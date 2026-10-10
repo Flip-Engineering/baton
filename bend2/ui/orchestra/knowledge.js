@@ -17,12 +17,15 @@
 //          overview.actors {id: {role, parent}}, overview.groups
 //          {id: {owner, coupling, received}}, overview.scope
 //          {kind, id}, and ensembles [{id, owner, coupling,
-//          members}] for the whole canvas. Sessions and groups share
-//          no key space: group nodes carry "group:"+id everywhere a
-//          session would carry its bare id, so a literal collision
-//          can never seat a group on an actor anchor.
+//          members}] for the whole canvas. Identity pairs kind and id:
+//          sessions keep their bare id for the shell and the fixture,
+//          while mixed maps, members, edges and lookups carry the kind
+//          in its own slot, so a session sharing a group's literal id
+//          still seats, edges, clusters, cards and focuses its own node.
+//          opts.focusRelation (a recorded relation name, or "") lights
+//          that relation's drawn edges and keeps its card.
 //   opts   { mode, authorIds, selectedId, selectedActorId, query,
-//          notice, onSelectFinding, onSelectActor }.
+//          notice, onSelectFinding, onSelectActor, focusRelation }.
 //          selectedId is the shell's finding selection; selectedActorId
 //          is the shell's actor selection. The shell clears the finding
 //          when an actor is chosen, so the map reads the finding first
@@ -69,6 +72,32 @@
   function kwScopeGroup(overview) {
     const scope = overview && overview.scope;
     return scope && scope.kind === "group" && scope.id ? String(scope.id) : "";
+  }
+
+  // Identity keys: kind and id travel as a pair the id cannot forge.
+  // Sessions keep their bare id everywhere the shell or the fixture
+  // addresses them; inside the layer's mixed maps the kind rides along
+  // in its own slot, split on the first colon so ids containing colons
+  // survive. Branches read the kind slot, never the id's text.
+  function kwKey(kind, id) { return String(kind) + ":" + String(id); }
+  function kwKeyKind(key) {
+    const i = String(key).indexOf(":");
+    return i < 0 ? "" : String(key).slice(0, i);
+  }
+  function kwKeyId(key) {
+    const i = String(key).indexOf(":");
+    return i < 0 ? String(key) : String(key).slice(i + 1);
+  }
+
+  // A shell selection resolves to its kind by recorded membership:
+  // findings first, then sessions, then reference tags. Canvas picks
+  // pass their kind outright and never resolve.
+  function kwSelKind(overview, sel) {
+    if (!sel) return "";
+    if ((overview.findings || []).some((f) => f.id === sel)) return "finding";
+    if ((overview.actors || {})[sel]) return "session";
+    if (kwRefMarks.get(sel)) return "ref";
+    return "";
   }
 
   // A group's naming line from its recorded metadata: id first, then
@@ -378,6 +407,10 @@
   // Dismissal is presentation only: the shell keeps its selection while
   // the map returns to the overview. Any new selection clears it.
   var kwDismissed = null;
+  // A node pick dismisses the shell's relation focus until the shell
+  // names another one; the canvas never re-adopts a dismissed name.
+  var kwDismissedRelation = "";
+  var kwSeenFocusRelation = "";
   var kwLastSelected = null;
   // A drag that pans the map must not also activate the node it
   // started on. Clicks consume the gesture; keydowns never pan.
@@ -421,21 +454,32 @@
     container.addEventListener("keydown", handler);
   }
 
-  function kwNodeId(g) {
-    return g.getAttribute("data-kw-node")
-      || g.getAttribute("data-kw-id") || g.getAttribute("data-kw-cluster") || "";
+  // A node's kind rides in its own attribute beside its literal id,
+  // so a lookup matches the pair and never the other kind.
+  function kwNodeKind(g) {
+    return g.getAttribute("data-kw-kind") || "";
+  }
+  function kwNodeKey(g) {
+    const id = g.getAttribute("data-kw-node") || g.getAttribute("data-kw-id")
+      || g.getAttribute("data-kw-cluster") || g.getAttribute("data-kw-ref") || "";
+    return kwKey(kwNodeKind(g), id);
   }
 
   // Depth 1 lights the node and its direct relations; depth 2 adds
   // the neighbours of neighbours, which is the selection read.
-  function kwIsolateSvg(svg, id, depth) {
+  // Isolation compares kind-and-id pairs from the attributes' own
+  // slots: a session sharing a group's literal id lights only itself.
+  function kwIsolateSvg(svg, key, depth) {
     const layer = svg.querySelector("g.kw-edges");
     if (!layer) return;
-    const near = new Set([id]);
+    const endKey = (edge, side) => kwKey(
+      edge.getAttribute(side === "from" ? "data-from-kind" : "data-to-kind") || "",
+      edge.getAttribute(side === "from" ? "data-from" : "data-to") || "");
+    const near = new Set([key]);
     for (const edge of layer.children) {
-      const from = edge.getAttribute("data-from") || "";
-      const to = edge.getAttribute("data-to") || "";
-      if (from === id || to === id) {
+      const from = endKey(edge, "from");
+      const to = endKey(edge, "to");
+      if (from === key || to === key) {
         near.add(from);
         near.add(to);
       }
@@ -443,8 +487,8 @@
     const keep = new Set(near);
     if (depth === 2) {
       for (const edge of layer.children) {
-        const from = edge.getAttribute("data-from") || "";
-        const to = edge.getAttribute("data-to") || "";
+        const from = endKey(edge, "from");
+        const to = endKey(edge, "to");
         if (near.has(from) || near.has(to)) {
           keep.add(from);
           keep.add(to);
@@ -452,12 +496,12 @@
       }
     }
     for (const g of svg.querySelectorAll("g.kw-anchor, g.knode, g.kw-cluster, g.kw-ref, g.kw-group")) {
-      g.classList.toggle("kw-hover-dim", !keep.has(kwNodeId(g)));
+      g.classList.toggle("kw-hover-dim", !keep.has(kwNodeKey(g)));
     }
     for (const edge of layer.children) {
-      const from = edge.getAttribute("data-from") || "";
-      const to = edge.getAttribute("data-to") || "";
-      const lit = from === id || to === id
+      const from = endKey(edge, "from");
+      const to = endKey(edge, "to");
+      const lit = from === key || to === key
         || (depth === 2 && (near.has(from) || near.has(to)));
       edge.classList.toggle("kw-hover-dim", !lit);
     }
@@ -472,9 +516,11 @@
     const actorPerRow = Math.max(1, Math.floor(
       (width - KW_GUTTER - KW_PAD) / KW_ACTOR_SLOT));
 
+    // Member keys carry kind and id as a pair: a session literally
+    // named like a group key still seats its own column.
     const authored = new Map();
     for (const f of overview.findings || []) {
-      const author = String(f.author || "unknown");
+      const author = kwKey("session", String(f.author || "unknown"));
       authored.set(author, (authored.get(author) || 0) + 1);
     }
     const scopeGroup = kwScopeGroup(overview);
@@ -489,29 +535,35 @@
     // Promotion endpoints seat by kind: a group endpoint never becomes
     // an actor column. Absent kinds are legacy session endpoints.
     const sessionActors = Array.from(authored.keys());
+    const kwAddSession = (id) => {
+      const key = kwKey("session", String(id || ""));
+      if (id && sessionActors.indexOf(key) === -1) sessionActors.push(key);
+    };
     for (const p of promotions) {
       if (p.source) {
         if (String(p.sourceKind || "session") === "group") kwAddGroup(p.source);
-        else if (sessionActors.indexOf(String(p.source)) === -1) sessionActors.push(String(p.source));
+        else kwAddSession(p.source);
       }
       if (p.destination) {
         if (String(p.destinationKind || "session") === "group") kwAddGroup(p.destination);
-        else if (sessionActors.indexOf(String(p.destination)) === -1) sessionActors.push(String(p.destination));
+        else kwAddSession(p.destination);
       }
-      if (p.promotedBy && sessionActors.indexOf(String(p.promotedBy)) === -1) {
-        sessionActors.push(String(p.promotedBy));
-      }
+      kwAddSession(p.promotedBy);
     }
     for (const r of overview.relations || []) {
-      if (r.author && sessionActors.indexOf(String(r.author)) === -1) sessionActors.push(String(r.author));
+      kwAddSession(r.author);
     }
     // A group scope places its findings without an actor column, under
     // the scope group; other scopes keep their session columns and seat
     // each referenced group beside them as its own node.
     const actors = (groupScope ? [] : sessionActors)
-      .concat(groupIds.map((g) => "group:" + g));
+      .concat(groupIds.map((g) => kwKey("group", g)));
     const tierOf = new Map();
-    for (const id of actors) tierOf.set(id, kwDepthOf(meta, roles, id));
+    // Groups always tier unknown: the depth walk reads session metadata
+    // only, so a group sharing a session's literal id never borrows it.
+    for (const id of actors) {
+      tierOf.set(id, kwKeyKind(id) === "group" ? -1 : kwDepthOf(meta, roles, kwKeyId(id)));
+    }
     const depths = Array.from(new Set(tierOf.values()))
       .filter((d) => d >= 0).sort((a, b) => a - b);
     // Actors with missing role or parent metadata appear in the unknown tier.
@@ -520,11 +572,11 @@
     if (groupScope) {
       // Every held finding packs under the scope group, which sorts
       // first by its count; referenced groups seat bare beside it.
-      byAuthor.set("group:" + scopeGroup, (overview.findings || []).slice());
-      authored.set("group:" + scopeGroup, (overview.findings || []).length);
+      byAuthor.set(kwKey("group", scopeGroup), (overview.findings || []).slice());
+      authored.set(kwKey("group", scopeGroup), (overview.findings || []).length);
     } else {
       for (const f of overview.findings || []) {
-        const author = String(f.author || "unknown");
+        const author = kwKey("session", String(f.author || "unknown"));
         if (!byAuthor.has(author)) byAuthor.set(author, []);
         byAuthor.get(author).push(f);
       }
@@ -643,15 +695,17 @@
     for (const f of items) {
       shared += promotions.filter((p) => p.finding === f.id).length;
     }
-    const clusterGroup = String(author).indexOf("group:") === 0;
-    const clusterWho = clusterGroup
-      ? " findings held by group " + String(author).slice("group:".length)
-      : " findings by " + author;
+    const clusterKind = kwKeyKind(author);
+    const clusterLit = kwKeyId(author);
+    const clusterWho = clusterKind === "group"
+      ? " findings held by group " + clusterLit
+      : " findings by " + clusterLit;
     const g = kwSvg(svg, "g", {
       class: "kw-cluster",
       tabindex: "0", role: "button",
       "aria-label": items.length + clusterWho + ", activate to expand",
-      "data-kw-cluster": String(author),
+      "data-kw-cluster": clusterLit,
+      "data-kw-kind": clusterKind,
     });
     kwSvg(g, "rect", {
       x: String(x - 15), y: String(y - 10),
@@ -679,11 +733,11 @@
         renderKnowledge(kwLastRender.container, kwLastRender.data, kwLastRender.opts);
         const mount = kwLastRender.container;
         const target = kwExpandedAuthors.has(author) && items.length
-          ? mount.querySelector('[data-kw-node="' + CSS.escape(items[0].id) + '"]')
-          : mount.querySelector('[data-kw-cluster="' + CSS.escape(String(author)) + '"]');
+          ? mount.querySelector('[data-kw-node="' + CSS.escape(items[0].id) + '"][data-kw-kind="finding"]')
+          : mount.querySelector('[data-kw-cluster="' + CSS.escape(clusterLit) + '"][data-kw-kind="' + CSS.escape(clusterKind) + '"]');
         if (target && typeof target.focus === "function") target.focus();
       }
-      if (opts && typeof opts.onSelectActor === "function" && !clusterGroup) opts.onSelectActor(author);
+      if (opts && typeof opts.onSelectActor === "function" && clusterKind !== "group") opts.onSelectActor(clusterLit);
     };
     g.addEventListener("click", toggle);
     g.addEventListener("keydown", (ev) => {
@@ -757,8 +811,9 @@
       if (kwCollapsedEnsembles.has(id)) {
         // A scope that seats none of the members seats no lozenge: in a
         // group scope the members are absent, not collapsed.
-        if (!members.some((m) => tierOf.has(m))) continue;
-        const tier = tiers.find((t) => t.d === tierOf.get(members[0])) || tiers[0];
+        // Ensemble members are sessions; the tier map pairs kind and id.
+        if (!members.some((m) => tierOf.has(kwKey("session", m)))) continue;
+        const tier = tiers.find((t) => t.d === tierOf.get(kwKey("session", members[0]))) || tiers[0];
         if (!tier) continue;
         const n = lozenges.get(tier.d) || 0;
         lozenges.set(tier.d, n + 1);
@@ -915,17 +970,19 @@
         // A group seats as its own hollow node, never as an actor
         // anchor: its metadata names it in the title and the card.
         // The shell selects actors and findings only, so the group
-        // keeps its card and isolation to the canvas.
-        if (String(id).indexOf("group:") === 0) {
-          const gid = String(id).slice("group:".length);
-          groupPos.set(String(id), { x, y });
+        // keeps its card and isolation to the canvas. The branch reads
+        // the member key's kind slot, never the id's text.
+        if (kwKeyKind(id) === "group") {
+          const gid = kwKeyId(id);
+          groupPos.set(gid, { x, y });
           groupsDrawn.push(gid);
           kwTrackBox(x - 12, y - 12, x + 20 + gid.length * 8, y + 12);
           const g = kwSvg(svg, "g", {
             class: "kw-group",
             tabindex: "0", role: "button",
             "aria-label": "group " + gid,
-            "data-kw-id": String(id),
+            "data-kw-id": gid,
+            "data-kw-kind": "group",
           });
           kwSvg(g, "rect", {
             x: String(x - 7), y: String(y - 7),
@@ -950,8 +1007,9 @@
           if (!kwMatches(query, gid, "", gid)) g.classList.add("kw-dim");
           const pick = () => {
             kwDismissed = null;
-            kwPinCard(container, overview, promotions, opts, String(id));
-            kwIsolate(String(id), 2);
+            kwDismissedRelation = (opts && opts.focusRelation) || "";
+            kwPinCard(container, overview, promotions, opts, gid, "group");
+            kwIsolate(kwKey("group", gid), 2);
           };
           g.addEventListener("click", () => {
             if (kwConsumePan()) return;
@@ -967,18 +1025,22 @@
           });
           return;
         }
-        actorPos.set(String(id), { x, y });
-        kwTrackBox(x - 12, y - 12, x + 20 + String(id).length * 8, y + 12);
-        const role = layout.roleOf ? layout.roleOf(id) : "";
+        // Member keys pair kind and id; the anchor draws the literal
+        // id and carries its kind beside it for lookups.
+        const lid = kwKeyId(id);
+        actorPos.set(lid, { x, y });
+        kwTrackBox(x - 12, y - 12, x + 20 + lid.length * 8, y + 12);
+        const role = layout.roleOf ? layout.roleOf(lid) : "";
         const conductor = role === "principal-conductor" || role === "associate-conductor";
         const s = conductor ? 11 : 8;
         const g = kwSvg(svg, "g", {
           class: "kw-anchor",
           tabindex: "0", role: "button",
-          "aria-label": String(id),
-          "data-kw-id": String(id),
+          "aria-label": lid,
+          "data-kw-id": lid,
+          "data-kw-kind": "session",
         });
-        const read = kwActorReads[String(id)] || {};
+        const read = kwActorReads[lid] || {};
         kwSvg(g, "rect", {
           x: String(x - s / 2), y: String(y - s / 2),
           width: String(s), height: String(s),
@@ -989,7 +1051,7 @@
         // Actor names thin like finding labels: members arrive ranked
         // by authored count, and a name that would overlap one already
         // placed on its row is skipped while the anchor still draws.
-        const nw = String(id).length * 8 + 10;
+        const nw = lid.length * 8 + 10;
         const nbox = [x + 10, x + 10 + nw];
         const nboxes = nameRows.get(row) || [];
         if (nbox[1] <= layout.width
@@ -999,18 +1061,19 @@
           const name = kwSvg(g, "text", {
             x: String(x + 10), y: String(y + 4), class: "kw-name mono",
           });
-          name.textContent = String(id);
+          name.textContent = lid;
           kwLabelBoxes.push({ x0: x + 10, y0: y - 8, x1: x + 10 + nw, y1: y + 8 });
         }
-        if (!kwMatches(query, id, "", id)) g.classList.add("kw-dim");
+        if (!kwMatches(query, lid, "", lid)) g.classList.add("kw-dim");
         g.addEventListener("click", () => {
           if (kwConsumePan()) return;
           kwDismissed = null;
-          kwPinCard(container, overview, promotions, opts, id);
+          kwDismissedRelation = (opts && opts.focusRelation) || "";
+          kwPinCard(container, overview, promotions, opts, lid, "session");
           g.focus();
-          kwIsolate(id, 2);
+          kwIsolate(kwKey("session", lid), 2);
           if (opts && typeof opts.onSelectActor === "function") {
-            opts.onSelectActor(id);
+            opts.onSelectActor(lid);
           }
         });
         g.addEventListener("keydown", (ev) => {
@@ -1018,10 +1081,11 @@
             if (ev.preventDefault) ev.preventDefault();
             kwViewMoved = false;
             kwDismissed = null;
-            kwPinCard(container, overview, promotions, opts, id);
-            kwIsolate(id, 2);
+            kwDismissedRelation = (opts && opts.focusRelation) || "";
+            kwPinCard(container, overview, promotions, opts, lid, "session");
+            kwIsolate(kwKey("session", lid), 2);
             if (opts && typeof opts.onSelectActor === "function") {
-              opts.onSelectActor(id);
+              opts.onSelectActor(lid);
             }
           }
         });
@@ -1087,6 +1151,7 @@
           tabindex: "0", role: "button",
           "aria-label": String(f.id),
           "data-kw-node": String(f.id),
+          "data-kw-kind": "finding",
         });
         kwMarkNew(g, f.id);
         // The ring carries the kind family, the shape the kind inside
@@ -1135,9 +1200,10 @@
         g.addEventListener("click", () => {
           if (kwConsumePan()) return;
           kwDismissed = null;
-          kwPinCard(container, overview, promotions, opts, f.id);
+          kwDismissedRelation = (opts && opts.focusRelation) || "";
+          kwPinCard(container, overview, promotions, opts, f.id, "finding");
           g.focus();
-          kwIsolate(f.id, 2);
+          kwIsolate(kwKey("finding", f.id), 2);
           if (opts && typeof opts.onSelectFinding === "function") {
             opts.onSelectFinding(f.id);
           }
@@ -1147,8 +1213,9 @@
             if (ev.preventDefault) ev.preventDefault();
             kwViewMoved = false;
             kwDismissed = null;
-            kwPinCard(container, overview, promotions, opts, f.id);
-            kwIsolate(f.id, 2);
+            kwDismissedRelation = (opts && opts.focusRelation) || "";
+            kwPinCard(container, overview, promotions, opts, f.id, "finding");
+            kwIsolate(kwKey("finding", f.id), 2);
             if (opts && typeof opts.onSelectFinding === "function") {
               opts.onSelectFinding(f.id);
             }
@@ -1158,11 +1225,12 @@
     }
     // Promotion relations draw as arcs bowed off the straight line so
     // movement reads apart from structure; authorship stays straight.
-    const edge = (x1, y1, x2, y2, cls, marker, label, kind, from, to, arc) => {
+    const edge = (x1, y1, x2, y2, cls, marker, label, kind, fromKind, from, toKind, to, arc) => {
       const attrs = {
         class: cls, "marker-end": "url(#" + marker + ")",
         "aria-label": label, "data-kind": kind,
         "data-from": String(from), "data-to": String(to),
+        "data-from-kind": String(fromKind), "data-to-kind": String(toKind),
       };
       if (arc) {
         const mx = (x1 + x2) / 2;
@@ -1186,34 +1254,34 @@
       if (!to) continue;
       // Each end anchors by its recorded kind: groups meet their own
       // nodes, never an actor that happens to share the literal id.
-      const skind = String(p.sourceKind || "session");
-      const dkind = String(p.destinationKind || "session");
-      const skey = skind === "group" ? "group:" + p.source : String(p.source);
-      const dkey = dkind === "group" ? "group:" + p.destination : String(p.destination);
-      const from = p.source
-        ? (skind === "group" ? groupPos.get(skey) : actorPos.get(String(p.source)))
+      const sk = String(p.sourceKind || "session") === "group" ? "group" : "session";
+      const dk = String(p.destinationKind || "session") === "group" ? "group" : "session";
+      const sfrom = p.source ? String(p.source) : "";
+      const ddest = p.destination ? String(p.destination) : "";
+      const from = sfrom
+        ? (sk === "group" ? groupPos.get(sfrom) : actorPos.get(sfrom))
         : null;
       if (from) {
         edge(from.x, from.y + 6, to.x, to.y - 6, "kw-edge-share",
-          "kw-arrow-share", "promotion from " + p.source, "share",
-          skey, p.finding, true);
+          "kw-arrow-share", "promotion from " + sfrom, "share",
+          sk, sfrom, "finding", p.finding, true);
       }
-      const dest = p.destination
-        ? (dkind === "group" ? groupPos.get(dkey) : actorPos.get(String(p.destination)))
+      const dest = ddest
+        ? (dk === "group" ? groupPos.get(ddest) : actorPos.get(ddest))
         : null;
       if (dest) {
         edge(to.x, to.y + 6, dest.x, dest.y - 6, "kw-edge-deliver",
-          "kw-arrow-deliver", "delivery to " + p.destination, "deliver",
-          p.finding, dkey, true);
+          "kw-arrow-deliver", "delivery to " + ddest, "deliver",
+          "finding", p.finding, dk, ddest, true);
       }
       const promoter = p.promotedBy ? String(p.promotedBy) : "";
-      const sameSrc = skind !== "group" && promoter === String(p.source || "");
-      const sameDst = dkind !== "group" && promoter === String(p.destination || "");
+      const sameSrc = sk !== "group" && promoter === sfrom;
+      const sameDst = dk !== "group" && promoter === ddest;
       if (promoter && !sameSrc && !sameDst && actorPos.has(promoter)) {
         const pfrom = actorPos.get(promoter);
         edge(pfrom.x, pfrom.y + 6, to.x, to.y - 6, "kw-edge-promote",
           "kw-arrow-promote", "promoted by " + promoter, "promote",
-          promoter, p.finding, true);
+          "session", promoter, "finding", p.finding, true);
       }
     }
     for (const [fid, finding] of layout.findings) {
@@ -1224,12 +1292,17 @@
       const to = findingPos.get(fid);
       edge(from.x, from.y + 6, to.x, to.y - 6, "kw-edge-authorship",
         "kw-arrow-author", "authored by " + author, "authorship",
-        author, fid);
+        "session", author, "finding", fid);
     }
     // Hulls draw before relations so settling tags keep clear of their
     // labels; paint order is unchanged, the hull layer sits beneath the edges.
     layout.actorPos = actorPos;
-    kwNodeXY = new Map([...actorPos, ...findingPos, ...groupPos]);
+    // The mixed maps key kind and id together; the per-kind maps they
+    // spread stay literal.
+    kwNodeXY = new Map();
+    for (const [id, pos] of actorPos) kwNodeXY.set(kwKey("session", id), pos);
+    for (const [id, pos] of findingPos) kwNodeXY.set(kwKey("finding", id), pos);
+    for (const [id, pos] of groupPos) kwNodeXY.set(kwKey("group", id), pos);
     kwEnsembleHulls(svg, edgeLayer, layout, ensembles || []);
     // Draw recorded relations between nodes or labeled reference tags.
     // Relations between references are placed beside their author.
@@ -1246,6 +1319,10 @@
     }
     const nodePos = (end) => end.kind !== "node" ? null
       : (findingPos.get(end.id) || actorPos.get(end.id) || null);
+    // A drawn node's entity kind by recorded placement, for the relate
+    // ends the resolver leaves as plain nodes.
+    const kwDrawnKind = (id) => findingPos.has(id) ? "finding"
+      : actorPos.has(id) ? "session" : "";
     // Marks hug their node on a short stub, fanning round it so several
     // references on one record do not stack on one spot. Each node starts
     // the fan at its own angle so neighbouring fans do not pile one way.
@@ -1308,15 +1385,15 @@
       if (needA && needB) {
         const author = actorPos.get(r.author);
         if (!author) continue;
-        const first = kwRefSlot(r.author, author, a);
-        const second = kwRefSlot(r.author, author, b);
+        const first = kwRefSlot(kwKey("session", r.author), author, a);
+        const second = kwRefSlot(kwKey("session", r.author), author, b);
         first.relations.push({ name, other: b.ref });
         second.relations.push({ name, other: a.ref });
       } else {
         if (needA && !nodePos(b)) continue;
         if (needB && !nodePos(a)) continue;
-        if (needA) kwRefSlot(b.id, nodePos(b), a).relations.push({ name, other: b.id });
-        if (needB) kwRefSlot(a.id, nodePos(a), b).relations.push({ name, other: a.id });
+        if (needA) kwRefSlot(kwKey(kwDrawnKind(b.id), b.id), nodePos(b), a).relations.push({ name, other: b.id });
+        if (needB) kwRefSlot(kwKey(kwDrawnKind(a.id), a.id), nodePos(a), b).relations.push({ name, other: a.id });
       }
       // Node-to-node names draw at the edge midpoint; their box joins
       // the obstacles so settling tags keep clear of edge names too.
@@ -1364,6 +1441,7 @@
           + (mark.unheld ? ", not held" : mark.family === "finding" || mark.family === "message" ? ", held" : ""),
         "data-kw-node": mark.ref,
         "data-kw-ref": mark.ref,
+        "data-kw-kind": "ref",
       });
       kwSvg(g, "rect", {
         x: String(mark.x - mark.w / 2), y: String(mark.y - 9),
@@ -1382,17 +1460,19 @@
       g.addEventListener("click", () => {
         if (kwConsumePan()) return;
         kwDismissed = null;
-        kwPinCard(container, overview, promotions, opts, mark.ref);
+        kwDismissedRelation = (opts && opts.focusRelation) || "";
+        kwPinCard(container, overview, promotions, opts, mark.ref, "ref");
         g.focus();
-        kwIsolate(mark.ref, 2);
+        kwIsolate(kwKey("ref", mark.ref), 2);
       });
       g.addEventListener("keydown", (ev) => {
         if (ev.key === "Enter" || ev.key === " ") {
           if (ev.preventDefault) ev.preventDefault();
           kwViewMoved = false;
           kwDismissed = null;
-          kwPinCard(container, overview, promotions, opts, mark.ref);
-          kwIsolate(mark.ref, 2);
+          kwDismissedRelation = (opts && opts.focusRelation) || "";
+          kwPinCard(container, overview, promotions, opts, mark.ref, "ref");
+          kwIsolate(kwKey("ref", mark.ref), 2);
         }
       });
       kwRefsDrawn += 1;
@@ -1474,16 +1554,42 @@
       const from = relateEnd(a);
       const to = relateEnd(b);
       if (!from || !to) continue;
+      const aKind = a.kind === "node" ? kwDrawnKind(a.id) : "ref";
+      const bKind = b.kind === "node" ? kwDrawnKind(b.id) : "ref";
+      const aRef = a.kind === "node" ? a.id : a.ref;
+      const bRef = b.kind === "node" ? b.id : b.ref;
       const g = kwSvg(edgeLayer, "g", {
         class: "kw-edge-relate",
         "data-kind": "relation",
-        "data-from": a.kind === "node" ? a.id : a.ref,
-        "data-to": b.kind === "node" ? b.id : b.ref,
+        "data-rel-name": name,
+        "data-from": aRef,
+        "data-to": bRef,
+        "data-from-kind": aKind,
+        "data-to-kind": bKind,
         tabindex: "0",
-        role: "img",
+        role: "button",
         "aria-label": "recorded relation '" + name + "' from "
-          + (a.kind === "node" ? a.id : a.ref) + " to "
-          + (b.kind === "node" ? b.id : b.ref),
+          + aRef + " to " + bRef,
+      });
+      // Activating a relation lights its two ends and pins a card naming
+      // the relation; a node pick or Escape clears it back to the canvas.
+      const activate = () => {
+        kwDismissed = null;
+        kwLightRelation(svg, { name, ends: [{ kind: aKind, id: aRef }, { kind: bKind, id: bRef }] });
+        kwPinRelCard(container, overview, name,
+          [{ kind: aKind, id: aRef }, { kind: bKind, id: bRef }]);
+      };
+      g.addEventListener("click", () => {
+        if (kwConsumePan()) return;
+        activate();
+        g.focus();
+      });
+      g.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter" || ev.key === " ") {
+          if (ev.preventDefault) ev.preventDefault();
+          kwViewMoved = false;
+          activate();
+        }
       });
       // One drawn stroke per relation, in spans: blocked stretches drop
       // out where the stub would cross a text box. The arrowhead stays
@@ -1534,7 +1640,7 @@
     if (query) {
       for (const [ref, mark] of kwRefMarks) {
         const names = mark.relations.map((rel) => rel.name).join(" ");
-        const g = svg.querySelector('g.kw-ref[data-kw-ref="' + CSS.escape(ref) + '"]');
+        const g = svg.querySelector('g.kw-ref[data-kw-ref="' + CSS.escape(ref) + '"][data-kw-kind="ref"]');
         if (g && !kwMatches(query, ref, names, "")) g.classList.add("kw-dim");
       }
     }
@@ -1550,12 +1656,14 @@
       }
     };
     for (const g of svg.querySelectorAll("g.kw-anchor, g.knode, g.kw-cluster, g.kw-ref, g.kw-group")) {
-      g.addEventListener("mouseover", () => kwIsolate(kwNodeId(g)));
+      g.addEventListener("mouseover", () => kwIsolate(kwNodeKey(g)));
       g.addEventListener("mouseleave", kwClearIsolation);
       // The selected anchor keeps its two-hop read across re-renders;
       // every other focus reads one hop.
-      g.addEventListener("focus", () => kwIsolate(kwNodeId(g),
-        kwEffectiveSelected(opts) === kwNodeId(g) ? 2 : 1));
+      g.addEventListener("focus", () => {
+        const sel = kwEffectiveSelected(opts);
+        kwIsolate(kwNodeKey(g), kwKey(kwSelKind(overview, sel), sel) === kwNodeKey(g) ? 2 : 1);
+      });
       g.addEventListener("blur", kwClearIsolation);
     }
     // A background click or Escape returns to the overview: the card
@@ -1737,9 +1845,9 @@
     }
     kwApplyView(view);
     kwNodePos.clear();
-    for (const [id, pos] of actorPos) kwNodePos.set(id, { x: pos.x, y: pos.y, kind: "actor" });
-    for (const [id, pos] of findingPos) kwNodePos.set(id, { x: pos.x, y: pos.y, kind: "finding" });
-    for (const [id, pos] of groupPos) kwNodePos.set(id, { x: pos.x, y: pos.y, kind: "group" });
+    for (const [id, pos] of actorPos) kwNodePos.set(kwKey("session", id), { x: pos.x, y: pos.y, kind: "session" });
+    for (const [id, pos] of findingPos) kwNodePos.set(kwKey("finding", id), { x: pos.x, y: pos.y, kind: "finding" });
+    for (const [id, pos] of groupPos) kwNodePos.set(kwKey("group", id), { x: pos.x, y: pos.y, kind: "group" });
     kwMapChrome(container, svg, view, overview, promotions, opts, ensembles || []);
     kwPinCard(container, overview, promotions, opts);
     // The selected neighborhood lights on every render, not only when
@@ -1747,7 +1855,24 @@
     // shell focus to its roster row, which would otherwise leave the map
     // dark. A dismissed selection stays an overview until it changes.
     const shown = kwEffectiveSelected(opts);
-    if (shown && kwDismissed !== shown) kwIsolate(shown, 2);
+    if (shown && kwDismissed !== shown) kwIsolate(kwKey(kwSelKind(overview, shown), shown), 2);
+    // A shell-focused relation lights its drawn edges and keeps its card
+    // naming it. A node pick dismisses it until the shell names another;
+    // Escape and background clicks clear the visible card and light at
+    // once through the dismiss path below, untouched.
+    const fr = (opts && opts.focusRelation) || "";
+    if (fr !== kwSeenFocusRelation) { kwSeenFocusRelation = fr; kwDismissedRelation = ""; }
+    if (fr && fr !== kwDismissedRelation) {
+      const edges = Array.from(svg.querySelectorAll("g.kw-edge-relate"))
+        .filter((e) => e.getAttribute("data-rel-name") === fr);
+      const first = edges[0];
+      const ends = first ? [
+        { kind: first.getAttribute("data-from-kind") || "", id: first.getAttribute("data-from") || "" },
+        { kind: first.getAttribute("data-to-kind") || "", id: first.getAttribute("data-to") || "" },
+      ] : [];
+      if (edges.length) kwLightRelation(svg, { name: fr, ends });
+      kwPinRelCard(container, fr, ends);
+    }
   }
 
   function kwApplyView(view) {
@@ -2016,7 +2141,9 @@
       const text = kwEl(b, "span", { class: "kw-match-text" });
       text.textContent = textWords;
       text.setAttribute("title", titleWords || textWords);
-      if (!kwNodePos.has(id)) {
+      // Match rows name their kind outright; actor rows read the
+      // session side of the position map.
+      if (!kwNodePos.has(kwKey(kind === "actor" ? "session" : kind, id))) {
         const note = kwEl(b, "span", { class: "kw-match-note" });
         note.textContent = "outside the drawn tiers";
       }
@@ -2065,11 +2192,11 @@
       // A group scope clusters every held finding under its group, so
       // the cluster owner is the group key, not the session author.
       const scopeOwner = kwScopeGroup(overview);
-      const clusterOwner = scopeOwner ? "group:" + scopeOwner : author;
+      const clusterOwner = scopeOwner ? kwKey("group", scopeOwner) : kwKey("session", author);
       const authored = scopeOwner ? findings
         : findings.filter((f) => String(f.author || "") === author);
       if (authored.length > KW_CLUSTER_AT && !kwExpandedAuthors.has(clusterOwner)
-        && !kwNodePos.has(hit.id)) {
+        && !kwNodePos.has(kwKey("finding", hit.id))) {
         kwExpandedAuthors.add(clusterOwner);
         rerendered();
       }
@@ -2090,7 +2217,8 @@
         }
       }
     }
-    const pos = kwNodePos.get(hit ? hit.id : id);
+    const gotoKind = hit ? "finding" : "session";
+    const pos = kwNodePos.get(kwKey(gotoKind, id));
     if (!pos || !live) {
       kwSayStatus(container, "'" + String(id) + "' is outside the drawn tiers");
       return null;
@@ -2104,11 +2232,13 @@
     // The card, isolation and focus land before the shell is told, so a
     // repeated hit whose selection the shell already holds still re-pins.
     kwDismissed = null;
-    kwPinCard(container, overview, overview.promotions || [], opts, id);
-    const node = container.querySelector('[data-kw-node="' + CSS.escape(id) + '"]')
-      || container.querySelector('[data-kw-id="' + CSS.escape(id) + '"]');
+    kwDismissedRelation = (opts && opts.focusRelation) || "";
+    kwPinCard(container, overview, overview.promotions || [], opts, id, gotoKind);
+    const node = hit
+      ? container.querySelector('[data-kw-node="' + CSS.escape(id) + '"][data-kw-kind="finding"]')
+      : container.querySelector('[data-kw-id="' + CSS.escape(id) + '"][data-kw-kind="session"]');
     if (node && typeof node.focus === "function") node.focus();
-    if (canvas) kwIsolateSvg(canvas, id, 2);
+    if (canvas) kwIsolateSvg(canvas, kwKey(gotoKind, id), 2);
     if (hit && opts && typeof opts.onSelectFinding === "function") {
       opts.onSelectFinding(hit.id);
     } else if (actorHit && opts && typeof opts.onSelectActor === "function") {
@@ -2152,23 +2282,34 @@
   // the same function with an explicit id before notifying the shell,
   // so the card stands even when the shell skips its re-render because
   // the selection did not change; a re-render rebuilds it either way.
-  function kwPinCard(container, overview, promotions, opts, id) {
-    const sel = id !== undefined ? id : kwEffectiveSelected(opts);
-    if (!sel || kwDismissed === sel) return;
-    const findings = overview.findings || [];
-    const found = findings.find((f) => f.id === sel);
-    const actors = overview.actors || {};
-    const ref = kwRefMarks.get(sel);
-    const selGroup = typeof sel === "string" && sel.indexOf("group:") === 0;
-    if (!found && !actors[sel] && !ref && !selGroup) return;
+  // A fresh card shell: the old card goes, and the mount holds still
+  // for absolute placement. Node and relation cards share it.
+  function kwOpenCard(container) {
     const old = container.querySelector(".kw-card");
     if (old) old.remove();
     if (typeof getComputedStyle === "function"
       && getComputedStyle(container).position === "static") {
       container.style.position = "relative";
     }
-    const card = kwEl(container, "div", { class: "kw-card" });
-    if (found) {
+    return kwEl(container, "div", { class: "kw-card" });
+  }
+
+  function kwPinCard(container, overview, promotions, opts, id, kind) {
+    const sel = id !== undefined ? id : kwEffectiveSelected(opts);
+    if (!sel || kwDismissed === sel) return;
+    // Canvas picks name their kind outright; a shell selection resolves
+    // by recorded membership. Either way the id's text never decides.
+    const selKind = kind !== undefined ? kind : kwSelKind(overview, sel);
+    const findings = overview.findings || [];
+    const found = findings.find((f) => f.id === sel);
+    const actors = overview.actors || {};
+    const ref = kwRefMarks.get(sel);
+    const known = selKind === "finding" ? !!found
+      : selKind === "session" ? !!actors[sel]
+      : selKind === "ref" ? !!ref : selKind === "group";
+    if (!known) return;
+    const card = kwOpenCard(container);
+    if (selKind === "finding") {
       const degree = promotions.filter((p) => p.finding === found.id).length;
       kwEl(card, "p", { class: "kw-card-title" }, String(found.claim || found.id));
       kwEl(card, "p", { class: "kw-card-state" }, degree ? "shared" : "unshared");
@@ -2193,8 +2334,14 @@
       if (bodies.length) kwEl(refs, "p", { class: "kw-card-ref" }, bodies.join(" + ") + " recorded");
       const step = promotions.find((p) => p.finding === found.id);
       if (step) {
+        // Group ends read with their kind word from the recorded kinds,
+        // so a group never hides behind a session's literal id.
+        const send = String(step.sourceKind || "session") === "group"
+          ? "group " + step.source : String(step.source || "?");
+        const dend = String(step.destinationKind || "session") === "group"
+          ? "group " + step.destination : String(step.destination || "?");
         kwEl(refs, "p", { class: "kw-card-ref mono" },
-          String(step.source || "?") + " → " + String(step.destination || "?")
+          send + " → " + dend
           + (step.promotedBy ? " via " + String(step.promotedBy) : ""));
       }
       // The selection already rendered the complete claim, evidence and
@@ -2214,7 +2361,7 @@
           "Show in the record");
         open.addEventListener("click", () => { opts.onOpenRecord(found.id); });
       }
-    } else if (actors[sel]) {
+    } else if (selKind === "session") {
       const held = actors[sel] || {};
       const read = kwActorReads[sel] || {};
       const role = String(held.role || "");
@@ -2245,7 +2392,7 @@
       if (role && role !== kind) bits.push(role);
       if (held.parent) bits.push("parent " + held.parent);
       kwEl(refs, "p", { class: "kw-card-ref" }, bits.join(" · ") || "recorded actor");
-    } else if (ref) {
+    } else if (selKind === "ref") {
       // A reference tag's card: the reference, whether the overview
       // holds its record, and the relations that cite it. A held
       // message follows to the finding that cites it as evidence.
@@ -2281,10 +2428,10 @@
           "Show the finding");
         show.addEventListener("click", () => { opts.onSelectFinding(ref.follow); });
       }
-    } else if (selGroup) {
+    } else if (selKind === "group") {
       // A group's card names it from its recorded metadata, the same
       // line the node's title carries.
-      const gid = sel.slice("group:".length);
+      const gid = sel;
       const gmeta = ((overview.groups) || {})[gid] || {};
       const lead = kwEl(card, "p", { class: "kw-card-lead" });
       kwEl(lead, "span", { class: "kw-card-title mono" }, gid);
@@ -2300,7 +2447,13 @@
     // The card opens on the side away from its node, and below any
     // hull it would cover. Hull boxes map through the view transform
     // into container pixels, the same mapping the nodes render through.
-    const npos = kwNodeXY.get(sel) || kwRefMarks.get(sel) || null;
+    const npos = kwNodeXY.get(kwKey(selKind, sel)) || kwRefMarks.get(sel) || null;
+    kwPlaceCard(container, card, npos);
+  }
+
+  // A pinned card opens on the side away from its anchor, below any hull
+  // it would cover. Node and relation cards share the placement.
+  function kwPlaceCard(container, card, npos) {
     const wide = kwLastWidth || container.clientWidth || 1;
     const nodeRight = !!npos && npos.x > wide / 2;
     card.classList.toggle("kw-card-left", nodeRight);
@@ -2331,6 +2484,46 @@
       }
       card.style.top = String(cardTop) + "px";
     }
+  }
+
+  // Relation light: the named relation's drawn edges and its two ends
+  // stay lit, everything else dims. Escape and background clicks clear
+  // it through the existing dismiss path, untouched.
+  function kwLightRelation(svg, rel) {
+    const names = new Set(rel.ends.map((e) => kwKey(e.kind, e.id)));
+    for (const g of svg.querySelectorAll("g.kw-anchor, g.knode, g.kw-cluster, g.kw-ref, g.kw-group")) {
+      g.classList.toggle("kw-hover-dim", !names.has(kwNodeKey(g)));
+    }
+    const layer = svg.querySelector("g.kw-edges");
+    if (!layer) return;
+    for (const edge of layer.children) {
+      edge.classList.toggle("kw-hover-dim", edge.getAttribute("data-rel-name") !== rel.name);
+    }
+  }
+
+  // A relation's card names the relation and its two ends. Ends read as
+  // kind and id from the edge's own attributes; a name with no drawn
+  // edge says its ends sit outside the drawn tiers.
+  function kwPinRelCard(container, name, ends) {
+    if (!container) return;
+    const card = kwOpenCard(container);
+    const lead = kwEl(card, "p", { class: "kw-card-lead" });
+    kwEl(lead, "span", { class: "kw-card-title" }, name);
+    lead.appendChild(document.createTextNode(" "));
+    kwEl(lead, "span", { class: "kw-card-state" }, "relation");
+    const label = (e) => e.kind === "ref" ? e.id : e.kind + " " + e.id;
+    kwEl(card, "p", { class: "kw-card-fact mono" },
+      ends.length === 2 ? label(ends[0]) + " → " + label(ends[1])
+      : "ends outside the drawn tiers");
+    const pts = [];
+    for (const e of ends) {
+      const p = e.kind === "ref" ? kwRefMarks.get(e.id) : kwNodeXY.get(kwKey(e.kind, e.id));
+      if (p) pts.push(p);
+    }
+    kwPlaceCard(container, card, pts.length
+      ? { x: pts.reduce((s, p) => s + p.x, 0) / pts.length,
+          y: pts.reduce((s, p) => s + p.y, 0) / pts.length }
+      : null);
   }
 
   function kwNodeLabel(g, f, x, y) {
@@ -2371,8 +2564,13 @@
     let focused = null;
     let caret = null;
     if (active && container.contains(active)) {
-      for (const name of ["data-kw-id", "data-kw-node"]) {
-        if (active.hasAttribute(name)) focused = '[' + name + '="' + CSS.escape(active.getAttribute(name)) + '"]';
+      // Nodes restore by kind and id together, so a session sharing a
+      // group's literal id refocuses its own node and not the other's.
+      for (const name of ["data-kw-id", "data-kw-node", "data-kw-cluster", "data-kw-ref"]) {
+        if (active.hasAttribute(name)) {
+          focused = '[' + name + '="' + CSS.escape(active.getAttribute(name)) + '"]'
+            + '[data-kw-kind="' + CSS.escape(active.getAttribute("data-kw-kind") || "") + '"]';
+        }
       }
       // The chrome is rebuilt too, so a live frame must not eat typing or
       // drop the reader off the match list: the search box keeps its caret
@@ -2427,7 +2625,7 @@
     const collapsed = new Set();
     for (const e of ensembles) {
       if (e && e.id && kwCollapsedEnsembles.has(String(e.id))) {
-        for (const m of (e.members || [])) collapsed.add(String(m));
+        for (const m of (e.members || [])) collapsed.add(kwKey("session", String(m)));
       }
     }
     const layout = kwRenderWhole(container, overview, promotions, opts, collapsed);
