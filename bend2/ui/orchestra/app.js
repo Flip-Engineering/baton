@@ -869,8 +869,6 @@ function renderProject() {
   if (signature === projectDrawn) return;
   const active = document.activeElement;
   const key = active && active.dataset ? active.dataset.projectKey || "" : "";
-  const report = el.projectBody.querySelector(".project-report");
-  const scroll = report ? report.scrollTop : 0;
   projectDrawn = signature;
   const project = state.project;
   if (el.projectState) {
@@ -982,8 +980,6 @@ function renderProject() {
   const back = key
     ? el.projectBody.querySelector('[data-project-key="' + CSS.escape(key) + '"]') : null;
   if (back && typeof back.focus === "function") back.focus();
-  const next = el.projectBody.querySelector(".project-report");
-  if (next && scroll) next.scrollTop = scroll;
 }
 
 // The plate's index states what each section holds, from the facts those sections draw - the
