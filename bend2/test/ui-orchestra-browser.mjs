@@ -362,6 +362,54 @@ check('row knowledge reads as one compact line', await evalJs(`(() => {
   const line = document.querySelector('#roster .doc-row[data-doc-id="worker"] .kw-compact');
   return !!line && (line.textContent || '').includes('Worker retained finding');
 })()`));
+// The payload contract, read once from the live overview endpoint. The nodes and
+// edges the contract adds are checked here; the drawing checks stay in the page.
+const overviewPayload = await evalJs(`(async () => {
+  const meta = document.querySelector('meta[name="orchestra-api-base"]');
+  const base = String((meta && meta.content) || location.origin).replace(/\\/+$/, '');
+  const response = await fetch(base + '/orchestra/knowledge/overview');
+  return await response.json();
+})()`);
+check('the overview preserves its fields while adding nodes and edges',
+  Boolean(overviewPayload)
+    && ['scope', 'findings', 'promotions', 'relations', 'nodes', 'edges', 'actors']
+      .every((key) => Object.prototype.hasOwnProperty.call(overviewPayload, key)));
+check('the overview carries the contract node shapes', (() => {
+  const nodes = (overviewPayload && overviewPayload.nodes) || [];
+  const findings = (overviewPayload && overviewPayload.findings) || [];
+  const held = nodes.filter((node) => node.referenceOnly === false);
+  const unheld = nodes.filter((node) => node.referenceOnly === true);
+  return nodes.length > 0 && held.length === findings.length
+    && held.every((node) => node.reference === 'finding:' + node.id
+      && typeof node.author === 'string' && typeof node.claim === 'string')
+    && unheld.every((node) => typeof node.reference === 'string' && node.reference.length > 0
+      && typeof node.kind === 'string' && node.kind.length > 0)
+    && unheld.filter((node) => node.reference.startsWith('message:'))
+      .every((node) => Array.isArray(node.deliveryRead) && node.deliveryRead.length === 2);
+})());
+check('cited edges come only from structured evidence', (() => {
+  const edges = (overviewPayload && overviewPayload.edges) || [];
+  const findings = (overviewPayload && overviewPayload.findings) || [];
+  const structured = new Map(findings.map((row) => [row.id,
+    /^(message:|finding:|file:|https?:\\/\\/|external:)/.test(String(row.evidence || ''))]));
+  const cited = edges.filter((edge) => edge.provenance === 'recorded-evidence');
+  return edges.every((edge) => edge.provenance === 'authored' || edge.provenance === 'recorded-evidence')
+    && cited.length === findings.filter((row) => structured.get(row.id)).length
+    && cited.every((edge) => edge.relation === 'Cited'
+      && String(edge.source).startsWith('finding:')
+      && structured.get(String(edge.source).slice('finding:'.length)) === true
+      && typeof edge.id === 'string' && edge.id.startsWith('citation:'));
+})());
+check('authored edges match the relations the payload preserves', (() => {
+  const authored = ((overviewPayload && overviewPayload.edges) || [])
+    .filter((edge) => edge.provenance === 'authored');
+  const relations = (overviewPayload && overviewPayload.relations) || [];
+  return authored.length === relations.length
+    && authored.every((edge) => relations.some((relation) =>
+      relation.sourceReference === edge.source && relation.targetReference === edge.target))
+    && relations.every((relation) => authored.some((edge) =>
+      edge.source === relation.sourceReference && edge.target === relation.targetReference));
+})());
 check('a roster row and its knowledge band each hold one row', await evalJs(`(() => {
   const rows = [...document.querySelectorAll('#roster .doc-row')].filter((row) => row.offsetHeight > 0);
   if (rows.length < 2) return false;
@@ -813,6 +861,20 @@ check('the evidence citation carries its number, tail and full title', await eva
   const tail = (cite.textContent || '').replace(/^\[\d+\] message /, '').split(' ')[0];
   const id = cite.getAttribute('title') || '';
   return tail.startsWith('\u2026') && id.endsWith(tail.replace(/^\u2026/, '')) && id.length > tail.length;
+})()`));
+check('a message reference draws its full id and holds no body until read', await evalJs(`(async () => {
+  const block = document.querySelector('#selection #sel-sec-finding');
+  if (!block) return false;
+  const cite = [...block.querySelectorAll('p')].find((p) => /^\\[\\d+\\] message /.test(p.textContent || ''));
+  if (!cite) return false;
+  const full = cite.getAttribute('title') || '';
+  if (full.slice(0, 8) !== 'message:') return false;
+  const meta = document.querySelector('meta[name="orchestra-api-base"]');
+  const base = String((meta && meta.content) || location.origin).replace(/\\/+$/, '');
+  const response = await fetch(base + '/orchestra/message?id=' + encodeURIComponent(full.slice(8)));
+  const payload = await response.json();
+  const body = payload && payload.message && payload.message.body;
+  return typeof body === 'string' && body.length > 0 && !(block.textContent || '').includes(body);
 })()`));
 check('the prose holds its measure and leading as element style', await evalJs(`(() => {
   const prose = document.querySelector('#selection .sel-lead');
