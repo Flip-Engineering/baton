@@ -954,10 +954,26 @@ def direct_request_checked(+db: String, +id: String, +player: String, +harness: 
     +error : String <- IO.try(String,DB.Sql.query(db,direct_request_sql(id,player,harness,cmd,model,effort,cwd,task,prompt,log,session,directory)))
     Stop.error_result(Tx.trim_nl(error),String.is_empty(Tx.trim_nl(error)))
 
+# Recovery accepts the original, fresh, and account-continuation directories.
 def direct_recovery_checked(+db: String, +player: String, +id: String, +harness: String, +directory: String) -> IO(Unit):
   do IO<Unit>:
-    found : String <- IO.try(String,DB.Sql.query(db,"SELECT count(*) FROM direct_turn_requests WHERE id=" ++ C.q(id) ++ " AND session=" ++ C.q(player) ++ " AND harness=" ++ C.q(harness) ++ " AND (directory=" ++ C.q(directory) ++ " OR directory || '.fresh'=" ++ C.q(directory) ++ ");"))
+    found : String <- IO.try(String,DB.Sql.query(db,"SELECT count(*) FROM direct_turn_requests WHERE id=" ++ C.q(id) ++ " AND session=" ++ C.q(player) ++ " AND harness=" ++ C.q(harness) ++ " AND (directory=" ++ C.q(directory) ++ " OR directory || '.fresh'=" ++ C.q(directory) ++ " OR substr(" ++ C.q(directory) ++ ",1,length(directory)+11)=directory || '.continued-' OR substr(" ++ C.q(directory) ++ ",1,length(directory)+17)=directory || '.fresh.continued-');"))
     Stop.error_result("Recorded direct recovery arguments differ from the retained request; preserve the attempt and inspect its manifest.",String.eq(found,"1\n"))
+
+# Continue the requested conversation or the conversation recorded by the attempt.
+def direct_conversation(+db: String, +player: String, +session: String) -> IO(String):
+  do IO<String>:
+    recorded : String <- IO.try(String,DB.Sql.query(db,"SELECT native FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
+    IO.pure(String,Bool.pick(String,String.is_empty(Tx.trim_nl(session)),Tx.trim_nl(recorded),Tx.trim_nl(session)))
+
+# Each account continuation uses a separate retained attempt directory.
+def direct_continued_directory(+db: String, +player: String, +directory: String) -> IO(String):
+  do IO<String>:
+    record_path : String <- profile_path(db,player)
+    read : Result<&1,&1,U32 & String,String> <- T.Text.read(record_path)
+    text : String <- IO.pass(String,Subs.optional_text(read))
+    +label : String <- IO.pure(String,Subs.record_label(Subs.last_line(Tx.split_lines(text))))
+    IO.pure(String,directory ++ ".continued-" ++ label)
 
 def direct_directory(+db: String, id: String) -> IO(String):
   do IO<String>:
@@ -1014,12 +1030,33 @@ def direct_unstarted(+db: String, +player: String, +id: String, +log: String, +d
     wake : Result<&1,&1,U32 & String,Unit> <- Delivery.wake_pending(db,player,"0")
     IO.pass(Unit,combine(finished,wake))
 
-def direct_second_started(+db: String, +player: String, +id: String, +log: String, +directory: String, +harness: String, +requested: String, lock: Maybe<U32>, start: P.RetainedStart) -> IO(Unit):
+# Self-recursive across successive handoffs, like the consume IO loops above.
+@unsafe
+def direct_second_started(+db: String, +player: String, +id: String, +log: String, +directory: String, +harness: String, +requested: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +prompt: String, +session: String, lock: Maybe<U32>, start: P.RetainedStart) -> IO(Unit):
   match start:
     case P.Retained{+handle}: do IO<Unit>:
       reconciled : Unit <- Stop.started(db,player,id,directory)
       observation : Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- retained_output(db,player,id,log,harness,directory,handle,requested)
-      direct_completed(db,player,id,log,directory,handle,lock,observation)
+      (+outcome,deliveries)=observation
+      match lock:
+        case None{}: direct_completed(db,player,id,log,directory,handle,None{},(outcome,deliveries))
+        case Some{held}: match outcome:
+          case Ended{status,event,error,incomplete}: do IO<Unit>:
+            +conversation : String <- direct_conversation(db,player,session)
+            advanced : Bool <- Subs.profile_handoff(db,player,id,event,conversation,cmd,cwd)
+            match advanced:
+              case False{}: direct_completed(db,player,id,log,directory,handle,Some{held},(Ended{status,event,error,incomplete},deliveries))
+              case True{}: do IO<Unit>:
+                cleaned : Unit <- direct_cleanup(handle,deliveries)
+                +continued : String <- direct_continued_directory(db,player,directory)
+                allowed : Bool <- Stop.admit(db,player,id,"direct",continued)
+                admitted : Unit <- Stop.admitted(allowed)
+                +executable : String <- IO.try(String,Lock.SessionLock.executable())
+                +recovery : String <- IO.pure(String,direct_recovery_argv(executable,db,player,id,cmd,model,effort,cwd,log,harness,continued,conversation))
+                +policy : Logs.Policy <- Logs.policy(db,player)
+                +level : String <- IO.pure(String,policy_level(policy))
+                next : P.RetainedStart <- IO.try(P.RetainedStart,direct_retained(db,player,continued,cmd,model,effort,cwd,conversation,harness,db ++ ".sessions",prompt,held,recovery,level))
+                direct_second_started(db,player,id,log,continued,harness,Omp.filter_events(level),cmd,model,effort,cwd,task,prompt,conversation,Some{held},next)
     case P.Unstarted{error}: direct_unstarted(db,player,id,log,directory,lock,error)
 
 def direct_restart_with_lock(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +harness: String, +directory: String, +prompt: String, +outcome: Outcome, +lock: U32) -> IO(Unit):
@@ -1035,7 +1072,7 @@ def direct_restart_with_lock(+db: String, +player: String, +id: String, +cmd: St
     +policy : Logs.Policy <- Logs.policy(db,player)
     +level : String <- IO.pure(String,policy_level(policy))
     start : P.RetainedStart <- IO.try(P.RetainedStart,direct_retained(db,player,fresh,cmd,model,effort,cwd,"",harness,db ++ ".sessions",note,lock,recovery,level))
-    direct_second_started(db,player,id,log,fresh,harness,Omp.filter_events(level),Some{lock},start)
+    direct_second_started(db,player,id,log,fresh,harness,Omp.filter_events(level),cmd,model,effort,cwd,task,prompt,"",Some{lock},start)
 
 def direct_restart_acquired(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +harness: String, +directory: String, +prompt: String, +outcome: Outcome, lock: Maybe<U32>) -> IO(Unit):
   match lock:
@@ -1047,21 +1084,55 @@ def direct_restart_cleaned(+db: String, +player: String, +id: String, +cmd: Stri
     case Some{held}: direct_restart_with_lock(db,player,id,cmd,model,effort,cwd,task,log,harness,directory,prompt,outcome,held)
     case None{}: Lock.SessionLock.acquire_session(Unit,db,player,+database => next => direct_restart_acquired(database,player,id,cmd,model,effort,cwd,task,log,harness,directory,prompt,outcome,next))
 
+# Start the next account on the same conversation while holding the session lock.
+def direct_handoff_relaunch_locked(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +harness: String, +directory: String, +prompt: String, +conversation: String, +lock: U32) -> IO(Unit):
+  do IO<Unit>:
+    +continued : String <- direct_continued_directory(db,player,directory)
+    allowed : Bool <- Stop.admit(db,player,id,"direct",continued)
+    admitted : Unit <- Stop.admitted(allowed)
+    +executable : String <- IO.try(String,Lock.SessionLock.executable())
+    +recovery : String <- IO.pure(String,direct_recovery_argv(executable,db,player,id,cmd,model,effort,cwd,log,harness,continued,conversation))
+    +policy : Logs.Policy <- Logs.policy(db,player)
+    +level : String <- IO.pure(String,policy_level(policy))
+    start : P.RetainedStart <- IO.try(P.RetainedStart,direct_retained(db,player,continued,cmd,model,effort,cwd,conversation,harness,db ++ ".sessions",prompt,lock,recovery,level))
+    direct_second_started(db,player,id,log,continued,harness,Omp.filter_events(level),cmd,model,effort,cwd,task,prompt,conversation,Some{lock},start)
+
+# Keeper recovery reacquires the session lock before starting the next account.
+def direct_handoff_acquired(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +harness: String, +directory: String, +prompt: String, +conversation: String, lock: Maybe<U32>) -> IO(Unit):
+  match lock:
+    case None{}: IO.die(Unit,2,"The retained direct attempt ended before its handoff continuation reacquired the session; inspect the attempt and retry its pending input.")
+    case Some{held}: direct_handoff_relaunch_locked(db,player,id,cmd,model,effort,cwd,task,log,harness,directory,prompt,conversation,held)
+
+# Provider-reported exhaustion advances through the operator's account list.
+# Settle the completed attempt and continue its task and conversation.
+def direct_handoff_checked(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +harness: String, +directory: String, +prompt: String, +session: String, +handle: U32, lock: Maybe<U32>, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, outcome: Outcome) -> IO(Unit):
+  match outcome:
+    case Ended{status,event,error,incomplete}: do IO<Unit>:
+      +conversation : String <- direct_conversation(db,player,session)
+      advanced : Bool <- Subs.profile_handoff(db,player,id,event,conversation,cmd,cwd)
+      match advanced:
+        case False{}: direct_completed(db,player,id,log,directory,handle,lock,(Ended{status,event,error,incomplete},deliveries))
+        case True{}: do IO<Unit>:
+          cleaned : Unit <- direct_cleanup(handle,deliveries)
+          match lock:
+            case Some{held}: direct_handoff_relaunch_locked(db,player,id,cmd,model,effort,cwd,task,log,harness,directory,prompt,conversation,held)
+            case None{}: Lock.SessionLock.acquire_session(Unit,db,player,+database => next => direct_handoff_acquired(database,player,id,cmd,model,effort,cwd,task,log,harness,directory,prompt,conversation,next))
+
 def direct_restart(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +harness: String, +directory: String, +prompt: String, +handle: U32, lock: Maybe<U32>, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, outcome: Outcome) -> IO(Unit):
   do IO<Unit>:
     cleaned : Unit <- direct_cleanup(handle,deliveries)
     direct_restart_cleaned(db,player,id,cmd,model,effort,cwd,task,log,harness,directory,prompt,outcome,lock)
 
-def direct_first_checked(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +harness: String, +directory: String, +prompt: String, +handle: U32, lock: Maybe<U32>, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, outcome: Outcome, gone: Bool) -> IO(Unit):
+def direct_first_checked(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +harness: String, +directory: String, +prompt: String, +session: String, +handle: U32, lock: Maybe<U32>, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, outcome: Outcome, gone: Bool) -> IO(Unit):
   match gone:
     case True{}: direct_restart(db,player,id,cmd,model,effort,cwd,task,log,harness,directory,prompt,handle,lock,deliveries,outcome)
-    case False{}: direct_completed(db,player,id,log,directory,handle,lock,(outcome,deliveries))
+    case False{}: direct_handoff_checked(db,player,id,cmd,model,effort,cwd,task,log,harness,directory,prompt,session,handle,lock,deliveries,outcome)
 
 def direct_first_observed(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +harness: String, +directory: String, +session: String, +prompt: String, +handle: U32, lock: Maybe<U32>, observation: Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>) -> IO(Unit):
   (+outcome,deliveries)=observation
   do IO<Unit>:
     gone : Bool <- refusal(directory ++ "/native.stderr",Bool.not(String.is_empty(session)),outcome)
-    direct_first_checked(db,player,id,cmd,model,effort,cwd,task,log,harness,directory,prompt,handle,lock,deliveries,outcome,gone)
+    direct_first_checked(db,player,id,cmd,model,effort,cwd,task,log,harness,directory,prompt,session,handle,lock,deliveries,outcome,gone)
 
 def direct_first_started(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +harness: String, +directory: String, +session: String, +prompt: String, +requested: String, lock: Maybe<U32>, start: P.RetainedStart) -> IO(Unit):
   match start:

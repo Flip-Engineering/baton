@@ -1836,6 +1836,233 @@ class Receive(unittest.TestCase):
             failed = [turn for turn in self.coord('turns', 'root') if cause in turn['reportBody']]
             self.assertEqual(len(failed), 1)
 
+    def test_codex_direct_hands_off_to_the_next_profile_and_resumes_the_same_native(self):
+        # Direct-turn #702 fallback inside one turn invocation: profile A refuses with the
+        # provider's own usage-exhaustion message, the record advances to profile B, the same
+        # turn invocation relaunches B with its own store on the recorded native conversation,
+        # and B completes the same task file prompt. Every assertion reads coordinator state.
+        # The exhausted attempt writes no turn row of its own; its cause is retained in the
+        # handoff report and the continuation's completion records the single turn row.
+        self.coord('attach', 'root', 'codex', '', '')
+        store_a = self.directory / 'store-a'
+        store_b = self.directory / 'store-b'
+        store_a.mkdir()
+        store_b.mkdir()
+        home_a = self.directory / 'history-a'
+        home_b = self.directory / 'history-b'
+        home_a.mkdir()
+        home_b.mkdir()
+        (store_a / 'config.toml').write_text('model = "gpt-5.6-codex"\nsqlite_home = "' + str(home_a) + '"\n')
+        (store_b / 'config.toml').write_text('# profile B names a different history root\nsqlite_home = "' + str(home_b) + '"\n')
+        record = self.directory / ('state.db.profile-' + 'root'.encode().hex())
+        (self.directory / 'state.db.profiles').write_text(
+            'codex A ' + str(store_a) + '\ncodex B ' + str(store_b) + '\n')
+        record.write_text('A ' + str(store_a) + '\n')
+        document = json.loads((self.directory / 'fixture.json').read_text())
+        document['record_launches'] = True
+        (self.directory / 'fixture.json').write_text(json.dumps(document))
+        body = 'Direct task for the handoff.\n'
+        task = self.directory / 'direct-handoff.txt'
+        task.write_text(body)
+        cause = 'You’ve hit your usage limit for gpt-5.6-codex. Switch to another model now, or try again later.'
+        direct = self.spawn('turn', 'root', 'direct-handoff', str(self.fixture), 'codex', 'low',
+                            str(self.directory), str(task),
+                            str(self.directory / 'direct-handoff.jsonl'), '')
+        first, started = self.accept('root')
+        self.assertTrue(any(str(store_a) in argument for argument in started['args']))
+        self.assertIn(body, started['prompt'])
+        self.action(first, fail=True, ack=False, fail_message=cause)
+        self.action(first, exit_fixture=True)
+        second, resumed = self.accept('root')
+        launches = [json.loads(line) for line in
+                    (self.directory / 'native-launches.jsonl').read_text().splitlines()]
+        self.assertEqual(len(launches), 2)
+        self.assertEqual(launches[0]['resume'], '')
+        self.assertEqual(launches[1]['resume'], started['native'])
+        self.assertEqual(resumed['native'], started['native'])
+        self.assertTrue(any(str(store_b) in argument for argument in resumed['args']))
+        # Profile B names its own history root in its own configuration, and the preserved
+        # home is profile A's configured root: the continuation resolves A's history through
+        # the recorded override, so a contrary configuration in B does not win.
+        self.assertIn('sqlite_home="' + str(home_a) + '"', resumed['args'])
+        self.assertNotIn('sqlite_home="' + str(home_b) + '"', resumed['args'])
+        self.assertIn(body, resumed['prompt'])
+        sidecar = self.directory / ('state.db.history-' + 'root'.encode().hex())
+        recorded_home = json.loads(sidecar.read_text().splitlines()[-1])
+        self.assertEqual(recorded_home['harness'], 'codex')
+        self.assertEqual(recorded_home['sourceStore'], str(store_a))
+        self.assertEqual(recorded_home['store'], str(store_b))
+        self.assertEqual(recorded_home['home'], str(home_a))
+        history = [json.loads(line) for line in
+                   (self.directory / 'native-history.jsonl').read_text().splitlines()]
+        self.assertEqual(len(history), 2)
+        self.assertEqual(history[1]['resume'], started['native'])
+        self.assertEqual(history[1]['native'], started['native'])
+        self.assertEqual(history[1]['home'], str(home_a))
+        self.action(second)
+        self.finish(direct)
+        self.assertEqual(record.read_text().splitlines()[-1], 'B ' + str(store_b))
+        handoff = [message for message in self.coord('inbox', 'operator')
+                   if 'subscription profile handoff' in message['body']]
+        self.assertEqual(len(handoff), 1)
+        self.assertIn(cause, handoff[0]['body'])
+        self.assertIn('refused profile=A', handoff[0]['body'])
+        self.assertIn('bound profile=B', handoff[0]['body'])
+        self.assertIsNone(self.coord('delivery', handoff[0]['id'])['receipt'])
+        turns = self.coord('turns', 'root')
+        self.assertEqual(len(turns), 1)
+        self.assertIn(body, turns[0]['reportBody'])
+        self.assertFalse(any(cause in turn['reportBody'] for turn in turns))
+
+    def test_codex_direct_chains_two_handoffs_with_distinct_reports(self):
+        # Three-profile direct-turn #702 chain: profiles A and B both refuse with the
+        # provider's own usage-exhaustion message, the record advances A -> B -> C, and C
+        # completes the same task on the recorded native conversation. Each handoff keeps
+        # its own report: the message id names the newly bound profile, so the second
+        # handoff is not ignored as a duplicate of the first. Every assertion reads
+        # coordinator state.
+        self.coord('attach', 'root', 'codex', '', '')
+        store_a = self.directory / 'store-a'
+        store_b = self.directory / 'store-b'
+        store_c = self.directory / 'store-c'
+        store_a.mkdir()
+        store_b.mkdir()
+        store_c.mkdir()
+        home_a = self.directory / 'history-a'
+        home_b = self.directory / 'history-b'
+        home_c = self.directory / 'history-c'
+        home_a.mkdir()
+        home_b.mkdir()
+        home_c.mkdir()
+        (store_a / 'config.toml').write_text('model = "gpt-5.6-codex"\nsqlite_home = "' + str(home_a) + '"\n')
+        (store_b / 'config.toml').write_text('sqlite_home = "' + str(home_b) + '"\n')
+        (store_c / 'config.toml').write_text('sqlite_home = "' + str(home_c) + '"\n')
+        record = self.directory / ('state.db.profile-' + 'root'.encode().hex())
+        (self.directory / 'state.db.profiles').write_text(
+            'codex A ' + str(store_a) + '\ncodex B ' + str(store_b) + '\ncodex C ' + str(store_c) + '\n')
+        record.write_text('A ' + str(store_a) + '\n')
+        document = json.loads((self.directory / 'fixture.json').read_text())
+        document['record_launches'] = True
+        (self.directory / 'fixture.json').write_text(json.dumps(document))
+        body = 'Direct task for the chained handoff.\n'
+        task = self.directory / 'direct-handoff-chain.txt'
+        task.write_text(body)
+        cause = 'You’ve hit your usage limit for gpt-5.6-codex. Switch to another model now, or try again later.'
+        direct = self.spawn('turn', 'root', 'direct-handoff-chain', str(self.fixture), 'codex', 'low',
+                            str(self.directory), str(task),
+                            str(self.directory / 'direct-handoff-chain.jsonl'), '')
+        first, started = self.accept('root')
+        self.assertTrue(any(str(store_a) in argument for argument in started['args']))
+        self.action(first, fail=True, ack=False, fail_message=cause)
+        self.action(first, exit_fixture=True)
+        second, resumed_b = self.accept('root')
+        self.assertTrue(any(str(store_b) in argument for argument in resumed_b['args']))
+        self.assertEqual(resumed_b['native'], started['native'])
+        self.assertIn(body, resumed_b['prompt'])
+        self.action(second, fail=True, ack=False, fail_message=cause)
+        self.action(second, exit_fixture=True)
+        third, resumed_c = self.accept('root')
+        launches = [json.loads(line) for line in
+                    (self.directory / 'native-launches.jsonl').read_text().splitlines()]
+        self.assertEqual(len(launches), 3)
+        self.assertEqual(launches[1]['resume'], started['native'])
+        self.assertEqual(launches[2]['resume'], started['native'])
+        self.assertEqual(resumed_c['native'], started['native'])
+        self.assertTrue(any(str(store_c) in argument for argument in resumed_c['args']))
+        # Both continuations use the original history home recorded by the first handoff.
+        self.assertIn('sqlite_home="' + str(home_a) + '"', resumed_c['args'])
+        self.assertNotIn('sqlite_home="' + str(home_c) + '"', resumed_c['args'])
+        self.assertIn(body, resumed_c['prompt'])
+        sidecar = self.directory / ('state.db.history-' + 'root'.encode().hex())
+        recorded_home = json.loads(sidecar.read_text().splitlines()[-1])
+        self.assertEqual(recorded_home['sourceStore'], str(store_b))
+        self.assertEqual(recorded_home['store'], str(store_c))
+        self.assertEqual(recorded_home['home'], str(home_a))
+        self.action(third)
+        self.finish(direct)
+        self.assertEqual(record.read_text().splitlines()[-1], 'C ' + str(store_c))
+        handoff = sorted((message for message in self.coord('inbox', 'operator')
+                          if 'subscription profile handoff' in message['body']),
+                         key=lambda message: message['id'])
+        self.assertEqual(len(handoff), 2)
+        self.assertEqual(handoff[0]['id'], 'direct-handoff-chain:profile-handoff-B')
+        self.assertEqual(handoff[1]['id'], 'direct-handoff-chain:profile-handoff-C')
+        self.assertIn('refused profile=A', handoff[0]['body'])
+        self.assertIn('bound profile=B', handoff[0]['body'])
+        self.assertIn('refused profile=B', handoff[1]['body'])
+        self.assertIn('bound profile=C', handoff[1]['body'])
+        self.assertIn(cause, handoff[0]['body'])
+        self.assertIn(cause, handoff[1]['body'])
+        self.assertIsNone(self.coord('delivery', handoff[0]['id'])['receipt'])
+        self.assertIsNone(self.coord('delivery', handoff[1]['id'])['receipt'])
+        turns = self.coord('turns', 'root')
+        self.assertEqual(len(turns), 1)
+        self.assertIn(body, turns[0]['reportBody'])
+        self.assertFalse(any(cause in turn['reportBody'] for turn in turns))
+
+    def test_codex_recovered_direct_hands_off_to_the_next_profile(self):
+        # The same shared direct handoff seam reached through Turn.recover: the turn driver
+        # dies after the native child connects, the keeper runs the recorded recovery command,
+        # recovery observes the failed terminal, advances the profile, and relaunches the same
+        # task and conversation. The keeper owns the recovery process, so this case asserts
+        # end state rather than driving a second turn process of its own.
+        self.coord('attach', 'root', 'codex', '', '')
+        store_a = self.directory / 'store-a'
+        store_b = self.directory / 'store-b'
+        store_a.mkdir()
+        store_b.mkdir()
+        home_a = self.directory / 'history-a'
+        home_b = self.directory / 'history-b'
+        home_a.mkdir()
+        home_b.mkdir()
+        (store_a / 'config.toml').write_text('model = "gpt-5.6-codex"\nsqlite_home = "' + str(home_a) + '"\n')
+        (store_b / 'config.toml').write_text('# profile B names a different history root\nsqlite_home = "' + str(home_b) + '"\n')
+        record = self.directory / ('state.db.profile-' + 'root'.encode().hex())
+        (self.directory / 'state.db.profiles').write_text(
+            'codex A ' + str(store_a) + '\ncodex B ' + str(store_b) + '\n')
+        record.write_text('A ' + str(store_a) + '\n')
+        document = json.loads((self.directory / 'fixture.json').read_text())
+        document['record_launches'] = True
+        (self.directory / 'fixture.json').write_text(json.dumps(document))
+        body = 'Recovered direct task for the handoff.\n'
+        task = self.directory / 'direct-handoff-recovered.txt'
+        task.write_text(body)
+        cause = 'You’ve hit your usage limit for gpt-5.6-codex. Switch to another model now, or try again later.'
+        direct = self.spawn('turn', 'root', 'direct-handoff-recovered', str(self.fixture), 'codex',
+                            'low', str(self.directory), str(task),
+                            str(self.directory / 'direct-handoff-recovered.jsonl'), '')
+        first, started = self.accept('root')
+        self.assertTrue(any(str(store_a) in argument for argument in started['args']))
+        direct.kill()
+        direct.wait()
+        self.action(first, fail=True, ack=False, fail_message=cause)
+        self.action(first, exit_fixture=True)
+        second, resumed = self.accept('root')
+        launches = [json.loads(line) for line in
+                    (self.directory / 'native-launches.jsonl').read_text().splitlines()]
+        self.assertEqual(len(launches), 2)
+        self.assertEqual(launches[1]['resume'], started['native'])
+        self.assertEqual(resumed['native'], started['native'])
+        self.assertTrue(any(str(store_b) in argument for argument in resumed['args']))
+        self.assertIn('sqlite_home="' + str(home_a) + '"', resumed['args'])
+        self.assertNotIn('sqlite_home="' + str(home_b) + '"', resumed['args'])
+        self.assertIn(body, resumed['prompt'])
+        self.action(second)
+        # The record already advanced before the relaunch connected, so only the
+        # continuation's own completion is still pending: the keeper-owned recovery
+        # process has no test handle, so observe the actual final turn row rather
+        # than asserting it immediately.
+        self.assertEqual(record.read_text().splitlines()[-1], 'B ' + str(store_b))
+        handoff = [message for message in self.coord('inbox', 'operator')
+                   if 'subscription profile handoff' in message['body']]
+        self.assertEqual(len(handoff), 1)
+        self.assertIn(cause, handoff[0]['body'])
+        self.eventually(lambda: len(self.coord('turns', 'root')) == 1,
+                        'The recovered direct continuation did not complete its turn.')
+        turns = self.coord('turns', 'root')
+        self.assertIn(body, turns[0]['reportBody'])
+        self.assertFalse(any(cause in turn['reportBody'] for turn in turns))
+
     def test_busy_direct_receive_drains_new_input_and_preserves_native_session(self):
         self.player()
         self.prepare_input('first', 'parent')
