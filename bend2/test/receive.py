@@ -1616,7 +1616,9 @@ class Receive(unittest.TestCase):
         self.assertTrue((attempt / 'acknowledged').exists())
         wire = [json.loads(line) for line in (attempt / 'legacy-wire.jsonl').read_text().splitlines()]
         self.assertEqual([item['serial'] for item in wire if item['operation'] == 14], [0, 0])
-        self.assertTrue(any(item['operation'] == 6 and item['serial'] > 0 for item in wire))
+        completion = [item for item in wire if item['operation'] in (6, 8, 9)]
+        self.assertEqual([item['operation'] for item in completion], [6, 8, 9])
+        self.assertTrue(all(item['serial'] > 0 for item in completion))
         self.assertEqual(self.coord('inbox', 'parent'), [])
         self.shutdown_idle_database_owner('Legacy recovery and current continuation did not settle.')
         self.assertTrue(self.session_guard_available('parent'))
