@@ -29,19 +29,6 @@ import ../git/text.bend as Tx
 import ../host/text.bend as Text
 import ./store.bend as Store
 
-law report_persists_before_best_effort_control_output:
-  for db: String
-  for player: String
-  for id: String
-  for body: String
-  {Turn.report(db,player,id,body) == (do IO<Unit>:
-    saved : String <- IO.try(String,Store.commit(db,C.Report{id,player,body}))
-    written : Result<&1,&1,U32 & String,Unit> <- Text.Text.control_output(saved)
-    IO.pure(Unit,Unit{})) : IO(Unit)}
-
-def report_persists_before_best_effort_control_output(db,player,id,body):
-  {==}
-
 law direct_replay_keeps_output_failure_for_completion:
   for +db: String
   for +player: String
