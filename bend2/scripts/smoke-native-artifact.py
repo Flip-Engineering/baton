@@ -81,6 +81,29 @@ def fixture(kind, config_path, arguments):
     cli = lambda name, *args: json.loads(commands.call(name, [config['exe'], config['db'], *args]))
     if kind == 'parent':
         message = next(m for m in cli('inbox', 'inbox', 'root') if m['id'] == arguments[0])
+        if message['kind'] == 'completion-request':
+            require(message['id'] == config['completion_request']
+                    and message['sender'] == 'worker' and message['recipient'] == 'root'
+                    and message['body'] == config['report'], 'Parent received another completion request')
+            worker = cli('worker', 'player', 'worker')
+            require(worker['parent'] == 'root', 'Completion review lost the recorded parent')
+            workspace = Path(worker['workspace'])
+            commit = commands.call('review-head', [config['git'], '-C', workspace, 'rev-parse', 'HEAD']).strip()
+            work = commands.call('review-work', [config['git'], '-C', workspace, 'show', 'HEAD:native-work.txt'])
+            dirty = commands.call('review-status', [config['git'], '-C', workspace, 'status', '--porcelain'])
+            require(commit != worker['base'] and work == config['work'] and not dirty,
+                    'The completion request does not contain committed fixture work')
+            cli('ack-completion', 'ack', message['id'], 'root', 'artifact-parent-completion-reviewed')
+            cli('confirm-completion', 'message', config['completion_confirmation'], 'root', 'worker',
+                'completion-confirmed', message['id'])
+            confirmation = cli('confirmation-delivery', 'delivery', config['completion_confirmation'])
+            save(output / 'parent-completion-review.json', {
+                'pid': os.getpid(), 'message': message, 'workspace': str(workspace),
+                'commit': commit, 'work': work, 'confirmation': confirmation,
+                'receipt': 'artifact-parent-completion-reviewed',
+            })
+            print(json.dumps({'received': message['id']}))
+            return
         require(message['body'] == config['report'], 'Parent received a different report body')
         cli('ack', 'ack', message['id'], 'root', 'artifact-parent-reviewed')
         save(output / 'parent-delivery.json', {'pid': os.getpid(), 'message': message,
@@ -120,6 +143,21 @@ def fixture(kind, config_path, arguments):
     Path('native-work.txt').write_text(config['work'])
     commands.call('git-add', [config['git'], 'add', 'native-work.txt'])
     commands.call('git-commit', [config['git'], 'commit', '-q', '-m', 'Add controlled artifact work'])
+    cli('request-completion', 'message', config['completion_request'], 'worker', 'root',
+        'completion-request', config['report'])
+    reviewed = cli('completion-request-delivery', 'delivery', config['completion_request'])
+    confirmation = cli('completion-confirmation-delivery', 'delivery', config['completion_confirmation'])
+    require(reviewed['receipt'] == 'artifact-parent-completion-reviewed',
+            'The recorded parent has not reviewed the completion request')
+    require(confirmation['sender'] == 'root' and confirmation['recipient'] == 'worker'
+            and confirmation['kind'] == 'completion-confirmed'
+            and confirmation['body'] == config['completion_request'],
+            'The worker received another completion confirmation')
+    cli('ack-confirmation', 'ack', confirmation['id'], 'worker', 'artifact-worker-completion-confirmed')
+    save(output / 'native-completion-confirmation.json', {
+        'pid': os.getpid(), 'request': reviewed,
+        'confirmation': cli('handled-confirmation', 'delivery', confirmation['id']),
+    })
     print(json.dumps({'type': 'agent_end', 'isTerminal': True,
                       'messages': [{'role': 'assistant', 'content': [{'type': 'text', 'text': config['report']}]}]}), flush=True)
     require(sys.stdin.read() == '', 'Native stdin did not close after its terminal event')
@@ -242,7 +280,8 @@ def main():
                   'task': 'Exercise installed retained receive λ\nKeep the complete task body.\n',
                   'report': 'Complete installed native report λ\nFull second line.\n',
                   'work': 'Retained installed Player work λ\n', 'native': 'artifact-native',
-                  'event_filter': 'delta'}
+                  'event_filter': 'delta', 'completion_request': 'artifact-completion-request',
+                  'completion_confirmation': 'artifact-completion-confirmed'}
         save(config_path, config)
         native = output / 'controlled-native'
         native.write_text('#!/bin/sh\nexec ' + shlex.join([sys.executable, str(helper), '--fixture-native', str(config_path)]) + ' "$@"\n')
@@ -307,6 +346,21 @@ def main():
                 'Task acknowledgment was not retained')
         require(cli('report-delivery', 'delivery', report['id'])['receipt'] == 'artifact-parent-reviewed',
                 'Parent acknowledgment was not retained')
+        requested = cli('completion-request-delivery', 'delivery', config['completion_request'])
+        confirmed = cli('completion-confirmation-delivery', 'delivery', config['completion_confirmation'])
+        require(requested['sender'] == 'worker' and requested['recipient'] == 'root'
+                and requested['kind'] == 'completion-request' and requested['body'] == config['report']
+                and requested['receipt'] == 'artifact-parent-completion-reviewed',
+                'The parent completion review was not retained')
+        require(confirmed['sender'] == 'root' and confirmed['recipient'] == 'worker'
+                and confirmed['kind'] == 'completion-confirmed'
+                and confirmed['body'] == requested['id']
+                and confirmed['receipt'] == 'artifact-worker-completion-confirmed',
+                'The worker completion confirmation was not retained')
+        completion = cli('completion-state', 'session', 'worker')['taskCompletion']
+        require(completion == {'assignmentId': 'artifact-task', 'coordinator': 'root',
+                               'requestId': requested['id'], 'confirmed': True, 'open': False},
+                'The fixture assignment remains open')
         require((workspace / 'native-work.txt').read_text() == config['work'], 'Native work was not preserved')
         land = cli('land', 'land', 'worker', repo, 'main')
         require(land['status'] == 'landed', 'Public land did not advance the target')
@@ -320,14 +374,22 @@ def main():
         require(start.get('event_filter') == config.get('event_filter', 'delta'),
                 'The controlled fixture negotiated a different event-filter selection')
         parent = json.loads((output / 'parent-delivery.json').read_text())
+        review = json.loads((output / 'parent-completion-review.json').read_text())
+        handled = json.loads((output / 'native-completion-confirmation.json').read_text())
+        message_fields = ('id', 'sender', 'recipient', 'kind', 'body', 'receipt')
+        require(handled['pid'] == start['pid']
+                and all(handled['confirmation'][key] == confirmed[key] for key in message_fields),
+                'The original native did not handle its parent confirmation')
+        require(review['message']['id'] == requested['id'] and review['commit'] == land['commit'],
+                'The parent reviewed another request or commit')
         require(complete['pid'] == start['pid'] and complete['stdin_eof'], 'Native completion record differs')
         require(parent['message']['body'] == config['report'], 'Parent report body differs')
-        for pid, path in [(start['pid'], helper), (parent['pid'], helper)]:
+        for pid, path in [(start['pid'], helper), (parent['pid'], helper), (review['pid'], helper)]:
             wait_exit(pid, path, commands, ps)
         commands.call('instance-shutdown', [binary, '--instance-shutdown', db])
         wait_exit(start['ppid'], binary, commands, ps)
         records = [json.loads(p.read_text()) for p in (output / 'commands').glob('*.json')]
-        pids = sorted({r['pid'] for r in records} | {start['pid'], start['ppid'], parent['pid']})
+        pids = sorted({r['pid'] for r in records} | {start['pid'], start['ppid'], parent['pid'], review['pid']})
         remaining = commands.call('process-closure', [ps, '-ww', '-p', ','.join(map(str, pids)),
                                                      '-o', 'pid=,ppid=,stat=,lstart=,command='], (0, 1))
         require(not remaining, 'Captured process PIDs remain; inspect the closure command output')
