@@ -41,6 +41,9 @@ const state = {
   knowledgeScope: { kind: "universal", id: "" },
   // The relation the record asked the map to light, by its recorded name.
   knowledgeFocusRelation: "",
+  // Bumped by every relation activation, so activating the same relation again
+  // after a dismissal is a new request rather than the same one.
+  knowledgeFocusSeq: 0,
   // The project surface: the selected actor's recorded workspace, its prior conversations and
   // the outcome of continuing one. Read on demand; the actor it belongs to travels with it.
   project: null,
@@ -2138,10 +2141,14 @@ function renderDocument() {
     // map receives the name it should light and clears it with the next selection.
     onFocusRelation: (name) => {
       state.knowledgeFocusRelation = String(name || "");
+      // Every activation is a fresh request: activating the same relation again
+      // after a dismissal opens its card again.
+      state.knowledgeFocusSeq = (state.knowledgeFocusSeq || 0) + 1;
       markDrawnStale();
       renderDocument();
     },
     focusRelation: state.knowledgeFocusRelation || "",
+    focusRelationSeq: state.knowledgeFocusSeq || 0,
     onReadMessage: (id) => { void loadMessageBody(id); },
     onScrub: selectHistoryEvent,
     onSelectEvent: selectHistoryEvent,

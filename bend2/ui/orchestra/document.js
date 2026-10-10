@@ -460,6 +460,8 @@
         onOpenRecord: opts.onOpenRecord,
         // The relation the record asked the map to light, by its recorded name.
         focusRelation: opts.focusRelation || "",
+        // Its activation count, so a repeated activation is a fresh request.
+        focusRelationSeq: opts.focusRelationSeq || 0,
       });
       // The map publishes the height its own drawing needs; the frame takes that
       // height within bounds, so a small recorded ensemble does not sit in a tall
