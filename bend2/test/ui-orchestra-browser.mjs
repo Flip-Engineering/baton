@@ -2079,7 +2079,79 @@ check('a reference the store does not hold ends in an open bead, and a held end 
     return beads.every((bead) => /the store does not hold this record/.test(bead.textContent || ''));
   })()`));
 
-// A cited seam routes through the shell to the citing finding's record,
+// The seating plan is the reporting hierarchy: the tier order and membership
+// derive from the fixture's own parent records, so a row that sat beside the
+// principal without reporting through it fails the check.
+check('the stage seats the fixture by its reporting hierarchy', await evalJs(`(async () => {
+  const document_ = await (await fetch('fixtures/fixture-knowledge.json')).json();
+  const players = document_.players || [];
+  const byId = new Map(players.map((pl) => [pl.id, pl]));
+  // The same resolver the stage states: a row with no parent sits at 0 when it
+  // carries the principal role, every other row at one more than its parent,
+  // and a broken chain, a cycle, or a parentless non-principal is an orphan.
+  const depth = new Map();
+  const resolve = (id, stack) => {
+    if (depth.has(id)) return depth.get(id);
+    if (stack.includes(id)) return -1;
+    stack.push(id);
+    const pl = byId.get(id) || {};
+    let level;
+    if (!pl.parent) level = pl.role === 'principal-conductor' ? 0 : -1;
+    else if (!byId.has(pl.parent)) level = -1;
+    else {
+      const up = resolve(pl.parent, stack);
+      level = up === -1 ? -1 : up + 1;
+    }
+    stack.pop();
+    depth.set(id, level);
+    return level;
+  };
+  for (const pl of players) resolve(pl.id, []);
+  const expected = new Map();
+  for (const pl of players) {
+    const level = depth.get(pl.id);
+    if (level === -1) return false; // the fixture carries no orphans
+    if (!expected.has(level)) expected.set(level, []);
+    expected.get(level).push(pl.id);
+  }
+  // Read the drawn tiers and seats: a seat belongs to the last tier band above it.
+  const tierTexts = [...document.querySelectorAll('#attention-band text.att-tier')]
+    .map((node) => ({ y: Number(node.getAttribute('y') || 0), label: node.textContent || '' }))
+    .sort((a, b) => a.y - b.y);
+  if (!tierTexts.length || !/^principal conductor/.test(tierTexts[0].label)) return false;
+  if (tierTexts.some((tier) => /no parent recorded/.test(tier.label))) return false;
+  const seats = [...document.querySelectorAll('#attention-band .att-seat')]
+    .map((seat) => ({ y: Number(seat.getAttribute('transform') ? 0 : 0)
+      || seat.getBoundingClientRect().top, id: seat.getAttribute('data-att-id') || '' }))
+    .map((seat) => ({ ...seat, y: seat.getBoundingClientRect().top }));
+  const grouped = tierTexts.map((tier) => ({
+    label: tier.label,
+    ids: seats.filter((seat) => seat.id && seat.y >= tier.y)
+      .sort((a, b) => a.y - b.y).map((seat) => seat.id),
+  }));
+  // Each tier's seat set, in order, equals the derived depth set.
+  const levels = [...expected.keys()].sort((a, b) => a - b);
+  if (grouped.length !== levels.length) return false;
+  for (let i = 0; i < levels.length; i += 1) {
+    const want = expected.get(levels[i]).sort().join(',');
+    const got = grouped[i].ids.sort().join(',');
+    if (want !== got) return false;
+    if (i > 0 && !new RegExp('depth ' + levels[i] + '(\\u00b7|,)').test(grouped[i].label)) return false;
+  }
+  return true;
+})()`));
+check('every non-principal seat names the parent it reports to', await evalJs(`(() => {
+  const seats = [...document.querySelectorAll('#attention-band .att-seat')];
+  if (!seats.length) return false;
+  return seats.every((seat) => {
+    const id = seat.getAttribute('data-att-id') || '';
+    const title = seat.textContent || '';
+    if (/^fixture-knowledge-root$/.test(id)) return !/reports to/.test(title);
+    return /reports to fixture-knowledge-/.test(title);
+  });
+})()`));
+
+// A cited seam routes through the shell to the citing finding's record,// A cited seam routes through the shell to the citing finding's record,
 // and the address it writes reloads to the same record.
 await evalJs(`(() => {
   const hits = [...document.querySelectorAll('#attention-band .att-seam-hit')];
