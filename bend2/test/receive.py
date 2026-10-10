@@ -301,12 +301,13 @@ while True:
     failure=action.get('fail',False)
     body=action.get('body','native review complete')
     if omp:
-        if action.get('fail_status') is not None:
+        if 'fail_status' in action:
+            assistant={'role':'assistant','stopReason':'error',
+                       'errorMessage':action.get('fail_message','fixture provider failed'),
+                       'content':[]}
+            if action['fail_status'] is not None: assistant['errorStatus']=action['fail_status']
             print(json.dumps({'type':'agent_end','isTerminal':True,
-                              'messages':[{'role':'assistant','stopReason':'error',
-                                           'errorStatus':action['fail_status'],
-                                           'errorMessage':action.get('fail_message','fixture provider failed'),
-                                           'content':[]}]}),flush=True)
+                              'messages':[assistant]}),flush=True)
         else:
             print(json.dumps({'type':'agent_end','isTerminal':True,'is_error':failure,'messages':[{'role':'assistant','content':[{'type':'text','text':body}]}]}),flush=True)
         remaining_input='' if action.get('exit_after_terminal') else sys.stdin.read()
@@ -315,11 +316,13 @@ while True:
                           'session_id':native,'is_error':failure,
                           'result':action.get('fail_message','fixture provider failed') if failure else body}),flush=True)
     elif muse:
+        payload={'kind':'run_terminal','terminal':'failed' if failure else 'completed',
+                 'command_id':'fixture-primary',
+                 'text':action.get('fail_message','fixture provider failed') if failure else body}
+        if 'fail_reason' in action: payload['reason']=action['fail_reason']
         print(json.dumps({'stream':{'kind':'session','id':native},
                           'payload_type':'run.terminal.failed' if failure else 'run.terminal.completed',
-                          'payload':{'kind':'run_terminal','terminal':'failed' if failure else 'completed',
-                                     'command_id':'fixture-primary',
-                                     'text':action.get('fail_message','fixture provider failed') if failure else body}}),flush=True)
+                          'payload':payload}),flush=True)
     elif failure:
         print(json.dumps({'type':'turn.failed','error':{'message':action.get('fail_message','fixture provider failed')}}),flush=True)
     else:
@@ -2139,27 +2142,34 @@ class Receive(unittest.TestCase):
         self.assertFalse(any(cause in turn['reportBody'] for turn in turns))
 
     def test_omp_direct_retries_the_same_conversation_after_a_rate_refusal(self):
+        cause = '429 Rate limit reached for requests\nRate limit reached for requests (type=1302)'
+        self.omp_direct_transient(cause, 429)
+
+    def test_omp_direct_continues_after_a_settled_socket_closure(self):
+        cause = 'The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()'
+        self.omp_direct_transient(cause, None)
+
+    def omp_direct_transient(self, cause, status):
         # Direct-turn transient continuation: the first attempt ends with the provider's
-        # own OMP request-rate refusal, no profile advances, and the same turn invocation
+        # settled OMP error, no profile advances, and the same turn invocation
         # relaunches the same conversation in a retry directory the keeper accepts. The
         # retry then completes the same task, so the turn exits successfully with one
         # turn row. Every assertion reads coordinator state.
         self.coord('attach', 'root', 'omp', '', '')
-        body = 'Direct OMP task for the rate retry.\n'
-        task = self.directory / 'direct-rate-retry.txt'
+        body = 'Direct OMP task interrupted by a provider failure.\n'
+        task = self.directory / 'direct-provider-retry.txt'
         task.write_text(body)
-        cause = '429 Rate limit reached for requests\nRate limit reached for requests (type=1302)'
-        direct = self.spawn('turn', 'root', 'direct-rate-retry', str(self.fixture), 'omp', 'low',
+        direct = self.spawn('turn', 'root', 'direct-provider-retry', str(self.fixture), 'omp', 'low',
                             str(self.directory), str(task),
-                            str(self.directory / 'direct-rate-retry.jsonl'), '')
+                            str(self.directory / 'direct-provider-retry.jsonl'), '')
         first, started = self.accept('root')
         self.assertIn(body, started['prompt'])
-        self.action(first, ack=False, fail_status=429, fail_message=cause)
+        self.action(first, ack=False, fail_status=status, fail_message=cause)
         self.action(first, exit_fixture=True)
         second, resumed = self.accept('root')
         self.assertEqual(resumed['native'], started['native'])
         self.assertIn(body, resumed['prompt'])
-        attempt = self.directory / ('state.db.direct-' + 'direct-rate-retry'.encode().hex())
+        attempt = self.directory / ('state.db.direct-' + 'direct-provider-retry'.encode().hex())
         self.assertTrue(pathlib.Path(str(attempt) + '.retry').is_dir())
         self.action(second)
         self.finish(direct)
@@ -2169,7 +2179,7 @@ class Receive(unittest.TestCase):
         turns = self.coord('turns', 'root')
         self.assertEqual(len(turns), 1)
         self.assertIn(body, turns[0]['reportBody'])
-        self.assertFalse(any('type=1302' in turn['reportBody'] for turn in turns))
+        self.assertFalse(any(cause in turn['reportBody'] for turn in turns))
 
     def test_busy_direct_receive_drains_new_input_and_preserves_native_session(self):
         self.player()
@@ -2442,17 +2452,33 @@ class Receive(unittest.TestCase):
 
     def test_omp_rate_error_continues_same_conversation_without_new_account(self):
         """A failed OMP HTTP 429 terminal resumes the accepted task in the same conversation."""
-        self.player('parent', harness='omp')
+        cause = '429 Rate limit reached for requests\nRate limit reached for requests (type=1302)'
+        self.receive_transient('omp', cause, 429)
+
+    def test_omp_socket_closure_continues_the_accepted_task(self):
+        cause = 'The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()'
+        self.receive_transient('omp', cause)
+
+    def test_muse_transport_timeout_continues_the_accepted_task(self):
+        cause = 'transport error [net-timeout]: timed out waiting for response data (meta stream)'
+        self.receive_transient('muse', cause)
+
+    def receive_transient(self, harness, cause, status=None):
+        self.player('parent', harness=harness)
         self.message('input', 'parent')
-        cause = 'Request capacity temporarily unavailable'
         failed = self.spawn(*self.receive_args('parent'))
         control, original = self.accept('parent')
-        self.action(control, fail_status=429, fail_message=cause)
+        if harness == 'muse':
+            self.action(control, fail=True, fail_reason=cause,
+                        fail_message='Partial report before the transport failure.')
+        else:
+            self.action(control, fail_status=status, fail_message=cause)
         self.action(control, exit_fixture=True)
         second, resumed = self.accept('parent')
         self.assertEqual(resumed['native'], original['native'])
-        self.assertIn('request-rate error', resumed['prompt'])
-        self.assertEqual([message for message in self.coord('inbox', 'operator')
+        self.assertIn('transient provider error', resumed['prompt'])
+        self.assertEqual(self.coord('delivery', 'input')['receipt'], 'native-reviewed')
+        self.assertEqual([message for message in self.coord('inbox', 'root')
                           if 'subscription profile handoff' in message['body']], [])
         self.assertFalse((self.directory / ('state.db.profile-' + 'parent'.encode().hex())).exists())
         self.action(second)
@@ -2461,7 +2487,29 @@ class Receive(unittest.TestCase):
         self.assertEqual(len(turns), 2)
         failed_turns = [turn for turn in turns if cause in turn['reportBody']]
         self.assertEqual(len(failed_turns), 1)
-        self.assertIn('errorStatus=429', failed_turns[0]['reportBody'])
+        if status is not None: self.assertIn('errorStatus=' + str(status), failed_turns[0]['reportBody'])
+        if harness == 'muse': self.assertIn('Partial report before the transport failure.', failed_turns[0]['reportBody'])
+        self.assertEqual(self.coord('inbox', 'parent'), [])
+
+    def test_omp_usage_window_exhaustion_keeps_its_account_failure(self):
+        self.player('parent', harness='omp')
+        self.message('input', 'parent')
+        cause = ('429 Usage limit reached for 5 hour. Your limit will reset at 2026-10-06 07:12:52\n'
+                 'Usage limit reached for 5 hour. Your limit will reset at 2026-10-06 07:12:52 (type=1308)')
+        failed = self.spawn(*self.receive_args('parent'))
+        control, original = self.accept('parent')
+        self.action(control, fail_status=429, fail_message=cause)
+        self.action(control, exit_fixture=True)
+        self.finish(failed, ok=False)
+        self.assert_no_start()
+        turns = self.coord('turns', 'parent')
+        self.assertEqual(len(turns), 1)
+        self.assertIn(cause, turns[0]['reportBody'])
+        account_reports = [message for message in self.coord('inbox', 'root')
+                           if message['id'].endswith(':profile-exhausted')]
+        self.assertEqual(len(account_reports), 1)
+        self.assertIn('provider-reported usage exhaustion: ' + cause, account_reports[0]['body'])
+        self.assertEqual(self.coord('delivery', 'input')['receipt'], 'native-reviewed')
         self.assertEqual(self.coord('inbox', 'parent'), [])
 
     def test_turn_and_receive_share_ownership_and_omp_session_file(self):

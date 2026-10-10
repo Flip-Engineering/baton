@@ -192,11 +192,12 @@ def failed_terminal_sql_expr(+event: String) -> String:
 # subscription diagnostic reports the window instead: "You've reached your 5-hour usage
 # limit. Your quota will reset when the current 5-hour window ends.", which the
 # "reached your" fragment below covers. The "hit your" fragment omits the apostrophe so
-# the curly and ASCII forms both match. Not matched: the upstream "limit reached" header
+# the curly and ASCII forms both match. ZAI reports "Usage limit reached for 5 hour"
+# with its reset time. Not matched: the upstream "limit reached" header
 # flag, "rate limit exceeded", the context-window message, stream disconnection and
 # timeouts.
 def exhausted_marker_sql(+text: String) -> String:
-  "CASE WHEN (instr(lower(" ++ text ++ "),'hit your')>0 AND (instr(lower(" ++ text ++ "),'limit')>0 OR instr(lower(" ++ text ++ "),'budget')>0)) OR (instr(lower(" ++ text ++ "),'reached your')>0 AND (instr(lower(" ++ text ++ "),'limit')>0 OR instr(lower(" ++ text ++ "),'quota')>0)) OR instr(lower(" ++ text ++ "),'out of credits')>0 OR instr(lower(" ++ text ++ "),'spend cap')>0 OR instr(lower(" ++ text ++ "),'quota exceeded')>0 OR instr(lower(" ++ text ++ "),'spend limit reached')>0 OR instr(lower(" ++ text ++ "),'spend limit unavailable')>0 THEN 1 ELSE 0 END"
+  "CASE WHEN (instr(lower(" ++ text ++ "),'hit your')>0 AND (instr(lower(" ++ text ++ "),'limit')>0 OR instr(lower(" ++ text ++ "),'budget')>0)) OR (instr(lower(" ++ text ++ "),'reached your')>0 AND (instr(lower(" ++ text ++ "),'limit')>0 OR instr(lower(" ++ text ++ "),'quota')>0)) OR instr(lower(" ++ text ++ "),'usage limit reached for ')>0 OR instr(lower(" ++ text ++ "),'out of credits')>0 OR instr(lower(" ++ text ++ "),'spend cap')>0 OR instr(lower(" ++ text ++ "),'quota exceeded')>0 OR instr(lower(" ++ text ++ "),'spend limit reached')>0 OR instr(lower(" ++ text ++ "),'spend limit unavailable')>0 THEN 1 ELSE 0 END"
 
 # Bind the complete terminal once and extract its diagnostic once for the
 # provider's subscription-limit wording and the returned cause.
@@ -279,28 +280,27 @@ def exhaustion_present(db: String, event: String, empty: Bool) -> IO(String):
 def exhaustion_cause(db: String, +event: String) -> IO(String):
   exhaustion_present(db,event,String.is_empty(event))
 
-# Failed OMP assistant terminals with HTTP 429 can continue on the same account.
-# exhaustion_cause determines whether the terminal requires an account handoff.
-def transient_rate_sql(event: String) -> String:
-  "WITH frame(value) AS (VALUES(" ++ C.q(event) ++ ")), diagnostic(failed,terminal,rate_status) AS MATERIALIZED (SELECT " ++ failed_terminal_sql_expr("frame.value") ++ ",json_extract(frame.value,'$.type'),json_extract((" ++ C.last_assistant_sql_expr("frame.value") ++ "),'$.errorStatus') FROM frame) SELECT CASE WHEN diagnostic.failed=1 AND diagnostic.terminal='agent_end' AND diagnostic.rate_status=429 THEN 1 ELSE 0 END FROM diagnostic;"
+# Settled OMP rate refusals and socket closures, and Muse transport timeouts,
+# continue on the same account. Usage exhaustion follows the account handoff path.
+def transient_provider_sql(event: String) -> String:
+  "WITH frame(value) AS (VALUES(" ++ C.q(event) ++ ")), diagnostic(terminal,assistant,muse_terminal,muse_reason) AS MATERIALIZED (SELECT json_extract(frame.value,'$.type')," ++ C.last_assistant_sql_expr("frame.value") ++ ",CASE WHEN json_extract(frame.value,'$.payload.kind')='run_terminal' THEN json_extract(frame.value,'$.payload.terminal') END,coalesce(json_extract(frame.value,'$.payload.reason'),'') FROM frame) SELECT CASE WHEN (diagnostic.terminal='agent_end' AND json_extract(diagnostic.assistant,'$.stopReason')='error' AND (json_extract(diagnostic.assistant,'$.errorStatus')=429 OR instr(coalesce(json_extract(diagnostic.assistant,'$.errorMessage'),''),'The socket connection was closed unexpectedly.')=1)) OR (diagnostic.muse_terminal='failed' AND instr(diagnostic.muse_reason,'transport error [net-timeout]:')=1) THEN 1 ELSE 0 END FROM diagnostic;"
 
-def transient_rate_stated(db: String, +event: String) -> IO(Bool):
+def transient_provider_stated(db: String, +event: String) -> IO(Bool):
   do IO<Bool>:
-    found : String <- IO.try(String,DB.Sql.query(db,transient_rate_sql(event)))
+    found : String <- IO.try(String,DB.Sql.query(db,transient_provider_sql(event)))
     cause : String <- exhaustion_cause(db,event)
     IO.pure(Bool,Bool.and(String.eq(found,"1\n"),String.is_empty(cause)))
 
-def transient_rate_present(db: String, event: String, empty: Bool) -> IO(Bool):
+def transient_provider_present(db: String, event: String, empty: Bool) -> IO(Bool):
   match empty:
     case True{}: IO.pure(Bool,False{})
-    case False{}: transient_rate_stated(db,event)
+    case False{}: transient_provider_stated(db,event)
 
-# A terminal OMP request-rate refusal that states no usage exhaustion, shared by
-# coordinator receives and direct turns. A terminal that stated no event is never one:
-# the empty check runs before any JSON is read, so startup and no-terminal failures
-# keep their own recorded failure.
-def transient_rate_limited(db: String, +event: String) -> IO(Bool):
-  transient_rate_present(db,event,String.is_empty(event))
+# A settled native transport failure or request-rate refusal that states no usage
+# exhaustion, shared by coordinator receives and direct turns. The empty check runs
+# before any JSON is read. Startup and no-terminal failures keep their recorded cause.
+def transient_provider_error(db: String, +event: String) -> IO(Bool):
+  transient_provider_present(db,event,String.is_empty(event))
 
 def history_path(+db: String, session: String) -> IO(String):
   do IO<String>:

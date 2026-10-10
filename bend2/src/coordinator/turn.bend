@@ -976,7 +976,7 @@ def direct_request_checked(+db: String, +id: String, +player: String, +harness: 
     Stop.error_result(Tx.trim_nl(error),String.is_empty(Tx.trim_nl(error)))
 
 # Recovery accepts the original, fresh, account-continuation, and same-account
-# retry directories: a rate-limit retry appends .retry to its own attempt, so the
+# retry directories: a provider continuation appends .retry to its own attempt, so the
 # check names both the plain and the fresh-prefixed retry forms.
 def direct_recovery_checked(+db: String, +player: String, +id: String, +harness: String, +directory: String) -> IO(Unit):
   do IO<Unit>:
@@ -1088,8 +1088,8 @@ def direct_second_started(+db: String, +player: String, +id: String, +log: Strin
           advanced : Bool <- Subs.profile_handoff(db,player,id,event,conversation,cmd,cwd)
           direct_handoff_decided(advanced, deliveries, Some{held},
             moved_deliveries => moved_lock => do IO<Unit>:
-              rate : Bool <- Subs.transient_rate_limited(db,event)
-              direct_handoff_decided(Bool.and(rate,Bool.and(Bool.not(incomplete),String.is_empty(error))), moved_deliveries, moved_lock,
+              transient : Bool <- Subs.transient_provider_error(db,event)
+              direct_handoff_decided(Bool.and(transient,Bool.and(Bool.not(incomplete),String.is_empty(error))), moved_deliveries, moved_lock,
                 inner_deliveries => inner_lock => direct_completed(db,player,id,log,directory,handle,inner_lock,(Ended{status,event,error,incomplete},inner_deliveries)),
                 inner_deliveries => inner_lock => do IO<Unit>:
                   cleaned : Unit <- direct_cleanup(handle,inner_deliveries)
@@ -1183,10 +1183,10 @@ def direct_transient_relaunch_locked(+db: String, +player: String, +id: String, 
 # Keeper recovery reacquires the session lock before retrying the same account.
 def direct_transient_acquired(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +harness: String, +retry: String, +prompt: String, +conversation: String, lock: Maybe<U32>) -> IO(Unit):
   match lock:
-    case None{}: IO.die(Unit,2,"The retained direct attempt ended before its rate-limit retry reacquired the session; inspect the attempt and retry its pending input.")
+    case None{}: IO.die(Unit,2,"The retained direct attempt ended before its provider continuation reacquired the session; inspect the attempt and retry its pending input.")
     case Some{held}: direct_transient_relaunch_locked(db,player,id,cmd,model,effort,cwd,task,log,harness,retry,prompt,conversation,held)
 
-# Continue a settled rate-limit retry with the held or reacquired session lock.
+# Continue a settled provider failure with the held or reacquired session lock.
 def direct_transient_settled(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +harness: String, +retry: String, +prompt: String, +conversation: String, lock: Maybe<U32>) -> IO(Unit):
   match lock:
     case Some{held}: direct_transient_relaunch_locked(db,player,id,cmd,model,effort,cwd,task,log,harness,retry,prompt,conversation,held)
@@ -1201,8 +1201,8 @@ def direct_handoff_checked(+db: String, +player: String, +id: String, +cmd: Stri
       advanced : Bool <- Subs.profile_handoff(db,player,id,event,conversation,cmd,cwd)
       direct_handoff_decided(advanced, deliveries, lock,
         moved_deliveries => moved_lock => do IO<Unit>:
-          rate : Bool <- Subs.transient_rate_limited(db,event)
-          direct_handoff_decided(Bool.and(rate,Bool.and(Bool.not(incomplete),String.is_empty(error))), moved_deliveries, moved_lock,
+          transient : Bool <- Subs.transient_provider_error(db,event)
+          direct_handoff_decided(Bool.and(transient,Bool.and(Bool.not(incomplete),String.is_empty(error))), moved_deliveries, moved_lock,
             inner_deliveries => inner_lock => direct_completed(db,player,id,log,directory,handle,inner_lock,(Ended{status,event,error,incomplete},inner_deliveries)),
             inner_deliveries => inner_lock => do IO<Unit>:
               cleaned : Unit <- direct_cleanup(handle,inner_deliveries)

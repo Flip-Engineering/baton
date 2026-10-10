@@ -101,9 +101,8 @@ def superseding(superseded: Bool, outcome: Turn.Outcome) -> Bool:
     case Turn.Ended{status,event,error,incomplete}: Bool.and(superseded,Bool.and(Bool.not(incomplete),String.is_empty(error)))
 
 # True only for a successfully finished continuation: a classified complete provider
-# rate refusal whose ordinary continuation succeeded reports the continuation outcome
-# instead of the old attempt's exit failure. The old turn row and provider cause are
-# still recorded from the outcome itself, and no extra guidance turn is launched.
+# failure whose ordinary continuation succeeded reports the continuation outcome.
+# The old turn row and provider cause remain recorded from the outcome itself.
 def result_ok(result: Result<&1,&1,U32 & String,Unit>) -> Bool:
   match result:
     case Fail{error}: False{}
@@ -368,11 +367,11 @@ def terminal_event(outcome: Turn.Outcome) -> String:
   match outcome:
     case Turn.Ended{status,event,error,incomplete}: event
 
-# A terminal OMP request-rate refusal that is not usage exhaustion, read through the
-# shared subscription classifier: the same actor continues on the same conversation
+# A settled provider transport error or rate refusal, read through the shared
+# subscription classifier: the same actor continues on the same conversation
 # and subscription; no account changes.
-def transient_rate_error(+db: String, outcome: Turn.Outcome) -> IO(Bool):
-  Subs.transient_rate_limited(db,terminal_event(outcome))
+def transient_provider_error(+db: String, outcome: Turn.Outcome) -> IO(Bool):
+  Subs.transient_provider_error(db,terminal_event(outcome))
 
 # True only when the observation completed and recorded no error: the same
 # requirement superseding applies before an advance stands in for a failure.
@@ -381,7 +380,7 @@ def observation_clear(outcome: Turn.Outcome) -> Bool:
     case Turn.Ended{status,event,error,incomplete}: Bool.and(Bool.not(incomplete),String.is_empty(error))
 
 # The exit-status synthesis suppresses only the provider failure a complete observation
-# superseded, or a classified complete rate refusal whose owed continuation succeeded;
+# superseded, or a classified complete provider failure whose owed continuation succeeded;
 # every other Result below keeps its own combination, and an attempt whose
 # advance was recorded runs the advance's own continuation instead of the ordinary one.
 def finish_pending(+db: String, +session: String, id: String, log: String, +cursor: String, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), acknowledge: Unit -> IO(Result<&1,&1,U32 & String,Unit>), +superseded: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
@@ -395,8 +394,8 @@ def finish_pending(+db: String, +session: String, id: String, log: String, +curs
     stopped : Bool <- Stop.stopped(db,session)
     ack : Result<&1,&1,U32 & String,Unit> <- acknowledge_if_observed(Bool.and(native_observation_failed(outcome),Bool.not(stopped)),acknowledge)
     +next : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,continued_task)
-    rate : Bool <- transient_rate_error(db,outcome)
-    status : Result<&1,&1,U32 & String,Unit> <- exit_status(Bool.and(failed,Bool.not(Bool.or(superseding(superseded,outcome),Bool.and(rate,Bool.and(observation_clear(outcome),Bool.and(owed,result_ok(next))))))))
+    transient : Bool <- transient_provider_error(db,outcome)
+    status : Result<&1,&1,U32 & String,Unit> <- exit_status(Bool.and(failed,Bool.not(Bool.or(superseding(superseded,outcome),Bool.and(transient,Bool.and(observation_clear(outcome),Bool.and(owed,result_ok(next))))))))
     IO.pure(Result<&1,&1,U32 & String,Unit>,Turn.combine(finished,Turn.combine(questions,Turn.combine(next,Turn.combine(ack,status)))))
 
 # Retirement follows acknowledgment on the same attempt handle: the shared
@@ -513,14 +512,14 @@ def continue_after_advance(+db: String, +session: String, id: String, attempt: S
     noted : Unit <- Bool.pick(IO(Unit),owed,IO.pure(Unit,Unit{}),handoff_guidance(db,session,id,attempt))
     again(Unit{})
 
-# The guidance message is written only for this session when a request-rate
-# refusal interrupted its accepted task: the failed turn stays recorded with
+# The guidance message is written only for this session when a transient
+# provider error interrupted its accepted task: the failed turn stays recorded with
 # the provider's own cause, and the same actor continues the unfinished task
 # on the same conversation. The task message that started it is already
 # acknowledged.
 def transient_guidance(db: String, +session: String, id: String, attempt: String) -> IO(Unit):
   do IO<Unit>:
-    noted : String <- IO.try(String,DB.Sql.query(db,"INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id ++ ":transient-guidance") ++ ",id,id,'guidance'," ++ C.q("The provider refused a request with a request-rate error and the attempt ended. Continue the unfinished task on the retained attempt " ++ attempt ++ " in the same conversation; the task message that started it is already acknowledged and the failed turn stays recorded with the provider cause.") ++ " FROM sessions WHERE id=" ++ C.q(session) ++ " AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ ";"))
+    noted : String <- IO.try(String,DB.Sql.query(db,"INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id ++ ":transient-guidance") ++ ",id,id,'guidance'," ++ C.q("The attempt ended with a transient provider error. Continue the unfinished task on the retained attempt " ++ attempt ++ " in the same conversation and account; the task message that started it is already acknowledged and the failed turn stays recorded with the provider cause.") ++ " FROM sessions WHERE id=" ++ C.q(session) ++ " AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ ";"))
     IO.pure(Unit,Unit{})
 
 # After a recorded transient failure with nothing owed, the same actor resumes
@@ -555,15 +554,15 @@ def completed_transient(+db: String, +session: String, +id: String, log: String,
 
 # The transient continuation is decided before the observed path runs its ordinary
 # pending-input continuation, so one failure routes exactly one continuation: a failed
-# terminal rate refusal with a completely observed outcome, an unstopped session, and
+# terminal provider error with a completely observed outcome, an unstopped session, and
 # an empty inbox. Anything else keeps the observed result untouched.
 def transient_precheck(+db: String, +session: String, +outcome: Turn.Outcome) -> IO(Bool):
   do IO<Bool>:
     failed : Bool <- outcome_failed(db,outcome)
-    rate : Bool <- transient_rate_error(db,outcome)
+    transient : Bool <- transient_provider_error(db,outcome)
     closed : Bool <- Stop.stopped(db,session)
     owed : Bool <- wake_owed(db,session,"0")
-    IO.pure(Bool,Bool.and(failed,Bool.and(rate,Bool.and(Bool.not(closed),Bool.and(Bool.not(owed),Bool.not(native_observation_failed(outcome)))))))
+    IO.pure(Bool,Bool.and(failed,Bool.and(transient,Bool.and(Bool.not(closed),Bool.and(Bool.not(owed),Bool.not(native_observation_failed(outcome)))))))
 
 # One completion shared by a fresh start and a recovered observation: the provider
 # outcome decides whether a profile advance is recorded, an exhausted terminal advances
