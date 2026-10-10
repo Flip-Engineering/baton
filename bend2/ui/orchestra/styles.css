@@ -66,6 +66,8 @@
   --step3: 20px;
   --step4: 26px;
 
+  /* The roster's row: a seat's open line and the knowledge band beneath it each
+     hold one, so a row carrying records grows by exactly one row. */
   --row: 28px;
   --gutter: 20px;
   --radius: 3px;
@@ -652,7 +654,7 @@ button:active { background: var(--wash); }
   align-items: center;
   gap: 10px;
   width: 100%;
-  min-height: 26px;
+  min-height: var(--row);
   padding: 2px 8px;
   border: 0;
   background: none;
@@ -838,7 +840,7 @@ button:active { background: var(--wash); }
 
 /* The author's recorded findings sit on the author's own row: the halo and the
    slur carry the graphic, and the layer holds the line to one compact row. */
-.doc-row-knowledge { padding: 0 8px 6px 14px; }
+.doc-row-knowledge { min-height: var(--row); padding: 0 8px 6px 14px; }
 
 
 /* The plate's figures double as the index: a figure that jumps takes the ink of a link
