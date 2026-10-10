@@ -9,7 +9,7 @@
     "rule": "parent-owner-member-routes-v1"
   },
   "fixture": true,
-  "fixtureNote": "Synthetic DOM behavior fixture for the Orchestra live view. Not live coordinator state. The knowledge object now carries nodes and edges in the shapes server.mjs knowledgeGraph emits, with deliveryRead as the projection delivery pointer, never a boolean, plus three named probes the projection never emits (probe-self, probe-empty, probe-inferred) and one held message node, so the skip rules and the floated dot can fail on data the fixture states.",
+  "fixtureNote": "Synthetic DOM behavior fixture for the Orchestra live view. Not live coordinator state. The knowledge object now carries nodes and edges in the shapes server.mjs knowledgeGraph emits, with deliveryRead as the projection delivery pointer, never a boolean, plus three named probes the projection never emits (probe-self, probe-empty, probe-inferred) and one held message node, so the skip rules and the floated dot can fail on data the fixture states. A fourth probe, probe-cited-seat, hands the stage a cited edge whose source is already a seat id, the unanchored variant the projection cannot reach, so the title check can fail on an attribution clause the payload does not make.",
   "players": [
     {
       "id": "fixture-knowledge-root",
@@ -1174,6 +1174,16 @@
         "target": "finding:fixture-finding-b1",
         "targetKind": "finding",
         "provenance": "inferred"
+      },
+      {
+        "id": "probe-cited-seat",
+        "author": "fixture-knowledge-operator",
+        "source": "fixture-knowledge-operator",
+        "sourceKind": "session",
+        "relation": "Cited",
+        "target": "external:fixture-external-2",
+        "targetKind": "external",
+        "provenance": "recorded-evidence"
       }
     ]
   }
