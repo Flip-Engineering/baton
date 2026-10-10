@@ -2203,34 +2203,24 @@ stand in for another. Exact Node22.15 API behavior, dependency packaging, migrat
 provider compatibility and runtime cleanup/notification remain acceptance gates.
 This document does not claim those installed native gates have run.
 
-Root gates the composed candidate with `build-native`, full `laws-check.mjs` and
-`check-native`, followed by independent review, native fast-forward publication
-and remote readback. The landing gate compares selected tests on target and change
-and blocks regressions; known target breakage belongs in the issue tracker.
+Ordinary remote acceptance applies: build, package, the selected suites and
+installed use run on the qualification host, and the landing gate compares
+selected tests on the target and on the change and blocks regressions; known
+target breakage belongs in the issue tracker.
 
 ## Ownership and evidence
 
-Runtime implementation remains gated. `semantic-synthesis` owns this document
-and semantic integration review. For the independently authorized #671 repair,
-the registered `semantic-controls-interfaces-research` Player exclusively owns
-shared commands/main/MCP/help/briefing and the final read candidate. Structural
-proposal `2543678035631371a6f024a1c58ac9ec16239c12` has six design ACCEPT verdicts;
-controls-next owns its structural module, laws and Recruit factoring, with a
-separately owned structural fixture. That approval performs no semantic or
-optional-startup effect. Controls-next owns the #672 direct-start proposal and
-shared keeper design, with bounded direct95 implementation authorized and host
-qualification still open. Semantic package/store/law
-and entry changes require explicit reviewed handoffs after authorization.
-`native-receive-conductor` first owns #669/#670 repair to
-commands/turn/receive and associated laws/tests. Feature branches rebase onto its
-reviewed landed result before overlapping edits. No shared file is edited by
-both feature owners concurrently.
+`semantic-synthesis` owns this document and semantic integration review.
+Implementation proceeds as ordinary shared-rewrite work on the canonical branch:
+one owner holds each file at a time, a single owner may carry overlapping edits
+across several modules, and when two owners need the same file they sequence
+their edits in the shared checkout.
 
-After authorization, implementation splits into context core/laws, TypeScript
-and data joins, clang/code-security, CDP runtime, schema/model/replay,
-environment/dataset, and shared integration. Each new module/test set has one
-owner. A separate core-runtime table is functional state; research inventories
-or test-count ledgers are not implementation artifacts.
+The work splits into context core, TypeScript and data joins, clang/code
+security, CDP runtime, schema/model/replay, environment/dataset, and shared
+integration. Each new module or test set has one owner. A separate core-runtime
+table is functional state; research inventories or test-count ledgers are not
+implementation artifacts.
 
 The retained research used for this specification is retrievable with native
 `delivery MESSAGE_ID` and the files named by those messages:
