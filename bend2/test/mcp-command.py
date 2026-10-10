@@ -225,6 +225,7 @@ class McpCommand(unittest.TestCase):
                 ['context-query-file', session, query, path]),
             'baton2_context_result': ({'query': query}, ['context-result', query]),
             'baton2_knowledge': ({}, ['knowledge', session]),
+            'baton2_knowledge_relations': ({}, ['knowledge-relations', session, 'worker', session]),
             'baton2_knowledge_record': ({'id': 'finding-λ', 'claim': 'claim with\nnewlines',
                 'evidence': 'message:retained-message', 'limits': 'source only'},
                 ['record', 'finding-λ', session, 'claim with\nnewlines',
@@ -247,6 +248,7 @@ class McpCommand(unittest.TestCase):
                 self.assertEqual(set(schema.get('required', [])), set(arguments))
                 optional = {'baton2_resume': {'liftStop'},
                             'baton2_knowledge': {'scope', 'subject', 'index', 'id', 'pretty'},
+                            'baton2_knowledge_relations': {'scope', 'subject', 'pretty'},
                             'baton2_knowledge_record': {'kind'}}.get(tool, set())
                 expected_properties = set(arguments) | optional
                 self.assertEqual(set(schema['properties']), expected_properties)
@@ -276,6 +278,9 @@ class McpCommand(unittest.TestCase):
                                 'id': 'shared-finding', 'pretty': True},
                      expected_args=['knowledge-scope', session, 'group', 'review-group',
                                     '--id', 'shared-finding', '--pretty'])
+        self.command(tool='baton2_knowledge_relations', session=session,
+                     arguments={'scope': 'group', 'subject': "review group's λ", 'pretty': True},
+                     expected_args=['knowledge-relations', session, 'group', "review group's λ", '--pretty'])
 
     def test_context_query_uses_attached_identity_and_consumer_reads_same_query(self):
         query = 'shared-query'

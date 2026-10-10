@@ -108,6 +108,22 @@ class McpContract(unittest.TestCase):
         self.assertFalse(result.get('isError', False))
         self.assertEqual(json.loads(result['content'][0]['text']), json.loads(native))
 
+    def test_relationship_discovery_returns_message_and_external_links(self):
+        external = json.loads(self.coord('relate', 'external-link', 'root',
+            'external:observation λ', 'DerivedFrom', 'file:source λ').stdout)
+        message = json.loads(self.coord('relate', 'message-link', 'w1',
+            'message:turn-1', 'Supersedes', "message:prior report's λ").stdout)
+        result = self.tool('baton2_knowledge_relations')
+        self.assertFalse(result.get('isError', False))
+        self.assertEqual(json.loads(result['content'][0]['text']), [external])
+        result = self.tool('baton2_knowledge_relations', {'scope': 'worker', 'subject': 'w1'})
+        self.assertFalse(result.get('isError', False))
+        self.assertEqual(json.loads(result['content'][0]['text']), [message])
+        result = self.tool('baton2_knowledge_relations', {'scope': 'all', 'pretty': True})
+        self.assertFalse(result.get('isError', False))
+        self.assertEqual(json.loads(result['content'][0]['text']), [external, message])
+        self.assertEqual(json.loads(self.coord('knowledge', 'root').stdout), [])
+
     def test_inbox_delivers_retained_bodies_complete(self):
         native = json.loads(self.coord('inbox', 'root').stdout)
         result = self.tool('baton2_inbox')

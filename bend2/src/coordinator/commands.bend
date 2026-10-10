@@ -72,6 +72,7 @@ type Command is Data:
   KnowledgeRelate{id: String, author: String, source: String, relation: String, target: String}
   KnowledgeRead{reader: String}
   KnowledgeReadScope{reader: String, scope: String, subject: String}
+  KnowledgeRelations{reader: String, scope: String, subject: String}
   KnowledgeIndex{reader: String}
   KnowledgeDetail{reader: String, id: String}
   KnowledgeScopeIndex{reader: String, scope: String, subject: String}
@@ -548,6 +549,7 @@ def sql(command: Command) -> String:
     case KnowledgeRelate{id,author,source,relation,target}: ""
     case KnowledgeRead{reader}: ""
     case KnowledgeReadScope{reader,scope,subject}: ""
+    case KnowledgeRelations{reader,scope,subject}: ""
     case KnowledgeIndex{reader}: ""
     case KnowledgeDetail{reader,id}: ""
     case KnowledgeScopeIndex{reader,scope,subject}: ""
@@ -610,6 +612,7 @@ def parse_verb_id(+verb: String, +id: String) -> Command:
     case "project-sessions": ProjectSessions{id}
     case "resume": Resume{id,False{}}
     case "knowledge": KnowledgeRead{id}
+    case "knowledge-relations": KnowledgeRelations{id,"worker",id}
     case "observed-usage": ObservedUsage{id}
     case "models": Models{id}
     case "view": View{id,id,"7682"}
@@ -644,6 +647,9 @@ def parse_verb_session_id(+verb: String, +session: String, +id: String) -> Comma
       case "--pretty": Pretty{KnowledgeRead{session}}
       case "--index": KnowledgeIndex{session}
       case _: Invalid{}
+    case "knowledge-relations": match id:
+      case "--pretty": Pretty{KnowledgeRelations{session,"worker",session}}
+      case _: Invalid{}
     case "worktree": match id:
       case "--pretty": Pretty{Worktree{session}}
       case _: Invalid{}
@@ -662,6 +668,7 @@ def parse_verb_three_args(+verb: String, +id: String, +one: String, +two: String
       Bool.pick(Command,String.eq(one,"--id"),KnowledgeDetail{id,two},
         Bool.pick(Command,Bool.or(Bool.and(String.eq(one,"--index"),String.eq(two,"--pretty")),Bool.and(String.eq(one,"--pretty"),String.eq(two,"--index"))),Pretty{KnowledgeIndex{id}},Invalid{}))
     case "knowledge-scope": KnowledgeReadScope{id,one,two}
+    case "knowledge-relations": KnowledgeRelations{id,one,two}
     case "context-query-file": ContextQueryFile{id,one,two}
     case "receiver": Receiver{id,one,two,""}
     case "ensemble": Ensemble{id,one,two}
@@ -689,6 +696,8 @@ def parse_verb_four_args(+verb: String, +id: String, +one: String, +two: String,
     case "knowledge-scope":
       Bool.pick(Command,String.eq(three,"--index"),KnowledgeScopeIndex{id,one,two},
         Bool.pick(Command,String.eq(three,"--pretty"),Pretty{KnowledgeReadScope{id,one,two}},Invalid{}))
+    case "knowledge-relations":
+      Bool.pick(Command,String.eq(three,"--pretty"),Pretty{KnowledgeRelations{id,one,two}},Invalid{})
     case "receiver": Receiver{id,one,two,three}
     case "section": Section{id,one,two,three}
     case "ensemble-member": EnsembleMember{id,one,two,three}

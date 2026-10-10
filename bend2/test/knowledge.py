@@ -96,11 +96,42 @@ class Knowledge(unittest.TestCase):
         self.assertEqual(self.scoped('universal'), [])
         self.call('promote', 'quota-to-worker', 'worker', 'grand', 'worker', 'quota-observation')
         self.assertEqual(self.ids(self.scoped('group', 'review-group')), ['quota-observation'])
+        self.assertEqual(self.ids(self.call('knowledge-relations', 'root', 'group', 'review-group')),
+                         ['quota-support', 'quota-supersedes'])
         self.assertEqual(self.scoped('universal'), [])
         self.call('promote', 'quota-to-root', 'root', 'worker', 'root', 'quota-observation')
         self.assertEqual(self.ids(self.scoped('universal')), ['quota-observation'])
         self.assertEqual(self.ids(self.scoped('all')), ['quota-correction', 'quota-observation'])
         self.assertEqual(self.ids(self.read('root')), ['quota-correction', 'quota-observation'])
+
+    def test_relationship_discovery_includes_links_without_a_finding_endpoint(self):
+        first = self.evidence("first report ' λ", 'grand')
+        later = self.evidence('later report λ', 'grand')
+        message_link = self.call('relate', 'report-correction', 'grand', later,
+                                 'Supersedes', first)
+        external_link = self.call('relate', 'source-result', 'grand', 'file:source λ',
+                                  'Causes', 'run:result λ')
+        self.call('relate', 'root-link', 'root', 'external:observation',
+                  'DerivedFrom', 'external:source')
+        self.call('ensemble', 'review-group', 'worker')
+        self.call('relate', 'group-link', 'worker', 'message:group-a',
+                  'Supports', 'message:group-b')
+
+        own = self.call('knowledge-relations', 'grand')
+        self.assertEqual(own, [message_link, external_link])
+        self.assertEqual(self.call('knowledge-relations', 'grand', '--pretty'), own)
+        self.assertEqual((own[0]['source'], own[0]['relation'], own[0]['target']),
+                         (later, 'Supersedes', first))
+        self.assertEqual(self.ids(self.call('knowledge-relations', 'root', 'group', 'review-group')),
+                         ['group-link'])
+        self.assertEqual(self.ids(self.call('knowledge-relations', 'root', 'universal', '')),
+                         ['root-link'])
+        all_links = self.call('knowledge-relations', 'root', 'all', '')
+        self.assertEqual(self.ids(all_links),
+                         ['group-link', 'report-correction', 'root-link', 'source-result'])
+        self.assertEqual(self.call('knowledge-relations', 'root', 'all', '', '--pretty'),
+                         all_links)
+        self.assertEqual(self.read('root'), [])
 
     def test_metadata_navigation_reads_exact_findings_and_evidence_in_the_same_scope(self):
         finding = "finding ' λ"
@@ -145,12 +176,16 @@ class Knowledge(unittest.TestCase):
     def test_an_existing_knowledge_table_keeps_its_findings_when_typed_records_are_written(self):
         with sqlite3.connect(self.db) as db:
             db.execute('DROP TABLE knowledge')
+            db.execute('DROP TABLE knowledge_relations')
             db.execute('CREATE TABLE knowledge (id TEXT UNIQUE NOT NULL,author TEXT NOT NULL,'
                        'claim TEXT NOT NULL,evidence TEXT NOT NULL,limits TEXT NOT NULL)')
             db.execute("INSERT INTO knowledge VALUES ('legacy','root','Recorded claim','run:legacy','One run')")
         legacy = self.read('root')[0]
         self.assertEqual((legacy['id'], legacy['kind'], legacy['relations']),
                          ('legacy', 'finding', []))
+        self.assertEqual(self.call('knowledge-relations', 'root'), [])
+        with sqlite3.connect(self.db) as db:
+            self.assertIsNone(db.execute("SELECT name FROM sqlite_master WHERE name='knowledge_relations'").fetchone())
         self.call('record-typed', 'new-observation', 'root', 'observation',
                   'New recorded observation', 'run:new', 'One run')
         migrated = {row['id']: row for row in self.read('root')}

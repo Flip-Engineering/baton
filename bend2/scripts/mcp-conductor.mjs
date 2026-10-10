@@ -182,6 +182,15 @@ const TOOLS = [
     }, additionalProperties: false },
   },
   {
+    name: 'baton2_knowledge_relations',
+    description: 'Read directed knowledge relationships, including message and external-reference links. Defaults to the attached session\'s authored relationships and links touching its held findings; optional scopes use the existing knowledge holdings.',
+    inputSchema: { type: 'object', properties: {
+      scope: { type: 'string', description: 'worker (default), group, universal, or all' },
+      subject: { type: 'string', description: 'Worker or Ensemble ID; universal can name its Principal Conductor' },
+      pretty: { type: 'boolean', description: 'Pretty-print the JSON result' },
+    }, additionalProperties: false },
+  },
+  {
     name: 'baton2_knowledge_record',
     description: 'Record knowledge as the attached session, with cited evidence and limits. An optional kind names the item, such as observation, decision or hypothesis.',
     inputSchema: { type: 'object', properties: {
@@ -570,7 +579,7 @@ function handleMessage(msg) {
         experimental: { 'claude/channel': {} },
       },
       serverInfo: { name: 'baton-conductor', version: '0.1.0' },
-      instructions: `Baton2 ${hasParent(selectedSession()) ? 'Associate' : 'Principal'} Conductor attachment for session ${sessionId}. Use baton2_join for shared-checkout work and baton2_recruit when a separate worktree is needed. Name the target branch, remote and integration Conductor in the assignment. Commit completed changes. The integration Conductor lands or reconciles contributions and pushes the integrated target with baton2_push. After publication and turn completion, relocate the same Player with baton2_receiver to the shared checkout and retire clean unused merged task worktrees and branches through ordinary Git. Preserve active or unfinished work, explicit stops and receiver/toolchain dependencies. Use baton2_receiver to register a Player's Codex, OMP, Muse or Claude Code receive endpoint, then baton2_dispatch_file to send task or guidance files. Use baton2_dispatch_turn to launch a registered Player's task file with its recorded route. Use baton2_configure to save future effort on the same harness and model during active or stopped sessions, keeping the receiver, current turn and stop. Change harness or model after the current attempt ends and any stop is lifted. Configuration keeps the Player's identity, work, native conversation and pending input. Use baton2_context_engines to discover installed context modules; scope:"session" includes the attached project settings. Use baton2_context_install to acquire a module from a supplied built module directory or extracted distribution. Use baton2_context_query_file for request files and baton2_context_result for retained query results. Use baton2_inbox or baton2_pending to see pending messages. Their optional index:true argument returns metadata; baton2_delivery reads a selected complete message. Use baton2_ack to acknowledge your own fully read and handled input; retain unfinished work in your reports and project state. Use baton2_guide to direct Players. The coordinator CLI ask and ask-file send questions as your recorded session to its parent; a parentless Principal Conductor reaches the registered operator. Use baton2_player and baton2_players to inspect Players and both Conductor tiers. Use baton2_role, baton2_ensemble, baton2_ensemble_member, baton2_section and baton2_section_member to configure responsibilities and membership. Use baton2_orchestra to inspect the system. Use baton2_turns for turn history and baton2_land or baton2_land_checked to land a Player's changes. Supply commit to select a reviewed ancestor while later work remains on the recorded branch.`,
+      instructions: `Baton2 ${hasParent(selectedSession()) ? 'Associate' : 'Principal'} Conductor attachment for session ${sessionId}. Use baton2_join for shared-checkout work and baton2_recruit when a separate worktree is needed. Name the target branch, remote and integration Conductor in the assignment. Commit completed changes. The integration Conductor lands or reconciles contributions and pushes the integrated target with baton2_push. After publication and turn completion, relocate the same Player with baton2_receiver to the shared checkout and retire clean unused merged task worktrees and branches through ordinary Git. Preserve active or unfinished work, explicit stops and receiver/toolchain dependencies. Use baton2_receiver to register a Player's Codex, OMP, Muse or Claude Code receive endpoint, then baton2_dispatch_file to send task or guidance files. Use baton2_dispatch_turn to launch a registered Player's task file with its recorded route. Use baton2_configure to save future effort on the same harness and model during active or stopped sessions, keeping the receiver, current turn and stop. Change harness or model after the current attempt ends and any stop is lifted. Configuration keeps the Player's identity, work, native conversation and pending input. Use baton2_context_engines to discover installed context modules; scope:"session" includes the attached project settings. Use baton2_context_install to acquire a module from a supplied built module directory or extracted distribution. Use baton2_context_query_file for request files and baton2_context_result for retained query results. Use baton2_knowledge for findings and baton2_knowledge_relations for directed links, including links between retained messages or external references. Use baton2_inbox or baton2_pending to see pending messages. Their optional index:true argument returns metadata; baton2_delivery reads a selected complete message. Use baton2_ack to acknowledge your own fully read and handled input; retain unfinished work in your reports and project state. Use baton2_guide to direct Players. The coordinator CLI ask and ask-file send questions as your recorded session to its parent; a parentless Principal Conductor reaches the registered operator. Use baton2_player and baton2_players to inspect Players and both Conductor tiers. Use baton2_role, baton2_ensemble, baton2_ensemble_member, baton2_section and baton2_section_member to configure responsibilities and membership. Use baton2_orchestra to inspect the system. Use baton2_turns for turn history and baton2_land or baton2_land_checked to land a Player's changes. Supply commit to select a reviewed ancestor while later work remains on the recorded branch.`,
     });
     return;
   }
@@ -653,6 +662,13 @@ function handleToolCall(msg) {
           : coord('knowledge-scope', sessionId, options.scope,
               options.subject ?? (options.scope === 'worker' ? sessionId : ''),
               ...selection, ...presentation);
+        break;
+      }
+      case 'baton2_knowledge_relations': {
+        const scope = args.scope ?? 'worker';
+        const subject = args.subject ?? (scope === 'worker' ? sessionId : '');
+        result = coord('knowledge-relations', sessionId, scope, subject,
+          ...(args.pretty === true ? ['--pretty'] : []));
         break;
       }
       case 'baton2_knowledge_record':

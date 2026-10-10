@@ -82,6 +82,26 @@ def scope_findings_sql(+scope: String, subject: String) -> String:
       +holders = scope_holders_sql(scope,subject)
       "(k.author IN(" ++ holders ++ ") OR EXISTS(SELECT 1 FROM knowledge_promotions p WHERE p.finding=k.id AND p.destination IN(" ++ holders ++ ")))"
 
+def scope_relations_sql(+scope: String, +subject: String) -> String:
+  match scope:
+    case "all": "1"
+    case _:
+      "(r.author IN(" ++ scope_holders_sql(scope,subject) ++ ") OR EXISTS(SELECT 1 FROM knowledge k WHERE " ++ scope_findings_sql(scope,subject) ++ " AND (r.source IN(k.id,'finding:'||k.id) OR r.target IN(k.id,'finding:'||k.id))))"
+
+def relations_read_sql(+reader: String, scope: String, subject: String) -> String:
+  "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_object('id',r.id,'author',r.author,'source',r.source,'relation',r.relation,'target',r.target) AS item FROM knowledge_relations r WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") AND " ++ scope_relations_sql(scope,subject) ++ " ORDER BY r.id);"
+
+def relations_when_present(db: String, reader: String, scope: String, subject: String,
+                           present: Bool) -> IO(String):
+  match present:
+    case False{}: IO.pure(String,"[]\n")
+    case True{}: IO.try(String,DB.Sql.read(db,relations_read_sql(reader,scope,subject)))
+
+def relations_value(+db: String, reader: String, scope: String, subject: String) -> IO(String):
+  do IO<String>:
+    present : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM sqlite_master WHERE type='table' AND name='knowledge_relations';"))
+    relations_when_present(db,reader,scope,subject,String.eq(present,"1\n"))
+
 def scoped_read_sql(+reader: String, scope: String, subject: String, typed: Bool) -> String:
   "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT " ++ knowledge_item_with_types(typed) ++ " AS item FROM knowledge k WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") AND " ++ scope_findings_sql(scope,subject) ++ " ORDER BY k.rowid);"
 
@@ -263,6 +283,11 @@ def read(db: String, reader: String) -> IO(Unit):
 def read_scope(db: String, reader: String, scope: String, subject: String) -> IO(Unit):
   do IO<Unit>:
     visible : String <- read_scope_value(db,reader,scope,subject)
+    IO.write(visible)
+
+def read_relations(db: String, reader: String, scope: String, subject: String) -> IO(Unit):
+  do IO<Unit>:
+    visible : String <- relations_value(db,reader,scope,subject)
     IO.write(visible)
 
 def read_index(db: String, reader: String, scope: String, subject: String, scoped: Bool) -> IO(Unit):

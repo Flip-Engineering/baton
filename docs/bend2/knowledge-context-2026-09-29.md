@@ -10,6 +10,7 @@ baton2 DATABASE record-typed FINDING_ID AUTHOR KIND CLAIM EVIDENCE LIMITS
 baton2 DATABASE relate RELATION_ID AUTHOR SOURCE RELATION TARGET
 baton2 DATABASE knowledge READER
 baton2 DATABASE knowledge-scope READER universal|worker|group|all SUBJECT
+baton2 DATABASE knowledge-relations READER [universal|worker|group|all SUBJECT] [--pretty]
 baton2 DATABASE promote PROMOTION_ID PROMOTER SOURCE DESTINATION FINDING
 ```
 
@@ -18,6 +19,13 @@ baton2 DATABASE promote PROMOTION_ID PROMOTER SOURCE DESTINATION FINDING
 `EVIDENCE` is stored as supplied reference text. If it has the form `message:ID` and that message exists, a read includes the message ID, sender, recipient, and body in `evidenceMessage`. Otherwise `evidenceMessage` is null. The finding row also contains `id`, `author`, `kind`, `claim`, `evidence`, `limits`, `destinations`, `promotions`, and `relations`. Existing records have kind `finding`.
 
 `KIND` and `RELATION` are descriptive strings chosen by the author. Examples include `observation`, `hypothesis`, `decision`, `correction`, `Supports`, `Causes`, `DerivedFrom`, and `Supersedes`. A relationship retains its ID, author, source, relationship name and target. References can name `finding:ID`, `message:ID`, a source file, a run or another external source. A correction can be recorded separately and linked to its earlier finding.
+
+`knowledge-relations READER` uses worker scope for READER and returns its authored
+relationships and links touching its held findings. Optional scope and subject use the holdings described
+below. Each row contains `id`, `author`, `source`, `relation` and `target`. Links
+between retained messages or external references are included even when neither
+endpoint names a finding. Older databases with no relationship table return an
+empty array.
 
 Any registered session can read all findings and their promotions. An unregistered reader receives an empty array. A promotion records the finding, its original author, source, destination, and promoting session. The promoter must own a registered destination session. The source must be the original author or a destination already recorded for that finding. Repeating a promotion ID with identical values returns its stored record; conflicting reuse fails.
 
@@ -32,7 +40,7 @@ Any registered session can read all findings and their promotions. An unregister
 
 The Orchestra UI's knowledge overview defaults to universal holdings. `/orchestra/knowledge/overview?actor=WORKER` selects worker holdings; `?group=ENSEMBLE` selects group holdings; `?scope=all` selects all-data discovery. Responses contain `scope`, `findings`, `promotions`, `relations`, and `actors`. A relation may reference a finding outside the selected holdings; its reference remains available while that finding's content appears in its own scope or all-data discovery. Cited retained message content is available in each finding's `evidenceMessage`.
 
-MCP exposes the same operations through `baton2_knowledge_record` with optional `kind`, `baton2_knowledge_relate`, `baton2_knowledge` with optional `scope` and `subject`, and `baton2_knowledge_promote`. Omitted MCP scope retains all-data discovery.
+MCP exposes the same operations through `baton2_knowledge_record` with optional `kind`, `baton2_knowledge_relate`, `baton2_knowledge` with optional `scope` and `subject`, and `baton2_knowledge_promote`. Omitted `baton2_knowledge` scope retains all-data discovery. `baton2_knowledge_relations` defaults to the attached session's relationships and accepts optional `scope`, `subject` and `pretty`.
 
 ## Notices and delivery
 
