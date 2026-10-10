@@ -1314,8 +1314,18 @@ check('the stage draws a seam only where the payload places both ends', await ev
   // author-anchored ones are checked as a subset of the payload rather than a count.
   const anchor = (edge) => edge.provenance === 'recorded-evidence'
     && (heldById.has(String(edge.source)) || heldById.has(String(edge.target)));
-  const citedIds = new Set((payload.edges || []).filter((edge) => edge.provenance === 'recorded-evidence')
-    .map((edge) => String(edge.id || '')));
+  // The cited ceiling is the payload's own distinct drawn pairs once a held source
+  // is anchored at its author seat (attention.js:1139-1194).
+  const citedPairs = new Set();
+  for (const edge of payload.edges || []) {
+    if (edge.provenance !== 'recorded-evidence') continue;
+    const src = String(edge.source || '');
+    const author = heldById.has(src) ? String((heldById.get(src) || {}).author || '') : '';
+    const from = seats.has(src) ? src : (author && seats.has(author) ? author : '');
+    const to = place(edge.target) ? String(edge.target) : '';
+    if (!from || !to || from === to) continue;
+    citedPairs.add(from + '|' + to);
+  }
   const expected = (payload.edges || []).filter((edge) => edge.provenance !== 'recorded-evidence'
     && place(edge.source) && place(edge.target)).length
     + (payload.edges || []).filter((edge) => edge.provenance === 'recorded-evidence'
@@ -1348,7 +1358,7 @@ check('the stage draws a seam only where the payload places both ends', await ev
     && place(edge.source) && place(edge.target)).length;
   // Cited seams may exceed the outright count by the author-anchored shape; they may
   // not exceed the payload.
-  const citedWithinPayload = cited <= citedIds.size;
+  const citedWithinPayload = cited <= citedPairs.size;
   return authored === expectedAuthored && cited >= expectedCitedOutright && citedWithinPayload && named && glyphs;
 })()`));
 check('a reference bead states that the store does not hold what it names', await evalJs(`(async () => {
@@ -1759,26 +1769,63 @@ check('the stage draws exactly the edges the placement rule places', await evalJ
   const knowledge = (document_ && document_.knowledge) || {};
   const seats = new Set([...document.querySelectorAll('#attention-band .att-seat[data-att-id]')]
     .map((seat) => seat.getAttribute('data-att-id') || '').filter(Boolean));
-  const unheld = new Set((knowledge.nodes || []).filter((node) => node.referenceOnly === true)
+  const nodes = knowledge.nodes || [];
+  const unheld = new Set(nodes.filter((node) => node.referenceOnly === true)
     .map((node) => String(node.reference || '')));
-  const place = (value) => seats.has(String(value)) || unheld.has(String(value));
-  const seatEnds = (edge) => (seats.has(String(edge.source)) ? 1 : 0)
-    + (seats.has(String(edge.target)) ? 1 : 0);
-  const placed = (knowledge.edges || []).filter((edge) => {
-    if (edge.provenance !== 'authored' && edge.provenance !== 'recorded-evidence') return false;
-    if (!place(edge.source) || !place(edge.target)) return false;
-    if (seatEnds(edge) < 1) return false;
-    return String(edge.source) !== String(edge.target);
-  });
+  const held = new Set(nodes.filter((node) => node.referenceOnly !== true)
+    .map((node) => String(node.reference || '')));
+  const endOf = (value) => {
+    const id = String(value || '');
+    if (seats.has(id)) return { seat: id };
+    return unheld.has(id) ? { ref: id } : null;
+  };
+  // A cited edge whose source is a held node is anchored at its author seat
+  // (attention.js:1139-1160); an authored edge end is never anchored.
+  const citedFrom = (edge) => {
+    if (seats.has(String(edge.source || ''))) return { seat: String(edge.source) };
+    if (!held.has(String(edge.source || ''))) return null;
+    const author = String(edge.author || '');
+    return author && seats.has(author) ? { seat: author } : null;
+  };
+  const pairs = new Map();
+  for (const edge of knowledge.edges || []) {
+    const provenance = String(edge.provenance || '');
+    if (provenance !== 'authored' && provenance !== 'recorded-evidence') continue;
+    const from = provenance === 'recorded-evidence' ? citedFrom(edge) : endOf(edge.source);
+    const to = endOf(edge.target);
+    if (!from || !to) continue;
+    if (from.seat && to.seat && from.seat === to.seat) continue;
+    if (!from.seat && !to.seat) continue;
+    const key = provenance + '|' + (from.seat || 'ref:' + from.ref)
+      + '|' + (to.seat || 'ref:' + to.ref);
+    pairs.set(key, { provenance: provenance, seatEnds: (from.seat ? 1 : 0) + (to.seat ? 1 : 0) });
+  }
+  const expected = [...pairs.values()];
   const seams = document.querySelectorAll('.att-seam').length;
   const beads = document.querySelectorAll('circle.att-ref').length;
   const chevrons = document.querySelectorAll('polygon.att-seam-chevron').length;
   const bars = document.querySelectorAll('g.att-seam-bars').length;
-  return seams === placed.length
-    && beads === placed.filter((edge) => seatEnds(edge) === 1).length
-    && chevrons === placed.filter((edge) => seatEnds(edge) === 2
-      && edge.provenance === 'authored').length
-    && bars === 0;
+  return pairs.size > 0 && seams === pairs.size
+    && beads === expected.filter((pair) => pair.seatEnds === 1).length
+    && chevrons === expected.filter((pair) => pair.seatEnds === 2
+      && pair.provenance === 'authored').length
+    && bars === expected.filter((pair) => pair.seatEnds === 2
+      && pair.provenance === 'recorded-evidence').length;
+})()`));
+// The hall must not imply that an anchored seat is the edge endpoint.
+check('a cited seam anchored at an author seat says whose seat it is', await evalJs(`(() => {
+  const seams = [...document.querySelectorAll('.att-seam-cited')];
+  if (!seams.length) return false;
+  const anchored = seams.filter((seam) => (seam.textContent || '').includes('drawn at that author'));
+  if (!anchored.length) return false;
+  return anchored.every((seam) => {
+    const words = seam.textContent || '';
+    return /authored by fixture-knowledge-/.test(words)
+      && /cited material/.test(words)
+      && /finding:fixture-/.test(words)
+      && /fixture-message-/.test(words)
+      && /which the store does not hold/.test(words);
+  });
 })()`));
 await evalJs(`(() => {
   const edge = [...document.querySelectorAll('.kw-edge-typed')]
