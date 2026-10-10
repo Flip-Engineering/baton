@@ -124,6 +124,40 @@ class McpContract(unittest.TestCase):
         self.assertEqual(json.loads(result['content'][0]['text']), [external, message])
         self.assertEqual(json.loads(self.coord('knowledge', 'root').stdout), [])
 
+        self.coord('record-typed', 'measured-recovery', 'w1', 'evidence',
+                   'Measured original process recovery', 'message:turn-1', 'One retained process')
+        self.coord('record-typed', 'recovery-decision', 'root', 'decision',
+                   'Continue the original process recovery', 'finding:measured-recovery',
+                   'The recorded provider fault')
+        self.coord('relate', 'recovery-basis', 'root', 'finding:recovery-decision',
+                   'DerivedFrom', 'finding:measured-recovery')
+        for tool, arguments in (
+                ('baton2_knowledge_search', {'query': 'original recovery'}),
+                ('baton2_knowledge_traverse', {'reference': 'finding:recovery-decision',
+                                               'direction': 'out'})):
+            with self.subTest(tool=tool):
+                result = self.tool(tool, arguments)
+                self.assertFalse(result.get('isError', False), result)
+                graph = json.loads(result['content'][0]['text'])
+                self.assertEqual({row['id'] for row in graph['nodes']}, {'recovery-decision'})
+                reference = next(row for row in graph['references']
+                                 if row['reference'] == 'finding:measured-recovery')
+                record = json.loads(self.coord(*reference['detailRead']).stdout)[0]
+                self.assertEqual((record['id'], record['kind'], record['claim'], record['limits']),
+                                 ('measured-recovery', 'evidence',
+                                  'Measured original process recovery', 'One retained process'))
+                complete = self.tool('baton2_knowledge', {'scope': 'all', 'id': record['id']})
+                self.assertFalse(complete.get('isError', False), complete)
+                self.assertEqual(json.loads(complete['content'][0]['text']), [record])
+                self.assertEqual(record['evidenceMessage']['body'], self.body)
+                delivery = self.tool('baton2_delivery', {'id': record['evidenceMessage']['id']})
+                self.assertFalse(delivery.get('isError', False), delivery)
+                self.assertEqual(json.loads(delivery['content'][0]['text'])['body'], self.body)
+        holdings = self.tool('baton2_knowledge', {'scope': 'worker', 'subject': 'root'})
+        self.assertFalse(holdings.get('isError', False), holdings)
+        self.assertEqual([row['id'] for row in json.loads(holdings['content'][0]['text'])],
+                         ['recovery-decision'])
+
     def test_group_promotions_and_onward_sharing_use_attached_destination_owner(self):
         self.coord('role', 'root', 'principal-conductor')
         self.coord('ensemble', 'review-group', 'root', 'tight')

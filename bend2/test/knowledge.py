@@ -194,9 +194,22 @@ class Knowledge(unittest.TestCase):
         shared = self.call('knowledge-search', 'root', 'universal', '', 'reconnect')
         self.assertEqual({r['id'] for r in shared['matches']}, {'hypothesis'})
         self.assertEqual({r['id'] for r in shared['nodes']}, {'hypothesis'})
-        outside = {r['reference']: r['kind'] for r in shared['references']}
-        self.assertEqual(outside['finding:measurement'], 'evidence')
-        self.assertEqual(outside['finding:decision'], 'decision')
+        outside = {r['reference']: r for r in shared['references']}
+        for finding, kind, claim, evidence, limits in (
+                ('measurement', 'evidence', 'Observed recovery',
+                 'message:' + source, 'One process'),
+                ('decision', 'decision', 'Continue the original process',
+                 'finding:hypothesis', 'This observed fault')):
+            reference = outside['finding:' + finding]
+            self.assertEqual(reference['kind'], kind)
+            record = self.call(*reference['detailRead'])[0]
+            self.assertEqual((record['id'], record['kind'], record['claim'],
+                              record['evidence'], record['limits']),
+                             (finding, kind, claim, evidence, limits))
+            if finding == 'measurement':
+                self.assertEqual(record['evidenceMessage']['body'],
+                                 'The measured process recovered after reconnect.')
+        self.assertEqual(self.ids(self.scoped('universal')), ['hypothesis'])
 
     def test_linked_record_failure_rolls_back_record_links_and_parent_notice(self):
         malformed = [{'id': 'broken', 'source': 'finding:new', 'relation': 'Supports'}]
