@@ -564,6 +564,8 @@
           onSelectActor: options.onSelect,
           // A relation statement asks the map to light that relation's edges.
           onFocusRelation: options.onFocusRelation,
+          // The relation the map is currently lit for, so the record can mark it.
+          focusRelation: options.focusRelation || "",
         });
       } else {
         var seat = options.selectedSeat || null;
