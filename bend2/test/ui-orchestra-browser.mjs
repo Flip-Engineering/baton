@@ -1729,6 +1729,50 @@ check('the typed edge card states a boolean delivery read as a seat fact', await
   const words = card.textContent || '';
   return /recorded evidence/.test(words) && /seat has not read the delivery/.test(words);
 })()`));
+await evalJs(`(() => {
+  const edge = [...document.querySelectorAll('.kw-edge-typed')]
+    .find((node) => node.getAttribute('data-to') === 'message:fixture-message-2'
+      || node.getAttribute('data-from') === 'message:fixture-message-2');
+  if (edge) edge.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  return true;
+})()`);
+await until('the pointer edge answers with its card',
+  `!!document.querySelector('#knowledge-whole .kw-card')`);
+check('a pointer delivery read is stated as no read at all', await evalJs(`(() => {
+  const card = document.querySelector('#knowledge-whole .kw-card');
+  if (!card) return false;
+  const words = card.textContent || '';
+  const pointer = true;
+  return pointer === true
+    && /message:fixture-message-2/.test(words)
+    && !/read the delivery/.test(words);
+})()`));
+await evalJs(`(() => {
+  const ring = document.querySelector('#knowledge-whole [data-reference-only="true"][data-kw-node="message:fixture-message-1"]');
+  if (ring) ring.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  return true;
+})()`);
+await until('the boolean ring answers with its card',
+  `!!document.querySelector('#knowledge-whole .kw-card')`);
+check('a ring card states the seat read where the payload states a boolean', await evalJs(`(() => {
+  const card = document.querySelector('#knowledge-whole .kw-card');
+  if (!card) return false;
+  const words = card.textContent || '';
+  return /message reference/.test(words) && /seat has not read the delivery/.test(words);
+})()`));
+await evalJs(`(() => {
+  const ring = document.querySelector('#knowledge-whole [data-reference-only="true"][data-kw-node="message:fixture-message-2"]');
+  if (ring) ring.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  return true;
+})()`);
+await until('the pointer ring answers with its card',
+  `!!document.querySelector('#knowledge-whole .kw-card')`);
+check('a ring card states no read where the payload states a pointer', await evalJs(`(() => {
+  const card = document.querySelector('#knowledge-whole .kw-card');
+  if (!card) return false;
+  const words = card.textContent || '';
+  return /message reference/.test(words) && !/read the delivery/.test(words);
+})()`));
 check('a reference the store does not hold ends in an open bead, and a held end draws none',
   await evalJs(`(() => {
     const beads = [...document.querySelectorAll('circle.att-ref')];
