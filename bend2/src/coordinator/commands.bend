@@ -79,7 +79,7 @@ type Command is Data:
   KnowledgePromote{id: String, promoter: String, source: String, destination: String, finding: String}
   View{subject: String, reader: String, port: String}
   UiSubscribe{after_cursor: String, generation: String}
-  ContextEngines{}
+  ContextEngines{session: String}
   ContextQueryFile{owner: String, query: String, path: String}
   ContextResult{query: String}
   Serve{}
@@ -547,7 +547,7 @@ def sql(command: Command) -> String:
     case KnowledgePromote{id,promoter,source,destination,finding}: ""
     case View{subject,reader,port}: ""
     case UiSubscribe{after_cursor,generation}: ""
-    case ContextEngines{}: ""
+    case ContextEngines{session}: ""
     case ContextQueryFile{owner,query,path}: ""
     case ContextResult{query}: ""
     case Serve{}: ""
@@ -557,7 +557,7 @@ def sql(command: Command) -> String:
 
 def parse_verb_only(+verb: String) -> Command:
   match verb:
-    case "context-engines": ContextEngines{}
+    case "context-engines": ContextEngines{""}
     case "logs-storage": LogsStorage{}
     case "help": Help{}
     case "--help": Help{}
@@ -572,6 +572,7 @@ def parse_verb_only(+verb: String) -> Command:
 
 def parse_verb_id(+verb: String, +id: String) -> Command:
   match verb:
+    case "context-engines": ContextEngines{id}
     case "context-result": ContextResult{id}
     case "logs": Logs{id,""}
     case "logs-clean": LogsClean{id}
@@ -755,7 +756,7 @@ def help_flag_selects_the_help_command():
   {==}
 
 law context_engines_has_a_single_command_word:
-  {parse(["context-engines"]) == ContextEngines{} : Command}
+  {parse(["context-engines"]) == ContextEngines{""} : Command}
 
 def context_engines_has_a_single_command_word():
   {==}

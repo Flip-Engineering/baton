@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
 
-import { installedModuleInventory, moduleDirectoryName, resolveSelectedPackageRoot, verifyInvocationArtifact } from '../scripts/context-provider.mjs';
+import { installedModuleInventory, sessionModuleInventory, moduleDirectoryName, resolveSelectedPackageRoot, verifyInvocationArtifact } from '../scripts/context-provider.mjs';
 
 test('installed provider resolves the module named by the invocation below its wrapper prefix', () => {
   const prefix = mkdtempSync(join(tmpdir(), 'baton2-installed-context-'));
@@ -76,6 +76,54 @@ test('installed module inventory reports malformed and symlinked module entries'
         { directory: 'm-zz', reason: 'selectedModuleDirectoryNameInvalid' },
       ],
     });
+  } finally {
+    rmSync(prefix, { recursive: true, force: true });
+  }
+});
+
+test('session inventory reports project settings and preserves capabilities on policy read failures', async () => {
+  const prefix = mkdtempSync(join(tmpdir(), 'baton2-session-inventory-'));
+  try {
+    const wrapper = join(prefix, 'libexec/baton2/context-provider.mjs');
+    const worktree = join(prefix, 'project');
+    const moduleRoot = join(prefix, 'lib/context/modules', moduleDirectoryName('bend2'));
+    mkdirSync(join(prefix, 'libexec/baton2'), { recursive: true });
+    mkdirSync(moduleRoot, { recursive: true });
+    mkdirSync(join(worktree, '.baton'), { recursive: true });
+    writeFileSync(wrapper, '// installed wrapper\n');
+    const declaration = { moduleId: 'bend2', operations: [{ id: 'sourceAnalysis' }] };
+    writeFileSync(join(moduleRoot, 'native-provider.declaration.json'), JSON.stringify(declaration));
+    const read = () => sessionModuleInventory({ owner: 'worker', worktree, wrapperPath: wrapper });
+    const policy = join(worktree, '.baton/context.json');
+    const absent = await read();
+    assert.deepEqual(absent.scope, { session: 'worker', workspace: worktree });
+    assert.equal(absent.projectPolicy.status, 'absent');
+    assert.equal(absent.modules[0].enabled, true);
+    assert.equal(absent.modules[0].preferred, false);
+
+    writeFileSync(policy, JSON.stringify({ schema: 'baton2-context-project-v1',
+      disabled: ['bend2'], preferred: ['bend2'] }));
+    const configured = await read();
+    assert.equal(configured.projectPolicy.status, 'present');
+    assert.equal(configured.modules[0].enabled, false);
+    assert.equal(configured.modules[0].preferred, true);
+    assert.deepEqual(configured.modules[0].declaration, declaration);
+    assert.equal(installedModuleInventory({ wrapperPath: wrapper }).modules[0].enabled, undefined);
+
+    writeFileSync(policy, '{');
+    const malformed = await read();
+    assert.equal(malformed.status, 'available');
+    assert.equal(malformed.projectPolicy.reason, 'projectPolicyMalformed');
+    assert.equal(malformed.modules[0].enabled, null);
+    assert.equal(malformed.modules[0].preferred, null);
+    assert.deepEqual(malformed.modules[0].declaration, declaration);
+
+    rmSync(policy);
+    mkdirSync(policy);
+    const unreadable = await read();
+    assert.equal(unreadable.projectPolicy.status, 'unavailable');
+    assert.equal(unreadable.projectPolicy.reason, 'EISDIR');
+    assert.equal(unreadable.modules[0].enabled, null);
   } finally {
     rmSync(prefix, { recursive: true, force: true });
   }

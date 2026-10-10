@@ -94,6 +94,30 @@ export function installedModuleInventory({ wrapperPath = fileURLToPath(import.me
   }
 }
 
+export async function sessionModuleInventory({ owner, worktree, wrapperPath } = {}) {
+  const inventory = installedModuleInventory({ wrapperPath });
+  if (inventory.status !== 'available') return inventory;
+  const { decodePolicy } = await import('./context-project-policy.mjs');
+  const path = join(worktree, '.baton', 'context.json');
+  let projectPolicy;
+  try {
+    const policy = decodePolicy(readFileSync(path, 'utf8'));
+    projectPolicy = policy.status === 'decoded'
+      ? { status: 'present', path, disabled: policy.disabled, preferred: policy.preferred }
+      : { status: 'malformed', path, reason: policy.reason, detail: policy.detail };
+  } catch (error) {
+    projectPolicy = error.code === 'ENOENT'
+      ? { status: 'absent', path, disabled: [], preferred: [] }
+      : { status: 'unavailable', path, reason: error.code, detail: error.message };
+  }
+  const known = projectPolicy.status === 'present' || projectPolicy.status === 'absent';
+  return { ...inventory, scope: { session: owner, workspace: worktree }, projectPolicy,
+    modules: inventory.modules.map((module) => ({ ...module,
+      enabled: known ? !projectPolicy.disabled.includes(module.moduleId) : null,
+      preferred: known ? projectPolicy.preferred.includes(module.moduleId) : null,
+    })) };
+}
+
 export async function runSelectedInvocation(invocation, { wrapperPath = fileURLToPath(import.meta.url) } = {}) {
   const moduleId = invocation?.moduleBinding?.id;
   const selected = resolveSelectedPackageRoot(wrapperPath, moduleId);
@@ -181,7 +205,18 @@ if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.a
   if (process.argv[2] === '--runtime-adapter-file') {
     await runSelectedRuntimeAdapterFile(process.argv[3]);
   } else if (process.argv[2] === '--inventory') {
-    const result = installedModuleInventory();
+    let result;
+    if (process.argv[3] === '--session') {
+      let input = '';
+      for await (const chunk of process.stdin) input += chunk;
+      try {
+        result = await sessionModuleInventory(JSON.parse(input));
+      } catch (error) {
+        result = refused('sessionInventoryUnavailable', error.message);
+      }
+    } else {
+      result = installedModuleInventory();
+    }
     process.stdout.write(`${JSON.stringify(result)}\n`);
     if (result.status === 'refused') process.exitCode = 2;
   } else if (process.argv[2] === '--capture-inputs') {

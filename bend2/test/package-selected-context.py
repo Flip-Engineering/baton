@@ -56,12 +56,18 @@ def tool(name,arguments):
     return json.loads(answer['content'][0]['text'])
 if session==config['producer'] and not resume:
     tool('baton2_context_query_file',{'query':config['query'],'path':config['request']})
+inventory=tool('baton2_context_engines',{'scope':'session'})
+assert inventory['scope']['session']==session,inventory
+assert inventory['projectPolicy']['status']=='present',inventory
+modules={row['moduleId']:row for row in inventory['modules']}
+assert modules['bend2']['enabled'] and modules['bend2']['preferred'],inventory
+assert modules['runtime']['enabled'] is False,inventory
 retained=tool('baton2_context_result',{'query':config['query']})
 assert retained['state']=='complete',retained
 for ident in re.findall(r'^Message \([^\n]*\) from [^\n]* \[id: (.*?)\]:$',prompt,re.M):
     tool('baton2_ack',{'id':ident,'receipt':'native-consumed-'+config['query']})
 body=json.dumps({'session':session,'native':native,'resume':resume,'prompt':prompt,
-                 'retained':retained},ensure_ascii=False)
+                 'retained':retained,'discoveryScope':inventory['scope']},ensure_ascii=False)
 print(json.dumps({'stream':stream,'payload_type':'run.terminal.completed',
                  'payload':{'kind':'run_terminal','terminal':'completed',
                             'command_id':'handoff','text':body}}),flush=True)
@@ -575,10 +581,17 @@ void handler(const char *dynamic) {
         fixture.parent.mkdir(parents=True)
         shutil.copyfile(SOURCE / 'fixtures/valid.bend', fixture)
         project.mkdir(exist_ok=True)
+        (project / '.baton').mkdir()
+        (project / '.baton/context.json').write_text(json.dumps({
+            'schema': 'baton2-context-project-v1',
+            'disabled': ['runtime'], 'preferred': ['bend2'],
+        }) + '\n')
         subprocess.run(['git', 'init', '-b', 'main', str(project)], check=True,
                        capture_output=True, text=True)
         subprocess.run(['git', 'add', '.'], cwd=project, check=True,
                        capture_output=True, text=True)
+        subprocess.run(['git', 'add', '--force', '.baton/context.json'], cwd=project,
+                       check=True, capture_output=True, text=True)
         subprocess.run(['git', '-c', 'user.name=Context fixture',
                         '-c', 'user.email=context-fixture@example.invalid',
                         '-c', 'core.hooksPath=/dev/null',
@@ -590,6 +603,22 @@ void handler(const char *dynamic) {
                            'fixture-model', 'low', str(project), 'context-query-fixture',
                            str(worktree), 'HEAD')
         self.assertEqual(recruited.returncode, 0, recruited.stdout + recruited.stderr)
+
+        global_inventory = invoke('context-engines')
+        self.assertEqual(global_inventory.returncode, 0,
+                         global_inventory.stdout + global_inventory.stderr)
+        self.assertNotIn('scope', json.loads(global_inventory.stdout))
+        scoped_inventory = invoke('context-engines', 'validation-owner')
+        self.assertEqual(scoped_inventory.returncode, 0,
+                         scoped_inventory.stdout + scoped_inventory.stderr)
+        discovery = json.loads(scoped_inventory.stdout)
+        self.assertEqual(discovery['scope'], {'session': 'validation-owner',
+                                             'workspace': str(worktree)})
+        self.assertEqual(discovery['projectPolicy']['status'], 'present')
+        modules = {row['moduleId']: row for row in discovery['modules']}
+        self.assertTrue(modules['bend2']['enabled'])
+        self.assertTrue(modules['bend2']['preferred'])
+        self.assertFalse(modules['runtime']['enabled'])
 
         query = 'installed-source-analysis'
         request = self.root / 'request.json'
@@ -655,6 +684,8 @@ void handler(const char *dynamic) {
             self.assertEqual(report['session'], actor)
             self.assertEqual(report['native'], checked('session', actor)['native'])
             self.assertEqual(report['resume'], '')
+            self.assertEqual(report['discoveryScope'],
+                             {'session': actor, 'workspace': str(actor_workspace)})
             if actor == producer:
                 rows = checked('players')
                 player = next(row for row in rows if row['id'] == actor)
@@ -800,6 +831,9 @@ void handler(const char *dynamic) {
                 self.assertEqual(connection.execute('SELECT value FROM records').fetchall(),
                                  [('alpha',)], retained.stdout)
 
+        (worktree / '.baton/context.json').write_text(json.dumps({
+            'schema': 'baton2-context-project-v1', 'disabled': [], 'preferred': ['bend2'],
+        }) + '\n')
         target = worktree / 'runtime-target.mjs'
         shutil.copyfile(repository / 'bend2/context/runtime/cdp-fixture-longrun.mjs', target)
         target_source = target.read_text()

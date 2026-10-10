@@ -104,6 +104,10 @@ def inventory_argv(+runtime_path: String, +executable: String) -> String:
   Process.argv([runtime_path, "--experimental-strip-types",
     installed_provider_path(executable), "--inventory"])
 
+def inventory_session_argv(+runtime_path: String, +executable: String) -> String:
+  Process.argv([runtime_path, "--experimental-strip-types",
+    installed_provider_path(executable), "--inventory", "--session"])
+
 def project_policy_argv(+runtime_path: String, +executable: String) -> String:
   Process.argv([runtime_path, "--experimental-strip-types",
     installed_provider_path(executable), "--project-policy"])
@@ -1319,11 +1323,41 @@ def inventory_with_runtime(+executable: String, +cwd: String,
     answer : ProviderAnswer <- inventory_runtime_answer(executable, cwd, runtime)
     inventory_answer(answer)
 
-def engines(db: String) -> IO(Unit):
+def inventory_session_runtime(+executable: String, +owner: String, +workspace: String,
+                              runtime: ProviderAnswer) -> IO(Unit):
+  match runtime:
+    case ProviderRefused{reason}: IO.die(Unit, 3, reason)
+    case ProviderOutput{value, status}: IO.die(Unit, 3, "nodeRuntimeProbeMalformed")
+    case ProviderRuntime{path, version}:
+      do IO<Unit>:
+        spawned : Result<&1,&1,U32 & String,U32> <- Process.ProcessChild.spawn(
+          inventory_session_argv(path, executable), workspace, "/dev/null")
+        answer : ProviderAnswer <- provider_spawn(installed_provider_path(executable),
+          workspace, project_policy_request(owner, workspace), spawned)
+        inventory_answer(answer)
+
+def engines_workspace(+executable: String, +owner: String,
+                      workspace: OwnerWorkspace) -> IO(Unit):
+  match workspace:
+    case OwnerWorkspaceRefused{reason}: IO.die(Unit, 3, reason)
+    case OwnerWorkspaceReady{+path}:
+      do IO<Unit>:
+        runtime : ProviderAnswer <- resolve_node_runtime(path)
+        inventory_session_runtime(executable, owner, path, runtime)
+
+def engines_session(+db: String, +executable: String, +owner: String) -> IO(Unit):
   do IO<Unit>:
-    executable : String <- IO.try(String, Host.SessionLock.executable())
-    runtime : ProviderAnswer <- resolve_node_runtime("/")
-    inventory_with_runtime(executable, "/", runtime)
+    rows : String <- IO.try(String, DB.Sql.read(db, owner_workspace_sql(owner)))
+    engines_workspace(executable, owner, owner_workspace_rows(rows))
+
+def engines(+db: String, +owner: String) -> IO(Unit):
+  do IO<Unit>:
+    +executable : String <- IO.try(String, Host.SessionLock.executable())
+    Bool.pick(IO(Unit), String.is_empty(owner),
+      do IO<Unit>:
+        runtime : ProviderAnswer <- resolve_node_runtime("/")
+        inventory_with_runtime(executable, "/", runtime),
+      engines_session(db, executable, owner))
 
 def query_source_json(+owner: String, +worktree: String,
                       decoded: ProjectPolicyJson) -> BoundaryPath:

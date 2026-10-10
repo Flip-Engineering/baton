@@ -39,7 +39,7 @@ function hasDuplicateObjectKeys(text) {
   return false;
 }
 
-function decodePolicy(bytes) {
+export function decodePolicy(bytes) {
   let value;
   try {
     value = JSON.parse(bytes);

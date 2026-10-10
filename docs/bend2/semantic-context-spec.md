@@ -67,23 +67,24 @@ shared graph service, provider plug-in registry or indexing daemon is added.
 ## Native surfaces
 
 ```text
-baton2 DATABASE context-engines
+baton2 DATABASE context-engines [SESSION]
 baton2 DATABASE context-query-file SESSION QUERY_ID PATH
 baton2 DATABASE context-result QUERY_ID
 ```
 
-`context-engines` returns `{engines, runtimes}`. An engine entry has `engine`,
-`provider`, `version`, `executable`, `projections`, `effects`, `availability`
-and `limits`; the availability is `available`, `unavailable` or `excluded`.
-Failed probes remain visible. Runtime rows name owner, origin attempt if any,
-state, pending query IDs and the next observe/release operation. Managed one-shot
-query progress is retrieved through `context-result`; its returned state names
-the ordinary query-control route. This command
-runs fixed provider version/capability probes and reads coordination state.
-It never loads a target project or starts a debuggee.
+`context-engines` returns `{status, modules, refusals}` for the installed context
+modules. Each module includes its ID, declaration digest and capability
+declaration. Failed inventory reads remain visible. Optional SESSION reads that
+session's recorded workspace and `.baton/context.json`. The response adds the
+session and workspace under `scope`, the policy path and read state under
+`projectPolicy`, and `enabled` and `preferred` fields on each module. An absent
+policy supplies the default settings. A malformed or unreadable policy includes
+its cause and leaves these module settings unknown. Managed query progress is
+retrieved through `context-result`; its returned state names the ordinary
+query-control route.
 
-The requesting SESSION must exist and be active; the release exception for a
-stopped owner is defined in Runtime contract. Its recorded workspace supplies
+For `context-query-file`, SESSION must exist and be active; the release exception
+for a stopped owner is defined in Runtime contract. Its recorded workspace supplies
 omitted `cwd`; a session without a workspace supplies `cwd`. The CLI uses the
 trusted-local declared identity convention. MCP obtains SESSION from its
 attachment; it does not infer an identity from a request body. Query identities
@@ -93,8 +94,10 @@ coordination database may read a retained query. It has no requester argument
 and establishes no owner-only read boundary. MCP result lookup uses the same
 rule. Control effects separately require the recorded owner identity.
 
-The Conductor MCP tools are `baton2_context_query_file` and
-`baton2_context_result`. Query arguments are `{query, path}`. The attachment
+The Conductor MCP tools are `baton2_context_engines`, `baton2_context_query_file`
+and `baton2_context_result`. Discovery arguments are `{}` for installed modules
+or `{scope: "session"}` for the attachment's recorded project settings. Query
+arguments are `{query, path}`. The attachment
 supplies SESSION and invokes `context-query-file SESSION QUERY_ID PATH` through
 the coordinator CLI. Result arguments are `{query}` and invoke `context-result`.
 The request file must be accessible to the coordinator. The CLI also accepts

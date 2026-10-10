@@ -143,6 +143,13 @@ const TOOLS = [
       required: ['session'], additionalProperties: false },
   },
   {
+    name: 'baton2_context_engines',
+    description: 'List installed context modules and their capabilities. Optional session scope includes the attached session\'s project settings and each module\'s enabled and preferred state.',
+    inputSchema: { type: 'object', properties: {
+      scope: { type: 'string', enum: ['session'], description: 'Use the attached session\'s recorded workspace' },
+    }, additionalProperties: false },
+  },
+  {
     name: 'baton2_context_query_file',
     description: 'Evaluate a native context query from a JSON request file as the attached session and retain its result in this database. Use a unique query ID and a file accessible to the coordinator.',
     inputSchema: { type: 'object', properties: {
@@ -555,7 +562,7 @@ function handleMessage(msg) {
         experimental: { 'claude/channel': {} },
       },
       serverInfo: { name: 'baton-conductor', version: '0.1.0' },
-      instructions: `Baton2 ${hasParent(selectedSession()) ? 'Associate' : 'Principal'} Conductor attachment for session ${sessionId}. Use baton2_join for shared-checkout work and baton2_recruit when a separate worktree is needed. Name the target branch, remote and integration Conductor in the assignment. Commit completed changes. The integration Conductor lands or reconciles contributions and pushes the integrated target with baton2_push. After publication and turn completion, relocate the same Player with baton2_receiver to the shared checkout and retire clean unused merged task worktrees and branches through ordinary Git. Preserve active or unfinished work, explicit stops and receiver/toolchain dependencies. Use baton2_receiver to register a Player's Codex, OMP, Muse or Claude Code receive endpoint, then baton2_dispatch_file to send task or guidance files. Use baton2_dispatch_turn to launch a registered Player's task file with its recorded route. Use baton2_configure to save future effort on the same harness and model during active or stopped sessions, keeping the receiver, current turn and stop. Change harness or model after the current attempt ends and any stop is lifted. Configuration keeps the Player's identity, work, native conversation and pending input. Use baton2_inbox or baton2_pending to see pending messages. Their optional index:true argument returns metadata; baton2_delivery reads a selected complete message. Use baton2_ack to acknowledge your own fully read and handled input; retain unfinished work in your reports and project state. Use baton2_guide to direct Players. The coordinator CLI ask and ask-file send questions as your recorded session to its parent; a parentless Principal Conductor reaches the registered operator. Use baton2_player and baton2_players to inspect Players and both Conductor tiers. Use baton2_role, baton2_ensemble, baton2_ensemble_member, baton2_section and baton2_section_member to configure responsibilities and membership. Use baton2_orchestra to inspect the system. Use baton2_turns for turn history and baton2_land or baton2_land_checked to land a Player's changes. Supply commit to select a reviewed ancestor while later work remains on the recorded branch.`,
+      instructions: `Baton2 ${hasParent(selectedSession()) ? 'Associate' : 'Principal'} Conductor attachment for session ${sessionId}. Use baton2_join for shared-checkout work and baton2_recruit when a separate worktree is needed. Name the target branch, remote and integration Conductor in the assignment. Commit completed changes. The integration Conductor lands or reconciles contributions and pushes the integrated target with baton2_push. After publication and turn completion, relocate the same Player with baton2_receiver to the shared checkout and retire clean unused merged task worktrees and branches through ordinary Git. Preserve active or unfinished work, explicit stops and receiver/toolchain dependencies. Use baton2_receiver to register a Player's Codex, OMP, Muse or Claude Code receive endpoint, then baton2_dispatch_file to send task or guidance files. Use baton2_dispatch_turn to launch a registered Player's task file with its recorded route. Use baton2_configure to save future effort on the same harness and model during active or stopped sessions, keeping the receiver, current turn and stop. Change harness or model after the current attempt ends and any stop is lifted. Configuration keeps the Player's identity, work, native conversation and pending input. Use baton2_context_engines to discover installed context modules; scope:"session" includes the attached project settings. Use baton2_context_query_file for request files and baton2_context_result for retained query results. Use baton2_inbox or baton2_pending to see pending messages. Their optional index:true argument returns metadata; baton2_delivery reads a selected complete message. Use baton2_ack to acknowledge your own fully read and handled input; retain unfinished work in your reports and project state. Use baton2_guide to direct Players. The coordinator CLI ask and ask-file send questions as your recorded session to its parent; a parentless Principal Conductor reaches the registered operator. Use baton2_player and baton2_players to inspect Players and both Conductor tiers. Use baton2_role, baton2_ensemble, baton2_ensemble_member, baton2_section and baton2_section_member to configure responsibilities and membership. Use baton2_orchestra to inspect the system. Use baton2_turns for turn history and baton2_land or baton2_land_checked to land a Player's changes. Supply commit to select a reviewed ancestor while later work remains on the recorded branch.`,
     });
     return;
   }
@@ -615,6 +622,9 @@ function handleToolCall(msg) {
         break;
       case 'baton2_resume':
         result = coord('resume', args.session, ...(args.liftStop === true ? ['--lift-stop'] : []));
+        break;
+      case 'baton2_context_engines':
+        result = coord('context-engines', ...(args?.scope === 'session' ? [sessionId] : []));
         break;
       case 'baton2_context_query_file':
         result = coord('context-query-file', sessionId, args.query, args.path);
