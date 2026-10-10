@@ -855,7 +855,7 @@ def index_options(args: List<String>, +base: Command, +inbox: Bool, +condition: 
       index_options(rest,base,inbox,condition ++ " AND m.recipient=" ++ q(value),state,index,pretty,True{})
     case "--kind" <> value <> rest:
       index_options(rest,base,inbox,condition ++ " AND m.kind=" ++ q(value),state,index,pretty,True{})
-    case "--state" <> value <> +rest:
+    case "--state" <> value <> rest:
       match value:
         case "pending": index_options(rest,base,inbox,condition,"m.receipt IS NULL",index,pretty,True{})
         case "acknowledged": index_options(rest,base,inbox,condition,"m.receipt IS NOT NULL",index,pretty,True{})
