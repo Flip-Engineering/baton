@@ -931,6 +931,61 @@ finally:
         self.assertEqual(original_receive.returncode, 0, stdout + stderr)
         self.shutdown()
 
+    def test_12_failed_session_keeps_other_sessions_and_subscription_active(self):
+        self.recruit('bad', 'omp')
+        self.recruit('held', 'codex')
+        self.recruit('late', 'codex')
+        self.queue('bad', {'fail_status': 403, 'fail_message': 'fixture subscription exhausted'})
+        self.queue('held', {'body': 'Held work completed after another session failed',
+                            'hold_exit': True})
+        self.queue('late', {'body': 'Later work completed through the existing subscription'})
+        self.dispatch('failed-task', 'bad', 'Accepted work whose provider fails.')
+        self.dispatch('held-task', 'held', 'Keep this native work active.')
+        for session in ('bad', 'held', 'late'):
+            self.receiver(session)
+        self.start_owner()
+        self.start_serve()
+        serve_lines = []
+
+        def drain():
+            try:
+                for line in self.serve_proc.stdout:
+                    serve_lines.append(line)
+            except (OSError, ValueError):
+                pass
+
+        threading.Thread(target=drain, daemon=True).start()
+        held_stream, _ = self.stream_for('held')
+        self.assertEqual(json.loads(held_stream.readline()), {'terminal_written': True})
+        self.await_inbox('root', lambda messages: (
+            messages if any('fixture subscription exhausted' in message['body']
+                            for message in messages) else None),
+            'the actual failed provider report was not retained')
+        self.eventually(lambda: any('Serve task bad failed:' in line for line in serve_lines),
+                        'the failed session result never reached the shared event loop')
+        self.assertIsNone(self.serve_proc.poll(), 'one session failure ended the serve')
+        self.assertEqual(self.query("SELECT receipt FROM messages WHERE id='failed-task'"),
+                         [('native-reviewed',)])
+        self.assertEqual(len(self.connections('bad')), 1,
+                         'the failed session was immediately launched again')
+        self.assertEqual(len(self.connections('held')), 1,
+                         'the unrelated active native was replaced')
+        self.dispatch('late-task', 'late', 'New work after the other session failed.')
+        self.await_inbox('root', lambda messages: (
+            messages if any('Later work completed through the existing subscription'
+                            in message['body'] for message in messages) else None),
+            'the shared subscription stopped admitting unrelated new work')
+        self.assertEqual(self.connections('late')[0]['ppid'], self.owner_pid)
+        self.release('held')
+        self.await_inbox('root', lambda messages: (
+            messages if any('Held work completed after another session failed'
+                            in message['body'] for message in messages) else None),
+            'the unrelated native lost its completion observer')
+        self.assertEqual(self.inbox('held'), [])
+        self.assertEqual(self.inbox('late'), [])
+        self.assertEqual(self.query("SELECT count(*) FROM session_stops"), [(0,)])
+        self.shutdown(expect_serve=1)
+
 
 if __name__ == '__main__':
     unittest.main()

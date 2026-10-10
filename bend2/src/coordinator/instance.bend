@@ -307,8 +307,12 @@ def fork_serving(+db: String, +chan: Chan(Event), stripped_serve: List<(String &
   match stripped_serve:
     case (fresh_serve, flying): fork_refusing(db, chan, fresh_serve, strip_known(refused, refuse), flying, failed, again)
 
+def fork_unrefused(+db: String, +chan: Chan(Event), stripped: List<(String & String)> & List<String>, refuse: List<(String & String)>, flying: List<String>, failed: Bool, again: Bool -> List<String> -> List<String> -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match stripped:
+    case (serve, refused): fork_serving(db, chan, strip_known(flying, serve), refuse, refused, failed, again)
+
 def fork_new(+db: String, +chan: Chan(Event), serve: List<(String & String)>, refuse: List<(String & String)>, flying: List<String>, refused: List<String>, failed: Bool, again: Bool -> List<String> -> List<String> -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
-  fork_serving(db, chan, strip_known(flying, serve), refuse, refused, failed, again)
+  fork_unrefused(db, chan, strip_known(refused, serve), refuse, flying, failed, again)
 
 def fork_fresh(+db: String, +chan: Chan(Event), fresh: List<(String & String)> & List<(String & String)>, flying: List<String>, refused: List<String>, failed: Bool, again: Bool -> List<String> -> List<String> -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   match fresh:
@@ -336,25 +340,19 @@ def close_guarded(handle: U32, guard: U32, failed: Bool) -> IO(Result<&1,&1,U32 
     failed_now : Bool <- release_guard(guard, failed)
     close_subscription(handle, failed_now)
 
-def task_cleanup(code: U32, cause: String, closed: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
-  match closed:
-    case Done{unit}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(code,cause)})
-    case Fail{(cleanup_code,cleanup_cause)}: do IO<Result<&1,&1,U32 & String,Unit>>:
-      logged : Unit <- IO.write("Serve cleanup failed: " ++ U32.show(cleanup_code) ++ ": " ++ cleanup_cause ++ "\n")
-      IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(code,cause)})
-
 def task_completed(+db: String, handle: U32, guard: U32, +chan: Chan(Event), +session: String, result: Result<&1,&1,U32 & String,Unit>, failed: Bool, flying: List<String>, refused: List<String>, again: Bool -> List<String> -> List<String> -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   match result:
     case Fail{(+code,+cause)}: do IO<Result<&1,&1,U32 & String,Unit>>:
       logged : Unit <- IO.write("Serve task " ++ session ++ " failed: " ++ U32.show(code) ++ ": " ++ cause ++ "\n")
-      closed : Result<&1,&1,U32 & String,Unit> <- close_guarded(handle,guard,failed)
-      task_cleanup(code,cause,closed)
+      fresh : List<(String & String)> & List<(String & String)> <- snapshot(db)
+      fork_fresh(db,chan,fresh,without_id(flying,session),Con{session,without_id(refused,session)},True{},again)
     case Done{unit}: do IO<Result<&1,&1,U32 & String,Unit>>:
       fresh : List<(String & String)> & List<(String & String)> <- snapshot(db)
       fork_fresh(db,chan,fresh,without_id(flying,session),refused,failed,again)
 
-# Successful TaskDone releases the in-flight entry and replays pending input.
-# A failed task prints its actual cause and closes the coordinator with failure.
+# TaskDone releases the in-flight entry and replays pending input. A failed
+# session prints its actual cause and waits for Committed or Gap reconsideration;
+# the shared subscription and other sessions remain active.
 # Committed and Gap re-arm the notice waiter and replay the current snapshot.
 # Closed releases the coordinator role and closes its subscription.
 @unsafe
