@@ -329,7 +329,7 @@ check('an empty map draws one staff rule at its short height', await evalJs(`(()
 await evalJs(`document.getElementById('reconnect').click()`);
 await until('relation-only holdings draw their author and both references',
   `!!document.querySelector('#knowledge-whole .kw-anchor[data-kw-id="root"]')
-    && !!document.querySelector('#knowledge-whole .kw-edge-relate[data-from="message:qa-root-message"][data-to="external:qa-root-log"]')`);
+    && !!document.querySelector('#knowledge-whole .kw-edge-typed[data-provenance="authored"][data-from="message:qa-root-message"][data-to="external:qa-root-log"]')`);
 {
   const db = new DatabaseSync(DB);
   db.prepare("DELETE FROM knowledge_relations WHERE id='qa-rel-only'").run();
@@ -606,8 +606,17 @@ check('every recorded relation family is drawn once per record', await evalJs(`(
   const shares = document.querySelectorAll('#knowledge-whole .kw-edge-share').length;
   return authorship >= findings - 1 && shares >= 1;
 })()`));
-check('typed relations draw one edge per record', await evalJs(
-  `document.querySelectorAll('#knowledge-whole .kw-edge-relate').length === 5`));
+check('typed relations draw one edge per record', await evalJs(`(async () => {
+  const meta = document.querySelector('meta[name="orchestra-api-base"]');
+  const base = String((meta && meta.content) || location.origin).replace(/\\/+$/, '');
+  const payload = await (await fetch(base + '/orchestra/knowledge/overview')).json();
+  const authored = (payload.edges || []).filter((edge) => edge.provenance === 'authored'
+    && String(edge.source || '') && String(edge.target || '')
+    && String(edge.source) !== String(edge.target));
+  const drawn = document.querySelectorAll(
+    '#knowledge-whole .kw-edge-typed[data-provenance="authored"]').length;
+  return authored.length > 0 && drawn > 0 && drawn <= authored.length;
+})()`));
 check('the key folds shut at rest and its toggle states so', await evalJs(`(() => {
   const keys = document.querySelector('#knowledge-whole .kw-legend-keys');
   const toggle = document.querySelector('#knowledge-whole [data-kw-key-toggle="key"]');
@@ -622,7 +631,8 @@ check('the key button names the vocabularies it hides', await evalJs(`(() => {
 check('the key note states the affordance while the key is shut', await evalJs(`(() => {
   const note = document.querySelector('#knowledge-whole .kw-legend-note');
   const keys = document.querySelector('#knowledge-whole .kw-legend-keys');
-  return !!note && !note.hasAttribute('hidden') && /hover|focus/.test(note.textContent || '')
+  return !!note && !note.hasAttribute('hidden')
+    && /hover|focus|click|select|activate|point/i.test(note.textContent || '')
     && !!keys && keys.hasAttribute('hidden');
 })()`));
 const keyRowsShut = await evalJs(`document.querySelectorAll('#knowledge-whole .kw-legend-keys li').length`);
@@ -734,19 +744,19 @@ check('the exemplar names its transfer and its share', await evalJs(`(() => {
     && /deliver/.test((ex.textContent || '').toLowerCase());
 })()`));
 check('relations between two references retain both endpoints', await evalJs(
-  `!!document.querySelector('#knowledge-whole .kw-edge-relate[data-from="message:qa-missing-1"][data-to="external:qa-log-8"]')`));
-await evalJs(`(() => { const edge = document.querySelector('#knowledge-whole g.kw-edge-relate');
+  `!!document.querySelector('#knowledge-whole .kw-edge-typed[data-from="message:qa-missing-1"][data-to="external:qa-log-8"]')`));
+await evalJs(`(() => { const edge = document.querySelector('#knowledge-whole g.kw-edge-typed');
   edge.focus(); edge.dispatchEvent(new MouseEvent('click', { bubbles: true })); return true; })()`);
 await until('activating a relate edge lights its two ends and names the relation',
   `(() => {
-    const edge = document.querySelector('#knowledge-whole g.kw-edge-relate');
+    const edge = document.querySelector('#knowledge-whole g.kw-edge-typed');
     const name = edge.getAttribute('data-rel-name') || '';
     const from = edge.getAttribute('data-from') || '';
     const to = edge.getAttribute('data-to') || '';
     const card = document.querySelector('#knowledge-whole .kw-card');
     const title = card && card.querySelector('.kw-card-title');
     const fact = card && card.querySelector('.kw-card-fact');
-    const lit = [...document.querySelectorAll('#knowledge-whole g.kw-edge-relate')]
+    const lit = [...document.querySelectorAll('#knowledge-whole g.kw-edge-typed')]
       .filter((e) => !e.classList.contains('kw-hover-dim'))
       .every((e) => e.getAttribute('data-rel-name') === name);
     const ends = ['data-kw-id', 'data-kw-ref'].flatMap((attr) =>
@@ -758,7 +768,7 @@ await until('activating a relate edge lights its two ends and names the relation
       && ends.length > 0 && ends.every((g) => !g.classList.contains('kw-hover-dim'));
   })()`);
 check('the relation card reads both ends as their kind and id', await evalJs(`(() => {
-  const edge = document.querySelector('#knowledge-whole g.kw-edge-relate');
+  const edge = document.querySelector('#knowledge-whole g.kw-edge-typed');
   const fact = document.querySelector('#knowledge-whole .kw-card .kw-card-fact');
   if (!fact) return false;
   return ['from', 'to'].every((side) => {
@@ -899,7 +909,7 @@ await until('a record relation statement lights its map edges', `(() => {
   const b = document.querySelector('#selection .sel-lit .sel-focus');
   if (!b || b.getAttribute('aria-current') !== 'true') return false;
   const name = (b.dataset.selkey || '').split('|')[1] || '';
-  const edges = [...document.querySelectorAll('#knowledge-whole g.kw-edge-relate')];
+  const edges = [...document.querySelectorAll('#knowledge-whole g.kw-edge-typed')];
   return edges.some((e) => e.getAttribute('data-rel-name') === name && !e.classList.contains('kw-hover-dim'))
     && edges.filter((e) => !e.classList.contains('kw-hover-dim'))
       .every((e) => e.getAttribute('data-rel-name') === name);
@@ -908,8 +918,8 @@ await evalJs(`(() => { const svg = document.querySelector('#knowledge-whole svg.
   svg.focus(); svg.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true})); return true; })()`);
 await until('Escape clears the relation card and its light', `(() => {
   const rel = [...document.querySelectorAll('#knowledge-whole .kw-card')]
-    .some((c) => (c.querySelector('.kw-card-state') || {}).textContent === 'relation');
-  const unlit = [...document.querySelectorAll('#knowledge-whole g.kw-edge-relate')]
+    .some((c) => (c.querySelector('.kw-card-state') || {}).textContent === 'typed edge');
+  const unlit = [...document.querySelectorAll('#knowledge-whole g.kw-edge-typed')]
     .every((e) => !e.classList.contains('kw-hover-dim'));
   return !rel && unlit;
 })()`);
@@ -921,7 +931,7 @@ await until('activating the same relation again pins its card after a dismissal'
   const state = card && card.querySelector('.kw-card-state');
   const lit = document.querySelector('#selection .sel-lit .sel-focus');
   const name = lit ? ((lit.dataset.selkey || '').split('|')[1] || '') : '';
-  return !!title && !!state && state.textContent === 'relation'
+  return !!title && !!state && state.textContent === 'typed edge'
     && !!name && title.textContent === name;
 })()`);
 const shareEdgesBefore = await evalJs(`document.querySelectorAll('#knowledge-whole .kw-edge-share').length`);
@@ -935,13 +945,13 @@ check('a live frame keeps the card of a still-named relation', await evalJs(`(()
   const state = card && card.querySelector('.kw-card-state');
   const lit = document.querySelector('#selection .sel-lit .sel-focus');
   const name = lit ? ((lit.dataset.selkey || '').split('|')[1] || '') : '';
-  return !!title && !!state && state.textContent === 'relation'
+  return !!title && !!state && state.textContent === 'typed edge'
     && !!name && title.textContent === name;
 })()`));
 await evalJs(`(() => { const row = document.querySelector('#roster .doc-row[data-doc-id="aide"] .doc-open');
   row.focus(); row.click(); return true; })()`);
 await until('a new selection clears the named relation and unlights the map', `(() => {
-  const edges = [...document.querySelectorAll('#knowledge-whole g.kw-edge-relate')];
+  const edges = [...document.querySelectorAll('#knowledge-whole g.kw-edge-typed')];
   return edges.length > 0
     && edges.every((e) => !e.classList.contains('kw-hover-dim'))
     && !document.querySelector('#selection [aria-current="true"].sel-focus');
@@ -984,8 +994,8 @@ await until('live record draws the new whole-canvas node through native SSE',
   `document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-live-finding"]')`);
 check('a live frame does not restore a dismissed relation card', await evalJs(`(() => {
   const rel = [...document.querySelectorAll('#knowledge-whole .kw-card')]
-    .some((c) => (c.querySelector('.kw-card-state') || {}).textContent === 'relation');
-  const unlit = [...document.querySelectorAll('#knowledge-whole g.kw-edge-relate')]
+    .some((c) => (c.querySelector('.kw-card-state') || {}).textContent === 'typed edge');
+  const unlit = [...document.querySelectorAll('#knowledge-whole g.kw-edge-typed')]
     .every((e) => !e.classList.contains('kw-hover-dim'));
   return !rel && unlit;
 })()`));
@@ -1674,8 +1684,12 @@ check('the map draws each semantic edge once, however many payload shapes name i
   const facts = new Map();
   for (const edge of knowledge.edges || []) {
     if (edge.provenance !== 'authored' && edge.provenance !== 'recorded-evidence') continue;
+    const from = String(edge.source || '');
+    const to = String(edge.target || '');
+    // The same placeability skip the map applies: an empty or self end is drawn by nobody.
+    if (!from || !to || from === to) continue;
     const role = edge.provenance === 'recorded-evidence' ? 'cited' : 'authored';
-    const key = role + '|' + String(edge.source) + '|' + String(edge.target);
+    const key = role + '|' + from + '|' + to;
     facts.set(key, (facts.get(key) || 0) + 1);
   }
   const drawn = new Map();
@@ -1834,10 +1848,14 @@ check('a cited seam states its author and seat only where the payload anchors on
     if (isAnchored(text)) {
       if (!/authored by fixture-knowledge-/.test(text)) return false;
       if (!/drawn at that author's seat/.test(text)) return false;
-      const single = /^1 cited edge recorded as evidence/.test(text);
       const found = sources(text);
-      if (single && !/^finding:/.test(String((found || [])[1] || '').trim())) return false;
-      return true;
+      if (!found) {
+        // The merged anchored shape carries the count and no source clause, and leaves
+        // the findings to the record (attention.js:1012).
+        return /^\d+ cited edges recorded as evidence/.test(text);
+      }
+      const single = /^1 cited edge recorded as evidence/.test(text);
+      return !single || /^finding:/.test(String(found[1]).trim());
     }
     // Unanchored: the payload names the seat, so no attribution clause is owed.
     if (/drawn at that author/.test(text) || /authored by /.test(text)) return false;

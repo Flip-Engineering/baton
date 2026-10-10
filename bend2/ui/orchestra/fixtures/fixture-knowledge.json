@@ -9,7 +9,7 @@
     "rule": "parent-owner-member-routes-v1"
   },
   "fixture": true,
-  "fixtureNote": "Synthetic DOM behavior fixture for the Orchestra live view. Not live coordinator state. The knowledge object now carries nodes and edges in the shapes server.mjs knowledgeGraph emits, with deliveryRead as the projection delivery pointer, never a boolean, plus three named probes the projection never emits (probe-self, probe-empty, probe-inferred) and one held message node, so the skip rules and the floated dot can fail on data the fixture states. A fourth probe, probe-cited-seat, hands the stage a cited edge whose source is already a seat id, the unanchored variant the projection cannot reach, so the title check can fail on an attribution clause the payload does not make.",
+  "fixtureNote": "Synthetic DOM behavior fixture for the Orchestra live view. Not live coordinator state. The knowledge object now carries nodes and edges in the shapes server.mjs knowledgeGraph emits, with deliveryRead as the projection delivery pointer, never a boolean, plus three named probes the projection never emits (probe-self, probe-empty, probe-inferred) and one held message node, so the skip rules and the floated dot can fail on data the fixture states. A fourth probe, probe-cited-seat, hands the stage a cited edge whose source is already a seat id, the unanchored variant the projection cannot reach, so the title check can fail on an attribution clause the payload does not make. fixture-finding-a2 now cites the same structured reference as fixture-finding-a1, both authored by fixture-knowledge-player-a, so the two citations resolve to one drawn pair on the hall and merge there, while the map draws two typed edges because each citation source is its own finding. That is a shape the store can hold, not a probe: two findings of one author citing one recorded message.",
   "players": [
     {
       "id": "fixture-knowledge-root",
@@ -480,7 +480,7 @@
         "id": "fixture-finding-a2",
         "author": "fixture-knowledge-player-a",
         "claim": "A busy database read is recoverable; the page retries the snapshot.",
-        "evidence": "A snapshot request answered 503 while a writer held the database lock; the retry answered 200 with no page reload.",
+        "evidence": "message:fixture-message-1",
         "limits": "The retry interval is one second and was observed against a single writer.",
         "kind": "finding"
       },
@@ -816,7 +816,7 @@
         "id": "fixture-finding-a2",
         "author": "fixture-knowledge-player-a",
         "claim": "A busy database read is recoverable; the page retries the snapshot.",
-        "evidence": "A snapshot request answered 503 while a writer held the database lock; the retry answered 200 with no page reload.",
+        "evidence": "message:fixture-message-1",
         "limits": "The retry interval is one second and was observed against a single writer.",
         "kind": "finding",
         "reference": "finding:fixture-finding-a2",
@@ -1183,6 +1183,16 @@
         "relation": "Cited",
         "target": "external:fixture-external-2",
         "targetKind": "external",
+        "provenance": "recorded-evidence"
+      },
+      {
+        "id": "citation:fixture-finding-a2",
+        "author": "fixture-knowledge-player-a",
+        "source": "finding:fixture-finding-a2",
+        "sourceKind": "finding",
+        "relation": "Cited",
+        "target": "message:fixture-message-1",
+        "targetKind": "message",
         "provenance": "recorded-evidence"
       }
     ]
