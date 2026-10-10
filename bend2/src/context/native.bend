@@ -2392,6 +2392,9 @@ def query_control_recover_answered(+db: String, +binding: String, +owner: String
     case ProviderRefused{reason}:
       query_control_publish(db, binding, owner, control, "failed", "",
         "{\"condition\":\"queryControlRecover\",\"detail\":" ++ J.json_text(J.Jstr{reason}) ++ "}")
+    case ProviderRuntime{path, version}:
+      query_control_publish(db, binding, owner, control, "failed", "",
+        "{\"condition\":\"queryControlRecover\",\"detail\":\"providerRuntimeMalformed\"}")
 
 def query_control_recover_waited(+db: String, +binding: String, +owner: String, +control: String,
                                  +target: String, +stderr_file: String, +handle: U32) -> IO(Unit):
@@ -2429,6 +2432,11 @@ def query_control_recover_drain_answered(+db: String, +binding: String, +owner: 
         "{\"condition\":\"queryControlRecover\",\"drainCode\":" ++ U32.show(code)
         ++ ",\"drainDetail\":" ++ J.json_text(J.Jstr{detail})
         ++ ",\"detail\":" ++ J.json_text(J.Jstr{reason}) ++ "}")
+    case ProviderRuntime{path, version}:
+      query_control_publish(db, binding, owner, control, "failed", "",
+        "{\"condition\":\"queryControlRecover\",\"drainCode\":" ++ U32.show(code)
+        ++ ",\"drainDetail\":" ++ J.json_text(J.Jstr{detail})
+        ++ ",\"detail\":\"providerRuntimeMalformed\"}")
 
 def query_control_recover_drain_waited(+db: String, +binding: String, +owner: String, +control: String,
                                        +target: String, +stderr_file: String, +handle: U32,
