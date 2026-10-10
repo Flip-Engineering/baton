@@ -869,13 +869,13 @@ def index_options(args: List<String>, +base: Command, +inbox: Bool, +condition: 
       Bool.pick(Command,Bool.not(String.is_empty(next_condition)),index_options(rest,base,inbox,next_condition,state,index,pretty,True{}),Invalid{})
     case _: Invalid{}
 
-def parse(+args: List<String>) -> Command:
+def parse(args: List<String>) -> Command:
   match args:
     case "pending" <> rest:
       index_options(rest,Pending{},False{},"1","m.receipt IS NULL",False{},False{},False{})
     case "inbox" <> +id <> rest:
       index_options(rest,Inbox{id},True{},"m.recipient=" ++ q(id),"m.receipt IS NULL",False{},False{},False{})
-    case _: parse_basic(args)
+    case other: parse_basic(other)
 
 law help_word_selects_the_help_command:
   {parse(["help"]) == Help{} : Command}
