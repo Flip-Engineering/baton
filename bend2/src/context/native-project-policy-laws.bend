@@ -18,15 +18,15 @@ def project_value(+disabled: J.Json, +preferred: J.Json) -> J.Json:
     pair("disabled", disabled, pair("preferred", preferred, J.Jnil{})))}
 
 law project_policy_decodes_unique_disabled_and_preferred_module_ids:
-  {Policy.decode(project_value(strings("example.disabled", empty_array()),
-    strings("example.preferred", empty_array()))) == Policy.PolicyDecoded{
+  {Policy.decode(project_value(strings("example.disabled", J.Jnil{}),
+    strings("example.preferred", J.Jnil{}))) == Policy.PolicyDecoded{
       Policy.ProjectPolicy{Eng.ss_one("example.disabled"), Eng.ss_one("example.preferred")}} : Policy.PolicyDecode}
 
 def project_policy_decodes_unique_disabled_and_preferred_module_ids():
   {==}
 
 law project_policy_refuses_duplicate_disabled_ids:
-  {Policy.decode(project_value(strings("example.mod", strings("example.mod", empty_array())), empty_array())) ==
+  {Policy.decode(project_value(strings("example.mod", strings("example.mod", J.Jnil{})), empty_array())) ==
     Policy.PolicyRefused{"projectPolicyMalformed"} : Policy.PolicyDecode}
 
 def project_policy_refuses_duplicate_disabled_ids():

@@ -80,6 +80,7 @@ def text_array(+items: J.Json) -> Eng.SS:
 
 def text_array_values(+items: J.Json) -> Bool:
   match items:
+    case J.Jnil{}: True{}
     case J.Jarr{J.Jnil{}, J.Jnil{}}: True{}
     case J.Jarr{+head, +tail}:
       Bool.and(Req.is_jstr(head), Bool.and(Bool.not(String.is_empty(Req.text_of(head))), text_array_values(tail)))
@@ -92,8 +93,14 @@ def text_list_unique(xs: List<String>, +seen: Eng.SS) -> Bool:
       Bool.pick(Bool, Eng.ss_member(seen, head), False{},
         text_list_unique(tail, Eng.SSCons{head, seen}))
 
+def text_array_shape(items: J.Json) -> Bool:
+  match items:
+    case J.Jarr{head, tail}: True{}
+    case other: False{}
+
 def text_array_valid(+items: J.Json) -> Bool:
-  Bool.and(text_array_values(items), text_list_unique(text_array_tail(items), Eng.ss_empty()))
+  Bool.and(text_array_shape(items),
+    Bool.and(text_array_values(items), text_list_unique(text_array_tail(items), Eng.ss_empty())))
 
 def policy_fields_valid(+value: J.Json) -> Bool:
   Bool.and(Req.is_jobj(value),
