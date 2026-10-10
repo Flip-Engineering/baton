@@ -1753,6 +1753,58 @@ check('a typed edge carries its provenance marker and a stroke that tells them a
       && dash(authored[0]) !== dash(cited[0])
       && dash(cited[0]) !== 'none';
   })()`));
+// The new map chrome, held to the same bar: each check reads the drawn
+// thing and can fail on the fixture's own payload.
+check('no dim applies on the fixture page first render', await evalJs(
+  `document.querySelectorAll('#knowledge-whole .kw-dim').length === 0`));
+await evalJs(`(() => {
+  const edge = document.querySelector('#knowledge-whole .kw-edge-typed');
+  if (edge) edge.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  return true;
+})()`);
+await until('a lit edge brings the direction control',
+  `document.querySelectorAll('#knowledge-whole .kw-direction button').length >= 3`);
+check('the direction control offers the three choices and dims by them', await evalJs(`(() => {
+  const buttons = [...document.querySelectorAll('#knowledge-whole .kw-direction button')];
+  const labels = buttons.map((b) => (b.textContent || '').trim());
+  if (!labels.includes('all') || !labels.includes('outgoing') || !labels.includes('incoming')) return false;
+  const before = document.querySelectorAll('#knowledge-whole .kw-dim').length;
+  const outgoing = buttons.find((b) => (b.textContent || '').trim() === 'outgoing');
+  if (outgoing) outgoing.click();
+  const dimmed = document.querySelectorAll('#knowledge-whole .kw-dim').length;
+  const all = buttons.find((b) => (b.textContent || '').trim() === 'all');
+  if (all) all.click();
+  const restored = document.querySelectorAll('#knowledge-whole .kw-dim').length;
+  return dimmed > before && restored === before;
+})()`));
+await evalJs(`(() => {
+  const ring = document.querySelector('#knowledge-whole [data-reference-only="true"][data-kw-node="message:fixture-message-2"]');
+  if (ring) ring.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  return true;
+})()`);
+await until('the reference card answers with its junction rows',
+  `document.querySelectorAll('#knowledge-whole .kw-junction').length > 0`);
+check('a junction row names its direction and the edge it stands for', await evalJs(`(() => {
+  const rows = [...document.querySelectorAll('#knowledge-whole .kw-junction')];
+  return rows.length > 0 && rows.every((row) => {
+    const dir = row.getAttribute('data-dir') || '';
+    const words = row.textContent || '';
+    return (dir === 'in' || dir === 'out') && words.includes(dir + ' · ');
+  });
+})()`));
+await evalJs(`(() => {
+  const row = document.querySelector('#knowledge-whole .kw-junction');
+  if (row) row.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  return true;
+})()`);
+await until('the walk bar keeps the visited edges as steps',
+  `document.querySelectorAll('#knowledge-whole .kw-walk-step').length >= 2`);
+check('a walk step re-lights the edge it names', await evalJs(`(() => {
+  const steps = [...document.querySelectorAll('#knowledge-whole .kw-walk-step')];
+  if (steps.length < 2) return false;
+  return steps.every((step) => /\u2192/.test(step.textContent || '')
+    && (step.getAttribute('aria-label') || '').startsWith('Re-light '));
+})()`));
 check('the key rows follow the drawn provenance', await evalJs(`(() => {
   const words = (document.querySelector('#knowledge-whole') || { textContent: '' }).textContent || '';
   return /authored claim/.test(words) && /recorded evidence/.test(words);
