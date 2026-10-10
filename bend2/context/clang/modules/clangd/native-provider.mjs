@@ -60,6 +60,7 @@ export async function executeInvocation(invocation, { packageRoot }) {
     const compile = compilation(request, cwd, file);
     const text = readFileSync(file, 'utf8');
     const uri = pathToFileURL(file).href;
+    const selected = Array.isArray(request.select) ? request.select : [];
     const document = {
       version: 1,
       command: 'diagnose',
@@ -72,6 +73,7 @@ export async function executeInvocation(invocation, { packageRoot }) {
       text,
       compileArguments: compile.arguments,
       methods: methodRequests(request, uri),
+      requireDiagnosticPublication: selected.includes('diagnostics'),
     };
     const adapter = join(packageRoot, 'adapter/clangd.mjs');
     const result = await runAdapter(adapter, document);

@@ -2,7 +2,7 @@
 
 The Clang source contains two selected native modules:
 
-- `clangd` provides definition, type, references, calls, callers, and diagnostics for C and C++ files. It runs `BATON2_CLANGD` when configured, or resolves `clangd` from `PATH`.
+- `clangd` provides definition, type, references, calls, callers, and diagnostics for C and C++ files. It runs `BATON2_CLANGD` when configured, or resolves `clangd` from `PATH`. Every `textDocument/publishDiagnostics` message is retained with its complete diagnostic entries: URI, version, message, range, severity, code, and source. When the request selects `diagnostics`, completion requires a publication for the opened document's exact URI and exact recorded version, and an explicit empty array completes with no diagnostics; publications with another URI, another version, or no version are retained evidence that cannot complete the projection. When the request selects no `diagnostics` projection, the query completes on its language-service responses and retains observed publications as evidence. No timer treats silence as completion or failure.
 - `clang-analyzer` runs the first-party LibTooling extractor for type, calls, diagnostics, authorization, database-access, and control-flow projections.
 
 Both modules implement the native `sourceAnalysis` invocation and return a protocol-version-2 event frame. They read the request's source path and `compile_commands.json` selected by `options.project`; the default is `compile_commands.json` in the request working directory. The extractor receives the matching compile command and the request's position or symbol subject. Provider startup, compiler-database, executable, protocol, and compiler failures remain in the returned result.

@@ -7,9 +7,11 @@
 //     for the exact URI carrying the exact recorded integer version; an
 //     explicit empty array completes with no diagnostics. Versionless
 //     publications, other URIs and other versions are retained protocol
-//     evidence that cannot complete the projection. No timer treats silence
-//     as completion or failure; provider exit, transport failure and
-//     structured protocol errors are their own failure evidence.
+//     evidence that cannot complete the projection. Requests that select no
+//     diagnostics projection complete on their language-service responses,
+//     with publications retained as evidence. No timer treats silence as
+//     completion or failure; provider exit, transport failure and structured
+//     protocol errors are their own failure evidence.
 // Floor: Node 22.15.0.
 import { spawn } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
@@ -86,10 +88,17 @@ async function providerEngines(doc) {
 //   root:<abs capture dir>, file:<path as in compile command>,
 //   uriFile:<abs file whose publication completes the projection>,
 //   docVersion:<integer>, languageId:<string>, text:<captured bytes string>,
-//   compileArguments:[...], methods:[{method, params}]
+//   compileArguments:[...], methods:[{method, params}],
+//   requireDiagnosticPublication:<boolean>  (diagnostics projection selected)
 async function diagnose(doc) {
   if (doc.version !== 1) refuse('diagnose', 'versionMustEqual1');
   if (!Number.isInteger(doc.docVersion)) refuse('diagnose', 'docVersionMustBeInteger');
+  if (
+    doc.requireDiagnosticPublication !== undefined &&
+    typeof doc.requireDiagnosticPublication !== 'boolean'
+  ) {
+    refuse('diagnose', 'requireDiagnosticPublicationMustBeBoolean');
+  }
   if (!Array.isArray(doc.methods)) refuse('diagnose', 'methodsMustBeArray');
   if (!Array.isArray(doc.compileArguments)) refuse('diagnose', 'compileArgumentsMustBeArray');
   const real = realPath(doc.executable);
@@ -113,22 +122,27 @@ async function diagnose(doc) {
   let serverInfo = null;
   let failure = null;
   let publicationMatched = false;
+  let matchedPublication = null;
   let initialized = false;
 
   function baseHandler(msg) {
     if (msg.method === 'textDocument/publishDiagnostics') {
-      publications.push({
+      // Retain the complete publication: every diagnostic entry with its
+      // message, range, severity, code and source survives in the output.
+      const publication = {
         uri: msg.params?.uri ?? null,
         version: msg.params?.version ?? null,
-        diagnosticCount: Array.isArray(msg.params?.diagnostics)
-          ? msg.params.diagnostics.length
+        diagnostics: Array.isArray(msg.params?.diagnostics)
+          ? msg.params.diagnostics
           : null,
-      });
+      };
+      publications.push(publication);
       if (
         msg.params?.uri === targetUri &&
         msg.params?.version === doc.docVersion
       ) {
         publicationMatched = true;
+        matchedPublication = publication;
       }
       return;
     }
@@ -174,6 +188,10 @@ async function diagnose(doc) {
   });
 
   // Event loop: resolve on completion or provider failure. No timers.
+  // The diagnostics projection is required only when the caller selected
+  // diagnostics; definition/references/type/calls requests complete on
+  // their responses, with publications retained as evidence either way.
+  const diagnosticsRequired = doc.requireDiagnosticPublication === true;
   while (true) {
     if (lsp.closed) {
       failure = {
@@ -187,7 +205,7 @@ async function diagnose(doc) {
       const id = requestedIds[i];
       return id !== undefined && responses.has(id);
     });
-    if (publicationMatched && allResponses) break;
+    if (allResponses && (publicationMatched || !diagnosticsRequired)) break;
     // Structured protocol errors on requested ids are failure evidence.
     for (const [, msg] of responses) {
       if (msg.error) {
@@ -251,9 +269,7 @@ async function diagnose(doc) {
     serverIdentity: serverInfo,
     diagnostics: {
       completed: publicationMatched,
-      matchingPublication: publicationMatched
-        ? { uri: targetUri, version: doc.docVersion }
-        : null,
+      matchingPublication: publicationMatched ? matchedPublication : null,
       publications,
     },
     responses: outResponses,
@@ -265,7 +281,7 @@ async function diagnose(doc) {
     })),
     failure,
     executable: { path: real },
-    limits: publicationMatched
+    limits: publicationMatched || !diagnosticsRequired
       ? []
       : [
           {
