@@ -112,7 +112,7 @@ def m17_missing_observation_reports_to_the_parent(db, player, id, text):
 # keyed by the identity the caller supplied.
 law m1_session_answer_reads_the_stored_row:
   for +id: String
-  {C.session_result(id) == "SELECT json_patch(json_object('id',id,'parent',parent,'harness',harness,'model',model,'effort',effort,'native',native,'observedHarness',observed_harness,'observedModel',observed_model,'observedEffort',observed_effort,'endpoint',endpoint,'endpointArgv'," ++ C.endpoint_argv("endpoint") ++ ",'workspace',workspace,'branch',branch,'base',base,'kind'," ++ C.session_kind("sessions.id") ++ ",'role'," ++ C.public_role("sessions.id") ++ ")," ++ C.session_state_sql("sessions.id") ++ ") FROM sessions WHERE id=" ++ C.q(id) ++ ";" : String}
+  {C.session_result(id) == "SELECT json_patch(json_object('id',id,'parent',parent,'harness',harness,'model',model,'effort',effort,'native',native,'observedHarness',observed_harness,'observedModel',observed_model,'observedEffort',observed_effort,'endpoint',endpoint,'endpointArgv'," ++ C.endpoint_argv("endpoint") ++ ",'workspace',workspace,'branch',branch,'base',base,'kind'," ++ C.session_kind("sessions.id") ++ ",'role'," ++ C.public_role("sessions.id") ++ ",'taskCompletion'," ++ C.task_state_sql("sessions.id") ++ ")," ++ C.session_state_sql("sessions.id") ++ ") FROM sessions WHERE id=" ++ C.q(id) ++ ";" : String}
 
 def m1_session_answer_reads_the_stored_row(id):
   {==}

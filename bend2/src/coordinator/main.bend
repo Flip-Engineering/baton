@@ -59,7 +59,7 @@ def log_answer(+saved: String) -> IO(Unit):
 def execute(+db: String, command: C.Command) -> IO(Unit):
   match command:
     case C.Help{}: IO.write(usage() ++ Knowledge.tool_help())
-    case C.Invalid{}: IO.die(Unit,2,usage())
+    case C.Invalid{}: IO.die(Unit,2,usage() ++ Knowledge.tool_help())
     case C.Stop{session,id,reason}: Stop.run(db,session,id,reason,False{})
     case C.ForceStop{session,id}: Stop.run(db,session,id,"",True{})
     case C.Start{session,harness,cmd,model,effort,cwd,log,id,task}:

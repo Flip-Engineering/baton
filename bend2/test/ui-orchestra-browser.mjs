@@ -391,7 +391,7 @@ check('cited edges come only from structured evidence', (() => {
   const edges = (overviewPayload && overviewPayload.edges) || [];
   const findings = (overviewPayload && overviewPayload.findings) || [];
   const structured = new Map(findings.map((row) => [row.id,
-    /^(message:|finding:|file:|https?:\\/\\/|external:)/.test(String(row.evidence || ''))]));
+    /^(message:|finding:|file:|https?:\/\/|external:)/.test(String(row.evidence || ''))]));
   const cited = edges.filter((edge) => edge.provenance === 'recorded-evidence');
   return edges.every((edge) => edge.provenance === 'authored' || edge.provenance === 'recorded-evidence')
     && cited.length === findings.filter((row) => structured.get(row.id)).length

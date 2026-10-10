@@ -8,7 +8,7 @@ import ../git/text.bend as Tx
 
 law session_answer_preserves_the_supplied_admission_condition:
   for condition: String
-  {C.session_result_where(condition) == "SELECT json_patch(json_object('id',id,'parent',parent,'harness',harness,'model',model,'effort',effort,'native',native,'observedHarness',observed_harness,'observedModel',observed_model,'observedEffort',observed_effort,'endpoint',endpoint,'endpointArgv'," ++ C.endpoint_argv("endpoint") ++ ",'workspace',workspace,'branch',branch,'base',base,'kind'," ++ C.session_kind("sessions.id") ++ ",'role'," ++ C.public_role("sessions.id") ++ ")," ++ C.session_state_sql("sessions.id") ++ ") FROM sessions WHERE " ++ condition ++ ";" : String}
+  {C.session_result_where(condition) == "SELECT json_patch(json_object('id',id,'parent',parent,'harness',harness,'model',model,'effort',effort,'native',native,'observedHarness',observed_harness,'observedModel',observed_model,'observedEffort',observed_effort,'endpoint',endpoint,'endpointArgv'," ++ C.endpoint_argv("endpoint") ++ ",'workspace',workspace,'branch',branch,'base',base,'kind'," ++ C.session_kind("sessions.id") ++ ",'role'," ++ C.public_role("sessions.id") ++ ",'taskCompletion'," ++ C.task_state_sql("sessions.id") ++ ")," ++ C.session_state_sql("sessions.id") ++ ") FROM sessions WHERE " ++ condition ++ ";" : String}
 
 def session_answer_preserves_the_supplied_admission_condition(condition):
   {==}
@@ -86,7 +86,7 @@ def delivery_rows_present_the_recipient_endpoint_argv():
   {==}
 
 law status_rows_present_the_stored_endpoint_argv:
-  {C.sql(C.Status{}) == "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_patch(json_object('id',id,'parent',parent,'harness',harness,'model',model,'effort',effort,'native',native,'observedHarness',observed_harness,'observedModel',observed_model,'observedEffort',observed_effort,'endpoint',endpoint,'endpointArgv'," ++ C.endpoint_argv("endpoint") ++ ",'workspace',workspace,'branch',branch,'base',base,'kind'," ++ C.session_kind("sessions.id") ++ ",'role'," ++ C.public_role("sessions.id") ++ ",'pending',(SELECT count(*) FROM messages WHERE recipient=sessions.id AND receipt IS NULL AND NOT (" ++ C.stopped_session_sql("sessions.id") ++ " AND " ++ C.execution_input_sql("messages.kind") ++ ")))," ++ C.session_state_sql("sessions.id") ++ ") AS item FROM sessions ORDER BY id);" : String}
+  {C.sql(C.Status{}) == "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_patch(json_object('id',id,'parent',parent,'harness',harness,'model',model,'effort',effort,'native',native,'observedHarness',observed_harness,'observedModel',observed_model,'observedEffort',observed_effort,'endpoint',endpoint,'endpointArgv'," ++ C.endpoint_argv("endpoint") ++ ",'workspace',workspace,'branch',branch,'base',base,'kind'," ++ C.session_kind("sessions.id") ++ ",'role'," ++ C.public_role("sessions.id") ++ ",'pending',(SELECT count(*) FROM messages WHERE recipient=sessions.id AND receipt IS NULL AND NOT (" ++ C.stopped_session_sql("sessions.id") ++ " AND " ++ C.execution_input_sql("messages.kind") ++ ")),'taskCompletion'," ++ C.task_state_sql("sessions.id") ++ ")," ++ C.session_state_sql("sessions.id") ++ ") AS item FROM sessions ORDER BY id);" : String}
 
 def status_rows_present_the_stored_endpoint_argv():
   {==}

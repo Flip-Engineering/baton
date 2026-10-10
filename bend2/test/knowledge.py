@@ -99,8 +99,9 @@ class Knowledge(unittest.TestCase):
         self.call('promote-scoped', 'quota-to-group', 'worker', 'session', 'grand',
                   'group', 'review-group', 'quota-observation')
         self.assertEqual(self.ids(self.scoped('group', 'review-group')), ['quota-observation'])
-        self.assertEqual(self.ids(self.call('knowledge-relations', 'root', 'group', 'review-group')),
-                         ['quota-support', 'quota-supersedes'])
+        self.assertEqual([row['id'] for row in self.call(
+            'knowledge-relations', 'root', 'group', 'review-group')],
+            ['quota-supersedes', 'quota-support'])
         self.assertEqual(self.scoped('universal'), [])
         self.call('promote', 'quota-to-root', 'root', 'worker', 'root', 'quota-observation')
         self.assertEqual(self.ids(self.scoped('universal')), ['quota-observation'])
@@ -256,7 +257,12 @@ class Knowledge(unittest.TestCase):
                   'Supports', 'message:group-b')
 
         own = self.call('knowledge-relations', 'grand')
-        self.assertEqual(own, [message_link, external_link])
+        self.assertEqual(own, [
+            {**message_link, 'sourceReference': later, 'sourceKind': 'message',
+             'targetReference': first, 'targetKind': 'message'},
+            {**external_link, 'sourceReference': 'file:source λ', 'sourceKind': 'external',
+             'targetReference': 'run:result λ', 'targetKind': 'external'},
+        ])
         self.assertEqual(self.call('knowledge-relations', 'grand', '--pretty'), own)
         self.assertEqual((own[0]['source'], own[0]['relation'], own[0]['target']),
                          (later, 'Supersedes', first))

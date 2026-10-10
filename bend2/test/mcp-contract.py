@@ -113,15 +113,23 @@ class McpContract(unittest.TestCase):
             'external:observation λ', 'DerivedFrom', 'file:source λ').stdout)
         message = json.loads(self.coord('relate', 'message-link', 'w1',
             'message:turn-1', 'Supersedes', "message:prior report's λ").stdout)
+        external_read = {
+            **external, 'sourceReference': 'external:observation λ', 'sourceKind': 'external',
+            'targetReference': 'file:source λ', 'targetKind': 'external',
+        }
+        message_read = {
+            **message, 'sourceReference': 'message:turn-1', 'sourceKind': 'message',
+            'targetReference': "message:prior report's λ", 'targetKind': 'message',
+        }
         result = self.tool('baton2_knowledge_relations')
         self.assertFalse(result.get('isError', False))
-        self.assertEqual(json.loads(result['content'][0]['text']), [external])
+        self.assertEqual(json.loads(result['content'][0]['text']), [external_read])
         result = self.tool('baton2_knowledge_relations', {'scope': 'worker', 'subject': 'w1'})
         self.assertFalse(result.get('isError', False))
-        self.assertEqual(json.loads(result['content'][0]['text']), [message])
+        self.assertEqual(json.loads(result['content'][0]['text']), [message_read])
         result = self.tool('baton2_knowledge_relations', {'scope': 'all', 'pretty': True})
         self.assertFalse(result.get('isError', False))
-        self.assertEqual(json.loads(result['content'][0]['text']), [external, message])
+        self.assertEqual(json.loads(result['content'][0]['text']), [external_read, message_read])
         self.assertEqual(json.loads(self.coord('knowledge', 'root').stdout), [])
 
         self.coord('record-typed', 'measured-recovery', 'w1', 'evidence',

@@ -249,7 +249,20 @@ class NativeFailureOutput(unittest.TestCase):
                        str(fixture.directory / 'direct.jsonl'), 'native-parent']
         original = fixture.spawn(*direct_args)
         started, request = fixture.accept_child(original, 'parent')
-        self.assertEqual(request['prompt'], task.read_text())
+        task_body = task.read_text()
+        prompt = request['prompt']
+        self.assertIn('A native turn ending does not finish your task.', prompt)
+        self.assertIn('completion-request', prompt)
+        self.assertIn('completion-confirmed', prompt)
+        self.assertIn('knowledge-search READER', prompt)
+        self.assertIn('Message (task-assignment) from parent [id: completed-direct:task-input]:',
+                      prompt)
+        self.assertTrue(prompt.endswith(task_body))
+        self.assertEqual(fixture.coord('delivery', 'completed-direct:task-input')['body'], task_body)
+        with sqlite3.connect(fixture.db) as database:
+            self.assertEqual(database.execute(
+                'SELECT task FROM direct_turn_requests WHERE id=? AND session=?',
+                ('completed-direct', 'parent')).fetchone(), (task_body,))
         self.assertEqual(request['native'], 'native-parent')
         fixture.action(started, body='Stored direct report.')
         self.assertEqual(started.readline(), b'')
