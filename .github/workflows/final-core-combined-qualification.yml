@@ -23,6 +23,11 @@ on:
         description: One existing runtime suite to recheck; empty runs the full selection
         required: false
         type: string
+      browser_capture_only:
+        description: Capture initial and worker knowledge views for partial visual inspection
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   actions: read
@@ -549,6 +554,7 @@ jobs:
             ui-orchestra-browser)
               "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" ui-orchestra-browser \
                 env PYTHONUNBUFFERED=1 BATON2_REQUIRE_NATIVE_VIEW=1 BATON2_NATIVE_BINARY="$PWD/.scratch/bend2/baton2" \
+                FINAL_NATIVE_CONTEXT_BROWSER_CAPTURE_ONLY='${{ inputs.browser_capture_only }}' \
                 python3 -u bend2/test/ui-orchestra-browser.py -v
               ;;
             node-provider-ui)
