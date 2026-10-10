@@ -54,21 +54,142 @@ class CodexRootAdapter(unittest.TestCase):
             fields = line.strip().split(None, 3)
             if len(fields) == 4 and fields[3] == expected and not fields[2].startswith('Z'):
                 owners.add(int(fields[0]))
+        try:
+            observation = getattr(self, '_cleanup_observation', None)
+            if observation is not None:
+                recorded = {'argv': ['ps', '-axo', 'pid=,ppid=,stat=,command='],
+                            'returncode': processes.returncode, 'stdout': processes.stdout,
+                            'stderr': processes.stderr, 'expectedOwnerArgv': expected,
+                            'matchedOwnerIds': sorted(owners)}
+                observation.setdefault('ordinaryPsInitial', recorded)
+                observation['ordinaryPsLast'] = recorded
+                observation['ordinaryPsCalls'] = observation.get('ordinaryPsCalls', 0) + 1
+        except BaseException:
+            pass
         return owners
+
+    def cleanup_ps(self, wide):
+        argv = ['ps', *(['-ww'] if wide else []), '-axo', 'pid=,ppid=,stat=,command=']
+        result = subprocess.run(argv, capture_output=True, text=True)
+        expected = f'{EXE.resolve()} --instance-owner {self.db.resolve()}'
+        matches = []
+        for line in result.stdout.splitlines():
+            fields = line.strip().split(None, 3)
+            if len(fields) == 4 and fields[3] == expected and not fields[2].startswith('Z'):
+                matches.append(int(fields[0]))
+        return {'argv': argv, 'returncode': result.returncode, 'stdout': result.stdout,
+                'stderr': result.stderr, 'expectedOwnerArgv': expected,
+                'matchedOwnerIds': sorted(matches)}
+
+    def cleanup_entries(self):
+        root = pathlib.Path(self.temp.name)
+        rows = []
+        def add(path):
+            row = {'path': str(path.relative_to(root)) if path != root else '.'}
+            try:
+                info = path.lstat()
+                row.update(mode=info.st_mode, uid=info.st_uid, device=info.st_dev,
+                           inode=info.st_ino, size=info.st_size, mtimeNs=info.st_mtime_ns)
+            except OSError as error:
+                row['error'] = repr(error)
+            rows.append(row)
+        add(root)
+        for directory, subdirs, files in os.walk(root, followlinks=False,
+                onerror=lambda error: rows.append({'walkError': repr(error)})):
+            for name in sorted(subdirs + files):
+                add(pathlib.Path(directory) / name)
+        return rows
+
+    def cleanup_related_fds(self):
+        root = self.temp.name
+        related = []
+        if not os.path.isdir('/proc'):
+            return related
+        for entry in os.scandir('/proc'):
+            if not entry.name.isdigit():
+                continue
+            proc = pathlib.Path(entry.path)
+            found = []
+            try:
+                cwd = os.readlink(proc / 'cwd')
+                if cwd == root or cwd.startswith(root + '/'):
+                    found.append({'fd': 'cwd', 'target': cwd})
+            except OSError:
+                pass
+            try:
+                for fd in os.scandir(proc / 'fd'):
+                    try:
+                        target = os.readlink(fd.path)
+                        if target == root or target.startswith(root + '/'):
+                            found.append({'fd': fd.name, 'target': target})
+                    except OSError:
+                        pass
+            except OSError:
+                pass
+            if found:
+                try:
+                    argv = (proc / 'cmdline').read_bytes().rstrip(b'\0').split(b'\0')
+                    command = [arg.decode('utf-8', 'replace') for arg in argv]
+                except OSError as error:
+                    command = [repr(error)]
+                related.append({'pid': int(entry.name), 'argv': command, 'links': found})
+        return related
+
+    def cleanup_failure_observe(self, error):
+        try:
+            observation = self._cleanup_observation
+            observation['cleanupError'] = repr(error)
+            if isinstance(error, subprocess.CalledProcessError):
+                observation['failedCommand'] = {'argv': error.cmd, 'returncode': error.returncode,
+                                                'stdout': error.stdout, 'stderr': error.stderr}
+            observation['beforeDirectoryEntries'] = 'unavailable'
+            observation['timeNs'] = time.time_ns()
+            for key, collect in (('ordinaryPsAfterFailure', lambda: self.cleanup_ps(False)),
+                                 ('widePsAfterFailure', lambda: self.cleanup_ps(True)),
+                                 ('remainingEntries', self.cleanup_entries),
+                                 ('relatedFdsAfterFailure', self.cleanup_related_fds)):
+                try:
+                    observation[key] = collect()
+                except BaseException as diagnostic_error:
+                    observation[key + 'Error'] = repr(diagnostic_error)
+            try:
+                sys.stderr.write('CODEX_CLEANUP_OBSERVATION '
+                                 + json.dumps(observation, ensure_ascii=False) + '\n')
+                sys.stderr.flush()
+            except BaseException:
+                pass
+        except BaseException:
+            pass
 
     def cleanup_fixture(self):
         try:
-            if self.db.exists():
-                owners = self.instance_owner_pids()
-                stopped = subprocess.run([str(EXE), '--instance-shutdown', str(self.db)],
-                                         capture_output=True, text=True)
-                self.assertEqual(stopped.returncode, 0, stopped.stdout + stopped.stderr)
-                while owners & self.instance_owner_pids():
-                    time.sleep(.01)
-        except Exception:
-            self.temp._finalizer.detach()
+            self._cleanup_observation = {'test': self.id(), 'directory': self.temp.name,
+                                         'database': str(self.db)}
+        except BaseException:
+            self._cleanup_observation = None
+        try:
+            try:
+                if self.db.exists():
+                    owners = self.instance_owner_pids()
+                    stopped = subprocess.run([str(EXE), '--instance-shutdown', str(self.db)],
+                                             capture_output=True, text=True)
+                    try:
+                        self._cleanup_observation['shutdown'] = {
+                            'argv': [str(EXE), '--instance-shutdown', str(self.db)],
+                            'returncode': stopped.returncode, 'stdout': stopped.stdout,
+                            'stderr': stopped.stderr}
+                    except BaseException:
+                        pass
+                    self.assertEqual(stopped.returncode, 0, stopped.stdout + stopped.stderr)
+                    while owners & self.instance_owner_pids():
+                        time.sleep(.01)
+            except Exception:
+                self.temp._finalizer.detach()
+                raise
+            self.temp.cleanup()
+        except BaseException as error:
+            self.cleanup_failure_observe(error)
             raise
-        self.temp.cleanup()
 
     def coord(self, *args, ok=True):
         p = subprocess.run(
