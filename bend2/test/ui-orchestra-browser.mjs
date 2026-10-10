@@ -1710,6 +1710,28 @@ check('the map draws each semantic edge once, however many payload shapes name i
   }
   return true;
 })()`));
+// The two map heads and the two stroke textures. The property read is
+// stroke-dasharray, because the pair differs there rather than in colour or width:
+// the typed edge sets a dash for the cited stroke and none for the authored one
+// (knowledge.js:2052), and marker-end names the marker its provenance owns (:2054).
+check('a typed edge carries its provenance marker and a stroke that tells them apart',
+  await evalJs(`(() => {
+    const edges = [...document.querySelectorAll('#knowledge-whole .kw-edge-typed')];
+    if (!edges.length) return false;
+    const authored = edges.filter((e) => e.classList.contains('kw-edge-authored'));
+    const cited = edges.filter((e) => e.classList.contains('kw-edge-cited'));
+    if (!authored.length || !cited.length) return false;
+    const head = (e) => e.getAttribute('marker-end') || '';
+    const dash = (e) => String(getComputedStyle(e).strokeDasharray || '');
+    return authored.every((e) => head(e).includes('kw-arrow-authored')
+        && !head(e).includes('kw-arrow-cited'))
+      && cited.every((e) => head(e).includes('kw-arrow-cited')
+        && !head(e).includes('kw-arrow-authored'))
+      && authored.every((e) => dash(e) === dash(authored[0]))
+      && cited.every((e) => dash(e) === dash(cited[0]))
+      && dash(authored[0]) !== dash(cited[0])
+      && dash(cited[0]) !== 'none';
+  })()`));
 check('the key rows follow the drawn provenance', await evalJs(`(() => {
   const words = (document.querySelector('#knowledge-whole') || { textContent: '' }).textContent || '';
   return /authored claim/.test(words) && /recorded evidence/.test(words);
@@ -1778,6 +1800,19 @@ check('the stage draws the authored seam on the arc with its chevron and its val
   })()`));
 // The placement rule the hall states, applied to the fixture payload and counted
 // against the drawing rather than pinned: at least one end a seat, the ends distinct.
+// The two provenance classes are the claim, so their own values are pinned here and
+// read from the drawn elements, not from the sheet: a class that stops being applied
+// fails the check rather than passing on the stylesheet's word.
+check('a cited seam draws at the quieter value and an authored one at the brighter',
+  await evalJs(`(() => {
+    const authored = [...document.querySelectorAll('.att-seam-authored')];
+    const cited = [...document.querySelectorAll('.att-seam-cited')];
+    if (!authored.length || !cited.length) return false;
+    const value = (seam) => Number(getComputedStyle(seam).opacity);
+    return authored.every((seam) => value(seam) === 0.85)
+      && cited.every((seam) => value(seam) === 0.55)
+      && value(authored[0]) !== value(cited[0]);
+  })()`));
 check('the stage draws exactly the edges the placement rule places', await evalJs(`(async () => {
   const document_ = await (await fetch('fixtures/fixture-knowledge.json')).json();
   const knowledge = (document_ && document_.knowledge) || {};
