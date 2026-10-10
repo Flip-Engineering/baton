@@ -2079,9 +2079,8 @@ check('a reference the store does not hold ends in an open bead, and a held end 
     return beads.every((bead) => /the store does not hold this record/.test(bead.textContent || ''));
   })()`));
 
-// The seating plan is the reporting hierarchy: the tier order and membership
-// derive from the fixture's own parent records, so a row that sat beside the
-// principal without reporting through it fails the check.
+// The assertion compares drawn tier membership with reporting depth derived from
+// the fixture's recorded parent links and active state.
 check('the stage seats the fixture by its reporting hierarchy', await evalJs(`(async () => {
   const document_ = await (await fetch('fixtures/fixture-knowledge.json')).json();
   const players = document_.players || [];

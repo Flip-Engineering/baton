@@ -110,10 +110,10 @@
   stroke: var(--ink);
 }
 
-/* The conductor's role enclosure, in the page's own ink: a whole ring at radius + 7
+/* The conductor's role enclosure, in the foreground colour: a whole ring at radius + 7
    for the principal conductor, the same ring with two gaps for an associate. The
    fermata ring uses the seat state's colour at radius + 4 and the selection ring marks
-   focus at radius + 3; the role enclosure's radius is 7, so its radius identifies the
+   focus at radius + 3. The enclosure uses radius + 7, and its shape identifies the
    conductor's role. */
 .lane-strip .att-role {
   fill: none;
@@ -142,7 +142,7 @@
 }
 
 /* The tier's condition, beside its name: the same unit mark the seats use - one mark
-   per seat that needs a person, in the colour that seat's state uses, then one per
+   per seat that is not progressing, in the colour that seat's state uses, then one per
    seat that owes work in the muted colour. The module sets each mark's stroke from
    the same PAINT table the seat marks read, so the tier's marks and the hall's marks
    use one set of colours. */

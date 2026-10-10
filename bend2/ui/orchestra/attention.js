@@ -17,7 +17,7 @@
    baton on the seat that acted most recently, a recency trail above the mark, a
    queue bar under a seat that owes work, and the recorded relations as threads
    between the seats that hold them. The seating plan is the reporting hierarchy:
-   the principal conductor at depth 0, one tier row per parent step below it,
+   the principal conductor at depth 0, one depth level per parent step below it,
    ensemble membership grouping seats inside a depth level, and rows with unknown
    ancestry in a separate tier.
    A conductor's seat carries a role enclosure in the page's ink - a whole ring
@@ -541,7 +541,7 @@
   }
 
   // The seating plan is the reporting hierarchy: the principal conductor at depth 0,
-  // one tier row per parent step below it, deepest last, so tier position states
+  // one depth level per parent step below it, deepest last, so tier position states
   // reporting depth. Ensemble membership groups seats inside a depth level and does
   // not change a seat's depth; the payload's sections follow their ensemble at
   // whatever level it sits; rows with unknown ancestry keep a separate tier at the
@@ -894,10 +894,10 @@
     }
 
     // The role mark for a conductor's recorded role: a whole ring at radius + 7 in
-    // the page's ink for the principal conductor, the same ring with two gaps for an
+    // the foreground colour for the principal conductor, the same ring with two gaps for an
     // associate. The fermata ring uses the seat state's colour at radius + 4 and the
-    // selection ring marks focus at radius + 3; the role enclosure's radius is 7, so
-    // its radius identifies the conductor's role.
+    // selection ring marks focus at radius + 3. The enclosure uses radius + 7, and
+    // its shape identifies the conductor's role.
     if (seat.role === "principal-conductor" || seat.role === "associate-conductor") {
       group.appendChild(roleMark(seat.role, radius));
     }
@@ -1458,8 +1458,8 @@
       });
       setText(nameText, shortId(tierName, laid.labelChars));
 
-      // The tier's condition, beside its name: one unit mark per seat that needs a
-      // person, in the colour that seat's state uses, then one per seat that owes
+      // The tier's condition, beside its name: one unit mark per seat that is not
+      // progressing, in the colour that seat's state uses, then one per seat that owes
       // work, in the muted colour the seat's own units use. The unit marks and the
       // colours are the same ones the seats draw. Held seats come first; the exact
       // counts are in the name's title, and the marks stop where the count column
