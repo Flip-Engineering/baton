@@ -1816,26 +1816,32 @@ check('the stage draws exactly the edges the placement rule places', await evalJ
 check('a cited seam states its author and seat only where the payload anchors one', await evalJs(`(() => {
   const seams = [...document.querySelectorAll('.att-seam-cited')];
   if (!seams.length) return false;
-  const words = (seam) => seam.textContent || '';
-  const anchored = seams.filter((seam) => /source finding:/.test(words(seam)));
-  const unanchored = seams.filter((seam) => /source fixture-knowledge-/.test(words(seam)));
-  if (!anchored.length || !unanchored.length) return false;
+  const title = (seam) => seam.textContent || '';
+  const sources = (text) => /\u2014 source ([^,\u2014]+)/.exec(text);
+  // The three cited titles (attention.js:1005-1012): an anchored single opens on
+  // source finding:, an anchored merge carries no source clause at all, and an
+  // unanchored seam opens on the seat id the payload named. Identification by the
+  // payload predicate, never by the author clause's presence.
+  const isAnchored = (text) => {
+    const found = sources(text);
+    return !found || /^finding:/.test(String(found[1]).trim());
+  };
+  if (!seams.some((seam) => isAnchored(title(seam)))) return false;
+  if (!seams.some((seam) => !isAnchored(title(seam)))) return false;
   return seams.every((seam) => {
-    const title = words(seam);
-    // Every cited seam names its material and the store's silence (attention.js:985-990).
-    if (!/cited material/.test(title) || !/which the store does not hold/.test(title)) return false;
-    if (/source finding:/.test(title)) {
-      // The anchored branch names the canonical source, the author and the anchoring
-      // (attention.js:1009-1016); only the single shape names the finding itself.
-      if (!/authored by fixture-knowledge-/.test(title)) return false;
-      if (!/drawn at that author's seat/.test(title)) return false;
-      const single = /^1 cited edge recorded as evidence/.test(title);
-      if (single && !/source finding:fixture-/.test(title)) return false;
+    const text = title(seam);
+    if (!/cited material/.test(text) || !/which the store does not hold/.test(text)) return false;
+    if (isAnchored(text)) {
+      if (!/authored by fixture-knowledge-/.test(text)) return false;
+      if (!/drawn at that author's seat/.test(text)) return false;
+      const single = /^1 cited edge recorded as evidence/.test(text);
+      const found = sources(text);
+      if (single && !/^finding:/.test(String((found || [])[1] || '').trim())) return false;
       return true;
     }
-    // The unanchored branch is seated by the payload and owes no attribution.
-    if (/drawn at that author/.test(title) || /authored by /.test(title)) return false;
-    return /source fixture-knowledge-/.test(title);
+    // Unanchored: the payload names the seat, so no attribution clause is owed.
+    if (/drawn at that author/.test(text) || /authored by /.test(text)) return false;
+    return /\u2014 source fixture-knowledge-/.test(text);
   });
 })()`));
 await evalJs(`(() => {
