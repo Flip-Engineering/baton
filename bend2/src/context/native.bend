@@ -2268,8 +2268,10 @@ def query_runtime_source_path(+db: String, +binding: String, +owner: String,
 # outcome there, so context-result reads the control id after caller loss.
 # Recover runs the same-query recovery operation as a child process,
 # draining child stdout before the wait, and retains the target envelope
-# on success or the exit status and child stderr on failure. Missing
-# coordinates or a missing owner workspace publishes a failed envelope.
+# on success or the exit status and child stderr on failure. The child
+# executable and stderr key resolve before admission; either failure
+# refuses without a row. Missing coordinates or a missing owner workspace
+# publishes a failed envelope.
 # Release writes the cleanup intent before signaling the target keeper
 # directory, then retains the signal outcome beside the intent. A target
 # the owner does not own, or one with no retained bootstrap, refuses as
@@ -2462,15 +2464,13 @@ def query_control_recover_spawned(+db: String, +binding: String, +owner: String,
 
 def query_control_recover_workspace(+db: String, +binding: String, +owner: String, +control: String,
                                     +target: String, +directory: String, +bootstrap_file: String,
-                                    workspace: OwnerWorkspace) -> IO(Unit):
+                                    workspace: OwnerWorkspace, +executable: String, +stderr_key: String) -> IO(Unit):
   match workspace:
     case OwnerWorkspaceRefused{reason}:
       query_control_publish(db, binding, owner, control, "failed", "",
         "{\"condition\":\"queryControlWorkspace\",\"detail\":" ++ J.json_text(J.Jstr{reason}) ++ "}")
     case OwnerWorkspaceReady{+path}:
       do IO<Unit>:
-        executable : String <- IO.try(String, Host.SessionLock.executable())
-        stderr_key : String <- IO.try(String, ContextIdentity.role_guard_key(control))
         +stderr_file : String = directory ++ "/control-recovery-" ++ stderr_key ++ ".log"
         spawned : Result<&1,&1,U32 & String,U32> <- Process.ProcessChild.spawn(
           query_control_recover_argv(executable, db, owner, target, directory, path, bootstrap_file),
@@ -2478,10 +2478,39 @@ def query_control_recover_workspace(+db: String, +binding: String, +owner: Strin
         query_control_recover_spawned(db, binding, owner, control, target, stderr_file, spawned)
 
 def query_control_recover(+db: String, +binding: String, +owner: String, +control: String,
-                          +target: String, +directory: String, +bootstrap_file: String) -> IO(Unit):
+                          +target: String, +directory: String, +bootstrap_file: String,
+                          +executable: String, +stderr_key: String) -> IO(Unit):
   do IO<Unit>:
     workspace : OwnerWorkspace <- read_owner_workspace(db, binding, owner)
-    query_control_recover_workspace(db, binding, owner, control, target, directory, bootstrap_file, workspace)
+    query_control_recover_workspace(db, binding, owner, control, target, directory, bootstrap_file, workspace, executable, stderr_key)
+
+def query_control_recover_prepared(+db: String, +binding: String, +owner: String, +control: String,
+                                   +cwd: String, +canonical: String, +target: String, +directory: String,
+                                   +bootstrap_file: String, +artifact_path: String, +executable: String,
+                                   key: Result<&1,&1,U32 & String,String>) -> IO(Unit):
+  match key:
+    case Fail{error}:
+      match error:
+        case (code, detail): IO.die(Unit, code, "queryControlStderrKey:" ++ detail)
+    case Done{+stderr_key}:
+      do IO<Unit>:
+        admitted : Unit <- query_control_admit(db, binding, control, owner, canonical, cwd, artifact_path)
+        Bool.pick(IO(Unit), Bool.or(String.is_empty(directory), String.is_empty(bootstrap_file)),
+          query_control_failed(db, binding, owner, control, "queryControlCoordinates"),
+          query_control_recover(db, binding, owner, control, target, directory, bootstrap_file, executable, stderr_key))
+
+def query_control_recover_executable(+db: String, +binding: String, +owner: String, +control: String,
+                                     +cwd: String, +canonical: String, +target: String, +directory: String,
+                                     +bootstrap_file: String, +artifact_path: String,
+                                     executable: Result<&1,&1,U32 & String,String>) -> IO(Unit):
+  match executable:
+    case Fail{error}:
+      match error:
+        case (code, detail): IO.die(Unit, code, "queryControlExecutable:" ++ detail)
+    case Done{+path}:
+      do IO<Unit>:
+        key : Result<&1,&1,U32 & String,String> <- ContextIdentity.role_guard_key(control)
+        query_control_recover_prepared(db, binding, owner, control, cwd, canonical, target, directory, bootstrap_file, artifact_path, path, key)
 
 def query_control_release_store_sql(+canonical: String, +target: String, +owner: String, +control_error: String) -> String:
   "UPDATE semantic_queries SET cleanup_intent_json=json_object('intent','release','signal',json_extract("
@@ -2542,25 +2571,20 @@ def query_control_release(+db: String, +binding: String, +owner: String, +canoni
     query_control_failed(db, binding, owner, control, "queryControlSignalAbsent"),
     query_control_release_signal(db, binding, owner, canonical, control, target, signal, directory))
 
-def query_control_ready(+db: String, +binding: String, +owner: String, +control: String,
-                        +canonical: String, +target: String, +intent: String, +signal: String,
-                        +directory: String, +bootstrap_file: String) -> IO(Unit):
-  match intent:
-    case "recover":
-      Bool.pick(IO(Unit), Bool.or(String.is_empty(directory), String.is_empty(bootstrap_file)),
-        query_control_failed(db, binding, owner, control, "queryControlCoordinates"),
-        query_control_recover(db, binding, owner, control, target, directory, bootstrap_file))
-    case "release":
-      query_control_release(db, binding, owner, canonical, control, target, signal, directory)
-    case other: IO.die(Unit, 3, "queryControlIntent")
-
 def query_control_intent(+db: String, +binding: String, +owner: String, +control: String,
                          +cwd: String, +canonical: String, +target: String, +intent: String,
                          +signal: String, +directory: String, +bootstrap_file: String,
                          +artifact_path: String) -> IO(Unit):
-  do IO<Unit>:
-    admitted : Unit <- query_control_admit(db, binding, control, owner, canonical, cwd, artifact_path)
-    query_control_ready(db, binding, owner, control, canonical, target, intent, signal, directory, bootstrap_file)
+  match intent:
+    case "recover":
+      do IO<Unit>:
+        executable : Result<&1,&1,U32 & String,String> <- Host.SessionLock.executable()
+        query_control_recover_executable(db, binding, owner, control, cwd, canonical, target, directory, bootstrap_file, artifact_path, executable)
+    case "release":
+      do IO<Unit>:
+        admitted : Unit <- query_control_admit(db, binding, control, owner, canonical, cwd, artifact_path)
+        query_control_release(db, binding, owner, canonical, control, target, signal, directory)
+    case other: IO.die(Unit, 3, "queryControlIntent")
 
 def query_control_fields(+db: String, +binding: String, +owner: String, +control: String,
                          +cwd: String, +canonical: String, fields: List<String>) -> IO(Unit):
