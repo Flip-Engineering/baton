@@ -2586,23 +2586,30 @@ def query_control_intent(+db: String, +binding: String, +owner: String, +control
         query_control_release(db, binding, owner, canonical, control, target, signal, directory)
     case other: IO.die(Unit, 3, "queryControlIntent")
 
+def query_control_marker(+db: String, +binding: String, +owner: String, +control: String,
+                         +cwd: String, +canonical: String, marker: String,
+                         +target_hex: String, +intent_hex: String, +signal_hex: String,
+                         +directory_hex: String, +bootstrap_hex: String, +artifact_hex: String) -> IO(Unit):
+  match marker:
+    case "control-unknown": IO.die(Unit, 3, "queryControlUnknown")
+    case "control-invalid": IO.die(Unit, 3, "queryControlIntent")
+    case "control":
+      do IO<Unit>:
+        target : String <- query_control_field(target_hex)
+        intent : String <- query_control_field(intent_hex)
+        signal : String <- query_control_field(signal_hex)
+        directory : String <- query_control_field(directory_hex)
+        bootstrap_file : String <- query_control_field(bootstrap_hex)
+        artifact_path : String <- query_control_field(artifact_hex)
+        query_control_intent(db, binding, owner, control, cwd, canonical, target, intent, signal, directory, bootstrap_file, artifact_path)
+    case other: IO.die(Unit, 3, "queryControlCoordinates")
+
 def query_control_fields(+db: String, +binding: String, +owner: String, +control: String,
                          +cwd: String, +canonical: String, fields: List<String>) -> IO(Unit):
   match fields:
     case marker <> +target_hex <> +intent_hex <> +signal_hex <> +directory_hex <> +bootstrap_hex <> +artifact_hex <> Nil{}:
-      match marker:
-        case "control-unknown": IO.die(Unit, 3, "queryControlUnknown")
-        case "control-invalid": IO.die(Unit, 3, "queryControlIntent")
-        case "control":
-          do IO<Unit>:
-            target : String <- query_control_field(target_hex)
-            intent : String <- query_control_field(intent_hex)
-            signal : String <- query_control_field(signal_hex)
-            directory : String <- query_control_field(directory_hex)
-            bootstrap_file : String <- query_control_field(bootstrap_hex)
-            artifact_path : String <- query_control_field(artifact_hex)
-            query_control_intent(db, binding, owner, control, cwd, canonical, target, intent, signal, directory, bootstrap_file, artifact_path)
-        case other: IO.die(Unit, 3, "queryControlCoordinates")
+      query_control_marker(db, binding, owner, control, cwd, canonical, marker,
+        target_hex, intent_hex, signal_hex, directory_hex, bootstrap_hex, artifact_hex)
     case other: IO.die(Unit, 3, "queryControlCoordinates")
 
 def query_control_environment(+db: String, +binding: String, +owner: String, +control: String,
