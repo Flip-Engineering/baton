@@ -279,6 +279,29 @@ def exhaustion_present(db: String, event: String, empty: Bool) -> IO(String):
 def exhaustion_cause(db: String, +event: String) -> IO(String):
   exhaustion_present(db,event,String.is_empty(event))
 
+# Failed OMP assistant terminals with HTTP 429 can continue on the same account.
+# exhaustion_cause determines whether the terminal requires an account handoff.
+def transient_rate_sql(event: String) -> String:
+  "WITH frame(value) AS (VALUES(" ++ C.q(event) ++ ")), diagnostic(failed,terminal,rate_status) AS MATERIALIZED (SELECT " ++ failed_terminal_sql_expr("frame.value") ++ ",json_extract(frame.value,'$.type'),json_extract((" ++ C.last_assistant_sql_expr("frame.value") ++ "),'$.errorStatus') FROM frame) SELECT CASE WHEN diagnostic.failed=1 AND diagnostic.terminal='agent_end' AND diagnostic.rate_status=429 THEN 1 ELSE 0 END FROM diagnostic;"
+
+def transient_rate_stated(db: String, +event: String) -> IO(Bool):
+  do IO<Bool>:
+    found : String <- IO.try(String,DB.Sql.query(db,transient_rate_sql(event)))
+    cause : String <- exhaustion_cause(db,event)
+    IO.pure(Bool,Bool.and(String.eq(found,"1\n"),String.is_empty(cause)))
+
+def transient_rate_present(db: String, event: String, empty: Bool) -> IO(Bool):
+  match empty:
+    case True{}: IO.pure(Bool,False{})
+    case False{}: transient_rate_stated(db,event)
+
+# A terminal OMP request-rate refusal that states no usage exhaustion, shared by
+# coordinator receives and direct turns. A terminal that stated no event is never one:
+# the empty check runs before any JSON is read, so startup and no-terminal failures
+# keep their own recorded failure.
+def transient_rate_limited(db: String, +event: String) -> IO(Bool):
+  transient_rate_present(db,event,String.is_empty(event))
+
 def history_path(+db: String, session: String) -> IO(String):
   do IO<String>:
     saved : String <- IO.try(String,DB.Sql.query(db,history_record_sql(db,session)))

@@ -448,38 +448,6 @@ law native_completion_is_committed_before_owner_release:
 def native_completion_is_committed_before_owner_release(db,session,id,log,stderr,cursor,handle,lock,outcome,deliveries,again):
   {==}
 
-# A completed attempt settles beside its queued continuation: the parent
-# delivery, native-request settle and attempt acknowledge join before the
-# continuation does, the acknowledge failure stays a combined value, and the
-# combined outcome keeps the same failure order for a successful acknowledge.
-def settle_attempt_before_joining_continuation(+db: String, +session: String, id: String, log: String, cursor: String, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), acknowledge: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
-  do IO<Result<&1,&1,U32 & String,Unit>>:
-    +failed : Bool <- Receive.outcome_failed(db,outcome)
-    delivery_task : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,Turn.finish(db,session,id,log,outcome))
-    continued_task : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,Receive.continue_pending(db,session,cursor,again))
-    finished : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,delivery_task)
-    questions : Result<&1,&1,U32 & String,Unit> <- NativeRequests.settle(deliveries)
-    stopped : Bool <- Stop.stopped(db,session)
-    ack : Result<&1,&1,U32 & String,Unit> <- Receive.acknowledge_if_observed(Bool.and(Receive.native_observation_failed(outcome),Bool.not(stopped)),acknowledge)
-    status : Result<&1,&1,U32 & String,Unit> <- Receive.exit_status(failed)
-    next : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,continued_task)
-    IO.pure(Result<&1,&1,U32 & String,Unit>,Turn.combine(finished,Turn.combine(questions,Turn.combine(next,Turn.combine(ack,status)))))
-
-law completed_attempt_settles_before_continuation_joins:
-  for +db: String
-  for +session: String
-  for id: String
-  for log: String
-  for cursor: String
-  for +outcome: Turn.Outcome
-  for -deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>
-  for -again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
-  for -acknowledge: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
-  {Receive.finish_pending(db,session,id,log,cursor,outcome,deliveries,again,acknowledge) == settle_attempt_before_joining_continuation(db,session,id,log,cursor,outcome,deliveries,again,acknowledge) : IO(Result<&1,&1,U32 & String,Unit>)}
-
-def completed_attempt_settles_before_continuation_joins(db,session,id,log,cursor,outcome,deliveries,again,acknowledge):
-  {==}
-
 # An incomplete native observation keeps the attempt available for recovery.
 law incomplete_observation_skips_acknowledgement:
   for -acknowledge: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
