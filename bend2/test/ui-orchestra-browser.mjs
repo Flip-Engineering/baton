@@ -589,6 +589,52 @@ check('the open legend names the four relation families', await evalJs(`(() => {
   const text = keys ? keys.textContent : '';
   return ['authorship. ', 'sharing. ', 'delivery. ', 'promotion. '].every((word) => text.includes(word));
 })()`));
+check('the macro band opens the knowledge region', await evalJs(`(() => {
+  const mount = document.getElementById('knowledge-whole');
+  const macro = mount && mount.firstElementChild;
+  if (!macro || !macro.classList.contains('kw-macro')) return false;
+  const rows = [...macro.querySelectorAll('.kw-tier-row')];
+  if (rows.length < 2) return false;
+  return rows.every((row) => !!row.querySelector('.kw-tier-bar') && !!row.querySelector('.kw-tier-num'));
+})()`));
+check('a tier row states its findings and its actors', await evalJs(`(() => {
+  const rows = [...document.querySelectorAll('#knowledge-whole .kw-tier-row')];
+  if (!rows.length) return false;
+  return rows.every((row) => {
+    const num = row.querySelector('.kw-tier-num');
+    const text = num ? (num.textContent || '').trim() : '';
+    return /^\d+ \u00b7 \d+$/.test(text);
+  });
+})()`));
+await evalJs(`(() => { const row = document.querySelector('#knowledge-whole .kw-tier-row'); if (row) row.click(); return true; })()`);
+await until('a tier row moves the canvas', `(() => {
+  const view = document.querySelector('#knowledge-whole g.kw-view');
+  return !!view && view.getAttribute('transform') !== 'translate(0,0) scale(1)';
+})()`);
+check('the worker to aide cell of the flow grid reads one before the live promotions', await evalJs(`(() => {
+  const grid = document.querySelector('#knowledge-whole .kw-flow-grid');
+  const cap = document.querySelector('#knowledge-whole .kw-flow-cap');
+  if (!grid || !cap) return false;
+  const words = cap.textContent || '';
+  const heads = [...grid.querySelectorAll('th')].map((th) => (th.textContent || '').trim());
+  const col = heads.indexOf('aide');
+  const row = heads.indexOf('worker');
+  if (col < 0 || row < 0) return false;
+  const cells = [...grid.querySelectorAll('tr')].map((tr) => [...tr.children].map((c) => (c.textContent || '').trim()));
+  const line = cells.find((line) => line.includes('worker')) || [];
+  const header = cells[0] || [];
+  const colAt = header.findIndex((h) => h === 'aide');
+  const cell = colAt >= 0 ? (line[colAt] || '') : '';
+  return /promotion/i.test(words) && /source/i.test(words) && /destination/i.test(words)
+    && heads.includes('worker') && heads.includes('aide') && cell === '1';
+})()`));
+check('the exemplar names its transfer and its share', await evalJs(`(() => {
+  const ex = document.querySelector('#knowledge-whole .kw-exemplar');
+  if (!ex) return false;
+  const label = (ex.getAttribute('aria-label') || '').toLowerCase();
+  return /transfer/.test(label) && /share/.test(label)
+    && /deliver/.test((ex.textContent || '').toLowerCase());
+})()`));
 check('relations between two references retain both endpoints', await evalJs(
   `!!document.querySelector('#knowledge-whole .kw-edge-relate[data-from="message:qa-missing-1"][data-to="external:qa-log-8"]')`));
 await evalJs(`(() => { const edge = document.querySelector('#knowledge-whole g.kw-edge-relate');
@@ -701,6 +747,28 @@ await until('the card action opens the record at its finding', `(() => {
   const box = block.getBoundingClientRect();
   return box.top <= 96 && box.bottom >= 0;
 })()`);
+check('the finding posture states what its facts hold', await evalJs(`(() => {
+  const block = document.querySelector('#selection #sel-sec-finding');
+  if (!block) return false;
+  const lines = [...block.querySelectorAll('p')].map((p) => p.textContent || '');
+  return lines.some((line) => /(evidence cited|no evidence cited)/.test(line)
+    && /(limits stated|no limits stated)/.test(line)
+    && /(shared \d+ times?|not shared)/.test(line));
+})()`));
+check('the evidence citation carries its number, tail and full title', await evalJs(`(() => {
+  const block = document.querySelector('#selection #sel-sec-finding');
+  if (!block) return false;
+  const cite = [...block.querySelectorAll('p')].find((p) => /^\[\d+\] message /.test(p.textContent || ''));
+  if (!cite) return false;
+  const tail = (cite.textContent || '').replace(/^\[\d+\] message /, '').split(' ')[0];
+  const id = cite.getAttribute('title') || '';
+  return tail.startsWith('\u2026') && id.endsWith(tail.replace(/^\u2026/, '')) && id.length > tail.length;
+})()`));
+check('the prose holds its measure and leading as element style', await evalJs(`(() => {
+  const prose = document.querySelector('#selection .sel-lead');
+  if (!prose) return false;
+  return prose.style.maxWidth === '33em' && prose.style.lineHeight === '1.5';
+})()`));
 await evalJs(`document.querySelector('#knowledge-whole svg.kw-canvas').dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}))`);
 check('escape dismisses the pinned card', await evalJs(
   `!document.querySelector('#knowledge-whole .kw-card') && document.querySelectorAll('#knowledge-whole .kw-hover-dim').length === 0`));
@@ -1119,6 +1187,30 @@ check('the band does not scroll: the page carries its drawing at its own height'
   const band = document.getElementById('attention-band');
   if (!band) return false;
   return band.scrollHeight <= band.clientHeight + 1;
+})()`));
+check('the owed units count what the seat title states', await evalJs(`(() => {
+  const seats = [...document.querySelectorAll('#attention-band .att-seat')];
+  const owed = seats.filter((s) => /\d+ owed/.test(s.textContent || ''));
+  if (!owed.length) return false;
+  return owed.every((seat) => {
+    const stated = Number((/(\d+) owed/.exec(seat.textContent || '') || [0, 0])[1]);
+    const marks = seat.querySelectorAll('.att-owed').length;
+    return marks === Math.min(stated, 6);
+  });
+})()`));
+check('the flash takes the seat own ink and no other', await evalJs(`(() => {
+  const core = document.querySelector('#attention-band .att-seat.att-new .att-core');
+  if (!core) return true;
+  const seat = core.closest('.att-seat');
+  const ink = getComputedStyle(seat).color;
+  return getComputedStyle(core).stroke === ink;
+})()`));
+check('the stage text and the pit sentence share one face', await evalJs(`(() => {
+  const chip = document.querySelector('#attention-band .lane-chip');
+  const summary = document.querySelector('#ribbon .ribbon-summary');
+  if (!chip || !summary) return false;
+  const a = getComputedStyle(chip).fontFamily, b = getComputedStyle(summary).fontFamily;
+  return !!a && a === b;
 })()`));
 const stageOther = stageFirst === 'aide' ? 'worker' : 'aide';
 await evalJs(`document.querySelector('#roster .doc-row[data-doc-id="${stageOther}"] .doc-open').click()`);
