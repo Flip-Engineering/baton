@@ -1030,13 +1030,18 @@ def direct_unstarted(+db: String, +player: String, +id: String, +log: String, +d
     wake : Result<&1,&1,U32 & String,Unit> <- Delivery.wake_pending(db,player,"0")
     IO.pass(Unit,combine(finished,wake))
 
+# Match a retained terminal observation as a signature parameter and run the
+# locked continuation with its Ended fields.
+def with_retained_outcome(held: U32, outcome: Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, locked: U32 -> String -> String -> String -> Bool -> List<Chan(Result<&1,&1,U32 & String,String>)> -> IO(Unit)) -> IO(Unit):
+  match outcome:
+    case Ended{status,event,error,incomplete}: locked(held,status,event,error,incomplete,deliveries)
+
 # Dispatch a retained observation through unlocked and locked continuations.
 def with_retained_observation(observation: Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>, lock: Maybe<U32>, unlocked: Outcome -> List<Chan(Result<&1,&1,U32 & String,String>)> -> IO(Unit), locked: U32 -> String -> String -> String -> Bool -> List<Chan(Result<&1,&1,U32 & String,String>)> -> IO(Unit)) -> IO(Unit):
   (outcome,deliveries)=observation
   match lock:
     case None{}: unlocked(outcome,deliveries)
-    case Some{held}: match outcome:
-      case Ended{status,event,error,incomplete}: locked(held,status,event,error,incomplete,deliveries)
+    case Some{held}: with_retained_outcome(held,outcome,deliveries,locked)
 
 # Self-recursive across successive handoffs, like the consume IO loops above.
 @unsafe
