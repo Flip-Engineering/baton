@@ -41,7 +41,9 @@ type Command is Data:
   Session{id: String}
   Delivery{id: String}
   Pending{}
+  PendingIndex{}
   Inbox{id: String}
+  InboxIndex{id: String}
   Land{player: String, repo: String, target: String}
   LandAt{player: String, repo: String, target: String, commit: String}
   LandCheckedAt{player: String, repo: String, target: String, check: String, files: String, commit: String}
@@ -267,6 +269,9 @@ def message_upsert() -> String:
 def delivery_row() -> String:
   "json_patch(json_object('id',m.id,'sender',m.sender,'recipient',m.recipient,'kind',m.kind,'body',m.body,'receipt',m.receipt,'harness',s.harness,'native',s.native,'endpoint',s.endpoint,'endpointArgv'," ++ endpoint_argv("s.endpoint") ++ ")," ++ input_state_sql("m") ++ ")"
 
+def message_index_sql(source: String, condition: String) -> String:
+  "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_patch(json_object('seq',m.seq,'id',m.id,'sender',m.sender,'recipient',m.recipient,'kind',m.kind,'receipt',m.receipt)," ++ input_state_sql("m") ++ ") AS item FROM " ++ source ++ " WHERE m.receipt IS NULL AND " ++ condition ++ " ORDER BY m.seq);"
+
 def terminal_expr(+event: String) -> String:
   "(json_extract(" ++ event ++ ",'$.payload.kind')='run_terminal' OR json_extract(" ++ event ++ ",'$.type')='result' OR (json_extract(" ++ event ++ ",'$.type')='agent_end' AND coalesce(json_extract(" ++ event ++ ",'$.isTerminal'),1)=1))"
 
@@ -466,8 +471,10 @@ def sql(command: Command) -> String:
       "SELECT " ++ delivery_row() ++ " FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.id=" ++ q(id) ++ ";"
     case Pending{}:
       "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT " ++ delivery_row() ++ " AS item FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.receipt IS NULL ORDER BY m.seq);"
+    case PendingIndex{}: message_index_sql("messages m JOIN sessions s ON s.id=m.recipient","1")
     case Inbox{id}:
       "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_patch(json_object('id',id,'sender',sender,'recipient',recipient,'kind',kind,'body',body)," ++ input_state_sql("messages") ++ ") AS item FROM messages WHERE recipient=" ++ q(id) ++ " AND receipt IS NULL ORDER BY seq);"
+    case InboxIndex{id}: message_index_sql("messages m","m.recipient=" ++ q(id))
     case Status{}:
       "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_patch(json_object('id',id,'parent',parent,'harness',harness,'model',model,'effort',effort,'native',native,'observedHarness',observed_harness,'observedModel',observed_model,'observedEffort',observed_effort,'endpoint',endpoint,'endpointArgv'," ++ endpoint_argv("endpoint") ++ ",'workspace',workspace,'branch',branch,'base',base,'kind'," ++ session_kind("sessions.id") ++ ",'role'," ++ public_role("sessions.id") ++ ",'pending',(SELECT count(*) FROM messages WHERE recipient=sessions.id AND receipt IS NULL AND NOT (" ++ stopped_session_sql("sessions.id") ++ " AND " ++ execution_input_sql("messages.kind") ++ ")))," ++ session_state_sql("sessions.id") ++ ") AS item FROM sessions ORDER BY id);"
     case Players{}: "SELECT " ++ players_json(assigned_role("s.id") ++ "<>'operator'") ++ ";"
@@ -559,6 +566,7 @@ def parse_verb_id(+verb: String, +id: String) -> Command:
       case _: Invalid{}
     case "pending": match id:
       case "--pretty": Pretty{Pending{}}
+      case "--index": PendingIndex{}
       case _: Invalid{}
     case "status": match id:
       case "--pretty": StatusPretty{}
@@ -582,6 +590,7 @@ def parse_verb_id(+verb: String, +id: String) -> Command:
 
 def parse_verb_session_id(+verb: String, +session: String, +id: String) -> Command:
   match verb:
+    case "pending": Bool.pick(Command,Bool.or(Bool.and(String.eq(session,"--index"),String.eq(id,"--pretty")),Bool.and(String.eq(session,"--pretty"),String.eq(id,"--index"))),Pretty{PendingIndex{}},Invalid{})
     case "resume": match id:
       case "--lift-stop": Resume{session,True{}}
       case _: Invalid{}
@@ -595,6 +604,7 @@ def parse_verb_session_id(+verb: String, +session: String, +id: String) -> Comma
       case _: Invalid{}
     case "inbox": match id:
       case "--pretty": Pretty{Inbox{session}}
+      case "--index": InboxIndex{session}
       case _: Invalid{}
     case "delivery": match id:
       case "--pretty": Pretty{Delivery{session}}
@@ -618,6 +628,7 @@ def parse_verb_session_id(+verb: String, +session: String, +id: String) -> Comma
 
 def parse_verb_three_args(+verb: String, +id: String, +one: String, +two: String) -> Command:
   match verb:
+    case "inbox": Bool.pick(Command,Bool.or(Bool.and(String.eq(one,"--index"),String.eq(two,"--pretty")),Bool.and(String.eq(one,"--pretty"),String.eq(two,"--index"))),Pretty{InboxIndex{id}},Invalid{})
     case "knowledge-scope": KnowledgeReadScope{id,one,two}
     case "context-query-file": ContextQueryFile{id,one,two}
     case "receiver": Receiver{id,one,two,""}

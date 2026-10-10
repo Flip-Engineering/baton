@@ -325,12 +325,21 @@ const TOOLS = [
   },
   {
     name: 'baton2_inbox',
-    description: 'Show pending unacknowledged messages for the attached Conductor.',
+    description: 'Show unacknowledged messages for a session. Set index to true for message metadata; baton2_delivery reads a complete stored message.',
     inputSchema: {
       type: 'object',
-      properties: { recipient: { type: 'string', description: 'Session ID (default: attached Conductor)' } },
+      properties: {
+        recipient: { type: 'string', description: 'Session ID (default: attached Conductor)' },
+        index: { type: 'boolean', description: 'Return sequence, identity, route, kind and receipt without bodies' },
+      },
       additionalProperties: false,
     },
+  },
+  {
+    name: 'baton2_delivery',
+    description: 'Read one complete stored message and its receipt by ID.',
+    inputSchema: { type: 'object', properties: { id: { type: 'string' } },
+      required: ['id'], additionalProperties: false },
   },
   {
     name: 'baton2_ack',
@@ -418,8 +427,8 @@ const TOOLS = [
   },
   {
     name: 'baton2_pending',
-    description: 'List all undelivered messages with their recipients\' current native endpoints.',
-    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    description: 'List all unacknowledged messages. Set index to true for message metadata; baton2_delivery reads a complete stored message.',
+    inputSchema: { type: 'object', properties: { index: { type: 'boolean' } }, additionalProperties: false },
   },
   {
     name: 'baton2_push',
@@ -543,7 +552,7 @@ function handleMessage(msg) {
         experimental: { 'claude/channel': {} },
       },
       serverInfo: { name: 'baton-conductor', version: '0.1.0' },
-      instructions: `Baton2 ${hasParent(selectedSession()) ? 'Associate' : 'Principal'} Conductor attachment for session ${sessionId}. Use baton2_join to register a Player in an existing checkout. Use baton2_recruit when the task needs a separate worktree. Commit and push completed work, then integrate it into the intended delivery branch. Preserve incomplete work and explicit stops. Use baton2_receiver to register a Player's Codex, OMP, Muse or Claude Code receive endpoint, then baton2_dispatch_file to send task or guidance files. Use baton2_dispatch_turn to launch a registered Player's task file with its recorded route. Use baton2_configure to save future effort on the same harness and model during active or stopped sessions, keeping the receiver, current turn and stop. Change harness or model after the current attempt ends and any stop is lifted. Configuration keeps the Player's identity, work, native conversation and pending input. Use baton2_inbox or baton2_pending to see pending messages. Use baton2_ack to acknowledge your own fully read and handled input; retain unfinished work in your reports and project state. Use baton2_guide to direct Players. The coordinator CLI ask and ask-file send questions as your recorded session to its parent; a parentless Principal Conductor reaches the registered operator. Use baton2_player and baton2_players to inspect Players and both Conductor tiers. Use baton2_role, baton2_ensemble, baton2_ensemble_member, baton2_section and baton2_section_member to configure responsibilities and membership. Use baton2_orchestra to inspect the system. Use baton2_turns for turn history and baton2_land or baton2_land_checked to land a Player's changes. Supply commit to select a reviewed ancestor while later work remains on the recorded branch.`,
+      instructions: `Baton2 ${hasParent(selectedSession()) ? 'Associate' : 'Principal'} Conductor attachment for session ${sessionId}. Use baton2_join to register a Player in an existing checkout. Use baton2_recruit when the task needs a separate worktree. Commit and push completed work, then integrate it into the intended delivery branch. Preserve incomplete work and explicit stops. Use baton2_receiver to register a Player's Codex, OMP, Muse or Claude Code receive endpoint, then baton2_dispatch_file to send task or guidance files. Use baton2_dispatch_turn to launch a registered Player's task file with its recorded route. Use baton2_configure to save future effort on the same harness and model during active or stopped sessions, keeping the receiver, current turn and stop. Change harness or model after the current attempt ends and any stop is lifted. Configuration keeps the Player's identity, work, native conversation and pending input. Use baton2_inbox or baton2_pending to see pending messages. Their optional index:true argument returns metadata; baton2_delivery reads a selected complete message. Use baton2_ack to acknowledge your own fully read and handled input; retain unfinished work in your reports and project state. Use baton2_guide to direct Players. The coordinator CLI ask and ask-file send questions as your recorded session to its parent; a parentless Principal Conductor reaches the registered operator. Use baton2_player and baton2_players to inspect Players and both Conductor tiers. Use baton2_role, baton2_ensemble, baton2_ensemble_member, baton2_section and baton2_section_member to configure responsibilities and membership. Use baton2_orchestra to inspect the system. Use baton2_turns for turn history and baton2_land or baton2_land_checked to land a Player's changes. Supply commit to select a reviewed ancestor while later work remains on the recorded branch.`,
     });
     return;
   }
@@ -680,7 +689,10 @@ function handleToolCall(msg) {
         result = coord('owner-status');
         break;
       case 'baton2_inbox':
-        result = coord('inbox', args?.recipient ?? sessionId);
+        result = coord('inbox', args?.recipient ?? sessionId, ...(args?.index === true ? ['--index'] : []));
+        break;
+      case 'baton2_delivery':
+        result = coord('delivery', args.id);
         break;
       case 'baton2_ack':
         result = coord('ack', args.id, sessionId, args.receipt);
@@ -708,7 +720,7 @@ function handleToolCall(msg) {
         result = coord('turns', player);
         break;
       case 'baton2_pending':
-        result = coord('pending');
+        result = coord('pending', ...(args?.index === true ? ['--index'] : []));
         break;
       case 'baton2_push':
         result = coord('push', args.repo, args.branch, args.remote);

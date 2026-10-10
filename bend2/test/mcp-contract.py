@@ -117,6 +117,35 @@ class McpContract(unittest.TestCase):
         delivered = next(row for row in rows if row['id'] == 'turn-1')
         self.assertEqual(delivered['body'], self.body)
 
+    def test_index_and_delivery_keep_complete_input_available_until_ack(self):
+        for tool, command, arguments in (
+                ('baton2_inbox', ('inbox', 'root', '--index'), {'index': True}),
+                ('baton2_pending', ('pending', '--index'), {'index': True})):
+            with self.subTest(tool=tool):
+                native = json.loads(self.coord(*command).stdout)
+                result = self.tool(tool, arguments)
+                self.assertFalse(result.get('isError', False))
+                rows = json.loads(result['content'][0]['text'])
+                self.assertEqual(rows, native)
+                retained = next(row for row in rows if row['id'] == 'turn-1')
+                self.assertNotIn('body', retained)
+                self.assertEqual((retained['sender'], retained['recipient'], retained['kind']),
+                                 ('w1', 'root', 'report'))
+                self.assertIsNone(retained['receipt'])
+        result = self.tool('baton2_delivery', {'id': 'turn-1'})
+        self.assertFalse(result.get('isError', False))
+        delivery = json.loads(result['content'][0]['text'])
+        self.assertEqual(delivery, json.loads(self.coord('delivery', 'turn-1').stdout))
+        self.assertEqual(delivery['body'], self.body)
+        self.assertIsNone(delivery['receipt'])
+        self.tool('baton2_ack', {'id': 'turn-1', 'receipt': ''})
+        index = self.tool('baton2_inbox', {'index': True})
+        self.assertEqual(json.loads(index['content'][0]['text']), [])
+        delivered = self.tool('baton2_delivery', {'id': 'turn-1'})
+        row = json.loads(delivered['content'][0]['text'])
+        self.assertEqual(row['body'], self.body)
+        self.assertEqual(row['receipt'], '')
+
     def test_ack_refusal_returns_the_native_cli_output(self):
         cli = self.coord('ack', 'missing-ack', 'root', 'receipt', ok=False)
         self.assertNotEqual(cli.returncode, 0)

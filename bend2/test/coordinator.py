@@ -119,6 +119,56 @@ class Coordinator(unittest.TestCase):
         self.assertEqual(self.call('pending'), [])
         self.assertEqual(self.call('delivery', 'turn-1')['receipt'], 'accepted')
 
+    def test_message_index_keeps_owed_messages_and_complete_body_retrieval(self):
+        body = "Retained report with apostrophe ' and unicode λ🙂.\n" * 4000
+        report = pathlib.Path(self.temp.name) / 'large-report.txt'
+        report.write_text(body)
+        self.call('report-file', 'large-report', 'worker', str(report))
+        self.call('report', 'handled-report', 'worker', 'Already handled.')
+        self.call('ack', 'handled-report', 'root', '')
+        self.player('stopped-worker', harness='omp')
+        self.call('message', 'stopped-task', 'root', 'stopped-worker', 'task',
+                  'This input remains owed after the explicit stop.')
+        self.call('stop', 'stopped-worker', 'operator-stop', 'Stopped by operator.')
+        self.call('report', 'later-report', 'worker', 'Later report.')
+        with sqlite3.connect(self.db) as db:
+            db.execute('INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)',
+                       ('historical-orphan', 'worker', 'retired-recipient', 'report',
+                        'Retained historical message without a session row.'))
+
+        full = self.call('inbox', 'root')
+        index = self.call('inbox', 'root', '--index')
+        self.assertEqual([row['id'] for row in index], [row['id'] for row in full])
+        self.assertEqual([row['seq'] for row in index], sorted(row['seq'] for row in index))
+        for row in index:
+            self.assertNotIn('body', row)
+            self.assertNotIn('endpoint', row)
+            self.assertIsNone(row['receipt'])
+            self.assertEqual((row['sender'], row['recipient'], row['kind']),
+                             ('worker', 'root', 'report'))
+        for flags in (('--index', '--pretty'), ('--pretty', '--index')):
+            self.assertEqual(self.call('inbox', 'root', *flags), index)
+        self.assertEqual(self.call('inbox', 'missing-recipient', '--index'), [])
+
+        pending = self.call('pending', '--index')
+        self.assertEqual([row['id'] for row in pending],
+                         [row['id'] for row in self.call('pending')])
+        self.assertNotIn('historical-orphan', [row['id'] for row in pending])
+        orphan = self.call('inbox', 'retired-recipient', '--index')
+        self.assertEqual([row['id'] for row in orphan],
+                         [row['id'] for row in self.call('inbox', 'retired-recipient')])
+        self.assertEqual(orphan[0]['id'], 'historical-orphan')
+        for flags in (('--index', '--pretty'), ('--pretty', '--index')):
+            self.assertEqual(self.call('pending', *flags), pending)
+        stopped = next(row for row in pending if row['id'] == 'stopped-task')
+        self.assertEqual(stopped['executionDisposition'], 'stopped')
+        self.assertEqual(stopped['stopId'], 'operator-stop')
+        self.assertEqual(self.call('inbox', 'stopped-worker', '--index'), [stopped])
+        self.assertEqual(self.call('delivery', 'large-report')['body'], body)
+        self.assertIsNone(self.call('delivery', 'large-report')['receipt'])
+        self.assertEqual(self.call('delivery', 'handled-report')['receipt'], '')
+        self.assertEqual(self.call('inbox', 'root'), full)
+
     def test_codex_thread_event_records_resume_identity_before_report(self):
         self.player('codex', 'root', 'codex', 'gpt-6-astra', 'low',
                   '/retained/codex', 'codex-branch', 'base')
