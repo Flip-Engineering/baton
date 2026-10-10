@@ -68,6 +68,7 @@ shared graph service, provider plug-in registry or indexing daemon is added.
 
 ```text
 baton2 DATABASE context-engines [SESSION]
+baton2 DATABASE context-install MODULE SOURCE
 baton2 DATABASE context-query-file SESSION QUERY_ID PATH
 baton2 DATABASE context-result QUERY_ID
 ```
@@ -83,6 +84,13 @@ its cause and leaves these module settings unknown. Managed query progress is
 retrieved through `context-result`; its returned state names the ordinary
 query-control route.
 
+`context-install` copies a locally supplied, already-built module directory or
+the named module from an extracted native distribution into the executing
+coordinator's installation. Its result names the module, source and installed
+path. `installed` records a completed copy; `present` records an existing module
+directory. The existing module and project settings remain in place. Missing
+source, malformed declaration and filesystem errors retain their causes.
+
 For `context-query-file`, SESSION must exist and be active; the release exception
 for a stopped owner is defined in Runtime contract. Its recorded workspace supplies
 omitted `cwd`; a session without a workspace supplies `cwd`. The CLI uses the
@@ -94,14 +102,19 @@ coordination database may read a retained query. It has no requester argument
 and establishes no owner-only read boundary. MCP result lookup uses the same
 rule. Control effects separately require the recorded owner identity.
 
-The Conductor MCP tools are `baton2_context_engines`, `baton2_context_query_file`
-and `baton2_context_result`. Discovery arguments are `{}` for installed modules
-or `{scope: "session"}` for the attachment's recorded project settings. Query
+The Conductor MCP tools are `baton2_context_engines`, `baton2_context_install`,
+`baton2_context_query_file` and `baton2_context_result`. Discovery arguments are
+`{}` for installed modules or `{scope: "session"}` for the attachment's recorded
+project settings. Query
 arguments are `{query, path}`. The attachment
 supplies SESSION and invokes `context-query-file SESSION QUERY_ID PATH` through
 the coordinator CLI. Result arguments are `{query}` and invoke `context-result`.
 The request file must be accessible to the coordinator. The CLI also accepts
 `PATH -` to read its stdin.
+
+Module acquisition arguments are `{module, path}` and invoke
+`context-install MODULE SOURCE`. The path supplies an existing built payload;
+a remote module artifact catalog remains unimplemented.
 
 The MCP adapter parses newline-delimited JSON-RPC messages, dispatches the named
 tool and returns the coordinator output as text content. Command failures set

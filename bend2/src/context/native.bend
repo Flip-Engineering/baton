@@ -1359,6 +1359,30 @@ def engines(+db: String, +owner: String) -> IO(Unit):
         inventory_with_runtime(executable, "/", runtime),
       engines_session(db, executable, owner))
 
+def module_install_request(+module_id: String, +source: String) -> String:
+  J.json_text(J.Jobj{J.Jpair{"moduleId", J.Jstr{module_id},
+    J.Jpair{"source", J.Jstr{source}, J.Jnil{}}}})
+
+def module_install_runtime(+executable: String, +module_id: String, +source: String,
+                           runtime: ProviderAnswer) -> IO(Unit):
+  match runtime:
+    case ProviderRefused{reason}: IO.die(Unit, 3, reason)
+    case ProviderOutput{value, status}: IO.die(Unit, 3, "nodeRuntimeProbeMalformed")
+    case ProviderRuntime{path, version}:
+      do IO<Unit>:
+        spawned : Result<&1,&1,U32 & String,U32> <- Process.ProcessChild.spawn(
+          Process.argv([path, "--experimental-strip-types", installed_provider_path(executable),
+            "--install-module"]), ".", "/dev/null")
+        answer : ProviderAnswer <- provider_spawn(installed_provider_path(executable),
+          ".", module_install_request(module_id, source), spawned)
+        inventory_answer(answer)
+
+def install_module(+module_id: String, +source: String) -> IO(Unit):
+  do IO<Unit>:
+    executable : String <- IO.try(String, Host.SessionLock.executable())
+    runtime : ProviderAnswer <- resolve_node_runtime(".")
+    module_install_runtime(executable, module_id, source, runtime)
+
 def query_source_json(+owner: String, +worktree: String,
                       decoded: ProjectPolicyJson) -> BoundaryPath:
   match decoded:

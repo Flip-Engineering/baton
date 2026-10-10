@@ -80,6 +80,7 @@ type Command is Data:
   View{subject: String, reader: String, port: String}
   UiSubscribe{after_cursor: String, generation: String}
   ContextEngines{session: String}
+  ContextInstall{module_id: String, source: String}
   ContextQueryFile{owner: String, query: String, path: String}
   ContextResult{query: String}
   Serve{}
@@ -548,6 +549,7 @@ def sql(command: Command) -> String:
     case View{subject,reader,port}: ""
     case UiSubscribe{after_cursor,generation}: ""
     case ContextEngines{session}: ""
+    case ContextInstall{module_id,source}: ""
     case ContextQueryFile{owner,query,path}: ""
     case ContextResult{query}: ""
     case Serve{}: ""
@@ -608,6 +610,7 @@ def parse_verb_id(+verb: String, +id: String) -> Command:
 
 def parse_verb_session_id(+verb: String, +session: String, +id: String) -> Command:
   match verb:
+    case "context-install": ContextInstall{session,id}
     case "pending": Bool.pick(Command,Bool.or(Bool.and(String.eq(session,"--index"),String.eq(id,"--pretty")),Bool.and(String.eq(session,"--pretty"),String.eq(id,"--index"))),Pretty{PendingIndex{}},Invalid{})
     case "resume": match id:
       case "--lift-stop": Resume{session,True{}}

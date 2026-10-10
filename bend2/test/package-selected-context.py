@@ -56,6 +56,8 @@ def tool(name,arguments):
     return json.loads(answer['content'][0]['text'])
 if session==config['producer'] and not resume:
     tool('baton2_context_query_file',{'query':config['query'],'path':config['request']})
+acquired=tool('baton2_context_install',{'module':'bend2','path':config['moduleSource']})
+assert acquired['status']=='present' and acquired['moduleId']=='bend2',acquired
 inventory=tool('baton2_context_engines',{'scope':'session'})
 assert inventory['scope']['session']==session,inventory
 assert inventory['projectPolicy']['status']=='present',inventory
@@ -604,6 +606,21 @@ void handler(const char *dynamic) {
                            str(worktree), 'HEAD')
         self.assertEqual(recruited.returncode, 0, recruited.stdout + recruited.stderr)
 
+        distribution = self.root / 'context-distribution'
+        module_source = distribution / 'lib/context/modules/m-62656e6432'
+        module_source.parent.mkdir(parents=True)
+        (self.payload / 'lib/context/modules/m-62656e6432').rename(module_source)
+        missing_inventory = invoke('context-engines')
+        self.assertEqual(missing_inventory.returncode, 0,
+                         missing_inventory.stdout + missing_inventory.stderr)
+        self.assertNotIn('bend2', {row['moduleId'] for row in json.loads(missing_inventory.stdout)['modules']})
+        missing_source = invoke('context-install', 'bend2', str(self.root / 'missing-distribution'))
+        self.assertEqual(missing_source.returncode, 2, missing_source.stdout + missing_source.stderr)
+        self.assertIn('ENOENT', missing_source.stderr)
+        acquired = invoke('context-install', 'bend2', str(distribution), cwd=worktree)
+        self.assertEqual(acquired.returncode, 0, acquired.stdout + acquired.stderr)
+        self.assertEqual(json.loads(acquired.stdout)['status'], 'installed')
+
         global_inventory = invoke('context-engines')
         self.assertEqual(global_inventory.returncode, 0,
                          global_inventory.stdout + global_inventory.stderr)
@@ -660,6 +677,7 @@ void handler(const char *dynamic) {
             'node': node, 'mcp': str(self.payload / 'libexec/baton2/mcp-conductor.mjs'),
             'db': str(database), 'exe': str(installed), 'producer': producer,
             'query': handoff_query, 'request': str(handoff_request),
+            'moduleSource': str(module_source),
         }))
         handoff_task = self.root / 'handoff-task.txt'
         handoff_task.write_text('Read the complete retained source object for ' + handoff_query + '.\n')

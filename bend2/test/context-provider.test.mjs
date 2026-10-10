@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
-import { copyFileSync, mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
 
-import { installedModuleInventory, sessionModuleInventory, moduleDirectoryName, resolveSelectedPackageRoot, verifyInvocationArtifact } from '../scripts/context-provider.mjs';
+import { installedModuleInventory, installContextModule, runSelectedInvocation, sessionModuleInventory, moduleDirectoryName, resolveSelectedPackageRoot, verifyInvocationArtifact } from '../scripts/context-provider.mjs';
 
 test('installed provider resolves the module named by the invocation below its wrapper prefix', () => {
   const prefix = mkdtempSync(join(tmpdir(), 'baton2-installed-context-'));
@@ -124,6 +124,49 @@ test('session inventory reports project settings and preserves capabilities on p
     assert.equal(unreadable.projectPolicy.status, 'unavailable');
     assert.equal(unreadable.projectPolicy.reason, 'EISDIR');
     assert.equal(unreadable.modules[0].enabled, null);
+  } finally {
+    rmSync(prefix, { recursive: true, force: true });
+  }
+});
+
+test('module acquisition copies a supplied dependency closure and keeps the installed provider usable', async () => {
+  const prefix = mkdtempSync(join(tmpdir(), 'baton2-module-acquisition-'));
+  try {
+    const wrapper = join(prefix, 'installed/libexec/baton2/context-provider.mjs');
+    mkdirSync(join(prefix, 'installed/libexec/baton2'), { recursive: true });
+    writeFileSync(wrapper, '// installed wrapper\n');
+    const distribution = join(prefix, 'distribution');
+    const source = join(distribution, 'lib/context/modules', moduleDirectoryName('fixture.worker'));
+    mkdirSync(source, { recursive: true });
+    writeFileSync(join(source, 'native-provider.declaration.json'), JSON.stringify({ moduleId: 'fixture.worker' }));
+    mkdirSync(join(source, 'dependencies'));
+    writeFileSync(join(source, 'dependencies/value.mjs'), 'export const value = "supplied dependency";\n');
+    symlinkSync('dependencies/value.mjs', join(source, 'dependency.mjs'));
+    writeFileSync(join(source, 'native-provider.mjs'),
+      'import { writeFileSync } from "node:fs";\n'
+      + 'import { value } from "./dependency.mjs";\n'
+      + 'writeFileSync(new URL("./loaded.txt", import.meta.url), "loaded");\n'
+      + 'export function executeInvocation() { return { value }; }\n');
+
+    const acquired = installContextModule({ moduleId: 'fixture.worker', source, wrapperPath: wrapper });
+    assert.equal(acquired.status, 'installed');
+    assert.equal(existsSync(join(acquired.path, 'loaded.txt')), false);
+    assert.equal(installedModuleInventory({ wrapperPath: wrapper }).modules[0].moduleId, 'fixture.worker');
+    const result = await runSelectedInvocation({ moduleBinding: { id: 'fixture.worker' },
+      request: { cwd: prefix } }, { wrapperPath: wrapper });
+    assert.deepEqual(result, { value: 'supplied dependency' });
+    assert.equal(readFileSync(join(acquired.path, 'loaded.txt'), 'utf8'), 'loaded');
+
+    writeFileSync(join(source, 'dependencies/value.mjs'), 'export const value = "new supplied bytes";\n');
+    const repeated = installContextModule({ moduleId: 'fixture.worker', source: distribution,
+      wrapperPath: wrapper });
+    assert.equal(repeated.status, 'present');
+    assert.equal(readFileSync(join(acquired.path, 'dependency.mjs'), 'utf8'),
+      'export const value = "supplied dependency";\n');
+    const missing = installContextModule({ moduleId: 'missing', source: distribution, wrapperPath: wrapper });
+    assert.equal(missing.reason, 'moduleInstallFailed');
+    assert.equal(missing.detail.code, 'ENOENT');
+    assert.equal(installedModuleInventory({ wrapperPath: wrapper }).modules.length, 1);
   } finally {
     rmSync(prefix, { recursive: true, force: true });
   }

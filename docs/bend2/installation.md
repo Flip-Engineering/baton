@@ -144,6 +144,30 @@ released archive above carries the complete payload. The executable
 linked system SQLite and libSystem on the qualified host. Other operating
 systems and architectures need their own build and execution qualification.
 
+## Install a context module
+
+Acquire a module from a locally supplied, already-built module directory or an
+extracted Baton2 distribution:
+
+```sh
+baton2 /absolute/path/state.db context-install typescript /absolute/path/distribution
+baton2 /absolute/path/state.db context-engines SESSION
+```
+
+A distribution source contains the module under `lib/context/modules`; a module
+directory contains `native-provider.declaration.json` and its dependency closure.
+The command copies that directory into the executing coordinator's installation
+and publishes the completed copy. The result names its source and installed path.
+An existing module returns `present` and keeps its files. Project settings and
+active providers remain in place. Installing another version uses the qualified
+development archive procedure above.
+
+The Conductor MCP tool `baton2_context_install` accepts `{module, path}` for the
+same operation. A supplied module must contain its already-built dependencies.
+Missing sources and filesystem errors are reported by the command. A remote
+module artifact catalog remains unimplemented. Elixir, Rust, Go and Python
+provider payloads remain future module work.
+
 ## Runtime paths and dependencies
 
 Commands use `baton2 DATABASE COMMAND ARGS`. Use an absolute database path and

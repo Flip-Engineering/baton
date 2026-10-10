@@ -1,9 +1,9 @@
 // Resolve the selected package from the installed Baton prefix containing this file.
 // The native coordinator supplies the invocation over stdin. Its module identity
 // chooses one package directory below this installation's lib tree.
-import { readdirSync, readFileSync, realpathSync, statSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync } from 'node:fs';
 import { createHash } from 'node:crypto';
-import { dirname, isAbsolute, join, relative, sep } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 
 function refused(reason, detail = null) {
@@ -118,6 +118,48 @@ export async function sessionModuleInventory({ owner, worktree, wrapperPath } = 
     })) };
 }
 
+export function installContextModule({ moduleId, source,
+  wrapperPath = fileURLToPath(import.meta.url) } = {}) {
+  let staging;
+  try {
+    const directory = moduleDirectoryName(moduleId);
+    const supplied = resolve(source);
+    const moduleSource = realpathSync(existsSync(join(supplied, 'native-provider.declaration.json'))
+      ? supplied : join(supplied, 'lib', 'context', 'modules', directory));
+    const declaration = JSON.parse(readFileSync(join(moduleSource, 'native-provider.declaration.json'), 'utf8'));
+    if (declaration.moduleId !== moduleId) {
+      return refused('moduleIdentityMismatch', { requested: moduleId, supplied: declaration.moduleId });
+    }
+    const wrapper = realpathSync(wrapperPath);
+    const modulesRoot = join(dirname(wrapper), '..', '..', 'lib', 'context', 'modules');
+    const destination = resolve(modulesRoot, directory);
+    mkdirSync(modulesRoot, { recursive: true });
+    if (existsSync(destination)) {
+      if (!statSync(destination).isDirectory()) {
+        throw Object.assign(new Error('Module destination is not a directory'), { code: 'ENOTDIR' });
+      }
+      return { status: 'present', moduleId, path: destination, source: moduleSource };
+    }
+    staging = mkdtempSync(join(modulesRoot, '.install-'));
+    const copied = join(staging, directory);
+    cpSync(moduleSource, copied, { recursive: true, preserveTimestamps: true, verbatimSymlinks: true });
+    try {
+      renameSync(copied, destination);
+    } catch (error) {
+      if ((error.code === 'EEXIST' || error.code === 'ENOTEMPTY')
+          && statSync(destination).isDirectory()) {
+        return { status: 'present', moduleId, path: destination, source: moduleSource };
+      }
+      throw error;
+    }
+    return { status: 'installed', moduleId, path: destination, source: moduleSource };
+  } catch (error) {
+    return refused('moduleInstallFailed', { code: error.code ?? null, message: error.message });
+  } finally {
+    if (staging !== undefined) rmSync(staging, { recursive: true, force: true });
+  }
+}
+
 export async function runSelectedInvocation(invocation, { wrapperPath = fileURLToPath(import.meta.url) } = {}) {
   const moduleId = invocation?.moduleBinding?.id;
   const selected = resolveSelectedPackageRoot(wrapperPath, moduleId);
@@ -216,6 +258,17 @@ if (process.argv[1] !== undefined && import.meta.url === pathToFileURL(process.a
       }
     } else {
       result = installedModuleInventory();
+    }
+    process.stdout.write(`${JSON.stringify(result)}\n`);
+    if (result.status === 'refused') process.exitCode = 2;
+  } else if (process.argv[2] === '--install-module') {
+    let input = '';
+    for await (const chunk of process.stdin) input += chunk;
+    let result;
+    try {
+      result = installContextModule(JSON.parse(input));
+    } catch (error) {
+      result = refused('moduleInstallFailed', { code: error.code ?? null, message: error.message });
     }
     process.stdout.write(`${JSON.stringify(result)}\n`);
     if (result.status === 'refused') process.exitCode = 2;
