@@ -1,0 +1,41 @@
+{
+  "id": "baton:filter",
+  "type": "response",
+  "command": "set_event_filter",
+  "success": true,
+  "data": {
+    "events": [
+      "agent_start",
+      "agent_end",
+      "turn_start",
+      "turn_end",
+      "message_start",
+      "message_update",
+      "message_end",
+      "tool_execution_start",
+      "tool_stream_update",
+      "tool_execution_end",
+      "auto_compaction_start",
+      "auto_compaction_end",
+      "auto_retry_start",
+      "auto_retry_end",
+      "cache_warming_start",
+      "cache_warming_end",
+      "retry_fallback_applied",
+      "retry_fallback_succeeded",
+      "model_changed",
+      "config_warnings_changed",
+      "advisor_cost_changed",
+      "advisor_yielded",
+      "ttsr_triggered",
+      "todo_reminder",
+      "todo_auto_clear",
+      "irc_message",
+      "notice",
+      "thinking_level_changed",
+      "goal_updated",
+      "queue_update"
+    ],
+    "messageUpdates": "delta"
+  }
+}

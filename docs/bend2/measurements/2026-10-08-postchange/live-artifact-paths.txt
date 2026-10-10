@@ -1,0 +1,6 @@
+baton2 package binary: /Users/wahargis/.local/share/baton2/releases/development-ceb914218e5edbdcf5d9284f712b94fe6760ac7b/bin/baton2
+provider executable:   /Users/wahargis/Development/Experiments/baton-bend2-root-delivery-20260928/.scratch/baton2-audit-followups-20261004/toolchains/omp-v18.6.0/omp
+database:              /Users/wahargis/Development/Experiments/baton-bend2-root-delivery-20260928/.scratch/baton2-audit-followups-20261004/orchestra.db
+supervisor process:    pid 16775 .../development-ceb914218e5edbdcf5d9284f712b94fe6760ac7b/bin/baton2 <db> turn logging-measure-ds-20261007 logging-measure-ds-20261007-execute-postchange <omp-v18.6.0>/omp
+baton turn log:        /Users/wahargis/Development/Experiments/baton/.scratch/session-takeover-20261006/orchestra-expansion/logging-measure-ds-20261007-turn6.jsonl.attempt-logging-measure-ds-20261007-execute-postchange
+provider native journal: /Users/wahargis/Development/Experiments/baton-bend2-root-delivery-20260928/.scratch/baton2-audit-followups-20261004/orchestra.db.sessions/2026-10-08T02-47-20-893Z_01a11968-7e3d-744c-971c-ca9d5f7672a8.jsonl

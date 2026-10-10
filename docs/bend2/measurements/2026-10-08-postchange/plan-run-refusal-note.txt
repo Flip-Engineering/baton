@@ -1,0 +1,2 @@
+Session busy guard (planned separate turn):
+  Session already has an active native turn; send a message to queue input.
