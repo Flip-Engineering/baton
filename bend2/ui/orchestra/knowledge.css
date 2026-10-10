@@ -375,6 +375,23 @@ g.kw-ref.unheld .kw-ref-tag {
   fill: var(--ink, #141a26);
 }
 
+/* Typed endpoints: a hollow ring when the store holds no record, a
+   filled dot when the record exists but the endpoint has no tier
+   seat. Neither borrows a node's shape or fill. */
+.kw-typeref {
+  cursor: pointer;
+}
+
+.kw-typeref-ring {
+  fill: var(--paper, #fbfcfe);
+  stroke: var(--ink, #141a26);
+  stroke-width: 1.5;
+}
+
+.kw-typeref-dot {
+  fill: var(--ink, #141a26);
+}
+
 .kw-card-fact {
   margin: 6px 0 0;
   font-size: 14px;

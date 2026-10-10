@@ -17,7 +17,14 @@
 //          overview.actors {id: {role, parent}}, overview.groups
 //          {id: {owner, coupling, received}}, overview.scope
 //          {kind, id}, and ensembles [{id, owner, coupling,
-//          members}] for the whole canvas. Identity pairs kind and id:
+//          members}] for the whole canvas. The typed contract adds
+//          overview.nodes [{reference, kind, referenceOnly,
+//          deliveryRead}] and overview.edges [{source, target,
+//          provenance}]: an authored edge is a solid stroke with a
+//          filled head, a recorded-evidence edge a dotted stroke with
+//          an open ring at the evidence. A reference-only endpoint
+//          draws as a hollow ring, never a node. Absent nodes and
+//          edges draw exactly today's map. Identity pairs kind and id:
 //          sessions keep their bare id for the shell and the fixture,
 //          while mixed maps, members, edges and lookups carry the kind
 //          in its own slot, so a session sharing a group's literal id
@@ -229,6 +236,10 @@
   var kwRefMarks = new Map();
   var kwRefsDrawn = 0;
   var kwEvidenceDrawn = 0;
+  var kwTypedAuthored = 0;
+  var kwTypedCited = 0;
+  var kwTypedRings = 0;
+  var kwTypedOutside = 0;
   // Drawn text boxes this render: settling tags keep clear of them.
   var kwLabelBoxes = [];
   // Drawn node centres, drawing width, and hull boxes this render,
@@ -699,6 +710,27 @@
     });
     kwSvg(relate, "title", null).textContent = "recorded relation. ";
     kwSvg(relate, "path", { d: "M0,0 L8,4 L0,8 Z", fill: "var(--ink, #141a26)" });
+    // Typed heads exist only when typed edges do, so a payload
+    // without them leaves the defs exactly as they were. The
+    // authored head is a filled wedge; the cited head is an open
+    // ring at the evidence, which nothing else on the canvas uses.
+    if ((overview.edges || []).length) {
+      const authored = kwSvg(defs, "marker", {
+        id: "kw-arrow-authored", viewBox: "0 0 8 8", refX: "7", refY: "4",
+        markerWidth: "7", markerHeight: "7", orient: "auto-start-reverse",
+      });
+      kwSvg(authored, "title", null).textContent = "authored claim. ";
+      kwSvg(authored, "path", { d: "M0,0 L8,4 L0,8 Z", fill: "var(--ink, #141a26)" });
+      const cited = kwSvg(defs, "marker", {
+        id: "kw-arrow-cited", viewBox: "0 0 8 8", refX: "6.5", refY: "4",
+        markerWidth: "7", markerHeight: "7", orient: "auto-start-reverse",
+      });
+      kwSvg(cited, "title", null).textContent = "recorded evidence. ";
+      kwSvg(cited, "circle", {
+        cx: "4", cy: "4", r: "2.6", fill: "var(--paper, #fbfcfe)",
+        stroke: "var(--ink, #141a26)", "stroke-width": "1.4",
+      });
+    }
     const edgeLayer = kwSvg(svg, "g", { class: "kw-edges" });
     const roleOf = (id) => (meta[id] && meta[id].role) || roles[id] || "";
     return { svg, edgeLayer, tiers, findings, actorPerRow, width, roleOf, markers, tierOf, groupScope };
@@ -942,6 +974,10 @@
     kwRefMarks = new Map();
     kwRefsDrawn = 0;
     kwEvidenceDrawn = 0;
+    kwTypedAuthored = 0;
+    kwTypedCited = 0;
+    kwTypedRings = 0;
+    kwTypedOutside = 0;
     kwKindsDrawn = new Map();
     kwRelStyleDrawn = new Map();
     kwMidpointsDrawn = 0;
@@ -1485,6 +1521,82 @@
       }
       evidenceSpecs.push({ a: { kind: "node", id: f.id }, b: end });
     }
+    // Typed edges resolve against the drawn canvas: a held finding,
+    // session or group end meets its node, any other end floats a
+    // ring on the stub fan. The typed node record overrides the
+    // family inference: referenceOnly means not held whatever the
+    // reference looks like, and an end with no node record at all
+    // never pretends to a record. An edge with no drawn end draws
+    // nothing and counts as outside instead of inventing a seat.
+    const typedNodes = new Map();
+    for (const n of overview.nodes || []) {
+      if (n && n.reference !== undefined && n.reference !== null) {
+        typedNodes.set(String(n.reference), n);
+      }
+    }
+    const typedSpecs = [];
+    const kwTypedSideKind = (e, side) => {
+      const k = String((e && e[side]) || "").toLowerCase();
+      return k === "finding" || k === "session" || k === "group" ? k : "";
+    };
+    const kwTypedNodeEnd = (s, kind) => {
+      if (!s) return null;
+      const fid = kwFindingRef(s) || s;
+      const want = (k) => !kind || kind === k;
+      if (want("finding") && findingPos.has(fid)) {
+        return { kind: "node", id: fid, ref: s, drawn: "finding" };
+      }
+      if (want("finding") && layout.findings.has(fid)) {
+        return { kind: "hidden", id: fid, ref: s };
+      }
+      if (want("session") && actorPos.has(s)) {
+        return { kind: "node", id: s, ref: s, drawn: "session" };
+      }
+      if (want("group") && groupPos.has(s)) {
+        return { kind: "node", id: s, ref: s, drawn: "group" };
+      }
+      return null;
+    };
+    const KW_TYPED_FAMILIES = /^(message|task|report|turn|issue|pr|external)$/;
+    for (const e of overview.edges || []) {
+      const prov = String((e && e.provenance) || "");
+      if (prov !== "authored" && prov !== "recorded-evidence") continue;
+      const sref = e.source !== undefined && e.source !== null ? String(e.source) : "";
+      const tref = e.target !== undefined && e.target !== null ? String(e.target) : "";
+      if (!sref || !tref || sref === tref) continue;
+      const a = kwTypedNodeEnd(sref, kwTypedSideKind(e, "sourceKind"))
+        || { kind: "ring", ref: sref };
+      const b = kwTypedNodeEnd(tref, kwTypedSideKind(e, "targetKind"))
+        || { kind: "ring", ref: tref };
+      if (a.kind === "hidden" || b.kind === "hidden") continue;
+      const anchor = a.kind === "node" ? a : (b.kind === "node" ? b : null);
+      if (!anchor) { kwTypedOutside += 1; continue; }
+      const at = anchor.drawn === "finding" ? findingPos.get(anchor.id)
+        : anchor.drawn === "session" ? actorPos.get(anchor.id)
+        : groupPos.get(anchor.id);
+      const slotRing = (end) => {
+        const rec = typedNodes.get(end.ref) || null;
+        const rkind = String((rec && rec.kind) || "");
+        const fam = KW_TYPED_FAMILIES.test(rkind) ? rkind
+          : rkind === "finding" ? "finding"
+          : ((KW_REF_FAMILIES.exec(end.ref) || [])[1]
+            || (kwFindingRef(end.ref) ? "finding" : "reference"));
+        const mark = kwRefSlot(kwKey(anchor.drawn, anchor.id), at,
+          { ref: end.ref, family: fam });
+        const refOnly = rec ? rec.referenceOnly === true : true;
+        mark.typed = {
+          kind: rkind, referenceOnly: refOnly,
+          deliveryRead: rec ? rec.deliveryRead : undefined,
+        };
+        mark.unheld = refOnly;
+        const label = end.ref.length > 22 ? end.ref.slice(0, 21) + "…" : end.ref;
+        mark.shown = refOnly ? label + " · not held" : label;
+        mark.w = mark.shown.length * 7.5 + 14;
+      };
+      if (a.kind === "ring") slotRing(a);
+      if (b.kind === "ring") slotRing(b);
+      typedSpecs.push({ a, b, provenance: prov });
+    }
     // Tags settle top-down past nodes, text and the tags above; a tag
     // keeps stepping until it clears, so settling never places overlap
     // within the boxes it is given. The boxes are exact for mono words
@@ -1505,7 +1617,9 @@
       .sort((p, q) => (p.y - q.y) || (p.x - q.x));
     for (const mark of slotOrder) {
       const hw = mark.w / 2 + 3;
-      const hh = 9 + 3;
+      // A typed ring hangs its label below the ring, so its box is
+      // taller than a tag's; the settle moves the centre the same way.
+      const hh = mark.typed ? 19 : 9 + 3;
       while (settled.some((box) =>
           mark.x - hw < box.x1 && box.x0 < mark.x + hw
           && mark.y - hh < box.y1 && box.y0 < mark.y + hh)) {
@@ -1517,6 +1631,57 @@
       kwLabelBoxes.push({ x0: mark.x - hw, y0: mark.y - hh, x1: mark.x + hw, y1: mark.y + hh });
     }
     for (const mark of kwRefMarks.values()) {
+      // A typed endpoint draws as a ring, never a tag or a node: open
+      // when the store holds no record for it, a filled dot when the
+      // record exists but the endpoint has no tier seat. The label
+      // hangs below the ring inside the settled box.
+      if (mark.typed) {
+        const open = mark.typed.referenceOnly !== false;
+        const g = kwSvg(svg, "g", {
+          class: "kw-ref kw-typeref",
+          tabindex: "0", role: "button",
+          "aria-label": "reference " + mark.ref
+            + (open ? ", not held"
+              : ", held " + (mark.typed.kind || "record")),
+          "data-kw-node": mark.ref,
+          "data-kw-ref": mark.ref,
+          "data-kw-kind": "ref",
+          "data-reference-only": open ? "true" : "false",
+        });
+        kwSvg(g, "circle", {
+          cx: String(mark.x), cy: String(mark.y - 4), r: "7",
+          class: open ? "kw-typeref-ring" : "kw-typeref-dot",
+        });
+        const word = kwSvg(g, "text", {
+          x: String(mark.x), y: String(mark.y + 12), class: "kw-ref-word mono",
+          "text-anchor": "middle",
+        });
+        word.textContent = mark.shown;
+        const heading = kwSvg(g, "title", null);
+        heading.textContent = mark.ref + (open ? " — not held" : "");
+        kwTrackBox(mark.x - mark.w / 2, mark.y - 16, mark.x + mark.w / 2, mark.y + 16);
+        g.addEventListener("click", () => {
+          if (kwConsumePan()) return;
+          kwDismissed = null;
+          kwDismissedRelation = (opts && opts.focusRelation) || "";
+          kwPinCard(container, overview, promotions, opts, mark.ref, "ref");
+          g.focus();
+          kwIsolate(kwKey("ref", mark.ref), 2);
+        });
+        g.addEventListener("keydown", (ev) => {
+          if (ev.key === "Enter" || ev.key === " ") {
+            if (ev.preventDefault) ev.preventDefault();
+            kwViewMoved = false;
+            kwDismissed = null;
+            kwDismissedRelation = (opts && opts.focusRelation) || "";
+            kwPinCard(container, overview, promotions, opts, mark.ref, "ref");
+            kwIsolate(kwKey("ref", mark.ref), 2);
+          }
+        });
+        kwRefsDrawn += 1;
+        kwTypedRings += 1;
+        continue;
+      }
       const g = kwSvg(svg, "g", {
         class: "kw-ref" + (mark.unheld ? " unheld" : ""),
         tabindex: "0", role: "button",
@@ -1755,6 +1920,92 @@
       kwTrackBox(Math.min(from.x, to.x), Math.min(from.y, to.y),
         Math.max(from.x, to.x), Math.max(from.y, to.y));
     }
+    // Typed edges draw last, above the relation strokes: an authored
+    // claim is a solid stroke with a filled head, a recorded citation
+    // a dotted stroke with an open ring at the evidence. Texture and
+    // terminus differ together, so neither needs the key. Ring ends
+    // meet the ring, not the label hanging below it.
+    const typedEnd = (end) => {
+      if (end.kind === "node") {
+        if (end.drawn === "finding") return findingPos.get(end.id) || null;
+        if (end.drawn === "session") return actorPos.get(end.id) || null;
+        return groupPos.get(end.id) || null;
+      }
+      const mark = kwRefMarks.get(end.ref);
+      return mark ? { x: mark.x, y: mark.y - 4 } : null;
+    };
+    for (const spec of typedSpecs) {
+      const from = typedEnd(spec.a);
+      const to = typedEnd(spec.b);
+      if (!from || !to) continue;
+      const authored = spec.provenance === "authored";
+      const aRef = spec.a.kind === "node" ? spec.a.id : spec.a.ref;
+      const bRef = spec.b.kind === "node" ? spec.b.id : spec.b.ref;
+      const aKind = spec.a.kind === "node" ? spec.a.drawn : "ref";
+      const bKind = spec.b.kind === "node" ? spec.b.drawn : "ref";
+      const words = authored ? "authored claim" : "recorded evidence";
+      const g = kwSvg(edgeLayer, "g", {
+        class: "kw-edge-typed " + (authored ? "kw-edge-authored" : "kw-edge-cited"),
+        "data-kind": "typed",
+        "data-provenance": spec.provenance,
+        "data-from": aRef,
+        "data-to": bRef,
+        "data-from-kind": aKind,
+        "data-to-kind": bKind,
+        tabindex: "0",
+        role: "button",
+        "aria-label": words + " from " + aRef + " to " + bRef,
+      });
+      const readOf = (end) => {
+        const rec = typedNodes.get(end.ref) || null;
+        return rec ? rec.deliveryRead : undefined;
+      };
+      const ends = [
+        { kind: aKind, id: aRef, deliveryRead: readOf(spec.a) },
+        { kind: bKind, id: bRef, deliveryRead: readOf(spec.b) },
+      ];
+      const activate = () => {
+        kwDismissed = null;
+        kwLightTyped(svg, g, ends);
+        kwPinTypedCard(container, spec.provenance, ends);
+      };
+      g.addEventListener("click", () => {
+        if (kwConsumePan()) return;
+        activate();
+        g.focus();
+      });
+      g.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter" || ev.key === " ") {
+          if (ev.preventDefault) ev.preventDefault();
+          kwViewMoved = false;
+          activate();
+        }
+      });
+      const spans = kwStubSpans(from.x, from.y, to.x, to.y);
+      for (let si = 0; si < spans.length; si += 1) {
+        const s0 = spans[si][0];
+        const s1 = spans[si][1];
+        const attrs = {
+          x1: String(from.x + (to.x - from.x) * s0),
+          y1: String(from.y + (to.y - from.y) * s0),
+          x2: String(from.x + (to.x - from.x) * s1),
+          y2: String(from.y + (to.y - from.y) * s1),
+          stroke: "var(--ink, #141a26)", "stroke-width": "1.5",
+          "stroke-linecap": "round",
+        };
+        if (!authored) attrs["stroke-dasharray"] = "2 2.5";
+        if (si === spans.length - 1) {
+          attrs["marker-end"] = "url(#" + (authored ? "kw-arrow-authored" : "kw-arrow-cited") + ")";
+        }
+        kwSvg(g, "line", attrs);
+      }
+      const tip = kwSvg(g, "title", null);
+      tip.textContent = words;
+      kwTrackBox(Math.min(from.x, to.x), Math.min(from.y, to.y),
+        Math.max(from.x, to.x), Math.max(from.y, to.y));
+      if (authored) kwTypedAuthored += 1;
+      else kwTypedCited += 1;
+    }
     if (query) {
       for (const [ref, mark] of kwRefMarks) {
         const names = mark.relations.map((rel) => rel.name).join(" ");
@@ -1838,6 +2089,26 @@
       keyEntries.push(["", "evidence",
         "var(--muted, #5b6478)", "evline", ""]);
     }
+    // Typed rows key only drawn provenance: a payload without typed
+    // edges adds no row, so the key reads exactly as before. Edges
+    // with no drawn end count as outside rather than vanishing.
+    if (kwTypedAuthored > 0) {
+      keyEntries.push(["kw-arrow-authored", "authored claim",
+        "var(--ink, #141a26)", "authored", ""]);
+    }
+    if (kwTypedCited > 0) {
+      keyEntries.push(["kw-arrow-cited", "recorded evidence",
+        "var(--ink, #141a26)", "cited", "2 2.5"]);
+    }
+    if (kwTypedRings > 0) {
+      keyEntries.push(["", "typed endpoint, open when the record is not held",
+        "var(--ink, #141a26)", "typering", ""]);
+    }
+    if (kwTypedOutside > 0) {
+      keyEntries.push(["", kwTypedOutside + " typed edge"
+        + (kwTypedOutside === 1 ? "" : "s") + " outside the drawn tiers",
+        "var(--ink, #141a26)", "empty", ""]);
+    }
     // One row per drawn kind family, with its count; the drawn kinds
     // stand named in the row's title, and the card names the kind of the
     // finding it pins. The swatch mirrors the family's first-drawn shape
@@ -1880,10 +2151,10 @@
       for (const entry of keyEntries) {
         if (!entry || entry.toggle) continue;
         const shape = String(entry[3] || "");
-        if (shape === "line" || shape === "arc" || shape === "relate" || shape === "evline") edges = true;
+        if (shape === "line" || shape === "arc" || shape === "relate" || shape === "evline" || shape === "authored" || shape === "cited") edges = true;
         else if (shape.indexOf("family:") === 0) families = true;
         else if (shape === "groupnode") groups = true;
-        else if (shape === "tag" || shape === "glyphs") marks = true;
+        else if (shape === "tag" || shape === "glyphs" || shape === "typering") marks = true;
       }
       if (edges) kwKeyParts.push("edges");
       if (families) kwKeyParts.push("families");
@@ -2043,6 +2314,17 @@
       } else if (shape === "evline") {
         kwSvg(sw, "line", {
           x1: "3", y1: "9", x2: "23", y2: "3", stroke: paint, "stroke-width": "1",
+        });
+      } else if (shape === "authored" || shape === "cited") {
+        const ln = kwSvg(sw, "line", {
+          x1: "3", y1: "9", x2: "20", y2: "4", stroke: paint, "stroke-width": "1.5",
+          "stroke-linecap": "round",
+          "marker-end": "url(#" + String(entry[0]) + ")",
+        });
+        if (dash) ln.setAttribute("stroke-dasharray", dash);
+      } else if (shape === "typering") {
+        kwSvg(sw, "circle", {
+          cx: "13", cy: "6", r: "4", fill: "none", stroke: paint, "stroke-width": "1.5",
         });
       } else if (shape === "empty") {
         // An absence keys no mark, so it carries no swatch.
@@ -2638,6 +2920,16 @@
       kwEl(card, "p", { class: "kw-card-fact" },
         String(ref.family) + " reference · " + ref.relations.length
         + (ref.relations.length === 1 ? " relation" : " relations"));
+      // A typed endpoint states its recorded kind and, for a message
+      // carrying deliveryRead, the seat's read state as words about
+      // the seat. Absent fields state nothing.
+      if (ref.typed && ref.typed.kind) {
+        kwEl(card, "p", { class: "kw-card-fact" }, "kind: " + String(ref.typed.kind));
+      }
+      if (ref.typed && ref.typed.deliveryRead !== undefined) {
+        kwEl(card, "p", { class: "kw-card-fact" }, ref.typed.deliveryRead === true
+          ? "seat read the delivery" : "seat has not read the delivery");
+      }
       const refs = kwEl(card, "div", { class: "kw-card-refs" });
       for (const rel of ref.relations) {
         const other = String(rel.other);
@@ -2760,6 +3052,51 @@
     kwEl(card, "p", { class: "kw-card-fact mono" },
       ends.length === 2 ? label(ends[0]) + " → " + label(ends[1])
       : "ends outside the drawn tiers");
+    const pts = [];
+    for (const e of ends) {
+      const p = e.kind === "ref" ? kwRefMarks.get(e.id) : kwNodeXY.get(kwKey(e.kind, e.id));
+      if (p) pts.push(p);
+    }
+    kwPlaceCard(container, card, pts.length
+      ? { x: pts.reduce((s, p) => s + p.x, 0) / pts.length,
+          y: pts.reduce((s, p) => s + p.y, 0) / pts.length }
+      : null);
+  }
+
+  // Activating a typed edge lights only it and its two ends; every
+  // other edge dims, related or not.
+  function kwLightTyped(svg, edge, ends) {
+    const names = new Set(ends.map((e) => kwKey(e.kind, e.id)));
+    for (const g of svg.querySelectorAll("g.kw-anchor, g.knode, g.kw-cluster, g.kw-ref, g.kw-group")) {
+      g.classList.toggle("kw-hover-dim", !names.has(kwNodeKey(g)));
+    }
+    const layer = svg.querySelector("g.kw-edges");
+    if (!layer) return;
+    for (const e of layer.children) {
+      e.classList.toggle("kw-hover-dim", e !== edge);
+    }
+  }
+
+  // A typed edge's card names the provenance and its two ends. A
+  // message end carrying deliveryRead states it as a fact about
+  // the seat, never as a mark on the message.
+  function kwPinTypedCard(container, provenance, ends) {
+    if (!container) return;
+    const card = kwOpenCard(container);
+    const lead = kwEl(card, "p", { class: "kw-card-lead" });
+    kwEl(lead, "span", { class: "kw-card-title" },
+      provenance === "authored" ? "authored claim" : "recorded evidence");
+    lead.appendChild(document.createTextNode(" "));
+    kwEl(lead, "span", { class: "kw-card-state" }, "typed edge");
+    const label = (e) => e.kind === "ref" ? e.id : e.kind + " " + e.id;
+    kwEl(card, "p", { class: "kw-card-fact mono" },
+      ends.length === 2 ? label(ends[0]) + " → " + label(ends[1])
+      : "ends outside the drawn tiers");
+    for (const e of ends) {
+      if (e.deliveryRead === undefined) continue;
+      kwEl(card, "p", { class: "kw-card-fact" }, e.deliveryRead === true
+        ? "seat read the delivery" : "seat has not read the delivery");
+    }
     const pts = [];
     for (const e of ends) {
       const p = e.kind === "ref" ? kwRefMarks.get(e.id) : kwNodeXY.get(kwKey(e.kind, e.id));
@@ -2975,6 +3312,7 @@
     // An empty group scope still seats its group, so the holder and its
     // metadata draw instead of an empty notice.
     if (!(overview.findings || []).length && !(overview.relations || []).length
+      && !(overview.edges || []).length && !(overview.nodes || []).length
       && !kwScopeGroup(overview)) {
       const p = kwEl(container, "p", { class: "muted" });
       p.textContent = (opts && opts.query)
