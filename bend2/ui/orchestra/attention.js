@@ -219,10 +219,12 @@
   }
 
   // Beside the mark, in the seat's own band: the room is what is left between the
-  // next seat's mark, the box edge, the row's label column, and any name already
-  // placed beside this row.
+  // next seat's enclosure, the box edge, the row's label column, and any name already
+  // placed beside this row. A seat that carries a role enclosure starts its name two
+  // pixels past the enclosure's outer edge; every seat starts seven pixels past its
+  // mark.
   function labelBeside(forms, place) {
-    var pad = place.radius + 7;
+    var pad = place.radius + 7 + (place.roleRing ? 2 : 0);
     var right = place.caps.right - (place.x + pad) - 2;
     var left = (place.x - pad) - place.caps.left - 2;
     var room = Math.floor(Math.max(right, left) / CHAR_W);
@@ -644,13 +646,18 @@
     var labelChars = Math.max(8, Math.floor((gutter - LABEL_PAD) / CHAR_W));
 
     // The mark's size follows the run's size, and the tier's pitch follows the
-    // mark, so a tier never crowds and never paints outside the box.
+    // mark, so a tier never crowds and never paints outside the box. A conductor's
+    // role enclosure reaches radius + 7, half a stroke past that at its outer edge,
+    // so the row extent used for the horizontal inset, the minimum pitch, the row
+    // spacing and the height bounds is the enclosure's when any conductor is seated
+    // and the mark's otherwise. The pointer target stays at its own radius: it is a
+    // transparent circle and remains the smallest consistent hit area.
     var radius = radiusFor(total);
-    // The pointer target is the outermost thing a seat draws, so the box's inset
-    // is derived from it rather than fixed.
+    var extent = ringDrawn ? radius + 7 : radius;
     var hitRadius = Math.max(12, radius + 5);
-    var usable = Math.max(40, w - gutter - hitRadius - 2);
-    var pitchMin = 2 * radius + 7;
+    var inset = Math.max(hitRadius, extent + 1);
+    var usable = Math.max(40, w - gutter - inset - 2);
+    var pitchMin = 2 * extent + 7;
     var perRow = widest > 1 ? Math.max(2, Math.floor(usable / pitchMin)) : 1;
     if (widest && perRow > widest) perRow = widest;
 
@@ -659,12 +666,6 @@
       totalRows += Math.max(1, Math.ceil(plan.tiers[s].rows.length / perRow));
     }
 
-    // A conductor's role enclosure reaches radius + 7, past the mark and the pointer
-    // target, so the row extent the spacing and the bounds account for is the ring's
-    // when any conductor is seated and the mark's otherwise. The horizontal inset and
-    // the within-row pitch keep the smaller hit radius: the enclosure is a thin
-    // stroke that may sit close to its neighbours sideways.
-    var extent = ringDrawn ? radius + 7 : radius;
     // Size the drawing to its rows and compress their spacing within the mount height.
     var gap = 2 * extent + 10;
     var seatTop = Math.max(SEAT_TOP, extent + 12);
@@ -692,23 +693,25 @@
         var row = Math.floor(k / inRow);
         var column = k - row * inRow;
         var x = inRow === 1 ? gutter + usable / 2 : gutter + column * pitch;
-        // The tiers bow away from the conductors' tier at the edges, so the hall reads
-        // seating plan.
+        // The outer seats of a tier sit lower than its first row, by an amount that
+        // grows with the square of the distance from the tier's centre.
         var bow = BOW * Math.pow((x - mid) / Math.max(1, mid), 2);
-        // Where this seat's name may reach: the next seat's mark, the box, the row's
-        // label column, and any name already placed beside this row.
+        // Where this seat's name may reach: the next seat's enclosure, the box, the
+        // row's label column, and any name already placed beside this row.
         var lane = i + ":" + row;
-        var nextLeft = column === inRow - 1 ? w - 4 : x + pitch - radius - 4;
+        var nextLeft = column === inRow - 1 ? w - 4 : x + pitch - extent - 4;
         var caps = {
           left: Math.max((row === 0 ? gutter : 0) + 4, blocked[lane] || 0),
           right: nextLeft,
         };
+        var seatRole = tier.rows[k].role;
         var label = seatLabelFor(tier.rows[k].forms, {
           x: x,
           row: row,
           pitch: pitch,
           gap: gap,
           radius: radius,
+          roleRing: seatRole === "principal-conductor" || seatRole === "associate-conductor",
           gutter: gutter,
           width: w,
           caps: caps,
@@ -890,11 +893,11 @@
       group.appendChild(held);
     }
 
-    // The role mark for a conductor's recorded role, in the page's own ink at
-    // radius + 7: a whole ring for the principal conductor, the same ring with two
-    // gaps for an associate. No other mark sits at that radius - the fermata ring is
-    // a state ink at radius + 4, the selection ring a focus indicator at radius + 3 -
-    // so the enclosure carries the role alone.
+    // The role mark for a conductor's recorded role: a whole ring at radius + 7 in
+    // the page's ink for the principal conductor, the same ring with two gaps for an
+    // associate. The fermata ring uses the seat state's colour at radius + 4 and the
+    // selection ring marks focus at radius + 3; the role enclosure's radius is 7, so
+    // its radius identifies the conductor's role.
     if (seat.role === "principal-conductor" || seat.role === "associate-conductor") {
       group.appendChild(roleMark(seat.role, radius));
     }
@@ -1456,10 +1459,10 @@
       setText(nameText, shortId(tierName, laid.labelChars));
 
       // The tier's condition, beside its name: one unit mark per seat that needs a
-      // person, in that seat's own state ink, then one per seat that owes work, in the
-      // muted ink the seat's own units wear - the same unit and the same inks, so the
-      // gutter reads as one table: name, condition, size. Held seats lead; the exact
-      // counts travel in the name's title, and the marks stop where the count column
+      // person, in the colour that seat's state uses, then one per seat that owes
+      // work, in the muted colour the seat's own units use. The unit marks and the
+      // colours are the same ones the seats draw. Held seats come first; the exact
+      // counts are in the name's title, and the marks stop where the count column
       // begins.
       var heldSeats = [];
       var owingSeats = [];
