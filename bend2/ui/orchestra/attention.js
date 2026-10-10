@@ -1015,7 +1015,7 @@
     if (!id) return null;
     var kind = String(named ? (value.kind || "") : "");
     var seat = positions[id];
-    if (seat) return { seat: seat, name: id, kind: kind };
+    if (seat) return { seat: seat, kind: kind };
     var reference = String(named ? (value.reference || id) : id);
     if (!(named && value.referenceOnly === true) && !unheld.has(reference)) return null;
     return { reference: reference, kind: kind };
@@ -1025,8 +1025,12 @@
     return provenance === "authored" ? "att-seam-authored" : "att-seam-cited";
   }
 
+  // An end's name in a seam's own words. A seat is named by its id alone: a kind carried
+  // beside a seat end describes the record the edge came from, not the seat, and the id is
+  // what the reader matches to the hall. A reference is named with its kind, because the
+  // kind is what the reference is.
   function seamEndName(end) {
-    if (end.seat) return end.seat.seat.id + (end.kind ? " (" + end.kind + ")" : "");
+    if (end.seat) return end.seat.seat.id;
     return "reference " + end.reference + (end.kind ? " (" + end.kind + ")" : "")
       + ", which the store does not hold";
   }
