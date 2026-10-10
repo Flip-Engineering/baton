@@ -228,15 +228,17 @@ def traverse_sql(+reader: String, +scope: String, +subject: String, +reference: 
   ++ ", walk(reference) AS (SELECT " ++ seed ++ Bool.pick(String,recursive," UNION SELECT CASE WHEN e.source_ref=w.reference THEN e.target_ref ELSE e.source_ref END FROM edges e JOIN walk w ON " ++ traversal_join(direction) ++ " WHERE " ++ traversal_relation(relation),"") ++ "), selected AS (SELECT reference FROM walk)"
   ++ graph_answer(reader,scope,subject,",'reference'," ++ seed ++ ",'direction'," ++ C.q(direction) ++ ",'relation'," ++ C.q(relation) ++ ",'recursive'," ++ Bool.pick(String,recursive,"json('true')","json('false')"),traversal_filter(direction,relation))
 
+def graph_read_sql(+reader: String, +scope: String, +subject: String, +query: String, search: Bool, direction: String, relation: String, recursive: Bool, typed: String, +groups: Bool, present: String) -> String:
+  +types = String.eq(typed,"1\n")
+  +edges = String.eq(present,"1\n")
+  Bool.pick(String,search,search_sql(reader,scope,subject,query,types,groups,edges),traverse_sql(reader,scope,subject,query,direction,relation,recursive,types,groups,edges))
+
 def graph_read(+db: String, +reader: String, +scope: String, +subject: String, +query: String, search: Bool, direction: String, relation: String, recursive: Bool) -> IO(Unit):
   do IO<Unit>:
     typed : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM pragma_table_info('knowledge') WHERE name='kind';"))
     +groups : Bool <- promotion_groups_value(db)
     present : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM sqlite_master WHERE type='table' AND name='knowledge_relations';"))
-    +types = String.eq(typed,"1\n")
-    +edges = String.eq(present,"1\n")
-    +sql = Bool.pick(String,search,search_sql(reader,scope,subject,query,types,groups,edges),traverse_sql(reader,scope,subject,query,direction,relation,recursive,types,groups,edges))
-    saved : String <- IO.try(String,DB.Sql.read(db,sql))
+    saved : String <- IO.try(String,DB.Sql.read(db,graph_read_sql(reader,scope,subject,query,search,direction,relation,recursive,typed,groups,present)))
     IO.write(saved)
 
 # The stored finding, read back only when it is this invocation's own finding:
