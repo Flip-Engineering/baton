@@ -133,8 +133,12 @@ export function readQueryBootstrap({ database, owner, worktree, query, bootstrap
   const loaded = readBootstrap(bootstrapPath, { database, owner: prepared.owner,
     worktree: prepared.worktree, query: prepared.query, artifactPath: prepared.path });
   if (loaded.status !== 'loaded') return loaded;
+  const recoveryArgv = loaded.value.recoveryArgv.split('\0');
+  if (recoveryArgv.at(-1) === '') recoveryArgv.pop();
+  const value = Object.freeze({ ...loaded.value, recoveryArgv: Object.freeze(recoveryArgv) });
   return Object.freeze({ status: 'loaded', owner, worktree: prepared.worktree,
-    query, path: bootstrapPath, sha256: sha256(loaded.bytes), value: loaded.value });
+    query, path: bootstrapPath, sha256: sha256(loaded.bytes),
+    bootstrapText: loaded.bytes.toString('utf8').replace(/\n$/, ''), value });
 }
 
 export function persistQueryBootstrap({ database, owner, worktree, query, bootstrapText } = {}) {

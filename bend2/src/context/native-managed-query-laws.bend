@@ -4,6 +4,14 @@ import ./native-managed-query.bend as Managed
 import ./bound-admission.bend as Admission
 import ./service.bend as Service
 import ../json/canonical.bend as J
+import ../host/process.bend as Process
+import ./engines.bend as Eng
+import ./engines-wire.bend as Wire
+
+def managed_recovery_args() -> List<String>:
+  ["/opt/baton2/bin/baton2", "--recover-context-query", "/logs/state.db",
+    "owner-1", "q-1", "/logs/keeper-q", "/work",
+    "/work/.baton/context-artifacts/q/bootstrap.json"]
 
 def managed_bootstrap() -> Managed.Bootstrap:
   Managed.query_bootstrap("db-binding", "q-1", "owner-1", "{}", "/work", "0",
@@ -11,14 +19,17 @@ def managed_bootstrap() -> Managed.Bootstrap:
       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
     "[]", "plan-identity", "result-v1", "/work/.baton/context-artifacts/q",
     "/logs/keeper-q", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-    "7:1", "native-recover-argv", "/opt/baton2/bin/baton2",
+    "7:1", Process.argv(managed_recovery_args()), "/opt/baton2/bin/baton2",
     "/usr/bin/node", "/opt/baton2/libexec/baton2/context-provider.mjs",
     "/logs/keeper-q/invocation.json",
-    "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc")
+    "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", "")
 
 law sealed_bootstrap_recovery_preserves_the_original_owner_witness_and_artifact:
-  {Managed.bootstrap_from_json(Managed.bootstrap_json(managed_bootstrap()),
-    "owner-1", "q-1") == Managed.BootstrapDecoded{managed_bootstrap()} : Managed.BootstrapDecode}
+  {(Managed.bootstrap_from_json(Managed.bootstrap_json(managed_bootstrap()),
+      "owner-1", "q-1"),
+    Managed.recovery_argv_from_json(Wire.ss_json(Eng.ss_of_list(managed_recovery_args())))) ==
+    (Managed.BootstrapDecoded{managed_bootstrap()}, Process.argv(managed_recovery_args())) :
+    Managed.BootstrapDecode & String}
 
 def sealed_bootstrap_recovery_preserves_the_original_owner_witness_and_artifact():
   {==}
@@ -236,7 +247,7 @@ def recovery_refuses_transition_mode_that_does_not_match_incarnations():
 def managed_submission() -> Service.Submission:
   Service.SubmissionManaged{accepted_admission(), "[]", "plan-identity", "result-v1",
     "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    Managed.bootstrap_text(managed_bootstrap())}
+    Managed.bootstrap_text(managed_bootstrap()), ""}
 
 law a_retained_observer_and_matching_committed_admission_are_required_for_start:
   {Managed.start_from_submission(managed_bootstrap(), ready_keeper(),
@@ -269,7 +280,7 @@ law recovery_replays_the_original_grant_after_terminal_publication:
       "/logs/keeper-q", "/work", "/work/.baton/context-artifacts/q"},
     "[]", "plan-identity", "result-v1",
     "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    Managed.bootstrap_text(managed_bootstrap())) ==
+    Managed.bootstrap_text(managed_bootstrap()), "") ==
     Managed.StartGranted{"q-1", "owner-1", "starter", "0", "{}",
       "/logs/keeper-q", "/work/.baton/context-artifacts/q", "[]", "result-v1"} : Managed.StartDecision}
 
@@ -282,7 +293,7 @@ law recovery_replays_only_the_captured_origin_attempt:
       "/logs/keeper-q", "/work", "/work/.baton/context-artifacts/q"},
     "[]", "plan-identity", "result-v1",
     "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    Managed.bootstrap_text(managed_bootstrap())) ==
+    Managed.bootstrap_text(managed_bootstrap()), "") ==
     Managed.StartHeld{"recoveryManagedAdmissionMismatch"} : Managed.StartDecision}
 
 def recovery_replays_only_the_captured_origin_attempt():
@@ -302,7 +313,7 @@ law recovery_plan_mismatch_holds_the_existing_keeper:
   {Managed.accepted_recovery_managed_admission(managed_bootstrap(), "starter", "0",
     accepted_admission(), "different-plan", "plan-identity", "result-v1",
     "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-    Managed.bootstrap_text(managed_bootstrap())) ==
+    Managed.bootstrap_text(managed_bootstrap()), "") ==
     Managed.StartHeld{"recoveryManagedAdmissionMismatch"} : Managed.StartDecision}
 
 def recovery_plan_mismatch_holds_the_existing_keeper():

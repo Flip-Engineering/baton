@@ -51,7 +51,7 @@ function bootstrapText(worktreePath, query = 'query-1', owner = 'owner-1', origi
     query,
     recoveryArgv: '/opt/baton2/bin/baton2\0--recover-context-query\0/database\0'
       + owner + '\0' + query + '\0' + keeperPath + '\0' + worktreePath + '\0'
-      + join(worktreePath, '.baton', 'context-artifacts', Buffer.from(query).toString('hex'), 'bootstrap.json'),
+      + join(worktreePath, '.baton', 'context-artifacts', Buffer.from(query).toString('hex'), 'bootstrap.json') + '\0',
     request: '{}',
     resultSchema: 'result-v1',
     runtimePath: '/usr/bin/node',
@@ -163,10 +163,14 @@ test('bootstrap keeps the invocation location and digest consumed by native reco
 test('recovery reads only the bootstrap under the matching owner-worktree marker', (t) => {
   const root = worktree(t);
   const authority = { database: databaseFor(root), owner: 'owner-1', worktree: root, query: 'query-1' };
-  const saved = persistQueryBootstrap({ ...authority, bootstrapText: bootstrapText(root) });
+  const originalText = bootstrapText(root);
+  const saved = persistQueryBootstrap({ ...authority, bootstrapText: originalText });
   const loaded = readQueryBootstrap({ ...authority, bootstrapPath: saved.path });
   assert.equal(loaded.status, 'loaded');
   assert.equal(loaded.sha256, saved.sha256);
+  assert.equal(loaded.bootstrapText, originalText);
+  assert.equal(readFileSync(saved.path, 'utf8'), originalText + '\n');
+  assert.equal(loaded.value.recoveryArgv.join('\0') + '\0', JSON.parse(originalText).recoveryArgv);
   assert.equal(readQueryBootstrap({ ...authority, bootstrapPath: join(root, 'request.json') }).reason,
     'queryBootstrapPathMismatch');
   assert.equal(readQueryBootstrap({ ...authority, owner: 'owner-2', bootstrapPath: saved.path }).reason,

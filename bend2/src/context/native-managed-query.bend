@@ -7,6 +7,8 @@ import ./bound-admission.bend as Admission
 import ./service.bend as ContextService
 import ./identity.bend as ContextIdentity
 import ./request.bend as Req
+import ./native-request.bend as NativeRequest
+import ../host/process.bend as Process
 
 type Bootstrap is Data:
   QueryBootstrap{query: String, owner: String, database_binding: String,
@@ -401,6 +403,11 @@ def keeper_recovery_readiness_from_host(+bootstrap: Bootstrap,
       bootstrap_keeper_path(bootstrap), "starter", "0"},
     KeeperObserverUnavailable{"hostRecoveryReadinessMismatch"})
 
+def recovery_argv_from_json(+value: J.Json) -> String:
+  match value:
+    case J.Jarr{+head, +tail}: Process.argv(NativeRequest.projections_list(value))
+    case other: Req.text_of(value)
+
 def bootstrap_from_json(+value: J.Json, +expected_owner: String,
                         +expected_query: String) -> BootstrapDecode:
   match value:
@@ -421,7 +428,7 @@ def bootstrap_from_json(+value: J.Json, +expected_owner: String,
       +guard_key = Req.text_of(readiness_member(value, "guardKey"))
       +physical_role_key = Req.text_of(readiness_member(value, "physicalRoleKey"))
       +owner_witness = Req.text_of(readiness_member(value, "ownerWitness"))
-      +recovery_argv = Req.text_of(readiness_member(value, "recoveryArgv"))
+      +recovery_argv = recovery_argv_from_json(readiness_member(value, "recoveryArgv"))
       +source_identity = Req.text_of(readiness_member(value, "sourceIdentity"))
       +executable_path = Req.text_of(readiness_member(value, "executablePath"))
       +runtime_path = Req.text_of(readiness_member(value, "runtimePath"))
