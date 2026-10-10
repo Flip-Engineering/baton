@@ -52,9 +52,14 @@ def run(args, **kw):
 
 
 def coord(db, *args):
-    result = subprocess.run([str(EXE), str(db), *map(str, args)],
-                            capture_output=True, text=True)
-    assert result.returncode == 0, result.stderr
+    argv = [str(EXE), str(db), *map(str, args)]
+    result = subprocess.run(argv, capture_output=True, text=True)
+    assert result.returncode == 0, {
+        'argv': argv,
+        'returncode': result.returncode,
+        'stdout': result.stdout,
+        'stderr': result.stderr,
+    }
     return json.loads(result.stdout)
 
 
@@ -415,6 +420,13 @@ if __name__ == '__main__':
         code = main()
     except Exception as error:
         EVIDENCE['error'] = repr(error)
+        if isinstance(error, subprocess.CalledProcessError):
+            EVIDENCE['commandFailure'] = {
+                'argv': error.cmd,
+                'returncode': error.returncode,
+                'stdout': error.stdout,
+                'stderr': error.stderr,
+            }
         code = 1
     if EVIDENCE:
         known = set(OWNED_ROOTS)
