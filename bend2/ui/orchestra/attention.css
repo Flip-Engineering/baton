@@ -184,6 +184,47 @@
    never be read as an execution or as any family. Its title still names it. */
 .lane-strip .att-thread-recorded { stroke-dasharray: 1 23; }
 
+/* A typed edge between two seats: an authored claim, or structured recorded evidence.
+   The two read on value and on the glyph at the far end. Ink hue belongs to the seat
+   states, so a seam wears the seams' own muted ink and never a state's, and width
+   states how many recorded edges pair the two seats. */
+.lane-strip .att-seam {
+  fill: none;
+  stroke: var(--muted, #9aa3b4);
+  vector-effect: non-scaling-stroke;
+}
+
+/* An authored claim: the brighter seam, 5.68:1 on the pit's flat ground. */
+.lane-strip .att-seam-authored { opacity: 0.85; }
+
+/* Recorded evidence: the quieter seam, 3.05:1, above SC 1.4.11's 3:1 floor for a
+   graphic a reader needs. The two seam values differ by 1.92:1. */
+.lane-strip .att-seam-cited { opacity: 0.55; }
+
+/* The authored end: one solid chevron pointing along the seam at the seat the claim is
+   about. Six pixels across, and no seat silhouette, so no state can be read from it. */
+.lane-strip .att-seam-chevron {
+  fill: var(--muted, #9aa3b4);
+  opacity: 0.85;
+}
+
+/* The cited end: two short bars across the seam, the mark a quotation takes. The pair
+   reads as one mark and never as the counted units, which stand under a seat's mark. */
+.lane-strip .att-seam-bar {
+  stroke: var(--muted, #9aa3b4);
+  stroke-width: 1.2;
+  stroke-linecap: round;
+  opacity: 0.55;
+}
+
+/* A reference the store does not hold: an open bead where its seam leaves the hall. */
+.lane-strip .att-ref {
+  fill: none;
+  stroke: var(--muted, #9aa3b4);
+  stroke-width: 1.4;
+  opacity: 0.85;
+}
+
 /* ── motion ────────────────────────────────────────────────────────────── */
 
 /* Motion marks work in flight and a state that has just changed; a state that

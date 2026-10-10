@@ -266,7 +266,7 @@
   // Everything the seat owes: queued inputs it has not acknowledged and reports
   // sent and never acknowledged. The shell states the total as owedTotal, so
   // pendingCount alone is never the read; it misses reports.
-  function owedCount(player) {
+  function statedOwed(player) {
     function count(value) {
       var n = Number(value);
       return isFinite(n) && n > 0 ? n : 0;
@@ -275,6 +275,40 @@
     var total = count(player.owedTotal);
     if (total > 0) return total;
     return Math.max(count(player.pendingCount), count(player.unacknowledgedCount));
+  }
+
+  // The typed payload's own read of the seat's inbox, when it states one: a message
+  // endpoint with deliveryRead false is a delivery the seat has not read, and an unread
+  // delivery is work the seat owes. The projection carries a pointer here -
+  // ['delivery', id], naming where the read lives - and a pointer is not a read, so only
+  // a boolean states one. Null means no read is stated, and the stated counts stand.
+  function unreadDeliveries(player) {
+    var nodes = player && Array.isArray(player.nodes) ? player.nodes : null;
+    if (!nodes) return null;
+    var unread = 0;
+    var stated = false;
+    for (var i = 0; i < nodes.length; i += 1) {
+      var node = nodes[i];
+      if (!node) continue;
+      if (String(node.kind || "") !== "message") continue;
+      if (typeof node.deliveryRead !== "boolean") continue;
+      stated = true;
+      if (node.deliveryRead === false) unread += 1;
+    }
+    return stated ? unread : null;
+  }
+
+  // What the units count and what the state reads. The units take the delivered field
+  // when the payload carries it, because that is the fact they point at; the state
+  // keeps the stated total, which also counts reports sent and never acknowledged.
+  function owedRead(player) {
+    var unread = unreadDeliveries(player);
+    if (unread === null) return { count: statedOwed(player), ground: "owed", stated: statedOwed(player) };
+    return { count: unread, ground: "deliveries", stated: statedOwed(player) };
+  }
+
+  function owedCount(player) {
+    return owedRead(player).stated;
   }
 
   // The recorded terminal of the current attempt: null when the attempt ended
@@ -349,6 +383,16 @@
     return row.stale ? row.activity + " (recorded earlier)" : row.activity;
   }
 
+  // What the unit marks count, said in the seat's own title when the typed payload
+  // grounds them in deliveryRead and that count differs from the state's stated total.
+  // Two recorded facts stay apart: the marks count deliveries the seat has not read,
+  // the state's word counts everything the seat owes.
+  function unitsNote(row) {
+    if (!row || row.owedGround !== "deliveries" || row.owed <= 0) return "";
+    if (row.owed === row.owedStated) return "";
+    return row.owed + (row.owed === 1 ? " unread delivery" : " unread deliveries");
+  }
+
   // What the read says about a stop, in the read's own words. Where the read carries
   // no stop flag and no stop word, the pit says the stop is not recorded instead of
   // drawing its absence as the record's own statement. The marks are unaffected: a
@@ -421,20 +465,25 @@
       if (!player || !player.id) continue;
       var id = String(player.id);
       var reading = readingOf(player);
-      var owed = owedCount(player);
+      var owed = owedRead(player);
       var isQuiet = quiet ? quiet.has(id) : reading === "quiet";
       readings[id] = reading;
       rows.push({
         id: id,
         reading: reading,
-        word: readingWord(reading, owed),
+        word: readingWord(reading, owed.stated),
         rank: readingRank(reading),
-        owed: owed,
-        queued: owed > 0,
+        // The unit marks count what the typed payload grounds them in; the seat's state,
+        // its order and the strip keep the stated total, which also counts reports sent
+        // and never acknowledged.
+        owed: owed.count,
+        owedStated: owed.stated,
+        owedGround: owed.ground,
+        queued: owed.stated > 0,
         // Two reads: the flag the shell names when it names one, else the record's own
         // stop or a failure of the current attempt. The stop note carries the wording.
         notProgressing: namedFlag(player, "notProgressing", notProgressingReading(reading)),
-        owesWork: namedFlag(player, "owesWork", owed > 0),
+        owesWork: namedFlag(player, "owesWork", owed.stated > 0),
         stopNote: stopNote(player),
         live: reading === "running",
         role: String(player.role || ""),
@@ -449,7 +498,7 @@
     }
     rows.sort(function (a, b) {
       if (a.rank !== b.rank) return a.rank - b.rank;
-      if (b.owed !== a.owed) return b.owed - a.owed;
+      if (b.owedStated !== a.owedStated) return b.owedStated - a.owedStated;
       return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
     });
 
@@ -786,8 +835,9 @@
       group.appendChild(trail);
     }
 
-    // What the seat owes, as units: one mark per recorded item, on the band the
-    // queue bar took (top radius + 3, bottom radius + 5.5, a tick 2px wide and
+    // What the seat owes, as units: one mark per delivery the payload records unread,
+    // or one per owed item when the payload carries no node list. The band is the one
+    // the queue bar took (top radius + 3, bottom radius + 5.5, a tick 2px wide and
     // 2.5px tall with its round caps), so the room the next row's mark and an
     // under-label need is unchanged. Counting marks in a row answers how much is
     // waiting without measuring a length; the bar's six-item cap stays, and the
@@ -827,6 +877,7 @@
     setText(title, seat.id + " \u2014 " + seat.word
       + " \u2014 " + (seat.activity ? activityText(seat) : "no work recorded")
       + (marks.recent && marks.recent.age ? " \u2014 acted " + marks.recent.age + " ago" : "")
+      + (unitsNote(seat) ? " \u2014 " + unitsNote(seat) : "")
       + (seat.stopNote ? " \u2014 " + seat.stopNote : ""));
     group.appendChild(title);
 
@@ -844,11 +895,13 @@
   }
 
   // Recorded relations as threads between the seats that hold them: promotions
-  // from the knowledge overview, message traffic from the page's events. Stroke
-  // only, so a thread reads as a connection and never as a filled field.
-  function relationThreads(stage, positions, knowledge, events) {
+  // from the knowledge overview, message traffic from the page's events, and the
+  // typed graph's authored claims and cited edges. Stroke only, so a thread reads as
+  // a connection and never as a filled field.
+  function relationThreads(stage, positions, knowledge, events, laid) {
     drawPromotions(stage, positions, knowledge);
     drawTraffic(stage, positions, events);
+    drawTypedEdges(stage, positions, knowledge, laid);
   }
 
   function drawPromotions(stage, positions, knowledge) {
@@ -945,6 +998,205 @@
         + " between " + parts[0] + " and " + parts[1]);
       path.appendChild(title);
       stage.appendChild(path);
+    });
+  }
+
+  /* ── the typed graph's edges ──────────────────────────────────────────── */
+
+  // One end of a typed edge. The payload names an end either by an id the stage seats or
+  // by a reference (finding:, message:, file:, external:). A reference the store does not
+  // hold is stated by the node list's referenceOnly true; such an end is drawn as a
+  // reference and never as a seat. An end the payload does not place, or a reference the
+  // store does hold, is skipped: the hall seats actors, and the map holds the rest.
+  function edgeEnd(value, positions, unheld) {
+    if (value === undefined || value === null) return null;
+    var named = typeof value === "object";
+    var id = String(named ? (value.id || value.reference || "") : value);
+    if (!id) return null;
+    var kind = String(named ? (value.kind || "") : "");
+    var seat = positions[id];
+    if (seat) return { seat: seat, name: id, kind: kind };
+    var reference = String(named ? (value.reference || id) : id);
+    if (!(named && value.referenceOnly === true) && !unheld.has(reference)) return null;
+    return { reference: reference, kind: kind };
+  }
+
+  function provenanceClass(provenance) {
+    return provenance === "authored" ? "att-seam-authored" : "att-seam-cited";
+  }
+
+  function seamEndName(end) {
+    if (end.seat) return end.seat.seat.id + (end.kind ? " (" + end.kind + ")" : "");
+    return "reference " + end.reference + (end.kind ? " (" + end.kind + ")" : "")
+      + ", which the store does not hold";
+  }
+
+  // The seam's own words: what the edge is, which provenance the payload recorded, and
+  // the two ends by name. No word here is inferred from prose.
+  function appendSeamTitle(node, seam) {
+    var title = svgEl("title");
+    var count = seam.count;
+    var fromName = seamEndName(seam.from);
+    var toName = seamEndName(seam.to);
+    if (seam.provenance === "authored") {
+      setText(title, count + (count === 1 ? " authored claim" : " authored claims")
+        + " from " + fromName + " to " + toName);
+    } else {
+      setText(title, count + (count === 1 ? " cited edge" : " cited edges")
+        + " recorded as evidence between " + fromName + " and " + toName);
+    }
+    node.appendChild(title);
+  }
+
+  // A point on a seam and the direction of travel there, a given distance back from the
+  // end, so a seam's own glyph rides the curve wherever the curve runs: the hall's
+  // tiers bow, and an arrowhead drawn on an assumed direction would leave its seam.
+  // Twenty-four chords answer to about a pixel on the curves this stage draws.
+  function curveBack(curve, back) {
+    var steps = 24;
+    var px = curve.toX;
+    var py = curve.toY;
+    var run = 0;
+    var last = { x: curve.toX, y: curve.toY };
+    for (var i = 1; i <= steps; i += 1) {
+      var t = 1 - i / steps;
+      var u = 1 - t;
+      var x = u * u * u * curve.fromX + 3 * u * u * t * curve.fromX
+        + 3 * u * t * t * curve.toX + t * t * t * curve.toX;
+      var y = u * u * u * curve.fromY + 3 * u * u * t * (curve.fromY - curve.lift)
+        + 3 * u * t * t * (curve.toY - curve.lift) + t * t * t * curve.toY;
+      var dx = x - px;
+      var dy = y - py;
+      var step = Math.sqrt(dx * dx + dy * dy);
+      if (step > 0 && run + step >= back) {
+        var take = (back - run) / step;
+        return { x: px + dx * take, y: py + dy * take, dx: dx / step, dy: dy / step };
+      }
+      run += step;
+      last = { x: x, y: y };
+      px = x;
+      py = y;
+    }
+    return { x: last.x, y: last.y, dx: 0, dy: 1 };
+  }
+
+  // The authored seam's glyph: one solid chevron at the claimed end, pointing along the
+  // seam. It is the authored language and is drawn nowhere else; it is 6px across and is
+  // no seat silhouette, so it cannot be read as a state.
+  function seamChevron(point) {
+    var nx = -point.dy;
+    var ny = point.dx;
+    var head = 4.2;
+    var half = 2.6;
+    return svgEl("polygon", {
+      "class": "att-seam-chevron",
+      points: (point.x + point.dx * head) + " " + (point.y + point.dy * head)
+        + " " + (point.x + nx * half) + " " + (point.y + ny * half)
+        + " " + (point.x - nx * half) + " " + (point.y - ny * half),
+    });
+  }
+
+  // The cited seam's glyph: two short bars across the seam near the end, the mark a
+  // quotation takes. Two bars read as one mark, never as the counted units, which stand
+  // under a seat's own mark and are round-capped.
+  function seamBars(point) {
+    var group = svgEl("g", { "class": "att-seam-bars" });
+    var nx = -point.dy;
+    var ny = point.dx;
+    var half = 3.2;
+    for (var i = 0; i < 2; i += 1) {
+      var cx = point.x - point.dx * i * 3;
+      var cy = point.y - point.dy * i * 3;
+      group.appendChild(svgEl("line", {
+        "class": "att-seam-bar",
+        x1: cx - nx * half, y1: cy - ny * half,
+        x2: cx + nx * half, y2: cy + ny * half,
+      }));
+    }
+    return group;
+  }
+
+  // One seam, drawn. Between two seats it takes the stage's own arc, so a seam still
+  // reads as a connection and never as a filled field. From a seat to a reference the
+  // store does not hold it leaves the drawing on the side nearest that seat and ends in
+  // an open bead at the hall's edge: a reference, and never a seat.
+  function drawSeam(stage, seam, laid) {
+    var width = 0.9 + Math.min(seam.count, 5) * 0.4;
+    var className = "att-seam " + provenanceClass(seam.provenance);
+    if (!seam.from.seat || !seam.to.seat) {
+      var seatEnd = seam.from.seat ? seam.from : seam.to;
+      var other = seam.from.seat ? seam.to : seam.from;
+      var at = seatEnd.seat;
+      var edgeX = at.x < laid.width / 2 ? 3 : laid.width - 3;
+      var line = svgEl("line", { "class": className, x1: at.x, y1: at.y, x2: edgeX, y2: at.y });
+      line.setAttribute("stroke-width", String(width));
+      appendSeamTitle(line, seam);
+      stage.appendChild(line);
+      var bead = svgEl("circle", { "class": "att-ref", cx: edgeX, cy: at.y, r: 3.4 });
+      var beadTitle = svgEl("title");
+      setText(beadTitle, "reference " + other.reference
+        + (other.kind ? " (" + other.kind + ")" : "")
+        + " \u2014 the store does not hold this record");
+      bead.appendChild(beadTitle);
+      stage.appendChild(bead);
+      return;
+    }
+    var from = seam.from.seat;
+    var to = seam.to.seat;
+    var lift = arcLift(from.y, to.y, Math.min(90, Math.max(20, Math.abs(to.y - from.y) * 0.4)));
+    var path = svgEl("path", {
+      "class": className,
+      d: "M " + from.x + " " + from.y
+        + " C " + from.x + " " + (from.y - lift)
+        + " " + to.x + " " + (to.y - lift)
+        + " " + to.x + " " + to.y,
+    });
+    path.setAttribute("stroke-width", String(width));
+    appendSeamTitle(path, seam);
+    stage.appendChild(path);
+    var point = curveBack({
+      fromX: from.x, fromY: from.y, toX: to.x, toY: to.y, lift: lift,
+    }, laid.radius + 11);
+    stage.appendChild(seam.provenance === "authored" ? seamChevron(point) : seamBars(point));
+  }
+
+  // The typed graph's edges, when the payload carries them. An authored edge is a claim
+  // someone recorded between two actors; a recorded-evidence edge is structured evidence
+  // the store holds. They read on the two channels the hall has left: value, where the
+  // claim is the brighter seam, and the glyph at the end, where a chevron is authored and
+  // bars are cited. Ink hue belongs to the seat states and width to how many edges pair
+  // two seats, so no meaning rides a channel another meaning owns. An edge whose ends the
+  // payload does not place is not drawn.
+  function drawTypedEdges(stage, positions, knowledge, laid) {
+    var edges = knowledge && Array.isArray(knowledge.edges) ? knowledge.edges : [];
+    if (!edges.length) return;
+    var unheld = new Set();
+    var nodes = knowledge && Array.isArray(knowledge.nodes) ? knowledge.nodes : [];
+    for (var n = 0; n < nodes.length; n += 1) {
+      var node = nodes[n];
+      if (!node || node.referenceOnly !== true) continue;
+      if (node.reference) unheld.add(String(node.reference));
+    }
+    var seams = new Map();
+    for (var i = 0; i < edges.length; i += 1) {
+      var edge = edges[i];
+      if (!edge) continue;
+      var provenance = String(edge.provenance || "");
+      if (provenance !== "authored" && provenance !== "recorded-evidence") continue;
+      var from = edgeEnd(edge.source, positions, unheld);
+      var to = edgeEnd(edge.target, positions, unheld);
+      if (!from || !to) continue;
+      if (!from.kind) from.kind = String(edge.sourceKind || "");
+      if (!to.kind) to.kind = String(edge.targetKind || "");
+      if (from.seat && to.seat && from.seat === to.seat) continue;
+      if (!from.seat && !to.seat) continue;
+      var key = provenance + "\u0000" + seamEndName(from) + "\u0000" + seamEndName(to);
+      var held = seams.get(key);
+      if (held) held.count += 1;
+      else seams.set(key, { count: 1, from: from, to: to, provenance: provenance });
+    }
+    seams.forEach(function (seam) {
+      drawSeam(stage, seam, laid);
     });
   }
 
@@ -1085,7 +1337,7 @@
       svg.appendChild(baton);
     }
 
-    relationThreads(svg, positions, relations && relations.knowledge, relations && relations.events);
+    relationThreads(svg, positions, relations && relations.knowledge, relations && relations.events, laid);
 
     for (var i = 0; i < laid.seats.length; i += 1) {
       var entry = laid.seats[i];
