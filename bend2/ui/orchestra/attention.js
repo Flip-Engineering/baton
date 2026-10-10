@@ -63,7 +63,8 @@
   // stage reads for a reader who cannot separate the colours. Every mark keeps its
   // own state's ink at the ink's own strength: nothing dims a mark below it, and no
   // signal borrows a state colour another state owns. The quiet dot is the faintest
-  // mark on the stage by its ink alone, which reads 1.83:1 on the ground; the state
+  // mark on the stage by its ink alone, which reads 1.82:1 on the pit's flat hall
+  // ground and 1.75:1 where the hall's own gradient is at its lit end; the state
   // and its count are stated in text in the plate line, the roster rows and the
   // record, so the quiet mark is a field the eye can find rather than the only
   // channel for the fact.

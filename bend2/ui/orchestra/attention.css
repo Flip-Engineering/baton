@@ -250,6 +250,11 @@
    floor, so no chip can render as a fragment; the activity yields instead. */
 .lane-strip .lane-chip { min-width: 104px; }
 
+/* The pit speaks in its ledger face, so the strip's chips take it here. The rule is
+   scoped to this mount, which is the pit's seat strip; the rail's chips sit outside
+   it and keep the page's face. The size stays the shell's step. */
+.lane-strip .lane-chip { font-family: var(--mono); }
+
 .lane-strip .lane-chip .lane-id { flex: none; }
 
 .lane-strip .lane-chip .att-activity {
