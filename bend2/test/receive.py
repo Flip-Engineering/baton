@@ -125,6 +125,117 @@ FIXTURE = r'''import json,os,pathlib,re,socket,subprocess,sys,time
 home=pathlib.Path(__file__).resolve().parent
 config=json.loads((home/'fixture.json').read_text())
 args=sys.argv[1:]
+if args[:1]==['legacy_keeper']:
+    import array,ctypes,fcntl,select,struct
+    legacy=config['legacy_keeper']
+    directory=pathlib.Path(legacy['directory'])
+    recovery=legacy['recovery']
+    frame=struct.Struct('=IiQQq')
+    guard=open(legacy['guard'],'a+b')
+    fcntl.flock(guard,fcntl.LOCK_EX)
+    listener=socket.socket(socket.AF_UNIX)
+    listener.bind(legacy['control']);listener.listen()
+    fields=[('\0'.join(legacy['native'])+'\0').encode(),str(home).encode(),
+            str(directory/'native.stderr').encode(),legacy['initial'].encode(),
+            ('\0'.join(recovery)+'\0').encode(),legacy['control'].encode()]
+    (directory/'manifest').write_bytes(struct.pack('=8s6Q2I',b'BATONRP1',
+                                                *map(len,fields),1,0)+b''.join(fields))
+    spool=open(directory/'stdout','ab',buffering=0)
+    with open(directory/'native.stderr','ab') as diagnostic:
+        native=subprocess.Popen(legacy['native'],cwd=home,stdin=subprocess.PIPE,
+                                stdout=spool,stderr=diagnostic,start_new_session=True)
+    if sys.platform=='darwin':
+        library=ctypes.CDLL('/usr/lib/libproc.dylib',use_errno=True)
+        library.proc_pidinfo.argtypes=[ctypes.c_int,ctypes.c_int,ctypes.c_uint64,
+                                      ctypes.c_void_p,ctypes.c_int]
+        info=ctypes.create_string_buffer(136)
+        assert library.proc_pidinfo(native.pid,3,0,info,len(info))==len(info)
+        birth=struct.unpack_from('=QQ',info.raw,120)
+    else:
+        ticks=int(pathlib.Path('/proc',str(native.pid),'stat').read_text().rsplit(')',1)[1].split()[19])
+        boot=next(int(line.split()[1]) for line in pathlib.Path('/proc/stat').read_text().splitlines()
+                  if line.startswith('btime '))
+        birth=(ticks,boot)
+    (directory/'native.birth').write_bytes(struct.pack('=i4xQQ',native.pid,*birth))
+    (directory/'native.pid').write_text(str(native.pid)+'\n')
+    (directory/'launch').write_text('launch\n')
+    native.stdin.write(fields[3]);native.stdin.flush()
+    client=None;status=None;closed=False;released=False;size=0
+    def exact(connection,length):
+        data=b''
+        while len(data)<length:
+            part=connection.recv(length-len(data))
+            if not part: raise EOFError()
+            data+=part
+        return data
+    def disconnected():
+        global client
+        client.close();client=None
+        with open(directory/'observer.log','ab') as output:
+            recovered=subprocess.Popen(recovery,cwd=home,stdout=output,stderr=output)
+        with open(directory/'legacy-recoveries.jsonl','a') as launches:
+            launches.write(json.dumps({'pid':recovered.pid,'argv':recovery})+'\n')
+    def send(operation,serial=0,error=0,value=0):
+        try: client.sendall(frame.pack(operation,error,serial,0,value))
+        except (BrokenPipeError,ConnectionResetError): disconnected()
+    while True:
+        result=native.poll()
+        if result is not None and status is None:
+            status=result<<8 if result>=0 else -result
+            (directory/'status').write_text(str(status)+'\n')
+            if client is not None: send(3,value=status)
+        current=os.fstat(spool.fileno()).st_size
+        if current!=size:
+            size=current
+            if client is not None: send(2)
+        ready,_,_=select.select([listener]+([client] if client is not None else []),[],[],.01)
+        for connection in ready:
+            if connection is listener:
+                candidate,_=listener.accept()
+                operation,error,serial,length,value=frame.unpack(exact(candidate,frame.size))
+                assert (operation,serial,value)==(11,0,0)
+                assert exact(candidate,length)==str(directory).encode()+b'\0'
+                if client is not None:
+                    candidate.sendall(frame.pack(1,16,0,0,0));candidate.close()
+                else:
+                    client=candidate
+                    state=struct.pack('=5i',native.pid,status is not None,status or 0,released,closed)
+                    client.sendmsg([frame.pack(1,0,0,len(state),2)],
+                                   [(socket.SOL_SOCKET,socket.SCM_RIGHTS,array.array('i',[guard.fileno()]))])
+                    client.sendall(state)
+                continue
+            if connection is not client: continue
+            try:
+                operation,error,serial,length,value=frame.unpack(exact(client,frame.size))
+                payload=exact(client,length)
+            except (EOFError,ConnectionResetError):
+                disconnected()
+                continue
+            with open(directory/'legacy-wire.jsonl','a') as wire:
+                wire.write(json.dumps({'operation':operation,'serial':serial})+'\n')
+            if operation==14:
+                # The retained ecfb keeper accepts serial-zero READY.
+                assert serial==0 and not payload
+                continue
+            if operation==5:
+                native.stdin.write(payload);native.stdin.flush()
+            elif operation==6:
+                if not closed:
+                    native.stdin.close();closed=True;send(10)
+            elif operation==7:
+                os.killpg(native.pid,value)
+            elif operation==8:
+                assert status is not None
+                guard.close();released=True
+                (directory/'released').write_text('released\n')
+            elif operation==9:
+                assert status is not None and released
+                (directory/'acknowledged').write_text('acknowledged\n')
+                (directory/'stdout').unlink()
+                send(4,serial);client.close();listener.close();spool.close()
+                sys.exit(0)
+            else: raise AssertionError(operation)
+            send(4,serial)
 if args[:1] in (['parent_endpoint'],['answering_parent']):
     messages=json.loads(subprocess.check_output([config['exe'],config['db'],'inbox','root'],text=True))
     if args[0]=='answering_parent': messages=[message for message in messages if message['id']==args[1]]
@@ -1412,6 +1523,103 @@ class Receive(unittest.TestCase):
                     fixture.exercise_observer_loss(harness, retry=True, terminal_before_loss=True)
                 finally:
                     fixture.doCleanups()
+
+    def test_legacy_keeper_recovers_fourteen_arguments_and_closes_terminal_input(self):
+        self.coord('connect', 'root', 'native-root', json.dumps([str(self.fixture), 'parent_endpoint']))
+        self.player(harness='omp')
+        self.prepare_input('legacy-original', 'parent', 'Finish the original legacy input.', kind='task')
+        self.coord('connect', 'parent', 'native-parent', '')
+        attempt = self.directory / 'legacy-attempt'
+        attempt.mkdir()
+        log = self.directory / 'parent.jsonl'
+        with sqlite3.connect(self.db) as database:
+            cutoff = database.execute("SELECT seq FROM messages WHERE id='legacy-original'").fetchone()[0]
+            identity = f'receive:parent:{cutoff}:legacy-keeper'
+            database.execute('INSERT INTO executions(session,id,mode,directory,phase,status) VALUES(?,?,?,?,?,?)',
+                             ('parent', identity, 'retained', str(attempt), 'running', ''))
+        recovery = [str(EXE.resolve()), '--recover-receive', str(self.db.resolve()), 'parent',
+                    identity, str(cutoff) + '\n', str(self.fixture), 'parent', 'low',
+                    str(self.directory), str(log), 'omp\n', str(attempt), 'native-parent']
+        self.assertEqual(len(recovery), 14)
+        config_path = self.directory / 'fixture.json'
+        config = json.loads(config_path.read_text())
+        prompt = 'Message (task) from root [id: legacy-original]:\nFinish the original legacy input.\n'
+        config.update(record_launches=True, legacy_keeper={
+            'directory': str(attempt), 'control': str(pathlib.Path(self.ipc.name) / 'legacy-control'),
+            'guard': _session_lock_path(self.db, 'parent'), 'recovery': recovery,
+            'native': [str(self.fixture), '--mode', 'rpc', '--model', 'parent',
+                       '--session-dir', str(self.db) + '.sessions'],
+            'initial': '\n'.join(json.dumps(value) for value in [
+                {'type': 'set_event_filter'}, {'type': 'get_state', 'id': 'baton:session'},
+                {'type': 'prompt', 'message': prompt}]) + '\n',
+        })
+        config_path.write_text(json.dumps(config))
+        keeper = subprocess.Popen([str(self.fixture), 'legacy_keeper'], stdout=subprocess.PIPE,
+                                  stderr=subprocess.PIPE, text=True)
+        self.children.append(keeper)
+        native, started = self.accept_child(keeper, 'parent')
+        retained = {name: (attempt / name).read_bytes() for name in ('manifest', 'native.birth')}
+        observer = subprocess.Popen(recovery, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        self.children.append(observer)
+        self.action(native, progress='legacy observer attached')
+        self.assertEqual(json.loads(native.readline()), {'progress_written': 'legacy observer attached'})
+        def attached():
+            if observer.poll() is not None:
+                self.fail('Legacy receive recovery exited: ' + ''.join(self.child_communication(observer)))
+            if keeper.poll() is not None:
+                self.fail('Legacy keeper exited: ' + ''.join(self.child_communication(keeper)))
+            return log.exists() and 'legacy observer attached' in log.read_text()
+        self.eventually(attached, 'Current recovery did not attach to the legacy keeper.')
+        self.assertFalse(self.session_guard_available('parent'))
+        duplicate = subprocess.run(recovery, capture_output=True, text=True)
+        self.assertEqual(duplicate.returncode, 16, duplicate.stderr)
+        self.assertIn('Resource busy', duplicate.stderr)
+        observer.kill()
+        observer.wait()
+        self.coord('message', 'legacy-second', 'root', 'parent', 'report', 'Queued after legacy observer loss.')
+        marker = 'original native output after legacy observer loss'
+        self.action(native, progress=marker)
+        self.assertEqual(json.loads(native.readline()), {'progress_written': marker})
+        self.eventually(lambda: marker in log.read_text(), 'Keeper recovery did not resume the legacy stream.')
+        launches = [json.loads(line) for line in (attempt / 'legacy-recoveries.jsonl').read_text().splitlines()]
+        self.assertEqual([launch['argv'] for launch in launches], [recovery])
+        self.assertIsNotNone(self.selected_process(started['pid']))
+        for name, content in retained.items():
+            self.assertEqual((attempt / name).read_bytes(), content)
+        self.assertFalse(self.session_guard_available('parent'))
+        self.assert_no_start()
+        body = 'Original legacy work completed through the same native process.'
+        self.action(native, body=body, hold_exit=True, report_input=True)
+        self.assertEqual(json.loads(native.readline()), {'terminal_written': True, 'input_after_prompt': ''})
+        self.assertFalse((attempt / 'status').exists())
+        self.assertIsNotNone(self.selected_process(started['pid']))
+        self.assertFalse(self.session_guard_available('parent'))
+        self.action(native)
+        self.assertEqual(native.readline(), b'')
+        continuation, resumed = self.accept('parent')
+        self.assertIsNone(self.selected_process(started['pid']))
+        self.assertNotEqual(resumed['ppid'], keeper.pid)
+        owner_command = f'{EXE.resolve()} --instance-owner {self.db.resolve()}'
+        self.assertTrue(any(process['pid'] == resumed['ppid'] and process['command'] == owner_command
+                            for process in self.owned_processes()))
+        self.assertEqual(resumed['native'], started['native'])
+        self.assertIn('[id: legacy-second]', resumed['prompt'])
+        self.assertNotIn('[id: legacy-original]', resumed['prompt'])
+        self.action(continuation, body='Queued input completed under the current database owner.')
+        self.assertEqual(continuation.readline(), b'')
+        self.finish(keeper)
+        self.eventually(lambda: len(self.coord('turns', 'parent')) == 2, 'Legacy completion was not retained once.')
+        self.assertEqual([turn['reportBody'] for turn in self.coord('turns', 'parent')],
+                         [body, 'Queued input completed under the current database owner.'])
+        self.assertEqual((attempt / 'status').read_text(), '0\n')
+        self.assertTrue((attempt / 'released').exists())
+        self.assertTrue((attempt / 'acknowledged').exists())
+        wire = [json.loads(line) for line in (attempt / 'legacy-wire.jsonl').read_text().splitlines()]
+        self.assertEqual([item['serial'] for item in wire if item['operation'] == 14], [0, 0])
+        self.assertTrue(any(item['operation'] == 6 and item['serial'] > 0 for item in wire))
+        self.assertEqual(self.coord('inbox', 'parent'), [])
+        self.shutdown_idle_database_owner('Legacy recovery and current continuation did not settle.')
+        self.assertTrue(self.session_guard_available('parent'))
 
     def selected_process(self, pid):
         result = subprocess.run(['ps', '-p', str(pid), '-o', 'pid=,ppid=,lstart=,stat=,command='],

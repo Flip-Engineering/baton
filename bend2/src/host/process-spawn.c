@@ -683,7 +683,7 @@ static int br_hello(int socket,BrFrame *hello,int *guard) {
   if(message.msg_flags&MSG_CTRUNC)return EPROTO;
   return (size_t)length<sizeof(*hello)?br_read_all(socket,(char *)hello+length,sizeof(*hello)-(size_t)length):0;
 }
-static int br_attach_socket(BatonChild *child,const char *directory,int socket,int *unstarted,uint64_t incarnation) {
+static int br_attach_socket(BatonChild *child,const char *directory,int socket,int *unstarted,uint64_t incarnation,int ready_ack) {
   BrFrame hello;BrState state={0};int guard=-1;
   int error=br_hello(socket,&hello,&guard);
   if(!error && hello.error) {
@@ -715,11 +715,11 @@ static int br_attach_socket(BatonChild *child,const char *directory,int socket,i
      caller's decision, taken through restore after it has restored the reducer
      state the checkpoint carries. */
   if(!error && (hello.value==2 || hello.value==3 || hello.value==4 || hello.value==5)) {
-    BrFrame ready={.op=BR_READY,.serial=1};error=br_write_all(socket,&ready,sizeof(ready));
+    BrFrame ready={.op=BR_READY,.serial=ready_ack?1:0};error=br_write_all(socket,&ready,sizeof(ready));
     BrFrame reply={0};
-    if(!error)error=br_read_all(socket,&reply,sizeof(reply));
-    if(!error && (reply.op!=BR_REPLY || reply.serial!=ready.serial || reply.length))error=EPROTO;
-    if(!error)error=reply.error;
+    if(!error && ready_ack)error=br_read_all(socket,&reply,sizeof(reply));
+    if(!error && ready_ack && (reply.op!=BR_REPLY || reply.serial!=ready.serial || reply.length))error=EPROTO;
+    if(!error && ready_ack)error=reply.error;
   }
   if(!error)error=pthread_create(&retained->receiver,NULL,br_receiver,retained);
   if(error){if(life>=0)close(life);if(guard>=0)close(guard);close(spool);close(socket);free(retained->directory);free(retained);return error;}
@@ -3214,7 +3214,7 @@ static int br_retain(BatonProcessCall *call) {
     }
   }
   if(sockets[1]>=0)close(sockets[1]);
-  if(!error) {error=br_attach_socket(call->child,directory,sockets[0],&call->unstarted,0);sockets[0]=-1;}
+  if(!error) {error=br_attach_socket(call->child,directory,sockets[0],&call->unstarted,0,1);sockets[0]=-1;}
   if(sockets[0]>=0)close(sockets[0]);if(null>=0)close(null);if(log>=0)close(log);
   free(self);free(log_path);free(address);free(directory);
   return error;
@@ -3505,13 +3505,24 @@ static int br_attempt_socket(const char *directory,uint32_t op,uint64_t serial,i
   *socket_out=socket_fd;
   return error;
 }
+/* Legacy attempt connections use the keeper's serial-zero ready exchange. */
+static int br_instance_attach_legacy(BatonProcessCall *call,const char *directory) {
+  int socket_fd=-1;
+  int error=br_attempt_socket(directory,BR_ATTACH,0,0,NULL,0,&socket_fd);
+  if(!error) {
+    error=br_attach_socket(call->child,directory,socket_fd,NULL,0,0);
+    socket_fd=-1;
+  }
+  if(socket_fd>=0)close(socket_fd);
+  return error;
+}
 /* Joins an existing attempt as its observer, bound to the owner incarnation
    that resolved it. */
 static int br_instance_join(BatonProcessCall *call,const char *directory,uint64_t incarnation,uint64_t epoch,int64_t observer) {
   int socket_fd=-1;
   int error=br_attempt_socket(directory,BR_ATTACH,0,observer,NULL,0,&socket_fd);
   if(!error) {
-    error=br_attach_socket(call->child,directory,socket_fd,NULL,incarnation);socket_fd=-1;
+    error=br_attach_socket(call->child,directory,socket_fd,NULL,incarnation,1);socket_fd=-1;
     if(!error && call->child->retained) {
       call->child->retained->database=strdup(call->database);
       if(!call->child->retained->database)error=ENOMEM;
@@ -3584,6 +3595,8 @@ static int br_instance_attach_observer(BatonProcessCall *call,int64_t observer) 
   int error=br_instance_request(call->database,
     (BrInstanceFrame){.op=BI_ATTACH,.length=strlen(directory)+1},directory,-1,&reply);
   if(!error)error=br_instance_join(call,directory,reply.owner,reply.epoch,observer);
+  else if(!observer && (error==ENOENT || error==ECONNREFUSED || error==EPIPE || error==ECONNRESET))
+    error=br_instance_attach_legacy(call,directory);
   free(directory);
   return error;
 }
@@ -3696,13 +3709,7 @@ static int br_instance_attach_owned(BatonProcessCall *call) {
   else if(error==ENOENT || error==ECONNREFUSED || error==EPIPE || error==ECONNRESET) {
     /* A legacy keeper can still serve this attempt when the database owner
        has no record of it. Attach there to retain native input and completion. */
-    int socket_fd=-1;
-    error=br_attempt_socket(directory,BR_ATTACH,0,0,NULL,0,&socket_fd);
-    if(!error) {
-      error=br_attach_socket(call->child,directory,socket_fd,NULL,0);
-      socket_fd=-1;
-    }
-    if(socket_fd>=0)close(socket_fd);
+    error=br_instance_attach_legacy(call,directory);
     if(error==ENOENT || error==ECONNREFUSED || error==EPIPE || error==ECONNRESET)
       error=br_attach_orphan(call->child,directory,(int)call->lock);
   }
@@ -4241,7 +4248,7 @@ static void baton_retained_begin_call(BatonProcessCall *call) {
       int socket_fd=-1;
       call->error=br_attempt_socket(directory,op,serial,call->signal,payload,length,&socket_fd);
       if(!call->error) {
-        if(attach) {call->error=br_attach_socket(call->child,directory,socket_fd,NULL,0);socket_fd=-1;}
+        if(attach) {call->error=br_attach_socket(call->child,directory,socket_fd,NULL,0,1);socket_fd=-1;}
         else {
           BrFrame reply;
           call->error=br_read_all(socket_fd,&reply,sizeof(reply));
