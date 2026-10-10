@@ -37,8 +37,16 @@ native turn.
 The original captures, attempt output and measurement plan remain in the
 measurement worker checkout and in the local source archive at
 `.git/baton2-archives/20261009/logging-measure-postchange-untracked-20261009.tar.gz`.
-The original worker and its conductor retain ownership of the final crosscheck
-and remote archival publication.
+The completed evidence is published in
+[`archive/baton2/logging-measure-ds-20261007-postchange`](https://github.com/Flip-Engineering/baton/tree/archive/baton2/logging-measure-ds-20261007-postchange/docs/bend2/measurements/2026-10-08-postchange).
+
+The worker and conductor also checked two retained logs after terminal
+compaction. Their `full.turnsRow` references resolve to stored `turns` rows,
+and `full.log` references resolve to registered `log_files` paths. The stored
+event sizes were 542,161 and 25,598 bytes. Superseded attempts have no row in
+`executions`, which stores the current attempt for each session. This check
+covers those two logs. The October 7 baseline run's raw log and database were
+not retained, and its executable predates terminal compaction.
 
 [The October 7 measurement](../2026-10-07-logging-measurement/README.md) records
 controlled workload totals and two retained Codex traces.
