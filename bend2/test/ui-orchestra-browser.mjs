@@ -314,6 +314,8 @@ await until('map opens on the universal view',
   `document.querySelector('#map-scope').textContent === 'Universal knowledge · 0 items'`);
 check('universal view holds no fixture records', await evalJs(
   `document.querySelectorAll('#knowledge-whole .knode').length === 0 && document.querySelectorAll('#knowledge-whole .kw-anchor').length === 0`));
+check('the exemplar is absent where nothing draws', await evalJs(
+  `!document.querySelector('#knowledge-whole .kw-exemplar') && !document.querySelector('#knowledge-whole .kw-macro')`));
 check('an empty map draws one staff rule at its short height', await evalJs(`(() => {
   const svg = document.querySelector('#knowledge-whole svg');
   return document.querySelectorAll('#knowledge-whole line.kw-staff').length === 1
@@ -360,15 +362,17 @@ check('row knowledge reads as one compact line', await evalJs(`(() => {
   const line = document.querySelector('#roster .doc-row[data-doc-id="worker"] .kw-compact');
   return !!line && (line.textContent || '').includes('Worker retained finding');
 })()`));
-check('a roster row keeps its own line to one row', await evalJs(`(() => {
+check('a roster row and its knowledge band each hold one row', await evalJs(`(() => {
   const rows = [...document.querySelectorAll('#roster .doc-row')].filter((row) => row.offsetHeight > 0);
   if (rows.length < 2) return false;
-  const own = rows.map((row) => {
+  const ROW = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--row'));
+  if (!ROW) return false;
+  return rows.every((row) => {
     const band = row.querySelector('.doc-row-knowledge');
-    return row.getBoundingClientRect().height - (band ? band.getBoundingClientRect().height : 0);
+    const own = row.getBoundingClientRect().height - (band ? band.getBoundingClientRect().height : 0);
+    if (Math.abs(own - ROW) > 2) return false;
+    return !band || Math.abs(band.getBoundingClientRect().height - ROW) <= 2;
   });
-  const plain = Math.min(...own);
-  return own.every((height) => height <= plain + 6);
 })()`));
 // Capture the compact row knowledge for review.
 const knowledgeShot = await send(pageWs, 'Page.captureScreenshot', { format: 'png' });
@@ -627,6 +631,53 @@ check('the worker to aide cell of the flow grid reads one before the live promot
   const cell = colAt >= 0 ? (line[colAt] || '') : '';
   return /promotion/i.test(words) && /source/i.test(words) && /destination/i.test(words)
     && heads.includes('worker') && heads.includes('aide') && cell === '1';
+})()`));
+check('the tier census states the counts the canvas draws', await evalJs(`(() => {
+  const rows = [...document.querySelectorAll('#knowledge-whole .kw-tier-row')];
+  const nodes = document.querySelectorAll('#knowledge-whole .knode').length;
+  if (!rows.length) return false;
+  const nums = rows.map((row) => {
+    const num = row.querySelector('.kw-tier-num');
+    const parts = ((num && num.textContent) || '').split('\u00b7').map((s) => s.trim());
+    return { findings: Number(parts[0]), actors: Number(parts[1]) };
+  });
+  if (nums.some((n) => !Number.isFinite(n.findings) || !Number.isFinite(n.actors))) return false;
+  const total = nums.reduce((sum, n) => sum + n.findings, 0);
+  const widths = rows.map((row) => {
+    const bar = row.querySelector('.kw-tier-bar');
+    return parseFloat(((bar && bar.getAttribute('style')) || 'width:0%').replace(/[^0-9.]/g, ''));
+  });
+  const maxNum = Math.max(...nums.map((n) => n.findings));
+  const maxWidth = Math.max(...widths);
+  const proportional = nums.every((n, i) => Math.abs(widths[i] - (n.findings / maxNum) * 100) <= 2);
+  return total === nodes && proportional && maxWidth > 0;
+})()`));
+check('the flow field sums to the caption and groups its tail', await evalJs(`(() => {
+  const grid = document.querySelector('#knowledge-whole .kw-flow-grid');
+  const cap = document.querySelector('#knowledge-whole .kw-flow-cap');
+  if (!grid || !cap) return false;
+  const words = cap.textContent || '';
+  const total = Number((/(\d+) promotion/.exec(words) || [0, 0])[1]);
+  const sources = Number((/(\d+) source/.exec(words) || [0, 0])[1]);
+  const destinations = Number((/(\d+) destination/.exec(words) || [0, 0])[1]);
+  const lines = [...grid.querySelectorAll('tr')].map((tr) => [...tr.children].map((c) => (c.textContent || '').trim()));
+  const body = lines.slice(1).filter((line) => line.length > 1);
+  const cells = body.flatMap((line) => line.slice(1).map((c) => c === '' ? 0 : Number(c)));
+  const sum = cells.reduce((s, n) => s + (Number.isFinite(n) ? n : 0), 0);
+  const tailRows = body.filter((line) => (line[0] || '').includes('other holders')).length;
+  const heads = [...grid.querySelectorAll('th')].map((th) => (th.textContent || '').trim());
+  const tailCols = heads.filter((h) => h.includes('other holders')).length;
+  const grouped = /tail grouped/.test(words) === (tailRows > 0 || tailCols > 0);
+  return sum === total && body.length === sources + tailRows && (heads.length - 1) === destinations + tailCols && grouped;
+})()`));
+check('the exemplar draws a transfer the canvas also draws', await evalJs(`(() => {
+  const ex = document.querySelector('#knowledge-whole .kw-exemplar');
+  if (!ex) return false;
+  const label = ex.getAttribute('aria-label') || '';
+  const ids = [...document.querySelectorAll('#knowledge-whole .kw-anchor[data-kw-id]')].map((a) => a.getAttribute('data-kw-id'));
+  const named = ids.filter((id) => id && label.includes(id));
+  return /transfer/i.test(label) && /shares finding/i.test(label) && named.length >= 1
+    && ids.some((id) => label.includes(id));
 })()`));
 check('the exemplar names its transfer and its share', await evalJs(`(() => {
   const ex = document.querySelector('#knowledge-whole .kw-exemplar');
