@@ -171,6 +171,22 @@ for registry configuration and publication authority.
 
 ## Status and report inspection
 
+A worker's assignment remains open across successful native turns. When its
+work is ready, it sends a `completion-request` message to its immediate parent.
+The parent reviews the result and replies with `completion-confirmed`, using
+the request ID alone as the body, or sends guidance for remaining work. The
+worker continues useful work until confirmation and acknowledges each handled
+message separately. New tasks and guidance begin further work. Explicit
+operator stops remain effective. Parentless Principal Conductors follow their
+operator input.
+
+Codex, OMP, Muse and Claude native receivers preserve the same conversation
+across this continuation. The managed Codex App watcher observes public turn
+settlement and uses `continue-task SESSION TURN_ID` to queue continuation input,
+then delivers it through the public turn interface.
+`session SESSION` exposes the current assignment, request, coordinator and
+confirmation in `taskCompletion`.
+
 The native read commands support `--pretty` and retain complete stored fields:
 
 ```sh

@@ -28,6 +28,6 @@ def migrate_if(ready: Bool, db: String) -> IO(Unit):
 # An existing policy row and registered file survive the constraint migration.
 def ensure(+db: String) -> IO(Unit):
   do IO<Unit>:
-    ready : String <- IO.try(String,DB.Sql.query(db,tables() ++ "SELECT count(*) FROM sqlite_master WHERE name='log_policies' AND instr(sql,'budget_bytes')=0 AND instr(sql,'keep_segments')=0;"))
-    done : Unit <- migrate_if(String.eq(Tx.trim_nl(ready),"1"),db)
+    ready : String <- IO.try(String,DB.Sql.query(db,tables() ++ "SELECT count(*) FROM pragma_table_info('log_policies');"))
+    done : Unit <- migrate_if(String.eq(Tx.trim_nl(ready),"2"),db)
     IO.pure(Unit,Unit{})

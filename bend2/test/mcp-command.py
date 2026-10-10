@@ -98,6 +98,17 @@ class McpCommand(unittest.TestCase):
                 ['dispatch-turn', player, 'turn-λ', command, log, task]),
         }
 
+    def test_authored_completion_messages_use_the_attached_session(self):
+        for kind,recipient,body in ((None,'worker','Continue the assigned work.'),
+                                    ('completion-request','parent','The task result is ready.'),
+                                    ('completion-confirmed','worker','worker-ready-λ')):
+            with self.subTest(kind=kind):
+                arguments={'id':'message-λ','player':recipient,'body':body}
+                if kind is not None: arguments['kind']=kind
+                self.command(tool='baton2_guide',arguments=arguments,session='attached-λ',
+                             expected_args=['message','message-λ','attached-λ',recipient,
+                                            kind or 'guidance',body])
+
     def test_native_control_tools_advertise_typed_arguments(self):
         self.command()
         contracts = {

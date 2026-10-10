@@ -935,6 +935,53 @@ finally:
         phase('shutting down the completed fixture')
         self.shutdown()
 
+    def test_managed_worker_keeps_its_open_assignment_after_own_inbox_ack(self):
+        self.recruit('w1', 'codex')
+        self.managed_app_proxy()
+        self.queue('w1-app', {'controlReady': True})
+        self.coord('connect', 'w1', 'native-w1', json.dumps([
+            'node', str(ROOT / 'bend2/scripts/codex-inbox-wake.mjs'), '--session',
+            str(EXE), str(self.db), 'w1', 'native-w1']))
+        self.dispatch('managed-task', 'w1', 'Continue this task until the coordinator confirms completion.')
+        self.start_owner()
+        self.start_serve()
+        self.stream_for('w1-app')
+
+        def events(kind):
+            if not self.app_follow_events.exists(): return []
+            return [event for line in self.app_follow_events.read_text().splitlines(keepends=True)
+                    if line.endswith('\n') and (event := json.loads(line))['type'] == kind]
+
+        def starts():
+            if not self.codex_calls.exists(): return []
+            return [call for line in self.codex_calls.read_text().splitlines(keepends=True)
+                    if line.endswith('\n') and (call := json.loads(line))['method'] == 'turn/start']
+
+        self.coord('ack', 'managed-task', 'w1', 'The worker handled its original task input.')
+        self.eventually(lambda: events('codexInboxTaskAwaitingConfirmation'),
+                        'Own inbox ACK ended observation of an unconfirmed task.')
+        self.assertEqual(self.inbox('w1'), [])
+        self.assertTrue(self.coord('session', 'w1')['taskCompletion']['open'])
+        self.assertTrue(any('--follow' in process['command'] for process in self.owned_processes()))
+        self.release('w1-app', settle=True)
+        self.eventually(starts, 'Successful App settlement did not continue its open assignment.')
+        self.assertEqual(len(starts()), 1)
+        self.assertEqual(len(self.connections('w1-app')), 1)
+        continuation = self.inbox('w1')
+        self.assertEqual([message['kind'] for message in continuation], ['task-continuation'])
+        self.assertIsNone(continuation[0]['receipt'])
+
+        self.coord('message', 'managed-ready', 'w1', 'root', 'completion-request',
+                   'The managed worker task result is ready.')
+        self.coord('ack', 'managed-ready', 'root', 'The immediate coordinator reviewed the result.')
+        self.coord('message', 'managed-confirmed', 'root', 'w1', 'completion-confirmed', 'managed-ready')
+        self.coord('ack', continuation[0]['id'], 'w1', 'The worker handled its continuation input.')
+        self.coord('ack', 'managed-confirmed', 'w1', 'The worker handled coordinator confirmation.')
+        self.eventually(lambda: events('codexInboxReleased'), 'The confirmed App worker did not settle.')
+        self.assertFalse(self.coord('session', 'w1')['taskCompletion']['open'])
+        self.assertEqual(self.inbox('w1'), [])
+        self.shutdown()
+
     def test_11_owner_drain_leaves_no_duplicate_serve_admission(self):
         # An ordinary Receive owns the native attempt before the serve starts.
         self.recruit('w1', 'codex')

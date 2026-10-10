@@ -1,4 +1,5 @@
 """Integration checks with a controlled native-process protocol fixture."""
+import importlib.util
 import json
 import os
 import pathlib
@@ -11,6 +12,10 @@ from unittest.mock import patch
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 EXE = ROOT / '.scratch/bend2/baton2'
+
+SPEC = importlib.util.spec_from_file_location('receive_fixture', pathlib.Path(__file__).with_name('receive.py'))
+RECEIVE = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(RECEIVE)
 
 class Turn(unittest.TestCase):
     def setUp(self):
@@ -55,6 +60,22 @@ print(json.dumps({"type":"result","result":"Task recorded.","session_id":"native
     def tearDown(self): self.temp.cleanup()
 
     def call(self,*args):
+        if args[0]=='turn' and args[3]==str(self.player):
+            session,turn=args[1:3]
+            completed=self.cwd/'completed-native-fixture'
+            if self.player.exists():
+                completed.write_text('#!'+sys.executable+'\nimport json,os,runpy,subprocess,sys\n'
+                    + 'config='+repr({'exe':str(EXE),'db':str(self.db)})+'\nmodel='+repr(session)+'\n'
+                    + RECEIVE.COMPLETION_EXCHANGE
+                    + 'runpy.run_path('+repr(str(self.player))+',run_name="__main__")\n'
+                    + 'for message in coordinator("inbox",model):\n'
+                    + '    if message["kind"]=="task-assignment":\n'
+                    + '        reviewed=coordinator("delivery",message["id"])\n'
+                    + '        assert reviewed["body"]=='+repr(self.task.read_text())+'\n'
+                    + '        coordinator("ack",message["id"],model,"Fixture worker handled its Direct task.")\n'
+                    + 'confirm_finished_fixture_task("Completed the controlled native protocol task.")\n')
+                completed.chmod(0o700)
+            args=(*args[:3],str(completed),*args[4:])
         p=subprocess.run([str(EXE),str(self.db),*args],text=True,capture_output=True)
         self.assertEqual(p.returncode,0,p.stderr)
         return p.stdout
@@ -69,7 +90,13 @@ print(json.dumps({"type":"result","result":"Task recorded.","session_id":"native
         self.run_turn()
         inbox=json.loads(self.call('inbox','root'))
         self.assertEqual([m['body'] for m in inbox],['Task recorded.'])
-        self.assertEqual((self.cwd/'received.txt').read_text(),self.task.read_text())
+        delivered=(self.cwd/'received.txt').read_text()
+        self.assertTrue(delivered.endswith(self.task.read_text()))
+        self.assertIn('completion-request',delivered)
+        original=json.loads(self.call('delivery','turn-1:task-input'))
+        self.assertEqual(original['body'],self.task.read_text())
+        self.assertIsNotNone(original['receipt'])
+        self.assertFalse(json.loads(self.call('session','worker'))['taskCompletion']['open'])
         self.assertEqual(json.loads(self.call('player','worker'))['native'],'native-fixture')
         self.assertEqual(len(self.generation('turn-1').read_text().splitlines()),3)
 
@@ -110,7 +137,12 @@ print(json.dumps({"type":"result","result":"Task recorded.","session_id":"native
         self.task.write_text('large task '*40000)
         self.player.write_text('#!'+sys.executable+'\n'+'import json,sys\nprint(json.dumps({"type":"system","subtype":"init","session_id":"s","detail":"x"*400000}),flush=True)\nline=sys.stdin.readline()\nprompt=json.loads(line)["message"]["content"]\nprint(json.dumps({"type":"result","result":str(len(prompt))}))\n')
         self.run_turn()
-        self.assertEqual(json.loads(self.call('inbox','root'))[0]['body'],str(len(self.task.read_text())))
+        with sqlite3.connect(self.db) as connection:
+            prompt,directory=connection.execute('SELECT task,directory FROM direct_turn_requests WHERE id=?',
+                                                ('turn-1',)).fetchone()
+        self.assertEqual(prompt,self.task.read_text())
+        delivered=pathlib.Path(directory) / 'prompt.txt'
+        self.assertEqual(json.loads(self.call('inbox','root'))[0]['body'],str(len(delivered.read_text())))
 
     def test_start_failure_reports_to_parent(self):
         self.run_turn(self.cwd/'missing-program')
@@ -152,7 +184,7 @@ print(json.dumps({"type":"agent_end","isTerminal":True,"messages":[{"role":"assi
 assert sys.stdin.read()==''
 ''')
         self.call('turn','omp-worker','omp-turn',str(self.player),'requested-model','high',str(self.cwd),str(self.task),str(self.log),'')
-        self.assertEqual((self.cwd/'received.txt').read_text(),self.task.read_text())
+        self.assertIn(self.task.read_text(),(self.cwd/'received.txt').read_text())
         self.assertEqual(json.loads(self.call('inbox','root'))[0]['body'],'Full final answer λ')
         session=json.loads(self.call('player','omp-worker'))
         self.assertEqual(session['native'],'omp-native')
@@ -161,8 +193,8 @@ assert sys.stdin.read()==''
         event_lines=self.generation('omp-turn').read_text().splitlines()
         frames=[json.loads(line) for line in event_lines]
         self.assertEqual([f['assistantMessageEvent']['delta'] for f in frames
-                          if f.get('type')=='message_update'], [self.task.read_text()])
-        self.assertEqual([f['partialResult']['content'][0]['text'] for f in frames if f.get('type')=='tool_execution_update'], [self.task.read_text()])
+                          if f.get('type')=='message_update'], [(self.cwd/'received.txt').read_text()])
+        self.assertEqual([f['partialResult']['content'][0]['text'] for f in frames if f.get('type')=='tool_execution_update'], [(self.cwd/'received.txt').read_text()])
         with sqlite3.connect(self.db) as connection:
             stored_event=connection.execute('SELECT event FROM turns WHERE id=?',('omp-turn',)).fetchone()[0]
         observed=json.loads(stored_event)
@@ -235,7 +267,9 @@ assert sys.stdin.read()==''
         receiver.write_text('import json,pathlib,sqlite3,sys\n'
                             'db, output, report = sys.argv[1:]\n'
                             'with sqlite3.connect(db) as connection:\n'
-                            ' body = connection.execute("SELECT body FROM messages WHERE id=?", (report,)).fetchone()[0]\n'
+                            ' row = connection.execute("SELECT kind,body FROM messages WHERE id=?", (report,)).fetchone()\n'
+                            'if row[0] != "report": sys.exit(0)\n'
+                            'body=row[1]\n'
                             'with pathlib.Path(output).open("a") as stream: stream.write(json.dumps(body)+"\\n")\n')
         received = self.cwd / 'root-reports.jsonl'
         endpoint = json.dumps([sys.executable, str(receiver), str(self.db), str(received)])
@@ -427,10 +461,10 @@ print(json.dumps({'stream':{'kind':'session','id':session},'payload_type':'run.t
         self.assertEqual(native,'native-muse')
         self.task.write_text('Continue with a new task λ.')
         self.call('turn','muse-worker','muse-2',str(self.player),'requested-model','low',str(self.cwd),str(self.task),str(self.cwd/'resumed.jsonl'),native)
-        self.assertEqual((self.cwd/'received.txt').read_text(),self.task.read_text())
+        self.assertIn(self.task.read_text(),(self.cwd/'received.txt').read_text())
         reports=json.loads(self.call('inbox','root'))
         self.assertEqual([r['id'] for r in reports],['muse-1','muse-2'])
-        self.assertEqual(reports[-1]['body'],self.task.read_text())
+        self.assertEqual(reports[-1]['body'],(self.cwd/'received.txt').read_text())
         self.assertEqual(json.loads(self.call('player','muse-worker'))['native'],native)
 
     def test_codex_command_pairs_keep_completed_and_unfinished_commands_at_each_level(self):
@@ -512,14 +546,14 @@ print(json.dumps({'type':'turn.completed','usage':{'input_tokens':42,'output_tok
         session=json.loads(self.call('player','codex-worker'))
         self.assertEqual(session['native'],'native-codex')
         self.assertEqual(session['observedModel'],'')
-        self.assertEqual(json.loads(self.call('inbox','root'))[0]['body'],self.task.read_text())
-        initial_prompt=self.task.read_text()
+        self.assertEqual(json.loads(self.call('inbox','root'))[0]['body'],(self.cwd/'received.txt').read_text())
+        initial_prompt=(self.cwd/'received.txt').read_text()
         self.task.write_text('Next instruction with trailing newline.\n')
         with patch.dict(os.environ, {'OPENAI_API_KEY':'controlled-unused-key', 'CODEX_API_KEY':'controlled-unused-key'}):
             self.call('turn','codex-worker','codex-2',str(self.player),'gpt-6-astra','low',str(self.cwd),str(self.task),str(self.cwd/'second.jsonl'),session['native'])
         args=json.loads((self.cwd/'argv.json').read_text())
         launches=[json.loads(line) for line in (self.cwd/'native-launches.jsonl').read_text().splitlines()]
-        for launch, subcommand, prompt in zip(launches, [['exec'],['exec','resume','native-codex']], [initial_prompt,self.task.read_text()]):
+        for launch, subcommand, prompt in zip(launches, [['exec'],['exec','resume','native-codex']], [initial_prompt,(self.cwd/'received.txt').read_text()]):
             self.assertEqual(launch['args'][:2], ['-c','forced_login_method="chatgpt"'])
             self.assertEqual(launch['args'][2:2+len(subcommand)],subcommand)
             configs=[launch['args'][i+1] for i,arg in enumerate(launch['args']) if arg=='-c']
@@ -530,7 +564,7 @@ print(json.dumps({'type':'turn.completed','usage':{'input_tokens':42,'output_tok
             self.assertEqual(launch['prompt'],prompt)
         self.assertEqual(len(launches),2)
         for turn,base_log,prompt in (('codex-1',self.log,initial_prompt),
-                                    ('codex-2',self.cwd/'second.jsonl',self.task.read_text())):
+                                    ('codex-2',self.cwd/'second.jsonl',(self.cwd/'received.txt').read_text())):
             frames=[json.loads(line) for line in pathlib.Path(str(base_log)+'.attempt-'+turn).read_text().splitlines()]
             commands=[frame for frame in frames if frame.get('item',{}).get('id')=='cmd-reused']
             self.assertEqual(commands,[{'type':'item.completed','item':{'type':'command_execution',
@@ -538,7 +572,7 @@ print(json.dumps({'type':'turn.completed','usage':{'input_tokens':42,'output_tok
                                         'exit_code':0,'aggregated_output':'Output '+prompt}}])
         self.assertEqual(json.loads(self.call('player','codex-worker'))['native'],session['native'])
         self.assertEqual(args[-1],'-')
-        self.assertEqual(json.loads(self.call('inbox','root'))[-1]['body'],self.task.read_text())
+        self.assertEqual(json.loads(self.call('inbox','root'))[-1]['body'],(self.cwd/'received.txt').read_text())
         self.player.unlink()
         self.call('turn','codex-worker','codex-2',str(self.player),'gpt-6-astra','low',str(self.cwd),str(self.task),str(self.cwd/'second.jsonl'),session['native'])
         self.assertEqual(len(json.loads(self.call('turns','codex-worker'))),2)

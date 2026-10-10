@@ -83,6 +83,30 @@ def reply(value): stream.write((json.dumps(value)+'\n').encode())
 def command(*value):
     result=subprocess.run([config['exe'],config['db'],*value],capture_output=True,text=True)
     return {'code':result.returncode,'stdout':result.stdout,'stderr':result.stderr}
+def fixture_completion(body):
+    state=command('session',session)
+    assert state['code']==0,state
+    completion=json.loads(state['stdout'])['taskCompletion']
+    if not completion['open']: return
+    assignment=command('delivery',completion['assignmentId'])
+    assert assignment['code']==0,assignment
+    if json.loads(assignment['stdout'])['receipt'] is None: return
+    parent=completion['coordinator']
+    request=completion['requestId'] or ('fixture-completion-'+str(os.getpid()))
+    if not completion['requestId']:
+        sent=command('message',request,session,parent,'completion-request',body)
+        assert sent['code']==0,sent
+    read=command('delivery',request)
+    assert read['code']==0,read
+    reviewed=command('ack',request,parent,'Fixture coordinator reviewed the result.')
+    assert reviewed['code']==0,reviewed
+    confirmation=request+':confirmed'
+    sent=command('message',confirmation,parent,session,'completion-confirmed',request)
+    assert sent['code']==0,sent
+    read=command('delivery',confirmation)
+    assert read['code']==0,read
+    handled=command('ack',confirmation,session,'Fixture worker handled confirmation.')
+    assert handled['code']==0,handled
 def acknowledge():
     for ident in re.findall(r'^Message \([^\n]*\) from [^\n]* \[id: (.*?)\]:$',prompt,re.M):
         accepted=command('ack',ident,session,'fixture-native-reviewed')
@@ -119,6 +143,7 @@ while True:
     acknowledge()
     body=action['finish']
     failure=action.get('fail',False)
+    if not failure and action.get('complete_task',True): fixture_completion(body)
     if omp:
         print(json.dumps({'type':'agent_end','isTerminal':True,
                          'messages':[{'role':'assistant','stopReason':'error' if failure else 'stop',

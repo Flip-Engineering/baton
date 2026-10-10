@@ -89,6 +89,38 @@ def _session_lock_path(db, session):
     key = 'owner-%x-%x' % (info.st_dev, info.st_ino)
     return os.path.join(os.environ['XDG_RUNTIME_DIR'], 'baton2', key + '.lock-' + session.encode().hex())
 
+COMPLETION_EXCHANGE = r'''import sqlite3
+def coordinator(*arguments):
+    return json.loads(subprocess.check_output([config['exe'],config['db'],*arguments],text=True))
+def confirm_finished_fixture_task(body):
+    state=coordinator('session',model)
+    completion=state['taskCompletion']
+    if not completion['open']: return
+    assignment=coordinator('delivery',completion['assignmentId'])
+    if assignment['receipt'] is None: return
+    parent=completion['coordinator']
+    request=completion['requestId'] or ('fixture-completion-'+str(os.getpid()))
+    if not completion['requestId']:
+        # The scripted coordinator reviews this request synchronously. Explicit
+        # lifecycle cases below exercise public request delivery and wake.
+        with sqlite3.connect(config['db']) as database:
+            database.execute('INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)',
+                             (request,model,parent,'completion-request',body))
+            reviewed=database.execute('SELECT sender,recipient,kind,body FROM messages WHERE id=?',
+                                      (request,)).fetchone()
+            assert reviewed==(model,parent,'completion-request',body),reviewed
+            database.execute('UPDATE messages SET receipt=? WHERE id=? AND recipient=?',
+                             ('Fixture coordinator reviewed the requested result.',request,parent))
+    reviewed=coordinator('delivery',request)
+    assert reviewed['sender']==model and reviewed['recipient']==parent,reviewed
+    coordinator('ack',request,parent,'Fixture coordinator reviewed the requested result.')
+    confirmation=request+':confirmed'
+    coordinator('message',confirmation,parent,model,'completion-confirmed',request)
+    reviewed=coordinator('delivery',confirmation)
+    assert reviewed['body']==request,reviewed
+    coordinator('ack',confirmation,model,'Fixture worker handled coordinator confirmation.')
+'''
+
 FIXTURE = r'''import json,os,pathlib,re,socket,subprocess,sys,time
 home=pathlib.Path(__file__).resolve().parent
 config=json.loads((home/'fixture.json').read_text())
@@ -219,7 +251,7 @@ else:
 client=socket.create_connection(('127.0.0.1',config['port']))
 stream=client.makefile('rwb',buffering=0)
 def reply(value): stream.write((json.dumps(value)+'\n').encode())
-def progress(action):
+''' + COMPLETION_EXCHANGE + r'''def progress(action):
     print(json.dumps({'type':'fixture_progress','marker':action['progress'],'native_pid':os.getpid()}),flush=True)
     reply({'progress_written':action['progress']})
 def session_lock_path(db,session):
@@ -243,7 +275,10 @@ while True:
     line=stream.readline()
     if not line: break
     action=json.loads(line)
-    if action.get('exit_fixture'): break
+    if action.get('exit_fixture'):
+        if action.get('complete_task',False):
+            confirm_finished_fixture_task('Completed the controlled native observation task.')
+        break
     if action.get('progress'):
         progress(action)
         continue
@@ -290,16 +325,25 @@ while True:
         result=subprocess.run([config['exe'],config['db'],'message',ident,model,recipient,'guidance',body],capture_output=True,text=True)
         reply({'code':result.returncode,'stdout':result.stdout,'stderr':result.stderr})
         continue
+    if action.get('completion_request'):
+        ident,body=action['completion_request']
+        parent=coordinator('session',model)['parent']
+        reply(coordinator('message',ident,model,parent,'completion-request',body))
+        continue
     if action.get('promote'):
         result=subprocess.run([config['exe'],config['db'],'promote',*action['promote']],capture_output=True,text=True)
         reply({'code':result.returncode,'stdout':result.stdout,'stderr':result.stderr})
         continue
     if action.get('ack',True):
         handled_inputs=re.findall(r'^Message \([^\n]*\) from [^\n]* \[id: (.*?)\]:$',prompt,re.M)+steered_inputs
+        if action.get('ack_inbox'):
+            handled_inputs += [message['id'] for message in coordinator('inbox',model)]
         for ident in dict.fromkeys(handled_inputs):
             subprocess.run([config['exe'],config['db'],'ack',ident,model,'native-reviewed'],check=True,stdout=subprocess.DEVNULL)
     failure=action.get('fail',False)
     body=action.get('body','native review complete')
+    if not failure and 'fail_status' not in action and action.get('complete_task',True):
+        confirm_finished_fixture_task(body)
     if omp:
         if 'fail_status' in action:
             assistant={'role':'assistant','stopReason':'error',
@@ -744,6 +788,60 @@ class Receive(unittest.TestCase):
         self.finish(observer)
         self.assertEqual([turn['reportBody'] for turn in self.coord('turns', 'parent')],
                          ['Original result complete.', 'Queued result complete.'])
+
+    def test_workers_continue_successful_native_turns_until_their_coordinator_confirms(self):
+        for harness in ('codex', 'omp', 'muse', 'claude-code'):
+            for entry in ('receive', 'direct'):
+                with self.subTest(harness=harness, entry=entry):
+                    name = harness + '-' + entry
+                    self.player(name=name, harness=harness)
+                    if entry == 'receive':
+                        self.prepare_input(name + '-task', name, 'Complete this assignment.', kind='task')
+                        self.connect(name)
+                        observer = self.spawn(*self.receive_args(name))
+                        assignment = name + '-task'
+                    else:
+                        self.connect(name)
+                        task = self.directory / (name + '-task.txt')
+                        task.write_text('Complete this retained direct assignment.')
+                        observer = self.spawn('turn', name, name + '-turn', self.fixture, name, 'low',
+                                              self.directory, task, self.directory / (name + '.jsonl'), '')
+                        assignment = name + '-turn:task-input'
+                    first, started = self.accept(name)
+                    self.assertIn('completion-request', started['prompt'])
+                    self.action(first, body='Intermediate work is retained.', complete_task=False)
+                    self.assertEqual(first.readline(), b'')
+                    second, continued = self.accept(name)
+                    self.assertEqual(continued['native'], started['native'])
+                    self.assertIn('task-continuation', continued['prompt'])
+                    self.assertIsNotNone(self.coord('delivery', assignment)['receipt'])
+                    state = self.coord('session', name)['taskCompletion']
+                    self.assertTrue(state['open'])
+                    self.assertEqual(state['assignmentId'], assignment)
+                    self.assertFalse(any(message['sender'] == name and message['kind'] == 'completion-request'
+                                         for message in self.coord('inbox', 'root')))
+
+                    request = name + '-ready'
+                    self.action(second, completion_request=[request, 'The task result is ready.'])
+                    requested = json.loads(second.readline())
+                    self.assertEqual((requested['sender'], requested['recipient'], requested['kind']),
+                                     (name, 'root', 'completion-request'))
+                    self.assertTrue(self.coord('session', name)['taskCompletion']['open'])
+                    self.coord('ack', request, 'root', 'Reviewed the completed assignment.')
+                    self.coord('message', name + '-confirmed', 'root', name, 'completion-confirmed', request)
+                    self.action(second, body='The coordinator confirmed this task.',
+                                ack_inbox=True, complete_task=False)
+                    self.assertEqual(second.readline(), b'')
+                    self.finish(observer)
+                    self.shutdown_idle_database_owner('The confirmed worker did not settle naturally.')
+                    self.assertEqual(self.coord('inbox', name), [])
+                    state = self.coord('session', name)['taskCompletion']
+                    self.assertTrue(state['confirmed'])
+                    self.assertFalse(state['open'])
+                    reports = self.coord('turns', name)
+                    self.assertEqual([report['reportBody'] for report in reports],
+                                     ['Intermediate work is retained.', 'The coordinator confirmed this task.'])
+                    self.assertEqual(self.coord('delivery', name + '-confirmed')['receipt'], 'native-reviewed')
 
     def test_ack_failure_still_joins_queued_continuation(self):
         self.player()

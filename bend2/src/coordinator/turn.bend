@@ -157,15 +157,57 @@ def prepare_parent(db: String, player: String, id: String, log: String, stderr: 
         case False{}: IO.pure(Unit,Unit{})
         case True{}: prepare_player(db,player,id,log,stderr,error,status,event,Bool.or(String.eq(status,"start failed"),String.eq(status,"input failed")))
 
+# Successful turn settlement keeps an unconfirmed assignment in the ordinary
+# inbox. Other owed input already provides its continuation.
+def continue_task_if(db: String, player: String, id: String, success: Bool) -> IO(Unit):
+  match success:
+    case False{}: IO.pure(Unit,Unit{})
+    case True{}: do IO<Unit>:
+      saved : String <- IO.try(String,DB.Sql.query(db,C.task_continuation_sql(player,id)))
+      IO.pure(Unit,Unit{})
+
+def settlement_success(db: String, outcome: Outcome) -> IO(Bool):
+  match outcome:
+    case Ended{status,+event,error,incomplete}: do IO<Bool>:
+      semantic_error : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN coalesce(json_extract(" ++ C.q(event) ++ ",'$.is_error'),0)=1 OR " ++ C.omp_terminal_error_sql(event) ++ " OR (coalesce(json_extract(" ++ C.q(event) ++ ",'$.payload.kind'),'')='run_terminal' AND coalesce(json_extract(" ++ C.q(event) ++ ",'$.payload.terminal'),'')<>'completed') ELSE 1 END;"))
+      IO.pure(Bool,Bool.and(Bool.not(incomplete),Bool.and(Bool.not(failed(status,event,error)),String.eq(semantic_error,"0\n"))))
+
+def continue_task(+db: String, player: String, id: String, outcome: Outcome) -> IO(Unit):
+  do IO<Unit>:
+    success : Bool <- settlement_success(db,outcome)
+    continue_task_if(db,player,id,success)
+
+# A failed Direct turn retains its original input for supported recovery.
+# Later input still reaches the current receiver through the ordinary wake.
+def direct_wake(+db: String, +player: String, id: String, outcome: Outcome) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    success : Bool <- settlement_success(db,outcome)
+    cursor : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce((SELECT CAST(seq AS TEXT) FROM messages WHERE id=" ++ C.q(id ++ ":task-input") ++ " AND recipient=" ++ C.q(player) ++ "),'0');"))
+    Delivery.wake_pending(db,player,Bool.pick(String,success,"0",Tx.trim_nl(cursor)))
+
+def task_instructions() -> String:
+  "A native turn ending does not finish your task. Continue your assignment and read your inbox until your immediate coordinator confirms completion. When your work is ready, use the ordinary message command to send kind completion-request from your session to its recorded parent, with your result and remaining work. Send one request and continue useful work while the coordinator reviews it. The coordinator replies with kind completion-confirmed and the request ID alone as its body when the task is complete, or sends guidance for further work. Acknowledge handled input separately. A new task or guidance begins further work. Explicit operator stops remain effective. A parentless Principal Conductor follows the operator's task.\n"
+
+def knowledge_instructions() -> String:
+  "Record authored evidence, finding, hypothesis, experiment, decision and principle items. Link Supports, Contradicts, Produced, Informed, DerivedFrom, TestedBy and Supersedes as appropriate to actual evidence. Keep uncertainty and complete retained evidence. record-linked ID AUTHOR KIND CLAIM EVIDENCE LIMITS LINKS_JSON records the item with an authored array of {id,source,relation,target} links. knowledge-search READER SCOPE SUBJECT QUERY matches all query terms across records and retained evidence messages and returns typed neighbors with detail reads. knowledge-traverse READER SCOPE SUBJECT REFERENCE in|out|both RELATION neighbors|recursive follows scoped holdings and cycles; an empty RELATION includes all links. MCP knowledge_record accepts links; knowledge_search and knowledge_traverse expose the same operations.\n"
+
+def direct_task_prompt(+db: String, +player: String, +id: String, prompt: String) -> IO(String):
+  do IO<String>:
+    executable : String <- IO.try(String,Lock.SessionLock.executable())
+    parent : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce(parent,'') FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
+    header : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(id ++ ":task-input") ++ " AND recipient=" ++ C.q(player) ++ " AND kind='task-assignment') THEN 'Message (task-assignment) from ' || " ++ C.q(player) ++ " || ' [id: ' || " ++ C.q(id ++ ":task-input") ++ " || ']:' ELSE '' END;"))
+    IO.pure(String,task_instructions() ++ knowledge_instructions() ++ "Coordinator executable, database and session argv: " ++ P.argv([executable,db,player]) ++ ". Recorded parent: " ++ Tx.trim_nl(parent) ++ ".\nRead your inbox with inbox SESSION. Use message REQUEST_ID SESSION PARENT completion-request SUMMARY and acknowledge each handled input with ack MESSAGE_ID SESSION RECEIPT.\n" ++ Tx.trim_nl(header) ++ "\n" ++ prompt)
+
 def generation_log(+log: String, +id: String) -> String:
   Logs.attempt_log(log,id)
 
 # Failure reports are committed while this invocation still owns the session.
-def prepare(+db: String, +player: String, +id: String, log: String, stderr: String, outcome: Outcome) -> IO(Unit):
+def prepare(+db: String, +player: String, +id: String, log: String, stderr: String, +outcome: Outcome) -> IO(Unit):
   do IO<Unit>:
     +generation : String <- IO.pure(String,generation_log(log,id))
     recipient : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ C.report_recipient(C.q(player)) ++ " IS NOT NULL;"))
-    prepare_parent(db,player,id,generation,stderr,outcome,String.eq(recipient,"1\n"))
+    reported : Unit <- prepare_parent(db,player,id,generation,stderr,outcome,String.eq(recipient,"1\n"))
+    continue_task(db,player,id,outcome)
 
 def record_exit(db: String, player: String, +id: String, log: String, outcome: Outcome) -> IO(Unit):
   match outcome:
@@ -1047,6 +1089,7 @@ def direct_request_match(+id: String, +player: String, +harness: String, +cmd: S
 def direct_request_sql(+id: String, +player: String, +harness: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +prompt: String, +log: String, +session: String, +directory: String) -> String:
   "BEGIN IMMEDIATE;" ++ direct_request_schema()
   ++ "INSERT INTO direct_turn_requests(id,session,harness,command,model,effort,workspace,task_path,task,output,native,directory) SELECT " ++ C.q(id) ++ "," ++ C.q(player) ++ "," ++ C.q(harness) ++ "," ++ C.q(cmd) ++ "," ++ C.q(model) ++ "," ++ C.q(effort) ++ "," ++ C.q(cwd) ++ "," ++ C.q(task) ++ "," ++ C.q(prompt) ++ "," ++ C.q(log) ++ "," ++ C.q(session) ++ "," ++ C.q(directory) ++ " WHERE NOT EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(id) ++ ") ON CONFLICT(id) DO NOTHING;"
+  ++ "INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id ++ ":task-input") ++ ",worker.id,worker.id,'task-assignment'," ++ C.q(prompt) ++ " FROM sessions worker WHERE worker.id=" ++ C.q(player) ++ " AND worker.parent IS NOT NULL AND NOT EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(id) ++ ") AND EXISTS(SELECT 1 FROM direct_turn_requests WHERE " ++ direct_request_match(id,player,harness,cmd,model,effort,cwd,task,prompt,log,session,directory) ++ ");"
   ++ "SELECT CASE WHEN EXISTS(SELECT 1 FROM direct_turn_requests WHERE " ++ direct_request_match(id,player,harness,cmd,model,effort,cwd,task,prompt,log,session,directory) ++ ") THEN '' WHEN EXISTS(SELECT 1 FROM direct_turn_requests WHERE id=" ++ C.q(id) ++ ") THEN 'The direct turn ID belongs to a different retained request; use a new turn ID.' WHEN EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(id) ++ ") THEN 'The direct turn ID has a stored result without retained request input; use delivery to read that result and a new ID for new work.' ELSE 'The direct turn request could not be retained.' END;COMMIT;"
 
 def direct_request_checked(+db: String, +id: String, +player: String, +harness: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +prompt: String, +log: String, +session: String, +directory: String) -> IO(Unit):
@@ -1119,7 +1162,7 @@ def direct_completed(+db: String, +player: String, +id: String, +log: String, +d
     finished : Result<&1,&1,U32 & String,Unit> <- finish(db,player,id,log,outcome)
     questions : Result<&1,&1,U32 & String,Unit> <- NativeRequests.settle(deliveries)
     acknowledged : Result<&1,&1,U32 & String,Unit> <- direct_acknowledge(handle)
-    wake : Result<&1,&1,U32 & String,Unit> <- Delivery.wake_pending(db,player,"0")
+    wake : Result<&1,&1,U32 & String,Unit> <- direct_wake(db,player,id,outcome)
     IO.pass(Unit,combine(native_released,combine(finished,combine(questions,combine(acknowledged,wake)))))
 
 def direct_unstarted(+db: String, +player: String, +id: String, +log: String, +directory: String, lock: Maybe<U32>, error: String) -> IO(Unit):
@@ -1129,7 +1172,7 @@ def direct_unstarted(+db: String, +player: String, +id: String, +log: String, +d
     prepared : Unit <- prepare(db,player,id,log,directory ++ "/native.stderr",outcome)
     released : Unit <- direct_release_lock(lock)
     finished : Result<&1,&1,U32 & String,Unit> <- finish(db,player,id,log,outcome)
-    wake : Result<&1,&1,U32 & String,Unit> <- Delivery.wake_pending(db,player,"0")
+    wake : Result<&1,&1,U32 & String,Unit> <- direct_wake(db,player,id,outcome)
     IO.pass(Unit,combine(finished,wake))
 
 # Pass the delivery channels and lock to the selected continuation: the verdict is the
@@ -1379,7 +1422,8 @@ def player_checked(+db: String, +player: String, +id: String, +cmd: String, +mod
         +directory : String <- direct_directory(db,id)
         request : Unit <- direct_request_checked(db,id,player,Tx.trim_nl(harness),cmd,model,effort,cwd,task,prompt,log,session,directory)
         found : String <- IO.try(String,DB.Sql.query(db,turn_present_sql(id)))
-        choose(db,player,id,cmd,model,effort,cwd,task,log,session,harness,directory,prompt,lock,String.eq(found,"1\n"))
+        launched_prompt : String <- direct_task_prompt(db,player,id,prompt)
+        choose(db,player,id,cmd,model,effort,cwd,task,log,session,harness,directory,launched_prompt,lock,String.eq(found,"1\n"))
 
 def replay_finished(db: String, player: String, lock: U32, output: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
   do IO<Unit>:
@@ -1395,7 +1439,7 @@ def complete_outcome_locked(+db: String, +player: String, +id: String, +log: Str
       prepared : Unit <- prepare(db,player,id,log,log ++ ".stderr",outcome)
       released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
       delivery_task : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,finish(db,player,id,log,outcome))
-      wake : Result<&1,&1,U32 & String,Unit> <- Delivery.wake_pending(db,player,"0")
+      wake : Result<&1,&1,U32 & String,Unit> <- direct_wake(db,player,id,outcome)
       finished : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,delivery_task)
       IO.pass(Unit,combine(finished,wake))
 
@@ -1517,11 +1561,16 @@ def resume_pending(+db: String, +player: String) -> IO(Maybe<String>):
     request : Maybe<DirectRequest> <- direct_pending(db,player,"")
     resume_pending_request(db,player,request)
 
-def direct_saved_prompt(+directory: String, original_directory: String, +cwd: String, +saved: String, read: Result<&1,&1,U32 & String,String>) -> IO(String):
+def direct_missing_prompt(db: String, player: String, id: String, directory: String, original_directory: String, cwd: String, +saved: String) -> IO(String):
+  do IO<String>:
+    prompt : String <- Bool.pick(IO(String),String.eq(directory,original_directory ++ ".fresh"),refused_note(cwd,saved),IO.pure(String,saved))
+    direct_task_prompt(db,player,id,prompt)
+
+def direct_saved_prompt(db: String, player: String, id: String, directory: String, original_directory: String, cwd: String, saved: String, read: Result<&1,&1,U32 & String,String>) -> IO(String):
   match read:
     case Done{prompt}: IO.pure(String,prompt)
     case Fail{(+code,cause)}:
-      Bool.pick(IO(String),U32.is_eq(code,2),Bool.pick(IO(String),String.eq(directory,original_directory ++ ".fresh"),refused_note(cwd,saved),IO.pure(String,saved)),IO.die(String,code,cause))
+      Bool.pick(IO(String),U32.is_eq(code,2),direct_missing_prompt(db,player,id,directory,original_directory,cwd,saved),IO.die(String,code,cause))
 
 def direct_prelaunch_request(+db: String, +player: String, +lock: U32, request: Maybe<DirectRequest>) -> IO(Unit):
   match request:
@@ -1530,7 +1579,7 @@ def direct_prelaunch_request(+db: String, +player: String, +lock: U32, request: 
       IO.die(Unit,2,"The session has no interrupted direct setup to resume; inspect its current execution and input.")
     case Some{Saved{+id,+harness,+command,+model,+effort,+workspace,task_path,+task,+output,+native,+directory,original_directory}}: do IO<Unit>:
       retained : Result<&1,&1,U32 & String,String> <- T.Text.read(directory ++ "/prompt.txt")
-      prompt : String <- direct_saved_prompt(directory,original_directory,workspace,task,retained)
+      prompt : String <- direct_saved_prompt(db,player,id,directory,original_directory,workspace,task,retained)
       choose(db,player,id,command,model,effort,workspace,task_path,output,native,harness ++ "\n",directory,prompt,lock,False{})
 
 def direct_prelaunch(+db: String, +player: String, id: String) -> IO(Unit):

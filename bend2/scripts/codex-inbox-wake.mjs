@@ -254,10 +254,10 @@ async function reportFailure(executable, database, session, threadId, error) {
   }
 }
 
-async function openInbox(database, session, threadId) {
+async function openInbox(executable, database, session, threadId) {
   const { DatabaseSync } = await import('node:sqlite');
   const db = new DatabaseSync(database, { readOnly: true });
-  const query = `SELECT s.native,
+  const query = `SELECT s.native,s.parent,
     EXISTS(SELECT 1 FROM session_stops WHERE session=s.id) AS stopped,
     (SELECT count(*) FROM messages WHERE recipient=s.id AND receipt IS NULL) AS pendingCount,
     (SELECT max(seq) FROM messages WHERE recipient=s.id) AS inputSeq,
@@ -277,7 +277,13 @@ async function openInbox(database, session, threadId) {
       return 'Baton input is pending.\n' + JSON.stringify({ database, recipient: session, message: row.message, pendingCount: row.pendingCount }) +
         '\nRead all owed input with baton2 DATABASE inbox RECIPIENT. Read complete stored bodies with baton2 DATABASE delivery MESSAGE. ' +
         'Handle the work in this continuation. Acknowledge each handled own message with baton2 DATABASE ack MESSAGE RECIPIENT RECEIPT. ' +
-        'Read your inbox again before ending the turn. Admission is separate from handling and acknowledgement.';
+        'Read your inbox again before ending the turn. Admission is separate from handling and acknowledgement. ' +
+        'A native turn ending does not finish your task. Continue your assignment until its immediate coordinator confirms completion. ' +
+        (row.parent ? 'When the task is ready, send one completion-request message from ' + session + ' to ' + row.parent +
+          ' with your result and remaining work. Continue useful work while it is reviewed. The coordinator sends guidance or completion-confirmed with the request ID as its body. ' :
+          'This parentless session follows the operator task. ') +
+        'Coordinator executable/database argv: ' + JSON.stringify([executable, database]) +
+        '. Use message REQUEST_ID SESSION PARENT completion-request SUMMARY and acknowledge each handled own input separately. Explicit operator stops remain effective.';
     },
   };
 }
@@ -317,12 +323,45 @@ async function readCommittedInbox(inbox, events, session, threadId) {
   }
 }
 
+async function coordinatorCommand(executable, database, args) {
+  const child = spawn(executable, [database, ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
+  let output = '', diagnostic = '';
+  child.stdout.setEncoding('utf8');
+  child.stderr.setEncoding('utf8');
+  child.stdout.on('data', part => { output += part; });
+  child.stderr.on('data', part => { diagnostic += part; });
+  const exit = await new Promise((resolve, reject) => {
+    child.once('error', reject);
+    child.once('close', (code, signal) => resolve({ code, signal }));
+  });
+  if (exit.code !== 0 || exit.signal) throw new Error('Baton coordinator command failed: ' + JSON.stringify({ args, ...exit, output, diagnostic }));
+  return JSON.parse(output);
+}
+
 async function follow(proxy, executable, database, session, threadId, inbox) {
   const events = new Events();
   let notificationFailure;
   const notifyFailure = async error => {
     try { await reportFailure(executable, database, session, threadId, error); }
     catch (error) { notificationFailure = error; throw error; }
+  };
+  let taskInput, taskOpen;
+  const unconfirmedTask = async row => {
+    if (taskInput !== row.inputSeq || taskOpen === undefined) {
+      const state = await coordinatorCommand(executable, database, ['session', session]);
+      taskOpen = Boolean(state.taskCompletion?.open);
+      taskInput = row.inputSeq;
+      if (taskOpen && !row.pendingCount) record({ type: 'codexInboxTaskAwaitingConfirmation',
+        session, threadId, taskCompletion: state.taskCompletion });
+    }
+    return taskOpen;
+  };
+  const continueTask = async turnId => {
+    const state = await coordinatorCommand(executable, database, ['continue-task', session, turnId]);
+    taskOpen = Boolean(state.taskCompletion?.open);
+    taskInput = undefined;
+    record({ type: 'codexInboxTaskContinuation', session, threadId, turnId,
+      continuationId: state.continuationId, taskCompletion: state.taskCompletion });
   };
   proxy.onNotification = message => {
     if (message.error) events.push(message);
@@ -356,7 +395,7 @@ async function follow(proxy, executable, database, session, threadId, inbox) {
     await readiness;
     await proxy.connect();
     let row = await readCommittedInbox(inbox, events, session, threadId);
-    if (row.stopped || !row.pendingCount) return;
+    if (row.stopped || (!row.pendingCount && !await unconfirmedTask(row))) return;
     await proxy.rpc('thread/resume', { threadId });
     record({ type: 'codexInboxSubscribed', session, threadId });
     let lastAdmission, lastInput = row.inputSeq;
@@ -364,26 +403,49 @@ async function follow(proxy, executable, database, session, threadId, inbox) {
     for (;;) {
       if (event.error) throw event.error;
       row = await readCommittedInbox(inbox, events, session, threadId);
-      if (row.stopped || !row.pendingCount) {
-        record({ type: 'codexInboxReleased', session, threadId, stopped: Boolean(row.stopped), pendingCount: row.pendingCount });
-        return;
-      }
-      if (event.change && row.inputSeq === lastInput) { event = await events.next(); continue; }
-      lastInput = row.inputSeq;
       if (event.method === 'turn/completed') {
         record({ type: 'codexInboxTurnSettled', session, threadId, turnId: event.params.turn.id,
           status: event.params.turn.status, ...(event.params.turn.error ? { error: event.params.turn.error } : {}) });
         if (event.params.turn.status !== 'completed') {
-          const recoverable = recoverableTurn(event.params.turn);
-          if (!recoverable) lastAdmission = JSON.stringify([event.params.turn.id, row.inputSeq]);
-          await notifyFailure(new Error('Managed Codex turn settled with unfinished input: ' + JSON.stringify(event.params.turn)));
-          if (!recoverable) {
+          await notifyFailure(new Error('Managed Codex turn settled with unfinished work: ' + JSON.stringify(event.params.turn)));
+          if (!recoverableTurn(event.params.turn)) {
+            lastAdmission = JSON.stringify([event.params.turn.id, row.inputSeq]);
             record({ type: 'codexInboxTurnRetained', session, threadId, turn: event.params.turn });
-            event = await events.next();
-            continue;
           }
         }
       }
+      if (event.method === 'turn/completed' && !row.stopped &&
+        (event.params.turn.status === 'completed' || recoverableTurn(event.params.turn))) {
+        await continueTask(event.params.turn.id);
+        row = await readCommittedInbox(inbox, events, session, threadId);
+      }
+      if (row.stopped || (!row.pendingCount && !await unconfirmedTask(row))) {
+        record({ type: 'codexInboxReleased', session, threadId, stopped: Boolean(row.stopped), pendingCount: row.pendingCount });
+        return;
+      }
+      if (!row.pendingCount) {
+        if (event.initial) {
+          const { thread } = await proxy.rpc('thread/read', { threadId, includeTurns: false });
+          if (thread.status.type === 'idle') {
+            const turns = await proxy.rpc('thread/turns/list', { threadId, sortDirection: 'desc', itemsView: 'notLoaded' });
+            const latest = turns.data[0];
+            if (latest?.status === 'completed' || recoverableTurn(latest)) {
+              await continueTask(latest.id);
+              row = await readCommittedInbox(inbox, events, session, threadId);
+              if (row.pendingCount) continue;
+            }
+          }
+        }
+        event = await events.next();
+        continue;
+      }
+      if (event.method === 'turn/completed' && event.params.turn.status !== 'completed' &&
+        !recoverableTurn(event.params.turn)) {
+        event = await events.next();
+        continue;
+      }
+      if (event.change && row.inputSeq === lastInput) { event = await events.next(); continue; }
+      lastInput = row.inputSeq;
       const { thread } = await proxy.rpc('thread/read', { threadId, includeTurns: false });
       if (thread.status.type === 'idle') {
         const turns = await proxy.rpc('thread/turns/list', { threadId, sortDirection: 'desc', itemsView: 'notLoaded' });
@@ -454,7 +516,7 @@ if (!threadId || (managed ? !executable || !database || !session || (mode === '-
   process.once('SIGTERM', terminate);
   try {
     if (managed) {
-      inbox = await openInbox(database, session, threadId);
+      inbox = await openInbox(executable, database, session, threadId);
       if (mode === '--follow') {
         proxy = new PublicProxy();
         await follow(proxy, executable, database, session, threadId, inbox);

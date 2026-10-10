@@ -29,6 +29,7 @@ type Command is Data:
   EnsembleMember{id: String, owner: String, session: String, action: String}
   Message{id: String, sender: String, recipient: String, kind: String, body: String}
   MessageFile{id: String, sender: String, recipient: String, kind: String, path: String}
+  TaskContinue{session: String, id: String}
   Observe{id: String, player: String, event: String, sealed: Bool}
   ObserveFile{id: String, player: String, path: String}
   Report{id: String, sender: String, body: String}
@@ -148,7 +149,7 @@ def stopped_session_sql(session: String) -> String:
   "EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ session ++ ")"
 
 def execution_input_sql(kind: String) -> String:
-  kind ++ " IN ('task','guidance','recovery')"
+  kind ++ " IN ('task','guidance','recovery','task-assignment','task-continuation','completion-confirmed')"
 
 def input_state_sql(+row: String) -> String:
   "CASE WHEN " ++ stopped_session_sql(row ++ ".recipient") ++ " THEN json_object('stopId',(SELECT id FROM session_stops WHERE session=" ++ row ++ ".recipient),'executionDisposition',CASE WHEN " ++ row ++ ".receipt IS NOT NULL THEN 'accepted' WHEN " ++ execution_input_sql(row ++ ".kind") ++ " THEN 'stopped' ELSE 'retained-for-stopped-session' END) ELSE json('{}') END"
@@ -196,9 +197,29 @@ def wake_state_sql(+session: String) -> String:
 def blocked_owner_sql(+session: String) -> String:
   "(SELECT CASE WHEN report_sender.parent IS NOT NULL THEN report_sender.parent WHEN coalesce((SELECT role FROM session_roles WHERE session=report_sender.id),'player')='conductor' THEN (SELECT report_owner.id FROM sessions report_owner WHERE report_owner.id='operator' AND report_owner.parent IS NULL AND coalesce((SELECT role FROM session_roles WHERE session=report_owner.id),'player')='operator') END FROM sessions report_sender WHERE report_sender.id=" ++ session ++ ")"
 
+# An assignment remains open across native turns. Its worker explicitly asks
+# the recorded parent to confirm completion through ordinary messages.
+def task_assignment_sql(+session: String) -> String:
+  "(SELECT a.seq FROM messages a WHERE a.recipient=" ++ session ++ " AND ((a.sender<>a.recipient AND a.kind IN ('task','guidance','recovery')) OR a.kind='task-assignment') ORDER BY a.seq DESC LIMIT 1)"
+
+def task_request_sql(+session: String) -> String:
+  "(SELECT r.id FROM messages r WHERE r.sender=" ++ session ++ " AND r.recipient=(SELECT task_parent.parent FROM sessions task_parent WHERE task_parent.id=" ++ session ++ ") AND r.kind='completion-request' AND r.seq>coalesce(" ++ task_assignment_sql(session) ++ ",0) ORDER BY r.seq DESC LIMIT 1)"
+
+def task_confirmed_sql(+session: String) -> String:
+  "EXISTS(SELECT 1 FROM messages c WHERE c.recipient=" ++ session ++ " AND c.sender=(SELECT task_parent.parent FROM sessions task_parent WHERE task_parent.id=" ++ session ++ ") AND c.kind='completion-confirmed' AND c.body=" ++ task_request_sql(session) ++ " AND c.seq>(SELECT seq FROM messages WHERE id=c.body))"
+
+def task_open_sql(+session: String) -> String:
+  "((SELECT task_parent.parent FROM sessions task_parent WHERE task_parent.id=" ++ session ++ ") IS NOT NULL AND " ++ task_assignment_sql(session) ++ " IS NOT NULL AND NOT " ++ task_confirmed_sql(session) ++ " AND NOT " ++ stopped_session_sql(session) ++ ")"
+
+def task_state_sql(+session: String) -> String:
+  "json_object('assignmentId',(SELECT id FROM messages WHERE seq=" ++ task_assignment_sql(session) ++ "),'coordinator',(SELECT task_parent.parent FROM sessions task_parent WHERE task_parent.id=" ++ session ++ "),'requestId'," ++ task_request_sql(session) ++ ",'confirmed',json(CASE WHEN " ++ task_confirmed_sql(session) ++ " THEN 'true' ELSE 'false' END),'open',json(CASE WHEN " ++ task_open_sql(session) ++ " THEN 'true' ELSE 'false' END))"
+
+def task_continuation_sql(+session: String, +id: String) -> String:
+  "INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ q(id ++ ":task-continuation") ++ ",worker.id,worker.id,'task-continuation','Continue assignment ' || (SELECT id FROM messages WHERE seq=" ++ task_assignment_sql("worker.id") ++ ") || '. Your immediate coordinator has not confirmed task completion. Continue the work and review your inbox. When the task is ready, send one completion-request to your recorded parent and keep working until its completion-confirmed reply names that request.' FROM sessions worker WHERE worker.id=" ++ q(session) ++ " AND " ++ task_open_sql("worker.id") ++ " AND NOT EXISTS(SELECT 1 FROM messages owed WHERE owed.recipient=worker.id AND owed.receipt IS NULL);"
+
 def session_state_sql(+session: String) -> String:
   "json_patch(coalesce((SELECT json_object('stop',json_object('id',id,'reason',reason,'status',outcome,'attempt',nullif(attempt,''),'requestedSignal',CASE WHEN attempt='' THEN NULL ELSE signal END,'submittedSignal',nullif(applied_signal,0),'controlError',nullif(control_error,''),'nativeStatus',nullif(native_status,''),'reportId',nullif(report_id,''))) FROM session_stops WHERE session=" ++ session ++ "),json('{}'))"
-  ++ ",json_object('blockedCause'," ++ blocked_cause_sql(session) ++ ",'blockedOwner'," ++ blocked_owner_sql(session) ++ ",'wake'," ++ wake_state_sql(session) ++ "))"
+  ++ ",json_object('blockedCause'," ++ blocked_cause_sql(session) ++ ",'blockedOwner'," ++ blocked_owner_sql(session) ++ ",'wake'," ++ wake_state_sql(session) ++ ",'taskCompletion'," ++ task_state_sql(session) ++ "))"
 
 def assigned_role(session: String) -> String:
   "coalesce((SELECT role FROM session_roles WHERE session=" ++ session ++ "),'player')"
@@ -373,7 +394,7 @@ def operator_route(+sender: String, +recipient: String) -> String:
   "((" ++ assigned_role(sender) ++ "='operator' AND " ++ assigned_role(recipient) ++ "='conductor' AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ recipient ++ " AND parent IS NULL)) OR (" ++ assigned_role(recipient) ++ "='operator' AND " ++ assigned_role(sender) ++ "='conductor' AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ sender ++ " AND parent IS NULL)))"
 
 def message_route(+sender: String, +recipient: String) -> String:
-  "(EXISTS(SELECT 1 FROM sessions WHERE id=" ++ sender ++ ") AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ recipient ++ ") AND " ++ sender ++ "<>" ++ recipient ++ " AND ((" ++ assigned_role(sender) ++ "<>'operator' AND " ++ assigned_role(recipient) ++ "<>'operator' AND (coalesce((SELECT parent FROM sessions WHERE id=" ++ sender ++ ")=" ++ recipient ++ ",0) OR (" ++ assigned_role(sender) ++ "='conductor' AND " ++ descendant(sender,recipient) ++ ") OR " ++ tight_peers(sender,recipient) ++ ")) OR " ++ operator_route(sender,recipient) ++ "))"
+  "(EXISTS(SELECT 1 FROM sessions WHERE id=" ++ sender ++ ") AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ recipient ++ ") AND " ++ sender ++ "<>" ++ recipient ++ " AND ((" ++ assigned_role(sender) ++ "<>'operator' AND " ++ assigned_role(recipient) ++ "<>'operator' AND (coalesce((SELECT parent FROM sessions WHERE id=" ++ sender ++ ")=" ++ recipient ++ ",0) OR coalesce((SELECT parent FROM sessions WHERE id=" ++ recipient ++ ")=" ++ sender ++ ",0) OR (" ++ assigned_role(sender) ++ "='conductor' AND " ++ descendant(sender,recipient) ++ ") OR " ++ tight_peers(sender,recipient) ++ ")) OR " ++ operator_route(sender,recipient) ++ "))"
 
 def exact_message(+id: String, +sender: String, +recipient: String, +kind: String, +body: String) -> String:
   "EXISTS(SELECT 1 FROM messages WHERE id=" ++ q(id) ++ " AND sender=" ++ q(sender) ++ " AND recipient=" ++ q(recipient) ++ " AND kind=" ++ q(kind) ++ " AND body=" ++ q(body) ++ ")"
@@ -481,6 +502,8 @@ def orchestra_sql() -> String:
 
 def sql(command: Command) -> String:
   match command:
+    case TaskContinue{+session,+id}:
+      task_continuation_sql(session,id) ++ "SELECT json_object('session',id,'continuationId',(SELECT id FROM messages WHERE id=" ++ q(id ++ ":task-continuation") ++ " AND recipient=" ++ q(session) ++ " AND receipt IS NULL),'taskCompletion'," ++ task_state_sql("sessions.id") ++ ") FROM sessions WHERE id=" ++ q(session) ++ ";"
     case Observe{id,player,event,sealed}: observe_sql(id,player,event,sealed)
     case Attach{+id, harness, native, endpoint}:
       "INSERT INTO sessions(id,harness,native,endpoint) VALUES(" ++ q(id) ++ "," ++ q(harness) ++ "," ++ q(native) ++ "," ++ q(endpoint) ++ ") ON CONFLICT(id) DO UPDATE SET id=CASE WHEN sessions.parent IS NULL THEN sessions.id ELSE NULL END,harness=excluded.harness,native=excluded.native,endpoint=excluded.endpoint;" ++ session_result(id)
@@ -681,6 +704,7 @@ def parse_verb_session_id(+verb: String, +session: String, +id: String) -> Comma
     case "ensemble": EnsembleEnsure{session,id}
     case "force-stop": ForceStop{session,id}
     case "recover-observer": RecoverObserver{session,id}
+    case "continue-task": TaskContinue{session,id}
     case "view": View{session,id,"7682"}
     case _: Invalid{}
 

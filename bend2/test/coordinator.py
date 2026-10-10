@@ -331,6 +331,54 @@ class Coordinator(unittest.TestCase):
         self.observe('bad-input', 'worker', '{"type":"result"', success=False)
         self.assertEqual(len(self.call('inbox', 'root')), 1)
 
+    def test_worker_completion_requires_its_immediate_coordinator_and_current_assignment(self):
+        self.player('leaf', parent='worker', harness='omp')
+        self.call('message', 'leaf-task', 'worker', 'leaf', 'task', 'Complete the assigned work.')
+        self.call('ack', 'leaf-task', 'leaf', 'The task was read and handled.')
+        self.assertTrue(self.call('session', 'leaf')['taskCompletion']['open'])
+        first = self.call('continue-task', 'leaf', 'leaf-native-one')
+        self.assertEqual(first['continuationId'], 'leaf-native-one:task-continuation')
+        self.call('continue-task', 'leaf', 'leaf-native-one')
+        self.assertEqual([row['id'] for row in self.call('inbox', 'leaf')],
+                         ['leaf-native-one:task-continuation'])
+        self.assertEqual(self.call('inbox', 'worker'), [])
+        self.call('ack', first['continuationId'], 'leaf', 'Continued the assignment.')
+
+        self.call('message', 'leaf-ready', 'leaf', 'worker', 'completion-request',
+                  'The assigned result is ready for the immediate coordinator.')
+        self.call('ack', 'leaf-ready', 'worker', 'Reviewed the result.')
+        self.call('message', 'wrong-coordinator', 'root', 'leaf', 'completion-confirmed', 'leaf-ready')
+        self.call('ack', 'wrong-coordinator', 'leaf', 'The immediate coordinator must decide.')
+        self.assertFalse(self.call('session', 'leaf')['taskCompletion']['confirmed'])
+        self.call('report', 'ordinary-progress', 'leaf', 'An intermediate native report.')
+        self.assertEqual(self.call('session', 'leaf')['taskCompletion']['assignmentId'], 'leaf-task')
+
+        self.call('message', 'leaf-confirmed', 'worker', 'leaf', 'completion-confirmed', 'leaf-ready')
+        self.assertEqual(self.call('session', 'worker')['role'], 'player')
+        state = self.call('session', 'leaf')['taskCompletion']
+        self.assertEqual((state['assignmentId'], state['requestId'], state['coordinator']),
+                         ('leaf-task', 'leaf-ready', 'worker'))
+        self.assertTrue(state['confirmed'])
+        self.assertFalse(state['open'])
+        self.call('ack', 'leaf-confirmed', 'leaf', 'The coordinator confirmed completion.')
+        self.assertIsNone(self.call('continue-task', 'leaf', 'leaf-native-two')['continuationId'])
+
+        self.call('message', 'leaf-next', 'worker', 'leaf', 'guidance', 'Complete the next work.')
+        state = self.call('session', 'leaf')['taskCompletion']
+        self.assertTrue(state['open'])
+        self.assertFalse(state['confirmed'])
+        self.assertIsNone(state['requestId'])
+        self.call('stop', 'leaf', 'operator-stop', 'The operator stopped this worker.')
+        self.assertIsNone(self.call('continue-task', 'leaf', 'after-stop')['continuationId'])
+        self.assertIsNone(self.call('delivery', 'leaf-next')['receipt'])
+
+        self.operator()
+        self.call('message', 'principal-task', 'operator', 'root', 'task', 'Continue the operator task.')
+        principal = self.call('session', 'root')['taskCompletion']
+        self.assertIsNone(principal['coordinator'])
+        self.assertFalse(principal['open'])
+        self.assertIsNone(self.call('continue-task', 'root', 'principal-native')['continuationId'])
+
     def operator(self, role=True):
         self.call('attach', 'operator', 'operator', '', '')
         if role:

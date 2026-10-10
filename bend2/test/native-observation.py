@@ -96,7 +96,7 @@ class NativeObservation(RECEIVE.Receive):
         self.eventually(lambda: self.coord('turns', 'parent'),
                         'terminal frame was not observed before raw stdout capture')
         raw = self.attempt_stdout('parent').read_text()
-        self.action(stream, exit_fixture=True)
+        self.action(stream, exit_fixture=True, complete_task=True)
         self.finish(observer)
 
         turns = self.coord('turns', 'parent')
@@ -132,7 +132,7 @@ class NativeObservation(RECEIVE.Receive):
         turns = self.eventually(lambda: self.coord('turns', 'parent'),
                                 'the captured completion was not reported')
         raw = self.attempt_stdout('parent').read_text()
-        self.action(stream, exit_fixture=True)
+        self.action(stream, exit_fixture=True, complete_task=True)
         self.finish(observer)
 
         self.assertEqual([row['reportBody'] for row in turns], [text])
@@ -162,7 +162,7 @@ class NativeObservation(RECEIVE.Receive):
         turns = self.eventually(lambda: self.coord('turns', 'parent'),
                                 'empty terminal was not reported')
         raw = self.attempt_stdout('parent').read_text()
-        self.action(stream, exit_fixture=True)
+        self.action(stream, exit_fixture=True, complete_task=True)
         self.finish(observer)
 
         self.assertEqual(len(turns), 1)
@@ -220,8 +220,14 @@ class NativeObservation(RECEIVE.Receive):
              'payload': {'kind': 'run_terminal', 'command_id': 'later-run',
                          'terminal': 'completed', 'text': 'Later lifecycle completion.'}},
         ]
-        fake.write_text('#!' + sys.executable + '\nimport json\nframes=' + repr(frames) +
-                        '\nfor frame in frames: print(json.dumps(frame), flush=True)\n')
+        fake.write_text('#!' + sys.executable + '\nimport json,os,subprocess\nframes=' + repr(frames) +
+                        '\nfor frame in frames: print(json.dumps(frame), flush=True)\n'
+                        + 'config='+repr({'exe':str(RECEIVE.EXE),'db':str(self.db)})+'\nmodel="parent"\n'
+                        + RECEIVE.COMPLETION_EXCHANGE
+                        + 'task=coordinator("delivery","muse-observation-turn:task-input")\n'
+                        + 'assert task["body"]=="Review this report."\n'
+                        + 'coordinator("ack",task["id"],model,"Fixture worker handled its Direct task.")\n'
+                        + 'confirm_finished_fixture_task("Completed the controlled Muse observation task.")\n')
         fake.chmod(0o755)
         result = subprocess.run([str(RECEIVE.EXE), str(self.db), 'turn', 'parent',
                                  'muse-observation-turn', str(fake), 'parent', 'low',
@@ -283,7 +289,7 @@ class NativeObservation(RECEIVE.Receive):
         self.action(stream, native_frame={'type': 'agent_end', 'isTerminal': True,
                                           'is_error': False, 'messages': []})
         self.assertEqual(json.loads(stream.readline()), {'frame_written': True})
-        self.action(stream, exit_fixture=True)
+        self.action(stream, exit_fixture=True, complete_task=True)
         self.finish(resumed)
 
         turns = self.eventually(lambda: self.coord('turns', 'parent'),
@@ -355,7 +361,7 @@ class NativeObservation(RECEIVE.Receive):
         self.review_input(stream, 'reattach-checkpoint-task')
         self.action(stream, native_frame=terminal)
         self.assertEqual(json.loads(stream.readline()), {'frame_written': True})
-        self.action(stream, exit_fixture=True)
+        self.action(stream, exit_fixture=True, complete_task=True)
         self.finish(resumed)
 
         turns = self.eventually_slow_case(
@@ -506,9 +512,13 @@ class NativeObservation(RECEIVE.Receive):
         for frame in frames:
             self.assertIn(json.dumps(frame), raw)
         self.action(stream, exit_fixture=True)
-        _, stderr = self.finish(observer, ok=False)
+        continued, resumed = self.accept_child(
+            observer, 'parent', 'The recoverable rate failure did not continue its original task')
+        self.assertEqual(resumed['native'], started['native'])
+        self.assertIn('[id: observed-later-failure]', resumed['prompt'])
+        self.action(continued, body='The original task completed after the rate refusal.')
+        self.finish(observer)
 
-        self.assertIn('Native receive failed;', stderr)
         self.assertEqual(len(turns), 1)
         self.assertEqual(turns[0]['id'], attempt)
         self.assertEqual(turns[0]['reportBody'],
@@ -521,6 +531,9 @@ class NativeObservation(RECEIVE.Receive):
         self.assertEqual(self.coord('delivery', attempt)['body'], turns[0]['reportBody'])
         self.assertEqual(int((pathlib.Path(directory) / 'status').read_text()), 0)
         self.assertTrue((pathlib.Path(directory) / 'acknowledged').exists())
+        self.assertEqual([row['reportBody'] for row in self.coord('turns','parent')],
+                         [turns[0]['reportBody'],'The original task completed after the rate refusal.'])
+        self.assertEqual(self.coord('delivery','observed-later-failure')['receipt'],'native-reviewed')
         self.shutdown_idle_database_owner('fixture database owner did not exit')
 
     def test_observed_success_supersedes_an_earlier_error_in_an_elided_terminal(self):
@@ -549,7 +562,7 @@ class NativeObservation(RECEIVE.Receive):
         turns = self.eventually(lambda: self.coord('turns', 'parent'),
                                 'later completed success was not reported')
         raw = self.attempt_stdout('parent').read_text()
-        self.action(stream, exit_fixture=True)
+        self.action(stream, exit_fixture=True, complete_task=True)
         self.finish(observer)
 
         self.assertEqual(len(turns), 1)
@@ -615,7 +628,7 @@ class NativeObservation(RECEIVE.Receive):
                                  'content': []}]}
         self.action(stream, native_frame=refusal)
         self.assertEqual(json.loads(stream.readline()), {'frame_written': True})
-        self.action(stream, exit_fixture=True)
+        self.action(stream, exit_fixture=True, complete_task=True)
         self.finish(resumed)
         turns = self.eventually(lambda: self.coord('turns', 'parent'),
                                 'sealed success report was not retained')
@@ -690,7 +703,7 @@ class NativeObservation(RECEIVE.Receive):
         }
         self.action(stream, native_frame=terminal)
         self.assertEqual(json.loads(stream.readline()), {'frame_written': True})
-        self.action(stream, exit_fixture=True)
+        self.action(stream, exit_fixture=True, complete_task=True)
         self.finish(observer)
 
         turns = self.eventually(lambda: self.coord('turns', 'parent'),
