@@ -956,7 +956,7 @@
       viewBox: "0 0 " + laid.width + " " + laid.height,
       tabindex: "0",
       role: "application",
-      "aria-label": "Activity. " + laid.seats.length + " seats drawn of "
+      "aria-label": "Agents. " + laid.seats.length + " seats drawn of "
         + result.rows.length + " recorded actors. Arrow keys walk the seats, Enter opens one.",
     });
 
@@ -1251,7 +1251,7 @@
             + (cursorRow.activity ? ", " + activityText(cursorRow) : "")
             + (cursorRow.stopNote ? ", " + cursorRow.stopNote : ""));
         } else {
-          setText(live, "Activity. No seat is drawn.");
+          setText(live, "Agents. No seat is drawn.");
         }
       });
 

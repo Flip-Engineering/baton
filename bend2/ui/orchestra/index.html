@@ -20,8 +20,8 @@
   <p class="plate-sub">a live score</p>
   <nav class="plate-nav" aria-label="Move to a section">
     <a href="#pit">Activity <span class="plate-count" id="plate-pit"></span></a>
-    <a href="#map">Knowledge <span class="plate-count" id="plate-map"></span></a>
     <a href="#staves">Agents <span class="plate-count" id="plate-staves"></span></a>
+    <a href="#map">Knowledge <span class="plate-count" id="plate-map"></span></a>
     <a href="#record">Selected actor <span class="plate-count" id="plate-record"></span></a>
     <a href="#project">Project <span class="plate-count" id="plate-project"></span></a>
   </nav>
@@ -46,40 +46,14 @@
       <p class="doc-counts" id="doc-counts"></p>
     </div>
     <div id="ribbon" class="doc-ribbon"></div>
-    <div id="attention-band" class="lane-strip"></div>
   </section>
 
   <!-- The written surfaces and the record. The record is a rail beside them, so a
        selection from the map or the staves never moves the reader away from where
        they made it. -->
 
-  <!-- Read prior sessions from the selected actor's recorded workspace. -->
-  <section class="project" id="project" tabindex="-1" aria-labelledby="project-title">
-    <div class="movement-row">
-      <h2 id="project-title" class="movement">Project</h2>
-      <p class="doc-scope" id="project-state" role="status"></p>
-      <button type="button" id="project-load" class="doc-scope-btn">Read the project</button>
-    </div>
-    <div id="project-body" class="project-body"></div>
-  </section>
-
   <div class="work">
   <div class="work-main">
-
-  <!-- The map: the whole recorded ensemble. -->
-  <section class="map" id="map" tabindex="-1" aria-labelledby="map-title">
-    <div class="movement-row">
-      <h2 id="map-title" class="movement">Knowledge</h2>
-      <div class="doc-scope-row">
-        <span id="map-scope" class="doc-scope" role="status">Universal knowledge</span>
-        <button type="button" id="map-scope-all" class="doc-scope-btn" aria-pressed="false">All held
-          records</button>
-      </div>
-    </div>
-    <div class="map-frame">
-      <div id="knowledge-whole" class="doc-whole-mount"></div>
-    </div>
-  </section>
 
   <!-- The written score: one staff per actor. -->
   <section class="paper" id="staves" tabindex="-1" aria-labelledby="staves-title">
@@ -96,7 +70,24 @@
           <button type="button" id="reconnect">Reconnect</button>
         </div>
       </div>
+      <!-- One mark per actor, above the rows that list them. -->
+      <div id="attention-band" class="lane-strip"></div>
       <ul class="doc-roster" id="roster"></ul>
+    </div>
+  </section>
+
+  <!-- The map: the whole recorded ensemble. -->
+  <section class="map" id="map" tabindex="-1" aria-labelledby="map-title">
+    <div class="movement-row">
+      <h2 id="map-title" class="movement">Knowledge</h2>
+      <div class="doc-scope-row">
+        <span id="map-scope" class="doc-scope" role="status">Universal knowledge</span>
+        <button type="button" id="map-scope-all" class="doc-scope-btn" aria-pressed="false">All held
+          records</button>
+      </div>
+    </div>
+    <div class="map-frame">
+      <div id="knowledge-whole" class="doc-whole-mount"></div>
     </div>
   </section>
 
@@ -108,6 +99,15 @@
   </aside>
 
   </div>
+  <!-- Read prior sessions from the selected actor's recorded workspace. -->
+  <section class="project" id="project" tabindex="-1" aria-labelledby="project-title">
+    <div class="movement-row">
+      <h2 id="project-title" class="movement">Project</h2>
+      <p class="doc-scope" id="project-state" role="status"></p>
+      <button type="button" id="project-load" class="doc-scope-btn">Read the project</button>
+    </div>
+    <div id="project-body" class="project-body"></div>
+  </section>
 
 </main>
 
