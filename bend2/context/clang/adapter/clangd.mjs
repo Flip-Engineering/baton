@@ -201,14 +201,10 @@ async function diagnose(doc) {
       };
       break;
     }
-    const allResponses = doc.methods.every((_, i) => {
-      const id = requestedIds[i];
-      return id !== undefined && responses.has(id);
-    });
-    if (allResponses && (publicationMatched || !diagnosticsRequired)) break;
-    // Structured protocol errors on requested ids are failure evidence.
+    // Classify observed protocol errors before any completion report, so a
+    // failed response cannot satisfy completion with failure null.
     for (const [, msg] of responses) {
-      if (msg.error) {
+      if (msg.error && failure === null) {
         failure = {
           code: 'protocolError',
           detail: `${msg.error.code}: ${msg.error.message ?? ''}`,
@@ -216,6 +212,23 @@ async function diagnose(doc) {
       }
     }
     if (failure) break;
+    // An empty method selection with no diagnostics projection performs no
+    // service work: after initialization completes, report the unsupported
+    // selection instead of inventing a complete result. Initialization is
+    // retained, and a provider that dies first reports its own failure.
+    if (initialized && doc.methods.length === 0 && !diagnosticsRequired) {
+      failure = {
+        code: 'unsupportedSelection',
+        detail:
+          'no supported language-service method for the selected subject and projections',
+      };
+      break;
+    }
+    const allResponses = doc.methods.every((_, i) => {
+      const id = requestedIds[i];
+      return id !== undefined && responses.has(id);
+    });
+    if (allResponses && (publicationMatched || !diagnosticsRequired)) break;
     await lsp.nextEvent();
   }
 
