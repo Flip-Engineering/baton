@@ -28,6 +28,11 @@ on:
         required: false
         type: boolean
         default: false
+      darwin_from_generated_c:
+        description: Compile and package Darwin from the retained production C artifact
+        required: false
+        type: boolean
+        default: false
 
 permissions:
   actions: read
@@ -208,12 +213,13 @@ jobs:
         shell: bash
         env:
           ORIGINAL_DARWIN_RUN_JSON: ${{ needs.darwin_publication.outputs.original_run_json }}
+          DARWIN_FROM_GENERATED_C: ${{ inputs.darwin_from_generated_c }}
         run: |
           set -euo pipefail
           evidence="$RUNNER_TEMP/final-native-context-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-darwin"
           mkdir -p "$evidence/toolchain"
           printf 'FINAL_NATIVE_CONTEXT_EVIDENCE=%s\n' "$evidence" >> "$GITHUB_ENV"
-          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch ]]; then
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch && "$DARWIN_FROM_GENERATED_C" != true ]]; then
             printf 'PACKAGE_DIRECTORY=%s/retained/package\n' "$evidence" >> "$GITHUB_ENV"
           else
             printf 'PACKAGE_DIRECTORY=%s/package\n' "$evidence" >> "$GITHUB_ENV"
@@ -224,7 +230,7 @@ jobs:
             printf '%s\n' "$ORIGINAL_DARWIN_RUN_JSON" > "$evidence/original-darwin-run.json"
           fi
       - name: Download the original Darwin package
-        if: ${{ github.event_name == 'workflow_dispatch' || env.CANONICAL_DARWIN_RUN_ID }}
+        if: ${{ !inputs.darwin_from_generated_c && (github.event_name == 'workflow_dispatch' || env.CANONICAL_DARWIN_RUN_ID) }}
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
           name: ${{ github.event_name == 'workflow_dispatch' && format('final-native-context-darwin-{0}-{1}', env.PRODUCT_RUN_ID, env.PRODUCT_RUN_ATTEMPT) || format('baton2-development-darwin-arm64-{0}-1', env.CANONICAL_DARWIN_SOURCE_SHA) }}
@@ -241,7 +247,7 @@ jobs:
             > "$FINAL_NATIVE_CONTEXT_EVIDENCE/typescript-install.stdout" \
             2> "$FINAL_NATIVE_CONTEXT_EVIDENCE/typescript-install.stderr"
       - name: Stage published assets with the retained Darwin executable
-        if: ${{ github.event_name == 'workflow_dispatch' || env.CANONICAL_DARWIN_RUN_ID }}
+        if: ${{ !inputs.darwin_from_generated_c && (github.event_name == 'workflow_dispatch' || env.CANONICAL_DARWIN_RUN_ID) }}
         shell: bash
         run: |
           set -euo pipefail
@@ -318,13 +324,16 @@ jobs:
           PY
           printf 'PACKAGE_DIRECTORY=%s/package\n' "$FINAL_NATIVE_CONTEXT_EVIDENCE" >> "$GITHUB_ENV"
       - name: Download generated production C from this build
-        if: ${{ github.event_name == 'push' && !env.CANONICAL_DARWIN_RUN_ID }}
+        if: ${{ inputs.darwin_from_generated_c || (github.event_name == 'push' && !env.CANONICAL_DARWIN_RUN_ID) }}
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
-          name: final-native-context-binaries-${{ github.run_id }}-${{ github.run_attempt }}
+          name: final-native-context-binaries-${{ env.PRODUCT_RUN_ID }}-${{ env.PRODUCT_RUN_ATTEMPT }}
+          run-id: ${{ env.PRODUCT_RUN_ID }}
+          repository: Flip-Engineering/baton
+          github-token: ${{ github.token }}
           path: generated
       - name: Install Bend package notices
-        if: ${{ github.event_name == 'push' && !env.CANONICAL_DARWIN_RUN_ID }}
+        if: ${{ inputs.darwin_from_generated_c || (github.event_name == 'push' && !env.CANONICAL_DARWIN_RUN_ID) }}
         shell: bash
         run: |
           set -euo pipefail
@@ -335,7 +344,7 @@ jobs:
             https://github.com/bendlang/bend/releases/download/v2.0.25/bend-2.0.25-darwin-arm64.tar.gz \
             -o "$FINAL_NATIVE_CONTEXT_EVIDENCE/toolchain/compiler.tar.gz"
       - name: Compile and package Darwin executable
-        if: ${{ github.event_name == 'push' && !env.CANONICAL_DARWIN_RUN_ID }}
+        if: ${{ inputs.darwin_from_generated_c || (github.event_name == 'push' && !env.CANONICAL_DARWIN_RUN_ID) }}
         shell: bash
         run: |
           set -euo pipefail
@@ -392,7 +401,7 @@ jobs:
           retention-days: 14
 
   runtime:
-    if: ${{ !cancelled() && (github.event_name == 'workflow_dispatch' || needs.build.result == 'success') }}
+    if: ${{ !cancelled() && !inputs.darwin_from_generated_c && (github.event_name == 'workflow_dispatch' || needs.build.result == 'success') }}
     needs: build
     runs-on: ubuntu-24.04
     strategy:
