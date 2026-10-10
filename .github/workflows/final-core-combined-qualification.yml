@@ -30,11 +30,11 @@ permissions:
 
 env:
   BEND_NO_TELEMETRY: '1'
-  PRODUCT_SOURCE_SHA: ${{ inputs.fixture_source_sha || 'c3ccdcc6f1ba8c5b0ae4b716c692edeb24cb180a' }}
+  PRODUCT_SOURCE_SHA: ${{ inputs.fixture_source_sha || '2fef7f55841ec99db59ea7e7538b79263a7e8d60' }}
   PRODUCT_RUN_ID: ${{ inputs.product_run_id || github.run_id }}
   PRODUCT_RUN_ATTEMPT: ${{ inputs.product_run_attempt || github.run_attempt }}
-  CANONICAL_DARWIN_RUN_ID: '38018902040'
-  CANONICAL_DARWIN_SOURCE_SHA: 'c3ccdcc6f1ba8c5b0ae4b716c692edeb24cb180a'
+  CANONICAL_DARWIN_RUN_ID: '38020300312'
+  CANONICAL_DARWIN_SOURCE_SHA: '2fef7f55841ec99db59ea7e7538b79263a7e8d60'
 
 jobs:
   build:
@@ -487,7 +487,11 @@ jobs:
               Receive.test_codex_direct_chains_two_handoffs_with_distinct_reports \
               Receive.test_codex_recovered_direct_hands_off_to_the_next_profile \
               Receive.test_omp_direct_retries_the_same_conversation_after_a_rate_refusal \
-              Receive.test_omp_rate_error_continues_same_conversation_without_new_account
+              Receive.test_omp_rate_error_continues_same_conversation_without_new_account \
+              Receive.test_omp_direct_continues_after_a_settled_socket_closure \
+              Receive.test_omp_socket_closure_continues_the_accepted_task \
+              Receive.test_muse_transport_timeout_continues_the_accepted_task \
+              Receive.test_omp_usage_window_exhaustion_keeps_its_account_failure
       - name: Retain provider continuation output before observer recovery and the full suite
         if: ${{ always() && matrix.suite == 'receive' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -514,6 +518,24 @@ jobs:
         with:
           name: final-native-context-receive-observer-recovery-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ env.FINAL_NATIVE_CONTEXT_EVIDENCE }}/logs/receive-observer-recovery.*
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Run existing coordinator failure isolation case before the full suite
+        if: ${{ !cancelled() && matrix.suite == 'fixed-coordinator' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd owned
+          "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" fixed-coordinator-isolation \
+            env PYTHONUNBUFFERED=1 BEND="$PWD/.scratch/bend2/bend" \
+            python3 -u bend2/test/fixed-coordinator.py -v \
+              FixedCoordinator.test_12_failed_session_keeps_other_sessions_and_subscription_active
+      - name: Retain coordinator failure isolation output before the full suite
+        if: ${{ always() && matrix.suite == 'fixed-coordinator' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: final-native-context-fixed-coordinator-isolation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.FINAL_NATIVE_CONTEXT_EVIDENCE }}/logs/fixed-coordinator-isolation.*
           if-no-files-found: warn
           retention-days: 14
       - name: Run selected suite
