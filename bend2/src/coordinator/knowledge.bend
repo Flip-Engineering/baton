@@ -236,14 +236,14 @@ def deliver_record(db: String, id: String, saved: String) -> IO(Result<&1,&1,U32
 
 def record(+db: String, +id: String, author: String, claim: String, evidence: String, limits: String) -> IO(Unit):
   do IO<Unit>:
-    saved : String <- IO.try(String,Store.transact_sql(db,commit_sql(record_statements(id,author,claim,evidence,limits))))
+    +saved : String <- IO.try(String,Store.transact_sql(db,commit_sql(record_statements(id,author,claim,evidence,limits))))
     Bool.pick(IO(Unit),Store.refused(saved),IO.die(Unit,2,saved),do IO<Unit>:
       delivery : Result<&1,&1,U32 & String,String> <- deliver_record(db,id,saved)
       answered(delivery))
 
 def record_typed(+db: String, +id: String, author: String, kind: String, claim: String, evidence: String, limits: String) -> IO(Unit):
   do IO<Unit>:
-    saved : String <- IO.try(String,Store.transact_sql(db,commit_sql(typed_record_statements(id,author,kind,claim,evidence,limits))))
+    +saved : String <- IO.try(String,Store.transact_sql(db,commit_sql(typed_record_statements(id,author,kind,claim,evidence,limits))))
     Bool.pick(IO(Unit),Store.refused(saved),IO.die(Unit,2,saved),do IO<Unit>:
       delivery : Result<&1,&1,U32 & String,String> <- deliver_record(db,id,saved)
       answered(delivery))
@@ -284,7 +284,7 @@ def deliver_promotion(db: String, id: String, saved: String) -> IO(Result<&1,&1,
 
 def promote(+db: String, +id: String, promoter: String, source: String, destination: String, finding: String) -> IO(Unit):
   do IO<Unit>:
-    saved : String <- IO.try(String,Store.transact_sql(db,commit_sql(promote_statements(id,promoter,source,destination,finding))))
+    +saved : String <- IO.try(String,Store.transact_sql(db,commit_sql(promote_statements(id,promoter,source,destination,finding))))
     Bool.pick(IO(Unit),Store.refused(saved),IO.die(Unit,2,saved),do IO<Unit>:
       delivery : Result<&1,&1,U32 & String,String> <- deliver_promotion(db,id,saved)
       answered(delivery))

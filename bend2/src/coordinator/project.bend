@@ -6,6 +6,7 @@ import ../coordinator/commands.bend as C
 import ./store.bend as Store
 import ./delivery.bend as Delivery
 import ./stop.bend as Stop
+import ./turn.bend as Turn
 import ../host/sqlite.bend as DB
 import ../host/control.bend as Host
 import ../host/files.bend as Files
@@ -286,14 +287,21 @@ def resume_input_sql(+session: String) -> String:
   "BEGIN IMMEDIATE;INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT 'resume:' || lower(hex(e.id)),s.id,s.id,'recovery','Continue unfinished work from native attempt ' || e.id || ' in your recorded conversation and workspace.' || coalesce((SELECT ' The latest accepted task is ' || m.id || '.' FROM messages m WHERE m.recipient=s.id AND m.kind='task' AND m.receipt IS NOT NULL ORDER BY m.seq DESC LIMIT 1),'') || ' Review the current work before continuing. The original task receipt and failed turn remain recorded.' FROM executions e JOIN sessions s ON s.id=e.session WHERE s.id=" ++ C.q(session) ++ " AND e.phase='exited' AND " ++ C.blocked_cause_sql("s.id") ++ "='provider-failure' AND NOT EXISTS(SELECT 1 FROM messages WHERE recipient=s.id AND receipt IS NULL);"
   ++ "SELECT hex(coalesce((SELECT id FROM messages WHERE recipient=" ++ C.q(session) ++ " AND receipt IS NULL ORDER BY seq LIMIT 1),''));COMMIT;"
 
+def resume_direct_or_input(+db: String, +session: String, direct: Maybe<String>) -> IO(Unit):
+  match direct:
+    case Some{answer}: IO.write(answer)
+    case None{}: do IO<Unit>:
+      oldest : String <- IO.try(String,Store.transact_sql(db,resume_input_sql(session)))
+      +trimmed : String <- field(oldest)
+      resume_oldest(db,session,trimmed,String.is_empty(trimmed))
+
 def resume_stopped(+db: String, +session: String, stopped: Bool) -> IO(Unit):
   match stopped:
     case True{}: IO.die(Unit, 2, stopped_refusal())
     case False{}:
       do IO<Unit>:
-        oldest : String <- IO.try(String,Store.transact_sql(db,resume_input_sql(session)))
-        +trimmed : String <- field(oldest)
-        resume_oldest(db, session, trimmed, String.is_empty(trimmed))
+        direct : Maybe<String> <- Turn.resume_pending(db,session)
+        resume_direct_or_input(db,session,direct)
 
 def resume_lift(db: String, session: String, lift_stop: Bool) -> IO(Unit):
   match lift_stop:

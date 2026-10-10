@@ -947,6 +947,78 @@ else:
                 self.assertEqual(self.call('delivery', ident), retained)
                 self.assertFalse(changed.with_suffix('.effect').exists())
 
+    def test_project_resume_recovers_direct_setup_failure_and_interruption(self):
+        self.root()
+        original = self.task.read_text()
+        for harness in ('omp', 'muse', 'codex', 'claude-code'):
+            for interrupted in (False, True):
+                with self.subTest(harness=harness, interrupted=interrupted):
+                    session = 'setup-' + harness + ('-interrupted' if interrupted else '-failed')
+                    self.recruit(session, harness)
+                    assignment = self.call('player', session)
+                    ident = session + '-turn'
+                    task = self.directory / (ident + '.txt')
+                    task.write_text(original)
+                    output_parent = self.directory / (ident + '-output')
+                    log = output_parent / 'native.jsonl'
+                    native = '' if interrupted else 'saved-' + session
+                    if native:
+                        self.call('connect', session, native, '')
+                    failed = self.call('turn', session, ident, self.fixture,
+                                       assignment['model'], assignment['effort'],
+                                       assignment['workspace'], task, log, native,
+                                       ok=False)
+                    self.assertIn('Native control setup failed', failed['stderr'])
+                    execution = self.rows('SELECT * FROM executions WHERE session=?', (session,))[0]
+                    self.assertEqual((execution['id'], execution['phase'], execution['status']),
+                                     (ident, 'exited', 'setup failed'))
+                    request = self.rows('SELECT * FROM direct_turn_requests WHERE id=?', (ident,))[0]
+                    self.assertEqual(request['task'], original)
+                    self.assertEqual(request['native'], native)
+                    self.assertFalse(pathlib.Path(execution['directory']).exists())
+                    self.assertEqual(self.rows('SELECT id FROM turns WHERE id=?', (ident,)), [])
+                    self.assertEqual(self.rows('SELECT id FROM messages WHERE id=?', (ident,)), [])
+                    diagnostics = self.rows("SELECT * FROM messages WHERE sender=? AND kind='report'",
+                                            (session,))
+                    self.assertTrue(any('Direct turn setup failed:' in row['body'] and
+                                        ident in row['body'] for row in diagnostics))
+                    if interrupted:
+                        # Restore the durable admission left when the caller exits
+                        # before retry setup has returned. The recorded conversation
+                        # is newer than the original request's empty native value.
+                        native = 'saved-retry-' + session
+                        self.call('connect', session, native, '')
+                        with sqlite3.connect(self.db) as database:
+                            database.execute("UPDATE executions SET phase='starting',status='',directory=? WHERE session=?",
+                                             (execution['directory'] + '.retry', session))
+                    else:
+                        self.call('stop', session, session + '-stop', 'Keep this unfinished task stopped.')
+                        refused = self.call('resume', session, ok=False)
+                        self.assertIn('terminally stopped', refused['stderr'])
+                        self.assertFalse(pathlib.Path(execution['directory']).exists())
+                    task.unlink()
+                    output_parent.mkdir()
+                    unfinished = pathlib.Path(assignment['workspace']) / 'unfinished.txt'
+                    unfinished.write_text('Uncommitted source retained before setup recovery.\n')
+                    resumed = self.call('resume', session, *([] if interrupted else ['--lift-stop']))
+                    self.assertEqual(resumed['attempt'], ident)
+                    self.assertEqual(resumed['launch']['state'], 'launched')
+                    stream, started = self.accept(session)
+                    self.assertEqual(started['prompt'], original)
+                    self.assertEqual(started['resume'], native)
+                    self.assertEqual(started['cwd'], assignment['workspace'])
+                    self.assertEqual(started['args'][started['args'].index('--model') + 1], assignment['model'])
+                    self.assertEqual(unfinished.read_text(),
+                                     'Uncommitted source retained before setup recovery.\n')
+                    self.finish(stream, original)
+                    completed = self.exited(session)
+                    self.assertEqual((completed['id'], completed['status']), (ident, 'exit 0'))
+                    self.assertEqual(self.call('delivery', ident)['body'], original)
+                    self.assertEqual(self.call('player', session)['native'], started['native'])
+                    self.assertEqual(self.rows('SELECT * FROM direct_turn_requests WHERE id=?', (ident,)), [request])
+                    self.assertEqual(self.rows('SELECT id FROM session_stops WHERE session=?', (session,)), [])
+                    self.assertFalse(task.exists())
+
     def test_direct_observer_loss_recovers_the_surviving_child(self):
         self.root()
         for harness in ('muse', 'claude-code'):
