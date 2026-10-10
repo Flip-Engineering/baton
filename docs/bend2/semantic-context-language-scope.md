@@ -10,9 +10,9 @@ interface and language-specific providers.
 This requirement supersedes the fixed language/provider scope and whole-feature
 acceptance in specification `8a26bc3e7f9d5355b72f1291d95620b218b5c8e2`.
 That specification remains a retained source and review reference. Its common
-result, provenance, freshness, access, lifecycle and law requirements remain
-applicable. Existing backend implementations remain candidates for individual
-modules, with their actual qualification limits preserved.
+result, provenance and lifecycle descriptions provide historical context.
+Individual module implementations report their actual capabilities and tested
+limits.
 
 ## Common native integration
 
@@ -74,16 +74,15 @@ resolve it. No target effect starts before required admission succeeds.
 The core must accept a new declared module without adding a language-specific
 engine enumeration, filename switch, option profile or result parser to shared
 code. Use the existing package manifest and execution/lifecycle boundaries for
-module identity and ownership. The implementation spec must define the smallest
-typed provider declaration and invocation contract needed by these callers.
+module identity and ownership. The typed provider declaration and invocation
+contract describe the fields these callers consume.
 A module build adds its normal Bend imports, typed declaration and package
 payload. Shared validation, selection and result algorithms consume the common
 declarations. Module composition must preserve separate installation and
-activation. The implementation spec must state the actual load boundary;
+activation. Module documentation states the actual load boundary;
 importing every provider into the baseline executable violates this requirement.
-Each module's operative laws enter its build and every composition that links
-it. The common runtime proves its real selection, admission and invocation
-functions against the module contract.
+The common runtime reads declarations, selects providers and constructs their
+invocations. Existing provider and installed-package tests exercise those paths.
 
 Modules normalize actual facts into the common source/runtime subjects,
 relationships, diagnostics and evidence model. A fact identifies its producer,
@@ -96,20 +95,19 @@ distinct meanings. An absent fact is represented with its actual availability.
 
 Bind analysis to the actual pinned Bend2 frontend, imports and examined source.
 Use its parser, name resolution and checker outputs where they provide the
-requested facts. Investigate and document the concrete compiler integration
-before choosing its API. Preserve declaration order, linear-use semantics,
+requested facts. Document the compiler interface the module uses. Preserve
+declaration order, linear-use semantics,
 dependent types and operative law meaning in returned relationships.
 
 The module must qualify useful definitions, resolved references and imports,
 type/checker context and source-bound diagnostics. It must state which call,
 control-flow, proof and runtime/debug facts the actual backend supports.
 Compiler diagnostics retain their original output and location; enriched
-relationships must have their own source or checker evidence. A claimed checked
-law is bound to its real statement, proof, source and completed checker result.
+relationships identify the source or checker result that produced them. A
+reported law result includes the statement and actual checker outcome.
 
-Formal law verification remains a required compilation gate for Baton2 itself.
 Analysis of a target Bend2 program returns context through ordinary native
-queries. Compiler checks, builds and qualification execute on remote validation
+queries. Compiler checks, builds and existing tests execute on remote validation
 runners. The operator's laptop hosts orchestration, edits and evidence review.
 
 ## Additional modules
@@ -126,38 +124,21 @@ The specification must keep language support extensible beyond these preferred
 targets. Existing C/C++ and CDP work can be retained as optional modules whose
 qualification does not establish Bend2 support or whole-feature completion.
 
-## Acceptance
+## Build, package and installed use
 
-The revised specification receives independent domain and whole-feature review,
-then root comparison against the feature document before affected shared
-implementation is accepted. Existing compatible pure modules and repairs can
-continue through their original owners while that review proceeds.
+Remote builds check the common runtime and selected module sources. Existing
+provider and installed-package tests exercise useful requests, returned facts,
+diagnostics, references and query lifecycle. Completed runs retain their source,
+provider and toolchain versions, full output and process results.
 
-Qualify Bend2 first through actual installed CLI and MCP calls on real source,
-with independent expectations for definitions, imports, checker diagnostics and
-claimed types or relationships. Include positive, invalid and changed-source
-subjects. Preserve full source, provider, toolchain and completed-process evidence.
-Unavailable-only answers do not qualify the feature.
+Package staging copies each selected module's declared files and dependencies
+into the installed payload. Discovery reads its declaration. Ordinary installed
+CLI and MCP calls use the recorded project workspace and submit the provider's
+request through the common native interface. Their retained query results show
+the actual provider output or failure.
 
-Then qualify the preferred language modules independently through the same
-operations. A module extension must pass a meaningful test showing that shared
-admission and result consumption work without editing core language cases.
-Cross-language projects must keep exact source and producer attribution and
-refuse unsupported joins truthfully. Effectful debugger/model operations require
-the existing grants and lifecycle qualification.
-
-Qualify automatic detection and loading on Bend2-only, individual preferred
-language and mixed-language projects through ordinary installed CLI and MCP
-operations. Check the installed payloads, dependencies, loaded libraries,
-probes and processes attributable to each query. Include an unused module
-whose payload is absent and whose initialization would leave observable
-evidence; discovery and unrelated queries must leave it untouched. Exercise
-missing selected dependencies, changed project configuration and resource
-ownership across projects. Record the package footprint and process/memory
-cost of each activated dependency closure. The shared native surface must
-provide the needed resolution and honest capability state.
-
-Operative laws cover the real native selection, admission, normalization and
-reference functions. Host/provider fixtures establish foreign facts. Whole-tree
-law controls, native checks, safe landing and installed use remain acceptance
-requirements on the exact composed source.
+Module delivery includes the useful existing fixtures affected by a change.
+Installed use checks discovery, selected dependencies and the returned source
+or runtime facts. Cross-language results name their actual producers and report
+unsupported relationships. Source publication, completed remote checks, package
+installation and actual installed calls each have their own recorded outcome.
