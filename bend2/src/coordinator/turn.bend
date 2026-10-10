@@ -1406,7 +1406,7 @@ def direct_decoded(decoded: Req.Scalar) -> IO(String):
 def direct_field(encoded: String) -> IO(String):
   direct_decoded(Req.decode_scalar_utf8(Tx.hex_decode(encoded)))
 
-def direct_request_fields(fields: List<String>) -> IO(DirectRequest):
+def direct_request_fields(fields: List<&2,String>) -> IO(DirectRequest):
   match fields:
     case id <> harness <> command <> model <> effort <> workspace <> task_path <> task <> output <> native <> directory <> original_directory <> Nil{}: do IO<DirectRequest>:
       saved_id : String <- direct_field(id)
