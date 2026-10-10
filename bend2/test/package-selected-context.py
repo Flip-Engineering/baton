@@ -639,15 +639,11 @@ void handler(const char *dynamic) {
 
         query = 'installed-source-analysis'
         request = self.root / 'request.json'
-        request.write_text(json.dumps({
-            'version': 1,
-            'engine': 'bend2',
-            'subject': {'kind': 'symbol',
-                        'path': 'bend2/context/bend2/fixtures/valid.bend',
-                        'name': 'id'},
-            'select': ['definition'],
-            'cwd': str(worktree),
-        }) + '\n')
+        source_tool = next(tool for tool in modules['bend2']['tools']
+                           if tool['operation'] == 'sourceAnalysis')
+        self.assertEqual(source_tool['optionsSchema']['type'], 'object')
+        source_request = dict(source_tool['requestExample'], cwd=str(worktree))
+        request.write_text(json.dumps(source_request) + '\n')
         submitted = invoke('context-query-file', 'validation-owner', query, str(request),
                            cwd=worktree)
         self.assertEqual(submitted.returncode, 0, submitted.stdout + submitted.stderr)

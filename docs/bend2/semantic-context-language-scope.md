@@ -22,6 +22,15 @@ the actual target project. Project configuration and enabled module declarations
 identify applicable providers; selection records its inputs and chosen provider.
 An explicit provider selector remains available through the same query.
 
+`context-engines` and the corresponding MCP discovery operation return installed
+modules with their declared `tools`. Each tool includes its operation,
+projections, effects, provider-authored option schema and example native request.
+Module declarations provide `optionsJsonSchema` and `requestExample` on each
+operation; discovery exposes these as `optionsSchema` and `requestExample`.
+An omitted schema or example is returned as `null`. Session discovery also
+includes the recorded workspace and project module settings. Set an example's
+`cwd` to that workspace and submit it through `context-query-file` or MCP.
+
 ## Project detection and loading
 
 Baton2 automatically detects applicable modules from project manifests,

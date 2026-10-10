@@ -159,6 +159,24 @@
       "implements": "sourceAnalysis",
       "subjectSchema": "baton2.context.bend2.source-analysis.subject.v1",
       "optionsSchema": "baton2.context.bend2.source-analysis.options.v1",
+      "optionsJsonSchema": {
+        "type": "object",
+        "description": "Bend2 source analysis uses the subject path and working directory."
+      },
+      "requestExample": {
+        "version": 1,
+        "engine": "bend2",
+        "subject": {
+          "kind": "symbol",
+          "path": "bend2/context/bend2/fixtures/valid.bend",
+          "name": "id"
+        },
+        "select": [
+          "definition"
+        ],
+        "cwd": ".",
+        "options": {}
+      },
       "projections": [
         "definition",
         "type",

@@ -44,6 +44,18 @@ function moduleIdFromDirectory(name) {
   return moduleDirectoryName(id) === name ? id : null;
 }
 
+function moduleTools(declaration) {
+  return (declaration.operations ?? []).map((operation) => ({
+    operation: operation.operation ?? operation.id ?? null,
+    implements: operation.implements ?? null,
+    description: operation.description ?? null,
+    optionsSchema: operation.optionsJsonSchema ?? null,
+    requestExample: operation.requestExample ?? null,
+    projections: operation.projections ?? [],
+    effects: operation.effects ?? [],
+  }));
+}
+
 export function installedModuleInventory({ wrapperPath = fileURLToPath(import.meta.url) } = {}) {
   try {
     const wrapper = realpathSync(wrapperPath);
@@ -83,7 +95,8 @@ export function installedModuleInventory({ wrapperPath = fileURLToPath(import.me
       try {
         const declarationBytes = readFileSync(join(selected.root, 'native-provider.declaration.json'));
         const declaration = JSON.parse(declarationBytes.toString('utf8'));
-        modules.push(Object.freeze({ moduleId, declarationDigest: sha256(declarationBytes), declaration }));
+        modules.push(Object.freeze({ moduleId, declarationDigest: sha256(declarationBytes), declaration,
+          tools: moduleTools(declaration) }));
       } catch (error) {
         refusals.push(Object.freeze({ moduleId, reason: 'selectedDeclarationUnavailable', detail: error.message }));
       }

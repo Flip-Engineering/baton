@@ -108,6 +108,8 @@ test('session inventory reports project settings and preserves capabilities on p
     assert.equal(configured.modules[0].enabled, false);
     assert.equal(configured.modules[0].preferred, true);
     assert.deepEqual(configured.modules[0].declaration, declaration);
+    assert.equal(configured.modules[0].tools[0].optionsSchema, null);
+    assert.equal(configured.modules[0].tools[0].requestExample, null);
     assert.equal(installedModuleInventory({ wrapperPath: wrapper }).modules[0].enabled, undefined);
 
     writeFileSync(policy, '{');
@@ -138,7 +140,15 @@ test('module acquisition copies a supplied dependency closure and keeps the inst
     const distribution = join(prefix, 'distribution');
     const source = join(distribution, 'lib/context/modules', moduleDirectoryName('fixture.worker'));
     mkdirSync(source, { recursive: true });
-    writeFileSync(join(source, 'native-provider.declaration.json'), JSON.stringify({ moduleId: 'fixture.worker' }));
+    const optionsSchema = { type: 'object', properties: { greeting: { type: 'string' } } };
+    const requestExample = { version: 1, engine: 'fixture.worker', cwd: '.',
+      subject: { kind: 'path', path: 'example.txt' }, select: ['definition'],
+      options: { greeting: 'hello' } };
+    writeFileSync(join(source, 'native-provider.declaration.json'), JSON.stringify({
+      moduleId: 'fixture.worker', operations: [{ operation: 'sourceAnalysis',
+        implements: 'sourceAnalysis', optionsJsonSchema: optionsSchema, requestExample,
+        projections: ['definition'], effects: [] }],
+    }));
     mkdirSync(join(source, 'dependencies'));
     writeFileSync(join(source, 'dependencies/value.mjs'), 'export const value = "supplied dependency";\n');
     symlinkSync('dependencies/value.mjs', join(source, 'dependency.mjs'));
@@ -146,15 +156,18 @@ test('module acquisition copies a supplied dependency closure and keeps the inst
       'import { writeFileSync } from "node:fs";\n'
       + 'import { value } from "./dependency.mjs";\n'
       + 'writeFileSync(new URL("./loaded.txt", import.meta.url), "loaded");\n'
-      + 'export function executeInvocation() { return { value }; }\n');
+      + 'export function executeInvocation(invocation) { return { value, greeting: invocation.request.options.greeting }; }\n');
 
     const acquired = installContextModule({ moduleId: 'fixture.worker', source, wrapperPath: wrapper });
     assert.equal(acquired.status, 'installed');
     assert.equal(existsSync(join(acquired.path, 'loaded.txt')), false);
-    assert.equal(installedModuleInventory({ wrapperPath: wrapper }).modules[0].moduleId, 'fixture.worker');
+    const discovered = installedModuleInventory({ wrapperPath: wrapper }).modules[0];
+    assert.equal(discovered.moduleId, 'fixture.worker');
+    assert.deepEqual(discovered.tools[0].optionsSchema, optionsSchema);
+    assert.deepEqual(discovered.tools[0].requestExample, requestExample);
     const result = await runSelectedInvocation({ moduleBinding: { id: 'fixture.worker' },
-      request: { cwd: prefix } }, { wrapperPath: wrapper });
-    assert.deepEqual(result, { value: 'supplied dependency' });
+      request: { ...discovered.tools[0].requestExample, cwd: prefix } }, { wrapperPath: wrapper });
+    assert.deepEqual(result, { value: 'supplied dependency', greeting: 'hello' });
     assert.equal(readFileSync(join(acquired.path, 'loaded.txt'), 'utf8'), 'loaded');
 
     writeFileSync(join(source, 'dependencies/value.mjs'), 'export const value = "new supplied bytes";\n');
