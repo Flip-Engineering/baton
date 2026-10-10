@@ -644,7 +644,7 @@ def consume(+db: String, +player: String, +id: String, +log: String, +policy: Lo
     case Done{AwakeLine{+line,notice,+alive}}:
       do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
         +drained : String <- Guidance.awake_pending(db,player,handle,cursor,Bool.and(String.eq(harness,"omp\n"),Bool.and(Bool.not(String.is_empty(notice)),String.is_empty(terminal))))
-        +current_policy : Logs.Policy <- Logs.policy(db,player)
+        +current_policy : Logs.Policy <- Logs.level_open(db,player)
         +kind : String <- frame_kind(db,line,harness)
         +frame_key : String <- Logs.frame_identity(db,line,Tx.trim_nl(kind),String.eq(harness,"omp\n"))
         +message_frame : Bool <- IO.pure(Bool,Bool.and(String.eq(harness,"omp\n"),String.eq(Tx.trim_nl(kind),"message_end")))
@@ -1031,9 +1031,9 @@ def direct_unstarted(+db: String, +player: String, +id: String, +log: String, +d
     IO.pass(Unit,combine(finished,wake))
 
 # Destructure the observation before passing its fields to the continuation.
-def with_retained_observation(observation: Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>, next: Outcome -> List<Chan(Result<&1,&1,U32 & String,String>)> -> IO(Unit)) -> IO(Unit):
+def with_retained_observation(observation: Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>, lock: Maybe<U32>, next: Outcome -> List<Chan(Result<&1,&1,U32 & String,String>)> -> Maybe<U32> -> IO(Unit)) -> IO(Unit):
   (outcome,deliveries)=observation
-  next(outcome,deliveries)
+  next(outcome,deliveries,lock)
 
 # Self-recursive across successive handoffs, like the consume IO loops above.
 @unsafe
@@ -1042,7 +1042,7 @@ def direct_second_started(+db: String, +player: String, +id: String, +log: Strin
     case P.Retained{+handle}: do IO<Unit>:
       reconciled : Unit <- Stop.started(db,player,id,directory)
       observation : Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- retained_output(db,player,id,log,harness,directory,handle,requested)
-      with_retained_observation(observation,+outcome => deliveries => match lock:
+      with_retained_observation(observation,lock,+outcome => deliveries => lock => match lock:
         case None{}: direct_completed(db,player,id,log,directory,handle,None{},(outcome,deliveries))
         case Some{+held}: match outcome:
           case Ended{status,+event,error,incomplete}: do IO<Unit>:
@@ -1107,6 +1107,12 @@ def direct_handoff_acquired(+db: String, +player: String, +id: String, +cmd: Str
     case None{}: IO.die(Unit,2,"The retained direct attempt ended before its handoff continuation reacquired the session; inspect the attempt and retry its pending input.")
     case Some{held}: direct_handoff_relaunch_locked(db,player,id,cmd,model,effort,cwd,task,log,harness,directory,prompt,conversation,held)
 
+# Continue a settled handoff with the held or reacquired session lock.
+def direct_handoff_settled(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +harness: String, +directory: String, +prompt: String, +conversation: String, lock: Maybe<U32>) -> IO(Unit):
+  match lock:
+    case Some{held}: direct_handoff_relaunch_locked(db,player,id,cmd,model,effort,cwd,task,log,harness,directory,prompt,conversation,held)
+    case None{}: Lock.SessionLock.acquire_session(Unit,db,player,+database => next => direct_handoff_acquired(database,player,id,cmd,model,effort,cwd,task,log,harness,directory,prompt,conversation,next))
+
 # Provider-reported exhaustion advances through the operator's account list.
 # Settle the completed attempt and continue its task and conversation.
 def direct_handoff_checked(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +harness: String, +directory: String, +prompt: String, +session: String, +handle: U32, lock: Maybe<U32>, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, outcome: Outcome) -> IO(Unit):
@@ -1118,9 +1124,7 @@ def direct_handoff_checked(+db: String, +player: String, +id: String, +cmd: Stri
         case False{}: direct_completed(db,player,id,log,directory,handle,lock,(Ended{status,event,error,incomplete},deliveries))
         case True{}: do IO<Unit>:
           cleaned : Unit <- direct_cleanup(handle,deliveries)
-          match lock:
-            case Some{held}: direct_handoff_relaunch_locked(db,player,id,cmd,model,effort,cwd,task,log,harness,directory,prompt,conversation,held)
-            case None{}: Lock.SessionLock.acquire_session(Unit,db,player,+database => next => direct_handoff_acquired(database,player,id,cmd,model,effort,cwd,task,log,harness,directory,prompt,conversation,next))
+          direct_handoff_settled(db,player,id,cmd,model,effort,cwd,task,log,harness,directory,prompt,conversation,lock)
 
 def direct_restart(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +harness: String, +directory: String, +prompt: String, +handle: U32, lock: Maybe<U32>, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, outcome: Outcome) -> IO(Unit):
   do IO<Unit>:

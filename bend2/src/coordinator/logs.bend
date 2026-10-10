@@ -61,6 +61,12 @@ def policy(+db: String, +session: String) -> IO(Policy):
     row : String <- IO.try(String,DB.Sql.query(db,schema() ++ policy_sql(session)))
     IO.pure(Policy,policy_row(Tx.trim_nl(row)))
 
+# Read the current level after Logs.open_attempt initializes the schema.
+def level_open(+db: String, +session: String) -> IO(Policy):
+  do IO<Policy>:
+    row : String <- IO.try(String,DB.Sql.query(db,policy_sql(session)))
+    IO.pure(Policy,policy_row(Tx.trim_nl(row)))
+
 def known(+session: String) -> String:
   "EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ ")"
 
