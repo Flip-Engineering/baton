@@ -1141,6 +1141,107 @@ finally:
                          [('native-w1', '')])
         self.shutdown()
 
+    def test_14_one_shot_session_read_waits_out_a_held_database_writer(self):
+        def phase(text):
+            print(f'FIXED14 {text}', file=sys.stderr, flush=True)
+
+        self.recruit('w1', 'codex')
+        self.managed_app_proxy()
+        self.queue('w1-app', {'controlReady': True})
+        self.coord('connect', 'w1', 'native-w1', json.dumps([
+            'node', str(ROOT / 'bend2/scripts/codex-inbox-wake.mjs'), '--session',
+            str(EXE), str(self.db), 'w1', 'native-w1']))
+        self.dispatch('busy-task', 'w1', 'Admit this input once the held writer releases.')
+        self.start_owner()
+        self.start_serve()
+        self.stream_for('w1-app')
+
+        def app_calls(method):
+            lines = self.codex_calls.read_text().splitlines(keepends=True)
+            return [row for line in lines if line.endswith('\n')
+                    for row in [json.loads(line)] if row['method'] == method
+                    and row.get('params', {}).get('threadId') == 'native-w1']
+
+        self.eventually(lambda: app_calls('turn/steer'),
+                        'the recorded endpoint did not admit the original input')
+        wake_events = []
+
+        def drain(stream):
+            try:
+                for line in stream:
+                    wake_events.append(json.loads(line))
+            except (OSError, ValueError):
+                pass
+
+        def spawn_session_wake(thread):
+            wake = subprocess.Popen([
+                'node', str(ROOT / 'bend2/scripts/codex-inbox-wake.mjs'), '--session',
+                str(EXE), str(self.db), 'w1', thread, 'busy-task'],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            self.children.append(wake)
+            threading.Thread(target=drain, args=(wake.stdout,), daemon=True).start()
+            return wake
+
+        phase('holding the database writer across the one-shot session read')
+        writer = sqlite3.connect(str(self.db))
+        try:
+            writer.execute('BEGIN EXCLUSIVE')
+            # Readiness needs no database read and an external empty commit
+            # publishes no committed-change notification, so the one-shot
+            # reread relies on the native busy handler waiting through the
+            # held lock itself.
+            wake = spawn_session_wake('native-w1')
+            busy = self.eventually(lambda: [event for event in wake_events
+                                            if event['type'] == 'codexInboxDatabaseBusy'],
+                                   'the held writer did not reach the one-shot session read')
+            self.assertEqual(busy[0]['errcode'] & 255, sqlite3.SQLITE_BUSY)
+            self.assertEqual(len(app_calls('turn/steer')), 1,
+                             'the one-shot delivery continued before its committed read succeeded')
+            self.assertIsNone(wake.poll(), 'the one-shot delivery exited while the writer was still held')
+            writer.commit()
+        finally:
+            writer.close()
+        phase('waiting for the committed read after the writer released')
+        self.eventually(lambda: [event for event in wake_events
+                                 if event['type'] == 'codexInboxDatabaseReady'],
+                        'the released writer did not resume the one-shot committed read')
+        self.eventually(lambda: len(app_calls('turn/steer')) == 2,
+                        'the released writer did not lead to a fresh committed admission')
+        steers = app_calls('turn/steer')
+        self.assertEqual(len(steers), 2, 'the one-shot delivery admitted its input more than once')
+        self.assertIn('"recipient":"w1"', steers[1]['params']['input'][0]['text'])
+        self.assertIn('"message":"busy-task"', steers[1]['params']['input'][0]['text'])
+        self.assertEqual(self.query("SELECT receipt FROM messages WHERE id='busy-task'"),
+                         [(None,)], 'the one-shot admission acknowledged the input')
+        self.eventually(lambda: wake.poll() is not None,
+                        'the one-shot delivery did not settle after its admission')
+        self.assertEqual(wake.returncode, 0, ''.join(wake.stderr.readlines()))
+
+        phase('changing the recorded native conversation before another one-shot read')
+        self.coord('connect', 'w1', 'native-w2', json.dumps([
+            'node', str(ROOT / 'bend2/scripts/codex-inbox-wake.mjs'), '--session',
+            str(EXE), str(self.db), 'w1', 'native-w2']))
+        changed = subprocess.run([
+            'node', str(ROOT / 'bend2/scripts/codex-inbox-wake.mjs'), '--session',
+            str(EXE), str(self.db), 'w1', 'native-w1', 'busy-task'],
+            capture_output=True, text=True)
+        self.assertEqual(changed.returncode, 1, 'a superseded native identity did not fail the one-shot delivery')
+        self.assertIn('another native conversation', changed.stderr)
+
+        phase('stopping the session before another one-shot read')
+        self.coord('stop', 'w1', 'one-shot-operator-stop', 'Retain the remaining one-shot input.')
+        retained = subprocess.run([
+            'node', str(ROOT / 'bend2/scripts/codex-inbox-wake.mjs'), '--session',
+            str(EXE), str(self.db), 'w1', 'native-w2', 'busy-task'],
+            capture_output=True, text=True)
+        self.assertEqual(retained.returncode, 0, retained.stderr)
+        retained_events = [json.loads(line) for line in retained.stdout.splitlines()]
+        self.assertEqual([event['type'] for event in retained_events], ['codexInboxRetained'],
+                         'the stopped session produced an unexpected one-shot record')
+        self.assertTrue(retained_events[0]['stopped'])
+        self.assertEqual(len(app_calls('turn/steer')), 2, 'the stopped session was admitted again')
+        self.shutdown()
+
 
 if __name__ == '__main__':
     unittest.main()

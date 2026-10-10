@@ -322,6 +322,68 @@ async function readCommittedInbox(inbox, events, session, threadId) {
     }
   }
 }
+// One committed-change notification source for a committed inbox read. The
+// first line confirms the subscription started; every later line is one
+// committed database change. close() tears the child down and reports an
+// abnormal exit, prefixing the failure that was already being propagated.
+function committedChanges(executable, database, events) {
+  const changes = spawn(executable, [database, 'ui-subscribe', '0', '0'], { stdio: ['ignore', 'pipe', 'inherit'] });
+  const exited = new Promise(resolve => changes.once('close', (code, signal) => resolve({ code, signal })));
+  const lines = createInterface({ input: changes.stdout });
+  let ready = false, closing = false;
+  const readiness = new Promise((resolve, reject) => {
+    changes.once('error', error => { reject(error); events.push({ error }); });
+    lines.on('line', line => {
+      try {
+        const notice = JSON.parse(line);
+        if (!ready) { ready = true; resolve(); }
+        else events.push({ change: notice });
+      } catch (error) { reject(error); events.push({ error }); }
+    });
+    changes.once('close', (code, signal) => {
+      if (!closing) {
+        const error = new Error('Baton inbox change subscription ended: ' + JSON.stringify({ code, signal }));
+        reject(error); events.push({ error });
+      }
+    });
+  });
+  const close = async failure => {
+    closing = true;
+    lines.close();
+    changes.kill('SIGTERM');
+    const exit = await exited;
+    if (exit.code !== 0 && exit.signal !== 'SIGTERM') {
+      throw new Error((failure ? String(failure.stack || failure) + '\n' : '') + 'Baton inbox change subscription exit: ' + JSON.stringify(exit));
+    }
+  };
+  return { readiness, close };
+}
+
+// The one-shot read waits out database contention through the coordinator's
+// ordinary session read: main.bend dispatches it through read_command to
+// host SQLite opened read-only with the existing busy handler, which waits
+// through lock contention without an attempt or time cap and performs no
+// schema installation or data mutation. A writer holding the lock - also one
+// committing an empty transaction - releases before that read returns; the
+// Node inbox read then rereads the current native, stop and pending state.
+// A missing session or a genuine command error remains an error.
+async function readOneShotInbox(inbox, executable, database, session, threadId) {
+  let waiting = false;
+  for (;;) {
+    try {
+      const row = inbox.read();
+      if (waiting) record({ type: 'codexInboxDatabaseReady', session, threadId });
+      return row;
+    } catch (error) {
+      if (!databaseBusy(error)) throw error;
+      if (!waiting) record({ type: 'codexInboxDatabaseBusy', session, threadId,
+        errcode: error.errcode, cause: error.message });
+      waiting = true;
+      await coordinatorCommand(executable, database, ['session', session]);
+    }
+  }
+}
+
 
 async function coordinatorCommand(executable, database, args) {
   const child = spawn(executable, [database, ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -371,28 +433,10 @@ async function follow(proxy, executable, database, session, threadId, inbox) {
     } else if (message.params?.threadId === threadId && message.method === 'thread/status/changed' &&
       message.params.status.type !== 'active') events.push({ method: message.method, params: message.params });
   };
-  const changes = spawn(executable, [database, 'ui-subscribe', '0', '0'], { stdio: ['ignore', 'pipe', 'inherit'] });
-  const exited = new Promise(resolve => changes.once('close', (code, signal) => resolve({ code, signal })));
-  const lines = createInterface({ input: changes.stdout });
-  let ready = false, closing = false, failure;
-  const readiness = new Promise((resolve, reject) => {
-    changes.once('error', error => { reject(error); events.push({ error }); });
-    lines.on('line', line => {
-      try {
-        const notice = JSON.parse(line);
-        if (!ready) { ready = true; resolve(); }
-        else events.push({ change: notice });
-      } catch (error) { reject(error); events.push({ error }); }
-    });
-    changes.once('close', (code, signal) => {
-      if (!closing) {
-        const error = new Error('Baton inbox change subscription ended: ' + JSON.stringify({ code, signal }));
-        reject(error); events.push({ error });
-      }
-    });
-  });
+  const subscription = committedChanges(executable, database, events);
+  let failure;
   try {
-    await readiness;
+    await subscription.readiness;
     await proxy.connect();
     let row = await readCommittedInbox(inbox, events, session, threadId);
     if (row.stopped || (!row.pendingCount && !await unconfirmedTask(row))) return;
@@ -486,13 +530,7 @@ async function follow(proxy, executable, database, session, threadId, inbox) {
     catch (error) { failure = error; }
     throw failure;
   } finally {
-    closing = true;
-    lines.close();
-    changes.kill('SIGTERM');
-    const exit = await exited;
-    if (exit.code !== 0 && exit.signal !== 'SIGTERM') {
-      throw new Error((failure ? String(failure.stack || failure) + '\n' : '') + 'Baton inbox change subscription exit: ' + JSON.stringify(exit));
-    }
+    await subscription.close(failure);
   }
 }
 
@@ -521,7 +559,14 @@ if (!threadId || (managed ? !executable || !database || !session || (mode === '-
         proxy = new PublicProxy();
         await follow(proxy, executable, database, session, threadId, inbox);
       } else {
-        const row = inbox.read();
+        // The one-shot delivery keeps the local read as its fast path and
+        // rereads through the coordinator on database contention: the native
+        // reads wait through the lock in the host busy handler, so a writer
+        // that releases its lock without a committed-change notification
+        // still unblocks the delivery, which then admits the exact committed
+        // input. Explicit stops, an empty inbox, a changed native conversation
+        // and command failures keep their recorded outcomes.
+        const row = await readOneShotInbox(inbox, executable, database, session, threadId);
         if (row.stopped || !row.pendingCount) {
           record({ type: 'codexInboxRetained', session, threadId, stopped: Boolean(row.stopped), pendingCount: row.pendingCount });
         } else {
