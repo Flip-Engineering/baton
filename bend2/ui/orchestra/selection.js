@@ -12,7 +12,7 @@
    Long bodies read as a lead line with the rest behind one sized
    disclosure; causes stay in the open.
    Finding relations light their strokes on the map when the shell
-   passes the way.
+   passes the way, and the lit one's statement carries a mark.
    All labels arrive through textContent. */
 
 var SEL_EVENT_LIMIT = 8;
@@ -187,8 +187,9 @@ function selRelationStroke(name) {
 // A stroke swatch for one authored relation name: the map's dash,
 // width and ink on a short horizontal line, mirroring the canvas edge
 // constants. Decorative: the statement keeps the name, the ends and
-// the separators. Null when the map vocabulary is unavailable.
-function selRelationSwatch(name) {
+// the separators. Null when the map vocabulary is unavailable. A lit
+// statement's swatch reads at full strength.
+function selRelationSwatch(name, lit) {
   if (!name) return null;
   var stroke = selRelationStroke(name);
   if (!stroke) return null;
@@ -198,7 +199,7 @@ function selRelationSwatch(name) {
   var attrs = {
     x1: "1", y1: "4", x2: "25", y2: "4",
     stroke: stroke.ink, "stroke-width": String(stroke.width),
-    "stroke-linecap": "round", opacity: "0.65",
+    "stroke-linecap": "round", opacity: lit ? "1" : "0.65",
   };
   if (stroke.dash) attrs["stroke-dasharray"] = stroke.dash;
   svg.appendChild(selSvg("line", attrs));
@@ -660,6 +661,7 @@ function renderSelection(mount, data, options) {
       findingBlock.appendChild(selEl("p", null, "Relations"));
       var rels = selEl("ul", null);
       var canFocus = options && typeof options.onFocusRelation === "function";
+      var litName = (options && options.focusRelation) || "";
       relations.forEach(function (rel) {
         if (!rel) return;
         if (typeof rel === "string") {
@@ -667,8 +669,9 @@ function renderSelection(mount, data, options) {
           return;
         }
         var text = (rel.source || "?") + " — " + (rel.relation || "?") + " → " + (rel.target || "?");
-        var item = selEl("li", null);
-        var swatch = selRelationSwatch(rel.relation);
+        var isLit = Boolean(litName) && rel.relation === litName;
+        var item = selEl("li", isLit ? "sel-lit" : null);
+        var swatch = selRelationSwatch(rel.relation, isLit);
         if (canFocus && rel.relation) {
           var name = String(rel.relation);
           var light = selEl("button", "sel-focus");
@@ -679,9 +682,11 @@ function renderSelection(mount, data, options) {
             + [(rel.source || ""), name, (rel.target || "")].join("|");
           light.title = "Light '" + name + "' on the map";
           light.setAttribute("aria-label", "Light '" + name + "' on the map: " + text);
+          if (isLit) light.setAttribute("aria-current", "true");
           light.addEventListener("click", function () { options.onFocusRelation(name); });
           item.appendChild(light);
         } else {
+          if (isLit) item.setAttribute("aria-current", "true");
           if (swatch) item.appendChild(swatch);
           item.appendChild(document.createTextNode(text));
         }
