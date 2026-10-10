@@ -1048,13 +1048,15 @@ await until('ribbon rows name the recorded far side',
 await evalJs(`document.querySelector('#roster .doc-row[data-doc-id="aide"] .doc-open').click()`);
 await until('pending message has a read control',
   `document.querySelector('#selection [data-selkey="sel:msg:qa-aide-receipt"]') !== null`);
-check('a long recorded text ends where the ending reads as an ending', await evalJs(`(() => {
+check('a cut recorded text states plainly that it continues', await evalJs(`(() => {
   const lead = document.querySelector('#selection .sel-lead');
   if (!lead) return false;
   const line = (lead.textContent || '').trim();
   if (!line) return false;
-  if (!/\u2026|continues/.test(line)) return true;
-  return /(continues|more characters|more)\s*\.?$/.test(line);
+  const first = (${JSON.stringify(pendingBody)}.split('\n').map((s) => s.trim()).find((s) => s) || '');
+  const whole = Boolean(first) && line.includes(first) && !/\u2026/.test(line);
+  const cut = /\u2026\s*continues/.test(line);
+  return whole || cut;
 })()`));
 await evalJs(`(() => {
   const button = document.querySelector('#selection [data-selkey="sel:msg:qa-aide-receipt"]');
