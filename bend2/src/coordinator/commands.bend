@@ -167,7 +167,7 @@ def blocked_cause_sql(+session: String) -> String:
   "CASE WHEN " ++ stopped_session_sql(session) ++ " THEN 'terminal-stop'"
   ++ " WHEN (SELECT route.harness FROM sessions AS route WHERE route.id=" ++ session ++ ") NOT IN ('codex','omp','muse','claude-code') THEN 'harness-unsupported'"
   ++ " WHEN " ++ blocked_endpoint_absent_sql(session) ++ " AND NOT " ++ direct_app_route_sql(session) ++ " THEN 'endpoint-absent'"
-  ++ " WHEN EXISTS(SELECT 1 FROM executions e WHERE e.session=" ++ session ++ " AND e.phase='exited' AND (e.status<>'exit 0' OR EXISTS(SELECT 1 FROM turns t WHERE t.id=e.id AND t.worker=e.session AND (coalesce(json_extract(t.event,'$.is_error'),0)=1 OR " ++ omp_terminal_error_sql_expr("t.event") ++ ")))) THEN 'provider-failure'"
+  ++ " WHEN EXISTS(SELECT 1 FROM executions e WHERE e.session=" ++ session ++ " AND e.phase='exited' AND (e.status<>'exit 0' OR EXISTS(SELECT 1 FROM turns t WHERE t.id=e.id AND t.worker=e.session AND (coalesce(json_extract(t.event,'$.is_error'),0)=1 OR " ++ omp_terminal_error_sql_expr("t.event") ++ " OR (json_extract(t.event,'$.payload.kind')='run_terminal' AND json_extract(t.event,'$.payload.terminal')<>'completed'))))) THEN 'provider-failure'"
   ++ " ELSE '' END"
 
 # Wake and ownership projection shared by every session surface. Pending input

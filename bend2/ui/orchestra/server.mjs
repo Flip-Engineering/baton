@@ -136,7 +136,14 @@ function playerSupport(db, sessionIds) {
                                               THEN json_extract(m.value, '$.role') END = 'assistant'
                                             ORDER BY m.key DESC LIMIT 1) assistant
                                          WHERE json_extract(assistant.value, '$.stopReason') = 'error'
-                                      ) END
+                                      )
+                                      WHEN json_extract(t.event, '$.payload.kind') = 'run_terminal'
+                                        AND json_extract(t.event, '$.payload.terminal') <> 'completed' THEN
+                                        json_object('cause', 'provider-failure', 'eventType', 'run_terminal',
+                                          'stopReason', json_extract(t.event, '$.payload.terminal'),
+                                          'errorStatus', NULL,
+                                          'errorMessage', json_extract(t.event, '$.payload.text'))
+                                      END
                                     END AS failure
                                FROM executions e LEFT JOIN turns t ON t.id = e.id AND t.worker = e.session
                               WHERE e.session IN (${placeholders}) ORDER BY e.session, e.rowid`, ...ids)) {

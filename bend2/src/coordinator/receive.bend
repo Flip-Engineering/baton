@@ -80,11 +80,13 @@ def exit_status(failed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
     case False{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
     case True{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(1,"Native receive failed; read the retained native log and pending inbox.")})
 
-# A terminal's latest assistant can record an OMP failure with host exit zero.
+# A terminal can record a provider failure with host exit zero: an OMP
+# assistant frame with stopReason error, or a Muse primary run_terminal whose
+# payload terminal is not completed.
 def outcome_failed(db: String, outcome: Turn.Outcome) -> IO(Bool):
   match outcome:
     case Turn.Ended{+status,+event,+error,incomplete}: do IO<Bool>:
-      failure : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN " ++ C.q(event) ++ "='' THEN 1 WHEN coalesce(json_extract(" ++ C.q(event) ++ ",'$.is_error'),0)=1 THEN 1 ELSE " ++ C.omp_terminal_error_sql(event) ++ " END;"))
+      failure : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN " ++ C.q(event) ++ "='' THEN 1 WHEN coalesce(json_extract(" ++ C.q(event) ++ ",'$.is_error'),0)=1 THEN 1 WHEN json_extract(" ++ C.q(event) ++ ",'$.payload.kind')='run_terminal' AND json_extract(" ++ C.q(event) ++ ",'$.payload.terminal')<>'completed' THEN 1 ELSE " ++ C.omp_terminal_error_sql(event) ++ " END;"))
       IO.pure(Bool,Bool.or(Turn.failed(status,event,error),String.eq(failure,"1\n")))
 
 def native_observation_failed(outcome: Turn.Outcome) -> Bool:

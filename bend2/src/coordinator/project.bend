@@ -1,6 +1,6 @@
 # Linked worktrees share a database-path pointer under their canonical Git
 # common directory. Project session reads include retained reports and input.
-# Resume delivers owed input to the selected session; --lift-stop clears its current stop.
+# Resume delivers owed input or continues a failed turn; --lift-stop clears its current stop.
 import Base
 import ../coordinator/commands.bend as C
 import ./store.bend as Store
@@ -214,7 +214,7 @@ def missing_refusal(session: String) -> String:
   "No recorded session carries that identity. Recruit a new session; pass the project checkout as its workspace."
 
 def no_input_refusal(session: String) -> String:
-  "Session " ++ session ++ " has no unacknowledged input. Send input with message or dispatch-turn, then resume."
+  "Session " ++ session ++ " has no unacknowledged input or failed turn to continue. Send input with message or dispatch-turn, then resume."
 
 def endpoint_refusal(session: String) -> String:
   "Session " ++ session ++ " records no receiver endpoint and no native queue identity. Connect one with receiver SESSION HARNESS_CMD OUTPUT_LOG, or continue a direct turn with dispatch-turn."
@@ -279,12 +279,19 @@ def resume_oldest(+db: String, +session: String, oldest: String, empty: Bool) ->
       decoded : String <- field(endpoint)
       resume_endpoint(db,session,oldest,decoded)
 
+# An explicit resume can continue an interrupted task whose input the actor
+# already acknowledged. The failed turn stays in history, and this recovery
+# message follows the recorded receiver into the same native conversation.
+def resume_input_sql(+session: String) -> String:
+  "BEGIN IMMEDIATE;INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT 'resume:' || lower(hex(e.id)),s.id,s.id,'recovery','Continue unfinished work from native attempt ' || e.id || ' in your recorded conversation and workspace.' || coalesce((SELECT ' The latest accepted task is ' || m.id || '.' FROM messages m WHERE m.recipient=s.id AND m.kind='task' AND m.receipt IS NOT NULL ORDER BY m.seq DESC LIMIT 1),'') || ' Review the current work before continuing. The original task receipt and failed turn remain recorded.' FROM executions e JOIN sessions s ON s.id=e.session WHERE s.id=" ++ C.q(session) ++ " AND e.phase='exited' AND " ++ C.blocked_cause_sql("s.id") ++ "='provider-failure' AND NOT EXISTS(SELECT 1 FROM messages WHERE recipient=s.id AND receipt IS NULL);"
+  ++ "SELECT hex(coalesce((SELECT id FROM messages WHERE recipient=" ++ C.q(session) ++ " AND receipt IS NULL ORDER BY seq LIMIT 1),''));COMMIT;"
+
 def resume_stopped(+db: String, +session: String, stopped: Bool) -> IO(Unit):
   match stopped:
     case True{}: IO.die(Unit, 2, stopped_refusal())
     case False{}:
       do IO<Unit>:
-        oldest : String <- IO.try(String,DB.Sql.query(db,"SELECT hex(coalesce((SELECT id FROM messages WHERE recipient=" ++ C.q(session) ++ " AND receipt IS NULL ORDER BY seq LIMIT 1),''));"))
+        oldest : String <- IO.try(String,Store.transact_sql(db,resume_input_sql(session)))
         +trimmed : String <- field(oldest)
         resume_oldest(db, session, trimmed, String.is_empty(trimmed))
 

@@ -1025,7 +1025,7 @@ test('the snapshot names the recorded current action and every stored awaiting',
   assert.deepEqual(snapshot.providers.child, { name: 'configured/child', status: 'configured' });
 });
 
-test('an exited attempt exposes its OMP provider error at exit zero and clears it for a successful retry', async (t) => {
+test('an exited attempt exposes its OMP or Muse provider error at exit zero and clears it for a successful retry', async (t) => {
   const space = fixture();
   t.after(() => rmSync(space.directory, { recursive: true, force: true }));
   const server = createOrchestraServer({ databasePath: space.databasePath, reader: 'root' });
@@ -1074,6 +1074,43 @@ test('an exited attempt exposes its OMP provider error at exit zero and clears i
   assert.equal(completedPlayer.execution.attempt, retry);
   assert.equal(completedPlayer.execution.status, 'exit 0');
   assert.equal(completedPlayer.execution.failure, null);
+
+  const museAttempt = 'receive:child:15048:muse-failure';
+  const museError = 'The provider request failed after task acceptance.';
+  db.prepare(`UPDATE sessions SET harness = 'muse' WHERE id = 'child'`).run();
+  db.prepare(`INSERT INTO turns(id, worker, event) VALUES (?, 'child', ?)`).run(museAttempt,
+    JSON.stringify({ stream: { kind: 'session', id: 'original-muse-native' },
+      payload_type: 'run.terminal.failed', payload: { kind: 'run_terminal',
+        terminal: 'failed', command_id: 'original-command', text: museError } }));
+  db.prepare(`UPDATE executions SET id = ?, phase = 'exited', status = 'exit 0'
+    WHERE session = 'child'`).run(museAttempt);
+  const museSnapshot = await (await fetch(`${base}/orchestra/snapshot?subject=child`)).json();
+  const museExecution = museSnapshot.players.find((player) => player.id === 'child').execution;
+  assert.equal(museExecution.attempt, museAttempt);
+  assert.equal(museExecution.status, 'exit 0');
+  assert.deepEqual(museExecution.failure, {
+    cause: 'provider-failure', eventType: 'run_terminal', stopReason: 'failed',
+    errorStatus: null, errorMessage: museError,
+  });
+  const museWork = await (await fetch(`${base}/orchestra/work?subject=child`)).json();
+  assert.deepEqual(museWork.execution.failure, museExecution.failure);
+
+  const museRetry = 'receive:child:15049:muse-retry';
+  db.prepare(`UPDATE executions SET id = ?, phase = 'running', status = ''
+    WHERE session = 'child'`).run(museRetry);
+  const museRunning = await (await fetch(`${base}/orchestra/snapshot?subject=child`)).json();
+  const museRunningPlayer = museRunning.players.find((player) => player.id === 'child');
+  assert.equal(museRunningPlayer.lastTurnId, museAttempt);
+  assert.equal(museRunningPlayer.execution.failure, null);
+  db.prepare(`INSERT INTO turns(id, worker, event) VALUES (?, 'child', ?)`).run(museRetry,
+    JSON.stringify({ stream: { kind: 'session', id: 'original-muse-native' },
+      payload_type: 'run.terminal.completed', payload: { kind: 'run_terminal',
+        terminal: 'completed', command_id: 'continued-command', text: 'Work continued.' } }));
+  db.prepare(`UPDATE executions SET phase = 'exited', status = 'exit 0' WHERE session = 'child'`).run();
+  const museCompleted = await (await fetch(`${base}/orchestra/snapshot?subject=child`)).json();
+  const museCompletedPlayer = museCompleted.players.find((player) => player.id === 'child');
+  assert.equal(museCompletedPlayer.execution.attempt, museRetry);
+  assert.equal(museCompletedPlayer.execution.failure, null);
 });
 
 test('selected work reads the recorded cursors and complete bodies', async (t) => {

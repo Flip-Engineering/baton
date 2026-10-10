@@ -137,7 +137,7 @@ const TOOLS = [
   },
   {
     name: 'baton2_resume',
-    description: 'Continue a recorded session through its registered receiver using its oldest pending input.',
+    description: 'Continue a recorded session through its registered receiver using its oldest pending input. An empty inbox after a failed native turn receives recovery guidance to continue the interrupted task in the same conversation.',
     inputSchema: { type: 'object', properties: { session: { type: 'string' },
       liftStop: { type: 'boolean', description: 'Explicitly lift the current stop before resuming the same conversation.' } },
       required: ['session'], additionalProperties: false },

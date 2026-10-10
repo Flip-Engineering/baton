@@ -2309,6 +2309,29 @@ class Receive(unittest.TestCase):
         self.finish(retry)
         self.assertEqual(self.coord('inbox', 'root'), [])
 
+    def test_muse_failed_terminal_with_exit_zero_keeps_input_owed(self):
+        """A Muse primary run_terminal failed frame with host exit zero is a provider
+        failure: the receive exits nonzero, the input stays owed, the failed turn stays
+        visible, and the same actor retries it after recovery."""
+        self.player('parent', harness='muse')
+        self.message('input', 'parent')
+        failed = self.spawn(*self.receive_args('parent'))
+        control, original = self.accept('parent')
+        self.action(control, fail=True, ack=False, fail_message='Muse provider refused request')
+        self.finish(failed, ok=False)
+        self.assertEqual([m['id'] for m in self.coord('inbox', 'parent')], ['input'])
+        turns = self.coord('turns', 'parent')
+        self.assertEqual(len(turns), 1)
+        self.assertIn('Muse provider refused request', turns[0]['reportBody'])
+        retry = self.spawn(*self.receive_args('parent'))
+        control, resumed = self.accept_or_child_exit(retry, 'muse retry exited before native start')
+        self.assertEqual(resumed['session'], 'parent')
+        self.assertEqual(resumed['native'], original['native'])
+        self.assertIn('[id: input]', resumed['prompt'])
+        self.action(control)
+        self.finish(retry)
+        self.assertEqual(self.coord('inbox', 'parent'), [])
+
     def test_turn_and_receive_share_ownership_and_omp_session_file(self):
         self.player(harness='omp')
         self.prepare_input('preexisting', 'parent', 'Already pending before turn.', kind='report')

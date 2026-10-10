@@ -118,16 +118,23 @@ while True:
         continue
     acknowledge()
     body=action['finish']
+    failure=action.get('fail',False)
     if omp:
         print(json.dumps({'type':'agent_end','isTerminal':True,
-                         'messages':[{'role':'assistant','content':[{'type':'text','text':body}]}]}),flush=True)
+                         'messages':[{'role':'assistant','stopReason':'error' if failure else 'stop',
+                                      'errorStatus':503 if failure else None,
+                                      'errorMessage':body if failure else None,
+                                      'content':[{'type':'text','text':body}]}]}),flush=True)
         sys.stdin.read()
     elif muse:
-        print(json.dumps({'stream':{'kind':'session','id':native},'payload_type':'run.terminal.completed',
-                         'payload':{'kind':'run_terminal','terminal':'completed',
+        print(json.dumps({'stream':{'kind':'session','id':native},
+                         'payload_type':'run.terminal.failed' if failure else 'run.terminal.completed',
+                         'payload':{'kind':'run_terminal','terminal':'failed' if failure else 'completed',
                                     'command_id':'fixture-primary','text':body}}),flush=True)
     elif claude:
-        print(json.dumps({'type':'result','session_id':native,'result':body,'is_error':False}),flush=True)
+        print(json.dumps({'type':'result','session_id':native,'result':body,'is_error':failure}),flush=True)
+    elif failure:
+        print(json.dumps({'type':'turn.failed','error':{'message':body}}),flush=True)
     else:
         print(json.dumps({'type':'item.completed','item':{'type':'agent_message','text':body}}),flush=True)
         print(json.dumps({'type':'turn.completed'}),flush=True)
@@ -258,8 +265,8 @@ class Control(unittest.TestCase):
         connection.sendall((json.dumps(value) + '\n').encode())
         return json.loads(stream.readline())
 
-    def finish(self, stream, body='Fixture native task completed.'):
-        self.assertEqual(self.action(stream, finish=body), {'terminal_written': True})
+    def finish(self, stream, body='Fixture native task completed.', fail=False):
+        self.assertEqual(self.action(stream, finish=body, fail=fail), {'terminal_written': True})
         self.assertEqual(stream.readline(), b'')
 
     def rows(self, sql, parameters=()):
@@ -523,6 +530,69 @@ class Control(unittest.TestCase):
         for field in ('id', 'parent', 'harness', 'workspace', 'branch', 'native'):
             self.assertEqual(final[field], original[field])
         self.assertEqual(unfinished.read_text(), 'Retained unfinished project source.\n')
+        refusal = self.project_call(self.repo, 'resume', session, ok=False)
+        self.assertIn('no unacknowledged input or failed turn', refusal['stderr'])
+        self.assertEqual(self.call('inbox', session), [])
+
+    def test_project_resume_continues_acknowledged_task_after_native_failure(self):
+        self.root()
+        self.call('project', self.repo)
+        for harness in ('omp', 'muse', 'codex', 'claude-code'):
+            with self.subTest(harness=harness):
+                session = 'project-failed-' + harness
+                assignment = self.recruit(session, harness)
+                self.receiver(session)
+                task_id = session + '-task'
+                self.dispatch('dispatch-file', task_id, 'root', session, 'task', self.task)
+                stream, first = self.accept(session)
+                self.assertEqual(self.action(stream, ack=True), {'acknowledged': True})
+                receipt = self.call('delivery', task_id)['receipt']
+                unfinished = pathlib.Path(assignment['workspace']) / 'unfinished.txt'
+                unfinished.write_text('Source retained before a provider error.\n')
+                self.finish(stream, 'The provider request failed after task acceptance.', fail=True)
+                failed = self.exited(session)
+                original_turns = self.call('turns', session)
+                self.assertEqual(len(original_turns), 1)
+                self.assertEqual(self.call('player', session)['blockedCause'], 'provider-failure')
+                self.assertEqual(self.call('inbox', session), [])
+                shutdown_fixture_owner(self)
+                self.eventually(lambda: not self.process_rows())
+
+                resume_args = []
+                if harness == 'muse':
+                    self.call('stop', session, session + '-stop', 'Operator stopped this interrupted task.')
+                    stopped = self.project_call(self.repo, 'resume', session, ok=False)
+                    self.assertIn('terminally stopped', stopped['stderr'])
+                    self.assertEqual(self.call('inbox', session), [])
+                    self.assertEqual(self.call('turns', session), original_turns)
+                    resume_args = ['--lift-stop']
+
+                resumed = subprocess.Popen([str(EXE), '--project', assignment['workspace'],
+                                            'resume', session, *resume_args], env=self.environment,
+                                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                continued, start = self.accept(session)
+                self.assertEqual((start['native'], start['resume']), (first['native'], first['native']))
+                self.assertEqual(start['cwd'], assignment['workspace'])
+                self.assertIn(failed['id'], start['prompt'])
+                self.assertIn('Continue unfinished work', start['prompt'])
+                self.assertIn('The latest accepted task is ' + task_id + '.', start['prompt'])
+                self.assertEqual(self.call('delivery', task_id)['receipt'], receipt)
+                self.assertEqual(self.call('turns', session), original_turns)
+                self.finish(continued, 'The interrupted project task continued.')
+                stdout, stderr = resumed.communicate()
+                self.assertEqual(resumed.returncode, 0, stdout + stderr)
+                answer = json.loads(stdout)
+                self.assertEqual(answer['delivery']['kind'], 'recovery')
+                self.assertEqual(answer['delivery']['receipt'], 'fixture-native-reviewed')
+                self.exited(session)
+                self.assertEqual(self.call('turns', session)[0], original_turns[0])
+                self.assertEqual(self.call('session', session)['native'], first['native'])
+                self.assertEqual(self.call('delivery', task_id)['receipt'], receipt)
+                self.assertEqual(unfinished.read_text(), 'Source retained before a provider error.\n')
+                self.assertEqual(self.call('inbox', session), [])
+                self.assertEqual(self.rows('SELECT * FROM session_stops WHERE session=?', (session,)), [])
+                shutdown_fixture_owner(self)
+                self.eventually(lambda: not self.process_rows())
 
     def test_project_resume_keeps_queued_delivery_separate_from_history_and_preserves_stops(self):
         self.root()
