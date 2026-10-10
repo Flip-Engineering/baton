@@ -606,16 +606,37 @@ check('every recorded relation family is drawn once per record', await evalJs(`(
   const shares = document.querySelectorAll('#knowledge-whole .kw-edge-share').length;
   return authorship >= findings - 1 && shares >= 1;
 })()`));
-check('typed relations draw one edge per record', await evalJs(`(async () => {
+// The exact expectation, derived from the payload and the drawn surface. One rule:
+// a typed edge is placeable when its provenance is one of the two contract names, its
+// ends are non-empty and distinct, and either an end names a drawn node - a finding or
+// an actor - or the edge own author names a drawn actor, which seats an edge whose two
+// ends are both references. Everything else stays outside, which is where the self,
+// empty and unknown-provenance probes belong by construction. This replaces a bracket
+// that could not see a missing edge: the relation-only holding
+// message:qa-root-message -> external:qa-root-log and finding:qa-missing-1 ->
+// external:qa-log-8 drew no typed edge while the legacy relation pass still drew them,
+// which is the defect the bracket hid. Expected red until the map lands the author rule.
+check('the map draws one typed edge for every placeable payload edge', await evalJs(`(async () => {
   const meta = document.querySelector('meta[name="orchestra-api-base"]');
   const base = String((meta && meta.content) || location.origin).replace(/\\/+$/, '');
   const payload = await (await fetch(base + '/orchestra/knowledge/overview')).json();
-  const authored = (payload.edges || []).filter((edge) => edge.provenance === 'authored'
-    && String(edge.source || '') && String(edge.target || '')
-    && String(edge.source) !== String(edge.target));
-  const drawn = document.querySelectorAll(
-    '#knowledge-whole .kw-edge-typed[data-provenance="authored"]').length;
-  return authored.length > 0 && drawn > 0 && drawn <= authored.length;
+  const whole = '#knowledge-whole ';
+  const ids = (selector, attr) => [...document.querySelectorAll(whole + selector)]
+    .map((node) => node.getAttribute(attr) || '').filter(Boolean);
+  const nodes = new Set([...ids('.knode', 'aria-label'), ...ids('.kw-anchor[data-kw-id]', 'data-kw-id')]);
+  const actors = new Set(ids('.kw-anchor[data-kw-id]', 'data-kw-id'));
+  const bare = (ref) => ref.startsWith('finding:') ? ref.slice(8) : ref;
+  const drawnNode = (ref) => nodes.has(ref) || nodes.has(bare(ref));
+  const placeable = (edge) => {
+    const from = String(edge.source || '');
+    const to = String(edge.target || '');
+    if (!from || !to || from === to) return false;
+    return drawnNode(from) || drawnNode(to) || actors.has(String(edge.author || ''));
+  };
+  const expected = (payload.edges || []).filter((edge) =>
+    (edge.provenance === 'authored' || edge.provenance === 'recorded-evidence') && placeable(edge)).length;
+  const drawn = document.querySelectorAll('#knowledge-whole .kw-edge-typed').length;
+  return expected > 0 && drawn === expected;
 })()`));
 check('the key folds shut at rest and its toggle states so', await evalJs(`(() => {
   const keys = document.querySelector('#knowledge-whole .kw-legend-keys');
