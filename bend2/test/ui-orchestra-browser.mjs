@@ -2086,11 +2086,13 @@ check('the stage seats the fixture by its reporting hierarchy', await evalJs(`(a
   const document_ = await (await fetch('fixtures/fixture-knowledge.json')).json();
   const players = document_.players || [];
   const byId = new Map(players.map((pl) => [pl.id, pl]));
-  // The same resolver the stage states: a row with no parent sits at 0 when it
-  // carries the principal role, every other row at one more than its parent,
-  // and a broken chain, a cycle, or a parentless non-principal is an orphan.
-  // Depth resolves over every player, so a hidden middle seat still places
-  // its seated descendants.
+  // Reporting depth, resolved over every recorded player with the rule the
+  // stage states: a player that records no parent sits at depth 0 when it
+  // carries the principal-conductor role; every other player sits at one
+  // more than its parent's depth; a parent absent from the record, a parent
+  // chain that cycles, or a player with no parent that is not the principal
+  // gives depth -1, the unknown-ancestry tier. Resolving over every player
+  // places the seated descendants of a player the active filter hides.
   const depth = new Map();
   const resolve = (id, stack) => {
     if (depth.has(id)) return depth.get(id);
@@ -2109,33 +2111,59 @@ check('the stage seats the fixture by its reporting hierarchy', await evalJs(`(a
     return level;
   };
   for (const pl of players) resolve(pl.id, []);
+  // Seated membership, derived from the recorded state through the stage's
+  // own reading rule: a player is seated when its reading is any word other
+  // than quiet. The recorded fields decide: a failed exit (status other than
+  // exit 0), a stop, a running or starting phase, or owed input seat the
+  // player; an exit 0 with no owed input and no stop reads quiet and the
+  // active-only page hides it; a player with no execution and no stop reads
+  // owed input when it holds pending or unacknowledged counts, quiet
+  // otherwise.
+  const owed = (pl) => {
+    const total = Math.max(0, Number(pl.owedTotal) || 0);
+    if (total > 0) return total;
+    return Math.max(Math.max(0, Number(pl.pendingCount) || 0),
+      Math.max(0, Number(pl.unacknowledgedCount) || 0));
+  };
+  const seated = (pl) => {
+    const execution = pl.execution || null;
+    const stop = pl.stop || null;
+    const count = owed(pl);
+    if (execution && execution.phase === 'exited' && execution.status !== 'exit 0') return true;
+    if (stop && stop.status === 'stopped') return true;
+    if (execution && (execution.phase === 'running' || execution.phase === 'starting')) return true;
+    if (execution || stop) return count > 0;
+    return count > 0;
+  };
   const expected = new Map();
   for (const pl of players) {
     const level = depth.get(pl.id);
-    if (level === -1) return false; // the fixture carries no orphans
+    if (level === -1) return false; // the fixture records no unknown ancestry
+    if (!seated(pl)) continue;
     if (!expected.has(level)) expected.set(level, []);
     expected.get(level).push(pl.id);
   }
-  // One coordinate system: SVG y throughout. The renderer draws each tier
-  // label as text.att-section-label at the tier's own y plus three, and each
-  // seat group as a translate(x y) transform; both parse from the drawing.
+  // The drawn tiers, read in one coordinate system: each tier label is a
+  // text.att-section-label element whose SVG y attribute is the tier's own
+  // y plus three, and each seat group carries translate(x y). A seat belongs
+  // to the tier whose label stands at or above it and before the next label
+  // below, so every seat is bounded on both sides.
   const tiers = [...document.querySelectorAll('#attention-band text.att-section-label')]
     .map((node) => ({ y: Number(node.getAttribute('y') || 0), label: node.textContent || '' }))
-    .filter((tier) => tier.y > 0 || tier.label)
     .sort((a, b) => a.y - b.y);
   if (!tiers.length) return false;
   if (!/^principal conductor/.test(tiers[0].label)) return false;
   if (tiers.some((tier) => /unknown ancestry/.test(tier.label))) return false;
   const seatY = (seat) => {
-    const m = /translate\([^ ]+ ([0-9.]+)/.exec(seat.getAttribute('transform') || '');
+    const m = /translate[(][^ ]+ ([0-9.]+)/.exec(seat.getAttribute('transform') || '');
     return m ? Number(m[1]) : Infinity;
   };
-  // A seat belongs to the tier whose label stands at or above it and before
-  // the next label below: each seat is bounded on both sides, never counted
-  // into every tier above it.
+  // The depth number from either label the renderer emits: a space and a
+  // middle dot before the ensemble name, or a comma and the words no
+  // ensemble.
   const depthOf = (label) => {
     if (/^principal conductor/.test(label)) return 0;
-    const m = /depth (\d+) /.exec(label);
+    const m = /depth ([0-9]+)/.exec(label);
     return m ? Number(m[1]) : -1;
   };
   const drawn = new Map();
@@ -2150,20 +2178,13 @@ check('the stage seats the fixture by its reporting hierarchy', await evalJs(`(a
       })
       .map((seat) => seat.getAttribute('data-att-id') || '')
       .filter(Boolean);
-    // Several bands can share one depth: collect them before comparing.
+    // Several bands can share one depth: collect them all before comparing.
     if (!drawn.has(level)) drawn.set(level, []);
     drawn.set(level, drawn.get(level).concat(ids));
   }
-  // The page opens active-only: the stage's own filter hides the ended
-  // actors, so the expected visible membership comes from that filter -
-  // the seats actually drawn - while depth above resolved over every
-  // recorded player, so a hidden ancestor still places its seated
-  // descendants at the right tier.
-  const drawnIds = new Set([...document.querySelectorAll('#attention-band .att-seat')]
-    .map((seat) => seat.getAttribute('data-att-id') || '').filter(Boolean));
   const levels = [...expected.keys()].sort((a, b) => a - b);
   for (const level of levels) {
-    const want = expected.get(level).filter((id) => drawnIds.has(id)).sort().join(',');
+    const want = expected.get(level).sort().join(',');
     const got = (drawn.get(level) || []).sort().join(',');
     if (want !== got) return false;
   }
@@ -2180,7 +2201,7 @@ check('every non-principal seat names the parent it reports to', await evalJs(`(
   });
 })()`));
 
-// A cited seam routes through the shell to the citing finding's record,// A cited seam routes through the shell to the citing finding's record,
+// A cited seam routes through the shell to the citing finding's record,
 // and the address it writes reloads to the same record.
 await evalJs(`(() => {
   const hits = [...document.querySelectorAll('#attention-band .att-seam-hit')];
