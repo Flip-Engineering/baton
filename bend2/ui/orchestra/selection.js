@@ -11,6 +11,8 @@
    Change rows open their seat when the shell passes the way.
    Long bodies read as a lead line with the rest behind one sized
    disclosure; causes stay in the open.
+   Finding relations light their strokes on the map when the shell
+   passes the way.
    All labels arrive through textContent. */
 
 var SEL_EVENT_LIMIT = 8;
@@ -657,17 +659,32 @@ function renderSelection(mount, data, options) {
     if (relations.length) {
       findingBlock.appendChild(selEl("p", null, "Relations"));
       var rels = selEl("ul", null);
+      var canFocus = options && typeof options.onFocusRelation === "function";
       relations.forEach(function (rel) {
         if (!rel) return;
         if (typeof rel === "string") {
           rels.appendChild(selEl("li", null, rel));
           return;
         }
+        var text = (rel.source || "?") + " — " + (rel.relation || "?") + " → " + (rel.target || "?");
         var item = selEl("li", null);
         var swatch = selRelationSwatch(rel.relation);
-        if (swatch) item.appendChild(swatch);
-        item.appendChild(document.createTextNode(
-          (rel.source || "?") + " — " + (rel.relation || "?") + " → " + (rel.target || "?")));
+        if (canFocus && rel.relation) {
+          var name = String(rel.relation);
+          var light = selEl("button", "sel-focus");
+          if (swatch) light.appendChild(swatch);
+          light.appendChild(document.createTextNode(text));
+          light.type = "button";
+          light.dataset.selkey = "sel:focus:"
+            + [(rel.source || ""), name, (rel.target || "")].join("|");
+          light.title = "Light '" + name + "' on the map";
+          light.setAttribute("aria-label", "Light '" + name + "' on the map: " + text);
+          light.addEventListener("click", function () { options.onFocusRelation(name); });
+          item.appendChild(light);
+        } else {
+          if (swatch) item.appendChild(swatch);
+          item.appendChild(document.createTextNode(text));
+        }
         rels.appendChild(item);
       });
       findingBlock.appendChild(rels);
@@ -884,28 +901,46 @@ function renderSelection(mount, data, options) {
       var eventsBlock = selEl("div", "sel-block");
       eventsBlock.id = "sel-sec-changes";
       eventsBlock.appendChild(selEl("h2", "doc-section", "Changes"));
-      var ul = selEl("ul", "sel-timeline");
-      var listed = selEventsOpen ? mine : mine.slice(0, SEL_EVENT_LIMIT);
-      var canGo = options && typeof options.onSelectActor === "function";
-      listed.forEach(function (ev) {
-        var text = selEventText(ev);
-        var row = selEl("li", "mono");
-        row.dataset.tone = selEventTone(ev);
-        var seatId = ev.counterpart || ev.session;
-        if (canGo && seatId) {
-          var go = selEl("button", "sel-goto", text);
-          go.type = "button";
-          go.dataset.selkey = "sel:goto:" + selEventKey(ev);
-          go.title = "Open seat " + seatId;
-          go.setAttribute("aria-label", "Open seat " + seatId + ": " + text);
-          go.addEventListener("click", function () { options.onSelectActor(seatId); });
-          row.appendChild(go);
-        } else {
-          row.appendChild(document.createTextNode(text));
+      var groups = [];
+      var groupAt = {};
+      mine.forEach(function (ev) {
+        var kind = ev.kind || "unrecorded kind";
+        if (!Object.prototype.hasOwnProperty.call(groupAt, kind)) {
+          groupAt[kind] = groups.length;
+          groups.push({ kind: kind, items: [] });
         }
-        ul.appendChild(row);
+        groups[groupAt[kind]].items.push(ev);
       });
-      eventsBlock.appendChild(ul);
+      var listed = selEventsOpen ? mine : mine.slice(0, SEL_EVENT_LIMIT);
+      var listedSet = new Set(listed);
+      var canGo = options && typeof options.onSelectActor === "function";
+      groups.forEach(function (group) {
+        if (groups.length > 1) {
+          eventsBlock.appendChild(selEl("p", "sel-group",
+            group.kind + " · " + group.items.length));
+        }
+        var ul = selEl("ul", "sel-timeline");
+        group.items.forEach(function (ev) {
+          if (!listedSet.has(ev)) return;
+          var text = selEventText(ev);
+          var row = selEl("li", "mono");
+          row.dataset.tone = selEventTone(ev);
+          var seatId = ev.counterpart || ev.session;
+          if (canGo && seatId) {
+            var go = selEl("button", "sel-goto", text);
+            go.type = "button";
+            go.dataset.selkey = "sel:goto:" + selEventKey(ev);
+            go.title = "Open seat " + seatId;
+            go.setAttribute("aria-label", "Open seat " + seatId + ": " + text);
+            go.addEventListener("click", function () { options.onSelectActor(seatId); });
+            row.appendChild(go);
+          } else {
+            row.appendChild(document.createTextNode(text));
+          }
+          ul.appendChild(row);
+        });
+        if (ul.childNodes.length) eventsBlock.appendChild(ul);
+      });
       if (selEventsOpen || listed.length < mine.length) {
         var more = selEl("button", null,
           selEventsOpen ? "Show fewer" : "Show all " + mine.length + " changes");
