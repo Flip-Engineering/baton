@@ -94,6 +94,13 @@ class Coordinator(unittest.TestCase):
         self.assertEqual(inbox[0]['id'], 'askq-1')
         self.assertEqual(inbox[0]['kind'], 'question')
         self.assertEqual(inbox[0]['body'], text)
+        progress = {'type': 'system', 'subtype': 'init', 'session_id': 'native-question'}
+        self.assertIsNone(self.observe('askq-1', 'worker', json.dumps(progress))['reportId'])
+        conflict = self.observe('askq-1', 'worker', json.dumps({'type': 'result', 'result': 'Different output.'}), success=False)
+        self.assertIn('message-id-conflict', conflict.stderr)
+        self.assertNotIn(text, conflict.stderr)
+        self.assertEqual(self.call('turns', 'worker'), [])
+        self.assertEqual(self.call('delivery', 'askq-1')['body'], text)
 
     def test_ask_file_reads_file_and_stdin_into_complete_questions(self):
         text = "Piped question with apostrophe ' and unicode λ🙂.\n" * 6000
@@ -257,8 +264,10 @@ class Coordinator(unittest.TestCase):
         with sqlite3.connect(self.db) as db:
             self.assertEqual(db.execute('SELECT event FROM turns WHERE id=?', ('turn-1',)).fetchone()[0], raw)
         changed = dict(result, session_id='different-session')
-        self.observe('turn-1', 'worker', json.dumps(changed), success=False)
-        self.assertEqual(self.call('player', 'worker')['native'], 'native-1')
+        self.observe('turn-1', 'worker', json.dumps(changed))
+        self.assertEqual(self.call('player', 'worker')['native'], 'different-session')
+        with sqlite3.connect(self.db) as db:
+            self.assertEqual(db.execute('SELECT event FROM turns WHERE id=?', ('turn-1',)).fetchone()[0], raw)
 
     def test_native_failure_is_reported_and_malformed_input_does_not_commit(self):
         raw = json.dumps({'type': 'result', 'is_error': True, 'errors': ['provider unavailable']})

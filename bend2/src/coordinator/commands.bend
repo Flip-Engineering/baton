@@ -259,12 +259,16 @@ def configure_update_sql(+session: String, +harness: String, +model: String, +ef
 def configure_sql(+session: String, +harness: String, +model: String, +effort: String, +endpoint: String, +expected_harness: String, +expected_model: String, +expected_effort: String) -> String:
   configure_update_sql(session,harness,model,effort,endpoint,expected_harness,expected_model,expected_effort,configure_admitted(session,harness,model,endpoint,expected_harness,expected_model,expected_effort))
 
-def message_result(id: String) -> String:
-  "SELECT json_patch(json_object('id',id,'sender',sender,'recipient',recipient,'kind',kind,'body',body,'receipt',receipt)," ++ input_state_sql("messages") ++ ") FROM messages WHERE id=" ++ q(id) ++ ";"
-
-# A repeated ID preserves the original message fields. Different input fails the transaction.
+# A repeated ID preserves the original message fields. Same-body replay is
+# ordinary; different input keeps the stored row and is answered with a refusal
+# naming that ID, whose full body stays available through delivery.
 def message_upsert() -> String:
-  " ON CONFLICT(id) DO UPDATE SET id=CASE WHEN messages.sender=excluded.sender AND messages.recipient=excluded.recipient AND messages.kind=excluded.kind AND messages.body=excluded.body THEN messages.id ELSE NULL END;"
+  " ON CONFLICT(id) DO NOTHING;"
+
+# Conflicts return the ID and stored message coordinates.
+# The applicability expression follows the accompanying insert.
+def message_conflict_sql(+id: String, +sender: String, +recipient: String, +kind: String, +body: String, +guards: String) -> String:
+  "SELECT json_object('error','message-id-conflict','id'," ++ id ++ ",'stored',json_object('sender',sender,'recipient',recipient,'kind',kind),'condition','The message ID is already stored with different content.','next','Read delivery ID for the stored message and retain it; retry the new input under a different ID.') FROM messages WHERE id=" ++ id ++ " AND " ++ guards ++ " AND NOT (sender=" ++ sender ++ " AND recipient=" ++ recipient ++ " AND kind=" ++ kind ++ " AND body=" ++ body ++ ");"
 
 def delivery_row() -> String:
   "json_patch(json_object('id',m.id,'sender',m.sender,'recipient',m.recipient,'kind',m.kind,'body',m.body,'receipt',m.receipt,'harness',s.harness,'native',s.native,'endpoint',s.endpoint,'endpointArgv'," ++ endpoint_argv("s.endpoint") ++ ")," ++ input_state_sql("m") ++ ")"
@@ -317,8 +321,8 @@ def completion_oldest_sql(+player: String) -> String:
   "(SELECT id FROM messages WHERE recipient=" ++ q(player) ++ " AND receipt IS NULL AND NOT " ++ stopped_session_sql(q(player)) ++ " ORDER BY seq LIMIT 1)"
 
 def completion_sql_expr(+id: String, +player: String, +event: String) -> String:
-  "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ q(id) ++ ",id," ++ report_recipient("sessions.id") ++ ",'report'," ++ terminal_body_expr(event) ++ " FROM sessions WHERE id=" ++ q(player) ++ " AND " ++ report_recipient("sessions.id") ++ " IS NOT NULL AND " ++ terminal_expr(event) ++ message_upsert()
-  ++ "INSERT INTO turns(id,worker,event) SELECT " ++ q(id) ++ "," ++ q(player) ++ "," ++ event ++ " WHERE " ++ report_recipient(q(player)) ++ " IS NOT NULL AND " ++ terminal_expr(event) ++ " ON CONFLICT(id) DO UPDATE SET id=CASE WHEN turns.worker=excluded.worker AND turns.event=excluded.event THEN turns.id ELSE NULL END;"
+  "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ q(id) ++ ",id," ++ report_recipient("sessions.id") ++ ",'report'," ++ terminal_body_expr(event) ++ " FROM sessions WHERE id=" ++ q(player) ++ " AND " ++ report_recipient("sessions.id") ++ " IS NOT NULL AND " ++ terminal_expr(event) ++ message_upsert() ++ message_conflict_sql(q(id),q(player),report_recipient(q(player)),"'report'",terminal_body_expr(event),report_recipient(q(player)) ++ " IS NOT NULL AND " ++ terminal_expr(event))
+  ++ "INSERT INTO turns(id,worker,event) SELECT " ++ q(id) ++ "," ++ q(player) ++ "," ++ event ++ " WHERE " ++ report_recipient(q(player)) ++ " IS NOT NULL AND " ++ terminal_expr(event) ++ " AND EXISTS(SELECT 1 FROM messages WHERE id=" ++ q(id) ++ " AND sender=" ++ q(player) ++ " AND recipient=" ++ report_recipient(q(player)) ++ " AND kind='report' AND body=" ++ terminal_body_expr(event) ++ ") ON CONFLICT(id) DO NOTHING;"
   ++ "SELECT json_object('player',id,'native',native,'eventType',coalesce(json_extract(" ++ event ++ ",'$.type'),json_extract(" ++ event ++ ",'$.payload_type')),'reportId',CASE WHEN " ++ report_recipient("sessions.id") ++ " IS NOT NULL AND " ++ terminal_expr(event) ++ " THEN " ++ q(id) ++ " ELSE NULL END,'reconciliation',CASE WHEN " ++ completion_pending_sql(player) ++ ">0 THEN json_object('pendingCount'," ++ completion_pending_sql(player) ++ ",'oldestPendingId'," ++ completion_oldest_sql(player) ++ ",'next','Reconcile the pending input before completion; wake the session or record the blocked cause.') ELSE NULL END) FROM sessions WHERE id=" ++ q(player) ++ ";"
 
 # The SQL query owns this temporary frame relation for its complete transaction.
@@ -366,8 +370,13 @@ def exact_message(+id: String, +sender: String, +recipient: String, +kind: Strin
 def matching_message_result(+id: String, sender: String, recipient: String, kind: String, body: String) -> String:
   "SELECT json_patch(json_object('id',id,'sender',sender,'recipient',recipient,'kind',kind,'body',body,'receipt',receipt)," ++ input_state_sql("messages") ++ ") FROM messages WHERE id=" ++ q(id) ++ " AND " ++ exact_message(id,sender,recipient,kind,body) ++ ";"
 
+# The stored row answers only an exact replay; a derived recipient arrives as an
+# SQL expression rather than a value.
+def matching_message_result_expr(+id: String, +sender: String, +recipient: String, +kind: String, +body: String) -> String:
+  "SELECT json_patch(json_object('id',id,'sender',sender,'recipient',recipient,'kind',kind,'body',body,'receipt',receipt)," ++ input_state_sql("messages") ++ ") FROM messages WHERE id=" ++ id ++ " AND EXISTS(SELECT 1 FROM messages WHERE id=" ++ id ++ " AND sender=" ++ sender ++ " AND recipient=" ++ recipient ++ " AND kind=" ++ kind ++ " AND body=" ++ body ++ ");"
+
 def message_sql(+id: String, +sender: String, +recipient: String, +kind: String, +body: String) -> String:
-  "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ q(id) ++ "," ++ q(sender) ++ "," ++ q(recipient) ++ "," ++ q(kind) ++ "," ++ q(body) ++ " WHERE (" ++ message_route(q(sender),q(recipient)) ++ " AND NOT (" ++ stopped_session_sql(q(recipient)) ++ " AND " ++ execution_input_sql(q(kind)) ++ ")) OR " ++ exact_message(id,sender,recipient,kind,body) ++ message_upsert()
+  "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ q(id) ++ "," ++ q(sender) ++ "," ++ q(recipient) ++ "," ++ q(kind) ++ "," ++ q(body) ++ " WHERE (" ++ message_route(q(sender),q(recipient)) ++ " AND NOT (" ++ stopped_session_sql(q(recipient)) ++ " AND " ++ execution_input_sql(q(kind)) ++ ")) OR " ++ exact_message(id,sender,recipient,kind,body) ++ message_upsert() ++ message_conflict_sql(q(id),q(sender),q(recipient),q(kind),q(body),"1")
   ++ "SELECT json_object('error','message-route-denied','sender'," ++ q(sender) ++ ",'recipient'," ++ q(recipient) ++ ",'condition','Use an immediate parent, a conductor descendant route, an explicitly tight Ensemble peer, or the operator and top-level conductor route.','next','Inspect session roles and Ensemble membership; send through your immediate conductor when a direct route is unavailable.') WHERE NOT " ++ message_route(q(sender),q(recipient)) ++ " AND NOT " ++ exact_message(id,sender,recipient,kind,body) ++ ";"
   ++ "SELECT json_object('error','session-stopped','session'," ++ q(recipient) ++ ") WHERE NOT " ++ exact_message(id,sender,recipient,kind,body) ++ " AND " ++ message_route(q(sender),q(recipient)) ++ " AND " ++ stopped_session_sql(q(recipient)) ++ " AND " ++ execution_input_sql(q(kind)) ++ ";" ++ matching_message_result(id,sender,recipient,kind,body)
 
@@ -461,9 +470,9 @@ def sql(command: Command) -> String:
     case Message{+id, sender, +recipient, +kind, body}:
       message_sql(id,sender,recipient,kind,body)
     case Report{+id, +sender, body}:
-      "INSERT INTO messages(id,sender,recipient,kind,body) VALUES(" ++ q(id) ++ "," ++ q(sender) ++ "," ++ report_recipient(q(sender)) ++ ",'report'," ++ q(body) ++ ")" ++ message_upsert() ++ message_result(id)
+      "INSERT INTO messages(id,sender,recipient,kind,body) VALUES(" ++ q(id) ++ "," ++ q(sender) ++ "," ++ report_recipient(q(sender)) ++ ",'report'," ++ q(body) ++ ")" ++ message_upsert() ++ message_conflict_sql(q(id),q(sender),report_recipient(q(sender)),"'report'",q(body),report_recipient(q(sender)) ++ " IS NOT NULL") ++ matching_message_result_expr(q(id),q(sender),report_recipient(q(sender)),"'report'",q(body))
     case Ask{+id, +player, body}:
-      "INSERT INTO messages(id,sender,recipient,kind,body) VALUES(" ++ q(id) ++ "," ++ q(player) ++ "," ++ report_recipient(q(player)) ++ ",'question'," ++ q(body) ++ ")" ++ message_upsert() ++ message_result(id)
+      "INSERT INTO messages(id,sender,recipient,kind,body) VALUES(" ++ q(id) ++ "," ++ q(player) ++ "," ++ report_recipient(q(player)) ++ ",'question'," ++ q(body) ++ ")" ++ message_upsert() ++ message_conflict_sql(q(id),q(player),report_recipient(q(player)),"'question'",q(body),report_recipient(q(player)) ++ " IS NOT NULL") ++ matching_message_result_expr(q(id),q(player),report_recipient(q(player)),"'question'",q(body))
     case Ack{+id, +recipient, receipt}:
       "UPDATE messages SET receipt=coalesce(receipt," ++ q(receipt) ++ ") WHERE id=" ++ q(id) ++ " AND recipient=" ++ q(recipient) ++ ";DELETE FROM wake_claims WHERE session=" ++ q(recipient) ++ " AND NOT EXISTS(SELECT 1 FROM messages WHERE recipient=" ++ q(recipient) ++ " AND receipt IS NULL);SELECT json_object('id',id,'receipt',receipt) FROM messages WHERE id=" ++ q(id) ++ " AND recipient=" ++ q(recipient) ++ ";"
     case Session{id}: session_result(id)

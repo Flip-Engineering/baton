@@ -117,18 +117,6 @@ law message_answer_matches_its_accepted_coordinates:
 def message_answer_matches_its_accepted_coordinates(id,sender,recipient,kind,body):
   {==}
 
-law message_admission_checks_routes_or_an_exact_accepted_retry:
-  for +id: String
-  for +sender: String
-  for +recipient: String
-  for +kind: String
-  for +body: String
-  {C.message_sql(id,sender,recipient,kind,body) == "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id) ++ "," ++ C.q(sender) ++ "," ++ C.q(recipient) ++ "," ++ C.q(kind) ++ "," ++ C.q(body) ++ " WHERE (" ++ C.message_route(C.q(sender),C.q(recipient)) ++ " AND NOT (" ++ C.stopped_session_sql(C.q(recipient)) ++ " AND " ++ C.execution_input_sql(C.q(kind)) ++ ")) OR " ++ C.exact_message(id,sender,recipient,kind,body) ++ C.message_upsert()
-  ++ "SELECT json_object('error','message-route-denied','sender'," ++ C.q(sender) ++ ",'recipient'," ++ C.q(recipient) ++ ",'condition','Use an immediate parent, a conductor descendant route, an explicitly tight Ensemble peer, or the operator and top-level conductor route.','next','Inspect session roles and Ensemble membership; send through your immediate conductor when a direct route is unavailable.') WHERE NOT " ++ C.message_route(C.q(sender),C.q(recipient)) ++ " AND NOT " ++ C.exact_message(id,sender,recipient,kind,body) ++ ";"
-  ++ "SELECT json_object('error','session-stopped','session'," ++ C.q(recipient) ++ ") WHERE NOT " ++ C.exact_message(id,sender,recipient,kind,body) ++ " AND " ++ C.message_route(C.q(sender),C.q(recipient)) ++ " AND " ++ C.stopped_session_sql(C.q(recipient)) ++ " AND " ++ C.execution_input_sql(C.q(kind)) ++ ";" ++ C.matching_message_result(id,sender,recipient,kind,body) : String}
-
-def message_admission_checks_routes_or_an_exact_accepted_retry(id,sender,recipient,kind,body):
-  {==}
 
 law role_declarations_validate_registered_sessions_and_closed_roles:
   for +session: String

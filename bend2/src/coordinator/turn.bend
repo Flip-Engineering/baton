@@ -58,7 +58,7 @@ def append_store_error(previous: String, result: Result<&1,&1,U32 & String,Strin
 # Its stdout copy is best effort and cannot interrupt native completion.
 def report(db: String, player: String, id: String, body: String) -> IO(Unit):
   do IO<Unit>:
-    saved : String <- IO.try(String,Store.commit(db,C.Report{id,player,body}))
+    saved : String <- IO.try(String,Store.apply(db,C.Report{id,player,body}))
     written : Result<&1,&1,U32 & String,Unit> <- T.Text.control_output(saved)
     IO.pure(Unit,Unit{})
 
@@ -204,7 +204,7 @@ def codex_report(db: String, player: String, id: String, event: String, empty: B
   match empty:
     case True{}: IO.pure(Unit,Unit{})
     case False{}: do IO<Unit>:
-      saved : String <- IO.try(String,Store.commit(db,C.Observe{id,player,event,sealed}))
+      saved : String <- IO.try(String,Store.apply(db,C.Observe{id,player,event,sealed}))
       IO.pure(Unit,Unit{})
 
 def codex_result_sql(source: String) -> String:
@@ -383,7 +383,7 @@ def terminal_observation_sealed(sealed: Bool, terminal: Bool, admitted: Bool, +s
 
 def observe_event(db: String, player: String, id: String, line: String, relevant: Bool, sealed: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   match relevant:
-    case True{}: Store.commit(db,C.Observe{id,player,line,sealed})
+    case True{}: Store.apply(db,C.Observe{id,player,line,sealed})
     case False{}: IO.pure(Result<&1,&1,U32 & String,String>,Done{""})
 
 # Later native episodes keep the first report and publish their own reports.
@@ -435,7 +435,7 @@ def publish_deferred(+db: String, +player: String, +id: String, +event: String, 
       failure : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce(" ++ C.omp_terminal_error_text_sql(event) ++ ",'');"))
       write_deferred(db,player,id,Tx.trim_nl(failure),Tx.trim_nl(pending),String.eq(presence,"1\n"))
     case True{}: do IO<Unit>:
-      saved : String <- IO.try(String,Store.commit(db,C.Observe{report_id,player,event,False{}}))
+      saved : String <- IO.try(String,Store.apply(db,C.Observe{report_id,player,event,False{}}))
       delivered : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,report_id,"1",saved)
       written : Result<&1,&1,U32 & String,Unit> <- T.Text.control_output(saved)
       IO.pure(Unit,Unit{})

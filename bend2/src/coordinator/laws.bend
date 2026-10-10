@@ -117,21 +117,9 @@ law m1_session_answer_reads_the_stored_row:
 def m1_session_answer_reads_the_stored_row(id):
   {==}
 
-# M-1: a message answer likewise reads the stored row by the supplied identity.
-law m1_message_answer_reads_the_stored_row:
-  for +id: String
-  {C.message_result(id) == "SELECT json_patch(json_object('id',id,'sender',sender,'recipient',recipient,'kind',kind,'body',body,'receipt',receipt)," ++ C.input_state_sql("messages") ++ ") FROM messages WHERE id=" ++ C.q(id) ++ ";" : String}
-
-def m1_message_answer_reads_the_stored_row(id):
-  {==}
 
 # M-3b: repeating an operation identity re-selects the stored row; it cannot
-# insert a second row. Conflicting reuse of the identity fails the write.
-law m3b_repeated_identity_reselects_the_stored_row:
-  {C.message_upsert() == " ON CONFLICT(id) DO UPDATE SET id=CASE WHEN messages.sender=excluded.sender AND messages.recipient=excluded.recipient AND messages.kind=excluded.kind AND messages.body=excluded.body THEN messages.id ELSE NULL END;" : String}
-
-def m3b_repeated_identity_reselects_the_stored_row():
-  {==}
+# insert a second row. Conflicting reuse keeps the stored row and is refused.
 
 # M-5: recording an observation updates the native identity and the observed
 # route and leaves the parent, the workspace, the branch and the base as they
@@ -147,16 +135,6 @@ law m5_bind_preserves_parentage_and_placement:
 def m5_bind_preserves_parentage_and_placement(id, native, harness, model, effort):
   {==}
 
-# M-7: a report's recipient comes from the stored parent or Principal's
-# registered operator. The caller supplies the sender and body.
-law m7_report_routes_to_the_recorded_parent:
-  for +id: String
-  for +sender: String
-  for +body: String
-  {C.sql(C.Report{id, sender, body}) == "INSERT INTO messages(id,sender,recipient,kind,body) VALUES(" ++ C.q(id) ++ "," ++ C.q(sender) ++ "," ++ C.report_recipient(C.q(sender)) ++ ",'report'," ++ C.q(body) ++ ")" ++ C.message_upsert() ++ C.message_result(id) : String}
-
-def m7_report_routes_to_the_recorded_parent(id, sender, body):
-  {==}
 
 # M-11: the terminal predicate is read from the record's own event fields, so
 # the caller's body cannot make a record terminal.
@@ -774,16 +752,6 @@ law m5_a_report_and_its_delivery_are_one_transaction:
 def m5_a_report_and_its_delivery_are_one_transaction(db, id, sender, body):
   {==}
 
-# M-5: the report insert names the sender's recorded parent as its
-# recipient. This pins the exact bytes the committed transaction carries.
-law m5_report_insert_names_the_sender_parent:
-  for +id: String
-  for +sender: String
-  for +body: String
-  {C.sql(C.Report{id, sender, body}) == ("INSERT INTO messages(id,sender,recipient,kind,body) VALUES(" ++ C.q(id) ++ "," ++ C.q(sender) ++ "," ++ C.report_recipient(C.q(sender)) ++ ",'report'," ++ C.q(body) ++ ")" ++ C.message_upsert() ++ C.message_result(id)) : String}
-
-def m5_report_insert_names_the_sender_parent(id, sender, body):
-  {==}
 
 # M-5: a transaction that did not commit delivers nothing and answers its own
 # failure, so no delivery is attempted without the write that records it.
@@ -1042,13 +1010,6 @@ law m1_a_message_write_answers_from_the_row_it_stored:
 def m1_a_message_write_answers_from_the_row_it_stored(id,sender,recipient,kind,body):
   {==}
 
-# M-1: a report answers from the row it stored, whose recipient the transaction
-# derived from the sender's recorded parent or registered Principal operator.
-law m1_a_report_write_answers_from_the_row_it_stored:
-  {C.sql(C.Report{"m2", "s2", "body2"}) == "INSERT INTO messages(id,sender,recipient,kind,body) VALUES('m2','s2'," ++ C.report_recipient("'s2'") ++ ",'report','body2')" ++ C.message_upsert() ++ "SELECT json_patch(json_object('id',id,'sender',sender,'recipient',recipient,'kind',kind,'body',body,'receipt',receipt)," ++ C.input_state_sql("messages") ++ ") FROM messages WHERE id='m2';" : String}
-
-def m1_a_report_write_answers_from_the_row_it_stored():
-  {==}
 
 
 # Principal completion uses the stored hierarchy and explicit operator role.
@@ -1069,17 +1030,6 @@ law terminal_reports_preserve_the_native_result:
 def terminal_reports_preserve_the_native_result(event):
   {==}
 
-law terminal_observation_records_the_report_and_turn:
-  for +id: String
-  for +player: String
-  for +event: String
-  {C.completion_sql_expr(id,player,event) == (
-  "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id) ++ ",id," ++ C.report_recipient("sessions.id") ++ ",'report'," ++ C.terminal_body_expr(event) ++ " FROM sessions WHERE id=" ++ C.q(player) ++ " AND " ++ C.report_recipient("sessions.id") ++ " IS NOT NULL AND " ++ C.terminal_expr(event) ++ C.message_upsert()
-  ++ "INSERT INTO turns(id,worker,event) SELECT " ++ C.q(id) ++ "," ++ C.q(player) ++ "," ++ event ++ " WHERE " ++ C.report_recipient(C.q(player)) ++ " IS NOT NULL AND " ++ C.terminal_expr(event) ++ " ON CONFLICT(id) DO UPDATE SET id=CASE WHEN turns.worker=excluded.worker AND turns.event=excluded.event THEN turns.id ELSE NULL END;"
-  ++ "SELECT json_object('player',id,'native',native,'eventType',coalesce(json_extract(" ++ event ++ ",'$.type'),json_extract(" ++ event ++ ",'$.payload_type')),'reportId',CASE WHEN " ++ C.report_recipient("sessions.id") ++ " IS NOT NULL AND " ++ C.terminal_expr(event) ++ " THEN " ++ C.q(id) ++ " ELSE NULL END,'reconciliation',CASE WHEN " ++ C.completion_pending_sql(player) ++ ">0 THEN json_object('pendingCount'," ++ C.completion_pending_sql(player) ++ ",'oldestPendingId'," ++ C.completion_oldest_sql(player) ++ ",'next','Reconcile the pending input before completion; wake the session or record the blocked cause.') ELSE NULL END) FROM sessions WHERE id=" ++ C.q(player) ++ ";") : String}
-
-def terminal_observation_records_the_report_and_turn(id,player,event):
-  {==}
 
 law observations_update_identity_before_recording_completion:
   for +id: String
