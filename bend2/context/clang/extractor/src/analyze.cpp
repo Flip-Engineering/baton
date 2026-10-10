@@ -563,9 +563,13 @@ private:
                                   int &MatchCount) {
     FunctionDecl *Found = nullptr;
     MatchCount = 0;
+    std::set<const FunctionDecl *> SeenDefs;
     for (auto *D : Ctx.getTranslationUnitDecl()->decls()) {
-      auto *FD = dyn_cast<FunctionDecl>(D);
-      if (!FD || !FD->hasBody() || FD->getNameAsString() != Name)
+      auto *PD = dyn_cast<FunctionDecl>(D);
+      if (!PD || PD->getNameAsString() != Name)
+        continue;
+      FunctionDecl *FD = definedFunctionDecl(PD);
+      if (!FD || !SeenDefs.insert(FD).second)
         continue;
       ++MatchCount;
       Found = FD;
@@ -573,17 +577,41 @@ private:
     return Found;
   }
 
+  // The declaration that carries the body. hasBody considers any
+  // redeclaration, so a prototype of a defined function passes hasBody while
+  // its own interval is not the body interval; getDefinition resolves the
+  // chain to the one defining declaration, or null when none is in this AST.
+  static FunctionDecl *definedFunctionDecl(FunctionDecl *FD) {
+    return FD->getDefinition();
+  }
+
   bool functionInterval(FunctionDecl *FD, SourceManager &SM,
                         const LangOptions &LO, int64_t &Start,
-                        int64_t &End, bool &sameFile) {
+                        int64_t &End, bool &inMain) {
     SourceRange R = FD->getSourceRange();
     if (R.getBegin().isInvalid() || R.getEnd().isInvalid())
       return false;
     SourceLocation EB = SM.getExpansionLoc(R.getBegin());
     SourceLocation EE = SM.getExpansionLoc(R.getEnd());
-    sameFile = SM.getFileID(EB) == SM.getFileID(EE);
+    // Interval offsets always index the main file's bytes, so the interval
+    // is usable only when both endpoints expand into the main file. A range
+    // in any other file, or expanded by a macro into another file, is not
+    // usable regardless of begin and end sharing one FileID.
+    const FileID Main = SM.getMainFileID();
+    inMain = SM.getFileID(EB) == Main && SM.getFileID(EE) == Main;
     Start = static_cast<int64_t>(SM.getFileOffset(EB));
     return endTokenOffset(R.getEnd(), SM, LO, End);
+  }
+
+  // A main-file slice bounded against the recorded bytes: inverted or
+  // out-of-range intervals yield an empty slice instead of wrapped offsets.
+  static llvm::StringRef boundedMainSlice(llvm::StringRef Bytes,
+                                          int64_t Start, int64_t End) {
+    if (Start < 0 || End < 0 || Start > End ||
+        End > static_cast<int64_t>(Bytes.size()))
+      return llvm::StringRef();
+    return Bytes.substr(static_cast<size_t>(Start),
+                        static_cast<size_t>(End - Start));
   }
 
   int countOriginalOccurrences(llvm::StringRef OrigBytes,
@@ -681,13 +709,18 @@ private:
         }
       } else {
         int MatchCount = 0;
+        std::set<const FunctionDecl *> SeenDefs;
         for (auto *D : Ctx.getTranslationUnitDecl()->decls()) {
-          auto *FD = dyn_cast<FunctionDecl>(D);
-          if (!FD || !FD->hasBody())
+          auto *PD = dyn_cast<FunctionDecl>(D);
+          if (!PD)
+            continue;
+          FunctionDecl *FD = definedFunctionDecl(PD);
+          if (!FD || !SeenDefs.insert(FD).second)
             continue;
           int64_t S, E;
-          bool Same;
-          if (!functionInterval(FD, SM, Ctx.getLangOpts(), S, E, Same) || !Same)
+          bool InMain;
+          if (!functionInterval(FD, SM, Ctx.getLangOpts(), S, E, InMain) ||
+              !InMain)
             continue;
           const FilePair *Pair = pairForGenerated();
           if (!Pair || resolvePath(Pair->original) != SubjectPath)
@@ -695,9 +728,9 @@ private:
           auto Orig = llvm::MemoryBuffer::getFileAsStream(SubjectPath);
           if (!Orig)
             continue;
-          llvm::StringRef Seg =
-              MainBytes.substr(static_cast<size_t>(S),
-                               static_cast<size_t>(E - S));
+          llvm::StringRef Seg = boundedMainSlice(MainBytes, S, E);
+          if (Seg.empty())
+            continue;
           int64_t Pos = -1;
           int Count = countOriginalOccurrences((*Orig)->getBuffer(), Seg, Pos);
           if (Count != 1)
@@ -725,8 +758,9 @@ private:
     // Body interval and generated/original correspondence.
     {
       int64_t S = GenStart, E = GenEnd;
-      bool Same = false;
-      if (functionInterval(Selected, SM, Ctx.getLangOpts(), S, E, Same) && Same) {
+      bool InMain = false;
+      if (functionInterval(Selected, SM, Ctx.getLangOpts(), S, E, InMain) &&
+          InMain) {
         GenStart = S;
         GenEnd = E;
       }
@@ -740,7 +774,7 @@ private:
         C.reason = "noDeclaredPair";
       } else {
         C.original = Pair->original;
-        if (!Same) {
+        if (!InMain) {
           C.status = "unmapped";
           C.reason = "macroExpandedBoundary";
         } else {
@@ -750,22 +784,26 @@ private:
             C.status = "unmapped";
             C.reason = "originalUnreadable";
           } else {
-            llvm::StringRef Seg = MainBytes.substr(
-                static_cast<size_t>(GenStart),
-                static_cast<size_t>(GenEnd - GenStart));
-            int64_t Pos = -1;
-            int Count = countOriginalOccurrences((*Orig)->getBuffer(), Seg, Pos);
-            if (Count == 0) {
+            llvm::StringRef Seg = boundedMainSlice(MainBytes, GenStart, GenEnd);
+            if (Seg.empty()) {
               C.status = "unmapped";
-              C.reason = "originalSegmentMissing";
-            } else if (Count > 1) {
-              C.status = "unmapped";
-              C.reason = "originalSegmentAmbiguous";
+              C.reason = "bodyIntervalOutOfBounds";
             } else {
-              C.status = "mapped";
-              C.originalStart = Pos;
-              C.originalEnd = Pos + (GenEnd - GenStart);
-              C.segmentSha256 = sha256Hex(Seg);
+              int64_t Pos = -1;
+              int Count =
+                  countOriginalOccurrences((*Orig)->getBuffer(), Seg, Pos);
+              if (Count == 0) {
+                C.status = "unmapped";
+                C.reason = "originalSegmentMissing";
+              } else if (Count > 1) {
+                C.status = "unmapped";
+                C.reason = "originalSegmentAmbiguous";
+              } else {
+                C.status = "mapped";
+                C.originalStart = Pos;
+                C.originalEnd = Pos + (GenEnd - GenStart);
+                C.segmentSha256 = sha256Hex(Seg);
+              }
             }
           }
         }
@@ -782,13 +820,17 @@ private:
                                     int64_t Offset) {
     FunctionDecl *Best = nullptr;
     int64_t BestSize = -1;
+    std::set<const FunctionDecl *> SeenDefs;
     for (auto *D : Ctx.getTranslationUnitDecl()->decls()) {
-      auto *FD = dyn_cast<FunctionDecl>(D);
-      if (!FD || !FD->hasBody())
+      auto *PD = dyn_cast<FunctionDecl>(D);
+      if (!PD)
+        continue;
+      FunctionDecl *FD = definedFunctionDecl(PD);
+      if (!FD || !SeenDefs.insert(FD).second)
         continue;
       int64_t S, E;
-      bool Same;
-      if (!functionInterval(FD, SM, Ctx.getLangOpts(), S, E, Same) || !Same)
+      bool InMain;
+      if (!functionInterval(FD, SM, Ctx.getLangOpts(), S, E, InMain) || !InMain)
         continue;
       if (Offset >= S && Offset < E) {
         int64_t Size = E - S;
@@ -806,9 +848,13 @@ private:
                                    bool SubjectIsMain) {
     FunctionDecl *Found = nullptr;
     int Match = 0;
+    std::set<const FunctionDecl *> SeenDefs;
     for (auto *D : Ctx.getTranslationUnitDecl()->decls()) {
-      auto *FD = dyn_cast<FunctionDecl>(D);
-      if (!FD || !FD->hasBody() || FD->getNameAsString() != In_.subject.name)
+      auto *PD = dyn_cast<FunctionDecl>(D);
+      if (!PD || PD->getNameAsString() != In_.subject.name)
+        continue;
+      FunctionDecl *FD = definedFunctionDecl(PD);
+      if (!FD || !SeenDefs.insert(FD).second)
         continue;
       bool MatchHere = false;
       if (SubjectIsMain) {
@@ -816,8 +862,9 @@ private:
         MatchHere = resolvePath(filePathFor(SM, SM.getFileID(B))) == SubjectPath;
       } else {
         int64_t S, E;
-        bool Same;
-        if (functionInterval(FD, SM, Ctx.getLangOpts(), S, E, Same) && Same) {
+        bool InMain;
+        if (functionInterval(FD, SM, Ctx.getLangOpts(), S, E, InMain) &&
+            InMain) {
           const FilePair *Pair = pairForGenerated();
           MatchHere = Pair && resolvePath(Pair->original) == SubjectPath;
         }
