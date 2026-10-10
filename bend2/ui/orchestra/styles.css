@@ -37,6 +37,10 @@
   /* Pending counts, reading position and arrivals. */
   --attention: #a2611f;
 
+  /* The baseline: the page's vertical gaps are multiples of it, so the regions
+     keep one beat from the plate down to the record rail. */
+  --baseline: 4px;
+
   /* Recorded activity colors. */
   --running: #1e7e34;
   --waiting: #8a6d00;
@@ -520,6 +524,25 @@ button:active { background: var(--wash); }
   font-size: var(--step1);
   color: var(--muted);
 }
+
+/* The fleet as one mark per recorded actor, in the roster's order: the state
+   ink carries the reading, the quiet seats are the faintest, and a failure is a
+   low bar rather than a shout. Shapes stay small so a large fleet reads as
+   proportion at a glance. */
+.doc-fleet {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: calc(var(--baseline) / 2);
+  max-width: 216px;
+  margin-left: calc(var(--baseline) * 2);
+}
+.doc-fleet-mark { width: 6px; height: 6px; border-radius: 1px; background: var(--staff); }
+.doc-fleet-mark.state-working { background: var(--running); }
+.doc-fleet-mark.state-queued { background: var(--attention); }
+.doc-fleet-mark.state-stopped { width: 8px; height: 3px; background: var(--attention); }
+.doc-fleet-mark.state-failed { width: 8px; height: 2px; background: var(--failed); }
+.doc-fleet-mark.state-quiet { width: 4px; height: 4px; border-radius: 50%; background: var(--staff); }
+.doc-fleet-rest { margin-left: 4px; font-size: var(--step0); color: var(--muted); }
 
 
 /* ── the attention strip ─────────────────────────────────────────────────── */

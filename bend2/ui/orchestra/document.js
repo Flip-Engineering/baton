@@ -308,6 +308,35 @@
     return line;
   }
 
+  // One mark per recorded actor, in the roster's state order. The mark's ink is
+  // its state and the shapes stay small, so the fleet's proportion reads at a
+  // glance where two numerals cannot show it. A fleet past the mark count keeps
+  // the row bounded and states the remainder as a count.
+  var FLEET_MARKS = 120;
+  function fleetSpine(players) {
+    var rank = { working: 0, queued: 1, stopped: 2, failed: 3, quiet: 4 };
+    var sorted = players.slice().sort(function (a, b) {
+      var sa = rank[workState(a)], sb = rank[workState(b)];
+      return (sa === undefined ? 9 : sa) - (sb === undefined ? 9 : sb);
+    });
+    var line = el("span", "doc-fleet");
+    var counts = {};
+    var order = [];
+    var marks = 0;
+    sorted.forEach(function (p) {
+      var value = workState(p);
+      if (counts[value] === undefined) { counts[value] = 0; order.push(value); }
+      counts[value] += 1;
+      if (marks < FLEET_MARKS) { line.appendChild(el("i", "doc-fleet-mark state-" + value)); marks += 1; }
+    });
+    if (sorted.length > FLEET_MARKS) line.appendChild(el("b", "doc-fleet-rest", "+" + (sorted.length - FLEET_MARKS)));
+    var spoken = order.map(function (value) { return counts[value] + " " + value; });
+    line.setAttribute("role", "img");
+    line.setAttribute("aria-label", spoken.join(", ") || "no actors recorded");
+    line.title = spoken.join(" · ") || "no actors recorded";
+    return line;
+  }
+
   // Each run names all recorded memberships shared by its rows.
   function renderRoster(mount, ordered, opts) {
     if (!mount) return;
@@ -590,6 +619,9 @@
         mounts.counts.appendChild(stat("running", counts.running || 0, "running"));
         mounts.counts.appendChild(statSeparator());
         mounts.counts.appendChild(stat("actors recorded", players.length, ""));
+        // The same fleet as one mark per seat, so the shape of it reads beside
+        // the numerals and the row speaks its totals once.
+        mounts.counts.appendChild(fleetSpine(players));
       }
     }
     return { ordered: ordered, reading: reading };
