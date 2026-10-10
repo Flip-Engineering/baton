@@ -1474,7 +1474,7 @@ def direct_resume_acquired(+db: String, +player: String, lock: Maybe<U32>) -> IO
 
 # Public resume dispatches the saved request; native custody still owns any
 # launched attempt. The recovery child acquires the session guard before setup.
-def resume_pending_request(db: String, player: String, request: Maybe<DirectRequest>) -> IO(Maybe<String>):
+def resume_pending_request(db: String, +player: String, request: Maybe<DirectRequest>) -> IO(Maybe<String>):
   match request:
     case None{}: IO.pure(Maybe<String>,None{})
     case Some{saved}: Lock.SessionLock.acquire_session(Maybe<String>,db,player,+database => lock => direct_resume_acquired(database,player,lock))
