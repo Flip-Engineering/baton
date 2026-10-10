@@ -1627,7 +1627,8 @@ check('the fixture payload carries the typed shapes the checks read',
     && fixturePayload.edges.some((edge) => edge.provenance === 'authored')
     && fixturePayload.edges.some((edge) => edge.provenance === 'recorded-evidence')
     && fixturePayload.edges.some((edge) => edge.id === 'probe-self')
-    && fixturePayload.nodes.some((node) => typeof node.deliveryRead === 'boolean')
+    && fixturePayload.nodes.every((node) => node.deliveryRead === undefined
+      || Array.isArray(node.deliveryRead))
     && fixturePayload.nodes.some((node) => Array.isArray(node.deliveryRead)));
 check('the map draws both provenances and nothing outside them', await evalJs(`(() => {
   const drawn = [...document.querySelectorAll('.kw-edge-typed')];
@@ -1653,6 +1654,37 @@ check('an unheld endpoint draws the hollow ring and a held one the dot', await e
   return unheld.every((mark) => mark.querySelector('circle.kw-typeref-ring')
       && !mark.querySelector('.knode, rect.knode'))
     && held.every((mark) => mark.querySelector('circle.kw-typeref-dot'));
+})()`));
+// The mixed projection names one authored relation and one citation twice: once in the
+// compatibility rows and once in the typed edges. The canvas may draw each semantic fact
+// once. The expected count is read from the payload's own edges, never pinned.
+check('the map draws each semantic edge once, however many payload shapes name it', await evalJs(`(async () => {
+  const document_ = await (await fetch('fixtures/fixture-knowledge.json')).json();
+  const knowledge = (document_ && document_.knowledge) || {};
+  const facts = new Map();
+  for (const edge of knowledge.edges || []) {
+    if (edge.provenance !== 'authored' && edge.provenance !== 'recorded-evidence') continue;
+    const role = edge.provenance === 'recorded-evidence' ? 'cited' : 'authored';
+    const key = role + '|' + String(edge.source) + '|' + String(edge.target);
+    facts.set(key, (facts.get(key) || 0) + 1);
+  }
+  const drawn = new Map();
+  for (const node of document.querySelectorAll('#knowledge-whole [data-from][data-to]')) {
+    const from = node.getAttribute('data-from') || '';
+    const to = node.getAttribute('data-to') || '';
+    if (!from || !to) continue;
+    const role = node.classList.contains('kw-edge-cited') ? 'cited'
+      : (node.classList.contains('kw-edge-authored')
+        || node.classList.contains('kw-edge-relate')) ? 'authored' : '';
+    if (!role) continue;
+    const key = role + '|' + from + '|' + to;
+    drawn.set(key, (drawn.get(key) || 0) + 1);
+  }
+  if (!facts.size) return false;
+  for (const [key, count] of facts) {
+    if ((drawn.get(key) || 0) !== count) return false;
+  }
+  return true;
 })()`));
 check('the key rows follow the drawn provenance', await evalJs(`(() => {
   const words = (document.querySelector('#knowledge-whole') || { textContent: '' }).textContent || '';
@@ -1750,20 +1782,6 @@ check('the stage draws exactly the edges the placement rule places', await evalJ
 })()`));
 await evalJs(`(() => {
   const edge = [...document.querySelectorAll('.kw-edge-typed')]
-    .find((node) => node.getAttribute('data-to') === 'message:fixture-message-1');
-  if (edge) edge.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-  return true;
-})()`);
-await until('the typed edge answers with its card',
-  `!!document.querySelector('#knowledge-whole .kw-card')`);
-check('the typed edge card states a boolean delivery read as a seat fact', await evalJs(`(() => {
-  const card = document.querySelector('#knowledge-whole .kw-card');
-  if (!card) return false;
-  const words = card.textContent || '';
-  return /recorded evidence/.test(words) && /seat has not read the delivery/.test(words);
-})()`));
-await evalJs(`(() => {
-  const edge = [...document.querySelectorAll('.kw-edge-typed')]
     .find((node) => node.getAttribute('data-to') === 'message:fixture-message-2'
       || node.getAttribute('data-from') === 'message:fixture-message-2');
   if (edge) edge.dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -1771,27 +1789,11 @@ await evalJs(`(() => {
 })()`);
 await until('the pointer edge answers with its card',
   `!!document.querySelector('#knowledge-whole .kw-card')`);
-check('a pointer delivery read is stated as no read at all', await evalJs(`(() => {
+check('the typed edge card states nothing about a read for a pointer', await evalJs(`(() => {
   const card = document.querySelector('#knowledge-whole .kw-card');
   if (!card) return false;
   const words = card.textContent || '';
-  const pointer = true;
-  return pointer === true
-    && /message:fixture-message-2/.test(words)
-    && !/read the delivery/.test(words);
-})()`));
-await evalJs(`(() => {
-  const ring = document.querySelector('#knowledge-whole [data-reference-only="true"][data-kw-node="message:fixture-message-1"]');
-  if (ring) ring.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-  return true;
-})()`);
-await until('the boolean ring answers with its card',
-  `!!document.querySelector('#knowledge-whole .kw-card')`);
-check('a ring card states the seat read where the payload states a boolean', await evalJs(`(() => {
-  const card = document.querySelector('#knowledge-whole .kw-card');
-  if (!card) return false;
-  const words = card.textContent || '';
-  return /message reference/.test(words) && /seat has not read the delivery/.test(words);
+  return /message:fixture-message-2/.test(words) && !/read the delivery/.test(words);
 })()`));
 await evalJs(`(() => {
   const ring = document.querySelector('#knowledge-whole [data-reference-only="true"][data-kw-node="message:fixture-message-2"]');
@@ -1800,7 +1802,7 @@ await evalJs(`(() => {
 })()`);
 await until('the pointer ring answers with its card',
   `!!document.querySelector('#knowledge-whole .kw-card')`);
-check('a ring card states no read where the payload states a pointer', await evalJs(`(() => {
+check('the ring card states nothing about a read for a pointer', await evalJs(`(() => {
   const card = document.querySelector('#knowledge-whole .kw-card');
   if (!card) return false;
   const words = card.textContent || '';

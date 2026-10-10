@@ -9,7 +9,7 @@
     "rule": "parent-owner-member-routes-v1"
   },
   "fixture": true,
-  "fixtureNote": "Synthetic DOM behavior fixture for the Orchestra live view. Not live coordinator state. The knowledge object now carries nodes and edges in the shapes server.mjs knowledgeGraph emits, with deliveryRead as a boolean on one message endpoint and the delivery pointer on another, plus three named probes the projection never emits (probe-self, probe-empty, probe-inferred) and one held message node, so the skip rules and the floated dot can fail on data the fixture states.",
+  "fixtureNote": "Synthetic DOM behavior fixture for the Orchestra live view. Not live coordinator state. The knowledge object now carries nodes and edges in the shapes server.mjs knowledgeGraph emits, with deliveryRead as the projection delivery pointer, never a boolean, plus three named probes the projection never emits (probe-self, probe-empty, probe-inferred) and one held message node, so the skip rules and the floated dot can fail on data the fixture states.",
   "players": [
     {
       "id": "fixture-knowledge-root",
@@ -967,8 +967,7 @@
       {
         "reference": "message:fixture-message-1",
         "kind": "message",
-        "referenceOnly": true,
-        "deliveryRead": false
+        "referenceOnly": true
       },
       {
         "reference": "message:fixture-message-2",
@@ -982,8 +981,7 @@
       {
         "reference": "message:fixture-message-not-held",
         "kind": "message",
-        "referenceOnly": true,
-        "deliveryRead": false
+        "referenceOnly": true
       },
       {
         "reference": "external:fixture-external-1",
@@ -1023,8 +1021,7 @@
       {
         "reference": "message:fixture-message-held",
         "kind": "message",
-        "referenceOnly": false,
-        "deliveryRead": true
+        "referenceOnly": false
       }
     ],
     "edges": [
