@@ -780,16 +780,27 @@ finally:
         self.shutdown()
 
     def test_10_completed_session_serves_later_dispatch(self):
-        # The TaskDone drop is load-bearing in the post-quiescence window: a
-        # row dispatched after the previous task fully drained must fork anew.
-        # Without without_id the completed session stays in-flight forever and
-        # the later row is refused aloud instead of served.
+        def phase(text):
+            print(f'FIXED10 {text}', file=sys.stderr, flush=True)
+
+        def native_settled():
+            rows = self.query("SELECT directory,phase,status FROM executions WHERE session='w1'")
+            if len(rows) != 1 or rows[0][1] != 'exited':
+                return False
+            self.assertEqual(rows[0][2], '0', rows)
+            attempt = pathlib.Path(rows[0][0])
+            return all((attempt / marker).exists() for marker in ('released', 'acknowledged'))
+
+        # The first completed task is followed by a later dispatch. The second
+        # native task remains held while its session moves to the App receiver.
         self.recruit('w1', 'codex')
         self.queue('w1', {'body': 'w1 first turn complete', 'hold_exit': True})
         self.dispatch('t1', 'w1', 'First task.')
         self.receiver('w1')
         self.start_owner()
+        phase('starting the shared subscription')
         self.start_serve()
+        phase('waiting for the first native terminal')
         first_w1, _ = self.stream_for('w1')
         self.assertEqual(json.loads(first_w1.readline()), {'terminal_written': True})
         self.release('w1')
@@ -797,16 +808,17 @@ finally:
             [m['body'] for m in messages]
             if any('w1 first turn complete' in m['body'] for m in messages) else None),
             'first turn report never reached the root inbox')
-        self.queue('w1', {'body': 'w1 second turn complete'})
+        phase('waiting for the first native attempt to settle')
+        self.eventually(native_settled, 'the first native attempt was not consumed')
+        phase('dispatching the later native task')
+        self.queue('w1', {'body': 'w1 second turn complete', 'hold_exit': True})
         self.dispatch('t2', 'w1', 'Second task after the first completion.')
-        self.stream_for('w1', 1)
-        self.await_inbox('root', lambda messages: (
-            [m['body'] for m in messages]
-            if any('w1 second turn complete' in m['body'] for m in messages) else None),
-            'later dispatch for a completed session never ran')
+        second_w1, _ = self.stream_for('w1', 1)
+        self.assertEqual(json.loads(second_w1.readline()), {'terminal_written': True})
         row = self.query("SELECT receipt FROM messages WHERE id='t2'")
         self.assertNotEqual(row, [(None,)], 't2 was not acknowledged')
 
+        phase('changing the receiver while the second native attempt remains held')
         self.managed_app_proxy()
         previous_calls = len(self.codex_calls.read_text().splitlines()) if self.codex_calls.exists() else 0
         self.queue('w1-app', {'controlReady': True})
@@ -821,6 +833,21 @@ finally:
                     and row.get('params', {}).get('threadId') == 'native-w1']
 
         self.dispatch('t3', 'w1', 'Handle the remaining input when this App turn settles.')
+        self.assertTrue(app_calls('turn/steer'), 'the short sender admitted input to the active App turn')
+        phase('releasing the old native task after the receiver changed')
+        self.release('w1', 1)
+        self.await_inbox('root', lambda messages: (
+            [m['body'] for m in messages]
+            if any('w1 second turn complete' in m['body'] for m in messages) else None),
+            'later dispatch for a completed session never ran')
+        phase('waiting for the current managed receiver')
+        def managed_connected():
+            self.assertEqual(self.query("SELECT receipt FROM messages WHERE id='t3'"), [(None,)],
+                             'the old native continuation acknowledged managed input')
+            self.assertEqual(len(self.connections('w1')), 2,
+                             'the previous native receiver ran after the managed route was recorded')
+            return self.connections('w1-app')
+        self.eventually(managed_connected, 'the current managed receiver did not connect')
         self.stream_for('w1-app')
         self.assertTrue(app_calls('turn/steer'), 'the short sender admitted input to the active App turn')
         self.assertEqual(self.query("SELECT receipt FROM messages WHERE id='t3'"), [(None,)])
@@ -833,6 +860,7 @@ finally:
 
         self.eventually(lambda: follow_events('codexInboxSubscribed'),
                         'the managed follower never subscribed to the active App thread')
+        phase('settling the App turn while the database writer is held')
         writer = sqlite3.connect(str(self.db))
         try:
             writer.execute('BEGIN EXCLUSIVE')
@@ -847,6 +875,7 @@ finally:
             writer.close()
         self.coord('report', 'app-writer-released', 'w1',
                    'The fixture writer released after the App settled with input still owed.')
+        phase('waiting for managed continuation after the writer committed')
         self.eventually(lambda: follow_events('codexInboxDatabaseReady'),
                         'the ordinary commit did not resume the held follower read')
         self.eventually(lambda: app_calls('turn/start'), 'App completion did not prompt its remaining inbox')
@@ -859,6 +888,7 @@ finally:
         self.coord('ack', 't3', 'w1', 'w1-app-handled-t3')
         self.dispatch('g4', 'w1', 'Later guidance after the recipient handled its earlier input.', kind='guidance')
         self.assertEqual(len(self.connections('w1-app')), 1, 'own ACK or new input duplicated the App watcher')
+        phase('settling the App turn with later guidance')
         self.release('w1-app', settle=True)
         self.eventually(lambda: len(app_calls('turn/start')) >= 2,
                         'the next actual App completion did not prompt still-owed guidance')
@@ -866,13 +896,17 @@ finally:
         self.assertEqual(len(self.connections('w1-app')), 1, 'settlement duplicated the App watcher')
         self.assertEqual(self.query("SELECT receipt FROM messages WHERE id IN ('g3','g4') ORDER BY id"),
                          [(None,), (None,)], 'App input admission changed recipient receipts')
+        self.assertEqual(len(self.connections('w1')), 2,
+                         'the previous native receiver ran while later App guidance was pending')
         self.coord('stop', 'w1', 'app-operator-stop', 'Retain the remaining App guidance.')
+        phase('waiting for the explicitly stopped watcher to exit')
         self.eventually(lambda: not any('--follow' in process['command'] and str(self.db) in process['command']
                                        for process in self.owned_processes()),
                         'the managed watcher remained live after the explicit stop')
         self.assertEqual([message['id'] for message in self.inbox('w1')], ['g3', 'g4'])
         self.assertEqual(self.query("SELECT id,reason FROM session_stops WHERE session='w1'"),
                          [('app-operator-stop', 'Retain the remaining App guidance.')])
+        phase('shutting down the completed fixture')
         self.shutdown()
 
     def test_11_owner_drain_leaves_no_duplicate_serve_admission(self):

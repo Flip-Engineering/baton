@@ -16,6 +16,9 @@ import ../context/request.bend as Req
 def endpoint_sql(id: String, condition: String) -> String:
   "SELECT coalesce((SELECT (SELECT group_concat(length(CAST(value AS BLOB)) || ':' || value,'') FROM json_each(s.endpoint)) FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.id=" ++ C.q(id) ++ " AND m.receipt IS NULL AND CASE WHEN json_valid(s.endpoint) THEN json_type(s.endpoint)='array' ELSE 0 END AND " ++ condition ++ "),'');"
 
+def native_receiver_sql() -> String:
+  "CASE WHEN json_valid(s.endpoint) THEN s.harness IN ('codex','omp','muse','claude-code') AND json_extract(s.endpoint,'$[#-7]')='receive' AND json_extract(s.endpoint,'$[#-6]')=s.id ELSE 0 END"
+
 def result(saved: String, log: String, run: T.RunRes) -> Result<&1,&1,U32 & String,String>:
   match run:
     case T.RRun{T.SExit{0},out}: Done{saved}

@@ -52,7 +52,7 @@ def managed_receiver_sql() -> String:
   "CASE WHEN json_valid(s.endpoint) THEN s.harness='codex' AND s.native<>'' AND json_extract(s.endpoint,'$[1]') LIKE '%/codex-inbox-wake.mjs' AND json_extract(s.endpoint,'$[#-5]')='--session' AND json_extract(s.endpoint,'$[#-2]')=s.id AND json_extract(s.endpoint,'$[#-1]')=s.native ELSE 0 END"
 
 def native_receiver_sql() -> String:
-  "CASE WHEN json_valid(s.endpoint) THEN s.harness IN ('codex','omp','muse','claude-code') AND json_extract(s.endpoint,'$[#-7]')='receive' AND json_extract(s.endpoint,'$[#-6]')=s.id ELSE 0 END"
+  Delivery.native_receiver_sql()
 
 def dirty_session_sql() -> String:
   "SELECT DISTINCT m.recipient || '|' || s.harness || '|' || CASE WHEN (" ++ native_receiver_sql() ++ ") OR (" ++ managed_receiver_sql() ++ ") THEN 'serve' ELSE 'refuse' END FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.receipt IS NULL AND m.recipient <> '' AND NOT " ++ C.stopped_session_sql("m.recipient") ++ " AND s.harness IN ('codex','omp','muse','claude-code') ORDER BY m.recipient;"
