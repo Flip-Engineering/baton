@@ -60,14 +60,20 @@
   var READINGS = ["running", "queued", "owesWork", "stopped", "failed", "quiet"];
 
   // One ink and one silhouette per state. The shape carries the state too, so the
-  // stage reads for a reader who cannot separate the colours.
+  // stage reads for a reader who cannot separate the colours. Every mark keeps its
+  // own state's ink at the ink's own strength: nothing dims a mark below it, and no
+  // signal borrows a state colour another state owns. The quiet dot is the faintest
+  // mark on the stage by its ink alone, which reads 1.83:1 on the ground; the state
+  // and its count are stated in text in the plate line, the roster rows and the
+  // record, so the quiet mark is a field the eye can find rather than the only
+  // channel for the fact.
   var PAINT = {
     failed: { ink: "var(--failed, #ef6b5f)", shape: "triangle" },
     stopped: { ink: "var(--attention, #e2a94f)", shape: "square" },
     queued: { ink: "var(--stage-starting, #d7b45a)", shape: "ring" },
     owesWork: { ink: "var(--muted, #9aa3b4)", shape: "diamond" },
     running: { ink: "var(--running, #57c46a)", shape: "circle" },
-    quiet: { ink: "var(--staff, #39404b)", shape: "dot", dim: true },
+    quiet: { ink: "var(--staff, #39404b)", shape: "dot" },
   };
 
   // A mark reads at any count: few actors get large marks, a large run gets
@@ -716,7 +722,6 @@
       shape.style.strokeWidth = String(Math.max(1.5, r * 0.34));
     } else {
       shape.style.fill = paint.ink;
-      if (paint.dim) shape.style.opacity = "0.6";
     }
     shape.setAttribute("class", "att-core");
     return shape;
@@ -736,6 +741,10 @@
       "data-att-id": seat.id,
       "data-att-state": seat.reading,
     });
+    // A state that has just changed flashes in its own ink: the ink travels on the
+    // group as currentColor, so the flash adds the state's colour and never another
+    // state's.
+    if (marks.fresh) group.style.color = paint.ink;
 
     if (seat.live) {
       var halo = svgEl("circle", { "class": "att-halo", r: radius + 5, cx: 0, cy: 0 });
@@ -776,16 +785,23 @@
       group.appendChild(trail);
     }
 
-    // The queue as a bar: its length is the count, and the exact figure stays in
-    // the title.
+    // What the seat owes, as units: one mark per recorded item, on the band the
+    // queue bar took (top radius + 3, bottom radius + 5.5, a tick 2px wide and
+    // 2.5px tall with its round caps), so the room the next row's mark and an
+    // under-label need is unchanged. Counting marks in a row answers how much is
+    // waiting without measuring a length; the bar's six-item cap stays, and the
+    // exact figure travels in the seat's title.
     if (seat.owed > 0) {
-      var ticks = Math.min(seat.owed, 6);
-      var bar = svgEl("rect", {
-        "class": "att-tick", x: -(radius * 0.5 + ticks), y: radius + 3,
-        width: radius + ticks * 2, height: 2.5, rx: 1,
-      });
-      bar.style.fill = "var(--muted, #9aa3b4)";
-      group.appendChild(bar);
+      var units = Math.min(seat.owed, 6);
+      var pitch = 3.6;
+      var lead = -((units - 1) * pitch) / 2;
+      for (var u = 0; u < units; u += 1) {
+        group.appendChild(svgEl("line", {
+          "class": "att-owed",
+          x1: lead + u * pitch, y1: radius + 4,
+          x2: lead + u * pitch, y2: radius + 4.5,
+        }));
+      }
     }
 
     var ring = svgEl("circle", { "class": "att-seat-ring", r: radius + 3, cx: 0, cy: 0 });
@@ -1062,6 +1078,9 @@
           + " " + target.x + " " + (target.y - 10 - rise)
           + " " + target.x + " " + (target.y - 10),
       });
+      var batonNote = svgEl("title");
+      setText(batonNote, "the baton \u2014 " + target.id + " acted most recently");
+      baton.appendChild(batonNote);
       svg.appendChild(baton);
     }
 

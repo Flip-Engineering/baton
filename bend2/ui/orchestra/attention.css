@@ -63,6 +63,18 @@
 /* An action from an earlier event reads as a broken trail, never a fresh one. */
 .lane-strip .att-trail-earlier { stroke-dasharray: 2 3; }
 
+/* What a seat owes, in the band below its mark: one unit mark per recorded item.
+   The sign stands for an amount and more signs are more, so the count is read by
+   counting the marks in the row rather than by measuring the length of a bar. The
+   ink is the muted one the queue bar wore and never a state's own, and the exact
+   figure travels in the seat's title. Six units are the cap the bar took; the row
+   of six spans the same twenty pixels, and every unit stays inside the bar's band. */
+.lane-strip .att-owed {
+  stroke: var(--muted, #9aa3b4);
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
 /* The podium rule: the line the tiers stand behind. */
 .lane-strip .att-plate {
   stroke: var(--muted);
@@ -184,9 +196,12 @@
   50% { opacity: 0.6; }
 }
 
+/* A state that has just changed flashes in the seat's own ink, which the module
+   sets on the seat group as currentColor: the flash states the new state in colour
+   as the mark states it in shape. */
 @keyframes att-flash {
-  0% { stroke: #e2a94f; stroke-width: 3; }
-  100% { stroke-width: 0; }
+  0% { stroke: currentColor; stroke-width: 3; }
+  100% { stroke: currentColor; stroke-width: 0; }
 }
 
 @keyframes att-march {
@@ -201,10 +216,10 @@
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 4px 16px;
-  margin: 8px 0 2px;
-  font-family: var(--sans);
-  font-size: 11px;
+  gap: 3px 14px;
+  margin: 6px 0 2px;
+  font-family: var(--mono);
+  font-size: 10px;
   line-height: 1.4;
   color: var(--muted);
 }
@@ -222,7 +237,14 @@
   flex: none;
 }
 
-.lane-strip .att-quiet { margin: 6px 0 0; color: var(--muted); }
+/* The sentence that says nothing needs a person reads in the pit's own ledger face,
+   at the size the run's reading line uses beside the tempo mark. */
+.lane-strip .att-quiet {
+  margin: 6px 0 0;
+  font-family: var(--mono);
+  font-size: var(--step0, 12px);
+  color: var(--muted);
+}
 
 /* The chip states a state and a name. The name never clips and the chip keeps a
    floor, so no chip can render as a fragment; the activity yields instead. */
