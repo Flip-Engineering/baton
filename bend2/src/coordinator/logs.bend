@@ -478,6 +478,42 @@ def write_lines(log: String, lines: List<String>, stopped: Bool) -> IO(Result<&1
     case True{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
     case False{}: write_each(log,lines,Done{Unit{}})
 
+def lines_text(lines: List<String>) -> String:
+  match lines:
+    case Nil{}: ""
+    case Con{head,tail}: head ++ "\n" ++ lines_text(tail)
+
+def positioned_result(+position: String, written: Result<&1,&1,U32 & String,Unit>) -> Result<&1,&1,U32 & String,String>:
+  match written:
+    case Fail{error}: Fail{error}
+    case Done{unit}: Done{position}
+
+def position(previous: String, written: Result<&1,&1,U32 & String,String>) -> String:
+  match written:
+    case Fail{error}: previous
+    case Done{next}: next
+
+def position_write(log: String, written: Result<&1,&1,U32 & String,String>) -> Result<&1,&1,U32 & String,Unit>:
+  match written:
+    case Fail{(code,text)}: Fail{(code,"Log " ++ log ++ ": " ++ text)}
+    case Done{position}: Done{Unit{}}
+
+# Retained observers write each batch at the output cursor in their checkpoint.
+# Equal bytes already present stay in place, including a partial replayed batch.
+# Direct turns retain their existing append and incomplete-frame checkpoint.
+def write_positioned(log: String, lines: List<String>, position: String, stopped: Bool, retained: Bool, finish: Bool) -> IO(Result<&1,&1,U32 & String,String>):
+  match stopped:
+    case True{}: IO.pure(Result<&1,&1,U32 & String,String>,Done{position})
+    case False{}:
+      match retained:
+        case False{}: do IO<Result<&1,&1,U32 & String,String>>:
+          written : Result<&1,&1,U32 & String,Unit> <- write_lines(log,lines,False{})
+          IO.pure(Result<&1,&1,U32 & String,String>,positioned_result(position,written))
+        case True{}:
+          match lines:
+            case Nil{}: Bool.pick(IO(Result<&1,&1,U32 & String,String>),finish,T.Text.write_at(log,position,"",1),IO.pure(Result<&1,&1,U32 & String,String>,Done{position}))
+            case other: T.Text.write_at(log,position,lines_text(other),Bool.pick(U32,finish,1,0))
+
 def register_sql(session: String, log: String) -> String:
   "INSERT OR IGNORE INTO log_files(session,log) VALUES(" ++ C.q(session) ++ "," ++ C.q(log) ++ ");"
 

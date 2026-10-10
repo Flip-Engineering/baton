@@ -3,7 +3,9 @@
 import importlib.util
 import hashlib
 import json
+import os
 import pathlib
+import signal
 import sqlite3
 import subprocess
 import sys
@@ -265,14 +267,39 @@ class NativeObservation(RECEIVE.Receive):
         self.eventually(lambda: self.output_log('parent').exists() and
                         'reattach-checkpoint-assistant' in self.output_log('parent').read_text(),
                         'the complete assistant frame was not logged')
-        self.action(stream, native_frame={'type': 'checkpoint-barrier'})
+        barrier = {'type': 'checkpoint-barrier'}
+        self.action(stream, native_frame=barrier)
         self.assertEqual(json.loads(stream.readline()), {'frame_written': True})
-        self.eventually(lambda: 'checkpoint-barrier' in self.output_log('parent').read_text(),
-                        'observer did not consume the checkpoint barrier')
+        barrier_line = (json.dumps(barrier) + '\n').encode()
+        self.eventually(lambda: barrier_line in self.output_log('parent').read_bytes(),
+                        'observer did not write the complete checkpoint barrier')
 
+        os.kill(observer.pid, signal.SIGSTOP)
+        def observer_stopped():
+            selected = self.selected_process(observer.pid)
+            return selected is not None and selected['state'].startswith('T')
+        self.eventually(observer_stopped, 'fixture observer did not stop before replay output was seeded')
+        duplicate = json.dumps({'type': 'replay-output', 'text': 'Equal frames remain separate: café 🧪'},
+                               ensure_ascii=False)
+        for _ in range(2):
+            self.action(stream, native_line=duplicate)
+            self.assertEqual(json.loads(stream.readline()), {'line_written': duplicate})
+        encoded = (duplicate + '\n').encode()
+        partial = encoded.index('🧪'.encode()) + 1
+        output = self.output_log('parent')
+        before = output.read_bytes()
+        with output.open('ab') as appended:
+            appended.write(encoded + encoded[:partial])
+        visible = output.read_bytes()
         observer.kill()
         observer.wait()
         resumed = self.spawn(*self.receive_args('parent'))
+        self.eventually(lambda: encoded + encoded in output.read_bytes(),
+                        'replay did not complete the partial UTF-8 output batch')
+        completed = output.read_bytes()
+        self.assertEqual(completed, before + encoded + encoded)
+        self.assertEqual(completed[:len(visible)], visible)
+        self.assertEqual(completed[len(visible):], encoded[partial:])
         terminal = {'type': 'agent_end', 'isTerminal': True, 'is_error': False, 'messages': []}
         self.review_input(stream, 'reattach-checkpoint-task')
         self.action(stream, native_frame=terminal)
@@ -300,8 +327,10 @@ class NativeObservation(RECEIVE.Receive):
                          hashlib.sha256(text.encode()).hexdigest())
         barrier_frames = [json.loads(line) for line in log.splitlines()
                           if 'checkpoint-barrier' in line]
-        self.assertEqual(len(barrier_frames), 2)
-        self.assertEqual(barrier_frames[0], barrier_frames[1])
+        self.assertEqual(barrier_frames, [{'type': 'checkpoint-barrier'}])
+        repeated_frames = [json.loads(line) for line in log.splitlines()
+                           if 'Equal frames remain separate' in line]
+        self.assertEqual(repeated_frames, [json.loads(duplicate), json.loads(duplicate)])
         launches = [json.loads(line) for line in (self.directory / 'native-launches.jsonl').read_text().splitlines()]
         self.assertEqual([launch['pid'] for launch in launches], [started['pid']])
         self.shutdown_idle_database_owner('fixture database owner did not exit after OMP completion')

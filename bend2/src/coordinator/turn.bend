@@ -447,11 +447,6 @@ def deferred_note(+db: String, player: String, id: String, +event: String, termi
       noted : Unit <- record_deferred(db,player,id,event,String.eq(later,"1\n"))
       IO.pure(Unit,Unit{})
 
-def append_frame(log: String, line: String, keep: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
-  match keep:
-    case True{}: T.Text.append(log,line ++ "\n")
-    case False{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
-
 # Read the OMP frame type once for level filtering and event observation.
 def omp_frame_kind(db: String, line: String, omp: Bool) -> IO(String):
   match omp:
@@ -488,10 +483,10 @@ def filter_mode(db: String, +line: String, omp: Bool, +requested: String) -> IO(
     case False{}: IO.pure(String,"")
     case True{}: IO.try(String,DB.Sql.query(db,filter_mode_sql(line,requested)))
 
-def record_filter(log: String, +state: String, +requested: String, omp: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+def filter_lines(+state: String, +requested: String, omp: Bool) -> List<String>:
   match omp:
-    case False{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
-    case True{}: append_frame(log,Omp.filter_note(state,requested),True{})
+    case False{}: Nil{}
+    case True{}: [Omp.filter_note(state,requested)]
 
 def terminal_event(event: String, previous: String, selected: Bool) -> IO(String):
   match selected:
@@ -599,22 +594,26 @@ def wake_line(+read: U32, sub: U32, active: Bool) -> IO(Result<&1,&1,U32 & Strin
   Bool.pick(IO(Result<&1,&1,U32 & String,WakeRead>),active,notice_wake_line(read,sub),plain_wake_line(read))
 
 @unsafe
-def consume_exhausted(+db: String, player: String, id: String, +log: String, held: String, +log_failed: Bool, handle: U32, +harness: String, codex_log: String, terminal: String, filter: String, requested: String, first_error: String, sender: Chan(Result<&1,&1,U32 & String,Unit>), +attempt: String, incomplete_observation: Bool, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, wake_sub: U32, wake_on: Bool) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
+def consume_exhausted(+db: String, player: String, id: String, +log: String, held: String, +log_failed: Bool, handle: U32, +harness: String, codex_log: String, terminal: String, filter: String, requested: String, first_error: String, sender: Chan(Result<&1,&1,U32 & String,Unit>), +attempt: String, checkpoint_state: Observer.State, incomplete_observation: Bool, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, wake_sub: U32, wake_on: Bool) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
   do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
     +wake_closed : Result<&1,&1,U32 & String,Unit> <- wake_close(wake_sub,wake_on)
     +sent : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,sender)
     +status : Result<&1,&1,U32 & String,String> <- P.ProcessChild.wait(handle)
-    +flushed : Result<&1,&1,U32 & String,Unit> <- Logs.write_lines(log,Logs.flush(held),log_failed)
+    +output_lines : List<String> <- IO.pure(List<String>,List.append(&1,String,Logs.flush(held),filter_lines(filter,requested,String.eq(harness,"omp\n"))))
+    +positioned : Result<&1,&1,U32 & String,String> <- Logs.write_positioned(log,output_lines,Observer.output(checkpoint_state),Bool.or(log_failed,Observer.output_done(checkpoint_state)),Bool.not(String.is_empty(attempt)),True{})
+    +flushed : Result<&1,&1,U32 & String,Unit> <- IO.pure(Result<&1,&1,U32 & String,Unit>,Logs.position_write(log,positioned))
     +write_failed : Bool <- IO.pure(Bool,Logs.failed_now(log_failed,flushed))
     +event : String <- codex_finished(db,player,id,codex_log,terminal,String.eq(harness,"codex\n"),write_failed)
     +checkpoint_done : Result<&1,&1,U32 & String,Unit> <- checkpoint(Bool.and(String.is_empty(attempt),Bool.not(write_failed)),log,"")
-    +noted : Result<&1,&1,U32 & String,Unit> <- record_filter(log,filter,requested,Bool.and(String.eq(harness,"omp\n"),Bool.not(write_failed)))
     +closed : Result<&1,&1,U32 & String,String> <- NativeRequests.closed(db,attempt,Bool.not(String.is_empty(attempt)))
+    +checkpoint_enabled : Bool <- IO.pure(Bool,Bool.and(Bool.not(String.is_empty(attempt)),Bool.and(Bool.not(incomplete_observation),Bool.and(Bool.not(write_failed),Bool.and(Bool.not(Observer.output_done(checkpoint_state)),Bool.not(observation_store_failed(closed)))))))
+    +checkpointed : Result<&1,&1,U32 & String,Unit> <- Observer.commit(db,handle,Observer.finish_output(checkpoint_state,Logs.position(Observer.output(checkpoint_state),positioned)),checkpoint_enabled)
+    checkpoint_notice : Unit <- checkpoint_failure_notice(db,player,id,attempt,checkpoint_enabled,checkpointed)
     sent_error : String <- IO.pure(String,append_write_error(append_write_error(first_error,wake_closed),sent))
     waited_error : String <- IO.pure(String,append_store_error(sent_error,status))
-    log_error : String <- IO.pure(String,append_write_error(append_write_error(append_write_error(waited_error,flushed),checkpoint_done),noted))
+    log_error : String <- IO.pure(String,append_write_error(append_write_error(append_write_error(waited_error,flushed),checkpoint_done),checkpointed))
     +error : String <- IO.pure(String,append_store_error(log_error,closed))
-    +incomplete : Bool <- IO.pure(Bool,Bool.or(incomplete_observation,Bool.or(checkpoint_write_failed(wake_closed),Bool.or(wait_failed(status),Bool.or(checkpoint_write_failed(sent),Bool.or(checkpoint_write_failed(flushed),Bool.or(checkpoint_write_failed(checkpoint_done),Bool.or(checkpoint_write_failed(noted),observation_store_failed(closed)))))))))
+    +incomplete : Bool <- IO.pure(Bool,Bool.or(incomplete_observation,Bool.or(checkpoint_write_failed(wake_closed),Bool.or(wait_failed(status),Bool.or(checkpoint_write_failed(sent),Bool.or(checkpoint_write_failed(flushed),Bool.or(checkpoint_write_failed(checkpoint_done),Bool.or(checkpoint_write_failed(checkpointed),observation_store_failed(closed)))))))))
     IO.pure(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>,(Ended{status_text(status),event,error,incomplete},deliveries))
 
 @unsafe
@@ -625,10 +624,12 @@ def consume(+db: String, +player: String, +id: String, +log: String, +policy: Lo
       closed : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.close_stdin(handle)
       sent : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,sender)
       +waited : Result<&1,&1,U32 & String,String> <- P.ProcessChild.wait(handle)
-      +flushed : Result<&1,&1,U32 & String,Unit> <- Logs.write_lines(log,Logs.flush(held),log_failed)
+      +positioned : Result<&1,&1,U32 & String,String> <- Logs.write_positioned(log,Logs.flush(held),Observer.output(checkpoint_state),log_failed,Bool.not(String.is_empty(attempt)),False{})
+      +flushed : Result<&1,&1,U32 & String,Unit> <- IO.pure(Result<&1,&1,U32 & String,Unit>,Logs.position_write(log,positioned))
       +write_failed : Bool <- IO.pure(Bool,Logs.failed_now(log_failed,flushed))
       checkpoint_done : Result<&1,&1,U32 & String,Unit> <- checkpoint(Bool.and(String.is_empty(attempt),Bool.not(write_failed)),log,"")
-      named : Result<&1,&1,U32 & String,Unit> <- Logs.write_lines(log,Logs.interrupted(held),write_failed)
+      named_position : Result<&1,&1,U32 & String,String> <- Logs.write_positioned(log,Logs.interrupted(held),Logs.position(Observer.output(checkpoint_state),positioned),write_failed,Bool.not(String.is_empty(attempt)),True{})
+      named : Result<&1,&1,U32 & String,Unit> <- IO.pure(Result<&1,&1,U32 & String,Unit>,Logs.position_write(log,named_position))
       read_error : String <- IO.pure(String,append_error(first_error,"Native output read failed: " ++ error_text(error)))
       sent_error : String <- IO.pure(String,append_write_error(append_write_error(append_write_error(read_error,wake_closed),closed),sent))
       waited_error : String <- IO.pure(String,append_store_error(sent_error,waited))
@@ -637,7 +638,7 @@ def consume(+db: String, +player: String, +id: String, +log: String, +policy: Lo
     case Done{AwakeEnd{+notice,+alive}}: do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
       +drained : String <- Guidance.awake_pending(db,player,handle,cursor,Bool.and(String.eq(harness,"omp\n"),Bool.and(Bool.not(String.is_empty(notice)),String.is_empty(terminal))))
       Bool.pick(IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>),String.is_empty(notice),
-        consume_exhausted(db,player,id,log,held,log_failed,handle,harness,codex_log,terminal,filter,requested,first_error,sender,attempt,incomplete_observation,deliveries,wake_sub,alive),
+        consume_exhausted(db,player,id,log,held,log_failed,handle,harness,codex_log,terminal,filter,requested,first_error,sender,attempt,checkpoint_state,incomplete_observation,deliveries,wake_sub,alive),
         do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
           next : Result<&1,&1,U32 & String,WakeRead> <- wake_line(handle,wake_sub,alive)
           consume(db,player,id,log,policy,held,log_failed,handle,harness,drained,last_message,primary,current,terminal,filter,requested,codex_log,first_error,sender,attempt,checkpoint_state,incomplete_observation,wake_sub,alive,deliveries,next))
@@ -655,7 +656,8 @@ def consume(+db: String, +player: String, +id: String, +log: String, +policy: Lo
         +kept : String <- Logs.retained(db,current_policy,Tx.trim_nl(kind),line,event,log)
         +step : List<String> & String <- IO.pure(List<String> & String,Logs.frame_step(current_policy,Tx.trim_nl(kind),frame_key,kept,held))
         +next_held : String <- IO.pure(String,Logs.step_held(step))
-        +logged : Result<&1,&1,U32 & String,Unit> <- Logs.write_lines(log,Logs.step_lines(step),log_failed)
+        +positioned : Result<&1,&1,U32 & String,String> <- Logs.write_positioned(log,Logs.step_lines(step),Observer.output(checkpoint_state),log_failed,Bool.not(String.is_empty(attempt)),False{})
+        +logged : Result<&1,&1,U32 & String,Unit> <- IO.pure(Result<&1,&1,U32 & String,Unit>,Logs.position_write(log,positioned))
         +saved_checkpoint : Result<&1,&1,U32 & String,Unit> <- checkpoint_written(logged,Bool.and(String.is_empty(attempt),Bool.and(Bool.not(log_failed),Bool.not(String.eq(held,next_held)))),log,next_held)
         +written : Result<&1,&1,U32 & String,Unit> <- IO.pure(Result<&1,&1,U32 & String,Unit>,Logs.first_failure(saved_checkpoint,logged))
         +failed : Bool <- IO.pure(Bool,Logs.failed_now(log_failed,written))
@@ -679,7 +681,7 @@ def consume(+db: String, +player: String, +id: String, +log: String, +policy: Lo
         questions : List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool <- NativeRequests.observe(db,player,id,attempt,line,deliveries,Bool.and(Bool.not(String.is_empty(attempt)),String.eq(kind,"extension_ui_request\n")))
         +mode : String <- filter_mode(db,line,Bool.and(String.eq(harness,"omp\n"),String.eq(Tx.trim_nl(kind),"response")),requested)
         +next_filter : String <- IO.pure(String,Omp.filter_next(filter,Tx.trim_nl(mode)))
-        +next_checkpoint : Observer.State <- IO.pure(Observer.State,Observer.with_omp_activity(Observer.make(next_cursor,message,next_primary,next_current,ended,next_filter,codex_state,next_held),activity))
+        +next_checkpoint : Observer.State <- IO.pure(Observer.State,Observer.with_output(Observer.with_omp_activity(Observer.make(next_cursor,message,next_primary,next_current,ended,next_filter,codex_state,next_held),activity),Logs.position(Observer.output(checkpoint_state),positioned)))
         NativeRequests.with_observation(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>,questions,wakes => question_error => question_incomplete => do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
           +question_text : String <- IO.pure(String,question_error)
           +request_incomplete : Bool <- IO.pure(Bool,question_incomplete)
