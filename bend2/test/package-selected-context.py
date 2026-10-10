@@ -700,7 +700,7 @@ void handler(const char *dynamic) {
         source_tool = next(tool for tool in modules['bend2']['tools']
                            if tool['operation'] == 'sourceAnalysis')
         self.assertEqual(source_tool['optionsSchema']['type'], 'object')
-        source_request = dict(source_tool['requestExample'], cwd=str(worktree))
+        source_request = dict(source_tool['requestExample'], cwd=str(worktree), engine='auto')
         request.write_text(json.dumps(source_request) + '\n')
         submitted = invoke('context-query-file', 'validation-owner', query, str(request),
                            cwd=worktree)

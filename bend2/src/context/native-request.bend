@@ -59,11 +59,14 @@ def request_subject(+members: J.Json) -> J.Json:
 def source_path(req: J.Json) -> String:
   Ops.source_path(req)
 
+def selection_engine(+engine: String) -> String:
+  Bool.pick(String, String.eq(engine, "auto"), "", engine)
+
 def decoded_request(+req: J.Json, +canonical: String) -> RequestDecode:
   RequestDecoded{canonical,
     Sel.RequestOperands{Ops.request_subject_kind(req),
       Eng.ss_of_list(projections_list(request_select(request_members(req)))),
-      optional_member_text(request_members(req), "engine"),
+      selection_engine(optional_member_text(request_members(req), "engine")),
       CoreCodec.primary_operation(CoreCodec.request_operation_chain(req, Eng.ss_empty()))},
     CoreCodec.request_operation_chain(req, Eng.ss_empty()),
     optional_member_text(request_members(req), "cwd"),
