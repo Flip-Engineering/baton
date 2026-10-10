@@ -318,9 +318,9 @@
   margin: 8px 0 0;
   padding: 0;
   list-style: none;
-  max-height: 320px;
-  overflow: auto;
-  scrollbar-gutter: stable;
+  /* No box of its own: the page carries the window's length, as it
+     carries the record; the window is bounded in ribbon.js and the
+     axis pages it. */
   border-top: 1px solid var(--rib-grid);
 }
 

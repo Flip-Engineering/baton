@@ -18,8 +18,15 @@
    events were recorded under; {conversationId} the project's open conversation. */
 
 const RIBBON_BARS_MAX = 180;
-const RIBBON_LIST_ROWS = 400;
-const RIBBON_PAGE_STEP = 50;
+// The list is a moving window over the history, centred on the slider
+// position and re-rendered on every scrub. Twenty-one rows is ten events
+// of context on each side of the current one: the whole window stands in
+// page flow at roughly the height the old 320px box clipped to, and the
+// axis stays the one paging gesture, as the list's own note row states.
+const RIBBON_LIST_ROWS = 21;
+// One window per key press, less the current row so a single row carries
+// over between consecutive windows and the reader keeps their place.
+const RIBBON_PAGE_STEP = 20;
 const RIBBON_CHIPS_MAX = 8;
 // A second kind counts as a real mix of the stretch at a quarter of its entries
 // or more. A stray entry does not earn a head.
