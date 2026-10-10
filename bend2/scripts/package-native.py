@@ -194,6 +194,48 @@ def stage_typescript_context_module(payload, runtime_package):
         'referenceSchema': 'baton2.context.typescript.reference.v1',
         'eventSchema': 'baton2.context.typescript.source-analysis.event.v1',
         'lifetimeProfile': '',
+        'optionsJsonSchema': {
+            'type': 'object',
+            'properties': {
+                'project': {
+                    'type': 'string',
+                    'description': 'TypeScript configuration path relative to cwd. Omission uses baseline compiler options.',
+                },
+                'readRoots': {
+                    'type': 'array', 'items': {'type': 'string'},
+                    'description': 'Explicit filesystem roots relative to cwd. Omission permits ordinary source and dependency reads.',
+                },
+                'database': {
+                    'anyOf': [
+                        {'type': 'string'},
+                        {'type': 'object',
+                         'properties': {'engine': {'const': 'sqlite-schema'},
+                                        'path': {'type': 'string'}},
+                         'required': ['engine', 'path']},
+                        {'type': 'null'},
+                    ],
+                    'description': 'SQLite database path or selector used to join databaseAccesses to catalog objects.',
+                },
+                'client': {
+                    'anyOf': [
+                        {'type': 'object',
+                         'properties': {'path': {'type': 'string'},
+                                        'line': {'type': 'integer', 'minimum': 0},
+                                        'column': {'type': 'integer', 'minimum': 0}},
+                         'required': ['path', 'line', 'column']},
+                        {'type': 'null'},
+                    ],
+                    'description': 'Database-client declaration path and zero-based line and column.',
+                },
+            },
+        },
+        'requestExample': {
+            'version': 1, 'engine': 'typescript',
+            'subject': {'kind': 'symbol', 'path': 'src/analysis.ts', 'name': 'answer'},
+            'select': ['definition', 'type', 'databaseAccesses'], 'cwd': '.',
+            'options': {'database': {'engine': 'sqlite-schema', 'path': 'catalog.db'},
+                        'client': {'path': 'src/analysis.ts', 'line': 0, 'column': 17}},
+        },
     }
     identity = hashlib.sha256(json.dumps(artifacts + dependencies, sort_keys=True).encode()).hexdigest()
     declaration = {

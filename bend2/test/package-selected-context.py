@@ -827,13 +827,25 @@ void handler(const char *dynamic) {
             with sqlite3.connect(catalog_database) as connection:
                 connection.execute('CREATE TABLE records(value TEXT)')
                 connection.execute("INSERT INTO records VALUES ('alpha')")
-            request.write_text(json.dumps({
-                'version': 1, 'engine': 'typescript',
-                'subject': {'kind': 'symbol', 'path': 'analysis.ts', 'name': 'answer'},
-                'select': ['definition', 'type', 'databaseAccesses'], 'cwd': str(worktree),
-                'options': {'database': {'engine': 'sqlite-schema', 'path': 'catalog.db'},
-                            'client': {'path': 'analysis.ts', 'line': 0, 'column': 17}},
-            }) + '\n')
+            typescript_inventory = invoke('context-engines', 'validation-owner', cwd=worktree)
+            self.assertEqual(typescript_inventory.returncode, 0,
+                             typescript_inventory.stdout + typescript_inventory.stderr)
+            typescript_module = next(module for module in json.loads(typescript_inventory.stdout)['modules']
+                                     if module['moduleId'] == 'typescript')
+            typescript_tool = next(tool for tool in typescript_module['tools']
+                                   if tool['operation'] == 'sourceAnalysis')
+            self.assertEqual(typescript_tool['optionsSchema']['properties']['project']['type'], 'string')
+            self.assertEqual(typescript_tool['optionsSchema']['properties']['readRoots']['type'], 'array')
+            typescript_request = {
+                **typescript_tool['requestExample'], 'cwd': str(worktree),
+                'subject': {**typescript_tool['requestExample']['subject'], 'path': 'analysis.ts'},
+                'options': {
+                    **typescript_tool['requestExample']['options'],
+                    'client': {**typescript_tool['requestExample']['options']['client'],
+                               'path': 'analysis.ts'},
+                },
+            }
+            request.write_text(json.dumps(typescript_request) + '\n')
             submitted = invoke('context-query-file', 'validation-owner', 'installed-typescript',
                                str(request), cwd=worktree)
             self.assertEqual(submitted.returncode, 0, submitted.stdout + submitted.stderr)
