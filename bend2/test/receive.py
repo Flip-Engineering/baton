@@ -1443,8 +1443,9 @@ class Receive(unittest.TestCase):
                 finally:
                     fixture.doCleanups()
 
-    def exercise_completed_observer(self, stopped, keeper_loss=True):
-        print(f'Completed observer recovery: stopped={stopped}, keeper_loss={keeper_loss}', flush=True)
+    def exercise_completed_observer(self, stopped, keeper_loss=True, device_renumbered=False):
+        print(f'Completed observer recovery: stopped={stopped}, keeper_loss={keeper_loss}, '
+              f'device_renumbered={device_renumbered}', flush=True)
         self.coord('connect', 'root', 'native-root', json.dumps([str(self.fixture), 'parent_endpoint']))
         self.player(harness='omp')
         config_path = self.directory / 'fixture.json'
@@ -1478,6 +1479,28 @@ class Receive(unittest.TestCase):
         self.eventually(lambda: (attempt / 'status').exists(),
                         'The keeper did not record actual native exit.')
         self.assertEqual((attempt / 'status').read_text(), '0\n')
+        if device_renumbered:
+            # The retained logging attempt kept its path and inodes after its
+            # device number changed. Its device-qualified guard was recreated.
+            historical_guard = self.directory / 'pre-remount-session-guard'
+            historical_guard.write_bytes(b'')
+            self.assertNotEqual(historical_guard.stat().st_ino,
+                                pathlib.Path(_session_lock_path(self.db, 'parent')).stat().st_ino)
+            for name, device_offsets in (('admission', (16, 32, 48)), ('checkpoint', (40,))):
+                path = attempt / name
+                record = bytearray(path.read_bytes())
+                self.assertEqual(record[:8], b'BATONAD1' if name == 'admission' else b'BATONC03')
+                for offset in device_offsets:
+                    device = struct.unpack_from('=Q', record, offset)[0]
+                    struct.pack_into('=Q', record, offset, device ^ 1)
+                if name == 'admission':
+                    struct.pack_into('=Q', record, 40, historical_guard.stat().st_ino)
+                digest = 0xcbf29ce484222325
+                for byte in record[:72] + record[80:]:
+                    digest = ((digest ^ byte) * 0x100000001b3) & 0xFFFFFFFFFFFFFFFF
+                struct.pack_into('=Q', record, 72, digest)
+                path.write_bytes(record)
+            self.assertFalse((attempt / 'checkpoint-error').exists())
         if stopped:
             self.coord('stop', 'parent', 'operator-stop', 'Preserve the operator stop.')
         if keeper_loss:
@@ -1531,11 +1554,15 @@ class Receive(unittest.TestCase):
             self.assertEqual((attempt / name).read_bytes(), content)
         self.assertTrue((attempt / 'released').exists())
         self.assertTrue((attempt / 'acknowledged').exists())
+        if device_renumbered:
+            self.assertFalse((attempt / 'admission-error').exists())
+            self.assertFalse((attempt / 'checkpoint-error').exists(),
+                             'Device renumbering discarded the retained observation checkpoint.')
         self.shutdown_idle_database_owner('The recovered fixture owner did not exit naturally.')
         self.assertTrue(self.session_guard_available('parent'))
 
     def test_completed_orphan_observer_recovers_original_and_pending_input(self):
-        self.exercise_completed_observer(stopped=False)
+        self.exercise_completed_observer(stopped=False, device_renumbered=True)
 
     def test_completed_orphan_observer_recovery_preserves_explicit_stop(self):
         self.exercise_completed_observer(stopped=True)

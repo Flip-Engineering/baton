@@ -161,8 +161,7 @@ Each field is validated before the offset is trusted:
   across an owner restart (an owner-local attempt number is not);
 - `birth`, the native process from `<attempt>/native.birth`;
 - `manifest`, the digest of the admitted manifest;
-- `spool_device` and `spool_inode`, the identity of the stdout spool file the
-  bytes came from;
+- `spool_inode`, the inode of the stdout spool file the bytes came from;
 - `offset` within the current spool size;
 - `length` before any allocation, and the whole-record checksum, which covers
   every header field and every state byte, so an equal-length corruption is
@@ -175,6 +174,9 @@ than forced to replay. Everything else — a torn record, a mismatched binding, 
 state that fails its checksum — returns an empty state and offset zero, writes
 `<attempt>/checkpoint-error`, and leaves the reader at the beginning, so a caller
 replays with its own durable deduplication and never skips a frame.
+
+`spool_device` records the device number when the checkpoint was written. A
+remount can change that number while preserving the spool inode and attempt path.
 
 Reading bytes is not a durable observation: the reader never moves the
 checkpoint, and an offset alone never authorizes a resume.

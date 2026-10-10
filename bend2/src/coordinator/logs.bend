@@ -498,6 +498,11 @@ def position_write(log: String, written: Result<&1,&1,U32 & String,String>) -> R
     case Fail{(code,text)}: Fail{(code,"Log " ++ log ++ ": " ++ text)}
     case Done{position}: Done{Unit{}}
 
+def write_positioned_retained(log: String, lines: List<String>, +position: String, finish: Bool) -> IO(Result<&1,&1,U32 & String,String>):
+  match lines:
+    case Nil{}: Bool.pick(IO(Result<&1,&1,U32 & String,String>),finish,T.Text.write_at(log,position,"",1),IO.pure(Result<&1,&1,U32 & String,String>,Done{position}))
+    case other: T.Text.write_at(log,position,lines_text(other),Bool.pick(U32,finish,1,0))
+
 # Retained observers write each batch at the output cursor in their checkpoint.
 # Equal bytes already present stay in place, including a partial replayed batch.
 # Direct turns retain their existing append and incomplete-frame checkpoint.
@@ -509,10 +514,7 @@ def write_positioned(log: String, lines: List<String>, position: String, stopped
         case False{}: do IO<Result<&1,&1,U32 & String,String>>:
           written : Result<&1,&1,U32 & String,Unit> <- write_lines(log,lines,False{})
           IO.pure(Result<&1,&1,U32 & String,String>,positioned_result(position,written))
-        case True{}:
-          match lines:
-            case Nil{}: Bool.pick(IO(Result<&1,&1,U32 & String,String>),finish,T.Text.write_at(log,position,"",1),IO.pure(Result<&1,&1,U32 & String,String>,Done{position}))
-            case other: T.Text.write_at(log,position,lines_text(other),Bool.pick(U32,finish,1,0))
+        case True{}: write_positioned_retained(log,lines,position,finish)
 
 def register_sql(session: String, log: String) -> String:
   "INSERT OR IGNORE INTO log_files(session,log) VALUES(" ++ C.q(session) ++ "," ++ C.q(log) ++ ");"

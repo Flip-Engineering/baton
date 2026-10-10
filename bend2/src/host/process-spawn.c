@@ -1730,7 +1730,7 @@ static int br_checkpoint_verified_offset(const char *directory,int spool_fd,uint
   if(!error && (stored.birth.pid!=birth.pid || stored.birth.first!=birth.first ||
                 stored.birth.second!=birth.second))error=EINVAL;
   if(!error && (stored.manifest!=manifest || stored.attempt!=br_attempt_identity(directory)))error=EINVAL;
-  if(!error && (stored.spool_device!=spool_device || stored.spool_inode!=spool_inode))error=EINVAL;
+  if(!error && stored.spool_inode!=spool_inode)error=EINVAL;
   if(!error && fstat(spool_fd,&info))error=errno;
   if(!error && stored.offset>(uint64_t)info.st_size)error=EINVAL;
   char *state=NULL;
@@ -1826,7 +1826,7 @@ static int br_checkpoint_load(const char *directory,int spool_fd,uint32_t schema
   if(!error && (checkpoint.birth.pid!=birth.pid || checkpoint.birth.first!=birth.first ||
                 checkpoint.birth.second!=birth.second))error=EINVAL;
   if(!error && checkpoint.manifest!=manifest)error=EINVAL;
-  if(!error && (checkpoint.spool_device!=spool_device || checkpoint.spool_inode!=spool_inode))error=EINVAL;
+  if(!error && checkpoint.spool_inode!=spool_inode)error=EINVAL;
   if(!error && fstat(spool_fd,&info))error=errno;
   if(!error && (checkpoint.offset>(uint64_t)info.st_size))error=EINVAL;
   char *buffer=NULL;
@@ -2651,13 +2651,9 @@ static int br_manifest_store(const char *directory,const char *manifest_path,BrM
   if(dirfd>=0)close(dirfd);
   return error;
 }
-/* The durable admission record. It binds one attempt directory to the physical
-   database that admitted it, to the session guard whose lock the admitting call
-   held, and to the directory's own identity, so adoption and launch are
-   authorized from durable evidence rather than from the presence of a spool
-   file. The integrity check covers the record and the recorded path; the
-   authority comes from the recorded device and inode identities, which a copy
-   of the record into another directory cannot change. */
+/* The admission record stores the attempt path, database and directory inodes,
+   and the session guard held when the attempt was prepared. Device numbers are
+   retained as historical observations; they can change after a remount. */
 #define BR_ADMISSION_MAGIC "BATONAD1"
 typedef struct {
   char magic[8];
@@ -2713,10 +2709,8 @@ static int br_admission_store(const char *directory,const char *database,int gua
   free(bytes);free(path);free(canonical);
   return error;
 }
-/* Verifies the admission record of a directory against the database that requests
-   it and the guard the caller holds. Every mismatch refuses: a directory whose
-   recorded identity, database or guard differs is not the attempt that was
-   admitted, whatever files it contains. */
+/* Checks the recorded path and inodes against the requested attempt, database
+   and optional current guard. */
 static int br_admission_verify(const char *directory,const char *database,int guard) {
   char *path=br_path(directory,"admission");
   if(!path)return ENOMEM;
@@ -2751,8 +2745,7 @@ static int br_admission_verify(const char *directory,const char *database,int gu
   struct stat attempt,database_info,guard_info;
   if(!error && (lstat(canonical,&attempt) || !S_ISDIR(attempt.st_mode)))
     {error=EPERM;reason="the requested directory is not a directory\n";}
-  if(!error && ((uint64_t)attempt.st_dev!=record.attempt_device ||
-                (uint64_t)attempt.st_ino!=record.attempt_inode))
+  if(!error && (uint64_t)attempt.st_ino!=record.attempt_inode)
     {error=EPERM;reason="the admission record belongs to another directory\n";}
   if(!error && strcmp(recorded,canonical))
     {error=EPERM;reason="the admission record names another path\n";}
@@ -2762,8 +2755,7 @@ static int br_admission_verify(const char *directory,const char *database,int gu
     {error=EPERM;reason="the admission record states no database binding\n";}
   if(!error && database && record.database_inode) {
     if(stat(database,&database_info)) {error=EPERM;reason="the requesting database is not readable\n";}
-    else if((uint64_t)database_info.st_dev!=record.database_device ||
-            (uint64_t)database_info.st_ino!=record.database_inode)
+    else if((uint64_t)database_info.st_ino!=record.database_inode)
       {error=EPERM;reason="the admission record belongs to another database\n";}
   }
   /* A guard identity states which session guard admitted the attempt. An attempt
@@ -2773,14 +2765,12 @@ static int br_admission_verify(const char *directory,const char *database,int gu
      effect boundary passes zero for an absent lock. */
   if(!error && guard>=0 && guard>0 && !record.guard_inode)
     {error=EPERM;reason="the admission record states no session guard binding\n";}
-  /* Recovery passes -1 only after validating the exact old managed bootstrap
-     under the elected database owner. The recorded guard remains historical
-     provenance; this path does not claim that its descriptor or lock is held. */
+  /* Recovery passes -1 when the recorded guard is historical. The recovering
+     caller obtains and holds the current database/session guard separately. */
   if(!error && guard>=0 && record.guard_inode) {
     if(guard<=0) {error=EPERM;reason="the admission record requires a session guard\n";}
     else if(fstat(guard,&guard_info)) {error=EPERM;reason="the presented guard is not a file\n";}
-    else if((uint64_t)guard_info.st_dev!=record.guard_device ||
-            (uint64_t)guard_info.st_ino!=record.guard_inode)
+    else if((uint64_t)guard_info.st_ino!=record.guard_inode)
       {error=EPERM;reason="the admission record belongs to another session guard\n";}
   }
   if(error && reason)br_file(canonical?canonical:directory,"admission-error",reason,strlen(reason),1);
@@ -4716,7 +4706,7 @@ typedef struct {
 
 static int baton_observer_completed(BatonSessionLock *call) {
   if(call->observer<=1 || call->observer>INT_MAX || call->observer==(u32)getpid())return EINVAL;
-  int error=br_admission_verify(call->directory,call->database,call->handle);
+  int error=br_admission_verify(call->directory,call->database,-1);
   if(error)return error;
   char *path=br_path(call->directory,"status");
   FILE *file=path?fopen(path,"r"):NULL;

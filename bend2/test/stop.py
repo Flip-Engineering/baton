@@ -87,6 +87,8 @@ class Stop(unittest.TestCase):
     accept_child = receive.Receive.accept_child
     shutdown_idle_database_owner = receive.Receive.shutdown_idle_database_owner
     action = receive.Receive.action
+    capture_child_output = receive.Receive.capture_child_output
+    child_communication = receive.Receive.child_communication
     finish = receive.Receive.finish
     native_requests = receive.Receive.native_requests
     native_question = receive.Receive.native_question
