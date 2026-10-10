@@ -3447,6 +3447,10 @@
       const raw = e.getAttribute(side) || "";
       if (!raw) continue;
       if (kwKey(k, kwTypedLookupId(k, raw)) === hub) continue;
+      // This pass clears only the dim it introduced: an edge already
+      // dimmed by citations-only or search keeps its dim untracked,
+      // so returning to all cannot reveal what those passes hid.
+      if (e.classList.contains("kw-dim")) continue;
       e.classList.add("kw-dim");
       kwDirectionDimmed.push(e);
     }
