@@ -1208,7 +1208,7 @@ def direct_route_applied(+db: String, +player: String, +id: String, +log: String
       wake : Result<&1,&1,U32 & String,Unit> <- direct_wake(db,player,id,outcome)
       IO.pure(Result<&1,&1,U32 & String,Unit>,wake)
 
-def direct_route_continue(+db: String, +player: String, +id: String, +log: String, outcome: Outcome) -> IO(Result<&1,&1,U32 & String,Unit>):
+def direct_route_continue(+db: String, +player: String, +id: String, +log: String, +outcome: Outcome) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     +cause : String <- Subs.exhaustion_cause(db,direct_event(outcome))
     +old_harness : String <- IO.try(String,DB.Sql.query(db,Subs.session_route_sql(db,player)))
