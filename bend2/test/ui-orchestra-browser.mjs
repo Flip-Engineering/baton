@@ -1755,8 +1755,19 @@ check('a typed edge carries its provenance marker and a stroke that tells them a
   })()`));
 // The new map chrome, held to the same bar: each check reads the drawn
 // thing and can fail on the fixture's own payload.
-check('no dim applies on the fixture page first render', await evalJs(
-  `document.querySelectorAll('#knowledge-whole .kw-dim').length === 0`));
+// The live dim is intentional on the fixture page: the actors the shell
+// reports not running and not pending dim, and nothing else does. The
+// fixture carries conductor-b (completed), player-e (failed) and the
+// ghost (no player row, so no read at all) as its non-live actors.
+check('the first render dims exactly the non-live actors and nothing else', await evalJs(`(() => {
+  const dims = [...document.querySelectorAll('#knowledge-whole .kw-dim')];
+  if (!dims.length) return false;
+  const ids = dims.map((g) => g.getAttribute('data-kw-id') || '').sort();
+  const expected = ['fixture-knowledge-conductor-b', 'fixture-knowledge-ghost',
+    'fixture-knowledge-player-e'];
+  return dims.every((g) => g.classList.contains('kw-anchor'))
+    && ids.join(',') === expected.sort().join(',');
+})()`));
 await evalJs(`(() => {
   const edge = document.querySelector('#knowledge-whole .kw-edge-typed');
   if (edge) edge.dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -1777,6 +1788,41 @@ check('the direction control offers the three choices and dims by them', await e
   const restored = document.querySelectorAll('#knowledge-whole .kw-dim').length;
   return dimmed > before && restored === before;
 })()`));
+// The composed reading: citations-only holds its dim while the direction
+// pass runs and clears. This is the expected composed behavior against the
+// lane's fix: the direction dims and the provenance dims compose rather
+// than one clearing the other.
+await evalJs(`(() => {
+  const prov = document.querySelector('#knowledge-whole [data-kw-prov="cited"]');
+  if (prov) prov.click();
+  return true;
+})()`);
+await until('citations only dims the non-citation edges',
+  `document.querySelectorAll('#knowledge-whole .kw-dim').length > 0`);
+check('citations only holds its dim while the direction pass composes', await evalJs(`(() => {
+  const prov = document.querySelector('#knowledge-whole [data-kw-prov="cited"]');
+  if (!prov || prov.getAttribute('aria-pressed') !== 'true') return false;
+  const held = document.querySelectorAll('#knowledge-whole .kw-dim').length;
+  const outgoing = [...document.querySelectorAll('#knowledge-whole .kw-direction button')]
+    .find((b) => (b.textContent || '').trim() === 'outgoing');
+  if (outgoing) outgoing.click();
+  const afterDirection = document.querySelectorAll('#knowledge-whole .kw-dim').length;
+  const all = [...document.querySelectorAll('#knowledge-whole .kw-direction button')]
+    .find((b) => (b.textContent || '').trim() === 'all');
+  if (all) all.click();
+  const afterAll = document.querySelectorAll('#knowledge-whole .kw-dim').length;
+  const provStillHeld = document.querySelector('#knowledge-whole [data-kw-prov="cited"]');
+  return held > 0 && afterDirection >= held && afterAll >= held
+    && provStillHeld && provStillHeld.getAttribute('aria-pressed') === 'true';
+})()`));
+await evalJs(`(() => {
+  const prov = document.querySelector('#knowledge-whole [data-kw-prov="cited"]');
+  if (prov && prov.getAttribute('aria-pressed') === 'true') prov.click();
+  return true;
+})()`);
+await until('leaving citations only restores the canvas',
+  `document.querySelectorAll('#knowledge-whole .kw-dim').length === 0`
+    + ` || document.querySelectorAll('#knowledge-whole .kw-dim.kw-anchor').length > 0`);
 await evalJs(`(() => {
   const ring = document.querySelector('#knowledge-whole [data-reference-only="true"][data-kw-node="message:fixture-message-2"]');
   if (ring) ring.dispatchEvent(new MouseEvent('click', { bubbles: true }));
@@ -1799,11 +1845,16 @@ await evalJs(`(() => {
 })()`);
 await until('the walk bar keeps the visited edges as steps',
   `document.querySelectorAll('#knowledge-whole .kw-walk-step').length >= 2`);
-check('a walk step re-lights the edge it names', await evalJs(`(() => {
+check('a walk step re-lights the edge it names and pins its card', await evalJs(`(() => {
   const steps = [...document.querySelectorAll('#knowledge-whole .kw-walk-step')];
   if (steps.length < 2) return false;
-  return steps.every((step) => /\u2192/.test(step.textContent || '')
-    && (step.getAttribute('aria-label') || '').startsWith('Re-light '));
+  const label = steps[0].getAttribute('aria-label') || '';
+  const ends = label.replace(/^Re-light /, '').split(/ from | to /);
+  steps[0].click();
+  const card = document.querySelector('#knowledge-whole .kw-card');
+  if (!card) return false;
+  const words = card.textContent || '';
+  return ends.length >= 3 && words.includes(ends[1]) && words.includes(ends[2]);
 })()`));
 check('the key rows follow the drawn provenance', await evalJs(`(() => {
   const words = (document.querySelector('#knowledge-whole') || { textContent: '' }).textContent || '';
@@ -2004,6 +2055,29 @@ check('a reference the store does not hold ends in an open bead, and a held end 
     if (!beads.length) return false;
     return beads.every((bead) => /the store does not hold this record/.test(bead.textContent || ''));
   })()`));
+
+// A cited seam routes through the shell to the citing finding's record,
+// and the address it writes reloads to the same record.
+await evalJs(`(() => {
+  const hits = [...document.querySelectorAll('#attention-band .att-seam-hit')];
+  const cited = hits.find((hit) => /drawn at that author/.test(hit.textContent || ''));
+  if (cited) cited.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  return true;
+})()`);
+await until('a cited seam opens the citing finding record',
+  `(() => { const block = document.querySelector('#selection #sel-sec-finding');
+    return !!block && /^Finding fixture-finding-/.test((block.querySelector('h2') || { textContent: '' }).textContent || ''); })()`);
+const relationAddress = await evalJs(`location.hash || ''`);
+check('a cited seam click opens the citing finding and writes the relation address',
+  relationAddress.startsWith('#relation=recorded-evidence:finding%3A')
+    && relationAddress.includes('%3Amessage%3A'));
+await openPage(fixtureUrl + relationAddress);
+await until('reloading the relation address recovers the same record',
+  `(() => { const block = document.querySelector('#selection #sel-sec-finding');
+    return !!block && /^Finding fixture-finding-/.test((block.querySelector('h2') || { textContent: '' }).textContent || ''); })()`);
+check('the relation address round-trips through a reload', await evalJs(
+  `(location.hash || '') === ${JSON.stringify(relationAddress)}`
+    + ` && !!document.querySelector('#selection #sel-sec-finding')`));
 
 // ============ the fixture document: the absent typed fields ============
 await openPage(urlA + 'index.html?fixture=fixture-knowledge-empty');
