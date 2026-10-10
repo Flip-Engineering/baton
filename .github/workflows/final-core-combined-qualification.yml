@@ -40,11 +40,11 @@ permissions:
 
 env:
   BEND_NO_TELEMETRY: '1'
-  PRODUCT_SOURCE_SHA: ${{ inputs.fixture_source_sha || '23312bc14f104ee3b06d8e2abd97b57cb3b38cf3' }}
+  PRODUCT_SOURCE_SHA: ${{ inputs.fixture_source_sha || '93196f193ae39293e6a4f4f73f0c1da060f54e65' }}
   PRODUCT_RUN_ID: ${{ inputs.product_run_id || github.run_id }}
   PRODUCT_RUN_ATTEMPT: ${{ inputs.product_run_attempt || github.run_attempt }}
   CANONICAL_DARWIN_RUN_ID: ''
-  CANONICAL_DARWIN_SOURCE_SHA: '23312bc14f104ee3b06d8e2abd97b57cb3b38cf3'
+  CANONICAL_DARWIN_SOURCE_SHA: '93196f193ae39293e6a4f4f73f0c1da060f54e65'
 
 jobs:
   build:
