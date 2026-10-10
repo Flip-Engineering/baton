@@ -30,7 +30,8 @@ class OmpRootAdapter(unittest.TestCase):
         if not EXE.exists():
             self.skipTest(f'Coordinator not built at {EXE}')
         self.temp = tempfile.TemporaryDirectory(dir=ROOT / '.scratch/bend2')
-        self.addCleanup(self.temp.cleanup)
+        self.db = pathlib.Path(self.temp.name) / 'state.db'
+        self.addCleanup(self.cleanup_fixture)
         self.repo = pathlib.Path(self.temp.name) / 'repository'
         self.repo.mkdir()
         self.checkouts = pathlib.Path(self.temp.name) / 'checkouts'
@@ -44,8 +45,6 @@ class OmpRootAdapter(unittest.TestCase):
                        check=True, capture_output=True)
         self.base = subprocess.run(['git', '-C', str(self.repo), 'rev-parse', 'HEAD'],
                                    check=True, capture_output=True, text=True).stdout.strip()
-        self.db = pathlib.Path(self.temp.name) / 'state.db'
-        self.addCleanup(self.shutdown_instance_owner)
 
     def register(self, name, parent, harness, model, effort, workspace=None, branch=None, base=None):
         """Recruit the session into this suite's fixture repository."""
@@ -70,6 +69,12 @@ class OmpRootAdapter(unittest.TestCase):
         self.assertEqual(stopped.returncode, 0, stopped.stderr)
         while owners & self.instance_owner_pids():
             time.sleep(.01)
+
+    def cleanup_fixture(self):
+        self.temp._finalizer.detach()
+        if self.db.exists():
+            self.shutdown_instance_owner()
+        self.temp.cleanup()
 
     def coord(self, *args, ok=True):
         p = subprocess.run(
@@ -492,22 +497,24 @@ class OmpRootAdapter(unittest.TestCase):
 class OmpRootEndToEnd(unittest.TestCase):
     """End-to-end: recruit a worker, report, process with OMP root."""
 
+    instance_owner_pids = OmpRootAdapter.instance_owner_pids
+    shutdown_instance_owner = OmpRootAdapter.shutdown_instance_owner
+    cleanup_fixture = OmpRootAdapter.cleanup_fixture
+
     def setUp(self):
         if not EXE.exists():
             self.skipTest(f'Coordinator not built at {EXE}')
         self.temp = tempfile.TemporaryDirectory(dir=ROOT / '.scratch/bend2')
         self.directory = pathlib.Path(self.temp.name)
+        self.db = self.directory / 'state.db'
+        self.addCleanup(self.cleanup_fixture)
         self.repo = self.directory / 'repository'
         self.repo.mkdir()
-        self.db = self.directory / 'state.db'
         self.git('init', '-q', '-b', 'main')
         self.git('config', 'user.name', 'Baton test')
         self.git('config', 'user.email', 'baton@example.invalid')
         self.git('commit', '-q', '--allow-empty', '-m', 'initial')
         self.base = self.git('rev-parse', 'HEAD').strip()
-
-    def tearDown(self):
-        self.temp.cleanup()
 
     def git(self, *args):
         return subprocess.run(
