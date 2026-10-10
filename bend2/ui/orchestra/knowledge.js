@@ -2926,7 +2926,7 @@
       if (ref.typed && ref.typed.kind) {
         kwEl(card, "p", { class: "kw-card-fact" }, "kind: " + String(ref.typed.kind));
       }
-      if (ref.typed && ref.typed.deliveryRead !== undefined) {
+      if (ref.typed && typeof ref.typed.deliveryRead === "boolean") {
         kwEl(card, "p", { class: "kw-card-fact" }, ref.typed.deliveryRead === true
           ? "seat read the delivery" : "seat has not read the delivery");
       }
@@ -3093,7 +3093,10 @@
       ends.length === 2 ? label(ends[0]) + " → " + label(ends[1])
       : "ends outside the drawn tiers");
     for (const e of ends) {
-      if (e.deliveryRead === undefined) continue;
+      // Only a boolean states a read; a projection pointer states
+      // nothing, so the card stays silent on it rather than
+      // asserting a negative the payload does not carry.
+      if (typeof e.deliveryRead !== "boolean") continue;
       kwEl(card, "p", { class: "kw-card-fact" }, e.deliveryRead === true
         ? "seat read the delivery" : "seat has not read the delivery");
     }
