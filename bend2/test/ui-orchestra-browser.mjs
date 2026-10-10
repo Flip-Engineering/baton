@@ -1295,6 +1295,51 @@ check('stage focus announces its cursor seat', ['root', 'lead', 'worker', 'aide'
 check('the stage draws its seats inside the Agents region', await evalJs(
   `!!document.querySelector('#staves #attention-band svg.att-stage')
     && document.querySelectorAll('#staves #attention-band .att-seat').length > 0`));
+// The stage's typed seams. The payload decides how many edges the hall can place:
+// an end is placed by a seat or by a reference the node list marks referenceOnly.
+// Every seam, wherever it appears, must answer to one of those edges.
+check('the stage draws a seam only where the payload places both ends', await evalJs(`(async () => {
+  const meta = document.querySelector('meta[name="orchestra-api-base"]');
+  const base = String((meta && meta.content) || location.origin).replace(/\\/+$/, '');
+  const payload = await (await fetch(base + '/orchestra/knowledge/overview')).json();
+  const seats = new Set([...document.querySelectorAll('#attention-band .att-seat[data-att-id]')]
+    .map((seat) => seat.getAttribute('data-att-id') || '').filter(Boolean));
+  const unheld = new Set((payload.nodes || []).filter((node) => node.referenceOnly === true)
+    .map((node) => String(node.reference || '')));
+  const place = (value) => seats.has(String(value)) || unheld.has(String(value));
+  const expected = (payload.edges || []).filter((edge) => place(edge.source) && place(edge.target)).length;
+  const seams = [...document.querySelectorAll('.att-seam')];
+  const named = seams.every((seam) => seam.classList.contains('att-seam-cited')
+    || seam.classList.contains('att-seam-authored'));
+  const glyphs = seams.every((seam) => {
+    const cited = seam.classList.contains('att-seam-cited');
+    const stage = seam.parentNode;
+    if (!stage) return false;
+    if (seam.tagName.toLowerCase() === 'path') {
+      const bars = stage.querySelector('.att-seam-bars');
+      const chevron = stage.querySelector('.att-seam-chevron');
+      return cited
+        ? Boolean(bars) && bars.querySelectorAll('.att-seam-bar').length === 2 && !chevron
+        : Boolean(chevron) && !bars;
+    }
+    return Boolean(stage.querySelector('.att-ref'));
+  });
+  return seams.length === expected && named && glyphs;
+})()`));
+check('a reference bead states that the store does not hold what it names', await evalJs(`(async () => {
+  const beads = [...document.querySelectorAll('circle.att-ref')];
+  if (!beads.length) return true;
+  const meta = document.querySelector('meta[name="orchestra-api-base"]');
+  const base = String((meta && meta.content) || location.origin).replace(/\\/+$/, '');
+  const payload = await (await fetch(base + '/orchestra/knowledge/overview')).json();
+  const held = new Set((payload.nodes || []).filter((node) => node.referenceOnly === false)
+    .map((node) => String(node.reference || '')));
+  return beads.every((bead) => {
+    const title = bead.textContent || '';
+    const named = /^reference (.+) \u2014 the store does not hold this record$/.exec(title);
+    return Boolean(named) && !held.has(named[1].replace(/ \(.*\)$/, '').trim());
+  });
+})()`));
 check('the band does not scroll: the page carries its drawing at its own height', await evalJs(`(() => {
   const band = document.getElementById('attention-band');
   if (!band) return false;
