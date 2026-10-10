@@ -397,11 +397,9 @@ button:active { background: var(--wash); }
   top: 12px;
   align-self: start;
   min-width: 0;
-  max-height: calc(100vh - 24px);
-  overflow-y: auto;
-  scrollbar-gutter: stable;
   /* The rail floats while the page scrolls, so it carries the paper ground with
-     it; without it the map draws through the record. */
+     it; without it the map draws through the record. It grows with its own
+     content rather than scrolling inside itself. */
   background: var(--paper);
   border-left: 1px solid var(--hairline);
   padding: 20px 0 0 16px;
@@ -414,14 +412,9 @@ button:active { background: var(--wash); }
    bounds, so a small recorded ensemble does not sit in a tall empty box. */
 .map-frame {
   position: relative;
-  height: min(64vh, 620px);
-  min-height: 320px;
-  /* The layer's published height is set inline; this keeps it bounded when the
-     window is small or shrinks after the fact. */
-  max-height: 78vh;
-  border: 1px solid var(--hairline);
-  background: var(--surface);
-  overflow: hidden;
+  /* The drawing takes its own height and the page scrolls, so there is no second
+     scroll window and no clip: nothing the map draws is cut off. */
+  min-width: 0;
 }
 
 /* The rail: the seats whose work is not progressing, one chip each, above the page. */

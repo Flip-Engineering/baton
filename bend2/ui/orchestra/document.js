@@ -431,10 +431,6 @@
     return out;
   }
 
-  // The smallest drawing area the map frame keeps for the canvas: the frame grows past
-  // its viewport share rather than letting the tools, matches and key consume it all.
-  var DRAWING_FLOOR = 240;
-
   function renderWhole(wholeMount, data, opts) {
     if (!wholeMount) return;
     if (window.KnowledgeLayer && window.KnowledgeLayer.renderKnowledge) {
@@ -463,25 +459,6 @@
         // Its activation count, so a repeated activation is a fresh request.
         focusRelationSeq: opts.focusRelationSeq || 0,
       });
-      // The map publishes the height its own drawing needs; the frame takes that
-      // height within bounds, so a small recorded ensemble does not sit in a tall
-      // empty box. Without the published number the frame keeps its own size.
-      var frame = wholeMount.closest(".map-frame");
-      var natural = Number(wholeMount.getAttribute("data-kw-natural-height"));
-      var chrome = Number(wholeMount.getAttribute("data-kw-chrome-height"));
-      if (frame && isFinite(natural) && natural > 0) {
-        var ceiling = Math.round((window.innerHeight || 900) * 0.78);
-        var height = Math.min(ceiling, Math.round(natural));
-        // The frame holds the tools, the match list and the key above the drawing, so a
-        // dense view can leave the canvas nothing. A drawing with content keeps a stated
-        // minimum and the frame grows past its viewport share; an empty scope keeps its
-        // own small height instead of holding a frame open for nothing.
-        var empty = isFinite(chrome) && chrome > 0 && Math.round(natural) - chrome <= 60;
-        if (isFinite(chrome) && chrome > 0 && !empty) {
-          height = Math.max(height, Math.round(chrome) + DRAWING_FLOOR);
-        }
-        frame.style.height = Math.max(empty ? Math.round(natural) : 320, height) + "px";
-      }
     } else {
       wholeMount.textContent = "";
     }
