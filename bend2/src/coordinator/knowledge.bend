@@ -418,12 +418,12 @@ def deliver_promotion(db: String, id: String, saved: String) -> IO(Result<&1,&1,
     case SNil{}: IO.pure(Result<&1,&1,U32 & String,String>,Done{SNil{}})
     case SCon{h,t}: Delivery.deliver(db,promotion_notice_id(id),"1",SCon{h,t})
 
-def promote(db: String, id: String, promoter: String, source: String, destination: String, finding: String) -> IO(Unit):
-  promote_scoped(db,id,promoter,"session",source,"session",destination,finding)
-
 def promote_scoped(+db: String, +id: String, promoter: String, source_kind: String, source: String, destination_kind: String, destination: String, finding: String) -> IO(Unit):
   do IO<Unit>:
     +saved : String <- IO.try(String,Store.transact_sql(db,commit_sql(promote_statements(id,promoter,source_kind,source,destination_kind,destination,finding))))
     Bool.pick(IO(Unit),Store.refused(saved),IO.die(Unit,2,saved),do IO<Unit>:
       delivery : Result<&1,&1,U32 & String,String> <- deliver_promotion(db,id,saved)
       answered(delivery))
+
+def promote(db: String, id: String, promoter: String, source: String, destination: String, finding: String) -> IO(Unit):
+  promote_scoped(db,id,promoter,"session",source,"session",destination,finding)
