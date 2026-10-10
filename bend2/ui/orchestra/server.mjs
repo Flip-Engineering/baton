@@ -264,8 +264,9 @@ function playerSupport(db, sessionIds) {
     // The recorded time of a message's first insert, as the sample reports it.
     for (const row of rows(db, `SELECT entity_id AS id, recorded_at AS at FROM native_changes
                                  WHERE entity = 'message' AND operation = 'insert'
-                                 ORDER BY change_id`)) {
-      if (wanted.has(row.id) && !support.messageAt.has(row.id)) support.messageAt.set(row.id, row.at);
+                                   AND entity_id IN (SELECT value FROM json_each(?))
+                                 ORDER BY change_id`, JSON.stringify([...wanted]))) {
+      if (!support.messageAt.has(row.id)) support.messageAt.set(row.id, row.at);
     }
   }
   for (const row of rows(db, `SELECT owner AS session, id FROM ensembles
@@ -293,20 +294,25 @@ function playerSupport(db, sessionIds) {
     }
   }
   // The recorded time of the newest change behind each reported activity.
-  const changeKeys = new Set();
-  for (const open of support.openRequest.values()) changeKeys.add(changeKey('native-request', open.id));
+  const requestIds = new Set();
+  const executionSessions = new Set();
+  for (const open of support.openRequest.values()) requestIds.add(open.id);
   for (const [session, execution] of support.execution) {
     if (execution.phase === 'running' || execution.phase === 'starting') {
-      changeKeys.add(changeKey('execution', session));
+      executionSessions.add(session);
     }
   }
-  if (changeKeys.size) {
+  if (requestIds.size || executionSessions.size) {
     for (const row of rows(db, `SELECT entity, entity_id AS entityId, recorded_at AS at
                                   FROM native_changes
-                                 WHERE entity IN ('native-request', 'execution')
-                                 ORDER BY change_id`)) {
+                                 WHERE (entity = 'native-request'
+                                        AND entity_id IN (SELECT value FROM json_each(?)))
+                                    OR (entity = 'execution'
+                                        AND entity_id IN (SELECT value FROM json_each(?)))
+                                 ORDER BY change_id`, JSON.stringify([...requestIds]),
+                                   JSON.stringify([...executionSessions]))) {
       const key = changeKey(row.entity, row.entityId);
-      if (changeKeys.has(key)) support.changeAt.set(key, row.at);
+      support.changeAt.set(key, row.at);
     }
   }
   return support;
