@@ -286,6 +286,20 @@ function databaseBusy(error) {
   return Number.isInteger(error?.errcode) && (error.errcode & 255) === 5;
 }
 
+function recoverableTurn(turn) {
+  if (turn?.status !== 'failed') return false;
+  const info = turn.error?.codexErrorInfo;
+  if (info === 'serverOverloaded' || info === 'internalServerError') return true;
+  for (const kind of ['httpConnectionFailed', 'responseStreamConnectionFailed',
+    'responseStreamDisconnected', 'responseTooManyFailedAttempts']) {
+    if (info && Object.hasOwn(info, kind)) {
+      const status = info[kind]?.httpStatusCode;
+      return status == null || status === 429 || (status >= 500 && status <= 599);
+    }
+  }
+  return false;
+}
+
 async function readCommittedInbox(inbox, events, session, threadId) {
   let waiting = false;
   for (;;) {
@@ -360,17 +374,26 @@ async function follow(proxy, executable, database, session, threadId, inbox) {
         record({ type: 'codexInboxTurnSettled', session, threadId, turnId: event.params.turn.id,
           status: event.params.turn.status, ...(event.params.turn.error ? { error: event.params.turn.error } : {}) });
         if (event.params.turn.status !== 'completed') {
-          lastAdmission = JSON.stringify([event.params.turn.id, row.inputSeq]);
+          const recoverable = recoverableTurn(event.params.turn);
+          if (!recoverable) lastAdmission = JSON.stringify([event.params.turn.id, row.inputSeq]);
           await notifyFailure(new Error('Managed Codex turn settled with unfinished input: ' + JSON.stringify(event.params.turn)));
-          event = await events.next();
-          continue;
+          if (!recoverable) {
+            record({ type: 'codexInboxTurnRetained', session, threadId, turn: event.params.turn });
+            event = await events.next();
+            continue;
+          }
         }
       }
       const { thread } = await proxy.rpc('thread/read', { threadId, includeTurns: false });
       if (thread.status.type === 'idle') {
         const turns = await proxy.rpc('thread/turns/list', { threadId, sortDirection: 'desc', itemsView: 'notLoaded' });
-        const settlement = JSON.stringify([turns.data[0]?.id ?? null, row.inputSeq]);
-        if (settlement !== lastAdmission) {
+        const latest = turns.data[0];
+        const settlement = JSON.stringify([latest?.id ?? null, row.inputSeq]);
+        if (event.initial && (latest?.status === 'interrupted' ||
+          (latest?.status === 'failed' && !recoverableTurn(latest)))) {
+          lastAdmission = settlement;
+          record({ type: 'codexInboxTurnRetained', session, threadId, turn: latest });
+        } else if (settlement !== lastAdmission) {
           row = await readCommittedInbox(inbox, events, session, threadId);
           if (!row.stopped && row.pendingCount) {
             lastAdmission = settlement;

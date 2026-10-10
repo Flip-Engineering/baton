@@ -373,8 +373,9 @@ def completion_events(stream):
         action=json.loads(line)
         if action.get('settle'):
             current=read_state()
-            save_state({**current,'status':'idle'})
-            reply({'method':'turn/completed','params':{'threadId':'native-w1','turn':{'id':current['turn'],'status':'completed','error':None}}})
+            terminal={'id':current['turn'],'status':action.get('status','completed'),'error':action.get('error')}
+            save_state({**current,'status':'idle','terminal':terminal})
+            reply({'method':'turn/completed','params':{'threadId':'native-w1','turn':terminal}})
             reply({'method':'thread/status/changed','params':{'threadId':'native-w1','status':{'type':'idle'}}})
             stream.write((json.dumps({'settled':current['turn']})+'\n').encode())
 header=b''
@@ -410,7 +411,9 @@ try:
                 assert json.loads(control.readline())=={'controlReady':True}
                 threading.Thread(target=completion_events,args=(control,),daemon=True).start()
         elif method=='thread/turns/list':
-            result={'data':[{'id':current['turn'],'status':'inProgress' if current['status']=='active' else 'completed'}],'nextCursor':None}
+            turn=({'id':current['turn'],'status':'inProgress'} if current['status']=='active'
+                  else current.get('terminal',{'id':current['turn'],'status':'completed'}))
+            result={'data':[turn],'nextCursor':None}
         elif method=='turn/steer':
             assert current['status']=='active' and request['params']['expectedTurnId']==current['turn'], request
             result={'turnId':current['turn']}
@@ -898,6 +901,29 @@ finally:
                          [(None,), (None,)], 'App input admission changed recipient receipts')
         self.assertEqual(len(self.connections('w1')), 2,
                          'the previous native receiver ran while later App guidance was pending')
+        phase('settling a recoverable App stream failure with guidance still owed')
+        error = {'message': 'The response stream disconnected before completion.',
+                 'codexErrorInfo': {'responseStreamDisconnected': {'httpStatusCode': None}}}
+        self.release('w1-app', settle=True, status='failed', error=error)
+        self.eventually(lambda: len(app_calls('turn/start')) >= 3,
+                        'a recoverable App failure did not continue its owed input')
+        self.assertEqual(len(app_calls('turn/start')), 3)
+        retained_failure = self.await_inbox('root', lambda messages: next((message for message in messages
+            if 'codex-inbox-continuation-failed' in message['body']
+            and 'responseStreamDisconnected' in message['body']), None),
+            'the recoverable App failure cause was not retained')
+        self.assertEqual(json.loads(retained_failure['body'])['threadId'], 'native-w1')
+        self.assertEqual(self.query("SELECT receipt FROM messages WHERE id IN ('g3','g4') ORDER BY id"),
+                         [(None,), (None,)])
+        phase('interrupting the continued App turn with guidance still owed')
+        self.release('w1-app', settle=True, status='interrupted')
+        self.eventually(lambda: any(event['turn']['status'] == 'interrupted'
+            for event in follow_events('codexInboxTurnRetained')),
+            'the interrupted App turn was not retained')
+        self.coord('report', 'app-interruption-observed', 'w1', 'The operator interrupted the App turn.')
+        self.assertEqual(len(app_calls('turn/start')), 3,
+                         'the follower resumed an interrupted App turn')
+        self.assertEqual(len(self.connections('w1-app')), 1)
         self.coord('stop', 'w1', 'app-operator-stop', 'Retain the remaining App guidance.')
         phase('waiting for the explicitly stopped watcher to exit')
         self.eventually(lambda: not any('--follow' in process['command'] and str(self.db) in process['command']
