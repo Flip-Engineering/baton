@@ -34,15 +34,17 @@
   /* Selection, focus and links. */
   --selection: #2a3e6b;
 
-  /* Pending counts, reading position and arrivals. */
-  --attention: #a2611f;
+  /* Pending counts, reading position and arrivals. This ink carries text on the
+     paper ground, so it clears 4.5:1 there (4.95 at #8f5519). */
+  --attention: #8f5519;
 
   /* The baseline: the page's vertical gaps are multiples of it, so the regions
      keep one beat from the plate down to the record rail. */
   --baseline: 4px;
 
-  /* Recorded activity colors. */
-  --running: #1e7e34;
+  /* Recorded activity colors. The running green carries text on the paper
+     ground, so it clears 4.5:1 there (4.99 at #1b7130). */
+  --running: #1b7130;
   --waiting: #8a6d00;
   --failed: #b3261e;
 
@@ -638,9 +640,10 @@ button:active { background: var(--wash); }
   color: var(--muted);
 }
 
-/* The row reads as one line: who, what it is doing, the staff of what it has
-   recorded, then the counts. The action text is elided, never wrapped, so the
-   staves keep a steady height and their time grids line up down the page. */
+/* The row's open line reads as one line: who, what it is doing, the staff of
+   what it has recorded, then the counts. The action text is elided, never
+   wrapped, so the line's own height is steady; a row that carries recorded
+   knowledge adds the knowledge band's one row below it. */
 .doc-open {
   display: flex;
   align-items: center;
