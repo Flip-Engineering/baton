@@ -668,7 +668,7 @@ def consume_exhausted(+db: String, +player: String, +id: String, +log: String, h
     IO.pure(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>,(Ended{status_text(unshared_result(String,status)),event,error,incomplete},deliveries))
 
 @unsafe
-def consume(+db: String, +player: String, +id: String, +log: String, +policy: Logs.Policy, +held: String, +log_failed: Bool, +handle: U32, +harness: String, +cursor: String, +last_message: String, +primary: String, +current: String, +terminal: String, +filter: String, +requested: String, +codex_log: String, +first_error: String, +sender: Chan(Result<&1,&1,U32 & String,Unit>), +attempt: String, +checkpoint_state: Observer.State, +incomplete_observation: Bool, +wake_sub: U32, wake_on: Bool, +deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, result: Result<&1,&1,U32 & String,WakeRead>) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
+def consume(+db: String, +player: String, +id: String, +log: String, +policy: Logs.Policy, +held: String, +log_failed: Bool, +handle: U32, +harness: String, +cursor: String, +last_message: String, +primary: String, +current: String, +terminal: String, +filter: String, +requested: String, +codex_log: String, +first_error: String, +sender: Chan(Result<&1,&1,U32 & String,Unit>), +attempt: String, +checkpoint_state: Observer.State, +incomplete_observation: Bool, +wake_sub: U32, wake_on: Bool, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, result: Result<&1,&1,U32 & String,WakeRead>) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
   match result:
     case Fail{error}: do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
       wake_closed : Result<&1,&1,U32 & String,Unit> <- wake_close(wake_sub,wake_on)
@@ -688,11 +688,12 @@ def consume(+db: String, +player: String, +id: String, +log: String, +policy: Lo
       IO.pure(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>,(Ended{status_text(unshared_result(String,waited)),terminal,error,True{}},deliveries))
     case Done{AwakeEnd{+notice,+alive}}: do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
       +drained : String <- Guidance.awake_pending(db,player,handle,cursor,Bool.and(String.eq(harness,"omp\n"),Bool.and(Bool.not(String.is_empty(notice)),String.is_empty(terminal))))
-      Bool.pick(IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>),String.is_empty(notice),
-        consume_exhausted(db,player,id,log,held,log_failed,handle,harness,codex_log,terminal,filter,requested,first_error,sender,attempt,checkpoint_state,incomplete_observation,deliveries,wake_sub,alive),
-        do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
+      continuation : List<Chan(Result<&1,&1,U32 & String,String>)> -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>) <- IO.pure(List<Chan(Result<&1,&1,U32 & String,String>)> -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>),Bool.pick(List<Chan(Result<&1,&1,U32 & String,String>)> -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>),String.is_empty(notice),
+        pending => consume_exhausted(db,player,id,log,held,log_failed,handle,harness,codex_log,terminal,filter,requested,first_error,sender,attempt,checkpoint_state,incomplete_observation,pending,wake_sub,alive),
+        pending => do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
           next : Result<&1,&1,U32 & String,WakeRead> <- wake_line(handle,wake_sub,alive)
-          consume(db,player,id,log,policy,held,log_failed,handle,harness,drained,last_message,primary,current,terminal,filter,requested,codex_log,first_error,sender,attempt,checkpoint_state,incomplete_observation,wake_sub,alive,deliveries,next))
+          consume(db,player,id,log,policy,held,log_failed,handle,harness,drained,last_message,primary,current,terminal,filter,requested,codex_log,first_error,sender,attempt,checkpoint_state,incomplete_observation,wake_sub,alive,pending,next)))
+      continuation(deliveries)
     case Done{AwakeLine{+line,notice,+alive}}:
       do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
         +drained : String <- Guidance.awake_pending(db,player,handle,cursor,Bool.and(String.eq(harness,"omp\n"),Bool.and(Bool.not(String.is_empty(notice)),String.is_empty(terminal))))

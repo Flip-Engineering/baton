@@ -586,7 +586,7 @@ def advanced_completed(db: String, session: String, id: String, attempt: String,
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error})
     case Done{unit}: continue_after_advance(db,session,id,attempt,again)
 
-def completed_profile(+db: String, +session: String, +id: String, log: String, cursor: String, native: String, cwd: String, +attempt: String, handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, +again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), adopted: Bool, superseded: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+def completed_profile(+db: String, +session: String, +id: String, log: String, cursor: String, native: String, cwd: String, +attempt: String, handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), adopted: Bool, superseded: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match superseded:
     case False{}: do IO<Result<&1,&1,U32 & String,Unit>>:
       proceed : Bool <- transient_precheck(db,session,outcome)
