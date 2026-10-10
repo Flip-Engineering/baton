@@ -188,7 +188,7 @@ def stage_typescript_context_module(payload, runtime_package):
         'implements': 'sourceAnalysis', 'subjectSchema': 'baton2.context.typescript.subject.v1',
         'optionsSchema': 'baton2.context.typescript.options.v1',
         'projections': ['definition', 'type', 'references', 'calls', 'callers',
-                        'dependencies', 'diagnostics', 'flow', 'exceptions'],
+                        'dependencies', 'diagnostics', 'flow', 'exceptions', 'databaseAccesses'],
         'effects': [], 'dependencies': [], 'execution': 'managed',
         'resultSchema': 'baton2.context.typescript.source-analysis.result.v1',
         'referenceSchema': 'baton2.context.typescript.reference.v1',

@@ -698,11 +698,13 @@ void handler(const char *dynamic) {
                 PACKAGE.stage_typescript_context_module(self.payload, Path(compiler))
             finally:
                 PACKAGE.ROOT = previous_root
-            (worktree / 'analysis.ts').write_text('export const answer: number = 42;\n')
+            (worktree / 'analysis.ts').write_text(
+                'declare function query(sql: string): number;\n'
+                'export const answer: number = query("SELECT value FROM records");\n')
             request.write_text(json.dumps({
                 'version': 1, 'engine': 'typescript',
                 'subject': {'kind': 'symbol', 'path': 'analysis.ts', 'name': 'answer'},
-                'select': ['definition', 'type'], 'cwd': str(worktree),
+                'select': ['definition', 'type', 'databaseAccesses'], 'cwd': str(worktree),
             }) + '\n')
             submitted = invoke('context-query-file', 'validation-owner', 'installed-typescript',
                                str(request), cwd=worktree)
@@ -714,8 +716,12 @@ void handler(const char *dynamic) {
             payload = envelope['result']['payload']
             self.assertEqual(payload['schema'], 'baton2.context.typescript.source-analysis.result.v1')
             self.assertEqual(payload['status'], 'completed', retained.stdout)
-            self.assertTrue({'definition', 'type'}.issubset(
+            self.assertTrue({'definition', 'type', 'sqlCall'}.issubset(
                 {fact['kind'] for fact in payload['facts']}), retained.stdout)
+            sql_calls = [fact['value']['record']['sql'] for fact in payload['facts']
+                         if fact['kind'] == 'sqlCall']
+            self.assertIn({'status': 'constant', 'text': 'SELECT value FROM records',
+                           'literalKind': 'stringLiteral'}, sql_calls, retained.stdout)
 
         target = worktree / 'runtime-target.mjs'
         shutil.copyfile(repository / 'bend2/context/runtime/cdp-fixture-longrun.mjs', target)
