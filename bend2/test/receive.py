@@ -2814,6 +2814,8 @@ class Receive(unittest.TestCase):
         second, resumed = self.accept_or_child_exit(child, 'route continuation did not relaunch')
         self.assertEqual(resumed['session'], 'routed')
         self.assertIn('[id: follow]', resumed['prompt'])
+        self.assertIn('Direct retained work.', resumed['prompt'])
+        self.assertIn('previous native conversation lineage is saved-routed', resumed['prompt'])
         self.action(second)
         self.finish(child)
         turns = self.coord('turns', 'routed')
