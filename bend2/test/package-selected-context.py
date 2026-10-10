@@ -304,9 +304,33 @@ class SelectedContextPackageTest(unittest.TestCase):
             shutil.copytree(repository / 'bend2/context' / directory,
                             self.root / 'bend2/context' / directory)
         selected = PACKAGE.stage_clang_module(
-            self.payload, 'clang-analyzer', ['databaseAccesses'], Path(runtime))
+            self.payload, 'clang-analyzer',
+            ['type', 'calls', 'diagnostics', 'authorization', 'databaseAccesses', 'flow'],
+            Path(runtime))
         module_root = self.payload / selected['path']
         declaration = json.loads((module_root / 'native-provider.declaration.json').read_text())
+        operation = declaration['operations'][0]
+        self.assertIn('project', operation['optionsJsonSchema']['properties'])
+        self.assertIn('database', operation['optionsJsonSchema']['properties'])
+        self.assertIn('client', operation['optionsJsonSchema']['properties'])
+        request_example = operation['requestExample']
+        self.assertEqual(request_example['version'], 1)
+        self.assertEqual(request_example['engine'], 'clang-analyzer')
+        self.assertEqual(request_example['subject']['kind'], 'symbol')
+        self.assertTrue(set(request_example['select']) <= set(operation['projections']))
+        self.assertEqual(request_example['effects'], ['planTargetSql'])
+        clangd = PACKAGE.stage_clang_module(
+            self.payload, 'clangd',
+            ['definition', 'type', 'references', 'calls', 'callers', 'diagnostics'])
+        clangd_declaration = json.loads(
+            (self.payload / clangd['path'] / 'native-provider.declaration.json').read_text())
+        clangd_operation = clangd_declaration['operations'][0]
+        self.assertIn('project', clangd_operation['optionsJsonSchema']['properties'])
+        self.assertNotIn('database', clangd_operation['optionsJsonSchema']['properties'])
+        self.assertNotIn('client', clangd_operation['optionsJsonSchema']['properties'])
+        self.assertEqual(clangd_operation['requestExample']['subject']['kind'], 'position')
+        self.assertEqual(clangd_operation['requestExample']['select'], ['definition'])
+        self.assertEqual(clangd_operation['requestExample']['effects'], [])
         project = self.root / 'c project'
         project.mkdir()
         source = project / 'handler.c'
@@ -335,13 +359,20 @@ void handler(const char *dynamic) {
                    'artifactIdentities': declaration['artifactIdentities'],
                    'schemaIdentities': declaration['schemaIdentities'],
                    'packageIdentity': declaration['packageIdentity']}
+        # The submitted request is the declared requestExample with this
+        # fixture's recorded cwd and database, proving the discovered example
+        # is a request the provider supports.
+        request = {
+            **request_example,
+            'subject': {**request_example['subject'], 'path': source.name},
+            'cwd': str(project),
+            'options': {'project': 'compile_commands.json',
+                        'database': database.name},
+        }
         invocation = {
             'version': 2, 'query': 'clang-handler-catalog', 'owner': 'clang-owner',
             'moduleBinding': binding,
-            'request': {'version': 1, 'engine': 'clang-analyzer',
-                        'subject': {'kind': 'symbol', 'path': source.name, 'name': 'handler'},
-                        'select': ['databaseAccesses'], 'cwd': str(project),
-                        'options': {'database': database.name}},
+            'request': request,
             'operationPlan': [{'binding': binding, 'common': 'sourceAnalysis', 'dependencies': []}],
             'role': 'starter', 'incarnation': '1',
         }

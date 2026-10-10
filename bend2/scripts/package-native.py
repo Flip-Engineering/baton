@@ -273,6 +273,60 @@ def stage_clang_module(payload, module_id, projections, runtime_package=None):
         'eventSchema': 'baton2.context.clang.source-analysis.event.v1',
         'lifetimeProfile': '',
     }
+    # Explicit authored provider metadata the shared inventory exposes
+    # verbatim: the options the provider actually accepts and one usable
+    # version-1 native request. The schema identity strings stay
+    # authoritative; these fields carry the shapes themselves.
+    compile_database_option = {
+        'type': 'string',
+        'description': ('compile-command database path relative to the request '
+                        'cwd; the default is compile_commands.json'),
+    }
+    if module_id == 'clangd':
+        operation['optionsJsonSchema'] = {
+            'type': 'object', 'additionalProperties': False,
+            'properties': {'project': compile_database_option},
+        }
+        operation['requestExample'] = {
+            'version': 1, 'engine': 'clangd',
+            'subject': {'kind': 'position', 'path': 'src/handler.c',
+                        'line': 40, 'column': 17},
+            'select': ['definition'],
+            'cwd': '/work/application', 'options': {}, 'effects': [],
+        }
+    else:
+        operation['optionsJsonSchema'] = {
+            'type': 'object', 'additionalProperties': False,
+            'properties': {
+                'project': compile_database_option,
+                'database': {
+                    'description': ('SQLite database file opened read-only for '
+                                    'the constant-SQL join'),
+                    'oneOf': [
+                        {'type': 'string'},
+                        {'type': 'object', 'additionalProperties': False,
+                         'required': ['engine', 'path'],
+                         'properties': {'engine': {'const': 'sqlite-schema'},
+                                        'path': {'type': 'string'}}},
+                    ],
+                },
+                'client': {
+                    'type': 'string',
+                    'description': 'restrict helper-call discovery to the named callee',
+                },
+            },
+        }
+        operation['requestExample'] = {
+            'version': 1, 'engine': 'clang-analyzer',
+            'subject': {'kind': 'symbol', 'path': 'src/handler.c',
+                        'name': 'handler'},
+            'select': ['type', 'calls', 'authorization', 'databaseAccesses'],
+            'cwd': '/work/application',
+            'options': {'project': 'compile_commands.json',
+                        'database': {'engine': 'sqlite-schema',
+                                     'path': 'owned.fossil'}},
+            'effects': ['planTargetSql'],
+        }
     declaration = {
         'schema': 'baton2-native-module-declaration-v1', 'moduleId': module_id,
         'revision': 'development', 'protocolVersion': '2',

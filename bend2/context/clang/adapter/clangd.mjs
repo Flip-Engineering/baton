@@ -228,7 +228,11 @@ async function diagnose(doc) {
       const id = requestedIds[i];
       return id !== undefined && responses.has(id);
     });
-    if (allResponses && (publicationMatched || !diagnosticsRequired)) break;
+    // Completion is only considered after the server actually initialized:
+    // an empty selection must reach the unsupported branch below, and a
+    // diagnostics-only query must have had its document opened, before any
+    // completion can be reported.
+    if (initialized && allResponses && (publicationMatched || !diagnosticsRequired)) break;
     await lsp.nextEvent();
   }
 
