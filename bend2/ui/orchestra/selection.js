@@ -13,6 +13,9 @@
    disclosure; causes stay in the open.
    Finding relations light their strokes on the map when the shell
    passes the way, and the lit one's statement carries a mark.
+   The finding opens with a one-line posture above its facts, and its
+   evidence reference reads as a numbered citation. Long prose holds
+   a 66-character measure with unitless leading.
    All labels arrive through textContent. */
 
 var SEL_EVENT_LIMIT = 8;
@@ -60,9 +63,32 @@ function selBodyBlock(parent, heading, meta, body, cls, quote) {
   if (meta) block.appendChild(selEl("p", "muted", meta));
   if (typeof body === "string") {
     if (quote) selQuotedBody(block, quote.key, quote.what, body);
-    else block.appendChild(selEl("p", "sel-body", body));
+    else block.appendChild(selProse(selEl("p", "sel-body", body)));
   }
   if (block.childNodes.length) parent.appendChild(block);
+}
+
+// Reading prose holds a comfortable measure: Bringhurst's 66-character
+// ideal in elastic units, with unitless leading that survives text
+// resizing. Lengths only; ink still comes from the lead's tokens.
+function selProse(node) {
+  node.style.maxWidth = "33em";
+  node.style.lineHeight = "1.5";
+  return node;
+}
+
+// The finding's posture in one line above its facts: whether evidence is
+// cited and limits are stated, and how far the finding has been shared.
+// The facts below stay authoritative; this line only says what is there.
+function selFindingMicro(finding, evMid) {
+  var bits = [];
+  var cited = Boolean(evMid) || (finding.evidence !== "" && finding.evidence != null);
+  bits.push(cited ? "evidence cited" : "no evidence cited");
+  var limited = finding.limits !== "" && finding.limits != null;
+  bits.push(limited ? "limits stated" : "no limits stated");
+  var shared = Array.isArray(finding.promotions) ? finding.promotions.length : 0;
+  bits.push(shared ? "shared " + shared + (shared === 1 ? " time" : " times") : "not shared");
+  return bits.join(" · ");
 }
 
 // A long quotation behind one disclosure: a lead line with the body's
@@ -97,7 +123,7 @@ function selLeadCut(line) {
 function selQuotedBody(parent, key, what, body) {
   var text = String(body);
   if (text.length <= SEL_BODY_WHOLE) {
-    parent.appendChild(selEl("p", "sel-body", text));
+    parent.appendChild(selProse(selEl("p", "sel-body", text)));
     return;
   }
   var first = "";
@@ -109,7 +135,7 @@ function selQuotedBody(parent, key, what, body) {
     }
   }
   if (!first) {
-    parent.appendChild(selEl("p", "sel-body", text));
+    parent.appendChild(selProse(selEl("p", "sel-body", text)));
     return;
   }
   var cut = selLeadCut(first);
@@ -120,7 +146,7 @@ function selQuotedBody(parent, key, what, body) {
     kept = shown.length;
     shown = shown + "… continues";
   }
-  parent.appendChild(selEl("p", "sel-lead", shown + " · " + text.length + " characters"));
+  parent.appendChild(selProse(selEl("p", "sel-lead", shown + " · " + text.length + " characters")));
   var open = selBodyOpen.has(key);
   var toggle = selEl("button", null, open ? "Hide full " + what
     : "Read full " + what + " · " + (text.length - kept) + " more characters");
@@ -133,7 +159,7 @@ function selQuotedBody(parent, key, what, body) {
     renderSelection(selLast.mount, selLast.data, selLast.options);
   });
   parent.appendChild(toggle);
-  if (open) parent.appendChild(selEl("p", "sel-body", text));
+  if (open) parent.appendChild(selProse(selEl("p", "sel-body", text)));
 }
 
 function selEventText(ev, hideKind) {
@@ -615,14 +641,15 @@ function renderSelection(mount, data, options) {
   if (finding) {
     var findingBlock = selEl("div", "sel-block");
     findingBlock.id = "sel-sec-finding";
-    findingBlock.appendChild(selEl("h2", "doc-section", "Finding " + (finding.id || "")));
-    var facts = [];
-    if (finding.kind) facts.push(["kind", finding.kind]);
-    facts.push(["claim", finding.claim, "sel-claim"]);
     var evObj = finding.evidenceMessage && typeof finding.evidenceMessage === "object"
       ? finding.evidenceMessage : null;
     var evMid = evObj ? selMsgRef(evObj.id || "") : selMsgRef(finding.evidenceMessage);
     var evInline = Boolean(evObj && typeof evObj.body === "string");
+    findingBlock.appendChild(selEl("h2", "doc-section", "Finding " + (finding.id || "")));
+    findingBlock.appendChild(selEl("p", "muted", selFindingMicro(finding, evMid)));
+    var facts = [];
+    if (finding.kind) facts.push(["kind", finding.kind]);
+    facts.push(["claim", finding.claim, "sel-claim"]);
     if (!evMid) facts.push(["evidence", finding.evidence]);
     facts.push(["limits", finding.limits]);
     facts.push(["author", finding.author]);
@@ -632,6 +659,17 @@ function renderSelection(mount, data, options) {
       var evOpen = selMsgOpen.has(evMid);
       var evRead = (input.messages || {})[evMid] || null;
       var evMessage = evRead && evRead.state === "ok" ? evRead.message : null;
+      // The evidence reference as a citation: a stable number, the kind,
+      // the id tail with the full id in the title, and the stored extent
+      // once a read holds the body. The button below stays the read control.
+      var evCite = "[1] message " + selTail(evMid);
+      var evHeld = evInline ? evObj.body : (evMessage && evMessage.body);
+      if (typeof evHeld === "string") {
+        evCite += evHeld === "" ? " · empty" : " · " + evHeld.length + " characters";
+      }
+      var evCiteLine = selEl("p", "muted", evCite);
+      evCiteLine.setAttribute("title", evRaw);
+      findingBlock.appendChild(evCiteLine);
       var evButton = selEl("button", "sel-msg");
       var evMark = selEl("span", "sel-kind");
       evMark.setAttribute("aria-hidden", "true");
@@ -829,7 +867,7 @@ function renderSelection(mount, data, options) {
       resumeBlock.appendChild(selEl("p", "sel-group sel-refused",
         resume.refused != null ? "Resume read refused" : "Resume read failed"));
       if (typeof refused === "string") {
-        resumeBlock.appendChild(selEl("p", "sel-body", refused));
+        resumeBlock.appendChild(selProse(selEl("p", "sel-body", refused)));
       } else if (refused && typeof refused === "object") {
         var refRows = selScalars(refused).filter(function (row) {
           return row[0] !== "stdout" && row[0] !== "stderr";
@@ -840,7 +878,7 @@ function renderSelection(mount, data, options) {
         });
         refStreams.forEach(function (stream) {
           resumeBlock.appendChild(selEl("p", "muted", stream));
-          resumeBlock.appendChild(selEl("p", "sel-body", refused[stream]));
+          resumeBlock.appendChild(selProse(selEl("p", "sel-body", refused[stream])));
         });
         if (!refRows.length && !refStreams.length) {
           resumeBlock.appendChild(selEl("p", "muted", "No cause was recorded."));
