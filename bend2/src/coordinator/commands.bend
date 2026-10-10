@@ -473,9 +473,9 @@ def sql(command: Command) -> String:
     case EnsembleMember{id,owner,session,action}: ensemble_member_sql(id,owner,session,action)
     case Message{+id, sender, +recipient, +kind, body}:
       message_sql(id,sender,recipient,kind,body)
-    case Report{+id, +sender, body}:
+    case Report{+id, +sender, +body}:
       "INSERT INTO messages(id,sender,recipient,kind,body) VALUES(" ++ q(id) ++ "," ++ q(sender) ++ "," ++ report_recipient(q(sender)) ++ ",'report'," ++ q(body) ++ ")" ++ message_upsert() ++ message_conflict_sql(q(id),q(sender),report_recipient(q(sender)),"'report'",q(body),report_recipient(q(sender)) ++ " IS NOT NULL") ++ matching_message_result_expr(q(id),q(sender),report_recipient(q(sender)),"'report'",q(body))
-    case Ask{+id, +player, body}:
+    case Ask{+id, +player, +body}:
       "INSERT INTO messages(id,sender,recipient,kind,body) VALUES(" ++ q(id) ++ "," ++ q(player) ++ "," ++ report_recipient(q(player)) ++ ",'question'," ++ q(body) ++ ")" ++ message_upsert() ++ message_conflict_sql(q(id),q(player),report_recipient(q(player)),"'question'",q(body),report_recipient(q(player)) ++ " IS NOT NULL") ++ matching_message_result_expr(q(id),q(player),report_recipient(q(player)),"'question'",q(body))
     case Ack{+id, +recipient, receipt}:
       "UPDATE messages SET receipt=coalesce(receipt," ++ q(receipt) ++ ") WHERE id=" ++ q(id) ++ " AND recipient=" ++ q(recipient) ++ ";DELETE FROM wake_claims WHERE session=" ++ q(recipient) ++ " AND NOT EXISTS(SELECT 1 FROM messages WHERE recipient=" ++ q(recipient) ++ " AND receipt IS NULL);SELECT json_object('id',id,'receipt',receipt) FROM messages WHERE id=" ++ q(id) ++ " AND recipient=" ++ q(recipient) ++ ";"

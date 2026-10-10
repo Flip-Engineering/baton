@@ -344,9 +344,7 @@ def validity_sql(text: String) -> String:
   "WITH raw(t) AS (SELECT " ++ sql_quote(text) ++ ") SELECT json_valid(t) FROM raw;"
 
 # ---------------------------------------------------------------------------
-# The closed request profile. Unknown fields refuse before provider startup, and
-# every refusal names one fixed predicate. A computed scrutinee is passed to its
-# own definition, because a match cannot scrutinize a computed value.
+# Common request fields. The selected provider interprets the options object.
 
 type Words is Data:
   Wnone{}
@@ -384,10 +382,6 @@ def projection_words() -> Words:
               "guardPaths", "inputPaths", "predicateQueries", "migrations", "toolchain",
               "build", "configuration", "services", "value", "state", "frames", "scopes",
               "values", "exception", "threads"])
-
-def option_words() -> Words:
-  words_from(["project", "readRoots", "database", "client", "buildProvenance", "security",
-              "analysis", "code", "tools", "configFiles", "servicesFile"])
 
 def request_words() -> Words:
   words_from(["version", "engine", "subject", "select", "cwd", "options", "effects"])
@@ -711,33 +705,10 @@ def version_ok(members: J.Json) -> Bool:
 def engine_ok(members: J.Json) -> Bool:
   optional_text("engine", members)
 
-def database_option_ok(found: Maybe<&2, J.Json>) -> Bool:
-  match found:
-    case None{}: True{}
-    case Some{+value}: Bool.or(is_jstr(value),is_jobj(value))
-
-def options_values(+members: J.Json) -> Bool:
-  Bool.pick(Bool, database_option_ok(member_lookup("database", members)),
-    Bool.pick(Bool, optional_text("client", members),
-      Bool.pick(Bool, optional_text("analysis", members), True{}, False{}), False{}), False{})
-
-def options_shape(options: J.Json) -> Bool:
-  match options:
-    case J.Jobj{+members}: Bool.pick(Bool, keys_allowed(option_words(), members), options_values(members), False{})
-    case J.Jnull{}: False{}
-    case J.Jtrue{}: False{}
-    case J.Jfalse{}: False{}
-    case J.Jint{+value}: False{}
-    case J.Jnum{+token}: False{}
-    case J.Jstr{+value}: False{}
-    case J.Jarr{+head, +tail}: False{}
-    case J.Jpair{key, value, rest}: False{}
-    case J.Jnil{}: False{}
-
 def options_no_value(m: Maybe<&2, J.Json>) -> Bool:
   match m:
     case None{}: True{}
-    case Some{+value}: Bool.pick(Bool, is_jobj(value), options_shape(value), False{})
+    case Some{value}: is_jobj(value)
 
 def options_ok(members: J.Json) -> Bool:
   options_no_value(member_lookup("options", members))
