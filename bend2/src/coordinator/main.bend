@@ -58,7 +58,7 @@ def log_answer(+saved: String) -> IO(Unit):
 
 def execute(+db: String, command: C.Command) -> IO(Unit):
   match command:
-    case C.Help{}: IO.write(usage())
+    case C.Help{}: IO.write(usage() ++ Knowledge.tool_help())
     case C.Invalid{}: IO.die(Unit,2,usage())
     case C.Stop{session,id,reason}: Stop.run(db,session,id,reason,False{})
     case C.ForceStop{session,id}: Stop.run(db,session,id,"",True{})
@@ -142,6 +142,12 @@ def execute(+db: String, command: C.Command) -> IO(Unit):
       Knowledge.record(db,id,author,claim,evidence,limits)
     case C.KnowledgeRecordTyped{id,author,kind,claim,evidence,limits}:
       Knowledge.record_typed(db,id,author,kind,claim,evidence,limits)
+    case C.KnowledgeRecordLinked{id,author,kind,claim,evidence,limits,links}:
+      Knowledge.record_linked(db,id,author,kind,claim,evidence,limits,links)
+    case C.KnowledgeSearch{reader,scope,subject,query}:
+      Knowledge.graph_read(db,reader,scope,subject,query,True{},"both","",False{})
+    case C.KnowledgeTraverse{reader,scope,subject,reference,direction,relation,recursive}:
+      Knowledge.graph_read(db,reader,scope,subject,reference,False{},direction,relation,recursive)
     case C.KnowledgeRelate{id,author,source,relation,target}:
       Knowledge.relate(db,id,author,source,relation,target)
     case C.KnowledgeRead{reader}:

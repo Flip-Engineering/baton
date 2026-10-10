@@ -843,9 +843,53 @@ function knowledgeFindings(db, where = '', ...args) {
   }));
 }
 
+function knowledgeKinds(db) {
+  const typed = rows(db, "PRAGMA table_info('knowledge')").some((column) => column.name === 'kind');
+  return new Map(rows(db, `SELECT id, ${typed ? 'kind' : "'finding'"} AS kind FROM knowledge`)
+    .map((record) => [record.id, record.kind]));
+}
+
 function knowledgeRelations(db) {
   const present = one(db, "SELECT 1 AS present FROM sqlite_master WHERE type='table' AND name='knowledge_relations'");
-  return present ? rows(db, 'SELECT id, author, source, relation, target FROM knowledge_relations ORDER BY id') : [];
+  if (!present) return [];
+  const kinds = knowledgeKinds(db);
+  const kind = (reference) => reference.startsWith('message:') ? 'message'
+    : reference.startsWith('finding:') ? kinds.get(reference.slice(8)) ?? 'finding'
+      : kinds.get(reference) ?? 'external';
+  const reference = (value) => /^(finding:|message:)/.test(value) ? value
+    : kinds.has(value) ? 'finding:' + value : value;
+  return rows(db, 'SELECT id, author, source, relation, target FROM knowledge_relations ORDER BY id')
+    .map((relation) => ({ ...relation, sourceReference: reference(relation.source),
+      targetReference: reference(relation.target), sourceKind: kind(relation.source), targetKind: kind(relation.target) }));
+}
+
+// Complete held records and recorded evidence form the graph for this scope.
+// Unheld endpoints carry their reference and kind for continued navigation.
+function knowledgeGraph(db, findings, relations) {
+  const held = new Map(findings.map((record) => [record.id, record]));
+  const kinds = knowledgeKinds(db);
+  const nodes = new Map(findings.map((record) => ['finding:' + record.id,
+    { ...record, reference: 'finding:' + record.id, referenceOnly: false }]));
+  const reference = (value) => held.has(value) ? 'finding:' + value : value;
+  const edges = relations.map((relation) => ({ ...relation,
+    source: relation.sourceReference, target: relation.targetReference, provenance: 'authored' }));
+  for (const record of findings) {
+    if (!/^(message:|finding:|file:|https?:\/\/|external:)/.test(record.evidence)) continue;
+    const target = reference(record.evidence);
+    edges.push({ id: 'citation:' + record.id, author: record.author,
+      source: 'finding:' + record.id, sourceReference: 'finding:' + record.id, sourceKind: record.kind,
+      relation: 'Cited', target, targetReference: target, targetKind: target.startsWith('message:') ? 'message'
+        : target.startsWith('finding:') ? kinds.get(target.slice(8)) ?? 'finding' : 'external',
+      provenance: 'recorded-evidence' });
+  }
+  for (const edge of edges) {
+    for (const [endpoint, kind] of [[edge.source, edge.sourceKind], [edge.target, edge.targetKind]]) {
+      if (nodes.has(endpoint)) continue;
+      nodes.set(endpoint, { reference: endpoint, kind, referenceOnly: true,
+        ...(endpoint.startsWith('message:') ? { deliveryRead: ['delivery', endpoint.slice(8)] } : {}) });
+    }
+  }
+  return { nodes: [...nodes.values()], edges };
 }
 
 function knowledgePromotionColumns(db) {
@@ -921,7 +965,7 @@ function relationsForScope(db, scope, findings) {
 function knowledgeOverview(db, kind = 'universal', id = '') {
   const scope = knowledgeScope(db, kind, id);
   if (!knowledgeTablesReady(db)) {
-    return { contractVersion: 1, scope, findings: [], promotions: [], relations: [], actors: {}, groups: knowledgeGroups(db, [], kind === 'group' ? id : ''), empty: true };
+    return { contractVersion: 1, scope, findings: [], promotions: [], relations: [], nodes: [], edges: [], actors: {}, groups: knowledgeGroups(db, [], kind === 'group' ? id : ''), empty: true };
   }
   const findings = findingsForScope(db, scope);
   const relations = relationsForScope(db, scope, findings);
@@ -978,14 +1022,14 @@ function knowledgeOverview(db, kind = 'universal', id = '') {
       actor.parent = row.parent == null ? '' : row.parent;
     }
   }
-  return { contractVersion: 1, scope, findings, promotions, relations, actors, groups,
+  return { contractVersion: 1, scope, findings, promotions, relations, ...knowledgeGraph(db, findings, relations), actors, groups,
     empty: findings.length === 0 && promotions.length === 0 && relations.length === 0 };
 }
 
 function knowledgeForActor(db, session) {
   const scope = knowledgeScope(db, 'worker', session);
   if (!knowledgeTablesReady(db)) {
-    return { contractVersion: 1, scope, actor: session, authored: [], received: [], relations: [], groups: {}, counts: { authored: 0, received: 0, unshared: 0 }, empty: true };
+    return { contractVersion: 1, scope, actor: session, authored: [], received: [], relations: [], nodes: [], edges: [], groups: {}, counts: { authored: 0, received: 0, unshared: 0 }, empty: true };
   }
   const held = findingsForScope(db, scope);
   const authored = held.filter((finding) => finding.author === session);
@@ -994,13 +1038,13 @@ function knowledgeForActor(db, session) {
   const received = knowledgePromotions(db,
     `WHERE destination = ? ${kinds ? "AND destination_kind = 'session'" : ''}`, session).map((promotion) => {
     const finding = byId.get(promotion.finding) || {};
-    return { ...promotion, kind: finding.kind || 'finding', claim: finding.claim,
+    return { ...promotion, kind: finding.kind ?? 'finding', claim: finding.claim,
       evidence: finding.evidence, evidenceMessage: finding.evidenceMessage ?? null, limits: finding.limits };
   });
   const relations = relationsForScope(db, scope, held);
   const promoted = new Set(rows(db, 'SELECT DISTINCT finding AS f FROM knowledge_promotions').map((r) => r.f));
   const unshared = authored.filter((f) => !promoted.has(f.id)).length;
-  return { contractVersion: 1, scope, actor: session, authored, received, relations, groups: knowledgeGroups(db, received),
+  return { contractVersion: 1, scope, actor: session, authored, received, relations, ...knowledgeGraph(db, held, relations), groups: knowledgeGroups(db, received),
     counts: { authored: authored.length, received: received.length, unshared }, empty: authored.length === 0 && received.length === 0 && relations.length === 0 };
 }
   const handleRequest = async (request, response) => {

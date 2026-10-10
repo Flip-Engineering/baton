@@ -70,6 +70,9 @@ type Command is Data:
   Resume{session: String, lift_stop: Bool}
   KnowledgeRecord{id: String, author: String, claim: String, evidence: String, limits: String}
   KnowledgeRecordTyped{id: String, author: String, kind: String, claim: String, evidence: String, limits: String}
+  KnowledgeRecordLinked{id: String, author: String, kind: String, claim: String, evidence: String, limits: String, links: String}
+  KnowledgeSearch{reader: String, scope: String, subject: String, query: String}
+  KnowledgeTraverse{reader: String, scope: String, subject: String, reference: String, direction: String, relation: String, recursive: Bool}
   KnowledgeRelate{id: String, author: String, source: String, relation: String, target: String}
   KnowledgeRead{reader: String}
   KnowledgeReadScope{reader: String, scope: String, subject: String}
@@ -562,6 +565,9 @@ def sql(command: Command) -> String:
     case Worktree{id}: ""
     case KnowledgeRecord{id,author,claim,evidence,limits}: ""
     case KnowledgeRecordTyped{id,author,kind,claim,evidence,limits}: ""
+    case KnowledgeRecordLinked{id,author,kind,claim,evidence,limits,links}: ""
+    case KnowledgeSearch{reader,scope,subject,query}: ""
+    case KnowledgeTraverse{reader,scope,subject,reference,direction,relation,recursive}: ""
     case KnowledgeRelate{id,author,source,relation,target}: ""
     case KnowledgeRead{reader}: ""
     case KnowledgeReadScope{reader,scope,subject}: ""
@@ -707,6 +713,7 @@ def parse_verb_three_args(+verb: String, +id: String, +one: String, +two: String
 
 def parse_verb_four_args(+verb: String, +id: String, +one: String, +two: String, +three: String) -> Command:
   match verb:
+    case "knowledge-search": KnowledgeSearch{id,one,two,three}
     case "knowledge":
       Bool.pick(Command,Bool.and(String.eq(one,"--id"),String.eq(three,"--pretty")),Pretty{KnowledgeDetail{id,two}},
         Bool.pick(Command,Bool.and(String.eq(one,"--pretty"),String.eq(two,"--id")),Pretty{KnowledgeDetail{id,three}},Invalid{}))
@@ -723,6 +730,8 @@ def parse_verb_four_args(+verb: String, +id: String, +one: String, +two: String,
 
 def parse_verb_five_args(+verb: String, +id: String, +one: String, +two: String, +three: String, +four: String) -> Command:
   match verb:
+    case "knowledge-search":
+      Bool.pick(Command,String.eq(four,"--pretty"),Pretty{KnowledgeSearch{id,one,two,three}},Invalid{})
     case "knowledge-scope":
       Bool.pick(Command,String.eq(three,"--id"),KnowledgeScopeDetail{id,one,two,four},
         Bool.pick(Command,Bool.or(Bool.and(String.eq(three,"--index"),String.eq(four,"--pretty")),Bool.and(String.eq(three,"--pretty"),String.eq(four,"--index"))),Pretty{KnowledgeScopeIndex{id,one,two}},Invalid{}))
@@ -772,6 +781,12 @@ def parse_basic(args: List<String>) -> Command:
       Pretty{KnowledgeScopeDetail{reader,scope,subject,id}}
     case "record-typed" <> +id <> +author <> +kind <> +claim <> +evidence <> +limits <> Nil{}:
       KnowledgeRecordTyped{id,author,kind,claim,evidence,limits}
+    case "record-linked" <> +id <> +author <> +kind <> +claim <> +evidence <> +limits <> +links <> Nil{}:
+      KnowledgeRecordLinked{id,author,kind,claim,evidence,limits,links}
+    case "knowledge-traverse" <> +reader <> +scope <> +subject <> +reference <> +direction <> +relation <> +mode <> Nil{}:
+      KnowledgeTraverse{reader,scope,subject,reference,direction,relation,String.eq(mode,"recursive")}
+    case "knowledge-traverse" <> +reader <> +scope <> +subject <> +reference <> +direction <> +relation <> +mode <> "--pretty" <> Nil{}:
+      Pretty{KnowledgeTraverse{reader,scope,subject,reference,direction,relation,String.eq(mode,"recursive")}}
     case "join" <> +id <> +parent <> +harness <> +model <> +effort <> +path <> Nil{}:
       Join{id,parent,harness,model,effort,path}
     case +verb <> +session <> +cmd <> +model <> +effort <> +cwd <> +log <> +message <> Nil{}:

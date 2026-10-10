@@ -226,6 +226,11 @@ class McpCommand(unittest.TestCase):
             'baton2_context_result': ({'query': query}, ['context-result', query]),
             'baton2_knowledge': ({}, ['knowledge', session]),
             'baton2_knowledge_relations': ({}, ['knowledge-relations', session, 'worker', session]),
+            'baton2_knowledge_search': ({'query': "reconnect ' λ"},
+                ['knowledge-search', session, 'worker', session, "reconnect ' λ"]),
+            'baton2_knowledge_traverse': ({'reference': "finding:node ' λ"},
+                ['knowledge-traverse', session, 'worker', session, "finding:node ' λ",
+                 'both', '', 'neighbors']),
             'baton2_knowledge_record': ({'id': 'finding-λ', 'claim': 'claim with\nnewlines',
                 'evidence': 'message:retained-message', 'limits': 'source only'},
                 ['record', 'finding-λ', session, 'claim with\nnewlines',
@@ -249,7 +254,10 @@ class McpCommand(unittest.TestCase):
                 optional = {'baton2_resume': {'liftStop'},
                             'baton2_knowledge': {'scope', 'subject', 'index', 'id', 'pretty'},
                             'baton2_knowledge_relations': {'scope', 'subject', 'pretty'},
-                            'baton2_knowledge_record': {'kind'},
+                            'baton2_knowledge_search': {'scope', 'subject', 'pretty'},
+                            'baton2_knowledge_traverse': {'scope', 'subject', 'direction',
+                                                        'relation', 'recursive', 'pretty'},
+                            'baton2_knowledge_record': {'kind', 'links'},
                             'baton2_knowledge_promote': {'sourceKind', 'destinationKind'}}.get(tool, set())
                 expected_properties = set(arguments) | optional
                 self.assertEqual(set(schema['properties']), expected_properties)
@@ -292,6 +300,24 @@ class McpCommand(unittest.TestCase):
         self.command(tool='baton2_knowledge_relations', session=session,
                      arguments={'scope': 'group', 'subject': "review group's λ", 'pretty': True},
                      expected_args=['knowledge-relations', session, 'group', "review group's λ", '--pretty'])
+        self.command(tool='baton2_knowledge_search', session=session,
+                     arguments={'query': 'two terms', 'scope': 'universal', 'pretty': True},
+                     expected_args=['knowledge-search', session, 'universal', '', 'two terms', '--pretty'])
+        self.command(tool='baton2_knowledge_traverse', session=session,
+                     arguments={'reference': 'message:source', 'scope': 'group', 'subject': 'team',
+                                'direction': 'out', 'relation': 'supports', 'recursive': True,
+                                'pretty': True},
+                     expected_args=['knowledge-traverse', session, 'group', 'team', 'message:source',
+                                    'out', 'supports', 'recursive', '--pretty'])
+        links = [{'id': "link ' λ", 'source': 'message:source', 'relation': 'Supports',
+                  'target': 'finding:hypothesis'}]
+        self.command(tool='baton2_knowledge_record', session=session,
+                     arguments={'id': 'hypothesis', 'kind': 'hypothesis', 'claim': 'Explanation',
+                                'evidence': 'message:source', 'limits': 'One observation',
+                                'links': links},
+                     expected_args=['record-linked', 'hypothesis', session, 'hypothesis',
+                                    'Explanation', 'message:source', 'One observation',
+                                    json.dumps(links, ensure_ascii=False, separators=(',', ':'))])
 
     def test_context_query_uses_attached_identity_and_consumer_reads_same_query(self):
         query = 'shared-query'

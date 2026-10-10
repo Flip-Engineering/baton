@@ -201,13 +201,42 @@ const TOOLS = [
     }, additionalProperties: false },
   },
   {
+    name: 'baton2_knowledge_search',
+    description: 'Search typed knowledge in explicit holdings. Every space-separated term matches ID, kind, claim, evidence, limits or retained evidence message bodies. Returns ranked matches, typed neighboring records and relationships, complete evidence and literal record reads. Ranking describes lexical matches and recorded connectivity.',
+    inputSchema: { type: 'object', properties: {
+      query: { type: 'string' },
+      scope: { type: 'string', enum: ['worker', 'group', 'universal', 'all'], description: 'Default: attached worker holdings' },
+      subject: { type: 'string', description: 'Worker, Ensemble or Principal Conductor ID' },
+      pretty: { type: 'boolean' },
+    }, required: ['query'], additionalProperties: false },
+  },
+  {
+    name: 'baton2_knowledge_traverse',
+    description: 'Follow a knowledge or evidence reference through incoming, outgoing or both directions. Returns typed nodes, authored causal relationships and recorded citations with complete record reads. Optional recursive traversal follows the connected subgraph and terminates on cycles; relation selects one authored relationship name.',
+    inputSchema: { type: 'object', properties: {
+      reference: { type: 'string', description: 'finding:ID, bare knowledge ID, message:ID or external reference' },
+      scope: { type: 'string', enum: ['worker', 'group', 'universal', 'all'], description: 'Default: attached worker holdings' },
+      subject: { type: 'string' },
+      direction: { type: 'string', enum: ['in', 'out', 'both'], description: 'Default: both' },
+      relation: { type: 'string', description: 'Omitted means every relationship' },
+      recursive: { type: 'boolean', description: 'Default: immediate neighbors' },
+      pretty: { type: 'boolean' },
+    }, required: ['reference'], additionalProperties: false },
+  },
+  {
     name: 'baton2_knowledge_record',
-    description: 'Record knowledge as the attached session, with cited evidence and limits. An optional kind names the item, such as observation, decision or hypothesis.',
+    description: 'Record typed evidence, findings, hypotheses, experiments, decisions or principles with cited sources and limits. Optional links commit authored causal relationships with the record in one transaction. A committed record notifies the immediate parent.',
     inputSchema: { type: 'object', properties: {
       id: { type: 'string' }, claim: { type: 'string' },
       kind: { type: 'string', description: 'Authored item type; omitted means finding. Types are free-form.' },
       evidence: { type: 'string', description: 'Evidence reference, such as message:MESSAGE_ID' },
       limits: { type: 'string' },
+      links: { type: 'array', description: 'Authored relationships committed with this record', items: {
+        type: 'object', properties: {
+          id: { type: 'string' }, source: { type: 'string' },
+          relation: { type: 'string' }, target: { type: 'string' },
+        }, required: ['id', 'source', 'relation', 'target'], additionalProperties: false,
+      } },
     }, required: ['id', 'claim', 'evidence', 'limits'], additionalProperties: false },
   },
   {
@@ -702,8 +731,27 @@ function handleToolCall(msg) {
           ...(args.pretty === true ? ['--pretty'] : []));
         break;
       }
+      case 'baton2_knowledge_search': {
+        const scope = args.scope ?? 'worker';
+        result = coord('knowledge-search', sessionId, scope,
+          args.subject ?? (scope === 'worker' ? sessionId : ''), args.query,
+          ...(args.pretty === true ? ['--pretty'] : []));
+        break;
+      }
+      case 'baton2_knowledge_traverse': {
+        const scope = args.scope ?? 'worker';
+        result = coord('knowledge-traverse', sessionId, scope,
+          args.subject ?? (scope === 'worker' ? sessionId : ''), args.reference,
+          args.direction ?? 'both', args.relation ?? '',
+          args.recursive === true ? 'recursive' : 'neighbors',
+          ...(args.pretty === true ? ['--pretty'] : []));
+        break;
+      }
       case 'baton2_knowledge_record':
-        result = args.kind === undefined
+        result = args.links !== undefined
+          ? coord('record-linked', args.id, sessionId, args.kind ?? 'finding',
+              args.claim, args.evidence, args.limits, JSON.stringify(args.links))
+          : args.kind === undefined
           ? coord('record', args.id, sessionId, args.claim, args.evidence, args.limits)
           : coord('record-typed', args.id, sessionId, args.kind, args.claim, args.evidence, args.limits);
         break;

@@ -381,7 +381,7 @@ test('knowledge graphs expose authored types, cited messages and scoped shared h
     INSERT INTO knowledge VALUES
       ('quota-observation','grandchild','Provider quota error','message:quota-report','One turn','observation'),
       ('quota-correction','grandchild','Process exit differs from provider outcome','run:correction','One run','correction'),
-      ('root-decision','root','Use another available account','message:quota-report','The observed account','decision'),
+      ('root-decision','root','Use another available account','finding:quota-correction','The observed account','decision'),
       ('outside-local','external','Unshared local finding','run:outside','One run','finding');
     INSERT INTO knowledge_promotions VALUES
       ('to-worker','quota-observation','grandchild','grandchild','child','child','session','session'),
@@ -391,7 +391,7 @@ test('knowledge graphs expose authored types, cited messages and scoped shared h
       ('to-root','quota-observation','grandchild','review-group','root','root','group','session');
     INSERT INTO knowledge_relations VALUES
       ('quota-source','grandchild','message:quota-report','Supports','finding:quota-observation'),
-      ('quota-revision','grandchild','finding:quota-correction','Supersedes','finding:quota-observation'),
+      ('quota-revision','grandchild','quota-correction','Supersedes','finding:quota-observation'),
       ('quota-cause','root','finding:root-decision','BecauseOf','finding:quota-observation');
   `);
   writer.close();
@@ -407,6 +407,23 @@ test('knowledge graphs expose authored types, cited messages and scoped shared h
     id: 'quota-report', sender: 'grandchild', recipient: 'child', body: 'Retained provider quota error.',
   });
   assert.equal(universal.relations.find((relation) => relation.id === 'quota-source').relation, 'Supports');
+  const support = universal.edges.find((edge) => edge.id === 'quota-source');
+  assert.equal(support.sourceKind, 'message');
+  assert.equal(support.targetKind, 'observation');
+  const cited = universal.edges.find((edge) => edge.id === 'citation:quota-observation');
+  assert.equal(cited.relation, 'Cited');
+  assert.equal(cited.provenance, 'recorded-evidence');
+  const observation = universal.nodes.find((node) => node.reference === 'finding:quota-observation');
+  assert.equal(observation.evidenceMessage.body, 'Retained provider quota error.');
+  const source = universal.nodes.find((node) => node.reference === 'message:quota-report');
+  assert.deepEqual(source.deliveryRead, ['delivery', 'quota-report']);
+  const unheld = universal.nodes.find((node) => node.reference === 'finding:quota-correction');
+  assert.equal(unheld.kind, 'correction');
+  assert.equal(unheld.referenceOnly, true);
+  assert.equal(unheld.claim, undefined);
+  assert.equal(universal.relations.find((edge) => edge.id === 'quota-revision').source, 'quota-correction');
+  assert.equal(universal.edges.find((edge) => edge.id === 'quota-revision').source, 'finding:quota-correction');
+  assert.equal(universal.edges.find((edge) => edge.id === 'citation:root-decision').targetKind, 'correction');
   const group = await read('?group=review-group');
   assert.deepEqual(group.scope, { kind: 'group', id: 'review-group', holders: ['child'] });
   assert.deepEqual(group.findings.map((item) => item.id), ['quota-observation']);
@@ -431,6 +448,8 @@ test('knowledge graphs expose authored types, cited messages and scoped shared h
   assert.equal(actor.received[0].destinationKind, 'session');
   assert.equal(actor.received[0].kind, 'observation');
   assert.equal(actor.received[0].evidenceMessage.id, 'quota-report');
+  assert.deepEqual(actor.nodes.filter((node) => !node.referenceOnly).map((node) => node.reference),
+    ['finding:quota-observation']);
   const all = await read('?scope=all');
   assert.deepEqual(all.findings.map((item) => item.id),
     ['outside-local', 'quota-correction', 'quota-observation', 'root-decision']);

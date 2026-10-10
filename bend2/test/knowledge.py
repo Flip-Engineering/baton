@@ -150,6 +150,62 @@ class Knowledge(unittest.TestCase):
         self.assertIn('root', affected)
         self.assertNotIn('worker', affected)
 
+    def test_causal_records_search_evidence_and_traverse_scoped_cycles(self):
+        source = "retained evidence ' λ"
+        self.call('report', source, 'grand', 'The measured process recovered after reconnect.')
+        self.call('record-typed', 'measurement', 'grand', 'evidence',
+                  'Observed recovery', 'message:' + source, 'One process')
+        links = [{'id': 'supports-hypothesis', 'source': 'finding:measurement',
+                  'relation': 'Supports', 'target': 'finding:hypothesis'}]
+        self.call('record-linked', 'hypothesis', 'grand', 'hypothesis',
+                  'Reconnect permits recovery', 'message:' + source, 'Needs another run',
+                  json.dumps(links))
+        self.call('record-linked', 'decision', 'grand', 'decision',
+                  'Continue the original process', 'finding:hypothesis', 'This observed fault',
+                  json.dumps([{'id': 'informs-decision', 'source': 'finding:hypothesis',
+                               'relation': 'Informed', 'target': 'finding:decision'},
+                              {'id': 'cycle', 'source': 'finding:decision',
+                               'relation': 'Related', 'target': 'finding:measurement'}]))
+        self.call('record-typed', 'unheld', 'sibling', 'hypothesis',
+                  'Reconnect permits unrelated recovery', 'run:other', 'Another worker')
+        found = self.call('knowledge-search', 'root', 'worker', 'grand', 'measured reconnect')
+        self.assertEqual({r['id'] for r in found['matches']}, {'measurement', 'hypothesis'})
+        self.assertNotIn('unheld', {r['id'] for r in found['nodes']})
+        self.assertEqual(found['matches'][0]['evidenceMessage']['body'],
+                         'The measured process recovered after reconnect.')
+        for node in found['nodes']:
+            self.assertEqual(node['reference'], 'finding:' + node['id'])
+            self.assertEqual(self.call(*node['detailRead'])[0]['id'], node['id'])
+        incoming = self.call('knowledge-traverse', 'root', 'worker', 'grand',
+                             'hypothesis', 'in', 'supports', 'neighbors')
+        self.assertEqual({edge['id'] for edge in incoming['edges']}, {'supports-hypothesis'})
+        self.assertEqual({r['kind'] for r in incoming['nodes']}, {'evidence', 'hypothesis'})
+        self.assertEqual(incoming['edges'][0]['sourceKind'], 'evidence')
+        self.assertEqual(incoming['edges'][0]['targetKind'], 'hypothesis')
+        full = self.call('knowledge-traverse', 'root', 'worker', 'grand',
+                         'finding:decision', 'both', '', 'recursive')
+        self.assertEqual({r['id'] for r in full['nodes']}, {'measurement', 'hypothesis', 'decision'})
+        self.assertIn('message:' + source, full['roots'])
+        evidence = next(r for r in full['references'] if r['reference'] == 'message:' + source)
+        self.assertEqual(self.call(*evidence['deliveryRead'])['body'],
+                         'The measured process recovered after reconnect.')
+        self.assertEqual(self.call('knowledge-search', 'root', 'universal', '', 'recovery')['matches'], [])
+        self.call('promote', 'share-hypothesis', 'root', 'grand', 'root', 'hypothesis')
+        shared = self.call('knowledge-search', 'root', 'universal', '', 'reconnect')
+        self.assertEqual({r['id'] for r in shared['matches']}, {'hypothesis'})
+        self.assertEqual({r['id'] for r in shared['nodes']}, {'hypothesis'})
+        outside = {r['reference']: r['kind'] for r in shared['references']}
+        self.assertEqual(outside['finding:measurement'], 'evidence')
+        self.assertEqual(outside['finding:decision'], 'decision')
+
+    def test_linked_record_failure_rolls_back_record_links_and_parent_notice(self):
+        malformed = [{'id': 'broken', 'source': 'finding:new', 'relation': 'Supports'}]
+        self.call('record-linked', 'new', 'grand', 'hypothesis', 'Proposed explanation',
+                  'run:observation', 'Not evaluated', json.dumps(malformed), success=False)
+        self.assertEqual(self.read('root'), [])
+        self.assertEqual(self.call('knowledge-relations', 'root', 'all', ''), [])
+        self.assertEqual(self.call('inbox', 'worker'), [])
+
     def test_legacy_promotions_remain_session_holdings_before_and_after_migration(self):
         self.call('ensemble', 'review-group', 'worker')
         self.call('record', 'legacy-share', 'grand', 'Legacy finding', 'run:legacy', 'One run')
@@ -260,6 +316,24 @@ class Knowledge(unittest.TestCase):
         self.assertEqual(migrated['legacy']['claim'], 'Recorded claim')
         self.assertEqual(migrated['legacy']['kind'], 'finding')
         self.assertEqual(migrated['new-observation']['kind'], 'observation')
+
+    def test_legacy_findings_with_retained_relations_support_search_and_traversal(self):
+        with sqlite3.connect(self.db) as db:
+            db.execute('DROP TABLE knowledge')
+            db.execute('CREATE TABLE knowledge (id TEXT UNIQUE NOT NULL,author TEXT NOT NULL,'
+                       'claim TEXT NOT NULL,evidence TEXT NOT NULL,limits TEXT NOT NULL)')
+            db.execute("INSERT INTO knowledge VALUES ('legacy','root','Recorded claim','run:legacy','One run')")
+            db.execute("INSERT INTO knowledge_relations VALUES ('retained','root','finding:legacy','Supports','message:source')")
+        relation = self.call('knowledge-relations', 'root')[0]
+        self.assertEqual((relation['sourceKind'], relation['targetKind']), ('finding', 'message'))
+        found = self.call('knowledge-search', 'root', 'universal', '', 'Recorded claim')
+        self.assertEqual(found['matches'][0]['kind'], 'finding')
+        linked = self.call('knowledge-traverse', 'root', 'universal', '',
+                           'legacy', 'out', 'supports', 'recursive')
+        self.assertEqual(linked['edges'], [{**relation, 'provenance': 'authored'}])
+        self.assertEqual(linked['references'][0]['deliveryRead'], ['delivery', 'source'])
+        with sqlite3.connect(self.db) as db:
+            self.assertNotIn('kind', {row[1] for row in db.execute('PRAGMA table_info(knowledge)')})
 
     def test_a_finding_is_readable_by_every_registered_session(self):
         recorded = self.call('record', 'finding-1', 'worker', 'the cache is warm',
