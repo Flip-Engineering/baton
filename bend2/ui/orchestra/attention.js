@@ -16,8 +16,13 @@
    The stage draws one seat per actor, shaped and inked by its state, with the
    baton on the seat that acted most recently, a recency trail above the mark, a
    queue bar under a seat that owes work, and the recorded relations as threads
-   between the seats that hold them. Every tier maps onto the
-   mount's width and wraps inside it, so no seat is painted outside the box.
+   between the seats that hold them. The seating plan is the reporting hierarchy:
+   the principal conductor at the root, one depth level per complete parent chain,
+   ensembles grouping inside a level, and unknown ancestry in its own tier. A
+   conductor wears a role ring in the page's ink - whole for the principal, broken
+   for an associate - and a seat's title names the parent it reports to. Every tier
+   maps onto the mount's width and wraps inside it, so no seat is painted outside
+   the box.
 
    The default set is the shell's: an actor is seated unless its id arrives in
    options.quietIds, or unless options.showEnded is true. Keyboard: one tab stop;
@@ -441,6 +446,7 @@
         stopNote: stopNote(player),
         live: reading === "running",
         role: String(player.role || ""),
+        parent: String(player.parent || ""),
         conductor: isConductor(String(player.role || "")),
         activity: activityOf(player),
         at: atOf(player),
@@ -488,28 +494,56 @@
       listed: rows.filter(isListed),
       bandRank: bandRank,
       // The ensembles arrive from the shell's options; a direct caller may hand them as data.
-      // Either names the tiers and carries the sections the payload records.
-      stage: stagePlan(seated, (Array.isArray(options.ensembles) && options.ensembles.length
+      // Either names the tiers and carries the sections the payload records. Depth reads
+      // every row - quiet seats included - so a chain through a hidden seat still places
+      // its descendants, while only seated rows draw.
+      stage: stagePlan(rows, seated, (Array.isArray(options.ensembles) && options.ensembles.length
         ? options.ensembles : (data && data.ensembles)) || []),
     };
   }
 
   /* ── the seating plan ─────────────────────────────────────────────────── */
 
-  // Conductors stand on their own tier; every ensemble is one tier, and actors
-  // in no ensemble share the last tier. Tiers keep the document order inside.
-  function stagePlan(rows, ensembles) {
-    var podium = [];
-    var byBand = new Map();
-    var loose = [];
-    for (var i = 0; i < rows.length; i += 1) {
-      var row = rows[i];
-      if (row.conductor) { podium.push(row); continue; }
-      if (!row.memberOf.length) { loose.push(row); continue; }
-      var key = row.memberOf[0];
-      if (!byBand.has(key)) byBand.set(key, []);
-      byBand.get(key).push(row);
+  // Reporting depth, read over every row so a chain through a quiet seat still places
+  // its descendants. The principal conductor is the root: a row with no recorded
+  // parent and the principal's role sits at depth 0. Every other row sits at one more
+  // than its parent, following complete parent chains. A row whose parent is absent
+  // from the record, whose chain cycles, or that records no parent and is not the
+  // principal is genuine unknown ancestry: its own tier, never a guessed depth.
+  function parentDepths(rows) {
+    var byId = {};
+    for (var i = 0; i < rows.length; i += 1) byId[rows[i].id] = rows[i];
+    var ORPHAN = -1;
+    var depth = {};
+    function resolve(row, stack) {
+      if (depth[row.id] !== undefined) return depth[row.id];
+      if (stack.indexOf(row.id) !== -1) return ORPHAN;
+      stack.push(row.id);
+      var level;
+      if (!row.parent) {
+        level = row.role === "principal-conductor" ? 0 : ORPHAN;
+      } else if (!byId[row.parent]) {
+        level = ORPHAN;
+      } else {
+        var up = resolve(byId[row.parent], stack);
+        level = up === ORPHAN ? ORPHAN : up + 1;
+      }
+      stack.pop();
+      depth[row.id] = level;
+      return level;
     }
+    for (var r = 0; r < rows.length; r += 1) resolve(rows[r], []);
+    return depth;
+  }
+
+  // The seating plan is the reporting hierarchy: the principal conductor at the root,
+  // then one depth level per parent step, deepest last, so the hall reads top-down as
+  // a chain of command and the eye follows who reports to whom by tier position.
+  // Ensemble membership groups seats inside a depth level and never overrides depth;
+  // the payload's sections follow their ensemble wherever it sits; unknown ancestry
+  // keeps its own tier at the end. Tiers keep the document order inside.
+  function stagePlan(rows, seated, ensembles) {
+    var depth = parentDepths(rows);
 
     var labels = {};
     var sectionsByEnsemble = {};
@@ -522,14 +556,51 @@
       }
     }
 
-    var tiers = [];
-    if (podium.length) tiers.push({ id: "", label: "conductors", conductors: true, rows: podium });
-    byBand.forEach(function (members, key) {
-      tiers.push({ id: key, label: shortId(labels[key] || key), rows: members,
-        sections: sectionsByEnsemble[key] || [] });
-    });
+    var byLevel = new Map();
+    var orphans = [];
+    var deepest = 0;
+    for (var s = 0; s < seated.length; s += 1) {
+      var row = seated[s];
+      var level = depth[row.id];
+      if (level === undefined || level < 0) { orphans.push(row); continue; }
+      if (!byLevel.has(level)) byLevel.set(level, []);
+      byLevel.get(level).push(row);
+      if (level > deepest) deepest = level;
+    }
 
-    if (loose.length) tiers.push({ id: "", label: "no ensemble", rows: loose });
+    var tiers = [];
+    for (var level = 0; level <= deepest; level += 1) {
+      var members = byLevel.get(level);
+      if (!members || !members.length) continue;
+      if (level === 0) {
+        tiers.push({ id: "", label: members.length === 1 ? "principal conductor"
+          : "principal conductors", conductors: true, rows: members });
+        continue;
+      }
+      var byBand = new Map();
+      var loose = [];
+      for (var m = 0; m < members.length; m += 1) {
+        var seat = members[m];
+        if (!seat.memberOf.length) { loose.push(seat); continue; }
+        var key = seat.memberOf[0];
+        if (!byBand.has(key)) byBand.set(key, []);
+        byBand.get(key).push(seat);
+      }
+      byBand.forEach(function (band, key) {
+        tiers.push({
+          id: key,
+          label: "depth " + level + " \u00b7 " + shortId(labels[key] || key),
+          rows: band,
+          sections: sectionsByEnsemble[key] || [],
+        });
+      });
+      if (loose.length) {
+        tiers.push({ id: "", label: "depth " + level + ", no ensemble", rows: loose });
+      }
+    }
+    if (orphans.length) {
+      tiers.push({ id: "", label: "no parent recorded", rows: orphans });
+    }
 
     // The baton rests on the most recent recorded action among the working seats.
     var target = "";
@@ -742,6 +813,35 @@
     return shape;
   }
 
+  // One arc of a role ring, as a path from angle a1 to a2 (radians, y-down screen
+  // space), angles from three o'clock. The associate's two arcs sweep the top and the
+  // bottom, leaving the gaps at three and nine o'clock: the ring reads as broken
+  // whichever way the seat is scanned.
+  function roleArc(r, a1, a2) {
+    function point(angle) {
+      return (r * Math.cos(angle)).toFixed(2) + " " + (r * Math.sin(angle)).toFixed(2);
+    }
+    return svgEl("path", {
+      "class": "att-role",
+      d: "M " + point(a1) + " A " + r.toFixed(2) + " " + r.toFixed(2) + " 0 0 1 " + point(a2),
+    });
+  }
+
+  // The conductor's role enclosure, in the page's own ink: the principal a whole thin
+  // ring, an associate the same ring broken into two arcs. The stage and the legend
+  // draw from this one function.
+  function roleMark(role, radius) {
+    var group = svgEl("g", { "class": "att-role" });
+    var r = radius + 7;
+    if (role === "principal-conductor") {
+      group.appendChild(svgEl("circle", { "class": "att-role", cx: 0, cy: 0, r: r }));
+      return group;
+    }
+    group.appendChild(roleArc(r, Math.PI * 0.45, Math.PI * 0.95));
+    group.appendChild(roleArc(r, Math.PI * 1.45, Math.PI * 1.95));
+    return group;
+  }
+
   function seatNode(entry, options, marks, laid) {
     var seat = entry.seat;
     var radius = laid.radius;
@@ -773,6 +873,16 @@
       held.style.fill = "none";
       held.style.stroke = paint.ink;
       group.appendChild(held);
+    }
+
+    // The role mark: the recorded role of a conductor, in the page's own ink, as an
+    // enclosure no state owns - the fermata ring is a state ink at radius + 4, the
+    // selection ring a focus claim at radius + 3, and both are circles of the moment.
+    // The principal conductor carries a whole thin ring at radius + 7; an associate
+    // conductor carries the same ring broken into two arcs, so whole against broken -
+    // a closure difference, read before any word - separates the two roles at a glance.
+    if (seat.role === "principal-conductor" || seat.role === "associate-conductor") {
+      group.appendChild(roleMark(seat.role, radius));
     }
 
     group.appendChild(shapeNode(seat.reading, radius));
@@ -842,6 +952,7 @@
     setText(title, seat.id + " \u2014 " + seat.word
       + " \u2014 " + (seat.activity ? activityText(seat) : "no work recorded")
       + (marks.recent && marks.recent.age ? " \u2014 acted " + marks.recent.age + " ago" : "")
+      + (seat.parent ? " \u2014 reports to " + seat.parent : "")
       + (seat.stopNote ? " \u2014 " + seat.stopNote : ""));
     group.appendChild(title);
 
@@ -1490,6 +1601,26 @@
       key.appendChild(mark);
       key.appendChild(span(null, readingWord(state, 0)));
       legend.appendChild(key);
+    }
+    // The role keys, after the states: the same rings the seats wear, so a reader
+    // who meets a broken ring on a depth tier can name it without hunting.
+    var ROLES = [
+      { role: "principal-conductor", word: "principal" },
+      { role: "associate-conductor", word: "associate" },
+    ];
+    for (var j = 0; j < ROLES.length; j += 1) {
+      var roleKey = document.createElement("span");
+      roleKey.className = "att-key";
+      roleKey.dataset.attKey = "legend:role:" + ROLES[j].role;
+      roleKey.setAttribute("title", ROLES[j].word + " conductor");
+      var roleMarkSvg = svgEl("svg", {
+        "class": "att-key-mark", width: 12, height: 12, viewBox: "-13 -13 26 26",
+        "aria-hidden": "true", focusable: "false",
+      });
+      roleMarkSvg.appendChild(roleMark(ROLES[j].role, 4.4));
+      roleKey.appendChild(roleMarkSvg);
+      roleKey.appendChild(span(null, ROLES[j].word));
+      legend.appendChild(roleKey);
     }
     return legend;
   }

@@ -110,6 +110,17 @@
   stroke: var(--ink);
 }
 
+/* The conductor's role enclosure, in the page's own ink at radius + 7: the principal
+   a whole thin ring, an associate the same ring broken into two arcs. It owns no
+   state channel - the fermata ring is a state ink at radius + 4 and the selection
+   ring a focus claim at radius + 3 - so whole against broken reads as role alone. */
+.lane-strip .att-role {
+  fill: none;
+  stroke: var(--ink);
+  stroke-width: 1;
+  opacity: 0.9;
+}
+
 .lane-strip .att-hit { fill: transparent; }
 
 /* A tier's name sits flush left and its seat count flush right, so the column is
