@@ -2089,6 +2089,8 @@ check('the stage seats the fixture by its reporting hierarchy', await evalJs(`(a
   // The same resolver the stage states: a row with no parent sits at 0 when it
   // carries the principal role, every other row at one more than its parent,
   // and a broken chain, a cycle, or a parentless non-principal is an orphan.
+  // Depth resolves over every player, so a hidden middle seat still places
+  // its seated descendants.
   const depth = new Map();
   const resolve = (id, stack) => {
     if (depth.has(id)) return depth.get(id);
@@ -2114,29 +2116,56 @@ check('the stage seats the fixture by its reporting hierarchy', await evalJs(`(a
     if (!expected.has(level)) expected.set(level, []);
     expected.get(level).push(pl.id);
   }
-  // Read the drawn tiers and seats: a seat belongs to the last tier band above it.
-  const tierTexts = [...document.querySelectorAll('#attention-band text.att-tier')]
+  // One coordinate system: SVG y throughout. The renderer draws each tier
+  // label as text.att-section-label at the tier's own y plus three, and each
+  // seat group as a translate(x y) transform; both parse from the drawing.
+  const tiers = [...document.querySelectorAll('#attention-band text.att-section-label')]
     .map((node) => ({ y: Number(node.getAttribute('y') || 0), label: node.textContent || '' }))
+    .filter((tier) => tier.y > 0 || tier.label)
     .sort((a, b) => a.y - b.y);
-  if (!tierTexts.length || !/^principal conductor/.test(tierTexts[0].label)) return false;
-  if (tierTexts.some((tier) => /no parent recorded/.test(tier.label))) return false;
-  const seats = [...document.querySelectorAll('#attention-band .att-seat')]
-    .map((seat) => ({ y: Number(seat.getAttribute('transform') ? 0 : 0)
-      || seat.getBoundingClientRect().top, id: seat.getAttribute('data-att-id') || '' }))
-    .map((seat) => ({ ...seat, y: seat.getBoundingClientRect().top }));
-  const grouped = tierTexts.map((tier) => ({
-    label: tier.label,
-    ids: seats.filter((seat) => seat.id && seat.y >= tier.y)
-      .sort((a, b) => a.y - b.y).map((seat) => seat.id),
-  }));
-  // Each tier's seat set, in order, equals the derived depth set.
+  if (!tiers.length) return false;
+  if (!/^principal conductor/.test(tiers[0].label)) return false;
+  if (tiers.some((tier) => /no parent recorded/.test(tier.label))) return false;
+  const seatY = (seat) => {
+    const m = /translate\([^ ]+ ([0-9.]+)/.exec(seat.getAttribute('transform') || '');
+    return m ? Number(m[1]) : Infinity;
+  };
+  // A seat belongs to the tier whose label stands at or above it and before
+  // the next label below: each seat is bounded on both sides, never counted
+  // into every tier above it.
+  const depthOf = (label) => {
+    if (/^principal conductor/.test(label)) return 0;
+    const m = /depth (\d+) /.exec(label);
+    return m ? Number(m[1]) : -1;
+  };
+  const drawn = new Map();
+  for (let i = 0; i < tiers.length; i += 1) {
+    const level = depthOf(tiers[i].label);
+    if (level === -1) return false;
+    const upper = i + 1 < tiers.length ? tiers[i + 1].y - 3 : Infinity;
+    const ids = [...document.querySelectorAll('#attention-band .att-seat')]
+      .filter((seat) => {
+        const y = seatY(seat);
+        return y >= tiers[i].y - 3 && y < upper;
+      })
+      .map((seat) => seat.getAttribute('data-att-id') || '')
+      .filter(Boolean);
+    // Several bands can share one depth: collect them before comparing.
+    if (!drawn.has(level)) drawn.set(level, []);
+    drawn.set(level, drawn.get(level).concat(ids));
+  }
+  // The page opens active-only: the stage's own filter hides the ended
+  // actors, so the expected visible membership comes from that filter -
+  // the seats actually drawn - while depth above resolved over every
+  // recorded player, so a hidden ancestor still places its seated
+  // descendants at the right tier.
+  const drawnIds = new Set([...document.querySelectorAll('#attention-band .att-seat')]
+    .map((seat) => seat.getAttribute('data-att-id') || '').filter(Boolean));
   const levels = [...expected.keys()].sort((a, b) => a - b);
-  if (grouped.length !== levels.length) return false;
-  for (let i = 0; i < levels.length; i += 1) {
-    const want = expected.get(levels[i]).sort().join(',');
-    const got = grouped[i].ids.sort().join(',');
+  for (const level of levels) {
+    const want = expected.get(level).filter((id) => drawnIds.has(id)).sort().join(',');
+    const got = (drawn.get(level) || []).sort().join(',');
     if (want !== got) return false;
-    if (i > 0 && !new RegExp('depth ' + levels[i] + '(\\u00b7|,)').test(grouped[i].label)) return false;
   }
   return true;
 })()`));
