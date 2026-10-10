@@ -510,13 +510,38 @@ while True:
         self.release('root', 3)
         self.completed('root', 3)
 
+        lead_continuation = self.eventually(
+            lambda: self.calls('lead')[2:3], 'the open lead assignment did not continue.')
+        child_continuation = self.eventually(
+            lambda: self.calls('child')[1:2], 'the open child assignment did not continue.')
         self.eventually(lambda: len(self.calls('root')) == 3, 'the root started a fourth turn.')
-        self.assertEqual([len(self.calls(session)) for session in ('root', 'lead', 'child')], [3, 2, 1])
+        self.assertEqual([len(self.calls(session)) for session in ('root', 'lead', 'child')], [3, 3, 2])
         self.assertEqual([len(json.loads(self.coord('turns', session)))
                           for session in ('root', 'lead', 'child')], [3, 2, 1])
         # Each turn after the first resumed the identity its own session recorded.
         self.assertEqual([call['resume'] for call in self.calls('root')[1:]], ['native-root'] * 2)
         self.assertEqual(self.calls('lead')[1]['resume'], 'native-lead')
+        for session, parent, assignment, call in (
+                ('lead', 'root', 'late-lead', lead_continuation[0]),
+                ('child', 'lead', 'child-task', child_continuation[0])):
+            self.assertEqual(call['resume'], f'native-{session}')
+            self.assertIn(f'Continue assignment {assignment}.', call['prompt'])
+            self.assertIn('Your immediate coordinator has not confirmed task completion.',
+                          call['prompt'])
+            self.assertIn('send one completion-request to your recorded parent', call['prompt'])
+            self.assertIn('completion-confirmed reply names that request', call['prompt'])
+            continuation_ids = self.prompt_ids(call)
+            self.assertEqual(len(continuation_ids), 1)
+            self.assertTrue(continuation_ids[0].endswith(':task-continuation'))
+            self.assertEqual(self.accepted(continuation_ids[0]), 'fixture reviewed')
+            continuation = json.loads(self.coord('delivery', continuation_ids[0]))
+            self.assertEqual((continuation['sender'], continuation['recipient'], continuation['kind']),
+                             (session, session, 'task-continuation'))
+            state = json.loads(self.coord('session', session))['taskCompletion']
+            self.assertEqual((state['assignmentId'], state['coordinator'], state['requestId']),
+                             (assignment, parent, None))
+            self.assertTrue(state['open'])
+            self.assertFalse(state['confirmed'])
         for session in ('root', 'lead', 'child'):
             self.assertEqual(json.loads(self.coord('player', session))['native'], f'native-{session}')
         # Every hop reached its own recipient, and each input was consumed once.
