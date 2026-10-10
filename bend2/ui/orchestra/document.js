@@ -458,6 +458,8 @@
         onSelectActor: opts.onSelect,
         // The card's one move into the record, forwarded so the card renders it.
         onOpenRecord: opts.onOpenRecord,
+        // The relation the record asked the map to light, by its recorded name.
+        focusRelation: opts.focusRelation || "",
       });
       // The map publishes the height its own drawing needs; the frame takes that
       // height within bounds, so a small recorded ensemble does not sit in a tall
@@ -558,6 +560,8 @@
           onClearSelection: options.onClearSelection,
           // A change row opens the seat it names, the same callback the map and the ribbon use.
           onSelectActor: options.onSelect,
+          // A relation statement asks the map to light that relation's edges.
+          onFocusRelation: options.onFocusRelation,
         });
       } else {
         var seat = options.selectedSeat || null;

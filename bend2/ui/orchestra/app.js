@@ -39,6 +39,8 @@ const state = {
   // The knowledge the map is showing: universal by default, the selected worker's or
   // group's holdings once one is chosen, all held records only when asked for.
   knowledgeScope: { kind: "universal", id: "" },
+  // The relation the record asked the map to light, by its recorded name.
+  knowledgeFocusRelation: "",
   // The project surface: the selected actor's recorded workspace, its prior conversations and
   // the outcome of continuing one. Read on demand; the actor it belongs to travels with it.
   project: null,
@@ -411,6 +413,8 @@ function select(id) {
   state.selectionId = id;
   state.knowledgeOpen = false;
   state.findingId = null;
+  // A new selection clears the relation the record had asked the map to light.
+  state.knowledgeFocusRelation = "";
   // The map follows the selection into that worker's own holdings. Universal is the
   // default and stays one click away on the map's own control.
   if (state.knowledgeScope.kind !== "actor" || state.knowledgeScope.id !== id) {
@@ -660,6 +664,7 @@ function clearSelection() {
   state.selectionId = null;
   state.knowledgeOpen = false;
   state.findingId = null;
+  state.knowledgeFocusRelation = "";
   setKnowledgeScope({ kind: "universal", id: "" });
   if (typeof history.replaceState === "function") {
     history.replaceState(null, "", location.pathname + location.search);
@@ -2129,6 +2134,14 @@ function renderDocument() {
     },
     // The map's pinned card opens the record at its finding, on that finding's block.
     onOpenRecord: (id) => { openRecordAt(id); },
+    // The record's relation statements light that relation's edges on the map; the
+    // map receives the name it should light and clears it with the next selection.
+    onFocusRelation: (name) => {
+      state.knowledgeFocusRelation = String(name || "");
+      markDrawnStale();
+      renderDocument();
+    },
+    focusRelation: state.knowledgeFocusRelation || "",
     onReadMessage: (id) => { void loadMessageBody(id); },
     onScrub: selectHistoryEvent,
     onSelectEvent: selectHistoryEvent,
