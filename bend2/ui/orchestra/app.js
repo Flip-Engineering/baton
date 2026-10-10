@@ -2011,6 +2011,13 @@ function selectedSeat() {
         kind: held.message.kind || "",
         body: held.message.body == null ? "" : held.message.body,
       })),
+    // The seat's authored findings from the recorded knowledge overview, so
+    // the record reaches every claim the seat holds without the map. The
+    // record draws {id, claim} rows and renders nothing when none are held.
+    authored: ((state.knowledge && Array.isArray(state.knowledge.findings))
+      ? state.knowledge.findings : [])
+      .filter((f) => f && String(f.author || "") === p.id)
+      .map((f) => ({ id: String(f.id), claim: f.claim == null ? "" : String(f.claim) })),
   };
 }
 
