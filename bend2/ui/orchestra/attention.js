@@ -487,7 +487,10 @@
       owing: rows.filter(function (row) { return row.owesWork; }),
       listed: rows.filter(isListed),
       bandRank: bandRank,
-      stage: stagePlan(seated, (data && data.ensembles) || []),
+      // The ensembles arrive from the shell's options; a direct caller may hand them as data.
+      // Either names the tiers and carries the sections the payload records.
+      stage: stagePlan(seated, (Array.isArray(options.ensembles) && options.ensembles.length
+        ? options.ensembles : (data && data.ensembles)) || []),
     };
   }
 
@@ -509,15 +512,23 @@
     }
 
     var labels = {};
+    var sectionsByEnsemble = {};
     for (var e = 0; e < ensembles.length; e += 1) {
-      if (ensembles[e] && ensembles[e].id) labels[String(ensembles[e].id)] = String(ensembles[e].id);
+      if (!ensembles[e] || !ensembles[e].id) continue;
+      var ensembleId = String(ensembles[e].id);
+      labels[ensembleId] = String(ensembles[e].id);
+      if (Array.isArray(ensembles[e].sections)) {
+        sectionsByEnsemble[ensembleId] = ensembles[e].sections;
+      }
     }
 
     var tiers = [];
     if (podium.length) tiers.push({ id: "", label: "conductors", conductors: true, rows: podium });
     byBand.forEach(function (members, key) {
-      tiers.push({ id: key, label: shortId(labels[key] || key), rows: members });
+      tiers.push({ id: key, label: shortId(labels[key] || key), rows: members,
+        sections: sectionsByEnsemble[key] || [] });
     });
+
     if (loose.length) tiers.push({ id: "", label: "no ensemble", rows: loose });
 
     // The baton rests on the most recent recorded action among the working seats.
@@ -851,10 +862,10 @@
   // from the knowledge overview, message traffic from the page's events, and the
   // typed graph's authored claims and cited edges. Stroke only, so a thread reads as
   // a connection and never as a filled field.
-  function relationThreads(stage, positions, knowledge, events, laid) {
+  function relationThreads(stage, positions, knowledge, events, laid, options) {
     drawPromotions(stage, positions, knowledge);
     drawTraffic(stage, positions, events);
-    drawTypedEdges(stage, positions, knowledge, laid);
+    drawTypedEdges(stage, positions, knowledge, laid, options);
   }
 
   function drawPromotions(stage, positions, knowledge) {
@@ -1089,7 +1100,7 @@
   // reads as a connection and never as a filled field. From a seat to a reference the
   // store does not hold it leaves the drawing on the side nearest that seat and ends in
   // an open bead at the hall's edge: a reference, and never a seat.
-  function drawSeam(stage, seam, laid) {
+  function drawSeam(stage, seam, laid, options) {
     var width = 0.9 + Math.min(seam.count, 5) * 0.4;
     var className = "att-seam " + provenanceClass(seam.provenance);
     if (!seam.from.seat || !seam.to.seat) {
@@ -1101,6 +1112,9 @@
       line.setAttribute("stroke-width", String(width));
       appendSeamTitle(line, seam);
       stage.appendChild(line);
+      stage.appendChild(seamHit(svgEl("line", {
+        x1: at.x, y1: at.y, x2: edgeX, y2: at.y,
+      }), seam, options));
       var bead = svgEl("circle", { "class": "att-ref", cx: edgeX, cy: at.y, r: 3.4 });
       var beadTitle = svgEl("title");
       setText(beadTitle, "reference " + other.reference
@@ -1127,6 +1141,46 @@
       fromX: from.x, fromY: from.y, toX: to.x, toY: to.y, lift: lift,
     }, laid.radius + 11);
     stage.appendChild(seam.provenance === "authored" ? seamChevron(point) : seamBars(point));
+    stage.appendChild(seamHit(svgEl("path", { d: path.getAttribute("d") }), seam, options));
+  }
+
+  // What a seam click opens. The stage hands the shell the relation's own identity -
+  // the provenance, both ends as drawn, and the finding a cited seam stands for - and
+  // the shell routes it to the record and the address. Until the shell wires
+  // onSelectRelation, a click falls back to what a seat click opens: the finding's
+  // record for a cited seam, the claiming seat's record for an authored one.
+  function selectSeam(seam, options) {
+    var identity = {
+      provenance: seam.provenance,
+      source: seam.from.seat ? seam.from.seat.seat.id
+        : (seam.from.anchor ? seam.from.anchor.reference : String(seam.from.reference || "")),
+      target: seam.to.seat ? seam.to.seat.seat.id : String(seam.to.reference || ""),
+      finding: seam.from.anchor ? seam.from.anchor.reference : "",
+    };
+    if (typeof options.onSelectRelation === "function") {
+      options.onSelectRelation(identity);
+      return;
+    }
+    if (seam.provenance === "recorded-evidence" && identity.finding
+      && typeof options.onSelectFinding === "function") {
+      options.onSelectFinding(identity.finding.replace(/^finding:/, ""));
+      return;
+    }
+    if (seam.from.seat && typeof options.onSelect === "function") {
+      options.onSelect(seam.from.seat.seat.id);
+    }
+  }
+
+  // A seam's hit target: the seam's own geometry at 6px, transparent, above the
+  // drawing, carrying the seam's title so the pointer still reads what the seam says.
+  function seamHit(node, seam, options) {
+    node.setAttribute("class", "att-seam-hit");
+    appendSeamTitle(node, seam);
+    node.addEventListener("click", function (event) {
+      event.stopPropagation();
+      selectSeam(seam, options);
+    });
+    return node;
   }
 
   // A cited edge's source is the finding that recorded the evidence, and the canonical
@@ -1159,7 +1213,7 @@
   // bars are cited. Ink hue belongs to the seat states and width to how many edges pair
   // two seats, so no meaning rides a channel another meaning owns. An edge whose ends the
   // payload does not place is not drawn.
-  function drawTypedEdges(stage, positions, knowledge, laid) {
+  function drawTypedEdges(stage, positions, knowledge, laid, options) {
     var edges = knowledge && Array.isArray(knowledge.edges) ? knowledge.edges : [];
     if (!edges.length) return;
     var unheld = new Set();
@@ -1197,7 +1251,7 @@
       }
     }
     seams.forEach(function (seam) {
-      drawSeam(stage, seam, laid);
+      drawSeam(stage, seam, laid, options);
     });
   }
 
@@ -1275,9 +1329,40 @@
         "class": "att-section-label", x: 2, y: plan.tiers[t].y + 3,
       });
       setText(nameText, shortId(tierName, laid.labelChars));
+
+      // The tier's condition, beside its name: one unit mark per seat that needs a
+      // person, in that seat's own state ink, then one per seat that owes work, in the
+      // muted ink the seat's own units wear - the same unit and the same inks, so the
+      // gutter reads as one table: name, condition, size. Held seats lead; the exact
+      // counts travel in the name's title, and the marks stop where the count column
+      // begins.
+      var heldSeats = [];
+      var owingSeats = [];
+      for (var c = 0; c < plan.tiers[t].rows.length; c += 1) {
+        var member = plan.tiers[t].rows[c];
+        if (member.notProgressing) heldSeats.push(member);
+        else if (member.owesWork) owingSeats.push(member);
+      }
+      var tierBase = plan.tiers[t].y + 3;
+      var marksLeft = 2 + nameText.textContent.length * CHAR_W + 6;
+      var marksRight = laid.gutter - 8 - String(plan.tiers[t].rows.length).length * CHAR_W - 6;
+      var marksRoom = Math.floor((marksRight - marksLeft) / 3.6);
+      var conditionSeats = heldSeats.slice(0, 6).concat(owingSeats.slice(0, 6));
+      for (var m = 0; m < conditionSeats.length && m < marksRoom; m += 1) {
+        var mark = svgEl("line", {
+          "class": "att-tier-mark",
+          x1: marksLeft + m * 3.6, y1: tierBase - 2,
+          x2: marksLeft + m * 3.6, y2: tierBase - 0.5,
+        });
+        mark.style.stroke = PAINT[conditionSeats[m].reading]
+          ? PAINT[conditionSeats[m].reading].ink : PAINT.owesWork.ink;
+        svg.appendChild(mark);
+      }
       var full = svgEl("title");
       setText(full, tierName + ", " + plan.tiers[t].rows.length
-        + (plan.tiers[t].rows.length === 1 ? " seat" : " seats"));
+        + (plan.tiers[t].rows.length === 1 ? " seat" : " seats")
+        + ", " + heldSeats.length + (heldSeats.length === 1 ? " needs a person" : " need a person")
+        + ", " + owingSeats.length + (owingSeats.length === 1 ? " owes work" : " owe work"));
       nameText.appendChild(full);
       svg.appendChild(nameText);
 
@@ -1286,6 +1371,29 @@
       });
       setText(countText, String(plan.tiers[t].rows.length));
       svg.appendChild(countText);
+
+      // The sections the payload records for this ensemble, one line under the tier's
+      // name: the capability and its member count, joined when there are several.
+      // Nothing is drawn when the payload carries no sections.
+      if (plan.tiers[t].sections && plan.tiers[t].sections.length) {
+        var sectionParts = [];
+        for (var s = 0; s < plan.tiers[t].sections.length; s += 1) {
+          var section = plan.tiers[t].sections[s];
+          if (!section) continue;
+          var sectionSize = Array.isArray(section.members) ? section.members.length : 0;
+          sectionParts.push(String(section.capability || section.id || "section") + " " + sectionSize);
+        }
+        if (sectionParts.length) {
+          var sectionsLine = svgEl("text", {
+            "class": "att-sections", x: 2, y: plan.tiers[t].y + 15,
+          });
+          setText(sectionsLine, shortId(sectionParts.join(" \u00b7 "), laid.labelChars));
+          var sectionsTitle = svgEl("title");
+          setText(sectionsTitle, sectionParts.join(", "));
+          sectionsLine.appendChild(sectionsTitle);
+          svg.appendChild(sectionsLine);
+        }
+      }
     }
 
     var now = Date.now();
@@ -1338,7 +1446,7 @@
       svg.appendChild(baton);
     }
 
-    relationThreads(svg, positions, relations && relations.knowledge, relations && relations.events, laid);
+    relationThreads(svg, positions, relations && relations.knowledge, relations && relations.events, laid, options);
 
     for (var i = 0; i < laid.seats.length; i += 1) {
       var entry = laid.seats[i];
@@ -1415,25 +1523,6 @@
     return String(value).replace(/["\\]/g, "\\$&");
   }
 
-  // Keep the keyboard-selected actor visible by scrolling the stage container.
-  function revealSeat(container, svg, seatY, radius) {
-    var view = container.clientHeight;
-    if (!view || !svg) return;
-    var margin = radius + 14;
-    var svgTop = svg.getBoundingClientRect().top
-      - container.getBoundingClientRect().top + container.scrollTop;
-    var y = svgTop + seatY;
-    var top = container.scrollTop;
-    if (y - margin < top) container.scrollTop = Math.max(0, y - margin);
-    else if (y + margin > top + view) container.scrollTop = y + margin - view;
-  }
-
-  function seatYOf(laid, id) {
-    for (var i = 0; i < laid.seats.length; i += 1) {
-      if (laid.seats[i].seat.id === id) return laid.seats[i].y;
-    }
-    return null;
-  }
 
   /* ── the entry ────────────────────────────────────────────────────────── */
 
@@ -1465,8 +1554,6 @@
       restore = active.dataset.attKey || null;
     }
 
-    var keptScroll = 0;
-    if (typeof container.scrollTop === "number") keptScroll = container.scrollTop;
     container.textContent = "";
     dataByContainer.set(container, data);
 
@@ -1609,18 +1696,13 @@
       container.appendChild(fold);
     }
 
-    // The container keeps the reader's place across the rebuild, and while the
-    // stage holds focus the cursor's seat is brought into the visible slice.
-    if (typeof container.scrollTop === "number") container.scrollTop = keptScroll;
+    // The mount cannot scroll - the page carries the drawing at its own height - so
+    // the reader's place across a rebuild is the focus: restoring it brings the
+    // reader's seat back into view through the page's own scroll.
     if (restore) {
       var back = container.querySelector('[data-att-key="' + cssEscape(restore) + '"]');
       if (back && typeof back.focus === "function") back.focus();
     }
-    if (cursorId && document.activeElement === stage.svg) {
-      var cursorY = seatYOf(laid, cursorId);
-      if (cursorY !== null) revealSeat(container, stage.svg, cursorY, laid.radius);
-    }
-    result.revealed = document.activeElement === stage.svg;
     return result;
   }
 

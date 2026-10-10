@@ -129,6 +129,25 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* The tier's condition, beside its name: the same unit mark the seats use - one mark
+   per seat that needs a person, in that seat's own state ink, then one per seat that
+   owes work in the muted ink. The stroke ink is set per mark by the module, from the
+   same PAINT table the seat marks read, so the gutter's marks and the hall's marks
+   are one language. */
+.lane-strip .att-tier-mark {
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+/* The sections the payload records for an ensemble, one line under the tier's name:
+   the capability and its member count, joined when there are several, in the seat
+   labels' own face and ink. Nothing is drawn when the payload carries none. */
+.lane-strip .att-sections {
+  font-family: var(--mono);
+  font-size: 9px;
+  fill: var(--muted);
+}
+
 /* The seat's own name, under its mark, in the same ink as the tier labels. */
 .lane-strip .att-seat-label {
   font-family: var(--mono);
@@ -223,6 +242,17 @@
   stroke: var(--muted, #9aa3b4);
   stroke-width: 1.4;
   opacity: 0.85;
+}
+
+/* A seam's hit target: the seam's own geometry at 6px, transparent, above the drawing,
+   carrying the seam's title so the pointer still reads what the seam says. A click
+   reaches the relation's record through the shell; the drawing itself is unchanged. */
+.lane-strip .att-seam-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 6;
+  pointer-events: stroke;
+  cursor: pointer;
 }
 
 /* ── motion ────────────────────────────────────────────────────────────── */

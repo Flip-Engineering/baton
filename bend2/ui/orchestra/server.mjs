@@ -960,12 +960,45 @@ function relationsForScope(db, scope, findings) {
     || references.has(relation.source) || references.has(relation.target));
 }
 
+// The sections the scope's ensembles record, in the snapshot route's shape: an
+// ensemble enters when one of its members is a holder in the scope, each section's
+// members are limited to the holders, and the universal scope (holders null) reads
+// every section with every member. The same boundary ensembleSnapshot draws at
+// :483-489, so the overview and the snapshot agree about what a section holds.
+function knowledgeSections(db, scope) {
+  if (scope.holders === null) {
+    return rows(db, `SELECT s.ensemble AS ensemble, s.id AS id, s.capability AS capability,
+        (SELECT json_group_array(session) FROM (
+          SELECT sm.session AS session FROM section_members sm
+           WHERE sm.ensemble = s.ensemble AND sm.section = s.id
+             AND EXISTS(SELECT 1 FROM sessions WHERE sessions.id = sm.session)
+           ORDER BY sm.session)) AS members
+      FROM sections s ORDER BY s.ensemble, s.id`)
+      .map((row) => ({ ...row, members: JSON.parse(row.members) }));
+  }
+  if (!scope.holders.length) return [];
+  const placeholders = scope.holders.map(() => '?').join(',');
+  return rows(db, `SELECT s.ensemble AS ensemble, s.id AS id, s.capability AS capability,
+      (SELECT json_group_array(session) FROM (
+        SELECT sm.session AS session FROM section_members sm
+         WHERE sm.ensemble = s.ensemble AND sm.section = s.id
+           AND sm.session IN (SELECT value FROM json_each(json(?)))
+           AND EXISTS(SELECT 1 FROM sessions WHERE sessions.id = sm.session)
+         ORDER BY sm.session)) AS members
+    FROM sections s
+   WHERE s.ensemble IN (
+     SELECT DISTINCT em.ensemble FROM ensemble_members em
+      WHERE em.session IN (SELECT value FROM json_each(json(?))))
+   ORDER BY s.ensemble, s.id`, JSON.stringify(scope.holders), JSON.stringify(scope.holders))
+    .map((row) => ({ ...row, members: JSON.parse(row.members) }));
+}
+
 // Findings carry their stored evidence and limits. Actor metadata includes
 // recorded roles and parent links through each referenced actor's ancestors.
 function knowledgeOverview(db, kind = 'universal', id = '') {
   const scope = knowledgeScope(db, kind, id);
   if (!knowledgeTablesReady(db)) {
-    return { contractVersion: 1, scope, findings: [], promotions: [], relations: [], nodes: [], edges: [], actors: {}, groups: knowledgeGroups(db, [], kind === 'group' ? id : ''), empty: true };
+    return { contractVersion: 1, scope, findings: [], promotions: [], relations: [], nodes: [], edges: [], actors: {}, groups: knowledgeGroups(db, [], kind === 'group' ? id : ''), sections: [], empty: true };
   }
   const findings = findingsForScope(db, scope);
   const relations = relationsForScope(db, scope, findings);
@@ -1022,7 +1055,8 @@ function knowledgeOverview(db, kind = 'universal', id = '') {
       actor.parent = row.parent == null ? '' : row.parent;
     }
   }
-  return { contractVersion: 1, scope, findings, promotions, relations, ...knowledgeGraph(db, findings, relations), actors, groups,
+  const sections = knowledgeSections(db, scope);
+  return { contractVersion: 1, scope, findings, promotions, relations, ...knowledgeGraph(db, findings, relations), actors, groups, sections,
     empty: findings.length === 0 && promotions.length === 0 && relations.length === 0 };
 }
 
