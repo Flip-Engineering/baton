@@ -524,6 +524,9 @@
       reading = window.renderAttention(mounts.attention, players, {
         onSelect: options.onSelect,
         selectedId: options.selectedId,
+        // A seam click hands the shell the relation's own identity; the shell
+        // routes it to the address and the scoped record.
+        onSelectRelation: options.onSelectRelation,
         // The recorded knowledge overview, so the stage can draw each recorded
         // promotion as an arc between the seats it connects.
         knowledge: data.knowledge || null,

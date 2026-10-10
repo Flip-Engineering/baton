@@ -28,6 +28,9 @@ const state = {
   // A seat named by the page address (#seat=<id>), honoured on the first
   // snapshot that carries it.
   pendingSeat: "",
+  // A relation named by the page address (#relation=<provenance>:<source>:<target>),
+  // honoured on the first snapshot that carries its ends.
+  pendingRelation: null,
   sse: null,
   connected: false,
   knowledge: null,
@@ -418,6 +421,29 @@ function writeFindingAddress(id) {
     return;
   }
   history.replaceState(null, "", location.pathname + location.search);
+}
+
+// A seam's relation is addressable in its own identity, so the back-and-forward
+// routing reaches what a click opened. The ends travel in the address: a cited
+// relation opens its finding's record, an authored one the claiming seat's.
+function resolveRelationAddress(rel) {
+  if (!rel) return;
+  const ends = [rel.source, rel.target];
+  const findingEnd = ends.find((e) => String(e || "").indexOf("finding:") === 0);
+  if (findingEnd) {
+    openRecordAt(String(findingEnd).slice("finding:".length));
+  } else if (rel.source) {
+    select(String(rel.source));
+  }
+}
+
+function openRelationAt(rel) {
+  if (!rel) return;
+  resolveRelationAddress(rel);
+  if (typeof history.replaceState === "function") {
+    history.replaceState(null, "", "#relation=" + encodeURIComponent(
+      String(rel.provenance || "") + ":" + String(rel.source || "") + ":" + String(rel.target || "")));
+  }
 }
 
 function select(id) {
@@ -1420,6 +1446,12 @@ function applySnapshot(data, label) {
     // that actor's holdings, the scope a row click sets.
     setKnowledgeScope({ kind: "actor", id: addressed });
   }
+  // A relation address opens what its seam stands for, once, on the same first
+  // snapshot: the finding end for a cited relation, the claiming seat otherwise.
+  if (state.pendingRelation) {
+    resolveRelationAddress(state.pendingRelation);
+    state.pendingRelation = null;
+  }
   renderTree();
   // Knowledge reads are on demand: refresh them with every authoritative snapshot.
   void loadKnowledgeOverview();
@@ -1667,6 +1699,14 @@ function init() {
   if (seatAddress) state.pendingSeat = decodeURIComponent(seatAddress[1]);
   const findingAddress = String(location.hash || "").match(/^#finding=(.+)$/);
   if (findingAddress) state.findingId = decodeURIComponent(findingAddress[1]);
+  const relationAddress = String(location.hash || "").match(/^#relation=([^:]*):([^:]*):(.*)$/);
+  if (relationAddress) {
+    state.pendingRelation = {
+      provenance: decodeURIComponent(relationAddress[1]),
+      source: decodeURIComponent(relationAddress[2]),
+      target: decodeURIComponent(relationAddress[3]),
+    };
+  }
   // An ensemble link restores the group's position and the scope that follows it. The
   // scope is set here rather than through setKnowledgeScope so the boot's own reads
   // carry it, instead of fetching universal first and the group behind it.
@@ -2197,6 +2237,9 @@ function renderDocument() {
     },
     // The map's pinned card opens the record at its finding, on that finding's block.
     onOpenRecord: (id) => { openRecordAt(id); },
+    // A stage seam opens its relation: the record scopes to what the seam stands
+    // for, and the address names the relation's own identity.
+    onSelectRelation: (rel) => { openRelationAt(rel); },
     // The way back from a record: the mark that holds it, on whichever surface it lives.
     onLocate: (ref) => { locateEntity(ref); },
     // The record's relation statements light that relation's edges on the map; the
