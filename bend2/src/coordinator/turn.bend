@@ -445,7 +445,7 @@ def publish_deferred(+db: String, +player: String, +id: String, +event: String, 
       failure : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce(" ++ C.omp_terminal_error_text_sql(event) ++ ",'');"))
       write_deferred(db,player,id,Tx.trim_nl(failure),Tx.trim_nl(pending),String.eq(presence,"1\n"))
     case True{}: do IO<Unit>:
-      saved : String <- IO.try(String,Store.apply(db,C.Observe{report_id,player,event,False{}}))
+      +saved : String <- IO.try(String,Store.apply(db,C.Observe{report_id,player,event,False{}}))
       delivered : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,report_id,"1",saved)
       written : Result<&1,&1,U32 & String,Unit> <- T.Text.control_output(saved)
       IO.pure(Unit,Unit{})
