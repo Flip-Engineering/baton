@@ -787,39 +787,83 @@ def parse_verb_nine_args(+verb: String, +player: String, +id: String, +cmd: Stri
     case "recruit": Recruit{player,id,cmd,model,effort,cwd,task,log,session}
     case _: Invalid{}
 
+def parse_basic_seven(+verb: String, +one: String, +two: String, +three: String, +four: String, +five: String, +six: String) -> Command:
+  match verb:
+    case "knowledge-scope":
+      Bool.pick(Command,Bool.and(String.eq(four,"--id"),String.eq(six,"--pretty")),
+        Pretty{KnowledgeScopeDetail{one,two,three,five}},
+        Bool.pick(Command,Bool.and(String.eq(four,"--pretty"),String.eq(five,"--id")),
+          Pretty{KnowledgeScopeDetail{one,two,three,six}},Invalid{}))
+    case "record-typed": KnowledgeRecordTyped{one,two,three,four,five,six}
+    case "join": Join{one,two,three,four,five,six}
+    case _: Invalid{}
+
+def parse_basic_eight(+verb: String, +one: String, +two: String, +three: String, +four: String, +five: String, +six: String, +seven: String) -> Command:
+  match verb:
+    case "record-linked": KnowledgeRecordLinked{one,two,three,four,five,six,seven}
+    case "knowledge-traverse": KnowledgeTraverse{one,two,three,four,five,six,String.eq(seven,"recursive")}
+    case "land-checked": Bool.pick(Command,String.eq(six,"--commit"),LandCheckedAt{one,two,three,four,five,seven},Invalid{})
+    case other: parse_receive(other,one,two,three,four,five,six,seven)
+
+def parse_basic_nine(+verb: String, +one: String, +two: String, +three: String, +four: String, +five: String, +six: String, +seven: String, +eight: String) -> Command:
+  match verb:
+    case "knowledge-traverse": Bool.pick(Command,String.eq(eight,"--pretty"),Pretty{KnowledgeTraverse{one,two,three,four,five,six,String.eq(seven,"recursive")}},Invalid{})
+    case _: Invalid{}
+
+def parse_basic_9(+verb: String, +one: String, +two: String, +three: String, +four: String, +five: String, +six: String, +seven: String, +eight: String, +nine: String, args: List<String>) -> Command:
+  match args:
+    case Nil{}: parse_verb_nine_args(verb,one,two,three,four,five,six,seven,eight,nine)
+    case _: Invalid{}
+
+def parse_basic_8(+verb: String, +one: String, +two: String, +three: String, +four: String, +five: String, +six: String, +seven: String, +eight: String, args: List<String>) -> Command:
+  match args:
+    case Nil{}: parse_basic_nine(verb,one,two,three,four,five,six,seven,eight)
+    case +nine <> rest: parse_basic_9(verb,one,two,three,four,five,six,seven,eight,nine,rest)
+
+def parse_basic_7(+verb: String, +one: String, +two: String, +three: String, +four: String, +five: String, +six: String, +seven: String, args: List<String>) -> Command:
+  match args:
+    case Nil{}: parse_basic_eight(verb,one,two,three,four,five,six,seven)
+    case +eight <> rest: parse_basic_8(verb,one,two,three,four,five,six,seven,eight,rest)
+
+def parse_basic_6(+verb: String, +one: String, +two: String, +three: String, +four: String, +five: String, +six: String, args: List<String>) -> Command:
+  match args:
+    case Nil{}: parse_basic_seven(verb,one,two,three,four,five,six)
+    case +seven <> rest: parse_basic_7(verb,one,two,three,four,five,six,seven,rest)
+
+def parse_basic_5(+verb: String, +one: String, +two: String, +three: String, +four: String, +five: String, args: List<String>) -> Command:
+  match args:
+    case Nil{}: Bool.pick(Command,Bool.and(String.eq(verb,"land"),String.eq(four,"--commit")),LandAt{one,two,three,five},parse_verb_five_args(verb,one,two,three,four,five))
+    case +six <> rest: parse_basic_6(verb,one,two,three,four,five,six,rest)
+
+def parse_basic_4(+verb: String, +one: String, +two: String, +three: String, +four: String, args: List<String>) -> Command:
+  match args:
+    case Nil{}: parse_verb_four_args(verb,one,two,three,four)
+    case +five <> rest: parse_basic_5(verb,one,two,three,four,five,rest)
+
+def parse_basic_3(+verb: String, +one: String, +two: String, +three: String, args: List<String>) -> Command:
+  match args:
+    case Nil{}: parse_verb_three_args(verb,one,two,three)
+    case +four <> rest: parse_basic_4(verb,one,two,three,four,rest)
+
+def parse_basic_2(+verb: String, +one: String, +two: String, args: List<String>) -> Command:
+  match args:
+    case Nil{}: parse_verb_session_id(verb,one,two)
+    case +three <> rest: parse_basic_3(verb,one,two,three,rest)
+
+def parse_basic_1(+verb: String, +one: String, args: List<String>) -> Command:
+  match args:
+    case Nil{}: parse_verb_id(verb,one)
+    case +two <> rest: parse_basic_2(verb,one,two,rest)
+
+def parse_basic_0(+verb: String, args: List<String>) -> Command:
+  match args:
+    case Nil{}: parse_verb_only(verb)
+    case +one <> rest: parse_basic_1(verb,one,rest)
+
 def parse_basic(args: List<String>) -> Command:
   match args:
-    case +verb <> Nil{}:
-      parse_verb_only(verb)
-    case +verb <> +id <> Nil{}:
-      parse_verb_id(verb,id)
-    case +verb <> +session <> +id <> Nil{}:
-      parse_verb_session_id(verb,session,id)
-    case +verb <> +id <> +one <> +two <> Nil{}:
-      parse_verb_three_args(verb,id,one,two)
-    case +verb <> +id <> +one <> +two <> +three <> Nil{}:
-      parse_verb_four_args(verb,id,one,two,three)
-    case +verb <> +id <> +one <> +two <> +three <> +four <> Nil{}:
-      Bool.pick(Command, Bool.and(String.eq(verb,"land"),String.eq(three,"--commit")), LandAt{id,one,two,four}, parse_verb_five_args(verb,id,one,two,three,four))
-    case "knowledge-scope" <> +reader <> +scope <> +subject <> "--id" <> +id <> "--pretty" <> Nil{}:
-      Pretty{KnowledgeScopeDetail{reader,scope,subject,id}}
-    case "knowledge-scope" <> +reader <> +scope <> +subject <> "--pretty" <> "--id" <> +id <> Nil{}:
-      Pretty{KnowledgeScopeDetail{reader,scope,subject,id}}
-    case "record-typed" <> +id <> +author <> +kind <> +claim <> +evidence <> +limits <> Nil{}:
-      KnowledgeRecordTyped{id,author,kind,claim,evidence,limits}
-    case "record-linked" <> +id <> +author <> +kind <> +claim <> +evidence <> +limits <> +links <> Nil{}:
-      KnowledgeRecordLinked{id,author,kind,claim,evidence,limits,links}
-    case "knowledge-traverse" <> +reader <> +scope <> +subject <> +reference <> +direction <> +relation <> +mode <> Nil{}:
-      KnowledgeTraverse{reader,scope,subject,reference,direction,relation,String.eq(mode,"recursive")}
-    case "knowledge-traverse" <> +reader <> +scope <> +subject <> +reference <> +direction <> +relation <> +mode <> "--pretty" <> Nil{}:
-      Pretty{KnowledgeTraverse{reader,scope,subject,reference,direction,relation,String.eq(mode,"recursive")}}
-    case "join" <> +id <> +parent <> +harness <> +model <> +effort <> +path <> Nil{}:
-      Join{id,parent,harness,model,effort,path}
-    case +verb <> +session <> +cmd <> +model <> +effort <> +cwd <> +log <> +message <> Nil{}:
-      Bool.pick(Command, Bool.and(String.eq(verb,"land-checked"),String.eq(log,"--commit")), LandCheckedAt{session,cmd,model,effort,cwd,message}, parse_receive(verb,session,cmd,model,effort,cwd,log,message))
-    case +verb <> +player <> +id <> +cmd <> +model <> +effort <> +cwd <> +task <> +log <> +session <> Nil{}:
-      parse_verb_nine_args(verb,player,id,cmd,model,effort,cwd,task,log,session)
-    case _: Invalid{}
+    case Nil{}: Invalid{}
+    case +verb <> rest: parse_basic_0(verb,rest)
 
 def index_digits(value: String) -> Bool:
   match value:
