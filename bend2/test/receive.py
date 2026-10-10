@@ -2768,6 +2768,9 @@ class Receive(unittest.TestCase):
         self.assertEqual(len(guidance), 1)
         self.assertIn('harness=muse', guidance[0][0])
         self.assertIn('model=muse-main', guidance[0][0])
+        self.assertIn('original retained attempt', guidance[0][0])
+        self.assertIn('previous native conversation lineage is ' + original['native'], guidance[0][0])
+        self.assertIn('already acknowledged', guidance[0][0])
         self.assertNotIn('SELECT', guidance[0][0])
         lineage = self.directory / ('state.db.route-' + 'parent'.encode().hex())
         self.assertEqual(lineage.read_text().splitlines()[-1].split()[-2:], ['omp', 'parent'])
@@ -2781,22 +2784,26 @@ class Receive(unittest.TestCase):
         self.assertEqual(self.coord('inbox', 'parent'), [])
 
     def test_direct_exhaustion_continues_on_operator_listed_route(self):
-        """A raw turn that fails with provider-reported usage exhaustion and no .profiles
-        file records :profile-exhausted, selects the first viable operator-listed route,
-        reconfigures the session, and writes continuation guidance carrying the saved
-        complete task. The refused omp pair is recorded in the per-session route lineage
-        and the original cause travels on the chosen report. Every assertion reads
-        coordinator state; no source SQL text is asserted."""
-        self.player('routed', harness='omp')
+        """A raw turn on a parentless actor that fails with provider-reported usage
+        exhaustion and no .profiles file records :profile-exhausted, selects the
+        operator-listed route, reconfigures the session, and writes continuation
+        guidance carrying the saved complete task and the original native lineage.
+        The refused omp pair is recorded in the per-session route lineage and the
+        original cause travels on the chosen report. The Direct path wakes through the
+        ordinary wake with no endpoint-less relaunch: the turn process settles once the
+        failed turn, reports, reconfiguration and guidance are recorded. Every assertion
+        reads coordinator state; no source SQL text is asserted."""
+        self.coord('attach', 'routed', 'omp', 'saved-routed', '')
+        self.assertIsNone(self.coord('player', 'routed')['parent'])
         self.connect('routed')
         (self.directory / 'state.db.routes').write_text(
-            'omp routed ' + str(self.fixture) + '\n'
             'muse muse-main ' + str(self.fixture) + '\n')
         task = self.directory / 'direct task'
         task.write_text('Direct retained work.\n')
         child = self.spawn('turn', 'routed', 'routed-turn', self.fixture, 'routed', 'low',
-                           self.directory, task, self.directory / 'routed.jsonl', '')
+                           self.directory, task, self.directory / 'routed.jsonl', 'saved-routed')
         control, started = self.accept('routed')
+        self.assertEqual(started['resume'], 'saved-routed')
         cause = ('429 Usage limit reached for 5 hour. Your limit will reset at 2026-10-06 07:12:52\n'
                  'Usage limit reached for 5 hour. Your limit will reset at 2026-10-06 07:12:52 (type=1308)')
         self.action(control, fail_status=429, fail_message=cause)
@@ -2808,11 +2815,11 @@ class Receive(unittest.TestCase):
         rerouted = self.coord('player', 'routed')
         self.assertEqual((rerouted['harness'], rerouted['model']), ('muse', 'muse-main'))
         self.assertEqual(rerouted['native'], '')
-        account_reports = [message for message in self.coord('inbox', 'root')
+        account_reports = [message for message in self.coord('inbox', 'operator')
                            if message['id'].endswith(':profile-exhausted')]
         self.assertEqual(len(account_reports), 1)
         self.assertIn('provider-reported usage exhaustion: ' + cause, account_reports[0]['body'])
-        chosen = [message for message in self.coord('inbox', 'root')
+        chosen = [message for message in self.coord('inbox', 'operator')
                   if message['id'].endswith(':route-chosen')]
         self.assertEqual(len(chosen), 1)
         self.assertIn('harness=muse', chosen[0]['body'])
@@ -2823,10 +2830,13 @@ class Receive(unittest.TestCase):
                 "SELECT body FROM messages WHERE id LIKE '%:route-guidance'").fetchall()
         self.assertEqual(len(guidance), 1)
         self.assertIn('Direct retained work.', guidance[0][0])
+        self.assertIn('previous native conversation lineage is saved-routed', guidance[0][0])
         self.assertIn('harness=muse', guidance[0][0])
         self.assertNotIn('SELECT', guidance[0][0])
         lineage = self.directory / ('state.db.route-' + 'routed'.encode().hex())
-        self.assertEqual(lineage.read_text().splitlines()[-1].split()[-2:], ['omp', 'routed'])
+        refused = lineage.read_text().splitlines()[-1].split()
+        self.assertTrue(refused[0].isdigit() and refused[1].isdigit())
+        self.assertEqual(refused[2:], ['omp'])
 
     def test_turn_and_receive_share_ownership_and_omp_session_file(self):
         self.player(harness='omp')
