@@ -1358,10 +1358,13 @@
           ? PAINT[conditionSeats[m].reading].ink : PAINT.owesWork.ink;
         svg.appendChild(mark);
       }
+      // The condition words state the cause the marks count and where recovery routes:
+      // operator policy routes a stopped or failed seat's recovery to its immediate
+      // coordinator, so the title names that, and the counts stay as they were.
       var full = svgEl("title");
       setText(full, tierName + ", " + plan.tiers[t].rows.length
         + (plan.tiers[t].rows.length === 1 ? " seat" : " seats")
-        + ", " + heldSeats.length + (heldSeats.length === 1 ? " needs a person" : " need a person")
+        + ", " + heldSeats.length + " not progressing (recovery routes to the seat's coordinator)"
         + ", " + owingSeats.length + (owingSeats.length === 1 ? " owes work" : " owe work"));
       nameText.appendChild(full);
       svg.appendChild(nameText);
