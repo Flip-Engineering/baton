@@ -7,9 +7,9 @@
    The mount carries the material the drawing needs, because the Agents region sits on
    the paper material and the stage is the seats rather than a written surface: it keeps
    the hall's dark ground and the lit status tokens the marks were drawn against, copied
-   from the hall's own block, which the stage used to inherit. The band's height cap is
-   the lead's value, carried here for the same reason: the rule that set it is scoped to
-   the old region. The rules below read `var(--muted)`, `var(--hairline)`, `var(--ink)`,
+   from the hall's own block, which the stage used to inherit. The band keeps no cap and
+   no scroll of its own: the page carries the length, and a large hall runs long. The
+   rules below read `var(--muted)`, `var(--hairline)`, `var(--ink)`,
    `var(--wash)` and the ground tokens, and name no state colour: the state inks are set
    by the module, in PAINT, on the shapes that own them. One token the hall does not
    remap carries a ground value here for the module's own inks: `--stage-starting`
@@ -28,8 +28,6 @@
   --stage-starting: #d7b45a;
   background: var(--hall, #131009);
   color: var(--ink);
-  max-height: min(36vh, 320px);
-  overflow-y: auto;
 }
 
 .lane-strip .att-stage {

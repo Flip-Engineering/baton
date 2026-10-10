@@ -1,10 +1,13 @@
 /* The stage: liveness, document order and the seating plan. Read-only.
    One global entry: renderAttention(container, data, options).
 
-   State vocabulary, settled: running, queued, stopped, failed, owes work,
-   quiet. Starting is work in flight and reads as running. A stop or a failure is a
-   state, never a request to a person. The document order is failed, stopped,
-   queued, owes work, running, quiet; bands take their highest member's.
+   State vocabulary, settled: running, queued, stopped, failed, owes work, quiet.
+   Starting is work in flight and reads as running. A stop or a failure is a state, never
+   a request to a person, and never a read of elapsed time: no inactivity threshold takes
+   part in any state here. The document order is running, queued, owes work, stopped,
+   failed, quiet, so the active orchestra leads the stage, the strip and the roster and a
+   retained failure keeps its place without leading them; bands take their highest
+   member's order.
 
    A seat whose read carries no stop flag and no stop word says "no stop recorded" in
    its title and its label, and a stop the read names another way is quoted as it
@@ -51,8 +54,10 @@
   // read, because this module reads no other module.
   var RECENT_WINDOW_MS = 90000;
 
-  // Worst first: the document order is also the strip's order and the roster's.
-  var READINGS = ["failed", "stopped", "queued", "owesWork", "running", "quiet"];
+  // The document order, and with it the strip's order and the roster's: work in flight
+  // first, then the work a seat holds, then the record's held states, then quiet. A
+  // retained failure keeps its mark, its chip and its title without leading the view.
+  var READINGS = ["running", "queued", "owesWork", "stopped", "failed", "quiet"];
 
   // One ink and one silhouette per state. The shape carries the state too, so the
   // stage reads for a reader who cannot separate the colours.
@@ -85,7 +90,8 @@
     return index === -1 ? READINGS.length : index;
   }
 
-  // The states whose work the record holds still.
+  // Not progressing: the record says a stop, or the current attempt failed. Nothing here
+  // reads elapsed time, and no inactivity threshold takes part in the read.
   function notProgressingReading(reading) {
     return reading === "failed" || reading === "stopped";
   }
@@ -418,8 +424,8 @@
         rank: readingRank(reading),
         owed: owed,
         queued: owed > 0,
-        // Two reads, named by the shell when it names them, and the stop note the
-        // read's own wording gives.
+        // Two reads: the flag the shell names when it names one, else the record's own
+        // stop or a failure of the current attempt. The stop note carries the wording.
         notProgressing: namedFlag(player, "notProgressing", notProgressingReading(reading)),
         owesWork: namedFlag(player, "owesWork", owed > 0),
         stopNote: stopNote(player),
@@ -1196,12 +1202,10 @@
       events: (data && data.events) || opts.events || null,
     };
 
-    // The mount bounds its own height, so the drawing fits the band it is given
-    // and leaves the legend and a row of chips in view.
-    var band = container.clientHeight >= 200
-      ? container.clientHeight - 76
-      : SHELL_BOUND;
-    var laid = layoutStage(result.stage, result.width, band);
+    // The hall sizes from its own rows. The mount no longer caps the band, so the page
+    // carries the length and a large hall runs long rather than scrolling inside itself;
+    // the constant is the bound for a mount that states no height of its own.
+    var laid = layoutStage(result.stage, result.width, SHELL_BOUND);
     if (laid.order.length) cursor = ((cursor % laid.order.length) + laid.order.length) % laid.order.length;
     else cursor = 0;
     cursorByContainer.set(container, cursor);

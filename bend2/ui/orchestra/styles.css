@@ -290,7 +290,6 @@ button:active { background: var(--wash); }
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  scrollbar-gutter: stable;
   padding: 4px 4px 8px;
 }
 
