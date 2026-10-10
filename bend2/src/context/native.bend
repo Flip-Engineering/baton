@@ -2589,7 +2589,7 @@ def query_control_intent(+db: String, +binding: String, +owner: String, +control
 def query_control_fields(+db: String, +binding: String, +owner: String, +control: String,
                          +cwd: String, +canonical: String, fields: List<String>) -> IO(Unit):
   match fields:
-    case +marker <> +target_hex <> +intent_hex <> +signal_hex <> +directory_hex <> +bootstrap_hex <> +artifact_hex <> Nil{}:
+    case marker <> +target_hex <> +intent_hex <> +signal_hex <> +directory_hex <> +bootstrap_hex <> +artifact_hex <> Nil{}:
       match marker:
         case "control-unknown": IO.die(Unit, 3, "queryControlUnknown")
         case "control-invalid": IO.die(Unit, 3, "queryControlIntent")
