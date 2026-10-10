@@ -470,13 +470,15 @@
       if (frame && isFinite(natural) && natural > 0) {
         var ceiling = Math.round((window.innerHeight || 900) * 0.78);
         var height = Math.min(ceiling, Math.round(natural));
-        // The frame holds the tools, the match list and the key above the drawing,
-        // so a dense view can leave the canvas nothing. The drawing keeps a stated
-        // minimum: the frame grows past the viewport share rather than hiding it.
-        if (isFinite(chrome) && chrome > 0) {
+        // The frame holds the tools, the match list and the key above the drawing, so a
+        // dense view can leave the canvas nothing. A drawing with content keeps a stated
+        // minimum and the frame grows past its viewport share; an empty scope keeps its
+        // own small height instead of holding a frame open for nothing.
+        var empty = isFinite(chrome) && chrome > 0 && Math.round(natural) - chrome <= 60;
+        if (isFinite(chrome) && chrome > 0 && !empty) {
           height = Math.max(height, Math.round(chrome) + DRAWING_FLOOR);
         }
-        frame.style.height = Math.max(320, height) + "px";
+        frame.style.height = Math.max(empty ? Math.round(natural) : 320, height) + "px";
       }
     } else {
       wholeMount.textContent = "";
