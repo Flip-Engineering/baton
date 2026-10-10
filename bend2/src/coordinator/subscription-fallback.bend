@@ -121,20 +121,26 @@ def started_or_next(+profiles: List<&2,Profile>, +harness: String, +current: Str
 def record_fields(+label: String, +store: String) -> Maybe<&2,Profile>:
   Bool.pick(Maybe<&2,Profile>,Bool.and(Bool.not(String.is_empty(label)),Bool.not(String.is_empty(store))),Some{Pr{"",label,store}},None{})
 
-# New record lines name the harness first. A legacy two-field line carries no harness;
-# a longer line whose head is not a harness this tree binds is a legacy label with a
-# spaced store. The harness set is closed and code-defined, so the shapes never depend
-# on operator data; a legacy label that literally names a harness reparses fail-safe
-# (default binding, list-head restart).
+# New record lines name the harness first. A legacy line names a label plus the
+# complete store: a two-field line, or a longer line whose head is not a harness this
+# tree binds. A profile label names an operator account, never a path, so a
+# harness-headed line whose second field holds a slash is a legacy harness-named
+# label with a spaced store; reading it as a new record would shred the store and
+# rebind the account and history lookups. The harness set is closed and code-defined.
 def record_harness_known(+word: String) -> Bool:
   Bool.or(String.eq(word,"codex"),Bool.or(String.eq(word,"omp"),Bool.or(String.eq(word,"muse"),Bool.or(String.eq(word,"claude-code"),String.eq(word,"claude")))))
+
+def label_names_path(+field: String) -> Bool:
+  match field:
+    case SNil{}: False{}
+    case SCon{head, +tail}: Bool.pick(Bool,Char.is_eq(head,Char.from_u32(47)),True{},label_names_path(tail))
 
 def record_profile(+harness: String, +label: String, +store: String) -> Maybe<&2,Profile>:
   Bool.pick(Maybe<&2,Profile>,Bool.and(record_harness_known(harness),Bool.and(Bool.not(String.is_empty(label)),Bool.not(String.is_empty(store)))),Some{Pr{harness,label,store}},None{})
 
 def record_parts(fields: List<String>) -> Maybe<&2,Profile>:
   match fields:
-    case +harness <> +label <> +store <> +rest: Bool.pick(Maybe<&2,Profile>,record_harness_known(harness),record_profile(harness,label,Tx.join(" ",Con{store,rest})),record_fields(harness,Tx.join(" ",Con{label,Con{store,rest}})))
+    case +harness <> +label <> +store <> +rest: Bool.pick(Maybe<&2,Profile>,Bool.and(record_harness_known(harness),Bool.not(label_names_path(label))),record_profile(harness,label,Tx.join(" ",Con{store,rest})),record_fields(harness,Tx.join(" ",Con{label,Con{store,rest}})))
     case label <> store <> Nil{}: record_fields(label,store)
     case other: None{}
 
