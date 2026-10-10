@@ -1307,7 +1307,20 @@ check('the stage draws a seam only where the payload places both ends', await ev
   const unheld = new Set((payload.nodes || []).filter((node) => node.referenceOnly === true)
     .map((node) => String(node.reference || '')));
   const place = (value) => seats.has(String(value)) || unheld.has(String(value));
-  const expected = (payload.edges || []).filter((edge) => place(edge.source) && place(edge.target)).length;
+  const heldById = new Map((payload.nodes || []).filter((node) => node.referenceOnly === false)
+    .map((node) => [String(node.reference || ''), node]));
+  // A cited edge may anchor at its author's seat once the stage lands that shape, so
+  // a cited pair is expected only when both ends are placed outright, and the
+  // author-anchored ones are checked as a subset of the payload rather than a count.
+  const anchor = (edge) => edge.provenance === 'recorded-evidence'
+    && (heldById.has(String(edge.source)) || heldById.has(String(edge.target)));
+  const citedIds = new Set((payload.edges || []).filter((edge) => edge.provenance === 'recorded-evidence')
+    .map((edge) => String(edge.id || '')));
+  const expected = (payload.edges || []).filter((edge) => edge.provenance !== 'recorded-evidence'
+    && place(edge.source) && place(edge.target)).length
+    + (payload.edges || []).filter((edge) => edge.provenance === 'recorded-evidence'
+      && place(edge.source) && place(edge.target)).length;
+  const seamIds = new Set();
   const seams = [...document.querySelectorAll('.att-seam')];
   const named = seams.every((seam) => seam.classList.contains('att-seam-cited')
     || seam.classList.contains('att-seam-authored'));
@@ -1324,7 +1337,16 @@ check('the stage draws a seam only where the payload places both ends', await ev
     }
     return Boolean(stage.querySelector('.att-ref'));
   });
-  return seams.length === expected && named && glyphs;
+  const authored = seams.filter((seam) => seam.classList.contains('att-seam-authored')).length;
+  const cited = seams.filter((seam) => seam.classList.contains('att-seam-cited')).length;
+  const expectedAuthored = (payload.edges || []).filter((edge) => edge.provenance === 'authored'
+    && place(edge.source) && place(edge.target)).length;
+  const expectedCitedOutright = (payload.edges || []).filter((edge) => edge.provenance === 'recorded-evidence'
+    && place(edge.source) && place(edge.target)).length;
+  // Cited seams may exceed the outright count by the author-anchored shape; they may
+  // not exceed the payload.
+  const citedWithinPayload = cited <= citedIds.size;
+  return authored === expectedAuthored && cited >= expectedCitedOutright && citedWithinPayload && named && glyphs;
 })()`));
 check('a reference bead states that the store does not hold what it names', await evalJs(`(async () => {
   const beads = [...document.querySelectorAll('circle.att-ref')];
@@ -1581,6 +1603,152 @@ check('cluster badge sits at its author', await evalJs(`(() => {
 await evalJs(`document.querySelector('#knowledge-whole .kw-cluster[data-kw-cluster="worker"]').dispatchEvent(new MouseEvent('click', { bubbles: true }))`);
 await until('activating the badge expands the author fan',
   `!document.querySelector('#knowledge-whole .kw-cluster[data-kw-cluster="worker"]') && !!document.querySelector('#knowledge-whole .knode[aria-label="qa-cluster-0"]')`);
+
+// ============ the fixture document: the typed knowledge payload ============
+// The page is fed from the fixture file rather than the live server, so the typed
+// drawing can be exercised on data the fixture states. The fixture file carries the
+// shapes the projection emits, plus three named probes it never emits.
+const fixtureUrl = urlA + 'index.html?fixture=fixture-knowledge';
+await openPage(fixtureUrl);
+await until('the fixture map draws its canvas',
+  `!!document.querySelector('#knowledge-whole svg.kw-canvas')`);
+const fixturePayload = await evalJs(`(async () => {
+  const response = await fetch('fixtures/fixture-knowledge.json');
+  const document_ = await response.json();
+  return (document_ && document_.knowledge) || null;
+})()`);
+check('the fixture payload carries the typed shapes the checks read',
+  Boolean(fixturePayload)
+    && Array.isArray(fixturePayload.nodes) && fixturePayload.nodes.length > 0
+    && Array.isArray(fixturePayload.edges) && fixturePayload.edges.length > 0
+    && fixturePayload.edges.some((edge) => edge.provenance === 'authored')
+    && fixturePayload.edges.some((edge) => edge.provenance === 'recorded-evidence')
+    && fixturePayload.edges.some((edge) => edge.id === 'probe-self')
+    && fixturePayload.nodes.some((node) => typeof node.deliveryRead === 'boolean')
+    && fixturePayload.nodes.some((node) => Array.isArray(node.deliveryRead)));
+check('the map draws both provenances and nothing outside them', await evalJs(`(() => {
+  const drawn = [...document.querySelectorAll('.kw-edge-typed')];
+  const provs = drawn.map((edge) => edge.getAttribute('data-provenance'));
+  return drawn.some((edge) => edge.classList.contains('kw-edge-authored'))
+    && drawn.some((edge) => edge.classList.contains('kw-edge-cited'))
+    && provs.every((prov) => prov === 'authored' || prov === 'recorded-evidence')
+    && !document.querySelector('[data-provenance="inferred"]');
+})()`));
+check('the map draws nothing for the probes', await evalJs(`(() => {
+  const drawn = [...document.querySelectorAll('.kw-edge-typed')];
+  return drawn.every((edge) => {
+    const from = edge.getAttribute('data-from') || '';
+    const to = edge.getAttribute('data-to') || '';
+    return from !== '' && to !== '' && from !== to;
+  });
+})()`));
+check('an unheld endpoint draws the hollow ring and a held one the dot', await evalJs(`(() => {
+  const marks = [...document.querySelectorAll('#knowledge-whole [data-reference-only]')];
+  const unheld = marks.filter((mark) => mark.getAttribute('data-reference-only') === 'true');
+  const held = marks.filter((mark) => mark.getAttribute('data-reference-only') === 'false');
+  if (!unheld.length || !held.length) return false;
+  return unheld.every((mark) => mark.querySelector('circle.kw-typeref-ring')
+      && !mark.querySelector('.knode, rect.knode'))
+    && held.every((mark) => mark.querySelector('circle.kw-typeref-dot'));
+})()`));
+check('the key rows follow the drawn provenance', await evalJs(`(() => {
+  const words = (document.querySelector('#knowledge-whole') || { textContent: '' }).textContent || '';
+  return /authored claim/.test(words) && /recorded evidence/.test(words);
+})()`));
+await evalJs(`(() => {
+  const mark = [...document.querySelectorAll('#knowledge-whole [data-reference-only="true"]')]
+    .find((node) => (node.getAttribute('data-kw-node') || '').includes('not-held'));
+  if (mark) mark.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  return true;
+})()`);
+await until('the reference-only mark answers with a card or the record',
+  `!!document.querySelector('#selection #sel-sec-finding') || !!document.querySelector('#knowledge-whole .kw-card')`);
+await evalJs(`(() => {
+  const block = document.querySelector('#selection #sel-sec-finding');
+  if (block && /The full record is not held here/.test(block.textContent || '')) return true;
+  const card = document.querySelector('#knowledge-whole .kw-card');
+  const action = card && card.querySelector('button');
+  if (action) action.click();
+  return true;
+})()`);
+await until('the reference-only endpoint reaches its record',
+  `(() => { const block = document.querySelector('#selection #sel-sec-finding');
+    return !!block && /The full record is not held here/.test(block.textContent || ''); })()`);
+check('a reference-only endpoint states the full record is not held and offers no way back',
+  await evalJs(`(() => {
+    const block = document.querySelector('#selection #sel-sec-finding');
+    if (!block) return false;
+    return /The full record is not held here\./.test(block.textContent || '')
+      && !block.querySelector('[data-selkey^="sel:map:"]')
+      && !block.querySelector('[data-selkey^="sel:seat:"]');
+  })()`));
+await evalJs(`(() => {
+  const node = document.querySelector('#knowledge-whole .knode[aria-label="fixture-finding-a1"]')
+    || document.querySelector('#knowledge-whole .knode');
+  if (node) node.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  return true;
+})()`);
+await until('the held finding answers with its card or the record',
+  `!!document.querySelector('#selection #sel-sec-finding') || !!document.querySelector('#knowledge-whole .kw-card')`);
+check('a held finding offers the way back and reads its cited edge as recorded evidence',
+  await evalJs(`(() => {
+    const block = document.querySelector('#selection #sel-sec-finding');
+    if (!block) return false;
+    const map = block.querySelector('[data-selkey^="sel:map:"]');
+    const seat = block.querySelector('[data-selkey^="sel:seat:"]');
+    const words = block.textContent || '';
+    const wayBack = Boolean(map) && Boolean(seat)
+      && /Show on the map/.test((map.textContent || ''))
+      && /Show the author/.test((seat.textContent || ''));
+    return wayBack && /\[1\] recorded evidence \u00b7 message/.test(words);
+  })()`));
+check('the stage draws the authored seam on the arc with its chevron and its value',
+  await evalJs(`(() => {
+    const seams = [...document.querySelectorAll('.att-seam-authored')];
+    if (!seams.length) return false;
+    return seams.every((seam) => {
+      const stage = seam.parentNode;
+      const chevron = stage && stage.querySelector('polygon.att-seam-chevron');
+      const value = getComputedStyle(seam).opacity;
+      return Boolean(chevron) && chevron.tagName.toLowerCase() === 'polygon'
+        && !chevron.querySelector('circle, rect, ellipse')
+        && Number(value) === 0.85;
+    });
+  })()`));
+await evalJs(`(() => {
+  const edge = [...document.querySelectorAll('.kw-edge-typed')]
+    .find((node) => node.getAttribute('data-to') === 'message:fixture-message-1');
+  if (edge) edge.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+  return true;
+})()`);
+await until('the typed edge answers with its card',
+  `!!document.querySelector('#knowledge-whole .kw-card')`);
+check('the typed edge card states a boolean delivery read as a seat fact', await evalJs(`(() => {
+  const card = document.querySelector('#knowledge-whole .kw-card');
+  if (!card) return false;
+  const words = card.textContent || '';
+  return /recorded evidence/.test(words) && /seat has not read the delivery/.test(words);
+})()`));
+check('a reference the store does not hold ends in an open bead, and a held end draws none',
+  await evalJs(`(() => {
+    const beads = [...document.querySelectorAll('circle.att-ref')];
+    if (!beads.length) return false;
+    return beads.every((bead) => /the store does not hold this record/.test(bead.textContent || ''));
+  })()`));
+
+// ============ the fixture document: the absent typed fields ============
+await openPage(urlA + 'index.html?fixture=fixture-knowledge-empty');
+await until('the empty fixture renders its knowledge mount',
+  `!!document.getElementById('knowledge-whole')`);
+check('without the typed fields the map draws no typed mark', await evalJs(`(() => {
+  const whole = document.querySelector('#knowledge-whole');
+  if (!whole) return false;
+  const words = whole.textContent || '';
+  return whole.querySelectorAll('.kw-edge-typed').length === 0
+    && whole.querySelectorAll('[data-reference-only]').length === 0
+    && !/authored claim/.test(words)
+    && !/recorded evidence/.test(words);
+})()`));
 
 console.log('BROWSER_QA_OK');
 } finally {

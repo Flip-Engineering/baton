@@ -1,778 +1,1183 @@
 {
- "contractVersion": 1,
- "version": 1,
- "cursor": "fixture-knowledge-1",
- "capturedAt": "2026-10-06 20:00:00 UTC",
- "subject": null,
- "selection": {
-  "mode": "all",
-  "rule": "parent-owner-member-routes-v1"
- },
- "fixture": true,
- "fixtureNote": "Synthetic DOM behavior fixture for the Orchestra live view. Not live coordinator state.",
- "players": [
-  {
-   "id": "fixture-knowledge-root",
-   "kind": "player",
-   "role": "principal-conductor",
-   "parent": "",
-   "harness": "fixture",
-   "model": "fixture-model",
-   "effort": "high",
-   "observedHarness": "",
-   "observedModel": "fixture-model",
-   "observedEffort": "",
-   "workspace": "/tmp/fixture/worktrees/fixture-knowledge-root",
-   "branch": "fixture/fixture-knowledge-root",
-   "base": "fixture-base",
-   "execution": {
-    "attempt": "fixture-attempt-fixture-knowledge-root",
-    "mode": "retained",
-    "phase": "running",
-    "status": "pid 1"
-   },
-   "lastTurnId": "",
-   "latestReportId": "",
-   "pendingCount": 0,
-   "unacknowledgedCount": 0,
-   "ownedEnsembles": [],
-   "memberEnsembles": [],
-   "liveReceiver": null,
-   "endpointRegistered": null,
-   "reference": false,
-   "inputRead": [],
-   "stop": null,
-   "actualProcess": "unknown",
-   "currentAction": null,
-   "pendingSample": []
+  "contractVersion": 1,
+  "version": 1,
+  "cursor": "fixture-knowledge-1",
+  "capturedAt": "2026-10-06 20:00:00 UTC",
+  "subject": null,
+  "selection": {
+    "mode": "all",
+    "rule": "parent-owner-member-routes-v1"
   },
-  {
-   "id": "fixture-knowledge-conductor-a",
-   "kind": "player",
-   "role": "associate-conductor",
-   "parent": "fixture-knowledge-root",
-   "harness": "fixture",
-   "model": "fixture-model",
-   "effort": "high",
-   "observedHarness": "",
-   "observedModel": "fixture-model",
-   "observedEffort": "",
-   "workspace": "/tmp/fixture/worktrees/fixture-knowledge-conductor-a",
-   "branch": "fixture/fixture-knowledge-conductor-a",
-   "base": "fixture-base",
-   "execution": {
-    "attempt": "fixture-attempt-fixture-knowledge-conductor-a",
-    "mode": "retained",
-    "phase": "running",
-    "status": "pid 2"
-   },
-   "lastTurnId": "",
-   "latestReportId": "",
-   "pendingCount": 0,
-   "unacknowledgedCount": 0,
-   "ownedEnsembles": [
-    "fixture-knowledge-ensemble"
-   ],
-   "memberEnsembles": [],
-   "liveReceiver": null,
-   "endpointRegistered": null,
-   "reference": false,
-   "inputRead": [],
-   "stop": null,
-   "actualProcess": "unknown",
-   "currentAction": null,
-   "pendingSample": []
-  },
-  {
-   "id": "fixture-knowledge-conductor-b",
-   "kind": "player",
-   "role": "associate-conductor",
-   "parent": "fixture-knowledge-root",
-   "harness": "fixture",
-   "model": "fixture-model",
-   "effort": "high",
-   "observedHarness": "",
-   "observedModel": "fixture-model",
-   "observedEffort": "",
-   "workspace": "/tmp/fixture/worktrees/fixture-knowledge-conductor-b",
-   "branch": "fixture/fixture-knowledge-conductor-b",
-   "base": "fixture-base",
-   "execution": {
-    "attempt": "fixture-attempt-fixture-knowledge-conductor-b",
-    "mode": "retained",
-    "phase": "exited",
-    "status": "exit 0"
-   },
-   "lastTurnId": "",
-   "latestReportId": "",
-   "pendingCount": 0,
-   "unacknowledgedCount": 0,
-   "ownedEnsembles": [],
-   "memberEnsembles": [],
-   "liveReceiver": null,
-   "endpointRegistered": null,
-   "reference": false,
-   "inputRead": [],
-   "stop": null,
-   "actualProcess": "unknown",
-   "currentAction": null,
-   "pendingSample": []
-  },
-  {
-   "id": "fixture-knowledge-operator",
-   "kind": "player",
-   "role": "operator",
-   "parent": "fixture-knowledge-root",
-   "harness": "fixture",
-   "model": "fixture-model",
-   "effort": "high",
-   "observedHarness": "",
-   "observedModel": "fixture-model",
-   "observedEffort": "",
-   "workspace": "/tmp/fixture/worktrees/fixture-knowledge-operator",
-   "branch": "fixture/fixture-knowledge-operator",
-   "base": "fixture-base",
-   "execution": {
-    "attempt": "fixture-attempt-fixture-knowledge-operator",
-    "mode": "retained",
-    "phase": "running",
-    "status": "pid 3"
-   },
-   "lastTurnId": "",
-   "latestReportId": "",
-   "pendingCount": 0,
-   "unacknowledgedCount": 0,
-   "ownedEnsembles": [],
-   "memberEnsembles": [],
-   "liveReceiver": null,
-   "endpointRegistered": null,
-   "reference": false,
-   "inputRead": [],
-   "stop": null,
-   "actualProcess": "unknown",
-   "currentAction": {
-    "label": "wait on a recorded request",
-    "at": "2026-10-06 19:58:00 UTC"
-   },
-   "pendingSample": []
-  },
-  {
-   "id": "fixture-knowledge-player-a",
-   "kind": "player",
-   "role": "player",
-   "parent": "fixture-knowledge-conductor-a",
-   "harness": "fixture",
-   "model": "fixture-model",
-   "effort": "high",
-   "observedHarness": "",
-   "observedModel": "fixture-model",
-   "observedEffort": "",
-   "workspace": "/tmp/fixture/worktrees/fixture-knowledge-player-a",
-   "branch": "fixture/fixture-knowledge-player-a",
-   "base": "fixture-base",
-   "execution": {
-    "attempt": "fixture-attempt-fixture-knowledge-player-a",
-    "mode": "retained",
-    "phase": "running",
-    "status": "pid 4"
-   },
-   "lastTurnId": "",
-   "latestReportId": "",
-   "pendingCount": 0,
-   "unacknowledgedCount": 0,
-   "ownedEnsembles": [],
-   "memberEnsembles": [
-    "fixture-knowledge-ensemble"
-   ],
-   "liveReceiver": null,
-   "endpointRegistered": null,
-   "reference": false,
-   "inputRead": [],
-   "stop": null,
-   "actualProcess": "unknown",
-   "currentAction": {
-    "label": "read the live snapshot",
-    "at": "2026-10-06 20:00:00 UTC"
-   },
-   "pendingSample": []
-  },
-  {
-   "id": "fixture-knowledge-player-b",
-   "kind": "player",
-   "role": "player",
-   "parent": "fixture-knowledge-conductor-a",
-   "harness": "fixture",
-   "model": "fixture-model",
-   "effort": "high",
-   "observedHarness": "",
-   "observedModel": "fixture-model",
-   "observedEffort": "",
-   "workspace": "/tmp/fixture/worktrees/fixture-knowledge-player-b",
-   "branch": "fixture/fixture-knowledge-player-b",
-   "base": "fixture-base",
-   "execution": {
-    "attempt": "fixture-attempt-fixture-knowledge-player-b",
-    "mode": "retained",
-    "phase": "exited",
-    "status": "exit 0"
-   },
-   "lastTurnId": "",
-   "latestReportId": "",
-   "pendingCount": 0,
-   "unacknowledgedCount": 0,
-   "ownedEnsembles": [],
-   "memberEnsembles": [
-    "fixture-knowledge-ensemble"
-   ],
-   "liveReceiver": null,
-   "endpointRegistered": null,
-   "reference": false,
-   "inputRead": [],
-   "stop": null,
-   "actualProcess": "unknown",
-   "currentAction": null,
-   "pendingSample": []
-  },
-  {
-   "id": "fixture-knowledge-player-c",
-   "kind": "player",
-   "role": "player",
-   "parent": "fixture-knowledge-conductor-a",
-   "harness": "fixture",
-   "model": "fixture-model",
-   "effort": "high",
-   "observedHarness": "",
-   "observedModel": "fixture-model",
-   "observedEffort": "",
-   "workspace": "/tmp/fixture/worktrees/fixture-knowledge-player-c",
-   "branch": "fixture/fixture-knowledge-player-c",
-   "base": "fixture-base",
-   "execution": null,
-   "lastTurnId": "",
-   "latestReportId": "",
-   "pendingCount": 2,
-   "unacknowledgedCount": 2,
-   "ownedEnsembles": [],
-   "memberEnsembles": [
-    "fixture-knowledge-ensemble"
-   ],
-   "liveReceiver": null,
-   "endpointRegistered": null,
-   "reference": false,
-   "inputRead": [],
-   "stop": null,
-   "actualProcess": "unknown",
-   "currentAction": null,
-   "pendingSample": [
+  "fixture": true,
+  "fixtureNote": "Synthetic DOM behavior fixture for the Orchestra live view. Not live coordinator state. The knowledge object now carries nodes and edges in the shapes server.mjs knowledgeGraph emits, with deliveryRead as a boolean on one message endpoint and the delivery pointer on another, plus three named probes the projection never emits (probe-self, probe-empty, probe-inferred) and one held message node, so the skip rules and the floated dot can fail on data the fixture states.",
+  "players": [
     {
-     "id": "fixture-message-1",
-     "kind": "task",
-     "at": "2026-10-06 19:57:00 UTC"
+      "id": "fixture-knowledge-root",
+      "kind": "player",
+      "role": "principal-conductor",
+      "parent": "",
+      "harness": "fixture",
+      "model": "fixture-model",
+      "effort": "high",
+      "observedHarness": "",
+      "observedModel": "fixture-model",
+      "observedEffort": "",
+      "workspace": "/tmp/fixture/worktrees/fixture-knowledge-root",
+      "branch": "fixture/fixture-knowledge-root",
+      "base": "fixture-base",
+      "execution": {
+        "attempt": "fixture-attempt-fixture-knowledge-root",
+        "mode": "retained",
+        "phase": "running",
+        "status": "pid 1"
+      },
+      "lastTurnId": "",
+      "latestReportId": "",
+      "pendingCount": 0,
+      "unacknowledgedCount": 0,
+      "ownedEnsembles": [],
+      "memberEnsembles": [],
+      "liveReceiver": null,
+      "endpointRegistered": null,
+      "reference": false,
+      "inputRead": [],
+      "stop": null,
+      "actualProcess": "unknown",
+      "currentAction": null,
+      "pendingSample": []
     },
     {
-     "id": "fixture-message-2",
-     "kind": "guidance",
-     "at": "2026-10-06 19:56:00 UTC"
+      "id": "fixture-knowledge-conductor-a",
+      "kind": "player",
+      "role": "associate-conductor",
+      "parent": "fixture-knowledge-root",
+      "harness": "fixture",
+      "model": "fixture-model",
+      "effort": "high",
+      "observedHarness": "",
+      "observedModel": "fixture-model",
+      "observedEffort": "",
+      "workspace": "/tmp/fixture/worktrees/fixture-knowledge-conductor-a",
+      "branch": "fixture/fixture-knowledge-conductor-a",
+      "base": "fixture-base",
+      "execution": {
+        "attempt": "fixture-attempt-fixture-knowledge-conductor-a",
+        "mode": "retained",
+        "phase": "running",
+        "status": "pid 2"
+      },
+      "lastTurnId": "",
+      "latestReportId": "",
+      "pendingCount": 0,
+      "unacknowledgedCount": 0,
+      "ownedEnsembles": [
+        "fixture-knowledge-ensemble"
+      ],
+      "memberEnsembles": [],
+      "liveReceiver": null,
+      "endpointRegistered": null,
+      "reference": false,
+      "inputRead": [],
+      "stop": null,
+      "actualProcess": "unknown",
+      "currentAction": null,
+      "pendingSample": []
+    },
+    {
+      "id": "fixture-knowledge-conductor-b",
+      "kind": "player",
+      "role": "associate-conductor",
+      "parent": "fixture-knowledge-root",
+      "harness": "fixture",
+      "model": "fixture-model",
+      "effort": "high",
+      "observedHarness": "",
+      "observedModel": "fixture-model",
+      "observedEffort": "",
+      "workspace": "/tmp/fixture/worktrees/fixture-knowledge-conductor-b",
+      "branch": "fixture/fixture-knowledge-conductor-b",
+      "base": "fixture-base",
+      "execution": {
+        "attempt": "fixture-attempt-fixture-knowledge-conductor-b",
+        "mode": "retained",
+        "phase": "exited",
+        "status": "exit 0"
+      },
+      "lastTurnId": "",
+      "latestReportId": "",
+      "pendingCount": 0,
+      "unacknowledgedCount": 0,
+      "ownedEnsembles": [],
+      "memberEnsembles": [],
+      "liveReceiver": null,
+      "endpointRegistered": null,
+      "reference": false,
+      "inputRead": [],
+      "stop": null,
+      "actualProcess": "unknown",
+      "currentAction": null,
+      "pendingSample": []
+    },
+    {
+      "id": "fixture-knowledge-operator",
+      "kind": "player",
+      "role": "operator",
+      "parent": "fixture-knowledge-root",
+      "harness": "fixture",
+      "model": "fixture-model",
+      "effort": "high",
+      "observedHarness": "",
+      "observedModel": "fixture-model",
+      "observedEffort": "",
+      "workspace": "/tmp/fixture/worktrees/fixture-knowledge-operator",
+      "branch": "fixture/fixture-knowledge-operator",
+      "base": "fixture-base",
+      "execution": {
+        "attempt": "fixture-attempt-fixture-knowledge-operator",
+        "mode": "retained",
+        "phase": "running",
+        "status": "pid 3"
+      },
+      "lastTurnId": "",
+      "latestReportId": "",
+      "pendingCount": 0,
+      "unacknowledgedCount": 0,
+      "ownedEnsembles": [],
+      "memberEnsembles": [],
+      "liveReceiver": null,
+      "endpointRegistered": null,
+      "reference": false,
+      "inputRead": [],
+      "stop": null,
+      "actualProcess": "unknown",
+      "currentAction": {
+        "label": "wait on a recorded request",
+        "at": "2026-10-06 19:58:00 UTC"
+      },
+      "pendingSample": []
+    },
+    {
+      "id": "fixture-knowledge-player-a",
+      "kind": "player",
+      "role": "player",
+      "parent": "fixture-knowledge-conductor-a",
+      "harness": "fixture",
+      "model": "fixture-model",
+      "effort": "high",
+      "observedHarness": "",
+      "observedModel": "fixture-model",
+      "observedEffort": "",
+      "workspace": "/tmp/fixture/worktrees/fixture-knowledge-player-a",
+      "branch": "fixture/fixture-knowledge-player-a",
+      "base": "fixture-base",
+      "execution": {
+        "attempt": "fixture-attempt-fixture-knowledge-player-a",
+        "mode": "retained",
+        "phase": "running",
+        "status": "pid 4"
+      },
+      "lastTurnId": "",
+      "latestReportId": "",
+      "pendingCount": 0,
+      "unacknowledgedCount": 0,
+      "ownedEnsembles": [],
+      "memberEnsembles": [
+        "fixture-knowledge-ensemble"
+      ],
+      "liveReceiver": null,
+      "endpointRegistered": null,
+      "reference": false,
+      "inputRead": [],
+      "stop": null,
+      "actualProcess": "unknown",
+      "currentAction": {
+        "label": "read the live snapshot",
+        "at": "2026-10-06 20:00:00 UTC"
+      },
+      "pendingSample": []
+    },
+    {
+      "id": "fixture-knowledge-player-b",
+      "kind": "player",
+      "role": "player",
+      "parent": "fixture-knowledge-conductor-a",
+      "harness": "fixture",
+      "model": "fixture-model",
+      "effort": "high",
+      "observedHarness": "",
+      "observedModel": "fixture-model",
+      "observedEffort": "",
+      "workspace": "/tmp/fixture/worktrees/fixture-knowledge-player-b",
+      "branch": "fixture/fixture-knowledge-player-b",
+      "base": "fixture-base",
+      "execution": {
+        "attempt": "fixture-attempt-fixture-knowledge-player-b",
+        "mode": "retained",
+        "phase": "exited",
+        "status": "exit 0"
+      },
+      "lastTurnId": "",
+      "latestReportId": "",
+      "pendingCount": 0,
+      "unacknowledgedCount": 0,
+      "ownedEnsembles": [],
+      "memberEnsembles": [
+        "fixture-knowledge-ensemble"
+      ],
+      "liveReceiver": null,
+      "endpointRegistered": null,
+      "reference": false,
+      "inputRead": [],
+      "stop": null,
+      "actualProcess": "unknown",
+      "currentAction": null,
+      "pendingSample": []
+    },
+    {
+      "id": "fixture-knowledge-player-c",
+      "kind": "player",
+      "role": "player",
+      "parent": "fixture-knowledge-conductor-a",
+      "harness": "fixture",
+      "model": "fixture-model",
+      "effort": "high",
+      "observedHarness": "",
+      "observedModel": "fixture-model",
+      "observedEffort": "",
+      "workspace": "/tmp/fixture/worktrees/fixture-knowledge-player-c",
+      "branch": "fixture/fixture-knowledge-player-c",
+      "base": "fixture-base",
+      "execution": null,
+      "lastTurnId": "",
+      "latestReportId": "",
+      "pendingCount": 2,
+      "unacknowledgedCount": 2,
+      "ownedEnsembles": [],
+      "memberEnsembles": [
+        "fixture-knowledge-ensemble"
+      ],
+      "liveReceiver": null,
+      "endpointRegistered": null,
+      "reference": false,
+      "inputRead": [],
+      "stop": null,
+      "actualProcess": "unknown",
+      "currentAction": null,
+      "pendingSample": [
+        {
+          "id": "fixture-message-1",
+          "kind": "task",
+          "at": "2026-10-06 19:57:00 UTC"
+        },
+        {
+          "id": "fixture-message-2",
+          "kind": "guidance",
+          "at": "2026-10-06 19:56:00 UTC"
+        }
+      ]
+    },
+    {
+      "id": "fixture-knowledge-player-d",
+      "kind": "player",
+      "role": "player",
+      "parent": "fixture-knowledge-conductor-b",
+      "harness": "fixture",
+      "model": "fixture-model",
+      "effort": "high",
+      "observedHarness": "",
+      "observedModel": "fixture-model",
+      "observedEffort": "",
+      "workspace": "/tmp/fixture/worktrees/fixture-knowledge-player-d",
+      "branch": "fixture/fixture-knowledge-player-d",
+      "base": "fixture-base",
+      "execution": {
+        "attempt": "fixture-attempt-fixture-knowledge-player-d",
+        "mode": "retained",
+        "phase": "running",
+        "status": "pid 5"
+      },
+      "lastTurnId": "",
+      "latestReportId": "",
+      "pendingCount": 0,
+      "unacknowledgedCount": 0,
+      "ownedEnsembles": [],
+      "memberEnsembles": [],
+      "liveReceiver": null,
+      "endpointRegistered": null,
+      "reference": false,
+      "inputRead": [],
+      "stop": null,
+      "actualProcess": "unknown",
+      "currentAction": null,
+      "pendingSample": []
+    },
+    {
+      "id": "fixture-knowledge-player-e",
+      "kind": "player",
+      "role": "player",
+      "parent": "fixture-knowledge-conductor-b",
+      "harness": "fixture",
+      "model": "fixture-model",
+      "effort": "high",
+      "observedHarness": "",
+      "observedModel": "fixture-model",
+      "observedEffort": "",
+      "workspace": "/tmp/fixture/worktrees/fixture-knowledge-player-e",
+      "branch": "fixture/fixture-knowledge-player-e",
+      "base": "fixture-base",
+      "execution": {
+        "attempt": "fixture-attempt-fixture-knowledge-player-e",
+        "mode": "retained",
+        "phase": "exited",
+        "status": "exit 1"
+      },
+      "lastTurnId": "",
+      "latestReportId": "",
+      "pendingCount": 0,
+      "unacknowledgedCount": 0,
+      "ownedEnsembles": [],
+      "memberEnsembles": [],
+      "liveReceiver": null,
+      "endpointRegistered": null,
+      "reference": false,
+      "inputRead": [],
+      "stop": null,
+      "actualProcess": "unknown",
+      "currentAction": null,
+      "pendingSample": []
+    },
+    {
+      "id": "fixture-knowledge-player-f",
+      "kind": "player",
+      "role": "player",
+      "parent": "fixture-knowledge-player-d",
+      "harness": "fixture",
+      "model": "fixture-model",
+      "effort": "high",
+      "observedHarness": "",
+      "observedModel": "fixture-model",
+      "observedEffort": "",
+      "workspace": "/tmp/fixture/worktrees/fixture-knowledge-player-f",
+      "branch": "fixture/fixture-knowledge-player-f",
+      "base": "fixture-base",
+      "execution": {
+        "attempt": "fixture-attempt-fixture-knowledge-player-f",
+        "mode": "retained",
+        "phase": "running",
+        "status": "pid 6"
+      },
+      "lastTurnId": "",
+      "latestReportId": "",
+      "pendingCount": 0,
+      "unacknowledgedCount": 0,
+      "ownedEnsembles": [],
+      "memberEnsembles": [],
+      "liveReceiver": null,
+      "endpointRegistered": null,
+      "reference": false,
+      "inputRead": [],
+      "stop": null,
+      "actualProcess": "unknown",
+      "currentAction": null,
+      "pendingSample": []
+    },
+    {
+      "id": "fixture-knowledge-player-g",
+      "kind": "player",
+      "role": "player",
+      "parent": "fixture-knowledge-player-d",
+      "harness": "fixture",
+      "model": "fixture-model",
+      "effort": "high",
+      "observedHarness": "",
+      "observedModel": "fixture-model",
+      "observedEffort": "",
+      "workspace": "/tmp/fixture/worktrees/fixture-knowledge-player-g",
+      "branch": "fixture/fixture-knowledge-player-g",
+      "base": "fixture-base",
+      "execution": {
+        "attempt": "fixture-attempt-fixture-knowledge-player-g",
+        "mode": "retained",
+        "phase": "exited",
+        "status": "exit 0"
+      },
+      "lastTurnId": "",
+      "latestReportId": "",
+      "pendingCount": 0,
+      "unacknowledgedCount": 0,
+      "ownedEnsembles": [],
+      "memberEnsembles": [],
+      "liveReceiver": null,
+      "endpointRegistered": null,
+      "reference": false,
+      "inputRead": [],
+      "stop": null,
+      "actualProcess": "unknown",
+      "currentAction": null,
+      "pendingSample": []
     }
-   ]
-  },
-  {
-   "id": "fixture-knowledge-player-d",
-   "kind": "player",
-   "role": "player",
-   "parent": "fixture-knowledge-conductor-b",
-   "harness": "fixture",
-   "model": "fixture-model",
-   "effort": "high",
-   "observedHarness": "",
-   "observedModel": "fixture-model",
-   "observedEffort": "",
-   "workspace": "/tmp/fixture/worktrees/fixture-knowledge-player-d",
-   "branch": "fixture/fixture-knowledge-player-d",
-   "base": "fixture-base",
-   "execution": {
-    "attempt": "fixture-attempt-fixture-knowledge-player-d",
-    "mode": "retained",
-    "phase": "running",
-    "status": "pid 5"
-   },
-   "lastTurnId": "",
-   "latestReportId": "",
-   "pendingCount": 0,
-   "unacknowledgedCount": 0,
-   "ownedEnsembles": [],
-   "memberEnsembles": [],
-   "liveReceiver": null,
-   "endpointRegistered": null,
-   "reference": false,
-   "inputRead": [],
-   "stop": null,
-   "actualProcess": "unknown",
-   "currentAction": null,
-   "pendingSample": []
-  },
-  {
-   "id": "fixture-knowledge-player-e",
-   "kind": "player",
-   "role": "player",
-   "parent": "fixture-knowledge-conductor-b",
-   "harness": "fixture",
-   "model": "fixture-model",
-   "effort": "high",
-   "observedHarness": "",
-   "observedModel": "fixture-model",
-   "observedEffort": "",
-   "workspace": "/tmp/fixture/worktrees/fixture-knowledge-player-e",
-   "branch": "fixture/fixture-knowledge-player-e",
-   "base": "fixture-base",
-   "execution": {
-    "attempt": "fixture-attempt-fixture-knowledge-player-e",
-    "mode": "retained",
-    "phase": "exited",
-    "status": "exit 1"
-   },
-   "lastTurnId": "",
-   "latestReportId": "",
-   "pendingCount": 0,
-   "unacknowledgedCount": 0,
-   "ownedEnsembles": [],
-   "memberEnsembles": [],
-   "liveReceiver": null,
-   "endpointRegistered": null,
-   "reference": false,
-   "inputRead": [],
-   "stop": null,
-   "actualProcess": "unknown",
-   "currentAction": null,
-   "pendingSample": []
-  },
-  {
-   "id": "fixture-knowledge-player-f",
-   "kind": "player",
-   "role": "player",
-   "parent": "fixture-knowledge-player-d",
-   "harness": "fixture",
-   "model": "fixture-model",
-   "effort": "high",
-   "observedHarness": "",
-   "observedModel": "fixture-model",
-   "observedEffort": "",
-   "workspace": "/tmp/fixture/worktrees/fixture-knowledge-player-f",
-   "branch": "fixture/fixture-knowledge-player-f",
-   "base": "fixture-base",
-   "execution": {
-    "attempt": "fixture-attempt-fixture-knowledge-player-f",
-    "mode": "retained",
-    "phase": "running",
-    "status": "pid 6"
-   },
-   "lastTurnId": "",
-   "latestReportId": "",
-   "pendingCount": 0,
-   "unacknowledgedCount": 0,
-   "ownedEnsembles": [],
-   "memberEnsembles": [],
-   "liveReceiver": null,
-   "endpointRegistered": null,
-   "reference": false,
-   "inputRead": [],
-   "stop": null,
-   "actualProcess": "unknown",
-   "currentAction": null,
-   "pendingSample": []
-  },
-  {
-   "id": "fixture-knowledge-player-g",
-   "kind": "player",
-   "role": "player",
-   "parent": "fixture-knowledge-player-d",
-   "harness": "fixture",
-   "model": "fixture-model",
-   "effort": "high",
-   "observedHarness": "",
-   "observedModel": "fixture-model",
-   "observedEffort": "",
-   "workspace": "/tmp/fixture/worktrees/fixture-knowledge-player-g",
-   "branch": "fixture/fixture-knowledge-player-g",
-   "base": "fixture-base",
-   "execution": {
-    "attempt": "fixture-attempt-fixture-knowledge-player-g",
-    "mode": "retained",
-    "phase": "exited",
-    "status": "exit 0"
-   },
-   "lastTurnId": "",
-   "latestReportId": "",
-   "pendingCount": 0,
-   "unacknowledgedCount": 0,
-   "ownedEnsembles": [],
-   "memberEnsembles": [],
-   "liveReceiver": null,
-   "endpointRegistered": null,
-   "reference": false,
-   "inputRead": [],
-   "stop": null,
-   "actualProcess": "unknown",
-   "currentAction": null,
-   "pendingSample": []
-  }
- ],
- "ensembles": [
-  {
-   "id": "fixture-knowledge-ensemble",
-   "owner": "fixture-knowledge-conductor-a",
-   "coupling": "tight",
-   "members": [
-    "fixture-knowledge-conductor-a",
-    "fixture-knowledge-player-a",
-    "fixture-knowledge-player-b",
-    "fixture-knowledge-player-c"
-   ],
-   "sections": []
-  }
- ],
- "transitions": [
-  {
-   "seq": 3,
-   "at": "2026-10-06 20:00:00 UTC",
-   "session": "fixture-knowledge-player-a",
-   "kind": "execution",
-   "summary": "recorded execution running"
-  },
-  {
-   "seq": 2,
-   "at": "2026-10-06 19:58:00 UTC",
-   "session": "fixture-knowledge-conductor-a",
-   "kind": "knowledge",
-   "summary": "finding recorded"
-  },
-  {
-   "seq": 1,
-   "at": "2026-10-06 19:57:00 UTC",
-   "session": "fixture-knowledge-player-c",
-   "kind": "message",
-   "summary": "message admitted",
-   "entity": "message",
-   "operation": "insert",
-   "counterpart": "fixture-knowledge-conductor-a"
-  }
- ],
- "tasks": {},
- "providers": {},
- "knowledge": {
-  "contractVersion": 1,
-  "findings": [
-   {
-    "id": "fixture-finding-a1",
-    "author": "fixture-knowledge-player-a",
-    "claim": "The snapshot read stays authoritative while the event stream reconnects.",
-    "evidence": "message:fixture-message-1",
-    "limits": "Measured against a local database; a remote event source was not exercised.",
-    "kind": "finding",
-    "evidenceMessage": {
-     "id": "fixture-message-1",
-     "sender": "fixture-knowledge-player-a",
-     "recipient": "fixture-knowledge-conductor-a",
-     "body": "Two reconnect cycles during a restart left the snapshot read authoritative: the page served the recorded rows and the stream resumed from its cursor."
+  ],
+  "ensembles": [
+    {
+      "id": "fixture-knowledge-ensemble",
+      "owner": "fixture-knowledge-conductor-a",
+      "coupling": "tight",
+      "members": [
+        "fixture-knowledge-conductor-a",
+        "fixture-knowledge-player-a",
+        "fixture-knowledge-player-b",
+        "fixture-knowledge-player-c"
+      ],
+      "sections": []
     }
-   },
-   {
-    "id": "fixture-finding-a2",
-    "author": "fixture-knowledge-player-a",
-    "claim": "A busy database read is recoverable; the page retries the snapshot.",
-    "evidence": "A snapshot request answered 503 while a writer held the database lock; the retry answered 200 with no page reload.",
-    "limits": "The retry interval is one second and was observed against a single writer.",
-    "kind": "finding"
-   },
-   {
-    "id": "fixture-finding-a3",
-    "author": "fixture-knowledge-player-a",
-    "claim": "Recorded execution state is not process liveness.",
-    "evidence": "A session whose execution row read exited served a completed turn when the record was read again.",
-    "limits": "The database carries no process observation for the sessions in this set.",
-    "kind": "finding"
-   },
-   {
-    "id": "fixture-finding-a4",
-    "author": "fixture-knowledge-player-a",
-    "claim": "A pending count is the count of stored messages with no receipt.",
-    "evidence": "A message inserted with no receipt raised the recipient count by one.",
-    "limits": "Counts describe stored messages; delivery to a harness process is not recorded.",
-    "kind": "finding"
-   },
-   {
-    "id": "fixture-finding-b1",
-    "author": "fixture-knowledge-conductor-a",
-    "claim": "Selection survives an event that replaces a row.",
-    "evidence": "A player event replaced the selected row and the selection marker stayed on the same actor.",
-    "limits": "Observed for a player event whose parent did not change.",
-    "kind": "finding"
-   },
-   {
-    "id": "fixture-finding-b2",
-    "author": "fixture-knowledge-conductor-a",
-    "claim": "A knowledge read is on demand, so the snapshot carries no claims.",
-    "evidence": "The snapshot payload for this fixture carries no claim text; the band reads the overview document instead.",
-    "limits": "Applies to the two knowledge routes; other projections may carry summaries.",
-    "kind": "finding"
-   },
-   {
-    "id": "fixture-finding-b3",
-    "author": "fixture-knowledge-conductor-a",
-    "claim": "An ensemble carries its coupling, and membership carries no trust.",
-    "evidence": "The fixture ensemble records coupling tight and four members with no ordering.",
-    "limits": "Coupling is a recorded field of the ensemble row.",
-    "kind": "finding"
-   },
-   {
-    "id": "fixture-finding-c1",
-    "author": "fixture-knowledge-conductor-b",
-    "claim": "A stopped session keeps its worktree, branch and pending input.",
-    "evidence": "message:fixture-message-2",
-    "limits": "The stop record names the recorded attempt and no live process.",
-    "kind": "finding",
-    "evidenceMessage": null
-   },
-   {
-    "id": "fixture-finding-c2",
-    "author": "fixture-knowledge-conductor-b",
-    "claim": "A report reaches the immediate parent.",
-    "evidence": "The fixture transition list records the report against the sender's parent row.",
-    "limits": "Observed within one hierarchy of three levels.",
-    "kind": "finding"
-   },
-   {
-    "id": "fixture-finding-d1",
-    "author": "fixture-knowledge-player-d",
-    "claim": "A promotion records its source, its destination and its promoter.",
-    "evidence": "Promotion fixture-promotion-8 shares a finding authored by player a from conductor a to the root.",
-    "limits": "The record names the three actors and no reason for the share.",
-    "kind": "finding"
-   },
-   {
-    "id": "fixture-finding-d2",
-    "author": "fixture-knowledge-player-d",
-    "claim": "The recorded hierarchy orders the display and grants no authority.",
-    "evidence": "Seats are placed by parentage depth; the fixture carries an operator at the same rank as the conductors.",
-    "limits": "Display order only; the database records roles separately.",
-    "kind": "finding"
-   },
-   {
-    "id": "fixture-finding-ghost-1",
-    "author": "fixture-knowledge-ghost",
-    "claim": "A finding whose author the snapshot does not carry still appears.",
-    "evidence": "The band places this author in its own rank and its promotion line ends at the root.",
-    "limits": "The seat shows the recorded counts and no status, because the snapshot carries no session row.",
-    "kind": "finding"
-   },
-   {
-    "id": "fixture-finding-op-1",
-    "author": "fixture-knowledge-operator",
-    "claim": "The operator reads recorded facts, never an inference.",
-    "evidence": "The operator seat carries an authored finding and the running status recorded for it.",
-    "limits": "The view reports what the database holds at the cursor.",
-    "kind": "finding"
-   },
-   {
-    "id": "fixture-finding-e1",
-    "author": "fixture-knowledge-player-e",
-    "claim": "A failed attempt keeps its output log and its exit status.",
-    "evidence": "message:fixture-message-not-held",
-    "limits": "The view shows the recorded status; the log file itself is not read.",
-    "kind": "finding",
-    "evidenceMessage": null
-   },
-   {
-    "id": "fixture-finding-root-1",
-    "author": "fixture-knowledge-root",
-    "kind": "finding",
-    "claim": "Universal knowledge is the principal's authored and explicitly received holdings.",
-    "evidence": "Every overview read served those holdings and no others; a worker's unpromoted finding stayed out of them.",
-    "limits": "Holds while the projection is the one the server applies."
-   },
-   {
-    "id": "fixture-finding-root-2",
-    "author": "fixture-knowledge-root",
-    "kind": "finding",
-    "claim": "Membership alone publishes nothing: a worker's unpromoted finding is not its group's.",
-    "evidence": "A promotion names its source and its destination; absent a promotion the finding stayed in the author's holdings.",
-    "limits": "Holds for group and universal scopes alike."
-   }
   ],
-  "promotions": [
-   {
-    "id": "fixture-promotion-1",
-    "finding": "fixture-finding-a1",
-    "author": "fixture-knowledge-player-a",
-    "source": "fixture-knowledge-player-a",
-    "destination": "fixture-knowledge-conductor-a",
-    "promotedBy": "fixture-knowledge-conductor-a"
-   },
-   {
-    "id": "fixture-promotion-2",
-    "finding": "fixture-finding-a2",
-    "author": "fixture-knowledge-player-a",
-    "source": "fixture-knowledge-player-a",
-    "destination": "fixture-knowledge-conductor-a",
-    "promotedBy": "fixture-knowledge-conductor-a"
-   },
-   {
-    "id": "fixture-promotion-3",
-    "finding": "fixture-finding-a3",
-    "author": "fixture-knowledge-player-a",
-    "source": "fixture-knowledge-player-a",
-    "destination": "fixture-knowledge-conductor-a",
-    "promotedBy": "fixture-knowledge-conductor-a"
-   },
-   {
-    "id": "fixture-promotion-4",
-    "finding": "fixture-finding-b1",
-    "author": "fixture-knowledge-conductor-a",
-    "source": "fixture-knowledge-conductor-a",
-    "destination": "fixture-knowledge-root",
-    "promotedBy": "fixture-knowledge-root"
-   },
-   {
-    "id": "fixture-promotion-5",
-    "finding": "fixture-finding-b2",
-    "author": "fixture-knowledge-conductor-a",
-    "source": "fixture-knowledge-conductor-a",
-    "destination": "fixture-knowledge-root",
-    "promotedBy": "fixture-knowledge-root"
-   },
-   {
-    "id": "fixture-promotion-6",
-    "finding": "fixture-finding-c1",
-    "author": "fixture-knowledge-conductor-b",
-    "source": "fixture-knowledge-conductor-b",
-    "destination": "fixture-knowledge-root",
-    "promotedBy": "fixture-knowledge-root"
-   },
-   {
-    "id": "fixture-promotion-7",
-    "finding": "fixture-finding-d1",
-    "author": "fixture-knowledge-player-d",
-    "source": "fixture-knowledge-player-d",
-    "destination": "fixture-knowledge-conductor-b",
-    "promotedBy": "fixture-knowledge-conductor-b"
-   },
-   {
-    "id": "fixture-promotion-8",
-    "finding": "fixture-finding-a1",
-    "author": "fixture-knowledge-player-a",
-    "source": "fixture-knowledge-conductor-a",
-    "destination": "fixture-knowledge-root",
-    "promotedBy": "fixture-knowledge-root"
-   },
-   {
-    "id": "fixture-promotion-9",
-    "finding": "fixture-finding-ghost-1",
-    "author": "fixture-knowledge-ghost",
-    "source": "fixture-knowledge-ghost",
-    "destination": "fixture-knowledge-root",
-    "promotedBy": "fixture-knowledge-root"
-   }
+  "transitions": [
+    {
+      "seq": 3,
+      "at": "2026-10-06 20:00:00 UTC",
+      "session": "fixture-knowledge-player-a",
+      "kind": "execution",
+      "summary": "recorded execution running"
+    },
+    {
+      "seq": 2,
+      "at": "2026-10-06 19:58:00 UTC",
+      "session": "fixture-knowledge-conductor-a",
+      "kind": "knowledge",
+      "summary": "finding recorded"
+    },
+    {
+      "seq": 1,
+      "at": "2026-10-06 19:57:00 UTC",
+      "session": "fixture-knowledge-player-c",
+      "kind": "message",
+      "summary": "message admitted",
+      "entity": "message",
+      "operation": "insert",
+      "counterpart": "fixture-knowledge-conductor-a"
+    }
   ],
-  "actors": {
-   "fixture-knowledge-player-a": {
-    "authored": 4,
-    "received": 0,
-    "role": "player",
-    "parent": "fixture-knowledge-conductor-a"
-   },
-   "fixture-knowledge-conductor-a": {
-    "authored": 3,
-    "received": 3,
-    "role": "associate-conductor",
-    "parent": "fixture-knowledge-root"
-   },
-   "fixture-knowledge-conductor-b": {
-    "authored": 2,
-    "received": 1,
-    "role": "associate-conductor",
-    "parent": "fixture-knowledge-root"
-   },
-   "fixture-knowledge-player-d": {
-    "authored": 2,
-    "received": 0,
-    "role": "player",
-    "parent": "fixture-knowledge-conductor-b"
-   },
-   "fixture-knowledge-ghost": {
-    "authored": 1,
-    "received": 0,
-    "role": "",
-    "parent": ""
-   },
-   "fixture-knowledge-operator": {
-    "authored": 1,
-    "received": 0,
-    "role": "operator",
-    "parent": "fixture-knowledge-root"
-   },
-   "fixture-knowledge-player-e": {
-    "authored": 1,
-    "received": 0,
-    "role": "player",
-    "parent": "fixture-knowledge-conductor-b"
-   },
-   "fixture-knowledge-root": {
-    "authored": 2,
-    "received": 6,
-    "role": "principal-conductor",
-    "parent": ""
-   }
-  },
-  "relations": [
-   {
-    "id": "fixture-relation-1",
-    "author": "fixture-knowledge-conductor-a",
-    "source": "finding:fixture-finding-a2",
-    "relation": "extends",
-    "target": "finding:fixture-finding-a1"
-   },
-   {
-    "id": "fixture-relation-2",
-    "author": "fixture-knowledge-conductor-a",
-    "source": "finding:fixture-finding-b1",
-    "relation": "restates",
-    "target": "finding:fixture-finding-a1"
-   },
-   {
-    "id": "fixture-relation-3",
-    "author": "fixture-knowledge-player-a",
-    "source": "finding:fixture-finding-a3",
-    "relation": "evidence",
-    "target": "message:fixture-message-1"
-   },
-   {
-    "id": "fixture-relation-4",
-    "author": "fixture-knowledge-player-a",
-    "source": "finding:fixture-finding-e1",
-    "relation": "evidence",
-    "target": "message:fixture-message-not-held"
-   },
-   {
-    "id": "fixture-relation-5",
-    "author": "fixture-knowledge-ghost",
-    "source": "finding:fixture-finding-ghost-1",
-    "relation": "cites",
-    "target": "external:fixture-external-1"
-   },
-   {
-    "id": "fixture-relation-6",
-    "author": "fixture-knowledge-operator",
-    "source": "message:fixture-message-2",
-    "relation": "notes",
-    "target": "external:fixture-external-2"
-   }
-  ],
-  "scope": {
-   "kind": "universal",
-   "id": null,
-   "holders": [
-    "fixture-knowledge-root"
-   ]
+  "tasks": {},
+  "providers": {},
+  "knowledge": {
+    "contractVersion": 1,
+    "findings": [
+      {
+        "id": "fixture-finding-a1",
+        "author": "fixture-knowledge-player-a",
+        "claim": "The snapshot read stays authoritative while the event stream reconnects.",
+        "evidence": "message:fixture-message-1",
+        "limits": "Measured against a local database; a remote event source was not exercised.",
+        "kind": "finding",
+        "evidenceMessage": {
+          "id": "fixture-message-1",
+          "sender": "fixture-knowledge-player-a",
+          "recipient": "fixture-knowledge-conductor-a",
+          "body": "Two reconnect cycles during a restart left the snapshot read authoritative: the page served the recorded rows and the stream resumed from its cursor."
+        }
+      },
+      {
+        "id": "fixture-finding-a2",
+        "author": "fixture-knowledge-player-a",
+        "claim": "A busy database read is recoverable; the page retries the snapshot.",
+        "evidence": "A snapshot request answered 503 while a writer held the database lock; the retry answered 200 with no page reload.",
+        "limits": "The retry interval is one second and was observed against a single writer.",
+        "kind": "finding"
+      },
+      {
+        "id": "fixture-finding-a3",
+        "author": "fixture-knowledge-player-a",
+        "claim": "Recorded execution state is not process liveness.",
+        "evidence": "A session whose execution row read exited served a completed turn when the record was read again.",
+        "limits": "The database carries no process observation for the sessions in this set.",
+        "kind": "finding"
+      },
+      {
+        "id": "fixture-finding-a4",
+        "author": "fixture-knowledge-player-a",
+        "claim": "A pending count is the count of stored messages with no receipt.",
+        "evidence": "A message inserted with no receipt raised the recipient count by one.",
+        "limits": "Counts describe stored messages; delivery to a harness process is not recorded.",
+        "kind": "finding"
+      },
+      {
+        "id": "fixture-finding-b1",
+        "author": "fixture-knowledge-conductor-a",
+        "claim": "Selection survives an event that replaces a row.",
+        "evidence": "A player event replaced the selected row and the selection marker stayed on the same actor.",
+        "limits": "Observed for a player event whose parent did not change.",
+        "kind": "finding"
+      },
+      {
+        "id": "fixture-finding-b2",
+        "author": "fixture-knowledge-conductor-a",
+        "claim": "A knowledge read is on demand, so the snapshot carries no claims.",
+        "evidence": "The snapshot payload for this fixture carries no claim text; the band reads the overview document instead.",
+        "limits": "Applies to the two knowledge routes; other projections may carry summaries.",
+        "kind": "finding"
+      },
+      {
+        "id": "fixture-finding-b3",
+        "author": "fixture-knowledge-conductor-a",
+        "claim": "An ensemble carries its coupling, and membership carries no trust.",
+        "evidence": "The fixture ensemble records coupling tight and four members with no ordering.",
+        "limits": "Coupling is a recorded field of the ensemble row.",
+        "kind": "finding"
+      },
+      {
+        "id": "fixture-finding-c1",
+        "author": "fixture-knowledge-conductor-b",
+        "claim": "A stopped session keeps its worktree, branch and pending input.",
+        "evidence": "message:fixture-message-2",
+        "limits": "The stop record names the recorded attempt and no live process.",
+        "kind": "finding",
+        "evidenceMessage": null
+      },
+      {
+        "id": "fixture-finding-c2",
+        "author": "fixture-knowledge-conductor-b",
+        "claim": "A report reaches the immediate parent.",
+        "evidence": "The fixture transition list records the report against the sender's parent row.",
+        "limits": "Observed within one hierarchy of three levels.",
+        "kind": "finding"
+      },
+      {
+        "id": "fixture-finding-d1",
+        "author": "fixture-knowledge-player-d",
+        "claim": "A promotion records its source, its destination and its promoter.",
+        "evidence": "Promotion fixture-promotion-8 shares a finding authored by player a from conductor a to the root.",
+        "limits": "The record names the three actors and no reason for the share.",
+        "kind": "finding"
+      },
+      {
+        "id": "fixture-finding-d2",
+        "author": "fixture-knowledge-player-d",
+        "claim": "The recorded hierarchy orders the display and grants no authority.",
+        "evidence": "Seats are placed by parentage depth; the fixture carries an operator at the same rank as the conductors.",
+        "limits": "Display order only; the database records roles separately.",
+        "kind": "finding"
+      },
+      {
+        "id": "fixture-finding-ghost-1",
+        "author": "fixture-knowledge-ghost",
+        "claim": "A finding whose author the snapshot does not carry still appears.",
+        "evidence": "The band places this author in its own rank and its promotion line ends at the root.",
+        "limits": "The seat shows the recorded counts and no status, because the snapshot carries no session row.",
+        "kind": "finding"
+      },
+      {
+        "id": "fixture-finding-op-1",
+        "author": "fixture-knowledge-operator",
+        "claim": "The operator reads recorded facts, never an inference.",
+        "evidence": "The operator seat carries an authored finding and the running status recorded for it.",
+        "limits": "The view reports what the database holds at the cursor.",
+        "kind": "finding"
+      },
+      {
+        "id": "fixture-finding-e1",
+        "author": "fixture-knowledge-player-e",
+        "claim": "A failed attempt keeps its output log and its exit status.",
+        "evidence": "message:fixture-message-not-held",
+        "limits": "The view shows the recorded status; the log file itself is not read.",
+        "kind": "finding",
+        "evidenceMessage": null
+      },
+      {
+        "id": "fixture-finding-root-1",
+        "author": "fixture-knowledge-root",
+        "kind": "finding",
+        "claim": "Universal knowledge is the principal's authored and explicitly received holdings.",
+        "evidence": "Every overview read served those holdings and no others; a worker's unpromoted finding stayed out of them.",
+        "limits": "Holds while the projection is the one the server applies."
+      },
+      {
+        "id": "fixture-finding-root-2",
+        "author": "fixture-knowledge-root",
+        "kind": "finding",
+        "claim": "Membership alone publishes nothing: a worker's unpromoted finding is not its group's.",
+        "evidence": "A promotion names its source and its destination; absent a promotion the finding stayed in the author's holdings.",
+        "limits": "Holds for group and universal scopes alike."
+      }
+    ],
+    "promotions": [
+      {
+        "id": "fixture-promotion-1",
+        "finding": "fixture-finding-a1",
+        "author": "fixture-knowledge-player-a",
+        "source": "fixture-knowledge-player-a",
+        "destination": "fixture-knowledge-conductor-a",
+        "promotedBy": "fixture-knowledge-conductor-a"
+      },
+      {
+        "id": "fixture-promotion-2",
+        "finding": "fixture-finding-a2",
+        "author": "fixture-knowledge-player-a",
+        "source": "fixture-knowledge-player-a",
+        "destination": "fixture-knowledge-conductor-a",
+        "promotedBy": "fixture-knowledge-conductor-a"
+      },
+      {
+        "id": "fixture-promotion-3",
+        "finding": "fixture-finding-a3",
+        "author": "fixture-knowledge-player-a",
+        "source": "fixture-knowledge-player-a",
+        "destination": "fixture-knowledge-conductor-a",
+        "promotedBy": "fixture-knowledge-conductor-a"
+      },
+      {
+        "id": "fixture-promotion-4",
+        "finding": "fixture-finding-b1",
+        "author": "fixture-knowledge-conductor-a",
+        "source": "fixture-knowledge-conductor-a",
+        "destination": "fixture-knowledge-root",
+        "promotedBy": "fixture-knowledge-root"
+      },
+      {
+        "id": "fixture-promotion-5",
+        "finding": "fixture-finding-b2",
+        "author": "fixture-knowledge-conductor-a",
+        "source": "fixture-knowledge-conductor-a",
+        "destination": "fixture-knowledge-root",
+        "promotedBy": "fixture-knowledge-root"
+      },
+      {
+        "id": "fixture-promotion-6",
+        "finding": "fixture-finding-c1",
+        "author": "fixture-knowledge-conductor-b",
+        "source": "fixture-knowledge-conductor-b",
+        "destination": "fixture-knowledge-root",
+        "promotedBy": "fixture-knowledge-root"
+      },
+      {
+        "id": "fixture-promotion-7",
+        "finding": "fixture-finding-d1",
+        "author": "fixture-knowledge-player-d",
+        "source": "fixture-knowledge-player-d",
+        "destination": "fixture-knowledge-conductor-b",
+        "promotedBy": "fixture-knowledge-conductor-b"
+      },
+      {
+        "id": "fixture-promotion-8",
+        "finding": "fixture-finding-a1",
+        "author": "fixture-knowledge-player-a",
+        "source": "fixture-knowledge-conductor-a",
+        "destination": "fixture-knowledge-root",
+        "promotedBy": "fixture-knowledge-root"
+      },
+      {
+        "id": "fixture-promotion-9",
+        "finding": "fixture-finding-ghost-1",
+        "author": "fixture-knowledge-ghost",
+        "source": "fixture-knowledge-ghost",
+        "destination": "fixture-knowledge-root",
+        "promotedBy": "fixture-knowledge-root"
+      }
+    ],
+    "actors": {
+      "fixture-knowledge-player-a": {
+        "authored": 4,
+        "received": 0,
+        "role": "player",
+        "parent": "fixture-knowledge-conductor-a"
+      },
+      "fixture-knowledge-conductor-a": {
+        "authored": 3,
+        "received": 3,
+        "role": "associate-conductor",
+        "parent": "fixture-knowledge-root"
+      },
+      "fixture-knowledge-conductor-b": {
+        "authored": 2,
+        "received": 1,
+        "role": "associate-conductor",
+        "parent": "fixture-knowledge-root"
+      },
+      "fixture-knowledge-player-d": {
+        "authored": 2,
+        "received": 0,
+        "role": "player",
+        "parent": "fixture-knowledge-conductor-b"
+      },
+      "fixture-knowledge-ghost": {
+        "authored": 1,
+        "received": 0,
+        "role": "",
+        "parent": ""
+      },
+      "fixture-knowledge-operator": {
+        "authored": 1,
+        "received": 0,
+        "role": "operator",
+        "parent": "fixture-knowledge-root"
+      },
+      "fixture-knowledge-player-e": {
+        "authored": 1,
+        "received": 0,
+        "role": "player",
+        "parent": "fixture-knowledge-conductor-b"
+      },
+      "fixture-knowledge-root": {
+        "authored": 2,
+        "received": 6,
+        "role": "principal-conductor",
+        "parent": ""
+      }
+    },
+    "relations": [
+      {
+        "id": "fixture-relation-1",
+        "author": "fixture-knowledge-conductor-a",
+        "source": "finding:fixture-finding-a2",
+        "relation": "extends",
+        "target": "finding:fixture-finding-a1"
+      },
+      {
+        "id": "fixture-relation-2",
+        "author": "fixture-knowledge-conductor-a",
+        "source": "finding:fixture-finding-b1",
+        "relation": "restates",
+        "target": "finding:fixture-finding-a1"
+      },
+      {
+        "id": "fixture-relation-3",
+        "author": "fixture-knowledge-player-a",
+        "source": "finding:fixture-finding-a3",
+        "relation": "evidence",
+        "target": "message:fixture-message-1"
+      },
+      {
+        "id": "fixture-relation-4",
+        "author": "fixture-knowledge-player-a",
+        "source": "finding:fixture-finding-e1",
+        "relation": "evidence",
+        "target": "message:fixture-message-not-held"
+      },
+      {
+        "id": "fixture-relation-5",
+        "author": "fixture-knowledge-ghost",
+        "source": "finding:fixture-finding-ghost-1",
+        "relation": "cites",
+        "target": "external:fixture-external-1"
+      },
+      {
+        "id": "fixture-relation-6",
+        "author": "fixture-knowledge-operator",
+        "source": "message:fixture-message-2",
+        "relation": "notes",
+        "target": "external:fixture-external-2"
+      },
+      {
+        "id": "fixture-relation-seat",
+        "author": "fixture-knowledge-root",
+        "source": "fixture-knowledge-player-a",
+        "relation": "directs",
+        "target": "fixture-knowledge-conductor-a"
+      },
+      {
+        "id": "fixture-relation-edge",
+        "author": "fixture-knowledge-root",
+        "source": "fixture-knowledge-player-b",
+        "relation": "references",
+        "target": "external:fixture-log-1"
+      },
+      {
+        "id": "fixture-relation-notheld",
+        "author": "fixture-knowledge-player-a",
+        "source": "finding:fixture-finding-not-held",
+        "relation": "references",
+        "target": "fixture-knowledge-player-a"
+      }
+    ],
+    "scope": {
+      "kind": "universal",
+      "id": null,
+      "holders": [
+        "fixture-knowledge-root"
+      ]
+    },
+    "nodes": [
+      {
+        "id": "fixture-finding-a1",
+        "author": "fixture-knowledge-player-a",
+        "claim": "The snapshot read stays authoritative while the event stream reconnects.",
+        "evidence": "message:fixture-message-1",
+        "limits": "Measured against a local database; a remote event source was not exercised.",
+        "kind": "finding",
+        "evidenceMessage": {
+          "id": "fixture-message-1",
+          "sender": "fixture-knowledge-player-a",
+          "recipient": "fixture-knowledge-conductor-a",
+          "body": "Two reconnect cycles during a restart left the snapshot read authoritative: the page served the recorded rows and the stream resumed from its cursor."
+        },
+        "reference": "finding:fixture-finding-a1",
+        "referenceOnly": false
+      },
+      {
+        "id": "fixture-finding-a2",
+        "author": "fixture-knowledge-player-a",
+        "claim": "A busy database read is recoverable; the page retries the snapshot.",
+        "evidence": "A snapshot request answered 503 while a writer held the database lock; the retry answered 200 with no page reload.",
+        "limits": "The retry interval is one second and was observed against a single writer.",
+        "kind": "finding",
+        "reference": "finding:fixture-finding-a2",
+        "referenceOnly": false
+      },
+      {
+        "id": "fixture-finding-a3",
+        "author": "fixture-knowledge-player-a",
+        "claim": "Recorded execution state is not process liveness.",
+        "evidence": "A session whose execution row read exited served a completed turn when the record was read again.",
+        "limits": "The database carries no process observation for the sessions in this set.",
+        "kind": "finding",
+        "reference": "finding:fixture-finding-a3",
+        "referenceOnly": false
+      },
+      {
+        "id": "fixture-finding-a4",
+        "author": "fixture-knowledge-player-a",
+        "claim": "A pending count is the count of stored messages with no receipt.",
+        "evidence": "A message inserted with no receipt raised the recipient count by one.",
+        "limits": "Counts describe stored messages; delivery to a harness process is not recorded.",
+        "kind": "finding",
+        "reference": "finding:fixture-finding-a4",
+        "referenceOnly": false
+      },
+      {
+        "id": "fixture-finding-b1",
+        "author": "fixture-knowledge-conductor-a",
+        "claim": "Selection survives an event that replaces a row.",
+        "evidence": "A player event replaced the selected row and the selection marker stayed on the same actor.",
+        "limits": "Observed for a player event whose parent did not change.",
+        "kind": "finding",
+        "reference": "finding:fixture-finding-b1",
+        "referenceOnly": false
+      },
+      {
+        "id": "fixture-finding-b2",
+        "author": "fixture-knowledge-conductor-a",
+        "claim": "A knowledge read is on demand, so the snapshot carries no claims.",
+        "evidence": "The snapshot payload for this fixture carries no claim text; the band reads the overview document instead.",
+        "limits": "Applies to the two knowledge routes; other projections may carry summaries.",
+        "kind": "finding",
+        "reference": "finding:fixture-finding-b2",
+        "referenceOnly": false
+      },
+      {
+        "id": "fixture-finding-b3",
+        "author": "fixture-knowledge-conductor-a",
+        "claim": "An ensemble carries its coupling, and membership carries no trust.",
+        "evidence": "The fixture ensemble records coupling tight and four members with no ordering.",
+        "limits": "Coupling is a recorded field of the ensemble row.",
+        "kind": "finding",
+        "reference": "finding:fixture-finding-b3",
+        "referenceOnly": false
+      },
+      {
+        "id": "fixture-finding-c1",
+        "author": "fixture-knowledge-conductor-b",
+        "claim": "A stopped session keeps its worktree, branch and pending input.",
+        "evidence": "message:fixture-message-2",
+        "limits": "The stop record names the recorded attempt and no live process.",
+        "kind": "finding",
+        "evidenceMessage": null,
+        "reference": "finding:fixture-finding-c1",
+        "referenceOnly": false
+      },
+      {
+        "id": "fixture-finding-c2",
+        "author": "fixture-knowledge-conductor-b",
+        "claim": "A report reaches the immediate parent.",
+        "evidence": "The fixture transition list records the report against the sender's parent row.",
+        "limits": "Observed within one hierarchy of three levels.",
+        "kind": "finding",
+        "reference": "finding:fixture-finding-c2",
+        "referenceOnly": false
+      },
+      {
+        "id": "fixture-finding-d1",
+        "author": "fixture-knowledge-player-d",
+        "claim": "A promotion records its source, its destination and its promoter.",
+        "evidence": "Promotion fixture-promotion-8 shares a finding authored by player a from conductor a to the root.",
+        "limits": "The record names the three actors and no reason for the share.",
+        "kind": "finding",
+        "reference": "finding:fixture-finding-d1",
+        "referenceOnly": false
+      },
+      {
+        "id": "fixture-finding-d2",
+        "author": "fixture-knowledge-player-d",
+        "claim": "The recorded hierarchy orders the display and grants no authority.",
+        "evidence": "Seats are placed by parentage depth; the fixture carries an operator at the same rank as the conductors.",
+        "limits": "Display order only; the database records roles separately.",
+        "kind": "finding",
+        "reference": "finding:fixture-finding-d2",
+        "referenceOnly": false
+      },
+      {
+        "id": "fixture-finding-ghost-1",
+        "author": "fixture-knowledge-ghost",
+        "claim": "A finding whose author the snapshot does not carry still appears.",
+        "evidence": "The band places this author in its own rank and its promotion line ends at the root.",
+        "limits": "The seat shows the recorded counts and no status, because the snapshot carries no session row.",
+        "kind": "finding",
+        "reference": "finding:fixture-finding-ghost-1",
+        "referenceOnly": false
+      },
+      {
+        "id": "fixture-finding-op-1",
+        "author": "fixture-knowledge-operator",
+        "claim": "The operator reads recorded facts, never an inference.",
+        "evidence": "The operator seat carries an authored finding and the running status recorded for it.",
+        "limits": "The view reports what the database holds at the cursor.",
+        "kind": "finding",
+        "reference": "finding:fixture-finding-op-1",
+        "referenceOnly": false
+      },
+      {
+        "id": "fixture-finding-e1",
+        "author": "fixture-knowledge-player-e",
+        "claim": "A failed attempt keeps its output log and its exit status.",
+        "evidence": "message:fixture-message-not-held",
+        "limits": "The view shows the recorded status; the log file itself is not read.",
+        "kind": "finding",
+        "evidenceMessage": null,
+        "reference": "finding:fixture-finding-e1",
+        "referenceOnly": false
+      },
+      {
+        "id": "fixture-finding-root-1",
+        "author": "fixture-knowledge-root",
+        "kind": "finding",
+        "claim": "Universal knowledge is the principal's authored and explicitly received holdings.",
+        "evidence": "Every overview read served those holdings and no others; a worker's unpromoted finding stayed out of them.",
+        "limits": "Holds while the projection is the one the server applies.",
+        "reference": "finding:fixture-finding-root-1",
+        "referenceOnly": false
+      },
+      {
+        "id": "fixture-finding-root-2",
+        "author": "fixture-knowledge-root",
+        "kind": "finding",
+        "claim": "Membership alone publishes nothing: a worker's unpromoted finding is not its group's.",
+        "evidence": "A promotion names its source and its destination; absent a promotion the finding stayed in the author's holdings.",
+        "limits": "Holds for group and universal scopes alike.",
+        "reference": "finding:fixture-finding-root-2",
+        "referenceOnly": false
+      },
+      {
+        "reference": "message:fixture-message-1",
+        "kind": "message",
+        "referenceOnly": true,
+        "deliveryRead": false
+      },
+      {
+        "reference": "message:fixture-message-2",
+        "kind": "message",
+        "referenceOnly": true,
+        "deliveryRead": [
+          "delivery",
+          "fixture-message-2"
+        ]
+      },
+      {
+        "reference": "message:fixture-message-not-held",
+        "kind": "message",
+        "referenceOnly": true,
+        "deliveryRead": false
+      },
+      {
+        "reference": "external:fixture-external-1",
+        "kind": "external",
+        "referenceOnly": true
+      },
+      {
+        "reference": "external:fixture-external-2",
+        "kind": "external",
+        "referenceOnly": true
+      },
+      {
+        "reference": "fixture-knowledge-player-a",
+        "kind": "session",
+        "referenceOnly": true
+      },
+      {
+        "reference": "fixture-knowledge-conductor-a",
+        "kind": "session",
+        "referenceOnly": true
+      },
+      {
+        "reference": "fixture-knowledge-player-b",
+        "kind": "session",
+        "referenceOnly": true
+      },
+      {
+        "reference": "external:fixture-log-1",
+        "kind": "external",
+        "referenceOnly": true
+      },
+      {
+        "reference": "finding:fixture-finding-not-held",
+        "kind": "finding",
+        "referenceOnly": true
+      },
+      {
+        "reference": "message:fixture-message-held",
+        "kind": "message",
+        "referenceOnly": false,
+        "deliveryRead": true
+      }
+    ],
+    "edges": [
+      {
+        "id": "citation:fixture-finding-a1",
+        "author": "fixture-knowledge-player-a",
+        "source": "finding:fixture-finding-a1",
+        "sourceKind": "finding",
+        "relation": "Cited",
+        "target": "message:fixture-message-1",
+        "targetKind": "message",
+        "provenance": "recorded-evidence"
+      },
+      {
+        "id": "citation:fixture-finding-c1",
+        "author": "fixture-knowledge-conductor-b",
+        "source": "finding:fixture-finding-c1",
+        "sourceKind": "finding",
+        "relation": "Cited",
+        "target": "message:fixture-message-2",
+        "targetKind": "message",
+        "provenance": "recorded-evidence"
+      },
+      {
+        "id": "citation:fixture-finding-e1",
+        "author": "fixture-knowledge-player-e",
+        "source": "finding:fixture-finding-e1",
+        "sourceKind": "finding",
+        "relation": "Cited",
+        "target": "message:fixture-message-not-held",
+        "targetKind": "message",
+        "provenance": "recorded-evidence"
+      },
+      {
+        "id": "fixture-relation-1",
+        "author": "fixture-knowledge-conductor-a",
+        "source": "finding:fixture-finding-a2",
+        "sourceKind": "finding",
+        "relation": "extends",
+        "target": "finding:fixture-finding-a1",
+        "targetKind": "finding",
+        "provenance": "authored"
+      },
+      {
+        "id": "fixture-relation-2",
+        "author": "fixture-knowledge-conductor-a",
+        "source": "finding:fixture-finding-b1",
+        "sourceKind": "finding",
+        "relation": "restates",
+        "target": "finding:fixture-finding-a1",
+        "targetKind": "finding",
+        "provenance": "authored"
+      },
+      {
+        "id": "fixture-relation-3",
+        "author": "fixture-knowledge-player-a",
+        "source": "finding:fixture-finding-a3",
+        "sourceKind": "finding",
+        "relation": "evidence",
+        "target": "message:fixture-message-1",
+        "targetKind": "external",
+        "provenance": "authored"
+      },
+      {
+        "id": "fixture-relation-4",
+        "author": "fixture-knowledge-player-a",
+        "source": "finding:fixture-finding-e1",
+        "sourceKind": "finding",
+        "relation": "evidence",
+        "target": "message:fixture-message-not-held",
+        "targetKind": "external",
+        "provenance": "authored"
+      },
+      {
+        "id": "fixture-relation-5",
+        "author": "fixture-knowledge-ghost",
+        "source": "finding:fixture-finding-ghost-1",
+        "sourceKind": "finding",
+        "relation": "cites",
+        "target": "external:fixture-external-1",
+        "targetKind": "external",
+        "provenance": "authored"
+      },
+      {
+        "id": "fixture-relation-6",
+        "author": "fixture-knowledge-operator",
+        "source": "message:fixture-message-2",
+        "sourceKind": "session",
+        "relation": "notes",
+        "target": "external:fixture-external-2",
+        "targetKind": "external",
+        "provenance": "authored"
+      },
+      {
+        "id": "fixture-relation-seat",
+        "author": "fixture-knowledge-root",
+        "source": "fixture-knowledge-player-a",
+        "sourceKind": "session",
+        "relation": "directs",
+        "target": "fixture-knowledge-conductor-a",
+        "targetKind": "session",
+        "provenance": "authored"
+      },
+      {
+        "id": "fixture-relation-edge",
+        "author": "fixture-knowledge-root",
+        "source": "fixture-knowledge-player-b",
+        "sourceKind": "session",
+        "relation": "references",
+        "target": "external:fixture-log-1",
+        "targetKind": "external",
+        "provenance": "authored"
+      },
+      {
+        "id": "fixture-relation-notheld",
+        "author": "fixture-knowledge-player-a",
+        "source": "finding:fixture-finding-not-held",
+        "sourceKind": "finding",
+        "relation": "references",
+        "target": "fixture-knowledge-player-a",
+        "targetKind": "session",
+        "provenance": "authored"
+      },
+      {
+        "id": "probe-self",
+        "author": "fixture-knowledge-root",
+        "source": "finding:fixture-finding-a1",
+        "sourceKind": "finding",
+        "relation": "extends",
+        "target": "finding:fixture-finding-a1",
+        "targetKind": "finding",
+        "provenance": "authored"
+      },
+      {
+        "id": "probe-empty",
+        "author": "fixture-knowledge-root",
+        "source": "",
+        "sourceKind": "finding",
+        "relation": "extends",
+        "target": "finding:fixture-finding-a2",
+        "targetKind": "finding",
+        "provenance": "authored"
+      },
+      {
+        "id": "probe-inferred",
+        "author": "fixture-knowledge-root",
+        "source": "finding:fixture-finding-a1",
+        "sourceKind": "finding",
+        "relation": "causes",
+        "target": "finding:fixture-finding-b1",
+        "targetKind": "finding",
+        "provenance": "inferred"
+      }
+    ]
   }
- }
 }
