@@ -2789,12 +2789,15 @@ class Receive(unittest.TestCase):
         operator-listed route, reconfigures the session, and writes continuation
         guidance carrying the saved complete task and the original native lineage.
         The refused omp pair is recorded in the per-session route lineage and the
-        original cause travels on the chosen report. The Direct path wakes through the
-        ordinary wake with no endpoint-less relaunch: the turn process settles once the
-        failed turn, reports, reconfiguration and guidance are recorded. Every assertion
-        reads coordinator state; no source SQL text is asserted."""
+        original cause travels on the chosen report. The reconfiguration also stores
+        the new receiver endpoint, so the ordinary wake launches the continuation
+        receive for the still-owed follow-up input on the new route: the case accepts
+        that resumed native, completes it, and then inspects the failed cause and both
+        turns. Every assertion reads coordinator state, native starts, or message
+        bodies; no source SQL text is asserted."""
         self.coord('attach', 'routed', 'omp', 'saved-routed', '')
         self.assertIsNone(self.coord('player', 'routed')['parent'])
+        self.message('follow', 'routed', 'Follow-up work after the route change.')
         self.connect('routed')
         (self.directory / 'state.db.routes').write_text(
             'muse muse-main ' + str(self.fixture) + '\n')
@@ -2808,13 +2811,18 @@ class Receive(unittest.TestCase):
                  'Usage limit reached for 5 hour. Your limit will reset at 2026-10-06 07:12:52 (type=1308)')
         self.action(control, fail_status=429, fail_message=cause)
         self.action(control, exit_fixture=True)
+        second, resumed = self.accept_or_child_exit(child, 'route continuation did not relaunch')
+        self.assertEqual(resumed['session'], 'routed')
+        self.assertIn('[id: follow]', resumed['prompt'])
+        self.action(second)
         self.finish(child)
         turns = self.coord('turns', 'routed')
+        self.assertEqual(len(turns), 2)
         failed_turns = [turn for turn in turns if cause in turn['reportBody']]
         self.assertEqual(len(failed_turns), 1)
         rerouted = self.coord('player', 'routed')
         self.assertEqual((rerouted['harness'], rerouted['model']), ('muse', 'muse-main'))
-        self.assertEqual(rerouted['native'], '')
+        self.assertNotEqual(rerouted['native'], '')
         account_reports = [message for message in self.coord('inbox', 'operator')
                            if message['id'].endswith(':profile-exhausted')]
         self.assertEqual(len(account_reports), 1)
@@ -2833,6 +2841,7 @@ class Receive(unittest.TestCase):
         self.assertIn('previous native conversation lineage is saved-routed', guidance[0][0])
         self.assertIn('harness=muse', guidance[0][0])
         self.assertNotIn('SELECT', guidance[0][0])
+        self.assertEqual(self.coord('delivery', 'follow')['receipt'], 'native-reviewed')
         lineage = self.directory / ('state.db.route-' + 'routed'.encode().hex())
         refused = lineage.read_text().splitlines()[-1].split()
         self.assertTrue(refused[0].isdigit() and refused[1].isdigit())
