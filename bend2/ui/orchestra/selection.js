@@ -67,11 +67,33 @@ function selBodyBlock(parent, heading, meta, body, cls, quote) {
 
 // A long quotation behind one disclosure: a lead line with the body's
 // first line and stored length, and one control stating the remaining
-// size. Short or blank bodies read whole, exactly as before. Causes
-// never pass through here; the disclosure hides quotation, not facts.
+// size. A cut lead ends on a sentence, clause or word boundary and
+// says it continues. Short or blank bodies read whole, exactly as
+// before. Causes never pass through here; the disclosure hides
+// quotation, not facts.
 var SEL_BODY_WHOLE = 200;
 var SEL_LEAD_LINE = 120;
+var SEL_LEAD_MIN = 40;
 var selBodyOpen = new Set();
+
+// Where a long lead line honestly ends: the last sentence, clause or
+// word boundary inside the cap, each mark guarded by a following space
+// so figures and tokens stay whole. Zero when no boundary qualifies,
+// and the line reads whole.
+function selLeadCut(line) {
+  if (line.length <= SEL_LEAD_LINE) return 0;
+  var top = SEL_LEAD_LINE - 1;
+  var low = SEL_LEAD_MIN - 1;
+  var sets = [".!?", ",;:"];
+  for (var s = 0; s < sets.length; s += 1) {
+    for (var i = top; i >= low; i -= 1) {
+      if (sets[s].indexOf(line[i]) !== -1 && line[i + 1] === " ") return i + 1;
+    }
+  }
+  var space = line.lastIndexOf(" ", SEL_LEAD_LINE);
+  if (space >= SEL_LEAD_MIN) return space;
+  return 0;
+}
 function selQuotedBody(parent, key, what, body) {
   var text = String(body);
   if (text.length <= SEL_BODY_WHOLE) {
@@ -90,8 +112,14 @@ function selQuotedBody(parent, key, what, body) {
     parent.appendChild(selEl("p", "sel-body", text));
     return;
   }
-  var shown = first.length > SEL_LEAD_LINE ? first.slice(0, SEL_LEAD_LINE) + "…" : first;
-  var kept = first.length > SEL_LEAD_LINE ? SEL_LEAD_LINE : first.length;
+  var cut = selLeadCut(first);
+  var kept = cut || first.length;
+  var shown = first;
+  if (cut) {
+    shown = first.slice(0, cut).replace(/\s+$/, "");
+    kept = shown.length;
+    shown = shown + "… continues";
+  }
   parent.appendChild(selEl("p", "sel-lead", shown + " · " + text.length + " characters"));
   var open = selBodyOpen.has(key);
   var toggle = selEl("button", null, open ? "Hide full " + what
@@ -108,9 +136,9 @@ function selQuotedBody(parent, key, what, body) {
   if (open) parent.appendChild(selEl("p", "sel-body", text));
 }
 
-function selEventText(ev) {
+function selEventText(ev, hideKind) {
   var parts = [selEventAge(ev.at) || ev.at || "time unrecorded"];
-  if (ev.kind) parts.push(ev.kind);
+  if (ev.kind && !hideKind) parts.push(ev.kind);
   if (ev.kind === "receipt" && ev.counterpart) parts.push("message from " + ev.counterpart);
   if (ev.summary) parts.push(ev.summary);
   return parts.join(" · ");
@@ -728,6 +756,7 @@ function renderSelection(mount, data, options) {
       var read = messages[mid] || null;
       var message = read && read.state === "ok" ? read.message : null;
       var kindWord = stub.kind || "message";
+      var rowKind = groups.length > 1 ? "" : kindWord + " ";
       var senderBit = message && message.sender ? " from " + message.sender : "";
       var open = selMsgOpen.has(mid);
       var button = selEl("button", "sel-msg");
@@ -735,7 +764,7 @@ function renderSelection(mount, data, options) {
       mark.setAttribute("aria-hidden", "true");
       button.appendChild(mark);
       button.appendChild(document.createTextNode(
-        (open ? "Hide " : "Read ") + kindWord + " " + selTail(mid) + senderBit));
+        (open ? "Hide " : "Read ") + rowKind + selTail(mid) + senderBit));
       button.type = "button";
       button.dataset.selkey = "sel:msg:" + mid;
       button.setAttribute("title", kindWord + " " + mid);
@@ -927,7 +956,7 @@ function renderSelection(mount, data, options) {
         var ul = selEl("ul", "sel-timeline");
         group.items.forEach(function (ev) {
           if (!listedSet.has(ev)) return;
-          var text = selEventText(ev);
+          var text = selEventText(ev, groups.length > 1);
           var row = selEl("li", "mono");
           row.dataset.tone = selEventTone(ev);
           var seatId = ev.counterpart || ev.session;
