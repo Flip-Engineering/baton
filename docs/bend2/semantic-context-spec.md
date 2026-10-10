@@ -1,23 +1,22 @@
 # Native semantic context implementation specification
 
-Status: docs-only specification for independent review. Runtime implementation
-requires the independent review and root feature comparison. The requirement is
-[Native semantic context](semantic-context-feature.md), `6929bffe` with the
-credential clarification `98fbfe03`. Source baseline is `98fbfe03`; Bend remains
-2.0.25 and the adapter Node floor remains 22.15.0.
+Status: implementation specification for the callable native context path. The
+requirement is [Native semantic context](semantic-context-feature.md), `6929bffe`
+with the credential clarification `98fbfe03`, which is also the historical source
+baseline this document was written against; Bend remains 2.0.25 and the adapter
+Node floor remains 22.15.0.
 
-The approved control references are structural proposal
-`2543678035631371a6f024a1c58ac9ec16239c12` and direct-start proposal
-`95bfccf0acefa151a667fa40a5f1fdfedafc5a80`. Root authorized their bounded
-implementation; actual composed source, artifacts and host behavior retain their
-qualification gates. Stable read composition
-`e2e06950d1ccf6a61d66ac0eb2f623fbbb3eb2d7` supplies the separately reviewed
-read/discovery scope on `98fbfe03`, excluding provisional receive runtime.
-Its bounded composition acceptance leaves root full checks, landing and installed
-cold discovery open. `semantic-controls-next` and the registered interfaces
-owner retain their respective module and shared-surface ownership. These scoped
-references support the common conventions; root separately decides semantic
-implementation after independent review and whole-feature comparison.
+The common control and read conventions originate in structural proposal
+`2543678035631371a6f024a1c58ac9ec16239c12`, direct-start proposal
+`95bfccf0acefa151a667fa40a5f1fdfedafc5a80` and stable read composition
+`e2e06950d1ccf6a61d66ac0eb2f623fbbb3eb2d7`. Implemented source for the retained
+managed query path and its recover and release control operations, the attempt
+generation and suffix readers, and the knowledge navigation tools is published
+and reviewed; the sections below state what each part must do.
+
+Hosted execution, package staging, installed cold discovery and useful query
+outcomes require verification against the published implementation. Source
+publication establishes no runtime result.
 
 ## Supported scope
 
@@ -1366,10 +1365,8 @@ operation. This hook is required new integration, not existing keeper behavior.
 
 The startup composition uses the proposed ordinary retained-process primitive
 in `95bfccf0acefa151a667fa40a5f1fdfedafc5a80:docs/bend2/direct-start-672-proposal.md`,
-the docs-only successor to `d47d5c11` with six independent design ACCEPTs.
-These reviews establish the proposal assessment. Root has authorized bounded
-direct95 implementation; shared host qualification and semantic implementation
-authorization remain separate. The `08dd2053` and `d47d5c11` reports
+the successor to `d47d5c11`. Bounded direct95 implementation is authorized and
+shared host qualification remains open. The `08dd2053` and `d47d5c11` reports
 remain attached to their original pins.
 `ProcessChild.prepare`, `start` and
 `state` are proposed extensions of the existing keeper. Semantic composition
@@ -1454,18 +1451,16 @@ child role to that role's own observer before relinquishing starter custody. Eac
 and recovery invocation. Persisted role rows and handoff labels alone do not
 establish a surviving observer or a successful native delivery.
 
-This is required new coordinator composition. Baseline98fbfe03 supports the
-retained handshake and disconnect recovery path, but post-spawn setup failure
-and recovery-launch failure can leave keeper-error or observer-error evidence
-without completed cleanup or another wake. The root-authorized direct95 repair
-requires the surviving keeper to retain and reap its child after post-spawn
-setup failure, and to retry failed recovery launch or verified pre-attach exit
-on its monotonic retry cadence. A successful recovery spawn followed by waiter
-setup failure retains that child's qualified identity; another recovery spawn
-requires evidence that its lifetime ended. Semantic roles use those common
-requirements. Their implementation and selective-loss/actual-notice qualification
-remain open. Total loss of keeper and all historical observers remains an explicit
-unproved continuation boundary; an unavailable result establishes no survivor.
+The historical `98fbfe03` baseline retained the handshake and disconnect recovery
+path. Its post-spawn setup and recovery-launch failures could leave incomplete
+cleanup or notification. The published retained-process implementation keeps
+child identity and capture available during recovery and reports observed host
+failures. A successful recovery spawn followed by waiter setup failure retains
+that child's identity; another recovery spawn requires evidence that its lifetime
+ended. Semantic roles use those common requirements. Selective-loss and actual
+notification behavior require hosted and installed verification. Total loss of
+the keeper and all historical observers remains an unproved continuation
+boundary; an unavailable result establishes no survivor.
 
 Each runtime has separate `target` and `adapter` roles. Each role owns one
 shared prepared keeper and, after its admitted start grant, one direct child.
@@ -2253,6 +2248,4 @@ The retained research used for this specification is retrievable with native
 Research demonstrations establish component feasibility under their stated pins.
 This specification chooses the narrower qualified profiles above. Its new joins,
 transport composition, runtime worker and owner cleanup are implementation work,
-with host acceptance required before support can be advertised. Independent
-review and root whole-feature comparison remain prerequisites to root's
-implementation authorization.
+with host acceptance required before support can be advertised.
