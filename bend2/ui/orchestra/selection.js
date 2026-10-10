@@ -19,7 +19,10 @@
    endpoint reads as a reference with its kind and the sentence that
    the full record is not held here. Cited edges read as recorded
    evidence. A held finding offers the way back to the map and to
-   its author's seat when the shell passes the callbacks.
+   its author's seat when the shell passes the callbacks. The head
+   names the claim's first words after the id, relations open with
+   a count line, recorded-evidence rows locate a drawn target,
+   and a seat lists its authored findings behind that field.
    All labels arrive through textContent. */
 
 var SEL_EVENT_LIMIT = 8;
@@ -93,6 +96,29 @@ function selFindingMicro(finding, evMid) {
   var shared = Array.isArray(finding.promotions) ? finding.promotions.length : 0;
   bits.push(shared ? "shared " + shared + (shared === 1 ? " time" : " times") : "not shared");
   return bits.join(" · ");
+}
+
+// The claim's first words for the finding's head: the first line, cut
+// short on a word boundary when long. The id stays first; the words
+// teach what the finding says while the head is scanned.
+function selHeadClaim(claim) {
+  if (typeof claim !== "string") return "";
+  var first = claim.split(/\r?\n/)[0].trim();
+  if (first.length <= 60) return first;
+  var cut = first.lastIndexOf(" ", 60);
+  if (cut < 20) return first.slice(0, 60) + "…";
+  return first.slice(0, cut) + "…";
+}
+
+// The id the shell locates for one edge target: messages and external
+// references name no drawn node and read as absent; a finding reference
+// sheds its prefix, since the shell holds bare finding ids.
+function selNodeId(target, kind) {
+  var ref = String(target || "");
+  if (!ref) return "";
+  if (kind === "message" || kind === "external") return "";
+  if (/^(message:|https?:\/\/|external:|file:)/.test(ref)) return "";
+  return ref.replace(/^finding:/, "");
 }
 
 // A reference-only endpoint: what the store holds about it, and the
@@ -571,6 +597,43 @@ function renderSelection(mount, data, options) {
       ["task", seat.taskTitle],
       ["action", seat.action],
     ], "sel-ref");
+    // The seat's authored findings, behind the field's presence: each row
+    // reuses the citation shape and locates its finding. An absent field
+    // keeps today's behavior.
+    var authored = seat && Array.isArray(seat.authored) ? seat.authored.filter(function (item) {
+      if (!item) return false;
+      return Boolean(typeof item === "string" ? item : item.id);
+    }) : [];
+    if (authored.length) {
+      seatBlock.appendChild(selEl("p", "sel-group", "Authored · " + authored.length));
+      var authList = selEl("ul", null);
+      var authN = 0;
+      var authLocate = input && typeof input.onLocate === "function";
+      authored.forEach(function (item) {
+        if (!item) return;
+        var fid = typeof item === "string" ? item : String(item.id || "");
+        if (!fid) return;
+        authN += 1;
+        var fclaim = item && typeof item === "object" && typeof item.claim === "string"
+          ? item.claim : "";
+        var label = "[" + authN + "] " + (fclaim || selTail(fid));
+        var row = selEl("li", null);
+        if (authLocate) {
+          var open = selEl("button", "sel-goto", label);
+          open.type = "button";
+          open.dataset.selkey = "sel:auth:" + fid;
+          open.setAttribute("title", fid);
+          open.setAttribute("aria-label", "Open finding " + fid + ": " + label);
+          open.addEventListener("click", function () { input.onLocate(fid); });
+          row.appendChild(open);
+        } else {
+          row.textContent = label;
+          row.setAttribute("title", fid);
+        }
+        authList.appendChild(row);
+      });
+      if (authList.childNodes.length) seatBlock.appendChild(authList);
+    }
     mount.appendChild(seatBlock);
   }
   if (!seat && secEntries.length > 1) mount.appendChild(selSecNav(secEntries));
@@ -660,7 +723,9 @@ function renderSelection(mount, data, options) {
       ? finding.evidenceMessage : null;
     var evMid = evObj ? selMsgRef(evObj.id || "") : selMsgRef(finding.evidenceMessage);
     var evInline = Boolean(evObj && typeof evObj.body === "string");
-    findingBlock.appendChild(selEl("h2", "doc-section", "Finding " + (finding.id || "")));
+    var headClaim = selHeadClaim(finding.claim);
+    findingBlock.appendChild(selEl("h2", "doc-section",
+      "Finding " + (finding.id || "") + (headClaim ? " · " + headClaim : "")));
     // A reference-only endpoint is a reference, never a record: the held
     // sections below stay gated on this flag.
     var refOnly = finding.referenceOnly === true;
@@ -773,6 +838,13 @@ function renderSelection(mount, data, options) {
     }
     if (!refOnly && relations.length) {
       findingBlock.appendChild(selEl("p", null, "Relations"));
+      var rowRels = relations.filter(function (rel) { return Boolean(rel); });
+      var citedCount = rowRels.filter(function (rel) {
+        return rel.provenance === "recorded-evidence";
+      }).length;
+      findingBlock.appendChild(selEl("p", "muted",
+        rowRels.length + (rowRels.length === 1 ? " relation · " : " relations · ")
+        + citedCount + " recorded evidence"));
       var rels = selEl("ul", null);
       var canFocus = options && typeof options.onFocusRelation === "function";
       var litName = (options && options.focusRelation) || "";
@@ -805,6 +877,20 @@ function renderSelection(mount, data, options) {
           if (isLit) item.setAttribute("aria-current", "true");
           if (swatch) item.appendChild(swatch);
           item.appendChild(document.createTextNode(text));
+        }
+        // A recorded-evidence row reaches the node it cites, where the
+        // target names one the shell draws. Message and external targets
+        // keep the statement form above.
+        var targetRef = rel.targetReference || rel.target || "";
+        var nodeId = recorded ? selNodeId(targetRef, rel.targetKind || "") : "";
+        if (nodeId && canLocate) {
+          var locate = selEl("button", null, "Locate " + selTail(nodeId) + ".");
+          locate.type = "button";
+          locate.dataset.selkey = "sel:loc:" + nodeId;
+          locate.setAttribute("title", String(targetRef));
+          locate.setAttribute("aria-label", "Locate " + targetRef);
+          locate.addEventListener("click", function () { input.onLocate(nodeId); });
+          item.appendChild(locate);
         }
         rels.appendChild(item);
       });
