@@ -88,6 +88,74 @@
   color: var(--muted, #5b6478);
 }
 
+/* The walk bar: a wrapped breadcrumb row under the search box, one
+   button per visited edge, separators quiet. */
+.kw-walk {
+  flex: 1 1 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 6px;
+  align-items: baseline;
+  margin: 0;
+  font-size: var(--step0, 12px);
+}
+
+.kw-walk-sep {
+  color: var(--muted, #5b6478);
+}
+
+.kw-walk-step {
+  padding: 0;
+  background: none;
+  border: none;
+  font: inherit;
+  font-size: var(--step0, 12px);
+  color: var(--ink, #141a26);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* The direction control: two toggle buttons beside the walk, using
+   the page's pressed treatment. */
+.kw-direction {
+  flex: 1 1 100%;
+  display: flex;
+  gap: 6px;
+  margin: 0;
+}
+
+.kw-direction-btn {
+  font-size: var(--step0, 12px);
+  padding: 1px 8px;
+  color: var(--ink, #141a26);
+  background: none;
+  border: 1px solid var(--muted, #5b6478);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.kw-direction-btn[aria-pressed="true"] {
+  border-color: var(--selection, #2a3e6b);
+  color: var(--selection, #2a3e6b);
+}
+
+/* The provenance filter sits with the zoom buttons and shares their
+   shape; pressed reads through the same treatment. */
+.kw-prov {
+  font-size: var(--step0, 12px);
+  padding: 4px 10px;
+  color: var(--ink, #141a26);
+  background: none;
+  border: 1px solid var(--muted, #5b6478);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.kw-prov[aria-pressed="true"] {
+  border-color: var(--selection, #2a3e6b);
+  color: var(--selection, #2a3e6b);
+}
+
 /* The match list takes its own wrapped row inside the tools, between
    the status and the buttons, and the page carries its length: the
    frame no longer clips, so the list needs no window of its own. The
@@ -356,6 +424,16 @@ g.kw-ref.unheld .kw-ref-tag {
   stroke-dasharray: 3 2;
 }
 
+/* The folded fan's counted mark: a filled lozenge, so it reads as
+   one thing holding many rather than one more outline tag. */
+.kw-folded-tag {
+  fill: var(--ink, #141a26);
+}
+
+g.kw-folded .kw-ref-word {
+  fill: var(--paper, #fbfcfe);
+}
+
 /* Family glyphs sit on the stub in ink with a paper halo, so the
    dotted edge never swallows them. */
 .kw-ref-glyph {
@@ -407,6 +485,23 @@ g.kw-ref.unheld .kw-ref-tag {
   color: var(--muted, #5b6478);
 }
 
+/* Junction rows: each drawn edge touching the ring is a full-width
+   keyboard stop in the card's scroll, direction first. */
+.kw-junction {
+  display: block;
+  width: 100%;
+  margin: 2px 0 0;
+  padding: 2px 0;
+  background: none;
+  border: none;
+  border-top: 1px solid var(--hairline, #d5c9b4);
+  font: inherit;
+  font-size: var(--step0, 12px);
+  color: var(--ink, #141a26);
+  text-align: left;
+  cursor: pointer;
+}
+
 .kw-hull-line {
   fill: var(--attention, #a2611f);
   fill-opacity: 0.06;
@@ -420,6 +515,16 @@ g.kw-ref.unheld .kw-ref-tag {
 .kw-hull-label {
   font-size: var(--step2, 15px);
   fill: var(--muted, #5b6478);
+}
+
+/* A section hull is static, so it takes no pointer; its label runs
+   smaller than an ensemble's, naming a part rather than the whole. */
+g.kw-hull-section {
+  cursor: default;
+}
+
+.kw-hull-section-label {
+  font-size: var(--step0, 12px);
 }
 
 /* Depth labels and full-width tier separators. */

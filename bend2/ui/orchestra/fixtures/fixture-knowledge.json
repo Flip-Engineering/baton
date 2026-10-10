@@ -428,7 +428,17 @@
         "fixture-knowledge-player-b",
         "fixture-knowledge-player-c"
       ],
-      "sections": []
+      "sections": [
+        {
+          "ensemble": "fixture-knowledge-ensemble",
+          "id": "fixture-knowledge-section",
+          "capability": "map section hull",
+          "members": [
+            "fixture-knowledge-conductor-a",
+            "fixture-knowledge-player-a"
+          ]
+        }
+      ]
     }
   ],
   "transitions": [
@@ -795,6 +805,17 @@
         "fixture-knowledge-root"
       ]
     },
+    "sections": [
+      {
+        "ensemble": "fixture-knowledge-ensemble",
+        "id": "fixture-knowledge-section",
+        "capability": "map section hull",
+        "members": [
+          "fixture-knowledge-conductor-a",
+          "fixture-knowledge-player-a"
+        ]
+      }
+    ],
     "nodes": [
       {
         "id": "fixture-finding-a1",

@@ -253,6 +253,26 @@
   var kwTypedCited = 0;
   var kwTypedRings = 0;
   var kwTypedOutside = 0;
+  // The walk: the last edges visited, latest last, each re-lightable
+  // from its stored endpoints. The lit edge and the walk bar survive
+  // shell re-renders; background click and Escape clear them with the
+  // card. Direction thins the lit neighborhood to out or in around
+  // the lit edge; both is the resting state.
+  var kwWalk = [];
+  var kwLitEdge = null;
+  var kwDirection = "both";
+  var kwDirectionDimmed = [];
+  var KW_WALK_MAX = 8;
+  // Provenance dim: with "citations only" set, every edge but the
+  // cited ones dims, with the nodes no cited edge touches.
+  var kwProvCitedOnly = false;
+  // Fan folding: past KW_FAN_FOLD_AT marks on one anchor, the fan
+  // folds into one counted mark; expanded fans draw every member.
+  // Aside marks wait out the render they are folded for.
+  var KW_FAN_FOLD_AT = 6;
+  var kwExpandedFans = new Set();
+  var kwFoldedAside = new Map();
+  var kwFanCounts = new Map();
   // Drawn text boxes this render: settling tags keep clear of them.
   var kwLabelBoxes = [];
   // Drawn node centres, drawing width, and hull boxes this render,
@@ -969,6 +989,66 @@
     }
   }
 
+  // Section hulls reuse the ensemble hull machinery: a section groups
+  // the seats its recorded members occupy, labeled with its capability.
+  // No collapse: sections are not shell state, so the hull is static.
+  // Draws nothing when the prop is empty.
+  function kwSectionHulls(svg, edgeLayer, layout, sections) {
+    const list = Array.isArray(sections) ? sections : [];
+    if (!list.length) return;
+    const actorPos = layout.actorPos;
+    const layer = kwSvg(svg, "g", { class: "kw-hulls kw-hulls-sections" });
+    svg.insertBefore(layer, edgeLayer);
+    for (const s of list) {
+      const id = s && s.id ? String(s.id) : "";
+      const members = s && Array.isArray(s.members)
+        ? s.members.map((m) => String(m)) : [];
+      if (!id || !members.length) continue;
+      const capability = s && s.capability ? String(s.capability) : "";
+      const pts = [];
+      for (const m of members) {
+        if (actorPos.has(m)) pts.push(actorPos.get(m));
+      }
+      if (pts.length < 2) continue;
+      const cx = pts.reduce((sum, p) => sum + p.x, 0) / pts.length;
+      const cy = pts.reduce((sum, p) => sum + p.y, 0) / pts.length;
+      const padded = pts.map((p) => {
+        const dx = p.x - cx;
+        const dy = p.y - cy;
+        const len = Math.sqrt(dx * dx + dy * dy) || 1;
+        return { x: p.x + dx / len * 18, y: p.y + dy / len * 18 };
+      });
+      const hull = kwHullPath(padded);
+      const d = "M" + hull.map((p) => p.x + "," + p.y).join(" L") + " Z";
+      const top = hull.reduce((a, b) => (a.y < b.y ? a : b));
+      const g = kwSvg(layer, "g", {
+        class: "kw-hull kw-hull-section",
+        "aria-label": "section " + id + ", " + members.length + " seats"
+        + (capability ? ", " + capability : ""),
+      });
+      kwSvg(g, "path", { d, class: "kw-hull-line" });
+      const label = kwSvg(g, "text", {
+        x: String(top.x), y: String(top.y - 6),
+        class: "kw-hull-label kw-hull-section-label", "text-anchor": "middle",
+      });
+      label.textContent = id + " (" + members.length
+        + (capability ? ", " + capability : "") + ")";
+      const hlw = (label.textContent.length + 1) * 9 + 8;
+      kwTrackBox(top.x - hlw / 2, top.y - 20, top.x + hlw / 2, top.y);
+      kwLabelBoxes.push({ x0: top.x - hlw / 2, y0: top.y - 20, x1: top.x + hlw / 2, y1: top.y });
+      const hb = {
+        x0: top.x - hlw / 2, y0: top.y - 20,
+        x1: top.x + hlw / 2, y1: top.y,
+      };
+      for (const p of padded) {
+        if (p.x - 6 < hb.x0) hb.x0 = p.x - 6;
+        if (p.x + 6 > hb.x1) hb.x1 = p.x + 6;
+        if (p.y + 6 > hb.y1) hb.y1 = p.y + 6;
+      }
+      kwHullBoxes.push(hb);
+    }
+  }
+
   // A slot's centre within its author's column: centred in its own
   // row of the column, so a lone finding sits exactly under its author
   // and a full fan wraps to further rows inside the same column.
@@ -983,7 +1063,7 @@
     };
   }
 
-  function kwPlaceWhole(layout, container, overview, promotions, opts, ensembles) {
+  function kwPlaceWhole(layout, container, overview, promotions, opts, ensembles, sections) {
     const { svg, edgeLayer, tiers } = layout;
     kwContentBBox = null;
     kwRefMarks = new Map();
@@ -1407,6 +1487,7 @@
     for (const [id, pos] of findingPos) kwNodeXY.set(kwKey("finding", id), pos);
     for (const [id, pos] of groupPos) kwNodeXY.set(kwKey("group", id), pos);
     kwEnsembleHulls(svg, edgeLayer, layout, ensembles || []);
+    kwSectionHulls(svg, edgeLayer, layout, sections || []);
     // Draw recorded relations between nodes or labeled reference tags.
     // Relations between references are placed beside their author.
     const heldRefs = new Set();
@@ -1663,6 +1744,35 @@
       }
       evidenceSpecs.push({ a: { kind: "node", id: f.id }, b: end });
     }
+    // Fans past a readable degree fold into one counted mark: the
+    // carrier keeps the first slot and the rest wait aside for the
+    // render. An expanded fan draws every member; any member's card
+    // offers the fold back. Marks keep their slots either way, so
+    // folding never moves the canvas under the reader.
+    kwFoldedAside = new Map();
+    kwFanCounts = new Map();
+    const kwFans = new Map();
+    for (const mark of kwRefMarks.values()) {
+      const list = kwFans.get(mark.anchor) || [];
+      list.push(mark);
+      kwFans.set(mark.anchor, list);
+    }
+    for (const [anchorKey, marks] of kwFans) {
+      if (marks.length < KW_FAN_FOLD_AT) continue;
+      kwFanCounts.set(anchorKey, marks.length);
+      if (kwExpandedFans.has(anchorKey)) continue;
+      const carrier = marks[0];
+      carrier.folded = {
+        count: marks.length, anchorKey, refs: marks.map((m) => m.ref),
+      };
+      carrier.shown = marks.length + " references";
+      carrier.w = carrier.shown.length * 7.5 + 14;
+      for (let i = 1; i < marks.length; i += 1) {
+        marks[i].carrierRef = carrier.ref;
+        kwFoldedAside.set(marks[i].ref, marks[i]);
+        kwRefMarks.delete(marks[i].ref);
+      }
+    }
     // Tags settle top-down past nodes, text and the tags above; a tag
     // keeps stepping until it clears, so settling never places overlap
     // within the boxes it is given. The boxes are exact for mono words
@@ -1697,6 +1807,55 @@
       kwLabelBoxes.push({ x0: mark.x - hw, y0: mark.y - hh, x1: mark.x + hw, y1: mark.y + hh });
     }
     for (const mark of kwRefMarks.values()) {
+      // A folded fan draws one counted mark that expands on
+      // activation, reusing the disclosure shape: count first, the
+      // members behind one gesture.
+      if (mark.folded && !kwExpandedFans.has(mark.folded.anchorKey)) {
+        const g = kwSvg(svg, "g", {
+          class: "kw-ref kw-folded",
+          tabindex: "0", role: "button",
+          "aria-label": mark.folded.count + " references, activate to expand",
+          "data-kw-node": mark.ref,
+          "data-kw-ref": mark.ref,
+          "data-kw-kind": "ref",
+          "data-kw-folded": mark.folded.anchorKey,
+        });
+        kwSvg(g, "rect", {
+          x: String(mark.x - mark.w / 2), y: String(mark.y - 9),
+          width: String(mark.w), height: "18", rx: "9",
+          class: "kw-folded-tag",
+        });
+        const word = kwSvg(g, "text", {
+          x: String(mark.x), y: String(mark.y + 4), class: "kw-ref-word mono",
+          "text-anchor": "middle",
+        });
+        word.textContent = mark.shown;
+        const heading = kwSvg(g, "title", null);
+        heading.textContent = mark.folded.count + " references — activate to expand";
+        kwTrackBox(mark.x - mark.w / 2, mark.y - 9, mark.x + mark.w / 2, mark.y + 9);
+        const expand = () => {
+          kwExpandedFans.add(mark.folded.anchorKey);
+          if (kwLastRender) {
+            renderKnowledge(kwLastRender.container, kwLastRender.data, kwLastRender.opts);
+            const next = kwLastRender.container.querySelector(
+              'g.kw-ref[data-kw-ref="' + CSS.escape(mark.folded.refs[0]) + '"]');
+            if (next && typeof next.focus === "function") next.focus();
+          }
+        };
+        g.addEventListener("click", () => {
+          if (kwConsumePan()) return;
+          expand();
+        });
+        g.addEventListener("keydown", (ev) => {
+          if (ev.key === "Enter" || ev.key === " ") {
+            if (ev.preventDefault) ev.preventDefault();
+            kwViewMoved = false;
+            expand();
+          }
+        });
+        kwRefsDrawn += 1;
+        continue;
+      }
       // A typed endpoint draws as a ring, never a tag or a node: open
       // when the store holds no record for it, a filled dot when the
       // record exists but the endpoint has no tier seat. The label
@@ -1855,9 +2014,16 @@
       if (cur < 1) spans.push([cur, 1]);
       return spans;
     };
+    // A folded-aside endpoint meets its carrier's settled mark,
+    // so folding hides members without dropping their edges.
+    const asideCarrier = (ref) => {
+      const aside = kwFoldedAside.get(ref);
+      if (!aside || !aside.carrierRef) return null;
+      return kwRefMarks.get(aside.carrierRef) || null;
+    };
     const relateEnd = (end) => {
       if (end.kind === "node") return nodePos(end);
-      const mark = kwRefMarks.get(end.ref);
+      const mark = kwRefMarks.get(end.ref) || asideCarrier(end.ref);
       return mark ? { x: mark.x, y: mark.y } : null;
     };
     // Evidence stubs draw first, under the relation strokes: where a
@@ -1923,10 +2089,7 @@
       // Activating a relation lights its two ends and pins a card naming
       // the relation; a node pick or Escape clears it back to the canvas.
       const activate = () => {
-        kwDismissed = null;
-        kwLightRelation(svg, { name, ends: [{ kind: aKind, id: aRef }, { kind: bKind, id: bRef }] });
-        kwPinRelCard(container, name,
-          [{ kind: aKind, id: aRef }, { kind: bKind, id: bRef }]);
+        kwActivateEdgeEl(svg, g, opts, container, true);
       };
       g.addEventListener("click", () => {
         if (kwConsumePan()) return;
@@ -1997,8 +2160,9 @@
         if (end.drawn === "session") return actorPos.get(end.id) || null;
         return groupPos.get(end.id) || null;
       }
-      const mark = kwRefMarks.get(end.ref);
-      return mark ? { x: mark.x, y: mark.y - 4 } : null;
+      const mark = kwRefMarks.get(end.ref) || asideCarrier(end.ref);
+      if (!mark) return null;
+      return mark.folded ? { x: mark.x, y: mark.y } : { x: mark.x, y: mark.y - 4 };
     };
     for (const spec of typedSpecs) {
       const from = typedEnd(spec.a);
@@ -2030,14 +2194,8 @@
       // relation lights its drawing whichever source drew it.
       if (spec.relation) gAttrs["data-rel-name"] = spec.relation;
       const g = kwSvg(edgeLayer, "g", gAttrs);
-      const ends = [
-        { kind: aKind, id: aRef },
-        { kind: bKind, id: bRef },
-      ];
       const activate = () => {
-        kwDismissed = null;
-        kwLightTyped(svg, g, ends);
-        kwPinTypedCard(container, spec.provenance, ends, spec.relation, spec.edgeId, opts);
+        kwActivateEdgeEl(svg, g, opts, container, true);
       };
       g.addEventListener("click", () => {
         if (kwConsumePan()) return;
@@ -2080,7 +2238,12 @@
       for (const [ref, mark] of kwRefMarks) {
         const names = mark.relations.map((rel) => rel.name).join(" ");
         const g = svg.querySelector('g.kw-ref[data-kw-ref="' + CSS.escape(ref) + '"][data-kw-kind="ref"]');
-        if (g && !kwMatches(query, ref, names, "")) g.classList.add("kw-dim");
+        if (!g) continue;
+        // A folded carrier matches when any waiting member matches,
+        // so a query can find a reference inside a folded fan.
+        const foldedHit = mark.folded && (mark.folded.refs || [])
+          .some((r) => kwMatches(query, r, "", ""));
+        if (!kwMatches(query, ref, names, "") && !foldedHit) g.classList.add("kw-dim");
       }
     }
     // Hover or keyboard focus isolates the anchor's recorded neighborhood:
@@ -2117,6 +2280,13 @@
       const card = container.querySelector(".kw-card");
       if (card) card.remove();
       kwClearIsolation();
+      // The walk clears with the card: steps, lit edge and direction
+      // all belong to the dismissed reading.
+      kwWalk = [];
+      kwLitEdge = null;
+      kwDirection = "both";
+      kwClearDirection();
+      kwRefreshWalkChrome(container);
     };
     svg.addEventListener("click", (ev) => {
       if (ev.target && typeof ev.target.closest === "function"
@@ -2465,6 +2635,35 @@
       if (edges.length) kwLightRelation(svg, { name: fr, ends });
       kwPinRelCard(container, fr, ends);
     }
+    // Provenance dim runs last and only adds dim, so it composes
+    // with isolation and focus: with "citations only" pressed,
+    // every edge but the cited ones dims, with the nodes no cited
+    // edge touches. Direction re-applies around the still-lit edge,
+    // or clears when its edge no longer draws.
+    if (kwProvCitedOnly) {
+      const keep = new Set();
+      for (const e of edgeLayer.children) {
+        // A citation is either typed shape: the cited edge, or the
+        // evidence stub where the compat payload names the same fact
+        // with no typed edge beside it.
+        const cited = e.classList
+          && (e.classList.contains("kw-edge-cited")
+            || e.getAttribute("data-kind") === "evidence");
+        if (!cited) {
+          if (e.classList) e.classList.add("kw-dim");
+          continue;
+        }
+        for (const side of ["from", "to"]) {
+          const k = e.getAttribute("data-" + side + "-kind") || "";
+          const raw = e.getAttribute("data-" + side) || "";
+          if (raw) keep.add(kwKey(k, kwTypedLookupId(k, raw)));
+        }
+      }
+      for (const g of svg.querySelectorAll("g.kw-anchor, g.knode, g.kw-cluster, g.kw-ref, g.kw-group")) {
+        if (!keep.has(kwNodeKey(g))) g.classList.add("kw-dim");
+      }
+    }
+    kwApplyDirection(container);
     // The macro band goes first in the document: census, then field,
     // then the canvas micro reading, tools and key after.
     kwMacroBand(container, svg, tiers, promotions, layout.width || 0);
@@ -2549,6 +2748,11 @@
         kwSearchCentre(container, view, overview, search.value, opts, ensembles || []);
       }
     });
+    // Walk bar and direction control sit under the search box, ahead
+    // of the status; both build from layer state, so re-renders keep
+    // them without further wiring.
+    kwBuildWalkBar(tools, container, svg, opts, null);
+    kwBuildDirection(tools, container, null);
     const status = kwEl(tools, "p", {
       class: "kw-search-status muted",
       role: "status",
@@ -2558,6 +2762,24 @@
     // The match list sits between the status and the buttons, so the tab
     // order reads search box, rows, buttons, canvas nodes.
     kwRenderMatchList(tools, { container, view, overview, opts, ensembles: ensembles || [] });
+    // Provenance dim joins search as a dim pass: with "citations
+    // only" pressed, every edge but the cited ones dims at render,
+    // with the nodes no cited edge touches.
+    const provBtn = kwEl(tools, "button", {
+      class: "kw-prov mono", type: "button",
+      "aria-pressed": kwProvCitedOnly ? "true" : "false",
+      "aria-label": "Show only citations",
+      "data-kw-prov": "cited",
+    });
+    provBtn.textContent = "citations only";
+    provBtn.addEventListener("click", () => {
+      kwProvCitedOnly = !kwProvCitedOnly;
+      if (kwLastRender) {
+        renderKnowledge(kwLastRender.container, kwLastRender.data, kwLastRender.opts);
+        const next = kwLastRender.container.querySelector('[data-kw-prov="cited"]');
+        if (next && typeof next.focus === "function") next.focus();
+      }
+    });
     const mkBtn = (label, name, fn) => {
       const b = kwEl(tools, "button", { class: "kw-zoom mono", type: "button", "aria-label": name });
       b.textContent = label;
@@ -2903,6 +3125,13 @@
       : selKind === "session" ? !!actors[sel]
       : selKind === "ref" ? !!ref : selKind === "group";
     if (!known) return;
+    // A node card ends the edge reading: the direction control
+    // belongs to a lit edge, so it goes with it. The walk itself
+    // stands: junction rows extend it from here.
+    kwLitEdge = null;
+    kwDirection = "both";
+    kwClearDirection();
+    kwRefreshWalkChrome(container);
     const card = kwOpenCard(container);
     if (selKind === "finding") {
       const degree = promotions.filter((p) => p.finding === found.id).length;
@@ -3028,10 +3257,63 @@
         const words = kwEl(item, "span", null);
         words.textContent = "evidence for " + String(ev);
       }
+      // Junction rows: every drawn edge touching this reference, in
+      // and out, computed from the drawing. Each row is a keyboard
+      // stop that lights its edge and extends the walk; the incoming
+      // half is the "cited by" list. The rows live in the card, so
+      // the lane keeps its single scroller.
+      const canvas = container.querySelector("svg.kw-canvas");
+      if (canvas) {
+        const touching = canvas.querySelectorAll(
+          'g.kw-edges > g[data-from="' + CSS.escape(sel) + '"],'
+          + 'g.kw-edges > g[data-to="' + CSS.escape(sel) + '"]');
+        for (const e of touching) {
+          const out = (e.getAttribute("data-from") || "") === sel;
+          const otherRaw = out ? (e.getAttribute("data-to") || "")
+            : (e.getAttribute("data-from") || "");
+          const otherKind = out ? (e.getAttribute("data-to-kind") || "")
+            : (e.getAttribute("data-from-kind") || "");
+          const rel = e.getAttribute("data-rel-name") || "";
+          const prov = e.getAttribute("data-provenance") || "";
+          const what = rel || (prov === "recorded-evidence" ? "recorded evidence"
+            : prov === "authored" ? "authored claim"
+            : (e.getAttribute("data-kind") || "edge"));
+          const other = otherKind === "ref" ? otherRaw
+            : otherKind + " " + kwTypedLookupId(otherKind, otherRaw);
+          const row = kwEl(refs, "button", {
+            class: "kw-junction mono", type: "button",
+            "data-dir": out ? "out" : "in",
+          });
+          row.textContent = (out ? "out · " : "in · ") + what + " · "
+            + kwWalkShort(other);
+          row.setAttribute("aria-label", (out ? "Outgoing " : "Incoming ")
+            + what + (out ? " to " : " from ") + other);
+          row.addEventListener("click", () => {
+            kwViewMoved = false;
+            kwActivateEdgeEl(canvas, e, opts, container, true);
+          });
+        }
+      }
       if (ref.follow && opts && typeof opts.onSelectFinding === "function") {
         const show = kwEl(card, "button", { class: "kw-card-full", type: "button" },
           "Show the finding");
         show.addEventListener("click", () => { opts.onSelectFinding(ref.follow); });
+      }
+      // Any member card of an expanded fan offers the fold back,
+      // returning the fan to its counted mark.
+      if (kwExpandedFans.has(ref.anchor)) {
+        const count = kwFanCounts.get(ref.anchor) || 0;
+        const fold = kwEl(card, "button", { class: "kw-card-full", type: "button" },
+          "Fold " + count + " references");
+        fold.addEventListener("click", () => {
+          kwExpandedFans.delete(ref.anchor);
+          if (kwLastRender) {
+            renderKnowledge(kwLastRender.container, kwLastRender.data, kwLastRender.opts);
+            const next = kwLastRender.container.querySelector(
+              '[data-kw-folded="' + CSS.escape(ref.anchor) + '"]');
+            if (next && typeof next.focus === "function") next.focus();
+          }
+        });
       }
     } else if (selKind === "group") {
       // A group's card names it from its recorded metadata, the same
@@ -3132,6 +3414,169 @@
       : null);
   }
 
+  // The walk bar and the direction control share one activation
+  // path with canvas edges, junction rows and walk entries: light
+  // the edge, pin its card, record the lit edge and the walk step.
+  function kwWalkShort(s) {
+    const t = String(s || "");
+    return t.length > 16 ? t.slice(0, 15) + "…" : t;
+  }
+  function kwWalkPush(entry) {
+    const last = kwWalk[kwWalk.length - 1];
+    if (last && last.from === entry.from && last.to === entry.to
+      && last.cls === entry.cls && last.name === entry.name) return;
+    kwWalk.push(entry);
+    while (kwWalk.length > KW_WALK_MAX) kwWalk.shift();
+  }
+  function kwFindEdgeEl(svg, entry) {
+    if (!svg || !entry) return null;
+    const cands = Array.from(svg.querySelectorAll(
+      "g.kw-edges > g." + entry.cls
+      + '[data-from="' + CSS.escape(entry.from) + '"]'
+      + '[data-to="' + CSS.escape(entry.to) + '"]'));
+    if (entry.name) {
+      return cands.find((e) => e.getAttribute("data-rel-name") === entry.name)
+        || cands[0] || null;
+    }
+    return cands[0] || null;
+  }
+  function kwClearDirection() {
+    for (const el of kwDirectionDimmed) el.classList.remove("kw-dim");
+    kwDirectionDimmed = [];
+  }
+  // Direction thins the lit neighborhood around the lit edge: out
+  // keeps the lit edge plus edges leaving its target, in keeps the
+  // lit edge plus edges entering its source. Only adds dim, so it
+  // composes with isolation; an edge that no longer draws clears
+  // the lit edge instead of dimming around a ghost.
+  function kwApplyDirection(container) {
+    kwClearDirection();
+    if (!container || kwDirection === "both" || !kwLitEdge) return;
+    const svg = container.querySelector("svg.kw-canvas");
+    if (!svg) return;
+    const lit = kwFindEdgeEl(svg, {
+      from: kwLitEdge.from, to: kwLitEdge.to, cls: kwLitEdge.cls, name: kwLitEdge.name,
+    });
+    if (!lit) {
+      kwLitEdge = null;
+      kwDirection = "both";
+      kwRefreshWalkChrome(container);
+      return;
+    }
+    const hubKind = kwDirection === "out" ? kwLitEdge.toKind : kwLitEdge.fromKind;
+    const hubRaw = kwDirection === "out" ? kwLitEdge.to : kwLitEdge.from;
+    const hub = kwKey(hubKind, kwTypedLookupId(hubKind, hubRaw));
+    const side = kwDirection === "out" ? "data-from" : "data-to";
+    const kindSide = kwDirection === "out" ? "data-from-kind" : "data-to-kind";
+    for (const e of svg.querySelectorAll("g.kw-edges > g")) {
+      if (e === lit) continue;
+      const k = e.getAttribute(kindSide) || "";
+      const raw = e.getAttribute(side) || "";
+      if (!raw) continue;
+      if (kwKey(k, kwTypedLookupId(k, raw)) === hub) continue;
+      e.classList.add("kw-dim");
+      kwDirectionDimmed.push(e);
+    }
+  }
+  function kwActivateEdgeEl(svg, g, opts, container, pushWalk) {
+    if (!svg || !g) return;
+    const fromKind = g.getAttribute("data-from-kind") || "";
+    const from = g.getAttribute("data-from") || "";
+    const toKind = g.getAttribute("data-to-kind") || "";
+    const to = g.getAttribute("data-to") || "";
+    if (!from || !to) return;
+    kwDismissed = null;
+    kwClearDirection();
+    const ends = [{ kind: fromKind, id: from }, { kind: toKind, id: to }];
+    const name = g.getAttribute("data-rel-name") || "";
+    const typed = g.classList.contains("kw-edge-typed");
+    // An evidence stub reaches here only through a junction row: it
+    // lights alone like a typed edge, and its card states recorded
+    // evidence rather than borrowing the relation card's name slot.
+    const stub = !typed && g.classList.contains("kw-edge-evidence");
+    const cls = typed ? "kw-edge-typed" : stub ? "kw-edge-evidence" : "kw-edge-relate";
+    if (typed || stub) {
+      kwLightTyped(svg, g, ends);
+      kwPinTypedCard(container, g.getAttribute("data-provenance") || "recorded-evidence",
+        ends, name, g.getAttribute("data-edge") || "", opts, stub ? "edge" : "");
+    } else {
+      kwLightRelation(svg, { name, ends });
+      kwPinRelCard(container, name, ends);
+    }
+    const prov = g.getAttribute("data-provenance") || "";
+    kwLitEdge = { fromKind, from, toKind, to, cls, name };
+    if (pushWalk !== false) {
+      kwWalkPush({
+        name: name || (prov === "recorded-evidence" || stub ? "recorded evidence" : "authored claim"),
+        from, to, cls,
+      });
+    }
+    kwApplyDirection(container);
+    kwRefreshWalkChrome(container);
+    if (typeof g.focus === "function") g.focus();
+  }
+  // The walk bar and direction control rebuild in place, under the
+  // search box: the walk shows every step, the direction control
+  // shows while an edge is lit. Full renders build both from the
+  // same state through the same functions.
+  function kwBuildWalkBar(tools, container, svg, opts, at) {
+    if (!kwWalk.length) return;
+    const bar = kwEl(tools, "div", { class: "kw-walk", role: "navigation" });
+    if (at) tools.insertBefore(bar, at);
+    bar.setAttribute("aria-label", "Edge walk");
+    kwWalk.forEach((entry, i) => {
+      if (i > 0) {
+        const sep = kwEl(bar, "span", { class: "kw-walk-sep", "aria-hidden": "true" });
+        sep.textContent = "→";
+      }
+      const b = kwEl(bar, "button", { class: "kw-walk-step mono", type: "button" });
+      b.textContent = entry.name + " · " + kwWalkShort(entry.from)
+        + " → " + kwWalkShort(entry.to);
+      b.setAttribute("aria-label", "Re-light " + entry.name + " from "
+        + entry.from + " to " + entry.to);
+      b.addEventListener("click", () => {
+        const g = kwFindEdgeEl(svg, entry);
+        if (g) kwActivateEdgeEl(svg, g, opts, container, false);
+      });
+    });
+  }
+  function kwBuildDirection(tools, container, at) {
+    if (!kwLitEdge) return;
+    const dir = kwEl(tools, "div", { class: "kw-direction" });
+    if (at) tools.insertBefore(dir, at);
+    dir.setAttribute("aria-label", "Thin the lit neighborhood");
+    for (const d of [["out", "citations out"], ["in", "cited by in"]]) {
+      const b = kwEl(dir, "button", {
+        class: "kw-direction-btn mono", type: "button",
+        "aria-pressed": kwDirection === d[0] ? "true" : "false",
+        "data-kw-dir": d[0],
+      });
+      b.textContent = d[1];
+      b.addEventListener("click", () => {
+        kwDirection = kwDirection === d[0] ? "both" : d[0];
+        kwApplyDirection(container);
+        kwRefreshWalkChrome(container);
+        const next = container.querySelector('[data-kw-dir="' + d[0] + '"]');
+        if (next && typeof next.focus === "function") next.focus();
+      });
+    }
+  }
+  function kwRefreshWalkChrome(container) {
+    const tools = container ? container.querySelector(".kw-maptools") : null;
+    if (!tools) return;
+    const oldWalk = tools.querySelector(".kw-walk");
+    if (oldWalk) oldWalk.remove();
+    const oldDir = tools.querySelector(".kw-direction");
+    if (oldDir) oldDir.remove();
+    const svg = container.querySelector("svg.kw-canvas");
+    const opts = kwLastRender ? kwLastRender.opts : null;
+    const at = tools.querySelector(".kw-search-status");
+    // Both land before the status, walk first, so the order reads
+    // search box, walk, direction, status.
+    kwBuildWalkBar(tools, container, svg, opts, at);
+    kwBuildDirection(tools, container, at);
+  }
+
   // Activating a typed edge lights only it and its two ends; every
   // other edge dims, related or not.
   function kwLightTyped(svg, edge, ends) {
@@ -3151,14 +3596,14 @@
   // relation name lives here and in the edge's label, never on the
   // canvas. The record button opens the full record at the finding
   // end through the shell hook, like every other card.
-  function kwPinTypedCard(container, provenance, ends, relation, edgeId, opts) {
+  function kwPinTypedCard(container, provenance, ends, relation, edgeId, opts, stateWord) {
     if (!container) return;
     const card = kwOpenCard(container);
     const lead = kwEl(card, "p", { class: "kw-card-lead" });
     kwEl(lead, "span", { class: "kw-card-title" }, relation
       || (provenance === "authored" ? "authored claim" : "recorded evidence"));
     lead.appendChild(document.createTextNode(" "));
-    kwEl(lead, "span", { class: "kw-card-state" }, "typed edge");
+    kwEl(lead, "span", { class: "kw-card-state" }, stateWord || "typed edge");
     const label = (e) => e.kind === "ref" ? e.id : e.kind + " " + kwTypedLookupId(e.kind, e.id);
     kwEl(card, "p", { class: "kw-card-fact mono" },
       ends.length === 2 ? label(ends[0]) + " → " + label(ends[1])
@@ -3412,6 +3857,7 @@
       kwDismissed = null;
     }
     const ensembles = (data && data.ensembles) || [];
+    const sections = (data && data.sections) || [];
     kwActorReads = (data && data.actorReads) || {};
     const collapsed = new Set();
     for (const e of ensembles) {
@@ -3420,7 +3866,7 @@
       }
     }
     const layout = kwRenderWhole(container, overview, promotions, opts, collapsed);
-    kwPlaceWhole(layout, container, overview, promotions, opts, ensembles);
+    kwPlaceWhole(layout, container, overview, promotions, opts, ensembles, sections);
     // The frame takes the drawing's own height and the page scrolls,
     // so the map publishes no heights. The content tracker stays: it
     // still sizes the canvas itself and frames Fit.
