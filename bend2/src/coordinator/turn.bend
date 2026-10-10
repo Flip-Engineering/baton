@@ -1228,10 +1228,13 @@ def direct_route_wake(+db: String, +player: String, +id: String, +log: String, o
 # the receive route_after_advance gate.
 def direct_settled_wake(+db: String, +player: String, +id: String, +log: String, +outcome: Outcome, settled: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match settled:
-    case Fail{error}: direct_wake(db,player,id,outcome)
+    case Fail{error}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      wake : Result<&1,&1,U32 & String,Unit> <- direct_wake(db,player,id,outcome)
+      IO.pure(Result<&1,&1,U32 & String,Unit>,combine(Fail{error},wake))
     case Done{unit}: do IO<Result<&1,&1,U32 & String,Unit>>:
       routed : Bool <- direct_route_decided(db,player,id,outcome)
-      direct_route_wake(db,player,id,log,outcome,routed)
+      wake : Result<&1,&1,U32 & String,Unit> <- direct_route_wake(db,player,id,log,outcome,routed)
+      IO.pure(Result<&1,&1,U32 & String,Unit>,combine(Done{unit},wake))
 
 def direct_completed(+db: String, +player: String, +id: String, +log: String, +directory: String, +handle: U32, lock: Maybe<U32>, observation: Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>) -> IO(Unit):
   (+outcome,deliveries)=observation
@@ -1243,9 +1246,9 @@ def direct_completed(+db: String, +player: String, +id: String, +log: String, +d
     finished : Result<&1,&1,U32 & String,Unit> <- finish(db,player,id,log,outcome)
     questions : Result<&1,&1,U32 & String,Unit> <- NativeRequests.settle(deliveries)
     acknowledged : Result<&1,&1,U32 & String,Unit> <- direct_acknowledge(handle)
-    +settled : Result<&1,&1,U32 & String,Unit> <- IO.pure(Result<&1,&1,U32 & String,Unit>,combine(native_released,combine(finished,combine(questions,acknowledged))))
+    settled : Result<&1,&1,U32 & String,Unit> <- IO.pure(Result<&1,&1,U32 & String,Unit>,combine(native_released,combine(finished,combine(questions,acknowledged))))
     wake : Result<&1,&1,U32 & String,Unit> <- direct_settled_wake(db,player,id,log,outcome,settled)
-    IO.pass(Unit,combine(settled,wake))
+    IO.pass(Unit,wake)
 
 def direct_unstarted(+db: String, +player: String, +id: String, +log: String, +directory: String, lock: Maybe<U32>, error: String) -> IO(Unit):
   do IO<Unit>:
