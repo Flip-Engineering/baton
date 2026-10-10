@@ -10,7 +10,13 @@
   "contractVersion": 1,
   "empty": true,
   "findings": [],
-  "promotions": []
+  "promotions": [],
+  "scope": {
+   "kind": "universal",
+   "id": null,
+   "holders": []
+  },
+  "relations": []
  },
  "players": [
   {

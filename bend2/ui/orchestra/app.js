@@ -20,8 +20,10 @@ const state = {
   selectionId: null,
   snapshotLabel: "",
   capturedAt: "",
-  // Bumped by every fetched read and by interactions that change what the
-  // document draws; the redraw signature carries it.
+  // Live scope shows running and awaiting-input actors; all shows every actor.
+  scope: "live",
+  // Bumped by every fetched read and by interactions that change what the document
+  // draws; the redraw signature carries it.
   renderSeq: 0,
   // A seat named by the page address (#seat=<id>), honoured on the first
   // snapshot that carries it.
@@ -34,6 +36,9 @@ const state = {
   knowledgeActor: null,
   knowledgeActorId: "",
   knowledgeActorRequest: null,
+  // The knowledge the map is showing: universal by default, the selected worker's or
+  // group's holdings once one is chosen, all held records only when asked for.
+  knowledgeScope: { kind: "universal", id: "" },
   work: null,
   workRequest: null,
   workActorId: "",
@@ -66,6 +71,8 @@ const el = {
   selection: document.getElementById("selection"),
   ribbon: document.getElementById("ribbon"),
   knowledgeWhole: document.getElementById("knowledge-whole"),
+  mapScope: document.getElementById("map-scope"),
+  mapScopeAll: document.getElementById("map-scope-all"),
   counts: document.getElementById("doc-counts"),
   find: document.getElementById("doc-find"),
   showEnded: document.getElementById("doc-ended"),
@@ -117,21 +124,22 @@ function deriveStatus(p) {
 // Two different reads, kept apart with different names.
 //
 // A seat OWES WORK when the recorded queue holds messages it has not
-// acknowledged. That is the actor's own inbox responsibility: an ordinary
-// pending task or report belongs to the actor, and it never establishes that a
-// person must act.
-//
-// A seat NEEDS A PERSON when the record holds a fact only a person can clear: an
-// explicit stop, or a failure on the current attempt (a provider failure at
-// exit 0 included, which deriveStatus reports as failed).
+// acknowledged: an ordinary pending task or report belongs to the actor, and the
+// actor's inbox is where it is answered.
 function owesWork(p) {
   return Math.max(p.pendingCount || 0, p.unacknowledgedCount || 0) > 0;
 }
 
-function needsPerson(p) {
+// Identify an explicit stop or failure on the current attempt.
+function notProgressing(p) {
   const stop = p.stop || null;
-  if (stop && stop.status === "stopped") return true;
-  return deriveStatus(p) === "failed";
+  if (stop && stop.status === "stopped") {
+    return { word: "stopped", detail: stop.id || "a recorded stop" };
+  }
+  if (deriveStatus(p) === "failed") {
+    return { word: "failed", detail: "the attempt ended on a recorded failure" };
+  }
+  return null;
 }
 
 function roleRank(role) {
@@ -218,7 +226,7 @@ function fact(label, value, tone) {
 
 // The separator between two figures on the plate line. It carries the space
 // before it, and the label's own leading space carries the one after, so the
-// line still reads as prose: "read just now · 14 need a person".
+// line still reads as prose: "read just now · 12 running · 2 stopped or failed".
 function factSeparator() {
   const span = document.createElement("span");
   span.className = "fact-sep";
@@ -226,25 +234,31 @@ function factSeparator() {
   return span;
 }
 
-// The visible header line: what this snapshot is, and the counts no region
-// states. The three counts are exclusive, in this precedence: a seat that needs
-// a person, then a seat that owes work to its own inbox, then a quiet seat. The
-// pit counts what is running, so this line does not count it a second time.
+// The recorded relations that name one finding on either end, exactly as the
+// route states them: source and target may be finding:ID or message:ID references
+// or ordinary external references, so both the prefixed and the bare id match. A
+// relation exists only when it is recorded - nothing is inferred here.
+function relationsFor(findingId) {
+  const all = (state.knowledge && state.knowledge.relations) || [];
+  if (!all.length) return [];
+  const id = String(findingId || "");
+  const ref = "finding:" + id;
+  return all.filter((r) => r
+    && (r.source === ref || r.target === ref || r.source === id || r.target === id));
+}
+
+// Show current actor states and the number of actors with pending input.
 function renderHeaderLine() {
-  let people = 0;
-  let owing = 0;
-  let quiet = 0;
+  let running = 0;
+  let stopped = 0;
+  let waiting = 0;
+  let owed = 0;
   for (const p of state.players.values()) {
-    if (needsPerson(p)) {
-      people += 1;
-      continue;
-    }
-    if (owesWork(p)) {
-      owing += 1;
-      continue;
-    }
-    const tone = (typeof stateMark === "function" ? stateMark(p) : null);
-    if (tone && (tone.tone === "ended" || tone.tone === "unknown")) quiet += 1;
+    const status = deriveStatus(p);
+    if (status === "running") running += 1;
+    else if (status === "waiting") waiting += 1;
+    if (status === "stopped" || status === "failed") stopped += 1;
+    if (owesWork(p)) owed += 1;
   }
   el.snapshotLine.textContent = "";
   const snapshot = document.createElement("span");
@@ -266,12 +280,17 @@ function renderHeaderLine() {
     el.snapshotLine.appendChild(age);
   }
   if (state.players.size) {
+    // Count running, stopped or failed, and awaiting-input actors.
     el.snapshotLine.appendChild(factSeparator());
-    el.snapshotLine.appendChild(fact("need a person", people, people > 0 ? "attention" : ""));
+    el.snapshotLine.appendChild(fact("running", running, ""));
     el.snapshotLine.appendChild(factSeparator());
-    el.snapshotLine.appendChild(fact("owe work", owing, ""));
+    el.snapshotLine.appendChild(fact("stopped or failed", stopped, stopped > 0 ? "attention" : ""));
     el.snapshotLine.appendChild(factSeparator());
-    el.snapshotLine.appendChild(fact("quiet", quiet, ""));
+    el.snapshotLine.appendChild(fact("awaiting input", waiting, ""));
+    if (owed > 0) {
+      el.snapshotLine.appendChild(factSeparator());
+      el.snapshotLine.appendChild(fact("owe work", owed, ""));
+    }
   }
   el.snapshotLine.title = state.capturedAt ? "snapshot captured " + state.capturedAt : "";
 }
@@ -319,6 +338,11 @@ function select(id) {
   state.selectionId = id;
   state.knowledgeOpen = false;
   state.findingId = null;
+  // The map follows the selection into that worker's own holdings. Universal is the
+  // default and stays one click away on the map's own control.
+  if (state.knowledgeScope.kind !== "actor" || state.knowledgeScope.id !== id) {
+    setKnowledgeScope({ kind: "actor", id: id });
+  }
   // Every selection intent renders, even the same seat again: the map or the
   // record may have dismissed a card since, and that dismissal is not in the
   // shell's signature.
@@ -331,16 +355,7 @@ function select(id) {
   renderTree();
   void loadActorKnowledge(id);
   void loadActorWork(id);
-  // Move keyboard focus to the selected seat's row; when the row is not drawn
-  // (a quiet seat) the record itself takes the focus, since it holds the answer.
-  const row = el.roster.querySelector('.doc-row[data-doc-id="' + CSS.escape(id) + '"] .doc-open');
-  const record = document.getElementById("record");
-  const target = row || record;
-  if (target && typeof target.focus === "function") target.focus();
-}
-
-function focusKey(kind, id) {
-  return kind + ":" + id;
+  // Keep focus at the selection source; the adjacent record updates in place.
 }
 
 // The document is the page. Every path that used to repaint a panel calls this
@@ -410,18 +425,140 @@ function fixtureActorKnowledge(id) {
     const finding = findings.find((f) => f.id === p.finding) || {};
     return { id: p.id, finding: p.finding, author: p.author, source: p.source,
       destination: p.destination, promotedBy: p.promotedBy, claim: finding.claim,
+      kind: finding.kind, evidenceMessage: finding.evidenceMessage,
       evidence: finding.evidence, limits: finding.limits };
   });
   const unshared = authored.filter((f) => !promoted.has(f.id)).length;
+  // The actor route answers as the live one does: a worker scope, and the relations
+  // a holder authored or that touch a held finding, with the far end kept as the
+  // reference it is even when it lies outside the holdings.
+  const held = new Set([...authored.map((f) => f.id), ...received.map((r) => r.finding)]);
+  const touches = (end) => {
+    const ref = String(end == null ? "" : end);
+    const bare = ref.indexOf("finding:") === 0 ? ref.slice(8) : ref;
+    return held.has(ref) || held.has(bare);
+  };
+  const relations = (source.relations || []).filter((r) => r.author === id
+    || touches(r.source) || touches(r.target));
   return { contractVersion: CONTRACT_VERSION, actor: id, authored, received,
+    scope: { kind: "worker", id, holders: [id] },
+    relations,
     counts: { authored: authored.length, received: received.length, unshared },
-    empty: authored.length === 0 && received.length === 0 };
+    empty: authored.length === 0 && received.length === 0 && relations.length === 0 };
+}
+
+// The scope the map is showing. The overview route reads ?actor=ID for a worker's
+// holdings, ?group=ENSEMBLE for a recorded ensemble owner's, ?scope=all to discover
+// every held record, and answers universal when asked for nothing - which is the
+// default, and the view the shell opens on.
+function knowledgeScopeQuery() {
+  const scope = state.knowledgeScope || { kind: "universal", id: "" };
+  if (scope.kind === "actor" && scope.id) return "?actor=" + encodeURIComponent(scope.id);
+  if (scope.kind === "group" && scope.id) return "?group=" + encodeURIComponent(scope.id);
+  if (scope.kind === "all") return "?scope=all";
+  return "";
+}
+
+function setKnowledgeScope(scope) {
+  state.knowledgeScope = scope || { kind: "universal", id: "" };
+  renderMapScope();
+  void loadKnowledgeOverview();
+}
+
+// A fixture holds every record it carries, so the scope question is answered here
+// with the rule the server applies. A scope's holders are: every parentless
+// conductor for universal, the named session for a worker, the ensemble's recorded
+// owner for a group, and null - meaning every record - only for all. A scope holds
+// the findings its holders authored and the ones promoted into them, and no other:
+// membership alone publishes nothing. The actors map is recomputed for the scope
+// with its recorded ancestors, and a relation is kept when a holder authored it or
+// one of its ends is a held finding; the other end may lie outside the holdings and
+// stays the reference it is.
+function fixtureScopedKnowledge(scope) {
+  const source = state.fixtureKnowledge || null;
+  if (!source) return null;
+  const asking = scope || { kind: "universal", id: "" };
+  const findings = source.findings || [];
+  const allPromotions = source.promotions || [];
+  const known = source.actors || {};
+  const relations = source.relations || [];
+  let holders = null;
+  if (asking.kind === "all") holders = null;
+  else if (asking.kind === "actor" || asking.kind === "worker") holders = asking.id ? [asking.id] : [];
+  else if (asking.kind === "group") {
+    const ensemble = state.ensembles.get(asking.id);
+    holders = (ensemble && ensemble.owner) ? [ensemble.owner] : [];
+  } else {
+    holders = Object.keys(known).filter((id) => {
+      const actor = known[id] || {};
+      return !actor.parent && (actor.role === "principal-conductor" || actor.role === "conductor");
+    });
+    if (asking.id) holders = holders.filter((id) => id === asking.id);
+  }
+  const held = holders === null ? findings : findings.filter((f) => holders.includes(f.author)
+    || allPromotions.some((p) => p.finding === f.id && holders.includes(p.destination)));
+  const present = new Set(held.map((f) => f.id));
+  const promotions = allPromotions.filter((p) => present.has(p.finding));
+  const touches = (end) => {
+    const ref = String(end == null ? "" : end);
+    const bare = ref.indexOf("finding:") === 0 ? ref.slice(8) : ref;
+    return present.has(ref) || present.has(bare);
+  };
+  // Every recorded relation when the scope is everything, as the live query answers
+  // it; otherwise the ones a holder authored or that touch a held finding, with the
+  // other end kept as the reference it is.
+  const heldRelations = holders === null ? relations
+    : relations.filter((r) => holders.includes(r.author) || touches(r.source) || touches(r.target));
+  const actors = {};
+  const touch = (id) => {
+    if (id === null || id === undefined || id === "") return null;
+    if (!actors[id]) actors[id] = { authored: 0, received: 0, role: "", parent: "" };
+    return actors[id];
+  };
+  for (const finding of held) {
+    const actor = touch(finding.author);
+    if (actor) actor.authored += 1;
+  }
+  for (const promotion of promotions) {
+    const destination = touch(promotion.destination);
+    if (destination) destination.received += 1;
+    touch(promotion.source);
+    touch(promotion.promotedBy);
+  }
+  for (const relation of heldRelations) touch(relation.author);
+  // The tiers follow complete recorded parent chains, so each touched actor's
+  // ancestors join the map with the roles the fixture records.
+  const chain = (id) => {
+    const seen = new Set([id]);
+    let parent = (known[id] || {}).parent || "";
+    while (parent && !seen.has(parent)) {
+      seen.add(parent);
+      touch(parent);
+      parent = (known[parent] || {}).parent || "";
+    }
+  };
+  for (const id of Object.keys(actors)) {
+    const recorded = known[id] || {};
+    actors[id].role = recorded.role || "";
+    actors[id].parent = recorded.parent || "";
+    chain(id);
+  }
+  return Object.assign({}, source, {
+    scope: { kind: asking.kind, id: asking.id || null, holders },
+    findings: held,
+    promotions,
+    relations: heldRelations,
+    actors,
+    empty: held.length === 0 && promotions.length === 0 && heldRelations.length === 0,
+  });
 }
 
 async function loadKnowledgeOverview() {
+  const asked = knowledgeScopeQuery();
   if (state.fixtureName) {
-    state.knowledge = state.fixtureKnowledge || null;
-    state.knowledgeNotice = state.fixtureKnowledge ? "" : "A fixture carries no knowledge records.";
+    state.knowledge = fixtureScopedKnowledge(state.knowledgeScope);
+    state.knowledgeNotice = state.knowledge ? "" : "A fixture carries no knowledge records.";
+    renderMapScope();
     markDrawnStale();
     renderDocumentSoon();
     return;
@@ -429,21 +566,53 @@ async function loadKnowledgeOverview() {
   if (!knowledgeWired()) {
     state.knowledge = null;
     state.knowledgeNotice = "No live endpoint is configured.";
+    renderMapScope();
     markDrawnStale();
     renderDocumentSoon();
     return;
   }
   try {
-    const res = await fetch(state.apiBase + "/orchestra/knowledge/overview");
+    const res = await fetch(state.apiBase + "/orchestra/knowledge/overview" + asked);
     if (!res.ok) throw new Error("the endpoint answered " + res.status);
-    state.knowledge = await res.json();
+    const answered = await res.json();
+    // The reader may have moved scope while this was in flight; the newer read owns
+    // the map.
+    if (asked !== knowledgeScopeQuery()) return;
+    state.knowledge = answered;
     state.knowledgeNotice = "";
   } catch (e) {
+    if (asked !== knowledgeScopeQuery()) return;
     state.knowledge = null;
     state.knowledgeNotice = "Knowledge unavailable: " + (e && e.message ? e.message : e);
   }
+  renderMapScope();
   markDrawnStale();
   renderDocumentSoon();
+}
+
+// The map states which scope it drew, read from the scope the answer carries, and
+// offers the one step to every held record. The universal view is the default and
+// stays the way back.
+function renderMapScope() {
+  if (!el.mapScope) return;
+  const asked = state.knowledgeScope || { kind: "universal", id: "" };
+  const stated = (state.knowledge && state.knowledge.scope) || null;
+  // Display the returned scope and its finding count.
+  const kind = stated ? stated.kind : (state.knowledge ? "unstated" : asked.kind);
+  const id = (stated && stated.id) || asked.id;
+  const findings = (state.knowledge && state.knowledge.findings) || [];
+  const what = kind === "all" ? "All held records"
+    : kind === "worker" || kind === "actor" ? "Worker " + (id || "not named")
+    : kind === "group" ? "Group " + (id || "not named")
+    : kind === "unstated" ? "Held records"
+    : "Universal knowledge";
+  const count = findings.length + (findings.length === 1 ? " item" : " items");
+  el.mapScope.textContent = what + " · " + count;
+  if (el.mapScopeAll) {
+    const all = kind === "all";
+    el.mapScopeAll.setAttribute("aria-pressed", all ? "true" : "false");
+    el.mapScopeAll.textContent = all ? "Back to universal knowledge" : "All held records";
+  }
 }
 
 async function loadActorKnowledge(id) {
@@ -602,90 +771,108 @@ async function loadGraphRecord(actor, findingId) {
 // The dossier block: authored, received and never-shared counts with the stored
 // findings behind them. A refused actor keeps the reason visible.
 
-// ── the shell's two readings of the run ────────────────────────────────────
-// The plate word: the run in one expression mark. A seat that needs a person
-// outranks everything, then the arrival of recorded changes, then silence.
-const PLATE_PULSE_MS = 90000;
-
-function plateWord() {
-  for (const p of state.players.values()) {
-    if (needsPerson(p)) return "fermata";
-  }
-  const now = Date.now();
-  for (const t of state.transitions) {
-    if (t && t.at && now - Date.parse(t.at) < PLATE_PULSE_MS) return "attacca";
-  }
-  return "tacet";
+// A seat's id shortened to the part that distinguishes it in a dense list. The
+// distinguishing part usually sits before a trailing stamp, so the stamp goes first and
+// the last two name parts stay; the full id remains on the title, the label and the
+// record.
+function shortSeatId(id) {
+  const full = String(id || "");
+  if (full.length <= 24) return full;
+  const trimmed = full.replace(/[-_.]\d{4,}$/, "");
+  const parts = trimmed.split(/[-_.]/).filter(Boolean);
+  const last = parts[parts.length - 1] || "";
+  // A trailing index (dsflash-1, muse-2) travels with the name it numbers; a plain
+  // name stands alone.
+  let text = last.length <= 2 && parts.length > 1 ? parts.slice(-2).join("-") : last;
+  if (text.length < 4) text = trimmed.slice(-18);
+  if (text.length > 18) text = text.slice(-18);
+  return "\u2026" + text;
 }
 
-// The rail: the seats a person must act on, held by an explicit stop or a failed
-// attempt. The chip names the recorded fact and selects the seat, so the record
-// below answers the rail. A seat that only owes work to its own inbox is not
-// here; that work shows on the seat's own row and in the pit's queue tick.
+// ── the shell's two readings of the run ────────────────────────────────────
+// The plate word: the run in one plain state word, from what the seats are doing.
+
+// List stopped or failed actors; their record contains the cause.
 const RAIL_CHIPS = 12;
 let railSignature = "";
 
 function railReason(p) {
-  const stop = p.stop || null;
-  if (stop && stop.status === "stopped") {
-    return { word: "stopped", detail: stop.id || "an explicit stop" };
-  }
-  const ex = p.execution || null;
-  if (ex && ex.failure) {
-    const failure = ex.failure;
-    return {
-      word: "failed",
-      detail: [failure.cause, failure.errorStatus, failure.stopReason]
-        .filter(Boolean).join(" · "),
-    };
-  }
-  return { word: "failed", detail: "the attempt did not finish" };
+  const held = notProgressing(p);
+  if (held) return held;
+  return { word: (deriveStatus(p) || "unknown"), detail: "the recorded state" };
 }
 
 function renderRail() {
   if (!el.rail) return;
   if (el.rail.contains(document.activeElement)) return;
-  const waiting = orderPlayers([...state.players.values()]).filter(needsPerson);
-  const signature = waiting.map((p) => p.id + ":" + railReason(p).word).join("|");
+  const holding = orderPlayers([...state.players.values()]).filter((p) => notProgressing(p) !== null);
+  const signature = holding.map((p) => p.id + ":" + railReason(p).word).join("|");
   if (signature === railSignature) return;
   railSignature = signature;
   el.rail.textContent = "";
-  if (!waiting.length) {
+  if (!holding.length) {
     el.rail.hidden = true;
     return;
   }
   el.rail.hidden = false;
   const label = document.createElement("span");
   label.className = "rail-label";
-  text(label, "fermata");
+  text(label, "Not progressing");
   el.rail.appendChild(label);
   const count = document.createElement("span");
   count.className = "rail-count";
   const figure = document.createElement("b");
-  text(figure, String(waiting.length));
+  text(figure, String(holding.length));
   count.appendChild(figure);
   const countLabel = document.createElement("span");
-  text(countLabel, waiting.length === 1 ? " seat needs a person" : " seats need a person");
+  text(countLabel, holding.length === 1 ? " seat" : " seats");
   count.appendChild(countLabel);
   el.rail.appendChild(count);
-  waiting.slice(0, RAIL_CHIPS).forEach((p) => {
+  holding.slice(0, RAIL_CHIPS).forEach((p) => {
     const reason = railReason(p);
     const chip = document.createElement("button");
     chip.type = "button";
     chip.dataset.railId = p.id;
+    // Color each chip by state and retain the full id in its accessible label.
+    chip.className = "rail-chip rail-" + reason.word;
     chip.title = p.id + " · " + reason.word + ": " + reason.detail;
-    text(chip, p.id + " · " + reason.word);
+    chip.setAttribute("aria-label", p.id + ", " + reason.word + ", " + reason.detail);
+    text(chip, shortSeatId(p.id) + " · " + reason.word);
     chip.addEventListener("click", () => select(p.id));
     el.rail.appendChild(chip);
   });
-  if (waiting.length > RAIL_CHIPS) {
+  if (holding.length > RAIL_CHIPS) {
     const more = document.createElement("span");
     more.className = "rail-more";
-    text(more, "+" + (waiting.length - RAIL_CHIPS) + " more");
+    text(more, "+" + (holding.length - RAIL_CHIPS) + " more");
     el.rail.appendChild(more);
   }
 }
 
+// Summarize current states, prioritizing running actors.
+function plateWord() {
+  let working = 0;
+  let waiting = 0;
+  let stopped = 0;
+  let failed = 0;
+  for (const p of state.players.values()) {
+    const status = deriveStatus(p);
+    // Work in flight is a running seat; a seat with queued input is counted by the
+    // owe-work fact instead, so no seat is counted as two things.
+    if (status === "running") working += 1;
+    else if (status === "waiting") waiting += 1;
+    if (status === "stopped") stopped += 1;
+    if (status === "failed") failed += 1;
+  }
+  if (working) return "running";
+  if (stopped) return "stopped";
+  if (failed) return "failed";
+  if (waiting) return "awaiting input";
+  return "idle";
+}
+
+// The shell's own three reads in one place, so the state word, the counts and the
+// rail never disagree with each other.
 function renderShell() {
   if (el.plateMark) {
     el.plateMark.textContent = "";
@@ -965,6 +1152,10 @@ function init() {
   state.apiBase = query.get("api") || "";
   const meta = document.querySelector('meta[name="orchestra-api-base"]');
   if (!state.apiBase && meta) state.apiBase = meta.getAttribute("content") || "";
+  // Use the serving origin when no API address is configured.
+  if (!state.apiBase && /^https?:$/.test(location.protocol || "")) {
+    state.apiBase = location.origin;
+  }
   state.fixtureName = query.get("fixture") || "";
   state.subject = query.get("subject") || "";
 
@@ -986,9 +1177,27 @@ function init() {
   }
   if (el.showEnded) {
     el.showEnded.addEventListener("click", () => {
-      state.showEnded = state.showEnded !== true;
-      el.showEnded.setAttribute("aria-pressed", state.showEnded ? "true" : "false");
+      // Switch between current work and all recorded actors.
+      state.scope = state.scope === "all" ? "live" : "all";
+      el.showEnded.setAttribute("aria-pressed", state.scope === "all" ? "true" : "false");
       renderDocument();
+    });
+  }
+  if (el.roster) {
+    // A band naming one recorded ensemble opens that group's own knowledge on the
+    // map; the map's scope line states which holdings it drew.
+    el.roster.addEventListener("click", (ev) => {
+      const open = ev.target && ev.target.closest ? ev.target.closest("[data-doc-group]") : null;
+      if (!open) return;
+      setKnowledgeScope({ kind: "group", id: open.getAttribute("data-doc-group") });
+    });
+  }
+  if (el.mapScopeAll) {
+    el.mapScopeAll.addEventListener("click", () => {
+      // Universal knowledge is the default view; the one control discovers every
+      // held record and the same control names the way back.
+      const all = (state.knowledgeScope || {}).kind === "all";
+      setKnowledgeScope(all ? { kind: "universal", id: "" } : { kind: "all", id: "" });
     });
   }
   // The whole-orchestra canvas draws on demand: opening its disclosure repaints,
@@ -1094,9 +1303,9 @@ function documentPlayers() {
       // Everything the seat owes, whatever the kind, for ordering and the rail.
       owedTotal: Math.max(p.pendingCount || 0, p.unacknowledgedCount || 0),
       // Two reads with two names: the work the actor owes its own inbox, and
-      // whether a recorded fact holds the seat for a person.
+      // whether the current attempt is stopped or failed.
       owesWork: owesWork(p),
-      needsPerson: needsPerson(p),
+      notProgressing: notProgressing(p) !== null,
       action: action.label || "",
       actionAt: action.at || "",
       stale: action.stale === true,
@@ -1181,11 +1390,11 @@ function selectedSeat() {
     model: p.observedModel || p.model || "",
     parent: p.parent || "",
     status: deriveStatus(p),
-    // What the actor owes its own inbox, and whether a recorded fact holds the
-    // seat for a person. The selection header paints its tone dot from
-    // needsPerson: an explicit stop or a failed attempt, never a queued message.
+    // What the actor owes its own inbox, and whether the record holds the seat.
+    // The selection header paints its tone dot from notProgressing: an explicit
+    // stop or a failed attempt, never a queued message, and never a request.
     owesWork: owesWork(p),
-    needsPerson: needsPerson(p),
+    notProgressing: notProgressing(p) !== null,
     // The recorded terminal of the current attempt, when the server read has it:
     // null, or the provider failure the attempt ended on. The record states the
     // cause and the stop reason in one line.
@@ -1252,7 +1461,7 @@ function drawnNow(data) {
   for (const p of data.players) {
     rows.push([
       p.id, p.status, p.pendingCount, p.unacknowledgedCount,
-      p.owesWork ? 1 : 0, p.needsPerson ? 1 : 0, p.action, p.actionAt,
+      p.owesWork ? 1 : 0, p.notProgressing ? 1 : 0, p.action, p.actionAt,
       (p.ensembles || []).join(","),
     ].join("~"));
   }
@@ -1272,7 +1481,7 @@ function drawnNow(data) {
     state.selectionId || "",
     state.findingId || "",
     state.docQuery || "",
-    state.showEnded ? 1 : 0,
+    state.scope === "all" ? 1 : 0,
     state.ribbonSeq || "",
     // Every fetched read marks the drawn document stale through this revision,
     // so a landing paints without the signature enumerating each future input.
@@ -1313,6 +1522,7 @@ function renderDocument() {
     return;
   }
   drawnSignature = drawn;
+  renderMapScope();
   const active = document.activeElement;
   const rowFocus = active && active.dataset ? active.dataset.docKey : null;
   let knowledgeFocus = null;
@@ -1340,6 +1550,13 @@ function renderDocument() {
         claim: record.claim,
         evidence: record.evidence,
         limits: record.limits,
+        // The record's own typed semantics travel with it when the route serves
+        // them: the authored kind, the retained message that evidences it, and the
+        // named relations it stands in. An absent field stays absent, and no
+        // relation is inferred from parentage, proximity or promotion.
+        kind: record.kind || "",
+        evidenceMessage: record.evidenceMessage || "",
+        relations: relationsFor(record.id),
         promotions: promotions.filter((p) => p && (p.finding || p.id) === record.id),
       };
     }
@@ -1351,6 +1568,8 @@ function renderDocument() {
     ribbon: el.ribbon,
     knowledgeWhole: el.knowledgeWhole,
     counts: el.counts,
+    // The document owns the roster's scope, so it owns the control that names it.
+    scopeControl: el.showEnded,
   }, documentData(), {
     selectedId: state.selectionId,
     selectedFindingId: state.findingId || "",
@@ -1358,7 +1577,7 @@ function renderDocument() {
     selectedFinding,
     query: state.docQuery || "",
     position: historyPosition(),
-    showEnded: state.showEnded === true,
+    scope: state.scope === "all" ? "all" : "live",
     knowledgeWholeOpen: state.knowledgeWholeOpen === true,
     knowledgeQuery: state.knowledgeSearch || "",
     knowledgeNotice: state.knowledgeNotice || "",

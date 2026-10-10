@@ -48,8 +48,15 @@
 
 .pit .att-hit { fill: transparent; }
 
-/* A tier is named by its seat count, right-aligned against the seats it counts;
-   the recorded name is in that figure's title. */
+/* A tier's name sits flush left and its seat count flush right, so the column is
+   a table of groups and sizes: the name is readable without hover, and the count
+   is the figure that tells its size. */
+.pit .att-section-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  fill: var(--muted);
+}
+
 .pit .att-section {
   font-family: var(--mono);
   font-size: 10px;
@@ -115,18 +122,23 @@
   to { stroke-dashoffset: -16; }
 }
 
-/* The legend is a key of inks: one swatch per reading, its word in the title. */
+/* The legend decodes the state vocabulary: swatch, then its word in plain sight. */
 .pit .att-legend {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 3px 10px;
+  gap: 4px 16px;
   margin: 8px 0 2px;
+  font-family: var(--sans);
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--muted);
 }
 
 .pit .att-key {
   display: inline-flex;
   align-items: center;
+  gap: 5px;
   cursor: default;
 }
 

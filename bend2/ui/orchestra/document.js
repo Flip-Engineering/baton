@@ -3,7 +3,7 @@
 
    window.OversightDocument.render(data, opts)
      data.players    [{id, parent, role, model, status, pendingCount, unacknowledgedCount,
-                      owedTotal, owesWork, needsPerson, action, actionAt, stale, ensembles[],
+                      owedTotal, owesWork, notProgressing, action, actionAt, stale, ensembles[],
                       taskTitle, authored, shared, received, live}]
      data.ensembles  [{id, owner, coupling, members[]}]
      data.events     newest first, as the page holds them
@@ -12,7 +12,8 @@
                       knowledgeWhole, counts}
      opts.selectedId, opts.selectedFindingId, opts.query
      opts.position   reading position in the recorded history
-     opts.showEnded  whether quiet rows are shown
+     opts.scope      "live" for work in flight and seats the record holds, "all"
+                     for everything recorded (the staves' control names the rest)
      opts.onSelect(id), opts.onSelectFinding(id), opts.onScrub(index),
      opts.onSelectEvent(index), opts.onListOpen(open)
 
@@ -26,17 +27,14 @@
     return mark.tone === "ended" || mark.tone === "unknown";
   }
 
-  // Failed executions and stopped seats keep a distinct read; the row paints
-  // each state as the rule down its left edge. Held means a recorded fact stops
-  // the seat and a person must act; the queued branch reads the work the actor
-  // owes its own inbox, which never means a person is needed.
+  // Derive the row state from the current attempt and pending input.
   function workState(p) {
     if (!p) return "quiet";
-    var live = p.status === "running" || p.status === "waiting" || p.status === "pending";
     if (p.status === "failed") return "failed";
     if (p.status === "stopped") return "stopped";
+    if (p.status === "waiting") return "waiting";
     if ((p.owedTotal || 0) > 0 || p.owesWork === true || p.status === "pending") return "queued";
-    if (live) return "working";
+    if (p.status === "running") return "working";
     return "quiet";
   }
 
@@ -161,6 +159,27 @@
     return out;
   }
 
+  // The default roster is the work in flight: a seat playing now, or a seat whose turn
+  // ended and waits on input. A held seat, the work a seat owes and the quiet record
+  // are recorded state, and the control adds them with their count.
+  function scopeLive(state_) {
+    return state_ === "working" || state_ === "waiting";
+  }
+
+  // The control names the scope it would add, with the number of rows it adds, and
+  // says so on the button itself rather than in a title.
+  function renderScopeControl(node, hidden, scope) {
+    if (!node) return;
+    node.textContent = "";
+    if (scope === "all") {
+      text(node, "Show live only");
+      node.setAttribute("aria-pressed", "true");
+    } else {
+      text(node, hidden ? "Show " + hidden + " more recorded" : "Show all recorded");
+      node.setAttribute("aria-pressed", "false");
+    }
+  }
+
   function rowFor(p, mark, opts) {
     var state = workState(p);
     var li = el("li", "doc-row state-" + state + " tone-" + (mark ? mark.tone : "unknown"));
@@ -180,27 +199,17 @@
     button.appendChild(name);
 
     var lead = el("span", "doc-lead");
-    var work = p.action || p.taskTitle || "";
-    if (work) {
-      lead.appendChild(el("span", "doc-work" + (p.stale ? " stale" : ""), work));
-    } else {
-      lead.appendChild(el("span", "doc-work quiet", mark ? mark.word : "no work recorded"));
-    }
-    // The row draws one line, so the elided text stays readable on hover.
-    lead.title = work || (mark ? mark.word : "no work recorded");
+    // Show one state label; preserve the full action in the title and record.
+    var word = state === "failed" ? "failed"
+      : state === "stopped" ? "stopped"
+      : state === "waiting" ? "awaiting input"
+      : state === "queued" ? "owes work"
+      : state === "working" ? "playing"
+      : "quiet";
+    var workEl = el("span", "doc-work " + state, word);
+    workEl.title = p.action || p.taskTitle || word;
+    lead.appendChild(workEl);
     button.appendChild(lead);
-
-    // The failed read: the recorded terminal of the attempt, in the row.
-    if (p.status === "failed") {
-      var failedWord = el("span", "doc-fail-word", "failed");
-      failedWord.title = "the current attempt ended on a recorded failure";
-      button.appendChild(failedWord);
-    } else if (p.needsPerson === true && p.status === "stopped") {
-      // The stopped read: a recorded stop holds the seat until a person resumes it.
-      var stoppedWord = el("span", "doc-held-word", "stopped");
-      stoppedWord.title = "the record holds this seat at an explicit stop";
-      button.appendChild(stoppedWord);
-    }
 
     var age = ageText(p.actionAt);
     if (age) button.appendChild(el("span", "doc-age mono", age));
@@ -245,9 +254,6 @@
     });
     li.appendChild(button);
 
-    if (selected && p.detail && p.detail.length) {
-      li.appendChild(detailList(p.detail));
-    }
     // This author's recorded findings sit on this row, so the knowledge layer is
     // the rows rather than a second surface below them.
     if (opts.knowledgeAuthors && opts.knowledgeAuthors[p.id] && window.KnowledgeLayer) {
@@ -266,14 +272,36 @@
     return li;
   }
 
+
+  // The fallback record: a definition list of the recorded fields, drawn when the
+  // selection module is not present. Full recorded detail belongs in the record, so
+  // the raw fields stay here rather than on the row.
   function detailList(facts) {
     var dl = el("dl", "doc-facts");
-    facts.forEach(function (fact) {
-      dl.appendChild(el("dt", null, fact[0]));
-      dl.appendChild(el("dd", fact[1] === "" || fact[1] === null
-        || fact[1] === undefined ? "unknown" : String(fact[1])));
+    facts.forEach(function (item) {
+      dl.appendChild(el("dt", null, item[0]));
+      dl.appendChild(el("dd", item[1] === "" || item[1] === null
+        || item[1] === undefined ? "unknown" : String(item[1])));
     });
     return dl;
+  }
+
+  // Draw one state marker per member and announce the totals.
+  function bandTicks(members) {
+    var line = el("span", "doc-band-ticks");
+    var counts = {};
+    var order = [];
+    members.forEach(function (p) {
+      var value = workState(p);
+      if (counts[value] === undefined) { counts[value] = 0; order.push(value); }
+      counts[value] += 1;
+      line.appendChild(el("i", "doc-tick state-" + value));
+    });
+    var spoken = order.map(function (value) { return counts[value] + " " + value; });
+    line.setAttribute("role", "img");
+    line.setAttribute("aria-label", spoken.join(", ") || "no members recorded");
+    line.title = spoken.join(" · ") || "no members recorded";
+    return line;
   }
 
   // Each run names all recorded memberships shared by its rows.
@@ -287,13 +315,24 @@
     }
     opts.knowledgeWidth = Math.max(100, mount.clientWidth - 22);
     var shown = 0;
+    var hidden = 0;
     var bandIndex = 0;
     var lastEnsemble = null;
     var run = null;
+    // Each band's members, so its head can carry their states as one line.
+    var bandMembers = new Map();
+    ordered.forEach(function (p) {
+      var key = (p.ensembles || []).join(" · ");
+      if (!bandMembers.has(key)) bandMembers.set(key, []);
+      bandMembers.get(key).push(p);
+    });
     ordered.forEach(function (p) {
       var mark = typeof stateMark === "function" ? stateMark(p) : null;
-      var quiet = isQuiet(mark);
-      if (quiet && !opts.showEnded) return;
+      // Live scope shows running or awaiting-input actors.
+      if (opts.scope !== "all" && !scopeLive(workState(p))) {
+        hidden += 1;
+        return;
+      }
       var ensemble = (p.ensembles || []).join(" · ");
       if (ensemble !== lastEnsemble || !run) {
         run = el("section", "doc-band");
@@ -305,8 +344,19 @@
         bandMark.title = ensemble || "not in a recorded ensemble";
         bandIndex += 1;
         head.appendChild(bandMark);
-        head.appendChild(el("span", "doc-band-name",
-          ensemble || "not in a recorded ensemble"));
+        // A band that names one recorded ensemble opens that group's knowledge on the
+        // map: the name is the control, and the map's scope line states what it drew.
+        var single = ensemble && ensemble.indexOf(" · ") < 0 && ensemble !== "not in a recorded ensemble";
+        var bandName = single
+          ? el("button", "doc-band-name doc-band-open", ensemble)
+          : el("span", "doc-band-name", ensemble || "not in a recorded ensemble");
+        if (single) {
+          bandName.type = "button";
+          bandName.dataset.docGroup = ensemble;
+          bandName.title = "Show " + ensemble + "'s knowledge on the map";
+        }
+        head.appendChild(bandName);
+        head.appendChild(bandTicks(bandMembers.get(ensemble) || []));
         run.appendChild(head);
         mount.appendChild(run);
         lastEnsemble = ensemble;
@@ -322,18 +372,21 @@
       shown += 1;
     });
     if (!shown) {
-      mount.appendChild(el("p", "muted", opts.showEnded
-        ? "No actors recorded." : "No live or queued work. Show quiet to see ended and unobserved actors."));
+      mount.appendChild(el("p", "muted", opts.scope === "all"
+        ? "No actors recorded."
+        : (hidden
+          ? "Nothing is running or awaiting input. "
+            + hidden + " more recorded."
+          : "No actors recorded.")));
     }
+    // The control names the scope it adds and how many rows that is.
+    renderScopeControl(opts.scopeControl, hidden, opts.scope);
     // Promotion arcs join the rendered rows through the knowledge layer.
     // One hook line; the layer owns the overlay and its geometry.
     if (window.KnowledgeLayer && typeof window.KnowledgeLayer.renderArcs === "function") {
       window.KnowledgeLayer.renderArcs(mount, {
         promotions: (opts.overview && opts.overview.promotions) || [],
-        // The ordered row records, each carrying the reads the row marks use:
-        // the recorded status, the two counts and whether the seat needs a
-        // person. The layer draws only the ids whose rows are in the mount, so
-        // the list travels whole.
+        // Supply current actor states and pending counts to the overlay.
         players: ordered.map(function (p) {
           return {
             id: p.id,
@@ -342,9 +395,9 @@
             unacknowledgedCount: p.unacknowledgedCount || 0,
             owedTotal: p.owedTotal || 0,
             // The two reads with their own names: the work the actor owes its
-            // own inbox, and whether a recorded fact holds the seat for a person.
+            // own inbox, and whether the current attempt is stopped or failed.
             owesWork: p.owesWork === true,
-            needsPerson: p.needsPerson === true,
+            notProgressing: p.notProgressing === true,
             at: p.actionAt || "",
           };
         }),
@@ -366,7 +419,7 @@
     (players || []).forEach(function (p) {
       out[p.id] = {
         status: p.status || "unknown",
-        needsPerson: p.needsPerson === true,
+        notProgressing: p.notProgressing === true,
         owesWork: p.owesWork === true,
         owedTotal: p.owedTotal || 0,
       };
@@ -435,7 +488,7 @@
         knowledge: data.knowledge || null,
         // Quiet actors, by id, and whether the reader asked for them.
         quietIds: quietIds,
-        showEnded: options.showEnded === true,
+        showEnded: options.scope === "all",
       }) || null;
     }
 
@@ -456,6 +509,8 @@
       // The entries the page holds, newest first: the staves draw their window
       // from the same list the axis reads.
       events: data.events || [],
+      // The document owns the scope control, since it owns the scope.
+      scopeControl: mounts.scopeControl,
     });
     renderRoster(mounts.roster, ordered, ro);
     renderWhole(mounts.knowledgeWhole, data, options);

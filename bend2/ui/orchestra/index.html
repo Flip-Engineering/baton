@@ -18,13 +18,15 @@
 <header class="plate">
   <h1 class="plate-title">Baton</h1>
   <p class="plate-sub">a live score</p>
-  <nav class="plate-nav" aria-label="Move to a movement">
-    <a href="#pit">the pit</a>
-    <a href="#map">the map</a>
-    <a href="#staves">the staves</a>
-    <a href="#record">the record</a>
+  <nav class="plate-nav" aria-label="Move to a section">
+    <a href="#pit">The pit <span>what is running now</span></a>
+    <a href="#map">The map <span>who relates to whom</span></a>
+    <a href="#staves">The staves <span>each actor's activity</span></a>
+    <a href="#record">The record <span>the actor you selected</span></a>
   </nav>
-  <p class="plate-mark" id="plate-mark"></p>
+  <p class="plate-state">
+    <span class="plate-mark" id="plate-mark"></span>
+  </p>
   <p class="plate-facts" id="snapshot-line">No snapshot loaded.</p>
 </header>
 
@@ -46,20 +48,30 @@
     <div id="attention-band" class="lane-strip"></div>
   </section>
 
-  <!-- The map: the whole recorded ensemble. It follows the pit so the two
-       whole-orchestra drawings open the page together. -->
+  <!-- The written surfaces and the record. The record is a rail beside them, so a
+       selection from the map or the staves never moves the reader away from where
+       they made it. -->
+  <div class="work">
+  <div class="work-main">
+
+  <!-- The map: the whole recorded ensemble. -->
   <section class="map" id="map" tabindex="-1" aria-labelledby="map-title">
     <div class="movement-row">
       <h2 id="map-title" class="movement">The map</h2>
       <p class="muted doc-note">Actors on their depth tiers, findings on their authors, promotions
         as edges. Select any node to inspect it.</p>
+      <div class="doc-scope-row">
+        <span id="map-scope" class="doc-scope" role="status">Universal knowledge</span>
+        <button type="button" id="map-scope-all" class="doc-scope-btn" aria-pressed="false">All held
+          records</button>
+      </div>
     </div>
     <div class="map-frame">
       <div id="knowledge-whole" class="doc-whole-mount"></div>
     </div>
   </section>
 
-  <!-- The written score: one staff per actor, the record beside the staves. -->
+  <!-- The written score: one staff per actor. -->
   <section class="paper" id="staves" tabindex="-1" aria-labelledby="staves-title">
     <div class="staves-col">
       <div class="movement-row">
@@ -68,9 +80,9 @@
           right. A note head is a recorded entry.</p>
         <div class="doc-tools">
           <label class="doc-find">
-            <span class="doc-find-label">Find</span>
+            <span class="doc-find-label">Find an actor</span>
             <input type="search" id="doc-find" autocomplete="off"
-              placeholder="type to move the cursor" aria-controls="roster">
+              placeholder="name or role" aria-controls="roster">
           </label>
           <button type="button" id="doc-ended" aria-pressed="false">Show quiet seats</button>
           <button type="button" id="reconnect">Reconnect</button>
@@ -78,11 +90,16 @@
       </div>
       <ul class="doc-roster" id="roster"></ul>
     </div>
-    <aside class="record-col" id="record" tabindex="-1" aria-labelledby="selection-title">
-      <h2 id="selection-title" class="movement">The record</h2>
-      <div id="selection" class="doc-selection"></div>
-    </aside>
   </section>
+
+  </div>
+
+  <aside class="record-col" id="record" tabindex="-1" aria-labelledby="selection-title">
+    <h2 id="selection-title" class="movement">The actor you selected</h2>
+    <div id="selection" class="doc-selection"></div>
+  </aside>
+
+  </div>
 
 </main>
 

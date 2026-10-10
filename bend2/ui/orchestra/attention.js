@@ -1,17 +1,11 @@
 /* The pit stage: liveness, document order and the seating plan. Read-only.
    One global entry: renderAttention(container, data, options).
 
-   Readings. Each actor gets one reading from its own record, and the two reads the
-   shell names are kept apart. A seat that owes work holds recorded messages it has
-   not acknowledged: that is the actor's own inbox responsibility and never asks
-   for a person by itself. A seat that needs a person is held by a fact only a
-   person clears: an explicit stop, or a failure on the current attempt, which
-   counts even when the process exited zero. A stopped seat keeps its messages and
-   may be resumed, so its word states what the record holds rather than what cannot
-   happen.
+   Each actor's state comes from its current attempt, explicit stop and pending
+   messages. A provider terminal failure counts even when the process exits zero.
 
-   Order. The entry returns the document order the page composes against: what
-   needs a person first, then live work, then queues, then quiet. Bands take the
+   Order. The entry returns the document order the page composes against: work the
+   record holds first, then live work, then queues, then quiet. Bands take the
    order of their highest-ranked member.
 
    The stage. The mount is drawn as the orchestra it records: the conductors on
@@ -41,7 +35,14 @@
 
   /* ── geometry ─────────────────────────────────────────────────────────── */
 
-  var GUTTER = 46;        // the tier figures' column; the names live in titles
+  // The label column holds a tier's name flush left and its seat count flush
+  // right, so the column is only as wide as the names need: short names keep a
+  // narrow column, long ones take the cap and truncate with the full name in the
+  // title. A word carrying a group is never removed from the page, only shortened.
+  var GUTTER_MIN = 46;
+  var GUTTER_MAX = 132;
+  var CHAR_W = 6.2;       // one character of the 10px mono label
+  var LABEL_PAD = 26;     // the count's column and the gap to the seats
   var SEAT_TOP = 26;      // room above the top tier for a halo and a label
   var R_MIN = 5.5;        // the mark's radius at the largest run
   var R_MAX = 18;         // the mark's radius at the smallest run
@@ -91,12 +92,8 @@
     return index === -1 ? READINGS.length : index;
   }
 
-  // What needs a person: a fact only a person can clear, which is an explicit stop
-  // or a failure on the current attempt. A queue is work the actor owes, its own
-  // inbox responsibility, and never asks for a person by itself. The shell states
-  // both reads by name on every row it hands over; a caller that passes the raw
-  // record is read from the record instead, by the same rule.
-  function needsHuman(reading) {
+  // Identify stopped or failed activity.
+  function notProgressingReading(reading) {
     return reading === "failed" || reading === "stalled";
   }
 
@@ -105,19 +102,20 @@
     return typeof value === "boolean" ? value : fallback;
   }
 
-  // What the rail lists: a seat a person must act on, or a seat that owes work.
+  // What the pit's strip lists: a seat the record holds, or a seat that owes work.
   // Only the first carries the accent.
   function isListed(row) {
-    return row.needsPerson || row.owesWork;
+    return row.notProgressing || row.owesWork;
   }
 
   function isLive(reading) {
     return reading === "running" || reading === "waiting";
   }
 
-  function shortId(id) {
+  function shortId(id, max) {
     var full = String(id === undefined || id === null ? "" : id);
-    return full.length > ID_SHOWN ? full.slice(0, ID_SHOWN - 1) + "\u2026" : full;
+    var limit = typeof max === "number" && max > 4 ? max : ID_SHOWN;
+    return full.length > limit ? full.slice(0, limit - 1) + "\u2026" : full;
   }
 
   // Everything the seat owes, whatever the kind: queued inputs it has not
@@ -144,8 +142,7 @@
     return (execution && execution.failure) || null;
   }
 
-  // A queue alone is never a reason to involve a human. A page that has already
-  // summarised the record into a status word is read from that word instead.
+  // Read the raw execution record or its supplied summary state.
   function readingOf(player) {
     if (!player || !player.id) return "unobserved";
     var execution = player.execution || null;
@@ -255,7 +252,7 @@
         owed: owed,
         queued: owed > 0,
         // The two reads, named by the shell when it names them.
-        needsPerson: namedFlag(player, "needsPerson", needsHuman(reading)),
+        notProgressing: namedFlag(player, "notProgressing", notProgressingReading(reading)),
         owesWork: namedFlag(player, "owesWork", owed > 0),
         live: isLive(reading),
         role: String(player.role || ""),
@@ -296,7 +293,7 @@
       seatedRows: seated,
       readings: readings,
       counts: counts,
-      needHuman: rows.filter(function (row) { return row.needsPerson; }),
+      notProgressing: rows.filter(function (row) { return row.notProgressing; }),
       owing: rows.filter(function (row) { return row.owesWork; }),
       listed: rows.filter(isListed),
       bandRank: bandRank,
@@ -353,10 +350,18 @@
     var w = Math.max(width || 0, 320);
     var total = 0;
     var widest = 0;
+    var longestName = 1;
     for (var t = 0; t < plan.tiers.length; t += 1) {
       total += plan.tiers[t].rows.length;
       if (plan.tiers[t].rows.length > widest) widest = plan.tiers[t].rows.length;
+      var name = String(plan.tiers[t].label || "no ensemble");
+      if (name.length > longestName) longestName = name.length;
     }
+
+    // The column is as wide as the names ask for, inside its own bounds.
+    var gutter = Math.round(longestName * CHAR_W + LABEL_PAD);
+    gutter = Math.max(GUTTER_MIN, Math.min(GUTTER_MAX, gutter));
+    var labelChars = Math.max(6, Math.floor((gutter - LABEL_PAD) / CHAR_W));
 
     // The mark's size follows the run's size, and the tier's pitch follows the
     // mark, so a tier never crowds and never paints outside the box.
@@ -364,7 +369,7 @@
     // The pointer target is the outermost thing a seat draws, so the box's inset
     // is derived from it rather than fixed: a large mark keeps its target inside.
     var hitRadius = Math.max(12, radius + 5);
-    var usable = Math.max(40, w - GUTTER - hitRadius - 2);
+    var usable = Math.max(40, w - gutter - hitRadius - 2);
     var pitchMin = 2 * radius + 7;
     var perRow = widest > 1 ? Math.max(2, Math.floor(usable / pitchMin)) : 1;
     if (widest && perRow > widest) perRow = widest;
@@ -399,7 +404,7 @@
       for (var k = 0; k < count; k += 1) {
         var row = Math.floor(k / inRow);
         var column = k - row * inRow;
-        var x = inRow === 1 ? GUTTER + usable / 2 : GUTTER + column * pitch;
+        var x = inRow === 1 ? gutter + usable / 2 : gutter + column * pitch;
         // The tiers bow away from the podium at the edges, so the hall reads as a
         // seating plan rather than as a table of lines.
         var bow = BOW * Math.pow((x - half) / Math.max(1, half), 2);
@@ -422,6 +427,8 @@
       gap: gap,
       perRow: perRow,
       rows: totalRows,
+      gutter: gutter,
+      labelChars: labelChars,
       width: w,
     };
   }
@@ -467,7 +474,7 @@
       "class": "att-seat"
         + (fresh ? " att-new" : "")
         + (seat.live ? " att-working" : "")
-        + (seat.needsPerson ? " att-stuck" : "")
+        + (seat.notProgressing ? " att-stuck" : "")
         + (options.selectedId === seat.id ? " att-selected" : "")
         + (cursor ? " att-cursor" : ""),
       "data-att-key": "seat:" + seat.id,
@@ -493,8 +500,8 @@
       group.appendChild(halo);
     }
 
-    // The fermata ring: the one accent, on a seat a person must act on.
-    if (seat.needsPerson) {
+    // The fermata ring: the one accent, on a seat whose work the record holds.
+    if (seat.notProgressing) {
       var alarm = svgEl("circle", { "class": "att-ring", r: radius + 4, cx: 0, cy: 0 });
       alarm.style.fill = "none";
       alarm.style.stroke = paint.ring || "none";
@@ -642,17 +649,27 @@
     // The podium line and the tier labels.
     var line = svgEl("line", { x1: 0, x2: laid.width, y1: SEAT_TOP - 8, y2: SEAT_TOP - 8 });
     svg.appendChild(line);
-    // Display each tier's actor count and retain its name in the tooltip.
+    // A group has to be readable without hover: each tier draws its recorded name
+    // flush left and its seat count flush right, so the column reads as a table of
+    // groups and sizes. The full name stays in the name's title, which truncation
+    // can shorten but never replace.
     for (var t = 0; t < plan.tiers.length; t += 1) {
-      var figure = svgEl("text", {
-        "class": "att-section", x: GUTTER - 10, y: plan.tiers[t].y + 3,
+      var tierName = plan.tiers[t].label || "no ensemble";
+      var nameText = svgEl("text", {
+        "class": "att-section-label", x: 2, y: plan.tiers[t].y + 3,
       });
-      setText(figure, String(plan.tiers[t].rows.length));
-      var named = svgEl("title");
-      setText(named, (plan.tiers[t].label || "no ensemble") + ", "
-        + plan.tiers[t].rows.length + (plan.tiers[t].rows.length === 1 ? " seat" : " seats"));
-      figure.appendChild(named);
-      svg.appendChild(figure);
+      setText(nameText, shortId(tierName, laid.labelChars));
+      var full = svgEl("title");
+      setText(full, tierName + ", " + plan.tiers[t].rows.length
+        + (plan.tiers[t].rows.length === 1 ? " seat" : " seats"));
+      nameText.appendChild(full);
+      svg.appendChild(nameText);
+
+      var countText = svgEl("text", {
+        "class": "att-section", x: laid.gutter - 8, y: plan.tiers[t].y + 3,
+      });
+      setText(countText, String(plan.tiers[t].rows.length));
+      svg.appendChild(countText);
     }
 
     var now = Date.now();
@@ -704,7 +721,10 @@
     return svg;
   }
 
-  // Status swatches retain their descriptions in tooltips and accessible labels.
+  // The legend is the decoder for the state vocabulary: each reading keeps its
+  // word in plain sight and the swatch rides beside it, so an operator learning
+  // the states reads them rather than hovering for them. The title repeats the
+  // word for the pointer.
   function legendNode() {
     var legend = document.createElement("div");
     legend.className = "att-legend";
@@ -712,7 +732,7 @@
       ["var(--running, #1e7e34)", "", "playing"],
       ["var(--stage-starting, #d7b45a)", "", "starting"],
       ["var(--muted, #5b6478)", "", "owes work"],
-      ["var(--attention, #a2611f)", "", "needs you"],
+      ["var(--attention, #a2611f)", "", "stopped or failed"],
       ["var(--staff, #39404b)", "", "quiet"],
     ];
     for (var i = 0; i < keys.length; i += 1) {
@@ -720,23 +740,24 @@
       key.className = "att-key";
       key.dataset.attKey = "legend:" + keys[i][2];
       key.setAttribute("title", keys[i][2]);
-      key.setAttribute("aria-label", keys[i][2]);
       var swatch = document.createElement("i");
       swatch.style.background = keys[i][0];
       if (keys[i][1]) swatch.style.border = "1px solid " + keys[i][1];
+      swatch.setAttribute("aria-hidden", "true");
       key.appendChild(swatch);
+      key.appendChild(span(null, keys[i][2]));
       legend.appendChild(key);
     }
     return legend;
   }
 
-  // One row per seat that needs a person or holds a queue. A seat needing a
-  // person takes the accent; a queue is muted, so routine delivery is never
-  // presented as an intervention request.
+  // One row per seat the record holds or that holds a queue. A held seat takes the
+  // accent; a queue is muted, so routine delivery is never presented as an
+  // intervention request.
   function chipNode(row, options) {
     var chip = document.createElement("button");
     chip.type = "button";
-    var stuck = row.needsPerson;
+    var stuck = row.notProgressing;
     chip.className = "lane-chip att-" + row.reading
       + (stuck ? " att-need" : " att-queued")
       + (row.live ? " att-live" : "")
@@ -895,13 +916,13 @@
       total: listed.length,
       folded: folded,
       expanded: expanded,
-      humans: result.needHuman.length,
+      notProgressing: result.notProgressing.length,
     };
 
     if (!listed.length) {
       var quiet = document.createElement("p");
       quiet.className = "att-quiet";
-      setText(quiet, "Nothing needs you. "
+      setText(quiet, "Nothing is stopped, failed or waiting on input. "
         + (result.counts.running + result.counts.waiting) + " playing or starting.");
       container.appendChild(quiet);
       return result;
@@ -917,14 +938,15 @@
       fold.className = "lane-chip att-fold";
       fold.dataset.attKey = "fold";
       fold.setAttribute("aria-expanded", expanded ? "true" : "false");
-      // The control reports the folded count and its action.
-      setText(fold, expanded ? "\u2212" : "+" + folded);
+      // The control says what it does in plain words beside its figure, so its
+      // meaning never rests on a hover.
+      setText(fold, expanded ? "fewer" : "+" + folded + " more");
       fold.setAttribute("title", expanded
         ? "Show the " + STRIP_LIMIT + " highest"
         : "Show all " + listed.length + ", " + folded + " folded");
       fold.setAttribute("aria-label", expanded
         ? "Show the " + STRIP_LIMIT + " highest"
-        : "Show all " + listed.length + " seats that need a person or owe work, "
+        : "Show all " + listed.length + " seats the record holds or that owe work, "
           + folded + " folded");
       fold.addEventListener("click", function () {
         expandedByContainer.set(container, !expanded);

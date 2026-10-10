@@ -1,15 +1,20 @@
 /* Selected actor, finding and complete message reads in the oversight document.
    Message read states and bodies come from the shell; buttons request reads.
-   The seat heading carries a status dot: failed red, needs-person
-   attention, running green, everything else muted. The attention tone
-   marks a seat a person must act on (an explicit stop or a failed
-   attempt) and reads seat.needsPerson; queued messages never take it.
+   The seat heading carries a status dot: failed red, stopped-seat
+   attention, running green, everything else muted. The dot takes the
+   failed ink for a failed seat and the attention ink for a stopped
+   one, reading seat.notProgressing: the record holds the seat,
+   stopped or failed. Queued messages never take either ink.
    Changes read as a vertical timeline and the sharing path as a node
    chain, both drawn from the same recorded fields as the prose they
    replace. All labels arrive through textContent.
    The seat block leads with state: the status word set large beside
    its tone dot with the owed figure next to it. Reference facts sit
-   in a small muted grid below; the failure line reads as a warning. */
+   in a small muted grid below; the failure line reads as a warning.
+   A finding states its kind when served, its evidence as the retained
+   message it points at (rendered inline when the route supplies the
+   object, read on demand otherwise), and its recorded relations as
+   statements. Absent fields leave the block as it reads without them. */
 
 var SEL_EVENT_LIMIT = 8;
 var selEventsOpen = false;
@@ -66,9 +71,9 @@ function selEventText(ev) {
   return parts.join(" · ");
 }
 
-function selDot(status, needsPerson) {
+function selDot(status, notProgressing) {
   if (status === "failed") return "var(--failed)";
-  if (needsPerson) return "var(--attention)";
+  if (notProgressing) return "var(--attention)";
   if (status === "running") return "var(--running)";
   return "var(--muted)";
 }
@@ -110,6 +115,22 @@ function selTail(id) {
   var text = String(id || "");
   if (text.length <= 14) return text;
   return "…" + text.slice(-12);
+}
+
+// A served message reference, normalized to the id the read uses.
+// Accepts a bare id, a message:ID reference, or an object carrying
+// one. Unparseable references read as absent.
+function selMsgRef(ref) {
+  var raw = selMsgRaw(ref);
+  return raw.replace(/^message:/, "");
+}
+
+function selMsgRaw(ref) {
+  if (typeof ref === "string") return ref;
+  if (ref && typeof ref === "object") {
+    return String(ref.id || ref.reference || ref.messageId || ref.message || "");
+  }
+  return "";
 }
 
 // The sharing path as a node chain: one stop per recorded handoff, edges
@@ -214,7 +235,7 @@ function renderSelection(mount, data, options) {
     var owed = selOwed(seat);
     var state = selEl("p", "sel-state");
     var dot = selEl("span", "sel-dot");
-    dot.style.background = selDot(seat.status, seat.needsPerson);
+    dot.style.background = selDot(seat.status, seat.notProgressing);
     dot.setAttribute("aria-hidden", "true");
     state.appendChild(dot);
     state.appendChild(selEl("span", "sel-status", seat.status || "unknown"));
@@ -244,16 +265,90 @@ function renderSelection(mount, data, options) {
   if (finding) {
     var findingBlock = selEl("div", "sel-block");
     findingBlock.appendChild(selEl("h2", "doc-section", "Finding " + (finding.id || "")));
-    selFacts(findingBlock, [
-      ["claim", finding.claim, "sel-claim"],
-      ["evidence", finding.evidence],
-      ["limits", finding.limits],
-      ["author", finding.author],
-    ]);
+    var facts = [];
+    if (finding.kind) facts.push(["kind", finding.kind]);
+    facts.push(["claim", finding.claim, "sel-claim"]);
+    var evObj = finding.evidenceMessage && typeof finding.evidenceMessage === "object"
+      ? finding.evidenceMessage : null;
+    var evMid = evObj ? selMsgRef(evObj.id || "") : selMsgRef(finding.evidenceMessage);
+    var evInline = Boolean(evObj && typeof evObj.body === "string");
+    if (!evMid) facts.push(["evidence", finding.evidence]);
+    facts.push(["limits", finding.limits]);
+    facts.push(["author", finding.author]);
+    selFacts(findingBlock, facts);
+    if (evMid) {
+      var evRaw = selMsgRaw(finding.evidenceMessage);
+      var evOpen = selMsgOpen.has(evMid);
+      var evRead = (input.messages || {})[evMid] || null;
+      var evMessage = evRead && evRead.state === "ok" ? evRead.message : null;
+      var evButton = selEl("button", "sel-msg");
+      var evMark = selEl("span", "sel-kind");
+      evMark.setAttribute("aria-hidden", "true");
+      evButton.appendChild(evMark);
+      evButton.appendChild(document.createTextNode(
+        (evOpen ? "Hide evidence " : "Read evidence ") + selTail(evMid)));
+      evButton.type = "button";
+      evButton.dataset.selkey = "sel:evmsg:" + evMid;
+      evButton.setAttribute("title", evRaw);
+      evButton.setAttribute("aria-label",
+        (evOpen ? "Hide evidence " : "Read evidence ") + evRaw);
+      evButton.setAttribute("aria-expanded", String(evOpen));
+      evButton.addEventListener("click", function () {
+        if (selMsgOpen.has(evMid)) {
+          selMsgOpen.delete(evMid);
+        } else {
+          selMsgOpen.add(evMid);
+        }
+        renderSelection(selLast.mount, selLast.data, selLast.options);
+        if (!evInline && selMsgOpen.has(evMid) && (!evRead || evRead.state !== "ok")
+          && options && typeof options.onReadMessage === "function") {
+          options.onReadMessage(evMid);
+        }
+      });
+      findingBlock.appendChild(evButton);
+      if (evOpen) {
+        if (evInline) {
+          var evMeta = [];
+          if (evObj.sender) evMeta.push("from " + evObj.sender);
+          if (evObj.recipient) evMeta.push("to " + evObj.recipient);
+          if (evMeta.length) {
+            findingBlock.appendChild(selEl("p", "muted", evMeta.join(" · ")));
+          }
+          findingBlock.appendChild(selEl("p", "sel-body", evObj.body));
+          if (evObj.body === "") {
+            findingBlock.appendChild(selEl("p", "muted", "Stored body is empty."));
+          }
+        } else if (evMessage && typeof evMessage.body === "string") {
+          findingBlock.appendChild(selEl("p", "sel-body", evMessage.body));
+          if (evMessage.body === "") {
+            findingBlock.appendChild(selEl("p", "muted", "Stored body is empty."));
+          }
+        } else if (evRead && evRead.state === "reading") {
+          findingBlock.appendChild(selEl("p", "muted", "Reading message…"));
+        } else {
+          findingBlock.appendChild(selEl("p", "muted", "The cited message is not held."));
+        }
+      }
+    }
     var steps = Array.isArray(finding.promotions) ? finding.promotions : [];
     if (steps.length) {
       findingBlock.appendChild(selEl("p", null, "Sharing path"));
       findingBlock.appendChild(selPathChain(steps, finding.author));
+    }
+    var relations = Array.isArray(finding.relations) ? finding.relations : [];
+    if (relations.length) {
+      findingBlock.appendChild(selEl("p", null, "Relations"));
+      var rels = selEl("ul", null);
+      relations.forEach(function (rel) {
+        if (!rel) return;
+        if (typeof rel === "string") {
+          rels.appendChild(selEl("li", null, rel));
+          return;
+        }
+        rels.appendChild(selEl("li", null,
+          (rel.source || "?") + " — " + (rel.relation || "?") + " → " + (rel.target || "?")));
+      });
+      findingBlock.appendChild(rels);
     }
     mount.appendChild(findingBlock);
   }
@@ -295,7 +390,7 @@ function renderSelection(mount, data, options) {
       mark.setAttribute("aria-hidden", "true");
       button.appendChild(mark);
       button.appendChild(document.createTextNode(
-        (open ? "Hide " : "Read ") + selTail(mid) + senderBit));
+        (open ? "Hide " : "Read ") + kindWord + " " + selTail(mid) + senderBit));
       button.type = "button";
       button.dataset.selkey = "sel:msg:" + mid;
       button.setAttribute("title", kindWord + " " + mid);

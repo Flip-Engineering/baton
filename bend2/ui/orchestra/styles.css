@@ -134,9 +134,18 @@ a { color: var(--selection); }
   color: var(--muted);
 }
 
-/* Overall run state. */
-.plate-mark {
+/* Overall run state, with its operational reading beside it: the mark carries the
+   page's character, the reading says what it means. An unfamiliar word without
+   its reading is a riddle, so the two travel together - and the mark element
+   holds the word alone, since the checks read that element's own text. */
+.plate-state {
   margin: 0 0 0 auto;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.plate-mark {
   font-family: var(--display);
   font-style: italic;
   font-size: 30px;
@@ -202,6 +211,13 @@ a { color: var(--selection); }
 .plate-nav a:focus-visible {
   color: var(--ink);
   border-bottom-color: var(--ink);
+}
+
+/* Each section link says what the section is for, so the names need no decoding. */
+.plate-nav a span {
+  color: var(--muted);
+  font-size: 11px;
+  margin-left: 4px;
 }
 
 /* A movement jump leaves the heading clear of the window edge. */
@@ -393,16 +409,24 @@ button:active { background: var(--wash); }
   scrollbar-gutter: stable;
 }
 
-/* The paper: the written score. Staves left, the record beside them. */
-.paper {
+/* The written surfaces and the record rail: one grid, so the record keeps the
+   reader's selection in view while the map and the staves pass it. */
+.work {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(320px, 420px);
-  gap: 8px 34px;
-  padding: 22px 28px 26px;
+  grid-template-columns: minmax(0, 1fr) minmax(330px, 400px);
+  gap: 0 28px;
+  padding: 0 28px 30px;
   border-bottom: 1px solid var(--hairline);
 }
 
+.work-main { min-width: 0; }
+
 .staves-col { min-width: 0; }
+
+.paper {
+  padding: 20px 0 0;
+  border-top: 1px solid var(--hairline);
+}
 
 .record-col {
   position: sticky;
@@ -412,14 +436,14 @@ button:active { background: var(--wash); }
   max-height: calc(100vh - 24px);
   overflow-y: auto;
   scrollbar-gutter: stable;
-  /* The column floats while the page scrolls, so it carries the paper ground
-     with it; without it the map draws through the record. */
+  /* The rail floats while the page scrolls, so it carries the paper ground with
+     it; without it the map draws through the record. */
   background: var(--paper);
   border-left: 1px solid var(--hairline);
-  padding-left: 14px;
+  padding: 20px 0 0 16px;
 }
 
-.map { padding: 20px 28px 32px; }
+.map { padding: 20px 0 28px; }
 
 /* The canvas box: the graph pans and zooms inside its own frame. The layer
    publishes the height its drawing needs and the shell sets it within these
@@ -436,7 +460,7 @@ button:active { background: var(--wash); }
   overflow: hidden;
 }
 
-/* The rail: the seats that need a person, one chip each, above the page. */
+/* The rail: the seats whose work is not progressing, one chip each, above the page. */
 .rail {
   display: flex;
   flex-wrap: wrap;
@@ -488,6 +512,13 @@ button:active { background: var(--wash); }
 
 .rail button:hover,
 .rail button:focus-visible { color: #0d0f12; background: var(--attention-lit); }
+
+/* The chip's ink is the seat's state, so the band reads at a glance: a held seat in
+   the failed or attention light, the default being an explicit stop. */
+.rail button.rail-failed { color: var(--failed-lit); border-color: var(--failed-lit); }
+
+.rail button.rail-failed:hover,
+.rail button.rail-failed:focus-visible { background: var(--failed-lit); color: #0d0f12; }
 
 /* The staff gutter: five lines per actor row, its recorded entries as note
    heads on the shared window. Filled is committed, open is playing now. */
@@ -679,6 +710,20 @@ button:active { background: var(--wash); }
   overflow-wrap: normal;
 }
 
+/* The row's one state word. A held seat states itself in the ink of the fact that
+   holds it: red for a failed attempt, amber for a recorded stop. */
+.doc-work.failed {
+  color: var(--failed);
+  font-family: var(--serif);
+  font-style: italic;
+}
+
+.doc-work.stopped {
+  color: var(--attention);
+  font-family: var(--serif);
+  font-style: italic;
+}
+
 /* A row's state reads as the rule down its left edge, the way a marked bar
    reads in a score: red for a failed turn, amber for a seat held by a recorded
    stop or a seat whose inbox is behind, green for a seat playing now, hairline
@@ -692,6 +737,7 @@ button:active { background: var(--wash); }
 .doc-row.state-stopped { border-left-color: var(--attention); }
 .doc-row.state-queued { border-left-color: var(--attention); }
 .doc-row.state-working { border-left-color: var(--running); }
+.doc-row.state-waiting { border-left-color: var(--muted); }
 .doc-row.state-quiet { border-left-color: var(--staff); }
 
 .doc-row.state-quiet .doc-name,
@@ -703,31 +749,17 @@ button:active { background: var(--wash); }
   box-shadow: 0 0 0 2px rgba(30, 126, 52, 0.18);
 }
 
-/* The state reads in the row: failed for a failed attempt, stopped for a seat the
-   record holds at an explicit stop. */
-.doc-fail-word,
-.doc-held-word {
-  flex: none;
-  color: var(--failed);
-  font-family: var(--serif);
-  font-style: italic;
-  font-size: var(--step1);
-}
-
-.doc-held-word { color: var(--attention); }
-
 .doc-row.selected { border-left-color: var(--selection); background: var(--wash); }
 
 /* The work leads. Names, ages and counts follow it and recede. */
 .doc-lead { flex: 1 1 auto; min-width: 0; }
 .doc-work { display: block; overflow-wrap: anywhere; }
-.doc-work.stale { color: var(--muted); }
 .doc-work.quiet { color: var(--muted); font-style: italic; }
 
 /* Waiting reads in two kinds. A queue of input this seat has not answered keeps
    the attention accent as an outline; reports this seat was sent and never
    acknowledged are filled ink, because "was given work" and "never answered" are
-   different things to a person watching. */
+   different things to the reader. */
 .doc-pending {
   flex: none;
   min-width: 20px;
@@ -786,13 +818,15 @@ button:active { background: var(--wash); }
 
 .doc-ribbon { min-width: 0; }
 
-/* Narrow screens: the record drops under the staves and the rail wraps. */
+/* Narrow screens: the record drops under the written surfaces and the rail wraps. */
 @media (max-width: 1000px) {
-  .paper { grid-template-columns: minmax(0, 1fr); }
+  .work { grid-template-columns: minmax(0, 1fr); }
 
   .record-col {
     position: static;
     max-height: none;
+    border-left: 0;
+    padding-left: 0;
   }
 
   .map,
@@ -807,3 +841,84 @@ button:active { background: var(--wash); }
    slur carry the graphic, and the layer holds the line to one compact row. */
 .doc-row-knowledge { padding: 0 8px 6px 14px; }
 
+
+/* ── the map's scope line ─────────────────────────────────────────────────── */
+/* The map states which holdings it drew and offers the one step to every held
+   record; the scope word reads as a measurement, not as a control. */
+
+.doc-scope-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  margin-left: auto;
+}
+
+.doc-scope {
+  font-size: var(--step1);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.doc-scope-btn {
+  appearance: none;
+  border: 0;
+  border-bottom: 1px solid var(--hairline);
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: var(--step1);
+  color: var(--selection);
+  cursor: pointer;
+}
+
+.doc-scope-btn:hover,
+.doc-scope-btn:focus-visible { border-bottom-color: var(--selection); }
+
+.doc-scope-btn[aria-pressed="true"] {
+  color: var(--attention);
+  border-bottom-color: var(--attention);
+}
+
+/* A band's members as one state line: a tick per seat in the same inks the rows use,
+   so a group's activity reads at a glance. */
+.doc-band-ticks {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 8px;
+}
+
+.doc-tick {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  background: var(--staff);
+}
+
+.doc-tick.state-working { background: var(--running); }
+.doc-tick.state-waiting { background: var(--muted); }
+.doc-tick.state-queued,
+.doc-tick.state-stopped { background: var(--attention); }
+.doc-tick.state-failed { background: var(--failed); }
+
+/* A band that names one recorded ensemble carries its group's knowledge: the name
+   itself is the control, in the ink of a link and the face it already had. */
+.doc-band-open {
+  appearance: none;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-family: var(--serif);
+  font-style: italic;
+  font-size: var(--step1);
+  color: var(--selection);
+  cursor: pointer;
+  text-align: left;
+}
+
+.doc-band-open:hover,
+.doc-band-open:focus-visible { border-bottom-color: var(--selection); }

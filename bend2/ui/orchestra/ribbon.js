@@ -104,26 +104,31 @@ function ribbonKindTally(events, limit) {
     .slice(0, limit);
 }
 
-// The tempo mark at the axis's left end states one measured fact about the
-// window, using the page's expression marks where their meaning is true: solo
-// when one seat carries the whole stretch, tutti while the busiest stretch
-// carries twelve or more entries, attacca while entries arrive. The counts the
-// shell already computes are quoted, never recomputed.
+// The mark at the axis's left end states one measured fact about the window in
+// a familiar word: one seat when a single seat carries the whole stretch, busy
+// while the busiest stretch carries twelve or more entries, live while entries
+// arrive. Each word is set beside a plain reading of the same measurement, so
+// nothing has to be decoded. The counts the shell already computes are quoted,
+// never recomputed.
 function ribbonTempo(busiest, uniqueSeats, recent, shellCounts) {
   let word = "";
-  let meaning = "";
+  let reading = "";
   if (uniqueSeats === 1) {
-    word = "solo";
-    meaning = "one seat carries every entry in this window";
+    word = "one seat";
+    reading = "one seat carries the window";
   } else if (busiest >= 12) {
-    word = "tutti";
-    meaning = "the busiest stretch carries " + busiest + " entries";
+    word = "busy";
+    reading = "twelve or more entries in one stretch";
   } else if (recent) {
-    word = "attacca";
-    meaning = "entries keep arriving";
+    word = "live";
+    reading = "entries are arriving";
   }
   if (!word) return null;
-  return { word: word, title: meaning + (shellCounts ? " \u00b7 " + shellCounts : "") };
+  return {
+    word: word,
+    reading: reading,
+    title: reading + (shellCounts ? " \u00b7 " + shellCounts : ""),
+  };
 }
 
 // The counts the shell already computed, quoted in the mark's title.
@@ -325,6 +330,10 @@ function renderRibbon(container, data, options) {
     mark.title = tempo.title;
     mark.textContent = tempo.word;
     head.appendChild(mark);
+    const reading = document.createElement("span");
+    reading.className = "ribbon-tempo-read";
+    reading.textContent = tempo.reading;
+    head.appendChild(reading);
   }
   const summary = document.createElement("span");
   summary.className = "ribbon-summary";
@@ -349,7 +358,7 @@ function renderRibbon(container, data, options) {
       return ribbonEventText(current, position, total)
         + (current && current.at ? " \u00b7 " + ribbonAge(current.at) : "");
     }
-    return ribbonCount(total) + " recorded entries" + (spanWord ? " over " + spanWord : "");
+    return ribbonCount(total) + " entries" + (spanWord ? " over " + spanWord : "");
   }
 
   // One line for the figures, the scrub position or a hovered stretch: the line

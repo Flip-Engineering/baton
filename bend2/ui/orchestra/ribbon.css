@@ -48,6 +48,14 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* The reading beside an expression mark: plain words, so the mark is never a
+   riddle, set quieter than the figures it sits with. */
+.ribbon-tempo-read {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--muted);
+}
+
 /* A kind named in the figures line carries the ink its bars carry. */
 .ribbon-kind-word { color: var(--ink); }
 .ribbon-kind-word[class*="ribbon-kind-message-"] { color: var(--ink); }
