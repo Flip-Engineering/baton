@@ -18,13 +18,17 @@
 //          {id: {owner, coupling, received}}, overview.scope
 //          {kind, id}, and ensembles [{id, owner, coupling,
 //          members}] for the whole canvas. The typed contract adds
-//          overview.nodes [{reference, kind, referenceOnly,
-//          deliveryRead}] and overview.edges [{source, target,
-//          provenance}]: an authored edge is a solid stroke with a
-//          filled head, a recorded-evidence edge a dotted stroke with
-//          an open ring at the evidence. A reference-only endpoint
-//          draws as a hollow ring, never a node. Absent nodes and
-//          edges draw exactly today's map. Identity pairs kind and id:
+//          overview.nodes [{reference, kind, referenceOnly}] and
+//          overview.edges [{id, source, target, sourceKind,
+//          targetKind, relation, provenance}]: an authored edge is a
+//          solid stroke with a filled head, a recorded-evidence edge
+//          a dotted stroke with an open ring at the evidence, and the
+//          recorded relation name lives in the edge's label and card.
+//          A reference-only endpoint draws as a hollow ring, never a
+//          node. Each semantic edge draws once: a typed edge wins
+//          over the compatibility relation or evidence stub naming
+//          the same ends, and a payload without typed edges draws
+//          exactly today's map. Identity pairs kind and id:
 //          sessions keep their bare id for the shell and the fixture,
 //          while mixed maps, members, edges and lookups carry the kind
 //          in its own slot, so a session sharing a group's literal id
@@ -94,6 +98,14 @@
   function kwKeyId(key) {
     const i = String(key).indexOf(":");
     return i < 0 ? String(key) : String(key).slice(i + 1);
+  }
+
+  // A typed edge's attribute id back to the bare id the nodes
+  // carry: finding ends keep their finding: prefix in the
+  // attributes, and every other kind passes through unchanged.
+  function kwTypedLookupId(kind, id) {
+    if (kind === "finding") return kwFindingRef(id) || id;
+    return id;
   }
 
   // A shell selection resolves to its kind by recorded membership:
@@ -496,9 +508,11 @@
   function kwIsolateSvg(svg, key, depth) {
     const layer = svg.querySelector("g.kw-edges");
     if (!layer) return;
-    const endKey = (edge, side) => kwKey(
-      edge.getAttribute(side === "from" ? "data-from-kind" : "data-to-kind") || "",
-      edge.getAttribute(side === "from" ? "data-from" : "data-to") || "");
+    const endKey = (edge, side) => {
+      const kind = edge.getAttribute(side === "from" ? "data-from-kind" : "data-to-kind") || "";
+      const raw = edge.getAttribute(side === "from" ? "data-from" : "data-to") || "";
+      return kwKey(kind, kwTypedLookupId(kind, raw));
+    };
     const near = new Set([key]);
     for (const edge of layer.children) {
       const from = endKey(edge, "from");
@@ -1458,76 +1472,15 @@
       }
       return mark;
     };
-    // Edges resolve first with no drawing, so the tags can settle before
-    // anything paints. A reference end meets the tag the relation earns
-    // it; the tag is shared when several relations cite one endpoint.
-    const relateSpecs = [];
-    for (const r of overview.relations || []) {
-      const fromRef = r.source !== undefined && r.source !== null ? r.source : r.from;
-      const toRef = r.target !== undefined && r.target !== null ? r.target : r.to;
-      const a = kwResolveEnd(fromRef, layout.findings, findingPos, actorPos);
-      const b = kwResolveEnd(toRef, layout.findings, findingPos, actorPos);
-      if (!a || !b) continue;
-      if (a.kind === "hidden" || b.kind === "hidden") continue;
-      if (a.kind === "node" && b.kind === "node" && a.id === b.id) continue;
-      const name = String(r.relation || r.name || r.id || "related");
-      const needA = a.kind === "ref";
-      const needB = b.kind === "ref";
-      if (needA && needB) {
-        const author = actorPos.get(r.author);
-        if (!author) continue;
-        const first = kwRefSlot(kwKey("session", r.author), author, a);
-        const second = kwRefSlot(kwKey("session", r.author), author, b);
-        first.relations.push({ name, other: b.ref });
-        second.relations.push({ name, other: a.ref });
-      } else {
-        if (needA && !nodePos(b)) continue;
-        if (needB && !nodePos(a)) continue;
-        if (needA) kwRefSlot(kwKey(kwDrawnKind(b.id), b.id), nodePos(b), a).relations.push({ name, other: b.id });
-        if (needB) kwRefSlot(kwKey(kwDrawnKind(a.id), a.id), nodePos(a), b).relations.push({ name, other: a.id });
-      }
-      // Node-to-node names draw at the edge midpoint; their box joins
-      // the obstacles so settling tags keep clear of edge names too.
-      const shown = a.kind === "node" && b.kind === "node"
-        ? (name.length > 24 ? name.slice(0, 23) + "…" : name) : "";
-      if (shown) {
-        const pa = nodePos(a);
-        const pb = nodePos(b);
-        const mx = (pa.x + pb.x) / 2;
-        const my = (pa.y + pb.y) / 2;
-        // Midpoint names stay out of the stroke gaps: settling tags
-        // still avoid their boxes, but hidden text carves no gaps.
-        kwLabelBoxes.push({ x0: mx - shown.length * 3.5 - 4, y0: my - 12,
-          x1: mx + shown.length * 3.5 + 4, y1: my + 2, gap: false });
-      }
-      relateSpecs.push({ a, b, name, shown });
-    }
-    // Evidence the store actually holds draws too: a drawn finding whose
-    // evidence parses as a structured reference earns a tag and a quiet
-    // stub, the only links a scope without relations can honestly show.
-    // Prose evidence stays caption and card text; it names no record.
-    const evidenceSpecs = [];
-    for (const f of layout.findings.values()) {
-      if (!findingPos.has(f.id)) continue;
-      const raw = String((f && f.evidence) || "");
-      if (!raw || (!KW_REF_FAMILIES.test(raw) && !kwFindingRef(raw)
-        && !actorPos.has(raw) && !findingPos.has(raw))) continue;
-      const end = kwResolveEnd(raw, layout.findings, findingPos, actorPos);
-      if (!end || end.kind === "hidden") continue;
-      if (end.kind === "node" && end.id === f.id) continue;
-      if (end.kind === "ref") {
-        const mark = kwRefSlot(kwKey("finding", f.id), findingPos.get(f.id), end);
-        if (mark.evidenceOf.indexOf(f.id) < 0) mark.evidenceOf.push(f.id);
-      }
-      evidenceSpecs.push({ a: { kind: "node", id: f.id }, b: end });
-    }
-    // Typed edges resolve against the drawn canvas: a held finding,
-    // session or group end meets its node, any other end floats a
-    // ring on the stub fan. The typed node record overrides the
-    // family inference: referenceOnly means not held whatever the
-    // reference looks like, and an end with no node record at all
-    // never pretends to a record. An edge with no drawn end draws
-    // nothing and counts as outside instead of inventing a seat.
+    // Typed edges resolve first, before the compatibility passes, so
+    // a relation or evidence stub naming the same semantic edge can
+    // defer to the typed drawing. A held finding, session or group
+    // end meets its node, any other end floats a ring on the stub
+    // fan. The typed node record overrides the family inference:
+    // referenceOnly means not held whatever the reference looks
+    // like, and an end with no node record at all never pretends to
+    // a record. An edge with no drawn end draws nothing and counts
+    // as outside instead of inventing a seat.
     const typedNodes = new Map();
     for (const n of overview.nodes || []) {
       if (n && n.reference !== undefined && n.reference !== null) {
@@ -1584,10 +1537,7 @@
         const mark = kwRefSlot(kwKey(anchor.drawn, anchor.id), at,
           { ref: end.ref, family: fam });
         const refOnly = rec ? rec.referenceOnly === true : true;
-        mark.typed = {
-          kind: rkind, referenceOnly: refOnly,
-          deliveryRead: rec ? rec.deliveryRead : undefined,
-        };
+        mark.typed = { kind: rkind, referenceOnly: refOnly };
         mark.unheld = refOnly;
         const label = end.ref.length > 22 ? end.ref.slice(0, 21) + "…" : end.ref;
         mark.shown = refOnly ? label + " · not held" : label;
@@ -1595,7 +1545,109 @@
       };
       if (a.kind === "ring") slotRing(a);
       if (b.kind === "ring") slotRing(b);
-      typedSpecs.push({ a, b, provenance: prov });
+      typedSpecs.push({
+        a, b, provenance: prov,
+        relation: String((e && e.relation) || ""),
+        edgeId: e && e.id !== undefined && e.id !== null ? String(e.id) : "",
+      });
+    }
+    // Drawn typed edges by canonical ends. Authored keys carry the
+    // relation name and the direction; cited keys both directions of
+    // one citation. A compatibility end naming a drawn group reads as
+    // the group, the way the typed resolver sees it.
+    const kwTypedMatchKey = (end) => end.kind === "node"
+      ? end.drawn + ":" + end.id : "ref:" + end.ref;
+    const kwRelMatchKey = (end) => {
+      if (end.kind === "node") return kwDrawnKind(end.id) + ":" + end.id;
+      if (groupPos.has(end.ref)) return "group:" + end.ref;
+      return "ref:" + end.ref;
+    };
+    const kwTypedAuthoredKeys = new Set();
+    const kwTypedCitedKeys = new Set();
+    for (const spec of typedSpecs) {
+      const ka = kwTypedMatchKey(spec.a);
+      const kb = kwTypedMatchKey(spec.b);
+      if (spec.provenance === "authored") {
+        if (spec.relation) kwTypedAuthoredKeys.add(ka + "|" + kb + "|" + spec.relation);
+      } else {
+        kwTypedCitedKeys.add(ka + "|" + kb);
+        kwTypedCitedKeys.add(kb + "|" + ka);
+      }
+    }
+    // Edges resolve first with no drawing, so the tags can settle before
+    // anything paints. A reference end meets the tag the relation earns
+    // it; the tag is shared when several relations cite one endpoint.
+    const relateSpecs = [];
+    for (const r of overview.relations || []) {
+      const fromRef = r.source !== undefined && r.source !== null ? r.source : r.from;
+      const toRef = r.target !== undefined && r.target !== null ? r.target : r.to;
+      const a = kwResolveEnd(fromRef, layout.findings, findingPos, actorPos);
+      const b = kwResolveEnd(toRef, layout.findings, findingPos, actorPos);
+      if (!a || !b) continue;
+      if (a.kind === "hidden" || b.kind === "hidden") continue;
+      if (a.kind === "node" && b.kind === "node" && a.id === b.id) continue;
+      const name = String(r.relation || r.name || r.id || "related");
+      // A drawn typed edge wins over the compatibility row naming the
+      // same directed ends with the same relation name, so one fact
+      // draws once. An unnamed typed edge proves no sameness and
+      // suppresses nothing; without typed edges the set is empty and
+      // every relation draws as before.
+      if (kwTypedAuthoredKeys.has(
+        kwRelMatchKey(a) + "|" + kwRelMatchKey(b) + "|" + name)) continue;
+      const needA = a.kind === "ref";
+      const needB = b.kind === "ref";
+      if (needA && needB) {
+        const author = actorPos.get(r.author);
+        if (!author) continue;
+        const first = kwRefSlot(kwKey("session", r.author), author, a);
+        const second = kwRefSlot(kwKey("session", r.author), author, b);
+        first.relations.push({ name, other: b.ref });
+        second.relations.push({ name, other: a.ref });
+      } else {
+        if (needA && !nodePos(b)) continue;
+        if (needB && !nodePos(a)) continue;
+        if (needA) kwRefSlot(kwKey(kwDrawnKind(b.id), b.id), nodePos(b), a).relations.push({ name, other: b.id });
+        if (needB) kwRefSlot(kwKey(kwDrawnKind(a.id), a.id), nodePos(a), b).relations.push({ name, other: a.id });
+      }
+      // Node-to-node names draw at the edge midpoint; their box joins
+      // the obstacles so settling tags keep clear of edge names too.
+      const shown = a.kind === "node" && b.kind === "node"
+        ? (name.length > 24 ? name.slice(0, 23) + "…" : name) : "";
+      if (shown) {
+        const pa = nodePos(a);
+        const pb = nodePos(b);
+        const mx = (pa.x + pb.x) / 2;
+        const my = (pa.y + pb.y) / 2;
+        // Midpoint names stay out of the stroke gaps: settling tags
+        // still avoid their boxes, but hidden text carves no gaps.
+        kwLabelBoxes.push({ x0: mx - shown.length * 3.5 - 4, y0: my - 12,
+          x1: mx + shown.length * 3.5 + 4, y1: my + 2, gap: false });
+      }
+      relateSpecs.push({ a, b, name, shown });
+    }
+    // Evidence the store actually holds draws too: a drawn finding whose
+    // evidence parses as a structured reference earns a tag and a quiet
+    // stub, the only links a scope without relations can honestly show.
+    // Prose evidence stays caption and card text; it names no record.
+    const evidenceSpecs = [];
+    for (const f of layout.findings.values()) {
+      if (!findingPos.has(f.id)) continue;
+      const raw = String((f && f.evidence) || "");
+      if (!raw || (!KW_REF_FAMILIES.test(raw) && !kwFindingRef(raw)
+        && !actorPos.has(raw) && !findingPos.has(raw))) continue;
+      const end = kwResolveEnd(raw, layout.findings, findingPos, actorPos);
+      if (!end || end.kind === "hidden") continue;
+      if (end.kind === "node" && end.id === f.id) continue;
+      // A drawn citation wins over the stub parsing the same finding
+      // and evidence, so one citation draws once. Without typed edges
+      // the set is empty and every stub draws as before.
+      if (kwTypedCitedKeys.has(
+        "finding:" + f.id + "|" + kwRelMatchKey(end))) continue;
+      if (end.kind === "ref") {
+        const mark = kwRefSlot(kwKey("finding", f.id), findingPos.get(f.id), end);
+        if (mark.evidenceOf.indexOf(f.id) < 0) mark.evidenceOf.push(f.id);
+      }
+      evidenceSpecs.push({ a: { kind: "node", id: f.id }, b: end });
     }
     // Tags settle top-down past nodes, text and the tags above; a tag
     // keeps stepping until it clears, so settling never places overlap
@@ -1939,12 +1991,14 @@
       const to = typedEnd(spec.b);
       if (!from || !to) continue;
       const authored = spec.provenance === "authored";
-      const aRef = spec.a.kind === "node" ? spec.a.id : spec.a.ref;
-      const bRef = spec.b.kind === "node" ? spec.b.id : spec.b.ref;
+      // The edge carries its payload strings, so a finding end keeps
+      // its finding: prefix in the attributes; lookups strip it back.
+      const aRef = spec.a.ref;
+      const bRef = spec.b.ref;
       const aKind = spec.a.kind === "node" ? spec.a.drawn : "ref";
       const bKind = spec.b.kind === "node" ? spec.b.drawn : "ref";
       const words = authored ? "authored claim" : "recorded evidence";
-      const g = kwSvg(edgeLayer, "g", {
+      const gAttrs = {
         class: "kw-edge-typed " + (authored ? "kw-edge-authored" : "kw-edge-cited"),
         "data-kind": "typed",
         "data-provenance": spec.provenance,
@@ -1954,20 +2008,22 @@
         "data-to-kind": bKind,
         tabindex: "0",
         role: "button",
-        "aria-label": words + " from " + aRef + " to " + bRef,
-      });
-      const readOf = (end) => {
-        const rec = typedNodes.get(end.ref) || null;
-        return rec ? rec.deliveryRead : undefined;
+        "aria-label": words + (spec.relation ? " '" + spec.relation + "'" : "")
+          + " from " + aRef + " to " + bRef,
       };
+      if (spec.edgeId) gAttrs["data-edge"] = spec.edgeId;
+      // The relation name rides along for shell focus: a focused
+      // relation lights its drawing whichever source drew it.
+      if (spec.relation) gAttrs["data-rel-name"] = spec.relation;
+      const g = kwSvg(edgeLayer, "g", gAttrs);
       const ends = [
-        { kind: aKind, id: aRef, deliveryRead: readOf(spec.a) },
-        { kind: bKind, id: bRef, deliveryRead: readOf(spec.b) },
+        { kind: aKind, id: aRef },
+        { kind: bKind, id: bRef },
       ];
       const activate = () => {
         kwDismissed = null;
         kwLightTyped(svg, g, ends);
-        kwPinTypedCard(container, spec.provenance, ends);
+        kwPinTypedCard(container, spec.provenance, ends, spec.relation, spec.edgeId, opts);
       };
       g.addEventListener("click", () => {
         if (kwConsumePan()) return;
@@ -2000,7 +2056,7 @@
         kwSvg(g, "line", attrs);
       }
       const tip = kwSvg(g, "title", null);
-      tip.textContent = words;
+      tip.textContent = words + (spec.relation ? " '" + spec.relation + "'" : "");
       kwTrackBox(Math.min(from.x, to.x), Math.min(from.y, to.y),
         Math.max(from.x, to.x), Math.max(from.y, to.y));
       if (authored) kwTypedAuthored += 1;
@@ -2383,7 +2439,9 @@
       kwDismissedRelation = "";
     }
     if (fr && fr !== kwDismissedRelation) {
-      const edges = Array.from(svg.querySelectorAll("g.kw-edge-relate"))
+      // Focus follows the relation onto whichever source drew it:
+      // the compatibility stroke or the typed edge.
+      const edges = Array.from(svg.querySelectorAll("g.kw-edge-relate, g.kw-edge-typed"))
         .filter((e) => e.getAttribute("data-rel-name") === fr);
       const first = edges[0];
       const ends = first ? [
@@ -2920,15 +2978,11 @@
       kwEl(card, "p", { class: "kw-card-fact" },
         String(ref.family) + " reference · " + ref.relations.length
         + (ref.relations.length === 1 ? " relation" : " relations"));
-      // A typed endpoint states its recorded kind and, for a message
-      // carrying deliveryRead, the seat's read state as words about
-      // the seat. Absent fields state nothing.
+      // A typed endpoint states its recorded kind. The delivery
+      // pointer in the node record states no read state, so the card
+      // states none either. Absent fields state nothing.
       if (ref.typed && ref.typed.kind) {
         kwEl(card, "p", { class: "kw-card-fact" }, "kind: " + String(ref.typed.kind));
-      }
-      if (ref.typed && typeof ref.typed.deliveryRead === "boolean") {
-        kwEl(card, "p", { class: "kw-card-fact" }, ref.typed.deliveryRead === true
-          ? "seat read the delivery" : "seat has not read the delivery");
       }
       const refs = kwEl(card, "div", { class: "kw-card-refs" });
       for (const rel of ref.relations) {
@@ -3027,7 +3081,7 @@
   // stay lit, everything else dims. Escape and background clicks clear
   // it through the existing dismiss path, untouched.
   function kwLightRelation(svg, rel) {
-    const names = new Set(rel.ends.map((e) => kwKey(e.kind, e.id)));
+    const names = new Set(rel.ends.map((e) => kwKey(e.kind, kwTypedLookupId(e.kind, e.id))));
     for (const g of svg.querySelectorAll("g.kw-anchor, g.knode, g.kw-cluster, g.kw-ref, g.kw-group")) {
       g.classList.toggle("kw-hover-dim", !names.has(kwNodeKey(g)));
     }
@@ -3048,13 +3102,14 @@
     kwEl(lead, "span", { class: "kw-card-title" }, name);
     lead.appendChild(document.createTextNode(" "));
     kwEl(lead, "span", { class: "kw-card-state" }, "relation");
-    const label = (e) => e.kind === "ref" ? e.id : e.kind + " " + e.id;
+    const label = (e) => e.kind === "ref" ? e.id : e.kind + " " + kwTypedLookupId(e.kind, e.id);
     kwEl(card, "p", { class: "kw-card-fact mono" },
       ends.length === 2 ? label(ends[0]) + " → " + label(ends[1])
       : "ends outside the drawn tiers");
     const pts = [];
     for (const e of ends) {
-      const p = e.kind === "ref" ? kwRefMarks.get(e.id) : kwNodeXY.get(kwKey(e.kind, e.id));
+      const p = e.kind === "ref" ? kwRefMarks.get(e.id)
+        : kwNodeXY.get(kwKey(e.kind, kwTypedLookupId(e.kind, e.id)));
       if (p) pts.push(p);
     }
     kwPlaceCard(container, card, pts.length
@@ -3066,7 +3121,7 @@
   // Activating a typed edge lights only it and its two ends; every
   // other edge dims, related or not.
   function kwLightTyped(svg, edge, ends) {
-    const names = new Set(ends.map((e) => kwKey(e.kind, e.id)));
+    const names = new Set(ends.map((e) => kwKey(e.kind, kwTypedLookupId(e.kind, e.id))));
     for (const g of svg.querySelectorAll("g.kw-anchor, g.knode, g.kw-cluster, g.kw-ref, g.kw-group")) {
       g.classList.toggle("kw-hover-dim", !names.has(kwNodeKey(g)));
     }
@@ -3077,32 +3132,38 @@
     }
   }
 
-  // A typed edge's card names the provenance and its two ends. A
-  // message end carrying deliveryRead states it as a fact about
-  // the seat, never as a mark on the message.
-  function kwPinTypedCard(container, provenance, ends) {
+  // A typed edge's card names the recorded relation and its two
+  // ends, with the edge's own id when the payload carries one. The
+  // relation name lives here and in the edge's label, never on the
+  // canvas. The record button opens the full record at the finding
+  // end through the shell hook, like every other card.
+  function kwPinTypedCard(container, provenance, ends, relation, edgeId, opts) {
     if (!container) return;
     const card = kwOpenCard(container);
     const lead = kwEl(card, "p", { class: "kw-card-lead" });
-    kwEl(lead, "span", { class: "kw-card-title" },
-      provenance === "authored" ? "authored claim" : "recorded evidence");
+    kwEl(lead, "span", { class: "kw-card-title" }, relation
+      || (provenance === "authored" ? "authored claim" : "recorded evidence"));
     lead.appendChild(document.createTextNode(" "));
     kwEl(lead, "span", { class: "kw-card-state" }, "typed edge");
-    const label = (e) => e.kind === "ref" ? e.id : e.kind + " " + e.id;
+    const label = (e) => e.kind === "ref" ? e.id : e.kind + " " + kwTypedLookupId(e.kind, e.id);
     kwEl(card, "p", { class: "kw-card-fact mono" },
       ends.length === 2 ? label(ends[0]) + " → " + label(ends[1])
       : "ends outside the drawn tiers");
-    for (const e of ends) {
-      // Only a boolean states a read; a projection pointer states
-      // nothing, so the card stays silent on it rather than
-      // asserting a negative the payload does not carry.
-      if (typeof e.deliveryRead !== "boolean") continue;
-      kwEl(card, "p", { class: "kw-card-fact" }, e.deliveryRead === true
-        ? "seat read the delivery" : "seat has not read the delivery");
+    if (edgeId) {
+      kwEl(card, "p", { class: "kw-card-ref mono" }, "edge " + edgeId);
+    }
+    const finding = (ends || []).find((e) => e.kind === "finding");
+    if (finding && opts && typeof opts.onOpenRecord === "function") {
+      const open = kwEl(card, "button", { class: "kw-card-open", type: "button" },
+        "Read the full record");
+      open.addEventListener("click", () => {
+        opts.onOpenRecord(kwTypedLookupId("finding", finding.id));
+      });
     }
     const pts = [];
     for (const e of ends) {
-      const p = e.kind === "ref" ? kwRefMarks.get(e.id) : kwNodeXY.get(kwKey(e.kind, e.id));
+      const p = e.kind === "ref" ? kwRefMarks.get(e.id)
+        : kwNodeXY.get(kwKey(e.kind, kwTypedLookupId(e.kind, e.id)));
       if (p) pts.push(p);
     }
     kwPlaceCard(container, card, pts.length
