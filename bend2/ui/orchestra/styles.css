@@ -11,17 +11,17 @@
 :root {
   color-scheme: light;
 
-  /* Paper: the written score. */
-  --paper: #e6e7e1;
-  --surface: #eceded;
-  --ink: #15171b;
-  --wash: #dcded7;
-  --hairline: #c9ccc4;
-  --muted: #5b6478;
+  /* Paper: the written score, warm as stock rather than screen grey. */
+  --paper: #efe8db;
+  --surface: #f5efe3;
+  --ink: #1b1712;
+  --wash: #e7dccb;
+  --hairline: #d5c9b4;
+  --muted: #6a6257;
 
   /* The hall: the pit ground and its lit reads. */
-  --hall: #0d0f12;
-  --hall-edge: #23272f;
+  --hall: #131009;
+  --hall-edge: #2b2419;
   --graphite-lit: #9aa3b4;
   --attention-lit: #e2a94f;
   --running-lit: #57c46a;
@@ -29,7 +29,7 @@
 
   /* Rehearsal marks and plate figures. Never a status. */
   --rehearsal: #7a2f1c;
-  --staff: #b9bdb4;
+  --staff: #c3b7a3;
 
   /* Selection, focus and links. */
   --selection: #2a3e6b;
@@ -67,8 +67,8 @@
   --ink: #e8e9e4;
   --muted: var(--graphite-lit);
   --hairline: var(--hall-edge);
-  --wash: #1a1e25;
-  --surface: #14171d;
+  --wash: #1f1a12;
+  --surface: #191410;
   --attention: var(--attention-lit);
   --running: var(--running-lit);
   --failed: var(--failed-lit);
@@ -88,7 +88,7 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-h1, h2, h3 { margin: 0; font-family: var(--display); font-weight: 600; }
+h1, h2, h3 { margin: 0; font-family: var(--display); font-weight: 600; letter-spacing: -0.01em; }
 
 a { color: var(--selection); }
 
@@ -353,7 +353,7 @@ button:active { background: var(--wash); }
 
 /* The pit: the hall, full width, the run's axis across its top. */
 .pit {
-  padding: 16px 28px 22px;
+  padding: 12px 28px 14px;
   background: var(--hall);
   color: var(--ink);
   border-bottom: 3px solid var(--ink);
@@ -364,7 +364,7 @@ button:active { background: var(--wash); }
   flex-wrap: wrap;
   align-items: baseline;
   gap: 4px 16px;
-  margin: 0 0 10px;
+  margin: 0 0 6px;
 }
 
 .pit .movement { color: #f2f1ea; letter-spacing: 0.18em; }
@@ -401,10 +401,10 @@ button:active { background: var(--wash); }
 
 /* The stage draws to the height its own content needs; the hall shows a bounded
    slice of that and scrolls, so a large run keeps a presence a reader can take in
-   while every actor stays reachable. A small run draws under the bound and no
-   scrollbar appears. */
+   while every actor stays reachable. The bound is low enough that the map below keeps its
+   place on a laptop screen; a large orchestra scrolls inside it. */
 .pit .lane-strip {
-  max-height: min(62vh, 520px);
+  max-height: min(30vh, 240px);
   overflow-y: auto;
   scrollbar-gutter: stable;
 }
@@ -733,6 +733,30 @@ button:active { background: var(--wash); }
   padding-left: 2px;
 }
 
+/* The row's state glyph: form and ink carry the state at a glance, so the word is
+   kept for the states an operator names and the rest read from the mark. */
+.doc-glyph {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin-right: 7px;
+  border-radius: 50%;
+  background: var(--staff);
+}
+
+.doc-glyph.state-working { background: var(--running); }
+.doc-glyph.state-waiting { background: none; box-shadow: inset 0 0 0 1.5px var(--muted); }
+.doc-glyph.state-queued { background: var(--attention); border-radius: 2px; }
+.doc-glyph.state-stopped { width: 11px; height: 3px; border-radius: 1px; background: var(--attention); }
+.doc-glyph.state-failed {
+  width: 10px;
+  height: 2.5px;
+  border-radius: 1px;
+  background: var(--failed);
+  transform: rotate(-24deg);
+}
+.doc-glyph.state-quiet { width: 5px; height: 5px; background: var(--staff); }
+
 .doc-row.state-failed { border-left-color: var(--failed); }
 .doc-row.state-stopped { border-left-color: var(--attention); }
 .doc-row.state-queued { border-left-color: var(--attention); }
@@ -841,6 +865,21 @@ button:active { background: var(--wash); }
    slur carry the graphic, and the layer holds the line to one compact row. */
 .doc-row-knowledge { padding: 0 8px 6px 14px; }
 
+
+/* The plate's figures double as the index: a figure that jumps takes the ink of a link
+   and states what it does on hover. */
+.fact-jump {
+  appearance: none;
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.fact-jump:hover,
+.fact-jump:focus-visible { text-decoration: underline; }
 
 /* ── the map's scope line ─────────────────────────────────────────────────── */
 /* The map states which holdings it drew and offers the one step to every held

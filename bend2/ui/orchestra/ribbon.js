@@ -92,6 +92,20 @@ function ribbonSeats(event) {
   return seats;
 }
 
+// The contour: one line through the notes, scaled to the interval count.
+function ribbonContour(points, bars) {
+  const node = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  node.setAttribute("class", "ribbon-shape");
+  node.setAttribute("viewBox", "0 0 " + bars + " 100");
+  node.setAttribute("preserveAspectRatio", "none");
+  node.setAttribute("aria-hidden", "true");
+  const line = document.createElementNS("http://www.w3.org/2000/svg", "polyline");
+  line.setAttribute("points", points);
+  line.setAttribute("vector-effect", "non-scaling-stroke");
+  node.appendChild(line);
+  return node;
+}
+
 // The busiest recorded kinds, named as the database names them.
 function ribbonKindTally(events, limit) {
   const tally = new Map();
@@ -406,16 +420,27 @@ function renderRibbon(container, data, options) {
     axis.appendChild(rule);
   }
   let newestNote = null;
+  const contour = [];
   for (let column = 0; column < bars; column += 1) {
     const counted = counts[column];
     const cell = document.createElement("span");
     cell.className = "ribbon-cell";
+    if (!counted) {
+      // A quiet interval keeps its space and is drawn as a rest on the floor.
+      const rest = document.createElement("span");
+      rest.className = "ribbon-rest";
+      rest.style.bottom = STAFF_LINES[0] + "%";
+      rest.setAttribute("aria-hidden", "true");
+      cell.appendChild(rest);
+      contour.push((column + 0.5).toFixed(2) + " " + (100 - STAFF_LINES[0]).toFixed(2));
+    }
     if (counted) {
       const share = counted / busiest;
       const pitch = Math.min(STAFF_LINES.length, Math.round(share * STAFF_LINES.length));
       const note = document.createElement("span");
       note.className = "ribbon-note" + (column === here ? " ribbon-here" : "");
-      note.style.bottom = (pitch < STAFF_LINES.length ? STAFF_LINES[pitch] : STAFF_ABOVE) + "%";
+      const pitchBottom = pitch < STAFF_LINES.length ? STAFF_LINES[pitch] : STAFF_ABOVE;
+      note.style.bottom = pitchBottom + "%";
       const size = (2.6 + 3.4 * share).toFixed(1);
       note.style.width = size + "px";
       note.style.height = size + "px";
@@ -446,9 +471,17 @@ function renderRibbon(container, data, options) {
       note.addEventListener("pointerenter", () => renderLine(stretchText));
       cell.appendChild(note);
       newestNote = note;
+      contour.push((column + 0.5).toFixed(2) + " " + (100 - pitchBottom).toFixed(2));
     }
     axis.appendChild(cell);
   }
+  // The shape of the run: gathered where the line rises, quiet where it drops.
+  axis.appendChild(ribbonContour(contour.join(" "), bars));
+  // The end of the score, where the newest entry sits.
+  const endBar = document.createElement("span");
+  endBar.className = "ribbon-endbar";
+  endBar.setAttribute("aria-hidden", "true");
+  axis.appendChild(endBar);
   // The newest drawn note is the one an arrival inks.
   if (arriving && newestNote) newestNote.classList.add("ribbon-arrival");
   axis.addEventListener("pointerleave", () => renderLine());
@@ -481,12 +514,14 @@ function renderRibbon(container, data, options) {
     const keys = ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown"];
     if (keys.indexOf(event.key) === -1) return;
     event.preventDefault();
+    // Shift steps by one interval of the drawing, so a long window is walkable.
+    const step = event.shiftKey ? Math.max(1, Math.round(total / bars)) : 1;
     if (event.key === "Home") setPosition(total - 1);
     else if (event.key === "End") setPosition(0);
     else if (event.key === "PageUp") setPosition(position + RIBBON_PAGE_STEP);
     else if (event.key === "PageDown") setPosition(position - RIBBON_PAGE_STEP);
-    else if (event.key === "ArrowLeft" || event.key === "ArrowUp") setPosition(position + 1);
-    else setPosition(position - 1);
+    else if (event.key === "ArrowLeft" || event.key === "ArrowUp") setPosition(position + step);
+    else setPosition(position - step);
   });
 
   // The seats that moved most in this window; a chip jumps to that seat's

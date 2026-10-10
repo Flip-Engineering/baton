@@ -8,8 +8,11 @@
 
 .ribbon {
   --rib-grid: var(--staff, #39404b);
-  --rib-needle: #f2f1ea;
-  --rib-mark: #f2f1ea;
+  /* The score's own ink, warm, mixed from the page's paper and brick. */
+  --rib-ink: color-mix(in srgb, var(--paper, #e6e7e1) 84%, var(--rehearsal, #7a2f1c) 16%);
+  --rib-rule: color-mix(in srgb, var(--rib-ink) 42%, var(--hall, #0d0f12) 58%);
+  --rib-needle: var(--rib-ink);
+  --rib-mark: var(--rib-ink);
   --rib-focus: #8fa8e0;
   /* The pit remaps the status colours but not these three, and their shipped
      values are dark on paper. Their lit forms are region tokens. */
@@ -44,7 +47,7 @@
 .ribbon-summary {
   font-family: var(--mono);
   font-size: 14px;
-  color: var(--ink);
+  color: var(--rib-ink);
   font-variant-numeric: tabular-nums;
 }
 
@@ -57,8 +60,8 @@
 }
 
 /* A kind named in the figures line carries the ink its bars carry. */
-.ribbon-kind-word { color: var(--ink); }
-.ribbon-kind-word[class*="ribbon-kind-message-"] { color: var(--ink); }
+.ribbon-kind-word { color: var(--rib-ink); }
+.ribbon-kind-word[class*="ribbon-kind-message-"] { color: var(--rib-ink); }
 .ribbon-kind-word.ribbon-kind-message-task,
 .ribbon-kind-word.ribbon-kind-message-guidance,
 .ribbon-kind-word.ribbon-kind-message-recovery { color: var(--rib-waiting); }
@@ -127,8 +130,49 @@
 
 .ribbon-cell {
   position: relative;
+  z-index: 1;
   flex: 1 1 0;
   min-width: 1px;
+}
+
+/* The run's shape, one line through the notes. */
+.ribbon-shape {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.ribbon-shape polyline {
+  fill: none;
+  stroke: var(--rib-rule);
+  stroke-width: 1;
+}
+
+/* A quiet interval, drawn as a rest on the floor line. */
+.ribbon-rest {
+  position: absolute;
+  left: 50%;
+  width: 2px;
+  height: 2px;
+  background: var(--rib-rule);
+  transform: translate(-50%, 50%);
+}
+
+/* The end of the score, where the newest entry sits. */
+.ribbon-endbar {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 5px;
+  z-index: 2;
+  border-left: 1px solid var(--rib-ink);
+  border-right: 2px solid var(--rib-ink);
+  pointer-events: none;
 }
 
 /* Note height and size represent event count; color represents event kind. */
@@ -137,11 +181,11 @@
   left: 50%;
   transform: translate(-50%, 50%);
   border-radius: 50%;
-  background: var(--ink);
+  background: var(--rib-ink);
 }
 
 /* The ink is the recorded kind that dominates the stretch. */
-.ribbon-note[class*="ribbon-kind-message-"] { background: var(--ink); }
+.ribbon-note[class*="ribbon-kind-message-"] { background: var(--rib-ink); }
 .ribbon-note.ribbon-kind-message-task,
 .ribbon-note.ribbon-kind-message-guidance,
 .ribbon-note.ribbon-kind-message-recovery { background: var(--rib-waiting); }

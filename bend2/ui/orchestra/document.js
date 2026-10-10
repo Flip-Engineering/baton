@@ -199,15 +199,18 @@
     button.appendChild(name);
 
     var lead = el("span", "doc-lead");
-    // Show one state label; preserve the full action in the title and record.
-    var word = state === "failed" ? "failed"
+    // The glyph carries the state; the word stays only for the states an operator names
+    // (awaiting input, stopped, failed). Playing, owes work and quiet read from the glyph,
+    // the rule ink and the count marks, with the word in the title and the row's label.
+    var named = state === "waiting" ? "awaiting input"
       : state === "stopped" ? "stopped"
-      : state === "waiting" ? "awaiting input"
-      : state === "queued" ? "owes work"
-      : state === "working" ? "playing"
-      : "quiet";
-    var workEl = el("span", "doc-work " + state, word);
-    workEl.title = p.action || p.taskTitle || word;
+      : state === "failed" ? "failed"
+      : "";
+    var glyph = el("span", "doc-glyph state-" + state);
+    glyph.setAttribute("aria-hidden", "true");
+    lead.appendChild(glyph);
+    var workEl = el("span", "doc-work " + state, named);
+    workEl.title = (named ? named + " \u00b7 " : "") + (p.action || p.taskTitle || "no work recorded");
     lead.appendChild(workEl);
     button.appendChild(lead);
 
@@ -237,8 +240,8 @@
     button.appendChild(staff);
 
     // The staff and the marks are drawn for the eye; the label states the same
-    // facts to a reader who cannot see them.
-    var spoken = [p.id, p.status || "unknown"];
+    // facts to a reader who cannot see them, in the same state words the row shows.
+    var spoken = [p.id, named || state];
     if (p.action) spoken.push(p.action);
     if (pending > 0) spoken.push(pending + " pending");
     if (reports > 0) spoken.push(reports + (reports === 1 ? " report owed" : " reports owed"));
@@ -532,7 +535,7 @@
         mounts.selection.textContent = "";
         if (!seat) {
           mounts.selection.appendChild(el("p", "muted",
-            "Select a row to read its record here."));
+            "Select a row."));
         } else {
           mounts.selection.appendChild(el("h2", "doc-section", seat.id));
           mounts.selection.appendChild(detailList([

@@ -157,6 +157,20 @@ g.kw-ref.unheld .kw-ref-tag {
   stroke-dasharray: 3 2;
 }
 
+/* Family glyphs sit on the stub in ink with a paper halo, so the
+   dotted edge never swallows them. */
+.kw-ref-glyph {
+  fill: var(--ink, #141a26);
+  stroke: var(--paper, #fbfcfe);
+  stroke-width: 2px;
+  paint-order: stroke;
+}
+
+.kw-ref-glyph-ring {
+  fill: var(--paper, #fbfcfe);
+  stroke: var(--ink, #141a26);
+}
+
 .kw-ref-word {
   font-size: var(--step0, 12px);
   fill: var(--ink, #141a26);
@@ -211,6 +225,19 @@ g.kw-ref.unheld .kw-ref-tag {
 .kw-tier-rule {
   stroke: var(--hairline, #d8dce6);
   stroke-width: 1px;
+}
+
+/* An empty scope rests on one ruled staff with its state in the
+   page's reading voice. */
+.kw-staff {
+  stroke: var(--staff, #c3b7a3);
+  stroke-width: 1px;
+}
+
+.kw-canvas .kw-empty {
+  font-family: var(--sans, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif);
+  font-size: var(--step1, 13px);
+  fill: var(--muted, #5b6478);
 }
 
 /* A collapsed hull's lozenge is a key: the name stays quiet and the

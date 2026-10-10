@@ -175,6 +175,8 @@
   // instead of pretending the endpoint is an actor or a finding.
   var kwRefMarks = new Map();
   var kwRefsDrawn = 0;
+  // Drawn text boxes this render: settling tags keep clear of them.
+  var kwLabelBoxes = [];
   function kwFindingRef(ref) {
     const m = /^finding:(.+)$/.exec(String(ref || ""));
     return m ? m[1] : null;
@@ -195,6 +197,31 @@
     if (family) return { kind: "ref", id: s, ref: s, family: family[1] };
     if (kwFindingRef(s)) return { kind: "ref", id: s, ref: s, family: "finding" };
     return { kind: "ref", id: s, ref: s, family: "reference" };
+  }
+  // Tag family glyphs: diamond message, square external, ring finding, dot other.
+  function kwRefGlyph(g, family, gx, gy) {
+    if (family === "message") {
+      kwSvg(g, "polygon", {
+        points: gx + "," + (gy - 4) + " " + (gx + 4) + "," + gy
+          + " " + gx + "," + (gy + 4) + " " + (gx - 4) + "," + gy,
+        class: "kw-ref-glyph",
+      });
+    } else if (family === "external") {
+      kwSvg(g, "rect", {
+        x: String(gx - 3), y: String(gy - 3), width: "6", height: "6",
+        class: "kw-ref-glyph",
+      });
+    } else if (family === "finding") {
+      kwSvg(g, "circle", {
+        cx: String(gx), cy: String(gy), r: "3.5",
+        class: "kw-ref-glyph kw-ref-glyph-ring",
+      });
+    } else {
+      kwSvg(g, "circle", {
+        cx: String(gx), cy: String(gy), r: "2.5",
+        class: "kw-ref-glyph",
+      });
+    }
   }
   // The retained message a finding cites as evidence, as the reference
   // string the graph draws. The route serves the joined record as an
@@ -402,7 +429,7 @@
       const actorRows = Math.max(1, Math.ceil(members.length / actorPerRow));
       return {
         d, members, slots, actorRows, findRows, memberX, findCap, spread: spreadT,
-        height: 44 + actorRows * 30 + (slots.length ? 12 + findRows * 30 : 0) + 18,
+        height: 26 + actorRows * 30 + (slots.length ? 10 + findRows * 30 : 0) + 12,
       };
     });
     let height = KW_TOP;
@@ -411,6 +438,8 @@
       height += t.height;
     }
     height += KW_PAD;
+    // An empty scope keeps room for its staff instead of collapsing.
+    if (!tiers.length) height = 200;
 
     const svg = kwSvg(container, "svg", {
       viewBox: "0 0 " + width + " " + height,
@@ -477,6 +506,7 @@
       class: "kw-cluster-box",
     });
     kwTrackBox(x - 15, y - 10, x + 15, y + 10);
+    kwLabelBoxes.push({ x0: x - 15, y0: y - 10, x1: x + 15, y1: y + 10 });
     const count = kwSvg(g, "text", {
       x: String(x), y: String(y + 4),
       class: "kw-cluster-count", "text-anchor": "middle",
@@ -577,7 +607,7 @@
         const n = lozenges.get(tier.d) || 0;
         lozenges.set(tier.d, n + 1);
         const x = KW_GUTTER + 75 + n * 112;
-        const y = tier.y + 34;
+        const y = tier.y + 26;
         const g = kwSvg(layer, "g", {
           class: "kw-lozenge",
           tabindex: "0", role: "button",
@@ -591,6 +621,7 @@
           class: "kw-lozenge-box",
         });
         kwTrackBox(x - boxW / 2, y - 11, x + boxW / 2, y + 11);
+        kwLabelBoxes.push({ x0: x - boxW / 2, y0: y - 11, x1: x + boxW / 2, y1: y + 11 });
         const label = kwSvg(g, "text", {
           x: String(x), y: String(y + 4),
           class: "kw-lozenge-label", "text-anchor": "middle",
@@ -632,6 +663,7 @@
       label.textContent = id + " (" + members.length + ")";
       const hlw = (String(id).length + 5) * 9 + 8;
       kwTrackBox(top.x - hlw / 2, top.y - 20, top.x + hlw / 2, top.y);
+      kwLabelBoxes.push({ x0: top.x - hlw / 2, y0: top.y - 20, x1: top.x + hlw / 2, y1: top.y });
       wire(g);
     }
   }
@@ -656,9 +688,27 @@
     kwRelationsDrawn = 0;
     kwRefMarks = new Map();
     kwRefsDrawn = 0;
+    kwLabelBoxes = [];
     const actorPos = new Map();
     const findingPos = new Map();
     const query = opts && opts.query;
+    // An empty scope draws one ruled staff with its state, so the
+    // frame reads deliberate rather than broken.
+    if (!tiers.length) {
+      for (let line = 0; line < 5; line += 1) {
+        kwSvg(svg, "line", {
+          x1: String(KW_PAD), y1: String(82 + line * 9),
+          x2: String(layout.width - KW_PAD), y2: String(82 + line * 9),
+          class: "kw-staff",
+        });
+      }
+      const rest = kwSvg(svg, "text", {
+        x: String(layout.width / 2), y: "150",
+        class: "kw-empty", "text-anchor": "middle",
+      });
+      rest.textContent = "No records in this scope.";
+      kwTrackBox(KW_PAD, 82, layout.width - KW_PAD, 150);
+    }
     for (const t of tiers) {
       const depthWord = t.d < 0 ? "depth unknown" : "depth " + t.d;
       const label = kwSvg(svg, "text", {
@@ -678,12 +728,13 @@
         x2: String(layout.width - KW_PAD), y2: String(t.y + 8),
         class: "kw-tier-rule",
       });
+      kwLabelBoxes.push({ x0: KW_PAD, y0: t.y - 8, x1: KW_PAD + 140, y1: t.y + 12 });
       const perRow = layout.actorPerRow;
       const nameRows = new Map();
       t.members.forEach((id, i) => {
         const row = t.spread ? 0 : Math.floor(i / perRow);
         const x = t.memberX.get(id);
-        const y = t.y + 34 + row * 30;
+        const y = t.y + 26 + row * 30;
         actorPos.set(String(id), { x, y });
         kwTrackBox(x - 12, y - 12, x + 20 + String(id).length * 8, y + 12);
         const role = layout.roleOf ? layout.roleOf(id) : "";
@@ -717,6 +768,7 @@
             x: String(x + 10), y: String(y + 4), class: "kw-name mono",
           });
           name.textContent = String(id);
+          kwLabelBoxes.push({ x0: x + 10, y0: y - 8, x1: x + 10 + nw, y1: y + 8 });
         }
         if (!kwMatches(query, id, "", id)) g.classList.add("kw-dim");
         g.addEventListener("click", () => {
@@ -742,7 +794,7 @@
           }
         });
       });
-      const findTop = t.y + 34 + t.actorRows * 30 + 12;
+      const findTop = t.y + 26 + t.actorRows * 30 + 10;
       // Each tier labels its most promoted findings so the canvas reads
       // words at a glance; every other node keeps its claim one gesture
       // away through hover, keyboard, or selection.
@@ -792,9 +844,11 @@
         }
         const f = slot.finding;
         findingPos.set(f.id, { x, y });
-        kwTrackBox(x - 12, y - 12, x + 12, y + 12);
-        const selected = kwEffectiveSelected(opts) === f.id;
+        // Mass reads the recorded share count: 4 unshared, 6 to 10 shared.
         const degree = promotions.filter((p) => p.finding === f.id).length;
+        const mass = degree ? 6 + Math.min(4, Math.round(2 * Math.sqrt(degree - 1))) : 4;
+        kwTrackBox(x - 15, y - 15, x + 15, y + 15);
+        const selected = kwEffectiveSelected(opts) === f.id;
         const g = kwSvg(svg, "g", {
           class: "knode" + (degree ? "" : " unshared") + (selected ? " selected" : "")
             + " kw-kind-" + String(f.kind || "finding").toLowerCase().replace(/[^a-z0-9]+/g, "-"),
@@ -804,13 +858,13 @@
         });
         kwMarkNew(g, f.id);
         kwSvg(g, "circle", {
-          cx: String(x), cy: String(y), r: String(5 + Math.min(3, degree)),
+          cx: String(x), cy: String(y), r: String(mass),
           class: "kw-finding" + (degree ? "" : " unshared"),
         });
         if (degree) {
           kwSvg(g, "circle", {
             cx: String(x), cy: String(y),
-            r: String(8 + Math.min(3, degree)),
+            r: String(mass + 4),
             class: "kw-halo",
           });
         }
@@ -822,6 +876,7 @@
           kwNodeLabel(g, f, x, y);
           const lw = Math.min(27, String(f.claim || f.id).length) * 7.5 + 10;
           kwTrackBox(x - lw / 2, y + 10, x + lw / 2, y + 30);
+          kwLabelBoxes.push({ x0: x - lw / 2, y0: y + 10, x1: x + lw / 2, y1: y + 30 });
         }
         if (!kwMatches(query, f.id, f.claim, f.author)) {
           g.classList.add("kw-dim");
@@ -909,6 +964,10 @@
         "kw-arrow-author", "authored by " + author, "authorship",
         author, fid);
     }
+    // Hulls draw before relations so settling tags keep clear of their
+    // labels; paint order is unchanged, the hull layer sits beneath the edges.
+    layout.actorPos = actorPos;
+    kwEnsembleHulls(svg, edgeLayer, layout, ensembles || []);
     // Draw recorded relations between nodes or labeled reference tags.
     // Relations between references are placed beside their author.
     const heldRefs = new Set();
@@ -925,17 +984,23 @@
     const nodePos = (end) => end.kind !== "node" ? null
       : (findingPos.get(end.id) || actorPos.get(end.id) || null);
     // Marks hug their node on a short stub, fanning round it so several
-    // references on one record do not stack on one spot.
+    // references on one record do not stack on one spot. Each node starts
+    // the fan at its own angle so neighbouring fans do not pile one way.
     const fanAt = new Map();
     const fanAngles = [-90, -45, -135, 0, 180, -22, -158, 45, 135];
-    const kwRefMark = (nodeId, at, end) => {
+    const fanStart = (nodeId) => {
+      let h = 0;
+      for (const c of String(nodeId)) h = (h + c.charCodeAt(0)) % fanAngles.length;
+      return h;
+    };
+    const kwRefSlot = (nodeId, at, end) => {
       let mark = kwRefMarks.get(end.ref);
       if (!mark) {
         const k = fanAt.get(nodeId) || 0;
         fanAt.set(nodeId, k + 1);
-        const rad = fanAngles[k % fanAngles.length] * Math.PI / 180;
-        const x = at.x + 64 * Math.cos(rad);
-        const y = at.y + 64 * Math.sin(rad);
+        // Later tags orbit wider so a dense fan spirals instead of stacking.
+        const rr = Math.min(140, 64 + (k < 3 ? 0 : (k - 2) * 14));
+        const rad = fanAngles[(fanStart(nodeId) + k) % fanAngles.length] * Math.PI / 180;
         // A finding the overview holds draws as a node, so a finding
         // reference tag is never held. A message tag is held when some
         // finding cites it as evidence. Anything else is a pointer
@@ -943,56 +1008,28 @@
         const held = end.family === "finding" ? false
           : end.family === "message" ? heldRefs.has(end.ref)
           : true;
+        const unheld = (end.family === "finding" || end.family === "message") && !held;
+        const label = end.ref.length > 22 ? end.ref.slice(0, 21) + "…" : end.ref;
+        const shown = unheld ? label + " · not held" : label;
+        const w = shown.length * 7.5 + 14;
+        // Slots start inside the canvas; the settle below only moves down,
+        // and the canvas grows for what settles past its computed height.
+        const x = Math.min(Math.max(at.x + rr * Math.cos(rad), w / 2 + 4),
+          layout.width - w / 2 - 4);
+        const y = Math.max(at.y + rr * Math.sin(rad), 14);
         mark = {
-          x, y, held, family: end.family,
-          unheld: (end.family === "finding" || end.family === "message") && !held,
+          x, y, w, shown, ref: end.ref, family: end.family, held, unheld,
           relations: [], follow: refFollow.get(end.ref) || "",
+          anchorX: at.x, anchorY: at.y,
         };
         kwRefMarks.set(end.ref, mark);
-        const label = end.ref.length > 22 ? end.ref.slice(0, 21) + "…" : end.ref;
-        const shown = mark.unheld ? label + " · not held" : label;
-        const w = shown.length * 7 + 14;
-        const g = kwSvg(svg, "g", {
-          class: "kw-ref" + (mark.unheld ? " unheld" : ""),
-          tabindex: "0", role: "button",
-          "aria-label": "reference " + end.ref
-            + (mark.unheld ? ", not held" : end.family === "finding" || end.family === "message" ? ", held" : ""),
-          "data-kw-node": end.ref,
-          "data-kw-ref": end.ref,
-        });
-        kwSvg(g, "rect", {
-          x: String(x - w / 2), y: String(y - 9),
-          width: String(w), height: "18", rx: "4",
-          class: "kw-ref-tag",
-        });
-        const word = kwSvg(g, "text", {
-          x: String(x), y: String(y + 4), class: "kw-ref-word mono",
-          "text-anchor": "middle",
-        });
-        word.textContent = shown;
-        const heading = kwSvg(g, "title", null);
-        heading.textContent = end.ref + (mark.unheld ? " — not held" : "");
-        kwTrackBox(x - w / 2, y - 9, x + w / 2, y + 9);
-        g.addEventListener("click", () => {
-          if (kwConsumePan()) return;
-          kwDismissed = null;
-          kwPinCard(container, overview, promotions, opts, end.ref);
-          g.focus();
-          kwIsolate(end.ref, 2);
-        });
-        g.addEventListener("keydown", (ev) => {
-          if (ev.key === "Enter" || ev.key === " ") {
-            if (ev.preventDefault) ev.preventDefault();
-            kwViewMoved = false;
-            kwDismissed = null;
-            kwPinCard(container, overview, promotions, opts, end.ref);
-            kwIsolate(end.ref, 2);
-          }
-        });
-        kwRefsDrawn += 1;
       }
       return mark;
     };
+    // Edges resolve first with no drawing, so the tags can settle before
+    // anything paints. A reference end meets the tag the relation earns
+    // it; the tag is shared when several relations cite one endpoint.
+    const relateSpecs = [];
     for (const r of overview.relations || []) {
       const fromRef = r.source !== undefined && r.source !== null ? r.source : r.from;
       const toRef = r.target !== undefined && r.target !== null ? r.target : r.to;
@@ -1002,30 +1039,120 @@
       if (a.kind === "hidden" || b.kind === "hidden") continue;
       if (a.kind === "node" && b.kind === "node" && a.id === b.id) continue;
       const name = String(r.relation || r.name || r.id || "related");
-      // A reference end meets the tag the relation earns it; the tag is
-      // shared when several relations cite one endpoint.
-      let from = nodePos(a);
-      let to = nodePos(b);
-      if (a.kind === "ref" && b.kind === "ref") {
+      const needA = a.kind === "ref";
+      const needB = b.kind === "ref";
+      if (needA && needB) {
         const author = actorPos.get(r.author);
         if (!author) continue;
-        const first = kwRefMark(r.author, author, a);
-        const second = kwRefMark(r.author, author, b);
+        const first = kwRefSlot(r.author, author, a);
+        const second = kwRefSlot(r.author, author, b);
         first.relations.push({ name, other: b.ref });
         second.relations.push({ name, other: a.ref });
-        from = { x: first.x, y: first.y };
-        to = { x: second.x, y: second.y };
+      } else {
+        if (needA && !nodePos(b)) continue;
+        if (needB && !nodePos(a)) continue;
+        if (needA) kwRefSlot(b.id, nodePos(b), a).relations.push({ name, other: b.id });
+        if (needB) kwRefSlot(a.id, nodePos(a), b).relations.push({ name, other: a.id });
       }
-      if (a.kind === "ref" && b.kind === "node" && to) {
-        const mark = kwRefMark(b.id, to, a);
-        mark.relations.push({ name, other: b.id });
-        from = { x: mark.x, y: mark.y };
+      // Node-to-node names draw at the edge midpoint; their box joins
+      // the obstacles so settling tags keep clear of edge names too.
+      const shown = a.kind === "node" && b.kind === "node"
+        ? (name.length > 24 ? name.slice(0, 23) + "…" : name) : "";
+      if (shown) {
+        const pa = nodePos(a);
+        const pb = nodePos(b);
+        const mx = (pa.x + pb.x) / 2;
+        const my = (pa.y + pb.y) / 2;
+        kwLabelBoxes.push({ x0: mx - shown.length * 3.5 - 4, y0: my - 12,
+          x1: mx + shown.length * 3.5 + 4, y1: my + 2 });
       }
-      if (b.kind === "ref" && a.kind === "node" && from) {
-        const mark = kwRefMark(a.id, from, b);
-        mark.relations.push({ name, other: a.id });
-        to = { x: mark.x, y: mark.y };
+      relateSpecs.push({ a, b, name, shown });
+    }
+    // Tags settle top-down past nodes, text and the tags above; a tag
+    // keeps stepping until it clears, so settling never places overlap.
+    const settled = [];
+    for (const pos of actorPos.values()) {
+      settled.push({ x0: pos.x - 18, y0: pos.y - 18, x1: pos.x + 18, y1: pos.y + 18 });
+    }
+    for (const pos of findingPos.values()) {
+      settled.push({ x0: pos.x - 18, y0: pos.y - 18, x1: pos.x + 18, y1: pos.y + 18 });
+    }
+    for (const box of kwLabelBoxes) settled.push(box);
+    const slotOrder = [...kwRefMarks.values()]
+      .sort((p, q) => (p.y - q.y) || (p.x - q.x));
+    for (const mark of slotOrder) {
+      const hw = mark.w / 2 + 3;
+      const hh = 9 + 3;
+      while (settled.some((box) =>
+          mark.x - hw < box.x1 && box.x0 < mark.x + hw
+          && mark.y - hh < box.y1 && box.y0 < mark.y + hh)) {
+        mark.y += 10;
       }
+      settled.push({ x0: mark.x - hw, y0: mark.y - hh, x1: mark.x + hw, y1: mark.y + hh });
+    }
+    for (const mark of kwRefMarks.values()) {
+      const g = kwSvg(svg, "g", {
+        class: "kw-ref" + (mark.unheld ? " unheld" : ""),
+        tabindex: "0", role: "button",
+        "aria-label": "reference " + mark.ref
+          + (mark.unheld ? ", not held" : mark.family === "finding" || mark.family === "message" ? ", held" : ""),
+        "data-kw-node": mark.ref,
+        "data-kw-ref": mark.ref,
+      });
+      kwSvg(g, "rect", {
+        x: String(mark.x - mark.w / 2), y: String(mark.y - 9),
+        width: String(mark.w), height: "18", rx: "4",
+        class: "kw-ref-tag",
+      });
+      kwRefGlyph(g, mark.family, (mark.anchorX + mark.x) / 2, (mark.anchorY + mark.y) / 2);
+      const word = kwSvg(g, "text", {
+        x: String(mark.x), y: String(mark.y + 4), class: "kw-ref-word mono",
+        "text-anchor": "middle",
+      });
+      word.textContent = mark.shown;
+      const heading = kwSvg(g, "title", null);
+      heading.textContent = mark.ref + (mark.unheld ? " — not held" : "");
+      kwTrackBox(mark.x - mark.w / 2, mark.y - 9, mark.x + mark.w / 2, mark.y + 9);
+      g.addEventListener("click", () => {
+        if (kwConsumePan()) return;
+        kwDismissed = null;
+        kwPinCard(container, overview, promotions, opts, mark.ref);
+        g.focus();
+        kwIsolate(mark.ref, 2);
+      });
+      g.addEventListener("keydown", (ev) => {
+        if (ev.key === "Enter" || ev.key === " ") {
+          if (ev.preventDefault) ev.preventDefault();
+          kwViewMoved = false;
+          kwDismissed = null;
+          kwPinCard(container, overview, promotions, opts, mark.ref);
+          kwIsolate(mark.ref, 2);
+        }
+      });
+      kwRefsDrawn += 1;
+    }
+    // Settled tags can hang below the tier-computed height; the canvas
+    // grows to hold them instead of clipping.
+    if (kwContentBBox) {
+      const need = Math.ceil(kwContentBBox.y1 + 12);
+      const have = Number(svg.getAttribute("height")) || 0;
+      if (need > have) {
+        svg.setAttribute("height", String(need));
+        svg.setAttribute("viewBox", "0 0 " + svg.getAttribute("width") + " " + need);
+      }
+    }
+    const relateEnd = (end) => {
+      if (end.kind === "node") return nodePos(end);
+      const mark = kwRefMarks.get(end.ref);
+      return mark ? { x: mark.x, y: mark.y } : null;
+    };
+    for (const spec of relateSpecs) {
+      const a = spec.a;
+      const b = spec.b;
+      const name = spec.name;
+      const shown = spec.shown;
+      const from = relateEnd(a);
+      const to = relateEnd(b);
       if (!from || !to) continue;
       const g = kwSvg(edgeLayer, "g", {
         class: "kw-edge-relate",
@@ -1048,10 +1175,9 @@
       // Node-to-node edges carry the authored name at the midpoint; a
       // stub to a tag is too short for a name, so the name lives in
       // the edge title and in the tag's card instead.
-      if (a.kind === "node" && b.kind === "node") {
+      if (shown) {
         const mx = (from.x + to.x) / 2;
         const my = (from.y + to.y) / 2;
-        const shown = name.length > 24 ? name.slice(0, 23) + "…" : name;
         const tag = kwSvg(g, "text", {
           x: String(mx), y: String(my - 4), class: "kw-rel-name",
           "text-anchor": "middle",
@@ -1075,8 +1201,6 @@
         if (g && !kwMatches(query, ref, names, "")) g.classList.add("kw-dim");
       }
     }
-    layout.actorPos = actorPos;
-    kwEnsembleHulls(svg, edgeLayer, layout, ensembles || []);
     // Hover or keyboard focus isolates the anchor's recorded neighborhood:
     // the anchor, its connected anchors and findings, and their edges stay
     // lit while the rest of the canvas dims. A separate mark from the query
@@ -1131,6 +1255,8 @@
     if (kwRefsDrawn > 0) {
       keyEntries.push(["", "tagged recorded reference, dashed when the record is not held",
         "var(--ink, #141a26)", "tag", ""]);
+      keyEntries.push(["", "diamond message, square external, ring finding, dot other",
+        "var(--ink, #141a26)", "glyphs", ""]);
     }
     for (const entry of keyEntries) {
       const item = kwEl(keys, "li", null);
@@ -1152,6 +1278,13 @@
           fill: "none", stroke: paint, "stroke-width": "1.5",
           "stroke-dasharray": "2 2",
         });
+      } else if (shape === "glyphs") {
+        kwSvg(sw, "polygon", { points: "5,3 8,6 5,9 2,6", fill: paint });
+        kwSvg(sw, "rect", { x: "10", y: "4", width: "4", height: "4", fill: paint });
+        kwSvg(sw, "circle", {
+          cx: "16", cy: "6", r: "2.5", fill: "none", stroke: paint, "stroke-width": "1",
+        });
+        kwSvg(sw, "circle", { cx: "22", cy: "6", r: "1.8", fill: paint });
       } else if (shape === "arc") {
         const arc = kwSvg(sw, "path", {
           d: "M3,10 Q13,-1 23,8", fill: "none", stroke: paint, "stroke-width": "1.5",

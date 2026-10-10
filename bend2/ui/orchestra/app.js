@@ -121,11 +121,8 @@ function deriveStatus(p) {
   return "unknown";
 }
 
-// Two different reads, kept apart with different names.
-//
-// A seat OWES WORK when the recorded queue holds messages it has not
-// acknowledged: an ordinary pending task or report belongs to the actor, and the
-// actor's inbox is where it is answered.
+// A seat owes work when its recorded queue holds unacknowledged messages: the actor's
+// own inbox answers them.
 function owesWork(p) {
   return Math.max(p.pendingCount || 0, p.unacknowledgedCount || 0) > 0;
 }
@@ -212,16 +209,47 @@ function setConn(word) {
 }
 
 // Keep the count and its label in separate elements, with a text separator.
-function fact(label, value, tone) {
-  const span = document.createElement("span");
-  span.className = "fact" + (tone ? " " + tone : "");
+// A figure on the plate line. With a jump target it becomes the page's index: clicking it
+// focuses the first seat in that state.
+function fact(label, value, tone, jump) {
+  const node = document.createElement(jump ? "button" : "span");
+  node.className = "fact" + (tone ? " " + tone : "") + (jump ? " fact-jump" : "");
+  if (jump) {
+    node.type = "button";
+    node.title = "Focus the first " + label + " seat";
+    node.setAttribute("aria-label", "Focus the first " + label + " seat");
+    node.addEventListener("click", () => focusFirstRow(jump));
+  }
   const figure = document.createElement("b");
   text(figure, String(value));
-  span.appendChild(figure);
+  node.appendChild(figure);
   const name = document.createElement("span");
   text(name, " " + label);
-  span.appendChild(name);
-  return span;
+  node.appendChild(name);
+  return node;
+}
+
+// Focus the first seat in one of these states, revealing the recorded rows first when the
+// seat is not on screen. The roster's own control states how many rows that adds.
+function focusFirstRow(matches) {
+  const wanted = [...state.players.values()].filter(matches).map((p) => p.id);
+  const find = () => {
+    for (const id of wanted) {
+      const control = el.roster.querySelector('.doc-row[data-doc-id="' + CSS.escape(id) + '"] .doc-open');
+      if (control) return control;
+    }
+    return null;
+  };
+  let control = find();
+  if (!control && state.scope !== "all" && el.showEnded) {
+    state.scope = "all";
+    el.showEnded.setAttribute("aria-pressed", "true");
+    renderDocument();
+    control = find();
+  }
+  if (!control) return;
+  control.focus();
+  if (typeof control.scrollIntoView === "function") control.scrollIntoView({ block: "nearest" });
 }
 
 // The separator between two figures on the plate line. It carries the space
@@ -282,14 +310,15 @@ function renderHeaderLine() {
   if (state.players.size) {
     // Count running, stopped or failed, and awaiting-input actors.
     el.snapshotLine.appendChild(factSeparator());
-    el.snapshotLine.appendChild(fact("running", running, ""));
+    el.snapshotLine.appendChild(fact("running", running, "", (p) => deriveStatus(p) === "running"));
     el.snapshotLine.appendChild(factSeparator());
-    el.snapshotLine.appendChild(fact("stopped or failed", stopped, stopped > 0 ? "attention" : ""));
+    el.snapshotLine.appendChild(fact("stopped or failed", stopped,
+      stopped > 0 ? "attention" : "", (p) => ["stopped", "failed"].includes(deriveStatus(p))));
     el.snapshotLine.appendChild(factSeparator());
-    el.snapshotLine.appendChild(fact("awaiting input", waiting, ""));
+    el.snapshotLine.appendChild(fact("awaiting input", waiting, "", (p) => deriveStatus(p) === "waiting"));
     if (owed > 0) {
       el.snapshotLine.appendChild(factSeparator());
-      el.snapshotLine.appendChild(fact("owe work", owed, ""));
+      el.snapshotLine.appendChild(fact("owe work", owed, "", owesWork));
     }
   }
   el.snapshotLine.title = state.capturedAt ? "snapshot captured " + state.capturedAt : "";
@@ -447,10 +476,8 @@ function fixtureActorKnowledge(id) {
     empty: authored.length === 0 && received.length === 0 && relations.length === 0 };
 }
 
-// The scope the map is showing. The overview route reads ?actor=ID for a worker's
-// holdings, ?group=ENSEMBLE for a recorded ensemble owner's, ?scope=all to discover
-// every held record, and answers universal when asked for nothing - which is the
-// default, and the view the shell opens on.
+// The scope the map shows: ?actor=ID for a worker's holdings, ?group=ENSEMBLE for the
+// recorded owner's, ?scope=all for every held record, and nothing for universal.
 function knowledgeScopeQuery() {
   const scope = state.knowledgeScope || { kind: "universal", id: "" };
   if (scope.kind === "actor" && scope.id) return "?actor=" + encodeURIComponent(scope.id);
@@ -465,15 +492,11 @@ function setKnowledgeScope(scope) {
   void loadKnowledgeOverview();
 }
 
-// A fixture holds every record it carries, so the scope question is answered here
-// with the rule the server applies. A scope's holders are: every parentless
-// conductor for universal, the named session for a worker, the ensemble's recorded
-// owner for a group, and null - meaning every record - only for all. A scope holds
-// the findings its holders authored and the ones promoted into them, and no other:
-// membership alone publishes nothing. The actors map is recomputed for the scope
-// with its recorded ancestors, and a relation is kept when a holder authored it or
-// one of its ends is a held finding; the other end may lie outside the holdings and
-// stays the reference it is.
+// The scope answered from the fixture with the rule the server applies: holders are the
+// parentless conductors for universal, the named session for a worker, the recorded owner
+// for a group, and null (every record) only for all. A scope holds what its holders
+// authored or had promoted into it, plus the actors and ancestors it touches; a relation
+// stays when a holder authored it or an end is held, the other end as the reference it is.
 function fixtureScopedKnowledge(scope) {
   const source = state.fixtureKnowledge || null;
   if (!source) return null;
@@ -551,6 +574,36 @@ function fixtureScopedKnowledge(scope) {
     actors,
     empty: held.length === 0 && promotions.length === 0 && heldRelations.length === 0,
   });
+}
+
+// The keyboard spine: move the row cursor by one over the rows on screen and focus the
+// row's own control, so Enter opens the record. False when there is nowhere to move.
+function stepRow(delta) {
+  if (!el.roster) return false;
+  const rows = [...el.roster.querySelectorAll(".doc-row")];
+  if (!rows.length) return false;
+  const current = rows.findIndex((row) => row.contains(document.activeElement));
+  const next = current < 0
+    ? (delta > 0 ? 0 : rows.length - 1)
+    : Math.min(rows.length - 1, Math.max(0, current + delta));
+  if (next === current) return false;
+  const control = rows[next].querySelector(".doc-open");
+  if (!control) return false;
+  control.focus();
+  if (typeof control.scrollIntoView === "function") control.scrollIntoView({ block: "nearest" });
+  return true;
+}
+
+// Escape returns the record to its prompt and the page address to the plain view.
+function clearSelection() {
+  state.selectionId = null;
+  state.knowledgeOpen = false;
+  state.findingId = null;
+  setKnowledgeScope({ kind: "universal", id: "" });
+  if (typeof history.replaceState === "function") {
+    history.replaceState(null, "", location.pathname + location.search);
+  }
+  renderTree();
 }
 
 async function loadKnowledgeOverview() {
@@ -771,10 +824,8 @@ async function loadGraphRecord(actor, findingId) {
 // The dossier block: authored, received and never-shared counts with the stored
 // findings behind them. A refused actor keeps the reason visible.
 
-// A seat's id shortened to the part that distinguishes it in a dense list. The
-// distinguishing part usually sits before a trailing stamp, so the stamp goes first and
-// the last two name parts stay; the full id remains on the title, the label and the
-// record.
+// A seat's id shortened to the part that tells it apart in a dense list, with the full id
+// on the title, the label and the record.
 function shortSeatId(id) {
   const full = String(id || "");
   if (full.length <= 24) return full;
@@ -1200,6 +1251,21 @@ function init() {
       setKnowledgeScope(all ? { kind: "universal", id: "" } : { kind: "all", id: "" });
     });
   }
+  // The keyboard spine: one cursor walks the rows the reader can see, from anywhere in
+  // the page. Typing fields and the pit and axis own their own keys, so both are left alone.
+  document.addEventListener("keydown", (ev) => {
+    if (ev.defaultPrevented || ev.metaKey || ev.ctrlKey || ev.altKey) return;
+    const target = ev.target;
+    if (target && target.closest
+      && target.closest("input, textarea, select, [contenteditable], #ribbon, #attention-band")) return;
+    // j and k step from anywhere; the arrow keys step only once focus is already in the
+    // roster, so they keep scrolling the page.
+    const inRoster = Boolean(target && target.closest && target.closest("#roster"));
+    if (ev.key === "j" || (inRoster && ev.key === "ArrowDown")) { if (stepRow(1)) ev.preventDefault(); }
+    else if (ev.key === "k" || (inRoster && ev.key === "ArrowUp")) { if (stepRow(-1)) ev.preventDefault(); }
+    else if (ev.key === "/") { if (el.find) { ev.preventDefault(); el.find.focus(); } }
+    else if (ev.key === "Escape" && state.selectionId) { clearSelection(); ev.preventDefault(); }
+  });
   // The whole-orchestra canvas draws on demand: opening its disclosure repaints,
   // and the composition draws the canvas only while that disclosure is open, so
   // it is never the default surface and holds no region while it is closed.

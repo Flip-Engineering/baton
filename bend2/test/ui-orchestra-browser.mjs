@@ -351,6 +351,16 @@ await until('leaving all-records returns to universal knowledge',
 await evalJs(`document.querySelector('#roster .doc-row[data-doc-id="worker"] .doc-open').click()`);
 await until('worker scope restores its holdings',
   `(document.querySelector('#map-scope').textContent || '').endsWith('· 2 items') && !!document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]')`);
+await evalJs(`document.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true, cancelable:true}))`);
+await until('Escape clears the worker selection and returns to universal holdings',
+  `document.getElementById('map-scope').textContent === 'Universal knowledge · 0 items'
+    && !document.querySelector('#roster .doc-open[aria-current="true"]')
+    && !document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]')
+    && location.hash === ''`);
+await evalJs(`document.querySelector('#roster .doc-row[data-doc-id="worker"] .doc-open').click()`);
+await until('worker holdings reopen after clearing the selection',
+  `document.getElementById('map-scope').textContent === 'Worker worker · 2 items'
+    && !!document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]')`);
 await evalJs(`document.querySelector('#roster [data-doc-group="qa-ensemble"]').click()`);
 await until('ensemble band opens the owner holdings on the map',
   `document.querySelector('#map-scope').textContent === 'Group qa-ensemble · 1 item' && !!document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]')`);
@@ -982,6 +992,9 @@ let workerExecution;
 committed();
 await until('recorded running execution reaches the attention strip',
   `document.querySelector('#attention-band [data-att-key="chip:worker"]') !== null`);
+await evalJs(`document.querySelector('#snapshot-line [aria-label="Focus the first running seat"]').click()`);
+check('running count focuses the running actor while it owes input', await evalJs(
+  `document.activeElement === document.querySelector('#roster .doc-row[data-doc-id="worker"] .doc-open')`));
 // Capture the document with running work.
 const nowShot = await send(pageWs, 'Page.captureScreenshot', { format: 'png' });
 writeFileSync(join(OUT, 'now.png'), Buffer.from(nowShot.result.data, 'base64'));

@@ -1,20 +1,8 @@
-/* Selected actor, finding and complete message reads in the oversight document.
-   Message read states and bodies come from the shell; buttons request reads.
-   The seat heading carries a status dot: failed red, stopped-seat
-   attention, running green, everything else muted. The dot takes the
-   failed ink for a failed seat and the attention ink for a stopped
-   one, reading seat.notProgressing: the record holds the seat,
-   stopped or failed. Queued messages never take either ink.
-   Changes read as a vertical timeline and the sharing path as a node
-   chain, both drawn from the same recorded fields as the prose they
-   replace. All labels arrive through textContent.
-   The seat block leads with state: the status word set large beside
-   its tone dot with the owed figure next to it. Reference facts sit
-   in a small muted grid below; the failure line reads as a warning.
-   A finding states its kind when served, its evidence as the retained
-   message it points at (rendered inline when the route supplies the
-   object, read on demand otherwise), and its recorded relations as
-   statements. Absent fields leave the block as it reads without them. */
+/* The rail record: one seat's state, work, messages and changes, plus the
+   selected finding. Reads come from the shell; buttons request them.
+   The state head sticks while the record scrolls. Dot: failed red,
+   stopped attention, running green, else muted; queued messages take
+   no ink. All labels arrive through textContent. */
 
 var SEL_EVENT_LIMIT = 8;
 var selEventsOpen = false;
@@ -78,8 +66,8 @@ function selDot(status, notProgressing) {
   return "var(--muted)";
 }
 
-// Timeline tone from the recorded kind. Failures read red, receipts and
-// reports read attention, everything else stays muted.
+// Timeline tone from the recorded kind: failures red, receipts and reports
+// attention, promotions and shares selection, else muted.
 function selEventTone(ev) {
   var kind = String((ev && ev.kind) || "").toLowerCase();
   if (kind.indexOf("fail") !== -1) return "bad";
@@ -118,8 +106,7 @@ function selTail(id) {
 }
 
 // A served message reference, normalized to the id the read uses.
-// Accepts a bare id, a message:ID reference, or an object carrying
-// one. Unparseable references read as absent.
+// Unparseable references read as absent.
 function selMsgRef(ref) {
   var raw = selMsgRaw(ref);
   return raw.replace(/^message:/, "");
@@ -133,10 +120,8 @@ function selMsgRaw(ref) {
   return "";
 }
 
-// The sharing path as a node chain: one stop per recorded handoff, edges
-// arrowed in travel order, the promoting actor above its edge. The stop
-// matching the finding's recorded author carries an origin ring. Full
-// identities stay in titles and in the accessible label.
+// The sharing path as a node chain. Full identities stay in titles
+// and in the accessible label; the author's stop carries a ring.
 function selPathChain(steps, author) {
   var stops = [];
   var stopVias = [];
@@ -226,12 +211,12 @@ function renderSelection(mount, data, options) {
   var finding = input.finding || null;
   var events = Array.isArray(input.events) ? input.events : [];
   if (!seat && !finding) {
-    mount.appendChild(selEl("p", "muted", "Select a row to read its record here."));
+    mount.appendChild(selEl("p", "muted", "Select a row."));
     return;
   }
   if (seat) {
-    var seatBlock = selEl("div", "sel-block");
-    seatBlock.appendChild(selEl("h2", "doc-section", seat.id));
+    var head = selEl("div", "sel-block sel-head");
+    head.appendChild(selEl("h2", "doc-section", seat.id));
     var owed = selOwed(seat);
     var state = selEl("p", "sel-state");
     var dot = selEl("span", "sel-dot");
@@ -242,7 +227,9 @@ function renderSelection(mount, data, options) {
     if (owed > 0) {
       state.appendChild(selEl("span", "sel-owed", owed + " owed"));
     }
-    seatBlock.appendChild(state);
+    head.appendChild(state);
+    mount.appendChild(head);
+    var seatBlock = selEl("div", "sel-block");
     var failure = seat.failure || null;
     if (failure) {
       selBodyBlock(seatBlock,
@@ -360,7 +347,7 @@ function renderSelection(mount, data, options) {
     waiting.appendChild(selEl("h2", "doc-section", "Awaiting " + pendingTotal));
     if (stubs.length < pendingTotal) {
       waiting.appendChild(selEl("p", "muted", "Showing " + stubs.length
-        + " messages included in this snapshot."));
+        + " of " + pendingTotal + "."));
     }
     var groups = [];
     var groupAt = {};
