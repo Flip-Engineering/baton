@@ -14,6 +14,14 @@ EXE = ROOT / '.scratch/bend2/baton2'
 OMP_CONDUCTOR_SCRIPT = ROOT / 'bend2/scripts/omp-conductor.mjs'
 OMP_EXE = pathlib.Path('/opt/homebrew/bin/omp')
 
+RPC_INPUT = (
+    'filter_request=json.loads(sys.stdin.readline())\n'
+    'state_request=json.loads(sys.stdin.readline())\n'
+    'prompt=json.loads(sys.stdin.readline())["message"]\n'
+    'print(json.dumps({"type":"response","command":"get_state","success":True,"id":state_request["id"],'
+    '"data":{"sessionId":native_id,"model":{"provider":"fixture","id":sys.argv[sys.argv.index("--model")+1]}}}),flush=True)\n'
+)
+
 
 class OmpRootAdapter(unittest.TestCase):
     """Test the OMP Conductor adapter's report-triggered delivery and message formatting."""
@@ -73,12 +81,14 @@ class OmpRootAdapter(unittest.TestCase):
         native.write_text(
             '#!' + sys.executable + '\nimport json,sys,pathlib,subprocess,os\n'
             f'cmd={ [str(EXE), str(self.db)]!r}\n'
-            'ident="first" if "[id: first]" in sys.argv[-1] else "second"\n'
-            f'with pathlib.Path({str(calls)!r}).open("a") as f: f.write(json.dumps({{"args":sys.argv[1:],"cwd":os.getcwd()}})+"\\n")\n'
+            'native_id="native-lead"\n' + RPC_INPUT +
+            'ident="first" if "[id: first]" in prompt else "second"\n' +
+            f'with pathlib.Path({str(calls)!r}).open("a") as f: f.write(json.dumps({{"args":sys.argv[1:],"cwd":os.getcwd(),"prompt":prompt}})+"\\n")\n' +
             'print(json.dumps({"type":"session","id":"native-lead"}),flush=True)\n'
             'subprocess.run(cmd+["ack",ident,"lead","lead reviewed child"],check=True,stdout=subprocess.DEVNULL)\n'
             'print(json.dumps({"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Reviewed and landed "+ident}]}}),flush=True)\n'
-            'print(json.dumps({"type":"agent_end","messages":[],"isTerminal":True}),flush=True)\n')
+            'print(json.dumps({"type":"agent_end","messages":[{"role":"assistant","content":[{"type":"text","text":"Reviewed and landed "+ident}]}],"isTerminal":True}),flush=True)\n'
+            'sys.stdin.read()\n')
         native.chmod(0o700)
         args = ['node', str(OMP_CONDUCTOR_SCRIPT), str(self.db), str(EXE), str(native), '--session', 'lead', '--attach']
         for ident in ['first', 'second']:
@@ -96,9 +106,9 @@ class OmpRootAdapter(unittest.TestCase):
         native_calls = [json.loads(line) for line in calls.read_text().splitlines()]
         self.assertEqual(len(native_calls), 2)
         self.assertEqual(native_calls[0]['cwd'], str(self.checkouts / 'lead'))
-        prompt = native_calls[0]['args'][native_calls[0]['args'].index('--system-prompt') + 1]
+        prompt = native_calls[0]['prompt']
         self.assertIn("inbox 'lead'", prompt)
-        self.assertIn("ack ID 'lead'", prompt)
+        self.assertIn("ack MESSAGE_ID 'lead'", prompt)
         self.assertEqual(native_calls[1]['args'][native_calls[1]['args'].index('--resume') + 1], 'native-lead')
         reports = [json.loads(line) for line in root_calls.read_text().splitlines()]
         self.assertEqual([r['body'] for r in reports], ['Reviewed and landed first', 'Reviewed and landed second'])
@@ -118,10 +128,13 @@ class OmpRootAdapter(unittest.TestCase):
         calls = temp / 'selected.json'
         native = temp / 'selected.py'
         native.write_text('#!' + sys.executable + '\nimport json,os,pathlib,subprocess,sys\n'
-            + f'pathlib.Path({str(calls)!r}).write_text(json.dumps({{"argv":sys.argv[1:],"cwd":os.getcwd()}}))\n'
+            + 'native_id="saved-omp"\n' + RPC_INPUT
+            + f'pathlib.Path({str(calls)!r}).write_text(json.dumps({{"argv":sys.argv[1:],"cwd":os.getcwd(),"prompt":prompt}}))\n'
             + f'subprocess.run({[str(EXE), str(self.db), "ack", "selected-report", associate, "selected-reviewed"]!r},check=True,stdout=subprocess.DEVNULL)\n'
             + 'print(json.dumps({"type":"session","id":"saved-omp"}),flush=True)\n'
-            + 'print(json.dumps({"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Selected Associate reviewed."}]}}),flush=True)\n')
+            + 'print(json.dumps({"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Selected Associate reviewed."}]}}),flush=True)\n'
+            + 'print(json.dumps({"type":"agent_end","isTerminal":True,"messages":[{"role":"assistant","content":[{"type":"text","text":"Selected Associate reviewed."}]}]}),flush=True)\n'
+            + 'sys.stdin.read()\n')
         native.chmod(0o700)
         legacy = ROOT / 'bend2/scripts/omp-root.mjs'
         attached = subprocess.run(['node', str(legacy), str(self.db), str(EXE), str(native),
@@ -136,14 +149,14 @@ class OmpRootAdapter(unittest.TestCase):
         argv = observed['argv']
         self.assertEqual(argv[argv.index('--resume') + 1], 'saved-omp')
         self.assertEqual(argv[argv.index('--model') + 1], 'legacy-model')
-        prompt = argv[argv.index('--system-prompt') + 1]
+        prompt = observed['prompt']
         self.assertIn('Associate Conductor', prompt)
-        inbox = next(line.split(' — ', 1)[0].strip() for line in prompt.splitlines()
-                     if ' — show your pending messages' in line)
+        inbox = next(line.strip() for line in prompt.splitlines()
+                     if ' inbox ' in line and shlex.split(line)[-2:] == ['inbox', associate])
         self.assertEqual(shlex.split(inbox), [str(EXE), str(self.db), 'inbox', associate])
         selected = json.loads(self.coord('player', associate))
         self.assertEqual(selected['role'], 'associate-conductor')
-        self.assertIn(str(OMP_CONDUCTOR_SCRIPT), json.loads(selected['endpoint']))
+        self.assertEqual(json.loads(selected['endpoint'])[2:4], ['receive', associate])
         reports = json.loads(self.coord('inbox', ''))
         self.assertEqual([(r['sender'], r['recipient'], r['body']) for r in reports],
                          [(associate, '', 'Selected Associate reviewed.')])
@@ -167,39 +180,68 @@ class OmpRootAdapter(unittest.TestCase):
         self.assertEqual(len(reports), 1)
         self.assertEqual(reports[0]['sender'], 'lead')
         self.assertIn('23', reports[0]['body'])
-        self.assertEqual(json.loads(reports[0]['body'])['exitCode'], 23)
+        self.assertIn('23', json.loads(self.coord('player', 'lead'))['execution']['status'])
 
-    def test_report_file_starts_attached_omp_root(self):
+    def test_report_file_migrates_stored_callback_to_native_receive(self):
         temp = pathlib.Path(self.temp.name)
+        conductor = 'main-conductor'
         received = temp / 'received.txt'
+        argv_file = temp / 'received-argv.json'
         native = temp / 'root.py'
         native.write_text('#!' + sys.executable + '\n' +
             'import sys,pathlib,subprocess,json\n' +
-            f'pathlib.Path({str(received)!r}).write_text(sys.argv[-1])\n' +
-            f'subprocess.run({[str(EXE), str(self.db), "ack", "finished", "root", "native-reviewed"]!r},check=True,stdout=subprocess.DEVNULL)\n' +
-            'print(json.dumps({"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Reviewed."}]}}))\n')
+            'native_id="native-root"\n' + RPC_INPUT +
+            f'pathlib.Path({str(received)!r}).write_text(prompt)\n' +
+            f'pathlib.Path({str(argv_file)!r}).write_text(json.dumps(sys.argv[1:]))\n' +
+            f'subprocess.run({[str(EXE), str(self.db), "ack", "finished", conductor, "native-reviewed"]!r},check=True,stdout=subprocess.DEVNULL)\n' +
+            'print(json.dumps({"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"Reviewed."}]}}))\n' +
+            'print(json.dumps({"type":"agent_end","isTerminal":True,"messages":[{"role":"assistant","content":[{"type":"text","text":"Reviewed."}]}]}),flush=True)\n' +
+            'sys.stdin.read()\n')
         native.chmod(0o700)
-        attached = subprocess.run(['node', str(OMP_CONDUCTOR_SCRIPT), str(self.db), str(EXE), str(native), '--attach'], capture_output=True, text=True)
+        attached = subprocess.run(['node', str(OMP_CONDUCTOR_SCRIPT), str(self.db), str(EXE),
+                                   str(native), '--session', conductor, '--attach'], capture_output=True, text=True)
         self.assertEqual(attached.returncode, 0, attached.stderr)
         self.assertFalse(received.exists())
-        self.register('w1', 'root', 'omp', 'model', 'low', str(temp), 'branch', 'base')
+        legacy = ROOT / 'bend2/scripts/omp-root.mjs'
+        legacy_store = pathlib.Path(str(self.db) + '.session-' + conductor.encode().hex())
+        legacy_store.mkdir()
+        conversation = legacy_store / '2026_native-root.jsonl'
+        conversation.write_text(json.dumps({'type': 'session', 'id': 'native-root'}) + '\n')
+        callback = ['/usr/bin/env', 'OMP_ROOT_MODEL=legacy-model', 'OMP_ROOT_THINKING=low',
+                    'node', str(legacy), str(self.db), str(EXE), str(native),
+                    '--session', conductor, '--message']
+        self.coord('connect', conductor, 'native-root', json.dumps(callback))
+        self.register('w1', conductor, 'omp', 'model', 'low', str(temp), 'branch', 'base')
         report = temp / 'report.txt'
         report.write_text('Completed task with full report.')
         self.coord('report', 'finished', 'w1', report.read_text())
         self.assertIn(report.read_text(), received.read_text())
         self.assertEqual(json.loads(self.coord('delivery', 'finished'))['receipt'], 'native-reviewed')
+        selected = json.loads(self.coord('player', conductor))
+        endpoint = json.loads(selected['endpoint'])
+        self.assertEqual(endpoint[2:4], ['receive', conductor])
+        self.assertEqual(endpoint[5:7], ['legacy-model', 'low'])
+        self.assertEqual(selected['native'], 'native-root')
+        self.assertIsNone(selected['parent'])
+        observed_argv = json.loads(argv_file.read_text())
+        self.assertEqual(observed_argv[observed_argv.index('--resume') + 1], str(conversation))
 
-    def test_reattachment_preserves_native_session_for_the_next_report(self):
+    def test_attached_session_continues_later_input_and_reattaches_same_native(self):
         temp = pathlib.Path(self.temp.name)
         calls = temp / 'calls.jsonl'
         native = temp / 'root.py'
         native.write_text('#!' + sys.executable + '\nimport sys,pathlib,json,subprocess\n' +
-            f'with pathlib.Path({str(calls)!r}).open("a") as f:f.write(json.dumps(sys.argv[1:])+"\\n")\n' +
-            'body=sys.argv[-1]\n' +
-            'ident="first" if "[id: first]" in body else "second"\n' +
+            'native_id="native-root"\n' + RPC_INPUT +
+            'body=prompt\n' +
+            f'with pathlib.Path({str(calls)!r}).open("a") as f:f.write(json.dumps({{"argv":sys.argv[1:],"prompt":body}})+"\\n")\n' +
+            'ident="first" if "[id: first]" in body else ("during-turn" if "[id: during-turn]" in body else "second")\n' +
             'print(\'{"type": "session", "id": "native-root"}\',flush=True)\n' +
             f'subprocess.run({[str(EXE), str(self.db), "ack"]!r}+[ident,"root","reviewed"],check=True,stdout=subprocess.DEVNULL)\n' +
-            'print(\'{"type": "message_end", "message": {"role": "assistant", "content": [{"type": "text", "text": "Reviewed"}]}}\')\n')
+            'if ident=="first":\n' +
+            f' subprocess.run({[str(EXE), str(self.db), "report", "during-turn", "sender", "Later report during the live turn."]!r},check=True,stdout=subprocess.DEVNULL)\n' +
+            'print(\'{"type": "message_end", "message": {"role": "assistant", "content": [{"type": "text", "text": "Reviewed"}]}}\')\n' +
+            'print(\'{"type":"agent_end","isTerminal":true,"messages":[{"role":"assistant","content":[{"type":"text","text":"Reviewed"}]}]}\',flush=True)\n' +
+            'sys.stdin.read()\n')
         native.chmod(0o700)
         args = ['node', str(OMP_CONDUCTOR_SCRIPT), str(self.db), str(EXE), str(native), '--attach']
         for message in ['first', 'second']:
@@ -209,10 +251,14 @@ class OmpRootAdapter(unittest.TestCase):
                 self.register('sender', 'root', 'fixture', 'model', 'low')
             self.coord('report', message, 'sender', 'Review this message.')
             self.assertEqual(json.loads(self.coord('player', 'root'))['native'], 'native-root')
-        argv = [json.loads(line) for line in calls.read_text().splitlines()]
-        self.assertEqual(len(argv), 2)
-        self.assertEqual(argv[1][argv[1].index('--resume') + 1], 'native-root')
-        self.assertNotIn('--no-session', argv[0])
+        observed = [json.loads(line) for line in calls.read_text().splitlines()]
+        self.assertEqual(len(observed), 3)
+        self.assertIn('Later report during the live turn.', observed[1]['prompt'])
+        self.assertEqual(json.loads(self.coord('delivery', 'during-turn'))['receipt'], 'reviewed')
+        self.assertEqual(json.loads(self.coord('inbox', 'root')), [])
+        for call in observed[1:]:
+            self.assertEqual(call['argv'][call['argv'].index('--resume') + 1], 'native-root')
+        self.assertNotIn('--no-session', observed[0]['argv'])
 
     def test_adapter_exits_cleanly_with_no_pending_messages(self):
         """With no root and no messages, the adapter exits 0."""

@@ -78,7 +78,7 @@ class CodexRootAdapter(unittest.TestCase):
         self.coord('turn', 'w1', 'finished', str(player), 'model', 'low', str(temp), str(task), str(temp / 'worker.jsonl'), '')
         self.assertIn('Completed live task.', received.read_text())
         self.assertEqual(json.loads(self.coord('delivery', 'finished'))['receipt'], 'native-reviewed')
-        self.assertIn('Reviewed.', pathlib.Path(str(self.db) + '.root.log').read_text())
+        self.assertIn('Reviewed.', pathlib.Path(str(self.db) + '.conductor-726f6f74.jsonl').read_text())
 
     def test_failed_native_delivery_keeps_the_committed_report_pending(self):
         temp = pathlib.Path(self.temp.name)
@@ -95,17 +95,20 @@ class CodexRootAdapter(unittest.TestCase):
         self.assertEqual(pending[0]['body'], 'Retained report')
         self.assertIsNone(json.loads(self.coord('delivery', 'failed-delivery'))['receipt'])
 
-    def test_reattachment_preserves_native_session_for_the_next_report(self):
+    def test_attached_session_continues_later_input_and_reattaches_same_native(self):
         temp = pathlib.Path(self.temp.name)
         calls = temp / 'calls.jsonl'
         native = temp / 'root.py'
         native.write_text('#!' + sys.executable + '\nimport sys,pathlib,json,subprocess\n' +
-            f'with pathlib.Path({str(calls)!r}).open("a") as f:f.write(json.dumps(sys.argv[1:])+"\\n")\n' +
             'body=sys.stdin.read()\n' +
-            'ident="first" if "[id: first]" in body else "second"\n' +
+            f'with pathlib.Path({str(calls)!r}).open("a") as f:f.write(json.dumps({{"argv":sys.argv[1:],"prompt":body}})+"\\n")\n' +
+            'ident="first" if "[id: first]" in body else ("during-turn" if "[id: during-turn]" in body else "second")\n' +
             'print(\'{"type": "thread.started", "thread_id": "native-root"}\',flush=True)\n' +
             f'subprocess.run({[str(EXE), str(self.db), "ack"]!r}+[ident,"root","reviewed"],check=True,stdout=subprocess.DEVNULL)\n' +
-            'print(\'{"type": "item.completed", "item": {"type": "agent_message", "text": "Reviewed"}}\')\n')
+            'if ident=="first":\n' +
+            f' subprocess.run({[str(EXE), str(self.db), "report", "during-turn", "sender", "Later report during the live turn."]!r},check=True,stdout=subprocess.DEVNULL)\n' +
+            'print(\'{"type": "item.completed", "item": {"type": "agent_message", "text": "Reviewed"}}\')\n' +
+            'print(\'{"type":"turn.completed"}\')\n')
         native.chmod(0o700)
         args = ['node', str(CODEX_CONDUCTOR_SCRIPT), str(self.db), str(EXE), str(native), '--attach']
         for message in ['first', 'second']:
@@ -115,10 +118,15 @@ class CodexRootAdapter(unittest.TestCase):
                 self.register('sender', 'root', 'fixture', 'model', 'low')
             self.coord('report', message, 'sender', 'Review this message.')
             self.assertEqual(json.loads(self.coord('player', 'root'))['native'], 'native-root')
-        argv = [json.loads(line) for line in calls.read_text().splitlines()]
-        self.assertEqual(len(argv), 2)
-        self.assertEqual(argv[1][:3], ['exec', 'resume', 'native-root'])
-        self.assertNotIn('--ephemeral', argv[0])
+        observed = [json.loads(line) for line in calls.read_text().splitlines()]
+        self.assertEqual(len(observed), 3)
+        self.assertIn('Later report during the live turn.', observed[1]['prompt'])
+        self.assertEqual(json.loads(self.coord('delivery', 'during-turn'))['receipt'], 'reviewed')
+        self.assertEqual(json.loads(self.coord('inbox', 'root')), [])
+        for call in observed[1:]:
+            start = call['argv'].index('exec')
+            self.assertEqual(call['argv'][start:start + 3], ['exec', 'resume', 'native-root'])
+        self.assertNotIn('--ephemeral', observed[0]['argv'])
 
     def test_adapter_exits_cleanly_with_no_pending_messages(self):
         """With no root and no messages, the adapter exits 0."""
@@ -152,7 +160,8 @@ class CodexRootAdapter(unittest.TestCase):
             + f'pathlib.Path({str(calls)!r}).write_text(json.dumps({{"argv":sys.argv[1:],"cwd":os.getcwd(),"prompt":sys.stdin.read(),"api_keys":[k for k in ("OPENAI_API_KEY","CODEX_API_KEY") if k in os.environ]}}))\n'
             + f'subprocess.run({[str(EXE), str(self.db), "ack", "selected-report", associate, "selected-reviewed"]!r},check=True,stdout=subprocess.DEVNULL)\n'
             + 'print(json.dumps({"type":"thread.started","thread_id":"saved-codex"}),flush=True)\n'
-            + 'print(json.dumps({"type":"item.completed","item":{"type":"agent_message","text":"Selected Associate reviewed."}}),flush=True)\n')
+            + 'print(json.dumps({"type":"item.completed","item":{"type":"agent_message","text":"Selected Associate reviewed."}}),flush=True)\n'
+            + 'print(json.dumps({"type":"turn.completed"}),flush=True)\n')
         native.chmod(0o700)
         attached = subprocess.run(['node', str(CODEX_CONDUCTOR_SCRIPT), str(self.db), str(EXE),
                                    str(native), '--session', associate, '--attach'],
@@ -168,7 +177,8 @@ class CodexRootAdapter(unittest.TestCase):
         self.assertEqual(reported.returncode, 0, reported.stderr)
         observed = json.loads(calls.read_text())
         expected_prefix = ['exec', 'resume', native_id] if native_id else ['exec', '--json', '--model']
-        self.assertEqual(observed['argv'][:3], expected_prefix)
+        start = observed['argv'].index('exec')
+        self.assertEqual(observed['argv'][start:start + 3], expected_prefix)
         self.assertEqual(observed['argv'][observed['argv'].index('--model') + 1], 'stored-model')
         self.assertIn('forced_login_method="chatgpt"', observed['argv'])
         self.assertEqual([observed['argv'][index + 1]
@@ -178,8 +188,8 @@ class CodexRootAdapter(unittest.TestCase):
         self.assertEqual(observed['api_keys'], [])
         self.assertEqual(observed['cwd'], str(self.checkouts / associate))
         self.assertIn('Associate Conductor', observed['prompt'])
-        inbox = next(line.split(' — ', 1)[0].strip() for line in observed['prompt'].splitlines()
-                     if ' — show your pending messages' in line)
+        inbox = next(line.strip() for line in observed['prompt'].splitlines()
+                     if ' inbox ' in line and shlex.split(line)[-2:] == ['inbox', associate])
         self.assertEqual(shlex.split(inbox), [str(EXE), str(self.db), 'inbox', associate])
         self.assertEqual(json.loads(self.coord('role', associate))['role'], 'associate-conductor')
         reports = json.loads(self.coord('inbox', ''))
@@ -190,14 +200,35 @@ class CodexRootAdapter(unittest.TestCase):
     def test_stored_legacy_entry_and_model_environment_remain_valid(self):
         temp = pathlib.Path(self.temp.name)
         legacy = ROOT / 'bend2/scripts/codex-root.mjs'
+        calls = temp / 'legacy.json'
+        native = temp / 'legacy.py'
+        native.write_text('#!' + sys.executable + '\nimport json,pathlib,subprocess,sys\n'
+            + f'pathlib.Path({str(calls)!r}).write_text(json.dumps({{"argv":sys.argv[1:],"prompt":sys.stdin.read()}}))\n'
+            + f'subprocess.run({[str(EXE), str(self.db), "ack", "legacy-report", "root", "legacy-reviewed"]!r},check=True,stdout=subprocess.DEVNULL)\n'
+            + 'print(json.dumps({"type":"thread.started","thread_id":"saved-native"}),flush=True)\n'
+            + 'print(json.dumps({"type":"item.completed","item":{"type":"agent_message","text":"Legacy report reviewed."}}),flush=True)\n'
+            + 'print(json.dumps({"type":"turn.completed"}),flush=True)\n')
+        native.chmod(0o700)
         attached = subprocess.run(['node', str(legacy), str(self.db), str(EXE),
-                                   'false-codex', '--attach'], text=True, capture_output=True,
+                                   str(native), '--attach'], text=True, capture_output=True,
                                   env={**os.environ, 'CODEX_ROOT_MODEL': 'legacy-model'})
         self.assertEqual(attached.returncode, 0, attached.stderr)
+        self.assertFalse(calls.exists())
+        callback = ['/usr/bin/env', 'CODEX_ROOT_MODEL=legacy-model', 'node', str(legacy),
+                    str(self.db), str(EXE), str(native), '--session', 'root', '--message']
+        self.coord('connect', 'root', 'saved-native', json.dumps(callback))
+        self.register('sender', 'root', 'fixture', 'model', 'low')
+        self.coord('report', 'legacy-report', 'sender', 'Stored callback input.')
+        observed = json.loads(calls.read_text())
+        start = observed['argv'].index('exec')
+        self.assertEqual(observed['argv'][start:start + 3], ['exec', 'resume', 'saved-native'])
+        self.assertIn('Stored callback input.', observed['prompt'])
+        self.assertEqual(json.loads(self.coord('delivery', 'legacy-report'))['receipt'], 'legacy-reviewed')
         selected = json.loads(self.coord('player', 'root'))
         endpoint = json.loads(selected['endpoint'])
-        self.assertIn('CODEX_CONDUCTOR_MODEL=legacy-model', endpoint)
-        self.assertIn(str(CODEX_CONDUCTOR_SCRIPT), endpoint)
+        self.assertEqual(endpoint[2:4], ['receive', 'root'])
+        self.assertEqual(endpoint[5], 'legacy-model')
+        self.assertEqual(selected['native'], 'saved-native')
         self.assertEqual(selected['role'], 'principal-conductor')
 
     def test_adapter_formats_pending_report(self):

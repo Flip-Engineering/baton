@@ -865,10 +865,18 @@ def retained_input(muse: Bool, omp: Bool, claude: Bool, +prompt: String, level: 
 def retained_keep_stdin(muse: Bool, omp: Bool, claude: Bool) -> U32:
   Bool.pick(U32,muse,0,Bool.pick(U32,claude,0,Bool.pick(U32,omp,1,0)))
 
+# Legacy Node OMP adapters stored custom parentless IDs in the per-session directory.
+def retained_native(+db: String, +player: String, +sessions: String, +session: String, +harness: String) -> IO(String):
+  do IO<String>:
+    alternate : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN " ++ C.q(sessions) ++ "=" ++ C.q(db ++ ".sessions") ++ " THEN CASE WHEN parent IS NULL THEN " ++ C.q(db ++ ".root-sessions") ++ " ELSE " ++ C.q(db ++ ".session-") ++ " || lower(hex(id)) END ELSE " ++ C.q(db ++ ".sessions") ++ " END FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
+    +enabled : Bool <- IO.pure(Bool,Bool.and(String.eq(harness,"omp\n"),Bool.not(String.is_empty(session))))
+    +selected : String <- Omp.resume_file(sessions,Tx.trim_nl(alternate),session,enabled)
+    legacy : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ C.q(db ++ ".session-") ++ " || lower(hex(id)) FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
+    Omp.resume_file(Tx.trim_nl(legacy),sessions,selected,Bool.and(enabled,String.eq(selected,session)))
+
 def retained_prepare(+db: String, +player: String, +directory: String, +cmd: String, +model: String, +effort: String, +session: String, +harness: String, +sessions: String, +prompt: String, +level: String, seal_prompt: Bool) -> IO(Result<&1,&1,U32 & String,RetainedLaunch>):
   do IO<Result<&1,&1,U32 & String,RetainedLaunch>>:
-    alternate : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN " ++ C.q(sessions) ++ "=" ++ C.q(db ++ ".sessions") ++ " THEN CASE WHEN parent IS NULL THEN " ++ C.q(db ++ ".root-sessions") ++ " ELSE " ++ C.q(db ++ ".session-") ++ " || lower(hex(id)) END ELSE " ++ C.q(db ++ ".sessions") ++ " END FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
-    +native : String <- Omp.resume_file(sessions,Tx.trim_nl(alternate),session,Bool.and(String.eq(harness,"omp\n"),Bool.not(String.is_empty(session))))
+    +native : String <- retained_native(db,player,sessions,session,harness)
     +prompt_file : String <- IO.pure(String,directory ++ "/prompt.txt")
     +executable : String <- IO.try(String,Lock.SessionLock.executable())
     identity : String & String <- IO.try(String & String,HostControl.Control.identity(executable))

@@ -631,6 +631,9 @@ See [session stop behavior](../docs/bend2/native-interactions.md#terminal-sessio
 The former `*-root.mjs` paths forward to the canonical scripts for existing
 endpoints. Native `receive` supplies the session ownership and
 queued delivery described here.
+`--attach` registers the native receiver and continues pending input in the
+selected conversation. Stored `--message` callbacks register the same receiver.
+`--once` runs one turn.
 
 ### Contributor receive validation
 

@@ -229,7 +229,8 @@ identity. Fresh completion has its own attempt ID.
 Native initialization binds the session ID in the existing row. Later turns
 resume it. Codex retains conversations in its configured storage. Native OMP
 receive uses `DATABASE.root-sessions` for parentless sessions and
-`DATABASE.session-HEX_ID` for sessions with a parent. The Node OMP adapter uses
+`DATABASE.session-HEX_ID` for sessions with a parent. The Node OMP adapter's
+`--once` uses
 `DATABASE.root-sessions` for logical ID `root` and `DATABASE.session-HEX_ID` for
 other IDs. Each directory stores conversations by their native identity; its
 path does not assign a Conductor role.
@@ -241,6 +242,12 @@ wrapper supplies harness-specific configuration or login settings.
 The former `*-root.mjs` paths forward to these canonical entry points for
 existing endpoints. New trial Conductors use native `receive`. Claude's
 channel transport remains the runtime component that requires Node.
+The Node adapters' `--attach` and stored `--message` callbacks register ordinary
+native `receive` endpoints. The shared receiver continues input committed during
+an active turn after that turn settles, using the selected native identity,
+workspace, model and effort. Explicit `--once` runs one turn.
+OMP saved-conversation lookup also reads the legacy per-session directory when
+an attached parentless session has a custom logical ID.
 
 ### Conductor wake per harness
 

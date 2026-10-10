@@ -3,8 +3,8 @@
 //
 // Bridges the Bend2 coordinator to a Principal or Associate Conductor. Codex
 // runs in `exec --json` mode (non-interactive, JSONL on stdout) and calls the
-// coordinator CLI through its built-in shell tool. A report writer invokes the adapter for its committed message.
-// --attach records the invocation in the selected session and delivers pending messages.
+// coordinator CLI through its built-in shell tool. --once runs one turn.
+// --attach and stored message callbacks use the shared native receiver.
 //
 // Usage: node bend2/scripts/codex-conductor.mjs <database-path> [coordinator-executable] [codex-executable] [--session ID]
 //
@@ -294,19 +294,24 @@ async function runOnce() {
   closeDb();
 }
 
-if (attach) {
+async function runAttached() {
   await openDb();
   const session = selectedSession();
   codexModel ||= session?.model || 'o4-mini';
   const native = session?.native || '';
-  const endpoint = JSON.stringify([
-    '/usr/bin/env', `CODEX_CONDUCTOR_MODEL=${codexModel}`,
-    process.execPath, fileURLToPath(import.meta.url), DB, COORD, codexExe, '--session', sessionId, '--message',
-  ]);
+  const effort = session?.effort || 'medium';
+  const cwd = session?.workspace || ROOT;
+  const log = DB + '.conductor-' + Buffer.from(sessionId).toString('hex') + '.jsonl';
+  const receiver = [DB, 'receive', sessionId, codexExe, codexModel, effort, cwd, log];
+  const endpoint = JSON.stringify([COORD, ...receiver]);
   const command = hasParent(session)
     ? [DB, 'connect', sessionId, native, endpoint]
     : [DB, 'attach', sessionId, 'codex', native, endpoint];
   execFileSync(COORD, command, { stdio: 'inherit' });
   execFileSync(COORD, [DB, 'role', sessionId, hasParent(session) ? 'associate-conductor' : 'principal-conductor'], { stdio: 'inherit' });
+  closeDb();
+  execFileSync(COORD, [...receiver, messageId || ''], { stdio: 'inherit' });
 }
-await runOnce();
+
+if (attach || messageId !== null) await runAttached();
+else await runOnce();

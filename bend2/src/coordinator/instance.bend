@@ -178,8 +178,11 @@ def serve_managed(+db: String, +session: String) -> IO(Result<&1,&1,U32 & String
 def serve_native(+db: String, +session: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     cmd : String <- recorded_endpoint(db, session, "4")
+    model : String <- recorded_endpoint(db, session, "5")
+    effort : String <- recorded_endpoint(db, session, "6")
+    cwd : String <- recorded_endpoint(db, session, "7")
     log : String <- recorded_endpoint(db, session, "8")
-    Receive.serve(db, session, cmd, "", "", "", log)
+    Receive.serve(db, session, cmd, model, effort, cwd, log)
 
 def serve_selected(db: String, session: String, managed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match managed:

@@ -2,9 +2,8 @@
 // Bend2 OMP Conductor adapter.
 //
 // Bridges the Bend2 coordinator to a Principal or Associate Conductor. OMP runs
-// in --print --mode json and
-// calls the coordinator CLI through its built-in bash tool. A report writer invokes the adapter for its committed message.
-// --attach records the invocation in the selected session and delivers pending messages.
+// in --print --mode json for --once and calls the coordinator CLI through bash.
+// --attach and stored message callbacks use the shared native RPC receiver.
 //
 // Usage: node bend2/scripts/omp-conductor.mjs <database-path> [coordinator-executable] [omp-executable]
 //
@@ -313,19 +312,23 @@ async function runOnce() {
   closeDb();
 }
 
-if (attach) {
+async function runAttached() {
   await openDb();
   const session = selectedSession();
   selectRoute(session);
   const native = session?.native || '';
-  const endpoint = JSON.stringify([
-    '/usr/bin/env', `OMP_CONDUCTOR_MODEL=${ompModel}`, `OMP_CONDUCTOR_THINKING=${ompThinking}`,
-    process.execPath, fileURLToPath(import.meta.url), DB, COORD, ompExe, '--session', sessionId, '--message',
-  ]);
+  const cwd = session?.workspace || ROOT;
+  const log = DB + '.conductor-' + Buffer.from(sessionId).toString('hex') + '.jsonl';
+  const receiver = [DB, 'receive', sessionId, ompExe, ompModel, ompThinking, cwd, log];
+  const endpoint = JSON.stringify([COORD, ...receiver]);
   const command = hasParent(session)
     ? [DB, 'connect', sessionId, native, endpoint]
     : [DB, 'attach', sessionId, 'omp', native, endpoint];
   execFileSync(COORD, command, { stdio: 'inherit' });
   execFileSync(COORD, [DB, 'role', sessionId, hasParent(session) ? 'associate-conductor' : 'principal-conductor'], { stdio: 'inherit' });
+  closeDb();
+  execFileSync(COORD, [...receiver, messageId || ''], { stdio: 'inherit' });
 }
-await runOnce();
+
+if (attach || messageId !== null) await runAttached();
+else await runOnce();
