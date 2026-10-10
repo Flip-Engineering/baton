@@ -147,8 +147,8 @@ def notice_body(+id: String, +author: String) -> String:
 
 # A conflicting knowledge ID preserves the stored record and returns its ID
 # and stored party metadata.
-def knowledge_conflict_sql(+name: String, +table: String, +id: String, +guards: String, +match: String, +stored: String) -> String:
-  "SELECT json_object('error'," ++ C.q(name) ++ ",'id'," ++ id ++ ",'stored',json_object(" ++ stored ++ "),'condition','This knowledge identity is already stored with different content.','next','Read knowledge and retain the stored record, then retry the new input under a different ID.') FROM " ++ table ++ " WHERE id=" ++ id ++ " AND " ++ guards ++ " AND NOT (" ++ match ++ ");"
+def knowledge_conflict_sql(+name: String, +table: String, +id: String, +guards: String, +same: String, +stored: String) -> String:
+  "SELECT json_object('error'," ++ C.q(name) ++ ",'id'," ++ id ++ ",'stored',json_object(" ++ stored ++ "),'condition','This knowledge identity is already stored with different content.','next','Read knowledge and retain the stored record, then retry the new input under a different ID.') FROM " ++ table ++ " WHERE id=" ++ id ++ " AND " ++ guards ++ " AND NOT (" ++ same ++ ");"
 
 # The notice rides the existing question kind, so a parent already handed off or
 # stopped still receives it under the dispatch family it already serves. It is
