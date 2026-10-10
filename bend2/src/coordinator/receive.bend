@@ -382,7 +382,7 @@ def observation_clear(outcome: Turn.Outcome) -> Bool:
 
 def finish_pending_known(finished: Result<&1,&1,U32 & String,Unit>, questions: Result<&1,&1,U32 & String,Unit>, ack: Result<&1,&1,U32 & String,Unit>, failed: Bool, superseded: Bool, +outcome: Turn.Outcome, transient: Bool, owed: Bool, next_ok: Bool, next: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
-    status : Result<&1,&1,U32 & String,Unit> <- exit_status(Bool.and(failed,Bool.not(Bool.or(superseding(superseded,outcome),Bool.and(transient,Bool.and(observation_clear(outcome),Bool.and(owed,next_ok))))))))
+    status : Result<&1,&1,U32 & String,Unit> <- exit_status(Bool.and(failed,Bool.not(Bool.or(superseding(superseded,outcome),Bool.and(transient,Bool.and(observation_clear(outcome),Bool.and(owed,next_ok)))))))
     IO.pure(Result<&1,&1,U32 & String,Unit>,Turn.combine(finished,Turn.combine(questions,Turn.combine(next,Turn.combine(ack,status)))))
 
 def finish_pending_result(finished: Result<&1,&1,U32 & String,Unit>, questions: Result<&1,&1,U32 & String,Unit>, ack: Result<&1,&1,U32 & String,Unit>, failed: Bool, superseded: Bool, outcome: Turn.Outcome, transient: Bool, owed: Bool, next: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
