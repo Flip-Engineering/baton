@@ -2125,7 +2125,7 @@ class Receive(unittest.TestCase):
         task = self.directory / 'direct-handoff.txt'
         task.write_text(body)
         cause = 'You’ve hit your usage limit for gpt-5.6-codex. Switch to another model now, or try again later.'
-        direct = self.spawn('turn', 'root', 'direct-handoff', str(self.fixture), 'codex', 'low',
+        direct = self.spawn('turn', 'root', 'direct-handoff', str(self.fixture), 'root', 'low',
                             str(self.directory), str(task),
                             str(self.directory / 'direct-handoff.jsonl'), '')
         first, started = self.accept('root')
@@ -2208,7 +2208,7 @@ class Receive(unittest.TestCase):
         task = self.directory / 'direct-handoff-chain.txt'
         task.write_text(body)
         cause = 'You’ve hit your usage limit for gpt-5.6-codex. Switch to another model now, or try again later.'
-        direct = self.spawn('turn', 'root', 'direct-handoff-chain', str(self.fixture), 'codex', 'low',
+        direct = self.spawn('turn', 'root', 'direct-handoff-chain', str(self.fixture), 'root', 'low',
                             str(self.directory), str(task),
                             str(self.directory / 'direct-handoff-chain.jsonl'), '')
         first, started = self.accept('root')
@@ -2288,7 +2288,7 @@ class Receive(unittest.TestCase):
         task = self.directory / 'direct-handoff-recovered.txt'
         task.write_text(body)
         cause = 'You’ve hit your usage limit for gpt-5.6-codex. Switch to another model now, or try again later.'
-        direct = self.spawn('turn', 'root', 'direct-handoff-recovered', str(self.fixture), 'codex',
+        direct = self.spawn('turn', 'root', 'direct-handoff-recovered', str(self.fixture), 'root',
                             'low', str(self.directory), str(task),
                             str(self.directory / 'direct-handoff-recovered.jsonl'), '')
         first, started = self.accept('root')
@@ -2341,7 +2341,7 @@ class Receive(unittest.TestCase):
         body = 'Direct OMP task interrupted by a provider failure.\n'
         task = self.directory / 'direct-provider-retry.txt'
         task.write_text(body)
-        direct = self.spawn('turn', 'root', 'direct-provider-retry', str(self.fixture), 'omp', 'low',
+        direct = self.spawn('turn', 'root', 'direct-provider-retry', str(self.fixture), 'root', 'low',
                             str(self.directory), str(task),
                             str(self.directory / 'direct-provider-retry.jsonl'), '')
         first, started = self.accept('root')

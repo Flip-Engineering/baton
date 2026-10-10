@@ -182,6 +182,8 @@ class SelectedContextPackageTest(unittest.TestCase):
             self.skipTest('Selected TypeScript runtime requires BATON2_CONTEXT_TYPESCRIPT')
         source = self.root / 'bend2/context/typescript'
         shutil.copytree(TYPESCRIPT_SOURCE, source)
+        shutil.copytree(TYPESCRIPT_SOURCE.parent / 'catalogs',
+                        self.root / 'bend2/context/catalogs')
         fixture_compiler = self.root / 'installed compiler'
         shutil.copytree(Path(compiler), fixture_compiler)
         compiler_metadata_path = fixture_compiler / 'package.json'
@@ -284,6 +286,8 @@ class SelectedContextPackageTest(unittest.TestCase):
         if compiler is None:
             self.skipTest('Selected TypeScript runtime requires BATON2_CONTEXT_TYPESCRIPT')
         shutil.copytree(TYPESCRIPT_SOURCE, self.root / 'bend2/context/typescript')
+        shutil.copytree(TYPESCRIPT_SOURCE.parent / 'catalogs',
+                        self.root / 'bend2/context/catalogs')
         compiler_root = Path(compiler).resolve()
         selected = PACKAGE.stage_typescript_context_module(self.payload, compiler_root)
         repository = Path(__file__).resolve().parents[2]
