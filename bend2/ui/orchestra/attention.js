@@ -761,6 +761,10 @@
     // from an earlier event. No recorded action, no trail. The queue bar keeps the
     // band below the mark, so the two read by position and never by width.
     if (entry.trail && marks.recent) {
+      // Length is the channel. Weight and ink strength grade with the same value, so a
+      // packed hall - where the length can only span about 3.6x - still separates a fresh
+      // action from an old one. The width stops at 2px, which keeps the tick a clear
+      // pixel from the halo below it and from the row above's mark.
       var reach = radius * 0.5 + marks.recent.fresh * Math.max(0, entry.trail.room - radius * 0.5);
       var from = entry.trail.dir * entry.trail.pad;
       var above = -(radius + 7);
@@ -769,6 +773,8 @@
         x1: from, y1: above,
         x2: from + entry.trail.dir * reach, y2: above,
       });
+      trail.style.strokeWidth = (1.1 + marks.recent.fresh * 0.9).toFixed(2);
+      trail.style.opacity = (0.6 + marks.recent.fresh * 0.4).toFixed(2);
       group.appendChild(trail);
     }
 

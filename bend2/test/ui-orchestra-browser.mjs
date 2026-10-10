@@ -314,6 +314,11 @@ await until('map opens on the universal view',
   `document.querySelector('#map-scope').textContent === 'Universal knowledge · 0 items'`);
 check('universal view holds no fixture records', await evalJs(
   `document.querySelectorAll('#knowledge-whole .knode').length === 0 && document.querySelectorAll('#knowledge-whole .kw-anchor').length === 0`));
+check('an empty map draws one staff rule at its short height', await evalJs(`(() => {
+  const svg = document.querySelector('#knowledge-whole svg');
+  return document.querySelectorAll('#knowledge-whole line.kw-staff').length === 1
+    && !!svg && svg.getAttribute('height') === '120';
+})()`));
 {
   const db = new DatabaseSync(DB);
   db.prepare("INSERT INTO knowledge_relations(id,author,source,relation,target) VALUES ('qa-rel-only','root','message:qa-root-message','references','external:qa-root-log')").run();
@@ -540,6 +545,39 @@ check('every recorded relation family is drawn once per record', await evalJs(`(
 })()`));
 check('typed relations draw one edge per record', await evalJs(
   `document.querySelectorAll('#knowledge-whole .kw-edge-relate').length === 5`));
+check('the key folds shut at rest and its toggle states so', await evalJs(`(() => {
+  const keys = document.querySelector('#knowledge-whole .kw-legend-keys');
+  const toggle = document.querySelector('#knowledge-whole [data-kw-key-toggle="key"]');
+  return !!keys && !!toggle && keys.hasAttribute('hidden')
+    && toggle.getAttribute('aria-expanded') === 'false';
+})()`));
+check('the key button names the vocabularies it hides', await evalJs(`(() => {
+  const toggle = document.querySelector('#knowledge-whole [data-kw-key-toggle="key"]');
+  const text = toggle ? (toggle.textContent || '').trim() : '';
+  return /^Key \u00b7 (edges|families|groups|marks)(, (edges|families|groups|marks))*$/.test(text);
+})()`));
+check('the key note states the affordance while the key is shut', await evalJs(`(() => {
+  const note = document.querySelector('#knowledge-whole .kw-legend-note');
+  const keys = document.querySelector('#knowledge-whole .kw-legend-keys');
+  return !!note && !note.hasAttribute('hidden') && /hover|focus/.test(note.textContent || '')
+    && !!keys && keys.hasAttribute('hidden');
+})()`));
+const keyRowsShut = await evalJs(`document.querySelectorAll('#knowledge-whole .kw-legend-keys li').length`);
+await evalJs(`document.querySelector('#knowledge-whole [data-kw-key-toggle="key"]').click()`);
+await until('clicking the key toggle opens the legend', `(() => {
+  const keys = document.querySelector('#knowledge-whole .kw-legend-keys');
+  const toggle = document.querySelector('#knowledge-whole [data-kw-key-toggle="key"]');
+  return !!keys && !keys.hasAttribute('hidden')
+    && !!toggle && toggle.getAttribute('aria-expanded') === 'true';
+})()`);
+const keyRowsOpen = await evalJs(`document.querySelectorAll('#knowledge-whole .kw-legend-keys li').length`);
+check('the key rows stay in the document whether the fold is shut or open',
+  keyRowsShut > 0 && keyRowsOpen === keyRowsShut, JSON.stringify({shut:keyRowsShut, open:keyRowsOpen}));
+check('the open legend names the four relation families', await evalJs(`(() => {
+  const keys = document.querySelector('#knowledge-whole .kw-legend-keys');
+  const text = keys ? keys.textContent : '';
+  return ['authorship. ', 'sharing. ', 'delivery. ', 'promotion. '].every((word) => text.includes(word));
+})()`));
 check('relations between two references retain both endpoints', await evalJs(
   `!!document.querySelector('#knowledge-whole .kw-edge-relate[data-from="message:qa-missing-1"][data-to="external:qa-log-8"]')`));
 await evalJs(`(() => { const edge = document.querySelector('#knowledge-whole g.kw-edge-relate');
@@ -706,6 +744,13 @@ check('hover isolates the finding neighborhood', await evalJs(`(() => {
     && author && !author.classList.contains('kw-hover-dim')
     && stranger && stranger.classList.contains('kw-hover-dim');
 })()`));
+await evalJs(`(() => { const anchor = document.querySelector('#knowledge-whole .kw-anchor[data-kw-id="worker"]');
+  anchor.dispatchEvent(new MouseEvent('mouseover', { bubbles: true })); return true; })()`);
+await until('a tag whose edge touches no node stays lit under the anchor hover',
+  `(() => { const tag = document.querySelector('#knowledge-whole g.kw-ref[data-kw-ref="external:qa-log-8"]');
+    return !!tag && !tag.classList.contains('kw-hover-dim'); })()`);
+await evalJs(`(() => { const anchor = document.querySelector('#knowledge-whole .kw-anchor[data-kw-id="worker"]');
+  anchor.dispatchEvent(new MouseEvent('mouseleave', { bubbles: true })); return true; })()`);
 await evalJs(`document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]').dispatchEvent(new MouseEvent('mouseleave', { bubbles: true }))`);
 check('leaving the node restores the canvas', await evalJs(
   `document.querySelectorAll('#knowledge-whole .kw-hover-dim').length === 0`));
