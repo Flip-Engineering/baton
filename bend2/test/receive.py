@@ -1992,7 +1992,7 @@ class Receive(unittest.TestCase):
         self.action(second)
         self.finish(observer)
         self.assertEqual(self.coord('delivery', 'fallback')['receipt'], 'native-reviewed')
-        self.assertEqual(record.read_text().splitlines()[-1], 'codex B ' + str(store_b))
+        self.assertEqual(record.read_text().splitlines()[-1], ' codex B ' + str(store_b))
         handoff = [message for message in self.coord('inbox', 'operator')
                    if 'subscription profile handoff' in message['body']]
         self.assertEqual(len(handoff), 1)
@@ -2057,7 +2057,7 @@ class Receive(unittest.TestCase):
             self.assertEqual(prepared['store'], str(store_b))
             self.assertEqual(prepared['rolloutPath'], str(transcript_a))
             self.assertEqual(prepared['historyPath'], str(transcript_b))
-            self.assertEqual(record.read_text().splitlines()[-1], 'claude-code B ' + str(store_b))
+            self.assertEqual(record.read_text().splitlines()[-1], ' claude-code B ' + str(store_b))
             self.action(second)
             self.finish(observer)
         self.assertEqual(self.coord('delivery', 'claude-fallback')['receipt'], 'native-reviewed')
@@ -2161,7 +2161,7 @@ class Receive(unittest.TestCase):
         self.assertEqual(history[1]['home'], str(home_a))
         self.action(second)
         self.finish(direct)
-        self.assertEqual(record.read_text().splitlines()[-1], 'codex B ' + str(store_b))
+        self.assertEqual(record.read_text().splitlines()[-1], ' codex B ' + str(store_b))
         handoff = [message for message in self.coord('inbox', 'operator')
                    if 'subscription profile handoff' in message['body']]
         self.assertEqual(len(handoff), 1)
@@ -2240,7 +2240,7 @@ class Receive(unittest.TestCase):
         self.assertEqual(recorded_home['home'], str(home_a))
         self.action(third)
         self.finish(direct)
-        self.assertEqual(record.read_text().splitlines()[-1], 'codex C ' + str(store_c))
+        self.assertEqual(record.read_text().splitlines()[-1], ' codex C ' + str(store_c))
         handoff = sorted((message for message in self.coord('inbox', 'operator')
                           if 'subscription profile handoff' in message['body']),
                          key=lambda message: message['id'])
@@ -2312,7 +2312,7 @@ class Receive(unittest.TestCase):
         # continuation's own completion is still pending: the keeper-owned recovery
         # process has no test handle, so observe the actual final turn row rather
         # than asserting it immediately.
-        self.assertEqual(record.read_text().splitlines()[-1], 'codex B ' + str(store_b))
+        self.assertEqual(record.read_text().splitlines()[-1], ' codex B ' + str(store_b))
         handoff = [message for message in self.coord('inbox', 'operator')
                    if 'subscription profile handoff' in message['body']]
         self.assertEqual(len(handoff), 1)

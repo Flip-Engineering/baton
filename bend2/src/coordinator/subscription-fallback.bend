@@ -121,34 +121,43 @@ def started_or_next(+profiles: List<&2,Profile>, +harness: String, +current: Str
 def record_fields(+label: String, +store: String) -> Maybe<&2,Profile>:
   Bool.pick(Maybe<&2,Profile>,Bool.and(Bool.not(String.is_empty(label)),Bool.not(String.is_empty(store))),Some{Pr{"",label,store}},None{})
 
-# New record lines name the harness first. A legacy line names a label plus the
-# complete store: a two-field line, or a longer line whose head is not a harness this
-# tree binds. A profile label names an operator account, never a path, so a
-# harness-headed line whose second field holds a slash is a legacy harness-named
-# label with a spaced store; reading it as a new record would shred the store and
-# rebind the account and history lookups. The harness set is closed and code-defined.
+# New record lines carry a leading empty field: the line starts with an ASCII space
+# before the harness, a shape the old label-first writer could not emit because it
+# required a nonempty label. Any line without that leading space is a legacy line and
+# names a label plus the complete store, so legacy labels keep every word of a spaced
+# store with no dependence on operator data and no harness-name or slash guesswork.
+# The harness set is closed and code-defined.
 def record_harness_known(+word: String) -> Bool:
   Bool.or(String.eq(word,"codex"),Bool.or(String.eq(word,"omp"),Bool.or(String.eq(word,"muse"),Bool.or(String.eq(word,"claude-code"),String.eq(word,"claude")))))
-
-def label_names_path(+field: String) -> Bool:
-  match field:
-    case SNil{}: False{}
-    case SCon{head, +tail}: Bool.pick(Bool,Char.is_eq(head,Char.from_u32(47)),True{},label_names_path(tail))
 
 def record_profile(+harness: String, +label: String, +store: String) -> Maybe<&2,Profile>:
   Bool.pick(Maybe<&2,Profile>,Bool.and(record_harness_known(harness),Bool.and(Bool.not(String.is_empty(label)),Bool.not(String.is_empty(store)))),Some{Pr{harness,label,store}},None{})
 
-def record_parts(fields: List<String>) -> Maybe<&2,Profile>:
+def record_new(fields: List<String>) -> Maybe<&2,Profile>:
   match fields:
-    case +harness <> +label <> +store <> +rest: Bool.pick(Maybe<&2,Profile>,Bool.and(record_harness_known(harness),Bool.not(label_names_path(label))),record_profile(harness,label,Tx.join(" ",Con{store,rest})),record_fields(harness,Tx.join(" ",Con{label,Con{store,rest}})))
-    case label <> store <> Nil{}: record_fields(label,store)
+    case +harness <> +label <> +store <> +rest: record_profile(harness,label,Tx.join(" ",Con{store,rest}))
     case other: None{}
 
+def record_legacy(fields: List<String>) -> Maybe<&2,Profile>:
+  match fields:
+    case +label <> +store <> +rest: record_fields(label,Tx.join(" ",Con{store,rest}))
+    case other: None{}
+
+# The marked shape is detected on the line so the read never depends on how the word
+# splitter treats a leading separator: a marked line parses its words as a new record
+# with the marker consumed whether the splitter keeps the empty head or drops it.
+def record_marked(fields: List<String>) -> Maybe<&2,Profile>:
+  match fields:
+    case +head <> +tail: Bool.pick(Maybe<&2,Profile>,String.is_empty(head),record_new(tail),record_new(fields))
+    case other: None{}
+
+def record_trimmed(+trimmed: String) -> Maybe<&2,Profile>:
+  Bool.pick(Maybe<&2,Profile>,Tx.starts_with(trimmed," "),record_marked(split_parts(String.split(trimmed,Char.from_u32(32)))),record_legacy(split_parts(String.split(trimmed,Char.from_u32(32)))))
+
 # The per-session record is append-only: the last non-empty line is the profile in
-# use, so advancing it needs no rewrite and no lock. A current line names harness,
-# label and the rest of the line as the store; legacy lines name label and store.
+# use, so advancing it needs no rewrite and no lock.
 def record_of(line: String) -> Maybe<&2,Profile>:
-  record_parts(split_parts(String.split(Tx.trim_nl(line),Char.from_u32(32))))
+  record_trimmed(Tx.trim_nl(line))
 
 def last_line(lines: List<String>) -> String:
   match lines:
@@ -204,7 +213,7 @@ def record_source(harness: String, line: String) -> String:
   record_source_parsed(harness,record_of(line))
 
 def record_line(+profile: Profile) -> String:
-  profile_harness(profile) ++ " " ++ profile_label(profile) ++ " " ++ profile_store(profile)
+  " " ++ profile_harness(profile) ++ " " ++ profile_label(profile) ++ " " ++ profile_store(profile)
 
 # The report bodies carry the account change and the provider's own cause. Nothing
 # here decides anything; the caller records and reports.
