@@ -1016,6 +1016,11 @@ class SharedInstance(unittest.TestCase):
               'mutation-refusals-after-owner-loss', 'live-to-unavailable')
 
     def test_shutdown_releases_the_database_for_a_new_owner(self):
+        self.assertEqual(self.owner_processes(), [])
+        absent = self.command('shutdown', self.db)
+        self.assertEqual(absent.returncode, 0, absent.stderr)
+        self.assertIn('shutdown-ok', absent.stdout)
+        self.assertEqual(self.owner_processes(), [])
         directory, child = self.begin('a0')
         self.wait_run(child)
         self.assertEqual(len(self.owner_processes()), 1)
@@ -1024,6 +1029,10 @@ class SharedInstance(unittest.TestCase):
         self.assertIn('shutdown-ok', result.stdout)
         while self.owner_processes():
             time.sleep(.05)
+        self.assertEqual(self.owner_processes(), [])
+        absent = self.command('shutdown', self.db)
+        self.assertEqual(absent.returncode, 0, absent.stderr)
+        self.assertIn('shutdown-ok', absent.stdout)
         self.assertEqual(self.owner_processes(), [])
         directory, second = self.begin('b0', payload='again\n')
         output = self.wait_run(second)

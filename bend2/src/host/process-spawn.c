@@ -3784,14 +3784,24 @@ static int br_instance_job(BatonProcessCall *call) {
   return 0;
 }
 static int br_instance_shutdown(BatonProcessCall *call) {
-  BrInstanceFrame reply;
-  BrOwnerRecord record={0};
-  int socket_fd=-1;
-  int error=br_instance_connect(call->database,0,&record,&socket_fd);
-  if(error==ENOENT || error==ECONNREFUSED || error==EINVAL)return 0;
-  if(error)return error;
-  close(socket_fd);
-  return br_instance_request(call->database,(BrInstanceFrame){.op=BI_SHUTDOWN},NULL,-1,&reply);
+  for(;;) {
+    BrOwnerRecord record={0};
+    BrInstanceFrame reply={0};
+    int socket_fd=-1;
+    int error=br_instance_connect(call->database,0,&record,&socket_fd);
+    if(error==ENOENT || error==ECONNREFUSED || error==EINVAL)return 0;
+    if(error)return error;
+    error=br_instance_exchange(socket_fd,
+      (BrInstanceFrame){.op=BI_SHUTDOWN,.owner=record.token,.epoch=record.epoch},
+      NULL,-1,&reply);
+    close(socket_fd);
+    if(error)return error;
+    if(reply.owner && (reply.owner!=record.token || reply.epoch!=record.epoch))error=ESTALE;
+    if(!error && !reply.error)return 0;
+    if(error!=ESTALE && reply.error!=ESTALE)return error?error:reply.error;
+    struct timespec pause={0,20000000};
+    nanosleep(&pause,NULL);
+  }
 }
 /* Terminal capability cleanup. The attempt directory and its markers stay the
    durable record; this only releases the slot for reuse. */
