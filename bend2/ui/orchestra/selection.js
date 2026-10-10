@@ -15,7 +15,11 @@
    passes the way, and the lit one's statement carries a mark.
    The finding opens with a one-line posture above its facts, and its
    evidence reference reads as a numbered citation. Long prose holds
-   a 66-character measure with unitless leading.
+   a 66-character measure with unitless leading. A reference-only
+   endpoint reads as a reference with its kind and the sentence that
+   the full record is not held here. Cited edges read as recorded
+   evidence. A held finding offers the way back to the map and to
+   its author's seat when the shell passes the callbacks.
    All labels arrive through textContent. */
 
 var SEL_EVENT_LIMIT = 8;
@@ -89,6 +93,17 @@ function selFindingMicro(finding, evMid) {
   var shared = Array.isArray(finding.promotions) ? finding.promotions.length : 0;
   bits.push(shared ? "shared " + shared + (shared === 1 ? " time" : " times") : "not shared");
   return bits.join(" · ");
+}
+
+// A reference-only endpoint: what the store holds about it, and the
+// sentence that keeps it from reading as a record. Only the carried
+// reference and kind render; the flag declares the rest not held.
+function selReferenceLines(block, finding) {
+  var ref = finding.reference || finding.id || "";
+  var line = ref ? "Reference " + ref : "Reference unrecorded";
+  line += " · kind " + (finding.kind || "unknown");
+  block.appendChild(selEl("p", "muted", line));
+  block.appendChild(selEl("p", "muted", "The full record is not held here."));
 }
 
 // A long quotation behind one disclosure: a lead line with the body's
@@ -646,15 +661,43 @@ function renderSelection(mount, data, options) {
     var evMid = evObj ? selMsgRef(evObj.id || "") : selMsgRef(finding.evidenceMessage);
     var evInline = Boolean(evObj && typeof evObj.body === "string");
     findingBlock.appendChild(selEl("h2", "doc-section", "Finding " + (finding.id || "")));
-    findingBlock.appendChild(selEl("p", "muted", selFindingMicro(finding, evMid)));
+    // A reference-only endpoint is a reference, never a record: the held
+    // sections below stay gated on this flag.
+    var refOnly = finding.referenceOnly === true;
+    if (refOnly) {
+      selReferenceLines(findingBlock, finding);
+    } else {
+      findingBlock.appendChild(selEl("p", "muted", selFindingMicro(finding, evMid)));
+    }
+    // The way back: the finding on the map through the shell's finding
+    // selection, the author's seat through its actor selection. Both
+    // render only when the shell passes the callback that wires them.
+    var mapId = finding.id ? String(finding.id) : "";
+    if (!refOnly && mapId && options && typeof options.onSelectFinding === "function") {
+      var mapBack = selEl("button", null, "Show on the map.");
+      mapBack.type = "button";
+      mapBack.dataset.selkey = "sel:map:" + mapId;
+      mapBack.addEventListener("click", function () { options.onSelectFinding(mapId); });
+      findingBlock.appendChild(mapBack);
+    }
+    var authorId = (typeof finding.author === "string" || typeof finding.author === "number")
+      ? String(finding.author) : "";
+    if (!refOnly && authorId && options && typeof options.onSelectActor === "function") {
+      var seatBack = selEl("button", null, "Show the author's seat.");
+      seatBack.type = "button";
+      seatBack.dataset.selkey = "sel:seat:" + authorId;
+      seatBack.addEventListener("click", function () { options.onSelectActor(authorId); });
+      findingBlock.appendChild(seatBack);
+    }
     var facts = [];
     if (finding.kind) facts.push(["kind", finding.kind]);
     facts.push(["claim", finding.claim, "sel-claim"]);
     if (!evMid) facts.push(["evidence", finding.evidence]);
     facts.push(["limits", finding.limits]);
     facts.push(["author", finding.author]);
-    selFacts(findingBlock, facts);
-    if (evMid) {
+    if (!refOnly) selFacts(findingBlock, facts);
+    var relations = Array.isArray(finding.relations) ? finding.relations : [];
+    if (!refOnly && evMid) {
       var evRaw = selMsgRaw(finding.evidenceMessage);
       var evOpen = selMsgOpen.has(evMid);
       var evRead = (input.messages || {})[evMid] || null;
@@ -662,7 +705,12 @@ function renderSelection(mount, data, options) {
       // The evidence reference as a citation: a stable number, the kind,
       // the id tail with the full id in the title, and the stored extent
       // once a read holds the body. The button below stays the read control.
-      var evCite = "[1] message " + selTail(evMid);
+      var evCited = relations.some(function (rel) {
+        return rel && rel.provenance === "recorded-evidence"
+          && selMsgRef(rel.target || "") === evMid;
+      });
+      var evCite = (evCited ? "[1] recorded evidence · message " : "[1] message ")
+        + selTail(evMid);
       var evHeld = evInline ? evObj.body : (evMessage && evMessage.body);
       if (typeof evHeld === "string") {
         evCite += evHeld === "" ? " · empty" : " · " + evHeld.length + " characters";
@@ -718,12 +766,11 @@ function renderSelection(mount, data, options) {
       }
     }
     var steps = Array.isArray(finding.promotions) ? finding.promotions : [];
-    if (steps.length) {
+    if (!refOnly && steps.length) {
       findingBlock.appendChild(selEl("p", null, "Sharing path"));
       findingBlock.appendChild(selPathChain(steps, finding.author));
     }
-    var relations = Array.isArray(finding.relations) ? finding.relations : [];
-    if (relations.length) {
+    if (!refOnly && relations.length) {
       findingBlock.appendChild(selEl("p", null, "Relations"));
       var rels = selEl("ul", null);
       var canFocus = options && typeof options.onFocusRelation === "function";
@@ -734,7 +781,9 @@ function renderSelection(mount, data, options) {
           rels.appendChild(selEl("li", null, rel));
           return;
         }
-        var text = (rel.source || "?") + " — " + (rel.relation || "?") + " → " + (rel.target || "?");
+        var recorded = rel.provenance === "recorded-evidence";
+        var text = (recorded ? "recorded evidence · " : "")
+          + (rel.source || "?") + " — " + (rel.relation || "?") + " → " + (rel.target || "?");
         var isLit = Boolean(litName) && rel.relation === litName;
         var item = selEl("li", isLit ? "sel-lit" : null);
         var swatch = selRelationSwatch(rel.relation, isLit);
