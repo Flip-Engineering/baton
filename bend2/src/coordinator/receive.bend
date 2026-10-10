@@ -716,7 +716,7 @@ def continuation_field(decoded: Req.Scalar) -> IO(String):
     case other: IO.die(String,22,"Receiver field text could not be decoded: " ++ Req.scalar_reason(other))
 
 @unsafe
-def continuation_fields(+db: String, +session: String, cmd: String, model: String, effort: String, cwd: String, log: String, fields: List<String>) -> IO(Result<&1,&1,U32 & String,Unit>):
+def continuation_fields(+db: String, +session: String, cmd: String, model: String, effort: String, cwd: String, log: String, fields: List<String>, next: String -> String -> String -> String -> String -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   match fields:
     case route <> native_cmd <> native_model <> native_effort <> native_cwd <> native_log <> Nil{}: do IO<Result<&1,&1,U32 & String,Unit>>:
       current_cmd : String <- continuation_field(Req.decode_scalar_utf8(Tx.hex_decode(native_cmd)))
@@ -724,19 +724,19 @@ def continuation_fields(+db: String, +session: String, cmd: String, model: Strin
       current_effort : String <- continuation_field(Req.decode_scalar_utf8(Tx.hex_decode(native_effort)))
       current_cwd : String <- continuation_field(Req.decode_scalar_utf8(Tx.hex_decode(native_cwd)))
       current_log : String <- continuation_field(Req.decode_scalar_utf8(Tx.hex_decode(native_log)))
-      run(db,session,current_cmd,current_model,current_effort,current_cwd,current_log,"")
+      next(current_cmd,current_model,current_effort,current_cwd,current_log)
     case route <> Nil{}:
       Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),String.eq(route,"explicit"),
-        run(db,session,cmd,model,effort,cwd,log,""),Delivery.wake_pending(db,session,"0"))
+        next(cmd,model,effort,cwd,log),Delivery.wake_pending(db,session,"0"))
     case other: Delivery.wake_pending(db,session,"0")
 
 # Each next turn reads the current receiver. Native receivers continue in this
 # invocation; other endpoints use ordinary message delivery.
 @unsafe
-def continue_receiver(+db: String, +session: String, cmd: String, model: String, effort: String, cwd: String, log: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+def continue_selected(+db: String, +session: String, cmd: String, model: String, effort: String, cwd: String, log: String, next: String -> String -> String -> String -> String -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     route : String <- IO.try(String,DB.Sql.read(db,continuation_sql(session)))
-    continuation_fields(db,session,cmd,model,effort,cwd,log,Tx.split_tabs(Tx.trim_nl(route)))
+    continuation_fields(db,session,cmd,model,effort,cwd,log,Tx.split_tabs(Tx.trim_nl(route)),next)
 
 # MESSAGE_ID names the wake. The lock owner reads all pending inputs together.
 @unsafe
@@ -745,9 +745,12 @@ def run(+db: String, +session: String, +cmd: String, +model: String, +effort: St
     recorded : String <- IO.try(String,DB.Sql.read(db,"SELECT id FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
     exists : Unit <- registered(Bool.not(String.is_empty(recorded)))
     closed : Bool <- Stop.stopped(db,session)
-    result : Result<&1,&1,U32 & String,Unit> <- available(db,session,cmd,model,effort,cwd,log,u => continue_receiver(db,session,cmd,model,effort,cwd,log),closed)
+    result : Result<&1,&1,U32 & String,Unit> <- available(db,session,cmd,model,effort,cwd,log,u => continue_selected(db,session,cmd,model,effort,cwd,log,current_cmd => current_model => current_effort => current_cwd => current_log => run(db,session,current_cmd,current_model,current_effort,current_cwd,current_log,"")),closed)
     settled : Unit <- claim_left(db,session)
     IO.pure(Result<&1,&1,U32 & String,Unit>,result)
+
+def continue_receiver(+db: String, +session: String, cmd: String, model: String, effort: String, cwd: String, log: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  continue_selected(db,session,cmd,model,effort,cwd,log,current_cmd => current_model => current_effort => current_cwd => current_log => run(db,session,current_cmd,current_model,current_effort,current_cwd,current_log,""))
 
 def serve_acquired(+db: String, +session: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, lock: U32, closed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match closed:
