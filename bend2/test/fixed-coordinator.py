@@ -1039,6 +1039,7 @@ finally:
         self.shutdown()
 
     def test_12_failed_session_keeps_other_sessions_and_subscription_active(self):
+        print('failed-session continuation: preparing accepted work', flush=True)
         self.recruit('bad', 'omp')
         self.recruit('held', 'codex')
         self.recruit('late', 'codex')
@@ -1050,8 +1051,11 @@ finally:
         self.dispatch('held-task', 'held', 'Keep this native work active.')
         for session in ('bad', 'held', 'late'):
             self.receiver(session)
+        print('failed-session continuation: starting the owner', flush=True)
         self.start_owner()
+        print('failed-session continuation: waiting for serve readiness', flush=True)
         self.start_serve()
+        print('failed-session continuation: serve ready; waiting for held work', flush=True)
         serve_lines = []
 
         def drain():
@@ -1063,11 +1067,14 @@ finally:
 
         threading.Thread(target=drain, daemon=True).start()
         held_stream, _ = self.stream_for('held')
+        print('failed-session continuation: held stream connected; waiting for terminal write', flush=True)
         self.assertEqual(json.loads(held_stream.readline()), {'terminal_written': True})
+        print('failed-session continuation: waiting for the retained provider failure', flush=True)
         self.await_inbox('root', lambda messages: (
             messages if any('fixture subscription exhausted' in message['body']
                             for message in messages) else None),
             'the actual failed provider report was not retained')
+        print('failed-session continuation: waiting for the shared event loop failure result', flush=True)
         self.eventually(lambda: any('Serve task bad failed:' in line for line in serve_lines),
                         'the failed session result never reached the shared event loop')
         self.assertIsNone(self.serve_proc.poll(), 'one session failure ended the serve')
@@ -1078,12 +1085,14 @@ finally:
         self.assertEqual(len(self.connections('held')), 1,
                          'the unrelated active native was replaced')
         self.dispatch('late-task', 'late', 'New work after the other session failed.')
+        print('failed-session continuation: waiting for later work to complete', flush=True)
         self.await_inbox('root', lambda messages: (
             messages if any('Later work completed through the existing subscription'
                             in message['body'] for message in messages) else None),
             'the shared subscription stopped admitting unrelated new work')
         self.assertEqual(self.connections('late')[0]['ppid'], self.owner_pid)
         self.release('held')
+        print('failed-session continuation: held work released; waiting for its report', flush=True)
         self.await_inbox('root', lambda messages: (
             messages if any('Held work completed after another session failed'
                             in message['body'] for message in messages) else None),
@@ -1091,7 +1100,9 @@ finally:
         self.assertEqual(self.inbox('held'), [])
         self.assertEqual(self.inbox('late'), [])
         self.assertEqual(self.query("SELECT count(*) FROM session_stops"), [(0,)])
+        print('failed-session continuation: shutting down the fixture owner', flush=True)
         self.shutdown(expect_serve=1)
+        print('failed-session continuation: fixture owner shut down', flush=True)
 
     def test_13_endpointless_codex_continues_owed_input_after_settlement(self):
         self.recruit('w1', 'codex')

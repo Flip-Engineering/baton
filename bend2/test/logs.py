@@ -472,9 +472,11 @@ while True: time.sleep(1)
                                 text=True)
         pending = pathlib.Path(str(self.log) + '.pending')
         try:
+            print('checkpoint retry: waiting for the latest pending update', flush=True)
             while not pending.exists() or 'partial 2' not in pending.read_text():
                 self.assertIsNone(turn.poll(), 'observer stopped before receiving latest update')
                 time.sleep(.01)
+            print('checkpoint retry: pending update received; stopping the first turn', flush=True)
             turn.kill()
             turn.wait()
             self.assertEqual([json.loads(line) for line in pending.read_text().splitlines()],
@@ -492,8 +494,10 @@ sys.stdin.readline()
 print(pathlib.Path('events.jsonl').read_text(),end='',flush=True)
 assert sys.stdin.read()==''
 ''')
+            print('checkpoint retry: starting the same-turn retry', flush=True)
             self.call('turn', 'omp-worker', 'abrupt-turn', str(self.player), 'model', 'low',
                       str(self.cwd), str(self.task), str(self.base_log), '')
+            print('checkpoint retry: retry returned; checking retained events', flush=True)
             with sqlite3.connect(self.db) as connection:
                 stderr_runs = connection.execute(
                     'SELECT run,stderr FROM log_stderr_runs WHERE session=? AND attempt=? ORDER BY run',
@@ -509,6 +513,7 @@ assert sys.stdin.read()==''
             self.assertTrue(any(item.get('type') == 'agent_end' for item in saved))
             self.assertFalse(pending.exists())
         finally:
+            print('checkpoint retry: releasing fixture processes', flush=True)
             if turn.poll() is None:
                 turn.kill()
                 turn.wait()
@@ -517,6 +522,7 @@ assert sys.stdin.read()==''
                 try: os.kill(int(pid_file.read_text()), signal.SIGKILL)
                 except ProcessLookupError: pass
             turn.communicate()
+            print('checkpoint retry: fixture processes released', flush=True)
 
     def test_later_direct_turn_preserves_an_earlier_checkpoint(self):
         previous = json.dumps({'type': 'tool_execution_update', 'toolCallId': 'previous',
