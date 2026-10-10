@@ -257,10 +257,10 @@
   // from its stored endpoints. The lit edge and the walk bar survive
   // shell re-renders; background click and Escape clear them with the
   // card. Direction thins the lit neighborhood to out or in around
-  // the lit edge; both is the resting state.
+  // the lit edge; all is the resting state.
   var kwWalk = [];
   var kwLitEdge = null;
-  var kwDirection = "both";
+  var kwDirection = "all";
   var kwDirectionDimmed = [];
   var KW_WALK_MAX = 8;
   // Provenance dim: with "citations only" set, every edge but the
@@ -617,6 +617,21 @@
     }
     for (const r of overview.relations || []) {
       kwAddSession(r.author);
+    }
+    // Active actors seat by default from the shell's reads: running
+    // or pending seats a column even with no findings yet. This only
+    // adds seats beside holdings; a scope with no holdings keeps its
+    // empty drawing, so activity never invents a map where the store
+    // holds nothing. Historical findings, holdings and the universal
+    // default all stay where they were.
+    const hasHoldings = (overview.findings || []).length > 0
+      || promotions.length > 0 || (overview.relations || []).length > 0;
+    if (hasHoldings) {
+      const reads = kwActorReads || {};
+      for (const id of Object.keys(reads)) {
+        const st = reads[id] ? reads[id].status : "";
+        if (st === "running" || st === "pending") kwAddSession(id);
+      }
     }
     // A group scope places its findings without an actor column, under
     // the scope group; other scopes keep their session columns and seat
@@ -2284,7 +2299,7 @@
       // all belong to the dismissed reading.
       kwWalk = [];
       kwLitEdge = null;
-      kwDirection = "both";
+      kwDirection = "all";
       kwClearDirection();
       kwRefreshWalkChrome(container);
     };
@@ -2608,6 +2623,9 @@
     // dark. A dismissed selection stays an overview until it changes.
     const shown = kwEffectiveSelected(opts);
     if (shown && kwDismissed !== shown) kwIsolate(kwKey(kwSelKind(overview, shown), shown), 2);
+    // The lit edge re-lights ahead of the shell's relation focus, so
+    // a shell focus still wins the canvas when both name an edge.
+    kwRelightLit(container, svg);
     // A shell-focused relation lights its drawn edges and keeps its card
     // naming it. The name plus the shell's activation count is the
     // identity, and an absent count reads as zero: an activation reopens
@@ -2633,7 +2651,7 @@
         { kind: first.getAttribute("data-to-kind") || "", id: first.getAttribute("data-to") || "" },
       ] : [];
       if (edges.length) kwLightRelation(svg, { name: fr, ends });
-      kwPinRelCard(container, fr, ends);
+      kwPinRelCard(container, fr, ends, opts);
     }
     // Provenance dim runs last and only adds dim, so it composes
     // with isolation and focus: with "citations only" pressed,
@@ -3125,13 +3143,17 @@
       : selKind === "session" ? !!actors[sel]
       : selKind === "ref" ? !!ref : selKind === "group";
     if (!known) return;
-    // A node card ends the edge reading: the direction control
-    // belongs to a lit edge, so it goes with it. The walk itself
-    // stands: junction rows extend it from here.
-    kwLitEdge = null;
-    kwDirection = "both";
-    kwClearDirection();
-    kwRefreshWalkChrome(container);
+    // An explicit node pick ends the edge reading: the direction
+    // control belongs to a lit edge, so it goes with it. The walk
+    // itself stands: junction rows extend it from here. A render-end
+    // re-pin names no pick, so the lit edge, direction and walk all
+    // survive the round trip.
+    if (id !== undefined) {
+      kwLitEdge = null;
+      kwDirection = "all";
+      kwClearDirection();
+      kwRefreshWalkChrome(container);
+    }
     const card = kwOpenCard(container);
     if (selKind === "finding") {
       const degree = promotions.filter((p) => p.finding === found.id).length;
@@ -3260,8 +3282,8 @@
       // Junction rows: every drawn edge touching this reference, in
       // and out, computed from the drawing. Each row is a keyboard
       // stop that lights its edge and extends the walk; the incoming
-      // half is the "cited by" list. The rows live in the card, so
-      // the lane keeps its single scroller.
+      // half is the "cited by" list. The rows live in the card's
+      // page flow, which keeps no scroller.
       const canvas = container.querySelector("svg.kw-canvas");
       if (canvas) {
         const touching = canvas.querySelectorAll(
@@ -3391,7 +3413,7 @@
   // A relation's card names the relation and its two ends. Ends read as
   // kind and id from the edge's own attributes; a name with no drawn
   // edge says its ends sit outside the drawn tiers.
-  function kwPinRelCard(container, name, ends) {
+  function kwPinRelCard(container, name, ends, opts) {
     if (!container) return;
     const card = kwOpenCard(container);
     const lead = kwEl(card, "p", { class: "kw-card-lead" });
@@ -3402,6 +3424,14 @@
     kwEl(card, "p", { class: "kw-card-fact mono" },
       ends.length === 2 ? label(ends[0]) + " → " + label(ends[1])
       : "ends outside the drawn tiers");
+    const finding = (ends || []).find((e) => e.kind === "finding");
+    if (finding && opts && typeof opts.onOpenRecord === "function") {
+      const open = kwEl(card, "button", { class: "kw-card-open", type: "button" },
+        "Read the full record");
+      open.addEventListener("click", () => {
+        opts.onOpenRecord(kwTypedLookupId("finding", finding.id));
+      });
+    }
     const pts = [];
     for (const e of ends) {
       const p = e.kind === "ref" ? kwRefMarks.get(e.id)
@@ -3451,7 +3481,7 @@
   // the lit edge instead of dimming around a ghost.
   function kwApplyDirection(container) {
     kwClearDirection();
-    if (!container || kwDirection === "both" || !kwLitEdge) return;
+    if (!container || kwDirection === "all" || !kwLitEdge) return;
     const svg = container.querySelector("svg.kw-canvas");
     if (!svg) return;
     const lit = kwFindEdgeEl(svg, {
@@ -3459,7 +3489,7 @@
     });
     if (!lit) {
       kwLitEdge = null;
-      kwDirection = "both";
+      kwDirection = "all";
       kwRefreshWalkChrome(container);
       return;
     }
@@ -3477,6 +3507,30 @@
       e.classList.add("kw-dim");
       kwDirectionDimmed.push(e);
     }
+  }
+  // A re-render rebuilds the canvas, so the lit edge's dims are
+  // gone with the old nodes. The reading itself stands in the walk
+  // state: re-light it against the new drawing, without pushing a
+  // step or re-pinning a card. A missing edge ends the reading the
+  // way the direction pass would.
+  function kwRelightLit(container, svg) {
+    if (!kwLitEdge || !svg) return;
+    const g = kwFindEdgeEl(svg, {
+      from: kwLitEdge.from, to: kwLitEdge.to, cls: kwLitEdge.cls, name: kwLitEdge.name,
+    });
+    if (!g) {
+      kwLitEdge = null;
+      kwDirection = "all";
+      kwClearDirection();
+      kwRefreshWalkChrome(container);
+      return;
+    }
+    const ends = [
+      { kind: kwLitEdge.fromKind, id: kwLitEdge.from },
+      { kind: kwLitEdge.toKind, id: kwLitEdge.to },
+    ];
+    if (kwLitEdge.cls === "kw-edge-relate") kwLightRelation(svg, { name: kwLitEdge.name, ends });
+    else kwLightTyped(svg, g, ends);
   }
   function kwActivateEdgeEl(svg, g, opts, container, pushWalk) {
     if (!svg || !g) return;
@@ -3501,7 +3555,7 @@
         ends, name, g.getAttribute("data-edge") || "", opts, stub ? "edge" : "");
     } else {
       kwLightRelation(svg, { name, ends });
-      kwPinRelCard(container, name, ends);
+      kwPinRelCard(container, name, ends, opts);
     }
     const prov = g.getAttribute("data-provenance") || "";
     kwLitEdge = { fromKind, from, toKind, to, cls, name };
@@ -3544,8 +3598,10 @@
     if (!kwLitEdge) return;
     const dir = kwEl(tools, "div", { class: "kw-direction" });
     if (at) tools.insertBefore(dir, at);
-    dir.setAttribute("aria-label", "Thin the lit neighborhood");
-    for (const d of [["out", "citations out"], ["in", "cited by in"]]) {
+    dir.setAttribute("aria-label", "Direction of the lit neighborhood");
+    // Three explicit choices, all first: choosing sets the direction,
+    // so all is always one press away rather than a toggle state.
+    for (const d of [["all", "all"], ["out", "outgoing"], ["in", "incoming"]]) {
       const b = kwEl(dir, "button", {
         class: "kw-direction-btn mono", type: "button",
         "aria-pressed": kwDirection === d[0] ? "true" : "false",
@@ -3553,7 +3609,7 @@
       });
       b.textContent = d[1];
       b.addEventListener("click", () => {
-        kwDirection = kwDirection === d[0] ? "both" : d[0];
+        kwDirection = d[0];
         kwApplyDirection(container);
         kwRefreshWalkChrome(container);
         const next = container.querySelector('[data-kw-dir="' + d[0] + '"]');

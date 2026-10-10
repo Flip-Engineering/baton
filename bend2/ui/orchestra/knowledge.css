@@ -159,7 +159,7 @@
 /* The match list takes its own wrapped row inside the tools, between
    the status and the buttons, and the page carries its length: the
    frame no longer clips, so the list needs no window of its own. The
-   pinned card keeps the one inner scroller on the map. */
+   lane holds zero inner scrollers. */
 .kw-match-list {
   flex: 1 1 100%;
   list-style: none;
@@ -356,11 +356,9 @@ th.kw-flow-h {
   top: 8px;
   right: 8px;
   max-width: 320px;
-  /* A bounded box: however long the record, the card never covers the
-     graph past this height, and the claim reads whole inside the
-     scroll instead of ending in an ellipsis. */
-  max-height: 264px;
-  overflow-y: auto;
+  /* The card keeps no scroller: it is a glance in page flow, long
+     titles clamp to a few lines, and the record button below carries
+     the path to the whole. The lane holds zero scrollers. */
   padding: 10px 12px;
   background: var(--paper, #fbfcfe);
   border: 1px solid var(--muted, #5b6478);
@@ -388,6 +386,15 @@ th.kw-flow-h {
 
 .kw-card-state {
   margin-top: 2px;
+}
+
+/* Long titles clamp to four lines without a scroller; the record
+   button carries the whole text. Clipping only, no scroll region. */
+p.kw-card-title {
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .kw-card-full,
