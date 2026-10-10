@@ -857,10 +857,12 @@ def index_options(args: List<String>, +base: Command, +inbox: Bool, +condition: 
         case "acknowledged": index_options(rest,base,inbox,condition,"m.receipt IS NOT NULL",index,pretty,True{})
         case "all": index_options(rest,base,inbox,condition,"1",index,pretty,True{})
         case _: Invalid{}
-    case "--after-seq" <> +value <> +rest:
-      Bool.pick(Command,index_integer(value),index_options(rest,base,inbox,condition ++ " AND m.seq>CAST(" ++ q(value) ++ " AS INTEGER)",state,index,pretty,True{}),Invalid{})
-    case "--through-seq" <> +value <> +rest:
-      Bool.pick(Command,index_integer(value),index_options(rest,base,inbox,condition ++ " AND m.seq<=CAST(" ++ q(value) ++ " AS INTEGER)",state,index,pretty,True{}),Invalid{})
+    case "--after-seq" <> value <> +rest:
+      +bound = value
+      Bool.pick(Command,index_integer(bound),index_options(rest,base,inbox,condition ++ " AND m.seq>CAST(" ++ q(bound) ++ " AS INTEGER)",state,index,pretty,True{}),Invalid{})
+    case "--through-seq" <> value <> +rest:
+      +bound = value
+      Bool.pick(Command,index_integer(bound),index_options(rest,base,inbox,condition ++ " AND m.seq<=CAST(" ++ q(bound) ++ " AS INTEGER)",state,index,pretty,True{}),Invalid{})
     case _: Invalid{}
 
 def parse(+args: List<String>) -> Command:
