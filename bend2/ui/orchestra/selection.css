@@ -6,6 +6,7 @@
 .sel-index a + a::before { content: "·"; margin: 0 8px; color: var(--muted); }
 .sel-block > h2 { overflow-wrap: anywhere; }
 .sel-body { white-space: pre-wrap; overflow-wrap: anywhere; margin: 2px 0 8px; }
+.sel-lead { color: var(--muted); overflow-wrap: anywhere; margin: 2px 0 4px; }
 .sel-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 10px; flex: none; }
 .sel-head { position: sticky; top: 0; background: var(--paper, #fbfcfe); }
 .sel-state { display: flex; align-items: center; margin: 2px 0 6px; }

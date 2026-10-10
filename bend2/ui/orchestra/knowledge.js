@@ -8,13 +8,19 @@
 //   data   { overview, ensembles } with overview.findings [{id,
 //          author, claim, evidence, limits, kind, evidenceMessage}],
 //          overview.promotions [{finding, source, destination,
-//          promotedBy}], overview.relations [{id, author, source,
-//          relation, target}] with authored relation names and
-//          finding:/message:/external endpoints: node ends meet
-//          their node, reference ends meet a tag at the edge's end,
-//          dashed when the overview holds no record for it.
-//          overview.actors {id: {role, parent}}, and ensembles
-//          [{id, owner, coupling, members}] for the whole canvas.
+//          promotedBy}] with sourceKind/destinationKind (session or
+//          group; absent means session), overview.relations [{id,
+//          author, source, relation, target}] with authored relation
+//          names and finding:/message:/external endpoints: node ends
+//          meet their node, reference ends meet a tag at the edge's
+//          end, dashed when the overview holds no record for it.
+//          overview.actors {id: {role, parent}}, overview.groups
+//          {id: {owner, coupling, received}}, overview.scope
+//          {kind, id}, and ensembles [{id, owner, coupling,
+//          members}] for the whole canvas. Sessions and groups share
+//          no key space: group nodes carry "group:"+id everywhere a
+//          session would carry its bare id, so a literal collision
+//          can never seat a group on an actor anchor.
 //   opts   { mode, authorIds, selectedId, selectedActorId, query,
 //          notice, onSelectFinding, onSelectActor }.
 //          selectedId is the shell's finding selection; selectedActorId
@@ -55,6 +61,26 @@
     return String(id || "").toLowerCase().includes(q)
       || String(claim || "").toLowerCase().includes(q)
       || String(author || "").toLowerCase().includes(q);
+  }
+
+  // The scope's group id, or "" outside a group scope. A group scope
+  // lays its findings out without actor columns and seats the group
+  // as its own node; other scopes seat only referenced groups.
+  function kwScopeGroup(overview) {
+    const scope = overview && overview.scope;
+    return scope && scope.kind === "group" && scope.id ? String(scope.id) : "";
+  }
+
+  // A group's naming line from its recorded metadata: id first, then
+  // what the groups map holds. Absent metadata still names the id.
+  function kwGroupWords(overview, gid) {
+    const meta = ((overview && overview.groups) || {})[gid] || {};
+    const bits = ["group " + gid];
+    if (meta.owner) bits.push("owner " + meta.owner);
+    if (meta.coupling) bits.push(String(meta.coupling));
+    if (typeof meta.received === "number") bits.push(meta.received + " received");
+    else if (Array.isArray(meta.received)) bits.push(meta.received.length + " received");
+    return bits.join(", ");
   }
 
   function kwDepthOf(meta, roles, id) {
@@ -107,6 +133,7 @@
       let received = 0;
       const seenReceived = new Set();
       for (const p of promotions) {
+        if (String(p.destinationKind || "session") === "group") continue;
         if (String(p.destination || "") !== String(author)) continue;
         const f = (overview.findings || []).find(
           (cand) => cand.id === p.finding);
@@ -232,6 +259,19 @@
     finding: "circle", answer: "triangle", correction: "square",
     decision: "diamond", observation: "pentagon", question: "hexagon",
   };
+  // Kind families by recorded kind. The ring treatment carries the family
+  // at a glance: records draw plain, resolutions a solid seal ring, open
+  // questions a dashed ring, and anything the table does not list draws
+  // plain with a star. Shape still tells kinds apart inside a family, and
+  // fill still tells shared from unshared; the three never conflict.
+  var KW_KIND_FAMILY = {
+    finding: "records", observation: "records", correction: "records",
+    answer: "resolutions", decision: "resolutions",
+    question: "open",
+  };
+  function kwFamilyFor(kind) {
+    return KW_KIND_FAMILY[String(kind || "finding").toLowerCase()] || "other";
+  }
   var kwKindsDrawn = new Map();
   function kwShapeFor(kind) {
     return KW_KIND_SHAPES[String(kind || "finding").toLowerCase()] || "star";
@@ -270,6 +310,10 @@
   // order. The edges claim; the key and the cards read.
   var kwRelStyleDrawn = new Map();
   var kwMidpointsDrawn = 0;
+  // Relation rows past this wait behind the key's disclosure instead of
+  // eating the canvas; the rest of the key is bounded by construction.
+  var KW_KEY_RELATIONS = 6;
+  var kwRelationsExpanded = false;
   function kwRelBaseIndex(name) {
     const s = String(name || "");
     let h = 0;
@@ -407,7 +451,7 @@
         }
       }
     }
-    for (const g of svg.querySelectorAll("g.kw-anchor, g.knode, g.kw-cluster, g.kw-ref")) {
+    for (const g of svg.querySelectorAll("g.kw-anchor, g.knode, g.kw-cluster, g.kw-ref, g.kw-group")) {
       g.classList.toggle("kw-hover-dim", !keep.has(kwNodeId(g)));
     }
     for (const edge of layer.children) {
@@ -433,17 +477,39 @@
       const author = String(f.author || "unknown");
       authored.set(author, (authored.get(author) || 0) + 1);
     }
-    const actors = Array.from(authored.keys());
+    const scopeGroup = kwScopeGroup(overview);
+    const groupScope = !!scopeGroup;
+    const groupIds = [];
+    const groupSeen = new Set();
+    const kwAddGroup = (id) => {
+      const g = String(id || "");
+      if (g && !groupSeen.has(g)) { groupSeen.add(g); groupIds.push(g); }
+    };
+    if (scopeGroup) kwAddGroup(scopeGroup);
+    // Promotion endpoints seat by kind: a group endpoint never becomes
+    // an actor column. Absent kinds are legacy session endpoints.
+    const sessionActors = Array.from(authored.keys());
     for (const p of promotions) {
-      for (const id of [p.source, p.destination, p.promotedBy]) {
-        if (id && actors.indexOf(String(id)) === -1) {
-          actors.push(String(id));
-        }
+      if (p.source) {
+        if (String(p.sourceKind || "session") === "group") kwAddGroup(p.source);
+        else if (sessionActors.indexOf(String(p.source)) === -1) sessionActors.push(String(p.source));
+      }
+      if (p.destination) {
+        if (String(p.destinationKind || "session") === "group") kwAddGroup(p.destination);
+        else if (sessionActors.indexOf(String(p.destination)) === -1) sessionActors.push(String(p.destination));
+      }
+      if (p.promotedBy && sessionActors.indexOf(String(p.promotedBy)) === -1) {
+        sessionActors.push(String(p.promotedBy));
       }
     }
     for (const r of overview.relations || []) {
-      if (r.author && actors.indexOf(String(r.author)) === -1) actors.push(String(r.author));
+      if (r.author && sessionActors.indexOf(String(r.author)) === -1) sessionActors.push(String(r.author));
     }
+    // A group scope places its findings without an actor column, under
+    // the scope group; other scopes keep their session columns and seat
+    // each referenced group beside them as its own node.
+    const actors = (groupScope ? [] : sessionActors)
+      .concat(groupIds.map((g) => "group:" + g));
     const tierOf = new Map();
     for (const id of actors) tierOf.set(id, kwDepthOf(meta, roles, id));
     const depths = Array.from(new Set(tierOf.values()))
@@ -451,10 +517,17 @@
     // Actors with missing role or parent metadata appear in the unknown tier.
     if ([...tierOf.values()].some((d) => d < 0)) depths.push(-1);
     const byAuthor = new Map();
-    for (const f of overview.findings || []) {
-      const author = String(f.author || "unknown");
-      if (!byAuthor.has(author)) byAuthor.set(author, []);
-      byAuthor.get(author).push(f);
+    if (groupScope) {
+      // Every held finding packs under the scope group, which sorts
+      // first by its count; referenced groups seat bare beside it.
+      byAuthor.set("group:" + scopeGroup, (overview.findings || []).slice());
+      authored.set("group:" + scopeGroup, (overview.findings || []).length);
+    } else {
+      for (const f of overview.findings || []) {
+        const author = String(f.author || "unknown");
+        if (!byAuthor.has(author)) byAuthor.set(author, []);
+        byAuthor.get(author).push(f);
+      }
     }
     const promoCount = new Map();
     for (const p of promotions) {
@@ -556,7 +629,7 @@
     kwSvg(relate, "path", { d: "M0,0 L8,4 L0,8 Z", fill: "var(--ink, #141a26)" });
     const edgeLayer = kwSvg(svg, "g", { class: "kw-edges" });
     const roleOf = (id) => (meta[id] && meta[id].role) || roles[id] || "";
-    return { svg, edgeLayer, tiers, findings, actorPerRow, width, roleOf, markers, tierOf };
+    return { svg, edgeLayer, tiers, findings, actorPerRow, width, roleOf, markers, tierOf, groupScope };
   }
 
   // One count badge where an author holds more findings than the
@@ -570,10 +643,14 @@
     for (const f of items) {
       shared += promotions.filter((p) => p.finding === f.id).length;
     }
+    const clusterGroup = String(author).indexOf("group:") === 0;
+    const clusterWho = clusterGroup
+      ? " findings held by group " + String(author).slice("group:".length)
+      : " findings by " + author;
     const g = kwSvg(svg, "g", {
       class: "kw-cluster",
       tabindex: "0", role: "button",
-      "aria-label": items.length + " findings by " + author + ", activate to expand",
+      "aria-label": items.length + clusterWho + ", activate to expand",
       "data-kw-cluster": String(author),
     });
     kwSvg(g, "rect", {
@@ -606,7 +683,7 @@
           : mount.querySelector('[data-kw-cluster="' + CSS.escape(String(author)) + '"]');
         if (target && typeof target.focus === "function") target.focus();
       }
-      if (opts && typeof opts.onSelectActor === "function") opts.onSelectActor(author);
+      if (opts && typeof opts.onSelectActor === "function" && !clusterGroup) opts.onSelectActor(author);
     };
     g.addEventListener("click", toggle);
     g.addEventListener("keydown", (ev) => {
@@ -678,6 +755,9 @@
         });
       };
       if (kwCollapsedEnsembles.has(id)) {
+        // A scope that seats none of the members seats no lozenge: in a
+        // group scope the members are absent, not collapsed.
+        if (!members.some((m) => tierOf.has(m))) continue;
         const tier = tiers.find((t) => t.d === tierOf.get(members[0])) || tiers[0];
         if (!tier) continue;
         const n = lozenges.get(tier.d) || 0;
@@ -784,6 +864,8 @@
     kwLastWidth = layout.width || 0;
     const actorPos = new Map();
     const findingPos = new Map();
+    const groupPos = new Map();
+    const groupsDrawn = [];
     const query = opts && opts.query;
     // An empty scope draws one ruled staff with its state, so the
     // frame reads deliberate rather than broken.
@@ -803,10 +885,12 @@
       kwTrackBox(KW_PAD, 82, layout.width - KW_PAD, 150);
     }
     for (const t of tiers) {
-      const depthWord = t.d < 0 ? "depth unknown" : "depth " + t.d;
+      // A group scope holds no depth tiers: its one tier reads held.
+      const depthWord = layout.groupScope ? "held"
+        : t.d < 0 ? "depth unknown" : "depth " + t.d;
       const label = kwSvg(svg, "text", {
         x: String(KW_PAD), y: String(t.y + 4), class: "kw-tier",
-        "aria-label": depthWord,
+        "aria-label": layout.groupScope ? "held findings" : depthWord,
       });
       if (t.d < 0) {
         label.textContent = depthWord;
@@ -828,6 +912,61 @@
         const row = t.spread ? 0 : Math.floor(i / perRow);
         const x = t.memberX.get(id);
         const y = t.y + 26 + row * 30;
+        // A group seats as its own hollow node, never as an actor
+        // anchor: its metadata names it in the title and the card.
+        // The shell selects actors and findings only, so the group
+        // keeps its card and isolation to the canvas.
+        if (String(id).indexOf("group:") === 0) {
+          const gid = String(id).slice("group:".length);
+          groupPos.set(String(id), { x, y });
+          groupsDrawn.push(gid);
+          kwTrackBox(x - 12, y - 12, x + 20 + gid.length * 8, y + 12);
+          const g = kwSvg(svg, "g", {
+            class: "kw-group",
+            tabindex: "0", role: "button",
+            "aria-label": "group " + gid,
+            "data-kw-id": String(id),
+          });
+          kwSvg(g, "rect", {
+            x: String(x - 7), y: String(y - 7),
+            width: "14", height: "14",
+            class: "kw-group-box",
+          });
+          const tip = kwSvg(g, "title", null);
+          tip.textContent = kwGroupWords(overview, gid);
+          const nw = gid.length * 8 + 10;
+          const nbox = [x + 10, x + 10 + nw];
+          const nboxes = nameRows.get(row) || [];
+          if (nbox[1] <= layout.width
+            && !nboxes.some((b) => nbox[0] < b[1] && b[0] < nbox[1])) {
+            nboxes.push(nbox);
+            nameRows.set(row, nboxes);
+            const name = kwSvg(g, "text", {
+              x: String(x + 10), y: String(y + 4), class: "kw-name mono",
+            });
+            name.textContent = gid;
+            kwLabelBoxes.push({ x0: x + 10, y0: y - 8, x1: x + 10 + nw, y1: y + 8 });
+          }
+          if (!kwMatches(query, gid, "", gid)) g.classList.add("kw-dim");
+          const pick = () => {
+            kwDismissed = null;
+            kwPinCard(container, overview, promotions, opts, String(id));
+            kwIsolate(String(id), 2);
+          };
+          g.addEventListener("click", () => {
+            if (kwConsumePan()) return;
+            pick();
+            g.focus();
+          });
+          g.addEventListener("keydown", (ev) => {
+            if (ev.key === "Enter" || ev.key === " ") {
+              if (ev.preventDefault) ev.preventDefault();
+              kwViewMoved = false;
+              pick();
+            }
+          });
+          return;
+        }
         actorPos.set(String(id), { x, y });
         kwTrackBox(x - 12, y - 12, x + 20 + String(id).length * 8, y + 12);
         const role = layout.roleOf ? layout.roleOf(id) : "";
@@ -950,8 +1089,9 @@
           "data-kw-node": String(f.id),
         });
         kwMarkNew(g, f.id);
-        // Shape carries the recorded kind, size the share count: the two
-        // channels never conflict. The legend names each drawn kind.
+        // The ring carries the kind family, the shape the kind inside
+        // it, size the share count: the three channels never conflict.
+        // The key reads families with their drawn counts.
         const shape = kwShapeFor(f.kind);
         kwKindsDrawn.set(String(f.kind || "finding"), shape);
         if (shape === "circle") {
@@ -963,6 +1103,13 @@
           kwSvg(g, "path", {
             d: kwShapePath(shape, x, y, mass),
             class: "kw-finding" + (degree ? "" : " unshared"),
+          });
+        }
+        const kindFamily = kwFamilyFor(f.kind);
+        if (kindFamily === "resolutions" || kindFamily === "open") {
+          kwSvg(g, "circle", {
+            cx: String(x), cy: String(y), r: String(mass + 2),
+            class: kindFamily === "resolutions" ? "kw-seal" : "kw-open",
           });
         }
         if (degree) {
@@ -1037,23 +1184,34 @@
     for (const p of promotions) {
       const to = findingPos.get(p.finding);
       if (!to) continue;
-      if (p.source && actorPos.has(String(p.source))) {
-        const from = actorPos.get(String(p.source));
+      // Each end anchors by its recorded kind: groups meet their own
+      // nodes, never an actor that happens to share the literal id.
+      const skind = String(p.sourceKind || "session");
+      const dkind = String(p.destinationKind || "session");
+      const skey = skind === "group" ? "group:" + p.source : String(p.source);
+      const dkey = dkind === "group" ? "group:" + p.destination : String(p.destination);
+      const from = p.source
+        ? (skind === "group" ? groupPos.get(skey) : actorPos.get(String(p.source)))
+        : null;
+      if (from) {
         edge(from.x, from.y + 6, to.x, to.y - 6, "kw-edge-share",
           "kw-arrow-share", "promotion from " + p.source, "share",
-          p.source, p.finding, true);
+          skey, p.finding, true);
       }
-      if (p.destination && actorPos.has(String(p.destination))) {
-        const dest = actorPos.get(String(p.destination));
+      const dest = p.destination
+        ? (dkind === "group" ? groupPos.get(dkey) : actorPos.get(String(p.destination)))
+        : null;
+      if (dest) {
         edge(to.x, to.y + 6, dest.x, dest.y - 6, "kw-edge-deliver",
           "kw-arrow-deliver", "delivery to " + p.destination, "deliver",
-          p.finding, p.destination, true);
+          p.finding, dkey, true);
       }
       const promoter = p.promotedBy ? String(p.promotedBy) : "";
-      if (promoter && promoter !== String(p.source || "")
-        && promoter !== String(p.destination || "") && actorPos.has(promoter)) {
-        const from = actorPos.get(promoter);
-        edge(from.x, from.y + 6, to.x, to.y - 6, "kw-edge-promote",
+      const sameSrc = skind !== "group" && promoter === String(p.source || "");
+      const sameDst = dkind !== "group" && promoter === String(p.destination || "");
+      if (promoter && !sameSrc && !sameDst && actorPos.has(promoter)) {
+        const pfrom = actorPos.get(promoter);
+        edge(pfrom.x, pfrom.y + 6, to.x, to.y - 6, "kw-edge-promote",
           "kw-arrow-promote", "promoted by " + promoter, "promote",
           promoter, p.finding, true);
       }
@@ -1071,7 +1229,7 @@
     // Hulls draw before relations so settling tags keep clear of their
     // labels; paint order is unchanged, the hull layer sits beneath the edges.
     layout.actorPos = actorPos;
-    kwNodeXY = new Map([...actorPos, ...findingPos]);
+    kwNodeXY = new Map([...actorPos, ...findingPos, ...groupPos]);
     kwEnsembleHulls(svg, edgeLayer, layout, ensembles || []);
     // Draw recorded relations between nodes or labeled reference tags.
     // Relations between references are placed beside their author.
@@ -1391,7 +1549,7 @@
         n.classList.remove("kw-hover-dim");
       }
     };
-    for (const g of svg.querySelectorAll("g.kw-anchor, g.knode, g.kw-cluster, g.kw-ref")) {
+    for (const g of svg.querySelectorAll("g.kw-anchor, g.knode, g.kw-cluster, g.kw-ref, g.kw-group")) {
       g.addEventListener("mouseover", () => kwIsolate(kwNodeId(g)));
       g.addEventListener("mouseleave", kwClearIsolation);
       // The selected anchor keeps its two-hop read across re-renders;
@@ -1426,15 +1584,20 @@
     // The edge key is one row of edge samples from the same marker
     // table that draws the arrowheads, so it cannot drift from the
     // drawing. Each sample mirrors its edge's shape, ink, dash and head,
-    // and the kind and relation names stand beside it: a legend is a
-    // decoder, and the words are the vocabulary a reader has no other
-    // way to learn. Relation and kind rows key only what the canvas
-    // draws, one row per drawn name.
+    // and the relation names stand beside it: a legend is a decoder, and
+    // the words are the vocabulary a reader has no other way to learn.
+    // Relation rows key only what the canvas draws, one row per drawn
+    // name; kind rows key drawn families with their counts.
     const keys = kwEl(container, "ul", { class: "kw-legend-keys muted" });
     const keyEntries = (layout.markers || []).slice();
-    for (const [relName, relIdx] of kwRelStyleDrawn) {
-      const t = KW_REL_TUPLES[relIdx];
+    const kwRelNames = Array.from(kwRelStyleDrawn.keys());
+    const kwRelShown = kwRelationsExpanded ? kwRelNames : kwRelNames.slice(0, KW_KEY_RELATIONS);
+    for (const relName of kwRelShown) {
+      const t = KW_REL_TUPLES[kwRelStyleDrawn.get(relName)];
       keyEntries.push(["kw-arrow-relate", relName, t.ink, "relate", t.dash, t.width]);
+    }
+    if (kwRelNames.length > KW_KEY_RELATIONS) {
+      keyEntries.push({ toggle: true });
     }
     // The names hide until hover or focus; the key says so once, right
     // after the relation rows, only when a midpoint carries a name.
@@ -1442,9 +1605,30 @@
       keyEntries.push(["", "edge names appear on hover or focus",
         "var(--ink, #141a26)", "note", ""]);
     }
+    // One row per drawn kind family, with its count; the drawn kinds
+    // stand named in the row's title, and the card names the kind of the
+    // finding it pins. The swatch mirrors the family's first-drawn shape
+    // with its ring treatment, so the row keys only what draws.
+    const kwFamilyRows = new Map();
     for (const [kindName, kindShape] of kwKindsDrawn) {
-      keyEntries.push(["", kindShape + " " + kindName,
-        "var(--ink, #141a26)", "shape:" + kindShape, ""]);
+      const fam = kwFamilyFor(kindName);
+      if (!kwFamilyRows.has(fam)) kwFamilyRows.set(fam, { shape: kindShape, names: [] });
+      kwFamilyRows.get(fam).names.push(kindName);
+    }
+    for (const fam of ["records", "resolutions", "open", "other"]) {
+      const row = kwFamilyRows.get(fam);
+      if (!row) continue;
+      keyEntries.push(["", fam + " · " + row.names.length
+        + (row.names.length === 1 ? " kind" : " kinds"),
+        "var(--ink, #141a26)", "family:" + row.shape + ":" + fam, "",
+        row.names.join(", ")]);
+    }
+    // One row for every drawn group node, named in the title; without a
+    // drawn group there is no row.
+    if (groupsDrawn.length) {
+      keyEntries.push(["", "groups · " + groupsDrawn.length
+        + (groupsDrawn.length === 1 ? " group" : " groups"),
+        "var(--ink, #141a26)", "groupnode", "", groupsDrawn.join(", ")]);
     }
     if (kwRefsDrawn > 0) {
       keyEntries.push(["", "tagged recorded reference, dashed when the record is not held",
@@ -1453,6 +1637,27 @@
         "var(--ink, #141a26)", "glyphs", ""]);
     }
     for (const entry of keyEntries) {
+      // The relation disclosure sits among the relation rows: it states
+      // how many wait behind it, re-renders like a cluster badge, and
+      // keeps focus on itself across the render.
+      if (entry && entry.toggle) {
+        const rest = kwRelStyleDrawn.size - KW_KEY_RELATIONS;
+        const row = kwEl(keys, "li", null);
+        const btn = kwEl(row, "button", {
+          class: "kw-key-toggle mono", type: "button", "data-kw-key-toggle": "relations",
+        });
+        btn.textContent = kwRelationsExpanded ? "fewer relations"
+          : rest + " more relation" + (rest === 1 ? "" : "s");
+        btn.addEventListener("click", () => {
+          kwRelationsExpanded = !kwRelationsExpanded;
+          if (kwLastRender) {
+            renderKnowledge(kwLastRender.container, kwLastRender.data, kwLastRender.opts);
+            const next = kwLastRender.container.querySelector("[data-kw-key-toggle]");
+            if (next && typeof next.focus === "function") next.focus();
+          }
+        });
+        continue;
+      }
       const item = kwEl(keys, "li", null);
       const sw = kwSvg(item, "svg", {
         class: "kw-legend-swatch", width: "26", height: "12", "aria-hidden": "true",
@@ -1468,13 +1673,26 @@
           "marker-end": "url(#" + String(entry[0]) + ")",
         });
         if (dash) ln.setAttribute("stroke-dasharray", dash);
-      } else if (shape.indexOf("shape:") === 0) {
-        const ks = shape.slice("shape:".length);
+      } else if (shape.indexOf("family:") === 0) {
+        const bits = shape.split(":");
+        const ks = bits[1] || "circle";
+        const fam = bits[2] || "records";
         if (ks === "circle") {
           kwSvg(sw, "circle", { cx: "13", cy: "6", r: "4.5", fill: paint });
         } else {
           kwSvg(sw, "path", { d: kwShapePath(ks, 13, 6, 4.5), fill: paint });
         }
+        if (fam === "resolutions" || fam === "open") {
+          const ring = kwSvg(sw, "circle", {
+            cx: "13", cy: "6", r: "6", fill: "none", stroke: paint, "stroke-width": "1",
+          });
+          if (fam === "open") ring.setAttribute("stroke-dasharray", "2 2");
+        }
+      } else if (shape === "groupnode") {
+        kwSvg(sw, "rect", {
+          x: "6", y: "1", width: "14", height: "10",
+          fill: "var(--paper, #fbfcfe)", stroke: paint, "stroke-width": "1.5",
+        });
       } else if (shape === "tag") {
         kwSvg(sw, "rect", {
           x: "4", y: "2", width: "18", height: "8", rx: "2",
@@ -1504,6 +1722,9 @@
           "marker-end": "url(#" + String(entry[0]) + ")",
         });
       }
+      // A family row carries its drawn kind names in its title, so a
+      // reader who asks learns exactly which kinds the count covers.
+      if (typeof entry[6] === "string" && entry[6]) item.setAttribute("title", entry[6]);
       const words = kwEl(item, "span", { class: "kw-legend-words" });
       words.textContent = String(entry[1]) + ". ";
     }
@@ -1518,6 +1739,7 @@
     kwNodePos.clear();
     for (const [id, pos] of actorPos) kwNodePos.set(id, { x: pos.x, y: pos.y, kind: "actor" });
     for (const [id, pos] of findingPos) kwNodePos.set(id, { x: pos.x, y: pos.y, kind: "finding" });
+    for (const [id, pos] of groupPos) kwNodePos.set(id, { x: pos.x, y: pos.y, kind: "group" });
     kwMapChrome(container, svg, view, overview, promotions, opts, ensembles || []);
     kwPinCard(container, overview, promotions, opts);
     // The selected neighborhood lights on every render, not only when
@@ -1840,10 +2062,15 @@
     };
     if (hit) {
       const author = String(hit.author || "");
-      const authored = findings.filter((f) => String(f.author || "") === author);
-      if (authored.length > KW_CLUSTER_AT && !kwExpandedAuthors.has(author)
+      // A group scope clusters every held finding under its group, so
+      // the cluster owner is the group key, not the session author.
+      const scopeOwner = kwScopeGroup(overview);
+      const clusterOwner = scopeOwner ? "group:" + scopeOwner : author;
+      const authored = scopeOwner ? findings
+        : findings.filter((f) => String(f.author || "") === author);
+      if (authored.length > KW_CLUSTER_AT && !kwExpandedAuthors.has(clusterOwner)
         && !kwNodePos.has(hit.id)) {
-        kwExpandedAuthors.add(author);
+        kwExpandedAuthors.add(clusterOwner);
         rerendered();
       }
       for (const e of (ensembles || [])) {
@@ -1932,7 +2159,8 @@
     const found = findings.find((f) => f.id === sel);
     const actors = overview.actors || {};
     const ref = kwRefMarks.get(sel);
-    if (!found && !actors[sel] && !ref) return;
+    const selGroup = typeof sel === "string" && sel.indexOf("group:") === 0;
+    if (!found && !actors[sel] && !ref && !selGroup) return;
     const old = container.querySelector(".kw-card");
     if (old) old.remove();
     if (typeof getComputedStyle === "function"
@@ -2053,6 +2281,21 @@
           "Show the finding");
         show.addEventListener("click", () => { opts.onSelectFinding(ref.follow); });
       }
+    } else if (selGroup) {
+      // A group's card names it from its recorded metadata, the same
+      // line the node's title carries.
+      const gid = sel.slice("group:".length);
+      const gmeta = ((overview.groups) || {})[gid] || {};
+      const lead = kwEl(card, "p", { class: "kw-card-lead" });
+      kwEl(lead, "span", { class: "kw-card-title mono" }, gid);
+      lead.appendChild(document.createTextNode(" "));
+      kwEl(lead, "span", { class: "kw-card-state" }, "group");
+      const bits = [];
+      if (gmeta.owner) bits.push("owner " + gmeta.owner);
+      if (gmeta.coupling) bits.push(String(gmeta.coupling));
+      if (typeof gmeta.received === "number") bits.push(gmeta.received + " received");
+      else if (Array.isArray(gmeta.received)) bits.push(gmeta.received.length + " received");
+      kwEl(card, "p", { class: "kw-card-fact" }, bits.join(" · ") || "recorded group");
     }
     // The card opens on the side away from its node, and below any
     // hull it would cover. Hull boxes map through the view transform
@@ -2156,7 +2399,10 @@
       return { findings: 0, promotions: 0 };
     }
     const mode = (opts && opts.mode) || "whole";
-    if (!(overview.findings || []).length && !(overview.relations || []).length) {
+    // An empty group scope still seats its group, so the holder and its
+    // metadata draw instead of an empty notice.
+    if (!(overview.findings || []).length && !(overview.relations || []).length
+      && !kwScopeGroup(overview)) {
       const p = kwEl(container, "p", { class: "muted" });
       p.textContent = (opts && opts.query)
         ? "No findings match." : "No recorded findings.";
@@ -2194,10 +2440,13 @@
     const kwSvgH = Number(layout.svg && layout.svg.getAttribute("height")) || 0;
     const kwToolsEl = container.querySelector(".kw-maptools");
     const kwKeysEl = container.querySelector(".kw-legend-keys");
-    const kwNatural = kwSvgH
-      + (kwToolsEl ? kwToolsEl.offsetHeight + 8 : 0)
+    const kwChromeH = (kwToolsEl ? kwToolsEl.offsetHeight + 8 : 0)
       + (kwKeysEl ? kwKeysEl.offsetHeight + 8 : 0);
+    const kwNatural = kwSvgH + kwChromeH;
     container.setAttribute("data-kw-natural-height", kwNatural > 0 ? String(kwNatural) : "");
+    // The chrome's own height beside it, so the shell can grow the frame
+    // past its viewport share and keep a drawing floor under dense chrome.
+    container.setAttribute("data-kw-chrome-height", kwChromeH > 0 ? String(kwChromeH) : "");
     kwRestoreFocus(container, focused, caret);
     return {
       findings: (overview.findings || []).length,
@@ -2243,6 +2492,10 @@
       const from = p.source ? String(p.source) : "";
       const to = p.destination ? String(p.destination) : "";
       if (!from || !to || from === to) continue;
+      // Roster rows are sessions: a group end has no row, and must not
+      // borrow a session's when the literal ids collide.
+      if (String(p.sourceKind || "session") === "group"
+        || String(p.destinationKind || "session") === "group") continue;
       if (!mid.has(from) || !mid.has(to)) continue;
       const y1 = mid.get(from);
       const y2 = mid.get(to);
@@ -2265,7 +2518,7 @@
     const seats = (data && data.players) || [];
     const sharing = new Set();
     for (const p of promotions) {
-      if (p.source) sharing.add(String(p.source));
+      if (p.source && String(p.sourceKind || "session") !== "group") sharing.add(String(p.source));
     }
     for (const seat of seats) {
       const id = seat && seat.id ? String(seat.id) : "";

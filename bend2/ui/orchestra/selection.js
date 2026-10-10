@@ -9,6 +9,8 @@
    Finding relations carry the map's stroke for their authored name
    when the map exports it; without it they read text-only.
    Change rows open their seat when the shell passes the way.
+   Long bodies read as a lead line with the rest behind one sized
+   disclosure; causes stay in the open.
    All labels arrive through textContent. */
 
 var SEL_EVENT_LIMIT = 8;
@@ -50,12 +52,58 @@ function selEventAge(at) {
   return at || "";
 }
 
-function selBodyBlock(parent, heading, meta, body, cls) {
+function selBodyBlock(parent, heading, meta, body, cls, quote) {
   var block = selEl("div", cls || null);
   if (heading) block.appendChild(selEl("p", null, heading));
   if (meta) block.appendChild(selEl("p", "muted", meta));
-  if (typeof body === "string") block.appendChild(selEl("p", "sel-body", body));
+  if (typeof body === "string") {
+    if (quote) selQuotedBody(block, quote.key, quote.what, body);
+    else block.appendChild(selEl("p", "sel-body", body));
+  }
   if (block.childNodes.length) parent.appendChild(block);
+}
+
+// A long quotation behind one disclosure: a lead line with the body's
+// first line and stored length, and one control stating the remaining
+// size. Short or blank bodies read whole, exactly as before. Causes
+// never pass through here; the disclosure hides quotation, not facts.
+var SEL_BODY_WHOLE = 200;
+var SEL_LEAD_LINE = 120;
+var selBodyOpen = new Set();
+function selQuotedBody(parent, key, what, body) {
+  var text = String(body);
+  if (text.length <= SEL_BODY_WHOLE) {
+    parent.appendChild(selEl("p", "sel-body", text));
+    return;
+  }
+  var first = "";
+  var lines = text.split(/\r?\n/);
+  for (var i = 0; i < lines.length; i += 1) {
+    if (lines[i].trim() !== "") {
+      first = lines[i].trim();
+      break;
+    }
+  }
+  if (!first) {
+    parent.appendChild(selEl("p", "sel-body", text));
+    return;
+  }
+  var shown = first.length > SEL_LEAD_LINE ? first.slice(0, SEL_LEAD_LINE) + "…" : first;
+  var kept = first.length > SEL_LEAD_LINE ? SEL_LEAD_LINE : first.length;
+  parent.appendChild(selEl("p", "sel-lead", shown + " · " + text.length + " characters"));
+  var open = selBodyOpen.has(key);
+  var toggle = selEl("button", null, open ? "Hide full " + what
+    : "Read full " + what + " · " + (text.length - kept) + " more characters");
+  toggle.type = "button";
+  toggle.dataset.selkey = "sel:full:" + key;
+  toggle.setAttribute("aria-expanded", String(open));
+  toggle.addEventListener("click", function () {
+    if (selBodyOpen.has(key)) selBodyOpen.delete(key);
+    else selBodyOpen.add(key);
+    renderSelection(selLast.mount, selLast.data, selLast.options);
+  });
+  parent.appendChild(toggle);
+  if (open) parent.appendChild(selEl("p", "sel-body", text));
 }
 
 function selEventText(ev) {
@@ -263,34 +311,39 @@ function selHasSubject(subject) {
 }
 
 // A work read's task, input, request and report in the record's language.
-// Returns how many of the four it drew.
-function selWorkContent(parent, w) {
+// Returns how many of the four it drew. Bodies quote behind one sized
+// disclosure; the owner keys it so one actor's opening is not another's.
+function selWorkContent(parent, w, owner) {
   var rows = 0;
   if (!w) return rows;
   if (w.task) {
     rows += 1;
     selBodyBlock(parent, w.task.title ? "Task: " + w.task.title : "Task",
-      w.task.status || "", w.task.description || "");
+      w.task.status || "", w.task.description || "", null,
+      { key: owner + ":task", what: "task description" });
   }
   if (w.input) {
     rows += 1;
     selBodyBlock(parent, "Exact current input",
       [w.input.kind, w.input.sender ? "from " + w.input.sender : "", w.input.id]
         .filter(Boolean).join(" · "),
-      w.input.body || "");
+      w.input.body || "", null,
+      { key: owner + ":input", what: "input" });
   }
   if (w.request) {
     rows += 1;
     selBodyBlock(parent, "Open request",
       [w.request.method, w.request.event, w.request.id].filter(Boolean).join(" · "),
-      w.request.reply || "");
+      w.request.reply || "", null,
+      { key: owner + ":request", what: "request" });
   }
   if (w.report) {
     rows += 1;
     selBodyBlock(parent, "Latest report",
       [w.report.recipient ? "to " + w.report.recipient : "", w.report.id]
         .filter(Boolean).join(" · "),
-      w.report.body || "");
+      w.report.body || "", null,
+      { key: owner + ":report", what: "report" });
   }
   return rows;
 }
@@ -405,6 +458,8 @@ function renderSelection(mount, data, options) {
   var events = Array.isArray(input.events) ? input.events : [];
   var secEntries = selSecEntries(seat, finding, events, input.retained, input.retainedRead,
     input.resume, input.subject);
+  var owner = seat && seat.id ? "seat:" + seat.id
+    : (selHasSubject(input.subject) ? "subj:" + input.subject.id : "shared");
   if (!seat && !finding && !selHasSubject(input.subject)) {
     mount.appendChild(selEl("p", "muted", "Select a row."));
     return;
@@ -521,7 +576,7 @@ function renderSelection(mount, data, options) {
       if (sw.refused || sw.state === "refused") {
         swBlock.appendChild(selEl("p", "muted", "Readable when this actor is inside this tree."));
       }
-    } else if (!selWorkContent(swBlock, sw)) {
+    } else if (!selWorkContent(swBlock, sw, owner)) {
       swBlock.appendChild(selEl("p", "muted", "No work is recorded for this actor."));
     }
     mount.appendChild(swBlock);
@@ -579,12 +634,12 @@ function renderSelection(mount, data, options) {
           if (evMeta.length) {
             findingBlock.appendChild(selEl("p", "muted", evMeta.join(" · ")));
           }
-          findingBlock.appendChild(selEl("p", "sel-body", evObj.body));
+          selQuotedBody(findingBlock, "ev:" + evMid, "evidence", evObj.body);
           if (evObj.body === "") {
             findingBlock.appendChild(selEl("p", "muted", "Stored body is empty."));
           }
         } else if (evMessage && typeof evMessage.body === "string") {
-          findingBlock.appendChild(selEl("p", "sel-body", evMessage.body));
+          selQuotedBody(findingBlock, "ev:" + evMid, "evidence", evMessage.body);
           if (evMessage.body === "") {
             findingBlock.appendChild(selEl("p", "muted", "Stored body is empty."));
           }
@@ -680,7 +735,7 @@ function renderSelection(mount, data, options) {
       queued.appendChild(button);
       if (!open) return;
       if (message && typeof message.body === "string") {
-        queued.appendChild(selEl("p", "sel-body", message.body));
+        selQuotedBody(queued, "msg:" + mid, kindWord, message.body);
         if (message.body === "") queued.appendChild(selEl("p", "muted", "Stored body is empty."));
       } else {
         queued.appendChild(selReadLine("Queued " + kindWord + " " + selTail(mid), read));
@@ -706,7 +761,7 @@ function renderSelection(mount, data, options) {
     } else if (w.error) {
       work.appendChild(selReadLine("Work for this actor", w));
     } else {
-      workRows = selWorkContent(work, w);
+      workRows = selWorkContent(work, w, owner);
       if (!workRows) {
         work.appendChild(selEl("p", "muted", "No work is recorded for this actor."));
       }
@@ -763,7 +818,7 @@ function renderSelection(mount, data, options) {
       }
       var lrBody = selReportBody(resume.latestReport);
       if (lrBody.held) {
-        resumeBlock.appendChild(selEl("p", "sel-body", lrBody.body));
+        selQuotedBody(resumeBlock, owner + ":resume", "cited report", lrBody.body);
         if (lrBody.body === "") {
           resumeBlock.appendChild(selEl("p", "muted", "Stored body is empty."));
         }
@@ -803,7 +858,7 @@ function renderSelection(mount, data, options) {
     }
     var retBody = selReportBody(retained.report);
     if (retBody.held) {
-      retainedBlock.appendChild(selEl("p", "sel-body", retBody.body));
+      selQuotedBody(retainedBlock, owner + ":retained", "retained report", retBody.body);
       if (retBody.body === "") {
         retainedBlock.appendChild(selEl("p", "muted", "Stored body is empty."));
       }
