@@ -1,10 +1,8 @@
 """The managed completion boundary of a native receive.
 
-The first native terminal seals the attempt's report under its managed
-completion ID. A later terminal frame in the same native episode is named once
-in the separate deferred diagnostic, and the guidance that attempt did not
-accept stays pending for the continuation, which runs under its own managed
-completion ID.
+The first native terminal records the attempt's report under its managed
+completion ID. Later terminal reports have separate episode IDs. Guidance
+remains pending until the actor handles it in the current turn or continuation.
 """
 
 import importlib.util
@@ -22,14 +20,6 @@ SPEC.loader.exec_module(RECEIVE)
 def late_terminal(text):
     return {'type': 'agent_end', 'isTerminal': True, 'is_error': False,
             'messages': [{'role': 'assistant', 'content': [{'type': 'text', 'text': text}]}]}
-
-
-def deferred_body(sealed, guidance):
-    body = ('A later native terminal was observed after the report ' + sealed +
-            ' was sealed; the episode is retained in the native log')
-    if guidance:
-        body += ' and the deferred guidance ' + guidance + ' stays pending for the next receive'
-    return body + '.'
 
 
 class ReceiveTerminalBoundary(RECEIVE.Receive):
@@ -78,14 +68,14 @@ class ReceiveTerminalBoundary(RECEIVE.Receive):
         self.finish(observer)
         turns = self.coord('turns', 'parent')
         self.assertEqual([turn['reportBody'] for turn in turns],
-                         ['First sealed report.', 'Continuation report.'])
-        self.assertNotEqual(turns[0]['id'], turns[1]['id'])
+                         ['First sealed report.', 'Aborted episode body.',
+                          'Continuation report.'])
+        self.assertEqual(len({turn['id'] for turn in turns}), 3)
         self.assertEqual(turns[0]['id'], sealed)
         self.assertEqual(self.coord('delivery', sealed)['body'], 'First sealed report.')
-        notes = [report for report in self.coord('inbox', 'root')
-                 if report['id'] == sealed + ':deferred']
-        self.assertEqual([note['body'] for note in notes],
-                         [deferred_body(sealed, 'boundary-guidance')])
+        reports = [report for report in self.coord('inbox', 'root')
+                   if report['id'] == turns[1]['id']]
+        self.assertEqual([report['body'] for report in reports], ['Aborted episode body.'])
         self.assertEqual(self.coord('delivery', 'boundary-guidance')['receipt'], 'native-reviewed')
         self.assertEqual(self.coord('inbox', 'parent'), [])
         self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
@@ -100,17 +90,20 @@ class ReceiveTerminalBoundary(RECEIVE.Receive):
         self.frame(stream, late_terminal('Episode after the plain line.'))
         self.action(stream, exit_fixture=True)
         self.finish(observer)
-        self.assertEqual([turn['reportBody'] for turn in self.coord('turns', 'parent')],
-                         ['Report before plain native output.'])
+        turns = self.coord('turns', 'parent')
+        self.assertEqual([turn['reportBody'] for turn in turns],
+                         ['Report before plain native output.', 'Episode after the plain line.'])
+        self.assertNotEqual(turns[0]['id'], turns[1]['id'])
         log = self.output_log('parent').read_text()
         self.assertIn(line, log)
-        notes = [report for report in self.coord('inbox', 'root')
-                 if report['id'] == sealed + ':deferred']
-        self.assertEqual([note['body'] for note in notes], [deferred_body(sealed, None)])
+        reports = [report for report in self.coord('inbox', 'root')
+                   if report['id'] == turns[1]['id']]
+        self.assertEqual([report['body'] for report in reports], ['Episode after the plain line.'])
+        self.assertEqual(self.coord('delivery', sealed)['body'], 'Report before plain native output.')
         self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
         self.shutdown_idle_database_owner('boundary fixtures did not exit')
 
-    def test_replayed_response_before_the_first_terminal_records_acceptance(self):
+    def test_replayed_response_before_the_first_terminal_keeps_handled_guidance_receipt(self):
         self.coord('attach', 'root', 'codex', 'native-root', self.endpoint('root'))
         self.player(harness='omp')
         self.coord('message', 'replay-task', 'root', 'parent', 'task', 'Work before the replay.')
@@ -143,27 +136,31 @@ class ReceiveTerminalBoundary(RECEIVE.Receive):
         self.action(stream)
         self.assertEqual(stream.readline(), b'')
         self.eventually(lambda: self.coord('delivery', 'replay-guidance')['receipt'] is not None,
-                        'replayed steer response did not record acceptance')
+                        'the fixture handling receipt was not retained')
         self.assertEqual(self.coord('inbox', 'parent'), [])
         self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
         self.shutdown_idle_database_owner('replay fixtures did not exit')
 
-    def test_late_terminals_without_outstanding_guidance_keep_one_truthful_note(self):
+    def test_late_terminals_without_outstanding_guidance_deliver_each_report(self):
         observer, stream, started, sealed = self.sealed_attempt(
             'plain-task', 'Plain sealed report.')
         self.frame(stream, late_terminal('Late episode one.'))
         self.frame(stream, late_terminal('Late episode two.'))
         self.action(stream, exit_fixture=True)
         self.finish(observer)
-        self.assertEqual([turn['reportBody'] for turn in self.coord('turns', 'parent')],
-                         ['Plain sealed report.'])
-        notes = [report for report in self.coord('inbox', 'root')
-                 if report['id'] == sealed + ':deferred']
-        self.assertEqual([note['body'] for note in notes], [deferred_body(sealed, None)])
+        turns = self.coord('turns', 'parent')
+        self.assertEqual([turn['reportBody'] for turn in turns],
+                         ['Plain sealed report.', 'Late episode one.', 'Late episode two.'])
+        self.assertEqual(len({turn['id'] for turn in turns}), 3)
+        reports = [report for report in self.coord('inbox', 'root')
+                   if report['id'] in {turns[1]['id'], turns[2]['id']}]
+        self.assertEqual([report['body'] for report in reports],
+                         ['Late episode one.', 'Late episode two.'])
+        self.assertEqual(self.coord('delivery', sealed)['body'], 'Plain sealed report.')
         self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
         self.shutdown_idle_database_owner('boundary fixtures did not exit')
 
-    def test_pending_guidance_named_like_the_note_still_produces_it(self):
+    def test_pending_guidance_named_like_the_note_keeps_the_later_report(self):
         observer, stream, started, sealed = self.sealed_attempt(
             'recorded-task', 'Sealed report before the later terminal.', 'recorded')
         self.frame(stream, late_terminal('Later episode with the recorded guidance pending.'))
@@ -173,14 +170,18 @@ class ReceiveTerminalBoundary(RECEIVE.Receive):
         self.assertNotIn('[id: recorded-task]', resumed['prompt'])
         self.action(continuation, body='Continuation report after the recorded guidance.')
         self.finish(observer)
-        notes = [report for report in self.coord('inbox', 'root')
-                 if report['id'] == sealed + ':deferred']
-        self.assertEqual([note['body'] for note in notes], [deferred_body(sealed, 'recorded')])
         self.assertEqual(self.coord('delivery', sealed)['body'],
                          'Sealed report before the later terminal.')
-        self.assertEqual([turn['reportBody'] for turn in self.coord('turns', 'parent')],
+        turns = self.coord('turns', 'parent')
+        self.assertEqual([turn['reportBody'] for turn in turns],
                          ['Sealed report before the later terminal.',
+                          'Later episode with the recorded guidance pending.',
                           'Continuation report after the recorded guidance.'])
+        self.assertEqual(len({turn['id'] for turn in turns}), 3)
+        reports = [report for report in self.coord('inbox', 'root')
+                   if report['id'] == turns[1]['id']]
+        self.assertEqual([report['body'] for report in reports],
+                         ['Later episode with the recorded guidance pending.'])
         self.assertEqual(self.coord('delivery', 'recorded')['receipt'], 'native-reviewed')
         self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
         self.shutdown_idle_database_owner('boundary fixtures did not exit')

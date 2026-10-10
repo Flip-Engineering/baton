@@ -141,6 +141,55 @@ class NativeObservation(RECEIVE.Receive):
             self.assertIn(json.dumps(frame), raw)
         self.shutdown_idle_database_owner('fixture database owner did not exit')
 
+    def assert_empty_terminal_after_new_assistant_start(self, terminal, response):
+        self.player(harness='omp')
+        self.coord('message', 'started-without-answer', 'root', 'parent', 'task',
+                   'Read this task.')
+        observer = self.spawn(*self.receive_args('parent'))
+        stream, started = self.accept_child(
+            observer, 'parent', 'Observation receive exited before native startup')
+        directory, attempt = self.eventually(
+            lambda: self._retained_attempt(), 'empty terminal attempt was not registered')
+        self.review_input(stream, 'started-without-answer')
+        previous = {'role': 'assistant', 'responseId': 'previous-completion',
+                    'stopReason': 'stop',
+                    'content': [{'type': 'text', 'text': 'Earlier completed answer.'}]}
+        frames = [{'type': 'message_end', 'message': previous},
+                  {'type': 'message_start', 'message': response}, terminal]
+        for frame in frames:
+            self.action(stream, native_frame=frame)
+            self.assertEqual(json.loads(stream.readline()), {'frame_written': True})
+        turns = self.eventually(lambda: self.coord('turns', 'parent'),
+                                'empty terminal was not reported')
+        raw = self.attempt_stdout('parent').read_text()
+        self.action(stream, exit_fixture=True)
+        self.finish(observer)
+
+        self.assertEqual(len(turns), 1)
+        self.assertEqual(turns[0]['id'], attempt)
+        self.assertEqual(json.loads(turns[0]['reportBody']), terminal)
+        self.assertNotIn('Earlier completed answer.', turns[0]['reportBody'])
+        self.assertEqual(self.coord('delivery', attempt)['body'], turns[0]['reportBody'])
+        with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
+            event = json.loads(database.execute(
+                'SELECT event FROM turns WHERE id=?', (attempt,)).fetchone()[0])
+        self.assertEqual(event, terminal)
+        for frame in frames:
+            self.assertIn(json.dumps(frame), raw)
+        self.assertEqual(int((pathlib.Path(directory) / 'status').read_text()), 0)
+        self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
+        self.assertEqual(self.coord('player', 'parent')['blockedCause'], '')
+        self.shutdown_idle_database_owner('fixture database owner did not exit')
+
+    def test_new_assistant_start_leaves_empty_terminal_without_the_previous_answer(self):
+        self.assert_empty_terminal_after_new_assistant_start(
+            {'type': 'agent_end', 'isTerminal': True, 'messages': []},
+            {'role': 'assistant', 'responseId': 'new-unfinished-response', 'content': []})
+
+    def test_identifierless_assistant_start_does_not_restore_answer_into_missing_messages(self):
+        self.assert_empty_terminal_after_new_assistant_start(
+            {'type': 'agent_end', 'isTerminal': True}, {'role': 'assistant', 'content': []})
+
     def test_muse_uses_admitted_turn_terminal_and_keeps_later_lifecycle_separate(self):
         self.player(harness='muse')
         fake = self.directory / 'muse native fixture'

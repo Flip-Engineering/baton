@@ -272,10 +272,14 @@ def omp_elided_completion_sql(+source: String, +message: String, +activity: Stri
   +assistant = C.last_assistant_sql_expr(source)
   "CASE WHEN json_valid(" ++ message ++ ") AND json_valid(" ++ activity ++ ") THEN CASE WHEN (SELECT CASE WHEN tail.type='object' THEN coalesce(json_extract(tail.value,'$.role')='assistant',0) ELSE 0 END FROM json_each(" ++ source ++ ",'$.messages') tail ORDER BY tail.key DESC LIMIT 1)=0 AND coalesce(json_extract(" ++ assistant ++ ",'$.responseId'),'')<>'' AND json_extract(" ++ activity ++ ",'$.kind')='message_end' AND coalesce(json_extract(" ++ activity ++ ",'$.id'),'')<>'' AND json_extract(" ++ activity ++ ",'$.id')=json_extract(" ++ message ++ ",'$.responseId') AND json_extract(" ++ assistant ++ ",'$.responseId')<>json_extract(" ++ activity ++ ",'$.id') AND ((json_extract(" ++ assistant ++ ",'$.stopReason')='toolUse' AND json_extract(" ++ message ++ ",'$.stopReason')='stop') OR (json_extract(" ++ assistant ++ ",'$.stopReason')='error' AND EXISTS(SELECT 1 FROM json_each(" ++ activity ++ ",'$.errors') observed WHERE observed.value=json_extract(" ++ assistant ++ ",'$.responseId')))) THEN 1 ELSE 0 END ELSE 0 END"
 
+# A new assistant start has no completed answer to restore into an empty terminal.
+def omp_retained_answer_sql(+message: String, +activity: String) -> String:
+  "CASE WHEN json_valid(" ++ message ++ ") THEN CASE WHEN json_valid(" ++ activity ++ ") THEN coalesce(json_extract(" ++ activity ++ ",'$.kind'),'')<>'message_start' ELSE 1 END ELSE 0 END"
+
 def omp_terminal_messages_sql(+source: String, +message: String, +activity: String) -> String:
   +objects = omp_terminal_objects_sql(source)
   +kept = omp_terminal_kept_sql(source)
-  "CASE WHEN " ++ objects ++ "=0 AND json_valid(" ++ message ++ ") THEN json_array(json(" ++ message ++ ")) WHEN " ++ omp_elided_completion_sql(source,message,activity) ++ "=1 THEN json_array(json(" ++ omp_content_sql(message) ++ ")) ELSE " ++ kept ++ " END"
+  "CASE WHEN " ++ objects ++ "=0 AND " ++ omp_retained_answer_sql(message,activity) ++ " THEN json_array(json(" ++ message ++ ")) WHEN " ++ omp_elided_completion_sql(source,message,activity) ++ "=1 THEN json_array(json(" ++ omp_content_sql(message) ++ ")) ELSE " ++ kept ++ " END"
 
 # OMP may return valid terminal envelopes whose messages array contains a
 # non-object metadata marker. Keep object messages in their original order for
@@ -288,7 +292,7 @@ def omp_terminal_messages_sql(+source: String, +message: String, +activity: Stri
 # Extraction reads their SQL columns.
 def omp_terminal_sql(+event: String, +message: String, +activity: String) -> String:
   +messages = omp_terminal_messages_sql("frame.value","frame.message","frame.activity")
-  "WITH frame(value,message,activity) AS (VALUES(" ++ C.q(event) ++ "," ++ C.q(message) ++ "," ++ C.q(activity) ++ ")) SELECT CASE WHEN json_valid(value) THEN CASE WHEN json_extract(value,'$.type')='agent_end' AND coalesce(json_extract(value,'$.isTerminal'),1)=1 THEN CASE WHEN json_type(value,'$.messages')='array' THEN json_set(value,'$.messages',json(" ++ messages ++ ")) WHEN json_valid(frame.message) THEN json_set(value,'$.messages',json_array(json(frame.message))) ELSE value END ELSE value END ELSE value END FROM frame;"
+  "WITH frame(value,message,activity) AS (VALUES(" ++ C.q(event) ++ "," ++ C.q(message) ++ "," ++ C.q(activity) ++ ")) SELECT CASE WHEN json_valid(value) THEN CASE WHEN json_extract(value,'$.type')='agent_end' AND coalesce(json_extract(value,'$.isTerminal'),1)=1 THEN CASE WHEN json_type(value,'$.messages')='array' THEN json_set(value,'$.messages',json(" ++ messages ++ ")) WHEN " ++ omp_retained_answer_sql("frame.message","frame.activity") ++ " THEN json_set(value,'$.messages',json_array(json(frame.message))) ELSE value END ELSE value END ELSE value END FROM frame;"
 
 def omp_terminal(db: String, +event: String, +message: String, activity: String, enabled: Bool) -> IO(String):
   match enabled:
