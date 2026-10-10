@@ -62,7 +62,10 @@ class OrchestraBrowser(unittest.TestCase):
             output = stdout.decode()
             errors = stderr.decode()
             self.assertEqual(status, 0, output + errors)
-            self.assertIn('BROWSER_QA_OK', output)
+            marker = ('BROWSER_CAPTURE_OK'
+                      if os.environ.get('FINAL_NATIVE_CONTEXT_BROWSER_CAPTURE_ONLY') == 'true'
+                      else 'BROWSER_QA_OK')
+            self.assertIn(marker, output)
 
 
 if __name__ == '__main__':

@@ -12,6 +12,7 @@ import { createOrchestraServer } from '../ui/orchestra/server.mjs';
 
 const [EXE, WORK, OUT, CHROMIUM] = [process.argv[2], process.argv[3], process.argv[4], process.argv[5] || 'chromium'];
 const DB = join(WORK, 'orchestra.db');
+const CAPTURE_ONLY = process.env.FINAL_NATIVE_CONTEXT_BROWSER_CAPTURE_ONLY === 'true';
 let view = null;
 let view2 = null;
 let chrome = null;
@@ -33,6 +34,7 @@ function baton(...args) {
   return r.stdout.trim();
 }
 
+async function qualify() {
 try {
 // --- fixture: root conductor -> lead associate conductor -> worker/aide, ensemble+section
 mkdirSync(WORK, { recursive: true });
@@ -86,6 +88,10 @@ baton('promote', 'qa-worker-share', 'aide', 'worker', 'aide', 'qa-worker-finding
 // promotes the worker finding from the worker to itself; the author and
 // source stay the worker while the destination and promoter are the lead.
 baton('promote', 'qa-lead-share', 'lead', 'worker', 'lead', 'qa-worker-finding');
+if (!CAPTURE_ONLY) {
+  baton('promote-scoped', 'qa-group-share', 'lead', 'session', 'worker',
+    'group', 'qa-ensemble', 'qa-worker-finding');
+}
 baton('record', 'qa-msg-finding', 'worker', 'Worker message finding.',
   'message:qa-task-1', 'Worker message limits.');
 {
@@ -344,6 +350,13 @@ check('row knowledge reads as one compact line', await evalJs(`(() => {
 // Capture the compact row knowledge for review.
 const knowledgeShot = await send(pageWs, 'Page.captureScreenshot', { format: 'png' });
 writeFileSync(join(OUT, 'knowledge.png'), Buffer.from(knowledgeShot.result.data, 'base64'));
+if (CAPTURE_ONLY) {
+  await evalJs(`document.querySelector('#knowledge-whole [aria-label="Fit the map to the frame"]').click()`);
+  const mapShot = await send(pageWs, 'Page.captureScreenshot', { format: 'png' });
+  writeFileSync(join(OUT, 'knowledge-map.png'), Buffer.from(mapShot.result.data, 'base64'));
+  console.log('BROWSER_CAPTURE_OK — partial visual inspection: initial and worker knowledge views');
+  return;
+}
 await evalJs(`document.getElementById('map-scope-all').click()`);
 await until('all-records toggle discovers every held record',
   `document.querySelector('#map-scope').textContent === 'All held records · 3 items'`);
@@ -1146,6 +1159,8 @@ console.log('BROWSER_QA_OK');
 } finally {
   await teardown();
 }
+}
+await qualify();
 process.exit(0);
 
 async function stopChild(child) {
