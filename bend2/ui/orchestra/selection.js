@@ -669,24 +669,25 @@ function renderSelection(mount, data, options) {
     } else {
       findingBlock.appendChild(selEl("p", "muted", selFindingMicro(finding, evMid)));
     }
-    // The way back: the finding on the map through the shell's finding
-    // selection, the author's seat through its actor selection. Both
-    // render only when the shell passes the callback that wires them.
+    // The way back through the shell's locator: the finding on the map,
+    // the author's seat on the stage. Both render only when the shell
+    // passes the callback that wires them.
+    var canLocate = !refOnly && input && typeof input.onLocate === "function";
     var mapId = finding.id ? String(finding.id) : "";
-    if (!refOnly && mapId && options && typeof options.onSelectFinding === "function") {
+    if (canLocate && mapId) {
       var mapBack = selEl("button", null, "Show on the map.");
       mapBack.type = "button";
       mapBack.dataset.selkey = "sel:map:" + mapId;
-      mapBack.addEventListener("click", function () { options.onSelectFinding(mapId); });
+      mapBack.addEventListener("click", function () { input.onLocate(mapId); });
       findingBlock.appendChild(mapBack);
     }
     var authorId = (typeof finding.author === "string" || typeof finding.author === "number")
       ? String(finding.author) : "";
-    if (!refOnly && authorId && options && typeof options.onSelectActor === "function") {
+    if (canLocate && authorId) {
       var seatBack = selEl("button", null, "Show the author's seat.");
       seatBack.type = "button";
       seatBack.dataset.selkey = "sel:seat:" + authorId;
-      seatBack.addEventListener("click", function () { options.onSelectActor(authorId); });
+      seatBack.addEventListener("click", function () { input.onLocate(authorId); });
       findingBlock.appendChild(seatBack);
     }
     var facts = [];
