@@ -145,25 +145,32 @@ def notice_target(+author: String) -> String:
 def notice_body(+id: String, +author: String) -> String:
   "json_object('finding'," ++ C.q(id) ++ ",'author'," ++ C.q(author) ++ ")"
 
+# A conflicting knowledge ID preserves the stored record and returns its ID
+# and stored party metadata.
+def knowledge_conflict_sql(+name: String, +table: String, +id: String, +guards: String, +match: String, +stored: String) -> String:
+  "SELECT json_object('error'," ++ C.q(name) ++ ",'id'," ++ id ++ ",'stored',json_object(" ++ stored ++ "),'condition','This knowledge identity is already stored with different content.','next','Read knowledge and retain the stored record, then retry the new input under a different ID.') FROM " ++ table ++ " WHERE id=" ++ id ++ " AND " ++ guards ++ " AND NOT (" ++ match ++ ");"
+
 # The notice rides the existing question kind, so a parent already handed off or
 # stopped still receives it under the dispatch family it already serves. It is
 # written only for this invocation's own finding coordinates.
 def notice_statement(+id: String, +author: String, +claim: String, +evidence: String, +limits: String) -> String:
   "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(notice_id(id)) ++ "," ++ C.q(author) ++ "," ++ notice_target(author) ++ ",'question'," ++ notice_body(id,author) ++ " WHERE EXISTS(SELECT 1 FROM knowledge WHERE id=" ++ C.q(id) ++ " AND author=" ++ C.q(author) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits) ++ ") AND " ++ notice_target(author) ++ " IS NOT NULL"
-  ++ " ON CONFLICT(id) DO UPDATE SET id=CASE WHEN messages.sender=excluded.sender AND messages.recipient=excluded.recipient AND messages.kind=excluded.kind AND messages.body=excluded.body THEN messages.id ELSE NULL END;"
+  ++ " ON CONFLICT(id) DO NOTHING;"
+  ++ knowledge_conflict_sql("knowledge-notice-conflict","messages",C.q(notice_id(id)),notice_target(author) ++ " IS NOT NULL AND EXISTS(SELECT 1 FROM knowledge WHERE id=" ++ C.q(id) ++ " AND author=" ++ C.q(author) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits) ++ ")", "sender=" ++ C.q(author) ++ " AND recipient=" ++ notice_target(author) ++ " AND kind='question' AND body=" ++ notice_body(id,author),"'sender',sender,'recipient',recipient,'kind',kind")
 
 def finding_statement(+id: String, +author: String, claim: String, +evidence: String, limits: String) -> String:
   "INSERT INTO knowledge(id,author,claim,evidence,limits) SELECT " ++ C.q(id) ++ "," ++ C.q(author) ++ "," ++ C.q(claim) ++ "," ++ C.q(evidence) ++ "," ++ C.q(limits) ++ " WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(author) ++ ")"
-  ++ " ON CONFLICT(id) DO UPDATE SET id=CASE WHEN knowledge.author=excluded.author AND knowledge.claim=excluded.claim AND knowledge.evidence=excluded.evidence AND knowledge.limits=excluded.limits THEN knowledge.id ELSE NULL END;"
+  ++ " ON CONFLICT(id) DO NOTHING;"
+  ++ knowledge_conflict_sql("finding-id-conflict","knowledge",C.q(id),"EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(author) ++ ")","author=" ++ C.q(author) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits),"'author',author")
 
 def record_statements(+id: String, +author: String, +claim: String, +evidence: String, +limits: String) -> String:
   finding_statement(id,author,claim,evidence,limits) ++ notice_statement(id,author,claim,evidence,limits) ++ knowledge_answer(id,author,claim,evidence,limits)
 
 def typed_record_statements(+id: String, +author: String, kind: String, +claim: String, +evidence: String, +limits: String) -> String:
   finding_statement(id,author,claim,evidence,limits)
-  ++ "UPDATE knowledge SET kind=" ++ C.q(kind) ++ " WHERE id=" ++ C.q(id) ++ " AND author=" ++ C.q(author) ++ ";"
+  ++ "UPDATE knowledge SET kind=" ++ C.q(kind) ++ " WHERE id=" ++ C.q(id) ++ " AND author=" ++ C.q(author) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits) ++ ";"
   ++ notice_statement(id,author,claim,evidence,limits)
-  ++ "SELECT json_object('id',id,'author',author,'kind',kind,'claim',claim,'evidence',evidence,'limits',limits) FROM knowledge WHERE id=" ++ C.q(id) ++ " AND author=" ++ C.q(author) ++ ";"
+  ++ "SELECT json_object('id',id,'author',author,'kind',kind,'claim',claim,'evidence',evidence,'limits',limits) FROM knowledge WHERE id=" ++ C.q(id) ++ " AND author=" ++ C.q(author) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits) ++ ";"
 
 # Source and target are ordinary reference strings. An agent can link findings,
 # retained messages or external evidence and choose the relationship's name.
@@ -182,7 +189,8 @@ def source_carries(+source: String) -> String:
 
 def promotion_statement(+id: String, +promoter: String, +source: String, +destination: String, finding: String) -> String:
   "INSERT INTO knowledge_promotions(id,finding,author,source,destination,promoted_by) SELECT " ++ C.q(id) ++ ",k.id,k.author," ++ C.q(source) ++ "," ++ C.q(destination) ++ "," ++ C.q(promoter) ++ " FROM knowledge k WHERE k.id=" ++ C.q(finding) ++ " AND " ++ promotion_admitted(promoter,destination) ++ " AND " ++ source_carries(source)
-  ++ " ON CONFLICT(id) DO UPDATE SET id=CASE WHEN knowledge_promotions.finding=excluded.finding AND knowledge_promotions.author=excluded.author AND knowledge_promotions.source=excluded.source AND knowledge_promotions.destination=excluded.destination AND knowledge_promotions.promoted_by=excluded.promoted_by THEN knowledge_promotions.id ELSE NULL END;"
+  ++ " ON CONFLICT(id) DO NOTHING;"
+  ++ knowledge_conflict_sql("promotion-id-conflict","knowledge_promotions",C.q(id),"EXISTS(SELECT 1 FROM knowledge k WHERE k.id=" ++ C.q(finding) ++ " AND " ++ promotion_admitted(promoter,destination) ++ " AND " ++ source_carries(source) ++ ")","finding=" ++ C.q(finding) ++ " AND source=" ++ C.q(source) ++ " AND destination=" ++ C.q(destination) ++ " AND promoted_by=" ++ C.q(promoter),"'finding',finding,'source',source,'destination',destination")
 
 # The stored promotion, read back only when it is this call's own promotion:
 # the id, finding, source, destination and promoting actor must all match.
@@ -197,11 +205,17 @@ def promotion_notice_id(id: String) -> String:
 def promotion_notice_body() -> String:
   "json_object('promotion',p.id,'finding',p.finding,'author',p.author,'source',p.source,'destination',p.destination,'promotedBy',p.promoted_by)"
 
+# The same body read from the stored promotion under its own alias, so the
+# conflict comparison can run in a query whose FROM is the messages table.
+def promotion_notice_stored_body(+id: String) -> String:
+  "(SELECT " ++ promotion_notice_body() ++ " FROM knowledge_promotions p WHERE p.id=" ++ C.q(id) ++ ")"
+
 # A notice is written only for this invocation's exact stored promotion. Its
 # sender and recipient name the destination owner that admitted the promotion.
 def promotion_notice_statement(+id: String, +promoter: String, +source: String, +destination: String, +finding: String) -> String:
   "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(promotion_notice_id(id)) ++ ",p.promoted_by,p.destination,'question'," ++ promotion_notice_body() ++ " FROM knowledge_promotions p WHERE p.id=" ++ C.q(id) ++ " AND p.finding=" ++ C.q(finding) ++ " AND p.source=" ++ C.q(source) ++ " AND p.destination=" ++ C.q(destination) ++ " AND p.promoted_by=" ++ C.q(promoter)
-  ++ " ON CONFLICT(id) DO UPDATE SET id=CASE WHEN messages.sender=excluded.sender AND messages.recipient=excluded.recipient AND messages.kind=excluded.kind AND messages.body=excluded.body THEN messages.id ELSE NULL END;"
+  ++ " ON CONFLICT(id) DO NOTHING;"
+  ++ knowledge_conflict_sql("promotion-notice-conflict","messages",C.q(promotion_notice_id(id)),"EXISTS(SELECT 1 FROM knowledge_promotions p WHERE p.id=" ++ C.q(id) ++ " AND p.finding=" ++ C.q(finding) ++ " AND p.source=" ++ C.q(source) ++ " AND p.destination=" ++ C.q(destination) ++ " AND p.promoted_by=" ++ C.q(promoter) ++ ")","sender=" ++ C.q(promoter) ++ " AND recipient=" ++ C.q(destination) ++ " AND kind='question' AND body=" ++ promotion_notice_stored_body(id),"'sender',sender,'recipient',recipient")
 
 def promote_statements(+id: String, +promoter: String, +source: String, +destination: String, +finding: String) -> String:
   promotion_statement(id,promoter,source,destination,finding) ++ promotion_notice_statement(id,promoter,source,destination,finding) ++ promotion_answer(id,promoter,source,destination,finding)
@@ -223,14 +237,16 @@ def deliver_record(db: String, id: String, saved: String) -> IO(Result<&1,&1,U32
 def record(+db: String, +id: String, author: String, claim: String, evidence: String, limits: String) -> IO(Unit):
   do IO<Unit>:
     saved : String <- IO.try(String,Store.transact_sql(db,commit_sql(record_statements(id,author,claim,evidence,limits))))
-    delivery : Result<&1,&1,U32 & String,String> <- deliver_record(db,id,saved)
-    answered(delivery)
+    Bool.pick(IO(Unit),Store.refused(saved),IO.die(Unit,2,saved),do IO<Unit>:
+      delivery : Result<&1,&1,U32 & String,String> <- deliver_record(db,id,saved)
+      answered(delivery))
 
 def record_typed(+db: String, +id: String, author: String, kind: String, claim: String, evidence: String, limits: String) -> IO(Unit):
   do IO<Unit>:
     saved : String <- IO.try(String,Store.transact_sql(db,commit_sql(typed_record_statements(id,author,kind,claim,evidence,limits))))
-    delivery : Result<&1,&1,U32 & String,String> <- deliver_record(db,id,saved)
-    answered(delivery)
+    Bool.pick(IO(Unit),Store.refused(saved),IO.die(Unit,2,saved),do IO<Unit>:
+      delivery : Result<&1,&1,U32 & String,String> <- deliver_record(db,id,saved)
+      answered(delivery))
 
 def relate(db: String, id: String, author: String, source: String, relation: String, target: String) -> IO(Unit):
   do IO<Unit>:
@@ -269,5 +285,6 @@ def deliver_promotion(db: String, id: String, saved: String) -> IO(Result<&1,&1,
 def promote(+db: String, +id: String, promoter: String, source: String, destination: String, finding: String) -> IO(Unit):
   do IO<Unit>:
     saved : String <- IO.try(String,Store.transact_sql(db,commit_sql(promote_statements(id,promoter,source,destination,finding))))
-    delivery : Result<&1,&1,U32 & String,String> <- deliver_promotion(db,id,saved)
-    answered(delivery)
+    Bool.pick(IO(Unit),Store.refused(saved),IO.die(Unit,2,saved),do IO<Unit>:
+      delivery : Result<&1,&1,U32 & String,String> <- deliver_promotion(db,id,saved)
+      answered(delivery))

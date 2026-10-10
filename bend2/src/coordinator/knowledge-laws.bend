@@ -28,18 +28,6 @@ law m1_knowledge_statements_share_one_schema_ready_transaction:
 def m1_knowledge_statements_share_one_schema_ready_transaction(statements):
   {==}
 
-# The insertion checks its declared author and cited evidence and preserves an
-# existing row only when every finding coordinate matches.
-law m8_finding_insertion_checks_the_author_evidence_and_retry:
-  for id: String
-  for author: String
-  for claim: String
-  for evidence: String
-  for limits: String
-  {K.finding_statement(id,author,claim,evidence,limits) == "INSERT INTO knowledge(id,author,claim,evidence,limits) SELECT " ++ C.q(id) ++ "," ++ C.q(author) ++ "," ++ C.q(claim) ++ "," ++ C.q(evidence) ++ "," ++ C.q(limits) ++ " WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(author) ++ ") AND " ++ K.evidence_ok(author,evidence) ++ " ON CONFLICT(id) DO UPDATE SET id=CASE WHEN knowledge.author=excluded.author AND knowledge.claim=excluded.claim AND knowledge.evidence=excluded.evidence AND knowledge.limits=excluded.limits THEN knowledge.id ELSE NULL END;" : String}
-
-def m8_finding_insertion_checks_the_author_evidence_and_retry(id,author,claim,evidence,limits):
-  {==}
 
 # M-8: the cited message is exposed whole, so its identity, sender, recipient
 # and body travel with the finding.
@@ -112,19 +100,6 @@ law m8_only_the_destination_owner_admits_a_promotion:
   for destination: String
   {K.promotion_admitted(promoter, destination) == C.q(promoter) ++ "=" ++ C.q(destination) ++ " AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(destination) ++ ")" : String}
 
-# M-14: the notice is an ordinary message of the existing question kind,
-# addressed to the author's parent, carrying only the finding reference, and a
-# repeated id answers its own row.
-law m14_the_notice_carries_the_question_kind_and_the_reference:
-  for id: String
-  for author: String
-  for claim: String
-  for evidence: String
-  for limits: String
-  {K.notice_statement(id, author, claim, evidence, limits) == "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(K.notice_id(id)) ++ "," ++ C.q(author) ++ "," ++ K.notice_target(author) ++ ",'question'," ++ K.notice_body(id,author) ++ " WHERE EXISTS(SELECT 1 FROM knowledge WHERE id=" ++ C.q(id) ++ " AND author=" ++ C.q(author) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits) ++ ") AND " ++ K.notice_target(author) ++ " IS NOT NULL" ++ " ON CONFLICT(id) DO UPDATE SET id=CASE WHEN messages.sender=excluded.sender AND messages.recipient=excluded.recipient AND messages.kind=excluded.kind AND messages.body=excluded.body THEN messages.id ELSE NULL END;" : String}
-
-def m14_the_notice_carries_the_question_kind_and_the_reference(id, author, claim, evidence, limits):
-  {==}
 
 def m8_only_the_destination_owner_admits_a_promotion(promoter, destination):
   {==}
@@ -150,14 +125,6 @@ law m1_the_promotion_answer_is_this_calls_promotion:
 def m1_the_promotion_answer_is_this_calls_promotion(id, promoter, source, destination, finding):
   {==}
 
-# M-14: an empty answer is the refusal that names the rule; a stored row is
-# written as it stands.
-law m14_an_empty_knowledge_answer_names_its_rule:
-  for text: String
-  {K.answer_when(True{}, text) == IO.die(Unit,1,"No knowledge row was written: name a registered author, evidence naming an existing message the author is a party to, and an unused or identical row id.") : IO(Unit)}
-
-def m14_an_empty_knowledge_answer_names_its_rule(text):
-  {==}
 
 law m1_a_stored_knowledge_answer_is_written_unchanged:
   for text: String
@@ -202,34 +169,6 @@ law m8_the_destinations_are_all_recorded_for_the_finding:
 def m8_the_destinations_are_all_recorded_for_the_finding():
   {==}
 
-# M-8 and M-1: the finding item carries the finding, its evidence reference, the
-# cited message, its limits, and the promotions this reader can see.
-law m8_the_finding_item_carries_its_evidence_and_its_promotions:
-  {K.knowledge_item() == "json_object('id',k.id,'author',k.author,'claim',k.claim,'evidence',k.evidence,'evidenceMessage'," ++ K.evidence_message("k.evidence") ++ ",'limits',k.limits,'destinations'," ++ K.knowledge_destinations() ++ ",'promotions'," ++ K.knowledge_promotions() ++ ")" : String}
-
-def m8_the_finding_item_carries_its_evidence_and_its_promotions():
-  {==}
-# M-8: the read query limits shared results to registered readers and preserves
-# finding order.
-law m8_the_read_query_requires_a_registered_reader:
-  for reader: String
-  {K.read_sql(reader) == "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT " ++ K.knowledge_item() ++ " AS item FROM knowledge k WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") ORDER BY k.rowid);" : String}
-
-def m8_the_read_query_requires_a_registered_reader(reader):
-  {==}
-
-# M-8 and M-1: the promotion statement checks destination ownership, exact
-# source provenance, and the identity it inserts.
-law m8_the_promotion_statement_carries_the_admission_and_the_source:
-  for id: String
-  for promoter: String
-  for source: String
-  for destination: String
-  for finding: String
-  {K.promotion_statement(id, promoter, source, destination, finding) == "INSERT INTO knowledge_promotions(id,finding,author,source,destination,promoted_by) SELECT " ++ C.q(id) ++ ",k.id,k.author," ++ C.q(source) ++ "," ++ C.q(destination) ++ "," ++ C.q(promoter) ++ " FROM knowledge k WHERE k.id=" ++ C.q(finding) ++ " AND " ++ K.promotion_admitted(promoter,destination) ++ " AND " ++ K.source_carries(source) ++ " ON CONFLICT(id) DO UPDATE SET id=CASE WHEN knowledge_promotions.finding=excluded.finding AND knowledge_promotions.author=excluded.author AND knowledge_promotions.source=excluded.source AND knowledge_promotions.destination=excluded.destination AND knowledge_promotions.promoted_by=excluded.promoted_by THEN knowledge_promotions.id ELSE NULL END;" : String}
-
-def m8_the_promotion_statement_carries_the_admission_and_the_source(id, promoter, source, destination, finding):
-  {==}
 
 law m1_the_promote_statement_carries_the_promotion_notice_and_answer:
   for id: String
@@ -256,18 +195,6 @@ law m14_the_promotion_notice_body_names_its_provenance:
 def m14_the_promotion_notice_body_names_its_provenance():
   {==}
 
-# M-1 and M-8: the exact committed promotion supplies a question to its owner.
-# Conflicting message identity rolls back the same transaction.
-law m8_the_promotion_notice_addresses_its_exact_destination_owner:
-  for id: String
-  for promoter: String
-  for source: String
-  for destination: String
-  for finding: String
-  {K.promotion_notice_statement(id,promoter,source,destination,finding) == "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(K.promotion_notice_id(id)) ++ ",p.promoted_by,p.destination,'question'," ++ K.promotion_notice_body() ++ " FROM knowledge_promotions p WHERE p.id=" ++ C.q(id) ++ " AND p.finding=" ++ C.q(finding) ++ " AND p.source=" ++ C.q(source) ++ " AND p.destination=" ++ C.q(destination) ++ " AND p.promoted_by=" ++ C.q(promoter) ++ " ON CONFLICT(id) DO UPDATE SET id=CASE WHEN messages.sender=excluded.sender AND messages.recipient=excluded.recipient AND messages.kind=excluded.kind AND messages.body=excluded.body THEN messages.id ELSE NULL END;" : String}
-
-def m8_the_promotion_notice_addresses_its_exact_destination_owner(id,promoter,source,destination,finding):
-  {==}
 
 # M-1: the record's own IO sequence: one committing query, then the delivery of
 # the notice it wrote, then the answer.

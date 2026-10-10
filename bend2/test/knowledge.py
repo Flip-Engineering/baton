@@ -258,11 +258,16 @@ class Knowledge(unittest.TestCase):
         evidence = self.evidence('report-6', 'worker')
         first = self.call('record', 'finding-5', 'worker', 'a', evidence, 'c')
         self.assertEqual(self.call('record', 'finding-5', 'worker', 'a', evidence, 'c'), first)
-        self.call('record', 'finding-5', 'worker', 'changed', evidence, 'c', success=False)
+        changed = self.call('record', 'finding-5', 'worker', 'changed', evidence, 'c',
+                            success=False)
+        self.assertIn('finding-id-conflict', changed.stderr)
         self.assertEqual(self.ids(self.read('worker')), ['finding-5'])
         self.assertEqual(self.call('promote', 'promotion-3', 'root', 'worker', 'root', 'finding-5'),
                          self.call('promote', 'promotion-3', 'root', 'worker', 'root', 'finding-5'))
-        self.call('promote', 'promotion-3', 'root', 'worker', 'root', 'finding-1', success=False)
+        self.call('record', 'finding-6', 'worker', 'b', self.evidence('report-7', 'worker'), 'c')
+        reused = self.call('promote', 'promotion-3', 'root', 'worker', 'root', 'finding-6',
+                           success=False)
+        self.assertIn('promotion-id-conflict', reused.stderr)
 
     def test_a_mismatched_evidence_repeat_is_refused_and_keeps_the_stored_row(self):
         evidence = self.evidence('report-9', 'worker')
@@ -274,6 +279,8 @@ class Knowledge(unittest.TestCase):
         absent = self.call('record', 'finding-8', 'worker', 'a', 'message:absent', 'c', success=False)
         unrelated = self.call('record', 'finding-8', 'worker', 'a',
                               self.evidence('report-10', 'sibling'), 'c', success=False)
+        self.assertIn('finding-id-conflict', absent.stderr)
+        self.assertIn('finding-id-conflict', unrelated.stderr)
         after = [m['id'] for m in self.call('inbox', 'root') if m['kind'] == 'question']
         self.assertEqual(after, notices)
         stored = self.read('worker')
@@ -281,6 +288,19 @@ class Knowledge(unittest.TestCase):
         self.assertEqual(stored[0]['evidence'], evidence)
         repeated = self.call('record', 'finding-8', 'worker', 'a', evidence, 'c')
         self.assertEqual((repeated['id'], repeated['evidence']), ('finding-8', evidence))
+
+    def test_a_changed_content_repeat_keeps_the_stored_kind(self):
+        evidence = self.evidence('report-typed', 'worker')
+        self.call('record-typed', 'typed-1', 'worker', 'question', 'a', evidence, 'c')
+        refused = self.call('record-typed', 'typed-1', 'worker', 'answer', 'changed',
+                            evidence, 'c', success=False)
+        self.assertIn('finding-id-conflict', refused.stderr)
+        stored = self.read('worker')
+        self.assertEqual(self.ids(stored), ['typed-1'])
+        self.assertEqual((stored[0]['kind'], stored[0]['claim']), ('question', 'a'))
+        # A repeat that matches the stored finding still changes its kind.
+        self.call('record-typed', 'typed-1', 'worker', 'answer', 'a', evidence, 'c')
+        self.assertEqual(self.read('worker')[0]['kind'], 'answer')
 
     def test_the_usage_names_knowledge_commands(self):
         p = self.call('nonsense-verb', success=False)
@@ -393,18 +413,32 @@ class Knowledge(unittest.TestCase):
         self.assertEqual(deliveries.read_text(), before_conflict + before)
         self.assertEqual(len(self.read('sibling')[0]['promotions']), 1)
 
-    def test_conflicting_promotion_notice_identity_rolls_back_the_promotion(self):
+    def test_conflicting_promotion_notice_identity_preserves_the_promotion_and_refuses(self):
         self.call('record', 'rollback-finding', 'worker', 'claim',
                   self.evidence('rollback-evidence', 'worker'), 'limits')
         self.call('message', 'conflict-share:promotion-notice', 'root', 'sibling',
                   'guidance', 'Existing unrelated input.')
-        self.call('promote', 'conflict-share', 'root', 'worker', 'root',
-                  'rollback-finding', success=False)
-        self.assertEqual(self.read('worker')[0]['promotions'], [])
-        self.assertEqual(self.ids(self.read('sibling')), ['rollback-finding'])
-        self.assertEqual(self.read('sibling')[0]['promotions'], [])
-        self.assertEqual(self.call('delivery', 'conflict-share:promotion-notice')['body'],
-                         'Existing unrelated input.')
+        deliveries = pathlib.Path(self.temp.name) / 'conflict-deliveries.txt'
+        endpoint = pathlib.Path(self.temp.name) / 'conflict-endpoint.py'
+        endpoint.write_text('import pathlib,sys\n'
+                            'with pathlib.Path(sys.argv[1]).open("a") as stream:\n'
+                            '    stream.write(sys.argv[2] + "\\n")\n')
+        self.call('connect', 'sibling', 'sibling-session',
+                  json.dumps([sys.executable, str(endpoint), str(deliveries)]))
+        before = deliveries.read_text() if deliveries.exists() else ''
+        stored = self.call('delivery', 'conflict-share:promotion-notice')
+        conflict = self.call('promote', 'conflict-share', 'root', 'worker', 'root',
+                             'rollback-finding', success=False)
+        self.assertIn('promotion-notice-conflict', conflict.stderr)
+        # The refusal invoked no endpoint of the original notice's recipient.
+        self.assertEqual(deliveries.read_text() if deliveries.exists() else '', before)
+        self.assertEqual(self.ids(self.read('worker')), ['rollback-finding'])
+        self.assertEqual([p['destination'] for p in self.read('worker')[0]['promotions']],
+                         ['root'])
+        notice = self.call('delivery', 'conflict-share:promotion-notice')
+        self.assertEqual((notice['sender'], notice['recipient'], notice['kind'], notice['body']),
+                         (stored['sender'], stored['recipient'], stored['kind'], stored['body']))
+        self.assertEqual(notice['receipt'], stored['receipt'])
 
     def test_committed_promotion_notice_retries_after_endpoint_repair(self):
         self.call('record', 'repair-finding', 'worker', 'claim',
