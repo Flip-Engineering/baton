@@ -542,6 +542,39 @@ check('typed relations draw one edge per record', await evalJs(
   `document.querySelectorAll('#knowledge-whole .kw-edge-relate').length === 5`));
 check('relations between two references retain both endpoints', await evalJs(
   `!!document.querySelector('#knowledge-whole .kw-edge-relate[data-from="message:qa-missing-1"][data-to="external:qa-log-8"]')`));
+await evalJs(`(() => { const edge = document.querySelector('#knowledge-whole g.kw-edge-relate');
+  edge.focus(); edge.dispatchEvent(new MouseEvent('click', { bubbles: true })); return true; })()`);
+await until('activating a relate edge lights its two ends and names the relation',
+  `(() => {
+    const edge = document.querySelector('#knowledge-whole g.kw-edge-relate');
+    const name = edge.getAttribute('data-rel-name') || '';
+    const from = edge.getAttribute('data-from') || '';
+    const to = edge.getAttribute('data-to') || '';
+    const card = document.querySelector('#knowledge-whole .kw-card');
+    const title = card && card.querySelector('.kw-card-title');
+    const fact = card && card.querySelector('.kw-card-fact');
+    const lit = [...document.querySelectorAll('#knowledge-whole g.kw-edge-relate')]
+      .filter((e) => !e.classList.contains('kw-hover-dim'))
+      .every((e) => e.getAttribute('data-rel-name') === name);
+    const ends = ['data-kw-id', 'data-kw-ref'].flatMap((attr) =>
+      [from, to].map((id) => document.querySelector('#knowledge-whole [' + attr + '="' + id + '"]')))
+      .filter(Boolean);
+    return lit && !!title && title.textContent === name
+      && !!fact && fact.textContent.includes(from) && fact.textContent.includes(to)
+      && fact.textContent !== name
+      && ends.length > 0 && ends.every((g) => !g.classList.contains('kw-hover-dim'));
+  })()`);
+check('the relation card reads both ends as their kind and id', await evalJs(`(() => {
+  const edge = document.querySelector('#knowledge-whole g.kw-edge-relate');
+  const fact = document.querySelector('#knowledge-whole .kw-card .kw-card-fact');
+  if (!fact) return false;
+  return ['from', 'to'].every((side) => {
+    const kind = edge.getAttribute('data-' + side + '-kind') || '';
+    const id = edge.getAttribute('data-' + side) || '';
+    if (!kind || !id) return false;
+    return kind === 'ref' ? fact.textContent.includes(id) : fact.textContent.includes(kind + ' ' + id);
+  });
+})()`));
 check('message endpoints draw as held tags', await evalJs(`(() => {
   const g = document.querySelector('#knowledge-whole g.kw-ref[data-kw-ref="message:qa-task-1"]');
   return !!g && !g.classList.contains('unheld') && (g.getAttribute('aria-label') || '').includes('held');
@@ -632,6 +665,38 @@ await until('keyboard re-pins the dismissed finding',
 await evalJs(`document.querySelector('#knowledge-whole svg.kw-canvas').dispatchEvent(new MouseEvent('click', { bubbles: true }))`);
 check('background click returns to the overview', await evalJs(
   `!document.querySelector('#knowledge-whole .kw-card')`));
+await evalJs(`(() => { const b = document.querySelector('#selection .sel-focus'); b.click(); return true; })()`);
+await until('a record relation statement lights its map edges', `(() => {
+  const b = document.querySelector('#selection .sel-lit .sel-focus');
+  if (!b || b.getAttribute('aria-current') !== 'true') return false;
+  const name = (b.dataset.selkey || '').split('|')[1] || '';
+  const edges = [...document.querySelectorAll('#knowledge-whole g.kw-edge-relate')];
+  return edges.some((e) => e.getAttribute('data-rel-name') === name && !e.classList.contains('kw-hover-dim'))
+    && edges.filter((e) => !e.classList.contains('kw-hover-dim'))
+      .every((e) => e.getAttribute('data-rel-name') === name);
+})()`);
+await evalJs(`(() => { const svg = document.querySelector('#knowledge-whole svg.kw-canvas');
+  svg.focus(); svg.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true})); return true; })()`);
+await until('Escape clears the relation card and its light', `(() => {
+  const rel = [...document.querySelectorAll('#knowledge-whole .kw-card')]
+    .some((c) => (c.querySelector('.kw-card-state') || {}).textContent === 'relation');
+  const unlit = [...document.querySelectorAll('#knowledge-whole g.kw-edge-relate')]
+    .every((e) => !e.classList.contains('kw-hover-dim'));
+  return !rel && unlit;
+})()`);
+await evalJs(`(() => { const b = document.querySelector('#selection .sel-focus'); b.click(); return true; })()`);
+await until('a relation statement lights its edges again', `(() => {
+  const edges = [...document.querySelectorAll('#knowledge-whole g.kw-edge-relate')];
+  return edges.some((e) => !e.classList.contains('kw-hover-dim'));
+})()`);
+await evalJs(`(() => { const row = document.querySelector('#roster .doc-row[data-doc-id="aide"] .doc-open');
+  row.focus(); row.click(); return true; })()`);
+await until('a new selection clears the named relation and unlights the map', `(() => {
+  const edges = [...document.querySelectorAll('#knowledge-whole g.kw-edge-relate')];
+  return edges.length > 0
+    && edges.every((e) => !e.classList.contains('kw-hover-dim'))
+    && !document.querySelector('#selection [aria-current="true"].sel-focus');
+})()`);
 await evalJs(`document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]').dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))`);
 check('hover isolates the finding neighborhood', await evalJs(`(() => {
   const hovered = document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]');
@@ -661,6 +726,13 @@ await until('live record updates the author compact line through native SSE',
   `(document.querySelector('#roster .doc-row[data-doc-id="worker"] .kw-compact') || {}).textContent?.includes('3 findings')`);
 await until('live record draws the new whole-canvas node through native SSE',
   `document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-live-finding"]')`);
+check('a live frame does not restore a dismissed relation card', await evalJs(`(() => {
+  const rel = [...document.querySelectorAll('#knowledge-whole .kw-card')]
+    .some((c) => (c.querySelector('.kw-card-state') || {}).textContent === 'relation');
+  const unlit = [...document.querySelectorAll('#knowledge-whole g.kw-edge-relate')]
+    .every((e) => !e.classList.contains('kw-hover-dim'));
+  return !rel && unlit;
+})()`));
 baton('promote', 'qa-worker-live-share', 'aide', 'worker', 'aide', 'qa-worker-live-finding');
 await until('live promotion updates the shared count through native SSE',
   `(document.querySelector('#roster .doc-row[data-doc-id="worker"] .kw-compact') || {}).textContent?.includes('2 shared')`);
