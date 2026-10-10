@@ -623,7 +623,7 @@ def wake_line(+read: U32, sub: U32, active: Bool) -> IO(Result<&1,&1,U32 & Strin
   Bool.pick(IO(Result<&1,&1,U32 & String,WakeRead>),active,notice_wake_line(read,sub),plain_wake_line(read))
 
 @unsafe
-def consume_exhausted(+db: String, player: String, id: String, +log: String, held: String, +log_failed: Bool, handle: U32, +harness: String, codex_log: String, terminal: String, filter: String, requested: String, first_error: String, sender: Chan(Result<&1,&1,U32 & String,Unit>), +attempt: String, checkpoint_state: Observer.State, incomplete_observation: Bool, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, wake_sub: U32, wake_on: Bool) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
+def consume_exhausted(+db: String, +player: String, +id: String, +log: String, held: String, +log_failed: Bool, +handle: U32, +harness: String, codex_log: String, terminal: String, filter: String, requested: String, first_error: String, sender: Chan(Result<&1,&1,U32 & String,Unit>), +attempt: String, +checkpoint_state: Observer.State, +incomplete_observation: Bool, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, wake_sub: U32, wake_on: Bool) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
   do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
     +wake_closed : Result<&1,&1,U32 & String,Unit> <- wake_close(wake_sub,wake_on)
     +sent : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,sender)
