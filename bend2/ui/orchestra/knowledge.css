@@ -102,6 +102,13 @@
   border-radius: 6px;
 }
 
+/* The card opens on the side away from its node, so it does not sit
+   on the node's own group boundary. */
+.kw-card.kw-card-left {
+  left: 8px;
+  right: auto;
+}
+
 /* The pinned card reads in three layers: the node's identity and its
    state word lead, one line states the fact that matters, and the
    reference rows sit quiet underneath. */

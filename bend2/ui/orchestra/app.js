@@ -476,6 +476,19 @@ function fixtureActorKnowledge(id) {
     empty: authored.length === 0 && received.length === 0 && relations.length === 0 };
 }
 
+// Omit a repeated worker label when the holder's name includes that word.
+function scopeLabel(kind, id) {
+  const holder = shortSeatId(id || "");
+  if (kind === "all") return "All held records";
+  if (kind === "unstated") return "Held records";
+  if (kind === "group") return "Group " + (holder || "not named");
+  if (kind === "worker" || kind === "actor") {
+    if (!holder) return "Worker holdings";
+    return holder.toLowerCase().indexOf("worker") === -1 ? "Worker " + holder : holder;
+  }
+  return "Universal knowledge";
+}
+
 // The scope the map shows: ?actor=ID for a worker's holdings, ?group=ENSEMBLE for the
 // recorded owner's, ?scope=all for every held record, and nothing for universal.
 function knowledgeScopeQuery() {
@@ -654,11 +667,7 @@ function renderMapScope() {
   const kind = stated ? stated.kind : (state.knowledge ? "unstated" : asked.kind);
   const id = (stated && stated.id) || asked.id;
   const findings = (state.knowledge && state.knowledge.findings) || [];
-  const what = kind === "all" ? "All held records"
-    : kind === "worker" || kind === "actor" ? "Worker " + (id || "not named")
-    : kind === "group" ? "Group " + (id || "not named")
-    : kind === "unstated" ? "Held records"
-    : "Universal knowledge";
+  const what = scopeLabel(kind, id);
   const count = findings.length + (findings.length === 1 ? " item" : " items");
   el.mapScope.textContent = what + " · " + count;
   if (el.mapScopeAll) {

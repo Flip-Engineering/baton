@@ -1,5 +1,9 @@
 /* The rail record. State color stays in the existing page tokens. */
-.sel-block { margin: 0 0 12px; }
+.sel-block { margin: 0 0 12px; scroll-margin-top: 84px; }
+.sel-index { display: flex; flex-wrap: wrap; font-size: var(--step0, 12px); margin: 0 0 8px; }
+.sel-index a { color: var(--muted); text-decoration: none; }
+.sel-index a:hover { color: var(--ink, #141a26); text-decoration: underline; }
+.sel-index a + a::before { content: "·"; margin: 0 8px; color: var(--muted); }
 .sel-block > h2 { overflow-wrap: anywhere; }
 .sel-body { white-space: pre-wrap; overflow-wrap: anywhere; margin: 2px 0 8px; }
 .sel-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 10px; flex: none; }

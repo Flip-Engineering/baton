@@ -177,6 +177,11 @@
   var kwRefsDrawn = 0;
   // Drawn text boxes this render: settling tags keep clear of them.
   var kwLabelBoxes = [];
+  // Drawn node centres, drawing width, and hull boxes this render,
+  // for card placement.
+  var kwNodeXY = new Map();
+  var kwLastWidth = 0;
+  var kwHullBoxes = [];
   function kwFindingRef(ref) {
     const m = /^finding:(.+)$/.exec(String(ref || ""));
     return m ? m[1] : null;
@@ -374,8 +379,7 @@
     for (const id of actors) tierOf.set(id, kwDepthOf(meta, roles, id));
     const depths = Array.from(new Set(tierOf.values()))
       .filter((d) => d >= 0).sort((a, b) => a - b);
-    // Actors without usable role or parent metadata keep an honest
-    // unknown tier instead of dropping their findings off the canvas.
+    // Actors with missing role or parent metadata appear in the unknown tier.
     if ([...tierOf.values()].some((d) => d < 0)) depths.push(-1);
     const byAuthor = new Map();
     for (const f of overview.findings || []) {
@@ -622,6 +626,7 @@
         });
         kwTrackBox(x - boxW / 2, y - 11, x + boxW / 2, y + 11);
         kwLabelBoxes.push({ x0: x - boxW / 2, y0: y - 11, x1: x + boxW / 2, y1: y + 11 });
+        kwHullBoxes.push({ x0: x - boxW / 2, y0: y - 11, x1: x + boxW / 2, y1: y + 11 });
         const label = kwSvg(g, "text", {
           x: String(x), y: String(y + 4),
           class: "kw-lozenge-label", "text-anchor": "middle",
@@ -664,6 +669,17 @@
       const hlw = (String(id).length + 5) * 9 + 8;
       kwTrackBox(top.x - hlw / 2, top.y - 20, top.x + hlw / 2, top.y);
       kwLabelBoxes.push({ x0: top.x - hlw / 2, y0: top.y - 20, x1: top.x + hlw / 2, y1: top.y });
+      // Each hull records its box: member span plus the label above it.
+      const hb = {
+        x0: top.x - hlw / 2, y0: top.y - 20,
+        x1: top.x + hlw / 2, y1: top.y,
+      };
+      for (const p of padded) {
+        if (p.x - 6 < hb.x0) hb.x0 = p.x - 6;
+        if (p.x + 6 > hb.x1) hb.x1 = p.x + 6;
+        if (p.y + 6 > hb.y1) hb.y1 = p.y + 6;
+      }
+      kwHullBoxes.push(hb);
       wire(g);
     }
   }
@@ -689,6 +705,9 @@
     kwRefMarks = new Map();
     kwRefsDrawn = 0;
     kwLabelBoxes = [];
+    kwNodeXY = new Map();
+    kwHullBoxes = [];
+    kwLastWidth = layout.width || 0;
     const actorPos = new Map();
     const findingPos = new Map();
     const query = opts && opts.query;
@@ -967,6 +986,7 @@
     // Hulls draw before relations so settling tags keep clear of their
     // labels; paint order is unchanged, the hull layer sits beneath the edges.
     layout.actorPos = actorPos;
+    kwNodeXY = new Map([...actorPos, ...findingPos]);
     kwEnsembleHulls(svg, edgeLayer, layout, ensembles || []);
     // Draw recorded relations between nodes or labeled reference tags.
     // Relations between references are placed beside their author.
@@ -998,8 +1018,9 @@
       if (!mark) {
         const k = fanAt.get(nodeId) || 0;
         fanAt.set(nodeId, k + 1);
-        // Later tags orbit wider so a dense fan spirals instead of stacking.
-        const rr = Math.min(140, 64 + (k < 3 ? 0 : (k - 2) * 14));
+        // First four tags alternate near/far stubs (80/104); past four
+        // the fan spirals to a 150 cap. Slots follow relation order.
+        const rr = k < 4 ? 80 + (k % 2) * 24 : Math.min(150, 104 + (k - 3) * 14);
         const rad = fanAngles[(fanStart(nodeId) + k) % fanAngles.length] * Math.PI / 180;
         // A finding the overview holds draws as a node, so a finding
         // reference tag is never held. A message tag is held when some
@@ -1141,6 +1162,59 @@
         svg.setAttribute("viewBox", "0 0 " + svg.getAttribute("width") + " " + need);
       }
     }
+    // Visible spans of a relate stub: stretches crossing a text box
+    // drop out, so the stub keeps its direction with gaps at the text.
+    const kwStubSpans = (x1, y1, x2, y2) => {
+      const dx = x2 - x1;
+      const dy = y2 - y1;
+      const blocks = [];
+      for (const box of kwLabelBoxes) {
+        const pad = 3;
+        const bx0 = box.x0 - pad;
+        const bx1 = box.x1 + pad;
+        const by0 = box.y0 - pad;
+        const by1 = box.y1 + pad;
+        // Endpoints inside a box are kept, so the stub stays attached.
+        if ((x1 > bx0 && x1 < bx1 && y1 > by0 && y1 < by1)
+          || (x2 > bx0 && x2 < bx1 && y2 > by0 && y2 < by1)) continue;
+        let t0 = 0;
+        let t1 = 1;
+        let miss = false;
+        if (Math.abs(dx) < 1e-9) {
+          if (x1 <= bx0 || x1 >= bx1) miss = true;
+        } else {
+          let ta = (bx0 - x1) / dx;
+          let tb = (bx1 - x1) / dx;
+          if (ta > tb) { const tt = ta; ta = tb; tb = tt; }
+          if (ta > t0) t0 = ta;
+          if (tb < t1) t1 = tb;
+        }
+        if (Math.abs(dy) < 1e-9) {
+          if (y1 <= by0 || y1 >= by1) miss = true;
+        } else {
+          let ta = (by0 - y1) / dy;
+          let tb = (by1 - y1) / dy;
+          if (ta > tb) { const tt = ta; ta = tb; tb = tt; }
+          if (ta > t0) t0 = ta;
+          if (tb < t1) t1 = tb;
+        }
+        const c0 = Math.max(0, Math.min(1, t0));
+        const c1 = Math.max(0, Math.min(1, t1));
+        if (!miss && c0 < c1) blocks.push([c0, c1]);
+      }
+      blocks.sort((a, b) => a[0] - b[0]);
+      const spans = [];
+      let cur = 0;
+      for (let bi = 0; bi < blocks.length; bi += 1) {
+        const b0 = blocks[bi][0];
+        const b1 = blocks[bi][1];
+        if (b0 > cur) spans.push([cur, b0]);
+        if (b1 > cur) cur = b1;
+        if (cur >= 1) break;
+      }
+      if (cur < 1) spans.push([cur, 1]);
+      return spans;
+    };
     const relateEnd = (end) => {
       if (end.kind === "node") return nodePos(end);
       const mark = kwRefMarks.get(end.ref);
@@ -1163,13 +1237,25 @@
           + (a.kind === "node" ? a.id : a.ref) + " to "
           + (b.kind === "node" ? b.id : b.ref),
       });
-      kwSvg(g, "line", {
-        x1: String(from.x), y1: String(from.y),
-        x2: String(to.x), y2: String(to.y),
-        stroke: "var(--ink, #141a26)", "stroke-width": "2",
-        "stroke-linecap": "round", "stroke-dasharray": "0.5 3",
-        opacity: "0.65", "marker-end": "url(#kw-arrow-relate)",
-      });
+      // One drawn stroke per relation, in spans: blocked stretches drop
+      // out where the stub would cross a text box. The arrowhead stays
+      // on the final span.
+      const spans = kwStubSpans(from.x, from.y, to.x, to.y);
+      for (let si = 0; si < spans.length; si += 1) {
+        const s0 = spans[si][0];
+        const s1 = spans[si][1];
+        const attrs = {
+          x1: String(from.x + (to.x - from.x) * s0),
+          y1: String(from.y + (to.y - from.y) * s0),
+          x2: String(from.x + (to.x - from.x) * s1),
+          y2: String(from.y + (to.y - from.y) * s1),
+          stroke: "var(--ink, #141a26)", "stroke-width": "2",
+          "stroke-linecap": "round", "stroke-dasharray": "0.5 3",
+          opacity: "0.65",
+        };
+        if (si === spans.length - 1) attrs["marker-end"] = "url(#kw-arrow-relate)";
+        kwSvg(g, "line", attrs);
+      }
       const tip = kwSvg(g, "title", null);
       tip.textContent = "recorded relation '" + name + "'";
       // Node-to-node edges carry the authored name at the midpoint; a
@@ -1238,7 +1324,11 @@
       kwDismiss();
     });
     kwWireKeyHandler(container, (ev) => {
-      if (ev.key === "Escape") kwDismiss();
+      if (ev.key === "Escape") {
+        kwDismiss();
+        ev.preventDefault();
+        ev.stopPropagation();
+      }
     });
     // The edge key is one row of edge samples from the same marker
     // table that draws the arrowheads, so it cannot drift from the
@@ -1677,6 +1767,40 @@
           "Show the finding");
         show.addEventListener("click", () => { opts.onSelectFinding(ref.follow); });
       }
+    }
+    // The card opens on the side away from its node, and below any
+    // hull it would cover. Hull boxes map through the view transform
+    // into container pixels, the same mapping the nodes render through.
+    const npos = kwNodeXY.get(sel) || kwRefMarks.get(sel) || null;
+    const wide = kwLastWidth || container.clientWidth || 1;
+    const nodeRight = !!npos && npos.x > wide / 2;
+    card.classList.toggle("kw-card-left", nodeRight);
+    const svg = container.querySelector("svg");
+    if (svg) {
+      const rect = svg.getBoundingClientRect();
+      const base = container.getBoundingClientRect();
+      const s = kwUnitScale(svg, rect);
+      const toCardX = (x) => rect.left - base.left + (kwView.x + x * kwView.k) * s.x;
+      const toCardY = (y) => rect.top - base.top + (kwView.y + y * kwView.k) * s.y;
+      let cardTop = 8;
+      for (let round = 0; round < 4; round += 1) {
+        const cw = card.offsetWidth;
+        const ch = card.offsetHeight;
+        const cx0 = nodeRight ? 8 : Math.max(8, (container.clientWidth || wide) - cw - 8);
+        let hit = -1;
+        for (const hb of kwHullBoxes) {
+          const hx0 = toCardX(hb.x0);
+          const hx1 = toCardX(hb.x1);
+          const hy0 = toCardY(hb.y0);
+          const hy1 = toCardY(hb.y1);
+          if (cx0 < hx1 && hx0 < cx0 + cw && cardTop < hy1 && hy0 < cardTop + ch) {
+            if (hy1 + 8 > hit) hit = hy1 + 8;
+          }
+        }
+        if (hit < 0 || hit <= cardTop) break;
+        cardTop = hit;
+      }
+      card.style.top = String(cardTop) + "px";
     }
   }
 

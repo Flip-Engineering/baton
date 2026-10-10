@@ -181,6 +181,65 @@
     return shortId(forms[forms.length - 1] || "", chars);
   }
 
+  // A seat's name, placed so that no mark of the seat itself can cover it: beside the
+  // mark in the seat's own band, which costs the row no height, or under the mark
+  // when the row leaves a whole line free below the seat's own marks. The name is
+  // shortened to the room it is given and kept only when two characters fit.
+  function seatLabelFor(forms, place) {
+    var label = labelBeside(forms, place);
+    if (!label && place.gap >= place.radius * 2.2 + 18) label = labelUnder(forms, place);
+    return label;
+  }
+
+  // Beside the mark, in the seat's own band: the room is what is left between the
+  // next seat's mark, the box edge, the row's label column, and any name already
+  // placed beside this row.
+  function labelBeside(forms, place) {
+    var pad = place.radius + 7;
+    var right = place.caps.right - (place.x + pad) - 2;
+    var left = (place.x - pad) - place.caps.left - 2;
+    var room = Math.floor(Math.max(right, left) / CHAR_W);
+    if (room < 2) return null;
+    var toRight = right >= left;
+    return {
+      text: formFor(forms, room),
+      anchor: toRight ? "start" : "end",
+      dx: toRight ? pad : -pad,
+      baseline: 4,
+    };
+  }
+
+  // Under the mark. The seat's own marks reach past the queue bar at 5.5 radii below
+  // its centre, and the next row's mark reaches 1.15 radii above its own, so the line
+  // starts at radius + 14 and needs a row that leaves it that room.
+  function labelUnder(forms, place) {
+    var beside = place.pitch / 2;
+    var left = place.x - 4;
+    var right = place.width - 4 - place.x;
+    var centred = 2 * Math.min(beside, left, right);
+    var room;
+    var anchor = "middle";
+    var dx = 0;
+    if (centred >= 2 * CHAR_W) {
+      room = Math.floor(centred / CHAR_W);
+    } else if (right >= left) {
+      room = Math.floor((Math.min(right, beside) - 2) / CHAR_W);
+      anchor = "start";
+      dx = 2;
+    } else {
+      room = Math.floor((Math.min(left, beside) - 2) / CHAR_W);
+      anchor = "end";
+      dx = -2;
+    }
+    if (room < 2) return null;
+    return {
+      text: formFor(forms, room),
+      anchor: anchor,
+      dx: dx,
+      baseline: place.radius + 14,
+    };
+  }
+
   // Everything the seat owes: queued inputs it has not acknowledged and reports
   // sent and never acknowledged. The shell states the total as owedTotal, so
   // pendingCount alone is never the read; it misses reports.
@@ -442,22 +501,18 @@
       totalRows += Math.max(1, Math.ceil(plan.tiers[s].rows.length / perRow));
     }
 
-    // A row carries its seats' names when its pitch has room for one, and the rows
-    // keep the space a name needs between two rows when they do.
-    var maxInRow = Math.min(widest, perRow);
-    var rowPitch = maxInRow > 1 ? usable / (maxInRow - 1) : usable;
-    var named = rowPitch >= 6 * CHAR_W + 6;
-    var pad = radius + 16;
-    var gapMin = 2 * radius + (named ? 14 : 10);
-    var gapMax = 2 * radius + 30;
+    // Size the drawing to its rows and compress their spacing within the mount height.
+    var gap = 2 * radius + 10;
     var seatTop = Math.max(SEAT_TOP, radius + 12);
-    var budget = limit - seatTop - (BOW + pad);
-    var gap = totalRows > 0 ? Math.floor(budget / totalRows) : gapMax;
-    gap = Math.max(gapMin, Math.min(gapMax, gap));
-    var labelRoom = gap - 2 * radius >= 9;
+    if (totalRows > 1) {
+      var room = Math.floor((limit - seatTop - BOW - radius - 18) / (totalRows - 1));
+      // Keep eight pixels between adjacent marks; larger groups scroll.
+      if (room < gap) gap = Math.max(2 * radius + 8, room);
+    }
 
     var seats = [];
     var order = [];
+    var blocked = {};
     var y = seatTop;
     for (var i = 0; i < plan.tiers.length; i += 1) {
       var tier = plan.tiers[i];
@@ -475,40 +530,27 @@
         // The tiers bow away from the podium at the edges, so the hall reads as a
         // seating plan.
         var bow = BOW * Math.pow((x - mid) / Math.max(1, mid), 2);
-        // The name sits under the mark: centred where it fits, otherwise hung to
-        // the open side and always inside the box. Two characters are enough for
-        // the shortest form, so a packed row names its seats too. A tier's name is
-        // safe from these: it sits a full line above the seat's own row.
-        var label = null;
-        if (labelRoom) {
-          var beside = pitch / 2;
-          var left = x - 4;
-          var right = w - 4 - x;
-          var chars = 0;
-          var anchor = "middle";
-          var dx = 0;
-          var centred = 2 * Math.min(beside, left, right);
-          if (centred >= 2 * CHAR_W) {
-            chars = Math.floor(centred / CHAR_W);
-          } else if (right >= left) {
-            // Hung labels stay inside the seat's own half of the row, so they never
-            // reach a neighbour's centred name.
-            chars = Math.floor((Math.min(right, beside) - radius - 5) / CHAR_W);
-            anchor = "start";
-            dx = radius + 5;
-          } else {
-            chars = Math.floor((Math.min(left, beside) - radius - 5) / CHAR_W);
-            anchor = "end";
-            dx = -(radius + 5);
-          }
-          if (chars > ID_SHOWN) chars = ID_SHOWN;
-          if (chars >= 2) {
-            label = {
-              text: formFor(tier.rows[k].forms, chars),
-              anchor: anchor,
-              dx: dx,
-            };
-          }
+        // Where this seat's name may reach: the next seat's mark, the box, the row's
+        // label column, and any name already placed beside this row.
+        var lane = i + ":" + row;
+        var nextLeft = column === inRow - 1 ? w - 4 : x + pitch - radius - 4;
+        var label = seatLabelFor(tier.rows[k].forms, {
+          x: x,
+          row: row,
+          pitch: pitch,
+          gap: gap,
+          radius: radius,
+          gutter: gutter,
+          width: w,
+          caps: {
+            left: Math.max((row === 0 ? gutter : 0) + 4, blocked[lane] || 0),
+            right: nextLeft,
+          },
+        });
+        if (label && label.anchor !== "middle") {
+          blocked[lane] = label.anchor === "end"
+            ? x + label.dx
+            : x + label.dx + label.text.length * CHAR_W;
         }
         var seat = {
           seat: tier.rows[k],
@@ -522,7 +564,10 @@
       y += rowsOfTier * gap;
     }
 
-    var content = Math.round(y + BOW + pad);
+    // The height the drawing covers: the last row's centre, the bow the outermost
+    // seats take, the mark, and the room a name under a mark needs. The SVG, its
+    // viewBox and the published height all take this value.
+    var content = Math.round(y - (totalRows > 0 ? gap : 0) + BOW + radius + 18);
     return {
       seats: seats,
       order: order,
@@ -682,11 +727,11 @@
     ring.style.fill = "none";
     group.appendChild(ring);
 
-    // The seat's name under its mark: the reader can tell who is sitting where
-    // without hovering. The plan decides whether it fits and which way it hangs.
+    // The seat's name: the plan placed it clear of this seat's own marks, so the
+    // queue bar, the ring and the halo sit above or beside it, never over it.
     if (entry.label) {
       var name = svgEl("text", {
-        "class": "att-seat-label", x: entry.label.dx, y: radius + 8,
+        "class": "att-seat-label", x: entry.label.dx, y: entry.label.baseline,
       });
       name.style.textAnchor = entry.label.anchor;
       setText(name, entry.label.text);
@@ -706,6 +751,13 @@
       if (typeof options.onSelect === "function") options.onSelect(seat.id);
     });
     return group;
+  }
+
+  // How far an arc may rise above its ends without leaving the box: the curve reaches
+  // about three quarters of its control offset above the higher end.
+  function arcLift(fromY, toY, want) {
+    var top = Math.min(fromY, toY) - 8;
+    return Math.max(6, Math.min(want, top * 1.33));
   }
 
   // Recorded relations as threads between the seats that hold them: promotions
@@ -735,7 +787,7 @@
       var from = positions[parts[0]];
       var to = positions[parts[1]];
       if (!from || !to || from === to) return;
-      var lift = Math.min(90, Math.max(20, Math.abs(to.y - from.y) * 0.4));
+      var lift = arcLift(from.y, to.y, Math.min(90, Math.max(20, Math.abs(to.y - from.y) * 0.4)));
       var path = svgEl("path", {
         "class": "att-know",
         d: "M " + from.x + " " + from.y
@@ -776,7 +828,7 @@
       var from = positions[parts[0]];
       var to = positions[parts[1]];
       if (!from || !to || from === to) return;
-      var lift = Math.min(90, Math.max(20, Math.abs(to.y - from.y) * 0.4));
+      var lift = arcLift(from.y, to.y, Math.min(90, Math.max(20, Math.abs(to.y - from.y) * 0.4)));
       var path = svgEl("path", {
         "class": "att-thread att-thread-" + (held.kind || "recorded"),
         d: "M " + from.x + " " + from.y
@@ -902,11 +954,12 @@
     var holder = positions[holderId];
     var target = positions[plan.batonTarget];
     if (holder && target && holder !== target) {
+      var rise = arcLift(target.y - 10, target.y - 10, 46);
       var baton = svgEl("path", {
         "class": "att-baton",
         d: "M " + holder.x + " " + (holder.y + 10)
-          + " C " + holder.x + " " + (holder.y + 46)
-          + " " + target.x + " " + (target.y - 46)
+          + " C " + holder.x + " " + (holder.y + 10 + rise)
+          + " " + target.x + " " + (target.y - 10 - rise)
           + " " + target.x + " " + (target.y - 10),
       });
       svg.appendChild(baton);

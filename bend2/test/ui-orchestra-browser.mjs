@@ -323,6 +323,10 @@ check('roster rows read the name, the work, then the staff', await evalJs(
 await evalJs(`document.querySelector('#roster .doc-row[data-doc-id="worker"] .doc-open').click()`);
 await until('selection record opens for the chosen row',
   `document.querySelector('#selection h2') && document.querySelector('#selection h2').textContent === 'worker'`);
+const selectedActorHash = await evalJs(`location.hash`);
+await evalJs(`document.querySelector('#selection .sel-index a').click()`);
+check('record section navigation preserves the selected actor address', await evalJs(
+  `location.hash === ${JSON.stringify(selectedActorHash)} && document.querySelector('#selection h2')?.textContent === 'worker'`));
 await until('row selection lights its own arcs',
   `!!document.querySelector('#roster .kw-arc-hot[data-from="worker"]')`);
 await until('the map draws on the page without a disclosure',
@@ -359,7 +363,7 @@ await until('Escape clears the worker selection and returns to universal holding
     && location.hash === ''`);
 await evalJs(`document.querySelector('#roster .doc-row[data-doc-id="worker"] .doc-open').click()`);
 await until('worker holdings reopen after clearing the selection',
-  `document.getElementById('map-scope').textContent === 'Worker worker · 2 items'
+  `document.getElementById('map-scope').textContent === 'worker · 2 items'
     && !!document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]')`);
 await evalJs(`document.querySelector('#roster [data-doc-group="qa-ensemble"]').click()`);
 await until('ensemble band opens the owner holdings on the map',
@@ -452,6 +456,8 @@ await evalJs(`{ const box = document.querySelector('#knowledge-whole .kw-search'
 check('search outside the drawn tiers says so', await evalJs(
   `document.querySelector('#knowledge-whole .kw-search-status').textContent === "'root' is outside the drawn tiers"`));
 await evalJs(`document.querySelector('#knowledge-whole svg.kw-canvas').dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}))`);
+check('dismissing the map card keeps its selected actor and scope', await evalJs(
+  `document.querySelector('#map-scope').textContent === 'All held records · 3 items' && document.querySelector('#selection h2')?.textContent === 'worker' && !document.querySelector('#knowledge-whole .kw-card')`));
 await evalJs(`{ const box = document.querySelector('#knowledge-whole .kw-search'); box.value = 'qa-aide-finding'; box.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true})); }`);
 await until('search re-pins its dismissed hit',
   `!!document.querySelector('#knowledge-whole .kw-card')`);
@@ -488,7 +494,7 @@ await until('selecting an actor pins its card and loads its holdings', `(() => {
   const self = document.querySelector('#knowledge-whole .kw-anchor[data-kw-id="worker"]');
   const stranger = document.querySelector('#knowledge-whole .knode[aria-label="qa-aide-finding"]');
   return !!card && card.textContent === 'worker' && !!self && !self.classList.contains('kw-hover-dim')
-    && !stranger && document.getElementById('map-scope').textContent === 'Worker worker · 2 items';
+    && !stranger && document.getElementById('map-scope').textContent === 'worker · 2 items';
 })()`);
 await evalJs(`document.getElementById('map-scope-all').click()`);
 await until('all scope restores unrelated findings for the graph probes',

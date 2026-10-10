@@ -114,7 +114,7 @@
   display: flex;
   gap: 1px;
   width: 100%;
-  height: 104px;
+  height: 72px;
   background: none;
 }
 
@@ -235,6 +235,14 @@
   border-radius: 50%;
   background: var(--rib-needle);
 }
+
+/* A window with no arrivals: the fact in one line and the span as a rule. */
+.ribbon-quiet .ribbon-axis {
+  height: 1px;
+  background: var(--rib-grid);
+}
+
+.ribbon-quiet .ribbon-pulse { background: var(--rib-grid); }
 
 .ribbon-seats {
   display: flex;
@@ -362,7 +370,7 @@
 }
 
 @media (max-width: 720px) {
-  .ribbon-axis { height: 72px; }
+  .ribbon-axis { height: 56px; }
   .ribbon-tempo { font-size: 17px; }
   .ribbon-row { grid-template-columns: max-content minmax(0, 1fr); }
   .ribbon-row-who,

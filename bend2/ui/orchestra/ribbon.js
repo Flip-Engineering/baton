@@ -248,12 +248,38 @@ function renderRibbon(container, data, options) {
   container.textContent = "";
 
   if (!total) {
-    const empty = document.createElement("p");
-    empty.className = "ribbon-summary";
-    empty.textContent = "No recorded change is in this snapshot.";
-    container.appendChild(empty);
+    // Nothing arrived in this window: state it in one line, keep the span rule
+    // and the control's place, and take a fraction of the drawing's height.
+    container.classList.add("ribbon-quiet");
+    const head = document.createElement("div");
+    head.className = "ribbon-head";
+    const quiet = document.createElement("span");
+    quiet.className = "ribbon-summary";
+    quiet.textContent = "no arrivals in this window";
+    head.appendChild(quiet);
+    const quietPulse = document.createElement("span");
+    quietPulse.className = "ribbon-pulse";
+    quietPulse.setAttribute("aria-hidden", "true");
+    head.appendChild(quietPulse);
+    const quietSlider = document.createElement("div");
+    quietSlider.className = "ribbon-slider";
+    quietSlider.setAttribute("role", "slider");
+    quietSlider.setAttribute("aria-disabled", "true");
+    quietSlider.setAttribute("aria-label", "Position in the recorded history");
+    quietSlider.setAttribute("aria-valuemin", "0");
+    quietSlider.setAttribute("aria-valuemax", "0");
+    quietSlider.setAttribute("aria-valuenow", "0");
+    quietSlider.setAttribute("aria-valuetext", "no recorded arrivals");
+    quietSlider.tabIndex = -1;
+    const quietAxis = document.createElement("div");
+    quietAxis.className = "ribbon-axis";
+    quietAxis.setAttribute("aria-hidden", "true");
+    quietSlider.appendChild(quietAxis);
+    container.appendChild(head);
+    container.appendChild(quietSlider);
     return { events: 0, position: 0 };
   }
+  container.classList.remove("ribbon-quiet");
 
   // The page holds events newest first; the axis runs oldest to newest.
   let position = Number(opts.position);

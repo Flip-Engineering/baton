@@ -2,7 +2,8 @@
    selected finding. Reads come from the shell; buttons request them.
    The state head sticks while the record scrolls. Dot: failed red,
    stopped attention, running green, else muted; queued messages take
-   no ink. All labels arrive through textContent. */
+   no ink. An index under the head jumps to the blocks present.
+   All labels arrive through textContent. */
 
 var SEL_EVENT_LIMIT = 8;
 var selEventsOpen = false;
@@ -229,6 +230,34 @@ function renderSelection(mount, data, options) {
     }
     head.appendChild(state);
     mount.appendChild(head);
+    // Jumps to the blocks present, in document order. One block needs no index.
+    var secEntries = [];
+    if (finding) secEntries.push(["sel-sec-finding", "Finding"]);
+    if (selOwed(seat) > 0 || (seat.pending && seat.pending.length)) {
+      secEntries.push(["sel-sec-awaiting", "Awaiting"]);
+    }
+    if (seat.work) secEntries.push(["sel-sec-work", "Work"]);
+    var secHasChanges = events.some(function (ev) { return ev && ev.session === seat.id; });
+    if (secHasChanges) secEntries.push(["sel-sec-changes", "Changes"]);
+    if (secEntries.length > 1) {
+      var secNav = selEl("nav", "sel-index");
+      secNav.setAttribute("aria-label", "Record sections");
+      secEntries.forEach(function (entry) {
+        var secLink = selEl("a", null, entry[1]);
+        secLink.setAttribute("href", "#" + entry[0]);
+        // The jump scrolls without writing the address, so the shell's
+        // #seat=<id> hash survives the click and the reload after it.
+        secLink.addEventListener("click", function (ev) {
+          ev.preventDefault();
+          var secTarget = document.getElementById(entry[0]);
+          if (secTarget && typeof secTarget.scrollIntoView === "function") {
+            secTarget.scrollIntoView();
+          }
+        });
+        secNav.appendChild(secLink);
+      });
+      mount.appendChild(secNav);
+    }
     var seatBlock = selEl("div", "sel-block");
     var failure = seat.failure || null;
     if (failure) {
@@ -251,6 +280,7 @@ function renderSelection(mount, data, options) {
   }
   if (finding) {
     var findingBlock = selEl("div", "sel-block");
+    findingBlock.id = "sel-sec-finding";
     findingBlock.appendChild(selEl("h2", "doc-section", "Finding " + (finding.id || "")));
     var facts = [];
     if (finding.kind) facts.push(["kind", finding.kind]);
@@ -344,6 +374,7 @@ function renderSelection(mount, data, options) {
   var pendingTotal = selOwed(seat);
   if (pendingTotal > 0 || stubs.length) {
     var waiting = selEl("div", "sel-block");
+    waiting.id = "sel-sec-awaiting";
     waiting.appendChild(selEl("h2", "doc-section", "Awaiting " + pendingTotal));
     if (stubs.length < pendingTotal) {
       waiting.appendChild(selEl("p", "muted", "Showing " + stubs.length
@@ -422,6 +453,7 @@ function renderSelection(mount, data, options) {
   if (seat && seat.work) {
     var w = seat.work;
     var work = selEl("div", "sel-block");
+    work.id = "sel-sec-work";
     work.appendChild(selEl("h2", "doc-section", "Work"));
     if (w.refused) {
       work.appendChild(selEl("p", "muted",
@@ -459,6 +491,7 @@ function renderSelection(mount, data, options) {
     });
     if (mine.length) {
       var eventsBlock = selEl("div", "sel-block");
+      eventsBlock.id = "sel-sec-changes";
       eventsBlock.appendChild(selEl("h2", "doc-section", "Changes"));
       var ul = selEl("ul", "sel-timeline");
       var listed = selEventsOpen ? mine : mine.slice(0, SEL_EVENT_LIMIT);
