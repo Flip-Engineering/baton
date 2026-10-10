@@ -1339,8 +1339,11 @@ check('the stage draws a seam only where the payload places both ends', await ev
   });
   const authored = seams.filter((seam) => seam.classList.contains('att-seam-authored')).length;
   const cited = seams.filter((seam) => seam.classList.contains('att-seam-cited')).length;
+  const seatEnds = (edge) => (seats.has(String(edge.source)) ? 1 : 0)
+    + (seats.has(String(edge.target)) ? 1 : 0);
   const expectedAuthored = (payload.edges || []).filter((edge) => edge.provenance === 'authored'
-    && place(edge.source) && place(edge.target)).length;
+    && place(edge.source) && place(edge.target)
+    && seatEnds(edge) >= 1 && String(edge.source) !== String(edge.target)).length;
   const expectedCitedOutright = (payload.edges || []).filter((edge) => edge.provenance === 'recorded-evidence'
     && place(edge.source) && place(edge.target)).length;
   // Cited seams may exceed the outright count by the author-anchored shape; they may
@@ -1708,13 +1711,43 @@ check('the stage draws the authored seam on the arc with its chevron and its val
     if (!seams.length) return false;
     return seams.every((seam) => {
       const stage = seam.parentNode;
-      const chevron = stage && stage.querySelector('polygon.att-seam-chevron');
-      const value = getComputedStyle(seam).opacity;
-      return Boolean(chevron) && chevron.tagName.toLowerCase() === 'polygon'
-        && !chevron.querySelector('circle, rect, ellipse')
-        && Number(value) === 0.85;
+      if (!stage) return false;
+      if (Number(getComputedStyle(seam).opacity) !== 0.85) return false;
+      if (seam.tagName.toLowerCase() !== 'path') {
+        return Boolean(stage.querySelector('circle.att-ref'));
+      }
+      const chevron = stage.querySelector('polygon.att-seam-chevron');
+      return Boolean(chevron) && !chevron.querySelector('circle, rect, ellipse');
     });
   })()`));
+// The placement rule the hall states, applied to the fixture payload and counted
+// against the drawing rather than pinned: at least one end a seat, the ends distinct.
+check('the stage draws exactly the edges the placement rule places', await evalJs(`(async () => {
+  const document_ = await (await fetch('fixtures/fixture-knowledge.json')).json();
+  const knowledge = (document_ && document_.knowledge) || {};
+  const seats = new Set([...document.querySelectorAll('#attention-band .att-seat[data-att-id]')]
+    .map((seat) => seat.getAttribute('data-att-id') || '').filter(Boolean));
+  const unheld = new Set((knowledge.nodes || []).filter((node) => node.referenceOnly === true)
+    .map((node) => String(node.reference || '')));
+  const place = (value) => seats.has(String(value)) || unheld.has(String(value));
+  const seatEnds = (edge) => (seats.has(String(edge.source)) ? 1 : 0)
+    + (seats.has(String(edge.target)) ? 1 : 0);
+  const placed = (knowledge.edges || []).filter((edge) => {
+    if (edge.provenance !== 'authored' && edge.provenance !== 'recorded-evidence') return false;
+    if (!place(edge.source) || !place(edge.target)) return false;
+    if (seatEnds(edge) < 1) return false;
+    return String(edge.source) !== String(edge.target);
+  });
+  const seams = document.querySelectorAll('.att-seam').length;
+  const beads = document.querySelectorAll('circle.att-ref').length;
+  const chevrons = document.querySelectorAll('polygon.att-seam-chevron').length;
+  const bars = document.querySelectorAll('g.att-seam-bars').length;
+  return seams === placed.length
+    && beads === placed.filter((edge) => seatEnds(edge) === 1).length
+    && chevrons === placed.filter((edge) => seatEnds(edge) === 2
+      && edge.provenance === 'authored').length
+    && bars === 0;
+})()`));
 await evalJs(`(() => {
   const edge = [...document.querySelectorAll('.kw-edge-typed')]
     .find((node) => node.getAttribute('data-to') === 'message:fixture-message-1');
