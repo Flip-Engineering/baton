@@ -110,10 +110,10 @@
   stroke: var(--ink);
 }
 
-/* The conductor's role enclosure, in the page's own ink at radius + 7: the principal
-   a whole thin ring, an associate the same ring broken into two arcs. It owns no
-   state channel - the fermata ring is a state ink at radius + 4 and the selection
-   ring a focus claim at radius + 3 - so whole against broken reads as role alone. */
+/* The conductor's role enclosure, in the page's own ink at radius + 7: a whole ring
+   for the principal conductor, the same ring with two gaps for an associate. No other
+   mark sits at that radius - the fermata ring is a state ink at radius + 4 and the
+   selection ring a focus indicator at radius + 3 - so the enclosure carries the role. */
 .lane-strip .att-role {
   fill: none;
   stroke: var(--ink);

@@ -17,12 +17,13 @@
    baton on the seat that acted most recently, a recency trail above the mark, a
    queue bar under a seat that owes work, and the recorded relations as threads
    between the seats that hold them. The seating plan is the reporting hierarchy:
-   the principal conductor at the root, one depth level per complete parent chain,
-   ensembles grouping inside a level, and unknown ancestry in its own tier. A
-   conductor wears a role ring in the page's ink - whole for the principal, broken
-   for an associate - and a seat's title names the parent it reports to. Every tier
-   maps onto the mount's width and wraps inside it, so no seat is painted outside
-   the box.
+   the principal conductor at depth 0, one tier row per parent step below it,
+   ensemble membership grouping seats inside a depth level, and rows with unknown
+   ancestry in a separate tier.
+   A conductor's seat carries a role enclosure in the page's ink - a whole ring
+   for the principal, a ring with two gaps for an associate - and a seat's title
+   names the parent it reports to. Every tier maps onto the mount's width and
+   wraps inside it, so no seat is painted outside the box.
 
    The default set is the shell's: an actor is seated unless its id arrives in
    options.quietIds, or unless options.showEnded is true. Keyboard: one tab stop;
@@ -504,12 +505,13 @@
 
   /* ── the seating plan ─────────────────────────────────────────────────── */
 
-  // Reporting depth, read over every row so a chain through a quiet seat still places
-  // its descendants. The principal conductor is the root: a row with no recorded
-  // parent and the principal's role sits at depth 0. Every other row sits at one more
-  // than its parent, following complete parent chains. A row whose parent is absent
-  // from the record, whose chain cycles, or that records no parent and is not the
-  // principal is genuine unknown ancestry: its own tier, never a guessed depth.
+  // Reporting depth, computed over every row so a parent chain through a quiet seat
+  // still places its descendants. A row with no recorded parent and the principal
+  // role sits at depth 0. Every other row sits one level below its recorded parent,
+  // following complete parent chains. A row whose parent is absent from the record,
+  // whose chain cycles, or that records no parent and is not the principal goes to
+  // the separate tier for unknown ancestry: the depth -1, and no other value is
+  // assigned to those rows.
   function parentDepths(rows) {
     var byId = {};
     for (var i = 0; i < rows.length; i += 1) byId[rows[i].id] = rows[i];
@@ -536,12 +538,12 @@
     return depth;
   }
 
-  // The seating plan is the reporting hierarchy: the principal conductor at the root,
-  // then one depth level per parent step, deepest last, so the hall reads top-down as
-  // a chain of command and the eye follows who reports to whom by tier position.
-  // Ensemble membership groups seats inside a depth level and never overrides depth;
-  // the payload's sections follow their ensemble wherever it sits; unknown ancestry
-  // keeps its own tier at the end. Tiers keep the document order inside.
+  // The seating plan is the reporting hierarchy: the principal conductor at depth 0,
+  // one tier row per parent step below it, deepest last, so tier position states
+  // reporting depth. Ensemble membership groups seats inside a depth level and does
+  // not change a seat's depth; the payload's sections follow their ensemble at
+  // whatever level it sits; rows with unknown ancestry keep a separate tier at the
+  // end. Tiers keep the document order inside.
   function stagePlan(rows, seated, ensembles) {
     var depth = parentDepths(rows);
 
@@ -598,8 +600,10 @@
         tiers.push({ id: "", label: "depth " + level + ", no ensemble", rows: loose });
       }
     }
+    // The separate tier for unknown ancestry: cycles, parents absent from the
+    // record, and rows that record no parent and are not the principal.
     if (orphans.length) {
-      tiers.push({ id: "", label: "no parent recorded", rows: orphans });
+      tiers.push({ id: "", label: "unknown ancestry", rows: orphans });
     }
 
     // The baton rests on the most recent recorded action among the working seats.
@@ -622,11 +626,16 @@
     var total = 0;
     var widest = 0;
     var longestName = 1;
+    var ringDrawn = false;
     for (var t = 0; t < plan.tiers.length; t += 1) {
       total += plan.tiers[t].rows.length;
       if (plan.tiers[t].rows.length > widest) widest = plan.tiers[t].rows.length;
       var name = String(plan.tiers[t].label || "no ensemble");
       if (name.length > longestName) longestName = name.length;
+      for (var m = 0; m < plan.tiers[t].rows.length; m += 1) {
+        var tierRole = plan.tiers[t].rows[m].role;
+        if (tierRole === "principal-conductor" || tierRole === "associate-conductor") ringDrawn = true;
+      }
     }
 
     // The column is as wide as the names ask for, inside its own bounds.
@@ -650,13 +659,19 @@
       totalRows += Math.max(1, Math.ceil(plan.tiers[s].rows.length / perRow));
     }
 
+    // A conductor's role enclosure reaches radius + 7, past the mark and the pointer
+    // target, so the row extent the spacing and the bounds account for is the ring's
+    // when any conductor is seated and the mark's otherwise. The horizontal inset and
+    // the within-row pitch keep the smaller hit radius: the enclosure is a thin
+    // stroke that may sit close to its neighbours sideways.
+    var extent = ringDrawn ? radius + 7 : radius;
     // Size the drawing to its rows and compress their spacing within the mount height.
-    var gap = 2 * radius + 10;
-    var seatTop = Math.max(SEAT_TOP, radius + 12);
+    var gap = 2 * extent + 10;
+    var seatTop = Math.max(SEAT_TOP, extent + 12);
     if (totalRows > 1) {
-      var room = Math.floor((limit - seatTop - BOW - radius - 18) / (totalRows - 1));
+      var room = Math.floor((limit - seatTop - BOW - extent - 18) / (totalRows - 1));
       // Keep eight pixels between adjacent marks; larger groups scroll.
-      if (room < gap) gap = Math.max(2 * radius + 8, room);
+      if (room < gap) gap = Math.max(2 * extent + 8, room);
     }
 
     var seats = [];
@@ -730,10 +745,11 @@
     }
 
     // The height the drawing covers: the last row's centre, the bow the outermost
-    // seats take, the mark, and the room a name under a mark needs - reserved only when
-    // a name was actually drawn there, so a hall whose names all sit beside their marks
-    // keeps no empty tail. The SVG, its viewBox and the published height all take this.
-    var content = Math.round(y - (totalRows > 0 ? gap : 0) + BOW + radius + (underLabel ? 18 : 8));
+    // seats take, the row extent (the role enclosure's when a conductor is seated),
+    // and the room a name under a mark needs - reserved only when a name was
+    // actually drawn there, so a hall whose names all sit beside their marks keeps
+    // no empty tail. The SVG, its viewBox and the published height all take this.
+    var content = Math.round(y - (totalRows > 0 ? gap : 0) + BOW + extent + (underLabel ? 18 : 8));
     return {
       seats: seats,
       order: order,
@@ -814,9 +830,8 @@
   }
 
   // One arc of a role ring, as a path from angle a1 to a2 (radians, y-down screen
-  // space), angles from three o'clock. The associate's two arcs sweep the top and the
-  // bottom, leaving the gaps at three and nine o'clock: the ring reads as broken
-  // whichever way the seat is scanned.
+  // space), with angles measured from three o'clock. The associate's enclosure uses
+  // two arcs, sweeping the top and the bottom, with gaps at three and nine o'clock.
   function roleArc(r, a1, a2) {
     function point(angle) {
       return (r * Math.cos(angle)).toFixed(2) + " " + (r * Math.sin(angle)).toFixed(2);
@@ -827,9 +842,9 @@
     });
   }
 
-  // The conductor's role enclosure, in the page's own ink: the principal a whole thin
-  // ring, an associate the same ring broken into two arcs. The stage and the legend
-  // draw from this one function.
+  // The conductor's role enclosure in the page's own ink: a whole ring for the
+  // principal conductor, and the same ring with two gaps for an associate conductor.
+  // The stage and the legend draw from this one function.
   function roleMark(role, radius) {
     var group = svgEl("g", { "class": "att-role" });
     var r = radius + 7;
@@ -875,12 +890,11 @@
       group.appendChild(held);
     }
 
-    // The role mark: the recorded role of a conductor, in the page's own ink, as an
-    // enclosure no state owns - the fermata ring is a state ink at radius + 4, the
-    // selection ring a focus claim at radius + 3, and both are circles of the moment.
-    // The principal conductor carries a whole thin ring at radius + 7; an associate
-    // conductor carries the same ring broken into two arcs, so whole against broken -
-    // a closure difference, read before any word - separates the two roles at a glance.
+    // The role mark for a conductor's recorded role, in the page's own ink at
+    // radius + 7: a whole ring for the principal conductor, the same ring with two
+    // gaps for an associate. No other mark sits at that radius - the fermata ring is
+    // a state ink at radius + 4, the selection ring a focus indicator at radius + 3 -
+    // so the enclosure carries the role alone.
     if (seat.role === "principal-conductor" || seat.role === "associate-conductor") {
       group.appendChild(roleMark(seat.role, radius));
     }
@@ -1602,8 +1616,8 @@
       key.appendChild(span(null, readingWord(state, 0)));
       legend.appendChild(key);
     }
-    // The role keys, after the states: the same rings the seats wear, so a reader
-    // who meets a broken ring on a depth tier can name it without hunting.
+    // The role keys, after the states, drawing the same enclosures the seats carry,
+    // so the ring forms are named on the legend.
     var ROLES = [
       { role: "principal-conductor", word: "principal" },
       { role: "associate-conductor", word: "associate" },
