@@ -110,8 +110,7 @@ function deriveStatus(p) {
   const stop = p.stop || null;
   if (stop && stop.status === "stopped") return "stopped";
   const ex = p.execution || null;
-  if (ex && ex.phase === "running") return "running";
-  if (ex && ex.phase === "starting") return "waiting";
+  if (ex && (ex.phase === "running" || ex.phase === "starting")) return "running";
   if (ex && ex.phase === "exited") {
     // A physical exit 0 does not prove the turn finished: a provider refusal can
     // end the process with a zero status, and an OMP 403 is recorded that way.

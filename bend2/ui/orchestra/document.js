@@ -33,8 +33,8 @@
     if (p.status === "failed") return "failed";
     if (p.status === "stopped") return "stopped";
     if (p.status === "waiting") return "waiting";
-    if ((p.owedTotal || 0) > 0 || p.owesWork === true || p.status === "pending") return "queued";
     if (p.status === "running") return "working";
+    if ((p.owedTotal || 0) > 0 || p.owesWork === true || p.status === "pending") return "queued";
     return "quiet";
   }
 
