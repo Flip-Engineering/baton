@@ -25,8 +25,9 @@ function stateMark(p) {
   } else if (owed || status === "pending") {
     tone = "queued";
   } else if (status === "stopped") {
-    // A stopped actor owing nothing keeps its seat: at rest, not ended, so the
-    // quiet tests do not drop it from the default hall.
+    // A stopped actor owing nothing is at rest with its own tone: the
+    // default hall seats active work, and the quiet tests rest this seat
+    // while the all-rows toggle keeps it reachable.
     tone = "stopped";
   } else if (status === "completed" || status === "ended") {
     tone = "ended";

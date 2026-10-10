@@ -441,8 +441,14 @@ function openRelationAt(rel) {
   if (!rel) return;
   resolveRelationAddress(rel);
   if (typeof history.replaceState === "function") {
-    history.replaceState(null, "", "#relation=" + encodeURIComponent(
-      String(rel.provenance || "") + ":" + String(rel.source || "") + ":" + String(rel.target || "")));
+    // Each field encodes on its own and the colons stay literal, so the
+    // boot parse reads the same three components this writer emits, and a
+    // field's own colons (typed prefixes, endpoint punctuation) survive
+    // the round trip inside its encoding.
+    history.replaceState(null, "", "#relation="
+      + encodeURIComponent(String(rel.provenance || ""))
+      + ":" + encodeURIComponent(String(rel.source || ""))
+      + ":" + encodeURIComponent(String(rel.target || "")));
   }
 }
 

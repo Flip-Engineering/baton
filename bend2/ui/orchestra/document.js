@@ -21,10 +21,12 @@
 (function () {
   "use strict";
 
-  // Ended and unobserved rows with no queued input are quiet.
+  // Ended, unknown and stopped-at-rest rows are quiet: the default hall
+  // seats the active — running, waiting, queued or owing input — while a
+  // stopped seat stays reachable through the all-rows toggle.
   function isQuiet(mark) {
     if (!mark) return true;
-    return mark.tone === "ended" || mark.tone === "unknown";
+    return mark.tone === "ended" || mark.tone === "unknown" || mark.tone === "stopped";
   }
 
   // Derive the row state from the current attempt and pending input.
