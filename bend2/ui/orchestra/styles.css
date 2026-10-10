@@ -744,7 +744,6 @@ button:active { background: var(--wash); }
 }
 
 .doc-glyph.state-working { background: var(--running); }
-.doc-glyph.state-waiting { background: none; box-shadow: inset 0 0 0 1.5px var(--muted); }
 .doc-glyph.state-queued { background: var(--attention); border-radius: 2px; }
 .doc-glyph.state-stopped { width: 11px; height: 3px; border-radius: 1px; background: var(--attention); }
 .doc-glyph.state-failed {
@@ -760,7 +759,6 @@ button:active { background: var(--wash); }
 .doc-row.state-stopped { border-left-color: var(--attention); }
 .doc-row.state-queued { border-left-color: var(--attention); }
 .doc-row.state-working { border-left-color: var(--running); }
-.doc-row.state-waiting { border-left-color: var(--muted); }
 .doc-row.state-quiet { border-left-color: var(--staff); }
 
 .doc-row.state-quiet .doc-name,
@@ -1029,3 +1027,6 @@ button:active { background: var(--wash); }
   border-radius: 1px;
   background: var(--attention);
 }
+
+/* The plate's contents line: each section with what it holds, so the page states its own shape. */
+.plate-nav .plate-count { color: var(--muted); font-size: var(--step0); }

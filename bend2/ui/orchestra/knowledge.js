@@ -167,9 +167,6 @@
   // The shell's live read per actor id ({status, notProgressing, owesWork,
   // owedTotal}), refreshed from the data payload on every whole render.
   var kwActorReads = {};
-  // How many recorded semantic relations the current canvas draws.
-  // The legend keys the relation kind only when this is not zero.
-  var kwRelationsDrawn = 0;
   // Reference marks drawn this render, by endpoint string: relations
   // whose ends are messages or external evidence draw a tag there
   // instead of pretending the endpoint is an actor or a finding.
@@ -228,6 +225,73 @@
       });
     }
   }
+  // Node shapes by recorded kind. The default finding keeps its circle;
+  // the table covers the kinds the store records, and any other recorded
+  // kind draws a star. Shapes run triangle to hexagon down the alphabet.
+  var KW_KIND_SHAPES = {
+    finding: "circle", answer: "triangle", correction: "square",
+    decision: "diamond", observation: "pentagon", question: "hexagon",
+  };
+  var kwKindsDrawn = new Map();
+  function kwShapeFor(kind) {
+    return KW_KIND_SHAPES[String(kind || "finding").toLowerCase()] || "star";
+  }
+  // A regular-corner path centred at (x, y) with vertices on radius r.
+  // The square sits flat so it reads apart from the diamond; the star
+  // alternates outer and inner corners over eight points.
+  function kwShapePath(shape, x, y, r) {
+    const corners = { triangle: 3, square: 4, diamond: 4, pentagon: 5, hexagon: 6 }[shape] || 0;
+    const pts = [];
+    const total = shape === "star" ? 16 : corners * 2;
+    for (let i = 0; i < total; i += 2) {
+      const turn = i / total;
+      const rr = shape === "star" && (i / 2) % 2 === 1 ? r * 0.55 : r;
+      const a = (turn * 2 - 0.5) * Math.PI + (shape === "square" ? Math.PI / 4 : 0);
+      pts.push((x + rr * Math.cos(a)).toFixed(1) + "," + (y + rr * Math.sin(a)).toFixed(1));
+    }
+    return "M" + pts.join(" L") + " Z";
+  }
+  // Relation style tuples by authored name: dash, width and ink from
+  // the page tokens, twenty tuples in dash-major order. A name hashes
+  // to a base tuple, stable across renders and scopes; names drawn
+  // together that land on one tuple move to the next free tuple in
+  // table order. So a name owns its tuple for a given drawn set, and
+  // two drawn names never share one while free tuples remain. A drawn
+  // set larger than twenty shares from the top of the order.
+  var KW_REL_TUPLES = [];
+  ["0.5 3", "6 3", "7 2.5 1.5 2.5", "10 3 2 3", ""].forEach((dash) => {
+    ["2", "1"].forEach((width) => {
+      ["var(--ink, #141a26)", "var(--muted, #5b6478)"].forEach((ink) => {
+        KW_REL_TUPLES.push({ dash, width, ink });
+      });
+    });
+  });
+  // Drawn relation names to tuple indexes this render, claimed in drawn
+  // order. The edges claim; the key and the cards read.
+  var kwRelStyleDrawn = new Map();
+  function kwRelBaseIndex(name) {
+    const s = String(name || "");
+    let h = 0;
+    for (let i = 0; i < s.length; i += 1) h = (h * 33 + s.charCodeAt(i)) >>> 0;
+    return h % KW_REL_TUPLES.length;
+  }
+  function kwClaimRelTuple(name) {
+    const key = String(name || "");
+    if (kwRelStyleDrawn.has(key)) return KW_REL_TUPLES[kwRelStyleDrawn.get(key)];
+    const taken = new Set(kwRelStyleDrawn.values());
+    let idx = kwRelBaseIndex(key);
+    for (let step = 0; step < KW_REL_TUPLES.length; step += 1) {
+      if (!taken.has(idx)) break;
+      idx = (idx + 1) % KW_REL_TUPLES.length;
+    }
+    kwRelStyleDrawn.set(key, idx);
+    return KW_REL_TUPLES[idx];
+  }
+  function kwRelTuple(name) {
+    const key = String(name || "");
+    if (kwRelStyleDrawn.has(key)) return KW_REL_TUPLES[kwRelStyleDrawn.get(key)];
+    return KW_REL_TUPLES[kwRelBaseIndex(key)];
+  }
   // The retained message a finding cites as evidence, as the reference
   // string the graph draws. The route serves the joined record as an
   // object and older reads as a bare string; both spell the same id.
@@ -261,6 +325,10 @@
   var kwViewMoved = false;
   var kwSearchText = "";
   var kwSearchStatus = "";
+  // The committed search query behind the match list, and the match id
+  // currently centred. Both survive re-renders so expansion keeps them.
+  var kwSearchQuery = "";
+  var kwSearchCurrent = null;
   var kwZoomReadout = null;
   // Dismissal is presentation only: the shell keeps its selection while
   // the map returns to the overview. Any new selection clears it.
@@ -704,9 +772,10 @@
   function kwPlaceWhole(layout, container, overview, promotions, opts, ensembles) {
     const { svg, edgeLayer, tiers } = layout;
     kwContentBBox = null;
-    kwRelationsDrawn = 0;
     kwRefMarks = new Map();
     kwRefsDrawn = 0;
+    kwKindsDrawn = new Map();
+    kwRelStyleDrawn = new Map();
     kwLabelBoxes = [];
     kwNodeXY = new Map();
     kwHullBoxes = [];
@@ -879,10 +948,21 @@
           "data-kw-node": String(f.id),
         });
         kwMarkNew(g, f.id);
-        kwSvg(g, "circle", {
-          cx: String(x), cy: String(y), r: String(mass),
-          class: "kw-finding" + (degree ? "" : " unshared"),
-        });
+        // Shape carries the recorded kind, size the share count: the two
+        // channels never conflict. The legend names each drawn kind.
+        const shape = kwShapeFor(f.kind);
+        kwKindsDrawn.set(String(f.kind || "finding"), shape);
+        if (shape === "circle") {
+          kwSvg(g, "circle", {
+            cx: String(x), cy: String(y), r: String(mass),
+            class: "kw-finding" + (degree ? "" : " unshared"),
+          });
+        } else {
+          kwSvg(g, "path", {
+            d: kwShapePath(shape, x, y, mass),
+            class: "kw-finding" + (degree ? "" : " unshared"),
+          });
+        }
         if (degree) {
           kwSvg(g, "circle", {
             cx: String(x), cy: String(y),
@@ -1242,7 +1322,8 @@
       });
       // One drawn stroke per relation, in spans: blocked stretches drop
       // out where the stub would cross a text box. The arrowhead stays
-      // on the final span.
+      // on the final span. The style tuple carries the authored name.
+      const tuple = kwClaimRelTuple(name);
       const spans = kwStubSpans(from.x, from.y, to.x, to.y);
       for (let si = 0; si < spans.length; si += 1) {
         const s0 = spans[si][0];
@@ -1252,10 +1333,11 @@
           y1: String(from.y + (to.y - from.y) * s0),
           x2: String(from.x + (to.x - from.x) * s1),
           y2: String(from.y + (to.y - from.y) * s1),
-          stroke: "var(--ink, #141a26)", "stroke-width": "2",
-          "stroke-linecap": "round", "stroke-dasharray": "0.5 3",
+          stroke: tuple.ink, "stroke-width": tuple.width,
+          "stroke-linecap": "round",
           opacity: "0.65",
         };
+        if (tuple.dash) attrs["stroke-dasharray"] = tuple.dash;
         if (si === spans.length - 1) attrs["marker-end"] = "url(#kw-arrow-relate)";
         kwSvg(g, "line", attrs);
       }
@@ -1281,7 +1363,6 @@
       }
       kwTrackBox(Math.min(from.x, to.x), Math.min(from.y, to.y),
         Math.max(from.x, to.x), Math.max(from.y, to.y));
-      kwRelationsDrawn += 1;
     }
     if (query) {
       for (const [ref, mark] of kwRefMarks) {
@@ -1338,12 +1419,17 @@
     // drawing. Each sample mirrors its edge's shape, ink, dash and head,
     // and the kind and relation names stand beside it: a legend is a
     // decoder, and the words are the vocabulary a reader has no other
-    // way to learn.
+    // way to learn. Relation and kind rows key only what the canvas
+    // draws, one row per drawn name.
     const keys = kwEl(container, "ul", { class: "kw-legend-keys muted" });
     const keyEntries = (layout.markers || []).slice();
-    if (kwRelationsDrawn > 0) {
-      keyEntries.push(["kw-arrow-relate", "dotted recorded relation",
-        "var(--ink, #141a26)", "dots", ""]);
+    for (const [relName, relIdx] of kwRelStyleDrawn) {
+      const t = KW_REL_TUPLES[relIdx];
+      keyEntries.push(["kw-arrow-relate", relName, t.ink, "relate", t.dash, t.width]);
+    }
+    for (const [kindName, kindShape] of kwKindsDrawn) {
+      keyEntries.push(["", kindShape + " " + kindName,
+        "var(--ink, #141a26)", "shape:" + kindShape, ""]);
     }
     if (kwRefsDrawn > 0) {
       keyEntries.push(["", "tagged recorded reference, dashed when the record is not held",
@@ -1359,12 +1445,21 @@
       const paint = String(entry[2] || "currentcolor");
       const shape = String(entry[3] || "line");
       const dash = String(entry[4] || "");
-      if (shape === "dots") {
-        kwSvg(sw, "line", {
-          x1: "4", y1: "9", x2: "22", y2: "3", stroke: paint, "stroke-width": "2",
-          "stroke-linecap": "round", "stroke-dasharray": "0.5 3", opacity: "0.65",
+      if (shape === "relate") {
+        const ln = kwSvg(sw, "line", {
+          x1: "4", y1: "9", x2: "22", y2: "3", stroke: paint,
+          "stroke-width": String(entry[5] || "2"),
+          "stroke-linecap": "round", opacity: "0.65",
           "marker-end": "url(#" + String(entry[0]) + ")",
         });
+        if (dash) ln.setAttribute("stroke-dasharray", dash);
+      } else if (shape.indexOf("shape:") === 0) {
+        const ks = shape.slice("shape:".length);
+        if (ks === "circle") {
+          kwSvg(sw, "circle", { cx: "13", cy: "6", r: "4.5", fill: paint });
+        } else {
+          kwSvg(sw, "path", { d: kwShapePath(ks, 13, 6, 4.5), fill: paint });
+        }
       } else if (shape === "tag") {
         kwSvg(sw, "rect", {
           x: "4", y: "2", width: "18", height: "8", rx: "2",
@@ -1476,7 +1571,13 @@
     // a commit under the reader's fingers does not eat the query. Only
     // Enter moves the view.
     search.value = kwSearchText;
-    search.addEventListener("input", () => { kwSearchText = search.value; });
+    // Typing rebuilds the status and the match list in place; only Enter
+    // or a row activation moves the view.
+    search.addEventListener("input", () => {
+      kwSearchText = search.value;
+      kwSearchQuery = search.value;
+      kwSearchLive(container, overview);
+    });
     search.addEventListener("keydown", (ev) => {
       if (ev.key === "Enter") {
         kwSearchCentre(container, view, overview, search.value, opts, ensembles || []);
@@ -1488,6 +1589,9 @@
     });
     if (typeof kwSearchStatus === "number") kwRenderCount(status, kwSearchStatus);
     else status.textContent = kwSearchStatus;
+    // The match list sits between the status and the buttons, so the tab
+    // order reads search box, rows, buttons, canvas nodes.
+    kwRenderMatchList(tools, { container, view, overview, opts, ensembles: ensembles || [] });
     const mkBtn = (label, name, fn) => {
       const b = kwEl(tools, "button", { class: "kw-zoom mono", type: "button", "aria-label": name });
       b.textContent = label;
@@ -1541,14 +1645,19 @@
       document.addEventListener("pointerup", up);
       document.addEventListener("pointercancel", up);
     });
+    // The frame clips the tall drawing, so the chrome leads the mount:
+    // tools, key, then canvas, all reachable in document order.
+    const keys = container.querySelector(".kw-legend-keys");
+    if (keys) container.insertBefore(keys, svg);
+    container.insertBefore(tools, svg);
   }
 
-  // Search states how many records match, centres the first match and
-  // pins its card before selecting it. A hit inside a collapsed cluster
-  // or ensemble expands it first, whether the hit is a finding or an
-  // actor; a hit with no drawn position says so instead of pretending.
-  // An expansion re-renders the canvas, so the view node is re-acquired
-  // after it rather than reused.
+  // Search states how many records match, lists every match under the
+  // box, centres the first match and pins its card before selecting it.
+  // A hit inside a collapsed cluster or ensemble expands it first,
+  // whether the hit is a finding or an actor; a hit with no drawn
+  // position says so instead of pretending. An expansion re-renders the
+  // canvas, so the view node is re-acquired after it rather than reused.
   // Separate the result count and label with a readable text separator.
   function kwRenderCount(status, total) {
     status.classList.add("has-count");
@@ -1560,46 +1669,149 @@
     w.textContent = total === 1 ? "match" : "matches";
   }
 
-  function kwSearchCentre(container, view, overview, query, opts, ensembles) {
-    const say = (text) => {
-      kwSearchStatus = text;
-      const status = container.querySelector(".kw-search-status");
-      if (status) {
-        status.classList.remove("has-count");
-        status.textContent = text;
-      }
-    };
-    const sayCount = (total) => {
-      kwSearchStatus = total;
-      const status = container.querySelector(".kw-search-status");
-      if (status) kwRenderCount(status, total);
-    };
-    const q = String(query || "").trim().toLowerCase();
-    if (!q) {
-      say("");
-      return;
-    }
+  // The shared matcher: findings by id, claim or author, then actors
+  // by id. The status, the list and the first-match path all read it.
+  function kwSearchMatches(overview, q) {
     const matches = (f) => String(f.id).toLowerCase().includes(q)
       || String(f.claim || "").toLowerCase().includes(q)
       || String(f.author || "").toLowerCase().includes(q);
     const findings = overview.findings || [];
-    const hits = findings.filter(matches);
     const actors = Object.keys(overview.actors || {});
-    const actorHits = actors.filter((id) => id.toLowerCase().includes(q));
-    const total = hits.length + actorHits.length;
-    if (!total) {
-      say("No match for '" + String(query || "").trim() + "'");
+    return {
+      hits: findings.filter(matches),
+      actorHits: actors.filter((id) => id.toLowerCase().includes(q)),
+    };
+  }
+
+  function kwSayStatus(container, text) {
+    kwSearchStatus = text;
+    const status = container.querySelector(".kw-search-status");
+    if (status) {
+      status.classList.remove("has-count");
+      status.textContent = text;
+    }
+  }
+
+  function kwSayCount(container, total) {
+    kwSearchStatus = total;
+    const status = container.querySelector(".kw-search-status");
+    if (status) kwRenderCount(status, total);
+  }
+
+  // Typing updates the status and the list without moving the view.
+  function kwSearchLive(container, overview) {
+    const q = String(kwSearchQuery || "").trim().toLowerCase();
+    if (!q) {
+      kwSayStatus(container, "");
+      kwClearMatchList(container);
       return;
     }
-    sayCount(total);
-    const hit = hits[0] || null;
-    const actorHit = !hit ? actorHits[0] : null;
-    const id = hit ? hit.id : actorHit;
-    let live = view;
+    const found = kwSearchMatches(overview, q);
+    const total = found.hits.length + found.actorHits.length;
+    if (!total) {
+      kwSayStatus(container, "No match for '" + String(kwSearchQuery || "").trim() + "'");
+      kwClearMatchList(container);
+      return;
+    }
+    kwSayCount(container, total);
+    const tools = container.querySelector(".kw-maptools");
+    if (!tools) return;
+    const lr = kwLastRender || {};
+    kwRenderMatchList(tools, {
+      container,
+      view: container.querySelector("g.kw-view"),
+      overview,
+      opts: lr.opts,
+      ensembles: (lr.data && lr.data.ensembles) || [],
+    });
+  }
+
+  function kwClearMatchList(container) {
+    const old = container.querySelector(".kw-match-list");
+    if (old) old.remove();
+  }
+
+  function kwMarkMatchCurrent(container) {
+    const rows = container.querySelectorAll(".kw-match");
+    for (const b of rows) {
+      const current = b.getAttribute("data-kw-match-id") === kwSearchCurrent;
+      b.classList.toggle("kw-match-current", current);
+      if (current) b.setAttribute("aria-current", "true");
+      else b.removeAttribute("aria-current");
+    }
+  }
+
+  // One row per match under the search box: kind, actor or scope, and a
+  // short claim snippet, every character through textContent. A match
+  // with no drawn position says so in its row. The centred row carries
+  // aria-current. Rebuilt from the committed query on every render, so
+  // expansion and scope changes keep it honest.
+  function kwRenderMatchList(tools, ctx) {
+    const old = tools.querySelector(".kw-match-list");
+    if (old) old.remove();
+    const q = String(kwSearchQuery || "").trim().toLowerCase();
+    if (!q) return;
+    const overview = ctx.overview || {};
+    const found = kwSearchMatches(overview, q);
+    if (!found.hits.length && !found.actorHits.length) return;
+    const list = kwEl(tools, "ul", { class: "kw-match-list", "aria-label": "Search matches" });
+    const actors = overview.actors || {};
+    const row = (kind, id, typeWords, textWords, titleWords) => {
+      const li = kwEl(list, "li", null);
+      const b = kwEl(li, "button", {
+        class: "kw-match" + (kwSearchCurrent === id ? " kw-match-current" : ""),
+        type: "button",
+        "data-kw-match-kind": kind,
+        "data-kw-match-id": id,
+      });
+      if (kwSearchCurrent === id) b.setAttribute("aria-current", "true");
+      const type = kwEl(b, "span", { class: "kw-match-type" });
+      type.textContent = typeWords;
+      const text = kwEl(b, "span", { class: "kw-match-text" });
+      text.textContent = textWords;
+      text.setAttribute("title", titleWords || textWords);
+      if (!kwNodePos.has(id)) {
+        const note = kwEl(b, "span", { class: "kw-match-note" });
+        note.textContent = "outside the drawn tiers";
+      }
+      b.addEventListener("click", () => { kwGoToMatch(ctx, { kind, id }); });
+    };
+    for (const f of found.hits) {
+      const claim = String(f.claim || f.id);
+      row("finding", String(f.id), "finding · " + String(f.author || "unknown"),
+        claim.length > 90 ? claim.slice(0, 89) + "…" : claim, claim);
+    }
+    for (const id of found.actorHits) {
+      const held = actors[id] || {};
+      const bits = [String(id)];
+      if (held.authored) bits.push(held.authored + " authored");
+      if (held.received) bits.push(held.received + " received");
+      row("actor", String(id), "actor", bits.join(" · "));
+    }
+    // The list reads between the status and the buttons in tab order.
+    const firstBtn = tools.querySelector(".kw-zoom");
+    if (firstBtn) tools.insertBefore(list, firstBtn);
+  }
+
+  // Centre one match and pin its card: expansion of a collapsed cluster
+  // or ensemble, the card, focus, isolation and shell selection, exactly
+  // as the first-match path. A match with no drawn position says so and
+  // leaves the current mark where it was.
+  function kwGoToMatch(ctx, match) {
+    const container = ctx.container;
+    const overview = ctx.overview || {};
+    const opts = ctx.opts;
+    const ensembles = ctx.ensembles || [];
+    const findings = overview.findings || [];
+    const hit = match.kind === "finding"
+      ? findings.find((f) => String(f.id) === String(match.id)) || null : null;
+    const actorHit = match.kind === "actor" ? match.id : null;
+    const id = hit ? hit.id : match.id;
+    let live = ctx.view;
     const rerendered = () => {
       if (kwLastRender) {
         renderKnowledge(kwLastRender.container, kwLastRender.data, kwLastRender.opts);
-        live = container.querySelector("g.kw-view") || view;
+        live = container.querySelector("g.kw-view") || ctx.view;
       }
     };
     if (hit) {
@@ -1629,8 +1841,8 @@
     }
     const pos = kwNodePos.get(hit ? hit.id : id);
     if (!pos || !live) {
-      say("'" + String(id) + "' is outside the drawn tiers");
-      return;
+      kwSayStatus(container, "'" + String(id) + "' is outside the drawn tiers");
+      return null;
     }
     const canvas = container.querySelector("svg.kw-canvas");
     const box = kwVisibleBox(container, canvas);
@@ -1651,6 +1863,36 @@
     } else if (actorHit && opts && typeof opts.onSelectActor === "function") {
       opts.onSelectActor(actorHit);
     }
+    kwSearchCurrent = String(id);
+    kwMarkMatchCurrent(container);
+    return id;
+  }
+
+  function kwSearchCentre(container, view, overview, query, opts, ensembles) {
+    const text = String(query || "").trim();
+    kwSearchText = text;
+    kwSearchQuery = text;
+    const q = text.toLowerCase();
+    if (!q) {
+      kwSayStatus(container, "");
+      kwClearMatchList(container);
+      return;
+    }
+    const found = kwSearchMatches(overview, q);
+    const total = found.hits.length + found.actorHits.length;
+    if (!total) {
+      kwSayStatus(container, "No match for '" + text + "'");
+      kwClearMatchList(container);
+      return;
+    }
+    kwSayCount(container, total);
+    const ctx = { container, view, overview, opts, ensembles: ensembles || [] };
+    const tools = container.querySelector(".kw-maptools");
+    if (tools) kwRenderMatchList(tools, ctx);
+    const first = found.hits[0]
+      ? { kind: "finding", id: found.hits[0].id }
+      : { kind: "actor", id: found.actorHits[0] };
+    kwGoToMatch(ctx, first);
   }
 
   // The pinned detail card: the current selection rendered on the map
@@ -1762,8 +2004,18 @@
       for (const rel of ref.relations) {
         const other = String(rel.other);
         const shown = other.length > 32 ? other.slice(0, 31) + "…" : other;
-        kwEl(refs, "p", { class: "kw-card-ref mono" },
-          String(rel.name) + " — " + shown);
+        const item = kwEl(refs, "p", { class: "kw-card-ref mono" });
+        const t = kwRelTuple(rel.name);
+        const sw = kwSvg(item, "svg", {
+          class: "kw-rel-swatch", width: "26", height: "12", "aria-hidden": "true",
+        });
+        const ln = kwSvg(sw, "line", {
+          x1: "1", y1: "9", x2: "25", y2: "3", stroke: t.ink, "stroke-width": t.width,
+          "stroke-linecap": "round", opacity: "0.65", "marker-end": "url(#kw-arrow-relate)",
+        });
+        if (t.dash) ln.setAttribute("stroke-dasharray", t.dash);
+        const words = kwEl(item, "span", null);
+        words.textContent = String(rel.name) + " — " + shown;
       }
       if (ref.follow && opts && typeof opts.onSelectFinding === "function") {
         const show = kwEl(card, "button", { class: "kw-card-full", type: "button" },
@@ -1986,6 +2238,15 @@
       }
     }
   }
+
+  // The record consumes the relation style from here: the claimed
+  // tuple when the name is drawn, the base tuple when it is not, so the
+  // answer always matches the canvas. Callable after load without a
+  // render; with no render run, every name answers its base tuple.
+  window.knowledgeRelationStyle = function (name) {
+    const t = kwRelTuple(name);
+    return { dash: t.dash, width: t.width, ink: t.ink };
+  };
 
   window.KnowledgeLayer = { renderKnowledge, renderArcs };
 })();

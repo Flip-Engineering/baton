@@ -4,7 +4,11 @@
    stopped attention, running green, else muted; queued messages take
    no ink. An index under the head jumps to the blocks present.
    Retained session reports and resume outcomes render as their own
-   blocks. All labels arrive through textContent. */
+   blocks. Selections outside the tree render from the passed subject:
+   the actor, its reads or their refusal, and the way back.
+   Finding relations carry the map's stroke for their authored name
+   when the map exports it; without it they read text-only.
+   All labels arrive through textContent. */
 
 var SEL_EVENT_LIMIT = 8;
 var selEventsOpen = false;
@@ -107,6 +111,43 @@ function selTail(id) {
   return "…" + text.slice(-12);
 }
 
+// The map's stroke for one authored relation name: the dash, width and
+// ink the canvas draws for it. Anything unusable reads as absent and
+// the statement draws text-only, exactly as before.
+function selRelationStroke(name) {
+  if (typeof window.knowledgeRelationStyle !== "function") return null;
+  var style = window.knowledgeRelationStyle(name);
+  if (!style || typeof style !== "object") return null;
+  var dash = style.dash;
+  if (Array.isArray(dash)) dash = dash.join(" ");
+  if (typeof dash !== "string") return null;
+  var width = Number(style.width);
+  if (!isFinite(width) || width <= 0) return null;
+  if (typeof style.ink !== "string" || !style.ink) return null;
+  return { dash: dash, width: width, ink: style.ink };
+}
+
+// A stroke swatch for one authored relation name: the map's dash,
+// width and ink on a short horizontal line, mirroring the canvas edge
+// constants. Decorative: the statement keeps the name, the ends and
+// the separators. Null when the map vocabulary is unavailable.
+function selRelationSwatch(name) {
+  if (!name) return null;
+  var stroke = selRelationStroke(name);
+  if (!stroke) return null;
+  var svg = selSvg("svg", {
+    class: "sel-relsw", viewBox: "0 0 26 8", "aria-hidden": "true",
+  });
+  var attrs = {
+    x1: "1", y1: "4", x2: "25", y2: "4",
+    stroke: stroke.ink, "stroke-width": String(stroke.width),
+    "stroke-linecap": "round", opacity: "0.65",
+  };
+  if (stroke.dash) attrs["stroke-dasharray"] = stroke.dash;
+  svg.appendChild(selSvg("line", attrs));
+  return svg;
+}
+
 // A served message reference, normalized to the id the read uses.
 // Unparseable references read as absent.
 function selMsgRef(ref) {
@@ -164,20 +205,87 @@ function selReportBody(report) {
   return { held: false, body: "" };
 }
 
+// The one wording for a read that did not answer. A read that has not run, a
+// refused read and an empty record are three different things, and the record
+// says which one it is.
+var SEL_READ_WORDS = {
+  reading: "is being read",
+  missing: "is not present in the store",
+  refused: "was refused",
+  unreadable: "was rejected as invalid",
+  error: "could not be read",
+  unwired: "needs a live endpoint",
+};
+
+function selReadLine(what, read) {
+  var state = read && read.state
+    ? read.state
+    : (read && read.refused ? "refused" : (read && read.error ? "error" : ""));
+  var word = SEL_READ_WORDS[state] || "has not been read";
+  var cause = read
+    ? (read.reason || read.status || (typeof read.error === "string" ? read.error : ""))
+    : "";
+  return selEl("p", "sel-refused", what + " " + word + (cause ? " \u00b7 " + cause : ""));
+}
+
 // The index entries for the blocks this render draws, in document order.
-function selSecEntries(seat, finding, events, retained, resume) {
+function selSecEntries(seat, finding, events, retained, retainedRead, resume, subject) {
   var entries = [];
+  var foreign = !seat && selHasSubject(subject);
+  if (foreign) entries.push(["sel-sec-knowledge", "Knowledge"]);
+  if (foreign) entries.push(["sel-sec-work", "Work"]);
   if (finding) entries.push(["sel-sec-finding", "Finding"]);
   if (seat && (selOwed(seat) > 0 || (Array.isArray(seat.pending) && seat.pending.length))) {
-    entries.push(["sel-sec-awaiting", "Awaiting"]);
+    entries.push(["sel-sec-queued", "Queued"]);
   }
-  if (seat && seat.work) entries.push(["sel-sec-work", "Work"]);
+  if (seat) entries.push(["sel-sec-work", "Work"]);
   if (selHasResume(resume)) entries.push(["sel-sec-resume", "Resume"]);
-  if (selHasRetained(retained)) entries.push(["sel-sec-retained", "Retained"]);
+  if (selHasRetained(retained)
+    || (retainedRead && retainedRead.state && retainedRead.state !== "ok")) {
+    entries.push(["sel-sec-retained", "Retained"]);
+  }
   if (seat && events.some(function (ev) { return ev && ev.session === seat.id; })) {
     entries.push(["sel-sec-changes", "Changes"]);
   }
   return entries;
+}
+
+// Whether the shell named a selected actor outside this tree.
+function selHasSubject(subject) {
+  return Boolean(subject && typeof subject === "object" && subject.id);
+}
+
+// A work read's task, input, request and report in the record's language.
+// Returns how many of the four it drew.
+function selWorkContent(parent, w) {
+  var rows = 0;
+  if (!w) return rows;
+  if (w.task) {
+    rows += 1;
+    selBodyBlock(parent, w.task.title ? "Task: " + w.task.title : "Task",
+      w.task.status || "", w.task.description || "");
+  }
+  if (w.input) {
+    rows += 1;
+    selBodyBlock(parent, "Exact current input",
+      [w.input.kind, w.input.sender ? "from " + w.input.sender : "", w.input.id]
+        .filter(Boolean).join(" · "),
+      w.input.body || "");
+  }
+  if (w.request) {
+    rows += 1;
+    selBodyBlock(parent, "Open request",
+      [w.request.method, w.request.event, w.request.id].filter(Boolean).join(" · "),
+      w.request.reply || "");
+  }
+  if (w.report) {
+    rows += 1;
+    selBodyBlock(parent, "Latest report",
+      [w.report.recipient ? "to " + w.report.recipient : "", w.report.id]
+        .filter(Boolean).join(" · "),
+      w.report.body || "");
+  }
+  return rows;
 }
 
 function selSecNav(entries) {
@@ -288,8 +396,9 @@ function renderSelection(mount, data, options) {
   var seat = input.seat || null;
   var finding = input.finding || null;
   var events = Array.isArray(input.events) ? input.events : [];
-  var secEntries = selSecEntries(seat, finding, events, input.retained, input.resume);
-  if (!seat && !finding) {
+  var secEntries = selSecEntries(seat, finding, events, input.retained, input.retainedRead,
+    input.resume, input.subject);
+  if (!seat && !finding && !selHasSubject(input.subject)) {
     mount.appendChild(selEl("p", "muted", "Select a row."));
     return;
   }
@@ -331,6 +440,85 @@ function renderSelection(mount, data, options) {
     mount.appendChild(seatBlock);
   }
   if (!seat && secEntries.length > 1) mount.appendChild(selSecNav(secEntries));
+  if (!seat && selHasSubject(input.subject)) {
+    var subject = input.subject;
+    var subjHead = selEl("div", "sel-block");
+    subjHead.appendChild(selEl("h2", "doc-section", String(subject.id)));
+    var scopeRow = selEl("p", "sel-scope");
+    scopeRow.appendChild(document.createTextNode("Outside this tree."));
+    if (options && typeof options.onClearSelection === "function") {
+      var back = selEl("button", null, "Back to this tree.");
+      back.type = "button";
+      back.dataset.selkey = "sel:back";
+      back.addEventListener("click", function () { options.onClearSelection(); });
+      scopeRow.appendChild(back);
+    }
+    subjHead.appendChild(scopeRow);
+    mount.appendChild(subjHead);
+    var sk = subject.knowledge;
+    var skBlock = selEl("div", "sel-block");
+    skBlock.id = "sel-sec-knowledge";
+    skBlock.appendChild(selEl("h2", "doc-section", "Knowledge"));
+    if (!sk) {
+      skBlock.appendChild(selReadLine("Knowledge for this actor", null));
+    } else if (sk.refused || sk.error || sk.state) {
+      skBlock.appendChild(selReadLine("Knowledge for this actor", sk));
+      if (sk.refused || sk.state === "refused") {
+        skBlock.appendChild(selEl("p", "muted", "Readable when this actor is inside this tree."));
+      }
+    } else {
+      var skAuthored = Array.isArray(sk.authored) ? sk.authored : [];
+      var skReceived = Array.isArray(sk.received) ? sk.received : [];
+      var skRels = Array.isArray(sk.relations) ? sk.relations : [];
+      [["Authored", skAuthored], ["Received", skReceived]].forEach(function (pair) {
+        if (!pair[1].length) return;
+        skBlock.appendChild(selEl("p", "sel-group", pair[0]));
+        var skList = selEl("ul", null);
+        pair[1].forEach(function (item) {
+          if (!item) return;
+          var fid = typeof item === "string" ? item : String(item.id || "");
+          var fclaim = item && typeof item === "object" && item.claim ? String(item.claim) : "";
+          var row = selEl("li", null, (fclaim ? fclaim + " " : "") + (fid ? selTail(fid) : ""));
+          if (fid) row.setAttribute("title", fid);
+          skList.appendChild(row);
+        });
+        skBlock.appendChild(skList);
+      });
+      if (skRels.length) {
+        skBlock.appendChild(selEl("p", null, "Relations"));
+        var skRelList = selEl("ul", null);
+        skRels.forEach(function (rel) {
+          if (!rel) return;
+          if (typeof rel === "string") {
+            skRelList.appendChild(selEl("li", null, rel));
+            return;
+          }
+          skRelList.appendChild(selEl("li", null,
+            (rel.relation || "?") + " → " + (rel.target || "?")));
+        });
+        skBlock.appendChild(skRelList);
+      }
+      if (!skAuthored.length && !skReceived.length && !skRels.length) {
+        skBlock.appendChild(selEl("p", "muted", "No recorded findings."));
+      }
+    }
+    mount.appendChild(skBlock);
+    var sw = subject.work;
+    var swBlock = selEl("div", "sel-block");
+    swBlock.id = "sel-sec-work";
+    swBlock.appendChild(selEl("h2", "doc-section", "Work"));
+    if (!sw) {
+      swBlock.appendChild(selReadLine("Work for this actor", null));
+    } else if (sw.refused || sw.error || sw.state) {
+      swBlock.appendChild(selReadLine("Work for this actor", sw));
+      if (sw.refused || sw.state === "refused") {
+        swBlock.appendChild(selEl("p", "muted", "Readable when this actor is inside this tree."));
+      }
+    } else if (!selWorkContent(swBlock, sw)) {
+      swBlock.appendChild(selEl("p", "muted", "No work is recorded for this actor."));
+    }
+    mount.appendChild(swBlock);
+  }
   if (finding) {
     var findingBlock = selEl("div", "sel-block");
     findingBlock.id = "sel-sec-finding";
@@ -393,10 +581,8 @@ function renderSelection(mount, data, options) {
           if (evMessage.body === "") {
             findingBlock.appendChild(selEl("p", "muted", "Stored body is empty."));
           }
-        } else if (evRead && evRead.state === "reading") {
-          findingBlock.appendChild(selEl("p", "muted", "Reading message…"));
         } else {
-          findingBlock.appendChild(selEl("p", "muted", "The cited message is not held."));
+          findingBlock.appendChild(selReadLine("Evidence message " + selTail(evMid), evRead));
         }
       }
     }
@@ -415,8 +601,12 @@ function renderSelection(mount, data, options) {
           rels.appendChild(selEl("li", null, rel));
           return;
         }
-        rels.appendChild(selEl("li", null,
+        var item = selEl("li", null);
+        var swatch = selRelationSwatch(rel.relation);
+        if (swatch) item.appendChild(swatch);
+        item.appendChild(document.createTextNode(
           (rel.source || "?") + " — " + (rel.relation || "?") + " → " + (rel.target || "?")));
+        rels.appendChild(item);
       });
       findingBlock.appendChild(rels);
     }
@@ -426,11 +616,11 @@ function renderSelection(mount, data, options) {
   var messages = input.messages || {};
   var pendingTotal = selOwed(seat);
   if (pendingTotal > 0 || stubs.length) {
-    var waiting = selEl("div", "sel-block");
-    waiting.id = "sel-sec-awaiting";
-    waiting.appendChild(selEl("h2", "doc-section", "Awaiting " + pendingTotal));
+    var queued = selEl("div", "sel-block");
+    queued.id = "sel-sec-queued";
+    queued.appendChild(selEl("h2", "doc-section", "Queued " + pendingTotal));
     if (stubs.length < pendingTotal) {
-      waiting.appendChild(selEl("p", "muted", "Showing " + stubs.length
+      queued.appendChild(selEl("p", "muted", "Showing " + stubs.length
         + " of " + pendingTotal + "."));
     }
     var groups = [];
@@ -446,7 +636,7 @@ function renderSelection(mount, data, options) {
     });
     groups.forEach(function (group) {
       if (groups.length > 1) {
-        waiting.appendChild(selEl("p", "sel-group",
+        queued.appendChild(selEl("p", "sel-group",
           group.kind + " · " + group.items.length));
       }
       group.items.forEach(function (stub) {
@@ -480,60 +670,35 @@ function renderSelection(mount, data, options) {
           options.onReadMessage(mid);
         }
       });
-      waiting.appendChild(button);
+      queued.appendChild(button);
       if (!open) return;
       if (message && typeof message.body === "string") {
-        waiting.appendChild(selEl("p", "sel-body", message.body));
-        if (message.body === "") waiting.appendChild(selEl("p", "muted", "Stored body is empty."));
+        queued.appendChild(selEl("p", "sel-body", message.body));
+        if (message.body === "") queued.appendChild(selEl("p", "muted", "Stored body is empty."));
       } else {
-        var status = read ? read.state : "unwired";
-        var labels = {
-          reading: "Reading message…",
-          missing: "Message is not present in the store.",
-          refused: "Message read refused.",
-          unreadable: "Message read was invalid.",
-          error: "Message read failed.",
-          unwired: "Message reads require a live endpoint.",
-        };
-        var cause = read && (read.reason || read.status);
-        waiting.appendChild(selEl("p", "muted", (labels[status] || "Message body unavailable.")
-          + (cause ? " " + cause : "")));
+        queued.appendChild(selReadLine("Queued " + kindWord + " " + selTail(mid), read));
       }
       });
     });
-    mount.appendChild(waiting);
+    mount.appendChild(queued);
   }
-  if (seat && seat.work) {
+  if (seat) {
     var w = seat.work;
     var work = selEl("div", "sel-block");
     work.id = "sel-sec-work";
     work.appendChild(selEl("h2", "doc-section", "Work"));
-    if (w.refused) {
-      work.appendChild(selEl("p", "muted",
+    var workRows = 0;
+    if (!w) {
+      work.appendChild(selReadLine("Work for this actor", null));
+    } else if (w.refused) {
+      work.appendChild(selEl("p", "sel-refused",
         "Work for this actor is outside the bound reader's scope."));
     } else if (w.error) {
-      work.appendChild(selEl("p", "muted", "Work unavailable: " + w.error));
+      work.appendChild(selReadLine("Work for this actor", w));
     } else {
-      if (w.task) {
-        selBodyBlock(work, w.task.title ? "Task: " + w.task.title : "Task",
-          w.task.status || "", w.task.description || "");
-      }
-      if (w.input) {
-        selBodyBlock(work, "Exact current input",
-          [w.input.kind, w.input.sender ? "from " + w.input.sender : "", w.input.id]
-            .filter(Boolean).join(" · "),
-          w.input.body || "");
-      }
-      if (w.request) {
-        selBodyBlock(work, "Open request",
-          [w.request.method, w.request.event, w.request.id].filter(Boolean).join(" · "),
-          w.request.reply || "");
-      }
-      if (w.report) {
-        selBodyBlock(work, "Latest report",
-          [w.report.recipient ? "to " + w.report.recipient : "", w.report.id]
-            .filter(Boolean).join(" · "),
-          w.report.body || "");
+      workRows = selWorkContent(work, w);
+      if (!workRows) {
+        work.appendChild(selEl("p", "muted", "No work is recorded for this actor."));
       }
     }
     mount.appendChild(work);
@@ -571,8 +736,8 @@ function renderSelection(mount, data, options) {
     }
     var refused = resume.refused != null ? resume.refused : resume.error;
     if (refused != null) {
-      resumeBlock.appendChild(selEl("p", "sel-group",
-        resume.refused != null ? "Refused" : "Error"));
+      resumeBlock.appendChild(selEl("p", "sel-group sel-refused",
+        resume.refused != null ? "Resume read refused" : "Resume read failed"));
       if (typeof refused === "string") {
         resumeBlock.appendChild(selEl("p", "sel-body", refused));
       } else if (refused && typeof refused === "object") {
@@ -636,6 +801,15 @@ function renderSelection(mount, data, options) {
       retainedBlock.appendChild(selEl("p", "muted", "The cited report is not held."));
     }
     mount.appendChild(retainedBlock);
+  } else if (input.retainedRead && input.retainedRead.state
+    && input.retainedRead.state !== "ok") {
+    // A project read that did not answer is named rather than leaving the
+    // block out: the reader sees which read it was and the shell's own reason.
+    var retainedReadBlock = selEl("div", "sel-block");
+    retainedReadBlock.id = "sel-sec-retained";
+    retainedReadBlock.appendChild(selEl("h2", "doc-section", "Retained report"));
+    retainedReadBlock.appendChild(selReadLine("Retained report", input.retainedRead));
+    mount.appendChild(retainedReadBlock);
   }
   if (seat) {
     var mine = events.filter(function (ev) {

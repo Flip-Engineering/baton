@@ -158,7 +158,8 @@
   pointer-events: none;
 }
 
-/* Note height and size represent event count; color represents event kind. */
+/* Note height and size represent event count; ink is the recorded kind that
+   dominates the stretch. */
 .ribbon-note {
   position: absolute;
   left: 50%;
@@ -167,21 +168,24 @@
   background: var(--rib-ink);
 }
 
-/* The ink is the recorded kind that dominates the stretch. */
-.ribbon-note[class*="ribbon-kind-message-"] { background: var(--rib-ink); }
-.ribbon-note.ribbon-kind-message-task,
-.ribbon-note.ribbon-kind-message-guidance,
-.ribbon-note.ribbon-kind-message-recovery { background: var(--rib-waiting); }
-.ribbon-note.ribbon-kind-message-report,
-.ribbon-note.ribbon-kind-message-receipt,
-.ribbon-note.ribbon-kind-report { background: var(--rib-report); }
-.ribbon-note.ribbon-kind-execution,
-.ribbon-note.ribbon-kind-native-request { background: var(--running); }
-.ribbon-note.ribbon-kind-stop { background: var(--failed); }
-.ribbon-note[class*="ribbon-kind-ensemble"],
-.ribbon-note[class*="ribbon-kind-membership"],
-.ribbon-note[class*="ribbon-kind-section"],
-.ribbon-note.ribbon-kind-role { background: var(--rib-structure); }
+/* The stretch's second kind: a smaller head at the note's top right, in that
+   kind's own ink, sized by its share. A stretch whose mix reads as one kind
+   carries one head. */
+.ribbon-second {
+  position: absolute;
+  left: 100%;
+  bottom: 100%;
+  margin: 0 0 -1px -1px;
+  border-radius: 50%;
+  background: var(--rib-ink);
+}
+
+/* The ink a recorded kind carries, on the note and on its second head. */
+.ribbon-cell .ribbon-ink-waiting { background: var(--rib-waiting); }
+.ribbon-cell .ribbon-ink-report { background: var(--rib-report); }
+.ribbon-cell .ribbon-ink-running { background: var(--running); }
+.ribbon-cell .ribbon-ink-failed { background: var(--failed); }
+.ribbon-cell .ribbon-ink-structure { background: var(--rib-structure); }
 
 .ribbon-note.ribbon-here {
   box-shadow: 0 0 0 2px var(--rib-needle);

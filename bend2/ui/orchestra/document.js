@@ -32,7 +32,6 @@
     if (!p) return "quiet";
     if (p.status === "failed") return "failed";
     if (p.status === "stopped") return "stopped";
-    if (p.status === "waiting") return "waiting";
     if (p.status === "running") return "working";
     if ((p.owedTotal || 0) > 0 || p.owesWork === true || p.status === "pending") return "queued";
     return "quiet";
@@ -163,7 +162,7 @@
   // ended and waits on input. A held seat, the work a seat owes and the quiet record
   // are recorded state, and the control adds them with their count.
   function scopeLive(state_) {
-    return state_ === "working" || state_ === "waiting";
+    return state_ === "working";
   }
 
   // The control names the scope it would add, with the number of rows it adds, and
@@ -200,11 +199,11 @@
 
     var lead = el("span", "doc-lead");
     // The glyph carries the state; the word stays only for the states an operator names
-    // (awaiting input, stopped, failed). Playing, owes work and quiet read from the glyph,
-    // the rule ink and the count marks, with the word in the title and the row's label.
-    var named = state === "waiting" ? "awaiting input"
-      : state === "stopped" ? "stopped"
-      : state === "failed" ? "failed"
+    // (queued, stopped, failed), where the state key is the word. Playing, owes work and
+    // quiet read from the glyph, the rule ink and the count marks, with the word in the
+    // title and the row's label.
+    var named = state === "queued" || state === "stopped" || state === "failed"
+      ? state
       : "";
     var glyph = el("span", "doc-glyph state-" + state);
     glyph.setAttribute("aria-hidden", "true");
@@ -331,7 +330,7 @@
     });
     ordered.forEach(function (p) {
       var mark = typeof stateMark === "function" ? stateMark(p) : null;
-      // Live scope shows running or awaiting-input actors.
+      // Live scope shows running or queued actors.
       if (opts.scope !== "all" && !scopeLive(workState(p))) {
         hidden += 1;
         return;
@@ -378,7 +377,7 @@
       mount.appendChild(el("p", "muted", opts.scope === "all"
         ? "No actors recorded."
         : (hidden
-          ? "Nothing is running or awaiting input. "
+          ? "Nothing is running or queued. "
             + hidden + " more recorded."
           : "No actors recorded.")));
     }
@@ -523,15 +522,21 @@
         window.renderSelection(mounts.selection, {
           seat: options.selectedSeat || null,
           finding: options.selectedFinding || null,
+          // The selected id the snapshot does not carry, with the reads that answer for it.
+          subject: options.selectedSubject || null,
           events: data.events || [],
           // The project surface's reads, at the level the record expects them.
           retained: (options.selectedSeat && options.selectedSeat.retained) || null,
+          // The project read's outcome, so a refusal there is named rather than absent.
+          retainedRead: (options.selectedSeat && options.selectedSeat.retainedRead) || null,
           resume: (options.selectedSeat && options.selectedSeat.resume) || null,
           // Complete stored bodies already read, and the way to ask for one.
           messages: data.messages || {},
         }, {
           onSelectEvent: options.onSelectEvent,
           onReadMessage: options.onReadMessage,
+          // The record's way back out of an outside-tree subject.
+          onClearSelection: options.onClearSelection,
         });
       } else {
         var seat = options.selectedSeat || null;

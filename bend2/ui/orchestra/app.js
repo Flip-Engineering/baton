@@ -20,7 +20,7 @@ const state = {
   selectionId: null,
   snapshotLabel: "",
   capturedAt: "",
-  // Live scope shows running and awaiting-input actors; all shows every actor.
+  // Live scope shows running and queued actors; all shows every actor.
   scope: "live",
   // Bumped by every fetched read and by interactions that change what the document
   // draws; the redraw signature carries it.
@@ -43,6 +43,10 @@ const state = {
   // the outcome of continuing one. Read on demand; the actor it belongs to travels with it.
   project: null,
   projectNotice: "",
+  // The project read's own outcome: "" before any read, then reading, none,
+  // missing, error or ok. The record reads this so a read that did not answer
+  // is named rather than left out.
+  projectRead: "",
   projectActor: "",
   projectRequest: null,
   resume: null,
@@ -79,6 +83,11 @@ const el = {
   ribbon: document.getElementById("ribbon"),
   knowledgeWhole: document.getElementById("knowledge-whole"),
   mapScope: document.getElementById("map-scope"),
+  platePit: document.getElementById("plate-pit"),
+  plateMap: document.getElementById("plate-map"),
+  plateStaves: document.getElementById("plate-staves"),
+  plateRecord: document.getElementById("plate-record"),
+  plateProject: document.getElementById("plate-project"),
   projectState: document.getElementById("project-state"),
   projectBody: document.getElementById("project-body"),
   projectLoad: document.getElementById("project-load"),
@@ -293,7 +302,7 @@ function renderHeaderLine() {
   for (const p of state.players.values()) {
     const status = deriveStatus(p);
     if (status === "running") running += 1;
-    else if (status === "waiting") waiting += 1;
+    else if (status === "pending") waiting += 1;
     if (status === "stopped" || status === "failed") stopped += 1;
     if (owesWork(p)) owed += 1;
   }
@@ -317,14 +326,14 @@ function renderHeaderLine() {
     el.snapshotLine.appendChild(age);
   }
   if (state.players.size) {
-    // Count running, stopped or failed, and awaiting-input actors.
+    // Count running, stopped or failed, and queued actors.
     el.snapshotLine.appendChild(factSeparator());
     el.snapshotLine.appendChild(fact("running", running, "", (p) => deriveStatus(p) === "running"));
     el.snapshotLine.appendChild(factSeparator());
     el.snapshotLine.appendChild(fact("stopped or failed", stopped,
       stopped > 0 ? "attention" : "", (p) => ["stopped", "failed"].includes(deriveStatus(p))));
     el.snapshotLine.appendChild(factSeparator());
-    el.snapshotLine.appendChild(fact("awaiting input", waiting, "", (p) => deriveStatus(p) === "waiting"));
+    el.snapshotLine.appendChild(fact("queued", waiting, "", (p) => deriveStatus(p) === "pending"));
     if (owed > 0) {
       el.snapshotLine.appendChild(factSeparator());
       el.snapshotLine.appendChild(fact("owe work", owed, "", owesWork));
@@ -371,8 +380,19 @@ function clearGapNotice() {
 }
 
 /* --- rendering ------------------------------------------------------------ */
+// The seat address survives a reload and a shared link: the hash names the selection,
+// inside the reader's tree or outside it.
+function writeSeatAddress(id) {
+  if (typeof history.replaceState === "function") {
+    history.replaceState(null, "", "#seat=" + encodeURIComponent(id));
+  }
+}
+
 function select(id) {
-  if (!state.players.has(id)) return;
+  // An id outside the snapshot is an outside-tree subject, never a dead one: the
+  // record reads the id and says so, and the reads answer their own refusal. No
+  // other seat behaviour changes, and the address write below still happens.
+  if (!id) return;
   state.selectionId = id;
   state.knowledgeOpen = false;
   state.findingId = null;
@@ -388,11 +408,8 @@ function select(id) {
   // record may have dismissed a card since, and that dismissal is not in the
   // shell's signature.
   markDrawnStale();
-  // The seat is addressable: a reader can send the link to a seat and land on
-  // the same record.
-  if (typeof history.replaceState === "function") {
-    history.replaceState(null, "", "#seat=" + encodeURIComponent(id));
-  }
+  // The seat is addressable, outside the tree as well: a reader can send the link.
+  writeSeatAddress(id);
   renderTree();
   void loadActorKnowledge(id);
   void loadActorWork(id);
@@ -425,7 +442,11 @@ async function loadActorWork(id) {
   let data;
   try {
     const res = await fetch(state.apiBase + "/orchestra/work?subject=" + encodeURIComponent(id));
-    if (res.status === 403) data = { refused: true };
+    if (res.status === 403) {
+      const body = await res.json().catch(() => ({}));
+      // The route's own reason travels with the refusal, so the record names it.
+      data = { refused: true, reason: body.error || "reader-scope-denied" };
+    }
     else if (!res.ok) data = { error: "the endpoint answered " + res.status };
     else data = await res.json();
   } catch (e) {
@@ -652,6 +673,7 @@ async function loadProject(actor) {
   state.projectRequest = request;
   state.projectPending = request;
   state.projectActor = actor || "";
+  state.projectRead = actor ? "reading" : "none";
   state.resume = null;
   if (!actor) {
     state.project = null;
@@ -666,6 +688,7 @@ async function loadProject(actor) {
     state.project = null;
     state.projectPending = null;
     state.projectNotice = "This page has no recorded workspace to read.";
+    state.projectRead = "missing";
     markDrawnStale();
     renderProject();
     renderDocumentSoon();
@@ -679,9 +702,11 @@ async function loadProject(actor) {
     if (res.status === 400 && body.error === "project-workspace-required") {
       state.project = null;
       state.projectNotice = shortSeatId(actor) + " has no recorded workspace.";
+      state.projectRead = "missing";
     } else if (!res.ok) {
       state.project = null;
       state.projectNotice = "The project could not be read (" + res.status + ").";
+      state.projectRead = "error";
     } else {
       state.project = {
         actor,
@@ -690,12 +715,14 @@ async function loadProject(actor) {
         selected: body.selected || null,
       };
       state.projectNotice = "";
+      state.projectRead = "ok";
     }
   } catch (e) {
     if (state.projectRequest !== request) return;
     state.projectPending = null;
     state.project = null;
     state.projectNotice = "The project could not be read.";
+    state.projectRead = "error";
   }
   markDrawnStale();
   renderProject();
@@ -921,6 +948,21 @@ function renderProject() {
   if (next && scroll) next.scrollTop = scroll;
 }
 
+// The plate's index states what each section holds, from the facts those sections draw - the
+// page's own contents line, so a reader can see where to go without hunting.
+function renderPlateIndex() {
+  const running = [...state.players.values()]
+    .filter((p) => deriveStatus(p) === "running").length;
+  const findings = (state.knowledge && state.knowledge.findings) || [];
+  const project = state.project;
+  const set = (node, value) => { if (node) node.textContent = value; };
+  set(el.platePit, running ? running + " running" : "nothing running");
+  set(el.plateMap, findings.length ? findings.length + (findings.length === 1 ? " finding" : " findings") : "no findings");
+  set(el.plateStaves, state.players.size ? state.players.size + " seats" : "no seats");
+  set(el.plateRecord, state.selectionId ? shortSeatId(state.selectionId) : "none selected");
+  set(el.plateProject, project ? project.sessions.length + " conversations" : "");
+}
+
 async function loadKnowledgeOverview() {
   const asked = knowledgeScopeQuery();
   if (state.fixtureName) {
@@ -994,7 +1036,11 @@ async function loadActorKnowledge(id) {
   let data;
   try {
     const res = await fetch(state.apiBase + "/orchestra/knowledge?actor=" + encodeURIComponent(id));
-    if (res.status === 403) data = { refused: true };
+    if (res.status === 403) {
+      const body = await res.json().catch(() => ({}));
+      // The route's own reason travels with the refusal, so the record names it.
+      data = { refused: true, reason: body.error || "reader-scope-denied" };
+    }
     else if (!res.ok) data = { error: "the endpoint answered " + res.status };
     else data = await res.json();
   } catch (e) {
@@ -1002,6 +1048,9 @@ async function loadActorKnowledge(id) {
   }
   if (state.knowledgeActorRequest !== request || state.selectionId !== id) return;
   state.knowledgeActor = data;
+  // The record reads this too: a landing paints through the drawn revision.
+  markDrawnStale();
+  renderDocumentSoon();
 }
 
 // The actor view carries the full record; an overview expansion lists what the
@@ -1034,8 +1083,9 @@ function setIncludeUnshared(on) {
 // and keyboard focus on its node.
 function followGraphAuthor(id) {
   const actor = graphFindingAuthor(id);
-  if (!actor || !state.players.has(actor) || actor === state.selectionId) return;
+  if (!actor || actor === state.selectionId) return;
   state.selectionId = actor;
+  writeSeatAddress(actor);
   renderTree();
   void loadActorKnowledge(actor);
   void loadActorWork(actor);
@@ -1222,14 +1272,14 @@ function plateWord() {
     // Work in flight is a running seat; a seat with queued input is counted by the
     // owe-work fact instead, so no seat is counted as two things.
     if (status === "running") working += 1;
-    else if (status === "waiting") waiting += 1;
+    else if (status === "pending") waiting += 1;
     if (status === "stopped") stopped += 1;
     if (status === "failed") failed += 1;
   }
   if (working) return "running";
   if (stopped) return "stopped";
   if (failed) return "failed";
-  if (waiting) return "awaiting input";
+  if (waiting) return "queued";
   return "idle";
 }
 
@@ -1274,12 +1324,14 @@ function applySnapshot(data, label) {
   if (data.selection && data.selection.gap === true) {
     holdGapNotice("Snapshot reports an event history gap. Shown state is authoritative as of the cursor.");
   }
-  if (state.selectionId && !state.players.has(state.selectionId)) state.selectionId = null;
-  // A seat address is honoured once, on the first snapshot that carries the seat.
+  // A selection outside the snapshot is retained: the record reads the id as an
+  // outside-tree subject and the reads answer their own refusal.
+  // A seat address is honoured once, on the first snapshot, seat or not, so a
+  // shared link opens the record it names.
   if (state.pendingSeat) {
     const addressed = state.pendingSeat;
     state.pendingSeat = "";
-    if (state.players.has(addressed)) state.selectionId = addressed;
+    state.selectionId = addressed;
   }
   renderTree();
   // Knowledge reads are on demand: refresh them with every authoritative snapshot.
@@ -1692,7 +1744,7 @@ function documentPlayers() {
       stale: action.stale === true,
       taskTitle: (state.tasks[p.id] && state.tasks[p.id].title) || "",
       ensembles,
-      live: ["running", "waiting", "pending"].indexOf(status) !== -1,
+      live: ["running", "pending"].indexOf(status) !== -1,
     });
   }
   return out;
@@ -1760,6 +1812,19 @@ async function loadMessageBody(id) {
   renderDocument();
 }
 
+// The selected id the snapshot does not carry, with the reads that answer for it.
+// The record renders this as an outside-tree subject: it names the id and each read's
+// own refusal instead of showing the empty prompt.
+function selectedSubject() {
+  const id = state.selectionId;
+  if (!id || state.players.has(id)) return null;
+  return {
+    id,
+    knowledge: state.knowledgeActorId === id ? state.knowledgeActor : null,
+    work: state.workActorId === id ? state.work : null,
+  };
+}
+
 function selectedSeat() {
   if (!state.selectionId) return null;
   const p = state.players.get(state.selectionId);
@@ -1788,6 +1853,12 @@ function selectedSeat() {
         reportId: state.project.selected.latestReportId || "",
         report: state.project.selected.latestReport || null,
       }
+      : null,
+    // The project read's own outcome for this seat, so the record names a read
+    // that did not answer instead of leaving the Retained block out.
+    retainedRead: state.projectActor === p.id && state.projectRead
+      && state.projectRead !== "ok"
+      ? { state: state.projectRead, reason: state.projectNotice || "" }
       : null,
     resume: state.resume && state.resume.actor === p.id ? state.resume : null,
     pendingCount: p.pendingCount || 0,
@@ -1915,6 +1986,7 @@ function renderDocument() {
   drawnSignature = drawn;
   renderMapScope();
   renderProject();
+  renderPlateIndex();
   const active = document.activeElement;
   const rowFocus = active && active.dataset ? active.dataset.docKey : null;
   let knowledgeFocus = null;
@@ -1966,6 +2038,11 @@ function renderDocument() {
     selectedId: state.selectionId,
     selectedFindingId: state.findingId || "",
     selectedSeat: selectedSeat(),
+    // The selected id when the snapshot does not carry it: the record renders it as an
+    // outside-tree subject with the reads that answer for it.
+    selectedSubject: selectedSubject(),
+    // The record's way back: clearing the selection returns the page to its prompt.
+    onClearSelection: () => { clearSelection(); },
     // The open conversation, so the axis can name the window it draws.
     projectConversation: state.project && state.project.selected ? state.project.selected.id : "",
     selectedFinding,
@@ -1975,7 +2052,14 @@ function renderDocument() {
     knowledgeWholeOpen: state.knowledgeWholeOpen === true,
     knowledgeQuery: state.knowledgeSearch || "",
     knowledgeNotice: state.knowledgeNotice || "",
-    onSelect: select,
+    // A click on an actor the snapshot does not carry - an earlier Principal, a prior session -
+    // selects it as an outside-tree subject and reads its project, and the record names it as
+    // outside this tree rather than returning silently.
+    onSelect: (id) => {
+      if (state.players.has(id)) { select(id); return; }
+      select(id);
+      void loadProject(id);
+    },
     // A selection intent always renders, even when the same finding is activated
     // again: the map may have dismissed its card since, and its own state changed
     // without the shell's signature moving.

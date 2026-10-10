@@ -273,13 +273,13 @@ check('plate carries its heading and one plain state word', await evalJs(`(() =>
   const h1 = document.querySelector('h1.plate-title');
   const mark = document.getElementById('plate-mark');
   return !!h1 && h1.textContent === 'Baton'
-    && !!mark && ['running', 'stopped', 'failed', 'awaiting input', 'idle']
+    && !!mark && ['running', 'stopped', 'failed', 'queued', 'idle']
       .includes((mark.textContent || '').trim());
 })()`));
-check('snapshot line states running, stopped and awaiting input counts', await evalJs(`(() => {
+check('snapshot line states running, stopped and queued counts', await evalJs(`(() => {
   const line = document.getElementById('snapshot-line').textContent || '';
   return line.includes('running') && line.includes('stopped or failed')
-    && line.includes('awaiting input');
+    && line.includes('queued');
 })()`));
 check('pit and paper grounds paint their materials', await evalJs(`(() => {
   const pit = document.querySelector('.pit');
@@ -886,8 +886,8 @@ await evalJs(`(() => {
 })()`);
 await until('pending message displays its complete stored body',
   `[...document.querySelectorAll('#selection .sel-body')].some((node) => node.textContent === ${JSON.stringify(pendingBody)})`);
-check('awaiting list names the owed total', await evalJs(
-  `[...document.querySelectorAll('#selection h2')].some((h) => (h.textContent || '').startsWith('Awaiting '))`));
+check('queued list names the owed total', await evalJs(
+  `[...document.querySelectorAll('#selection h2')].some((h) => (h.textContent || '').startsWith('Queued '))`));
 check('message body remains open and focused after its asynchronous read', await evalJs(
   `document.querySelector('#selection [data-selkey="sel:msg:qa-aide-receipt"]').getAttribute('aria-expanded') === 'true'
     && document.activeElement === document.querySelector('#selection [data-selkey="sel:msg:qa-aide-receipt"]')`));

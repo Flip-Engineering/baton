@@ -21,6 +21,9 @@ const RIBBON_BARS_MAX = 180;
 const RIBBON_LIST_ROWS = 400;
 const RIBBON_PAGE_STEP = 50;
 const RIBBON_CHIPS_MAX = 8;
+// A second kind counts as a real mix of the stretch at a quarter of its entries
+// or more. A stray entry does not earn a head.
+const RIBBON_SECOND_SHARE = 0.25;
 // The five ruled lines of a staff, as percentages up from the axis floor, and
 // the position above the staff for the busiest stretch.
 const STAFF_LINES = [12, 31, 50, 69, 88];
@@ -82,6 +85,24 @@ function ribbonEscape(value) {
 function ribbonKindClass(kind) {
   const slug = String(kind || "unknown").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
   return "ribbon-kind-" + (slug || "unknown");
+}
+
+// The ink a recorded kind carries in the score. Kinds that read as one thing
+// share an ink; everything else carries the score's own warm ink. The colours
+// live in the region's stylesheet, one rule per group.
+function ribbonInkClass(kind) {
+  const slug = ribbonKindClass(kind).slice("ribbon-kind-".length);
+  if (slug === "message-task" || slug === "message-guidance"
+    || slug === "message-recovery") return "ribbon-ink-waiting";
+  // The recorded vocabulary names a receipt with and without its prefix, and
+  // receipts are the window's busiest kind.
+  if (slug === "message-report" || slug === "message-receipt"
+    || slug === "report" || slug === "receipt") return "ribbon-ink-report";
+  if (slug === "execution" || slug === "native-request") return "ribbon-ink-running";
+  if (slug === "stop") return "ribbon-ink-failed";
+  if (slug.startsWith("ensemble") || slug.startsWith("membership")
+    || slug.startsWith("section") || slug === "role") return "ribbon-ink-structure";
+  return "ribbon-ink-note";
 }
 
 function ribbonSeats(event) {
@@ -313,6 +334,13 @@ function renderRibbon(container, data, options) {
     return Math.min(1, Math.max(0, (at - firstAt) / spanMs));
   }
 
+  // The stretch a fraction of the axis falls in, taken at the stretch's center:
+  // the bar is the unit a press activates.
+  function stretchAt(fraction) {
+    const column = Math.min(bars - 1, Math.max(0, Math.floor(fraction * bars)));
+    return (column + 0.5) / bars;
+  }
+
   // The inverse: a column reports the recorded change nearest that time.
   function indexAt(fraction) {
     if (!usable) return Math.round((1 - fraction) * (total - 1));
@@ -474,31 +502,40 @@ function renderRibbon(container, data, options) {
       const size = (2.6 + 3.4 * share).toFixed(1);
       note.style.width = size + "px";
       note.style.height = size + "px";
-      let dominant = "unknown";
-      let dominantCount = 0;
-      for (const entry of kinds[column] || []) {
-        if (entry[1] > dominantCount) {
-          dominant = entry[0];
-          dominantCount = entry[1];
-        }
+      // The kinds the stretch holds, busiest first. The note's ink is the first
+      // one; a real second kind carries its own ink as a second, smaller head.
+      const stretchKinds = [...(kinds[column] || new Map()).entries()]
+        .sort((a, b) => (b[1] - a[1]) || (a[0] < b[0] ? -1 : 1));
+      const dominant = stretchKinds.length ? stretchKinds[0][0] : "unknown";
+      const dominantInk = ribbonInkClass(dominant);
+      note.classList.add(ribbonKindClass(dominant), dominantInk);
+      const runner = stretchKinds.length > 1 ? stretchKinds[1] : null;
+      const runnerShare = runner ? runner[1] / counted : 0;
+      const runnerInk = runner ? ribbonInkClass(runner[0]) : "";
+      // A second ink over a real share of the stretch. A kind that carries the
+      // note's own ink would add a head and no information, so it stays out.
+      if (runner && runnerShare >= RIBBON_SECOND_SHARE && runnerInk !== dominantInk) {
+        const second = document.createElement("span");
+        second.className = "ribbon-second " + ribbonKindClass(runner[0]) + " " + runnerInk;
+        const secondSize = (2.2 + 1.8 * runnerShare).toFixed(1);
+        second.style.width = secondSize + "px";
+        second.style.height = secondSize + "px";
+        second.setAttribute("aria-hidden", "true");
+        note.appendChild(second);
       }
-      note.classList.add(ribbonKindClass(dominant));
       const seatNames = [...(seats[column] || new Map()).entries()]
         .sort((a, b) => (b[1] - a[1]) || (a[0] < b[0] ? -1 : 1))
         .slice(0, 4)
         .map((entry) => entry[0]);
-      note.title = ribbonCount(counted) + (counted === 1 ? " recorded entry" : " recorded entries")
-        + " \u00b7 " + dominant
-        + (seatNames.length ? " \u00b7 " + seatNames.join(", ") : "");
-      const stretchKinds = [...(kinds[column] || new Map()).entries()]
-        .sort((a, b) => (b[1] - a[1]) || (a[0] < b[0] ? -1 : 1))
-        .slice(0, 2);
-      const stretchText = ribbonCount(counted) + (counted === 1 ? " recorded entry" : " recorded entries")
-        + (stretchKinds.length
-          ? " \u00b7 " + stretchKinds.map((entry) => entry[0] + " " + entry[1]).join(", ")
-          : "")
-        + (seatNames.length ? " \u00b7 " + seatNames.join(", ") : "");
-      note.addEventListener("pointerenter", () => renderLine(stretchText));
+      const stretchCount = ribbonCount(counted) + (counted === 1 ? " recorded entry" : " recorded entries");
+      const kindWords = stretchKinds.slice(0, 2)
+        .map((entry) => entry[0] + " " + ribbonCount(entry[1])).join(", ");
+      const seatWords = seatNames.join(", ");
+      // The stretch by name and count, in the title. The kinds are the stretch's
+      // inks, and this states them; the line below states the count and the seats.
+      note.title = [stretchCount, kindWords, seatWords].filter(Boolean).join(" \u00b7 ");
+      note.addEventListener("pointerenter", () => renderLine(
+        [stretchCount, seatWords].filter(Boolean).join(" \u00b7 ")));
       cell.appendChild(note);
       newestNote = note;
       contour.push((column + 0.5).toFixed(2) + " " + (100 - pitchBottom).toFixed(2));
@@ -537,7 +574,10 @@ function renderRibbon(container, data, options) {
     document.addEventListener("pointerup", ribbonEndDrag, true);
     document.addEventListener("pointercancel", ribbonEndDrag, true);
     const fraction = ribbonPositionFromClient(container, event.clientX);
-    if (fraction !== null) setPosition(indexAt(fraction));
+    // The press activates the stretch under the pointer: the recorded change
+    // nearest that stretch, through the mapping the drag and the rows use. A
+    // drag from here reads the pointer directly.
+    if (fraction !== null) setPosition(indexAt(stretchAt(fraction)));
     if (typeof slider.focus === "function") slider.focus({ preventScroll: true });
   });
   slider.addEventListener("keydown", (event) => {

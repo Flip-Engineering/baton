@@ -1,10 +1,14 @@
 /* The pit stage: liveness, document order and the seating plan. Read-only.
    One global entry: renderAttention(container, data, options).
 
-   State vocabulary, settled: running, awaiting input, stopped, failed, owes work,
+   State vocabulary, settled: running, queued, stopped, failed, owes work,
    quiet. Starting is work in flight and reads as running. A stop or a failure is a
    state, never a request to a person. The document order is failed, stopped,
-   awaiting input, owes work, running, quiet; bands take their highest member's.
+   queued, owes work, running, quiet; bands take their highest member's.
+
+   A seat whose read carries no stop flag and no stop word says "no stop recorded" in
+   its title and its label, and a stop the read names another way is quoted as it
+   reads. The marks are unchanged by either: a stop that is read still draws its ring.
 
    The stage draws one seat per actor, shaped and inked by its state, with the
    baton on the seat that acted most recently, a queue bar under a seat that owes
@@ -44,14 +48,14 @@
   var STAMP = /^\d{4,}$/; // a trailing date stamp is not part of a name
 
   // Worst first: the document order is also the strip's order and the roster's.
-  var READINGS = ["failed", "stopped", "awaitingInput", "owesWork", "running", "quiet"];
+  var READINGS = ["failed", "stopped", "queued", "owesWork", "running", "quiet"];
 
   // One ink and one silhouette per state. The shape carries the state too, so the
   // stage reads for a reader who cannot separate the colours.
   var PAINT = {
     failed: { ink: "var(--failed, #ef6b5f)", shape: "triangle" },
     stopped: { ink: "var(--attention, #e2a94f)", shape: "square" },
-    awaitingInput: { ink: "var(--stage-starting, #d7b45a)", shape: "ring" },
+    queued: { ink: "var(--stage-starting, #d7b45a)", shape: "ring" },
     owesWork: { ink: "var(--muted, #9aa3b4)", shape: "diamond" },
     running: { ink: "var(--running, #57c46a)", shape: "circle" },
     quiet: { ink: "var(--staff, #39404b)", shape: "dot", dim: true },
@@ -276,14 +280,16 @@
       if (stop && stop.status === "stopped") return "stopped";
       if (execution && execution.phase === "running") return "running";
       if (execution && execution.phase === "starting") return "running";
-      if (owed > 0) return execution && execution.phase === "exited" ? "awaitingInput" : "owesWork";
+      if (owed > 0) return execution && execution.phase === "exited" ? "queued" : "owesWork";
       return "quiet";
     }
     var word = String(player.status || "");
     if (word === "failed") return "failed";
+    // A page that states only a word: the corrected state for a stored "waiting"
+    // (an attempt that has started) is running, never queued.
     if (word === "running" || word === "waiting" || word === "starting") return "running";
     if (word === "stopped") return "stopped";
-    if (word === "completed" || word === "ended") return owed > 0 ? "awaitingInput" : "quiet";
+    if (word === "completed" || word === "ended") return owed > 0 ? "queued" : "quiet";
     if (word === "pending") return owed > 0 ? "owesWork" : "quiet";
     return owed > 0 ? "owesWork" : "quiet";
   }
@@ -305,14 +311,15 @@
   }
 
   // The state's own word, with an exact count where the seat owes work. Text
-  // surfaces only: the stage and the strip carry the shape and the ink.
+  // surfaces only: the stage and the strip carry the shape and the ink, and the
+  // count travels with any state that holds work, running included.
   function readingWord(reading, owed) {
     var count = owed > 0 ? ", " + owed + " owed" : "";
     if (reading === "failed") return "failed";
     if (reading === "stopped") return "stopped" + count;
-    if (reading === "awaitingInput") return "awaiting input" + count;
+    if (reading === "queued") return "queued" + count;
     if (reading === "owesWork") return "owes work" + count;
-    if (reading === "running") return "running";
+    if (reading === "running") return "running" + count;
     return "quiet";
   }
 
@@ -321,6 +328,35 @@
   function activityText(row) {
     if (!row || !row.activity) return "";
     return row.stale ? row.activity + " (recorded earlier)" : row.activity;
+  }
+
+  // What the read says about a stop, in the read's own words. Where the read carries
+  // no stop flag and no stop word, the pit says the stop is not recorded instead of
+  // drawing its absence as the record's own statement. The marks are unaffected: a
+  // stop that is read still draws its ring and its word.
+  function stopNote(player) {
+    var stop = player ? player.stop : undefined;
+    if (stop && String(stop.status || "") === "stopped") return "";
+    if (stop && stop.status) return "stop recorded as " + String(stop.status);
+    if (typeof (player ? player.notProgressing : undefined) === "boolean") return "";
+    var word = String((player && player.status) || "");
+    if (word === "stopped" || word === "failed") return "";
+    return "no stop recorded";
+  }
+
+  // The age of a recorded action in the shell's own units, so the stage's title and
+  // the roster's rows say the same thing: seconds, minutes, hours, days.
+  function ageText(at, now) {
+    if (!at) return "";
+    var then = Date.parse(at);
+    if (!isFinite(then)) return "";
+    var seconds = Math.max(0, Math.round((now - then) / 1000));
+    if (seconds < 90) return seconds + "s";
+    var minutes = Math.round(seconds / 60);
+    if (minutes < 90) return minutes + "m";
+    var hours = Math.round(minutes / 60);
+    if (hours < 48) return hours + "h";
+    return Math.round(hours / 24) + "d";
   }
 
   function playerList(data) {
@@ -376,9 +412,11 @@
         rank: readingRank(reading),
         owed: owed,
         queued: owed > 0,
-        // The two reads, named by the shell when it names them.
+        // Two reads, named by the shell when it names them, and the stop note the
+        // read's own wording gives.
         notProgressing: namedFlag(player, "notProgressing", notProgressingReading(reading)),
         owesWork: namedFlag(player, "owesWork", owed > 0),
+        stopNote: stopNote(player),
         live: reading === "running",
         role: String(player.role || ""),
         conductor: isConductor(String(player.role || "")),
@@ -541,6 +579,10 @@
         // label column, and any name already placed beside this row.
         var lane = i + ":" + row;
         var nextLeft = column === inRow - 1 ? w - 4 : x + pitch - radius - 4;
+        var caps = {
+          left: Math.max((row === 0 ? gutter : 0) + 4, blocked[lane] || 0),
+          right: nextLeft,
+        };
         var label = seatLabelFor(tier.rows[k].forms, {
           x: x,
           row: row,
@@ -549,11 +591,20 @@
           radius: radius,
           gutter: gutter,
           width: w,
-          caps: {
-            left: Math.max((row === 0 ? gutter : 0) + 4, blocked[lane] || 0),
-            right: nextLeft,
-          },
+          caps: caps,
         });
+        // The trail is a tick in the band under the mark, starting past whatever the
+        // seat already draws there (its queue bar), on whichever side the row leaves
+        // more room. Its length is set at draw time from how recent the action is.
+        var tickPad = Math.max(radius + 2,
+          tier.rows[k].owed > 0 ? radius * 0.5 + Math.min(tier.rows[k].owed, 6) + 3 : 0);
+        var tickRight = nextLeft - (x + tickPad);
+        var tickLeft = (x - tickPad) - (column === 0 ? 4 : x - pitch + radius + 4);
+        var tickDir = tickRight >= tickLeft ? 1 : -1;
+        var tickRoom = Math.max(tickRight, tickLeft);
+        var trail = tickRoom >= 3
+          ? { dir: tickDir, pad: tickPad, room: Math.min(tickRoom, radius * 1.8) }
+          : null;
         if (label && label.anchor !== "middle") {
           blocked[lane] = label.anchor === "end"
             ? x + label.dx
@@ -564,6 +615,7 @@
           x: x,
           y: tier.y + row * gap + bow,
           label: label,
+          trail: trail,
         };
         seats.push(seat);
         order.push(tier.rows[k].id);
@@ -618,7 +670,7 @@
   }
 
   // The silhouette of one state, at any size: triangle for failed, square for
-  // stopped, ring for awaiting input, diamond for owes work, circle for running,
+  // stopped, ring for queued, diamond for owes work, circle for running,
   // dot for quiet. The stage and the legend draw from this one function.
   function shapeNode(state, radius) {
     var paint = PAINT[state] || PAINT.quiet;
@@ -666,22 +718,22 @@
     return Math.max(0.08, Math.min(1, spent / longest));
   }
 
-  function seatNode(entry, options, fresh, fraction, cursor, laid) {
+  function seatNode(entry, options, marks, laid) {
     var seat = entry.seat;
     var radius = laid.radius;
     var paint = PAINT[seat.reading] || PAINT.quiet;
     var group = svgEl("g", {
       "class": "att-seat"
-        + (fresh ? " att-new" : "")
+        + (marks.fresh ? " att-new" : "")
         + (seat.live ? " att-working" : "")
         + (options.selectedId === seat.id ? " att-selected" : "")
-        + (cursor ? " att-cursor" : ""),
+        + (marks.cursor ? " att-cursor" : ""),
       "data-att-key": "seat:" + seat.id,
       "data-att-id": seat.id,
       "data-att-state": seat.reading,
     });
 
-    if (fraction > 0) {
+    if (marks.elapsed > 0) {
       var spentRadius = radius + 3.5;
       var circumference = 2 * Math.PI * spentRadius;
       var spent = svgEl("circle", {
@@ -690,7 +742,7 @@
       spent.style.fill = "none";
       spent.style.stroke = paint.ink;
       spent.style.strokeWidth = "1.6";
-      spent.style.strokeDasharray = (fraction * circumference).toFixed(1) + " " + circumference.toFixed(1);
+      spent.style.strokeDasharray = (marks.elapsed * circumference).toFixed(1) + " " + circumference.toFixed(1);
       group.appendChild(spent);
     }
 
@@ -717,6 +769,21 @@
     group.appendChild(floor);
 
     group.appendChild(shapeNode(seat.reading, radius));
+
+    // The trail: the pit's second, quieter reading of activity, in the band under the
+    // mark where no name sits. Its length grades how recently the seat acted, against
+    // the span the hall covers, and a broken trail marks an activity from an earlier
+    // event. No recorded action, no trail.
+    if (entry.trail && marks.recent) {
+      var reach = radius * 0.5 + marks.recent.fresh * Math.max(0, entry.trail.room - radius * 0.5);
+      var from = entry.trail.dir * entry.trail.pad;
+      var trail = svgEl("line", {
+        "class": "att-trail" + (seat.stale ? " att-trail-earlier" : ""),
+        x1: from, y1: radius + 4,
+        x2: from + entry.trail.dir * reach, y2: radius + 4,
+      });
+      group.appendChild(trail);
+    }
 
     // The queue as a bar: its length is the count, and the exact figure stays in
     // the title.
@@ -750,7 +817,9 @@
 
     var title = svgEl("title");
     setText(title, seat.id + " \u2014 " + seat.word
-      + (seat.activity ? " \u2014 " + activityText(seat) : ""));
+      + " \u2014 " + (seat.activity ? activityText(seat) : "no work recorded")
+      + (marks.recent && marks.recent.age ? " \u2014 acted " + marks.recent.age + " ago" : "")
+      + (seat.stopNote ? " \u2014 " + seat.stopNote : ""));
     group.appendChild(title);
 
     group.addEventListener("click", function () {
@@ -948,6 +1017,33 @@
       if (isFinite(since) && now - since > longest) longest = now - since;
     }
 
+    // How recent each drawn seat's action is, against the span the hall covers: the
+    // newest seat grades 1, the oldest 0, and a seat no older than the rest grades 1.
+    // A seat with no recorded action has no entry, and the exact age travels in the
+    // title, never in a word on the stage.
+    var times = {};
+    var newest = null;
+    var oldest = null;
+    for (var a = 0; a < laid.seats.length; a += 1) {
+      var at = laid.seats[a].seat.at;
+      if (!at) continue;
+      var when = Date.parse(at);
+      if (!isFinite(when)) continue;
+      var age = Math.max(0, now - when);
+      times[laid.seats[a].seat.id] = { at: at, age: age };
+      if (newest === null || age < newest) newest = age;
+      if (oldest === null || age > oldest) oldest = age;
+    }
+    var recent = {};
+    var span = newest === null ? 0 : oldest - newest;
+    var recentIds = Object.keys(times);
+    for (var a2 = 0; a2 < recentIds.length; a2 += 1) {
+      recent[recentIds[a2]] = {
+        fresh: span > 0 ? (oldest - times[recentIds[a2]].age) / span : 1,
+        age: ageText(times[recentIds[a2]].at, now),
+      };
+    }
+
     // The baton, drawn under the seats so it never hides one.
     var holderId = "";
     for (var h = 0; h < plan.tiers.length; h += 1) {
@@ -975,8 +1071,12 @@
 
     for (var i = 0; i < laid.seats.length; i += 1) {
       var entry = laid.seats[i];
-      var node = seatNode(entry, options, fresh[entry.seat.id] === true,
-        elapsedOf(entry.seat, now, longest), entry.seat.id === cursorId, laid);
+      var node = seatNode(entry, options, {
+        fresh: fresh[entry.seat.id] === true,
+        elapsed: elapsedOf(entry.seat, now, longest),
+        recent: recent[entry.seat.id] || null,
+        cursor: entry.seat.id === cursorId,
+      }, laid);
       node.setAttribute("transform", "translate(" + entry.x + " " + entry.y + ")");
       svg.appendChild(node);
     }
@@ -1022,7 +1122,8 @@
     chip.className = "lane-chip" + (row.notProgressing ? " att-need" : "")
       + (options.selectedId === row.id ? " selected" : "");
     chip.dataset.attKey = "chip:" + row.id;
-    var spoken = row.id + ", " + row.word + (row.activity ? ", " + activityText(row) : "");
+    var spoken = row.id + ", " + row.word + (row.activity ? ", " + activityText(row) : "")
+      + (row.stopNote ? ", " + row.stopNote : "");
     chip.setAttribute("title", spoken);
     chip.setAttribute("aria-label", spoken + ". Select to open the actor.");
     var mark = svgEl("svg", {
@@ -1158,7 +1259,8 @@
       stage.svg.addEventListener("focus", function () {
         if (cursorRow) {
           setText(live, cursorRow.id + ", " + cursorRow.word
-            + (cursorRow.activity ? ", " + activityText(cursorRow) : ""));
+            + (cursorRow.activity ? ", " + activityText(cursorRow) : "")
+            + (cursorRow.stopNote ? ", " + cursorRow.stopNote : ""));
         } else {
           setText(live, "The stage. No seat is drawn.");
         }
@@ -1208,7 +1310,7 @@
     if (!listed.length) {
       var quiet = document.createElement("p");
       quiet.className = "att-quiet";
-      setText(quiet, "Nothing is failed, stopped, awaiting input or owing work. "
+      setText(quiet, "Nothing is failed, stopped, queued or owing work. "
         + result.counts.running + " running.");
       container.appendChild(quiet);
     }
