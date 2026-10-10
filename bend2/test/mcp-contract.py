@@ -26,6 +26,7 @@ import json
 import pathlib
 import subprocess
 import tempfile
+import time
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -40,6 +41,7 @@ class McpContract(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(dir=ROOT / '.scratch/bend2')
         self.addCleanup(self.temp.cleanup)
         self.db = pathlib.Path(self.temp.name) / 'state.db'
+        self.addCleanup(self.shutdown_instance_owner)
         repo = pathlib.Path(self.temp.name) / 'repository'
         repo.mkdir()
         for argv in (['init', '-q', '-b', 'main'], ['config', 'user.email', 'fixture@example.invalid'],
@@ -56,6 +58,25 @@ class McpContract(unittest.TestCase):
                    str(repo), 'w1-branch', str(pathlib.Path(self.temp.name) / 'worktrees' / 'w1'), base)
         self.body = 'surface-开始 λ\n' + 'coordinator output λ\n' * 4000 + 'surface-完成 λ'
         self.coord('report', 'turn-1', 'w1', self.body)
+
+    def instance_owner_pids(self):
+        expected = f'{EXE.resolve()} --instance-owner {self.db.resolve()}'
+        processes = subprocess.run(['ps', '-axo', 'pid=,ppid=,stat=,command='],
+                                   check=True, capture_output=True, text=True)
+        owners = set()
+        for line in processes.stdout.splitlines():
+            fields = line.strip().split(None, 3)
+            if len(fields) == 4 and fields[3] == expected and not fields[2].startswith('Z'):
+                owners.add(int(fields[0]))
+        return owners
+
+    def shutdown_instance_owner(self):
+        owners = self.instance_owner_pids()
+        stopped = subprocess.run([str(EXE), '--instance-shutdown', str(self.db)],
+                                 capture_output=True, text=True)
+        self.assertEqual(stopped.returncode, 0, stopped.stderr)
+        while owners & self.instance_owner_pids():
+            time.sleep(.01)
 
     def coord(self, *args, ok=True):
         p = subprocess.run([str(EXE), str(self.db), *args],
@@ -122,13 +143,13 @@ class McpContract(unittest.TestCase):
             'targetReference': "message:prior report's λ", 'targetKind': 'message',
         }
         result = self.tool('baton2_knowledge_relations')
-        self.assertFalse(result.get('isError', False))
+        self.assertFalse(result.get('isError', False), result)
         self.assertEqual(json.loads(result['content'][0]['text']), [external_read])
         result = self.tool('baton2_knowledge_relations', {'scope': 'worker', 'subject': 'w1'})
-        self.assertFalse(result.get('isError', False))
+        self.assertFalse(result.get('isError', False), result)
         self.assertEqual(json.loads(result['content'][0]['text']), [message_read])
         result = self.tool('baton2_knowledge_relations', {'scope': 'all', 'pretty': True})
-        self.assertFalse(result.get('isError', False))
+        self.assertFalse(result.get('isError', False), result)
         self.assertEqual(json.loads(result['content'][0]['text']), [external_read, message_read])
         self.assertEqual(json.loads(self.coord('knowledge', 'root').stdout), [])
 

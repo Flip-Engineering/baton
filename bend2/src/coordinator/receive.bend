@@ -624,7 +624,7 @@ def route_applied(+db: String, +session: String, +id: String, attempt: String, a
   match chosen:
     case None{}: do IO<Result<&1,&1,U32 & String,Unit>>:
       noted : Unit <- Subs.report_route_unavailable(db,session,id,old_harness,cause)
-      IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
+      exit_status(True{})
     case Some{+route}: do IO<Result<&1,&1,U32 & String,Unit>>:
       noted : Unit <- Subs.report_route_chosen(db,session,id,route,cause)
       configured : String <- Control.configure(db,session,Subs.route_harness(route),Subs.route_model(route),effort,Subs.route_cmd(route),log,old_harness,old_model,effort)

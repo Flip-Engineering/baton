@@ -232,9 +232,19 @@ def stage_typescript_context_module(payload, runtime_package):
         'requestExample': {
             'version': 1, 'engine': 'typescript',
             'subject': {'kind': 'symbol', 'path': 'src/analysis.ts', 'name': 'answer'},
+            'select': ['definition', 'type'], 'cwd': '.', 'options': {}, 'effects': [],
+        },
+    }
+    join_operation = {
+        **operation, 'operation': 'codeAccessJoin', 'implements': 'codeAccessJoin',
+        'effects': ['planTargetSql'],
+        'requestExample': {
+            'version': 1, 'engine': 'typescript',
+            'subject': {'kind': 'symbol', 'path': 'src/analysis.ts', 'name': 'answer'},
             'select': ['definition', 'type', 'databaseAccesses'], 'cwd': '.',
             'options': {'database': {'engine': 'sqlite-schema', 'path': 'catalog.db'},
                         'client': {'path': 'src/analysis.ts', 'line': 0, 'column': 17}},
+            'effects': ['planTargetSql'],
         },
     }
     identity = hashlib.sha256(json.dumps(artifacts + dependencies, sort_keys=True).encode()).hexdigest()
@@ -249,7 +259,7 @@ def stage_typescript_context_module(payload, runtime_package):
                              operation['eventSchema']],
         'applicability': [{'kind': 'pathSuffixAny',
                            'values': ['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs', '.json']}],
-        'operations': [operation],
+        'operations': [operation, join_operation],
         'runtime': {'name': 'node', 'minimumVersion': '22.15'},
     }
     write_json(module_root / 'native-provider.declaration.json', declaration)

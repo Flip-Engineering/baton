@@ -30,6 +30,7 @@ class OmpRootAdapter(unittest.TestCase):
         if not EXE.exists():
             self.skipTest(f'Coordinator not built at {EXE}')
         self.temp = tempfile.TemporaryDirectory(dir=ROOT / '.scratch/bend2')
+        self.addCleanup(self.temp.cleanup)
         self.repo = pathlib.Path(self.temp.name) / 'repository'
         self.repo.mkdir()
         self.checkouts = pathlib.Path(self.temp.name) / 'checkouts'
@@ -44,14 +45,31 @@ class OmpRootAdapter(unittest.TestCase):
         self.base = subprocess.run(['git', '-C', str(self.repo), 'rev-parse', 'HEAD'],
                                    check=True, capture_output=True, text=True).stdout.strip()
         self.db = pathlib.Path(self.temp.name) / 'state.db'
+        self.addCleanup(self.shutdown_instance_owner)
 
     def register(self, name, parent, harness, model, effort, workspace=None, branch=None, base=None):
         """Recruit the session into this suite's fixture repository."""
         return self.coord('recruit', name, parent, harness, model, effort, str(self.repo),
                           branch or (name + '-branch'), str(self.checkouts / name), self.base)
 
-    def tearDown(self):
-        self.temp.cleanup()
+    def instance_owner_pids(self):
+        expected = f'{EXE.resolve()} --instance-owner {self.db.resolve()}'
+        processes = subprocess.run(['ps', '-axo', 'pid=,ppid=,stat=,command='],
+                                   check=True, capture_output=True, text=True)
+        owners = set()
+        for line in processes.stdout.splitlines():
+            fields = line.strip().split(None, 3)
+            if len(fields) == 4 and fields[3] == expected and not fields[2].startswith('Z'):
+                owners.add(int(fields[0]))
+        return owners
+
+    def shutdown_instance_owner(self):
+        owners = self.instance_owner_pids()
+        stopped = subprocess.run([str(EXE), '--instance-shutdown', str(self.db)],
+                                 capture_output=True, text=True)
+        self.assertEqual(stopped.returncode, 0, stopped.stderr)
+        while owners & self.instance_owner_pids():
+            time.sleep(.01)
 
     def coord(self, *args, ok=True):
         p = subprocess.run(
@@ -61,6 +79,43 @@ class OmpRootAdapter(unittest.TestCase):
         if ok:
             self.assertEqual(p.returncode, 0, p.stderr)
         return p.stdout.strip()
+
+    def eventually(self, observation):
+        while True:
+            result = observation()
+            if result:
+                return result
+            time.sleep(0.05)
+
+    def accepted(self, ident, receipt):
+        def observation():
+            stored = subprocess.run([str(EXE), str(self.db), 'delivery', ident],
+                                    text=True, capture_output=True)
+            if (stored.returncode == 1 and stored.stdout == ''
+                    and stored.stderr == 'No matching session or message; inspect status and the requested ID.\n'):
+                return None
+            self.assertEqual(stored.returncode, 0, stored.stderr)
+            return json.loads(stored.stdout)['receipt']
+        observed = self.eventually(observation)
+        self.assertEqual(observed, receipt)
+
+    def exited(self, session, status='exit 0'):
+        def observation():
+            player = next(row for row in json.loads(self.coord('players')) if row['id'] == session)
+            execution = player['execution']
+            return execution if execution and execution['phase'] == 'exited' else None
+        execution = self.eventually(observation)
+        self.assertEqual(execution['status'], status)
+        return execution
+
+    def completed(self, session, bodies):
+        def observation():
+            turns = json.loads(self.coord('turns', session))
+            return turns if len(turns) >= len(bodies) else None
+        turns = self.eventually(observation)
+        self.assertEqual([turn['reportBody'] for turn in turns], bodies)
+        self.exited(session)
+        return turns
 
     def test_player_report_wakes_lead_and_lead_report_wakes_root(self):
         temp = pathlib.Path(self.temp.name)
@@ -91,11 +146,14 @@ class OmpRootAdapter(unittest.TestCase):
             'sys.stdin.read()\n')
         native.chmod(0o700)
         args = ['node', str(OMP_CONDUCTOR_SCRIPT), str(self.db), str(EXE), str(native), '--session', 'lead', '--attach']
-        for ident in ['first', 'second']:
+        for number, ident in enumerate(['first', 'second'], 1):
             attached = subprocess.run(args, text=True, capture_output=True)
             self.assertEqual(attached.returncode, 0, attached.stderr)
             self.coord('report', ident, 'child', 'Child completed ' + ident)
-            self.assertEqual(json.loads(self.coord('delivery', ident))['receipt'], 'lead reviewed child')
+            self.accepted(ident, 'lead reviewed child')
+            turns = self.completed('lead', ['Reviewed and landed ' + item
+                                           for item in ['first', 'second'][:number]])
+            self.accepted(turns[-1]['id'], 'root reviewed lead')
         lead = json.loads(self.coord('player', 'lead'))
         root = json.loads(self.coord('player', 'root'))
         self.assertEqual((lead['parent'], lead['branch'], lead['base'], lead['workspace']),
@@ -120,7 +178,8 @@ class OmpRootAdapter(unittest.TestCase):
         temp = pathlib.Path(self.temp.name)
         self.db = temp / "state's λ.db"
         associate = "delegated's λ"
-        self.coord('attach', '', 'codex', 'parent-native', '')
+        self.coord('attach', '', 'codex', 'parent-native',
+                   json.dumps([sys.executable, '-c', 'pass']))
         self.coord('role', '', 'principal-conductor')
         self.register(associate, '', 'omp', 'stored-model', 'low', branch='associate-branch')
         self.coord('connect', associate, 'saved-omp', '')
@@ -144,6 +203,8 @@ class OmpRootAdapter(unittest.TestCase):
         self.assertEqual(attached.returncode, 0, attached.stderr)
         self.assertFalse(calls.exists())
         self.coord('report', 'selected-report', 'child', 'Selected child report')
+        self.accepted('selected-report', 'selected-reviewed')
+        self.completed(associate, ['Selected Associate reviewed.'])
         observed = json.loads(calls.read_text())
         self.assertEqual(observed['cwd'], str(self.checkouts / associate))
         argv = observed['argv']
@@ -163,7 +224,8 @@ class OmpRootAdapter(unittest.TestCase):
 
     def test_failed_lead_turn_reports_to_parent_and_keeps_child_report(self):
         temp = pathlib.Path(self.temp.name)
-        self.coord('attach', 'root', 'codex', 'native-root', '')
+        self.coord('attach', 'root', 'codex', 'native-root',
+                   json.dumps([sys.executable, '-c', 'pass']))
         self.register('lead', 'root', 'omp', 'lead-model', 'low', str(temp), 'lead-branch', 'base')
         self.register('child', 'lead', 'omp', 'worker-model', 'low', str(temp), 'child-branch', 'base')
         native = temp / 'failure.sh'
@@ -174,13 +236,19 @@ class OmpRootAdapter(unittest.TestCase):
         self.assertEqual(attached.returncode, 0, attached.stderr)
         failed = subprocess.run([str(EXE), str(self.db), 'report', 'child-done', 'child', 'Work retained'],
                                 text=True, capture_output=True)
-        self.assertNotEqual(failed.returncode, 0)
+        self.assertEqual(failed.returncode, 0, failed.stderr)
+        execution = self.exited('lead', 'exit 23')
+        reports = self.eventually(
+            lambda: rows if len(rows := json.loads(self.coord('inbox', 'root'))) >= 2 else None)
         self.assertIsNone(json.loads(self.coord('delivery', 'child-done'))['receipt'])
-        reports = json.loads(self.coord('inbox', 'root'))
-        self.assertEqual(len(reports), 1)
-        self.assertEqual(reports[0]['sender'], 'lead')
+        self.assertEqual([row['id'] for row in reports],
+                         [execution['attempt'], execution['attempt'] + ':exit'])
+        reports = [json.loads(self.coord('delivery', row['id'])) for row in reports]
+        self.assertTrue(all((row['sender'], row['recipient'], row['kind']) == ('lead', 'root', 'report')
+                            and row['receipt'] is None for row in reports))
+        self.assertTrue(reports[0]['body'].startswith('Player process ended without a native result (exit 23).'))
         self.assertIn('23', reports[0]['body'])
-        self.assertIn('23', json.loads(self.coord('player', 'lead'))['execution']['status'])
+        self.assertEqual(reports[1]['body'], 'Player process ended with exit 23')
 
     def test_report_file_migrates_stored_callback_to_native_receive(self):
         temp = pathlib.Path(self.temp.name)
@@ -215,6 +283,8 @@ class OmpRootAdapter(unittest.TestCase):
         report = temp / 'report.txt'
         report.write_text('Completed task with full report.')
         self.coord('report', 'finished', 'w1', report.read_text())
+        self.accepted('finished', 'native-reviewed')
+        self.exited(conductor)
         self.assertIn(report.read_text(), received.read_text())
         self.assertEqual(json.loads(self.coord('delivery', 'finished'))['receipt'], 'native-reviewed')
         selected = json.loads(self.coord('player', conductor))
@@ -250,6 +320,11 @@ class OmpRootAdapter(unittest.TestCase):
             if message == 'first':
                 self.register('sender', 'root', 'fixture', 'model', 'low')
             self.coord('report', message, 'sender', 'Review this message.')
+            self.accepted(message, 'reviewed')
+            if message == 'first':
+                self.accepted('during-turn', 'reviewed')
+            self.exited('root')
+            self.assertEqual(len(calls.read_text().splitlines()), 2 if message == 'first' else 3)
             self.assertEqual(json.loads(self.coord('player', 'root'))['native'], 'native-root')
         observed = [json.loads(line) for line in calls.read_text().splitlines()]
         self.assertEqual(len(observed), 3)

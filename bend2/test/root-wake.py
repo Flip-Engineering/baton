@@ -475,7 +475,7 @@ while True:
         # Releasing that turn delivers its completed report to the Muse parent.
         self.release('child', 1)
         self.eventually(lambda: self.calls('lead')[:1], 'the child report never woke the Muse lead.')
-        self.assertEqual(len(self.calls('child')), 1)
+        self.completed('child', 1)
         self.assertIn('Task for the OMP child.', child_turn[0]['prompt'])
         self.assertEqual(child_turn[0]['cwd'], str(self.checkouts / 'child'))
 
@@ -549,7 +549,7 @@ while True:
         self.assertEqual(self.accepted('late-lead'), 'fixture reviewed')
         self.assertEqual(self.accepted('late-root'), 'fixture reviewed')
         self.assertEqual({row['recipient'] for row in self.rows("SELECT recipient FROM messages WHERE sender='lead'")},
-                         {'root', 'child'})
+                         {'root', 'child', 'lead'})
         inbox = json.loads(self.coord('inbox', 'operator'))
         self.assertEqual({row['sender'] for row in inbox}, {'root'})
         self.assertEqual(len(inbox), 3)
@@ -606,8 +606,6 @@ while True:
         self.coord('role', 'operator', 'operator')
         self.recruit('leaf', 'root', 'claude-code')
         self.coord('receiver', 'leaf', str(self.fixture), str(self.directory / 'leaf.jsonl'))
-        self.release('leaf', 1)
-        self.release('leaf', 2)
         self.dispatch('dispatch-file', 'leaf-task', 'root', 'leaf', 'task', str(self.leaf_task))
         first = self.eventually(lambda: self.calls('leaf')[:1], 'the Claude player never started a turn.')
         self.assertEqual(first[0]['cwd'], str(self.checkouts / 'leaf'))
@@ -619,15 +617,34 @@ while True:
         self.assertIn('[id: leaf-task]', frame['message']['content'])
 
         self.dispatch('dispatch-file', 'leaf-followup', 'root', 'leaf', 'guidance', str(self.leaf_followup))
+        self.assertIsNone(json.loads(self.coord('delivery', 'leaf-followup'))['receipt'])
+        self.release('leaf', 1)
         second = self.eventually(lambda: self.calls('leaf')[1:2], 'the follow-up never woke the leaf.')
         self.assertEqual(second[0]['args'][second[0]['args'].index('--resume') + 1], 'native-leaf')
         self.assertIn('Follow-up for the Claude player.', json.loads(second[0]['frame'])['message']['content'])
+        self.assertEqual(self.accepted('leaf-followup'), 'fixture reviewed')
+        self.release('leaf', 2)
         self.completed('leaf', 2)
-        self.eventually(lambda: len(self.calls('leaf')) == 2, 'the leaf started a third turn.')
-        self.assertEqual([len(self.calls('leaf')), len(json.loads(self.coord('turns', 'leaf')))], [2, 2])
+        continuation_call = self.eventually(
+            lambda: self.calls('leaf')[2:3], 'the open Claude assignment did not continue.')[0]
+        self.assertEqual([len(self.calls('leaf')), len(json.loads(self.coord('turns', 'leaf')))], [3, 2])
+        self.assertEqual(continuation_call['resume'], 'native-leaf')
+        self.assertIn('Continue assignment leaf-followup.', continuation_call['prompt'])
+        continuation_ids = self.prompt_ids(continuation_call)
+        self.assertEqual(len(continuation_ids), 1)
+        self.assertTrue(continuation_ids[0].endswith(':task-continuation'))
+        self.assertEqual(self.accepted(continuation_ids[0]), 'fixture reviewed')
+        continuation = json.loads(self.coord('delivery', continuation_ids[0]))
+        self.assertEqual((continuation['sender'], continuation['recipient'], continuation['kind']),
+                         ('leaf', 'leaf', 'task-continuation'))
+        state = json.loads(self.coord('session', 'leaf'))['taskCompletion']
+        self.assertEqual((state['assignmentId'], state['coordinator'], state['requestId']),
+                         ('leaf-followup', 'root', None))
+        self.assertTrue(state['open'])
+        self.assertFalse(state['confirmed'])
         self.assertEqual(json.loads(self.coord('player', 'leaf'))['native'], 'native-leaf')
         self.assertEqual({row['recipient'] for row in self.rows("SELECT recipient FROM messages WHERE sender='leaf'")},
-                         {'root'})
+                         {'root', 'leaf'})
         self.assertEqual(self.accepted('leaf-task'), 'fixture reviewed')
         self.assert_consumed_once_and_by_its_recipient(['leaf'])
 

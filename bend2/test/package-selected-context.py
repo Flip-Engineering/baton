@@ -913,8 +913,17 @@ void handler(const char *dynamic) {
                              typescript_inventory.stdout + typescript_inventory.stderr)
             typescript_module = next(module for module in json.loads(typescript_inventory.stdout)['modules']
                                      if module['moduleId'] == 'typescript')
+            typescript_source_tool = next(tool for tool in typescript_module['tools']
+                                          if tool['operation'] == 'sourceAnalysis')
+            self.assertEqual(typescript_source_tool['implements'], 'sourceAnalysis')
+            self.assertEqual(typescript_source_tool['effects'], [])
+            self.assertEqual(typescript_source_tool['requestExample']['select'], ['definition', 'type'])
+            self.assertEqual(typescript_source_tool['requestExample']['effects'], [])
             typescript_tool = next(tool for tool in typescript_module['tools']
-                                   if tool['operation'] == 'sourceAnalysis')
+                                   if tool['operation'] == 'codeAccessJoin')
+            self.assertEqual(typescript_tool['implements'], 'codeAccessJoin')
+            self.assertEqual(typescript_tool['effects'], ['planTargetSql'])
+            self.assertEqual(typescript_tool['requestExample']['effects'], ['planTargetSql'])
             self.assertEqual(typescript_tool['optionsSchema']['properties']['project']['type'], 'string')
             self.assertEqual(typescript_tool['optionsSchema']['properties']['readRoots']['type'], 'array')
             typescript_request = {
