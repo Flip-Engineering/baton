@@ -25,7 +25,8 @@
 //          a dotted stroke with an open ring at the evidence, and the
 //          recorded relation name lives in the edge's label and card.
 //          A reference-only endpoint draws as a hollow ring, never a
-//          node. Each semantic edge draws once: a typed edge wins
+//          node. A typed edge with two reference ends seats at its
+//          recorded author's drawn position. Each semantic edge draws once: a typed edge wins
 //          over the compatibility relation or evidence stub naming
 //          the same ends, and a payload without typed edges draws
 //          exactly today's map. Identity pairs kind and id:
@@ -1522,11 +1523,24 @@
       const b = kwTypedNodeEnd(tref, kwTypedSideKind(e, "targetKind"))
         || { kind: "ring", ref: tref };
       if (a.kind === "hidden" || b.kind === "hidden") continue;
+      // The anchor is a drawn node end when there is one; otherwise
+      // the recorded author's drawn seat, exactly as the legacy
+      // relation pass seats reference pairs at r.author. The author
+      // is where the rings sit, never an endpoint of the edge: both
+      // endpoints keep their canonical references. An edge with no
+      // drawn end and no drawn author stays outside.
       const anchor = a.kind === "node" ? a : (b.kind === "node" ? b : null);
-      if (!anchor) { kwTypedOutside += 1; continue; }
-      const at = anchor.drawn === "finding" ? findingPos.get(anchor.id)
-        : anchor.drawn === "session" ? actorPos.get(anchor.id)
-        : groupPos.get(anchor.id);
+      const author = e && e.author !== undefined && e.author !== null
+        ? String(e.author) : "";
+      const authorAt = !anchor && author && actorPos.has(author)
+        ? actorPos.get(author) : null;
+      if (!anchor && !authorAt) { kwTypedOutside += 1; continue; }
+      const at = anchor
+        ? (anchor.drawn === "finding" ? findingPos.get(anchor.id)
+          : anchor.drawn === "session" ? actorPos.get(anchor.id)
+          : groupPos.get(anchor.id))
+        : authorAt;
+      const anchorKey = anchor ? kwKey(anchor.drawn, anchor.id) : kwKey("session", author);
       const slotRing = (end) => {
         const rec = typedNodes.get(end.ref) || null;
         const rkind = String((rec && rec.kind) || "");
@@ -1534,7 +1548,7 @@
           : rkind === "finding" ? "finding"
           : ((KW_REF_FAMILIES.exec(end.ref) || [])[1]
             || (kwFindingRef(end.ref) ? "finding" : "reference"));
-        const mark = kwRefSlot(kwKey(anchor.drawn, anchor.id), at,
+        const mark = kwRefSlot(anchorKey, at,
           { ref: end.ref, family: fam });
         const refOnly = rec ? rec.referenceOnly === true : true;
         mark.typed = { kind: rkind, referenceOnly: refOnly };
