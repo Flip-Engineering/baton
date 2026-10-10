@@ -372,6 +372,9 @@
       if (ensemble !== lastEnsemble || !run) {
         run = el("section", "doc-band");
         run.dataset.docEnsemble = ensemble;
+        // The reader's position: the band their selection names takes the selection
+        // ink, and every other band stands exactly as it did.
+        if (ensemble && ensemble === opts.selectedEnsemble) run.classList.add("is-selected");
         var head = el("p", "doc-band-head");
         // The rehearsal mark names this run of rows, so a reader can point at
         // the place it starts.

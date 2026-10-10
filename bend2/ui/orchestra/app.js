@@ -39,6 +39,9 @@ const state = {
   // The knowledge the map is showing: universal by default, the selected worker's or
   // group's holdings once one is chosen, all held records only when asked for.
   knowledgeScope: { kind: "universal", id: "" },
+  // The ensemble a reader has selected, when they picked one: the position the roster
+  // marks and the address names, cleared when a seat selection takes the hash.
+  ensembleId: null,
   // The relation the record asked the map to light, by its recorded name.
   knowledgeFocusRelation: "",
   // Bumped by every relation activation, so activating the same relation again
@@ -393,6 +396,15 @@ function writeSeatAddress(id) {
   }
 }
 
+// An ensemble is addressable as well, so a reader can send a link to a group's
+// holdings rather than to one of its seats. Selecting a seat replaces this address,
+// because the hash names one position and the scope follows it.
+function writeEnsembleAddress(id) {
+  if (typeof history.replaceState === "function") {
+    history.replaceState(null, "", "#ensemble=" + encodeURIComponent(id));
+  }
+}
+
 // The record is addressable by finding as well as by seat, so a reader can send a
 // link to a claim. With no finding open the seat address stands, or the plain one.
 function writeFindingAddress(id) {
@@ -416,6 +428,9 @@ function select(id) {
   state.selectionId = id;
   state.knowledgeOpen = false;
   state.findingId = null;
+  // A seat selection replaces the ensemble position: the hash names one, and the
+  // scope that follows it is the seat's own.
+  state.ensembleId = null;
   // A new selection clears the relation the record had asked the map to light.
   state.knowledgeFocusRelation = "";
   // The map follows the selection into that worker's own holdings. Universal is the
@@ -1656,6 +1671,14 @@ function init() {
   if (seatAddress) state.pendingSeat = decodeURIComponent(seatAddress[1]);
   const findingAddress = String(location.hash || "").match(/^#finding=(.+)$/);
   if (findingAddress) state.findingId = decodeURIComponent(findingAddress[1]);
+  // An ensemble link restores the group's position and the scope that follows it. The
+  // scope is set here rather than through setKnowledgeScope so the boot's own reads
+  // carry it, instead of fetching universal first and the group behind it.
+  const ensembleAddress = String(location.hash || "").match(/^#ensemble=(.+)$/);
+  if (ensembleAddress) {
+    state.ensembleId = decodeURIComponent(ensembleAddress[1]);
+    state.knowledgeScope = { kind: "group", id: state.ensembleId };
+  }
 
   // The plate's section links move the reader without taking the record's address
   // with them: the seat or finding address stays in the bar, so a reload restores
@@ -1700,7 +1723,13 @@ function init() {
     el.roster.addEventListener("click", (ev) => {
       const open = ev.target && ev.target.closest ? ev.target.closest("[data-doc-group]") : null;
       if (!open) return;
-      setKnowledgeScope({ kind: "group", id: open.getAttribute("data-doc-group") });
+      const group = open.getAttribute("data-doc-group");
+      // Selecting an ensemble is a position as well as a scope: the band remembers it
+      // and the address names it, so a reader can reload onto it or send the link.
+      state.ensembleId = group;
+      writeEnsembleAddress(group);
+      setKnowledgeScope({ kind: "group", id: group });
+      markDrawnStale();
     });
   }
   if (el.mapScopeAll) {
@@ -2178,6 +2207,8 @@ function renderDocument() {
     },
     focusRelation: state.knowledgeFocusRelation || "",
     focusRelationSeq: state.knowledgeFocusSeq || 0,
+    // The ensemble the reader has selected, so the roster marks the band they are on.
+    selectedEnsemble: state.ensembleId || "",
     onReadMessage: (id) => { void loadMessageBody(id); },
     onScrub: selectHistoryEvent,
     onSelectEvent: selectHistoryEvent,

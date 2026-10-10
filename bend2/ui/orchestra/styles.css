@@ -614,6 +614,15 @@ button:active { background: var(--wash); }
 
 .doc-band { margin: 0 0 8px; }
 
+/* The band the reader has selected: its rehearsal mark takes the selection ink, the
+   same ink a selected row's rule uses, so the position reads in the language the
+   roster already speaks. The band keeps its ground and the rows keep their ink; a
+   receded fleet would carry a meaning the selection does not. */
+.doc-band.is-selected .doc-bracket {
+  color: var(--selection);
+  border-color: var(--selection);
+}
+
 .doc-band-head {
   display: flex;
   align-items: center;
