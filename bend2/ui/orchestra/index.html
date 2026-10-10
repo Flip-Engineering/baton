@@ -13,17 +13,17 @@
 </head>
 <body>
 
-<a class="skip" href="#pit">Skip to the pit</a>
+<a class="skip" href="#pit">Skip to Activity</a>
 
 <header class="plate">
   <h1 class="plate-title">Baton</h1>
   <p class="plate-sub">a live score</p>
   <nav class="plate-nav" aria-label="Move to a section">
-    <a href="#pit">The pit <span class="plate-count" id="plate-pit"></span></a>
-    <a href="#map">The map <span class="plate-count" id="plate-map"></span></a>
-    <a href="#staves">The staves <span class="plate-count" id="plate-staves"></span></a>
-    <a href="#record">The record <span class="plate-count" id="plate-record"></span></a>
-    <a href="#project">The project <span class="plate-count" id="plate-project"></span></a>
+    <a href="#pit">Activity <span class="plate-count" id="plate-pit"></span></a>
+    <a href="#map">Knowledge <span class="plate-count" id="plate-map"></span></a>
+    <a href="#staves">Agents <span class="plate-count" id="plate-staves"></span></a>
+    <a href="#record">Selected actor <span class="plate-count" id="plate-record"></span></a>
+    <a href="#project">Project <span class="plate-count" id="plate-project"></span></a>
   </nav>
   <p class="plate-state">
     <span class="plate-mark" id="plate-mark"></span>
@@ -42,7 +42,7 @@
        time grid for the whole page; the seats sit on their tiers under it. -->
   <section class="pit" id="pit" tabindex="-1" aria-labelledby="pit-title">
     <div class="pit-head">
-      <h2 id="pit-title" class="movement">The pit</h2>
+      <h2 id="pit-title" class="movement">Activity</h2>
       <p class="doc-counts" id="doc-counts"></p>
     </div>
     <div id="ribbon" class="doc-ribbon"></div>
@@ -56,7 +56,7 @@
   <!-- Read prior sessions from the selected actor's recorded workspace. -->
   <section class="project" id="project" tabindex="-1" aria-labelledby="project-title">
     <div class="movement-row">
-      <h2 id="project-title" class="movement">The project</h2>
+      <h2 id="project-title" class="movement">Project</h2>
       <p class="doc-scope" id="project-state" role="status"></p>
       <button type="button" id="project-load" class="doc-scope-btn">Read the project</button>
     </div>
@@ -69,7 +69,7 @@
   <!-- The map: the whole recorded ensemble. -->
   <section class="map" id="map" tabindex="-1" aria-labelledby="map-title">
     <div class="movement-row">
-      <h2 id="map-title" class="movement">The map</h2>
+      <h2 id="map-title" class="movement">Knowledge</h2>
       <div class="doc-scope-row">
         <span id="map-scope" class="doc-scope" role="status">Universal knowledge</span>
         <button type="button" id="map-scope-all" class="doc-scope-btn" aria-pressed="false">All held
@@ -85,7 +85,7 @@
   <section class="paper" id="staves" tabindex="-1" aria-labelledby="staves-title">
     <div class="staves-col">
       <div class="movement-row">
-        <h2 id="staves-title" class="movement">The staves</h2>
+        <h2 id="staves-title" class="movement">Agents</h2>
         <div class="doc-tools">
           <label class="doc-find">
             <span class="doc-find-label">Find an actor</span>

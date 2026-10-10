@@ -357,7 +357,7 @@
         if (single) {
           bandName.type = "button";
           bandName.dataset.docGroup = ensemble;
-          bandName.title = "Show " + ensemble + "'s knowledge on the map";
+          bandName.title = "Show " + ensemble + "'s holdings";
         }
         head.appendChild(bandName);
         head.appendChild(bandTicks(bandMembers.get(ensemble) || []));
