@@ -944,8 +944,6 @@ button:active { background: var(--wash); }
 .project-report {
   margin: 0 0 8px;
   padding: 8px 10px;
-  max-height: 240px;
-  overflow: auto;
   background: var(--wash);
   border-left: 2px solid var(--hairline);
   white-space: pre-wrap;
