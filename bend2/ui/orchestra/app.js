@@ -424,11 +424,14 @@ function writeFindingAddress(id) {
 }
 
 // A seam's relation is addressable in its own identity, so the back-and-forward
-// routing reaches what a click opened. The ends travel in the address: a cited
-// relation opens its finding's record, an authored one the claiming seat's.
+// routing reaches what a click opened. A cited seam carries its canonical
+// citing finding separately from its drawn ends (an anchored seam draws from
+// the author's seat), so the finding leads the resolution and takes the
+// address's source slot: the click, the address and the reload all open the
+// citing record. An authored relation opens the claiming seat.
 function resolveRelationAddress(rel) {
   if (!rel) return;
-  const ends = [rel.source, rel.target];
+  const ends = [rel.finding, rel.source, rel.target];
   const findingEnd = ends.find((e) => String(e || "").indexOf("finding:") === 0);
   if (findingEnd) {
     openRecordAt(String(findingEnd).slice("finding:".length));
@@ -445,9 +448,10 @@ function openRelationAt(rel) {
     // boot parse reads the same three components this writer emits, and a
     // field's own colons (typed prefixes, endpoint punctuation) survive
     // the round trip inside its encoding.
+    const source = rel.finding ? String(rel.finding) : String(rel.source || "");
     history.replaceState(null, "", "#relation="
       + encodeURIComponent(String(rel.provenance || ""))
-      + ":" + encodeURIComponent(String(rel.source || ""))
+      + ":" + encodeURIComponent(source)
       + ":" + encodeURIComponent(String(rel.target || "")));
   }
 }
