@@ -152,6 +152,31 @@ class Naming(unittest.TestCase):
         self.call('ensemble-member', 'build', self.principal, self.player, 'add')
         self.assertEqual(self.call('section', 'build', 'review')['members'], [])
 
+    def test_ensemble_owner_conflicts_preserve_coupling_sections_and_members(self):
+        self.call('ensemble', 'owned', self.principal, 'tight')
+        self.call('ensemble-member', 'owned', self.principal, self.player, 'add')
+        self.call('section', 'owned', 'review', self.principal, 'validation')
+        self.call('section-member', 'owned', 'review', self.principal, self.player, 'add')
+        original = self.call('ensemble', 'owned')
+        self.assertNotIn(self.principal, original['members'])
+        self.assertEqual(self.call('player', self.player)['parent'], self.associate)
+        self.assertEqual(self.call('ensemble', 'owned', self.principal), original)
+        self.assertEqual(self.call('ensemble', 'owned', self.principal, 'tight'), original)
+        for args in [('ensemble', 'owned', 'other top'),
+                     ('ensemble', 'owned', 'other top', 'loose')]:
+            with self.subTest(args=args):
+                before = self.stored()
+                refusal = self.call(*args, error='ensemble-owner-conflict')
+                self.assertEqual(refusal['ensemble'], 'owned')
+                self.assertEqual(refusal['existingOwner'], self.principal)
+                self.assertEqual(refusal['requestedOwner'], 'other top')
+                self.assertEqual(self.stored(), before)
+                self.assertEqual(self.call('ensemble', 'owned'), original)
+        updated = self.call('ensemble', 'owned', self.principal, 'loose')
+        self.assertEqual(updated['coupling'], 'loose')
+        self.assertEqual(updated['members'], original['members'])
+        self.assertEqual(updated['sections'], original['sections'])
+
     def test_sections_preserve_existing_message_and_knowledge_rules(self):
         self.call('ensemble', 'team', self.principal)
         self.call('section', 'team', 'review', self.principal, 'review')

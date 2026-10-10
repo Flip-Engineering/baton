@@ -399,11 +399,18 @@ def section_row(+row: String) -> String:
 def ensemble_row(+row: String) -> String:
   "json_object('id'," ++ row ++ ".id,'owner'," ++ row ++ ".owner,'coupling'," ++ row ++ ".coupling,'members',(SELECT json_group_array(session) FROM (SELECT session FROM ensemble_members WHERE ensemble=" ++ row ++ ".id AND " ++ member_present("ensemble_members.session") ++ " ORDER BY session)),'sections',(SELECT json_group_array(json(item)) FROM (SELECT " ++ section_row("sc") ++ " AS item FROM sections sc WHERE sc.ensemble=" ++ row ++ ".id ORDER BY sc.id)))"
 
+def ensemble_owner_refusal(+id: String, +owner: String) -> String:
+  "SELECT json_object('error','ensemble-owner-conflict','ensemble',id,'existingOwner',owner,'requestedOwner'," ++ q(owner) ++ ",'condition','The Ensemble ID is already registered to another owner.','next','Read ensemble ID and retain its recorded owner. Use another Ensemble ID for the requested owner.') FROM ensembles WHERE id=" ++ q(id) ++ " AND owner<>" ++ q(owner) ++ ";"
+
 def ensemble_sql(+id: String, +owner: String, +coupling: String) -> String:
-  "INSERT INTO ensembles(id,owner,coupling) SELECT " ++ q(id) ++ "," ++ q(owner) ++ "," ++ q(coupling) ++ " WHERE " ++ q(coupling) ++ " IN ('loose','tight') ON CONFLICT(id) DO UPDATE SET id=CASE WHEN ensembles.owner=excluded.owner THEN ensembles.id ELSE NULL END,coupling=excluded.coupling;SELECT " ++ ensemble_row("ensembles") ++ " FROM ensembles WHERE id=" ++ q(id) ++ " AND owner=" ++ q(owner) ++ " AND coupling=" ++ q(coupling) ++ ";"
+  "INSERT INTO ensembles(id,owner,coupling) SELECT " ++ q(id) ++ "," ++ q(owner) ++ "," ++ q(coupling) ++ " WHERE " ++ q(coupling) ++ " IN ('loose','tight') ON CONFLICT(id) DO UPDATE SET coupling=excluded.coupling WHERE ensembles.owner=excluded.owner;"
+  ++ ensemble_owner_refusal(id,owner)
+  ++ "SELECT " ++ ensemble_row("ensembles") ++ " FROM ensembles WHERE id=" ++ q(id) ++ " AND owner=" ++ q(owner) ++ " AND coupling=" ++ q(coupling) ++ ";"
 
 def ensemble_ensure_sql(+id: String, +owner: String) -> String:
-  "INSERT INTO ensembles(id,owner,coupling) VALUES (" ++ q(id) ++ "," ++ q(owner) ++ ",'loose') ON CONFLICT(id) DO UPDATE SET id=CASE WHEN ensembles.owner=excluded.owner THEN ensembles.id ELSE NULL END;SELECT " ++ ensemble_row("ensembles") ++ " FROM ensembles WHERE id=" ++ q(id) ++ " AND owner=" ++ q(owner) ++ ";"
+  "INSERT INTO ensembles(id,owner,coupling) VALUES (" ++ q(id) ++ "," ++ q(owner) ++ ",'loose') ON CONFLICT(id) DO NOTHING;"
+  ++ ensemble_owner_refusal(id,owner)
+  ++ "SELECT " ++ ensemble_row("ensembles") ++ " FROM ensembles WHERE id=" ++ q(id) ++ " AND owner=" ++ q(owner) ++ ";"
 
 def ensemble_member_sql(+id: String, +owner: String, +session: String, +action: String) -> String:
   "DELETE FROM ensemble_members WHERE ensemble=" ++ q(id) ++ " AND session=" ++ q(session) ++ " AND " ++ q(action) ++ "='remove' AND EXISTS(SELECT 1 FROM ensembles WHERE id=" ++ q(id) ++ " AND owner=" ++ q(owner) ++ ");"
