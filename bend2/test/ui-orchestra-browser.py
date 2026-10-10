@@ -34,39 +34,35 @@ class OrchestraBrowser(unittest.TestCase):
         if not chromium or not node:
             self.skipTest('chromium or node unavailable')
         with tempfile.TemporaryDirectory(dir=ROOT / '.scratch/bend2') as work:
-            out = pathlib.Path(work) / 'evidence'
-            out.mkdir()
-            try:
-                with subprocess.Popen(
-                    [node, str(DRIVER), str(EXE), work, str(out), chromium],
-                    stdout=subprocess.PIPE, stderr=subprocess.PIPE) as child:
-                    stdout = bytearray()
-                    stderr = bytearray()
-                    with selectors.DefaultSelector() as streams:
-                        streams.register(child.stdout, selectors.EVENT_READ,
-                                         (sys.stdout.buffer, stdout))
-                        streams.register(child.stderr, selectors.EVENT_READ,
-                                         (sys.stderr.buffer, stderr))
-                        while streams.get_map():
-                            for key, _ in streams.select():
-                                chunk = key.fileobj.read1()
-                                if not chunk:
-                                    streams.unregister(key.fileobj)
-                                    continue
-                                destination, retained = key.data
-                                retained.extend(chunk)
-                                destination.write(chunk)
-                                destination.flush()
-                    status = child.wait()
-                output = stdout.decode()
-                errors = stderr.decode()
-                self.assertEqual(status, 0, output + errors)
-                self.assertIn('BROWSER_QA_OK', output)
-            finally:
-                evidence = os.environ.get('FINAL_NATIVE_CONTEXT_EVIDENCE')
-                if evidence:
-                    shutil.copytree(out, pathlib.Path(evidence) / 'ui-browser',
-                                    dirs_exist_ok=True)
+            evidence = os.environ.get('FINAL_NATIVE_CONTEXT_EVIDENCE')
+            out = (pathlib.Path(evidence) / 'ui-browser' if evidence
+                   else pathlib.Path(work) / 'evidence')
+            out.mkdir(parents=True, exist_ok=True)
+            with subprocess.Popen(
+                [node, str(DRIVER), str(EXE), work, str(out), chromium],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE) as child:
+                stdout = bytearray()
+                stderr = bytearray()
+                with selectors.DefaultSelector() as streams:
+                    streams.register(child.stdout, selectors.EVENT_READ,
+                                     (sys.stdout.buffer, stdout))
+                    streams.register(child.stderr, selectors.EVENT_READ,
+                                     (sys.stderr.buffer, stderr))
+                    while streams.get_map():
+                        for key, _ in streams.select():
+                            chunk = key.fileobj.read1()
+                            if not chunk:
+                                streams.unregister(key.fileobj)
+                                continue
+                            destination, retained = key.data
+                            retained.extend(chunk)
+                            destination.write(chunk)
+                            destination.flush()
+                status = child.wait()
+            output = stdout.decode()
+            errors = stderr.decode()
+            self.assertEqual(status, 0, output + errors)
+            self.assertIn('BROWSER_QA_OK', output)
 
 
 if __name__ == '__main__':
