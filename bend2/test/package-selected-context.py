@@ -25,7 +25,7 @@ RECEIVE_SPEC.loader.exec_module(RECEIVE)
 
 
 # Scripted Muse protocol fixture using the installed coordinator and MCP adapter.
-NATIVE_HANDOFF = r'''import json,pathlib,re,subprocess,sys
+NATIVE_HANDOFF = r'''import json,os,pathlib,re,sqlite3,subprocess,sys
 config=json.loads(pathlib.Path(__file__).with_suffix('.json').read_text())
 args=sys.argv[1:]
 session=args[args.index('--model')+1]
@@ -70,6 +70,29 @@ for ident in re.findall(r'^Message \([^\n]*\) from [^\n]* \[id: (.*?)\]:$',promp
     tool('baton2_ack',{'id':ident,'receipt':'native-consumed-'+config['query']})
 body=json.dumps({'session':session,'native':native,'resume':resume,'prompt':prompt,
                  'retained':retained,'discoveryScope':inventory['scope']},ensure_ascii=False)
+if resume:
+    # A parented assignment stays open after its acknowledged turn. This
+    # scripted coordinator exchange requests and records completion before
+    # the terminal, so the replayed handoff settles with no pending input.
+    def coordinator(*arguments):
+        return json.loads(subprocess.check_output([config['exe'],config['db'],
+                                                   *arguments],text=True))
+    completion=coordinator('session',session)['taskCompletion']
+    assert completion['open'],completion
+    assignment=coordinator('delivery',completion['assignmentId'])
+    assert assignment['receipt'] is not None,assignment
+    parent=completion['coordinator']
+    request=completion['requestId'] or ('fixture-completion-'+str(os.getpid()))
+    if not completion['requestId']:
+        with sqlite3.connect(config['db']) as database:
+            database.execute('INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)',
+                             (request,session,parent,'completion-request',body))
+            database.execute('UPDATE messages SET receipt=? WHERE id=? AND recipient=?',
+                             ('Fixture coordinator reviewed the requested result.',request,parent))
+    coordinator('ack',request,parent,'Fixture coordinator reviewed the requested result.')
+    confirmation=request+':confirmed'
+    coordinator('message',confirmation,parent,session,'completion-confirmed',request)
+    coordinator('ack',confirmation,session,'Fixture worker handled coordinator confirmation.')
 print(json.dumps({'stream':stream,'payload_type':'run.terminal.completed',
                  'payload':{'kind':'run_terminal','terminal':'completed',
                             'command_id':'handoff','text':body}}),flush=True)
