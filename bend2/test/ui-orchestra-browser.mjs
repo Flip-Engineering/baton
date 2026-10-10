@@ -1024,7 +1024,7 @@ baton('promote', 'qa-worker-live-share', 'aide', 'worker', 'aide', 'qa-worker-li
 await until('live promotion updates the shared count through native SSE',
   `(document.querySelector('#roster .doc-row[data-doc-id="worker"] .kw-compact') || {}).textContent?.includes('2 shared')`);
 await until('live promotion draws the second recorded share edge through native SSE',
-  `[...document.querySelectorAll('#knowledge-whole .kw-edge-share[aria-label="promotion from worker to aide"]')].length === 2`);
+  `[...document.querySelectorAll('#knowledge-whole .kw-edge-share[aria-label="promotion from worker"]')].length === 2`);
 await evalJs(`document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]').dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))`);
 check('one-hop hover dims the second finding by the same author', await evalJs(
   `document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-live-finding"]').classList.contains('kw-hover-dim')`));
