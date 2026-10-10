@@ -537,6 +537,8 @@
           onReadMessage: options.onReadMessage,
           // The record's way back out of an outside-tree subject.
           onClearSelection: options.onClearSelection,
+          // A change row opens the seat it names, the same callback the map and the ribbon use.
+          onSelectActor: options.onSelect,
         });
       } else {
         var seat = options.selectedSeat || null;

@@ -8,6 +8,7 @@
    the actor, its reads or their refusal, and the way back.
    Finding relations carry the map's stroke for their authored name
    when the map exports it; without it they read text-only.
+   Change rows open their seat when the shell passes the way.
    All labels arrive through textContent. */
 
 var SEL_EVENT_LIMIT = 8;
@@ -80,6 +81,12 @@ function selEventTone(ev) {
   if (kind === "receipt" || kind.indexOf("report") !== -1) return "note";
   if (kind.indexOf("promot") !== -1 || kind.indexOf("shar") !== -1) return "info";
   return "plain";
+}
+
+// The stable key for one change row: the recorded fields that identify
+// the event, so focus returns to the same row after a live re-render.
+function selEventKey(ev) {
+  return [ev.at || "", ev.kind || "", ev.counterpart || "", ev.summary || ""].join("|");
 }
 
 var SEL_SVG = "http://www.w3.org/2000/svg";
@@ -691,7 +698,10 @@ function renderSelection(mount, data, options) {
     if (!w) {
       work.appendChild(selReadLine("Work for this actor", null));
     } else if (w.refused) {
-      work.appendChild(selEl("p", "sel-refused",
+      // The refusal through the read vocabulary, so the seat block states the route's
+      // reason like the outside-tree blocks do, with the bound scope named beside it.
+      work.appendChild(selReadLine("Work for this actor", w));
+      work.appendChild(selEl("p", "muted",
         "Work for this actor is outside the bound reader's scope."));
     } else if (w.error) {
       work.appendChild(selReadLine("Work for this actor", w));
@@ -821,9 +831,23 @@ function renderSelection(mount, data, options) {
       eventsBlock.appendChild(selEl("h2", "doc-section", "Changes"));
       var ul = selEl("ul", "sel-timeline");
       var listed = selEventsOpen ? mine : mine.slice(0, SEL_EVENT_LIMIT);
+      var canGo = options && typeof options.onSelectActor === "function";
       listed.forEach(function (ev) {
-        var row = selEl("li", "mono", selEventText(ev));
+        var text = selEventText(ev);
+        var row = selEl("li", "mono");
         row.dataset.tone = selEventTone(ev);
+        var seatId = ev.counterpart || ev.session;
+        if (canGo && seatId) {
+          var go = selEl("button", "sel-goto", text);
+          go.type = "button";
+          go.dataset.selkey = "sel:goto:" + selEventKey(ev);
+          go.title = "Open seat " + seatId;
+          go.setAttribute("aria-label", "Open seat " + seatId + ": " + text);
+          go.addEventListener("click", function () { options.onSelectActor(seatId); });
+          row.appendChild(go);
+        } else {
+          row.appendChild(document.createTextNode(text));
+        }
         ul.appendChild(row);
       });
       eventsBlock.appendChild(ul);

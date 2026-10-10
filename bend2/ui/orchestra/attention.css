@@ -1,11 +1,12 @@
 /* The pit stage: the seating plan drawn by attention.js.
 
    An ordinary stylesheet: the page serves `default-src 'self'` and refuses an
-   inserted <style>. The stage draws inside `.pit`, which remaps the status tokens
-   to their lit variants, so these rules read `var(--running)`, `var(--attention)`,
-   `var(--failed)`, `var(--muted)`, `var(--hairline)` and `var(--ink)` without
-   naming a lit value. One token the pit does not remap carries a ground value
-   here: `--stage-starting` matches the ribbon's lit waiting. */
+   inserted <style>. The stage draws inside `.pit`, which remaps the status tokens to
+   their lit variants. These rules read `var(--muted)`, `var(--hairline)`, `var(--ink)`,
+   `var(--wash)` and the ground tokens, and name no state colour: the state inks are set
+   by the module, in PAINT, on the shapes that own them. One token the pit does not
+   remap carries a ground value here for the module's own inks: `--stage-starting`
+   matches the ribbon's lit waiting. */
 
 .pit .att-stage {
   --stage-starting: #d7b45a;
@@ -56,8 +57,6 @@
 
 .pit .att-ring { fill: none; }
 
-.pit .att-elapsed { fill: none; opacity: 0.85; }
-
 .pit .att-seat-ring {
   fill: none;
   stroke: var(--ink);
@@ -70,10 +69,13 @@
 /* The keyboard cursor is the focus ring on the hall ground. */
 .pit .att-seat.att-cursor .att-seat-ring { stroke-width: 2; }
 
+/* The selection ring marks the opened actor in the page's own ink, the same ink the
+   keyboard cursor uses, so no ring borrows a state colour: an amber ring would read
+   as a stop. */
 .pit .att-seat.att-selected .att-seat-ring {
   opacity: 1;
   stroke-width: 2;
-  stroke: var(--attention);
+  stroke: var(--ink);
 }
 
 .pit .att-hit { fill: transparent; }
@@ -106,10 +108,12 @@
 .pit .att-seat:hover .att-seat-label,
 .pit .att-seat.att-cursor .att-seat-label { fill: var(--ink); }
 
-/* The baton: a curved line from the podium to the seat that acted most recently. */
+/* The baton: a curved line from the podium to the seat that acted most recently. It
+   wears the page's own ink rather than a state's, so no line on the stage borrows a
+   state colour its shape does not own. */
 .pit .att-baton {
   fill: none;
-  stroke: var(--attention);
+  stroke: var(--ink);
   stroke-width: 1.5;
   opacity: 0.75;
   stroke-dasharray: 4 4;
@@ -117,26 +121,26 @@
 }
 
 /* A recorded relation: stroke only, no filled body, width against the recorded
-   count. Promotions arrive as arcs from the author seat to the destination seat;
+   count, and its kind read from the pattern rather than from a state's colour.
+   Promotions arrive as dotted arcs from the author seat to the destination seat;
    message traffic joins the seat that recorded the change to the seat on its far
-   side, inked by the recorded kind and fading with age. */
+   side, fading with age, and its kind is named in its title. */
 .pit .att-know,
 .pit .att-thread {
   fill: none;
+  stroke: var(--muted);
   vector-effect: non-scaling-stroke;
 }
 
-.pit .att-know { stroke: var(--muted); opacity: 0.35; }
+.pit .att-know { opacity: 0.35; stroke-dasharray: 1 3; }
 
-.pit .att-thread { stroke: var(--muted); }
 .pit .att-thread-receipt,
-.pit .att-thread-report { stroke: var(--stage-starting); }
+.pit .att-thread-report { stroke-dasharray: 2 3; }
 .pit .att-thread-insert,
 .pit .att-thread-task,
 .pit .att-thread-guidance,
-.pit .att-thread-recovery { stroke: var(--stage-starting); }
-.pit .att-thread-stop { stroke: var(--failed); }
-.pit .att-thread-execution { stroke: var(--running); }
+.pit .att-thread-recovery { stroke-dasharray: 5 3; }
+.pit .att-thread-stop { stroke-dasharray: 9 3; }
 
 /* ── motion ────────────────────────────────────────────────────────────── */
 

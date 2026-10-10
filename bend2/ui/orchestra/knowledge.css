@@ -201,7 +201,8 @@ p.kw-card-title {
   overflow: hidden;
 }
 
-.kw-card-full {
+.kw-card-full,
+.kw-card-open {
   margin: 8px 0 0;
   padding: 0;
   background: none;
@@ -211,6 +212,10 @@ p.kw-card-title {
   color: var(--ink, #141a26);
   text-decoration: underline;
   cursor: pointer;
+}
+
+.kw-card-open {
+  display: block;
 }
 
 /* Reference tags: a relation end that names a message or an external
@@ -361,6 +366,18 @@ g.kw-ref.unheld .kw-ref-tag {
   paint-order: stroke;
   stroke: var(--paper, #fbfcfe);
   stroke-width: 3px;
+}
+
+/* Midpoint names stay back until their edge has hover or keyboard
+   focus, so the overview reads as strokes while every edge keeps its
+   path into its name. Settling still reserves their boxes. */
+.kw-edge-relate .kw-rel-name {
+  display: none;
+}
+
+.kw-edge-relate:hover .kw-rel-name,
+.kw-edge-relate:focus-within .kw-rel-name {
+  display: inline;
 }
 
 .kw-canvas .kw-name {

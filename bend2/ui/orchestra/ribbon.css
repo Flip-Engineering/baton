@@ -4,9 +4,11 @@
    arriving. The tempo mark sits at the axis's left end.
 
    The region reads the pit's own tokens, which the shell remaps to the lit
-   status colours. Only tokens prefixed --rib- are added here. */
+   status colours. Only tokens prefixed --rib- are added here, on the region's
+   own mount: the shell renders it as `<div id="ribbon">` and no element carries
+   a `ribbon` class, so the mount's id is the anchor every --rib- name hangs on. */
 
-.ribbon {
+#ribbon {
   --rib-grid: var(--staff, #39404b);
   /* The score's own ink, warm, mixed from the page's paper and brick. */
   --rib-ink: color-mix(in srgb, var(--paper, #e6e7e1) 84%, var(--rehearsal, #7a2f1c) 16%);
@@ -180,12 +182,13 @@
   background: var(--rib-ink);
 }
 
-/* The ink a recorded kind carries, on the note and on its second head. */
-.ribbon-cell .ribbon-ink-waiting { background: var(--rib-waiting); }
-.ribbon-cell .ribbon-ink-report { background: var(--rib-report); }
-.ribbon-cell .ribbon-ink-running { background: var(--running); }
-.ribbon-cell .ribbon-ink-failed { background: var(--failed); }
-.ribbon-cell .ribbon-ink-structure { background: var(--rib-structure); }
+/* The ink a recorded kind carries, on the notes, their second heads, and the
+   heads a seat's chip carries. */
+#ribbon .ribbon-ink-waiting { background: var(--rib-waiting); }
+#ribbon .ribbon-ink-report { background: var(--rib-report); }
+#ribbon .ribbon-ink-running { background: var(--running); }
+#ribbon .ribbon-ink-failed { background: var(--failed); }
+#ribbon .ribbon-ink-structure { background: var(--rib-structure); }
 
 .ribbon-note.ribbon-here {
   box-shadow: 0 0 0 2px var(--rib-needle);
@@ -274,6 +277,16 @@
 }
 
 .ribbon-chip-id { color: var(--muted); font-size: 11px; }
+
+/* A seat whose entries are arriving, in the region's whole-window live ink. */
+.ribbon-chip-live {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--running);
+  flex: none;
+  align-self: center;
+}
 
 .ribbon-actions {
   display: flex;

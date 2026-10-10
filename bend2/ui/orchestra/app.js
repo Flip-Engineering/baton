@@ -388,6 +388,21 @@ function writeSeatAddress(id) {
   }
 }
 
+// The record is addressable by finding as well as by seat, so a reader can send a
+// link to a claim. With no finding open the seat address stands, or the plain one.
+function writeFindingAddress(id) {
+  if (typeof history.replaceState !== "function") return;
+  if (id) {
+    history.replaceState(null, "", "#finding=" + encodeURIComponent(id));
+    return;
+  }
+  if (state.selectionId) {
+    writeSeatAddress(state.selectionId);
+    return;
+  }
+  history.replaceState(null, "", location.pathname + location.search);
+}
+
 function select(id) {
   // An id outside the snapshot is an outside-tree subject, never a dead one: the
   // record reads the id and says so, and the reads answer their own refusal. No
@@ -1091,10 +1106,33 @@ function followGraphAuthor(id) {
   void loadActorWork(actor);
 }
 
+// Open the record at a finding: select it, render, then land the record on its block.
+// The map's pinned card and any future caller use this one path, so the block a reader
+// lands on is the block the record keeps.
+function openRecordAt(id) {
+  if (!id) return;
+  state.findingId = id;
+  writeFindingAddress(id);
+  markDrawnStale();
+  renderDocument();
+  const land = () => {
+    const block = el.selection && el.selection.querySelector("#sel-sec-finding");
+    if (block && typeof block.scrollIntoView === "function") {
+      block.scrollIntoView({ block: "start" });
+      return true;
+    }
+    return false;
+  };
+  // A click arrives during a pointer gesture, which defers the repaint; the block exists
+  // after the flush, so one frame later is the retry.
+  if (!land() && typeof requestAnimationFrame === "function") requestAnimationFrame(land);
+}
+
 // Open the complete claim, evidence and limits beside the graph.
 function toggleFinding(id) {
   if (!id) return;
   state.findingId = state.findingId === id ? null : id;
+  writeFindingAddress(state.findingId);
   if (state.findingId) {
     // A finding selected from the seats opens its recorded content. A finding no
     // recorded promotion carries has no row until the unshared rows are shown,
@@ -1573,10 +1611,13 @@ function init() {
   state.fixtureName = query.get("fixture") || "";
   state.subject = query.get("subject") || "";
 
-  // A seat address (#seat=<id>) selects that seat once the snapshot lands, so a
-  // link a reader sends opens the same record.
+  // A seat address (#seat=<id>) selects that seat once the snapshot lands, and a finding
+  // address (#finding=<id>) opens that claim's record, so a link a reader sends opens the
+  // same record.
   const seatAddress = String(location.hash || "").match(/^#seat=(.+)$/);
   if (seatAddress) state.pendingSeat = decodeURIComponent(seatAddress[1]);
+  const findingAddress = String(location.hash || "").match(/^#finding=(.+)$/);
+  if (findingAddress) state.findingId = decodeURIComponent(findingAddress[1]);
 
   // Query changes move to the first visible match while retaining typing focus.
   if (el.find) {
@@ -2063,7 +2104,14 @@ function renderDocument() {
     // A selection intent always renders, even when the same finding is activated
     // again: the map may have dismissed its card since, and its own state changed
     // without the shell's signature moving.
-    onSelectFinding: (id) => { state.findingId = id; markDrawnStale(); renderDocument(); },
+    onSelectFinding: (id) => {
+      state.findingId = id;
+      writeFindingAddress(id);
+      markDrawnStale();
+      renderDocument();
+    },
+    // The map's pinned card opens the record at its finding, on that finding's block.
+    onOpenRecord: (id) => { openRecordAt(id); },
     onReadMessage: (id) => { void loadMessageBody(id); },
     onScrub: selectHistoryEvent,
     onSelectEvent: selectHistoryEvent,

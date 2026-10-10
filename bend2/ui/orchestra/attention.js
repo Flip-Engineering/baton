@@ -11,9 +11,9 @@
    reads. The marks are unchanged by either: a stop that is read still draws its ring.
 
    The stage draws one seat per actor, shaped and inked by its state, with the
-   baton on the seat that acted most recently, a queue bar under a seat that owes
-   work, an elapsed arc for the time on the current action, and the recorded
-   relations as threads between the seats that hold them. Every tier maps onto the
+   baton on the seat that acted most recently, a recency trail above the mark, a
+   queue bar under a seat that owes work, and the recorded relations as threads
+   between the seats that hold them. Every tier maps onto the
    mount's width and wraps inside it, so no seat is painted outside the box.
 
    The default set is the shell's: an actor is seated unless its id arrives in
@@ -593,15 +593,15 @@
           width: w,
           caps: caps,
         });
-        // The trail is a tick in the band under the mark, starting past whatever the
-        // seat already draws there (its queue bar), on whichever side the row leaves
-        // more room. Its length is set at draw time from how recent the action is.
-        var tickPad = Math.max(radius + 2,
-          tier.rows[k].owed > 0 ? radius * 0.5 + Math.min(tier.rows[k].owed, 6) + 3 : 0);
-        var tickRight = nextLeft - (x + tickPad);
-        var tickLeft = (x - tickPad) - (column === 0 ? 4 : x - pitch + radius + 4);
+        // The trail runs in its own band above the mark, where the neighbours' marks do
+        // not reach: its room is the space to the next trail on either side, or to the
+        // box. Its length is set at draw time from how recent the action is.
+        var tickPad = radius + 1;
+        var toOtherTrail = Math.max(0, pitch - 2 * tickPad);
+        var tickLeft = Math.max(0, Math.min((x - tickPad) - 4, toOtherTrail));
+        var tickRight = Math.max(0, Math.min((w - 4) - (x + tickPad), toOtherTrail));
         var tickDir = tickRight >= tickLeft ? 1 : -1;
-        var tickRoom = Math.max(tickRight, tickLeft);
+        var tickRoom = Math.max(tickLeft, tickRight);
         var trail = tickRoom >= 3
           ? { dir: tickDir, pad: tickPad, room: Math.min(tickRoom, radius * 1.8) }
           : null;
@@ -707,17 +707,6 @@
     return shape;
   }
 
-  // How long a working seat has been on its recorded action, against the longest
-  // working seat, so duration is read as the length of an arc.
-  function elapsedOf(row, now, longest) {
-    if (!row.live || !row.at || !longest) return 0;
-    var when = Date.parse(row.at);
-    if (!isFinite(when)) return 0;
-    var spent = now - when;
-    if (!isFinite(spent) || spent <= 0) return 0;
-    return Math.max(0.08, Math.min(1, spent / longest));
-  }
-
   function seatNode(entry, options, marks, laid) {
     var seat = entry.seat;
     var radius = laid.radius;
@@ -732,19 +721,6 @@
       "data-att-id": seat.id,
       "data-att-state": seat.reading,
     });
-
-    if (marks.elapsed > 0) {
-      var spentRadius = radius + 3.5;
-      var circumference = 2 * Math.PI * spentRadius;
-      var spent = svgEl("circle", {
-        "class": "att-elapsed", r: spentRadius, cx: 0, cy: 0, transform: "rotate(-90)",
-      });
-      spent.style.fill = "none";
-      spent.style.stroke = paint.ink;
-      spent.style.strokeWidth = "1.6";
-      spent.style.strokeDasharray = (marks.elapsed * circumference).toFixed(1) + " " + circumference.toFixed(1);
-      group.appendChild(spent);
-    }
 
     if (seat.live) {
       var halo = svgEl("circle", { "class": "att-halo", r: radius + 5, cx: 0, cy: 0 });
@@ -770,17 +746,19 @@
 
     group.appendChild(shapeNode(seat.reading, radius));
 
-    // The trail: the pit's second, quieter reading of activity, in the band under the
-    // mark where no name sits. Its length grades how recently the seat acted, against
-    // the span the hall covers, and a broken trail marks an activity from an earlier
-    // event. No recorded action, no trail.
+    // The trail: the pit's reading of activity, on its own band above the mark where
+    // no name sits and no other mark reaches. Its length grades how recently the seat
+    // acted, against the span the hall covers, and a broken trail marks an activity
+    // from an earlier event. No recorded action, no trail. The queue bar keeps the
+    // band below the mark, so the two read by position and never by width.
     if (entry.trail && marks.recent) {
       var reach = radius * 0.5 + marks.recent.fresh * Math.max(0, entry.trail.room - radius * 0.5);
       var from = entry.trail.dir * entry.trail.pad;
+      var above = -(radius + 7);
       var trail = svgEl("line", {
         "class": "att-trail" + (seat.stale ? " att-trail-earlier" : ""),
-        x1: from, y1: radius + 4,
-        x2: from + entry.trail.dir * reach, y2: radius + 4,
+        x1: from, y1: above,
+        x2: from + entry.trail.dir * reach, y2: above,
       });
       group.appendChild(trail);
     }
@@ -915,6 +893,7 @@
       path.style.opacity = (0.18 + 0.72 * (1 - held.age / oldest)).toFixed(2);
       var title = svgEl("title");
       setText(title, held.count + (held.count === 1 ? " recorded change" : " recorded changes")
+        + (held.kind ? " (" + held.kind + ")" : "")
         + " between " + parts[0] + " and " + parts[1]);
       path.appendChild(title);
       stage.appendChild(path);
@@ -1009,13 +988,6 @@
     }
 
     var now = Date.now();
-    var longest = 0;
-    for (var w = 0; w < result.rows.length; w += 1) {
-      var working = result.rows[w];
-      if (!working.live || !working.at) continue;
-      var since = Date.parse(working.at);
-      if (isFinite(since) && now - since > longest) longest = now - since;
-    }
 
     // How recent each drawn seat's action is, against the span the hall covers: the
     // newest seat grades 1, the oldest 0, and a seat no older than the rest grades 1.
@@ -1073,7 +1045,6 @@
       var entry = laid.seats[i];
       var node = seatNode(entry, options, {
         fresh: fresh[entry.seat.id] === true,
-        elapsed: elapsedOf(entry.seat, now, longest),
         recent: recent[entry.seat.id] || null,
         cursor: entry.seat.id === cursorId,
       }, laid);

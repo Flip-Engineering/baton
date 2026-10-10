@@ -1167,8 +1167,10 @@
         const pb = nodePos(b);
         const mx = (pa.x + pb.x) / 2;
         const my = (pa.y + pb.y) / 2;
+        // Midpoint names stay out of the stroke gaps: settling tags
+        // still avoid their boxes, but hidden text carves no gaps.
         kwLabelBoxes.push({ x0: mx - shown.length * 3.5 - 4, y0: my - 12,
-          x1: mx + shown.length * 3.5 + 4, y1: my + 2 });
+          x1: mx + shown.length * 3.5 + 4, y1: my + 2, gap: false });
       }
       relateSpecs.push({ a, b, name, shown });
     }
@@ -1252,6 +1254,7 @@
       const dy = y2 - y1;
       const blocks = [];
       for (const box of kwLabelBoxes) {
+        if (box.gap === false) continue;
         const pad = 3;
         const bx0 = box.x0 - pad;
         const bx1 = box.x1 + pad;
@@ -1316,6 +1319,8 @@
         "data-kind": "relation",
         "data-from": a.kind === "node" ? a.id : a.ref,
         "data-to": b.kind === "node" ? b.id : b.ref,
+        tabindex: "0",
+        role: "img",
         "aria-label": "recorded relation '" + name + "' from "
           + (a.kind === "node" ? a.id : a.ref) + " to "
           + (b.kind === "node" ? b.id : b.ref),
@@ -1343,9 +1348,10 @@
       }
       const tip = kwSvg(g, "title", null);
       tip.textContent = "recorded relation '" + name + "'";
-      // Node-to-node edges carry the authored name at the midpoint; a
-      // stub to a tag is too short for a name, so the name lives in
-      // the edge title and in the tag's card instead.
+      // Node-to-node edges carry the authored name at the midpoint,
+      // kept back until the edge has hover or keyboard focus; a stub to
+      // a tag is too short for a name, so the name lives in the edge
+      // title and in the tag's card instead.
       if (shown) {
         const mx = (from.x + to.x) / 2;
         const my = (from.y + to.y) / 2;
@@ -1955,6 +1961,13 @@
         if (typeof rail.scrollIntoView === "function") rail.scrollIntoView({ block: "nearest" });
         if (typeof rail.focus === "function") rail.focus({ preventScroll: true });
       });
+      // The shell opens the record at this finding when it offers the
+      // hook; without it the card stays exactly as it was.
+      if (opts && typeof opts.onOpenRecord === "function") {
+        const open = kwEl(card, "button", { class: "kw-card-open", type: "button" },
+          "Show in the record");
+        open.addEventListener("click", () => { opts.onOpenRecord(found.id); });
+      }
     } else if (actors[sel]) {
       const held = actors[sel] || {};
       const read = kwActorReads[sel] || {};
