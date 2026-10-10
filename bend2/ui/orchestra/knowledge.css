@@ -115,6 +115,20 @@
   cursor: pointer;
 }
 
+/* The earlier/fewer disclosure reads as a control beside the steps,
+   opening the full retained walk in the bar's own flow. */
+.kw-walk-earlier,
+.kw-walk-fewer {
+  padding: 0 4px;
+  background: none;
+  border: 1px solid var(--muted, #5b6478);
+  border-radius: 4px;
+  font: inherit;
+  font-size: var(--step0, 12px);
+  color: var(--ink, #141a26);
+  cursor: pointer;
+}
+
 /* The direction control: two toggle buttons beside the walk, using
    the page's pressed treatment. */
 .kw-direction {
@@ -352,24 +366,15 @@ th.kw-flow-h {
 }
 
 .kw-card {
-  position: absolute;
-  top: 8px;
-  right: 8px;
+  /* The card sits in page flow below the canvas: the column grows
+     with it, so a long claim, the reference rows and the junction
+     rows all read whole with no scroller anywhere in the lane. */
   max-width: 320px;
-  /* The card keeps no scroller: it is a glance in page flow, long
-     titles clamp to a few lines, and the record button below carries
-     the path to the whole. The lane holds zero scrollers. */
+  margin: 8px 0 0;
   padding: 10px 12px;
   background: var(--paper, #fbfcfe);
   border: 1px solid var(--muted, #5b6478);
   border-radius: 6px;
-}
-
-/* The card opens on the side away from its node, so it does not sit
-   on the node's own group boundary. */
-.kw-card.kw-card-left {
-  left: 8px;
-  right: auto;
 }
 
 /* The pinned card reads in three layers: the node's identity and its
@@ -386,15 +391,6 @@ th.kw-flow-h {
 
 .kw-card-state {
   margin-top: 2px;
-}
-
-/* Long titles clamp to four lines without a scroller; the record
-   button carries the whole text. Clipping only, no scroll region. */
-p.kw-card-title {
-  display: -webkit-box;
-  -webkit-line-clamp: 4;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
 }
 
 .kw-card-full,
