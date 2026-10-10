@@ -214,6 +214,7 @@
       anchor: toRight ? "start" : "end",
       dx: toRight ? pad : -pad,
       baseline: 4,
+      under: false,
     };
   }
 
@@ -245,6 +246,7 @@
       anchor: anchor,
       dx: dx,
       baseline: place.radius + 14,
+      under: true,
     };
   }
 
@@ -562,6 +564,7 @@
     var seats = [];
     var order = [];
     var blocked = {};
+    var underLabel = false;
     var y = seatTop;
     for (var i = 0; i < plan.tiers.length; i += 1) {
       var tier = plan.tiers[i];
@@ -609,6 +612,7 @@
         var trail = tickRoom >= 3
           ? { dir: tickDir, pad: tickPad, room: Math.min(tickRoom, radius * 1.8) }
           : null;
+        if (label && label.under) underLabel = true;
         if (label && label.anchor !== "middle") {
           blocked[lane] = label.anchor === "end"
             ? x + label.dx
@@ -628,9 +632,10 @@
     }
 
     // The height the drawing covers: the last row's centre, the bow the outermost
-    // seats take, the mark, and the room a name under a mark needs. The SVG, its
-    // viewBox and the published height all take this value.
-    var content = Math.round(y - (totalRows > 0 ? gap : 0) + BOW + radius + 18);
+    // seats take, the mark, and the room a name under a mark needs - reserved only when
+    // a name was actually drawn there, so a hall whose names all sit beside their marks
+    // keeps no empty tail. The SVG, its viewBox and the published height all take this.
+    var content = Math.round(y - (totalRows > 0 ? gap : 0) + BOW + radius + (underLabel ? 18 : 8));
     return {
       seats: seats,
       order: order,
