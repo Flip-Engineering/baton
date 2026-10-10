@@ -1,39 +1,62 @@
-/* The pit stage: the seating plan drawn by attention.js.
+/* The stage: the seating plan drawn by attention.js.
 
-   An ordinary stylesheet: the page serves `default-src 'self'` and refuses an
-   inserted <style>. The stage draws inside `.pit`, which remaps the status tokens to
-   their lit variants. These rules read `var(--muted)`, `var(--hairline)`, `var(--ink)`,
+   An ordinary stylesheet: the page serves `default-src 'self'` and refuses an inserted
+   <style>. Every rule is scoped to the stage's own mount, `.lane-strip`, so the drawing
+   looks the same wherever its region sits.
+
+   The mount carries the material the drawing needs, because the Agents region sits on
+   the paper material and the stage is the seats rather than a written surface: it keeps
+   the hall's dark ground and the lit status tokens the marks were drawn against, copied
+   from the hall's own block, which the stage used to inherit. The band's height cap is
+   the lead's value, carried here for the same reason: the rule that set it is scoped to
+   the old region. The rules below read `var(--muted)`, `var(--hairline)`, `var(--ink)`,
    `var(--wash)` and the ground tokens, and name no state colour: the state inks are set
-   by the module, in PAINT, on the shapes that own them. One token the pit does not
+   by the module, in PAINT, on the shapes that own them. One token the hall does not
    remap carries a ground value here for the module's own inks: `--stage-starting`
    matches the ribbon's lit waiting. */
 
-.pit .att-stage {
+.lane-strip {
+  --ink: #e8e9e4;
+  --muted: var(--graphite-lit, #9aa3b4);
+  --hairline: var(--hall-edge, #2b2419);
+  --wash: #1f1a12;
+  --surface: #191410;
+  --attention: var(--attention-lit, #e2a94f);
+  --running: var(--running-lit, #57c46a);
+  --failed: var(--failed-lit, #ef6b5f);
+  --staff: #39404b;
   --stage-starting: #d7b45a;
+  background: var(--hall, #131009);
+  color: var(--ink);
+  max-height: min(36vh, 320px);
+  overflow-y: auto;
+}
+
+.lane-strip .att-stage {
   display: block;
   overflow: visible;
 }
 
-.pit .att-stage:focus { outline: none; }
+.lane-strip .att-stage:focus { outline: none; }
 
 /* ── the hall: ground, tier bands, floor ───────────────────────────────── */
 
 /* The ground runs from the lifted surface at the top to the deep floor, so the
    drawing reads as a room. The gradient is defined in the SVG. */
-.pit .att-hall { fill: var(--surface); }
+.lane-strip .att-hall { fill: var(--surface); }
 
 /* A lifted band behind every other tier, so a wide row reads across as one line. */
-.pit .att-tier {
+.lane-strip .att-tier {
   fill: var(--wash);
   opacity: 0.55;
 }
 
 /* Every mark sits on a cast shadow: the depth of the hall, not a second colour. */
-.pit .att-floor { fill: rgba(0, 0, 0, 0.4); }
+.lane-strip .att-floor { fill: rgba(0, 0, 0, 0.4); }
 
 /* The trail behind a seat: its length grades how recently the seat acted, on a
    channel the state does not own, so shape and ink keep reading the state alone. */
-.pit .att-trail {
+.lane-strip .att-trail {
   stroke: var(--muted);
   stroke-width: 1.2;
   stroke-linecap: round;
@@ -41,10 +64,10 @@
 }
 
 /* An action from an earlier event reads as a broken trail, never a fresh one. */
-.pit .att-trail-earlier { stroke-dasharray: 2 3; }
+.lane-strip .att-trail-earlier { stroke-dasharray: 2 3; }
 
 /* The podium rule: the line the tiers stand behind. */
-.pit .att-plate {
+.lane-strip .att-plate {
   stroke: var(--muted);
   stroke-width: 1;
   opacity: 0.4;
@@ -53,43 +76,43 @@
 /* ── the seats ─────────────────────────────────────────────────────────── */
 
 /* A seat is a pointer target and one stop in the stage's own keyboard walk. */
-.pit .att-seat { cursor: pointer; }
+.lane-strip .att-seat { cursor: pointer; }
 
-.pit .att-ring { fill: none; }
+.lane-strip .att-ring { fill: none; }
 
-.pit .att-seat-ring {
+.lane-strip .att-seat-ring {
   fill: none;
   stroke: var(--ink);
   opacity: 0;
 }
 
-.pit .att-seat:hover .att-seat-ring,
-.pit .att-seat.att-cursor .att-seat-ring { opacity: 0.9; }
+.lane-strip .att-seat:hover .att-seat-ring,
+.lane-strip .att-seat.att-cursor .att-seat-ring { opacity: 0.9; }
 
 /* The keyboard cursor is the focus ring on the hall ground. */
-.pit .att-seat.att-cursor .att-seat-ring { stroke-width: 2; }
+.lane-strip .att-seat.att-cursor .att-seat-ring { stroke-width: 2; }
 
 /* The selection ring marks the opened actor in the page's own ink, the same ink the
    keyboard cursor uses, so no ring borrows a state colour: an amber ring would read
    as a stop. */
-.pit .att-seat.att-selected .att-seat-ring {
+.lane-strip .att-seat.att-selected .att-seat-ring {
   opacity: 1;
   stroke-width: 2;
   stroke: var(--ink);
 }
 
-.pit .att-hit { fill: transparent; }
+.lane-strip .att-hit { fill: transparent; }
 
 /* A tier's name sits flush left and its seat count flush right, so the column is
    a table of groups and sizes: the name is readable without hover, and the count
    is the figure that tells its size. */
-.pit .att-section-label {
+.lane-strip .att-section-label {
   font-family: var(--mono);
   font-size: 10px;
   fill: var(--muted);
 }
 
-.pit .att-section {
+.lane-strip .att-section {
   font-family: var(--mono);
   font-size: 10px;
   fill: var(--muted);
@@ -98,20 +121,20 @@
 }
 
 /* The seat's own name, under its mark, in the same ink as the tier labels. */
-.pit .att-seat-label {
+.lane-strip .att-seat-label {
   font-family: var(--mono);
   font-size: 9px;
   fill: var(--muted);
   text-anchor: middle;
 }
 
-.pit .att-seat:hover .att-seat-label,
-.pit .att-seat.att-cursor .att-seat-label { fill: var(--ink); }
+.lane-strip .att-seat:hover .att-seat-label,
+.lane-strip .att-seat.att-cursor .att-seat-label { fill: var(--ink); }
 
 /* The baton: a curved line from the podium to the seat that acted most recently. It
    wears the page's own ink rather than a state's, so no line on the stage borrows a
    state colour its shape does not own. */
-.pit .att-baton {
+.lane-strip .att-baton {
   fill: none;
   stroke: var(--ink);
   stroke-width: 1.5;
@@ -131,33 +154,33 @@
    these counts are chosen against the shortest thread the stage models, which is long
    enough for every family to repeat. The kind is named in each thread's title as well,
    so the pattern is never the only channel. */
-.pit .att-know,
-.pit .att-thread {
+.lane-strip .att-know,
+.lane-strip .att-thread {
   fill: none;
   stroke: var(--muted);
   vector-effect: non-scaling-stroke;
 }
 
-.pit .att-know { opacity: 0.35; stroke-dasharray: 1 3; }
+.lane-strip .att-know { opacity: 0.35; stroke-dasharray: 1 3; }
 
-.pit .att-thread-receipt,
-.pit .att-thread-report { stroke-dasharray: 3 3; }
-.pit .att-thread-task,
-.pit .att-thread-guidance,
-.pit .att-thread-recovery { stroke-dasharray: 6 4; }
-.pit .att-thread-stop { stroke-dasharray: 10 6; }
+.lane-strip .att-thread-receipt,
+.lane-strip .att-thread-report { stroke-dasharray: 3 3; }
+.lane-strip .att-thread-task,
+.lane-strip .att-thread-guidance,
+.lane-strip .att-thread-recovery { stroke-dasharray: 6 4; }
+.lane-strip .att-thread-stop { stroke-dasharray: 10 6; }
 
 /* A kind the five families do not name: the sparsest mark on the ladder, one dot with
    a 23px gap (period 24, half again the stop family's 16), so an unnamed kind can
    never be read as an execution or as any family. Its title still names it. */
-.pit .att-thread-recorded { stroke-dasharray: 1 23; }
+.lane-strip .att-thread-recorded { stroke-dasharray: 1 23; }
 
 /* ── motion ────────────────────────────────────────────────────────────── */
 
 /* Motion marks work in flight and a state that has just changed; a state that
    holds still keeps the fermata ring and does not pulse. */
-.pit .att-working .att-halo { animation: att-breathe 2600ms ease-in-out infinite; }
-.pit .att-new .att-core { animation: att-flash 900ms ease-out 1; }
+.lane-strip .att-working .att-halo { animation: att-breathe 2600ms ease-in-out infinite; }
+.lane-strip .att-new .att-core { animation: att-flash 900ms ease-out 1; }
 
 @keyframes att-breathe {
   0%, 100% { opacity: 0.18; }
@@ -177,7 +200,7 @@
 
 /* The legend is the label for the state vocabulary: one silhouette and ink per
    state, with its word in plain sight beside it. */
-.pit .att-legend {
+.lane-strip .att-legend {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -189,35 +212,35 @@
   color: var(--muted);
 }
 
-.pit .att-key {
+.lane-strip .att-key {
   display: inline-flex;
   align-items: center;
   gap: 5px;
   cursor: default;
 }
 
-.pit .att-key-mark,
-.pit .att-chip-mark {
+.lane-strip .att-key-mark,
+.lane-strip .att-chip-mark {
   display: block;
   flex: none;
 }
 
-.pit .att-quiet { margin: 6px 0 0; color: var(--muted); }
+.lane-strip .att-quiet { margin: 6px 0 0; color: var(--muted); }
 
 /* The chip states a state and a name. The name never clips and the chip keeps a
    floor, so no chip can render as a fragment; the activity yields instead. */
-.pit .lane-chip { min-width: 104px; }
+.lane-strip .lane-chip { min-width: 104px; }
 
-.pit .lane-chip .lane-id { flex: none; }
+.lane-strip .lane-chip .lane-id { flex: none; }
 
-.pit .lane-chip .att-activity {
+.lane-strip .lane-chip .att-activity {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 /* What the stage announces when the keyboard walks it. */
-.pit .att-sr {
+.lane-strip .att-sr {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -230,10 +253,10 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .pit .att-working .att-halo,
-  .pit .att-baton,
-  .pit .att-new .att-core { animation: none; }
+  .lane-strip .att-working .att-halo,
+  .lane-strip .att-baton,
+  .lane-strip .att-new .att-core { animation: none; }
 
-  .pit .att-working .att-halo { opacity: 0.4; }
-  .pit .att-baton { opacity: 0.6; }
+  .lane-strip .att-working .att-halo { opacity: 0.4; }
+  .lane-strip .att-baton { opacity: 0.6; }
 }

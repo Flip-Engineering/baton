@@ -290,8 +290,6 @@ button:active { background: var(--wash); }
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
-  max-height: 128px;
-  overflow-y: auto;
   scrollbar-gutter: stable;
   padding: 4px 4px 8px;
 }
@@ -374,15 +372,6 @@ button:active { background: var(--wash); }
 .pit .doc-counts .stat.failed b { color: var(--failed-lit); }
 
 .pit .doc-counts .stat-sep { color: var(--hall-edge); }
-
-/* The stage draws to the height its own content needs; the hall shows a bounded
-   slice of that and scrolls, so a large run keeps a presence a reader can take in
-   while every actor stays reachable. The bound is low enough that the map below keeps its
-   place on a laptop screen; a large orchestra scrolls inside it. */
-.pit .lane-strip {
-  max-height: min(36vh, 320px);
-  overflow-y: auto;
-}
 
 /* The written surfaces and the record rail: one grid, so the record keeps the
    reader's selection in view while the map and the staves pass it. */

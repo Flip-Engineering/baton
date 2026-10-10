@@ -1,4 +1,4 @@
-/* The pit stage: liveness, document order and the seating plan. Read-only.
+/* The stage: liveness, document order and the seating plan. Read-only.
    One global entry: renderAttention(container, data, options).
 
    State vocabulary, settled: running, queued, stopped, failed, owes work,
@@ -39,13 +39,17 @@
   var R_MIN = 5.5;        // the mark's radius at the largest run
   var R_MAX = 18;         // the mark's radius at the smallest run
   // The hall keeps this height unless the mount states its own: the band the
-  // shell gives the pit, less the legend and one row of chips.
+  // shell gives the mount, less the legend and one row of chips.
   var SHELL_BOUND = 164;
-  var BOW = 14;           // how far the outermost seats bow away from the podium
+  var BOW = 14;           // how far the outermost seats bow from the conductors' tier
   var STRIP_LIMIT = 12;   // strip rows before the fold
   var ID_SHOWN = 30;      // characters of an id before the ellipsis
   var SHORT_KEEP = 24;    // an id this short is already its own short form
   var STAMP = /^\d{4,}$/; // a trailing date stamp is not part of a name
+  // The window the trail grades against: the score's own live window, RIBBON_LIVE_MS in
+  // ribbon.js, so the two surfaces agree about what recent means. Copied rather than
+  // read, because this module reads no other module.
+  var RECENT_WINDOW_MS = 90000;
 
   // Worst first: the document order is also the strip's order and the roster's.
   var READINGS = ["failed", "stopped", "queued", "owesWork", "running", "quiet"];
@@ -471,7 +475,7 @@
 
   /* ── the seating plan ─────────────────────────────────────────────────── */
 
-  // Conductors stand on the podium tier; every ensemble is one tier, and actors
+  // Conductors stand on their own tier; every ensemble is one tier, and actors
   // in no ensemble share the last tier. Tiers keep the document order inside.
   function stagePlan(rows, ensembles) {
     var podium = [];
@@ -572,7 +576,7 @@
         var row = Math.floor(k / inRow);
         var column = k - row * inRow;
         var x = inRow === 1 ? gutter + usable / 2 : gutter + column * pitch;
-        // The tiers bow away from the podium at the edges, so the hall reads as a
+        // The tiers bow away from the conductors' tier at the edges, so the hall reads
         // seating plan.
         var bow = BOW * Math.pow((x - mid) / Math.max(1, mid), 2);
         // Where this seat's name may reach: the next seat's mark, the box, the row's
@@ -934,9 +938,9 @@
     var defs = svgEl("defs");
     var gradient = svgEl("linearGradient", { id: "att-hall", x1: 0, y1: 0, x2: 0, y2: 1 });
     var top = svgEl("stop", { offset: 0 });
-    top.style.stopColor = tokenColour(container, "--surface", "#14171d");
+    top.style.stopColor = tokenColour(container, "--surface", "#191410");
     var bottom = svgEl("stop", { offset: 1 });
-    bottom.style.stopColor = tokenColour(container, "--hall", "#0d0f12");
+    bottom.style.stopColor = tokenColour(container, "--hall", "#131009");
     gradient.appendChild(top);
     gradient.appendChild(bottom);
     defs.appendChild(gradient);
@@ -981,7 +985,7 @@
       }));
     }
 
-    // The podium rule, then each tier's name flush left and seat count flush right.
+    // The rule above the first tier, then each tier's name flush left and count flush right.
     var line = svgEl("line", {
       "class": "att-plate", x1: 0, x2: laid.width, y1: laid.plateY, y2: laid.plateY,
     });
@@ -1007,29 +1011,24 @@
 
     var now = Date.now();
 
-    // How recent each drawn seat's action is, against the span the hall covers: the
-    // newest seat grades 1, the oldest 0, and a seat no older than the rest grades 1.
-    // A seat with no recorded action has no entry, and the exact age travels in the
-    // title, never in a word on the stage.
+    // How recent each drawn seat's action is, against the score's own live window: an
+    // action inside the window grades between 1 and 0, one older than the window grades
+    // 0, so a hall of old actions reads quiet and a fresh hall reads bright. A seat with
+    // no recorded action has no entry at all, and the exact age travels in the title,
+    // never in a word on the stage.
     var times = {};
-    var newest = null;
-    var oldest = null;
     for (var a = 0; a < laid.seats.length; a += 1) {
       var at = laid.seats[a].seat.at;
       if (!at) continue;
       var when = Date.parse(at);
       if (!isFinite(when)) continue;
-      var age = Math.max(0, now - when);
-      times[laid.seats[a].seat.id] = { at: at, age: age };
-      if (newest === null || age < newest) newest = age;
-      if (oldest === null || age > oldest) oldest = age;
+      times[laid.seats[a].seat.id] = { at: at, age: Math.max(0, now - when) };
     }
     var recent = {};
-    var span = newest === null ? 0 : oldest - newest;
     var recentIds = Object.keys(times);
     for (var a2 = 0; a2 < recentIds.length; a2 += 1) {
       recent[recentIds[a2]] = {
-        fresh: span > 0 ? (oldest - times[recentIds[a2]].age) / span : 1,
+        fresh: Math.max(0, Math.min(1, 1 - times[recentIds[a2]].age / RECENT_WINDOW_MS)),
         age: ageText(times[recentIds[a2]].at, now),
       };
     }
