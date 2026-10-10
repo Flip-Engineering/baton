@@ -859,7 +859,7 @@ def current_store(db: String, player: String, +harness: String) -> IO(String):
     read : Result<&1,&1,U32 & String,String> <- T.Text.read(path)
     text : String <- IO.pass(String,Subs.optional_text(read))
     +last : String <- IO.pure(String,Subs.last_line(Tx.split_lines(text)))
-    recorded : String <- IO.pure(String,Subs.record_harness(last))
+    +recorded : String <- IO.pure(String,Subs.record_harness(last))
     IO.pure(String,Bool.pick(String,Bool.or(String.is_empty(recorded),String.eq(recorded,Tx.trim_nl(harness))),Subs.record_store(last),""))
 
 def history_path(+db: String, player: String) -> IO(String):
