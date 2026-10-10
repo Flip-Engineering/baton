@@ -135,20 +135,25 @@ def record_profile(+harness: String, +label: String, +store: String) -> Maybe<&2
 
 def record_new(fields: List<String>) -> Maybe<&2,Profile>:
   match fields:
-    case +harness <> +label <> +store <> +rest: record_profile(harness,label,Tx.join(" ",Con{store,rest}))
+    case +harness <> +label <> +store <> rest: record_profile(harness,label,Tx.join(" ",Con{store,rest}))
     case other: None{}
 
 def record_legacy(fields: List<String>) -> Maybe<&2,Profile>:
   match fields:
-    case +label <> +store <> +rest: record_fields(label,Tx.join(" ",Con{store,rest}))
+    case +label <> +store <> rest: record_fields(label,Tx.join(" ",Con{store,rest}))
     case other: None{}
 
 # The marked shape is detected on the line so the read never depends on how the word
 # splitter treats a leading separator: a marked line parses its words as a new record
 # with the marker consumed whether the splitter keeps the empty head or drops it.
+def record_marked_head(empty: Bool, head: String, tail: List<String>) -> Maybe<&2,Profile>:
+  match empty:
+    case True{}: record_new(tail)
+    case False{}: record_new(Con{head,tail})
+
 def record_marked(fields: List<String>) -> Maybe<&2,Profile>:
   match fields:
-    case +head <> +tail: Bool.pick(Maybe<&2,Profile>,String.is_empty(head),record_new(tail),record_new(fields))
+    case +head <> tail: record_marked_head(String.is_empty(head),head,tail)
     case other: None{}
 
 def record_trimmed(+trimmed: String) -> Maybe<&2,Profile>:
@@ -688,9 +693,14 @@ def refusal_wrap(+epoch: String, +assignment: String, parsed: Maybe<&2,Route>) -
     case Some{+route}: Some{Ref{route,epoch,assignment}}
     case None{}: None{}
 
+def refusal_selected(marked: Bool, epoch: String, second: String, rest: List<String>) -> Maybe<&2,Refusal>:
+  match marked:
+    case True{}: refusal_wrap(epoch,second,route_of(rest))
+    case False{}: refusal_wrap("0","0",route_of(Con{epoch,Con{second,rest}}))
+
 def refusal_fields(fields: List<String>) -> Maybe<&2,Refusal>:
   match fields:
-    case +epoch <> +second <> +rest: Bool.pick(Maybe<&2,Refusal>,Bool.and(epoch_digits(epoch),epoch_digits(second)),refusal_wrap(epoch,second,route_of(rest)),refusal_wrap("0","0",route_of(Con{epoch,Con{second,rest}})))
+    case +epoch <> +second <> rest: refusal_selected(Bool.and(epoch_digits(epoch),epoch_digits(second)),epoch,second,rest)
     case +single <> Nil{}: refusal_wrap("0","0",route_of(Con{single,Nil{}}))
     case Nil{}: None{}
 
