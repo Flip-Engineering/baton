@@ -361,11 +361,19 @@ check('map publishes its natural height for the frame', await evalJs(
   `Number(document.querySelector('#knowledge-whole').getAttribute('data-kw-natural-height')) > 0`));
 check('tiers read as ruled bands', await evalJs(
   `document.querySelectorAll('#knowledge-whole .kw-tier-rule').length >= 2`));
-check('findings sit under their author', await evalJs(`(() => {
-  const a = document.querySelector('#knowledge-whole .kw-anchor[data-kw-id="worker"] rect');
-  const c = document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"] circle');
-  return !!a && !!c && Math.abs((Number(a.getAttribute('x')) + Number(a.getAttribute('width')) / 2)
-    - Number(c.getAttribute('cx'))) < 0.000001;
+check('authored findings form a group below their recorded author', await evalJs(`(() => {
+  const author = document.querySelector('#knowledge-whole .kw-anchor[data-kw-id="worker"] rect');
+  const findings = ['qa-worker-finding', 'qa-msg-finding'].map((id) =>
+    document.querySelector('#knowledge-whole .knode[aria-label="' + id + '"] .kw-finding'));
+  if (!author || findings.some((node) => !node)) return false;
+  const anchor = author.getBoundingClientRect();
+  const bounds = findings.map((node) => node.getBoundingClientRect());
+  const centers = bounds.map((box) => (box.left + box.right) / 2);
+  const authorCenter = (anchor.left + anchor.right) / 2;
+  const groupCenter = (centers[0] + centers[1]) / 2;
+  return Math.min(...centers) < authorCenter && Math.max(...centers) > authorCenter
+    && groupCenter >= anchor.left && groupCenter <= anchor.right
+    && bounds.every((box) => box.top >= anchor.bottom);
 })()`));
 check('map frame bounds the canvas', await evalJs(`(() => {
   const frame = document.querySelector('.map-frame');
