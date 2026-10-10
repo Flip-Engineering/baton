@@ -380,6 +380,16 @@ def observation_clear(outcome: Turn.Outcome) -> Bool:
   match outcome:
     case Turn.Ended{status,event,error,incomplete}: Bool.and(Bool.not(incomplete),String.is_empty(error))
 
+def finish_pending_known(finished: Result<&1,&1,U32 & String,Unit>, questions: Result<&1,&1,U32 & String,Unit>, ack: Result<&1,&1,U32 & String,Unit>, failed: Bool, superseded: Bool, +outcome: Turn.Outcome, transient: Bool, owed: Bool, next_ok: Bool, next: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    status : Result<&1,&1,U32 & String,Unit> <- exit_status(Bool.and(failed,Bool.not(Bool.or(superseding(superseded,outcome),Bool.and(transient,Bool.and(observation_clear(outcome),Bool.and(owed,next_ok))))))))
+    IO.pure(Result<&1,&1,U32 & String,Unit>,Turn.combine(finished,Turn.combine(questions,Turn.combine(next,Turn.combine(ack,status)))))
+
+def finish_pending_result(finished: Result<&1,&1,U32 & String,Unit>, questions: Result<&1,&1,U32 & String,Unit>, ack: Result<&1,&1,U32 & String,Unit>, failed: Bool, superseded: Bool, outcome: Turn.Outcome, transient: Bool, owed: Bool, next: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match next:
+    case Fail{error}: finish_pending_known(finished,questions,ack,failed,superseded,outcome,transient,owed,False{},Fail{error})
+    case Done{unit}: finish_pending_known(finished,questions,ack,failed,superseded,outcome,transient,owed,True{},Done{unit})
+
 # The exit-status synthesis suppresses only the provider failure a complete observation
 # superseded, or a classified complete provider failure whose owed continuation succeeded;
 # every other Result below keeps its own combination, and an attempt whose
@@ -394,10 +404,9 @@ def finish_pending(+db: String, +session: String, id: String, log: String, +curs
     questions : Result<&1,&1,U32 & String,Unit> <- NativeRequests.settle(deliveries)
     stopped : Bool <- Stop.stopped(db,session)
     ack : Result<&1,&1,U32 & String,Unit> <- acknowledge_if_observed(Bool.and(native_observation_failed(outcome),Bool.not(stopped)),acknowledge)
-    +next : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,continued_task)
+    next : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,continued_task)
     transient : Bool <- transient_provider_error(db,outcome)
-    status : Result<&1,&1,U32 & String,Unit> <- exit_status(Bool.and(failed,Bool.not(Bool.or(superseding(superseded,outcome),Bool.and(transient,Bool.and(observation_clear(outcome),Bool.and(owed,result_ok(next))))))))
-    IO.pure(Result<&1,&1,U32 & String,Unit>,Turn.combine(finished,Turn.combine(questions,Turn.combine(next,Turn.combine(ack,status)))))
+    finish_pending_result(finished,questions,ack,failed,superseded,outcome,transient,owed,next)
 
 # Retirement follows acknowledgment on the same attempt handle: the shared
 # owner frees the attempt slot and advances its generation once the attempt

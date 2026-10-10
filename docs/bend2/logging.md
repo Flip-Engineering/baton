@@ -10,7 +10,7 @@ At `default`, the coordinator retains completed frames and holds the newest `mes
 
 The OMP setup request carries the session level to the provider before `get_state`. At `diagnostic` it requests all event categories with full message updates. At other levels it requests the event categories in the adapter's list (`omp-player.bend`), which omits the `tool_execution_update` progress category, with delta message updates. Protocol and session frames such as `response`, `prompt_result` and `session_settled` are delivered independently of the selection. The provider controls which frames it sends. The turn records frames it receives and records a correlated filter response when one arrives. A refused, mismatched, or missing response does not establish which selection the provider applied. The default request excludes event categories added to later schemas. At default an interrupted tool retains its start frame and unfinished status but can lose its latest partial update; diagnostic requests that detail.
 
-The coordinator appends each retained frame to the generation log. It preserves complete frames, including large frames. The native process writes all stderr bytes to the unique path registered for that run.
+The coordinator writes each retained frame to the generation log. It preserves complete frames, including large frames. The native process writes all stderr bytes to the unique path registered for that run.
 
 ### Terminal frames
 
@@ -25,6 +25,8 @@ The retained records hold different things. The public log holds this projection
 ## Generations and checkpoints
 
 `Logs.attempt_log(BASE, TURN)` names a separate generation file for each turn. A generation path preserves the turn identity and prevents later runs from appending into an earlier run's public log. `OUTPUT_LOG.pending` stores the latest incomplete frames for direct turns. A later turn appends that checkpoint before new frames and removes it after the append succeeds.
+
+Retained observers save their public-output position and completion state in the attempt checkpoint. Reattachment writes at that position, preserves matching bytes already present, and writes new frames as they arrive.
 
 The attempt directory retains native input, output, and process ownership according to its own lifecycle. The log registry tracks public paths and stderr paths; it does not replace provider conversation stores or retained attempt artifacts.
 
