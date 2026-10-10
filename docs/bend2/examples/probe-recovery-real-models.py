@@ -58,6 +58,16 @@ def coord(db, *args):
     return json.loads(result.stdout)
 
 
+def generation_log(db, session, attempt):
+    with sqlite3.connect(f'{db.as_uri()}?mode=ro', uri=True) as connection:
+        row = connection.execute(
+            'SELECT log FROM log_generations WHERE session=? AND attempt=?',
+            (session, attempt)).fetchone()
+    if row is None:
+        raise RuntimeError('No public log generation recorded for %s/%s' % (session, attempt))
+    return pathlib.Path(row[0])
+
+
 def process_table():
     """Every live process as (pid, ppid, command)."""
     listing = run(['ps', '-ax', '-o', 'pid=,ppid=,stat=,command=']).stdout
@@ -275,11 +285,13 @@ def main():
         spec['beforeKillProcesses'] = wait_for(started)
         spec['native'] = [r for r in coord(db, 'workers') if r['id'] == name][0]['native']
         spec['freshArgv'] = harness_argv(spec, turns[name])
+        spec['generationLog'] = generation_log(db, name, name + '-turn-1')
 
     evidence['beforeKill'] = {spec['name']: {
         'launchFreshArgv': spec['launchFresh'],
         'harnessArgv': spec['freshArgv'],
         'native': spec['native'],
+        'publicLogGeneration': str(spec['generationLog']),
         'processes': spec['beforeKillProcesses'],
         'journalExists': spec['journal'].exists(),
         'journal': spec['journal'].read_text() if spec['journal'].exists() else '',
@@ -314,7 +326,8 @@ def main():
         journal_before = spec['journal'].read_text() if spec['journal'].exists() else ''
         launch = [str(EXE), str(db), 'turn', name, name + '-turn-1', spec['bin'], spec['model'],
                   'low', str(spec['worktree']), str(spec['task']), str(spec['log']), spec['native']]
-        log_offset = spec['log'].stat().st_size if spec['log'].exists() else 0
+        selected_log = generation_log(db, name, name + '-turn-1')
+        log_offset = selected_log.stat().st_size if selected_log.exists() else 0
         resumed_prefix = SCRATCH / (name + '-resumed')
         resumed = start_turn(launch, resumed_prefix)
         resumed.wait()
@@ -325,7 +338,7 @@ def main():
         rows = coord(db, 'workers')
         row = [r for r in rows if r['id'] == name][0]
         text = spec['journal'].read_text() if spec['journal'].exists() else ''
-        with spec['log'].open('rb') as native_log:
+        with selected_log.open('rb') as native_log:
             native_log.seek(log_offset)
             resumed_events = [json.loads(line) for line in native_log if line.strip()]
         with sqlite3.connect(f'{db.as_uri()}?mode=ro', uri=True) as connection:
@@ -345,6 +358,8 @@ def main():
             'turnEvent': row.get('lastTurnEvent'),
             'report': row.get('latestReport', ''),
             'terminal': terminal,
+            'publicLogGeneration': str(selected_log),
+            'resumedLogOffset': log_offset,
             'resumedNativeEvents': resumed_events,
             'recoveryRows': [message['id'] for message in recovery_messages],
             'recoveryMessages': recovery_messages,

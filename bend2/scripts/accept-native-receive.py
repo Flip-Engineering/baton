@@ -41,8 +41,15 @@ def snapshot(db):
                 for table in ['sessions', 'messages', 'turns']}
 
 
+def public_logs(db, session):
+    with sqlite3.connect(f'{db.as_uri()}?mode=ro', uri=True) as connection:
+        return [dict(attempt=attempt, path=path) for attempt, path in connection.execute(
+            'SELECT attempt, log FROM log_generations WHERE session=? ORDER BY rowid',
+            (session,))]
+
+
 def frames(path):
-    for line in path.read_text().splitlines():
+    for line in Path(path).read_text().splitlines():
         try:
             value = json.loads(line)
         except ValueError:
@@ -61,6 +68,8 @@ def omp_reports(path):
             messages = frame.get('messages', [])
         else:
             continue
+        if frame.get('compacted') and isinstance(frame.get('text'), str):
+            latest = frame['text']
         for message in messages:
             if message.get('role') == 'assistant':
                 latest = '\n'.join(part['text'] for part in message.get('content', [])
@@ -277,7 +286,8 @@ retained reports and receipts, summarize the findings and acknowledge the follow
                 reports = sorted((row for row in state['messages']
                                   if row['sender'] == player and row['kind'] == 'report'),
                                  key=lambda row: row['seq'])
-                native_reports = list(omp_reports(out / f'{player}.jsonl'))
+                native_reports = [text for generation in public_logs(db, player)
+                                  for text in omp_reports(generation['path'])]
                 assert len(reports) == len(native_reports) == count, reports
                 for report, text in zip(reports, native_reports):
                     assert report['recipient'] == 'root' and report['receipt']
@@ -303,7 +313,9 @@ retained reports and receipts, summarize the findings and acknowledge the follow
         final = snapshot(db)
         assert next(row['native'] for row in final['sessions'] if row['id'] == 'root') == root_native
         assert next(row for row in final['messages'] if row['id'] == 'root-followup')['receipt']
-        root_events = list(frames(out / 'root.jsonl'))
+        root_generations = public_logs(db, 'root')
+        root_events = [frame for generation in root_generations
+                       for frame in frames(generation['path'])]
         native_threads = [row['thread_id'] for row in root_events if row.get('type') == 'thread.started']
         assert native_threads and set(native_threads) == {root_native}
         assert all(row['receipt'] for row in final['messages'])
@@ -313,6 +325,8 @@ retained reports and receipts, summarize the findings and acknowledge the follow
         save(out / 'evidence.json', {
             **pin, 'ended_unix': time.time(), 'state': final,
             'processes': [row for _, row in processes], 'root_native_threads': native_threads,
+            'public_log_generations': {session: public_logs(db, session)
+                                       for session in ['root', *(p for p, _, _ in players)]},
             'player_native_sessions': player_natives, 'player_followups_verified': has_followups,
             'assertions': ['Reports match the complete native assistant text.',
                            'Reports and task messages have native acceptance receipts.',
