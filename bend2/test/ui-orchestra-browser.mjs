@@ -2125,7 +2125,7 @@ check('the stage seats the fixture by its reporting hierarchy', await evalJs(`(a
     .sort((a, b) => a.y - b.y);
   if (!tiers.length) return false;
   if (!/^principal conductor/.test(tiers[0].label)) return false;
-  if (tiers.some((tier) => /no parent recorded/.test(tier.label))) return false;
+  if (tiers.some((tier) => /unknown ancestry/.test(tier.label))) return false;
   const seatY = (seat) => {
     const m = /translate\([^ ]+ ([0-9.]+)/.exec(seat.getAttribute('transform') || '');
     return m ? Number(m[1]) : Infinity;
