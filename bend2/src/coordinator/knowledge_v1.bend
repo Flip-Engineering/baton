@@ -392,6 +392,16 @@ def nodes_fragment(+reader: String, +scope: String, +subject: String) -> String:
 def edges_fragment(+reader: String, +scope: String, +subject: String) -> String:
   "SELECT r.id,json_extract(r.source,'$.id') AS source,json_extract(r.target,'$.id') AS target,r.kind AS relation,'v1:'||json_extract(r.source,'$.id') AS source_ref,'v1:'||json_extract(r.target,'$.id') AS target_ref," ++ v1_edge_envelope("r") ++ " AS item FROM knowledge_edges_v1 r WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") AND " ++ v1_edge_scope(scope,subject)
 
+# Guarded JSON navigation for emitted SQL. Each yields NULL or zero rows
+# when the input is not valid JSON.
+def v1_t(+v: String, +p: String) -> String:
+  "(CASE WHEN json_valid(" ++ v ++ ") THEN json_type(" ++ v ++ "," ++ C.q(p) ++ ") END)"
+
+def v1_x(+v: String, +p: String) -> String:
+  "(CASE WHEN json_valid(" ++ v ++ ") THEN json_extract(" ++ v ++ "," ++ C.q(p) ++ ") END)"
+def v1_each_path(+x: String, +path: String) -> String:
+  "json_each(CASE WHEN json_valid(" ++ x ++ ") THEN (" ++ x ++ ") END" ++ path ++ ")"
+
 # Recorded-evidence citation edges for v1 evidence references, mirroring the
 # legacy Cited edges so provenance stays distinguished on every surface. It
 # reads the already-scoped nodes CTE and only scientific rows, selected by
@@ -512,14 +522,6 @@ def v1_refused(+saved: String) -> Bool:
 
 def v1_refusal(+rule: String, +instance: String) -> String:
   "{\"error\":\"v1-refused\",\"rule\":" ++ C.q(rule) ++ ",\"id\":" ++ C.q(instance) ++ "}"
-
-def v1_t(+v: String, +p: String) -> String:
-  "(CASE WHEN json_valid(" ++ v ++ ") THEN json_type(" ++ v ++ "," ++ C.q(p) ++ ") END)"
-
-def v1_x(+v: String, +p: String) -> String:
-  "(CASE WHEN json_valid(" ++ v ++ ") THEN json_extract(" ++ v ++ "," ++ C.q(p) ++ ") END)"
-def v1_each_path(+x: String, +path: String) -> String:
-  "json_each(CASE WHEN json_valid(" ++ x ++ ") THEN (" ++ x ++ ") END" ++ path ++ ")"
 
 def v1_req_text(+v: String, +p: String) -> String:
   "(" ++ v1_t(v, p) ++ " IS NULL OR " ++ v1_t(v, p) ++ "!='text' OR " ++ v1_x(v, p) ++ "='')"
