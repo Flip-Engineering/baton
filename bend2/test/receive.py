@@ -378,7 +378,7 @@ if config.get('inspect_session_guard'):
         except (ValueError,OSError): continue
         if (info.st_dev,info.st_ino)==(guard.st_dev,guard.st_ino): guard_descriptors.append(int(descriptor))
 reply({'pid':os.getpid(),'ppid':os.getppid(),'session':model,'native':native,'resume':resume,'args':args,'prompt':prompt,
-       'cwd':os.getcwd(),'apiKeyVariablesPresent':[key for key in ('OPENAI_API_KEY','CODEX_API_KEY') if key in os.environ],
+       'cwd':os.getcwd(),'codexHome':os.environ.get('CODEX_HOME',''),'apiKeyVariablesPresent':[key for key in ('OPENAI_API_KEY','CODEX_API_KEY') if key in os.environ],
        'claudeAuthVariablesPresent':[key for key in ('ANTHROPIC_API_KEY','ANTHROPIC_AUTH_TOKEN','CLAUDE_CODE_OAUTH_TOKEN') if key in os.environ],
        'sessionGuardDescriptors':guard_descriptors})
 steered_inputs=[]
@@ -2134,7 +2134,7 @@ class Receive(unittest.TestCase):
         # content before its own acknowledgment.
         observer = self.spawn(*self.receive_args('root'))
         first, started = self.accept('root')
-        self.assertTrue(any(str(store_a) in argument for argument in started['args']))
+        self.assertEqual(started['codexHome'], str(store_a))
         self.action(first, fail=True, ack=ack_before_exhaustion, fail_message=cause)
         self.action(first, exit_fixture=True)
         second, resumed = self.accept('root')
@@ -2143,7 +2143,7 @@ class Receive(unittest.TestCase):
         self.assertEqual(len(launches), 2)
         self.assertEqual(launches[0]['resume'], '')
         self.assertEqual(launches[1]['resume'], started['native'])
-        self.assertTrue(any(str(store_b) in argument for argument in resumed['args']))
+        self.assertEqual(resumed['codexHome'], str(store_b))
         # Profile B names its own history root in its own configuration, and the preserved
         # home is profile A's configured root: the continuation resolves A's history through
         # the recorded override, so a contrary configuration in B does not win.
@@ -2311,8 +2311,8 @@ class Receive(unittest.TestCase):
         # provider's own usage-exhaustion message, the record advances to profile B, the same
         # turn invocation relaunches B with its own store on the recorded native conversation,
         # and B completes the same task file prompt. Every assertion reads coordinator state.
-        # The exhausted attempt writes no turn row of its own; its cause is retained in the
-        # handoff report and the continuation's completion records the single turn row.
+        # The first report retains the exhausted attempt's cause. The successful
+        # continuation is retained in the native log under the same turn identity.
         self.coord('attach', 'root', 'codex', '', '')
         store_a = self.directory / 'store-a'
         store_b = self.directory / 'store-b'
@@ -2339,7 +2339,7 @@ class Receive(unittest.TestCase):
                             str(self.directory), str(task),
                             str(self.directory / 'direct-handoff.jsonl'), '')
         first, started = self.accept('root')
-        self.assertTrue(any(str(store_a) in argument for argument in started['args']))
+        self.assertEqual(started['codexHome'], str(store_a))
         self.assertIn(body, started['prompt'])
         self.action(first, fail=True, ack=False, fail_message=cause)
         self.action(first, exit_fixture=True)
@@ -2350,7 +2350,7 @@ class Receive(unittest.TestCase):
         self.assertEqual(launches[0]['resume'], '')
         self.assertEqual(launches[1]['resume'], started['native'])
         self.assertEqual(resumed['native'], started['native'])
-        self.assertTrue(any(str(store_b) in argument for argument in resumed['args']))
+        self.assertEqual(resumed['codexHome'], str(store_b))
         # Profile B names its own history root in its own configuration, and the preserved
         # home is profile A's configured root: the continuation resolves A's history through
         # the recorded override, so a contrary configuration in B does not win.
@@ -2369,7 +2369,7 @@ class Receive(unittest.TestCase):
         self.assertEqual(history[1]['resume'], started['native'])
         self.assertEqual(history[1]['native'], started['native'])
         self.assertEqual(history[1]['home'], str(home_a))
-        self.action(second)
+        self.action(second, body=body)
         self.finish(direct)
         self.assertEqual(record.read_text().splitlines()[-1], ' codex B ' + str(store_b))
         handoff = [message for message in self.coord('inbox', 'operator')
@@ -2379,10 +2379,7 @@ class Receive(unittest.TestCase):
         self.assertIn('refused profile=A', handoff[0]['body'])
         self.assertIn('bound profile=B', handoff[0]['body'])
         self.assertIsNone(self.coord('delivery', handoff[0]['id'])['receipt'])
-        turns = self.coord('turns', 'root')
-        self.assertEqual(len(turns), 1)
-        self.assertIn(body, turns[0]['reportBody'])
-        self.assertFalse(any(cause in turn['reportBody'] for turn in turns))
+        self.assert_direct_retry_result('direct-handoff', body, cause, 'codex')
 
     def test_codex_direct_chains_two_handoffs_with_distinct_reports(self):
         # Three-profile direct-turn #702 chain: profiles A and B both refuse with the
@@ -2422,11 +2419,11 @@ class Receive(unittest.TestCase):
                             str(self.directory), str(task),
                             str(self.directory / 'direct-handoff-chain.jsonl'), '')
         first, started = self.accept('root')
-        self.assertTrue(any(str(store_a) in argument for argument in started['args']))
+        self.assertEqual(started['codexHome'], str(store_a))
         self.action(first, fail=True, ack=False, fail_message=cause)
         self.action(first, exit_fixture=True)
         second, resumed_b = self.accept('root')
-        self.assertTrue(any(str(store_b) in argument for argument in resumed_b['args']))
+        self.assertEqual(resumed_b['codexHome'], str(store_b))
         self.assertEqual(resumed_b['native'], started['native'])
         self.assertIn(body, resumed_b['prompt'])
         self.action(second, fail=True, ack=False, fail_message=cause)
@@ -2438,7 +2435,7 @@ class Receive(unittest.TestCase):
         self.assertEqual(launches[1]['resume'], started['native'])
         self.assertEqual(launches[2]['resume'], started['native'])
         self.assertEqual(resumed_c['native'], started['native'])
-        self.assertTrue(any(str(store_c) in argument for argument in resumed_c['args']))
+        self.assertEqual(resumed_c['codexHome'], str(store_c))
         # Both continuations use the original history home recorded by the first handoff.
         self.assertIn('sqlite_home="' + str(home_a) + '"', resumed_c['args'])
         self.assertNotIn('sqlite_home="' + str(home_c) + '"', resumed_c['args'])
@@ -2448,7 +2445,7 @@ class Receive(unittest.TestCase):
         self.assertEqual(recorded_home['sourceStore'], str(store_b))
         self.assertEqual(recorded_home['store'], str(store_c))
         self.assertEqual(recorded_home['home'], str(home_a))
-        self.action(third)
+        self.action(third, body=body)
         self.finish(direct)
         self.assertEqual(record.read_text().splitlines()[-1], ' codex C ' + str(store_c))
         handoff = sorted((message for message in self.coord('inbox', 'operator')
@@ -2465,10 +2462,7 @@ class Receive(unittest.TestCase):
         self.assertIn(cause, handoff[1]['body'])
         self.assertIsNone(self.coord('delivery', handoff[0]['id'])['receipt'])
         self.assertIsNone(self.coord('delivery', handoff[1]['id'])['receipt'])
-        turns = self.coord('turns', 'root')
-        self.assertEqual(len(turns), 1)
-        self.assertIn(body, turns[0]['reportBody'])
-        self.assertFalse(any(cause in turn['reportBody'] for turn in turns))
+        self.assert_direct_retry_result('direct-handoff-chain', body, cause, 'codex')
 
     def test_codex_recovered_direct_hands_off_to_the_next_profile(self):
         # The same shared direct handoff seam reached through Turn.recover: the turn driver
@@ -2502,7 +2496,7 @@ class Receive(unittest.TestCase):
                             'low', str(self.directory), str(task),
                             str(self.directory / 'direct-handoff-recovered.jsonl'), '')
         first, started = self.accept('root')
-        self.assertTrue(any(str(store_a) in argument for argument in started['args']))
+        self.assertEqual(started['codexHome'], str(store_a))
         direct.kill()
         direct.wait()
         self.action(first, fail=True, ack=False, fail_message=cause)
@@ -2513,25 +2507,19 @@ class Receive(unittest.TestCase):
         self.assertEqual(len(launches), 2)
         self.assertEqual(launches[1]['resume'], started['native'])
         self.assertEqual(resumed['native'], started['native'])
-        self.assertTrue(any(str(store_b) in argument for argument in resumed['args']))
+        self.assertEqual(resumed['codexHome'], str(store_b))
         self.assertIn('sqlite_home="' + str(home_a) + '"', resumed['args'])
         self.assertNotIn('sqlite_home="' + str(home_b) + '"', resumed['args'])
         self.assertIn(body, resumed['prompt'])
-        self.action(second)
-        # The record already advanced before the relaunch connected, so only the
-        # continuation's own completion is still pending: the keeper-owned recovery
-        # process has no test handle, so observe the actual final turn row rather
-        # than asserting it immediately.
+        self.action(second, body=body)
+        # The keeper owns the recovery process. Observe its exited execution
+        # before checking the pending inbox and successful native terminal.
         self.assertEqual(record.read_text().splitlines()[-1], ' codex B ' + str(store_b))
         handoff = [message for message in self.coord('inbox', 'operator')
                    if 'subscription profile handoff' in message['body']]
         self.assertEqual(len(handoff), 1)
         self.assertIn(cause, handoff[0]['body'])
-        self.eventually(lambda: len(self.coord('turns', 'root')) == 1,
-                        'The recovered direct continuation did not complete its turn.')
-        turns = self.coord('turns', 'root')
-        self.assertIn(body, turns[0]['reportBody'])
-        self.assertFalse(any(cause in turn['reportBody'] for turn in turns))
+        self.assert_direct_retry_result('direct-handoff-recovered', body, cause, 'codex')
 
     def test_omp_direct_retries_the_same_conversation_after_a_rate_refusal(self):
         cause = '429 Rate limit reached for requests\nRate limit reached for requests (type=1302)'
@@ -2545,8 +2533,8 @@ class Receive(unittest.TestCase):
         # Direct-turn transient continuation: the first attempt ends with the provider's
         # settled OMP error, no profile advances, and the same turn invocation
         # relaunches the same conversation in a retry directory the keeper accepts. The
-        # retry then completes the same task, so the turn exits successfully with one
-        # turn row. Every assertion reads coordinator state.
+        # retry completes the same task. The first report keeps the provider failure;
+        # the exited execution and native log establish the successful continuation.
         self.coord('attach', 'root', 'omp', '', '')
         body = 'Direct OMP task interrupted by a provider failure.\n'
         task = self.directory / 'direct-provider-retry.txt'
@@ -2563,15 +2551,60 @@ class Receive(unittest.TestCase):
         self.assertIn(body, resumed['prompt'])
         attempt = self.directory / ('state.db.direct-' + 'direct-provider-retry'.encode().hex())
         self.assertTrue(pathlib.Path(str(attempt) + '.retry').is_dir())
-        self.action(second)
+        self.action(second, body=body)
         self.finish(direct)
         handoff = [message for message in self.coord('inbox', 'operator')
                    if 'subscription profile handoff' in message['body']]
         self.assertEqual(handoff, [])
+        self.assert_direct_retry_result('direct-provider-retry', body, cause, 'omp', status)
+
+    def assert_direct_retry_result(self, ident, body, cause, harness, status=None):
+        def settled_execution():
+            execution = next(row for row in self.coord('players')
+                             if row['id'] == 'root')['execution']
+            return execution if execution is not None and execution['phase'] == 'exited' else None
+        execution = self.eventually(settled_execution,
+                                    'The direct continuation did not exit naturally.')
+        self.assertEqual(execution, {'attempt': ident, 'mode': 'direct',
+                                     'phase': 'exited', 'status': 'exit 0'})
+        state = self.coord('session', 'root')
+        self.assertIsNone(state['parent'])
+        self.assertIsNone(state['taskCompletion']['assignmentId'])
+        self.assertIs(state['taskCompletion']['open'], False)
+        self.assertEqual(self.coord('inbox', 'root'), [])
         turns = self.coord('turns', 'root')
         self.assertEqual(len(turns), 1)
-        self.assertIn(body, turns[0]['reportBody'])
-        self.assertFalse(any(cause in turn['reportBody'] for turn in turns))
+        self.assertEqual((turns[0]['id'], turns[0]['player'], turns[0]['eventType']),
+                         (ident, 'root', 'result' if harness == 'codex' else 'agent_end'))
+        report = self.coord('delivery', ident)
+        self.assertEqual((report['sender'], report['recipient'], report['kind'],
+                          report['receipt']), ('root', 'operator', 'report', None))
+        self.assertEqual(report['body'], turns[0]['reportBody'])
+        frames = [json.loads(line) for line in self.output_log('root').read_text().splitlines()]
+        if harness == 'codex':
+            self.assertEqual(json.loads(report['body']),
+                             {'type': 'result', 'is_error': 1,
+                              'nativeEvent': {'type': 'turn.failed', 'error': {'message': cause}},
+                              'result': cause})
+            messages = [frame['item']['text'] for frame in frames
+                        if frame['type'] == 'item.completed'
+                        and frame['item']['type'] == 'agent_message']
+            self.assertEqual(messages, [body])
+            completed = [frame for frame in frames if frame['type'] == 'turn.completed']
+            self.assertEqual(completed, [{'type': 'turn.completed'}])
+            terminals = [frame for frame in frames
+                         if frame['type'] in ('turn.failed', 'turn.completed')]
+            self.assertEqual(terminals[-1], {'type': 'turn.completed'})
+        else:
+            failure = ('OMP provider failure: stopReason=error, errorStatus='
+                       + ('unknown' if status is None else str(status)) + '; ' + cause)
+            self.assertEqual(report['body'], failure)
+            terminals = [frame for frame in frames if frame['type'] == 'agent_end']
+            self.assertTrue(terminals)
+            self.assertEqual(terminals[-1]['text'], body)
+            self.assertIs(terminals[-1]['compacted'], True)
+            self.assertIs(terminals[-1]['isTerminal'], True)
+            self.assertNotIn('error', terminals[-1])
 
     def test_busy_direct_receive_drains_new_input_and_preserves_native_session(self):
         self.player()
