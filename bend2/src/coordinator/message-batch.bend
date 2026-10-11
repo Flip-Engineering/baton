@@ -167,27 +167,31 @@ def send_refused(+index: String, +id: String, +sender: String, +recipient: Strin
 def send_malformed(+index: String, +id: String, +sender: String, +recipient: String, +kind: String, +cause: String) -> String:
   message_prefix(index,id,sender,recipient,kind) ++ ",\"status\":\"refused\",\"admission\":{\"status\":\"refused\",\"cause\":" ++ J.string_literal("batchItem:" ++ cause) ++ "},\"detailRead\":" ++ detail_read(id) ++ "}"
 
-def wake_json(result: Result<&1,&1,U32 & String,Unit>) -> String:
-  match result:
-    case Fail{(code,cause)}: "{\"status\":\"refused\"," ++ error_tail(code,cause) ++ "}"
-    case Done{unit}: "{\"status\":\"accepted\"}"
-
-def admitted_status(+receipt: String, wake: Result<&1,&1,U32 & String,Unit>) -> String:
+def wake_parts(wake: Result<&1,&1,U32 & String,Unit>) -> Bool & String:
   match wake:
-    case Fail{error}: Bool.pick(String,String.eq(receipt,"acknowledged"),"acknowledged","pending")
-    case Done{unit}: Bool.pick(String,String.eq(receipt,"acknowledged"),"acknowledged","admitted")
+    case Fail{(code,cause)}: (True{}, "{\"status\":\"refused\"," ++ error_tail(code,cause) ++ "}")
+    case Done{unit}: (False{}, "{\"status\":\"accepted\"}")
 
-def admitted_present(+index: String, +id: String, +sender: String, +recipient: String, +kind: String, +saved: String, +receipt: String, +message: String, +wake: Result<&1,&1,U32 & String,Unit>) -> String:
-  message_prefix(index,id,sender,recipient,kind) ++ ",\"status\":" ++ J.string_literal(admitted_status(receipt,wake)) ++ ",\"admission\":{\"status\":\"admitted\",\"message\":" ++ Tx.trim_nl(saved) ++ "},\"wake\":" ++ wake_json(wake) ++ ",\"receiptStatus\":" ++ J.string_literal(receipt) ++ ",\"delivery\":" ++ message ++ ",\"detailRead\":" ++ detail_read(id) ++ "}"
+def admitted_status(+receipt: String, refused: Bool) -> String:
+  match refused:
+    case True{}: Bool.pick(String,String.eq(receipt,"acknowledged"),"acknowledged","pending")
+    case False{}: Bool.pick(String,String.eq(receipt,"acknowledged"),"acknowledged","admitted")
 
-def admitted_snapshot(+index: String, +id: String, +sender: String, +recipient: String, +kind: String, +saved: String, +wake: Result<&1,&1,U32 & String,Unit>, state: Result<&1,&1,U32 & String,String & String>) -> String:
+def admitted_present(+index: String, +id: String, +sender: String, +recipient: String, +kind: String, +saved: String, +receipt: String, +message: String, +refused: Bool, +wake_text: String) -> String:
+  message_prefix(index,id,sender,recipient,kind) ++ ",\"status\":" ++ J.string_literal(admitted_status(receipt,refused)) ++ ",\"admission\":{\"status\":\"admitted\",\"message\":" ++ Tx.trim_nl(saved) ++ "},\"wake\":" ++ wake_text ++ ",\"receiptStatus\":" ++ J.string_literal(receipt) ++ ",\"delivery\":" ++ message ++ ",\"detailRead\":" ++ detail_read(id) ++ "}"
+
+def admitted_snapshot_parts(+index: String, +id: String, +sender: String, +recipient: String, +kind: String, +saved: String, parts: Bool & String, state: Result<&1,&1,U32 & String,String & String>) -> String:
+  (+refused,+wake_text) = parts
   match state:
     case Fail{(code,cause)}:
-      message_prefix(index,id,sender,recipient,kind) ++ ",\"status\":\"pending\",\"admission\":{\"status\":\"admitted\",\"message\":" ++ Tx.trim_nl(saved) ++ "},\"wake\":" ++ wake_json(wake) ++ ",\"snapshot\":{\"status\":\"refused\"," ++ error_tail(code,cause) ++ "},\"detailRead\":" ++ detail_read(id) ++ "}"
+      message_prefix(index,id,sender,recipient,kind) ++ ",\"status\":\"pending\",\"admission\":{\"status\":\"admitted\",\"message\":" ++ Tx.trim_nl(saved) ++ "},\"wake\":" ++ wake_text ++ ",\"snapshot\":{\"status\":\"refused\"," ++ error_tail(code,cause) ++ "},\"detailRead\":" ++ detail_read(id) ++ "}"
     case Done{(receipt,+message)}:
       Bool.pick(String,String.is_empty(message),
-        message_prefix(index,id,sender,recipient,kind) ++ ",\"status\":\"pending\",\"admission\":{\"status\":\"admitted\",\"message\":" ++ Tx.trim_nl(saved) ++ "},\"wake\":" ++ wake_json(wake) ++ ",\"snapshot\":{\"status\":\"absent\"},\"detailRead\":" ++ detail_read(id) ++ "}",
-        admitted_present(index,id,sender,recipient,kind,saved,receipt,message,wake))
+        message_prefix(index,id,sender,recipient,kind) ++ ",\"status\":\"pending\",\"admission\":{\"status\":\"admitted\",\"message\":" ++ Tx.trim_nl(saved) ++ "},\"wake\":" ++ wake_text ++ ",\"snapshot\":{\"status\":\"absent\"},\"detailRead\":" ++ detail_read(id) ++ "}",
+        admitted_present(index,id,sender,recipient,kind,saved,receipt,message,refused,wake_text))
+
+def admitted_snapshot(+index: String, +id: String, +sender: String, +recipient: String, +kind: String, +saved: String, wake: Result<&1,&1,U32 & String,Unit>, state: Result<&1,&1,U32 & String,String & String>) -> String:
+  admitted_snapshot_parts(index,id,sender,recipient,kind,saved,wake_parts(wake),state)
 
 def admitted(+db: String, +index: String, +id: String, +sender: String, +recipient: String, +kind: String, +saved: String, +command: C.Command) -> IO(String):
   do IO<String>:
@@ -202,9 +206,8 @@ def admission_result(+db: String, +index: String, +id: String, +sender: String, 
 
 def send_one(+db: String, +index: String, +id: String, +sender: String, +recipient: String, +kind: String, +body: String) -> IO(String):
   do IO<String>:
-    command : C.Command = C.Message{id,sender,recipient,kind,body}
-    result : Result<&1,&1,U32 & String,String> <- Store.apply(db,command)
-    admission_result(db,index,id,sender,recipient,kind,command,result)
+    result : Result<&1,&1,U32 & String,String> <- Store.apply(db,C.Message{id,sender,recipient,kind,body})
+    admission_result(db,index,id,sender,recipient,kind,C.Message{id,sender,recipient,kind,body},result)
 
 def send_row(+db: String, +sender: String, fields: List<String>) -> IO(String):
   match fields:
