@@ -1213,6 +1213,17 @@ await until('a new selection clears the named relation and unlights the map', `(
     && edges.every((e) => !e.classList.contains('kw-hover-dim'))
     && !document.querySelector('#selection [aria-current="true"].sel-focus');
 })()`);
+await evalJs(`document.getElementById('map-scope-all').click()`);
+await until('all scope restores the reference-pair edge before the hover probes', `(() => {
+  const edge = document.querySelector('#knowledge-whole g.kw-edge-typed[data-edge="qa-rel-refs"]');
+  const tag = document.querySelector('#knowledge-whole g.kw-ref[data-kw-ref="external:qa-log-8"][data-kw-kind="ref"]');
+  return document.getElementById('map-scope').textContent === 'All held records · 3 items'
+    && document.querySelector('#selection h2')?.textContent === 'aide'
+    && !!edge && edge.getAttribute('data-from') === 'message:qa-missing-1'
+    && edge.getAttribute('data-from-kind') === 'ref'
+    && edge.getAttribute('data-to') === 'external:qa-log-8'
+    && edge.getAttribute('data-to-kind') === 'ref' && !!tag;
+})()`);
 await evalJs(`document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]').dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))`);
 check('hover isolates the finding neighborhood', await evalJs(`(() => {
   const hovered = document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]');
