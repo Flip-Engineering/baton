@@ -6,6 +6,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -15,9 +16,9 @@ EXE = ROOT / '.scratch/bend2/baton2'
 class Messaging(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(dir=ROOT / '.scratch/bend2')
-        self.addCleanup(self.temp.cleanup)
         self.directory = pathlib.Path(self.temp.name)
         self.db = self.directory / 'state.db'
+        self.addCleanup(self.cleanup_fixture)
         self.repo = self.directory / 'repo'
         self.repo.mkdir()
         for args in [('init', '-q'), ('config', 'user.name', 'Messaging fixture'),
@@ -46,6 +47,31 @@ class Messaging(unittest.TestCase):
             if role == 'associate-conductor':
                 self.call('role', name, role)
             self.call('connect', name, '', self.endpoint)
+
+    def instance_owner_pids(self):
+        expected = f'{EXE.resolve()} --instance-owner {self.db.resolve()}'
+        processes = subprocess.run(['ps', '-axo', 'pid=,ppid=,stat=,command='],
+                                   check=True, capture_output=True, text=True)
+        owners = set()
+        for line in processes.stdout.splitlines():
+            fields = line.strip().split(None, 3)
+            if len(fields) == 4 and fields[3] == expected and not fields[2].startswith('Z'):
+                owners.add(int(fields[0]))
+        return owners
+
+    def cleanup_fixture(self):
+        try:
+            if self.db.exists():
+                owners = self.instance_owner_pids()
+                stopped = subprocess.run([str(EXE), '--instance-shutdown', str(self.db)],
+                                         capture_output=True, text=True)
+                self.assertEqual(stopped.returncode, 0, stopped.stdout + stopped.stderr)
+                while owners & self.instance_owner_pids():
+                    time.sleep(.01)
+        except Exception:
+            self.temp._finalizer.detach()
+            raise
+        self.temp.cleanup()
 
     def call(self, *args, success=True, stdin=None):
         result = subprocess.run([str(EXE), str(self.db), *args], input=stdin,

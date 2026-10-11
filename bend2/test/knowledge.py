@@ -11,6 +11,7 @@ import sqlite3
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
@@ -21,6 +22,7 @@ class Knowledge(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(dir=ROOT / '.scratch/bend2')
         self.db = pathlib.Path(self.temp.name) / 'state.db'
+        self.addCleanup(self.cleanup_fixture)
         self.repo = pathlib.Path(self.temp.name) / 'repository'
         self.repo.mkdir()
         self.checkouts = pathlib.Path(self.temp.name) / 'checkouts'
@@ -41,7 +43,29 @@ class Knowledge(unittest.TestCase):
         self.player('grand', parent='worker')
         self.player('sibling')
 
-    def tearDown(self):
+    def instance_owner_pids(self):
+        expected = f'{EXE.resolve()} --instance-owner {self.db.resolve()}'
+        processes = subprocess.run(['ps', '-axo', 'pid=,ppid=,stat=,command='],
+                                   check=True, capture_output=True, text=True)
+        owners = set()
+        for line in processes.stdout.splitlines():
+            fields = line.strip().split(None, 3)
+            if len(fields) == 4 and fields[3] == expected and not fields[2].startswith('Z'):
+                owners.add(int(fields[0]))
+        return owners
+
+    def cleanup_fixture(self):
+        try:
+            if self.db.exists():
+                owners = self.instance_owner_pids()
+                stopped = subprocess.run([str(EXE), '--instance-shutdown', str(self.db)],
+                                         capture_output=True, text=True)
+                self.assertEqual(stopped.returncode, 0, stopped.stdout + stopped.stderr)
+                while owners & self.instance_owner_pids():
+                    time.sleep(.01)
+        except Exception:
+            self.temp._finalizer.detach()
+            raise
         self.temp.cleanup()
 
     def call(self, *args, success=True):
@@ -644,7 +668,7 @@ class Knowledge(unittest.TestCase):
                   json.dumps([str(pathlib.Path(self.temp.name) / 'missing-endpoint')]))
         promote = ('promote', 'repair-share', 'root', 'worker', 'root', 'repair-finding')
         failed = self.call(*promote, success=False)
-        self.assertIn('The row is committed and its notice is undelivered', failed.stderr)
+        self.assertIn('Message committed; session delivery failed:', failed.stderr)
         notice = self.call('delivery', 'repair-share:promotion-notice')
         self.assertIsNone(notice['receipt'])
         self.assertEqual(self.ids(self.read('sibling')), ['repair-finding'])
