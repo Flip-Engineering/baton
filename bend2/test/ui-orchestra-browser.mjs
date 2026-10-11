@@ -1193,7 +1193,7 @@ await until('activating the same relation again pins its card after a dismissal'
     && !!name && title.textContent === name;
 })()`);
 const shareEdgesBefore = await evalJs(`document.querySelectorAll('#knowledge-whole .kw-edge-share').length`);
-baton('promote', 'qa-relation-live-frame', 'root', 'root', 'worker', 'qa-worker-finding');
+baton('promote', 'qa-relation-live-frame', 'worker', 'aide', 'worker', 'qa-worker-finding');
 committed();
 await until('a live frame renders while the relation is still named',
   `document.querySelectorAll('#knowledge-whole .kw-edge-share').length > ${JSON.stringify(shareEdgesBefore)}`);
@@ -2379,6 +2379,44 @@ check('the Knowledge map reserves depth zero for the Principal and keeps a paren
       .map((anchor) => anchor.getAttribute('data-kw-id') || '').sort();
     const orphan = anchors.find((anchor) => anchor.getAttribute('data-kw-id') === ghost);
     return zero.join(',') === principal && !!orphan && depthAt(orphan) === -1;
+  })()`));
+
+check('reference marks clear the entire Principal band and retain their authored endpoints',
+  await evalJs(`(() => {
+    const actors = ${JSON.stringify(fixturePayload.actors || {})};
+    const edge = ${JSON.stringify(fixturePayload.edges || [])}
+      .find((row) => row.id === 'fixture-relation-edge');
+    const principal = 'fixture-knowledge-root';
+    if (actors[principal]?.role !== 'principal-conductor' || actors[principal]?.parent !== '') return false;
+    if (!edge || edge.author !== principal || edge.provenance !== 'authored'
+      || edge.source !== 'fixture-knowledge-player-b' || edge.sourceKind !== 'session'
+      || edge.target !== 'external:fixture-log-1' || edge.targetKind !== 'external') return false;
+    const svg = document.querySelector('#knowledge-whole svg.kw-canvas');
+    if (!svg || svg.querySelector('.kw-anchor[data-kw-id="' + edge.source + '"]')) return false;
+    const tiers = [...svg.querySelectorAll('text.kw-tier')]
+      .map((node) => ({ y: Number(node.getAttribute('y')), label: node.getAttribute('aria-label') || '' }))
+      .sort((a, b) => a.y - b.y);
+    const principalTier = tiers.findIndex((row) => row.label === 'depth 0');
+    if (principalTier < 0 || principalTier + 1 >= tiers.length) return false;
+    const floor = tiers[principalTier + 1].y - 4;
+    const drawn = svg.querySelector('.kw-edge-typed[data-edge="fixture-relation-edge"]');
+    if (!drawn || drawn.getAttribute('data-provenance') !== edge.provenance
+      || drawn.getAttribute('data-from') !== edge.source || drawn.getAttribute('data-to') !== edge.target
+      || drawn.getAttribute('data-from-kind') !== 'ref' || drawn.getAttribute('data-to-kind') !== 'ref') return false;
+    const marks = [...svg.querySelectorAll('g.kw-ref[data-kw-ref]')];
+    if (!marks.length || ![edge.source, edge.target].every((ref) => marks.some((mark) =>
+      mark.getAttribute('data-kw-ref') === ref && mark.getAttribute('data-kw-kind') === 'ref'
+        && mark.querySelector('circle.kw-typeref-ring')))) return false;
+    return marks.every((mark) => {
+      const shapes = [...mark.querySelectorAll('circle, rect, polygon, text')];
+      return shapes.length > 0 && shapes.every((shape) => {
+        const box = shape.getBBox();
+        const style = getComputedStyle(shape);
+        const stroke = style.stroke === 'none' ? 0 : (parseFloat(style.strokeWidth) || 0);
+        const padding = shape.tagName.toLowerCase() === 'polygon' ? stroke : stroke / 2;
+        return Number.isFinite(box.y) && box.y - padding >= floor;
+      });
+    });
   })()`));
 
 check('a collapsed ensemble stays on its first drawn member tier when its first recorded member is quiet',

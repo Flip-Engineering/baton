@@ -1795,6 +1795,9 @@
       settled.push({ x0: pos.x - 18, y0: pos.y - 18, x1: pos.x + 18, y1: pos.y + 18 });
     }
     for (const box of kwLabelBoxes) settled.push(box);
+    // References clear the full Principal tier, including its authored findings.
+    const principalTier = tiers.find((tier) => tier.d === 0);
+    const refFloor = principalTier ? principalTier.y + principalTier.height : null;
     const slotOrder = [...kwRefMarks.values()]
       .sort((p, q) => (p.y - q.y) || (p.x - q.x));
     for (const mark of slotOrder) {
@@ -1802,6 +1805,7 @@
       // A typed ring hangs its label below the ring, so its box is
       // taller than a tag's; the settle moves the centre the same way.
       const hh = mark.typed ? 19 : 9 + 3;
+      if (refFloor !== null) mark.y = Math.max(mark.y, refFloor + hh);
       while (settled.some((box) =>
           mark.x - hw < box.x1 && box.x0 < mark.x + hw
           && mark.y - hh < box.y1 && box.y0 < mark.y + hh)) {
@@ -1927,7 +1931,10 @@
         width: String(mark.w), height: "18", rx: "4",
         class: "kw-ref-tag",
       });
-      kwRefGlyph(g, mark.family, (mark.anchorX + mark.x) / 2, (mark.anchorY + mark.y) / 2);
+      const glyphY = (mark.anchorY + mark.y) / 2;
+      // Six units clear the diamond and its existing two-pixel stroke.
+      kwRefGlyph(g, mark.family, (mark.anchorX + mark.x) / 2,
+        refFloor === null ? glyphY : Math.max(glyphY, refFloor + 6));
       const word = kwSvg(g, "text", {
         x: String(mark.x), y: String(mark.y + 4), class: "kw-ref-word mono",
         "text-anchor": "middle",
