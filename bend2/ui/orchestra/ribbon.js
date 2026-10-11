@@ -456,8 +456,8 @@ function renderRibbon(container, data, options) {
       + " \u00b7 " + scopeWords;
   }
 
-  // One line for the figures, the scrub position or a hovered stretch: the line
-  // never grows into a second one.
+  // The bounded summary shows the current figures or the last inspected note.
+  // Long text wraps and remains available by scrolling within the summary.
   function renderLine(extra) {
     summary.textContent = "";
     summary.appendChild(document.createTextNode((extra || lineText()) + " "));
@@ -565,7 +565,8 @@ function renderRibbon(container, data, options) {
   axis.appendChild(endBar);
   // The newest drawn note is the one an arrival inks.
   if (arriving && newestNote) newestNote.classList.add("ribbon-arrival");
-  axis.addEventListener("pointerleave", () => renderLine());
+  // The latest inspected note remains readable in the fixed summary after the pointer
+  // leaves the axis. The next note or a new render updates it.
 
   const needle = document.createElement("span");
   needle.className = "ribbon-needle";
@@ -750,7 +751,7 @@ function renderRibbon(container, data, options) {
 
   if (focusKey) {
     const next = container.querySelector('[data-focus="' + ribbonEscape(focusKey) + '"]');
-    if (next && typeof next.focus === "function") next.focus();
+    if (next && typeof next.focus === "function") next.focus({ preventScroll: true });
   }
 
   return { events: total, position };

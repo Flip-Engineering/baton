@@ -4,9 +4,11 @@
 // recovery over the same committed database.
 // Usage: node ui-orchestra-browser.mjs EXE WORKDIR OUTDIR [CHROMIUM]
 import { spawn, spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, readFileSync, readdirSync, readlinkSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, createReadStream, existsSync, mkdirSync, readFileSync, readdirSync, readlinkSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
-import { join } from 'node:path';
+import { delimiter, dirname, isAbsolute, join, resolve } from 'node:path';
+import { createHash } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { createOrchestraServer } from '../ui/orchestra/server.mjs';
 
@@ -16,6 +18,44 @@ const CAPTURE_ONLY = process.env.FINAL_NATIVE_CONTEXT_BROWSER_CAPTURE_ONLY === '
 let view = null;
 let view2 = null;
 let chrome = null;
+let retainBrowserFailure = null;
+let retainedFailure = null;
+let primaryFailure = null;
+let lastEvaluation = null;
+let activeWait = null;
+let lastCoordinatorCall = null;
+const fixtureCommands = [];
+const fixtureFindings = new Map();
+
+function errorRecord(error, seen = new Set()) {
+  if (error === null || typeof error !== 'object') return { value: String(error) };
+  if (seen.has(error)) return { circular: true };
+  seen.add(error);
+  const result = {};
+  for (const key of ['name', 'message', 'stack', 'code', 'errno', 'syscall', 'path']) {
+    if (error[key] !== undefined) result[key] = String(error[key]);
+  }
+  if (error.cause !== undefined) result.cause = errorRecord(error.cause, seen);
+  if (error.retentionError !== undefined) result.retentionError = errorRecord(error.retentionError, seen);
+  if (Array.isArray(error.errors)) result.errors = error.errors.map((item) => errorRecord(item, seen));
+  if (error.fixtureCheck) result.check = error.fixtureCheck;
+  if (error.coordinatorCall) result.coordinatorCall = error.coordinatorCall;
+  if (error.cdpException) result.cdpException = error.cdpException;
+  return result;
+}
+
+function writeFailureRecord() {
+  try {
+    writeFileSync(join(OUT, 'assertion-failure-dom.json'), JSON.stringify(retainedFailure, null, 2) + '\n');
+  } catch (error) {
+    console.error('Browser failure metadata retention error: ' + error.stack);
+    retainedFailure.metadataRetentionError = errorRecord(error);
+  }
+}
+
+function retainFixtureCommands() {
+  writeFileSync(join(OUT, 'fixture-commands.json'), JSON.stringify(fixtureCommands, null, 2) + '\n');
+}
 
 function spawnTracked(...args) {
   const child = spawn(...args);
@@ -25,12 +65,27 @@ function spawnTracked(...args) {
 
 function check(name, ok, detail = '') {
   console.log(`${ok ? 'PASS' : 'FAIL'} ${name}${detail ? ' — ' + detail : ''}`);
-  if (!ok) throw new Error(name + ': ' + detail);
+  if (!ok) {
+    const error = new Error(name + ': ' + detail);
+    error.fixtureCheck = { name, detail, evaluation: lastEvaluation };
+    throw error;
+  }
 }
 
 function baton(...args) {
-  const r = spawnSync(EXE, [DB, ...args], { encoding: 'utf8' });
-  if (r.status !== 0) throw new Error(`baton2 ${args[0]} failed: ${r.stdout}${r.stderr}`);
+  const argv = [DB, ...args];
+  const r = spawnSync(EXE, argv, { encoding: 'utf8' });
+  lastCoordinatorCall = { executable: EXE, argv, status: r.status, signal: r.signal,
+    stdout: r.stdout, stderr: r.stderr, error: r.error ? errorRecord(r.error) : null };
+  if (r.status !== 0) {
+    const error = new Error(`baton2 ${args[0]} failed: ${r.stdout}${r.stderr}`, { cause: r.error });
+    error.coordinatorCall = lastCoordinatorCall;
+    throw error;
+  }
+  fixtureCommands.push({ sequence: fixtureCommands.length + 1, ...lastCoordinatorCall });
+  if (args[0] === 'record') {
+    fixtureFindings.set(String(args[1]), { id: String(args[1]), author: String(args[2]) });
+  }
   return r.stdout.trim();
 }
 
@@ -158,6 +213,67 @@ baton('record', 'qa-msg-finding', 'worker', 'Worker message finding.',
   db.close();
 }
 
+// This expectation describes the initial fixture before replacement and live records.
+const initialFindings = [...fixtureFindings.values()];
+const initialWorkerRecords = initialFindings.filter((finding) => finding.author === 'worker').length;
+const initialScopeText = {
+  worker: `worker · ${initialWorkerRecords} items`,
+  all: `All held records · ${initialFindings.length} items`,
+};
+
+async function fileIdentity(path) {
+  try {
+    const actual = realpathSync(path);
+    const stat = statSync(actual);
+    const hash = createHash('sha256');
+    for await (const chunk of createReadStream(actual)) hash.update(chunk);
+    return { path, resolvedPath: actual, bytes: stat.size, sha256: hash.digest('hex'),
+      device: stat.dev, inode: stat.ino };
+  } catch (error) {
+    return { path, error: errorRecord(error) };
+  }
+}
+function executablePath(value) {
+  if (isAbsolute(value) || value.includes('/')) return resolve(value);
+  return (process.env.PATH || '').split(delimiter).map((dir) => join(dir, value))
+    .find((path) => existsSync(path)) || value;
+}
+const driverPath = fileURLToPath(import.meta.url);
+const driverRoot = resolve(dirname(driverPath), '../..');
+const driverGit = spawnSync('git', ['-C', driverRoot, 'rev-parse', '--show-toplevel', 'HEAD'], { encoding: 'utf8' });
+const importedServer = fileURLToPath(new URL('../ui/orchestra/server.mjs', import.meta.url));
+const coordinatorPath = executablePath(EXE);
+const executableDirectory = dirname(realpathSync(coordinatorPath));
+const nativeServerCandidates = [resolve(executableDirectory, '../libexec/baton2/ui/server.mjs'),
+  resolve(executableDirectory, '../../bend2/ui/orchestra/server.mjs')];
+const nativeServer = nativeServerCandidates.find((path) => existsSync(path));
+const assetDirectories = [...new Set([dirname(importedServer), ...(nativeServer ? [dirname(nativeServer)] : [])])];
+const assetIdentities = [];
+for (const directory of assetDirectories) {
+  for (const name of readdirSync(directory).filter((name) => /\.(js|mjs|css|html)$/.test(name)).sort()) {
+    assetIdentities.push(await fileIdentity(join(directory, name)));
+  }
+  for (const name of ['fixture-knowledge.json', 'fixture-knowledge-empty.json']) {
+    assetIdentities.push(await fileIdentity(join(directory, 'fixtures', name)));
+  }
+}
+// The file hashes identify source and packaged assets; the binary hash identifies the compiled core.
+writeFileSync(join(OUT, 'provenance.json'), JSON.stringify({
+  driver: await fileIdentity(driverPath),
+  driverGit: { argv: driverGit.spawnargs || ['git', '-C', driverRoot, 'rev-parse', '--show-toplevel', 'HEAD'],
+    status: driverGit.status, stdout: driverGit.stdout, stderr: driverGit.stderr,
+    error: driverGit.error ? errorRecord(driverGit.error) : null },
+  coordinator: { requested: EXE, ...await fileIdentity(coordinatorPath) }, node: await fileIdentity(process.execPath),
+  chromium: { requested: CHROMIUM, ...await fileIdentity(executablePath(CHROMIUM)) },
+  databasePath: DB, captureOnly: CAPTURE_ONLY,
+  importedServer: await fileIdentity(importedServer),
+  nativeServerSelection: { candidates: nativeServerCandidates, selectedCandidateByExistence: nativeServer || null,
+    basis: 'Candidate path order from ui-view.bend; actual serving is established by retained HTTP responses.' },
+  uiAssets: assetIdentities,
+  initialFixtureCommands: fixtureCommands.slice(), initialFindings, initialScopeText,
+  fixtureCommandCoverage: 'Public calls through this driver baton wrapper; native callback calls and direct SQL writes are outside this transcript.',
+}, null, 2) + '\n');
+
 // --- chromium over CDP
 chrome = spawnTracked(CHROMIUM, ['--headless=new', '--no-sandbox', '--remote-debugging-port=0',
   `--user-data-dir=${join(WORK, 'chrome')}`, 'about:blank'], { stdio: ['ignore', 'pipe', 'pipe'] });
@@ -175,6 +291,7 @@ const wsUrl = await new Promise((resolve, reject) => {
 let msgId = 0;
 const pendingCalls = new Map();
 const pendingNavigations = new Map();
+const overviewProbeResponses = [];
 let pageWs = null;
 function attach(ws) {
   ws.onmessage = (ev) => {
@@ -303,15 +420,198 @@ async function openPage(url) {
   await send(pageWs, 'Runtime.enable');
   await send(pageWs, 'Page.enable');
   await send(pageWs, 'Page.setLifecycleEventsEnabled', { enabled: true });
+  await send(pageWs, 'Performance.enable');
+  navigationRedrawStart = await beginRedrawEvidence('page navigation ' + url);
   await navigatePage(pageWs, url);
 }
 async function evalJs(expression) {
-  const r = await send(pageWs, 'Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true });
-  if (r.result?.exceptionDetails) throw new Error(JSON.stringify(r.result.exceptionDetails));
-  return r.result && r.result.result ? r.result.result.value : undefined;
+  lastEvaluation = { expression };
+  const observesOverview = expression.includes('/orchestra/knowledge/overview');
+  const observedExpression = observesOverview ? `(async () => {
+    const responses = [];
+    const fetch = async (...args) => {
+      const response = await globalThis.fetch(...args);
+      responses.push({
+        requestedUrl: new URL(String(args[0]), location.href).href,
+        responseUrl: response.url,
+        status: response.status,
+        headers: [...response.headers.entries()],
+        contentType: response.headers.get('content-type'),
+        body: await response.clone().text(),
+      });
+      return response;
+    };
+    const value = await (${expression});
+    return { value, responses };
+  })()` : expression;
+  const r = await send(pageWs, 'Runtime.evaluate', { expression: observedExpression, returnByValue: true, awaitPromise: true });
+  if (r.result?.exceptionDetails) {
+    const error = new Error(JSON.stringify(r.result.exceptionDetails));
+    error.cdpException = r.result.exceptionDetails;
+    throw error;
+  }
+  const value = r.result && r.result.result ? r.result.result.value : undefined;
+  if (!observesOverview) return value;
+  const probe = { expression, responses: value.responses };
+  overviewProbeResponses.push(probe);
+  writeFileSync(join(OUT, 'overview-probe-responses.json'), JSON.stringify(overviewProbeResponses, null, 2) + '\n');
+  for (const [index, response] of probe.responses.entries()) {
+    writeFileSync(join(OUT, `overview-probe-${overviewProbeResponses.length}-${index + 1}.body`), response.body);
+  }
+  return value.value;
 }
+const redrawEvidence = [];
+let navigationRedrawStart = null;
+async function readRenderMetrics() {
+  try {
+    const reply = await send(pageWs, 'Performance.getMetrics');
+    if (reply.error || !Array.isArray(reply.result?.metrics)) return { error: reply };
+    return { metrics: Object.fromEntries(reply.result.metrics.map((metric) => [metric.name, metric.value])) };
+  } catch (error) { return { error: { name: error.name, message: error.message } }; }
+}
+async function beginRedrawEvidence(label) {
+  return { label, startedUtc: new Date().toISOString(), startedWallMs: Date.now(), before: await readRenderMetrics() };
+}
+async function finishRedrawEvidence(start) {
+  const after = await readRenderMetrics();
+  const deltaSeconds = {};
+  for (const name of ['ScriptDuration', 'LayoutDuration', 'RecalcStyleDuration', 'TaskDuration']) {
+    deltaSeconds[name] = typeof start.before.metrics?.[name] === 'number' && typeof after.metrics?.[name] === 'number'
+      ? after.metrics[name] - start.before.metrics[name] : null;
+  }
+  redrawEvidence.push({ ...start, endedUtc: new Date().toISOString(), wallMs: Date.now() - start.startedWallMs,
+    after, deltaSeconds, scope: 'Browser script, style, layout and task work during the existing redraw/readiness interval.' });
+  writeFileSync(join(OUT, 'render-duration-evidence.json'), JSON.stringify(redrawEvidence, null, 2) + '\n');
+}
+async function checkKnowledgeRouteClearance(label) {
+  const value = await evalJs(`(() => {
+  const svg = document.querySelector('#knowledge-whole svg.kw-canvas');
+  const edges = [...svg.querySelectorAll('g.kw-edges > [data-from][data-to]')];
+  const cardNodes = [...svg.querySelectorAll('.kw-record-hit')];
+  const cards = cardNodes.map((node) => {
+    const record = node.parentNode;
+    return { kind: record.dataset.kwKind || '', id: record.dataset.kwId || record.dataset.kwNode || '',
+      rect: node.getBoundingClientRect() };
+  });
+  const refs = [...svg.querySelectorAll('g.kw-ref[data-kw-ref]')].map((node) => {
+    const shapes = [...node.querySelectorAll('.kw-typeref-ring, .kw-typeref-dot, .kw-ref-tag, .kw-folded-tag, .kw-ref-word')]
+      .map((shape) => shape.getBoundingClientRect());
+    return { id: node.dataset.kwRef, folded: node.classList.contains('kw-folded'), rect: {
+      left: Math.min(...shapes.map((r) => r.left)), top: Math.min(...shapes.map((r) => r.top)),
+      right: Math.max(...shapes.map((r) => r.right)), bottom: Math.max(...shapes.map((r) => r.bottom))
+    } };
+  });
+  const inside = (point, rect) => point.x > rect.left && point.x < rect.right
+    && point.y > rect.top && point.y < rect.bottom;
+  const collisions = [];
+  const counts = [];
+  for (const edge of edges) {
+    const from = { kind: edge.dataset.fromKind, id: edge.dataset.from };
+    const to = { kind: edge.dataset.toKind, id: edge.dataset.to };
+    const same = (end, record) => end.kind === record.kind
+      && (end.kind === 'finding' ? end.id.replace(/^finding:/, '') : end.id) === record.id;
+    const strokes = edge.tagName.toLowerCase() === 'g'
+      ? [...edge.querySelectorAll(':scope > line, :scope > path')] : [edge];
+    const points = [];
+    for (const stroke of strokes) {
+      const matrix = stroke.getScreenCTM();
+      const length = stroke.getTotalLength();
+      const steps = Math.max(1, Math.ceil(length));
+      for (let i = 0; i <= steps; i += 1) {
+        points.push(stroke.getPointAtLength(length * i / steps).matrixTransform(matrix));
+      }
+    }
+    counts.push({ from, to, route: edge.dataset.kwRoute || '', strokes: strokes.length, points: points.length });
+    if (!points.length) { collisions.push({ from, to, reason: 'no drawn stroke' }); continue; }
+    const endpoints = [points[0], points[points.length - 1]];
+    const obstacles = cards.filter((record) => !same(from, record) && !same(to, record))
+      .map((record) => ({ kind: record.kind, id: record.id, rect: record.rect }));
+    for (const ref of refs) {
+      const own = (from.kind === 'ref' && from.id === ref.id) || (to.kind === 'ref' && to.id === ref.id)
+        || (ref.folded && (from.kind === 'ref' || to.kind === 'ref')
+          && endpoints.some((point) => inside(point, ref.rect)));
+      if (!own) obstacles.push({ kind: 'ref', id: ref.id, rect: ref.rect });
+    }
+    for (const obstacle of obstacles) {
+      const point = points.find((p) => inside(p, obstacle.rect));
+      if (point) collisions.push({ from, to, obstacle: { kind: obstacle.kind, id: obstacle.id },
+        point: { x: point.x, y: point.y }, rect: obstacle.rect });
+    }
+  }
+  return { viewport: { width: innerWidth, height: innerHeight }, scope: document.getElementById('map-scope')?.textContent,
+    cardCount: cards.length, referenceCount: refs.length, edgeCount: edges.length, counts, collisions };
+})()`);
+  writeFileSync(join(OUT, 'knowledge-route-geometry-' + label + '.json'), JSON.stringify(value, null, 2) + '\n');
+  check('Knowledge connections avoid unrelated complete cards and reference boxes ' + label,
+    value.edgeCount > 0 && value.cardCount > 0 && value.collisions.length === 0, JSON.stringify(value));
+}
+retainBrowserFailure = async () => {
+  const retain = async (name, read) => {
+    try { retainedFailure.observations[name] = await read(); }
+    catch (error) { retainedFailure.observations[name + 'Error'] = errorRecord(error); }
+  };
+  let snapshot;
+  await retain('dom', async () => {
+    snapshot = await evalJs(`(() => {
+      const map = document.querySelector('#knowledge-whole');
+      const attributes = (node) => node ? Object.fromEntries([...node.attributes]
+        .map((attribute) => [attribute.name, attribute.value])) : null;
+      const focused = document.activeElement;
+      return { url: location.href, title: document.title,
+        documentHtml: document.documentElement.outerHTML, mapHtml: map && map.outerHTML,
+        mapScopeText: document.querySelector('#map-scope')?.textContent || '',
+        selectionHeading: document.querySelector('#selection h2')?.textContent || '',
+        activeElement: focused && { attributes: attributes(focused), tag: focused.tagName },
+        note: map && [...map.querySelectorAll('.kw-legend-note')]
+          .map((node) => ({ attributes: attributes(node), text: node.textContent })),
+        keys: map && [...map.querySelectorAll('.kw-legend-keys')]
+          .map((node) => ({ attributes: attributes(node), text: node.textContent })),
+        toggle: map && [...map.querySelectorAll('[data-kw-key-toggle="key"]')]
+          .map((node) => ({ attributes: attributes(node), text: node.textContent })),
+        midpointNames: map && [...map.querySelectorAll('.kw-rel-name')]
+          .map((node) => ({ attributes: attributes(node), text: node.textContent })),
+        typedEdges: map && [...map.querySelectorAll('.kw-edge-typed')]
+          .map((node) => ({ attributes: attributes(node), text: node.textContent })),
+      };
+    })()`);
+    const { documentHtml, mapHtml, ...values } = snapshot;
+    return values;
+  });
+  if (snapshot) {
+    await retain('pageHtml', () => {
+      writeFileSync(join(OUT, 'assertion-failure-dom.html'), snapshot.documentHtml);
+      return 'assertion-failure-dom.html';
+    });
+    if (typeof snapshot.mapHtml === 'string') {
+      await retain('mapHtml', () => {
+        writeFileSync(join(OUT, 'assertion-failure-map.html'), snapshot.mapHtml);
+        return 'assertion-failure-map.html';
+      });
+    }
+  }
+  await retain('screenshot', async () => {
+    const shot = await send(pageWs, 'Page.captureScreenshot', { format: 'png' });
+    writeFileSync(join(OUT, 'assertion-failure.png'), Buffer.from(shot.result.data, 'base64'));
+    return 'assertion-failure.png';
+  });
+  await retain('knowledgeScreenshot', async () => {
+    const box = await evalJs(`(() => {
+      const map = document.querySelector('#knowledge-whole');
+      if (!map) return null;
+      const r = map.getBoundingClientRect();
+      return { x: r.x + window.scrollX, y: r.y + window.scrollY, width: r.width, height: r.height };
+    })()`);
+    if (!box || box.width <= 1 || box.height <= 1) return { absent: true, box };
+    const shot = await send(pageWs, 'Page.captureScreenshot', {
+      format: 'png', captureBeyondViewport: true, clip: { ...box, scale: 1 },
+    });
+    writeFileSync(join(OUT, 'assertion-failure-knowledge.png'), Buffer.from(shot.result.data, 'base64'));
+    return 'assertion-failure-knowledge.png';
+  });
+};
 async function until(name, expression) {
   console.log('WAIT ' + name);
+  activeWait = { name, expression };
   const value = await evalJs(`new Promise((resolve) => {
     const matches = () => Boolean(${expression});
     if (matches()) return resolve(true);
@@ -324,6 +624,7 @@ async function until(name, expression) {
     if (matches()) { observer.disconnect(); resolve(true); }
   })`);
   check(name, value === true);
+  activeWait = null;
   return value;
 }
 
@@ -354,8 +655,23 @@ await until('snapshot line leaves its unloaded state',
   `document.getElementById('snapshot-line') && !document.getElementById('snapshot-line').textContent.includes('No snapshot loaded')`);
 await until('the stage settles on the snapshot actors',
   `(document.getElementById('attention-band').textContent || '').length > 0`);
+await until('the live stage keeps its quiet recorded Principal as reporting context',
+  `(() => {
+    const stage = document.querySelector('#attention-band svg.att-stage');
+    const principal = stage && stage.querySelector('.att-seat[data-att-role="principal-conductor"][data-att-state="quiet"]');
+    const id = principal && principal.getAttribute('data-att-id');
+    return !!id && principal.getAttribute('data-att-context') === 'recorded-ancestor'
+      && principal.querySelector('.att-seat-state').textContent.includes('quiet')
+      && principal.querySelector('.att-seat-state').textContent.includes('reporting context')
+      && [...stage.querySelectorAll('.att-parent-link')].some((edge) =>
+        edge.getAttribute('data-att-parent-from') === id)
+      && ![...document.querySelectorAll('#roster .doc-row')].some((row) =>
+        row.getAttribute('data-doc-id') === id);
+  })()`);
 const initialShot = await send(pageWs, 'Page.captureScreenshot', { format: 'png' });
 writeFileSync(join(OUT, 'initial.png'), Buffer.from(initialShot.result.data, 'base64'));
+await captureSurfaceEvidence('initial-stage.png', '#staves');
+await captureSurfaceEvidence('initial-memberships.png', '#attention-band .att-ensembles');
 check('the default scope shows live work and puts the rest behind the control', await evalJs(
   `document.getElementById('doc-ended').getAttribute('aria-pressed') === 'false'
     && document.querySelectorAll('#roster .doc-row.state-quiet').length === 0
@@ -443,7 +759,7 @@ await until('row selection lights its own arcs',
 await until('the map draws on the page without a disclosure',
   `document.querySelector('#knowledge-whole svg.kw-canvas') && document.querySelectorAll('#knowledge-whole .kw-tier').length > 1`);
 await until('selecting a worker loads that scope holdings',
-  `(document.querySelector('#map-scope').textContent || '').endsWith('· 2 items')`);
+  `(document.querySelector('#map-scope').textContent || '').endsWith(${JSON.stringify(`· ${initialWorkerRecords} items`)})`);
 check('promotion arcs join the rendered rows in the margin', await evalJs(
   `!!document.querySelector('#roster > svg.kw-arcs') && !!document.querySelector('#roster .kw-arc[data-from="worker"][data-to="aide"]')`));
 check('sharing seats carry a holding halo in the row gutter', await evalJs(
@@ -524,7 +840,7 @@ if (CAPTURE_ONLY) {
 }
 await evalJs(`document.getElementById('map-scope-all').click()`);
 await until('all-records toggle discovers every held record',
-  `document.querySelector('#map-scope').textContent === 'All held records · 3 items'`);
+  `document.querySelector('#map-scope').textContent === ${JSON.stringify(initialScopeText.all)}`);
 check('all-records toggle states its pressed state', await evalJs(
   `document.getElementById('map-scope-all').getAttribute('aria-pressed') === 'true' && document.getElementById('map-scope-all').textContent === 'Back to universal knowledge'`));
 await evalJs(`document.getElementById('map-scope-all').click()`);
@@ -532,7 +848,7 @@ await until('leaving all-records returns to universal knowledge',
   `document.querySelector('#map-scope').textContent === 'Universal knowledge · 0 items'`);
 await evalJs(`document.querySelector('#roster .doc-row[data-doc-id="worker"] .doc-open').click()`);
 await until('worker scope restores its holdings',
-  `(document.querySelector('#map-scope').textContent || '').endsWith('· 2 items') && !!document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]')`);
+  `(document.querySelector('#map-scope').textContent || '').endsWith(${JSON.stringify(`· ${initialWorkerRecords} items`)}) && !!document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]')`);
 await evalJs(`document.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true, cancelable:true}))`);
 await until('Escape clears the worker selection and returns to universal holdings',
   `document.getElementById('map-scope').textContent === 'Universal knowledge · 0 items'
@@ -541,16 +857,17 @@ await until('Escape clears the worker selection and returns to universal holding
     && location.hash === ''`);
 await evalJs(`document.querySelector('#roster .doc-row[data-doc-id="worker"] .doc-open').click()`);
 await until('worker holdings reopen after clearing the selection',
-  `document.getElementById('map-scope').textContent === 'worker · 2 items'
+  `document.getElementById('map-scope').textContent === ${JSON.stringify(initialScopeText.worker)}
     && !!document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]')`);
 await evalJs(`document.querySelector('#roster [data-doc-group="qa-ensemble"]').click()`);
 await until('ensemble band opens the owner holdings on the map',
   `document.querySelector('#map-scope').textContent === 'Group qa-ensemble · 1 item' && !!document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]')`);
 await evalJs(`document.querySelector('#roster .doc-row[data-doc-id="worker"] .doc-open').click()`);
 await until('worker scope restores after the ensemble probe',
-  `(document.querySelector('#map-scope').textContent || '').endsWith('· 2 items') && !!document.querySelector('#knowledge-whole .knode[aria-label="qa-msg-finding"]')`);
+  `(document.querySelector('#map-scope').textContent || '').endsWith(${JSON.stringify(`· ${initialWorkerRecords} items`)}) && !!document.querySelector('#knowledge-whole .knode[aria-label="qa-msg-finding"]')`);
 check('tiers read as ruled bands', await evalJs(
   `document.querySelectorAll('#knowledge-whole .kw-tier-rule').length >= 2`));
+await captureSurfaceEvidence('knowledge-authored-layout.png', '#knowledge-whole');
 check('authored findings form a group below their recorded author', await evalJs(`(() => {
   const author = document.querySelector('#knowledge-whole .kw-anchor[data-kw-id="worker"] rect');
   const findings = ['qa-worker-finding', 'qa-msg-finding'].map((id) =>
@@ -560,10 +877,9 @@ check('authored findings form a group below their recorded author', await evalJs
   const bounds = findings.map((node) => node.getBoundingClientRect());
   const centers = bounds.map((box) => (box.left + box.right) / 2);
   const authorCenter = (anchor.left + anchor.right) / 2;
-  const groupCenter = (centers[0] + centers[1]) / 2;
-  return Math.min(...centers) < authorCenter && Math.max(...centers) > authorCenter
-    && groupCenter >= anchor.left && groupCenter <= anchor.right
-    && bounds.every((box) => box.top >= anchor.bottom);
+  return centers.every((center) => Math.abs(center - authorCenter) <= 1)
+    && bounds.every((box) => box.top >= anchor.bottom)
+    && bounds[0].bottom < bounds[1].top;
 })()`));
 check('the map frame scrolls nothing: the page carries the drawing at its own height', await evalJs(`(() => {
   const frame = document.querySelector('.map-frame');
@@ -573,10 +889,56 @@ check('the map frame scrolls nothing: the page carries the drawing at its own he
 })()`));
 check('zoom controls state their action and level', await evalJs(
   `!!document.querySelector('#knowledge-whole [aria-label="Zoom the map in"]') && !!document.querySelector('#knowledge-whole [aria-label="Zoom the map out"]') && !!document.querySelector('#knowledge-whole .kw-zoom-level')`));
-const mapNodeWidthBeforeZoom = await evalJs(`document.querySelector('#knowledge-whole .kw-anchor').getBoundingClientRect().width`);
+const zoomStateBefore = await evalJs(`(() => {
+  const svg = document.querySelector('#knowledge-whole svg.kw-canvas');
+  const view = svg.querySelector('.kw-view');
+  const anchor = svg.querySelector('.kw-anchor');
+  const bounds = svg.getBoundingClientRect();
+  const card = anchor.getBoundingClientRect();
+  const width = Number(svg.getAttribute('width'));
+  const height = Number(svg.getAttribute('height'));
+  const transforms = view.transform.baseVal;
+  const matrix = transforms.getItem(transforms.numberOfItems - 1).matrix;
+  const screen = view.getScreenCTM();
+  const readout = document.querySelector('#knowledge-whole .kw-zoom-level').textContent;
+  return {
+    actor: anchor.dataset.kwId, cardWidth: card.width,
+    cardBounds: { left: card.left, top: card.top, right: card.right, bottom: card.bottom },
+    percentage: parseFloat(readout), readout,
+    svg: { width, height, viewBox: svg.getAttribute('viewBox'), cssWidth: bounds.width, cssHeight: bounds.height },
+    unitScale: { x: bounds.width / width, y: bounds.height / height },
+    viewTransform: view.getAttribute('transform'), viewScale: { x: matrix.a, y: matrix.d },
+    screenMatrix: { a: screen.a, b: screen.b, c: screen.c, d: screen.d, e: screen.e, f: screen.f }
+  };
+})()`);
+const mapNodeWidthBeforeZoom = zoomStateBefore.cardWidth;
+const mapZoomLevelBeforeZoom = zoomStateBefore.percentage;
 await evalJs(`document.querySelector('#knowledge-whole [aria-label="Zoom the map in"]').click()`);
+const zoomStateAfter = await evalJs(`(() => {
+  const svg = document.querySelector('#knowledge-whole svg.kw-canvas');
+  const view = svg.querySelector('.kw-view');
+  const anchor = svg.querySelector('.kw-anchor');
+  const bounds = svg.getBoundingClientRect();
+  const card = anchor.getBoundingClientRect();
+  const width = Number(svg.getAttribute('width'));
+  const height = Number(svg.getAttribute('height'));
+  const transforms = view.transform.baseVal;
+  const matrix = transforms.getItem(transforms.numberOfItems - 1).matrix;
+  const screen = view.getScreenCTM();
+  const readout = document.querySelector('#knowledge-whole .kw-zoom-level').textContent;
+  return {
+    actor: anchor.dataset.kwId, cardWidth: card.width,
+    cardBounds: { left: card.left, top: card.top, right: card.right, bottom: card.bottom },
+    percentage: parseFloat(readout), readout,
+    svg: { width, height, viewBox: svg.getAttribute('viewBox'), cssWidth: bounds.width, cssHeight: bounds.height },
+    unitScale: { x: bounds.width / width, y: bounds.height / height },
+    viewTransform: view.getAttribute('transform'), viewScale: { x: matrix.a, y: matrix.d },
+    screenMatrix: { a: screen.a, b: screen.b, c: screen.c, d: screen.d, e: screen.e, f: screen.f }
+  };
+})()`);
+writeFileSync(join(OUT, 'zoom-state-evidence.json'), JSON.stringify({ before: zoomStateBefore, after: zoomStateAfter }, null, 2));
 check('zoom control scales the map view', await evalJs(
-  `document.querySelector('#knowledge-whole .kw-anchor').getBoundingClientRect().width > ${JSON.stringify(mapNodeWidthBeforeZoom)} && parseFloat(document.querySelector('#knowledge-whole .kw-zoom-level').textContent) > 100`));
+  `document.querySelector('#knowledge-whole .kw-anchor').getBoundingClientRect().width > ${JSON.stringify(mapNodeWidthBeforeZoom)} && parseFloat(document.querySelector('#knowledge-whole .kw-zoom-level').textContent) > ${JSON.stringify(mapZoomLevelBeforeZoom)}`));
 await evalJs(`document.querySelector('#knowledge-whole [aria-label="Fit the map to the frame"]').click()`);
 check('fit returns the whole drawing to view', await evalJs(`(() => {
   const svg = document.querySelector('#knowledge-whole svg.kw-canvas');
@@ -611,16 +973,26 @@ const wheelZoom = await evalJs(`(() => {
   const before = node.getBoundingClientRect().width;
   const beforeLevel = parseFloat(document.querySelector('#knowledge-whole .kw-zoom-level').textContent);
   const r = svg.getBoundingClientRect();
-  svg.dispatchEvent(new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: -100, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 }));
+  const plain = new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: -100, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 });
+  svg.dispatchEvent(plain);
+  const afterPlain = node.getBoundingClientRect().width;
+  const afterPlainLevel = parseFloat(document.querySelector('#knowledge-whole .kw-zoom-level').textContent);
+  const modified = new WheelEvent('wheel', { bubbles: true, cancelable: true, ctrlKey: true, deltaY: -100, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 });
+  svg.dispatchEvent(modified);
   const after = node.getBoundingClientRect().width;
   const afterLevel = parseFloat(document.querySelector('#knowledge-whole .kw-zoom-level').textContent);
-  return { before, after, beforeLevel, afterLevel };
+  return { before, afterPlain, after, beforeLevel, afterPlainLevel, afterLevel,
+    plainCanceled: plain.defaultPrevented, modifiedCanceled: modified.defaultPrevented };
 })()`);
-check('wheel zooms the map view', wheelZoom.after > wheelZoom.before && wheelZoom.afterLevel > wheelZoom.beforeLevel,
-  JSON.stringify(wheelZoom));
+check('ordinary page wheel leaves map zoom unchanged',
+  !wheelZoom.plainCanceled && wheelZoom.afterPlain === wheelZoom.before
+    && wheelZoom.afterPlainLevel === wheelZoom.beforeLevel, JSON.stringify(wheelZoom));
+check('modified wheel zooms the map view',
+  wheelZoom.modifiedCanceled && wheelZoom.after > wheelZoom.afterPlain
+    && wheelZoom.afterLevel > wheelZoom.afterPlainLevel, JSON.stringify(wheelZoom));
 await evalJs(`document.getElementById('map-scope-all').click()`);
 await until('finding search reads all held records',
-  `document.querySelector('#map-scope').textContent === 'All held records · 3 items' && !!document.querySelector('#knowledge-whole .knode[aria-label="qa-aide-finding"]')`);
+  `document.querySelector('#map-scope').textContent === ${JSON.stringify(initialScopeText.all)} && !!document.querySelector('#knowledge-whole .knode[aria-label="qa-aide-finding"]')`);
 await evalJs(`{ const box = document.querySelector('#knowledge-whole .kw-search'); box.value = 'qa-aide-finding'; box.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true})); }`);
 await until('map search centres and pins its hit',
   `document.querySelector('#knowledge-whole g.kw-view').getAttribute('transform') !== 'translate(0,0) scale(1)' && !!document.querySelector('#knowledge-whole .kw-card')`);
@@ -634,29 +1006,29 @@ check('search outside the drawn tiers says so', await evalJs(
   `document.querySelector('#knowledge-whole .kw-search-status').textContent === "'root' is outside the drawn tiers"`));
 await evalJs(`document.querySelector('#knowledge-whole svg.kw-canvas').dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}))`);
 check('dismissing the map card keeps its selected actor and scope', await evalJs(
-  `document.querySelector('#map-scope').textContent === 'All held records · 3 items' && document.querySelector('#selection h2')?.textContent === 'worker' && !document.querySelector('#knowledge-whole .kw-card')`));
+  `document.querySelector('#map-scope').textContent === ${JSON.stringify(initialScopeText.all)} && document.querySelector('#selection h2')?.textContent === 'worker' && !document.querySelector('#knowledge-whole .kw-card')`));
 await evalJs(`{ const box = document.querySelector('#knowledge-whole .kw-search'); box.value = 'qa-aide-finding'; box.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true})); }`);
 await until('search re-pins its dismissed hit',
   `!!document.querySelector('#knowledge-whole .kw-card')`);
 check('recorded edge types render directed', await evalJs(
   `['kw-edge-authorship', 'kw-edge-share', 'kw-edge-deliver'].every((cls) => [...document.querySelectorAll('#knowledge-whole .' + cls)].some((edge) => (edge.getAttribute('marker-end') || '').startsWith('url(')))`));
 await evalJs(`document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]').dispatchEvent(new MouseEvent('click', { bubbles: true }))`);
-await until('ensemble hull groups its drawn seats',
-  `!!document.querySelector('#knowledge-whole .kw-hull[data-kw-hull="qa-ensemble"]')`);
-await evalJs(`document.querySelector('#knowledge-whole .kw-hull[data-kw-hull="qa-ensemble"]').dispatchEvent(new MouseEvent('click', { bubbles: true }))`);
+await until('ensemble index lists its recorded membership',
+  `!!document.querySelector('#knowledge-whole .kw-memberships .kw-ensemble-toggle[data-kw-hull="qa-ensemble"][aria-expanded="true"]')`);
+await evalJs(`document.querySelector('#knowledge-whole .kw-memberships .kw-ensemble-toggle[data-kw-hull="qa-ensemble"]').click()`);
 await until('collapsing the hull hides its seats',
   `!document.querySelector('#knowledge-whole [data-kw-id="worker"]') && !!document.querySelector('#knowledge-whole .kw-lozenge[data-kw-hull="qa-ensemble"]')`);
 await evalJs(`document.querySelector('#knowledge-whole .kw-lozenge[data-kw-hull="qa-ensemble"]').dispatchEvent(new MouseEvent('click', { bubbles: true }))`);
 await until('expanding restores the seats',
   `!!document.querySelector('#knowledge-whole [data-kw-id="worker"]') && !document.querySelector('#knowledge-whole .kw-lozenge[data-kw-hull="qa-ensemble"]')`);
-await evalJs(`document.querySelector('#knowledge-whole .kw-hull[data-kw-hull="qa-ensemble"]').dispatchEvent(new MouseEvent('click', { bubbles: true }))`);
-await until('the hull collapses again for the search probe',
+await evalJs(`document.querySelector('#knowledge-whole .kw-memberships .kw-ensemble-toggle[data-kw-hull="qa-ensemble"]').click()`);
+await until('the ensemble collapses again for the search probe',
   `!!document.querySelector('#knowledge-whole .kw-lozenge[data-kw-hull="qa-ensemble"]')`);
 await evalJs(`{ const box = document.querySelector('#knowledge-whole .kw-search'); box.value = 'qa-worker-finding'; box.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true})); }`);
 await until('search expands a collapsed ensemble to reach its hit',
   `!document.querySelector('#knowledge-whole .kw-lozenge[data-kw-hull="qa-ensemble"]') && !!document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]') && !!document.querySelector('#knowledge-whole .kw-card')`);
-await evalJs(`document.querySelector('#knowledge-whole .kw-hull[data-kw-hull="qa-ensemble"]').dispatchEvent(new MouseEvent('click', { bubbles: true }))`);
-await until('the hull collapses for the actor probe',
+await evalJs(`document.querySelector('#knowledge-whole .kw-memberships .kw-ensemble-toggle[data-kw-hull="qa-ensemble"]').click()`);
+await until('the ensemble collapses for the actor probe',
   `!!document.querySelector('#knowledge-whole .kw-lozenge[data-kw-hull="qa-ensemble"]')`);
 await evalJs(`{ const box = document.querySelector('#knowledge-whole .kw-search'); box.value = 'lead'; box.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true})); }`);
 await until('search reaches an actor inside a collapsed ensemble',
@@ -665,17 +1037,25 @@ await until('selecting the actor pins its card on the map',
   `document.querySelector('#knowledge-whole .kw-card .kw-card-title')?.textContent === 'lead'`);
 check('actor card states the shell status word', await evalJs(
   `!!document.querySelector('#knowledge-whole .kw-card .kw-card-status')`));
+const actorPickScopeBefore = await evalJs(`document.getElementById('map-scope').textContent`);
 await evalJs(`document.querySelector('#knowledge-whole .kw-anchor[data-kw-id="worker"]').dispatchEvent(new MouseEvent('click', { bubbles: true }))`);
+await until('selecting a map actor pins its local card and preserves holdings scope', `(() => {
+  const card = document.querySelector('#knowledge-whole .kw-card .kw-card-title');
+  const self = document.querySelector('#knowledge-whole .kw-anchor[data-kw-id="worker"]');
+  return !!card && card.textContent === 'worker' && !!self && !self.classList.contains('kw-hover-dim')
+    && document.getElementById('map-scope').textContent === ${JSON.stringify(actorPickScopeBefore)};
+})()`);
+await evalJs(`document.querySelector('#roster .doc-row[data-doc-id="worker"] .doc-open').click()`);
 await until('selecting an actor pins its card and loads its holdings', `(() => {
   const card = document.querySelector('#knowledge-whole .kw-card .kw-card-title');
   const self = document.querySelector('#knowledge-whole .kw-anchor[data-kw-id="worker"]');
   const stranger = document.querySelector('#knowledge-whole .knode[aria-label="qa-aide-finding"]');
   return !!card && card.textContent === 'worker' && !!self && !self.classList.contains('kw-hover-dim')
-    && !stranger && document.getElementById('map-scope').textContent === 'worker · 2 items';
+    && !stranger && document.getElementById('map-scope').textContent === ${JSON.stringify(initialScopeText.worker)};
 })()`);
 await evalJs(`document.getElementById('map-scope-all').click()`);
 await until('all scope restores unrelated findings for the graph probes',
-  `document.getElementById('map-scope').textContent === 'All held records · 3 items'
+  `document.getElementById('map-scope').textContent === ${JSON.stringify(initialScopeText.all)}
     && !!document.querySelector('#knowledge-whole .knode[aria-label="qa-aide-finding"]')`);
 check('whole-orchestra nodes stay inside the drawn surface', await evalJs(`(() => {
   const svg = document.querySelector('#knowledge-whole svg.kw-canvas');
@@ -1037,44 +1417,89 @@ await until('following the restored reference selects its finding',
   `document.querySelector('#knowledge-whole .kw-card .kw-card-title')?.textContent === 'Worker message finding.'`);
 await evalJs(`document.querySelector('#roster .doc-row[data-doc-id="worker"] .doc-open').click()`);
 await until('actor selection clears the cited finding before the ranking probe',
-  `document.getElementById('map-scope').textContent === 'worker · 2 items'
+  `document.getElementById('map-scope').textContent === ${JSON.stringify(initialScopeText.worker)}
     && location.hash === '#seat=worker'
     && !document.querySelector('#knowledge-whole .knode.selected')
     && document.querySelector('#knowledge-whole .kw-card .kw-card-title')?.textContent === 'worker'`);
 await evalJs(`document.getElementById('map-scope-all').click()`);
 await until('all records restore the unselected finding ranking',
-  `document.getElementById('map-scope').textContent === 'All held records · 3 items'
+  `document.getElementById('map-scope').textContent === ${JSON.stringify(initialScopeText.all)}
     && !document.querySelector('#knowledge-whole .knode.selected')
     && !!document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]')
     && !!document.querySelector('#knowledge-whole .knode[aria-label="qa-aide-finding"]')`);
 check('conductor anchors read distinct from player anchors', await evalJs(
   `!!document.querySelector('#knowledge-whole .kw-anchor[data-kw-id="lead"] rect.role-conductor') && !document.querySelector('#knowledge-whole .kw-anchor[data-kw-id="worker"] rect.role-conductor')`));
-check('most promoted findings carry visible claims', await evalJs(
-  `document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"] .kw-word')?.textContent.includes('Worker retained finding') && !document.querySelector('#knowledge-whole .knode[aria-label="qa-aide-finding"] .kw-word')`));
+check('promoted and unshared findings carry their complete recorded claims', await evalJs(
+  `document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"] .kw-word')?.textContent === 'Worker retained finding.'
+    && document.querySelector('#knowledge-whole .knode[aria-label="qa-aide-finding"] .kw-word')?.textContent === 'Aide retained finding.'`));
 await evalJs(`document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]').dispatchEvent(new MouseEvent('click', { bubbles: true }))`);
-check('whole finding selection marks and keeps focus', await evalJs(
-  `document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]').classList.contains('selected') && document.activeElement === document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]')`));
+await until('whole finding selection reveals its readable inspector',
+  `(() => {
+    const mark = document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]');
+    const card = document.querySelector('#knowledge-whole .kw-inspector .kw-card');
+    const rect = card && card.getBoundingClientRect();
+    return !!mark && mark.classList.contains('selected')
+      && !!card && card.querySelector('.kw-card-title')?.textContent === 'Worker retained finding.'
+      && document.activeElement === card
+      && !!rect && Math.min(rect.bottom, innerHeight) - Math.max(rect.top, 0) > 24
+      && !!card.querySelector('button.kw-card-return');
+  })()`);
 await until('selecting a finding pins its card on the map',
   `document.querySelector('#knowledge-whole .kw-card .kw-card-title')?.textContent === 'Worker retained finding.'`);
-check('card states the finding without printing its recorded bodies', await evalJs(`(() => {
+check('selected finding is read in the persistent inspector', await evalJs(`(() => {
+  const card = document.querySelector('#knowledge-whole .kw-card');
+  const inspector = document.querySelector('#knowledge-whole .kw-inspector');
+  return !!card && !!inspector && card.parentElement === inspector
+    && inspector.getAttribute('aria-label') === 'Knowledge inspector';
+})()`));
+check('the readable inspector includes the complete recorded evidence and limits', await evalJs(`(() => {
   const card = document.querySelector('#knowledge-whole .kw-card');
   return !!card.querySelector('.kw-card-title') && !!card.querySelector('.kw-card-state')
-    && !card.textContent.includes('Worker evidence.') && !card.textContent.includes('Worker limits.');
+    && [...card.querySelectorAll('.kw-card-refs .kw-card-ref')].some((p) => p.textContent === 'Worker evidence.')
+    && [...card.querySelectorAll('.kw-card-refs .kw-card-ref')].some((p) => p.textContent === 'Worker limits.');
 })()`));
-check('selected relations retain incoming and outgoing endpoints', await evalJs(
-  `document.getElementById('selection').textContent.includes('finding:qa-nope — continues → finding:qa-worker-finding')
-    && document.getElementById('selection').textContent.includes('finding:qa-worker-finding — recorded in → external:qa-log-7')`));
-check('the finding card offers one record action', await evalJs(
-  `document.querySelectorAll('#knowledge-whole .kw-card button').length === 1`));
-await evalJs(`(() => { const card = document.querySelector('#knowledge-whole .kw-card');
-  const action = card && card.querySelector('button');
-  if (action) action.click(); return true; })()`);
+check('the finding card offers one full-record action and real connections', await evalJs(`(() => {
+  const card = document.querySelector('#knowledge-whole .kw-card');
+  return !!card && card.querySelectorAll('button.kw-card-open').length === 1
+    && [...card.querySelectorAll('button.kw-connection-edge')].some((button) => /authorship/.test(button.textContent))
+    && !!card.querySelector('button.kw-connection-node[data-kw-neighbor-kind="session"][data-kw-neighbor-id="worker"]');
+})()`));
+await evalJs(`(() => {
+  const card = document.querySelector('#knowledge-whole .kw-card');
+  const edge = [...card.querySelectorAll('button.kw-connection-edge')]
+    .find((button) => /authorship/.test(button.textContent));
+  edge.click(); return true;
+})()`);
+await until('the finding connection opens its own recorded edge', `(() => {
+  const card = document.querySelector('#knowledge-whole .kw-card');
+  const lit = [...document.querySelectorAll('#knowledge-whole g.kw-edges > [data-from][data-to]')]
+    .filter((edge) => !edge.classList.contains('kw-hover-dim'));
+  return card?.querySelector('.kw-card-title')?.textContent === 'authorship'
+    && card.querySelector('.kw-card-state')?.textContent === 'recorded connection'
+    && lit.length === 1 && lit[0].getAttribute('data-from') === 'worker'
+    && lit[0].getAttribute('data-to') === 'qa-worker-finding';
+})()`);
+await evalJs(`document.querySelector('#knowledge-whole .kw-card button[data-kw-endpoint="source"]').click()`);
+await until('edge source navigation reads the recorded actor',
+  `document.querySelector('#knowledge-whole .kw-card .kw-card-title')?.textContent === 'worker'`);
+await evalJs(`document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]').dispatchEvent(new MouseEvent('click', { bubbles: true }))`);
+await until('returning to the finding restores its record action',
+  `document.querySelector('#knowledge-whole .kw-card .kw-card-title')?.textContent === 'Worker retained finding.'
+    && document.querySelectorAll('#knowledge-whole .kw-card button.kw-card-open').length === 1`);
+await evalJs(`document.querySelector('#knowledge-whole .kw-card button.kw-card-open').click()`);
 await until('the card action opens the record at its finding', `(() => {
   const block = document.querySelector('#selection #sel-sec-finding');
   if (!block) return false;
   const box = block.getBoundingClientRect();
-  return box.top <= 96 && box.bottom >= 0;
+  return location.hash === '#finding=qa-worker-finding'
+    && block.querySelector('h2')?.textContent === 'Finding qa-worker-finding · Worker retained finding.'
+    && block.querySelector('.sel-claim')?.textContent === 'Worker retained finding.'
+    && box.top >= 0 && box.bottom <= innerHeight
+    && document.activeElement === block;
 })()`);
+check('selected relations retain incoming and outgoing endpoints', await evalJs(
+  `document.getElementById('selection').textContent.includes('finding:qa-nope — continues → finding:qa-worker-finding')
+    && document.getElementById('selection').textContent.includes('finding:qa-worker-finding — recorded in → external:qa-log-7')`));
 check('the finding posture states what its facts hold', await evalJs(`(() => {
   const block = document.querySelector('#selection #sel-sec-finding');
   if (!block) return false;
@@ -1084,6 +1509,10 @@ check('the finding posture states what its facts hold', await evalJs(`(() => {
     && /(shared [0-9]+ times?|not shared)/.test(line));
 })()`));
 await evalJs(`document.querySelector('#knowledge-whole .knode[aria-label="qa-msg-finding"]').dispatchEvent(new MouseEvent('click', { bubbles: true }))`);
+await until('the message finding opens its own inspector before the full record',
+  `document.querySelector('#knowledge-whole .kw-card .kw-card-title')?.textContent === 'Worker message finding.'
+    && document.querySelectorAll('#knowledge-whole .kw-card button.kw-card-open').length === 1`);
+await evalJs(`document.querySelector('#knowledge-whole .kw-card button.kw-card-open').click()`);
 await until('the citation probes select the finding with retained message evidence',
   `document.querySelector('#selection #sel-sec-finding h2')?.textContent === 'Finding qa-msg-finding · Worker message finding.'
     && document.querySelector('#knowledge-whole .kw-card .kw-card-title')?.textContent === 'Worker message finding.'
@@ -1095,7 +1524,7 @@ check('the evidence citation carries its number, tail and full title', await eva
   if (!block) return false;
   const cite = [...block.querySelectorAll('p')].find((p) => p.title === expected.id);
   const read = block.querySelector('.sel-msg');
-  return !!cite && cite.textContent === '[1] message ' + expected.id + ' · ' + expected.body.length + ' characters'
+  return !!cite && cite.textContent === '[1] recorded evidence · message ' + expected.id + ' · ' + expected.body.length + ' characters'
     && !!read && read.title === expected.id
     && read.textContent === 'Read evidence ' + expected.id
     && read.getAttribute('aria-label') === 'Read evidence ' + expected.id
@@ -1146,6 +1575,10 @@ await until('hiding the cited message restores its collapsed reference', `(() =>
     && !(block.textContent || '').includes(expected.body);
 })()`);
 await evalJs(`document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]').dispatchEvent(new MouseEvent('click', { bubbles: true }))`);
+await until('the worker finding opens its own inspector before the full record',
+  `document.querySelector('#knowledge-whole .kw-card .kw-card-title')?.textContent === 'Worker retained finding.'
+    && document.querySelectorAll('#knowledge-whole .kw-card button.kw-card-open').length === 1`);
+await evalJs(`document.querySelector('#knowledge-whole .kw-card button.kw-card-open').click()`);
 await until('the finding interactions restore the original worker record',
   `document.querySelector('#selection #sel-sec-finding h2')?.textContent === 'Finding qa-worker-finding · Worker retained finding.'
     && document.querySelector('#knowledge-whole .kw-card .kw-card-title')?.textContent === 'Worker retained finding.'
@@ -1217,7 +1650,7 @@ await evalJs(`document.getElementById('map-scope-all').click()`);
 await until('all scope restores the reference-pair edge before the hover probes', `(() => {
   const edge = document.querySelector('#knowledge-whole g.kw-edge-typed[data-edge="qa-rel-refs"]');
   const tag = document.querySelector('#knowledge-whole g.kw-ref[data-kw-ref="external:qa-log-8"][data-kw-kind="ref"]');
-  return document.getElementById('map-scope').textContent === 'All held records · 3 items'
+  return document.getElementById('map-scope').textContent === ${JSON.stringify(initialScopeText.all)}
     && document.querySelector('#selection h2')?.textContent === 'aide'
     && !!edge && edge.getAttribute('data-from') === 'message:qa-missing-1'
     && edge.getAttribute('data-from-kind') === 'ref'
@@ -1253,7 +1686,7 @@ await until('roster actor selection shows the actor card on the map',
   `document.querySelector('#knowledge-whole .kw-card .kw-card-title')?.textContent === 'aide'`);
 await evalJs(`document.querySelector('#roster .doc-row[data-doc-id="worker"] .doc-open').click()`);
 await until('live probes read the worker scope',
-  `(document.querySelector('#map-scope').textContent || '').endsWith('· 2 items') && !!document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]')`);
+  `(document.querySelector('#map-scope').textContent || '').endsWith(${JSON.stringify(`· ${initialWorkerRecords} items`)}) && !!document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]')`);
 await evalJs(`document.querySelector('#knowledge-whole svg.kw-canvas').dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}))`);
 check('Escape dismisses the worker map before the live frame', await evalJs(`(() => {
   const card = document.querySelector('#knowledge-whole .kw-card');
@@ -1262,7 +1695,7 @@ check('Escape dismisses the worker map before the live frame', await evalJs(`(()
   return !card && unlit
     && document.querySelector('#selection h2')?.textContent === 'worker'
     && location.hash === '#seat=worker'
-    && (document.querySelector('#map-scope').textContent || '').endsWith('· 2 items');
+    && (document.querySelector('#map-scope').textContent || '').endsWith(${JSON.stringify(`· ${initialWorkerRecords} items`)});
 })()`));
 baton('record', 'qa-worker-live-finding', 'worker', 'Worker live finding.',
   'Live evidence.', 'Live limits.');
@@ -1322,6 +1755,29 @@ check('the axis states the window it draws', await evalJs(`(() => {
     && (!mark || ((mark.title || '').length > 0
       && !!document.querySelector('#ribbon .ribbon-tempo-read')));
 })()`));
+check('inspecting activity notes preserves the header axis and page position', await evalJs(`(() => {
+  const mount = document.getElementById('ribbon');
+  const head = mount.querySelector('.ribbon-head');
+  const axis = mount.querySelector('.ribbon-axis');
+  const summary = mount.querySelector('.ribbon-summary');
+  if (!head || !axis || !summary) return false;
+  const notes = [...axis.querySelectorAll('.ribbon-note')];
+  if (notes.length < 2) return false;
+  const geometry = () => [head, axis].flatMap((node) => {
+    const box = node.getBoundingClientRect();
+    return [box.x, box.y, box.width, box.height];
+  }).concat(window.scrollX, window.scrollY).join(',');
+  const before = geometry();
+  const initial = summary.textContent;
+  for (const note of [notes[0], notes.at(-1)]) {
+    note.dispatchEvent(new PointerEvent('pointerenter'));
+    if (!summary.textContent.trim() || geometry() !== before) return false;
+  }
+  const inspected = summary.textContent;
+  axis.dispatchEvent(new PointerEvent('pointerleave'));
+  return inspected !== initial && summary.textContent === inspected && geometry() === before;
+})()`));
+
 const needleBefore = await evalJs(`document.querySelector('#ribbon .ribbon-slider').getAttribute('aria-valuenow')`);
 await evalJs(`(() => { const s = document.querySelector('#ribbon .ribbon-slider'); s.focus(); return document.activeElement === s; })()`);
 await send(pageWs, 'Input.dispatchKeyEvent', { type: 'keyDown', key: 'ArrowLeft', code: 'ArrowLeft', windowsVirtualKeyCode: 37 });
@@ -1354,26 +1810,28 @@ await until('a chip in the spine opens its seat record',
 check('the spine marks the seat it holds', await evalJs(
   `!!document.querySelector('#ribbon .ribbon-chip[aria-current="true"]')`));
 
-// Visual evidence for the two redesigned surfaces, clipped to their own boxes.
-const surfaceCaptures = [];
-for (const [name, selector] of [['pit.png', '.pit'], ['map.png', '.map'], ['agents.png', '#staves']]) {
+// Capture each surface using page coordinates without moving the page.
+async function captureSurfaceEvidence(name, selector) {
   const box = await evalJs(`(() => {
     const el = document.querySelector(${JSON.stringify(selector)});
     if (!el) return null;
     const r = el.getBoundingClientRect();
-    return { x: r.x, y: r.y, width: r.width, height: r.height };
+    return { x: r.x + window.scrollX, y: r.y + window.scrollY,
+      width: r.width, height: r.height };
   })()`);
-  if (box && box.width > 1 && box.height > 1) {
-    const shot = await send(pageWs, 'Page.captureScreenshot', {
-      format: 'png',
-      clip: { x: box.x, y: box.y, width: box.width, height: box.height, scale: 1 },
-    });
-    writeFileSync(join(OUT, name), Buffer.from(shot.result.data, 'base64'));
-    surfaceCaptures.push(name);
-  }
+  if (!box || box.width <= 1 || box.height <= 1) return false;
+  const shot = await send(pageWs, 'Page.captureScreenshot', {
+    format: 'png', captureBeyondViewport: true,
+    clip: { x: box.x, y: box.y, width: box.width, height: box.height, scale: 1 },
+  });
+  writeFileSync(join(OUT, name), Buffer.from(shot.result.data, 'base64'));
+  return true;
+}
+const surfaceCaptures = [];
+for (const [name, selector] of [['pit.png', '.pit'], ['map.png', '.map'], ['agents.png', '#staves']]) {
+  if (await captureSurfaceEvidence(name, selector)) surfaceCaptures.push(name);
 }
 check('activity, knowledge and agents evidence captured', surfaceCaptures.length === 3, surfaceCaptures.join(', '));
-
 // operator-triggered reconnect re-reads the snapshot through the view command server
 const ribbonMaxBeforeReconnect = await evalJs(`document.querySelector('#ribbon .ribbon-slider').getAttribute('aria-valuemax')`);
 baton('message', 'qa-guidance-1', 'root', 'worker', 'guidance', 'Follow-up input.');
@@ -1385,8 +1843,22 @@ await until('manual reconnect re-reads the snapshot with the new commit',
 await send(pageWs, 'Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
 await evalJs('new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
 await evalJs(`{ const box = document.querySelector('#knowledge-whole .kw-search'); box.value = 'qa-worker-finding'; box.dispatchEvent(new KeyboardEvent('keydown', {key:'Enter', bubbles:true})); }`);
-await until('narrow search selects its finding',
-  `document.querySelector('#knowledge-whole .kw-card .kw-card-title')?.textContent === 'Worker retained finding.'`);
+await until('narrow search selects its finding', `(() => {
+  const card = document.querySelector('#knowledge-whole .kw-card');
+  const title = card?.querySelector('.kw-card-title');
+  const back = card?.querySelector('.kw-card-return');
+  if (!title || !back) return false;
+  const visible = (element) => {
+    const box = element.getBoundingClientRect();
+    return box.left >= 0 && box.right <= innerWidth
+      && box.top >= 0 && box.bottom <= innerHeight;
+  };
+  const bodies = [...card.querySelectorAll('.kw-card-ref')].map((p) => p.textContent);
+  return title.textContent === 'Worker retained finding.'
+    && bodies.includes('Worker evidence.') && bodies.includes('Worker limits.')
+    && document.activeElement === card && visible(title) && visible(back);
+})()`);
+await evalJs(`document.querySelector('#knowledge-whole .kw-card .kw-card-return').click()`);
 check('narrow search puts the finding in the viewport', await evalJs(`(() => {
   const hit = document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"] .kw-finding');
   if (!hit) return false;
@@ -1405,6 +1877,50 @@ check('narrow dragging moves the finding with the pointer', await evalJs(`(() =>
   const after = hit.getBoundingClientRect();
   return Math.abs(after.left - before.left - 35) < 2 && Math.abs(after.top - before.top - 15) < 2;
 })()`));
+check('the actor stage keeps complete captions and role labels inside its cards at 390px', await evalJs(`(() => {
+  const stage = document.querySelector('#attention-band svg.att-stage');
+  const seats = stage ? [...stage.querySelectorAll('.att-seat')] : [];
+  if (!seats.length) return false;
+  const inside = (node, card) => {
+    const a = node.getBoundingClientRect(), b = card.getBoundingClientRect();
+    return a.width > 0 && a.left >= b.left && a.right <= b.right
+      && a.top >= b.top && a.bottom <= b.bottom;
+  };
+  return seats.every((seat) => {
+    const card = seat.querySelector('.att-seat-card');
+    const caption = seat.querySelector('.att-seat-label');
+    const role = seat.querySelector('.att-seat-role');
+    const box = card && card.getBoundingClientRect();
+    return !!box && box.left >= 0 && box.right <= window.innerWidth
+      && caption.textContent === seat.dataset.attId && !!role.textContent
+      && inside(caption, card) && inside(role, card);
+  });
+})()`));
+check('recorded parent links avoid actor cards and tier captions at 390px', await evalJs(`(() => {
+  const stage = document.querySelector('#attention-band .att-stage');
+  const seats = [...stage.querySelectorAll('.att-seat')].map((seat) => ({
+    id: seat.dataset.attId, rect: seat.querySelector('.att-seat-card').getBoundingClientRect()
+  }));
+  const headers = [...stage.querySelectorAll('.att-section-label')].map((node) => node.getBoundingClientRect());
+  const links = [...stage.querySelectorAll('.att-parent-link')];
+  return links.length > 0 && links.every((link) => {
+    const from = link.dataset.attParentFrom;
+    const to = link.dataset.attParentTo;
+    if (!seats.some((seat) => seat.id === from) || !seats.some((seat) => seat.id === to)) return false;
+    const blocked = seats.filter((seat) => seat.id !== from && seat.id !== to).map((seat) => seat.rect).concat(headers);
+    const matrix = link.getScreenCTM();
+    const length = link.getTotalLength();
+    const steps = Math.ceil(length);
+    for (let i = 0; i <= steps; i += 1) {
+      const point = link.getPointAtLength(length * i / steps).matrixTransform(matrix);
+      if (blocked.some((rect) => point.x > rect.left && point.x < rect.right
+        && point.y > rect.top && point.y < rect.bottom)) return false;
+    }
+    return true;
+  });
+})()`));
+await captureSurfaceEvidence('agents-narrow-390.png', '#staves');
+await captureSurfaceEvidence('agent-memberships-narrow-390.png', '#attention-band .att-ensembles');
 const narrow = await send(pageWs, 'Page.captureScreenshot', { format: 'png' });
 writeFileSync(join(OUT, 'narrow-390.png'), Buffer.from(narrow.result.data, 'base64'));
 await send(pageWs, 'Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
@@ -2022,6 +2538,10 @@ const fixtureUrl = `http://127.0.0.1:${portB}/index.html?fixture=fixture-knowled
 await openPage(fixtureUrl);
 await until('the fixture map draws its canvas',
   `!!document.querySelector('#knowledge-whole svg.kw-canvas')`);
+await finishRedrawEvidence(navigationRedrawStart);
+await captureSurfaceEvidence('static-stage-first-render.png', '#staves');
+await captureSurfaceEvidence('static-memberships-first-render.png', '#attention-band .att-ensembles');
+await captureSurfaceEvidence('static-knowledge-first-render.png', '#knowledge-whole');
 const fixturePayload = await evalJs(`(async () => {
   const response = await fetch('fixtures/fixture-knowledge.json');
   const document_ = await response.json();
@@ -2037,6 +2557,76 @@ check('the fixture payload carries the typed shapes the checks read',
     && fixturePayload.nodes.every((node) => node.deliveryRead === undefined
       || Array.isArray(node.deliveryRead))
     && fixturePayload.nodes.some((node) => Array.isArray(node.deliveryRead)));
+check('ensemble membership states owner, coupling and section independently of depth', await evalJs(`(() => {
+  const whole = document.querySelector('#knowledge-whole');
+  const entry = whole?.querySelector('.kw-memberships .kw-ensemble-entry');
+  const toggle = entry?.querySelector('.kw-ensemble-toggle[data-kw-hull="fixture-knowledge-ensemble"]');
+  const facts = entry?.querySelector('.kw-ensemble-facts')?.textContent || '';
+  const members = [...(entry?.querySelectorAll('.kw-ensemble-members .kw-member') || [])].map((row) => row.textContent);
+  const section = entry?.querySelector('.kw-section-members summary')?.textContent || '';
+  return !!toggle && toggle.getAttribute('aria-expanded') === 'true'
+    && facts.includes('tight coupling') && facts.includes('owner fixture-knowledge-conductor-a')
+    && facts.includes('4 members')
+    && ['fixture-knowledge-conductor-a', 'fixture-knowledge-player-a'].every((id) => members.includes(id))
+    && section.includes('fixture-knowledge-section') && section.includes('map section hull');
+})()`));
+check('overlapping Ensembles keep parentage and sections independent of membership', await evalJs(`(async () => {
+  const data = await (await fetch('fixtures/fixture-knowledge.json')).json();
+  const actors = new Map(data.players.map((actor) => [actor.id, actor]));
+  const a = data.ensembles.find((row) => row.id === 'fixture-knowledge-ensemble');
+  const cross = data.ensembles.find((row) => row.id === 'fixture-knowledge-ensemble-cross');
+  const entries = [...document.querySelectorAll('#knowledge-whole .kw-memberships .kw-ensemble-entry')];
+  const entry = (id) => entries.find((row) => row.querySelector('.kw-ensemble-toggle[data-kw-hull="' + id + '"]'));
+  const crossEntry = entry('fixture-knowledge-ensemble-cross');
+  const crossFacts = crossEntry?.querySelector('.kw-ensemble-facts')?.textContent || '';
+  const section = crossEntry?.querySelector('.kw-section-members summary')?.textContent || '';
+  const members = [...(crossEntry?.querySelectorAll('.kw-ensemble-members .kw-member') || [])]
+    .map((row) => row.textContent);
+  return !!a && !!cross && data.ensembles.length === 2
+    && a.coupling === 'tight' && cross.coupling === 'loose'
+    && cross.owner === 'fixture-knowledge-conductor-b'
+    && a.members.includes('fixture-knowledge-player-a')
+    && cross.members.includes('fixture-knowledge-player-a')
+    && actors.get('fixture-knowledge-player-a')?.parent === 'fixture-knowledge-conductor-a'
+    && actors.get('fixture-knowledge-player-f')?.parent === 'fixture-knowledge-player-d'
+    && actors.get('fixture-knowledge-conductor-b')?.ownedEnsembles?.includes(cross.id)
+    && actors.get('fixture-knowledge-conductor-b')?.memberEnsembles?.includes(cross.id)
+    && actors.get('fixture-knowledge-player-a')?.memberEnsembles?.length === 2
+    && !!entry(a.id) && !!crossEntry
+    && crossFacts.includes('loose coupling')
+    && crossFacts.includes('owner fixture-knowledge-conductor-b')
+    && crossFacts.includes('4 members')
+    && ['fixture-knowledge-player-a', 'fixture-knowledge-player-f'].every((id) => members.includes(id))
+    && section.includes('fixture-knowledge-section-cross')
+    && section.includes('cross-branch review');
+})()`));
+check('a shared seat remains visible until both Ensembles collapse', await evalJs(`(() => {
+  const whole = document.querySelector('#knowledge-whole');
+  const seat = () => !!whole.querySelector('.kw-anchor[data-kw-id="fixture-knowledge-player-a"]');
+  const toggle = (id) => whole.querySelector('.kw-memberships .kw-ensemble-toggle[data-kw-hull="' + id + '"]');
+  const badge = (id) => whole.querySelector('.kw-lozenge[data-kw-hull="' + id + '"]');
+  const a = 'fixture-knowledge-ensemble';
+  const cross = 'fixture-knowledge-ensemble-cross';
+  if (!seat() || toggle(a)?.getAttribute('aria-expanded') !== 'true'
+    || toggle(cross)?.getAttribute('aria-expanded') !== 'true') return false;
+  toggle(a).click();
+  const oneCollapsed = seat() && !!badge(a) && !badge(cross)
+    && toggle(a)?.getAttribute('aria-expanded') === 'false'
+    && toggle(cross)?.getAttribute('aria-expanded') === 'true';
+  toggle(cross).click();
+  const bothCollapsed = !seat() && !!badge(a) && !!badge(cross)
+    && toggle(a)?.getAttribute('aria-expanded') === 'false'
+    && toggle(cross)?.getAttribute('aria-expanded') === 'false';
+  toggle(a).click();
+  const firstRestored = seat() && !badge(a) && !!badge(cross)
+    && toggle(a)?.getAttribute('aria-expanded') === 'true'
+    && toggle(cross)?.getAttribute('aria-expanded') === 'false';
+  toggle(cross).click();
+  return oneCollapsed && bothCollapsed && firstRestored && seat()
+    && !badge(a) && !badge(cross)
+    && toggle(a)?.getAttribute('aria-expanded') === 'true'
+    && toggle(cross)?.getAttribute('aria-expanded') === 'true';
+})()`));
 check('the map draws both provenances and nothing outside them', await evalJs(`(() => {
   const drawn = [...document.querySelectorAll('.kw-edge-typed')];
   const provs = drawn.map((edge) => edge.getAttribute('data-provenance'));
@@ -2066,6 +2656,7 @@ check('an unheld endpoint draws the hollow ring and a held one the dot', await e
 const staticUniversalScope = await evalJs(`document.getElementById('map-scope').textContent`);
 const staticAllScope = 'All held records · ' + fixturePayload.findings.length
   + (fixturePayload.findings.length === 1 ? ' item' : ' items');
+const denseRoutingRedraw = await beginRedrawEvidence('dense complete holdings');
 await evalJs(`document.getElementById('map-scope-all').click()`);
 await until('all held records draw the complete fixture before semantic edge counts',
   `(() => {
@@ -2077,6 +2668,8 @@ await until('all held records draw the complete fixture before semantic edge cou
 // The mixed projection names one authored relation and one citation twice: once in the
 // compatibility rows and once in the typed edges. The canvas may draw each semantic fact
 // once. The expected count is read from the payload's own edges, never pinned.
+await finishRedrawEvidence(denseRoutingRedraw);
+await checkKnowledgeRouteClearance('dense');
 check('the map draws each semantic edge once, however many payload shapes name it', await evalJs(`(async () => {
   const document_ = await (await fetch('fixtures/fixture-knowledge.json')).json();
   const knowledge = (document_ && document_.knowledge) || {};
@@ -2130,9 +2723,21 @@ check('a typed edge carries its provenance marker and a stroke that tells them a
     const authored = edges.filter((e) => e.classList.contains('kw-edge-authored'));
     const cited = edges.filter((e) => e.classList.contains('kw-edge-cited'));
     if (!authored.length || !cited.length) return false;
-    const head = (e) => e.getAttribute('marker-end') || '';
-    const dash = (e) => String(getComputedStyle(e).strokeDasharray || '');
-    return authored.every((e) => head(e).includes('kw-arrow-authored')
+    const spans = (e) => [...e.querySelectorAll('line')];
+    const head = (e) => {
+      const lines = spans(e);
+      if (!lines.length || lines.slice(0, -1).some((line) => line.hasAttribute('marker-end'))) return '';
+      return lines[lines.length - 1].getAttribute('marker-end') || '';
+    };
+    const dash = (e) => {
+      const lines = spans(e);
+      if (!lines.length) return null;
+      const values = lines.map((line) => String(getComputedStyle(line).strokeDasharray || ''));
+      return values.every((value) => value === values[0]) ? values[0] : null;
+    };
+    return authored.every((e) => dash(e) !== null)
+      && cited.every((e) => dash(e) !== null)
+      && authored.every((e) => head(e).includes('kw-arrow-authored')
         && !head(e).includes('kw-arrow-cited'))
       && cited.every((e) => head(e).includes('kw-arrow-cited')
         && !head(e).includes('kw-arrow-authored'))
@@ -2293,35 +2898,35 @@ await evalJs(`(() => {
   if (mark) mark.dispatchEvent(new MouseEvent('click', { bubbles: true }));
   return true;
 })()`);
-await until('the reference-only mark answers with a card or the record',
-  `!!document.querySelector('#selection #sel-sec-finding') || !!document.querySelector('#knowledge-whole .kw-card')`);
-await evalJs(`(() => {
-  const block = document.querySelector('#selection #sel-sec-finding');
-  if (block && /The full record is not held here/.test(block.textContent || '')) return true;
-  const card = document.querySelector('#knowledge-whole .kw-card');
-  const action = card && card.querySelector('button');
-  if (action) action.click();
-  return true;
-})()`);
-await until('the reference-only endpoint reaches its record',
-  `(() => { const block = document.querySelector('#selection #sel-sec-finding');
-    return !!block && /The full record is not held here/.test(block.textContent || ''); })()`);
-check('a reference-only endpoint states the full record is not held and offers no way back',
+await until('the reference-only endpoint reads as a record that is not held',
+  `(() => {
+    const card = document.querySelector('#knowledge-whole .kw-inspector .kw-card');
+    return !!card && card.querySelector('.kw-card-title')?.textContent.includes('not-held')
+      && card.querySelector('.kw-card-state')?.textContent === 'not held';
+  })()`);
+check('the unheld reference has no full-record action in Universal scope',
   await evalJs(`(() => {
-    const block = document.querySelector('#selection #sel-sec-finding');
-    if (!block) return false;
-    return /The full record is not held here\\./.test(block.textContent || '')
-      && !block.querySelector('[data-selkey^="sel:map:"]')
-      && !block.querySelector('[data-selkey^="sel:seat:"]');
+    const card = document.querySelector('#knowledge-whole .kw-inspector .kw-card');
+    return !!card && card.querySelector('.kw-card-state')?.textContent === 'not held'
+      && !card.querySelector('button.kw-card-open')
+      && !!card.querySelector('button.kw-card-return')
+      && !card.querySelector('button.kw-card-full')
+      && card.querySelectorAll('button.kw-junction').length > 0;
   })()`));
 await evalJs(`(() => {
-  const node = document.querySelector('#knowledge-whole .knode[aria-label="fixture-finding-a1"]')
-    || document.querySelector('#knowledge-whole .knode');
+  const node = document.querySelector('#knowledge-whole .knode[aria-label="fixture-finding-a1"]');
   if (node) node.dispatchEvent(new MouseEvent('click', { bubbles: true }));
   return true;
 })()`);
-await until('the held finding answers with its card or the record',
-  `!!document.querySelector('#selection #sel-sec-finding') || !!document.querySelector('#knowledge-whole .kw-card')`);
+await until('the held finding offers its explicit full-record action',
+  `(() => {
+    const card = document.querySelector('#knowledge-whole .kw-inspector .kw-card');
+    return !!card && card.querySelector('.kw-card-title')?.textContent === ${JSON.stringify(fixturePayload.findings.find((row) => row.id === 'fixture-finding-a1')?.claim)}
+      && card.querySelectorAll('button.kw-card-open').length === 1;
+  })()`);
+await evalJs(`document.querySelector('#knowledge-whole .kw-inspector .kw-card-open').click()`);
+await until('the held finding opens its rail record',
+  `document.querySelector('#selection #sel-sec-finding h2')?.textContent.includes('fixture-finding-a1')`);
 check('a held finding offers the way back and reads its cited edge as recorded evidence',
   await evalJs(`(() => {
     const block = document.querySelector('#selection #sel-sec-finding');
@@ -2551,8 +3156,11 @@ check('reference marks clear the entire Principal band and retain their authored
   })()`));
 
 const staticNarrowScrollBefore = await evalJs('({ x: window.scrollX, y: window.scrollY })');
+const narrowRoutingRedraw = await beginRedrawEvidence('narrow static 390px resize');
 await send(pageWs, 'Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
 await evalJs('new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+await captureSurfaceEvidence('static-stage-narrow-390.png', '#staves');
+await captureSurfaceEvidence('static-memberships-narrow-390.png', '#attention-band .att-ensembles');
 await until('the narrow static Principal retains its complete caption beneath its glyph',
   `(() => {
     const svg = document.querySelector('#knowledge-whole svg.kw-canvas');
@@ -2566,6 +3174,8 @@ await until('the narrow static Principal retains its complete caption beneath it
       && box.y > g.y + g.height
       && box.x >= 0 && box.x + box.width <= Number(svg.getAttribute('width'));
   })()`);
+await finishRedrawEvidence(narrowRoutingRedraw);
+await checkKnowledgeRouteClearance('narrow');
 // Read both authors' complete holdings for the wrapped finding positions.
 await evalJs(`document.getElementById('map-scope-all').click()`);
 await until('all held records draw the wrapped findings beneath their authors',
@@ -2576,6 +3186,161 @@ await until('all held records draw the wrapped findings beneath their authors',
       && document.getElementById('map-scope-all').getAttribute('aria-pressed') === 'true'
       && !!whole && ids.every((id) => whole.querySelector('.knode[data-kw-kind="finding"][data-kw-node="' + CSS.escape(id) + '"] .kw-finding'));
   })()`);
+const narrowFindingClaim = fixturePayload.findings.find((row) => row.id === 'fixture-finding-a1')?.claim;
+const narrowMapBeforeRead = await evalJs(`(() => {
+  const whole = document.querySelector('#knowledge-whole');
+  const svg = whole && whole.querySelector('svg.kw-canvas');
+  const view = svg && svg.querySelector('g.kw-view');
+  const zoom = whole && whole.querySelector('.kw-zoom-level');
+  return { camera: view?.getAttribute('transform') || '', zoom: zoom?.textContent || '',
+    scope: document.getElementById('map-scope')?.textContent || '' };
+})()`);
+await evalJs(`document.querySelector('#knowledge-whole .knode[data-kw-kind="finding"][data-kw-node="fixture-finding-a1"]').dispatchEvent(new MouseEvent('click', { bubbles: true }))`);
+await until('narrow finding selection reveals its focused inspector',
+  `(() => {
+    const card = document.querySelector('#knowledge-whole .kw-inspector .kw-card');
+    const mark = document.querySelector('#knowledge-whole .knode[data-kw-kind="finding"][data-kw-node="fixture-finding-a1"]');
+    const rect = card && card.getBoundingClientRect();
+    return !!mark && mark.classList.contains('selected') && !!card
+      && card.querySelector('.kw-card-title')?.textContent === ${JSON.stringify(narrowFindingClaim)}
+      && document.activeElement === card
+      && !!rect && Math.min(rect.bottom, innerHeight) - Math.max(rect.top, 0) > 24
+      && !!card.querySelector('button.kw-card-return');
+  })()`);
+const narrowReadState = await evalJs(`(() => {
+  const whole = document.querySelector('#knowledge-whole');
+  const card = whole.querySelector('.kw-inspector .kw-card');
+  const svg = whole.querySelector('svg.kw-canvas');
+  return { camera: svg.querySelector('g.kw-view')?.getAttribute('transform') || '',
+    zoom: whole.querySelector('.kw-zoom-level')?.textContent || '',
+    scope: document.getElementById('map-scope')?.textContent || '',
+    focused: document.activeElement === card };
+})()`);
+check('reading the narrow inspector preserves the map camera and All scope',
+  narrowReadState.focused && narrowMapBeforeRead.camera !== ''
+    && narrowReadState.camera === narrowMapBeforeRead.camera
+    && narrowReadState.zoom === narrowMapBeforeRead.zoom
+    && narrowReadState.scope === narrowMapBeforeRead.scope, JSON.stringify({narrowMapBeforeRead, narrowReadState}));
+const narrowInspectorBeforeRedraw = await evalJs(`(() => {
+  const whole = document.querySelector('#knowledge-whole');
+  const card = whole.querySelector('.kw-inspector .kw-card');
+  window.__qaNarrowInspectorBeforeRedraw = card;
+  return { width: whole.clientWidth, camera: whole.querySelector('g.kw-view')?.getAttribute('transform') || '',
+    scope: document.getElementById('map-scope')?.textContent || '' };
+})()`);
+writeFileSync(join(OUT, 'narrow-inspector-redraw-baseline.json'), JSON.stringify({
+  capturedUtc: new Date().toISOString(), before: narrowInspectorBeforeRedraw,
+  finding: { id: 'fixture-finding-a1', claim: narrowFindingClaim },
+  resize: { width: 398, height: 844, deviceScaleFactor: 1, mobile: true },
+}, null, 2) + '\n');
+await send(pageWs, 'Emulation.setDeviceMetricsOverride', { width: 398, height: 844, deviceScaleFactor: 1, mobile: true });
+await until('a narrow resize rebuilds the inspector with its focus and finding intact',
+  `(() => {
+    const whole = document.querySelector('#knowledge-whole');
+    const card = whole.querySelector('.kw-inspector .kw-card');
+    const mark = whole.querySelector('.knode[data-kw-kind="finding"][data-kw-node="fixture-finding-a1"]');
+    const rect = card && card.getBoundingClientRect();
+    return whole.clientWidth !== ${narrowInspectorBeforeRedraw.width}
+      && !!card && card !== window.__qaNarrowInspectorBeforeRedraw
+      && document.activeElement === card
+      && card.querySelector('.kw-card-title')?.textContent === ${JSON.stringify(narrowFindingClaim)}
+      && !!mark && mark.classList.contains('selected')
+      && !!rect && Math.min(rect.bottom, innerHeight) - Math.max(rect.top, 0) > 24
+      && whole.querySelector('g.kw-view')?.getAttribute('transform') === ${JSON.stringify(narrowInspectorBeforeRedraw.camera)}
+      && document.getElementById('map-scope')?.textContent === ${JSON.stringify(narrowInspectorBeforeRedraw.scope)};
+  })()`);
+const narrowRosterBefore = await evalJs(`(() => {
+  const whole = document.querySelector('#knowledge-whole');
+  const control = whole.querySelector('.kw-inspector .kw-card-return');
+  control.focus({ preventScroll: true });
+  window.__qaNarrowReturnBeforeShell = control;
+  return { pressed: document.getElementById('doc-ended')?.getAttribute('aria-pressed'),
+    focused: document.activeElement === control };
+})()`);
+check('Return to map takes keyboard focus inside the narrow inspector',
+  narrowRosterBefore.focused && ['true', 'false'].includes(narrowRosterBefore.pressed));
+await evalJs(`document.getElementById('doc-ended').click()`);
+await until('a shell redraw retains the focused Return control and selected finding',
+  `(() => {
+    const whole = document.querySelector('#knowledge-whole');
+    const card = whole.querySelector('.kw-inspector .kw-card');
+    const control = card && card.querySelector('.kw-card-return');
+    const mark = whole.querySelector('.knode[data-kw-kind="finding"][data-kw-node="fixture-finding-a1"]');
+    return !!control && control !== window.__qaNarrowReturnBeforeShell
+      && document.activeElement === control
+      && document.getElementById('doc-ended')?.getAttribute('aria-pressed') !== ${JSON.stringify(narrowRosterBefore.pressed)}
+      && card.querySelector('.kw-card-title')?.textContent === ${JSON.stringify(narrowFindingClaim)}
+      && !!mark && mark.classList.contains('selected')
+      && whole.querySelector('g.kw-view')?.getAttribute('transform') === ${JSON.stringify(narrowInspectorBeforeRedraw.camera)}
+      && document.getElementById('map-scope')?.textContent === ${JSON.stringify(narrowInspectorBeforeRedraw.scope)};
+  })()`);
+await evalJs(`(() => {
+  window.__qaNarrowReturnBeforeShell = document.querySelector('#knowledge-whole .kw-inspector .kw-card-return');
+  document.getElementById('doc-ended').click();
+})()`);
+await until('restoring the roster scope retains Return focus and the map reading',
+  `(() => {
+    const whole = document.querySelector('#knowledge-whole');
+    const card = whole.querySelector('.kw-inspector .kw-card');
+    const control = card && card.querySelector('.kw-card-return');
+    const mark = whole.querySelector('.knode[data-kw-kind="finding"][data-kw-node="fixture-finding-a1"]');
+    return !!control && control !== window.__qaNarrowReturnBeforeShell
+      && document.activeElement === control
+      && document.getElementById('doc-ended')?.getAttribute('aria-pressed') === ${JSON.stringify(narrowRosterBefore.pressed)}
+      && card.querySelector('.kw-card-title')?.textContent === ${JSON.stringify(narrowFindingClaim)}
+      && !!mark && mark.classList.contains('selected')
+      && whole.querySelector('g.kw-view')?.getAttribute('transform') === ${JSON.stringify(narrowInspectorBeforeRedraw.camera)}
+      && document.getElementById('map-scope')?.textContent === ${JSON.stringify(narrowInspectorBeforeRedraw.scope)};
+  })()`);
+await evalJs(`window.__qaNarrowReturnBeforeRedraw = document.querySelector('#knowledge-whole .kw-inspector .kw-card-return')`);
+await send(pageWs, 'Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+await until('the original narrow width retains the focused Return control and selected finding',
+  `(() => {
+    const whole = document.querySelector('#knowledge-whole');
+    const card = whole.querySelector('.kw-inspector .kw-card');
+    const control = card && card.querySelector('.kw-card-return');
+    const mark = whole.querySelector('.knode[data-kw-kind="finding"][data-kw-node="fixture-finding-a1"]');
+    return whole.clientWidth === ${narrowInspectorBeforeRedraw.width}
+      && !!control && control !== window.__qaNarrowReturnBeforeRedraw
+      && document.activeElement === control
+      && card.querySelector('.kw-card-title')?.textContent === ${JSON.stringify(narrowFindingClaim)}
+      && !!mark && mark.classList.contains('selected')
+      && whole.querySelector('g.kw-view')?.getAttribute('transform') === ${JSON.stringify(narrowInspectorBeforeRedraw.camera)}
+      && document.getElementById('map-scope')?.textContent === ${JSON.stringify(narrowInspectorBeforeRedraw.scope)};
+  })()`);
+await evalJs('delete window.__qaNarrowInspectorBeforeRedraw');
+await evalJs('delete window.__qaNarrowReturnBeforeShell; delete window.__qaNarrowReturnBeforeRedraw');
+await evalJs(`document.querySelector('#knowledge-whole .kw-inspector .kw-card-return').click()`);
+await until('Return to map restores the selected finding in view',
+  `(() => {
+    const mark = document.querySelector('#knowledge-whole .knode[data-kw-kind="finding"][data-kw-node="fixture-finding-a1"]');
+    const rect = mark && mark.getBoundingClientRect();
+    return !!mark && mark.classList.contains('selected') && document.activeElement === mark
+      && !!rect && Math.min(rect.bottom, innerHeight) - Math.max(rect.top, 0) > 24;
+  })()`);
+const narrowReturned = await evalJs(`(() => {
+  const whole = document.querySelector('#knowledge-whole');
+  const mark = whole.querySelector('.knode[data-kw-kind="finding"][data-kw-node="fixture-finding-a1"]');
+  const svg = whole.querySelector('svg.kw-canvas');
+  return { camera: svg.querySelector('g.kw-view')?.getAttribute('transform') || '',
+    zoom: whole.querySelector('.kw-zoom-level')?.textContent || '',
+    scope: document.getElementById('map-scope')?.textContent || '',
+    pageX: scrollX, pageY: scrollY, focused: document.activeElement === mark };
+})()`);
+check('Return to map preserves the narrow camera, scope and selected finding',
+  narrowReturned.focused && narrowReturned.camera === narrowMapBeforeRead.camera
+    && narrowReturned.zoom === narrowMapBeforeRead.zoom
+    && narrowReturned.scope === narrowMapBeforeRead.scope, JSON.stringify({narrowMapBeforeRead, narrowReturned}));
+await evalJs('new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+check('a passive frame keeps the returned map and page position', await evalJs(`(() => {
+  const whole = document.querySelector('#knowledge-whole');
+  const svg = whole.querySelector('svg.kw-canvas');
+  const mark = whole.querySelector('.knode[data-kw-kind="finding"][data-kw-node="fixture-finding-a1"]');
+  return svg.querySelector('g.kw-view')?.getAttribute('transform') === ${JSON.stringify(narrowReturned.camera)}
+    && whole.querySelector('.kw-zoom-level')?.textContent === ${JSON.stringify(narrowReturned.zoom)}
+    && scrollX === ${narrowReturned.pageX} && scrollY === ${narrowReturned.pageY}
+    && document.activeElement === mark && mark?.classList.contains('selected');
+})()`));
 check('wrapped findings remain distinct beneath their own authors, including the Principal',
   await evalJs(`(() => {
     const findings = ${JSON.stringify(fixturePayload.findings || [])};
@@ -2640,6 +3405,25 @@ check('focused narrow Principal text is readable and the zoom readout states its
   })()`));
 const staticNarrowMetrics = await send(pageWs, 'Page.getLayoutMetrics');
 const staticNarrowClip = staticNarrowMetrics.result.cssContentSize;
+check('narrow findings display complete claims inside their cards', await evalJs(`(async () => {
+  const document_ = await (await fetch('fixtures/fixture-knowledge.json')).json();
+  const claims = new Map(document_.knowledge.findings.map((row) => [row.id, row.claim]));
+  const nodes = [...document.querySelectorAll('#knowledge-whole .knode[data-kw-kind="finding"]')];
+  if (!nodes.length || !nodes.some((node) => node.getAttribute('data-kw-node') === 'fixture-finding-a1'
+    && node.querySelectorAll('text.kw-word tspan').length >= 2)) return false;
+  return nodes.every((node) => {
+    const claim = claims.get(node.getAttribute('data-kw-node'));
+    const panel = node.querySelector('rect.kw-record-hit');
+    const text = node.querySelector('text.kw-word');
+    const lines = [...(text?.querySelectorAll('tspan') || [])];
+    if (!claim || !panel || !lines.length || text.textContent !== claim) return false;
+    const box = panel.getBBox();
+    return lines.every((line) => {
+      const span = line.getBBox();
+      return span.x >= box.x - 1 && span.x + span.width <= box.x + box.width + 1;
+    });
+  });
+})()`));
 const staticNarrowImage = await send(pageWs, 'Page.captureScreenshot', {
   format: 'png', captureBeyondViewport: true,
   clip: { x: staticNarrowClip.x, y: staticNarrowClip.y,
@@ -2654,6 +3438,103 @@ await evalJs(`(() => {
   return !!fit;
 })()`);
 await evalJs(`window.scrollTo(${staticNarrowScrollBefore.x}, ${staticNarrowScrollBefore.y})`);
+
+// Preserve the static Principal band before ensemble and address interactions.
+const staticPrincipalCapture = await evalJs(`(() => {
+  const box = (value) => value ? {
+    x: value.x, y: value.y, width: value.width, height: value.height,
+    top: value.top, right: value.right, bottom: value.bottom, left: value.left,
+  } : null;
+  const attrs = (node) => Object.fromEntries([...node.attributes].map((attr) => [attr.name, attr.value]));
+  const mark = (node) => {
+    let svgBox = null, svgBoxError = null;
+    if (typeof node.getBBox === 'function') {
+      try { svgBox = box(node.getBBox()); } catch (error) { svgBoxError = String(error); }
+    }
+    const style = getComputedStyle(node);
+    return {
+      tag: node.tagName, attributes: attrs(node), text: node.textContent || '',
+      clientBox: box(node.getBoundingClientRect()), svgBox, svgBoxError,
+      style: { display: style.display, visibility: style.visibility, opacity: style.opacity,
+        fill: style.fill, stroke: style.stroke, strokeWidth: style.strokeWidth,
+        fontSize: style.fontSize, color: style.color },
+    };
+  };
+  const records = (selector) => [...document.querySelectorAll(selector)].map((node) => ({
+    ...mark(node),
+    shapes: [...node.querySelectorAll('circle, rect, polygon, path, text')].map(mark),
+  }));
+  const whole = document.querySelector('#knowledge-whole');
+  const overview = ${JSON.stringify(fixturePayload)};
+  const focused = document.activeElement;
+  const state = {
+    href: location.href, hash: location.hash, scrollX, scrollY,
+    viewport: { width: innerWidth, height: innerHeight },
+    activeElement: focused ? { tag: focused.tagName, attributes: attrs(focused) } : null,
+    selectionHeading: document.querySelector('#selection h2')?.textContent || '',
+    findingHeading: document.querySelector('#selection #sel-sec-finding h2')?.textContent || '',
+  };
+  return {
+    pageHtml: document.documentElement.outerHTML,
+    mapHtml: whole ? whole.outerHTML : '',
+    geometry: {
+      stateBefore: state,
+      knowledgeSvg: [...document.querySelectorAll('#knowledge-whole svg.kw-canvas')].map(mark),
+      tiers: records('#knowledge-whole text.kw-tier'),
+      actors: records('#knowledge-whole .kw-anchor[data-kw-id]'),
+      findings: records('#knowledge-whole .knode[aria-label]'),
+      references: records('#knowledge-whole g.kw-ref[data-kw-ref]'),
+      ensembles: records('#knowledge-whole .kw-hull, #knowledge-whole .kw-lozenge'),
+      typedEdges: records('#knowledge-whole .kw-edge-typed'),
+      stageSvg: [...document.querySelectorAll('#attention-band svg.att-stage')].map(mark),
+      stageTiers: records('#attention-band text.att-section-label'),
+      stageSeats: records('#attention-band .att-seat'),
+      stageSeams: records('#attention-band .att-seam, #attention-band .att-seam-hit'),
+      fixtureIdentity: {
+        actors: overview.actors || {},
+        findings: (overview.findings || []).map((finding) => ({
+          id: finding.id, author: finding.author, kind: finding.kind,
+        })),
+        edges: overview.edges || [],
+      },
+    },
+  };
+})()`);
+writeFileSync(join(OUT, 'static-principal-page.html'), staticPrincipalCapture.pageHtml);
+writeFileSync(join(OUT, 'static-principal-map.html'), staticPrincipalCapture.mapHtml);
+const staticPrincipalLayout = await send(pageWs, 'Page.getLayoutMetrics');
+const staticPrincipalSize = staticPrincipalLayout.result.cssContentSize;
+const staticPrincipalShot = await send(pageWs, 'Page.captureScreenshot', {
+  format: 'png', fromSurface: true, captureBeyondViewport: true,
+  clip: {
+    x: staticPrincipalSize.x, y: staticPrincipalSize.y,
+    width: staticPrincipalSize.width, height: staticPrincipalSize.height, scale: 1,
+  },
+});
+writeFileSync(join(OUT, 'static-principal.png'), Buffer.from(staticPrincipalShot.result.data, 'base64'));
+const staticPrincipalStateAfter = await evalJs(`(() => {
+  const focused = document.activeElement;
+  return {
+    href: location.href, hash: location.hash, scrollX, scrollY,
+    viewport: { width: innerWidth, height: innerHeight },
+    activeElement: focused ? { tag: focused.tagName, attributes: Object.fromEntries(
+      [...focused.attributes].map((attr) => [attr.name, attr.value])) } : null,
+    selectionHeading: document.querySelector('#selection h2')?.textContent || '',
+    findingHeading: document.querySelector('#selection #sel-sec-finding h2')?.textContent || '',
+  };
+})()`);
+writeFileSync(join(OUT, 'static-principal-geometry.json'), JSON.stringify({
+  ...staticPrincipalCapture.geometry,
+  stateAfter: staticPrincipalStateAfter,
+  stateUnchanged: JSON.stringify(staticPrincipalCapture.geometry.stateBefore)
+    === JSON.stringify(staticPrincipalStateAfter),
+  layoutMetrics: staticPrincipalLayout.result,
+  screenshotClip: {
+    x: staticPrincipalSize.x, y: staticPrincipalSize.y,
+    width: staticPrincipalSize.width, height: staticPrincipalSize.height, scale: 1,
+  },
+}, null, 2));
+console.log('CAPTURE static Principal hierarchy: complete page, map, geometry and full-page image');
 
 check('a collapsed ensemble stays on its first drawn member tier when its first recorded member is quiet',
   await evalJs(`(async () => {
@@ -2676,9 +3557,9 @@ check('a collapsed ensemble stays on its first drawn member tier when its first 
     };
     const expected = tierOf(anchor(firstDrawn).querySelector('rect.kw-actor'));
     if (expected !== 'depth 1') return false;
-    const hull = whole.querySelector('.kw-hull[data-kw-hull="fixture-knowledge-ensemble"]');
-    if (!hull) return false;
-    hull.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    const toggle = whole.querySelector('.kw-memberships .kw-ensemble-toggle[data-kw-hull="fixture-knowledge-ensemble"]');
+    if (!toggle || toggle.getAttribute('aria-expanded') !== 'true') return false;
+    toggle.click();
     const lozenge = whole.querySelector('.kw-lozenge[data-kw-hull="fixture-knowledge-ensemble"]');
     if (!lozenge) return false;
     const sameTier = tierOf(lozenge.querySelector('rect.kw-lozenge-box')) === expected;
@@ -2737,11 +3618,21 @@ check('the stage seats the fixture by its reporting hierarchy', await evalJs(`(a
     if (execution || stop) return count > 0;
     return count > 0;
   };
+  const visible = new Set(players.filter(seated).map((pl) => pl.id));
+  for (const actor of players.filter(seated)) {
+    const chain = new Set([actor.id]);
+    let parent = actor.parent;
+    while (parent && byId.has(parent) && !chain.has(parent)) {
+      chain.add(parent);
+      visible.add(parent);
+      parent = byId.get(parent).parent;
+    }
+  }
   const expected = new Map();
   for (const pl of players) {
     const level = depth.get(pl.id);
     if (level === -1) return false; // the fixture records no unknown ancestry
-    if (!seated(pl)) continue;
+    if (!visible.has(pl.id)) continue;
     if (!expected.has(level)) expected.set(level, []);
     expected.get(level).push(pl.id);
   }
@@ -2803,6 +3694,91 @@ check('every non-principal seat names the parent it reports to', await evalJs(`(
   });
 })()`));
 
+check('the stage draws exactly the recorded parent links between its drawn actors', await evalJs(`(async () => {
+  const payload = await (await fetch('fixtures/fixture-knowledge.json')).json();
+  const seats = [...document.querySelectorAll('#attention-band .att-seat')];
+  const ids = new Set(seats.map((seat) => seat.dataset.attId));
+  const want = (payload.players || []).filter((row) => ids.has(row.id) && ids.has(row.parent))
+    .map((row) => row.parent + '|' + row.id).sort();
+  const links = [...document.querySelectorAll('#attention-band .att-parent-link')];
+  const actual = links.map((link) => link.dataset.attParentFrom + '|' + link.dataset.attParentTo).sort();
+  return actual.length === new Set(actual).size && actual.join(',') === want.join(',')
+    && seats.every((seat) => {
+      const row = (payload.players || []).find((entry) => entry.id === seat.dataset.attId);
+      return row && seat.dataset.attRole === row.role && seat.dataset.attParent === row.parent
+        && seat.querySelector('.att-seat-label').textContent === row.id;
+    });
+})()`));
+check('the ensemble panels retain owner coupling members and capability sections', await evalJs(`(async () => {
+  const payload = await (await fetch('fixtures/fixture-knowledge.json')).json();
+  const panels = [...document.querySelectorAll('#attention-band .att-ensemble')];
+  return panels.length === (payload.ensembles || []).length && (payload.ensembles || []).every((ensemble) => {
+    const panel = panels.find((node) => node.dataset.attEnsemble === ensemble.id);
+    if (!panel || panel.querySelector('.att-coupling').dataset.attCoupling !== ensemble.coupling) return false;
+    const owner = panel.querySelector('.att-ensemble-owner [data-att-member]');
+    if (!owner || owner.dataset.attMember !== ensemble.owner) return false;
+    const members = [...panel.querySelectorAll('.att-members [data-att-member]')].map((node) => node.dataset.attMember).sort();
+    if (members.join(',') !== ensemble.members.slice().sort().join(',')) return false;
+    return (ensemble.sections || []).every((section) => {
+      const part = [...panel.querySelectorAll('.att-capability')].find((node) => node.dataset.attSection === section.id);
+      return part && part.querySelector('.att-capability-name').textContent === section.capability
+        && [...part.querySelectorAll('[data-att-member]')].map((node) => node.dataset.attMember).sort().join(',')
+          === section.members.slice().sort().join(',');
+    });
+  });
+})()`));
+check('recorded parent links avoid unrelated actor cards and tier captions', await evalJs(`(() => {
+  const stage = document.querySelector('#attention-band .att-stage');
+  const seats = [...stage.querySelectorAll('.att-seat')].map((seat) => ({
+    id: seat.dataset.attId, rect: seat.querySelector('.att-seat-card').getBoundingClientRect()
+  }));
+  const headers = [...stage.querySelectorAll('.att-section-label')].map((node) => node.getBoundingClientRect());
+  const links = [...stage.querySelectorAll('.att-parent-link')];
+  return links.length > 0 && links.every((link) => {
+    const from = link.dataset.attParentFrom;
+    const to = link.dataset.attParentTo;
+    if (!seats.some((seat) => seat.id === from) || !seats.some((seat) => seat.id === to)) return false;
+    const blocked = seats.filter((seat) => seat.id !== from && seat.id !== to).map((seat) => seat.rect).concat(headers);
+    const matrix = link.getScreenCTM();
+    const length = link.getTotalLength();
+    const steps = Math.ceil(length);
+    for (let i = 0; i <= steps; i += 1) {
+      const point = link.getPointAtLength(length * i / steps).matrixTransform(matrix);
+      if (blocked.some((rect) => point.x > rect.left && point.x < rect.right
+        && point.y > rect.top && point.y < rect.bottom)) return false;
+    }
+    return true;
+  });
+})()`));
+const staticStageEvidence = await evalJs(`(() => {
+  const mount = document.querySelector('#staves');
+  const band = document.querySelector('#attention-band');
+  const rect = (node) => {
+    const r = node.getBoundingClientRect();
+    return { x: r.x, y: r.y, width: r.width, height: r.height,
+      documentX: r.x + window.scrollX, documentY: r.y + window.scrollY };
+  };
+  return { page: document.documentElement.outerHTML, stage: mount ? mount.outerHTML : '',
+    viewport: { width: window.innerWidth, height: window.innerHeight,
+      scrollX: window.scrollX, scrollY: window.scrollY },
+    stageBox: mount ? rect(mount) : null,
+    tiers: [...document.querySelectorAll('#attention-band .att-section-label')]
+      .map((node) => ({ text: node.textContent, box: rect(node) })),
+    actors: [...document.querySelectorAll('#attention-band .att-seat')].map((node) => ({
+      id: node.dataset.attId, role: node.dataset.attRole, parent: node.dataset.attParent,
+      context: node.dataset.attContext || '', text: node.textContent, box: rect(node),
+      caption: node.querySelector('.att-seat-label') ? rect(node.querySelector('.att-seat-label')) : null })),
+    parentLinks: [...document.querySelectorAll('#attention-band .att-parent-link')]
+      .map((node) => ({ from: node.dataset.attParentFrom, to: node.dataset.attParentTo, box: rect(node) })),
+    ensembles: [...document.querySelectorAll('#attention-band .att-ensemble')]
+      .map((node) => ({ id: node.dataset.attEnsemble, text: node.textContent, box: rect(node) })) };
+})()`);
+writeFileSync(join(OUT, 'static-stage-page.html'), staticStageEvidence.page);
+writeFileSync(join(OUT, 'static-stage.html'), staticStageEvidence.stage);
+const { page: staticStagePage, stage: staticStageMarkup, ...staticStageGeometry } = staticStageEvidence;
+writeFileSync(join(OUT, 'static-stage-geometry.json'), JSON.stringify(staticStageGeometry, null, 2));
+await captureSurfaceEvidence('static-stage.png', '#staves');
+await captureSurfaceEvidence('static-memberships.png', '#attention-band .att-ensembles');
 // A cited seam routes through the shell to the citing finding's record,
 // and the address it writes reloads to the same record.
 await evalJs(`(() => {
@@ -2857,9 +3833,28 @@ check('without the typed fields the map draws no typed mark', await evalJs(`(() 
     && !/recorded evidence/.test(words);
 })()`));
 
+retainFixtureCommands();
 console.log('BROWSER_QA_OK');
+} catch (error) {
+  primaryFailure = error;
+  retainedFailure = { originalError: errorRecord(error), wait: activeWait,
+    evaluation: lastEvaluation, lastCoordinatorCall, observations: {} };
+  if (retainBrowserFailure) {
+    try { await retainBrowserFailure(); }
+    catch (retentionError) { retainedFailure.retentionError = errorRecord(retentionError); }
+  }
+  try { retainFixtureCommands(); }
+  catch (retentionError) { retainedFailure.fixtureCommandsRetentionError = errorRecord(retentionError); }
+  writeFailureRecord();
+  throw error;
 } finally {
-  await teardown();
+  try { await teardown(); }
+  catch (cleanupError) {
+    if (!primaryFailure) throw cleanupError;
+    retainedFailure.cleanupError = errorRecord(cleanupError);
+    writeFailureRecord();
+    console.error('Browser cleanup failed after the original failure: ' + cleanupError.stack);
+  }
 }
 }
 await qualify();

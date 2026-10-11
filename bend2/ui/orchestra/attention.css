@@ -33,6 +33,8 @@
 .lane-strip .att-stage {
   display: block;
   overflow: visible;
+  width: 100%;
+  flex: 0 0 100%;
 }
 
 .lane-strip .att-stage:focus { outline: none; }
@@ -129,8 +131,8 @@
    is the figure that tells its size. */
 .lane-strip .att-section-label {
   font-family: var(--mono);
-  font-size: 10px;
-  fill: var(--muted);
+  font-size: 12px;
+  fill: var(--ink);
 }
 
 .lane-strip .att-section {
@@ -163,8 +165,8 @@
 /* The seat's own name, under its mark, in the same ink as the tier labels. */
 .lane-strip .att-seat-label {
   font-family: var(--mono);
-  font-size: 9px;
-  fill: var(--muted);
+  font-size: 13px;
+  fill: var(--ink);
   text-anchor: middle;
 }
 
@@ -366,4 +368,102 @@
 
   .lane-strip .att-working .att-halo { opacity: 0.4; }
   .lane-strip .att-baton { opacity: 0.6; }
+}
+
+/* Actor cards reserve their full label geometry during hover and focus. */
+.lane-strip .att-seat-card {
+  fill: var(--surface);
+  stroke: var(--hairline);
+  stroke-width: 1;
+}
+.lane-strip .att-seat:hover .att-seat-card,
+.lane-strip .att-seat.att-cursor .att-seat-card,
+.lane-strip .att-seat.att-selected .att-seat-card { stroke: var(--ink); }
+.lane-strip .att-seat-role,
+.lane-strip .att-seat-state,
+.lane-strip .att-seat-memberships {
+  font-family: var(--mono);
+  font-size: 11px;
+  text-anchor: middle;
+  fill: var(--muted);
+}
+.lane-strip .att-seat-role { fill: var(--ink); }
+.lane-strip .att-parent-link {
+  fill: none;
+  stroke: var(--ink);
+  stroke-width: 1.5;
+  opacity: 0.65;
+  vector-effect: non-scaling-stroke;
+}
+.lane-strip .att-legend { flex: 0 0 100%; font-size: 11px; }
+.lane-strip .att-ensembles { flex: 0 0 100%; min-width: 0; }
+.lane-strip .att-context-heading {
+  display: block;
+  margin: 18px 0 10px;
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--ink);
+}
+.lane-strip .att-ensemble-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+  gap: 14px;
+}
+.lane-strip .att-ensemble {
+  min-width: 0;
+  padding: 14px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.lane-strip .att-ensemble.is-selected { border-color: var(--ink); }
+.lane-strip .att-ensemble-name {
+  display: block;
+  max-width: 100%;
+  margin: 0 0 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+  color: var(--ink);
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.lane-strip button.att-ensemble-name { cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+.lane-strip .att-coupling { display: block; color: var(--muted); margin-bottom: 10px; }
+.lane-strip .att-ensemble-owner { margin-bottom: 12px; overflow-wrap: anywhere; }
+.lane-strip .att-members,
+.lane-strip .att-capability { display: flex; flex-wrap: wrap; gap: 5px; align-items: baseline; }
+.lane-strip .att-members-label,
+.lane-strip .att-capability-name { flex: 0 0 100%; color: var(--muted); }
+.lane-strip .att-capability { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--hairline); }
+.lane-strip .att-member {
+  max-width: 100%;
+  padding: 3px 6px;
+  border: 1px solid var(--hairline);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.lane-strip .att-member:hover { border-color: var(--ink); }
+.lane-strip .att-member:focus-visible,
+.lane-strip .att-ensemble-name:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.lane-strip .att-context-empty { color: var(--muted); }
+
+.lane-strip .att-seat[data-att-role="principal-conductor"] .att-seat-card {
+  stroke: var(--ink);
+  stroke-width: 1.5;
+}
+.lane-strip .att-parent-key::before {
+  content: "";
+  width: 24px;
+  border-top: 1.5px solid var(--ink);
 }

@@ -366,15 +366,109 @@ th.kw-flow-h {
 }
 
 .kw-card {
-  /* The card sits in page flow below the canvas: the column grows
-     with it, so a long claim, the reference rows and the junction
-     rows all read whole with no scroller anywhere in the lane. */
-  max-width: 320px;
-  margin: 8px 0 0;
-  padding: 10px 12px;
+  /* Record details remain in page flow at their complete height. */
+  max-width: none;
+  margin: 0;
+  padding: 16px;
   background: var(--paper, #fbfcfe);
   border: 1px solid var(--muted, #5b6478);
   border-radius: 6px;
+}
+
+.kw-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+
+.kw-workspace:not(.kw-workspace-wide) .kw-drawing { max-width: 1000px; width: 100%; }
+.kw-workspace-wide { grid-template-columns: minmax(0, 1fr) 320px; }
+.kw-drawing { min-width: 0; }
+.kw-inspector { min-width: 0; grid-row: 1; }
+.kw-workspace-wide .kw-inspector { grid-column: 2; position: sticky; top: 16px; }
+.kw-workspace-wide .kw-drawing { grid-column: 1; grid-row: 1; }
+
+.kw-inspector:has(> .kw-inspector-title) {
+  padding: 16px;
+  border: 1px dashed var(--hairline, #d5c9b4);
+  border-radius: 8px;
+}
+.kw-inspector-title { margin: 0 0 8px; font-size: 16px; }
+.kw-inspector > p { margin: 0; font-size: 13px; line-height: 1.6; }
+.kw-card { overflow-wrap: anywhere; line-height: 1.55; }
+.kw-card:focus { outline: 2px solid var(--ink, #141a26); outline-offset: 3px; }
+.kw-card-return { margin: 0 0 12px; font-size: 13px; }
+.kw-card-state { font-size: 12px; color: var(--muted, #5b6478); }
+.kw-connections { margin-top: 16px; border-top: 1px solid var(--hairline, #d5c9b4); }
+.kw-connections h4 { margin: 12px 0 8px; font-size: 13px; font-weight: 600; }
+.kw-connection { padding: 8px 0; border-top: 1px solid var(--hairline, #d5c9b4); }
+.kw-connection:first-of-type { border-top: 0; }
+.kw-connection-edge, .kw-connection-node {
+  display: block;
+  width: 100%;
+  padding: 4px 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink, #141a26);
+  text-align: left;
+  font: inherit;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.kw-connection-edge { font-size: 11px; color: var(--muted, #5b6478); }
+.kw-connection-node { font-size: 13px; text-decoration: underline; text-underline-offset: 3px; }
+.kw-connection-node:hover, .kw-connection-edge:hover { color: var(--selection, #2a3e6b); }
+.kw-gesture-note { font-size: 11px; }
+
+.kw-memberships { margin: 12px 0 20px; }
+.kw-memberships h3 { margin: 0 0 10px; font-size: 14px; }
+.kw-ensemble-entry { padding: 8px 0; border-top: 1px solid var(--hairline, #d5c9b4); }
+.kw-ensemble-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 14px; }
+.kw-ensemble-toggle {
+  border: 0;
+  padding: 0;
+  color: var(--ink, #141a26);
+  background: transparent;
+  font: inherit;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+  text-align: left;
+}
+.kw-ensemble-toggle::before { content: "− "; color: var(--muted, #5b6478); }
+.kw-ensemble-toggle[aria-expanded="false"]::before { content: "+ "; }
+.kw-ensemble-facts { font-size: 12px; color: var(--muted, #5b6478); overflow-wrap: anywhere; }
+.kw-ensemble-members, .kw-section-members { margin-top: 8px; font-size: 12px; }
+.kw-ensemble-members > summary, .kw-section-members > summary { cursor: pointer; }
+.kw-member-list { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 0; }
+.kw-member {
+  border: 1px solid var(--hairline, #d5c9b4);
+  border-radius: 4px;
+  padding: 4px 8px;
+  background: var(--paper, #fbfcfe);
+  color: var(--ink, #141a26);
+  font: inherit;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+  text-align: left;
+  cursor: pointer;
+}
+.kw-member:hover { border-color: var(--selection, #2a3e6b); }
+.kw-author-card, .kw-finding-card {
+  fill: var(--paper, #fbfcfe);
+  stroke: var(--hairline, #d5c9b4);
+  stroke-width: 1;
+  pointer-events: none;
+}
+.kw-author-card { fill: var(--surface, #f5efe3); }
+.kw-record-hit { fill: transparent; stroke: transparent; pointer-events: all; }
+.kw-canvas .kw-role, .kw-canvas .kw-finding-meta {
+  font-family: var(--sans, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif);
+  font-size: 11px;
+  fill: var(--muted, #5b6478);
+  stroke: var(--paper, #fbfcfe);
+  stroke-width: 3px;
+  paint-order: stroke;
 }
 
 /* The pinned card reads in three layers: the node's identity and its

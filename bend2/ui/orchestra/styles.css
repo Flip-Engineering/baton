@@ -1020,3 +1020,12 @@ button:active { background: var(--wash); }
 
 /* The plate's contents line: each section with what it holds, so the page states its own shape. */
 .plate-nav .plate-count { color: var(--muted); font-size: var(--step0); }
+
+.doc-band-memberships {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  min-width: 0;
+}
+.doc-band-memberships .doc-band-name { overflow-wrap: anywhere; }

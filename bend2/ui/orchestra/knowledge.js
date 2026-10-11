@@ -233,9 +233,8 @@
   // their author's row, shared first by promotion count. All four
   // recorded relation kinds draw directed with arrowheads. The canvas
   // fits its container width and grows vertically.
-  var KW_GUTTER = 170;
-  var KW_ACTOR_SLOT = 150;
-  var KW_FIND_SLOT = 32;
+  var KW_GUTTER = 112;
+  var KW_ACTOR_SLOT = 280;
   var KW_TOP = 44;
   var KW_PAD = 20;
   // Authors with more findings than this collapse to one count badge
@@ -468,6 +467,7 @@
   var kwSeenFocusRelation = "";
   var kwSeenFocusSeq = 0;
   var kwLastSelected = null;
+  var kwPinnedNode = null;
   // A drag that pans the map must not also activate the node it
   // started on. Clicks consume the gesture; keydowns never pan.
   function kwConsumePan() {
@@ -587,15 +587,28 @@
     });
     const lines = [];
     let line = "";
-    for (const ch of String(words)) {
-      const next = line + ch;
+    const measure = (value) => {
+      probe.textContent = value;
+      return typeof probe.getComputedTextLength === "function"
+        ? probe.getComputedTextLength() : Array.from(value).length * 8;
+    };
+    for (const token of String(words).split(/(\s+)/)) {
+      const next = line + token;
       probe.textContent = next;
-      const measured = typeof probe.getComputedTextLength === "function"
-        ? probe.getComputedTextLength() : Array.from(next).length * 8;
-      if (line && measured > width) { lines.push(line); line = ch; }
-      else line = next;
+      if (line && measure(next) > width) {
+        lines.push(line);
+        line = token;
+      } else line = next;
+      // Actor ids and references can contain a single long token.
+      while (line && measure(line) > width) {
+        const chars = Array.from(line);
+        let end = 1;
+        while (end < chars.length && measure(chars.slice(0, end + 1).join("")) <= width) end += 1;
+        lines.push(chars.slice(0, end).join(""));
+        line = chars.slice(end).join("");
+      }
     }
-    lines.push(line);
+    if (line || !lines.length) lines.push(line);
     probe.remove();
     return lines;
   }
@@ -636,7 +649,8 @@
     const roles = (opts && opts.roles) || {};
     const findings = new Map(
       (overview.findings || []).map((f) => [f.id, f]));
-    const width = container.clientWidth || 1640;
+    const available = container.clientWidth || 1640;
+    const width = available >= 1340 ? available - 340 : Math.min(available, 1000);
     const gutter = Math.min(KW_GUTTER, width / 4);
     const actorPerRow = Math.max(1, Math.floor(
       (width - gutter - KW_PAD) / KW_ACTOR_SLOT));
@@ -740,14 +754,12 @@
       // large runs keep packing row by row.
       const memberX = new Map();
       const columnWidths = new Map();
-      const findCaps = new Map();
       members.forEach((id, i) => {
         const rowStart = Math.floor(i / actorPerRow) * actorPerRow;
         const rowCount = Math.min(actorPerRow, members.length - rowStart);
         const colW = (width - gutter - KW_PAD) / rowCount;
         memberX.set(id, gutter + (i % actorPerRow + 0.5) * colW);
         columnWidths.set(id, colW);
-        findCaps.set(id, Math.max(1, Math.floor(colW / KW_FIND_SLOT)));
       });
       const slots = [];
       for (const id of members) {
@@ -763,9 +775,10 @@
         }
       }
       return {
-        d, members, slots, memberX, columnWidths, findCaps,
+        d, members, slots, memberX, columnWidths,
         memberY: new Map(), findingTop: new Map(), captionLines: new Map(),
-        findingLines: new Map(), findingWidths: new Map(), findPitch: 30, height: 0,
+        findingLines: new Map(), findingWidths: new Map(), findingHeights: new Map(),
+        findingOffsets: new Map(), height: 0,
       };
     });
     let height = KW_TOP;
@@ -803,36 +816,37 @@
       for (const slot of t.slots) {
         if (!slot.finding) continue;
         const words = kwCaptionWords(slot.finding);
-        const shown = words.length > 26 ? words.slice(0, 25) + "…" : words;
-        const lines = kwWrapCaption(svg, shown, Math.max(1, width - 2 * KW_PAD), "kw-word");
+        const room = Math.max(1, t.columnWidths.get(slot.author) - 48);
+        const lines = kwWrapCaption(svg, words, room, "kw-word");
         t.findingLines.set(slot.finding.id, lines);
         const probe = kwSvg(svg, "text", { class: "kw-word", visibility: "hidden", "aria-hidden": "true" });
         let widest = 0;
-        let descent = 0;
         for (const line of lines) {
           probe.textContent = line;
           widest = Math.max(widest, probe.getComputedTextLength());
-          const box = probe.getBBox();
-          descent = Math.max(descent, box.y + box.height);
         }
         probe.remove();
         t.findingWidths.set(slot.finding.id, widest + 6);
-        t.findPitch = Math.max(t.findPitch, 32 + (lines.length - 1) * 16 + descent + 22);
+        t.findingHeights.set(slot.finding.id, 78 + lines.length * 18);
       }
       let rowY = t.y + 26;
       for (let start = 0; start < t.members.length; start += actorPerRow) {
         const row = t.members.slice(start, start + actorPerRow);
-        const actorHeight = Math.max(30,
-          ...row.map((id) => 22 + t.captionLines.get(id).length * 16));
-        let findingRows = 0;
+        const actorHeight = Math.max(62,
+          ...row.map((id) => 46 + t.captionLines.get(id).length * 16));
+        let findingHeight = 0;
         for (const id of row) {
           t.memberY.set(id, rowY);
-          t.findingTop.set(id, rowY + actorHeight + 14);
+          t.findingTop.set(id, rowY + actorHeight + 30);
           const slots = byMember.get(id);
-          findingRows = Math.max(findingRows,
-            slots.some((slot) => slot.cluster) ? 1 : Math.ceil(slots.length / t.findCaps.get(id)));
+          let offset = 0;
+          for (const slot of slots) {
+            if (slot.finding) t.findingOffsets.set(slot.finding.id, offset);
+            offset += slot.finding ? t.findingHeights.get(slot.finding.id) + 16 : 64;
+          }
+          findingHeight = Math.max(findingHeight, offset);
         }
-        rowY += actorHeight + (findingRows ? 14 + findingRows * t.findPitch : 0) + 12;
+        rowY += actorHeight + (findingHeight ? 30 + findingHeight : 0) + 32;
       }
       t.height = Math.max(38, rowY - t.y);
       height += t.height;
@@ -948,7 +962,6 @@
           : mount.querySelector('[data-kw-cluster="' + CSS.escape(clusterLit) + '"][data-kw-kind="' + CSS.escape(clusterKind) + '"]');
         if (target && typeof target.focus === "function") target.focus();
       }
-      if (opts && typeof opts.onSelectActor === "function" && clusterKind !== "group") opts.onSelectActor(clusterLit);
     };
     g.addEventListener("click", toggle);
     g.addEventListener("keydown", (ev) => {
@@ -959,32 +972,77 @@
     });
   }
 
-  // Convex hull (Andrew monotone chain) over padded points.
-  function kwHullPath(points) {
-    const pts = points.slice().sort((a, b) => (a.x - b.x) || (a.y - b.y));
-    const cross = (o, a, b) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
-    const lower = [];
-    for (const p of pts) {
-      while (lower.length >= 2
-        && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) lower.pop();
-      lower.push(p);
+  // Membership lists show each Ensemble's owner, coupling and Sections.
+  function kwMembershipIndex(container, overview, ensembles, sections, opts) {
+    if (!ensembles.length && !sections.length) return;
+    const index = kwEl(container, "section", {
+      class: "kw-memberships", "aria-label": "Ensemble and section membership",
+    });
+    kwEl(index, "h3", null, "Ensembles and sections");
+    const memberButtons = (parent, members) => {
+      const list = kwEl(parent, "div", { class: "kw-member-list" });
+      for (const raw of members || []) {
+        const id = String(raw);
+        const button = kwEl(list, "button", { type: "button", class: "kw-member" }, id);
+        button.addEventListener("click", () => {
+          const view = container.querySelector("g.kw-view");
+          kwGoToMatch({ container, view, overview, opts, ensembles }, { kind: "actor", id });
+        });
+      }
+    };
+    const seenSections = new Set();
+    const section = (parent, s, ensembleId) => {
+      if (!s || !s.id) return;
+      const key = kwKey(ensembleId || String(s.ensemble || ""), String(s.id));
+      if (seenSections.has(key)) return;
+      seenSections.add(key);
+      const group = kwEl(parent, "details", { class: "kw-section-members" });
+      kwEl(group, "summary", null, "Section · " + String(s.id)
+        + (s.capability ? " · " + String(s.capability) : ""));
+      memberButtons(group, s.members || []);
+    };
+    for (const ensemble of ensembles) {
+      if (!ensemble || !ensemble.id) continue;
+      const id = String(ensemble.id);
+      const collapsed = kwCollapsedEnsembles.has(id);
+      const entry = kwEl(index, "article", { class: "kw-ensemble-entry" });
+      const head = kwEl(entry, "div", { class: "kw-ensemble-head" });
+      const toggle = kwEl(head, "button", {
+        class: collapsed ? "kw-ensemble-toggle" : "kw-hull kw-ensemble-toggle",
+        type: "button", "data-kw-hull": id,
+        "aria-expanded": collapsed ? "false" : "true",
+        "aria-label": "ensemble " + id + ", activate to " + (collapsed ? "expand" : "collapse"),
+      }, id);
+      toggle.addEventListener("click", () => {
+        if (collapsed) kwCollapsedEnsembles.delete(id);
+        else kwCollapsedEnsembles.add(id);
+        if (kwLastRender) {
+          renderKnowledge(kwLastRender.container, kwLastRender.data, kwLastRender.opts);
+          const next = kwLastRender.container.querySelector('.kw-ensemble-toggle[data-kw-hull="'
+            + CSS.escape(id) + '"]');
+          if (next) next.focus({ preventScroll: true });
+        }
+      });
+      const facts = [];
+      if (ensemble.coupling) facts.push(String(ensemble.coupling) + " coupling");
+      if (ensemble.owner) facts.push("owner " + String(ensemble.owner));
+      facts.push((ensemble.members || []).length + " members");
+      kwEl(head, "span", { class: "kw-ensemble-facts" }, facts.join(" · "));
+      if (opts && typeof opts.onSelectEnsemble === "function") {
+        const open = kwEl(head, "button", { class: "kw-member", type: "button" }, "Open holdings");
+        open.addEventListener("click", () => opts.onSelectEnsemble(id));
+      }
+      const members = kwEl(entry, "details", { class: "kw-ensemble-members" });
+      kwEl(members, "summary", null, "Members and sections");
+      memberButtons(members, ensemble.members || []);
+      for (const s of ensemble.sections || []) section(members, s, id);
+      for (const s of sections) {
+        if (s && String(s.ensemble || "") === id) section(members, s, id);
+      }
     }
-    const upper = [];
-    for (let i = pts.length - 1; i >= 0; i -= 1) {
-      const p = pts[i];
-      while (upper.length >= 2
-        && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) upper.pop();
-      upper.push(p);
-    }
-    lower.pop();
-    upper.pop();
-    return lower.concat(upper);
+    for (const s of sections) section(index, s, String(s && s.ensemble || ""));
   }
 
-  // Ensemble hulls group the drawn seats of each recorded ensemble.
-  // Activating a hull collapses its members out of the tiers into one
-  // count lozenge; activating again restores them. The layer sits under
-  // the drawing and never joins hover isolation.
   function kwEnsembleHulls(svg, edgeLayer, layout, ensembles) {
     const list = Array.isArray(ensembles) ? ensembles : [];
     if (!list.length) return;
@@ -1040,7 +1098,7 @@
         const g = kwSvg(layer, "g", {
           class: "kw-lozenge",
           tabindex: "0", role: "button",
-          "aria-label": "ensemble " + id + ", " + members.length + " seats"
+          "aria-label": "ensemble " + id + ", " + members.length + " members"
           + (coupling ? ", " + coupling : "") + ", activate to expand",
           "data-kw-hull": id,
         });
@@ -1066,90 +1124,9 @@
         wire(g);
         continue;
       }
-      const pts = [];
-      for (const m of members) {
-        if (actorPos.has(m)) pts.push(actorPos.get(m));
-      }
-      if (pts.length < 2) continue;
-      const cx = pts.reduce((s, p) => s + p.x, 0) / pts.length;
-      const cy = pts.reduce((s, p) => s + p.y, 0) / pts.length;
-      const padded = pts.map((p) => {
-        const dx = p.x - cx;
-        const dy = p.y - cy;
-        const len = Math.sqrt(dx * dx + dy * dy) || 1;
-        return { x: p.x + dx / len * 24, y: p.y + dy / len * 24 };
-      });
-      const hull = kwHullPath(padded);
-      const d = "M" + hull.map((p) => p.x + "," + p.y).join(" L") + " Z";
-      const top = hull.reduce((a, b) => (a.y < b.y ? a : b));
-      const g = kwSvg(layer, "g", {
-        class: "kw-hull",
-        tabindex: "0", role: "button",
-        "aria-label": "ensemble " + id + ", " + members.length + " seats"
-        + (coupling ? ", " + coupling : "") + ", activate to collapse",
-        "data-kw-hull": id,
-      });
-      kwSvg(g, "path", { d, class: "kw-hull-line" });
-      const label = kwSvg(g, "text", {
-        x: String(top.x), y: String(top.y - 6),
-        class: "kw-hull-label", "text-anchor": "middle",
-      });
-      label.textContent = id + " (" + members.length
-        + (coupling ? ", " + coupling : "") + ")";
-      const hlw = (label.textContent.length + 1) * 9 + 8;
-      kwTrackBox(top.x - hlw / 2, top.y - 20, top.x + hlw / 2, top.y);
-      kwLabelBoxes.push({ x0: top.x - hlw / 2, y0: top.y - 20, x1: top.x + hlw / 2, y1: top.y });
-      wire(g);
-    }
-  }
+      // Expanded memberships are listed in the membership index.
+      // Parent depth and shared membership keep independent positions.
 
-  // Section hulls reuse the ensemble hull machinery: a section groups
-  // the seats its recorded members occupy, labeled with its capability.
-  // No collapse: sections are not shell state, so the hull is static.
-  // Draws nothing when the prop is empty.
-  function kwSectionHulls(svg, edgeLayer, layout, sections) {
-    const list = Array.isArray(sections) ? sections : [];
-    if (!list.length) return;
-    const actorPos = layout.actorPos;
-    const layer = kwSvg(svg, "g", { class: "kw-hulls kw-hulls-sections" });
-    svg.insertBefore(layer, edgeLayer);
-    for (const s of list) {
-      const id = s && s.id ? String(s.id) : "";
-      const members = s && Array.isArray(s.members)
-        ? s.members.map((m) => String(m)) : [];
-      if (!id || !members.length) continue;
-      const capability = s && s.capability ? String(s.capability) : "";
-      const pts = [];
-      for (const m of members) {
-        if (actorPos.has(m)) pts.push(actorPos.get(m));
-      }
-      if (pts.length < 2) continue;
-      const cx = pts.reduce((sum, p) => sum + p.x, 0) / pts.length;
-      const cy = pts.reduce((sum, p) => sum + p.y, 0) / pts.length;
-      const padded = pts.map((p) => {
-        const dx = p.x - cx;
-        const dy = p.y - cy;
-        const len = Math.sqrt(dx * dx + dy * dy) || 1;
-        return { x: p.x + dx / len * 18, y: p.y + dy / len * 18 };
-      });
-      const hull = kwHullPath(padded);
-      const d = "M" + hull.map((p) => p.x + "," + p.y).join(" L") + " Z";
-      const top = hull.reduce((a, b) => (a.y < b.y ? a : b));
-      const g = kwSvg(layer, "g", {
-        class: "kw-hull kw-hull-section",
-        "aria-label": "section " + id + ", " + members.length + " seats"
-        + (capability ? ", " + capability : ""),
-      });
-      kwSvg(g, "path", { d, class: "kw-hull-line" });
-      const label = kwSvg(g, "text", {
-        x: String(top.x), y: String(top.y - 6),
-        class: "kw-hull-label kw-hull-section-label", "text-anchor": "middle",
-      });
-      label.textContent = id + " (" + members.length
-        + (capability ? ", " + capability : "") + ")";
-      const hlw = (label.textContent.length + 1) * 9 + 8;
-      kwTrackBox(top.x - hlw / 2, top.y - 20, top.x + hlw / 2, top.y);
-      kwLabelBoxes.push({ x0: top.x - hlw / 2, y0: top.y - 20, x1: top.x + hlw / 2, y1: top.y });
     }
   }
 
@@ -1158,18 +1135,18 @@
   // and a full fan wraps to further rows inside the same column.
   function kwSlotXY(t, slot) {
     const cx = t.memberX.get(slot.author);
-    const cap = t.findCaps.get(slot.author);
-    const r = Math.floor(slot.k / cap);
-    const inRow = Math.min(cap, slot.n - r * cap);
+    const offset = slot.finding ? t.findingOffsets.get(slot.finding.id) || 0 : 0;
     return {
-      x: cx + ((slot.k % cap) - (inRow - 1) / 2) * KW_FIND_SLOT,
-      row: t.findingTop.get(slot.author) + r * t.findPitch,
-      y: t.findingTop.get(slot.author) + r * t.findPitch,
+      x: cx,
+      row: t.findingTop.get(slot.author) + offset,
+      y: t.findingTop.get(slot.author) + offset,
     };
   }
 
   function kwPlaceWhole(layout, container, overview, promotions, opts, ensembles, sections) {
     const { svg, edgeLayer, tiers } = layout;
+    const surfaces = kwSvg(svg, "g", { class: "kw-record-surfaces", "aria-hidden": "true" });
+    svg.insertBefore(surfaces, edgeLayer);
     kwContentBBox = null;
     kwRefMarks = new Map();
     kwRefsDrawn = 0;
@@ -1186,6 +1163,12 @@
     const actorPos = new Map();
     const findingPos = new Map();
     const groupPos = new Map();
+    const recordBoxes = new Map();
+    const recordBox = (kind, id, x0, y0, x1, y1) => {
+      const box = { x0, y0, x1, y1 };
+      recordBoxes.set(kwKey(kind, id), box);
+      kwLabelBoxes.push(box);
+    };
     const groupsDrawn = [];
     const query = opts && opts.query;
     // An empty scope draws one ruled line with its state, so the
@@ -1290,6 +1273,18 @@
           "data-kw-kind": "session",
         });
         const read = kwActorReads[lid] || {};
+        const cardWidth = t.columnWidths.get(id) - 20;
+        const cardHeight = 64 + t.captionLines.get(id).length * 16;
+        const panel = kwSvg(surfaces, "rect", {
+          x: String(x - cardWidth / 2), y: String(y - 18),
+          width: String(cardWidth), height: String(cardHeight), rx: "8",
+          class: "kw-author-card",
+        });
+        g.appendChild(panel.cloneNode(false));
+        g.lastChild.setAttribute("class", "kw-record-hit");
+        kwTrackBox(x - cardWidth / 2, y - 18, x + cardWidth / 2, y - 18 + cardHeight);
+        recordBox("session", lid, x - cardWidth / 2, y - 18,
+          x + cardWidth / 2, y - 18 + cardHeight);
         kwSvg(g, "rect", {
           x: String(x - s / 2), y: String(y - s / 2),
           width: String(s), height: String(s),
@@ -1299,6 +1294,13 @@
         });
         // Captions wrap beneath their own glyph and retain the full actor id.
         kwDrawName(g, t.captionLines.get(id), x, y);
+        const roleWords = role === "principal-conductor" ? "Principal Conductor"
+          : role === "associate-conductor" ? "Associate Conductor"
+          : role === "player" ? "Player" : role === "operator" ? "Operator" : "Role unknown";
+        kwSvg(g, "text", {
+          x: String(x), y: String(y + 28 + t.captionLines.get(id).length * 16),
+          class: "kw-role", "text-anchor": "middle",
+        }).textContent = roleWords;
         if (!kwMatches(query, lid, "", lid)) g.classList.add("kw-dim");
         // Actors the shell reports live read full strength; the rest
         // dim with the lane's dim token. Dim only: findings, holdings
@@ -1313,9 +1315,6 @@
           kwPinCard(container, overview, promotions, opts, lid, "session");
           g.focus();
           kwIsolate(kwKey("session", lid), 2);
-          if (opts && typeof opts.onSelectActor === "function") {
-            opts.onSelectActor(lid);
-          }
         });
         g.addEventListener("keydown", (ev) => {
           if (ev.key === "Enter" || ev.key === " ") {
@@ -1325,65 +1324,9 @@
             kwDismissedRelation = (opts && opts.focusRelation) || "";
             kwPinCard(container, overview, promotions, opts, lid, "session");
             kwIsolate(kwKey("session", lid), 2);
-            if (opts && typeof opts.onSelectActor === "function") {
-              opts.onSelectActor(lid);
-            }
           }
         });
       });
-      // Each tier labels its most promoted findings so the canvas reads
-      // words at a glance; every other node keeps its claim one gesture
-      // away through hover, keyboard, or selection.
-      const visibleFindings = [];
-      for (const s of t.slots) {
-        if (s.finding) visibleFindings.push(s.finding);
-      }
-      const labeled = new Set(visibleFindings
-        .filter((f) => promotions.some((p) => p.finding === f.id))
-        .map((f) => [promotions.filter((p) => p.finding === f.id).length, f.id])
-        .sort((a, b) => (b[0] - a[0]) || String(a[1]).localeCompare(String(b[1])))
-        .slice(0, 8)
-        .map((entry) => entry[1]));
-      // Crowding rule: labels place in rank order and a label that would
-      // overlap one already placed on its row is skipped, so dense tiers
-      // thin themselves instead of knotting. Rank order is deterministic,
-      // so the same labels survive every render.
-      const slotByFinding = new Map();
-      for (const s of t.slots) {
-        if (s.finding) slotByFinding.set(s.finding.id, s);
-      }
-      const labelShown = new Set();
-      const placedRows = new Map();
-      // The selected caption places first, so the rank order thins
-      // around it instead of over it: selection is identity, it stays.
-      const kwThinSel = kwEffectiveSelected(opts);
-      if (kwThinSel && kwSelKind(overview, kwThinSel) === "finding") {
-        const s = slotByFinding.get(kwThinSel);
-        if (s) {
-          const at = kwSlotXY(t, s);
-          const w = t.findingWidths.get(kwThinSel);
-          const boxes = placedRows.get(at.row) || [];
-          const lx = kwCaptionX(at.x, w, layout.width);
-          boxes.push([lx - w / 2, lx + w / 2]);
-          placedRows.set(at.row, boxes);
-          labelShown.add(kwThinSel);
-        }
-      }
-      for (const fid of labeled) {
-        const s = slotByFinding.get(fid);
-        if (!s) continue;
-        const at = kwSlotXY(t, s);
-        const row = at.row;
-        const x = at.x;
-        const w = t.findingWidths.get(fid);
-        const lx = kwCaptionX(x, w, layout.width);
-        const box = [lx - w / 2, lx + w / 2];
-        const boxes = placedRows.get(row) || [];
-        if (boxes.some((b) => box[0] < b[1] && b[0] < box[1])) continue;
-        boxes.push(box);
-        placedRows.set(row, boxes);
-        labelShown.add(fid);
-      }
       t.slots.forEach((slot) => {
         const at = kwSlotXY(t, slot);
         const x = at.x;
@@ -1398,7 +1341,8 @@
         const degree = promotions.filter((p) => p.finding === f.id).length;
         const mass = degree ? 6 + Math.min(4, Math.round(2 * Math.sqrt(degree - 1))) : 4;
         kwTrackBox(x - 15, y - 15, x + 15, y + 15);
-        const selected = kwEffectiveSelected(opts) === f.id;
+        const selected = kwPinnedNode ? kwPinnedNode.kind === "finding" && kwPinnedNode.id === f.id
+          : kwEffectiveSelected(opts) === f.id;
         const g = kwSvg(svg, "g", {
           class: "knode" + (degree ? "" : " unshared") + (selected ? " selected" : "")
             + " kw-kind-" + String(f.kind || "finding").toLowerCase().replace(/[^a-z0-9]+/g, "-"),
@@ -1407,6 +1351,18 @@
           "data-kw-node": String(f.id),
           "data-kw-kind": "finding",
         });
+        const cardWidth = t.columnWidths.get(slot.author) - 20;
+        const cardHeight = t.findingHeights.get(f.id);
+        const panel = kwSvg(surfaces, "rect", {
+          x: String(x - cardWidth / 2), y: String(y - 22),
+          width: String(cardWidth), height: String(cardHeight), rx: "8",
+          class: "kw-finding-card",
+        });
+        g.appendChild(panel.cloneNode(false));
+        g.lastChild.setAttribute("class", "kw-record-hit");
+        kwTrackBox(x - cardWidth / 2, y - 22, x + cardWidth / 2, y - 22 + cardHeight);
+        recordBox("finding", f.id, x - cardWidth / 2, y - 22,
+          x + cardWidth / 2, y - 22 + cardHeight);
         kwMarkNew(g, f.id);
         // The ring carries the kind family, the shape the kind inside
         // it, size the share count: the three channels never conflict.
@@ -1442,11 +1398,13 @@
         heading.textContent = String(f.claim || f.id)
           + (f.evidence ? " — " + String(f.evidence) : "")
           + (f.limits ? " — " + String(f.limits) : "");
-        if (selected || labelShown.has(f.id)) {
-          const lx = kwCaptionX(x, t.findingWidths.get(f.id), layout.width);
-          const caption = kwNodeLabel(g, f, lx, y, t.findingLines.get(f.id));
-          kwTrackCaption(caption);
-        }
+        const caption = kwNodeLabel(g, f, x - cardWidth / 2 + 14, y, t.findingLines.get(f.id));
+        kwTrackCaption(caption);
+        kwSvg(g, "text", {
+          x: String(x), y: String(y + 40 + t.findingLines.get(f.id).length * 18),
+          class: "kw-finding-meta", "text-anchor": "middle",
+        }).textContent = String(f.kind || "finding") + " · "
+          + degree + (degree === 1 ? " promotion" : " promotions");
         if (!kwMatches(query, f.id, f.claim, f.author)) {
           g.classList.add("kw-dim");
         }
@@ -1457,9 +1415,6 @@
           kwPinCard(container, overview, promotions, opts, f.id, "finding");
           g.focus();
           kwIsolate(kwKey("finding", f.id), 2);
-          if (opts && typeof opts.onSelectFinding === "function") {
-            opts.onSelectFinding(f.id);
-          }
         });
         g.addEventListener("keydown", (ev) => {
           if (ev.key === "Enter" || ev.key === " ") {
@@ -1469,9 +1424,6 @@
             kwDismissedRelation = (opts && opts.focusRelation) || "";
             kwPinCard(container, overview, promotions, opts, f.id, "finding");
             kwIsolate(kwKey("finding", f.id), 2);
-            if (opts && typeof opts.onSelectFinding === "function") {
-              opts.onSelectFinding(f.id);
-            }
           }
         });
       });
@@ -1557,7 +1509,7 @@
     for (const [id, pos] of findingPos) kwNodeXY.set(kwKey("finding", id), pos);
     for (const [id, pos] of groupPos) kwNodeXY.set(kwKey("group", id), pos);
     kwEnsembleHulls(svg, edgeLayer, layout, ensembles || []);
-    kwSectionHulls(svg, edgeLayer, layout, sections || []);
+
     // Draw recorded relations between nodes or labeled reference tags.
     // Relations between references are placed beside their author.
     const heldRefs = new Set();
@@ -1869,6 +1821,17 @@
       // taller than a tag's; the settle moves the centre the same way.
       const hh = mark.typed ? 19 : 9 + 3;
       if (refFloor !== null) mark.y = Math.max(mark.y, refFloor + hh);
+      const overlaps = (x) => settled.some((box) =>
+        x - hw < box.x1 && box.x0 < x + hw
+        && mark.y - hh < box.y1 && box.y0 < mark.y + hh);
+      if (overlaps(mark.x)) {
+        const candidates = [mark.x].concat(settled.flatMap((box) =>
+          [box.x0 - hw - 12, box.x1 + hw + 12]));
+        candidates.sort((a, b) => Math.abs(a - mark.x) - Math.abs(b - mark.x));
+        const clearX = candidates.find((x) => x - hw >= 12
+          && x + hw <= layout.width + mark.w + 24 && !overlaps(x));
+        if (clearX !== undefined) mark.x = clearX;
+      }
       while (settled.some((box) =>
           mark.x - hw < box.x1 && box.x0 < mark.x + hw
           && mark.y - hh < box.y1 && box.y0 < mark.y + hh)) {
@@ -2310,6 +2273,14 @@
       if (authored) kwTypedAuthored += 1;
       else kwTypedCited += 1;
     }
+    kwRouteRecordEdges(svg, edgeLayer, recordBoxes, actorPos, findingPos, groupPos);
+    if (kwContentBBox) {
+      const width = Math.max(Number(svg.getAttribute("width")), Math.ceil(kwContentBBox.x1 + 12));
+      const height = Math.max(Number(svg.getAttribute("height")), Math.ceil(kwContentBBox.y1 + 12));
+      svg.setAttribute("width", String(width));
+      svg.setAttribute("height", String(height));
+      svg.setAttribute("viewBox", "0 0 " + width + " " + height);
+    }
     if (query) {
       for (const [ref, mark] of kwRefMarks) {
         const names = mark.relations.map((rel) => rel.name).join(" ");
@@ -2340,7 +2311,10 @@
       // every other focus reads one hop.
       g.addEventListener("focus", () => {
         const sel = kwEffectiveSelected(opts);
-        kwIsolate(kwNodeKey(g), kwKey(kwSelKind(overview, sel), sel) === kwNodeKey(g) ? 2 : 1);
+        const selectedKey = kwPinnedNode
+          ? kwKey(kwPinnedNode.kind, kwPinnedNode.id)
+          : kwKey(kwSelKind(overview, sel), sel);
+        kwIsolate(kwNodeKey(g), selectedKey === kwNodeKey(g) ? 2 : 1);
       });
       g.addEventListener("blur", kwClearIsolation);
     }
@@ -2355,6 +2329,9 @@
       kwDismissedRelation = (opts && opts.focusRelation) || "";
       const card = container.querySelector(".kw-card");
       if (card) card.remove();
+      kwPinnedNode = null;
+      const inspector = container.querySelector(".kw-inspector");
+      if (inspector) kwInspectorEmpty(inspector);
       kwClearIsolation();
       // The walk clears with the card: steps, lit edge and direction
       // all belong to the dismissed reading.
@@ -2688,8 +2665,9 @@
     // focus happens to be restored onto the map: choosing an actor moves
     // shell focus to its roster row, which would otherwise leave the map
     // dark. A dismissed selection stays an overview until it changes.
-    const shown = kwEffectiveSelected(opts);
-    if (shown && kwDismissed !== shown) kwIsolate(kwKey(kwSelKind(overview, shown), shown), 2);
+    const shown = kwPinnedNode ? kwPinnedNode.id : kwEffectiveSelected(opts);
+    const shownKind = kwPinnedNode ? kwPinnedNode.kind : kwSelKind(overview, shown);
+    if (shown && kwDismissed !== shown) kwIsolate(kwKey(shownKind, shown), 2);
     // The lit edge re-lights ahead of the shell's relation focus, so
     // a shell focus still wins the canvas when both name an edge.
     kwRelightLit(container, svg);
@@ -2752,6 +2730,18 @@
     // The macro band goes first in the document: census, then field,
     // then the canvas micro reading, tools and key after.
     kwMacroBand(container, svg, tiers, promotions, layout.width || 0);
+    kwMembershipIndex(container, overview, ensembles || [], sections || [], opts);
+    const workspace = kwEl(container, "div", {
+      class: "kw-workspace" + (container.clientWidth >= 1340 ? " kw-workspace-wide" : ""),
+    });
+    const map = kwEl(workspace, "div", { class: "kw-drawing" });
+    map.appendChild(svg);
+    const inspector = kwEl(workspace, "aside", {
+      class: "kw-inspector", "aria-label": "Knowledge inspector",
+    });
+    const card = container.querySelector(".kw-card");
+    if (card) inspector.appendChild(card);
+    else kwInspectorEmpty(inspector);
   }
 
   function kwScreenZoom(svg) {
@@ -2779,7 +2769,7 @@
 
   // Convert the visible canvas/frame intersection to drawing units.
   function kwVisibleBox(container, svg, inViewport) {
-    const frame = container.parentElement;
+    const frame = container.querySelector(".kw-drawing") || container.parentElement;
     const drawing = svg.getBoundingClientRect();
     const clip = frame.getBoundingClientRect();
     const s = kwUnitScale(svg, drawing);
@@ -2906,15 +2896,35 @@
       kwZoomAt(view, box.w / 2, box.h / 2, 1 / 1.25);
     });
     mkBtn("Fit", "Fit the map to the frame", () => kwFitView(container, svg, view));
+    mkBtn("Read", "Restore readable map scale", () => {
+      kwView = { x: 0, y: 0, k: 1 };
+      kwApplyView(view);
+    });
+    mkBtn("Overview", "Show the whole knowledge map", () => {
+      kwDismissed = kwEffectiveSelected(opts);
+      kwPinnedNode = null;
+      kwDismissedRelation = (opts && opts.focusRelation) || "";
+      kwLitEdge = null;
+      kwDirection = "all";
+      kwClearDirection();
+      for (const node of svg.querySelectorAll(".kw-hover-dim")) node.classList.remove("kw-hover-dim");
+      const card = container.querySelector(".kw-card");
+      if (card) card.remove();
+      const inspector = container.querySelector(".kw-inspector");
+      if (inspector) kwInspectorEmpty(inspector);
+      kwRefreshWalkChrome(container);
+    });
     kwZoomReadout = kwEl(tools, "span", { class: "kw-zoom-level mono muted" });
     kwZoomReadout.textContent = Math.round(kwScreenZoom(svg) * 100) + "%";
     svg.addEventListener("wheel", (ev) => {
+      if (!ev.ctrlKey && !ev.metaKey) return;
       if (ev.preventDefault) ev.preventDefault();
       const rect = svg.getBoundingClientRect();
       const s = kwUnitScale(svg, rect);
       kwZoomAt(view, (ev.clientX - rect.left) / s.x, (ev.clientY - rect.top) / s.y,
         ev.deltaY < 0 ? 1.15 : 1 / 1.15);
     }, { passive: false });
+    kwEl(tools, "span", { class: "kw-gesture-note muted" }, "Drag to pan · Ctrl/⌘ + scroll to zoom");
     // Drag pans; the move and up listeners live on the document for the
     // life of the drag so a redraw under the pointer cannot strand them.
     // The click-versus-drag threshold reads raw screen pixels while the
@@ -3163,11 +3173,6 @@
       : container.querySelector('[data-kw-id="' + CSS.escape(id) + '"][data-kw-kind="session"]');
     if (node && typeof node.focus === "function") node.focus();
     if (canvas) kwIsolateSvg(canvas, kwKey(gotoKind, id), 2);
-    if (hit && opts && typeof opts.onSelectFinding === "function") {
-      opts.onSelectFinding(hit.id);
-    } else if (actorHit && opts && typeof opts.onSelectActor === "function") {
-      opts.onSelectActor(actorHit);
-    }
     kwSearchCurrent = String(id);
     kwMarkMatchCurrent(container);
     return id;
@@ -3200,31 +3205,293 @@
     kwGoToMatch(ctx, first);
   }
 
-  // The pinned detail card: the current selection rendered on the map
-  // itself, derived from the same opts every render so it follows the
-  // shell instead of fighting it. Node gestures and search pin through
-  // the same function with an explicit id before notifying the shell,
-  // so the card stands even when the shell skips its re-render because
-  // the selection did not change; a re-render rebuilds it either way.
-  // A fresh card shell: the old card goes, and the mount holds still
-  // for absolute placement. Node and relation cards share it.
+  // Node and connection details share a persistent inspector.
   function kwOpenCard(container) {
     const old = container.querySelector(".kw-card");
     if (old) old.remove();
-    // In flow directly below the canvas: the drawing above never
-    // shifts when the card opens, and the column grows below it.
-    const card = kwEl(container, "div", { class: "kw-card" });
-    const svg = container.querySelector("svg.kw-canvas");
-    if (svg) container.insertBefore(card, svg.nextSibling);
+    const inspector = container.querySelector(".kw-inspector");
+    if (inspector) inspector.textContent = "";
+    const card = kwEl(inspector || container, "section", {
+      class: "kw-card", "aria-label": "Selected knowledge record", tabindex: "-1",
+      "data-kw-focus": "inspector",
+    });
+    const back = kwEl(card, "button", {
+      class: "kw-card-return", type: "button", "data-kw-focus": "return-map",
+    }, "Return to map");
+    back.addEventListener("click", () => {
+      const svg = container.querySelector("svg.kw-canvas");
+      if (!svg) return;
+      const node = kwPinnedNode && Array.from(svg.querySelectorAll("[data-kw-kind]"))
+        .find((g) => kwNodeKey(g) === kwKey(kwPinnedNode.kind, kwPinnedNode.id));
+      const edge = kwLitEdge && kwFindEdgeEl(svg, kwLitEdge);
+      const target = node || edge || svg;
+      target.scrollIntoView({ block: "center", inline: "nearest" });
+      if (typeof target.focus === "function") target.focus({ preventScroll: true });
+    });
     return card;
   }
 
+  function kwReadCard(container) {
+    // Explicit selection reveals the completed inspector after synchronous rendering.
+    queueMicrotask(() => {
+      const mount = kwLastRender ? kwLastRender.container : container;
+      const card = mount && mount.querySelector(".kw-card");
+      if (!card || !card.isConnected) return;
+      kwCardFocusKeys(mount);
+      const entry = card.querySelector(".kw-card-return") || card;
+      entry.scrollIntoView({ block: "start", inline: "nearest" });
+      card.focus({ preventScroll: true });
+    });
+  }
+
+  // Orthogonal routes use the whitespace between complete record cards.
+  // The visibility grid contains every obstacle boundary and endpoint port.
+  function kwRouteRecordEdges(svg, layer, cards, actors, findings, groups) {
+    const margin = 6;
+    const base = Array.from(cards.values()).map((box) => ({
+      x0: box.x0 - margin, y0: box.y0 - margin,
+      x1: box.x1 + margin, y1: box.y1 + margin,
+    }));
+    const refs = Array.from(kwRefMarks.values()).map((mark) => ({
+      ref: mark.ref, x0: mark.x - mark.w / 2 - margin,
+      x1: mark.x + mark.w / 2 + margin,
+      y0: mark.y - (mark.typed ? 10 : 9) - margin,
+      y1: mark.y + (mark.typed ? 24 : 9) + margin,
+    }));
+    const endpoint = (kind, raw) => {
+      const id = kwTypedLookupId(kind, raw);
+      const card = cards.get(kwKey(kind, id));
+      if (card) {
+        const cx = (card.x0 + card.x1) / 2;
+        const cy = (card.y0 + card.y1) / 2;
+        return { ports: [
+          { x: card.x0 - margin, y: cy }, { x: card.x1 + margin, y: cy },
+          { x: cx, y: card.y0 - margin }, { x: cx, y: card.y1 + margin },
+        ] };
+      }
+      if (kind === "ref") {
+        const aside = kwFoldedAside.get(raw);
+        const mark = kwRefMarks.get(raw) || (aside && kwRefMarks.get(aside.carrierRef));
+        if (mark) return { ref: mark.ref,
+          ports: [{ x: mark.x, y: mark.y - (mark.typed && !mark.folded ? 4 : 0) }] };
+      }
+      const at = (kind === "session" ? actors : kind === "finding" ? findings : groups).get(id);
+      return at ? { ports: [{ x: at.x, y: at.y }] } : null;
+    };
+    const clear = (a, b, obstacles) => !obstacles.some((box) =>
+      a.x === b.x
+        ? a.x > box.x0 && a.x < box.x1
+          && Math.max(a.y, b.y) > box.y0 && Math.min(a.y, b.y) < box.y1
+        : a.y > box.y0 && a.y < box.y1
+          && Math.max(a.x, b.x) > box.x0 && Math.min(a.x, b.x) < box.x1);
+    const route = (from, to) => {
+      const obstacles = base.concat(refs.filter((box) => box.ref !== from.ref && box.ref !== to.ref));
+      const xs = Array.from(new Set(obstacles.flatMap((b) => [b.x0, b.x1])
+        .concat(from.ports.map((p) => p.x), to.ports.map((p) => p.x)))).sort((a, b) => a - b);
+      const ys = Array.from(new Set(obstacles.flatMap((b) => [b.y0, b.y1])
+        .concat(from.ports.map((p) => p.y), to.ports.map((p) => p.y)))).sort((a, b) => a - b);
+      const xi = new Map(xs.map((x, i) => [x, i]));
+      const yi = new Map(ys.map((y, i) => [y, i]));
+      const key = (p) => yi.get(p.y) * xs.length + xi.get(p.x);
+      const point = (k) => ({ x: xs[k % xs.length], y: ys[Math.floor(k / xs.length)] });
+      const goals = new Set(to.ports.map(key));
+      const cost = new Map();
+      const previous = new Map();
+      const heap = [];
+      const push = (item) => {
+        let i = heap.length;
+        heap.push(item);
+        while (i) {
+          const parent = (i - 1) >> 1;
+          if (heap[parent].score <= item.score) break;
+          heap[i] = heap[parent]; i = parent;
+        }
+        heap[i] = item;
+      };
+      const pop = () => {
+        const first = heap[0];
+        const last = heap.pop();
+        if (heap.length) {
+          let i = 0;
+          while (i * 2 + 1 < heap.length) {
+            let child = i * 2 + 1;
+            if (child + 1 < heap.length && heap[child + 1].score < heap[child].score) child += 1;
+            if (heap[child].score >= last.score) break;
+            heap[i] = heap[child]; i = child;
+          }
+          heap[i] = last;
+        }
+        return first;
+      };
+      const estimate = (p) => Math.min(...to.ports.map((q) => Math.abs(p.x - q.x) + Math.abs(p.y - q.y)));
+      for (const start of from.ports) {
+        const k = key(start);
+        cost.set(k, 0); push({ k, distance: 0, score: estimate(start) });
+      }
+      while (heap.length) {
+        const item = pop();
+        if (item.distance !== cost.get(item.k)) continue;
+        if (goals.has(item.k)) {
+          const points = [];
+          let k = item.k;
+          while (k !== undefined) { points.push(point(k)); k = previous.get(k); }
+          points.reverse();
+          const compact = [];
+          for (const p of points) {
+            while (compact.length > 1) {
+              const a = compact[compact.length - 2], b = compact[compact.length - 1];
+              if (!((a.x === b.x && b.x === p.x) || (a.y === b.y && b.y === p.y))) break;
+              compact.pop();
+            }
+            compact.push(p);
+          }
+          return compact;
+        }
+        const p = point(item.k);
+        const x = item.k % xs.length, y = Math.floor(item.k / xs.length);
+        const neighbors = [];
+        if (x) neighbors.push(item.k - 1);
+        if (x + 1 < xs.length) neighbors.push(item.k + 1);
+        if (y) neighbors.push(item.k - xs.length);
+        if (y + 1 < ys.length) neighbors.push(item.k + xs.length);
+        for (const k of neighbors) {
+          const q = point(k);
+          if (!clear(p, q, obstacles)) continue;
+          const distance = item.distance + Math.abs(p.x - q.x) + Math.abs(p.y - q.y);
+          if (distance >= (cost.get(k) ?? Infinity)) continue;
+          cost.set(k, distance); previous.set(k, item.k);
+          push({ k, distance, score: distance + estimate(q) });
+        }
+      }
+      return null;
+    };
+    for (let element of Array.from(layer.children)) {
+      if (!element.hasAttribute("data-from")) continue;
+      const from = endpoint(element.getAttribute("data-from-kind"), element.getAttribute("data-from"));
+      const to = endpoint(element.getAttribute("data-to-kind"), element.getAttribute("data-to"));
+      if (!from || !to) continue;
+      const points = route(from, to);
+      if (!points || points.length < 2) continue;
+      element.setAttribute("data-kw-route", "record-whitespace");
+      if (element.tagName.toLowerCase() === "g") {
+        const strokes = Array.from(element.querySelectorAll(":scope > line, :scope > path"));
+        const first = strokes[0];
+        if (!first) continue;
+        const attrs = Object.fromEntries(Array.from(first.attributes)
+          .filter((attr) => !["x1", "y1", "x2", "y2", "d", "marker-end"].includes(attr.name))
+          .map((attr) => [attr.name, attr.value]));
+        const marker = strokes[strokes.length - 1].getAttribute("marker-end");
+        for (const stroke of strokes) stroke.remove();
+        for (let i = 1; i < points.length; i += 1) {
+          kwSvg(element, "line", { ...attrs,
+            x1: String(points[i - 1].x), y1: String(points[i - 1].y),
+            x2: String(points[i].x), y2: String(points[i].y),
+            ...(i === points.length - 1 && marker ? { "marker-end": marker } : {}),
+          });
+        }
+        const label = element.querySelector(".kw-rel-name");
+        if (label) {
+          const middle = Math.max(1, Math.floor(points.length / 2));
+          label.setAttribute("x", String((points[middle - 1].x + points[middle].x) / 2));
+          label.setAttribute("y", String((points[middle - 1].y + points[middle].y) / 2 - 4));
+        }
+      } else {
+        const path = kwSvg(layer, "path", Object.fromEntries(Array.from(element.attributes)
+          .filter((attr) => !["x1", "y1", "x2", "y2", "d"].includes(attr.name))
+          .map((attr) => [attr.name, attr.value])));
+        path.setAttribute("fill", "none");
+        path.setAttribute("d", points.map((p, i) => (i ? "L" : "M") + p.x + "," + p.y).join(" "));
+        layer.replaceChild(path, element);
+      }
+      for (const p of points) kwTrackBox(p.x, p.y, p.x, p.y);
+    }
+  }
+
+  function kwCardFocusKeys(container) {
+    const card = container.querySelector(".kw-card");
+    if (!card) return;
+    for (const control of card.querySelectorAll("button, a, summary")) {
+      if (control.hasAttribute("data-kw-focus")) continue;
+      const key = JSON.stringify([
+        control.tagName, control.className, control.textContent,
+        control.getAttribute("data-kw-neighbor-kind"), control.getAttribute("data-kw-neighbor-id"),
+        control.getAttribute("data-kw-connection"), control.getAttribute("href"),
+      ]);
+      control.setAttribute("data-kw-focus", key);
+    }
+  }
+
+  function kwInspectorEmpty(inspector) {
+    inspector.textContent = "";
+    kwEl(inspector, "h3", { class: "kw-inspector-title" }, "Inspect a record");
+    kwEl(inspector, "p", { class: "muted" },
+      "Select a finding, actor or connection to read its context and follow related records.");
+  }
+
+  function kwNavigateNode(container, overview, opts, kind, raw) {
+    const id = kwTypedLookupId(kind, raw);
+    const drawKind = kwRefMarks.has(id) && kind !== "finding" && kind !== "session" && kind !== "group"
+      ? "ref" : kind;
+    kwDismissed = null;
+    kwDismissedRelation = (opts && opts.focusRelation) || "";
+    kwPinCard(container, overview, overview.promotions || [], opts, id, drawKind);
+    const svg = container.querySelector("svg.kw-canvas");
+    const view = svg && svg.querySelector("g.kw-view");
+    const pos = kwNodePos.get(kwKey(drawKind, id)) || (drawKind === "ref" && kwRefMarks.get(id));
+    if (svg && view && pos) {
+      kwFocusView(container, svg, view, pos.x, pos.y);
+      kwIsolateSvg(svg, kwKey(drawKind, id), 2);
+      const node = Array.from(svg.querySelectorAll("[data-kw-kind]"))
+        .find((g) => kwNodeKey(g) === kwKey(drawKind, id));
+      if (node && typeof node.focus === "function") node.focus({ preventScroll: true });
+    }
+  }
+
+  function kwCardConnections(card, container, overview, opts, kind, id) {
+    const svg = container.querySelector("svg.kw-canvas");
+    if (!svg) return;
+    const edges = Array.from(svg.querySelectorAll("g.kw-edges > [data-from][data-to]"));
+    const touching = edges.filter((edge) => ["from", "to"].some((side) =>
+      edge.getAttribute("data-" + side + "-kind") === kind
+      && kwTypedLookupId(kind, edge.getAttribute("data-" + side)) === id));
+    if (!touching.length) return;
+    const list = kwEl(card, "div", { class: "kw-connections" });
+    kwEl(list, "h4", null, "Connections · " + touching.length);
+    for (const edge of touching) {
+      const out = edge.getAttribute("data-from-kind") === kind
+        && kwTypedLookupId(kind, edge.getAttribute("data-from")) === id;
+      const side = out ? "to" : "from";
+      const otherKind = edge.getAttribute("data-" + side + "-kind") || "ref";
+      const raw = edge.getAttribute("data-" + side) || "";
+      const otherId = kwTypedLookupId(otherKind, raw);
+      const finding = otherKind === "finding"
+        && (overview.findings || []).find((f) => String(f.id) === otherId);
+      const name = finding ? String(finding.claim || finding.id) : otherId;
+      const relation = edge.getAttribute("data-rel-name")
+        || edge.getAttribute("data-provenance") || edge.getAttribute("data-kind") || "connection";
+      const row = kwEl(list, "div", { class: "kw-connection" });
+      const read = kwEl(row, "button", {
+        class: "kw-connection-edge", type: "button",
+        "data-kw-connection": edge.getAttribute("data-edge-id") || relation,
+      }, (out ? "Outgoing · " : "Incoming · ") + relation);
+      read.addEventListener("click", () => {
+        kwViewMoved = false;
+        kwActivateEdgeEl(svg, edge, opts, container, true);
+      });
+      const open = kwEl(row, "button", {
+        class: "kw-connection-node", type: "button",
+        "data-kw-neighbor-kind": otherKind, "data-kw-neighbor-id": raw,
+      }, name);
+      open.addEventListener("click", () => kwNavigateNode(container, overview, opts, otherKind, raw));
+    }
+  }
+
   function kwPinCard(container, overview, promotions, opts, id, kind) {
-    const sel = id !== undefined ? id : kwEffectiveSelected(opts);
+    const sel = id !== undefined ? id : kwPinnedNode ? kwPinnedNode.id : kwEffectiveSelected(opts);
     if (!sel || kwDismissed === sel) return;
     // Canvas picks name their kind outright; a shell selection resolves
     // by recorded membership. Either way the id's text never decides.
-    const selKind = kind !== undefined ? kind : kwSelKind(overview, sel);
+    const selKind = kind !== undefined ? kind : kwPinnedNode ? kwPinnedNode.kind : kwSelKind(overview, sel);
     const findings = overview.findings || [];
     const found = findings.find((f) => f.id === sel);
     const actors = overview.actors || {};
@@ -3233,6 +3500,12 @@
       : selKind === "session" ? !!actors[sel]
       : selKind === "ref" ? !!ref : selKind === "group";
     if (!known) return;
+    if (id !== undefined) {
+      kwPinnedNode = { id: sel, kind: selKind };
+      for (const node of container.querySelectorAll("svg.kw-canvas [data-kw-kind]")) {
+        node.classList.toggle("selected", kwNodeKey(node) === kwKey(selKind, sel));
+      }
+    }
     // An explicit node pick ends the edge reading: the direction
     // control belongs to a lit edge, so it goes with it. The walk
     // itself stands: junction rows extend it from here. A render-end
@@ -3245,6 +3518,7 @@
       kwRefreshWalkChrome(container);
     }
     const card = kwOpenCard(container);
+    if (id !== undefined) kwReadCard(container);
     if (selKind === "finding") {
       const degree = promotions.filter((p) => p.finding === found.id).length;
       kwEl(card, "p", { class: "kw-card-title" }, String(found.claim || found.id));
@@ -3261,13 +3535,13 @@
       if (evidenceMessage) {
         kwEl(refs, "p", { class: "kw-card-ref mono" }, "evidence message: " + evidenceMessage);
       }
-      // The card is an identity-and-state glance: live claims run to
-      // thousands of characters, so bodies stay in the rail record and
-      // the card states only that they are recorded.
-      const bodies = [];
-      if (found.evidence) bodies.push("evidence");
-      if (found.limits) bodies.push("limits");
-      if (bodies.length) kwEl(refs, "p", { class: "kw-card-ref" }, bodies.join(" + ") + " recorded");
+      // The inspector keeps the complete retained evidence and limits
+      // with the claim so reading them preserves the map's scope.
+      for (const [label, body] of [["Evidence", found.evidence], ["Limits", found.limits]]) {
+        if (!body) continue;
+        kwEl(refs, "h4", null, label);
+        kwEl(refs, "p", { class: "kw-card-ref" }, String(body));
+      }
       const step = promotions.find((p) => p.finding === found.id);
       if (step) {
         // Group ends read with their kind word from the recorded kinds,
@@ -3280,9 +3554,7 @@
           send + " → " + dend
           + (step.promotedBy ? " via " + String(step.promotedBy) : ""));
       }
-      // The card is a glance; the button opens the record at this
-      // finding through the shell hook. Without the hook there is no
-      // button: no control on the card may do nothing.
+      // The full-record action opens this finding through the shell hook.
       if (opts && typeof opts.onOpenRecord === "function") {
         const open = kwEl(card, "button", { class: "kw-card-open", type: "button" },
           "Read the full record");
@@ -3409,7 +3681,11 @@
       if (ref.follow && opts && typeof opts.onSelectFinding === "function") {
         const show = kwEl(card, "button", { class: "kw-card-full", type: "button" },
           "Show the finding");
-        show.addEventListener("click", () => { opts.onSelectFinding(ref.follow); });
+        show.addEventListener("click", () => {
+          kwPinnedNode = null;
+          kwDismissed = null;
+          opts.onSelectFinding(ref.follow);
+        });
       }
       // Any member card of an expanded fan offers the fold back,
       // returning the fan to its counted mark.
@@ -3443,6 +3719,7 @@
       else if (Array.isArray(gmeta.received)) bits.push(gmeta.received.length + " received");
       kwEl(card, "p", { class: "kw-card-fact" }, bits.join(" · ") || "recorded group");
     }
+    if (selKind !== "ref") kwCardConnections(card, container, overview, opts, selKind, sel);
   }
 
   // Relation light: the named relation's drawn edges and its two ends
@@ -3502,7 +3779,7 @@
   function kwFindEdgeEl(svg, entry) {
     if (!svg || !entry) return null;
     const cands = Array.from(svg.querySelectorAll(
-      "g.kw-edges > g." + entry.cls
+      "g.kw-edges > ." + entry.cls
       + '[data-from="' + CSS.escape(entry.from) + '"]'
       + '[data-to="' + CSS.escape(entry.to) + '"]'));
     if (entry.name) {
@@ -3539,7 +3816,7 @@
     const hub = kwKey(hubKind, kwTypedLookupId(hubKind, hubRaw));
     const side = kwDirection === "out" ? "data-from" : "data-to";
     const kindSide = kwDirection === "out" ? "data-from-kind" : "data-to-kind";
-    for (const e of svg.querySelectorAll("g.kw-edges > g")) {
+    for (const e of svg.querySelectorAll("g.kw-edges > [data-from][data-to]")) {
       if (e === lit) continue;
       const k = e.getAttribute(kindSide) || "";
       const raw = e.getAttribute(side) || "";
@@ -3576,6 +3853,11 @@
     ];
     if (kwLitEdge.cls === "kw-edge-relate") kwLightRelation(svg, { name: kwLitEdge.name, ends });
     else kwLightTyped(svg, g, ends);
+    if (kwLitEdge.cls === "kw-edge-relate") kwPinRelCard(container, kwLitEdge.name, ends, kwLastRender && kwLastRender.opts);
+    else kwPinTypedCard(container, g.getAttribute("data-provenance") || "",
+      ends, kwLitEdge.name || g.getAttribute("data-kind") || "connection",
+      g.getAttribute("data-edge") || "", kwLastRender && kwLastRender.opts,
+      g.classList.contains("kw-edge-typed") ? "typed edge" : "recorded connection");
   }
   function kwActivateEdgeEl(svg, g, opts, container, pushWalk) {
     if (!svg || !g) return;
@@ -3585,6 +3867,7 @@
     const to = g.getAttribute("data-to") || "";
     if (!from || !to) return;
     kwDismissed = null;
+    kwPinnedNode = null;
     kwClearDirection();
     const ends = [{ kind: fromKind, id: from }, { kind: toKind, id: to }];
     const name = g.getAttribute("data-rel-name") || "";
@@ -3593,11 +3876,16 @@
     // lights alone like a typed edge, and its card states recorded
     // evidence rather than borrowing the relation card's name slot.
     const stub = !typed && g.classList.contains("kw-edge-evidence");
-    const cls = typed ? "kw-edge-typed" : stub ? "kw-edge-evidence" : "kw-edge-relate";
-    if (typed || stub) {
+    const related = g.classList.contains("kw-edge-relate");
+    const structural = !typed && !stub && !related;
+    const recordedKind = g.getAttribute("data-kind") || "connection";
+    const cls = typed ? "kw-edge-typed" : stub ? "kw-edge-evidence"
+      : related ? "kw-edge-relate" : Array.from(g.classList).find((value) => value.startsWith("kw-edge-"));
+    if (typed || stub || structural) {
       kwLightTyped(svg, g, ends);
-      kwPinTypedCard(container, g.getAttribute("data-provenance") || "recorded-evidence",
-        ends, name, g.getAttribute("data-edge") || "", opts, stub ? "edge" : "");
+      kwPinTypedCard(container, g.getAttribute("data-provenance") || (stub ? "recorded-evidence" : ""),
+        ends, name || (structural ? recordedKind : ""), g.getAttribute("data-edge") || "", opts,
+        structural ? "recorded connection" : stub ? "edge" : "");
     } else {
       kwLightRelation(svg, { name, ends });
       kwPinRelCard(container, name, ends, opts);
@@ -3606,13 +3894,15 @@
     kwLitEdge = { fromKind, from, toKind, to, cls, name };
     if (pushWalk !== false) {
       kwWalkPush({
-        name: name || (prov === "recorded-evidence" || stub ? "recorded evidence" : "authored claim"),
+        name: name || (structural ? recordedKind
+          : prov === "recorded-evidence" || stub ? "recorded evidence" : "authored claim"),
         from, to, cls,
       });
     }
     kwApplyDirection(container);
     kwRefreshWalkChrome(container);
-    if (typeof g.focus === "function") g.focus();
+    if (typeof g.focus === "function") g.focus({ preventScroll: true });
+    kwReadCard(container);
   }
   // The walk bar and direction control rebuild in place, under the
   // search box: the walk shows every step, the direction control
@@ -3745,6 +4035,15 @@
     if (edgeId) {
       kwEl(card, "p", { class: "kw-card-ref mono" }, "edge " + edgeId);
     }
+    const overview = kwLastRender && kwLastRender.data && kwLastRender.data.overview || {};
+    const endpoints = kwEl(card, "div", { class: "kw-connections" });
+    for (const [index, end] of (ends || []).entries()) {
+      const open = kwEl(endpoints, "button", {
+        class: "kw-connection-node", type: "button",
+        "data-kw-endpoint": index === 0 ? "source" : "target",
+      }, (index === 0 ? "Source · " : "Target · ") + label(end));
+      open.addEventListener("click", () => kwNavigateNode(container, overview, opts, end.kind, end.id));
+    }
     const finding = (ends || []).find((e) => e.kind === "finding");
     if (finding && opts && typeof opts.onOpenRecord === "function") {
       const open = kwEl(card, "button", { class: "kw-card-open", type: "button" },
@@ -3755,17 +4054,10 @@
     }
   }
 
-  // The caption a finding draws: claim plus kind and evidence
-  // suffixes, before the 26-character cap. The label, its obstacle
-  // and the thinning pass all measure this string, so the three
-  // cannot drift apart.
+  // The measured claim is the visible finding caption.
   function kwCaptionWords(f) {
     if (!f) return "";
-    const kind = String(f.kind || "");
-    const evidenceMessage = kwEvidenceRef(f);
-    return String(f.claim || f.id)
-      + (kind && kind !== "finding" ? " · " + kind : "")
-      + (evidenceMessage ? " · " + evidenceMessage : "");
+    return String(f.claim || f.id);
   }
 
   function kwCaptionX(x, width, canvasWidth) {
@@ -3774,18 +4066,14 @@
 
   function kwNodeLabel(g, f, x, y, lines) {
     const words = kwCaptionWords(f);
-    const label = words.length > 26 ? words.slice(0, 25) + "…" : words;
+    const label = words;
     const text = kwSvg(g, "text", {
       x: String(x), y: String(y + 32), class: "kw-word",
-      "text-anchor": "middle",
+      "text-anchor": "start",
     });
     (lines || [label]).forEach((line, i) => {
-      kwSvg(text, "tspan", { x: String(x), dy: i ? "16" : "0" }).textContent = line;
+      kwSvg(text, "tspan", { x: String(x), dy: i ? "18" : "0" }).textContent = line;
     });
-    if (label !== words) {
-      const tip = kwSvg(text, "title", null);
-      tip.textContent = words;
-    }
     return text;
   }
 
@@ -3868,8 +4156,8 @@
         for (const a of rs) for (const b of cs) n += cell.get(a + "\n" + b) || 0;
         return n;
       };
-      const wrap = kwEl(band, "div", { class: "kw-flow" });
-      const cap = kwEl(wrap, "p", { class: "kw-flow-cap muted" });
+      const wrap = kwEl(band, "details", { class: "kw-flow" });
+      const cap = kwEl(wrap, "summary", { class: "kw-flow-cap muted" });
       cap.textContent = pairs.length + " promotion" + (pairs.length === 1 ? "" : "s")
         + " · " + rows.length + " source" + (rows.length === 1 ? "" : "s")
         + " · " + cols.length + " destination" + (cols.length === 1 ? "" : "s")
@@ -3906,11 +4194,24 @@
     return band;
   }
 
-  function kwRestoreFocus(container, focused, caret) {
+  function kwRestoreFocus(container, focused, caret, restoreReading = false) {
     if (!focused) return;
     const node = container.querySelector(focused);
     if (node && typeof node.focus === "function") {
-      node.focus();
+      node.focus({ preventScroll: true });
+      if (restoreReading) {
+        const card = node.closest(".kw-card");
+        if (card) {
+          const rect = card.getBoundingClientRect();
+          const viewport = window.visualViewport;
+          const top = viewport ? viewport.offsetTop : 0;
+          const bottom = top + (viewport ? viewport.height : window.innerHeight);
+          if (rect.bottom <= top || rect.top >= bottom) {
+            const entry = card.querySelector(".kw-card-return") || card;
+            entry.scrollIntoView({ block: "start", inline: "nearest" });
+          }
+        }
+      }
       // The rebuilt search box carries the layer's query text; the caret
       // comes back with it, clamped to the text in hand.
       if (caret && typeof node.setSelectionRange === "function") {
@@ -3934,7 +4235,7 @@
       state.observer = new ResizeObserver(() => {
         if (!container.isConnected || !kwLastRender || kwLastRender.container !== container) return;
         const width = container.clientWidth;
-        if (width > 0 && width !== state.width) renderKnowledge(container, state.data, state.opts);
+        if (width > 0 && width !== state.width) renderKnowledge(container, state.data, state.opts, true);
       });
       kwSizeObservers.set(container, state);
       state.observer.observe(container);
@@ -3944,13 +4245,22 @@
     state.opts = opts;
   }
 
-  function renderKnowledge(container, data, opts) {
+  function renderKnowledge(container, data, opts, readingResize = false) {
     if (!container) return null;
     kwWatchWidth(container, data, opts);
     const active = document.activeElement;
     let focused = null;
     let caret = null;
+    let restoreReading = false;
     if (active && container.contains(active)) {
+      const readingCard = active.closest(".kw-card");
+      if (readingCard) {
+        const rect = readingCard.getBoundingClientRect();
+        const viewport = window.visualViewport;
+        const top = viewport ? viewport.offsetTop : 0;
+        const bottom = top + (viewport ? viewport.height : window.innerHeight);
+        restoreReading = readingResize || (rect.bottom > top && rect.top < bottom);
+      }
       // Nodes restore by kind and id together, so a session sharing a
       // group's literal id refocuses its own node and not the other's.
       for (const name of ["data-kw-id", "data-kw-node", "data-kw-cluster", "data-kw-ref"]) {
@@ -3977,6 +4287,10 @@
       if (active.hasAttribute("data-kw-tier")) {
         focused = '[data-kw-tier="' + CSS.escape(active.getAttribute("data-kw-tier") || "") + '"]';
       }
+      if (active.hasAttribute("data-kw-focus")) {
+        focused = '.kw-card [data-kw-focus="' + CSS.escape(active.getAttribute("data-kw-focus")) + '"]';
+        if (active.classList.contains("kw-card")) focused = '.kw-card[data-kw-focus="inspector"]';
+      }
     }
     container.textContent = "";
     const overview = (data && data.overview) || {};
@@ -4000,7 +4314,7 @@
     }
     if (mode === "band") {
       kwRenderBand(container, overview, promotions, opts);
-      kwRestoreFocus(container, focused, caret);
+      kwRestoreFocus(container, focused, caret, restoreReading);
       return {
         findings: (overview.findings || []).length,
         promotions: promotions.length,
@@ -4011,22 +4325,32 @@
     if (current !== kwLastSelected) {
       kwLastSelected = current;
       kwDismissed = null;
+      kwPinnedNode = null;
     }
     const ensembles = (data && data.ensembles) || [];
     const sections = (data && data.sections) || [];
     kwActorReads = (data && data.actorReads) || {};
     const collapsed = new Set();
+    const memberships = new Map();
     for (const e of ensembles) {
-      if (e && e.id && kwCollapsedEnsembles.has(String(e.id))) {
-        for (const m of (e.members || [])) collapsed.add(kwKey("session", String(m)));
+      if (e && e.id) {
+        for (const m of e.members || []) {
+          const id = String(m);
+          if (!memberships.has(id)) memberships.set(id, []);
+          memberships.get(id).push(String(e.id));
+        }
       }
+    }
+    for (const [id, groups] of memberships) {
+      if (groups.every((group) => kwCollapsedEnsembles.has(group))) collapsed.add(kwKey("session", id));
     }
     const layout = kwRenderWhole(container, overview, promotions, opts, collapsed);
     kwPlaceWhole(layout, container, overview, promotions, opts, ensembles, sections);
+    kwCardFocusKeys(container);
     // The frame takes the drawing's own height and the page scrolls,
     // so the map publishes no heights. The content tracker stays: it
     // still sizes the canvas itself and frames Fit.
-    kwRestoreFocus(container, focused, caret);
+    kwRestoreFocus(container, focused, caret, restoreReading);
     return {
       findings: (overview.findings || []).length,
       promotions: promotions.length,

@@ -291,17 +291,18 @@ function factSeparator() {
   return span;
 }
 
-// The recorded relations that name one finding on either end, exactly as the
-// route states them: source and target may be finding:ID or message:ID references
-// or ordinary external references, so both the prefixed and the bare id match. A
-// relation exists only when it is recorded - nothing is inferred here.
+// Authored relations and recorded evidence citations for the selected finding.
+// The scope response supplies citations in edges and authored rows in relations.
 function relationsFor(findingId) {
-  const all = (state.knowledge && state.knowledge.relations) || [];
+  const knowledge = state.knowledge || {};
+  const all = (knowledge.relations || []).concat((knowledge.edges || [])
+    .filter((edge) => edge && edge.provenance === "recorded-evidence"));
   if (!all.length) return [];
   const id = String(findingId || "");
   const ref = "finding:" + id;
   return all.filter((r) => r
-    && (r.source === ref || r.target === ref || r.source === id || r.target === id));
+    && (r.source === ref || r.target === ref || r.source === id || r.target === id
+      || r.sourceReference === ref || r.targetReference === ref));
 }
 
 // Show current actor states and the number of actors with pending input.
@@ -1180,6 +1181,8 @@ function openRecordAt(id) {
     const block = el.selection && el.selection.querySelector("#sel-sec-finding");
     if (block && typeof block.scrollIntoView === "function") {
       block.scrollIntoView({ block: "start" });
+      block.setAttribute("tabindex", "-1");
+      block.focus({ preventScroll: true });
       return true;
     }
     return false;
@@ -1695,6 +1698,15 @@ function scheduleEventsRetry() {
   }, wait);
 }
 
+function selectEnsemble(id) {
+  const group = String(id || "");
+  if (!group) return;
+  state.ensembleId = group;
+  writeEnsembleAddress(group);
+  setKnowledgeScope({ kind: "group", id: group });
+  markDrawnStale();
+}
+
 /* --- controls ------------------------------------------------------------- */
 
 function init() {
@@ -1777,12 +1789,7 @@ function init() {
       const open = ev.target && ev.target.closest ? ev.target.closest("[data-doc-group]") : null;
       if (!open) return;
       const group = open.getAttribute("data-doc-group");
-      // Selecting an ensemble is a position as well as a scope: the band remembers it
-      // and the address names it, so a reader can reload onto it or send the link.
-      state.ensembleId = group;
-      writeEnsembleAddress(group);
-      setKnowledgeScope({ kind: "group", id: group });
-      markDrawnStale();
+      selectEnsemble(group);
     });
   }
   if (el.mapScopeAll) {
@@ -2182,6 +2189,11 @@ function renderDocument() {
         knowledgeMount = row ? row.dataset.docId : "whole";
       }
     }
+    if (active.hasAttribute("data-kw-focus")) {
+      knowledgeFocus = '[data-kw-focus="' + CSS.escape(active.getAttribute("data-kw-focus")) + '"]';
+      const row = active.closest(".doc-row");
+      knowledgeMount = row ? row.dataset.docId : "whole";
+    }
   }
   const findings = (state.knowledge && state.knowledge.findings) || [];
   const promotions = (state.knowledge && state.knowledge.promotions) || [];
@@ -2243,6 +2255,7 @@ function renderDocument() {
       select(id);
       void loadProject(id);
     },
+    onSelectEnsemble: selectEnsemble,
     // A selection intent always renders, even when the same finding is activated
     // again: the map may have dismissed its card since, and its own state changed
     // without the shell's signature moving.
@@ -2282,11 +2295,11 @@ function renderDocument() {
     const mount = knowledgeMount === "whole" ? el.knowledgeWhole
       : el.roster.querySelector('[data-doc-id="' + CSS.escape(knowledgeMount) + '"]');
     const next = mount && mount.querySelector(knowledgeFocus);
-    if (next) next.focus();
+    if (next) next.focus({ preventScroll: true });
   }
   if (rowFocus) {
     const next = el.roster.querySelector('[data-doc-key="' + CSS.escape(rowFocus) + '"]');
-    if (next) next.focus();
+    if (next) next.focus({ preventScroll: true });
   }
   renderShell();
   return result;

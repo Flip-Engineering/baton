@@ -107,8 +107,12 @@
       "latestReportId": "",
       "pendingCount": 0,
       "unacknowledgedCount": 0,
-      "ownedEnsembles": [],
-      "memberEnsembles": [],
+      "ownedEnsembles": [
+        "fixture-knowledge-ensemble-cross"
+      ],
+      "memberEnsembles": [
+        "fixture-knowledge-ensemble-cross"
+      ],
       "liveReceiver": null,
       "endpointRegistered": null,
       "reference": false,
@@ -182,7 +186,8 @@
       "unacknowledgedCount": 0,
       "ownedEnsembles": [],
       "memberEnsembles": [
-        "fixture-knowledge-ensemble"
+        "fixture-knowledge-ensemble",
+        "fixture-knowledge-ensemble-cross"
       ],
       "liveReceiver": null,
       "endpointRegistered": null,
@@ -301,7 +306,9 @@
       "pendingCount": 0,
       "unacknowledgedCount": 0,
       "ownedEnsembles": [],
-      "memberEnsembles": [],
+      "memberEnsembles": [
+        "fixture-knowledge-ensemble-cross"
+      ],
       "liveReceiver": null,
       "endpointRegistered": null,
       "reference": false,
@@ -371,7 +378,9 @@
       "pendingCount": 0,
       "unacknowledgedCount": 0,
       "ownedEnsembles": [],
-      "memberEnsembles": [],
+      "memberEnsembles": [
+        "fixture-knowledge-ensemble-cross"
+      ],
       "liveReceiver": null,
       "endpointRegistered": null,
       "reference": false,
@@ -436,6 +445,28 @@
           "members": [
             "fixture-knowledge-conductor-a",
             "fixture-knowledge-player-a"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "fixture-knowledge-ensemble-cross",
+      "owner": "fixture-knowledge-conductor-b",
+      "coupling": "loose",
+      "members": [
+        "fixture-knowledge-conductor-b",
+        "fixture-knowledge-player-a",
+        "fixture-knowledge-player-d",
+        "fixture-knowledge-player-f"
+      ],
+      "sections": [
+        {
+          "ensemble": "fixture-knowledge-ensemble-cross",
+          "id": "fixture-knowledge-section-cross",
+          "capability": "cross-branch review",
+          "members": [
+            "fixture-knowledge-player-a",
+            "fixture-knowledge-player-f"
           ]
         }
       ]

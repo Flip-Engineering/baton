@@ -14,7 +14,7 @@
      opts.position   reading position in the recorded history
      opts.scope      "live" for work in flight and seats the record holds, "all"
                      for everything recorded (the staves' control names the rest)
-     opts.onSelect(id), opts.onSelectFinding(id), opts.onScrub(index),
+     opts.onSelect(id), opts.onSelectEnsemble(id), opts.onSelectFinding(id), opts.onScrub(index),
      opts.onSelectEvent(index), opts.onListOpen(open), opts.onOpenRecord(id), opts.onLocate(ref)
 
    attention.js reads activity for the summary; order.js orders the rows. */
@@ -269,6 +269,7 @@
         query: opts.knowledgeQuery || "",
         onSelectFinding: opts.onSelectFinding,
         onSelectActor: opts.onSelect,
+        onSelectEnsemble: opts.onSelectEnsemble,
         // The card's one move into the record, so a row's card offers it too.
         onOpenRecord: opts.onOpenRecord,
         // The way back, so a row's card can return a reader to the mark it names.
@@ -375,7 +376,7 @@
         run.dataset.docEnsemble = ensemble;
         // The reader's position: the band their selection names takes the selection
         // ink, and every other band stands exactly as it did.
-        if (ensemble && ensemble === opts.selectedEnsemble) run.classList.add("is-selected");
+        if ((p.ensembles || []).indexOf(opts.selectedEnsemble) >= 0) run.classList.add("is-selected");
         var head = el("p", "doc-band-head");
         // The rehearsal mark names this run of rows, so a reader can point at
         // the place it starts.
@@ -383,18 +384,17 @@
         bandMark.title = ensemble || "not in a recorded ensemble";
         bandIndex += 1;
         head.appendChild(bandMark);
-        // A band that names one recorded ensemble opens that group's knowledge on the
-        // map: the name is the control, and the map's scope line states what it drew.
-        var single = ensemble && ensemble.indexOf(" · ") < 0 && ensemble !== "not in a recorded ensemble";
-        var bandName = single
-          ? el("button", "doc-band-name doc-band-open", ensemble)
-          : el("span", "doc-band-name", ensemble || "not in a recorded ensemble");
-        if (single) {
+        var names = el("span", "doc-band-memberships");
+        var memberships = p.ensembles || [];
+        if (!memberships.length) names.appendChild(el("span", "doc-band-name", "not in a recorded ensemble"));
+        memberships.forEach(function (id) {
+          var bandName = el("button", "doc-band-name doc-band-open", id);
           bandName.type = "button";
-          bandName.dataset.docGroup = ensemble;
-          bandName.title = "Show " + ensemble + "'s holdings";
-        }
-        head.appendChild(bandName);
+          bandName.dataset.docGroup = id;
+          bandName.title = "Show " + id + "'s holdings";
+          names.appendChild(bandName);
+        });
+        head.appendChild(names);
         head.appendChild(bandTicks(bandMembers.get(ensemble) || []));
         run.appendChild(head);
         mount.appendChild(run);
@@ -454,7 +454,7 @@
      but a reader still asks how a seat is doing; the shell holds those reads, so
      they travel with the map's payload keyed by actor id. */
   function actorReads(players) {
-    var out = {};
+    var out = Object.create(null);
     (players || []).forEach(function (p) {
       out[p.id] = {
         status: p.status || "unknown",
@@ -491,6 +491,7 @@
         notice: opts.knowledgeNotice || "",
         onSelectFinding: opts.onSelectFinding,
         onSelectActor: opts.onSelect,
+        onSelectEnsemble: opts.onSelectEnsemble,
         // The card's one move into the record, forwarded so the card renders it.
         onOpenRecord: opts.onOpenRecord,
         // The way back: the shell selects the mark and shows its surface.
@@ -514,9 +515,8 @@
 
     var reading = null;
     if (mounts.attention && typeof window.renderAttention === "function") {
-      // The same quiet test and the same toggle the roster uses decide which
-      // seats the stage draws. The stage keeps the full list for parent depth
-      // and for the relation threads, and seats an actor unless its id is here.
+      // The roster quiet filter selects the active Stage actors. Recorded
+      // ancestors remain visible as quiet reporting context in the Stage.
       var quietIds = [];
       players.forEach(function (p) {
         var mark = typeof stateMark === "function" ? stateMark(p) : null;
@@ -524,6 +524,8 @@
       });
       reading = window.renderAttention(mounts.attention, players, {
         onSelect: options.onSelect,
+        onSelectEnsemble: options.onSelectEnsemble,
+        selectedEnsemble: options.selectedEnsemble,
         selectedId: options.selectedId,
         // A seam click hands the shell the relation's own identity; the shell
         // routes it to the address and the scoped record.
@@ -545,7 +547,7 @@
 
     // Which authors carry a finding decides which rows carry a knowledge block.
     var overview = data.knowledge || null;
-    var knowledgeAuthors = {};
+    var knowledgeAuthors = Object.create(null);
     if (overview && overview.findings) {
       for (var i = 0; i < overview.findings.length; i += 1) {
         var author = overview.findings[i] && overview.findings[i].author;

@@ -1,56 +1,21 @@
-/* The stage: liveness, document order and the seating plan. Read-only.
-   One global entry: renderAttention(container, data, options).
-
-   State vocabulary, settled: running, queued, stopped, failed, owes work, quiet.
-   Starting is work in flight and reads as running. A stop or a failure is a state, never
-   a request to a person, and never a read of elapsed time: no inactivity threshold takes
-   part in any state here. The document order is running, queued, owes work, stopped,
-   failed, quiet, so the active orchestra leads the stage, the strip and the roster and a
-   retained failure keeps its place without leading them; bands take their highest
-   member's order.
-
-   A seat whose read carries no stop flag and no stop word says "no stop recorded" in
-   its title and its label, and a stop the read names another way is quoted as it
-   reads. The marks are unchanged by either: a stop that is read still draws its ring.
-
-   The stage draws one seat per actor, shaped and inked by its state, with the
-   baton on the seat that acted most recently, a recency trail above the mark, a
-   queue bar under a seat that owes work, and the recorded relations as threads
-   between the seats that hold them. The seating plan is the reporting hierarchy:
-   the principal conductor at depth 0, one depth level per parent step below it,
-   ensemble membership grouping seats inside a depth level, and rows with unknown
-   ancestry in a separate tier.
-   A conductor's seat carries a role enclosure in the page's ink - a whole ring
-   for the principal, a ring with two gaps for an associate - and a seat's title
-   names the parent it reports to. Every tier maps onto the mount's width and
-   wraps inside it, so no seat is painted outside the box.
-
-   The default set is the shell's: an actor is seated unless its id arrives in
-   options.quietIds, or unless options.showEnded is true. Keyboard: one tab stop;
-   arrows walk the drawn seats, Home and End go to the ends, Enter and Space select
-   through options.onSelect, and the cursor seat is announced. Presentation lives
-   in attention.css. */
+/* Read-only actor stage. Reporting tiers follow complete recorded parent chains.
+   Each drawn actor has one seat with its complete identifier, role and current state.
+   Parent links and recorded coordination relations use separate drawing classes.
+   Ensemble panels retain every membership, owner, coupling value and capability section.
+   Keyboard arrows walk drawn actors; Enter and Space open the current actor. */
 
 (function () {
   "use strict";
 
   /* ── geometry ─────────────────────────────────────────────────────────── */
 
-  // The label column holds a tier's name flush left and its seat count flush
-  // right. It is as wide as the names need: the floor keeps a clipped name
-  // readable, the cap keeps the seats their room, and below the floor a name is
-  // shortened with the full one in its title.
-  var GUTTER_MIN = 96;
-  var GUTTER_MAX = 200;
-  var CHAR_W = 6.2;       // one character of the 10px mono label
-  var LABEL_PAD = 26;     // the count's column and the gap to the seats
-  var SEAT_TOP = 26;      // the least room above the top tier
-  var R_MIN = 5.5;        // the mark's radius at the largest run
-  var R_MAX = 18;         // the mark's radius at the smallest run
-  // The hall keeps this height unless the mount states its own: the band the
-  // shell gives the mount, less the legend and one row of chips.
-  var SHELL_BOUND = 164;
-  var BOW = 14;           // how far the outermost seats bow from the conductors' tier
+  var CHAR_W = 6.2;
+  var CARD_MIN = 220;
+  var CARD_MAX = 340;
+  var CARD_GAP = 20;
+  var CARD_INSET = 14;
+  var CAPTION_LINE = 18;
+  var SEAT_RADIUS = 12;
   var STRIP_LIMIT = 12;   // strip rows before the fold
   var ID_SHOWN = 30;      // characters of an id before the ellipsis
   var SHORT_KEEP = 24;    // an id this short is already its own short form
@@ -83,18 +48,14 @@
     quiet: { ink: "var(--staff, #39404b)", shape: "dot" },
   };
 
-  // A mark reads at any count: few actors get large marks, a large run gets
-  // smaller ones, and the tier's pitch follows the radius so marks never touch.
-  function radiusFor(count) {
-    var radius = 20 - 1.6 * Math.sqrt(Math.max(1, count));
-    return Math.max(R_MIN, Math.min(R_MAX, radius));
-  }
-
   var SVG_NS = "http://www.w3.org/2000/svg";
   var expandedByContainer = new WeakMap();
   var dataByContainer = new WeakMap();
   var readingsByContainer = new WeakMap();
   var cursorByContainer = new WeakMap();
+  var cursorSeatByContainer = new WeakMap();
+  var optionsByContainer = new WeakMap();
+  var resizeByContainer = new WeakMap();
 
   /* ── readings ─────────────────────────────────────────────────────────── */
 
@@ -129,8 +90,8 @@
   // the last name part stays with its number when that part is short (dsflash-1,
   // muse-2), and a name that two seats would share takes one more part of their ids.
   function shortForms(ids) {
-    var parts = {};
-    var take = {};
+    var parts = Object.create(null);
+    var take = Object.create(null);
     var i;
     for (i = 0; i < ids.length; i += 1) {
       var id = ids[i];
@@ -147,7 +108,7 @@
       take[id] = parts[id].length > 1 && last.length <= 2 ? 2 : 1;
     }
     for (var pass = 0; pass < 8; pass += 1) {
-      var groups = {};
+      var groups = Object.create(null);
       for (i = 0; i < ids.length; i += 1) {
         var text = joinTail(parts[ids[i]], take[ids[i]], ids[i]);
         if (groups[text]) groups[text].push(ids[i]);
@@ -167,7 +128,7 @@
       }
       if (!grew) break;
     }
-    var forms = {};
+    var forms = Object.create(null);
     for (i = 0; i < ids.length; i += 1) forms[ids[i]] = joinTail(parts[ids[i]], take[ids[i]], ids[i]);
     return forms;
   }
@@ -175,100 +136,6 @@
   function joinTail(parts, take, fallback) {
     if (!parts || !parts.length) return String(fallback);
     return parts.slice(-take).join("-");
-  }
-
-  // The forms a seat's name can take, longest first: the id, its short form, then
-  // the name's head with its number and alone, down to two characters.
-  function labelForms(id, short) {
-    var forms = [];
-    function push(text) {
-      var value = String(text === undefined || text === null ? "" : text);
-      if (value && forms.indexOf(value) === -1) forms.push(value);
-    }
-    push(shortId(id, ID_SHOWN));
-    push(short);
-    var tail = String(short).split(/[-_.]/);
-    var number = tail.length > 1 && /^\d+$/.test(tail[tail.length - 1]) ? tail.pop() : "";
-    var name = tail.length ? tail[tail.length - 1] : String(short);
-    for (var k = 5; k >= 2; k -= 1) push(name.slice(0, k) + number);
-    for (var j = 5; j >= 2; j -= 1) push(name.slice(0, j));
-    forms.sort(function (a, b) {
-      if (b.length !== a.length) return b.length - a.length;
-      return a < b ? -1 : a > b ? 1 : 0;
-    });
-    return forms;
-  }
-
-  // The longest form that fits the room, and never the short form's floor cut below
-  // it: a seat keeps a name it can carry rather than none.
-  function formFor(forms, chars) {
-    for (var i = 0; i < forms.length; i += 1) {
-      if (forms[i].length <= chars) return forms[i];
-    }
-    return shortId(forms[forms.length - 1] || "", chars);
-  }
-
-  // A seat's name, placed so that no mark of the seat itself can cover it: beside the
-  // mark in the seat's own band, which costs the row no height, or under the mark
-  // when the row leaves a whole line free below the seat's own marks. The name is
-  // shortened to the room it is given and kept only when two characters fit.
-  function seatLabelFor(forms, place) {
-    var label = labelBeside(forms, place);
-    if (!label && place.gap >= place.radius * 2.2 + 18) label = labelUnder(forms, place);
-    return label;
-  }
-
-  // Beside the mark, in the seat's own band: the room is what is left between the
-  // next seat's enclosure, the box edge, the row's label column, and any name already
-  // placed beside this row. A seat that carries a role enclosure starts its name two
-  // pixels past the enclosure's outer edge; every seat starts seven pixels past its
-  // mark.
-  function labelBeside(forms, place) {
-    var pad = place.radius + 7 + (place.roleRing ? 2 : 0);
-    var right = place.caps.right - (place.x + pad) - 2;
-    var left = (place.x - pad) - place.caps.left - 2;
-    var room = Math.floor(Math.max(right, left) / CHAR_W);
-    if (room < 2) return null;
-    var toRight = right >= left;
-    return {
-      text: formFor(forms, room),
-      anchor: toRight ? "start" : "end",
-      dx: toRight ? pad : -pad,
-      baseline: 4,
-      under: false,
-    };
-  }
-
-  // Under the mark. The seat's own marks reach past the queue bar at 5.5 radii below
-  // its centre, and the next row's mark reaches 1.15 radii above its own, so the line
-  // starts at radius + 14 and needs a row that leaves it that room.
-  function labelUnder(forms, place) {
-    var beside = place.pitch / 2;
-    var left = place.x - 4;
-    var right = place.width - 4 - place.x;
-    var centred = 2 * Math.min(beside, left, right);
-    var room;
-    var anchor = "middle";
-    var dx = 0;
-    if (centred >= 2 * CHAR_W) {
-      room = Math.floor(centred / CHAR_W);
-    } else if (right >= left) {
-      room = Math.floor((Math.min(right, beside) - 2) / CHAR_W);
-      anchor = "start";
-      dx = 2;
-    } else {
-      room = Math.floor((Math.min(left, beside) - 2) / CHAR_W);
-      anchor = "end";
-      dx = -2;
-    }
-    if (room < 2) return null;
-    return {
-      text: formFor(forms, room),
-      anchor: anchor,
-      dx: dx,
-      baseline: place.radius + 14,
-      under: true,
-    };
   }
 
   // Everything the seat owes, and the one read behind the unit marks: queued input it has
@@ -425,7 +292,7 @@
     var players = playerList(data);
     var quiet = quietSet(options);
     var showEnded = options.showEnded === true;
-    var readings = {};
+    var readings = Object.create(null);
     var rows = [];
     for (var i = 0; i < players.length; i += 1) {
       var player = players[i];
@@ -467,7 +334,7 @@
 
     var counts = { withQueue: 0 };
     for (var c = 0; c < READINGS.length; c += 1) counts[READINGS[c]] = 0;
-    var bandRank = {};
+    var bandRank = Object.create(null);
     for (var r = 0; r < rows.length; r += 1) {
       counts[rows[r].reading] += 1;
       if (rows[r].queued) counts.withQueue += 1;
@@ -486,7 +353,6 @@
     var shortById = shortForms(rows.map(function (row) { return row.id; }));
     for (var n = 0; n < rows.length; n += 1) {
       rows[n].short = shortById[rows[n].id] || rows[n].id;
-      rows[n].forms = labelForms(rows[n].id, rows[n].short);
     }
     return {
       rows: rows,
@@ -497,9 +363,9 @@
       listed: rows.filter(isListed),
       bandRank: bandRank,
       // The ensembles arrive from the shell's options; a direct caller may hand them as data.
-      // Either names the tiers and carries the sections the payload records. Depth reads
-      // every row - quiet seats included - so a chain through a hidden seat still places
-      // its descendants, while only seated rows draw.
+      // Group context carries the recorded memberships and sections. Depth reads
+      // every recorded row. Quiet ancestors stay visible as reporting context
+      // for the actors included by the current filter.
       stage: stagePlan(rows, seated, (Array.isArray(options.ensembles) && options.ensembles.length
         ? options.ensembles : (data && data.ensembles)) || []),
     };
@@ -515,10 +381,10 @@
   // the separate tier for unknown ancestry: the depth -1, and no other value is
   // assigned to those rows.
   function parentDepths(rows) {
-    var byId = {};
+    var byId = Object.create(null);
     for (var i = 0; i < rows.length; i += 1) byId[rows[i].id] = rows[i];
     var ORPHAN = -1;
-    var depth = {};
+    var depth = Object.create(null);
     function resolve(row, stack) {
       if (depth[row.id] !== undefined) return depth[row.id];
       if (stack.indexOf(row.id) !== -1) return ORPHAN;
@@ -540,73 +406,58 @@
     return depth;
   }
 
-  // The seating plan is the reporting hierarchy: the principal conductor at depth 0,
-  // one depth level per parent step below it, deepest last, so tier position states
-  // reporting depth. Ensemble membership groups seats inside a depth level and does
-  // not change a seat's depth; the payload's sections follow their ensemble at
-  // whatever level it sits; rows with unknown ancestry keep a separate tier at the
-  // end. Tiers keep the document order inside.
+  // Reporting tiers group siblings under their recorded parent. Ensemble and section
+  // membership remain independent context and preserve overlapping membership.
   function stagePlan(rows, seated, ensembles) {
     var depth = parentDepths(rows);
-
-    var labels = {};
-    var sectionsByEnsemble = {};
-    for (var e = 0; e < ensembles.length; e += 1) {
-      if (!ensembles[e] || !ensembles[e].id) continue;
-      var ensembleId = String(ensembles[e].id);
-      labels[ensembleId] = String(ensembles[e].id);
-      if (Array.isArray(ensembles[e].sections)) {
-        sectionsByEnsemble[ensembleId] = ensembles[e].sections;
+    var byId = new Map(rows.map(function (row) { return [row.id, row]; }));
+    var drawn = new Set(seated.map(function (row) { return row.id; }));
+    var contextIds = new Set();
+    for (var s = 0; s < seated.length; s += 1) {
+      var current = seated[s];
+      var chain = new Set([current.id]);
+      while (current.parent && byId.has(current.parent) && !chain.has(current.parent)) {
+        current = byId.get(current.parent);
+        chain.add(current.id);
+        if (!drawn.has(current.id)) {
+          drawn.add(current.id);
+          contextIds.add(current.id);
+        }
       }
     }
-
+    var stageRows = rows.filter(function (row) { return drawn.has(row.id); });
     var byLevel = new Map();
     var orphans = [];
     var deepest = 0;
-    for (var s = 0; s < seated.length; s += 1) {
-      var row = seated[s];
+    for (var s = 0; s < stageRows.length; s += 1) {
+      var row = stageRows[s];
       var level = depth[row.id];
       if (level === undefined || level < 0) { orphans.push(row); continue; }
       if (!byLevel.has(level)) byLevel.set(level, []);
       byLevel.get(level).push(row);
-      if (level > deepest) deepest = level;
+      deepest = Math.max(deepest, level);
     }
-
     var tiers = [];
     for (var level = 0; level <= deepest; level += 1) {
       var members = byLevel.get(level);
       if (!members || !members.length) continue;
       if (level === 0) {
-        tiers.push({ id: "", label: members.length === 1 ? "principal conductor"
+        tiers.push({ depth: 0, label: members.length === 1 ? "principal conductor"
           : "principal conductors", conductors: true, rows: members });
         continue;
       }
-      var byBand = new Map();
-      var loose = [];
+      var siblings = new Map();
       for (var m = 0; m < members.length; m += 1) {
-        var seat = members[m];
-        if (!seat.memberOf.length) { loose.push(seat); continue; }
-        var key = seat.memberOf[0];
-        if (!byBand.has(key)) byBand.set(key, []);
-        byBand.get(key).push(seat);
+        var parent = members[m].parent;
+        if (!siblings.has(parent)) siblings.set(parent, []);
+        siblings.get(parent).push(members[m]);
       }
-      byBand.forEach(function (band, key) {
-        tiers.push({
-          id: key,
-          label: "depth " + level + " \u00b7 " + shortId(labels[key] || key),
-          rows: band,
-          sections: sectionsByEnsemble[key] || [],
-        });
+      siblings.forEach(function (band, parent) {
+        tiers.push({ depth: level, parent: parent,
+          label: "depth " + level + " \u00b7 reports to " + parent, rows: band });
       });
-      if (loose.length) {
-        tiers.push({ id: "", label: "depth " + level + ", no ensemble", rows: loose });
-      }
     }
-    // The separate tier for unknown ancestry: cycles, parents absent from the
-    // record, and rows that record no parent and are not the principal.
-    if (orphans.length) {
-      tiers.push({ id: "", label: "unknown ancestry", rows: orphans });
-    }
+    if (orphans.length) tiers.push({ depth: -1, label: "unknown ancestry", rows: orphans });
 
     // The baton rests on the most recent recorded action among the working seats.
     var target = "";
@@ -617,158 +468,115 @@
       if (isFinite(when) && when > newest) { newest = when; target = rows[t].id; }
     }
 
-    return { tiers: tiers, batonTarget: target };
+    return { tiers: tiers, batonTarget: target, ensembles: ensembles, rows: rows, contextIds: contextIds };
   }
 
-  // A tier's seats span the usable box and wrap inside it when the tier is too
-  // wide, so nothing is placed outside. The height the drawing needs is returned.
-  function layoutStage(plan, width, bound) {
-    var w = Math.max(width || 0, 320);
-    var limit = Math.max(200, bound || SHELL_BOUND);
-    var total = 0;
-    var widest = 0;
-    var longestName = 1;
-    var ringDrawn = false;
-    for (var t = 0; t < plan.tiers.length; t += 1) {
-      total += plan.tiers[t].rows.length;
-      if (plan.tiers[t].rows.length > widest) widest = plan.tiers[t].rows.length;
-      var name = String(plan.tiers[t].label || "no ensemble");
-      if (name.length > longestName) longestName = name.length;
-      for (var m = 0; m < plan.tiers[t].rows.length; m += 1) {
-        var tierRole = plan.tiers[t].rows[m].role;
-        if (tierRole === "principal-conductor" || tierRole === "associate-conductor") ringDrawn = true;
-      }
+  // Wrap complete identifiers against the current monospace font metrics.
+  function textMeasure(container, size) {
+    var family = "monospace";
+    if (container && typeof window.getComputedStyle === "function") {
+      family = window.getComputedStyle(container).getPropertyValue("--mono").trim() || family;
     }
+    var canvas = document.createElement("canvas");
+    var context = typeof canvas.getContext === "function" ? canvas.getContext("2d") : null;
+    if (context) context.font = size + "px " + family;
+    return function (text) {
+      return context ? context.measureText(text).width : Array.from(text).length * size;
+    };
+  }
 
-    // The column is as wide as the names ask for, inside its own bounds.
-    var gutter = Math.round(longestName * CHAR_W + LABEL_PAD);
-    gutter = Math.max(GUTTER_MIN, Math.min(GUTTER_MAX, gutter));
-    var labelChars = Math.max(8, Math.floor((gutter - LABEL_PAD) / CHAR_W));
-
-    // The mark's size follows the run's size, and the tier's pitch follows the
-    // mark, so a tier never crowds and never paints outside the box. A conductor's
-    // role enclosure reaches radius + 7, half a stroke past that at its outer edge,
-    // so the row extent used for the horizontal inset, the minimum pitch, the row
-    // spacing and the height bounds is the enclosure's when any conductor is seated
-    // and the mark's otherwise. The pointer target stays at its own radius: it is a
-    // transparent circle and remains the smallest consistent hit area.
-    var radius = radiusFor(total);
-    var extent = ringDrawn ? radius + 7 : radius;
-    var hitRadius = Math.max(12, radius + 5);
-    var inset = Math.max(hitRadius, extent + 1);
-    var usable = Math.max(40, w - gutter - inset - 2);
-    var pitchMin = 2 * extent + 7;
-    var perRow = widest > 1 ? Math.max(2, Math.floor(usable / pitchMin)) : 1;
-    if (widest && perRow > widest) perRow = widest;
-
-    var totalRows = 0;
-    for (var s = 0; s < plan.tiers.length; s += 1) {
-      totalRows += Math.max(1, Math.ceil(plan.tiers[s].rows.length / perRow));
+  function captionLines(text, width, measure) {
+    var chars = Array.from(String(text || ""));
+    var lines = [];
+    var line = "";
+    for (var i = 0; i < chars.length; i += 1) {
+      var next = line + chars[i];
+      if (line && measure(next) > width) {
+        lines.push(line);
+        line = chars[i];
+      } else line = next;
     }
+    if (line || !lines.length) lines.push(line);
+    return lines;
+  }
 
-    // Size the drawing to its rows and compress their spacing within the mount height.
-    var gap = 2 * extent + 10;
-    var seatTop = Math.max(SEAT_TOP, extent + 12);
-    if (totalRows > 1) {
-      var room = Math.floor((limit - seatTop - BOW - extent - 18) / (totalRows - 1));
-      // Keep eight pixels between adjacent marks; larger groups scroll.
-      if (room < gap) gap = Math.max(2 * extent + 8, room);
+  function roleWord(role) {
+    if (role === "principal-conductor") return "Principal conductor";
+    if (role === "associate-conductor") return "Associate conductor";
+    if (role === "player") return "Player";
+    if (role === "operator") return "Operator";
+    return role || "Role unrecorded";
+  }
+
+  // Keep readable cards at the available CSS width. Additional actors add rows.
+  function layoutStage(plan, width, container) {
+    var w = Math.max(160, width || 640);
+    var drawnIds = new Set();
+    plan.tiers.forEach(function (tier) {
+      tier.rows.forEach(function (row) { drawnIds.add(row.id); });
+    });
+    var parentIds = [];
+    var parents = new Set();
+    plan.tiers.forEach(function (tier) {
+      tier.rows.forEach(function (row) {
+        if (row.parent && drawnIds.has(row.parent) && !parents.has(row.parent)) {
+          parents.add(row.parent);
+          parentIds.push(row.parent);
+        }
+      });
+    });
+    // Each recorded parent has a separate connection lane beside the actor cards.
+    var parentGutter = Math.min(w / 3, Math.max(CARD_INSET, 8 + parentIds.length * 6));
+    var parentLanes = Object.create(null);
+    for (var p = 0; p < parentIds.length; p += 1) {
+      parentLanes[parentIds[p]] = (p + 1) * parentGutter / (parentIds.length + 1);
     }
-
+    var usable = w - parentGutter - CARD_INSET;
+    var perRow = Math.max(1, Math.floor((usable + CARD_GAP) / (CARD_MIN + CARD_GAP)));
+    var cardWidth = Math.min(CARD_MAX, (usable - (perRow - 1) * CARD_GAP) / perRow);
+    var captionMeasure = textMeasure(container, 13);
+    var headerMeasure = textMeasure(container, 12);
     var seats = [];
     var order = [];
-    var blocked = {};
-    var underLabel = false;
-    var y = seatTop;
-    for (var i = 0; i < plan.tiers.length; i += 1) {
-      var tier = plan.tiers[i];
-      var count = tier.rows.length;
-      var rowsOfTier = Math.max(1, Math.ceil(count / perRow));
+    var y = 30;
+    var totalRows = 0;
+    for (var t = 0; t < plan.tiers.length; t += 1) {
+      var tier = plan.tiers[t];
       tier.y = y;
-      tier.rowsOnTier = rowsOfTier;
-      var inRow = Math.min(count, perRow);
-      var pitch = inRow > 1 ? usable / (inRow - 1) : usable;
-      var mid = w / 2;
-      for (var k = 0; k < count; k += 1) {
-        var row = Math.floor(k / inRow);
-        var column = k - row * inRow;
-        var x = inRow === 1 ? gutter + usable / 2 : gutter + column * pitch;
-        // The outer seats of a tier sit lower than its first row, by an amount that
-        // grows with the square of the distance from the tier's centre.
-        var bow = BOW * Math.pow((x - mid) / Math.max(1, mid), 2);
-        // Where this seat's name may reach: the next seat's enclosure, the box, the
-        // row's label column, and any name already placed beside this row.
-        var lane = i + ":" + row;
-        var nextLeft = column === inRow - 1 ? w - 4 : x + pitch - extent - 4;
-        var caps = {
-          left: Math.max((row === 0 ? gutter : 0) + 4, blocked[lane] || 0),
-          right: nextLeft,
-        };
-        var seatRole = tier.rows[k].role;
-        var label = seatLabelFor(tier.rows[k].forms, {
-          x: x,
-          row: row,
-          pitch: pitch,
-          gap: gap,
-          radius: radius,
-          roleRing: seatRole === "principal-conductor" || seatRole === "associate-conductor",
-          gutter: gutter,
-          width: w,
-          caps: caps,
+      tier.header = captionLines(tier.label, Math.max(1, usable - 44), headerMeasure);
+      var top = y + tier.header.length * 16 + 20;
+      var rowsOnTier = Math.ceil(tier.rows.length / perRow);
+      tier.rowsOnTier = rowsOnTier;
+      for (var r = 0; r < rowsOnTier; r += 1) {
+        var members = tier.rows.slice(r * perRow, (r + 1) * perRow);
+        var widestCaption = 1;
+        var captions = members.map(function (member) {
+          var lines = captionLines(member.id, Math.max(1, cardWidth - 28), captionMeasure);
+          widestCaption = Math.max(widestCaption, lines.length);
+          return lines;
         });
-        // The trail runs in its own band above the mark, where the neighbours' marks do
-        // not reach: its room is the space to the next trail on either side, or to the
-        // box. Its length is set at draw time from how recent the action is.
-        var tickPad = radius + 1;
-        var toOtherTrail = Math.max(0, pitch - 2 * tickPad);
-        var tickLeft = Math.max(0, Math.min((x - tickPad) - 4, toOtherTrail));
-        var tickRight = Math.max(0, Math.min((w - 4) - (x + tickPad), toOtherTrail));
-        var tickDir = tickRight >= tickLeft ? 1 : -1;
-        var tickRoom = Math.max(tickLeft, tickRight);
-        var trail = tickRoom >= 3
-          ? { dir: tickDir, pad: tickPad, room: Math.min(tickRoom, radius * 1.8) }
-          : null;
-        if (label && label.under) underLabel = true;
-        if (label && label.anchor !== "middle") {
-          blocked[lane] = label.anchor === "end"
-            ? x + label.dx
-            : x + label.dx + label.text.length * CHAR_W;
+        var cardHeight = 114 + widestCaption * CAPTION_LINE;
+        var rowWidth = members.length * cardWidth + (members.length - 1) * CARD_GAP;
+        var left = parentGutter + (usable - rowWidth) / 2;
+        for (var m = 0; m < members.length; m += 1) {
+          var seat = { seat: members[m], context: plan.contextIds.has(members[m].id), x: left + cardWidth / 2 + m * (cardWidth + CARD_GAP),
+            y: top + 48, top: top, bottom: top + cardHeight, width: cardWidth,
+            height: cardHeight, caption: captions[m], stateY: 34 + widestCaption * CAPTION_LINE,
+            trail: { dir: 1, pad: SEAT_RADIUS + 1, room: SEAT_RADIUS * 1.8 } };
+          seats.push(seat);
+          order.push(members[m].id);
         }
-        var seat = {
-          seat: tier.rows[k],
-          x: x,
-          y: tier.y + row * gap + bow,
-          label: label,
-          trail: trail,
-        };
-        seats.push(seat);
-        order.push(tier.rows[k].id);
+        top += cardHeight + 32;
+        totalRows += 1;
       }
-      y += rowsOfTier * gap;
+      tier.bottom = top - 20;
+      y = top + 18;
     }
-
-    // The height the drawing covers: the last row's centre, the bow the outermost
-    // seats take, the row extent (the role enclosure's when a conductor is seated),
-    // and the room a name under a mark needs - reserved only when a name was
-    // actually drawn there, so a hall whose names all sit beside their marks keeps
-    // no empty tail. The SVG, its viewBox and the published height all take this.
-    var content = Math.round(y - (totalRows > 0 ? gap : 0) + BOW + extent + (underLabel ? 18 : 8));
-    return {
-      seats: seats,
-      order: order,
-      // The height the drawing covers: the SVG, its viewBox and the published
-      // height all take this value, so nothing a seat draws falls outside.
-      height: content,
-      content: content,
-      radius: radius,
-      gap: gap,
-      perRow: perRow,
-      rows: totalRows,
-      gutter: gutter,
-      labelChars: labelChars,
-      plateY: seatTop - 10,
-      width: w,
-    };
+    var content = Math.max(0, y - 10);
+    return { seats: seats, order: order, height: content, content: content,
+      radius: SEAT_RADIUS, gap: CARD_GAP, perRow: perRow, rows: totalRows,
+      gutter: w - 12, parentGutter: parentGutter, parentLanes: parentLanes,
+      plateY: 12, width: w };
   }
 
   /* ── drawing ──────────────────────────────────────────────────────────── */
@@ -879,6 +687,16 @@
     // state's.
     if (marks.fresh) group.style.color = paint.ink;
 
+    group.setAttribute("data-att-role", seat.role);
+    group.setAttribute("data-att-parent", seat.parent);
+    if (entry.context) group.setAttribute("data-att-context", "recorded-ancestor");
+    group.appendChild(svgEl("rect", { "class": "att-seat-card",
+      x: -entry.width / 2, y: entry.top - entry.y, width: entry.width,
+      height: entry.height, rx: 8 }));
+    var role = svgEl("text", { "class": "att-seat-role", x: 0, y: -27 });
+    setText(role, roleWord(seat.role));
+    group.appendChild(role);
+
     if (seat.live) {
       var halo = svgEl("circle", { "class": "att-halo", r: radius + 5, cx: 0, cy: 0 });
       halo.style.fill = paint.ink;
@@ -951,19 +769,24 @@
     ring.style.fill = "none";
     group.appendChild(ring);
 
-    // The seat's name: the plan placed it clear of this seat's own marks, so the
-    // queue bar, the ring and the halo sit above or beside it, never over it.
-    if (entry.label) {
-      var name = svgEl("text", {
-        "class": "att-seat-label", x: entry.label.dx, y: entry.label.baseline,
-      });
-      name.style.textAnchor = entry.label.anchor;
-      setText(name, entry.label.text);
-      group.appendChild(name);
+    var name = svgEl("text", { "class": "att-seat-label", x: 0, y: 34 });
+    for (var line = 0; line < entry.caption.length; line += 1) {
+      var part = svgEl("tspan", { x: 0, y: 34 + line * CAPTION_LINE });
+      setText(part, entry.caption[line]);
+      name.appendChild(part);
     }
+    group.appendChild(name);
+    var state = svgEl("text", { "class": "att-seat-state", x: 0, y: entry.stateY });
+    setText(state, seat.word + (entry.context ? " · reporting context" : ""));
+    group.appendChild(state);
+    var memberships = svgEl("text", { "class": "att-seat-memberships", x: 0, y: entry.stateY + 17 });
+    setText(memberships, seat.memberOf.length
+      ? seat.memberOf.length + (seat.memberOf.length === 1 ? " ensemble" : " ensembles")
+      : "0 ensembles");
+    group.appendChild(memberships);
 
-    var hit = svgEl("circle", { "class": "att-hit", r: Math.max(12, radius + 5), cx: 0, cy: 0 });
-    group.appendChild(hit);
+    group.appendChild(svgEl("rect", { "class": "att-hit", x: -entry.width / 2,
+      y: entry.top - entry.y, width: entry.width, height: entry.height, rx: 8 }));
 
     var title = svgEl("title");
     setText(title, seat.id + " \u2014 " + seat.word
@@ -1410,7 +1233,7 @@
 
   function stageSvg(result, laid, options, fresh, cursorId, relations, container) {
     var plan = result.stage;
-    var positions = {};
+    var positions = Object.create(null);
     for (var p = 0; p < laid.seats.length; p += 1) positions[laid.seats[p].seat.id] = laid.seats[p];
 
     var svg = svgEl("svg", {
@@ -1433,100 +1256,45 @@
     ground.style.fill = "url(#att-hall)";
     svg.appendChild(ground);
 
-    // A lifted band behind every other tier, so a wide row reads across the hall
-    // as one line.
-    for (var b = 0; b < plan.tiers.length; b += 1) {
-      var banded = plan.tiers[b];
-      if (!banded.rows.length || b % 2 === 0) continue;
-      var bandTop = banded.y - laid.radius - 4;
-      var bandHeight = (banded.rowsOnTier - 1) * laid.gap + BOW + laid.radius * 2 + 8;
-      svg.appendChild(svgEl("rect", {
-        "class": "att-tier", x: 0, y: bandTop, width: laid.width,
-        height: bandHeight, rx: 6,
-      }));
-    }
-
-    // The rule above the first tier, then each tier's name flush left and count flush right.
-    var line = svgEl("line", {
-      "class": "att-plate", x1: 0, x2: laid.width, y1: laid.plateY, y2: laid.plateY,
-    });
-    svg.appendChild(line);
+    var labels = svgEl("g", { "class": "att-tier-labels" });
     for (var t = 0; t < plan.tiers.length; t += 1) {
-      var tierName = plan.tiers[t].label || "no ensemble";
-      var nameText = svgEl("text", {
-        "class": "att-section-label", x: 2, y: plan.tiers[t].y + 3,
-      });
-      setText(nameText, shortId(tierName, laid.labelChars));
-
-      // The tier's condition, beside its name: one unit mark per seat that is not
-      // progressing, in the colour that seat's state uses, then one per seat that owes
-      // work, in the muted colour the seat's own units use. The unit marks and the
-      // colours are the same ones the seats draw. Held seats come first; the exact
-      // counts are in the name's title, and the marks stop where the count column
-      // begins.
-      var heldSeats = [];
-      var owingSeats = [];
-      for (var c = 0; c < plan.tiers[t].rows.length; c += 1) {
-        var member = plan.tiers[t].rows[c];
-        if (member.notProgressing) heldSeats.push(member);
-        else if (member.owesWork) owingSeats.push(member);
+      var tier = plan.tiers[t];
+      svg.appendChild(svgEl("rect", { "class": "att-tier", x: 0, y: tier.y - 12,
+        width: laid.width, height: tier.bottom - tier.y + 16, rx: 8 }));
+      var label = svgEl("text", { "class": "att-section-label", x: laid.parentGutter, y: tier.y + 3 });
+      for (var h = 0; h < tier.header.length; h += 1) {
+        var line = svgEl("tspan", { x: laid.parentGutter, y: tier.y + 3 + h * 16 });
+        setText(line, tier.header[h]);
+        label.appendChild(line);
       }
-      var tierBase = plan.tiers[t].y + 3;
-      var marksLeft = 2 + nameText.textContent.length * CHAR_W + 6;
-      var marksRight = laid.gutter - 8 - String(plan.tiers[t].rows.length).length * CHAR_W - 6;
-      var marksRoom = Math.floor((marksRight - marksLeft) / 3.6);
-      var conditionSeats = heldSeats.slice(0, 6).concat(owingSeats.slice(0, 6));
-      for (var m = 0; m < conditionSeats.length && m < marksRoom; m += 1) {
-        var mark = svgEl("line", {
-          "class": "att-tier-mark",
-          x1: marksLeft + m * 3.6, y1: tierBase - 2,
-          x2: marksLeft + m * 3.6, y2: tierBase - 0.5,
-        });
-        mark.style.stroke = PAINT[conditionSeats[m].reading]
-          ? PAINT[conditionSeats[m].reading].ink : PAINT.owesWork.ink;
-        svg.appendChild(mark);
-      }
-      // The condition words state the cause the marks count and where recovery routes:
-      // operator policy routes a stopped or failed seat's recovery to its immediate
-      // coordinator, so the title names that, and the counts stay as they were.
-      var full = svgEl("title");
-      setText(full, tierName + ", " + plan.tiers[t].rows.length
-        + (plan.tiers[t].rows.length === 1 ? " seat" : " seats")
-        + ", " + heldSeats.length + " not progressing (recovery routes to the seat's coordinator)"
-        + ", " + owingSeats.length + (owingSeats.length === 1 ? " owes work" : " owe work"));
-      nameText.appendChild(full);
-      svg.appendChild(nameText);
-
-      var countText = svgEl("text", {
-        "class": "att-section", x: laid.gutter - 8, y: plan.tiers[t].y + 3,
-      });
-      setText(countText, String(plan.tiers[t].rows.length));
-      svg.appendChild(countText);
-
-      // The sections the payload records for this ensemble, one line under the tier's
-      // name: the capability and its member count, joined when there are several.
-      // Nothing is drawn when the payload carries no sections.
-      if (plan.tiers[t].sections && plan.tiers[t].sections.length) {
-        var sectionParts = [];
-        for (var s = 0; s < plan.tiers[t].sections.length; s += 1) {
-          var section = plan.tiers[t].sections[s];
-          if (!section) continue;
-          var sectionSize = Array.isArray(section.members) ? section.members.length : 0;
-          sectionParts.push(String(section.capability || section.id || "section") + " " + sectionSize);
-        }
-        if (sectionParts.length) {
-          var sectionsLine = svgEl("text", {
-            "class": "att-sections", x: 2, y: plan.tiers[t].y + 15,
-          });
-          setText(sectionsLine, shortId(sectionParts.join(" \u00b7 "), laid.labelChars));
-          var sectionsTitle = svgEl("title");
-          setText(sectionsTitle, sectionParts.join(", "));
-          sectionsLine.appendChild(sectionsTitle);
-          svg.appendChild(sectionsLine);
-        }
-      }
+      var title = svgEl("title");
+      setText(title, tier.label + ", " + tier.rows.length + " actors");
+      label.appendChild(title);
+      labels.appendChild(label);
+      var count = svgEl("text", { "class": "att-section", x: laid.width - 14, y: tier.y + 3 });
+      setText(count, String(tier.rows.length));
+      labels.appendChild(count);
     }
 
+    // Draw a parent link only when both recorded actors have a drawn seat.
+    for (var p = 0; p < laid.seats.length; p += 1) {
+      var child = laid.seats[p];
+      var parent = positions[child.seat.parent];
+      if (!parent || parent === child || parent.bottom >= child.top) continue;
+      var lane = laid.parentLanes[parent.seat.id];
+      var leave = parent.bottom + 12;
+      var arrive = child.top - 12;
+      var link = svgEl("path", { "class": "att-parent-link",
+        "data-att-parent-from": parent.seat.id, "data-att-parent-to": child.seat.id,
+        d: "M " + parent.x + " " + parent.bottom + " V " + leave
+          + " H " + lane + " V " + arrive + " H " + child.x + " V " + child.top });
+      var note = svgEl("title");
+      setText(note, child.seat.id + " reports to " + parent.seat.id);
+      link.appendChild(note);
+      svg.appendChild(link);
+    }
+
+    svg.appendChild(labels);
     var now = Date.now();
 
     // How recent each drawn seat's action is, against the score's own live window: an
@@ -1534,7 +1302,7 @@
     // 0, so a hall of old actions reads quiet and a fresh hall reads bright. A seat with
     // no recorded action has no entry at all, and the exact age travels in the title,
     // never in a word on the stage.
-    var times = {};
+    var times = Object.create(null);
     for (var a = 0; a < laid.seats.length; a += 1) {
       var at = laid.seats[a].seat.at;
       if (!at) continue;
@@ -1542,7 +1310,7 @@
       if (!isFinite(when)) continue;
       times[laid.seats[a].seat.id] = { at: at, age: Math.max(0, now - when) };
     }
-    var recent = {};
+    var recent = Object.create(null);
     var recentIds = Object.keys(times);
     for (var a2 = 0; a2 < recentIds.length; a2 += 1) {
       recent[recentIds[a2]] = {
@@ -1553,12 +1321,16 @@
 
     // The baton, drawn under the seats so it never hides one.
     var holderId = "";
-    for (var h = 0; h < plan.tiers.length; h += 1) {
-      if (!plan.tiers[h].conductors) continue;
-      for (var q = 0; q < plan.tiers[h].rows.length; q += 1) {
-        if (plan.tiers[h].rows[q].role === "principal-conductor") holderId = plan.tiers[h].rows[q].id;
+    var byId = new Map(plan.rows.map(function (row) { return [row.id, row]; }));
+    var ancestor = byId.get(plan.batonTarget);
+    var visited = new Set();
+    while (ancestor && !visited.has(ancestor.id)) {
+      visited.add(ancestor.id);
+      if (ancestor.role === "principal-conductor" && !ancestor.parent) {
+        holderId = ancestor.id;
+        break;
       }
-      if (!holderId && plan.tiers[h].rows.length) holderId = plan.tiers[h].rows[0].id;
+      ancestor = byId.get(ancestor.parent);
     }
     var holder = positions[holderId];
     var target = positions[plan.batonTarget];
@@ -1572,7 +1344,7 @@
           + " " + target.x + " " + (target.y - 10),
       });
       var batonNote = svgEl("title");
-      setText(batonNote, "the baton \u2014 " + target.id + " acted most recently");
+      setText(batonNote, "the baton \u2014 " + target.seat.id + " acted most recently");
       baton.appendChild(batonNote);
       svg.appendChild(baton);
     }
@@ -1619,6 +1391,9 @@
       key.appendChild(span(null, readingWord(state, 0)));
       legend.appendChild(key);
     }
+    var parentKey = span("att-key att-parent-key", "Recorded parent link");
+    parentKey.dataset.attKey = "legend:parent";
+    legend.appendChild(parentKey);
     // The role keys, after the states, drawing the same enclosures the seats carry,
     // so the ring forms are named on the legend.
     var ROLES = [
@@ -1669,6 +1444,114 @@
     return chip;
   }
 
+  function groupMemberIds(list) {
+    var ids = [];
+    (Array.isArray(list) ? list : []).forEach(function (member) {
+      var id = member && typeof member === "object" ? (member.id || member.session) : member;
+      if (id && ids.indexOf(String(id)) < 0) ids.push(String(id));
+    });
+    return ids;
+  }
+
+  function ensembleContext(plan, options) {
+    if (!plan.ensembles.length) return null;
+    var context = document.createElement("section");
+    context.className = "att-ensembles";
+    context.setAttribute("aria-label", "Ensembles and capability sections");
+    context.appendChild(span("att-context-heading", "Ensembles and sections"));
+    var groups = document.createElement("div");
+    groups.className = "att-ensemble-grid";
+    context.appendChild(groups);
+    function actorButton(id, kind) {
+      var button = document.createElement("button");
+      button.type = "button";
+      button.className = "att-member";
+      button.dataset.attKey = kind + ":" + id;
+      button.dataset.attMember = id;
+      setText(button, id);
+      button.addEventListener("click", function () {
+        if (typeof options.onSelect === "function") options.onSelect(id);
+      });
+      return button;
+    }
+    plan.ensembles.forEach(function (ensemble) {
+      if (!ensemble || !ensemble.id) return;
+      var id = String(ensemble.id);
+      var group = document.createElement("section");
+      group.className = "att-ensemble" + (options.selectedEnsemble === id ? " is-selected" : "");
+      group.dataset.attEnsemble = id;
+      var heading = document.createElement(typeof options.onSelectEnsemble === "function" ? "button" : "h3");
+      heading.className = "att-ensemble-name";
+      setText(heading, id);
+      if (heading.tagName === "BUTTON") {
+        heading.type = "button";
+        heading.dataset.attKey = "ensemble:" + id;
+        heading.title = "Show " + id + "'s holdings";
+        heading.addEventListener("click", function () { options.onSelectEnsemble(id); });
+      }
+      group.appendChild(heading);
+      var coupling = String(ensemble.coupling || "");
+      var couplingRead = span("att-coupling", coupling === "tight" ? "Tight coupling"
+        : coupling === "loose" ? "Loose coupling" : coupling ? coupling + " coupling" : "Coupling unrecorded");
+      couplingRead.dataset.attCoupling = coupling;
+      group.appendChild(couplingRead);
+      var owner = document.createElement("div");
+      owner.className = "att-ensemble-owner";
+      owner.appendChild(span(null, "Owner "));
+      if (ensemble.owner) owner.appendChild(actorButton(String(ensemble.owner), "owner:" + id));
+      else owner.appendChild(span(null, "unrecorded"));
+      group.appendChild(owner);
+      var members = document.createElement("div");
+      members.className = "att-members";
+      members.appendChild(span("att-members-label", "Members"));
+      var ids = groupMemberIds(ensemble.members);
+      ids.forEach(function (member) { members.appendChild(actorButton(member, "member:" + id)); });
+      if (!ids.length) members.appendChild(span("att-context-empty", "No members recorded"));
+      group.appendChild(members);
+      (Array.isArray(ensemble.sections) ? ensemble.sections : []).forEach(function (section) {
+        if (!section) return;
+        var part = document.createElement("section");
+        part.className = "att-capability";
+        part.dataset.attSection = String(section.id || "");
+        part.appendChild(span("att-capability-name", String(section.capability || section.id || "Capability unrecorded")));
+        groupMemberIds(section.members).forEach(function (member) {
+          part.appendChild(actorButton(member, "section:" + id + ":" + String(section.id || "")));
+        });
+        group.appendChild(part);
+      });
+      groups.appendChild(group);
+    });
+    return context;
+  }
+
+  function mountWidth(container) {
+    if (!container) return 640;
+    var width = container.clientWidth || 640;
+    if (typeof window.getComputedStyle === "function") {
+      var style = window.getComputedStyle(container);
+      width -= (parseFloat(style.paddingLeft) || 0) + (parseFloat(style.paddingRight) || 0);
+    }
+    return Math.max(160, width);
+  }
+
+  function observeWidth(container) {
+    if (resizeByContainer.has(container) || typeof window.ResizeObserver !== "function") return;
+    var current = mountWidth(container);
+    var observer = new window.ResizeObserver(function () {
+      if (!container.isConnected) {
+        observer.disconnect();
+        resizeByContainer.delete(container);
+        return;
+      }
+      var width = mountWidth(container);
+      if (width === current) return;
+      current = width;
+      renderAttention(container, dataByContainer.get(container), optionsByContainer.get(container));
+    });
+    observer.observe(container);
+    resizeByContainer.set(container, observer);
+  }
+
   function cssEscape(value) {
     if (window.CSS && typeof window.CSS.escape === "function") return window.CSS.escape(value);
     return String(value).replace(/["\\]/g, "\\$&");
@@ -1680,7 +1563,7 @@
   function renderAttention(container, data, options) {
     var opts = options || {};
     var result = analyse(data, opts);
-    result.width = container ? (container.clientWidth || 640) : 640;
+    result.width = mountWidth(container);
     if (!container) return result;
 
     var expanded = expandedByContainer.get(container) || false;
@@ -1688,14 +1571,14 @@
     if (typeof cursor !== "number") cursor = 0;
 
     var previous = readingsByContainer.get(container) || null;
-    var fresh = {};
+    var fresh = Object.create(null);
     if (previous) {
       for (var i = 0; i < result.rows.length; i += 1) {
         var row = result.rows[i];
         if (previous[row.id] && previous[row.id] !== row.reading) fresh[row.id] = true;
       }
     }
-    var next = {};
+    var next = Object.create(null);
     for (var j = 0; j < result.rows.length; j += 1) next[result.rows[j].id] = result.rows[j].reading;
     readingsByContainer.set(container, next);
 
@@ -1707,20 +1590,22 @@
 
     container.textContent = "";
     dataByContainer.set(container, data);
+    optionsByContainer.set(container, opts);
+    observeWidth(container);
 
     var relations = {
       knowledge: (data && data.knowledge) || opts.knowledge || null,
       events: (data && data.events) || opts.events || null,
     };
 
-    // The hall sizes from its own rows. The mount no longer caps the band, so the page
-    // carries the length and a large hall runs long rather than scrolling inside itself;
-    // the constant is the bound for a mount that states no height of its own.
-    var laid = layoutStage(result.stage, result.width, SHELL_BOUND);
+    var laid = layoutStage(result.stage, result.width, container);
+    var priorSeat = cursorSeatByContainer.get(container);
+    if (priorSeat && laid.order.indexOf(priorSeat) >= 0) cursor = laid.order.indexOf(priorSeat);
     if (laid.order.length) cursor = ((cursor % laid.order.length) + laid.order.length) % laid.order.length;
     else cursor = 0;
     cursorByContainer.set(container, cursor);
     var cursorId = laid.order[cursor] || "";
+    cursorSeatByContainer.set(container, cursorId);
     var stage = { svg: null, order: laid.order, height: 0 };
     result.drawnHeight = 0;
     result.drawnSeats = laid.order.length;
@@ -1746,12 +1631,21 @@
       if (result.rows[c].id === cursorId) cursorRow = result.rows[c];
     }
 
+    function redrawCursor() {
+      renderAttention(container, dataByContainer.get(container), opts);
+      var current = container.querySelector(".att-seat.att-cursor");
+      if (current && typeof current.scrollIntoView === "function") {
+        current.scrollIntoView({ block: "nearest", inline: "nearest" });
+      }
+    }
+
     function moveCursor(step) {
       var order = stage.order;
       if (!order.length) return;
       cursor = ((cursor + step) % order.length + order.length) % order.length;
       cursorByContainer.set(container, cursor);
-      renderAttention(container, dataByContainer.get(container), opts);
+      cursorSeatByContainer.set(container, order[cursor]);
+      redrawCursor();
     }
 
     function selectCursor() {
@@ -1780,14 +1674,16 @@
           event.preventDefault();
           cursor = 0;
           cursorByContainer.set(container, 0);
-          renderAttention(container, dataByContainer.get(container), opts);
+          cursorSeatByContainer.set(container, stage.order[0]);
+          redrawCursor();
           return;
         }
         if (key === "End") {
           event.preventDefault();
           cursor = stage.order.length - 1;
           cursorByContainer.set(container, cursor);
-          renderAttention(container, dataByContainer.get(container), opts);
+          cursorSeatByContainer.set(container, stage.order[cursor]);
+          redrawCursor();
           return;
         }
         if (key === "Enter" || key === " " || key === "Spacebar") { event.preventDefault(); selectCursor(); }
@@ -1800,6 +1696,8 @@
     // The legend decodes the marks the pit draws. With no seat seated and nothing
     // listed there is nothing to decode, so the pit keeps one line.
     if (laid.order.length || listed.length) container.appendChild(legendNode());
+    var context = ensembleContext(result.stage, opts);
+    if (context) container.appendChild(context);
 
     var folded = listed.length - shown.length;
     result.strip = {
@@ -1847,12 +1745,10 @@
       container.appendChild(fold);
     }
 
-    // The mount cannot scroll - the page carries the drawing at its own height - so
-    // the reader's place across a rebuild is the focus: restoring it brings the
-    // reader's seat back into view through the page's own scroll.
+    // Preserve keyboard focus across redraws without moving the page.
     if (restore) {
       var back = container.querySelector('[data-att-key="' + cssEscape(restore) + '"]');
-      if (back && typeof back.focus === "function") back.focus();
+      if (back && typeof back.focus === "function") back.focus({ preventScroll: true });
     }
     return result;
   }
