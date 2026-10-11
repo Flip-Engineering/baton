@@ -10,6 +10,7 @@ import ./instance-laws.bend as InstanceLaws
 import ./messaging-laws.bend as MessagingLaws
 import ./connect-laws.bend as ConnectLaws
 import ./naming-laws.bend as NamingLaws
+import ./attempt-custody-laws.bend as AttemptCustodyLaws
 import ./delivery.bend as Delivery
 import ./turn.bend as Turn
 import ../coordinator/commands.bend as C
