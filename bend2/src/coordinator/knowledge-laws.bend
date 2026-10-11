@@ -11,9 +11,11 @@
 import Base
 import ../coordinator/commands.bend as C
 import ./knowledge.bend as K
+import ./knowledge-v1.bend as K1
 import ./delivery.bend as Delivery
 import ./store.bend as Store
 import ../host/sqlite.bend as DB
+import ../git/text.bend as Tx
 
 law m1_the_knowledge_schema_retains_findings_and_promotions:
   {K.knowledge_schema() == "CREATE TABLE IF NOT EXISTS knowledge (id TEXT UNIQUE NOT NULL, author TEXT NOT NULL, claim TEXT NOT NULL, evidence TEXT NOT NULL, limits TEXT NOT NULL);" ++ "CREATE TABLE IF NOT EXISTS knowledge_promotions (id TEXT UNIQUE NOT NULL, finding TEXT NOT NULL, author TEXT NOT NULL, source TEXT NOT NULL, destination TEXT NOT NULL, promoted_by TEXT NOT NULL);" : String}
@@ -322,4 +324,166 @@ law m14_the_knowledge_verb_refuses_a_missing_argument:
   {C.parse(["knowledge"]) == C.Invalid{} : C.Command}
 
 def m14_the_knowledge_verb_refuses_a_missing_argument():
+  {==}
+
+# V1: the v1 tables live beside the legacy ones, admission runs one
+# transaction that checks six rules in order before writing, and a
+# violation answers a v1-refused refusal naming its rule and instance.
+# The storage validator checks structure and method classification only.
+law v1_the_v1_schema_creates_both_tables_beside_legacy:
+  {K1.v1_schema() == "CREATE TABLE IF NOT EXISTS knowledge_v1 (id TEXT UNIQUE NOT NULL,author TEXT NOT NULL,kind TEXT NOT NULL,statement TEXT NOT NULL,context TEXT NOT NULL,evidence TEXT NOT NULL,limits TEXT NOT NULL DEFAULT '',uncertainty TEXT NOT NULL DEFAULT '',details TEXT NOT NULL,schema_version INTEGER NOT NULL DEFAULT 1,supersedes TEXT,payload TEXT NOT NULL);" ++ "CREATE TABLE IF NOT EXISTS knowledge_edges_v1 (id TEXT UNIQUE NOT NULL,author TEXT NOT NULL,kind TEXT NOT NULL,source TEXT NOT NULL,target TEXT NOT NULL,context TEXT NOT NULL,basis TEXT NOT NULL,rationale TEXT NOT NULL,limits TEXT NOT NULL DEFAULT '',uncertainty TEXT NOT NULL DEFAULT '',details TEXT NOT NULL,schema_version INTEGER NOT NULL DEFAULT 1,supersedes TEXT,payload TEXT NOT NULL);" : String}
+
+def v1_the_v1_schema_creates_both_tables_beside_legacy():
+  {==}
+
+law v1_node_kinds_are_the_ten_closed_kinds:
+  {K1.v1_node_kinds() == "'question','claim','hypothesis','observation','research-finding','study','evidence','argument','proposal','decision'" : String}
+
+def v1_node_kinds_are_the_ten_closed_kinds():
+  {==}
+
+law v1_edge_kinds_are_the_sixteen_closed_kinds:
+  {K1.v1_edge_kinds() == "'supports','challenges','contradicts','negates','implies','proves','disproves','causes','correlates-with','competes-with','replicates','derived-from','investigates','produces','informs','supersedes'" : String}
+
+def v1_edge_kinds_are_the_sixteen_closed_kinds():
+  {==}
+
+law v1_legacy_kinds_name_the_readable_legacy_vocabulary:
+  {K1.v1_legacy_kinds() == "'fact','decision','finding','instruction','constraint','context-ref','note'" : String}
+
+def v1_legacy_kinds_name_the_readable_legacy_vocabulary():
+  {==}
+
+law v1_a_refusal_names_its_rule_and_instance:
+  for rule: String
+  for instance: String
+  {K1.v1_refusal(rule, instance) == "{\"error\":\"v1-refused\",\"rule\":" ++ C.q(rule) ++ ",\"id\":" ++ C.q(instance) ++ "}" : String}
+
+def v1_a_refusal_names_its_rule_and_instance(rule, instance):
+  {==}
+
+law v1_a_refused_answer_carries_the_v1_prefix:
+  for saved: String
+  {K1.v1_refused(saved) == Tx.starts_with(saved, "{\"error\":\"v1-refused\"") : Bool}
+
+def v1_a_refused_answer_carries_the_v1_prefix(saved):
+  {==}
+
+law v1_required_text_rejects_missing_wrong_and_empty:
+  {K1.v1_req_text("value", "$.id") == "(json_type(value,'$.id') IS NULL OR json_type(value,'$.id')!='text' OR json_extract(value,'$.id')='')" : String}
+
+def v1_required_text_rejects_missing_wrong_and_empty():
+  {==}
+
+law v1_a_node_reference_carries_id_and_closed_kind:
+  {K1.v1_noderef_ok("r") == "((SELECT COUNT(*) FROM json_each(r))==2 AND (json_type(r,'$.id') IS NULL OR json_type(r,'$.id')!='text' OR json_extract(r,'$.id')='')==0 AND (json_type(r,'$.kind') IS NULL OR json_type(r,'$.kind')!='text' OR json_extract(r,'$.kind') NOT IN ('question','claim','hypothesis','observation','research-finding','study','evidence','argument','proposal','decision'))==0)" : String}
+
+def v1_a_node_reference_carries_id_and_closed_kind():
+  {==}
+
+law v1_an_edge_reference_carries_id_edge_and_edge_kind:
+  {K1.v1_edgeref_ok("r") == "((SELECT COUNT(*) FROM json_each(r))==3 AND (json_type(r,'$.id') IS NULL OR json_type(r,'$.id')!='text' OR json_extract(r,'$.id')='')==0 AND json_type(r,'$.kind')=='text' AND json_extract(r,'$.kind')=='edge' AND (json_type(r,'$.edgeKind') IS NULL OR json_type(r,'$.edgeKind')!='text' OR json_extract(r,'$.edgeKind') NOT IN ('supports','challenges','contradicts','negates','implies','proves','disproves','causes','correlates-with','competes-with','replicates','derived-from','investigates','produces','informs','supersedes'))==0)" : String}
+
+def v1_an_edge_reference_carries_id_edge_and_edge_kind():
+  {==}
+
+law v1_a_batch_checks_validity_closure_version_and_arrays:
+  for batch: String
+  {K1.v1_batch_violated(batch) == "(json_valid(" ++ batch ++ ")!=1 OR (EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ") WHERE key NOT IN ('schemaVersion','nodes','edges'))) OR json_type(" ++ batch ++ ",'$.schemaVersion') IS NULL OR json_extract(" ++ batch ++ ",'$.schemaVersion')!=1 OR json_type(" ++ batch ++ ",'$.nodes') IS NULL OR json_type(" ++ batch ++ ",'$.nodes')!='array' OR json_type(" ++ batch ++ ",'$.edges') IS NULL OR json_type(" ++ batch ++ ",'$.edges')!='array')" : String}
+
+def v1_a_batch_checks_validity_closure_version_and_arrays(batch):
+  {==}
+
+law v1_structure_checks_batch_then_nodes_then_edges:
+  for batch: String
+  {K1.v1_structure_violated(batch) == "(" ++ K1.v1_batch_violated(batch) ++ " OR (EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.nodes') n WHERE " ++ K1.v1_node_envelope_violated() ++ " OR " ++ K1.v1_node_details_violated() ++ ")) OR (EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.edges') e WHERE " ++ K1.v1_edge_envelope_violated() ++ " OR " ++ K1.v1_edge_details_violated() ++ ")))" : String}
+
+def v1_structure_checks_batch_then_nodes_then_edges(batch):
+  {==}
+
+law v1_the_endpoint_rule_covers_edges_and_internal_references:
+  for batch: String
+  {K1.v1_endpoint_violated(batch) == "((EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.edges') e WHERE " ++ K1.v1_edge_endpoints_bad(batch) ++ ")) OR (EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.nodes') n WHERE " ++ K1.v1_node_refs_bad(batch) ++ ")) OR (EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.edges') e WHERE " ++ K1.v1_edge_refs_bad(batch) ++ ")))" : String}
+
+def v1_the_endpoint_rule_covers_edges_and_internal_references(batch):
+  {==}
+
+law v1_admission_checks_six_rules_in_order:
+  for batch: String
+  for author: String
+  {K1.v1_blocked(batch, author) == "(" ++ K1.v1_structure_violated(batch) ++ " OR " ++ K1.v1_endpoint_violated(batch) ++ " OR " ++ K1.v1_author_violated(batch, author) ++ " OR " ++ K1.v1_identity_violated(batch) ++ " OR " ++ K1.v1_method_violated(batch) ++ " OR " ++ K1.v1_study_violated(batch) ++ ")" : String}
+
+def v1_admission_checks_six_rules_in_order(batch, author):
+  {==}
+
+law v1_the_answer_names_the_first_violated_rule:
+  for batch: String
+  for author: String
+  {K1.v1_answer(batch, author) == "SELECT CASE WHEN " ++ K1.v1_structure_violated(batch) ++ " THEN " ++ K1.v1_refusal_sql("structure", K1.v1_structure_offender(batch)) ++ " WHEN " ++ K1.v1_endpoint_violated(batch) ++ " THEN " ++ K1.v1_refusal_sql("endpoint", K1.v1_endpoint_offender(batch)) ++ " WHEN " ++ K1.v1_author_violated(batch, author) ++ " THEN " ++ K1.v1_refusal_sql("author", K1.v1_author_offender(batch, author)) ++ " WHEN " ++ K1.v1_identity_violated(batch) ++ " THEN " ++ K1.v1_refusal_sql("identity", K1.v1_identity_offender(batch)) ++ " WHEN " ++ K1.v1_method_violated(batch) ++ " THEN " ++ K1.v1_refusal_sql("method", K1.v1_method_offender(batch)) ++ " WHEN " ++ K1.v1_study_violated(batch) ++ " THEN " ++ K1.v1_refusal_sql("study", K1.v1_study_offender(batch)) ++ " ELSE " ++ K1.v1_admitted_sql(batch) ++ " END;" : String}
+
+def v1_the_answer_names_the_first_violated_rule(batch, author):
+  {==}
+
+law v1_the_commit_writes_before_it_answers:
+  for batch: String
+  for author: String
+  {K1.v1_commit_sql(batch, author) == "BEGIN IMMEDIATE;" ++ C.schema() ++ K.knowledge_schema() ++ K1.v1_schema() ++ K1.v1_node_insert(batch, author) ++ K1.v1_edge_insert(batch, author) ++ K1.v1_node_fill(batch, author) ++ K1.v1_edge_fill(batch, author) ++ K1.v1_answer(batch, author) ++ "COMMIT;" : String}
+
+def v1_the_commit_writes_before_it_answers(batch, author):
+  {==}
+
+law v1_node_inserts_skip_identical_rows:
+  for batch: String
+  for author: String
+  {K1.v1_node_insert(batch, author) == "INSERT INTO knowledge_v1(id,author,kind,statement,context,evidence,limits,uncertainty,details,schema_version,supersedes,payload) SELECT json_extract(n.value,'$.id')," ++ author ++ ",json_extract(n.value,'$.kind'),json_extract(n.value,'$.statement'),json_extract(n.value,'$.context'),json_extract(n.value,'$.evidence'),json_extract(n.value,'$.limits'),json_extract(n.value,'$.uncertainty'),json_extract(n.value,'$.details'),1," ++ K1.v1_node_supersedes(batch) ++ ",n.value FROM json_each(" ++ batch ++ ",'$.nodes') n WHERE NOT " ++ K1.v1_blocked(batch, author) ++ " AND NOT EXISTS(SELECT 1 FROM knowledge_v1 WHERE id==json_extract(n.value,'$.id'));" : String}
+
+def v1_node_inserts_skip_identical_rows(batch, author):
+  {==}
+
+law v1_a_promotion_reads_the_v1_row:
+  for id: String
+  for promoter: String
+  for source_kind: String
+  for source: String
+  for destination_kind: String
+  for destination: String
+  for finding: String
+  {K1.v1_promotion_statement(id,promoter,source_kind,source,destination_kind,destination,finding) == "INSERT INTO knowledge_promotions(id,finding,author,source_kind,source,destination_kind,destination,promoted_by) SELECT " ++ C.q(id) ++ ",k.id,k.author," ++ C.q(source_kind) ++ "," ++ C.q(source) ++ "," ++ C.q(destination_kind) ++ "," ++ C.q(destination) ++ "," ++ C.q(promoter) ++ " FROM knowledge_v1 k WHERE k.id=" ++ C.q(finding) ++ " AND " ++ K.promotion_admitted(promoter,destination_kind,destination) ++ " AND " ++ K.source_carries(source_kind,source) ++ " ON CONFLICT(id) DO NOTHING;" ++ K.knowledge_conflict_sql("promotion-id-conflict","knowledge_promotions",C.q(id),"EXISTS(SELECT 1 FROM knowledge_v1 k WHERE k.id=" ++ C.q(finding) ++ " AND " ++ K.promotion_admitted(promoter,destination_kind,destination) ++ " AND " ++ K.source_carries(source_kind,source) ++ ")",K.promotion_coordinates(id,promoter,source_kind,source,destination_kind,destination,finding),"'finding',finding,'source',source,'sourceKind',source_kind,'destination',destination,'destinationKind',destination_kind") : String}
+
+def v1_a_promotion_reads_the_v1_row(id,promoter,source_kind,source,destination_kind,destination,finding):
+  {==}
+
+# V1: the admit entry runs one committing query, then answers the saved
+# text or dies with it. The promote entry does the same for promotions.
+def v1_admit_io(+db: String, +author: String, +batchJson: String) -> IO(Unit):
+  do IO<Unit>:
+    +saved : String <- IO.try(String,Store.transact_sql(db,K1.v1_commit_sql(C.q(batchJson),C.q(author))))
+    Bool.pick(IO(Unit),K1.v1_refused(saved),IO.die(Unit,2,saved),IO.write(saved))
+
+law v1_admit_queries_then_refuses_or_answers:
+  for db: String
+  for author: String
+  for batchJson: String
+  {K1.v1_admit(db, author, batchJson) == v1_admit_io(db,author,batchJson) : IO(Unit)}
+
+def v1_admit_queries_then_refuses_or_answers(db, author, batchJson):
+  {==}
+
+def v1_promote_io(+db: String, +id: String, +promoter: String, +source_kind: String, +source: String, +destination_kind: String, +destination: String, +finding: String) -> IO(Unit):
+  do IO<Unit>:
+    +saved : String <- IO.try(String,Store.transact_sql(db,"BEGIN IMMEDIATE;" ++ C.schema() ++ K.knowledge_schema() ++ K1.v1_schema() ++ K1.v1_promotion_statement(id,promoter,source_kind,source,destination_kind,destination,finding) ++ K1.v1_promotion_answer(id,promoter,source_kind,source,destination_kind,destination,finding) ++ "COMMIT;"))
+    Bool.pick(IO(Unit),Store.refused(saved),IO.die(Unit,2,saved),IO.write(saved))
+
+law v1_promote_queries_and_answers:
+  for db: String
+  for id: String
+  for promoter: String
+  for source_kind: String
+  for source: String
+  for destination_kind: String
+  for destination: String
+  for finding: String
+  {K1.v1_promote_scoped(db,id,promoter,source_kind,source,destination_kind,destination,finding) == v1_promote_io(db,id,promoter,source_kind,source,destination_kind,destination,finding) : IO(Unit)}
+
+def v1_promote_queries_and_answers(db,id,promoter,source_kind,source,destination_kind,destination,finding):
   {==}

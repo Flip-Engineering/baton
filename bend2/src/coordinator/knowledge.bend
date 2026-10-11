@@ -268,6 +268,12 @@ def notice_statement(+id: String, +author: String, +claim: String, +evidence: St
   ++ " ON CONFLICT(id) DO NOTHING;"
   ++ knowledge_conflict_sql("knowledge-notice-conflict","messages",C.q(notice_id(id)),notice_target(author) ++ " IS NOT NULL AND EXISTS(SELECT 1 FROM knowledge WHERE id=" ++ C.q(id) ++ " AND author=" ++ C.q(author) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits) ++ ")", "sender=" ++ C.q(author) ++ " AND recipient=" ++ notice_target(author) ++ " AND kind='question' AND body=" ++ notice_body(id,author),"'sender',sender,'recipient',recipient,'kind',kind")
 
+# M-8: evidence names an existing retained message the author is a party to.
+# This states the condition the m8 law pins. The legacy record path does
+# not call it; legacy admission behavior is unchanged here.
+def evidence_ok(+author: String, +evidence: String) -> String:
+  "(substr(" ++ C.q(evidence) ++ ",1,8)='message:' AND EXISTS(SELECT 1 FROM messages WHERE id=substr(" ++ C.q(evidence) ++ ",9) AND (sender=" ++ C.q(author) ++ " OR recipient=" ++ C.q(author) ++ ")))"
+
 def finding_statement(+id: String, +author: String, +claim: String, +evidence: String, +limits: String) -> String:
   "INSERT INTO knowledge(id,author,claim,evidence,limits) SELECT " ++ C.q(id) ++ "," ++ C.q(author) ++ "," ++ C.q(claim) ++ "," ++ C.q(evidence) ++ "," ++ C.q(limits) ++ " WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(author) ++ ")"
   ++ " ON CONFLICT(id) DO NOTHING;"
