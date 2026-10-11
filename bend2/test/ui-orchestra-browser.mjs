@@ -1727,7 +1727,7 @@ check('a reference bead states that the store does not hold what it names', awai
   return beads.every((bead) => {
     const title = bead.textContent || '';
     const named = /^reference (.+) \u2014 the store does not hold this record$/.exec(title);
-    return Boolean(named) && !held.has(named[1].replace(/ \(.*\)$/, '').trim());
+    return Boolean(named) && !held.has(named[1].replace(/ \\(.*\\)$/, '').trim());
   });
 })()`));
 check('the band does not scroll: the page carries its drawing at its own height', await evalJs(`(() => {
@@ -1737,10 +1737,10 @@ check('the band does not scroll: the page carries its drawing at its own height'
 })()`));
 check('the owed units count what the seat title states', await evalJs(`(() => {
   const seats = [...document.querySelectorAll('#attention-band .att-seat')];
-  const owed = seats.filter((s) => /\d+ owed/.test(s.textContent || ''));
+  const owed = seats.filter((s) => /\\d+ owed/.test(s.textContent || ''));
   if (!owed.length) return false;
   return owed.every((seat) => {
-    const stated = Number((/(\d+) owed/.exec(seat.textContent || '') || [0, 0])[1]);
+    const stated = Number((/(\\d+) owed/.exec(seat.textContent || '') || [0, 0])[1]);
     const marks = seat.querySelectorAll('.att-owed').length;
     return marks === Math.min(stated, 6);
   });
@@ -2279,7 +2279,7 @@ check('a reference-only endpoint states the full record is not held and offers n
   await evalJs(`(() => {
     const block = document.querySelector('#selection #sel-sec-finding');
     if (!block) return false;
-    return /The full record is not held here\./.test(block.textContent || '')
+    return /The full record is not held here\\./.test(block.textContent || '')
       && !block.querySelector('[data-selkey^="sel:map:"]')
       && !block.querySelector('[data-selkey^="sel:seat:"]');
   })()`));
@@ -2301,7 +2301,7 @@ check('a held finding offers the way back and reads its cited edge as recorded e
     const wayBack = Boolean(map) && Boolean(seat)
       && /Show on the map/.test((map.textContent || ''))
       && /Show the author/.test((seat.textContent || ''));
-    return wayBack && /\[1\] recorded evidence \u00b7 message/.test(words);
+    return wayBack && /\\[1\\] recorded evidence \u00b7 message/.test(words);
   })()`));
 check('the stage draws the authored seam on the arc with its chevron and its value',
   await evalJs(`(() => {
@@ -2407,7 +2407,7 @@ check('a cited seam states its author and seat only where the payload anchors on
       if (!found) {
         // The merged anchored shape carries the count and no source clause, and leaves
         // the findings to the record (attention.js:1012).
-        return /^\d+ cited edges recorded as evidence/.test(text);
+        return /^\\d+ cited edges recorded as evidence/.test(text);
       }
       const single = /^1 cited edge recorded as evidence/.test(text);
       return !single || /^finding:/.test(String(found[1]).trim());
