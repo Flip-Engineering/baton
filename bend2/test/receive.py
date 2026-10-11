@@ -537,7 +537,7 @@ class Receive(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix="receive ' paths ", dir=ROOT / '.scratch/bend2')
         self.addCleanup(self.temp.cleanup)
         self.directory = pathlib.Path(self.temp.name)
-        self.ipc = tempfile.TemporaryDirectory(prefix='baton2-receive-ipc-', dir='/tmp')
+        self.ipc = tempfile.TemporaryDirectory(prefix='baton2-receive-ipc-')
         self.addCleanup(self.ipc.cleanup)
         original_runtime = os.environ.get('XDG_RUNTIME_DIR')
         if original_runtime is None:

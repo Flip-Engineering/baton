@@ -168,7 +168,9 @@ print(json.dumps({'stream':{'kind':'session','id':native},'payload_type':'run.te
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         if terminal == 'completed':
             state = self.call('session', player)
-            self.assertTrue(state['taskCompletion']['confirmed'], state)
+            self.assertTrue(state['taskCompletion']['confirmed'],
+                            {'state': state, 'turnStdout': result.stdout,
+                             'turnStderr': result.stderr})
             self.assertFalse(state['taskCompletion']['open'], state)
             self.call('connect', player, state['native'], '')
             self.call('connect', parent_state['id'], parent_state['native'], parent_state['endpoint'])

@@ -358,7 +358,7 @@ class KnowledgeV1(unittest.TestCase):
         self.relate(edge('sibling', 'cited-support', 'supports',
                          ('cited-observation', 'observation'), ('cited-claim', 'claim'),
                          details={'bearing': 'The observation bears on the claim.'}))
-        self.call('message', 'cited-message', 'sibling', 'grand', 'report',
+        self.call('message', 'cited-message', 'sibling', 'root', 'report',
                   'The researcher records a source description.')
         uri = 'https://example.invalid/research-source'
         references = [
@@ -508,9 +508,10 @@ class KnowledgeV1(unittest.TestCase):
                             ('revision-evidence', 'evidence'), (revised_node['id'], 'claim'),
                             details={'bearing': 'The evidence bears on the revised claim.'})
         def revision(ident, source, target):
-            return edge('grand', ident, 'supersedes', ('unused', 'claim'), ('unused', 'claim'),
-                        source=source, target=target,
-                        details={'revision': 'This authored record revises the earlier record.'})
+            payload = edge('grand', ident, 'supersedes', ('unused', 'claim'), ('unused', 'claim'),
+                           details={'revision': 'This authored record revises the earlier record.'})
+            payload.update(source=source, target=target)
+            return payload
 
         node_source = {'id': revised_node['id'], 'kind': 'claim'}
         edge_source = {'id': revised_edge['id'], 'kind': 'edge', 'edgeKind': 'supports'}

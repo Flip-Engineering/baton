@@ -1330,7 +1330,8 @@ static void br_keeper_cleanup_control_path(BrKeeper *keeper) {
   char *slash=strrchr(parent,'/');
   if(!slash || slash==parent || strcmp(slash+1,"control")) {free(parent);return;}
   *slash=0;
-  if(strncmp(parent,"/tmp/baton-retained-",20)) {free(parent);return;}
+  const char *name=strrchr(parent,'/');
+  if(!name || strncmp(name+1,"baton-retained-",15)) {free(parent);return;}
   struct stat directory_info,socket_info;
   if(lstat(parent,&directory_info) || !S_ISDIR(directory_info.st_mode) ||
      directory_info.st_uid!=geteuid() || (directory_info.st_mode&0777)!=0700) {
@@ -3164,9 +3165,20 @@ static int br_attempt_prepare(BatonProcessCall *call,char **directory_out,char *
   call->fresh=1;
   char *directory=realpath(call->directory,NULL);
   if(!directory)return errno;
-  char temporary[]="/tmp/baton-retained-XXXXXX";
-  if(!mkdtemp(temporary)){free(directory);return errno;}
+  const char *temporary_root=getenv("TMPDIR");
+  if(!temporary_root || !temporary_root[0])temporary_root="/tmp";
+  char *resolved_root=NULL;
+  if(temporary_root[0]!='/') {
+    resolved_root=realpath(temporary_root,NULL);
+    if(!resolved_root){int error=errno;free(directory);return error;}
+    temporary_root=resolved_root;
+  }
+  char *temporary=br_path(temporary_root,"baton-retained-XXXXXX");
+  free(resolved_root);
+  if(!temporary){free(directory);return ENOMEM;}
+  if(!mkdtemp(temporary)){int error=errno;free(temporary);free(directory);return error;}
   char *address=br_path(temporary,"control"),*manifest_path=br_path(directory,"manifest");
+  free(temporary);
   int error=!address || !manifest_path?ENOMEM:0;
   if(!error) {
     BrManifestHeader header={.keep_stdin=call->keep_stdin,.reserved=0};
