@@ -2,7 +2,7 @@
 # reference. The host response is retained as a complete JSON object. Read
 # failures retain their host or database code and text through IO.try.
 import Base
-import ./commands.bend as C
+import ../coordinator/commands.bend as C
 import ../host/instance.bend as Custody
 import ../host/sqlite.bend as DB
 import ../git/text.bend as Tx
