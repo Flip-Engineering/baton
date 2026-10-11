@@ -12,10 +12,9 @@ import ../git/text.bend as Tx
 # in order, the first being the argv in its length-colon-bytes encoding), native.pid
 # as text and the acknowledged marker; host/instance.bend frames the checkpoint as
 # BATONC03 around the schema-1 JSON that observer-checkpoint.bend encodes, whose
-# first field after schema is guidance_cursor. The binary admission and lifecycle
-# records are not decoded here: the text reader is the only file reader available,
-# and their inodes and latch words are binary, so they are named remaining work
-# behind a binary-read host capability.
+# first field after schema is guidance_cursor. The admission and lifecycle records
+# are read through the custody host's own projection, Instance.state, whose JSON
+# keys the host builds from those records in br_instance_state_call.
 
 # The runtime identity is argv element zero of the recorded manifest: the binary
 # path the attempt was admitted with. The manifest header occupies 8 + 8*count +
@@ -195,6 +194,38 @@ def checkpoint_read(extracted: Result<&1,&1,U32 & String,String>) -> IO(String):
     case Fail{error}: IO.pure(String,"")
     case Done{+text}: IO.pure(String,Tx.trim_nl(text))
 
+# The recorded host lifecycle facts for one attempt, read through the custody
+# host's own projection rather than by parsing the binary record. Instance.state
+# returns one JSON object the host builds in br_instance_state_call, whose keys
+# come from the durable lifecycle record and the process observation: the state
+# token from br_lifecycle_state, spawn_latched, cancelled and observer_ready from
+# the record's own latch words, the recorded native pid, and whether its exit
+# status is known. An attach refusal, a refused state read and a body that is not
+# the host's JSON are three explicit outcomes, never silent defaults.
+def custody_lifecycle(db: String, directory: String) -> IO(String):
+  do IO<String>:
+    attached : Result<&1,&1,U32 & String,U32> <- IO.try(U32,Custody.Instance.attach(db,directory))
+    lifecycle_attached(db,attached)
+
+def lifecycle_attached(db: String, attached: Result<&1,&1,U32 & String,U32>) -> IO(String):
+  match attached:
+    case Fail{error}: IO.pure(String,"{\"lifecycleState\":\"unavailable\"}")
+    case Done{+handle}: do IO<String>:
+      stated : Result<&1,&1,U32 & String,String> <- IO.try(String,Custody.Instance.state(handle))
+      lifecycle_extract(db,stated)
+
+def lifecycle_extract(db: String, stated: Result<&1,&1,U32 & String,String>) -> IO(String):
+  match stated:
+    case Fail{error}: IO.pure(String,"{\"lifecycleState\":\"transport\"}")
+    case Done{+body}: do IO<String>:
+      extracted : Result<&1,&1,U32 & String,String> <- IO.try(String,DB.Sql.query(db,"WITH state(value) AS (VALUES(" ++ C.q(body) ++ ")) SELECT CASE WHEN json_valid(value) THEN json_object('lifecycleState',json_extract(value,'$.state'),'spawnLatched',json_extract(value,'$.spawn_latched'),'cancelled',json_extract(value,'$.cancelled'),'observerReady',json_extract(value,'$.observer_ready'),'recordedPid',json_extract(value,'$.native_pid'),'statusKnown',json_extract(value,'$.status_known'),'status',json_extract(value,'$.status')) ELSE json_object('lifecycleState','corrupt') END FROM state;"))
+      lifecycle_read(extracted)
+
+def lifecycle_read(extracted: Result<&1,&1,U32 & String,String>) -> IO(String):
+  match extracted:
+    case Fail{error}: IO.pure(String,"{\"lifecycleState\":\"corrupt\"}")
+    case Done{+text}: IO.pure(String,Tx.trim_nl(text))
+
 # The composing read for one session's recorded attempt. The directory comes from
 # the executions row, which is the session's recorded attempt pointer; every
 # custody fact here describes that recorded attempt and none of them claims a
@@ -219,8 +250,9 @@ def custody_recorded(db: String, directory: String) -> IO(String):
       pid : String <- recorded_pid(directory)
       marker : String <- acknowledged(directory)
       cursor : String <- checkpoint_cursor(db,directory)
+      lifecycle : String <- custody_lifecycle(db,directory)
       +release : String <- IO.pure(String,release_segment(binary))
-      rendered : Result<&1,&1,U32 & String,String> <- IO.try(String,DB.Sql.query(db,"SELECT json_object('binaryPath'," ++ C.q(binary) ++ ",'release'," ++ C.q(release) ++ ",'recordedPid'," ++ C.q(pid) ++ ",'acknowledged',json(" ++ marker ++ "),'guidanceCursor'," ++ C.q(cursor) ++ ");"))
+      rendered : Result<&1,&1,U32 & String,String> <- IO.try(String,DB.Sql.query(db,"SELECT json_object('binaryPath'," ++ C.q(binary) ++ ",'release'," ++ C.q(release) ++ ",'recordedPid'," ++ C.q(pid) ++ ",'acknowledged',json(" ++ marker ++ "),'guidanceCursor'," ++ C.q(cursor) ++ ",'lifecycle',json(" ++ lifecycle ++ "));"))
       custody_rendered(rendered)
 
 def custody_rendered(rendered: Result<&1,&1,U32 & String,String>) -> IO(String):

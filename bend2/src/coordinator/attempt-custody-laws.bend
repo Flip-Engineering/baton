@@ -78,3 +78,17 @@ law custody_facts_are_empty_without_a_recorded_directory:
 
 def custody_facts_are_empty_without_a_recorded_directory():
   {==}
+
+# An attach refusal is an explicit unavailable outcome, never a silent default.
+law custody_lifecycle_is_unavailable_when_attach_refuses:
+  {Custody.lifecycle_attached("db",Fail{(2,"refused")}) == IO.pure(String,"{\"lifecycleState\":\"unavailable\"}") : IO(String)}
+
+def custody_lifecycle_is_unavailable_when_attach_refuses():
+  {==}
+
+# A refused state read is an explicit transport outcome.
+law custody_lifecycle_is_transport_when_the_state_read_fails:
+  {Custody.lifecycle_extract("db",Fail{(5,"io")}) == IO.pure(String,"{\"lifecycleState\":\"transport\"}") : IO(String)}
+
+def custody_lifecycle_is_transport_when_the_state_read_fails():
+  {==}
