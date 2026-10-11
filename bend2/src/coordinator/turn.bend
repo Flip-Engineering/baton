@@ -880,7 +880,7 @@ def muse_final_extract(+cmd: String, +cwd: String, +attempt: String, fields: Lis
 
 def muse_final_event(+db: String, +event: String, +extraction: String, +diagnostic: String) -> IO(String):
   do IO<String>:
-    enriched : String <- IO.try(String,DB.Sql.query(db,"WITH extracted(value) AS (VALUES(" ++ C.q(extraction) ++ ")) SELECT json_set(" ++ C.q(event) ++ ",'$.baton.finalResponse',CASE WHEN json_valid(value) AND json_extract(value,'$.status') IN ('selected','unavailable') THEN json_set(json(value),'$.diagnosticLog'," ++ C.q(diagnostic) ++ ") ELSE json_object('status','unavailable','diagnostic',json_object('code','helperOutput','detail',value),'diagnosticLog'," ++ C.q(diagnostic) ++ ") END) FROM extracted;"))
+    enriched : String <- IO.try(String,DB.Sql.query(db,"WITH extracted(value) AS (VALUES(" ++ C.q(extraction) ++ ")) SELECT json_set(" ++ C.q(event) ++ ",'$.baton.finalResponse',json(CASE WHEN json_valid(value) AND json_extract(value,'$.status') IN ('selected','unavailable') THEN json_set(json(value),'$.diagnosticLog'," ++ C.q(diagnostic) ++ ") ELSE json_object('status','unavailable','diagnostic',json_object('code','helperOutput','detail',value),'diagnosticLog'," ++ C.q(diagnostic) ++ ") END)) FROM extracted;"))
     IO.pure(String,Tx.trim_nl(enriched))
 
 def muse_final_saved(+status: String, +event: String, +error: String, incomplete: Bool, saved: Result<&1,&1,U32 & String,String>) -> IO(Outcome):
