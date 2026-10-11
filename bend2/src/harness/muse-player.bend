@@ -74,10 +74,11 @@ def output_wait(+output: String, waited: Result<&1,&1,U32 & String,String>) -> I
     case Done{+status}:
       IO.pure(String,Bool.pick(String,String.eq(status,"exit 0"),Tx.trim_nl(output),unavailable("helperExit",status)))
 
-def output_read_failed(+error: U32 & String, waited: Result<&1,&1,U32 & String,String>) -> IO(String):
+def output_read_failed(error: U32 & String, waited: Result<&1,&1,U32 & String,String>) -> IO(String):
+  +detail : String = error_text(error)
   match waited:
-    case Fail{wait_error}: IO.pure(String,unavailable("helperRead",error_text(error) ++ "; wait: " ++ error_text(wait_error)))
-    case Done{status}: IO.pure(String,unavailable("helperRead",error_text(error) ++ "; " ++ status))
+    case Fail{wait_error}: IO.pure(String,unavailable("helperRead",detail ++ "; wait: " ++ error_text(wait_error)))
+    case Done{status}: IO.pure(String,unavailable("helperRead",detail ++ "; " ++ status))
 
 @unsafe
 def output_read(+handle: U32, +output: String, result: Result<&1,&1,U32 & String,Maybe<String>>) -> IO(String):
