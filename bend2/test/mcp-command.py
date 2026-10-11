@@ -18,7 +18,7 @@ import time
 values = json.loads(Path(__file__).with_suffix('.json').read_text())
 if len(sys.argv) > 2 and sys.argv[2] == 'help':
     if values.get('batch', True):
-        sys.stdout.write('outbox\\ndelivery-batch\\nmessage-batch\\n')
+        sys.stdout.write('outbox\\ndelivery-batch\\nmessage-batch\\ninput MESSAGE_ID\\n')
     else:
         sys.stdout.write('delivery\\nmessage\\n')
     sys.exit(0)
@@ -117,6 +117,8 @@ class McpCommand(unittest.TestCase):
 
     def test_batch_message_tools_forward_structured_arrays_with_attached_authorship(self):
         ids = ['message-one', "message two's λ"]
+        self.command(tool='baton2_input', arguments={'id': ids[0]},
+                     session='reader', expected_args=['input', ids[0]])
         self.command(tool='baton2_delivery_batch', arguments={'ids': ids},
                      session='reader', expected_args=['delivery-batch',
                          json.dumps(ids, ensure_ascii=False, separators=(',', ':'))])
@@ -138,6 +140,9 @@ class McpCommand(unittest.TestCase):
                      expected_args=['outbox', 'attached-λ'])
         read_schema = self.tools['baton2_delivery_batch']['inputSchema']
         self.assertEqual(read_schema['properties']['ids']['type'], 'array')
+        input_schema = self.tools['baton2_input']['inputSchema']
+        self.assertEqual(set(input_schema['required']), {'id'})
+        self.assertFalse(input_schema['additionalProperties'])
         send_schema = self.tools['baton2_message_batch']['inputSchema']
         item = send_schema['properties']['messages']['items']
         self.assertEqual(set(item['required']), {'id', 'player', 'body'})
@@ -168,6 +173,7 @@ class McpCommand(unittest.TestCase):
             self.assertTrue({'baton2_delivery', 'baton2_guide'} <= tools)
             self.assertTrue({'baton2_delivery_batch', 'baton2_outbox',
                              'baton2_message_batch'}.isdisjoint(tools))
+            self.assertNotIn('baton2_input', tools)
             instructions = replies[0]['result']['instructions']
             self.assertIn('baton2_delivery reads one complete stored message', instructions)
             self.assertNotIn('baton2_delivery_batch', instructions)

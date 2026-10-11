@@ -43,6 +43,7 @@ type Command is Data:
   Ack{id: String, recipient: String, receipt: String}
   Session{id: String}
   Delivery{id: String}
+  InputDetail{id: String}
   DeliveryBatch{input: String}
   DeliveryBatchFile{path: String}
   Pending{}
@@ -310,6 +311,18 @@ def message_conflict_sql(+id: String, +sender: String, +recipient: String, +kind
 def delivery_row() -> String:
   "json_patch(json_object('id',m.id,'sender',m.sender,'recipient',m.recipient,'kind',m.kind,'body',m.body,'receipt',m.receipt,'harness',s.harness,'native',s.native,'endpoint',s.endpoint,'endpointArgv'," ++ endpoint_argv("s.endpoint") ++ ")," ++ input_state_sql("m") ++ ")"
 
+# An input detail keeps the exact stored message and recipient-owned receipt
+# beside current recipient state. Historical wake outcomes and the ordinary
+# input-to-attempt relation are not stored, so both remain explicit unknowns.
+def input_detail_row() -> String:
+  "json_object('message',json_patch(" ++ delivery_row() ++ ",json_object('seq',m.seq))"
+  ++ ",'admission',json_object('status','admitted','sequence',m.seq)"
+  ++ ",'handling',json_object('status',CASE WHEN m.receipt IS NULL THEN 'pending' ELSE 'acknowledged' END,'owner',m.recipient,'receipt',m.receipt)"
+  ++ ",'wake',json_object('historicalStatus','unrecorded','condition','Historical per-input wake outcomes are not stored.','current'," ++ wake_state_sql("s.id") ++ ")"
+  ++ ",'recipientCurrent',json_patch(json_object('scope','current','id',s.id,'parent',s.parent,'role'," ++ public_role("s.id") ++ ",'route',json_object('harness',s.harness,'native',s.native,'endpoint',s.endpoint,'endpointArgv'," ++ endpoint_argv("s.endpoint") ++ "),'execution',(SELECT json_object('attempt',id,'mode',mode,'directory',directory,'phase',phase,'status',status,'qualification','recorded') FROM executions WHERE session=s.id),'taskCompletion'," ++ task_state_sql("s.id") ++ ")," ++ session_state_sql("s.id") ++ ")"
+  ++ ",'attemptRelation',json_object('status','unrecorded','condition','No durable input-to-attempt relation is stored for ordinary retained input. The recipient current execution is a current-state reference.')"
+  ++ ",'reads',json_object('message',json_array('delivery',m.id),'recipient',json_array('player',m.recipient),'roster',json_array('players'),'turns',json_array('turns',m.recipient),'inbox',json_array('inbox',m.recipient,'--index','--state','all')))"
+
 def message_index_sql(source: String, condition: String, state: String) -> String:
   "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_patch(json_object('seq',m.seq,'id',m.id,'sender',m.sender,'recipient',m.recipient,'kind',m.kind,'receipt',m.receipt)," ++ input_state_sql("m") ++ ") AS item FROM " ++ source ++ " WHERE " ++ state ++ " AND " ++ condition ++ " ORDER BY m.seq);"
 
@@ -538,6 +551,8 @@ def sql(command: Command) -> String:
     case Session{id}: session_result(id)
     case Delivery{id}:
       "SELECT " ++ delivery_row() ++ " FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.id=" ++ q(id) ++ ";"
+    case InputDetail{id}:
+      "SELECT " ++ input_detail_row() ++ " FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.id=" ++ q(id) ++ ";"
     case Pending{}:
       "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT " ++ delivery_row() ++ " AS item FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.receipt IS NULL ORDER BY m.seq);"
     case PendingIndex{}: message_index_sql("messages m JOIN sessions s ON s.id=m.recipient","1","m.receipt IS NULL")
@@ -666,6 +681,7 @@ def parse_verb_id(+verb: String, +id: String) -> Command:
     case "outbox": Outbox{id}
     case "session": Session{id}
     case "delivery": Delivery{id}
+    case "input": InputDetail{id}
     case "delivery-batch": DeliveryBatch{id}
     case "delivery-batch-file": DeliveryBatchFile{id}
     case "worktree": Worktree{id}
@@ -706,6 +722,9 @@ def parse_verb_session_id(+verb: String, +session: String, +id: String) -> Comma
       case _: Invalid{}
     case "delivery": match id:
       case "--pretty": Pretty{Delivery{session}}
+      case _: Invalid{}
+    case "input": match id:
+      case "--pretty": Pretty{InputDetail{session}}
       case _: Invalid{}
     case "turns": match id:
       case "--pretty": Pretty{Turns{session}}

@@ -319,6 +319,54 @@ class Messaging(unittest.TestCase):
         self.assertEqual(selected[1]['delivery']['body'], first_body)
         self.assertEqual(selected[2]['detailRead'], ['delivery', 'missing-batch'])
 
+    def test_input_detail_keeps_message_settlement_and_current_recipient_state_distinct(self):
+        body = "Input detail body λ🙂.\nSecond line.\n"
+        self.send('input-detail', 'root', 'leaf-a', body=body)
+        with closing(sqlite3.connect(self.db)) as db:
+            db.execute("INSERT INTO executions(session,id,mode,directory,phase,status) "
+                       "VALUES(?,?,?,?,?,?)",
+                       ('leaf-a', 'current-attempt', 'retained', '/attempt/current',
+                        'observing', 'provider-running'))
+            db.commit()
+
+        detail = self.call('input', 'input-detail')
+        delivery = self.call('delivery', 'input-detail')
+        self.assertEqual(detail['message']['body'], body)
+        self.assertEqual(detail['message']['body'], delivery['body'])
+        self.assertEqual(detail['message']['seq'], detail['admission']['sequence'])
+        self.assertEqual(detail['admission']['status'], 'admitted')
+        self.assertEqual(detail['handling'], {
+            'status': 'pending', 'owner': 'leaf-a', 'receipt': None,
+        })
+        self.assertEqual(detail['wake']['historicalStatus'], 'unrecorded')
+        self.assertEqual(detail['wake']['current']['pending'], 1)
+        self.assertEqual(detail['recipientCurrent']['scope'], 'current')
+        self.assertEqual(detail['recipientCurrent']['id'], 'leaf-a')
+        self.assertEqual(detail['recipientCurrent']['execution'], {
+            'attempt': 'current-attempt', 'mode': 'retained',
+            'directory': '/attempt/current', 'phase': 'observing',
+            'status': 'provider-running', 'qualification': 'recorded',
+        })
+        self.assertEqual(detail['recipientCurrent']['taskCompletion']['assignmentId'],
+                         'input-detail')
+        self.assertEqual(detail['attemptRelation']['status'], 'unrecorded')
+        self.assertEqual(detail['reads'], {
+            'message': ['delivery', 'input-detail'],
+            'recipient': ['player', 'leaf-a'],
+            'roster': ['players'],
+            'turns': ['turns', 'leaf-a'],
+            'inbox': ['inbox', 'leaf-a', '--index', '--state', 'all'],
+        })
+
+        self.call('ack', 'input-detail', 'leaf-a', 'handled by leaf-a')
+        settled = self.call('input', 'input-detail')
+        self.assertEqual(settled['handling'], {
+            'status': 'acknowledged', 'owner': 'leaf-a',
+            'receipt': 'handled by leaf-a',
+        })
+        self.assertEqual(settled['wake']['current']['pending'], 0)
+        self.assertEqual(settled['attemptRelation']['status'], 'unrecorded')
+
     def test_changed_coordinates_cannot_reuse_an_accepted_message_identity(self):
         self.send('accepted', 'root', 'leaf-a')
         for sender, recipient, kind, body in [

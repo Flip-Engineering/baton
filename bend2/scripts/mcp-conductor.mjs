@@ -64,24 +64,31 @@ if (delivery) {
   process.exit(0);
 }
 
-function supportsBatchMessaging() {
+function coordinatorSurface() {
   const help = spawnSync(coordinatorExe, [dbPath, 'help'], { encoding: 'utf8', maxBuffer: Infinity });
-  const surface = String(help.stdout ?? '') + String(help.stderr ?? '');
-  return ['outbox', 'delivery-batch', 'message-batch'].every((name) => surface.includes(name));
+  return String(help.stdout ?? '') + String(help.stderr ?? '');
 }
 
-const batchMessaging = supportsBatchMessaging();
+const commandSurface = coordinatorSurface();
+const batchMessaging = ['outbox', 'delivery-batch', 'message-batch'].every((name) => commandSurface.includes(name));
+const inputDetail = commandSurface.includes('input MESSAGE_ID');
 const batchMessageTools = new Set([
   'baton2_delivery_batch',
   'baton2_outbox',
   'baton2_message_batch',
 ]);
+const unavailableTools = new Set([
+  ...(!batchMessaging ? batchMessageTools : []),
+  ...(!inputDetail ? ['baton2_input'] : []),
+]);
 
 function messageInstructions() {
-  if (batchMessaging) {
-    return 'Use baton2_inbox or baton2_pending to see pending messages, and baton2_outbox to inspect authored messages and receipts. Their optional index:true argument returns metadata; baton2_delivery and baton2_delivery_batch read selected complete messages. Use baton2_ack to acknowledge your own fully read and handled input; retain unfinished work in your reports and project state. Use baton2_guide or baton2_message_batch to direct recipients. Each batch item keeps its own admission, wake, retained message and receipt facts.';
-  }
-  return 'Use baton2_inbox or baton2_pending to see pending messages. Their optional index:true argument returns metadata. baton2_delivery reads one complete stored message and its receipt. Use baton2_ack to acknowledge your own fully read and handled input; retain unfinished work in your reports and project state. Use baton2_guide to direct one recipient.';
+  const messaging = batchMessaging
+    ? 'Use baton2_inbox or baton2_pending to see pending messages, and baton2_outbox to inspect authored messages and receipts. Their optional index:true argument returns metadata; baton2_delivery and baton2_delivery_batch read selected complete messages. Use baton2_ack to acknowledge your own fully read and handled input; retain unfinished work in your reports and project state. Use baton2_guide or baton2_message_batch to direct recipients. Each batch item keeps its own admission, wake, retained message and receipt facts.'
+    : 'Use baton2_inbox or baton2_pending to see pending messages. Their optional index:true argument returns metadata. baton2_delivery reads one complete stored message and its receipt. Use baton2_ack to acknowledge your own fully read and handled input; retain unfinished work in your reports and project state. Use baton2_guide to direct one recipient.';
+  return messaging + (inputDetail
+    ? ' baton2_input relates one stored message to its admission, recipient-owned receipt, current recipient state and available attempt evidence.'
+    : '');
 }
 
 // node:sqlite (Node 22+)
@@ -430,6 +437,12 @@ const TOOLS = [
       required: ['id'], additionalProperties: false },
   },
   {
+    name: 'baton2_input',
+    description: 'Read one complete stored message with its admission, recipient-owned receipt, current recipient state, available attempt evidence and literal navigation commands.',
+    inputSchema: { type: 'object', properties: { id: { type: 'string' } },
+      required: ['id'], additionalProperties: false },
+  },
+  {
     name: 'baton2_delivery_batch',
     description: 'Read selected complete stored messages and their receipts in the supplied order. Each item retains its own found, absent or refused result.',
     inputSchema: { type: 'object', properties: {
@@ -574,9 +587,7 @@ const TOOLS = [
   },
 ];
 
-const AVAILABLE_TOOLS = batchMessaging
-  ? TOOLS
-  : TOOLS.filter((tool) => !batchMessageTools.has(tool.name));
+const AVAILABLE_TOOLS = TOOLS.filter((tool) => !unavailableTools.has(tool.name));
 
 // State.
 let deliveryReady = null;
@@ -749,7 +760,7 @@ function messageReadOptions(args, pending = false) {
 function handleToolCall(msg) {
   const { name, arguments: args } = msg.params;
   const player = args?.player ?? args?.worker;
-  if (!batchMessaging && batchMessageTools.has(name)) {
+  if (unavailableTools.has(name)) {
     sendError(msg.id, -32601, `The recorded coordinator executable does not advertise ${name}. Use baton2_delivery or baton2_guide until that executable is updated.`);
     return;
   }
@@ -888,6 +899,9 @@ function handleToolCall(msg) {
         break;
       case 'baton2_delivery':
         result = coord('delivery', args.id);
+        break;
+      case 'baton2_input':
+        result = coord('input', args.id);
         break;
       case 'baton2_delivery_batch':
         result = coord('delivery-batch', JSON.stringify(args.ids));
