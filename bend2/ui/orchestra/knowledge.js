@@ -245,6 +245,7 @@
   var kwExpandedAuthors = new Set();
   var kwCollapsedEnsembles = new Set();
   var kwLastRender = null;
+  var kwSizeObservers = new WeakMap();
   // The map view: hand-rolled pan and zoom held in the layer so they
   // survive shell re-renders. One whole canvas renders at a time.
   var kwView = { x: 0, y: 0, k: 1 };
@@ -580,14 +581,65 @@
     }
   }
 
+  function kwWrapCaption(svg, words, width, className) {
+    const probe = kwSvg(svg, "text", {
+      class: className, visibility: "hidden", "aria-hidden": "true",
+    });
+    const lines = [];
+    let line = "";
+    for (const ch of String(words)) {
+      const next = line + ch;
+      probe.textContent = next;
+      const measured = typeof probe.getComputedTextLength === "function"
+        ? probe.getComputedTextLength() : Array.from(next).length * 8;
+      if (line && measured > width) { lines.push(line); line = ch; }
+      else line = next;
+    }
+    lines.push(line);
+    probe.remove();
+    return lines;
+  }
+
+  function kwCaptionBox(text) {
+    const box = text.getBBox();
+    return { x0: box.x - 3, y0: box.y - 3,
+      x1: box.x + box.width + 3, y1: box.y + box.height + 3 };
+  }
+
+  function kwTrackCaption(text) {
+    const box = kwCaptionBox(text);
+    kwTrackBox(box.x0, box.y0, box.x1, box.y1);
+    kwLabelBoxes.push(box);
+  }
+
+  function kwDrawName(group, lines, x, y) {
+    const text = kwSvg(group, "text", {
+      x: String(x), y: String(y + 28), class: "kw-name mono",
+      "text-anchor": "middle",
+    });
+    lines.forEach((line, i) => {
+      kwSvg(text, "tspan", { x: String(x), dy: i ? "16" : "0" }).textContent = line;
+    });
+    kwTrackCaption(text);
+  }
+
+  function kwRefWords(ref, unheld, width) {
+    const suffix = unheld ? " · not held" : "";
+    const cap = Math.max(1, Math.min(22, Math.floor((width - 22) / 7.5) - suffix.length));
+    const chars = Array.from(String(ref));
+    const label = chars.length > cap ? chars.slice(0, Math.max(0, cap - 1)).join("") + "…" : ref;
+    return label + suffix;
+  }
+
   function kwRenderWhole(container, overview, promotions, opts, collapsed) {
     const meta = (opts && opts.actorMeta) || overview.actors || {};
     const roles = (opts && opts.roles) || {};
     const findings = new Map(
       (overview.findings || []).map((f) => [f.id, f]));
-    const width = Math.max(480, container.clientWidth || 1640);
+    const width = container.clientWidth || 1640;
+    const gutter = Math.min(KW_GUTTER, width / 4);
     const actorPerRow = Math.max(1, Math.floor(
-      (width - KW_GUTTER - KW_PAD) / KW_ACTOR_SLOT));
+      (width - gutter - KW_PAD) / KW_ACTOR_SLOT));
 
     // Member keys carry kind and id as a pair: a session literally
     // named like a group key still seats its own column.
@@ -686,18 +738,18 @@
       // edges stay short and near-vertical. Members spread evenly when
       // they fit one row; the slot pitch stays the minimum spacing and
       // large runs keep packing row by row.
-      const spreadT = members.length <= actorPerRow;
-      const colW = spreadT && members.length
-        ? (width - KW_GUTTER - KW_PAD) / members.length : KW_ACTOR_SLOT;
-      const findCap = Math.max(1, Math.floor(colW / KW_FIND_SLOT));
       const memberX = new Map();
+      const columnWidths = new Map();
+      const findCaps = new Map();
       members.forEach((id, i) => {
-        memberX.set(id, spreadT
-          ? KW_GUTTER + (i + 0.5) * colW
-          : KW_GUTTER + (i % actorPerRow) * KW_ACTOR_SLOT + 75);
+        const rowStart = Math.floor(i / actorPerRow) * actorPerRow;
+        const rowCount = Math.min(actorPerRow, members.length - rowStart);
+        const colW = (width - gutter - KW_PAD) / rowCount;
+        memberX.set(id, gutter + (i % actorPerRow + 0.5) * colW);
+        columnWidths.set(id, colW);
+        findCaps.set(id, Math.max(1, Math.floor(colW / KW_FIND_SLOT)));
       });
       const slots = [];
-      let findRows = 0;
       for (const id of members) {
         const group = (byAuthor.get(id) || []).slice().sort((a, b) =>
           ((promoCount.get(b.id) || 0) - (promoCount.get(a.id) || 0))
@@ -706,16 +758,14 @@
         if (group.length > KW_CLUSTER_AT && !kwExpandedAuthors.has(id)
           && !holdsSelected) {
           slots.push({ cluster: id, items: group, author: id, k: 0, n: 1 });
-          findRows = Math.max(findRows, 1);
         } else {
           group.forEach((f, k) => slots.push({ finding: f, author: id, k, n: group.length }));
-          findRows = Math.max(findRows, Math.ceil(group.length / findCap));
         }
       }
-      const actorRows = Math.max(1, Math.ceil(members.length / actorPerRow));
       return {
-        d, members, slots, actorRows, findRows, memberX, findCap, spread: spreadT,
-        height: 26 + actorRows * 30 + (slots.length ? 10 + findRows * 30 : 0) + 12,
+        d, members, slots, memberX, columnWidths, findCaps,
+        memberY: new Map(), findingTop: new Map(), captionLines: new Map(),
+        findingLines: new Map(), findingWidths: new Map(), findPitch: 30, height: 0,
       };
     });
     let height = KW_TOP;
@@ -739,6 +789,57 @@
       // a retained actor's holdings as well as the whole orchestra.
       "aria-label": "Knowledge map",
     });
+    height = KW_TOP;
+    for (const t of tiers) {
+      t.y = height;
+      const byMember = new Map(t.members.map((id) => [id, []]));
+      for (const slot of t.slots) byMember.get(slot.author).push(slot);
+      for (const id of t.members) {
+        const x = t.memberX.get(id);
+        const room = Math.max(1, Math.min(t.columnWidths.get(id) - 16,
+          2 * Math.min(x - KW_PAD, width - KW_PAD - x)));
+        t.captionLines.set(id, kwWrapCaption(svg, kwKeyId(id), room, "kw-name mono"));
+      }
+      for (const slot of t.slots) {
+        if (!slot.finding) continue;
+        const words = kwCaptionWords(slot.finding);
+        const shown = words.length > 26 ? words.slice(0, 25) + "…" : words;
+        const lines = kwWrapCaption(svg, shown, Math.max(1, width - 2 * KW_PAD), "kw-word");
+        t.findingLines.set(slot.finding.id, lines);
+        const probe = kwSvg(svg, "text", { class: "kw-word", visibility: "hidden", "aria-hidden": "true" });
+        let widest = 0;
+        let descent = 0;
+        for (const line of lines) {
+          probe.textContent = line;
+          widest = Math.max(widest, probe.getComputedTextLength());
+          const box = probe.getBBox();
+          descent = Math.max(descent, box.y + box.height);
+        }
+        probe.remove();
+        t.findingWidths.set(slot.finding.id, widest + 6);
+        t.findPitch = Math.max(t.findPitch, 32 + (lines.length - 1) * 16 + descent + 22);
+      }
+      let rowY = t.y + 26;
+      for (let start = 0; start < t.members.length; start += actorPerRow) {
+        const row = t.members.slice(start, start + actorPerRow);
+        const actorHeight = Math.max(30,
+          ...row.map((id) => 22 + t.captionLines.get(id).length * 16));
+        let findingRows = 0;
+        for (const id of row) {
+          t.memberY.set(id, rowY);
+          t.findingTop.set(id, rowY + actorHeight + 14);
+          const slots = byMember.get(id);
+          findingRows = Math.max(findingRows,
+            slots.some((slot) => slot.cluster) ? 1 : Math.ceil(slots.length / t.findCaps.get(id)));
+        }
+        rowY += actorHeight + (findingRows ? 14 + findingRows * t.findPitch : 0) + 12;
+      }
+      t.height = Math.max(38, rowY - t.y);
+      height += t.height;
+    }
+    height = tiers.length ? height + KW_PAD : 120;
+    svg.setAttribute("height", String(height));
+    svg.setAttribute("viewBox", "0 0 " + width + " " + height);
     const defs = kwSvg(svg, "defs", null);
     const markers = [
       ["kw-arrow-author", "thin gray author to finding",
@@ -791,7 +892,7 @@
     }
     const edgeLayer = kwSvg(svg, "g", { class: "kw-edges" });
     const roleOf = (id) => (meta[id] && meta[id].role) || roles[id] || "";
-    return { svg, edgeLayer, tiers, findings, actorPerRow, width, roleOf, markers, tierOf, groupScope };
+    return { svg, edgeLayer, tiers, findings, actorPerRow, width, gutter, roleOf, markers, tierOf, groupScope };
   }
 
   // One count badge where an author holds more findings than the
@@ -931,7 +1032,10 @@
         if (!tier) continue;
         const n = lozenges.get(tier.d) || 0;
         lozenges.set(tier.d, n + 1);
-        const x = KW_GUTTER + 75 + n * 112;
+        const boxW = Math.max(80,
+          (String(id).length + (coupling ? coupling.length + 3 : 0)) * 6.4 + 36);
+        const x = Math.min(layout.width - boxW / 2 - 4,
+          Math.max(boxW / 2 + 4, layout.gutter + 75 + n * 112));
         const y = tier.y + 26;
         const g = kwSvg(layer, "g", {
           class: "kw-lozenge",
@@ -940,8 +1044,6 @@
           + (coupling ? ", " + coupling : "") + ", activate to expand",
           "data-kw-hull": id,
         });
-        const boxW = Math.max(80,
-          (String(id).length + (coupling ? coupling.length + 3 : 0)) * 6.4 + 36);
         kwSvg(g, "rect", {
           x: String(x - boxW / 2), y: String(y - 11),
           width: String(boxW), height: "22", rx: "11",
@@ -1056,12 +1158,13 @@
   // and a full fan wraps to further rows inside the same column.
   function kwSlotXY(t, slot) {
     const cx = t.memberX.get(slot.author);
-    const cap = t.findCap;
+    const cap = t.findCaps.get(slot.author);
     const r = Math.floor(slot.k / cap);
     const inRow = Math.min(cap, slot.n - r * cap);
     return {
       x: cx + ((slot.k % cap) - (inRow - 1) / 2) * KW_FIND_SLOT,
-      row: r,
+      row: t.findingTop.get(slot.author) + r * t.findPitch,
+      y: t.findingTop.get(slot.author) + r * t.findPitch,
     };
   }
 
@@ -1117,17 +1220,14 @@
         num.textContent = String(t.d);
       }
       kwSvg(svg, "line", {
-        x1: String(KW_GUTTER), y1: String(t.y + 8),
+        x1: String(layout.gutter), y1: String(t.y + 8),
         x2: String(layout.width - KW_PAD), y2: String(t.y + 8),
         class: "kw-tier-rule",
       });
       kwLabelBoxes.push({ x0: KW_PAD, y0: t.y - 8, x1: KW_PAD + 140, y1: t.y + 12 });
-      const perRow = layout.actorPerRow;
-      const nameRows = new Map();
-      t.members.forEach((id, i) => {
-        const row = t.spread ? 0 : Math.floor(i / perRow);
+      t.members.forEach((id) => {
         const x = t.memberX.get(id);
-        const y = t.y + 26 + row * 30;
+        const y = t.memberY.get(id);
         // A group seats as its own hollow node, never as an actor
         // anchor: its metadata names it in the title and the card.
         // The shell selects actors and findings only, so the group
@@ -1137,7 +1237,7 @@
           const gid = kwKeyId(id);
           groupPos.set(gid, { x, y });
           groupsDrawn.push(gid);
-          kwTrackBox(x - 12, y - 12, x + 20 + gid.length * 8, y + 12);
+          kwTrackBox(x - 12, y - 12, x + 12, y + 12);
           const g = kwSvg(svg, "g", {
             class: "kw-group",
             tabindex: "0", role: "button",
@@ -1152,19 +1252,7 @@
           });
           const tip = kwSvg(g, "title", null);
           tip.textContent = kwGroupWords(overview, gid);
-          const nw = gid.length * 8 + 10;
-          const nbox = [x + 10, x + 10 + nw];
-          const nboxes = nameRows.get(row) || [];
-          if (nbox[1] <= layout.width
-            && !nboxes.some((b) => nbox[0] < b[1] && b[0] < nbox[1])) {
-            nboxes.push(nbox);
-            nameRows.set(row, nboxes);
-            const name = kwSvg(g, "text", {
-              x: String(x + 10), y: String(y + 4), class: "kw-name mono",
-            });
-            name.textContent = gid;
-            kwLabelBoxes.push({ x0: x + 10, y0: y - 8, x1: x + 10 + nw, y1: y + 8 });
-          }
+          kwDrawName(g, t.captionLines.get(id), x, y);
           if (!kwMatches(query, gid, "", gid)) g.classList.add("kw-dim");
           const pick = () => {
             kwDismissed = null;
@@ -1190,7 +1278,7 @@
         // id and carries its kind beside it for lookups.
         const lid = kwKeyId(id);
         actorPos.set(lid, { x, y });
-        kwTrackBox(x - 12, y - 12, x + 20 + lid.length * 8, y + 12);
+        kwTrackBox(x - 12, y - 12, x + 12, y + 12);
         const role = layout.roleOf ? layout.roleOf(lid) : "";
         const conductor = role === "principal-conductor" || role === "associate-conductor";
         const s = conductor ? 11 : 8;
@@ -1209,22 +1297,8 @@
             : role === "operator" ? " role-operator" : "")
             + (read.notProgressing === true ? " kw-not-progressing" : ""),
         });
-        // Actor names thin like finding labels: members arrive ranked
-        // by authored count, and a name that would overlap one already
-        // placed on its row is skipped while the anchor still draws.
-        const nw = lid.length * 8 + 10;
-        const nbox = [x + 10, x + 10 + nw];
-        const nboxes = nameRows.get(row) || [];
-        if (nbox[1] <= layout.width
-          && !nboxes.some((b) => nbox[0] < b[1] && b[0] < nbox[1])) {
-          nboxes.push(nbox);
-          nameRows.set(row, nboxes);
-          const name = kwSvg(g, "text", {
-            x: String(x + 10), y: String(y + 4), class: "kw-name mono",
-          });
-          name.textContent = lid;
-          kwLabelBoxes.push({ x0: x + 10, y0: y - 8, x1: x + 10 + nw, y1: y + 8 });
-        }
+        // Captions wrap beneath their own glyph and retain the full actor id.
+        kwDrawName(g, t.captionLines.get(id), x, y);
         if (!kwMatches(query, lid, "", lid)) g.classList.add("kw-dim");
         // Actors the shell reports live read full strength; the rest
         // dim with the lane's dim token. Dim only: findings, holdings
@@ -1257,7 +1331,6 @@
           }
         });
       });
-      const findTop = t.y + 26 + t.actorRows * 30 + 10;
       // Each tier labels its most promoted findings so the canvas reads
       // words at a glance; every other node keeps its claim one gesture
       // away through hover, keyboard, or selection.
@@ -1288,11 +1361,10 @@
         const s = slotByFinding.get(kwThinSel);
         if (s) {
           const at = kwSlotXY(t, s);
-          const rec = layout.findings.get(kwThinSel);
-          const words = rec ? kwCaptionWords(rec) : kwThinSel;
-          const w = Math.min(26, words.length) * 8 + 10;
+          const w = t.findingWidths.get(kwThinSel);
           const boxes = placedRows.get(at.row) || [];
-          boxes.push([at.x - w / 2, at.x + w / 2]);
+          const lx = kwCaptionX(at.x, w, layout.width);
+          boxes.push([lx - w / 2, lx + w / 2]);
           placedRows.set(at.row, boxes);
           labelShown.add(kwThinSel);
         }
@@ -1303,13 +1375,9 @@
         const at = kwSlotXY(t, s);
         const row = at.row;
         const x = at.x;
-        const rec = layout.findings.get(fid);
-        // The thinning box measures the drawn caption, suffixes and
-        // cap included: a claim-length box lets neighbours' suffixes
-        // overlap each other.
-        const words = rec ? kwCaptionWords(rec) : fid;
-        const w = Math.min(26, words.length) * 8 + 10;
-        const box = [x - w / 2, x + w / 2];
+        const w = t.findingWidths.get(fid);
+        const lx = kwCaptionX(x, w, layout.width);
+        const box = [lx - w / 2, lx + w / 2];
         const boxes = placedRows.get(row) || [];
         if (boxes.some((b) => box[0] < b[1] && b[0] < box[1])) continue;
         boxes.push(box);
@@ -1319,7 +1387,7 @@
       t.slots.forEach((slot) => {
         const at = kwSlotXY(t, slot);
         const x = at.x;
-        const y = findTop + at.row * 30;
+        const y = at.y;
         if (slot.cluster) {
           kwClusterBadge(svg, slot, x, y, promotions, opts, query);
           return;
@@ -1375,13 +1443,9 @@
           + (f.evidence ? " — " + String(f.evidence) : "")
           + (f.limits ? " — " + String(f.limits) : "");
         if (selected || labelShown.has(f.id)) {
-          kwNodeLabel(g, f, x, y);
-          // The obstacle measures the drawn caption, suffixes capped
-          // where the label caps. A claim-length box lets tags settle
-          // onto the suffixes.
-          const lw = Math.min(26, kwCaptionWords(f).length) * 8 + 10;
-          kwTrackBox(x - lw / 2, y + 10, x + lw / 2, y + 30);
-          kwLabelBoxes.push({ x0: x - lw / 2, y0: y + 10, x1: x + lw / 2, y1: y + 30 });
+          const lx = kwCaptionX(x, t.findingWidths.get(f.id), layout.width);
+          const caption = kwNodeLabel(g, f, lx, y, t.findingLines.get(f.id));
+          kwTrackCaption(caption);
         }
         if (!kwMatches(query, f.id, f.claim, f.author)) {
           g.classList.add("kw-dim");
@@ -1542,8 +1606,7 @@
           : end.family === "message" ? heldRefs.has(end.ref)
           : true;
         const unheld = (end.family === "finding" || end.family === "message") && !held;
-        const label = end.ref.length > 22 ? end.ref.slice(0, 21) + "…" : end.ref;
-        const shown = unheld ? label + " · not held" : label;
+        const shown = kwRefWords(end.ref, unheld, layout.width);
         const w = shown.length * 7.5 + 14;
         // Slots start inside the canvas; the settle below only moves down,
         // and the canvas grows for what settles past its computed height.
@@ -1640,8 +1703,7 @@
         const refOnly = rec ? rec.referenceOnly === true : true;
         mark.typed = { kind: rkind, referenceOnly: refOnly };
         mark.unheld = refOnly;
-        const label = end.ref.length > 22 ? end.ref.slice(0, 21) + "…" : end.ref;
-        mark.shown = refOnly ? label + " · not held" : label;
+        mark.shown = kwRefWords(end.ref, refOnly, layout.width);
         mark.w = mark.shown.length * 7.5 + 14;
       };
       if (a.kind === "ring") slotRing(a);
@@ -1802,6 +1864,7 @@
       .sort((p, q) => (p.y - q.y) || (p.x - q.x));
     for (const mark of slotOrder) {
       const hw = mark.w / 2 + 3;
+      mark.x = kwCaptionX(mark.x, mark.w + 6, layout.width);
       // A typed ring hangs its label below the ring, so its box is
       // taller than a tag's; the settle moves the centre the same way.
       const hh = mark.typed ? 19 : 9 + 3;
@@ -2691,24 +2754,50 @@
     kwMacroBand(container, svg, tiers, promotions, layout.width || 0);
   }
 
+  function kwScreenZoom(svg) {
+    return kwView.k * kwUnitScale(svg).x;
+  }
+
   function kwApplyView(view) {
     view.setAttribute("transform", "translate(" + kwView.x + "," + kwView.y + ") scale(" + kwView.k + ")");
-    if (kwZoomReadout) kwZoomReadout.textContent = Math.round(kwView.k * 100) + "%";
+    if (kwZoomReadout) kwZoomReadout.textContent =
+      Math.round(kwScreenZoom(view.ownerSVGElement) * 100) + "%";
+  }
+
+  function kwFocusView(container, svg, view, x, y) {
+    if (typeof svg.scrollIntoView === "function") {
+      svg.scrollIntoView({ block: "start", inline: "nearest" });
+    }
+    const box = kwVisibleBox(container, svg, true);
+    if (box.w <= 0 || box.h <= 0) return;
+    const scale = kwUnitScale(svg).x;
+    kwView.k = Math.min(4, Math.max(kwView.k, 1.25 / scale));
+    kwView.x = box.x + box.w / 2 - x * kwView.k;
+    kwView.y = box.y + box.h / 2 - y * kwView.k;
+    kwApplyView(view);
   }
 
   // Convert the visible canvas/frame intersection to drawing units.
-  function kwVisibleBox(container, svg) {
+  function kwVisibleBox(container, svg, inViewport) {
     const frame = container.parentElement;
     const drawing = svg.getBoundingClientRect();
     const clip = frame.getBoundingClientRect();
     const s = kwUnitScale(svg, drawing);
-    const left = Math.max(drawing.left, clip.left + frame.clientLeft);
-    const top = Math.max(drawing.top, clip.top + frame.clientTop);
-    const right = Math.min(drawing.right, clip.left + frame.clientLeft + frame.clientWidth);
-    const bottom = Math.min(drawing.bottom, clip.top + frame.clientTop + frame.clientHeight);
+    let left = Math.max(drawing.left, clip.left + frame.clientLeft);
+    let top = Math.max(drawing.top, clip.top + frame.clientTop);
+    let right = Math.min(drawing.right, clip.left + frame.clientLeft + frame.clientWidth);
+    let bottom = Math.min(drawing.bottom, clip.top + frame.clientTop + frame.clientHeight);
+    if (inViewport) {
+      left = Math.max(left, 0);
+      top = Math.max(top, 0);
+      right = Math.min(right, document.documentElement.clientWidth || window.innerWidth);
+      bottom = Math.min(bottom, document.documentElement.clientHeight || window.innerHeight);
+    }
     // A frame smaller than its own chrome leaves no visible drawing;
     // the box bottoms out at zero rather than going negative.
     return {
+      x: (left - drawing.left) / s.x,
+      y: (top - drawing.top) / s.y,
       w: Math.max(0, (right - left) / s.x),
       h: Math.max(0, (bottom - top) / s.y),
     };
@@ -2818,7 +2907,7 @@
     });
     mkBtn("Fit", "Fit the map to the frame", () => kwFitView(container, svg, view));
     kwZoomReadout = kwEl(tools, "span", { class: "kw-zoom-level mono muted" });
-    kwZoomReadout.textContent = Math.round(kwView.k * 100) + "%";
+    kwZoomReadout.textContent = Math.round(kwScreenZoom(svg) * 100) + "%";
     svg.addEventListener("wheel", (ev) => {
       if (ev.preventDefault) ev.preventDefault();
       const rect = svg.getBoundingClientRect();
@@ -3063,11 +3152,7 @@
       return null;
     }
     const canvas = container.querySelector("svg.kw-canvas");
-    const box = kwVisibleBox(container, canvas);
-    kwView.k = Math.min(4, Math.max(kwView.k, 1.25));
-    kwView.x = box.w / 2 - pos.x * kwView.k;
-    kwView.y = box.h / 2 - pos.y * kwView.k;
-    kwApplyView(live);
+    kwFocusView(container, canvas, live, pos.x, pos.y);
     // The card, isolation and focus land before the shell is told, so a
     // repeated hit whose selection the shell already holds still re-pins.
     kwDismissed = null;
@@ -3683,18 +3768,25 @@
       + (evidenceMessage ? " · " + evidenceMessage : "");
   }
 
-  function kwNodeLabel(g, f, x, y) {
+  function kwCaptionX(x, width, canvasWidth) {
+    return Math.min(canvasWidth - width / 2 - 4, Math.max(width / 2 + 4, x));
+  }
+
+  function kwNodeLabel(g, f, x, y, lines) {
     const words = kwCaptionWords(f);
     const label = words.length > 26 ? words.slice(0, 25) + "…" : words;
     const text = kwSvg(g, "text", {
-      x: String(x), y: String(y + 21), class: "kw-word",
+      x: String(x), y: String(y + 32), class: "kw-word",
       "text-anchor": "middle",
     });
-    text.textContent = label;
+    (lines || [label]).forEach((line, i) => {
+      kwSvg(text, "tspan", { x: String(x), dy: i ? "16" : "0" }).textContent = line;
+    });
     if (label !== words) {
       const tip = kwSvg(text, "title", null);
       tip.textContent = words;
     }
+    return text;
   }
 
   // The macro band: a tier census and a promotion flow field above
@@ -3712,6 +3804,9 @@
     if (tiers.length >= 2) {
       const counts = tiers.map((t) => ({
         d: t.d, y: t.y + t.height / 2,
+        x: t.members.length
+          ? (Math.min(...t.memberX.values()) + Math.max(...t.memberX.values())) / 2
+          : width / 2,
         actors: t.members.length,
         findings: t.slots.reduce((n, s) => n
           + (s.finding ? 1 : (s.items ? s.items.length : 0)), 0),
@@ -3735,11 +3830,7 @@
           const live = container.querySelector("g.kw-view");
           const canvas = container.querySelector("svg.kw-canvas");
           if (!live || !canvas) return;
-          const box = kwVisibleBox(container, canvas);
-          kwView.k = Math.min(4, Math.max(kwView.k, 1.25));
-          kwView.x = box.w / 2 - (width / 2) * kwView.k;
-          kwView.y = box.h / 2 - c.y * kwView.k;
-          kwApplyView(live);
+          kwFocusView(container, canvas, live, c.x, c.y);
         });
       }
       parts += 1;
@@ -3829,8 +3920,33 @@
     }
   }
 
+  function kwWatchWidth(container, data, opts) {
+    const mode = (opts && opts.mode) || "whole";
+    let state = kwSizeObservers.get(container);
+    if (mode !== "whole" || (opts && opts.notice)) {
+      if (state) state.observer.disconnect();
+      kwSizeObservers.delete(container);
+      return;
+    }
+    if (typeof ResizeObserver !== "function") return;
+    if (!state) {
+      state = { width: container.clientWidth, data, opts, observer: null };
+      state.observer = new ResizeObserver(() => {
+        if (!container.isConnected || !kwLastRender || kwLastRender.container !== container) return;
+        const width = container.clientWidth;
+        if (width > 0 && width !== state.width) renderKnowledge(container, state.data, state.opts);
+      });
+      kwSizeObservers.set(container, state);
+      state.observer.observe(container);
+    }
+    state.width = container.clientWidth;
+    state.data = data;
+    state.opts = opts;
+  }
+
   function renderKnowledge(container, data, opts) {
     if (!container) return null;
+    kwWatchWidth(container, data, opts);
     const active = document.activeElement;
     let focused = null;
     let caret = null;

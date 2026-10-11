@@ -2528,6 +2528,92 @@ check('reference marks clear the entire Principal band and retain their authored
     });
   })()`));
 
+const staticNarrowScrollBefore = await evalJs('({ x: window.scrollX, y: window.scrollY })');
+await send(pageWs, 'Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
+await evalJs('new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+await until('the narrow static Principal retains its complete caption beneath its glyph',
+  `(() => {
+    const svg = document.querySelector('#knowledge-whole svg.kw-canvas');
+    const anchor = svg && svg.querySelector('.kw-anchor[data-kw-id="fixture-knowledge-root"]');
+    const glyph = anchor && anchor.querySelector('rect.kw-actor');
+    const caption = anchor && anchor.querySelector('text.kw-name');
+    if (!glyph || !caption) return false;
+    const g = glyph.getBBox(), box = caption.getBBox();
+    return anchor.getAttribute('aria-label') === 'fixture-knowledge-root'
+      && caption.textContent === 'fixture-knowledge-root'
+      && box.y > g.y + g.height
+      && box.x >= 0 && box.x + box.width <= Number(svg.getAttribute('width'));
+  })()`);
+check('wrapped findings remain distinct beneath their own authors, including the Principal',
+  await evalJs(`(() => {
+    const findings = ${JSON.stringify(fixturePayload.findings || [])};
+    const whole = document.querySelector('#knowledge-whole');
+    if (!whole) return false;
+    const boxOf = (id) => {
+      const glyph = whole.querySelector('.knode[data-kw-kind="finding"][data-kw-node="' + CSS.escape(id) + '"] .kw-finding');
+      return glyph ? glyph.getBBox() : null;
+    };
+    const belowAuthor = (id) => {
+      const record = findings.find((row) => row.id === id);
+      const box = boxOf(id);
+      const author = record && whole.querySelector('.kw-anchor[data-kw-id="' + CSS.escape(record.author) + '"] rect.kw-actor');
+      if (!box || !author) return false;
+      const seat = author.getBBox();
+      return box.y > seat.y + seat.height;
+    };
+    const pairs = [['fixture-finding-a2', 'fixture-finding-d1'], ['fixture-finding-a3', 'fixture-finding-d2']];
+    if (!pairs.every(([a, b]) => {
+      const first = boxOf(a), second = boxOf(b);
+      return first && second && belowAuthor(a) && belowAuthor(b)
+        && (first.y + first.height < second.y || second.y + second.height < first.y);
+    })) return false;
+    const principal = findings.filter((row) => row.author === 'fixture-knowledge-root');
+    return principal.length > 0 && principal.every((row) => belowAuthor(row.id));
+  })()`));
+await evalJs(`(() => {
+  const tier = document.querySelector('#knowledge-whole [data-kw-tier="0"]');
+  if (tier) tier.click();
+  return !!tier;
+})()`);
+check('focused narrow Principal text is readable and the zoom readout states its actual scale',
+  await evalJs(`(() => {
+    const svg = document.querySelector('#knowledge-whole svg.kw-canvas');
+    const caption = svg && svg.querySelector('.kw-anchor[data-kw-id="fixture-knowledge-root"] text.kw-name');
+    const readout = document.querySelector('#knowledge-whole .kw-zoom-level');
+    if (!caption || !readout) return false;
+    const matrix = caption.getScreenCTM();
+    if (!matrix) return false;
+    const scale = Math.hypot(matrix.a, matrix.b);
+    const font = parseFloat(getComputedStyle(caption).fontSize);
+    const box = caption.getBoundingClientRect(), frame = svg.getBoundingClientRect();
+    const glyph = caption.parentElement.querySelector('rect.kw-actor');
+    if (!glyph) return false;
+    const seat = glyph.getBoundingClientRect();
+    return font * scale >= 13
+      && Math.abs(parseFloat(readout.textContent) - scale * 100) <= 0.5
+      && box.left >= Math.max(0, frame.left)
+      && box.right <= Math.min(window.innerWidth, frame.right)
+      && box.top >= 0 && box.bottom <= window.innerHeight
+      && seat.left >= 0 && seat.right <= window.innerWidth
+      && seat.top >= 0 && seat.bottom <= window.innerHeight;
+  })()`));
+const staticNarrowMetrics = await send(pageWs, 'Page.getLayoutMetrics');
+const staticNarrowClip = staticNarrowMetrics.result.cssContentSize;
+const staticNarrowImage = await send(pageWs, 'Page.captureScreenshot', {
+  format: 'png', captureBeyondViewport: true,
+  clip: { x: staticNarrowClip.x, y: staticNarrowClip.y,
+    width: staticNarrowClip.width, height: staticNarrowClip.height, scale: 1 },
+});
+writeFileSync(join(OUT, 'static-principal-narrow-390.png'), Buffer.from(staticNarrowImage.result.data, 'base64'));
+await send(pageWs, 'Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
+await evalJs('new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))');
+await evalJs(`(() => {
+  const fit = document.querySelector('#knowledge-whole button[aria-label="Fit the map to the frame"]');
+  if (fit) fit.click();
+  return !!fit;
+})()`);
+await evalJs(`window.scrollTo(${staticNarrowScrollBefore.x}, ${staticNarrowScrollBefore.y})`);
+
 check('a collapsed ensemble stays on its first drawn member tier when its first recorded member is quiet',
   await evalJs(`(async () => {
     const document_ = await (await fetch('fixtures/fixture-knowledge.json')).json();

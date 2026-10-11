@@ -630,7 +630,7 @@ g.kw-hull-section {
   font-size: 13px;
 }
 
-.kw-canvas .kw-word {
+.kw-canvas .kw-word, .kw-canvas .kw-name {
   paint-order: stroke;
   stroke: var(--paper, #fbfcfe);
   stroke-width: 3px;
