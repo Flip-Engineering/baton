@@ -68,6 +68,31 @@ class CodexRootAdapter(unittest.TestCase):
             pass
         return owners
 
+    def delivery_pids(self):
+        prefixes = (f'{EXE.resolve()} --dispatch-message {self.db.resolve()} ',
+                    f'{EXE.resolve()} {self.db.resolve()} receive ')
+        processes = subprocess.run(['ps', '-axo', 'pid=,ppid=,stat=,command='],
+                                   check=True, capture_output=True, text=True)
+        deliveries = set()
+        for line in processes.stdout.splitlines():
+            fields = line.strip().split(None, 3)
+            if (len(fields) == 4 and not fields[2].startswith('Z')
+                    and any(fields[3].startswith(prefix) for prefix in prefixes)):
+                deliveries.add(int(fields[0]))
+        try:
+            observation = getattr(self, '_cleanup_observation', None)
+            if observation is not None:
+                recorded = {'argv': ['ps', '-axo', 'pid=,ppid=,stat=,command='],
+                            'returncode': processes.returncode, 'stdout': processes.stdout,
+                            'stderr': processes.stderr, 'expectedDeliveryPrefixes': list(prefixes),
+                            'matchedDeliveryIds': sorted(deliveries)}
+                observation.setdefault('deliveryPsInitial', recorded)
+                observation['deliveryPsLast'] = recorded
+                observation['deliveryPsCalls'] = observation.get('deliveryPsCalls', 0) + 1
+        except BaseException:
+            pass
+        return deliveries
+
     def cleanup_ps(self, wide):
         argv = ['ps', *(['-ww'] if wide else []), '-axo', 'pid=,ppid=,stat=,command=']
         result = subprocess.run(argv, capture_output=True, text=True)
@@ -170,6 +195,8 @@ class CodexRootAdapter(unittest.TestCase):
         try:
             try:
                 if self.db.exists():
+                    while self.delivery_pids():
+                        time.sleep(.01)
                     owners = self.instance_owner_pids()
                     stopped = subprocess.run([str(EXE), '--instance-shutdown', str(self.db)],
                                              capture_output=True, text=True)
@@ -673,6 +700,7 @@ class CodexRootEndToEnd(unittest.TestCase):
     """End-to-end: recruit a worker, report, process with Codex root."""
 
     instance_owner_pids = CodexRootAdapter.instance_owner_pids
+    delivery_pids = CodexRootAdapter.delivery_pids
     cleanup_ps = CodexRootAdapter.cleanup_ps
     cleanup_entries = CodexRootAdapter.cleanup_entries
     cleanup_related_fds = CodexRootAdapter.cleanup_related_fds
