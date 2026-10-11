@@ -672,6 +672,13 @@ class CodexRootAdapter(unittest.TestCase):
 class CodexRootEndToEnd(unittest.TestCase):
     """End-to-end: recruit a worker, report, process with Codex root."""
 
+    instance_owner_pids = CodexRootAdapter.instance_owner_pids
+    cleanup_ps = CodexRootAdapter.cleanup_ps
+    cleanup_entries = CodexRootAdapter.cleanup_entries
+    cleanup_related_fds = CodexRootAdapter.cleanup_related_fds
+    cleanup_failure_observe = CodexRootAdapter.cleanup_failure_observe
+    cleanup_fixture = CodexRootAdapter.cleanup_fixture
+
     def setUp(self):
         if not EXE.exists():
             self.skipTest(f'Coordinator not built at {EXE}')
@@ -681,14 +688,12 @@ class CodexRootEndToEnd(unittest.TestCase):
         self.repo = self.directory / 'repository'
         self.repo.mkdir()
         self.db = self.directory / 'state.db'
+        self.addCleanup(self.cleanup_fixture)
         self.git('init', '-q', '-b', 'main')
         self.git('config', 'user.name', 'Baton test')
         self.git('config', 'user.email', 'baton@example.invalid')
         self.git('commit', '-q', '--allow-empty', '-m', 'initial')
         self.base = self.git('rev-parse', 'HEAD').strip()
-
-    def tearDown(self):
-        self.temp.cleanup()
 
     def git(self, *args):
         return subprocess.run(
