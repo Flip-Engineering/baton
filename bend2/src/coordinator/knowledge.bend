@@ -184,7 +184,7 @@ def detail_value(+db: String, +reader: String, +scope: String, +subject: String,
     typed : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM pragma_table_info('knowledge') WHERE name='kind';"))
     groups : Bool <- promotion_groups_value(db)
     v1present : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN('knowledge_v1_nodes','knowledge_v1_edges');"))
-    v1 : String <- IO.try(String,DB.Sql.read(db,Bool.pick(String,String.eq(v1present,"2\n"),V1.detail_sql(reader,scope,subject,id),"SELECT json('[]');")))
+    +v1 : String <- IO.try(String,DB.Sql.read(db,Bool.pick(String,String.eq(v1present,"2\n"),V1.detail_sql(reader,scope,subject,id),"SELECT json('[]');")))
     legacy : String <- IO.try(String,DB.Sql.read(db,scoped_detail_sql(reader,scope,subject,id,String.eq(typed,"1\n"),groups)))
     IO.pure(String,Bool.pick(String,Tx.starts_with(v1,"[]"),legacy,v1))
 
