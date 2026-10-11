@@ -1,0 +1,43 @@
+{
+  "sourceURL": "https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json",
+  "responseURL": "https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json",
+  "status": 200,
+  "headers": {
+    "Connection": "close",
+    "Content-Length": "10450",
+    "Server": "GitHub.com",
+    "Content-Type": "application/json; charset=utf-8",
+    "x-origin-cache": "HIT",
+    "Last-Modified": "Sun, 11 Oct 2026 19:17:31 GMT",
+    "Access-Control-Allow-Origin": "*",
+    "Strict-Transport-Security": "max-age=31556952",
+    "ETag": "\"6acbe0cb-28d2\"",
+    "expires": "Sun, 11 Oct 2026 19:27:41 GMT",
+    "Cache-Control": "max-age=600",
+    "x-proxy-cache": "HIT",
+    "X-GitHub-Request-Id": "E4BA:1E8E02:303150:37CBB1:6ACBE184",
+    "x-github-edge-region": "westus3",
+    "Accept-Ranges": "bytes",
+    "Date": "Sun, 11 Oct 2026 20:02:23 GMT",
+    "Via": "1.1 varnish",
+    "Age": "100",
+    "X-Served-By": "cache-pao-kpao1770042-PAO",
+    "X-Cache": "HIT",
+    "X-Cache-Hits": "2",
+    "X-Timer": "S1791748943.063312,VS0,VE3",
+    "Vary": "Accept-Encoding",
+    "X-Fastly-Request-ID": "569451ea64bab7e1a88cba70cfea41b7569ecafb"
+  },
+  "retrievedUTC": "2026-10-11T20:02:23.081744+00:00",
+  "identity": {
+    "size": 10450,
+    "sha256": "be245c9e1d73dc9b57f6ffa2ff764d0311c22ec19cfabdf0656a4d836667eccf"
+  },
+  "selected": {
+    "channel": "Stable",
+    "version": "155.0.8059.39",
+    "revision": "1697595",
+    "platform": "mac-arm64",
+    "url": "https://storage.googleapis.com/chrome-for-testing-public/155.0.8059.39/mac-arm64/chrome-mac-arm64.zip"
+  }
+}

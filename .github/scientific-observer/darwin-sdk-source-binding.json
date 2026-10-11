@@ -1,0 +1,107 @@
+{
+  "status": "source-only-held",
+  "platformHeaderSource": "macOS 15.2 CommandLineTools SDK on source inspection host",
+  "sdkHeaders": {
+    "procBsdInfo": {
+      "path": "/Library/Developer/CommandLineTools/SDKs/MacOSX15.2.sdk/usr/include/sys/proc_info.h",
+      "bytes": 31000,
+      "sha256": "9548e28972bd1653a6adb673d17beb975ae26a79e673a697434945bcb79d4059",
+      "lines": [
+        59,
+        81,
+        718,
+        719
+      ]
+    },
+    "libproc": {
+      "path": "/Library/Developer/CommandLineTools/SDKs/MacOSX15.2.sdk/usr/include/libproc.h",
+      "bytes": 7575,
+      "sha256": "246d87709fc6b9157ce5cf3c475656ac48e0e1ae8bbdc46cf45acd34294448cd",
+      "lines": [
+        96,
+        102
+      ]
+    },
+    "sysctl": {
+      "path": "/Library/Developer/CommandLineTools/SDKs/MacOSX15.2.sdk/usr/include/sys/sysctl.h",
+      "bytes": 37157,
+      "sha256": "32d463b3d01a2999b10865cc4e032a8b5959ab8d2b5e0c71ce820fe81fe53f82",
+      "lines": [
+        260,
+        396
+      ]
+    },
+    "maxcomlen": {
+      "path": "/Library/Developer/CommandLineTools/SDKs/MacOSX15.2.sdk/usr/include/sys/param.h",
+      "bytes": 9951,
+      "sha256": "a2615ddf1061d802f7c7320757b517dc0d3fb0d462d2186fc466d9453be2a817",
+      "lines": [
+        95
+      ]
+    },
+    "zombieStatus": {
+      "path": "/Library/Developer/CommandLineTools/SDKs/MacOSX15.2.sdk/usr/include/sys/proc.h",
+      "bytes": 11579,
+      "sha256": "82e677071865676673562999f13a6931d08420c7530fc08f23dfba1caffd6364",
+      "lines": [
+        153
+      ]
+    }
+  },
+  "xnuPrimarySource": {
+    "repository": "apple-oss-distributions/xnu",
+    "commit": "f6217f891ac0bb64f3d375211650a4c1ff8ca1ea",
+    "sourceUrl": "https://raw.githubusercontent.com/apple-oss-distributions/xnu/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/bsd/kern/kern_sysctl.c",
+    "downloadedFile": {
+      "path": "/tmp/baton-darwin-scientific-observer-source-v5-20261011/primary-source/kern_sysctl.pinned.c",
+      "bytes": 228755,
+      "sha256": "1cc5d1e7b46df0b2fad33449eb7df948207b7bc4c760119ed33624e7d2750df8"
+    },
+    "lines": {
+      "nullBufferSizeIntent": [
+        1330,
+        1375
+      ],
+      "pathAndArgvRange": [
+        1528,
+        1558
+      ],
+      "argcWord": [
+        1615,
+        1619
+      ],
+      "nullBufferComputedSize": [
+        1691,
+        1707
+      ]
+    },
+    "limit": "Pinned public XNU source describes sysctl layout. The macOS 15.2 SDK headers define the inspected ABI. No Darwin runtime behavior has been executed."
+  },
+  "libprocPrimarySource": {
+    "repository": "apple-oss-distributions/xnu",
+    "commit": "f6217f891ac0bb64f3d375211650a4c1ff8ca1ea",
+    "sourceUrl": "https://raw.githubusercontent.com/apple-oss-distributions/xnu/f6217f891ac0bb64f3d375211650a4c1ff8ca1ea/libsyscall/wrappers/libproc/libproc.c",
+    "downloadedFile": {
+      "path": "/tmp/baton-darwin-scientific-observer-source-v5-20261011/primary-source/libproc.pinned.c",
+      "bytes": 28996,
+      "sha256": "5c8a771427e04c5e1d55c4cdf5a077f3b52c5be4a091683b970084bfdda76df2"
+    },
+    "lines": {
+      "procPidInfo": [
+        100,
+        110
+      ],
+      "procPidPath": [
+        263,
+        283
+      ]
+    },
+    "limit": "Pinned public XNU source shows the libproc wrapper results. No macOS 15 runtime behavior has been executed."
+  },
+  "primarySourceCommitMetadata": {
+    "path": "/tmp/baton-darwin-scientific-observer-source-v5-20261011/primary-source/upstream-main-commit.json",
+    "bytes": 923108,
+    "sha256": "d91e35278ca8d094dd5ed1fc3b2461791e61393a76f8f338f24db182a48fb1ed"
+  },
+  "primarySourceByteIdentity": "The initially downloaded main files and the commit-pinned files are byte-equal for both paths; the pinned files are the source cited by line number."
+}

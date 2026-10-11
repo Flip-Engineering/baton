@@ -1,0 +1,133 @@
+{
+  "format": 1,
+  "productSourceCommit": "82029c6e9f194184de0c03fa197a3a40ecbe0286",
+  "observerDriverCommit": null,
+  "accepted": {
+    "main": true,
+    "nineSuites": null,
+    "darwinPackage": null
+  },
+  "sourceManifest": {
+    "size": 124079,
+    "sha256": "a15d8859dc688b3217496aa50369ad3df5b17bc7309bfc7023b8627c0eca667b"
+  },
+  "packageProducer": {
+    "repository": "Flip-Engineering/baton",
+    "driverCommit": "e0e687bc360a2a718a110fa8cb905a67b5164c46",
+    "workflowPath": ".github/workflows/final-core-combined-qualification.yml",
+    "runId": null,
+    "runAttempt": null,
+    "jobId": null
+  },
+  "artifact": {
+    "id": null,
+    "name": null,
+    "digest": null
+  },
+  "package": {
+    "archivePath": "package/baton2-development-darwin-arm64-82029c6e9f194184de0c03fa197a3a40ecbe0286.tar.gz",
+    "archive": {
+      "size": null,
+      "sha256": null
+    },
+    "manifest": {
+      "size": null,
+      "sha256": null
+    },
+    "result": {
+      "size": null,
+      "sha256": null
+    },
+    "sha256sums": {
+      "size": null,
+      "sha256": null
+    },
+    "smokeSummary": {
+      "size": null,
+      "sha256": null
+    }
+  },
+  "darwinNative": {
+    "size": null,
+    "sha256": null
+  },
+  "linuxNative": {
+    "size": 30308528,
+    "sha256": "847a159b0f4178899ef3d390363142df0411eba4fb65a198d84a47decbf67eac"
+  },
+  "generatedC": {
+    "size": 71274570,
+    "sha256": "9583eab0c3cca4cfbebbef27a928881f58d8029edd61a736707edceeec1ebf89"
+  },
+  "handoffManifest": {
+    "size": null,
+    "sha256": null
+  },
+  "nativeBuildResult": {
+    "size": 907,
+    "sha256": "0ffcdc9ba240d47f6aa947a0b6e9bfc0b161afba4e7a00ca8972a8b6d96de786"
+  },
+  "qualification": {
+    "after": {
+      "size": null,
+      "sha256": null
+    },
+    "binding": {
+      "size": null,
+      "sha256": null
+    },
+    "suiteResults": {
+      "size": null,
+      "sha256": null
+    },
+    "plan": {
+      "size": null,
+      "sha256": null
+    }
+  },
+  "tools": {
+    "node": {
+      "version": "22.23.3",
+      "executable": {
+        "size": null,
+        "sha256": null
+      }
+    },
+    "python": {
+      "version": null,
+      "executable": {
+        "size": null,
+        "sha256": null
+      }
+    },
+    "chrome": {
+      "version": "155.0.8059.39",
+      "url": "https://storage.googleapis.com/chrome-for-testing-public/155.0.8059.39/mac-arm64/chrome-mac-arm64.zip",
+      "relativeExecutable": "chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
+      "archive": {
+        "size": null,
+        "sha256": null
+      },
+      "executable": {
+        "size": null,
+        "sha256": null
+      },
+      "metadata": {
+        "size": 10450,
+        "sha256": "be245c9e1d73dc9b57f6ffa2ff764d0311c22ec19cfabdf0656a4d836667eccf"
+      }
+    }
+  },
+  "toolBaselineProvenance": {
+    "accepted": null,
+    "driverCommit": null,
+    "runId": null,
+    "runAttempt": null,
+    "artifactId": null,
+    "artifactDigest": null,
+    "result": {
+      "size": null,
+      "sha256": null
+    }
+  }
+}

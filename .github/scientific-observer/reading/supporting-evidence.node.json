@@ -1,0 +1,34 @@
+{
+  "id": "native-supporting-evidence",
+  "author": "example-researcher",
+  "kind": "evidence",
+  "statement": "Fictional supporting-message material retained through the public message read.",
+  "context": {
+    "scope": "Illustrative stream reaches during one summer field campaign. All records are fictional schema examples.",
+    "subjects": [
+      {
+        "kind": "entity",
+        "uri": "urn:example:stream-reaches",
+        "label": "Illustrative stream reaches"
+      }
+    ],
+    "conditions": [
+      "Midday measurements",
+      "Comparable stream discharge"
+    ],
+    "assumptions": [
+      "Thermometers are calibrated",
+      "Sampling reaches are comparable"
+    ]
+  },
+  "evidence": [],
+  "limits": "Illustrative record; no empirical result is claimed.",
+  "uncertainty": "",
+  "details": {
+    "source": {
+      "kind": "message",
+      "id": "native-science-support"
+    },
+    "description": "Fictional dataset used to illustrate record structure."
+  }
+}

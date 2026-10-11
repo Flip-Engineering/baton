@@ -20,7 +20,7 @@ on:
         required: false
         type: string
       runtime_suite:
-        description: Existing runtime suite, empty for the full matrix, or darwin-package-only for retained Darwin package and smoke
+        description: Existing runtime suite, Darwin package, installed scientific observation, or Darwin tool baseline
         required: false
         type: string
       browser_capture_only:
@@ -39,6 +39,10 @@ on:
         type: string
       retained_generated_c_manifest_sha256:
         description: SHA256 of that handoff's complete source, build and suite manifest
+        required: false
+        type: string
+      scientific_observation_binding:
+        description: Accepted installed observer bindings or published tool-baseline source binding as one JSON object
         required: false
         type: string
 
@@ -167,7 +171,7 @@ jobs:
           retention-days: 14
 
   retained_generated_c:
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.retained_generated_c_handoff }}
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.runtime_suite != 'scientific-installed-darwin-observation' && inputs.runtime_suite != 'scientific-darwin-tool-baseline' && inputs.retained_generated_c_handoff }}
     runs-on: [self-hosted, Linux, X64, baton2-native-linux-x64]
     steps:
       - name: Check out generated C product source
@@ -499,7 +503,7 @@ jobs:
           retention-days: 14
 
   runtime:
-    if: ${{ !cancelled() && !inputs.retained_generated_c_handoff && inputs.runtime_suite != 'darwin-package-only' && !inputs.darwin_from_generated_c && (github.event_name == 'workflow_dispatch' || needs.build.result == 'success') }}
+    if: ${{ !cancelled() && !inputs.retained_generated_c_handoff && inputs.runtime_suite != 'darwin-package-only' && inputs.runtime_suite != 'scientific-installed-darwin-observation' && inputs.runtime_suite != 'scientific-darwin-tool-baseline' && !inputs.darwin_from_generated_c && (github.event_name == 'workflow_dispatch' || needs.build.result == 'success') }}
     needs: build
     runs-on: ubuntu-24.04
     strategy:
@@ -909,3 +913,139 @@ jobs:
           path: ${{ runner.temp }}/final-native-context-${{ github.run_id }}-${{ github.run_attempt }}-${{ matrix.suite }}/
           if-no-files-found: warn
           retention-days: 14
+
+  scientific_installed_darwin:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.runtime_suite == 'scientific-installed-darwin-observation' }}
+    runs-on: macos-15
+    steps:
+      - name: Check out the observer driver
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.sha }}
+          path: observer-driver
+          persist-credentials: false
+      - name: Retain and verify the observer binding
+        id: observation_binding
+        shell: bash
+        env:
+          RUNTIME_SUITE: ${{ inputs.runtime_suite }}
+          SCIENTIFIC_OBSERVATION_BINDING: ${{ inputs.scientific_observation_binding }}
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/scientific-installed-darwin-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          printf 'SCIENTIFIC_DARWIN_EVIDENCE=%s\n' "$evidence" >> "$GITHUB_ENV"
+          status=0
+          python3 observer-driver/.github/scripts/scientific-installed-darwin-observer.py prepare \
+            --driver "$GITHUB_WORKSPACE/observer-driver" --evidence "$evidence" \
+            > "$evidence.prepare.stdout" 2> "$evidence.prepare.stderr" || status=$?
+          printf '%s\n' "$status" > "$evidence.prepare.status"
+          if test -d "$evidence"; then
+            mv "$evidence.prepare.stdout" "$evidence/prepare.stdout"
+            mv "$evidence.prepare.stderr" "$evidence/prepare.stderr"
+            mv "$evidence.prepare.status" "$evidence/prepare.status"
+            cat "$evidence/prepare.stdout"
+            cat "$evidence/prepare.stderr" >&2
+          fi
+          exit "$status"
+      - name: Check out immutable package source for byte comparison
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ steps.observation_binding.outputs.product_source }}
+          path: observation-product-source
+          persist-credentials: false
+      - name: Select the bound Node version
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ steps.observation_binding.outputs.node_version }}
+      - name: Observe the complete privately installed Darwin package
+        shell: bash
+        env:
+          RUNTIME_SUITE: ${{ inputs.runtime_suite }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          status=0
+          python3 observer-driver/.github/scripts/scientific-installed-darwin-observer.py observe \
+            --driver "$GITHUB_WORKSPACE/observer-driver" \
+            --product "$GITHUB_WORKSPACE/observation-product-source" \
+            --evidence "$SCIENTIFIC_DARWIN_EVIDENCE" \
+            > "$SCIENTIFIC_DARWIN_EVIDENCE/observer.stdout" \
+            2> "$SCIENTIFIC_DARWIN_EVIDENCE/observer.stderr" || status=$?
+          printf '%s\n' "$status" > "$SCIENTIFIC_DARWIN_EVIDENCE/observer.status"
+          cat "$SCIENTIFIC_DARWIN_EVIDENCE/observer.stdout"
+          cat "$SCIENTIFIC_DARWIN_EVIDENCE/observer.stderr" >&2
+          exit "$status"
+      - name: Retain the full installed observation evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: scientific-installed-darwin-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.SCIENTIFIC_DARWIN_EVIDENCE }}
+            ${{ env.SCIENTIFIC_DARWIN_EVIDENCE }}.prepare.*
+          if-no-files-found: error
+          include-hidden-files: true
+
+  scientific_darwin_tool_baseline:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.runtime_suite == 'scientific-darwin-tool-baseline' }}
+    runs-on: macos-15
+    steps:
+      - name: Check out the tool-baseline driver
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.sha }}
+          path: observer-driver
+          persist-credentials: false
+      - name: Retain the tool-baseline source and account binding
+        shell: bash
+        env:
+          RUNTIME_SUITE: ${{ inputs.runtime_suite }}
+          SCIENTIFIC_OBSERVATION_BINDING: ${{ inputs.scientific_observation_binding }}
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/scientific-darwin-tool-baseline-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          printf 'SCIENTIFIC_DARWIN_BASELINE=%s\n' "$evidence" >> "$GITHUB_ENV"
+          status=0
+          python3 observer-driver/.github/scripts/scientific-installed-darwin-observer.py baseline-prepare \
+            --driver "$GITHUB_WORKSPACE/observer-driver" --evidence "$evidence" \
+            > "$evidence.prepare.stdout" 2> "$evidence.prepare.stderr" || status=$?
+          printf '%s\n' "$status" > "$evidence.prepare.status"
+          if test -d "$evidence"; then
+            mv "$evidence.prepare.stdout" "$evidence/prepare.stdout"
+            mv "$evidence.prepare.stderr" "$evidence/prepare.stderr"
+            mv "$evidence.prepare.status" "$evidence/prepare.status"
+            cat "$evidence/prepare.stdout"
+            cat "$evidence/prepare.stderr" >&2
+          fi
+          exit "$status"
+      - name: Select Node 22.23.3 for tool metadata
+        id: baseline_node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22.23.3'
+      - name: Record Darwin tool bytes, architecture and versions
+        shell: bash
+        env:
+          RUNTIME_SUITE: ${{ inputs.runtime_suite }}
+          NODE_SETUP_OUTCOME: ${{ steps.baseline_node.outcome }}
+        run: |
+          set -euo pipefail
+          status=0
+          python3 observer-driver/.github/scripts/scientific-installed-darwin-observer.py baseline \
+            --driver "$GITHUB_WORKSPACE/observer-driver" --evidence "$SCIENTIFIC_DARWIN_BASELINE" \
+            > "$SCIENTIFIC_DARWIN_BASELINE/baseline.stdout" \
+            2> "$SCIENTIFIC_DARWIN_BASELINE/baseline.stderr" || status=$?
+          printf '%s\n' "$status" > "$SCIENTIFIC_DARWIN_BASELINE/baseline.status"
+          cat "$SCIENTIFIC_DARWIN_BASELINE/baseline.stdout"
+          cat "$SCIENTIFIC_DARWIN_BASELINE/baseline.stderr" >&2
+          exit "$status"
+      - name: Retain complete Darwin tool metadata
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: scientific-darwin-tool-baseline-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.SCIENTIFIC_DARWIN_BASELINE }}
+            ${{ env.SCIENTIFIC_DARWIN_BASELINE }}.prepare.*
+          if-no-files-found: error
+          include-hidden-files: true

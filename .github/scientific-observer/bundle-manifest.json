@@ -1,0 +1,58 @@
+{
+  "reading": {
+    "darwin-process.py": {
+      "size": 7416,
+      "sha256": "5730d385bc7090800bdb522e87f5f900b2d559be28d4a27b006357a655819f57"
+    },
+    "edges.batch.json": {
+      "size": 8159,
+      "sha256": "cdae45318426233e2076078658cc2d526b1e1907d4be3a5d8b8ca840babb64dd"
+    },
+    "native-flow.mjs": {
+      "size": 59303,
+      "sha256": "174eed4e2e1a6a03db2006c201622ee151883af4bf27f8360fc674de6d3ddb87"
+    },
+    "nodes.batch.json": {
+      "size": 13731,
+      "sha256": "e972034cd7aa8c3883c6723914cb8fc1f03f1b603653fea97ae216d40c6222d4"
+    },
+    "scientific-example.exact.json": {
+      "size": 21835,
+      "sha256": "56498f6c47312c1c3ef93febc15f578fa436549521bcdc87ae87a15101957e1b"
+    },
+    "supporting-evidence.node.json": {
+      "size": 979,
+      "sha256": "0de92fcb3e1daca5a34259134a8a12cdeab8dc3868a72d51802ecd9e35dd1198"
+    },
+    "supporting-message.txt": {
+      "size": 210,
+      "sha256": "ea862584306cefb88541cc0829699b9766ab6d33540215ff87beb47dd6b0510c"
+    }
+  },
+  "numeric": {
+    "authored-nodes.json": {
+      "size": 2351,
+      "sha256": "37480578cc9fc020347b20be59285f551fc2490dc3133423c83c76abcd38561c"
+    },
+    "darwin-process.py": {
+      "size": 7416,
+      "sha256": "5730d385bc7090800bdb522e87f5f900b2d559be28d4a27b006357a655819f57"
+    },
+    "expected-numeric-tokens.json": {
+      "size": 109,
+      "sha256": "4f422da9a1d24655db6501e053cb44097ed2c47e07dd4a37699d181497e4f3b8"
+    },
+    "native-flow.mjs": {
+      "size": 39402,
+      "sha256": "b74960a3cca90d27833b70ef18332f75db72afa51269169429b5a00bf991e10d"
+    },
+    "numeric.batch.json": {
+      "size": 2390,
+      "sha256": "0f70c7eab344dc1e148b3faa8ea57d3475fce875b3194cc7e2335f45840d1f72"
+    },
+    "standard-json-feature-expression.js": {
+      "size": 1691,
+      "sha256": "ad2004ac0919b2c4dd84fcc8c6b34d5b3662b743a3995d8a16fe5c0402780154"
+    }
+  }
+}

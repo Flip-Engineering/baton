@@ -1,0 +1,74 @@
+[
+  {
+    "id": "integer-observation",
+    "author": "example-researcher",
+    "kind": "observation",
+    "statement": "A fictional calibration record contains the specified integer count.",
+    "context": {
+      "scope": "Fictional numeric read-path illustration",
+      "subjects": [
+        {
+          "kind": "entity",
+          "uri": "urn:example:precision-calibration",
+          "label": "Fictional precision calibration"
+        }
+      ],
+      "conditions": [],
+      "assumptions": []
+    },
+    "evidence": [],
+    "limits": "Illustrative record; no empirical result is claimed.",
+    "uncertainty": "One illustrative paired measurement; sampling spread is not specified.",
+    "details": {
+      "subject": {
+        "kind": "entity",
+        "uri": "urn:example:precision-calibration",
+        "label": "Fictional precision calibration"
+      },
+      "property": "Calibration counter",
+      "procedure": "Read the numeric token from the fictional calibration record.",
+      "result": {
+        "kind": "quantity",
+        "value": 9007199254740993,
+        "unit": "count"
+      },
+      "phenomenonTime": "Fictional calibration reading"
+    }
+  },
+  {
+    "id": "decimal-observation",
+    "author": "example-researcher",
+    "kind": "observation",
+    "statement": "A fictional calibration record contains the specified decimal ratio.",
+    "context": {
+      "scope": "Fictional numeric read-path illustration",
+      "subjects": [
+        {
+          "kind": "entity",
+          "uri": "urn:example:precision-calibration",
+          "label": "Fictional precision calibration"
+        }
+      ],
+      "conditions": [],
+      "assumptions": []
+    },
+    "evidence": [],
+    "limits": "Illustrative record; no empirical result is claimed.",
+    "uncertainty": "One illustrative paired measurement; sampling spread is not specified.",
+    "details": {
+      "subject": {
+        "kind": "entity",
+        "uri": "urn:example:precision-calibration",
+        "label": "Fictional precision calibration"
+      },
+      "property": "Calibration ratio",
+      "procedure": "Read the numeric token from the fictional calibration record.",
+      "result": {
+        "kind": "quantity",
+        "value": 0.123456789012345678901234567890,
+        "unit": "ratio"
+      },
+      "phenomenonTime": "Fictional calibration reading"
+    }
+  }
+]
