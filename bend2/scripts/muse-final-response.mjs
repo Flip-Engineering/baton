@@ -124,8 +124,10 @@ async function main() {
     return unavailable('arguments', 'Expected MUSE SESSION RUN OUTPUT arguments');
   }
 
+  const exportPath = `${output}.${process.pid}`;
+  let exportProvenance = {};
   try {
-    const exported = await exportSession(executable, sessionId, output);
+    const exported = await exportSession(executable, sessionId, exportPath);
     if (exported.error) {
       return unavailable('exportSpawn', exported.error.message, { executable, sessionId, runId });
     }
@@ -138,16 +140,22 @@ async function main() {
         signal: exported.signal,
       });
     }
-    const document = JSON.parse(await readFile(output, 'utf8'));
-    return selectFinalResponse(document, sessionId, runId);
+    const source = await readFile(exportPath);
+    exportProvenance = {
+      exportUtf8Bytes: source.length,
+      exportSha256: createHash('sha256').update(source).digest('hex'),
+    };
+    return { ...selectFinalResponse(JSON.parse(source.toString('utf8')), sessionId, runId),
+      ...exportProvenance };
   } catch (error) {
     return unavailable('exportRead', error instanceof Error ? error.message : String(error), {
       executable,
       sessionId,
       runId,
+      ...exportProvenance,
     });
   } finally {
-    await rm(output, { force: true }).catch(() => {});
+    await rm(exportPath, { force: true }).catch(() => {});
   }
 }
 

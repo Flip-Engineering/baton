@@ -950,6 +950,8 @@ class Receive(unittest.TestCase):
                           'fixture-message', 'fixture-response', 'fixture-provider-item', 10, 11, 1,
                           len(final.encode()), hashlib.sha256(final.encode()).hexdigest(), final))
         self.assertEqual(event['payload']['text'], cumulative)
+        self.assertGreater(selected['exportUtf8Bytes'], selected['textUtf8Bytes'])
+        self.assertEqual(len(selected['exportSha256']), 64)
         self.assertEqual(self.coord('delivery', turns[0]['id'])['body'], final)
 
     def test_muse_receive_preserves_terminal_text_when_final_boundary_is_missing(self):
@@ -972,6 +974,8 @@ class Receive(unittest.TestCase):
         final_response = event['baton']['finalResponse']
         self.assertEqual(final_response['status'], 'unavailable')
         self.assertEqual(final_response['diagnostic']['code'], 'assistantBoundaryMissing')
+        self.assertGreater(final_response['exportUtf8Bytes'], len(cumulative.encode()))
+        self.assertEqual(len(final_response['exportSha256']), 64)
         self.assertTrue(final_response['diagnosticLog'].endswith('/muse-final-response.stderr'))
         self.assertEqual(event['payload']['text'], cumulative)
 
