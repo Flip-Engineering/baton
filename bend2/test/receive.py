@@ -1490,6 +1490,7 @@ class Receive(unittest.TestCase):
         original_body = authored_body
         if harness == 'muse':
             original_body = 'Intermediate Muse summary before observer loss.\n' + authored_body
+        serialized_original_body = json.dumps(original_body)[1:-1]
         terminal_action = {'body': original_body, 'hold_exit': True, 'report_input': True}
         if harness == 'muse':
             terminal_action['final_body'] = authored_body
@@ -1498,7 +1499,7 @@ class Receive(unittest.TestCase):
             self.action(original, **terminal_action)
             self.assertEqual(json.loads(original.readline()),
                              {'terminal_written': True, 'input_after_prompt': ''})
-            self.eventually(lambda: log.exists() and original_body in log.read_text(),
+            self.eventually(lambda: log.exists() and serialized_original_body in log.read_text(),
                             'terminal event was not observed before killing the observer')
             evidence['turnsBeforeLoss'] = self.coord('turns', 'parent')
         observer.kill()
@@ -1522,7 +1523,7 @@ class Receive(unittest.TestCase):
             self.assertEqual(json.loads(original.readline()),
                              {'terminal_written': True, 'input_after_prompt': ''})
         evidence['originalPromptRepeated'] = False
-        self.eventually(lambda: original_body in log.read_text(), 'original terminal output was lost')
+        self.eventually(lambda: serialized_original_body in log.read_text(), 'original terminal output was lost')
         evidence['duplicateNativeSession'] = bool(select.select([self.server], [], [], 0)[0])
         self.assertFalse(evidence['duplicateNativeSession'],
                          'another native started before the original process exited')
