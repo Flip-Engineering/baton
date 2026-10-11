@@ -2062,6 +2062,18 @@ check('an unheld endpoint draws the hollow ring and a held one the dot', await e
       && !mark.querySelector('.knode, rect.knode'))
     && held.every((mark) => mark.querySelector('circle.kw-typeref-dot'));
 })()`));
+// Read the complete fixture in All held records for the raw edge counts.
+const staticUniversalScope = await evalJs(`document.getElementById('map-scope').textContent`);
+const staticAllScope = 'All held records · ' + fixturePayload.findings.length
+  + (fixturePayload.findings.length === 1 ? ' item' : ' items');
+await evalJs(`document.getElementById('map-scope-all').click()`);
+await until('all held records draw the complete fixture before semantic edge counts',
+  `(() => {
+    const whole = document.querySelector('#knowledge-whole');
+    return document.getElementById('map-scope').textContent === ${JSON.stringify(staticAllScope)}
+      && document.getElementById('map-scope-all').getAttribute('aria-pressed') === 'true'
+      && !!whole?.querySelector('.kw-edge-cited[data-from="finding:fixture-finding-e1"][data-to="message:fixture-message-not-held"]');
+  })()`);
 // The mixed projection names one authored relation and one citation twice: once in the
 // compatibility rows and once in the typed edges. The canvas may draw each semantic fact
 // once. The expected count is read from the payload's own edges, never pinned.
@@ -2097,6 +2109,16 @@ check('the map draws each semantic edge once, however many payload shapes name i
   }
   return true;
 })()`));
+await evalJs(`document.getElementById('map-scope-all').click()`);
+await until('the static fixture returns to universal knowledge after semantic edge counts',
+  `(() => {
+    const whole = document.querySelector('#knowledge-whole');
+    return document.getElementById('map-scope').textContent === ${JSON.stringify(staticUniversalScope)}
+      && document.getElementById('map-scope').textContent.startsWith('Universal knowledge · ')
+      && document.getElementById('map-scope-all').getAttribute('aria-pressed') === 'false'
+      && !!whole && !whole.querySelector('.knode[data-kw-kind="finding"][data-kw-node="fixture-finding-e1"]')
+      && !whole.querySelector('.kw-edge-cited[data-from="finding:fixture-finding-e1"][data-to="message:fixture-message-not-held"]');
+  })()`);
 // The two map heads and the two stroke textures. The property read is
 // stroke-dasharray, because the pair differs there rather than in colour or width:
 // the typed edge sets a dash for the cited stroke and none for the authored one
@@ -2544,6 +2566,16 @@ await until('the narrow static Principal retains its complete caption beneath it
       && box.y > g.y + g.height
       && box.x >= 0 && box.x + box.width <= Number(svg.getAttribute('width'));
   })()`);
+// Read both authors' complete holdings for the wrapped finding positions.
+await evalJs(`document.getElementById('map-scope-all').click()`);
+await until('all held records draw the wrapped findings beneath their authors',
+  `(() => {
+    const whole = document.querySelector('#knowledge-whole');
+    const ids = ['fixture-finding-a2', 'fixture-finding-d1', 'fixture-finding-a3', 'fixture-finding-d2'];
+    return document.getElementById('map-scope').textContent === ${JSON.stringify(staticAllScope)}
+      && document.getElementById('map-scope-all').getAttribute('aria-pressed') === 'true'
+      && !!whole && ids.every((id) => whole.querySelector('.knode[data-kw-kind="finding"][data-kw-node="' + CSS.escape(id) + '"] .kw-finding'));
+  })()`);
 check('wrapped findings remain distinct beneath their own authors, including the Principal',
   await evalJs(`(() => {
     const findings = ${JSON.stringify(fixturePayload.findings || [])};
@@ -2570,6 +2602,15 @@ check('wrapped findings remain distinct beneath their own authors, including the
     const principal = findings.filter((row) => row.author === 'fixture-knowledge-root');
     return principal.length > 0 && principal.every((row) => belowAuthor(row.id));
   })()`));
+await evalJs(`document.getElementById('map-scope-all').click()`);
+await until('the narrow fixture returns to universal knowledge before Principal focus',
+  `(() => {
+    const whole = document.querySelector('#knowledge-whole');
+    return document.getElementById('map-scope').textContent === ${JSON.stringify(staticUniversalScope)}
+      && document.getElementById('map-scope-all').getAttribute('aria-pressed') === 'false'
+      && !!whole?.querySelector('.kw-anchor[data-kw-id="fixture-knowledge-root"] rect.kw-actor')
+      && !whole.querySelector('.knode[data-kw-kind="finding"][data-kw-node="fixture-finding-a2"]');
+  })()`);
 await evalJs(`(() => {
   const tier = document.querySelector('#knowledge-whole [data-kw-tier="0"]');
   if (tier) tier.click();
