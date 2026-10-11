@@ -9,18 +9,22 @@ import ../git/text.bend as Tx
 # writes. The writers are the authority for every format here. host/process-spawn.c
 # writes the manifest (BATONRP1 or BATONRP2: magic 8 bytes, then count uint64
 # field lengths, then keep_stdin and reserved as four bytes each, then the fields
-# in order, the first being the argv in its length-colon-bytes encoding), native.pid
-# as text and the acknowledged marker; host/instance.bend frames the checkpoint as
-# BATONC03 around the schema-1 JSON that observer-checkpoint.bend encodes, whose
-# first field after schema is guidance_cursor. The admission and lifecycle records
-# are read through the custody host's own projection, Instance.state, whose JSON
-# keys the host builds from those records in br_instance_state_call.
+# in order, the first being the argv in its length-colon-bytes encoding; the count
+# differs by version, so the argv offset differs too), native.pid as text and the
+# acknowledged marker; host/instance.bend frames the checkpoint as BATONC03 around
+# the schema-1 JSON that observer-checkpoint.bend encodes, whose first field after
+# schema is guidance_cursor.
 
 # The runtime identity is argv element zero of the recorded manifest: the binary
-# path the attempt was admitted with. The manifest header occupies 8 + 8*count +
-# 8 characters, and count is 6 or 8, so the argv field begins at byte 64 for
-# either version. A file the reader refuses, including for its binary header
-# bytes, is an absent identity, reported as an empty string.
+# path the attempt was admitted with. The manifest header is 8 magic characters,
+# then count uint64 lengths, then the 8 keep_stdin and reserved characters: 64
+# characters for the six-field BATONRP1 and 80 for the eight-field BATONRP2, so
+# the version is read first and the argv offset follows it. The manifest also
+# carries binary length words, and the text reader refuses records with binary
+# bytes, so a refused read is the explicit outcome it is: the identity renders as
+# an empty binaryPath and the composing read labels the manifest record
+# unreadable, because no text reader can recover a binary header. The passive host
+# reference is the path that can carry the argv instead.
 def manifest_identity(directory: String) -> IO(String):
   do IO<String>:
     read : Result<&1,&1,U32 & String,String> <- IO.try(String,T.Text.read(directory ++ "/manifest"))
@@ -29,7 +33,22 @@ def manifest_identity(directory: String) -> IO(String):
 def manifest_identity_read(read: Result<&1,&1,U32 & String,String>) -> IO(String):
   match read:
     case Fail{error}: IO.pure(String,"")
-    case Done{+text}: manifest_argv_element(custody_drop(text,64))
+    case Done{+text}: manifest_argv_at_version(text,manifest_argv_offset(custody_take(text,0,8,"")))
+
+# The argv offset by manifest version, derived from the writer's field counts:
+# 8 magic characters plus count uint64 lengths plus the 8 keep_stdin and
+# reserved characters.
+def manifest_argv_offset(magic: Maybe<String>) -> Maybe<U32>:
+  match magic:
+    case None{}: None{}
+    case Some{"BATONRP1"}: Some{64}
+    case Some{"BATONRP2"}: Some{80}
+    case Some{other}: None{}
+
+def manifest_argv_at_version(text: String, offset: Maybe<U32>) -> IO(String):
+  match offset:
+    case None{}: IO.pure(String,"")
+    case Some{n}: manifest_argv_element(custody_drop(text,n))
 
 # One length-colon-bytes element: a decimal character count, a colon, then that
 # many characters. A malformed element is an absent identity.
@@ -46,8 +65,11 @@ def manifest_argv_value(taken: Maybe<String>) -> IO(String):
     case None{}: IO.pure(String,"")
     case Some{value}: IO.pure(String,value)
 
+# The text whose first `count` characters are dropped. Dropping continues while
+# characters remain to drop: at a positive count the recursion consumes one
+# character and decrements, and at zero the text is returned as it stands.
 def custody_drop(text: String, count: U32) -> String:
-  custody_drop_step(text,count,U32.is_lt(count,1))
+  custody_drop_step(text,count,U32.is_lt(0,count))
 
 def custody_drop_step(text: String, count: U32, more: Bool) -> String:
   match more:
@@ -71,22 +93,22 @@ def custody_colon_step(colon: Bool, more: String) -> String:
     case True{}: more
     case False{}: custody_drop_colon(more)
 
-# A decimal character count up to the next colon, range checked as it
-# accumulates.
+# A decimal character count up to the next colon, range checked as it accumulates.
+# Digits that end without a colon are refused, because no length was delimited.
 def custody_digits(rest: String, value: U32, seen: Bool) -> Maybe<U32>:
   match rest:
-    case SNil{}: custody_seen(seen,value)
+    case SNil{}: None{}
     case SCon{c,more}: custody_digits_step(String.eq(Tx.one_char(c),":"),c,more,value,seen)
-
-def custody_seen(seen: Bool, value: U32) -> Maybe<U32>:
-  match seen:
-    case True{}: Some{value}
-    case False{}: None{}
 
 def custody_digits_step(colon: Bool, c: Char, more: String, value: U32, seen: Bool) -> Maybe<U32>:
   match colon:
     case True{}: custody_seen(seen,value)
     case False{}: custody_digit(custody_digit_value(c),more,value,seen)
+
+def custody_seen(seen: Bool, value: U32) -> Maybe<U32>:
+  match seen:
+    case True{}: Some{value}
+    case False{}: None{}
 
 def custody_digit_value(c: Char) -> Maybe<U32>:
   match c:
@@ -126,22 +148,23 @@ def custody_take_more(count: U32, target: U32, rest: String, seen: String) -> Ma
     case SNil{}: None{}
     case SCon{c,more}: custody_take((count + 1 : U32),target,more,seen ++ Tx.one_char(c))
 
-# The release directory name: the path segment two levels above the binary, so a
-# release path like releases/1.1.0-fca7af87/bin/baton2 yields 1.1.0-fca7af87 and
-# the source pin is read from it. This one derivation is the shared shape for
-# every surface that names the runtime identity.
+# The release directory name, derived from the actual layout
+# releases/<segment>/bin/<name>: the segment is two path components above the
+# binary name, one past the bin component, so releases/1.1.0-fca7af87/bin/baton2
+# yields 1.1.0-fca7af87 and the source pin is read from it. This one derivation is
+# the shared shape for every surface that names the runtime identity.
 def release_segment(path: String) -> String:
   release_scan(path,"","")
 
-def release_scan(rest: String, previous: String, current: String) -> String:
+def release_scan(rest: String, two_back: String, one_back: String) -> String:
   match rest:
-    case SNil{}: previous
-    case SCon{c,more}: release_step(String.eq(Tx.one_char(c),"/"),c,more,previous,current)
+    case SNil{}: two_back
+    case SCon{c,more}: release_step(String.eq(Tx.one_char(c),"/"),c,more,two_back,one_back)
 
-def release_step(slash: Bool, c: Char, more: String, previous: String, current: String) -> String:
+def release_step(slash: Bool, c: Char, more: String, two_back: String, one_back: String) -> String:
   match slash:
-    case True{}: release_scan(more,current,"")
-    case False{}: release_scan(more,previous,current ++ Tx.one_char(c))
+    case True{}: release_scan(more,one_back,"")
+    case False{}: release_scan(more,two_back,one_back ++ Tx.one_char(c))
 
 # The recorded pid is text in native.pid. It is a recorded value only; it is
 # never presented as evidence that a process is alive.
@@ -252,7 +275,7 @@ def custody_recorded(db: String, directory: String) -> IO(String):
       cursor : String <- checkpoint_cursor(db,directory)
       lifecycle : String <- custody_lifecycle(db,directory)
       +release : String <- IO.pure(String,release_segment(binary))
-      rendered : Result<&1,&1,U32 & String,String> <- IO.try(String,DB.Sql.query(db,"SELECT json_object('binaryPath'," ++ C.q(binary) ++ ",'release'," ++ C.q(release) ++ ",'recordedPid'," ++ C.q(pid) ++ ",'acknowledged',json(" ++ marker ++ "),'guidanceCursor'," ++ C.q(cursor) ++ ",'lifecycle',json(" ++ lifecycle ++ "));"))
+      rendered : Result<&1,&1,U32 & String,String> <- IO.try(String,DB.Sql.query(db,"SELECT json_object('binaryPath'," ++ C.q(binary) ++ ",'manifestRead',CASE WHEN " ++ C.q(binary) ++ "='' THEN 'unreadable-record' ELSE 'read' END,'release'," ++ C.q(release) ++ ",'recordedPid'," ++ C.q(pid) ++ ",'acknowledged',json(" ++ marker ++ "),'guidanceCursor'," ++ C.q(cursor) ++ ",'lifecycle',json(" ++ lifecycle ++ "));"))
       custody_rendered(rendered)
 
 def custody_rendered(rendered: Result<&1,&1,U32 & String,String>) -> IO(String):

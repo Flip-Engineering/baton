@@ -3,10 +3,45 @@ import ./attempt-custody.bend as Custody
 
 # Laws over the attempt-custody decoder. Every equation names a real decision
 # function of the decoder, in the shapes the writers define: the manifest's
-# length-colon-bytes argv element, the release-segment derivation shared by every
-# surface that names the runtime identity, the bounded field readers, and the
-# graceful-absent contracts that keep an unreadable record an empty fact rather
-# than an approximation.
+# version-dependent argv offset and its length-colon-bytes element, the
+# release-segment derivation shared by every surface that names the runtime
+# identity, the bounded field readers, and the graceful-absent contracts that
+# keep an unreadable record an empty fact rather than an approximation.
+
+# The drop boundary: dropping zero characters returns the text unchanged, and
+# dropping exactly the header length leaves what follows it.
+law custody_drop_at_zero_returns_the_text:
+  {Custody.custody_drop("abcdef",0) == "abcdef" : String}
+
+def custody_drop_at_zero_returns_the_text():
+  {==}
+
+law custody_drop_at_sixty_four_leaves_the_tail:
+  {Custody.custody_drop("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxtail",64) == "tail" : String}
+
+def custody_drop_at_sixty_four_leaves_the_tail():
+  {==}
+
+# The argv offset by manifest version, derived from the writer's field counts:
+# 8 magic characters, count uint64 lengths, 8 keep_stdin and reserved characters.
+# BATONRP1 carries six fields, BATONRP2 eight.
+law manifest_argv_offset_is_sixty_four_for_rpv1:
+  {Custody.manifest_argv_offset(Some{"BATONRP1"}) == Some{64} : Maybe<U32>}
+
+def manifest_argv_offset_is_sixty_four_for_rpv1():
+  {==}
+
+law manifest_argv_offset_is_eighty_for_rpv2:
+  {Custody.manifest_argv_offset(Some{"BATONRP2"}) == Some{80} : Maybe<U32>}
+
+def manifest_argv_offset_is_eighty_for_rpv2():
+  {==}
+
+law manifest_argv_offset_refuses_an_unknown_version:
+  {Custody.manifest_argv_offset(Some{"BATONXX9"}) == None{} : Maybe<U32>}
+
+def manifest_argv_offset_refuses_an_unknown_version():
+  {==}
 
 # A well-formed length-colon-bytes element yields exactly its declared bytes.
 law manifest_argv_element_decodes_one_element:
@@ -22,8 +57,14 @@ law manifest_argv_element_refuses_a_short_element:
 def manifest_argv_element_refuses_a_short_element():
   {==}
 
-# A non-digit length prefix is absent.
-law manifest_digits_refuse_a_non_digit:
+# Digits that end without a colon delimit no length and are refused.
+law custody_digits_refuse_digits_without_a_colon:
+  {Custody.custody_digits("123",0,False{}) == None{} : Maybe<U32>}
+
+def custody_digits_refuse_digits_without_a_colon():
+  {==}
+
+law custody_digits_refuse_a_non_digit:
   {Custody.custody_digits("x:rest",0,False{}) == None{} : Maybe<U32>}
 
 def custody_digits_refuse_a_non_digit():
@@ -33,7 +74,7 @@ def custody_digits_refuse_a_non_digit():
 law custody_take_reads_exactly_the_declared_count:
   {Custody.custody_take("baton",0,5,"") == Some{"baton"} : Maybe<String>}
 
-def manifest_digits_refuse_a_non_digit():
+def custody_take_reads_exactly_the_declared_count():
   {==}
 
 law custody_take_refuses_a_short_remainder:
@@ -42,8 +83,9 @@ law custody_take_refuses_a_short_remainder:
 def custody_take_refuses_a_short_remainder():
   {==}
 
-# The release segment is the path component two levels above the binary, so a
-# release layout names its version-and-pin directory and a flat name names none.
+# The release segment is derived from the actual layout
+# releases/<segment>/bin/<name>: two path components above the binary, one past
+# the bin component.
 law release_segment_names_the_release_directory:
   {Custody.release_segment("releases/1.1.0-fca7af87/bin/baton2") == "1.1.0-fca7af87" : String}
 
