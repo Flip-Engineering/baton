@@ -1973,13 +1973,13 @@ await until('page recovers to live after the gap resnapshot',
   `window.__qaMark === 42 && document.querySelector('#ribbon .ribbon-slider').getAttribute('aria-valuemax') !== ${JSON.stringify(ribbonMaxBeforeRecovery)}`);
 
 // Prolific authors collapse to one count badge that expands on focus.
-// Worker already holds two findings above; eleven more cross the dozen.
+// Worker retains three findings; eleven more bring its count to fourteen.
 for (let i = 0; i < 11; i += 1) {
   baton('record', 'qa-cluster-' + i, 'worker', 'Cluster finding ' + i + '.', 'Cluster evidence.', 'Cluster limits.');
 }
 committed();
 await until('prolific author collapses to a count badge',
-  `document.querySelector('#knowledge-whole .kw-cluster[data-kw-cluster="worker"] .kw-cluster-count')?.textContent === '13'`);
+  `document.querySelector('#knowledge-whole .kw-cluster[data-kw-cluster="worker"] .kw-cluster-count')?.textContent === '14'`);
 check('cluster badge sits at its author', await evalJs(`(() => {
   const a = document.querySelector('#knowledge-whole .kw-anchor[data-kw-id="worker"] rect');
   const b = document.querySelector('#knowledge-whole .kw-cluster[data-kw-cluster="worker"] rect');
