@@ -2018,7 +2018,7 @@ await until('the recorded view restores the stopped actor and owed count',
 // The page is fed from the fixture file rather than the live server, so the typed
 // drawing can be exercised on data the fixture states. The fixture file carries the
 // shapes the projection emits, plus three named probes it never emits.
-const fixtureUrl = urlA + 'index.html?fixture=fixture-knowledge';
+const fixtureUrl = `http://127.0.0.1:${portB}/index.html?fixture=fixture-knowledge`;
 await openPage(fixtureUrl);
 await until('the fixture map draws its canvas',
   `!!document.querySelector('#knowledge-whole svg.kw-canvas')`);
@@ -2803,7 +2803,7 @@ check('the relation address round-trips through a reload', await evalJs(`(() => 
 })()`));
 
 // ============ the fixture document: the absent typed fields ============
-await openPage(urlA + 'index.html?fixture=fixture-knowledge-empty');
+await openPage(`http://127.0.0.1:${portB}/index.html?fixture=fixture-knowledge-empty`);
 await until('the empty fixture renders its knowledge mount',
   `!!document.getElementById('knowledge-whole')`);
 check('without the typed fields the map draws no typed mark', await evalJs(`(() => {
