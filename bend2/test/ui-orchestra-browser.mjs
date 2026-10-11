@@ -4,7 +4,7 @@
 // recovery over the same committed database.
 // Usage: node ui-orchestra-browser.mjs EXE WORKDIR OUTDIR [CHROMIUM]
 import { spawn, spawnSync } from 'node:child_process';
-import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readFileSync, readdirSync, readlinkSync, statSync, writeFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -59,6 +59,28 @@ baton('ensemble-member', 'qa-ensemble', 'lead', 'aide', 'add');
 baton('section', 'qa-ensemble', 'qa-section', 'lead', 'qualification coverage');
 baton('section-member', 'qa-ensemble', 'qa-section', 'lead', 'worker', 'add');
 baton('message', 'qa-task-1', 'root', 'worker', 'task', 'Retained task input.');
+const parentState = JSON.parse(baton('session', 'lead'));
+const parentReviewer = join(WORK, 'lead-completion-review.cjs');
+writeFileSync(parentReviewer,
+  `const {spawnSync} = require('node:child_process');\n` +
+  `const coordinator = (...args) => {\n` +
+  `  const result = spawnSync(${JSON.stringify(EXE)}, [${JSON.stringify(DB)}, ...args], {encoding:'utf8'});\n` +
+  `  if (result.status !== 0) throw new Error(result.stdout + result.stderr);\n` +
+  `  return JSON.parse(result.stdout);\n` +
+  `};\n` +
+  `const request = process.argv.at(-1);\n` +
+  `const message = coordinator('delivery', request);\n` +
+  `if (message.recipient !== 'lead') throw new Error(JSON.stringify(message));\n` +
+  `if (message.kind === 'completion-request') {\n` +
+  `  if (message.sender !== 'worker' || message.body !== 'Worker completed the assigned task.') throw new Error(JSON.stringify(message));\n` +
+  `  const completion = coordinator('session', 'worker').taskCompletion;\n` +
+  `  if (completion.coordinator !== 'lead' || completion.requestId !== request) throw new Error(JSON.stringify(completion));\n` +
+  `  const assignment = coordinator('delivery', completion.assignmentId);\n` +
+  `  if (assignment.recipient !== 'worker' || assignment.receipt === null) throw new Error(JSON.stringify(assignment));\n` +
+  `  coordinator('ack', request, 'lead', 'Fixture coordinator reviewed the requested result.');\n` +
+  `  coordinator('message', request + ':confirmed', 'lead', 'worker', 'completion-confirmed', request);\n` +
+  `}\n`);
+baton('connect', 'lead', parentState.native, JSON.stringify([process.execPath, parentReviewer]));
 const workerCmd = join(WORK, 'worker-native');
 writeFileSync(workerCmd, `#!${process.execPath}\n` +
   `const {readFileSync} = require('node:fs'); const {spawnSync} = require('node:child_process');\n` +
@@ -71,6 +93,28 @@ writeFileSync(workerCmd, `#!${process.execPath}\n` +
   `  const accepted = spawnSync(${JSON.stringify(EXE)}, [${JSON.stringify(DB)}, 'ack', id, 'worker', 'fixture-native-reviewed'], {encoding:'utf8'});\n` +
   `  if (accepted.status !== 0) throw new Error(accepted.stdout + accepted.stderr);\n` +
   `}\n` +
+  `const coordinator = (...args) => {\n` +
+  `  const result = spawnSync(${JSON.stringify(EXE)}, [${JSON.stringify(DB)}, ...args], {encoding:'utf8'});\n` +
+  `  if (result.status !== 0) throw new Error(result.stdout + result.stderr);\n` +
+  `  return JSON.parse(result.stdout);\n` +
+  `};\n` +
+  `const state = coordinator('session', 'worker');\n` +
+  `const completion = state.taskCompletion;\n` +
+  `if (!completion.open || completion.coordinator !== state.parent) throw new Error(JSON.stringify(state));\n` +
+  `const assignment = coordinator('delivery', completion.assignmentId);\n` +
+  `if (assignment.recipient !== 'worker' || assignment.receipt === null) throw new Error(JSON.stringify(assignment));\n` +
+  `const request = 'qa-worker-completion:' + completion.assignmentId;\n` +
+  `const resultText = 'Worker completed the assigned task.';\n` +
+  `coordinator('message', request, 'worker', completion.coordinator, 'completion-request', resultText);\n` +
+  `const reviewed = coordinator('delivery', request);\n` +
+  `if (reviewed.sender !== 'worker' || reviewed.recipient !== completion.coordinator || reviewed.kind !== 'completion-request' || reviewed.body !== resultText) throw new Error(JSON.stringify(reviewed));\n` +
+  `if (reviewed.receipt !== 'Fixture coordinator reviewed the requested result.') throw new Error(JSON.stringify(reviewed));\n` +
+  `const confirmation = request + ':confirmed';\n` +
+  `const confirmed = coordinator('delivery', confirmation);\n` +
+  `if (confirmed.sender !== completion.coordinator || confirmed.recipient !== 'worker' || confirmed.kind !== 'completion-confirmed' || confirmed.body !== request) throw new Error(JSON.stringify(confirmed));\n` +
+  `coordinator('ack', confirmation, 'worker', 'Fixture worker handled coordinator confirmation.');\n` +
+  `const settled = coordinator('session', 'worker').taskCompletion;\n` +
+  `if (settled.assignmentId !== completion.assignmentId || settled.requestId !== request || !settled.confirmed || settled.open) throw new Error(JSON.stringify(settled));\n` +
   `console.log(JSON.stringify({stream:{kind:'session',id:'native-worker'},payload_type:'run.terminal.completed',payload:{kind:'run_terminal',terminal:'completed',command_id:'worker-primary',text:'Worker completed the assigned task.'}}));\n`);
 chmodSync(workerCmd, 0o755);
 writeFileSync(join(WORK, 'worker-task.txt'), 'Task for worker');
@@ -78,6 +122,14 @@ writeFileSync(join(WORK, 'worker-task.txt'), 'Task for worker');
   const turn = spawnSync(EXE, [DB, 'turn', 'worker', 'worker-finished', workerCmd, 'configured-model', 'low',
     join(WORK, 'worker'), join(WORK, 'worker-task.txt'), join(WORK, 'worker.jsonl'), ''], { encoding: 'utf8' });
   if (turn.status !== 0) throw new Error('fixture turn: ' + turn.stdout + turn.stderr);
+}
+{
+  const worker = JSON.parse(baton('session', 'worker'));
+  check('the worker assignment has coordinator confirmation',
+    worker.taskCompletion.confirmed && !worker.taskCompletion.open);
+  // Later display probes retain input for the same recorded native session.
+  baton('connect', 'worker', worker.native, '');
+  baton('connect', parentState.id, parentState.native, parentState.endpoint);
 }
 baton('record', 'qa-worker-finding', 'worker', 'Worker retained finding.',
   'Worker evidence.', 'Worker limits.');
@@ -200,6 +252,42 @@ async function openPage(url) {
       `Chromium target request failed; exit=${chrome.exitCode}; signal=${chrome.signalCode}; stderr=${chromeErr}`,
       { cause: error },
     );
+    const diagnostic = {
+      requestedExecutable: CHROMIUM,
+      requestedArgv: chrome.spawnargs,
+      pid: chrome.pid,
+      exitCode: chrome.exitCode,
+      signalCode: chrome.signalCode,
+      devToolsUrl: wsUrl,
+      targetUrl: wsUrl.replace('ws://', 'http://').replace(/\/devtools\/.*$/, '/json/new?about:blank'),
+      profile: join(WORK, 'chrome'),
+      stderr: chromeErr,
+      error: { message: error.message, code: error.code,
+        cause: error.cause && { message: error.cause.message, code: error.cause.code,
+          socket: error.cause.socket } },
+    };
+    for (const [name, read] of [
+      ['actualArgv', () => readFileSync(`/proc/${chrome.pid}/cmdline`, 'utf8').split('\0').filter(Boolean)],
+      ['actualExecutable', () => readlinkSync(`/proc/${chrome.pid}/exe`)],
+      ['processStat', () => readFileSync(`/proc/${chrome.pid}/stat`, 'utf8')],
+      ['profileStat', () => {
+        const state = statSync(join(WORK, 'chrome'));
+        return { device: state.dev, inode: state.ino, uid: state.uid, mode: state.mode,
+          isDirectory: state.isDirectory() };
+      }],
+      ['profileEntries', () => readdirSync(join(WORK, 'chrome'))],
+      ['devToolsActivePort', () => readFileSync(join(WORK, 'chrome', 'DevToolsActivePort'), 'utf8')],
+    ]) {
+      try { diagnostic[name] = read(); }
+      catch (observationError) {
+        diagnostic[name] = { error: observationError.message, code: observationError.code };
+      }
+    }
+    try {
+      writeFileSync(join(OUT, 'chromium-target-failure.json'), JSON.stringify(diagnostic, null, 2) + '\n');
+    } catch (retentionError) {
+      failure.retentionError = retentionError;
+    }
     throw failure;
   }
   if (!response.ok) throw new Error(await response.text());
@@ -317,7 +405,7 @@ check('universal view holds no fixture records', await evalJs(
 check('the exemplar is absent where nothing draws', await evalJs(
   `!document.querySelector('#knowledge-whole .kw-exemplar') && !document.querySelector('#knowledge-whole .kw-macro')`));
 check('an empty map draws one staff rule at its short height', await evalJs(`(() => {
-  const svg = document.querySelector('#knowledge-whole svg');
+  const svg = document.querySelector('#knowledge-whole svg.kw-canvas');
   return document.querySelectorAll('#knowledge-whole line.kw-staff').length === 1
     && !!svg && svg.getAttribute('height') === '120';
 })()`));
@@ -338,7 +426,9 @@ await until('relation-only holdings draw their author and both references',
 await evalJs(`document.getElementById('reconnect').click()`);
 await until('removing the only relation restores the empty universal view',
   `document.querySelectorAll('#knowledge-whole .kw-anchor').length === 0
-    && document.getElementById('knowledge-whole').textContent.includes('No recorded findings')`);
+    && document.querySelectorAll('#knowledge-whole line.kw-staff').length === 1
+    && document.querySelector('#knowledge-whole svg.kw-canvas')?.getAttribute('height') === '120'
+    && document.querySelector('#knowledge-whole .kw-empty')?.textContent === 'No records in this scope.'`);
 check('roster rows read the name, the work, then the staff', await evalJs(
   `[...document.querySelectorAll('#roster .doc-row')].every((row) => { const btn = row.querySelector('.doc-open'); if (!btn) return false; const kids = [...btn.children]; const name = btn.querySelector('.doc-name'); const lead = btn.querySelector('.doc-lead'); const staff = btn.querySelector('.doc-staff'); return !!name && !!lead && !!staff && kids.indexOf(name) < kids.indexOf(lead) && kids.indexOf(lead) < kids.indexOf(staff); })`));
 await evalJs(`document.querySelector('#roster .doc-row[data-doc-id="worker"] .doc-open').click()`);
@@ -367,7 +457,7 @@ check('row knowledge reads as one compact line', await evalJs(`(() => {
 const overviewPayload = await evalJs(`(async () => {
   const meta = document.querySelector('meta[name="orchestra-api-base"]');
   const base = String((meta && meta.content) || location.origin).replace(/\\/+$/, '');
-  const response = await fetch(base + '/orchestra/knowledge/overview');
+  const response = await fetch(base + '/orchestra/knowledge/overview?actor=worker');
   return await response.json();
 })()`);
 check('the overview preserves its fields while adding nodes and edges',
@@ -588,7 +678,7 @@ await until('all scope restores unrelated findings for the graph probes',
   `document.getElementById('map-scope').textContent === 'All held records · 3 items'
     && !!document.querySelector('#knowledge-whole .knode[aria-label="qa-aide-finding"]')`);
 check('whole-orchestra nodes stay inside the drawn surface', await evalJs(`(() => {
-  const svg = document.querySelector('#knowledge-whole svg');
+  const svg = document.querySelector('#knowledge-whole svg.kw-canvas');
   const width = Number(svg.getAttribute('width'));
   const height = Number(svg.getAttribute('height'));
   return [...document.querySelectorAll('#knowledge-whole circle')].every((node) => {
@@ -619,7 +709,7 @@ check('every recorded relation family is drawn once per record', await evalJs(`(
 check('the map draws one typed edge for every placeable payload edge', await evalJs(`(async () => {
   const meta = document.querySelector('meta[name="orchestra-api-base"]');
   const base = String((meta && meta.content) || location.origin).replace(/\\/+$/, '');
-  const payload = await (await fetch(base + '/orchestra/knowledge/overview')).json();
+  const payload = await (await fetch(base + '/orchestra/knowledge/overview?scope=all')).json();
   const whole = '#knowledge-whole ';
   const ids = (selector, attr) => [...document.querySelectorAll(whole + selector)]
     .map((node) => node.getAttribute(attr) || '').filter(Boolean);
@@ -686,7 +776,7 @@ check('a tier row states its findings and its actors', await evalJs(`(() => {
   return rows.every((row) => {
     const num = row.querySelector('.kw-tier-num');
     const text = num ? (num.textContent || '').trim() : '';
-    return /^\d+ \u00b7 \d+$/.test(text);
+    return /^[0-9]+ · [0-9]+$/.test(text);
   });
 })()`));
 await evalJs(`(() => { const row = document.querySelector('#knowledge-whole .kw-tier-row'); if (row) row.click(); return true; })()`);
@@ -736,15 +826,15 @@ check('the flow field sums to the caption and groups its tail', await evalJs(`((
   const cap = document.querySelector('#knowledge-whole .kw-flow-cap');
   if (!grid || !cap) return false;
   const words = cap.textContent || '';
-  const total = Number((/(\d+) promotion/.exec(words) || [0, 0])[1]);
-  const sources = Number((/(\d+) source/.exec(words) || [0, 0])[1]);
-  const destinations = Number((/(\d+) destination/.exec(words) || [0, 0])[1]);
+  const total = Number((/([0-9]+) promotion/.exec(words) || [0, 0])[1]);
+  const sources = Number((/([0-9]+) source/.exec(words) || [0, 0])[1]);
+  const destinations = Number((/([0-9]+) destination/.exec(words) || [0, 0])[1]);
   const lines = [...grid.querySelectorAll('tr')].map((tr) => [...tr.children].map((c) => (c.textContent || '').trim()));
   const body = lines.slice(1).filter((line) => line.length > 1);
   const cells = body.flatMap((line) => line.slice(1).map((c) => c === '' ? 0 : Number(c)));
   const sum = cells.reduce((s, n) => s + (Number.isFinite(n) ? n : 0), 0);
   const tailRows = body.filter((line) => (line[0] || '').includes('other holders')).length;
-  const heads = [...grid.querySelectorAll('th')].map((th) => (th.textContent || '').trim());
+  const heads = [...grid.querySelectorAll('th[scope="col"]')].map((th) => (th.textContent || '').trim());
   const tailCols = heads.filter((h) => h.includes('other holders')).length;
   const grouped = /tail grouped/.test(words) === (tailRows > 0 || tailCols > 0);
   return sum === total && body.length === sources + tailRows && (heads.length - 1) === destinations + tailCols && grouped;
@@ -772,21 +862,27 @@ await until('activating a relate edge lights its two ends and names the relation
   `(() => {
     const edge = document.querySelector('#knowledge-whole g.kw-edge-typed');
     const name = edge.getAttribute('data-rel-name') || '';
-    const from = edge.getAttribute('data-from') || '';
-    const to = edge.getAttribute('data-to') || '';
+    const endpoints = ['from', 'to'].map((side) => {
+      const kind = edge.getAttribute('data-' + side + '-kind') || '';
+      const raw = edge.getAttribute('data-' + side) || '';
+      const finding = kind === 'finding' ? /^finding:(.+)$/.exec(raw) : null;
+      const id = finding ? finding[1] : raw;
+      const attr = kind === 'finding' ? 'data-kw-node'
+        : kind === 'ref' ? 'data-kw-ref' : 'data-kw-id';
+      const mark = document.querySelector('#knowledge-whole [' + attr + '="'
+        + CSS.escape(id) + '"][data-kw-kind="' + CSS.escape(kind) + '"]');
+      return { kind, id, label: kind === 'ref' ? id : kind + ' ' + id, mark };
+    });
     const card = document.querySelector('#knowledge-whole .kw-card');
     const title = card && card.querySelector('.kw-card-title');
     const fact = card && card.querySelector('.kw-card-fact');
     const lit = [...document.querySelectorAll('#knowledge-whole g.kw-edge-typed')]
       .filter((e) => !e.classList.contains('kw-hover-dim'))
       .every((e) => e.getAttribute('data-rel-name') === name);
-    const ends = ['data-kw-id', 'data-kw-ref'].flatMap((attr) =>
-      [from, to].map((id) => document.querySelector('#knowledge-whole [' + attr + '="' + id + '"]')))
-      .filter(Boolean);
     return lit && !!title && title.textContent === name
-      && !!fact && fact.textContent.includes(from) && fact.textContent.includes(to)
+      && !!fact && endpoints.every((end) => end.kind && end.id && fact.textContent.includes(end.label))
       && fact.textContent !== name
-      && ends.length > 0 && ends.every((g) => !g.classList.contains('kw-hover-dim'));
+      && endpoints.every((end) => end.mark && !end.mark.classList.contains('kw-hover-dim'));
   })()`);
 check('the relation card reads both ends as their kind and id', await evalJs(`(() => {
   const edge = document.querySelector('#knowledge-whole g.kw-edge-typed');
@@ -794,33 +890,62 @@ check('the relation card reads both ends as their kind and id', await evalJs(`((
   if (!fact) return false;
   return ['from', 'to'].every((side) => {
     const kind = edge.getAttribute('data-' + side + '-kind') || '';
-    const id = edge.getAttribute('data-' + side) || '';
+    const raw = edge.getAttribute('data-' + side) || '';
+    const finding = kind === 'finding' ? /^finding:(.+)$/.exec(raw) : null;
+    const id = finding ? finding[1] : raw;
     if (!kind || !id) return false;
     return kind === 'ref' ? fact.textContent.includes(id) : fact.textContent.includes(kind + ' ' + id);
   });
 })()`));
-check('message endpoints draw as held tags', await evalJs(`(() => {
+check('retained cited messages draw as reference-only endpoints', (() => {
+  const node = overviewPayload.nodes.find((row) => row.reference === 'message:qa-task-1');
+  const finding = overviewPayload.findings.find((row) => row.id === 'qa-msg-finding');
+  const message = finding && finding.evidenceMessage;
+  return !!node && node.kind === 'message' && node.referenceOnly === true
+    && Array.isArray(node.deliveryRead) && node.deliveryRead.length === 2
+    && node.deliveryRead[0] === 'delivery' && node.deliveryRead[1] === 'qa-task-1'
+    && !!finding && finding.evidence === 'message:qa-task-1' && !!message
+    && message.id === 'qa-task-1' && message.sender === 'root' && message.recipient === 'worker'
+    && message.body === 'Retained task input.';
+})() && await evalJs(`(() => {
   const g = document.querySelector('#knowledge-whole g.kw-ref[data-kw-ref="message:qa-task-1"]');
-  return !!g && !g.classList.contains('unheld') && (g.getAttribute('aria-label') || '').includes('held');
+  return !!g && g.classList.contains('kw-typeref') && g.getAttribute('data-reference-only') === 'true'
+    && !!g.querySelector('circle.kw-typeref-ring') && !g.querySelector('circle.kw-typeref-dot')
+    && g.getAttribute('aria-label') === 'reference message:qa-task-1, not held'
+    && (g.textContent || '').includes('not held');
 })()`));
-check('missing endpoints draw as unheld tags', await evalJs(`(() => {
+check('missing endpoints draw as open reference-only rings', await evalJs(`(() => {
   const g = document.querySelector('#knowledge-whole g.kw-ref[data-kw-ref="message:qa-missing-1"]');
-  return !!g && g.classList.contains('unheld') && (g.textContent || '').includes('not held');
+  return !!g && g.classList.contains('kw-typeref') && g.getAttribute('data-reference-only') === 'true'
+    && !!g.querySelector('circle.kw-typeref-ring') && !g.querySelector('circle.kw-typeref-dot')
+    && g.getAttribute('aria-label') === 'reference message:qa-missing-1, not held'
+    && (g.textContent || '').includes('not held');
 })()`));
-check('external endpoints draw as plain tags', await evalJs(`(() => {
+check('external endpoints draw as open reference-only rings', await evalJs(`(() => {
   const g = document.querySelector('#knowledge-whole g.kw-ref[data-kw-ref="external:qa-log-7"]');
-  return !!g && !g.classList.contains('unheld');
+  return !!g && g.classList.contains('kw-typeref') && g.getAttribute('data-reference-only') === 'true'
+    && !!g.querySelector('circle.kw-typeref-ring') && !g.querySelector('circle.kw-typeref-dot')
+    && g.getAttribute('aria-label') === 'reference external:qa-log-7, not held'
+    && (g.textContent || '').includes('not held');
 })()`));
-check('absent finding endpoints draw as unheld tags', await evalJs(
-  `!!document.querySelector('#knowledge-whole g.kw-ref[data-kw-ref="finding:qa-nope"].unheld')`));
+check('absent finding endpoints draw as open reference-only rings', await evalJs(`(() => {
+  const g = document.querySelector('#knowledge-whole g.kw-ref[data-kw-ref="finding:qa-nope"]');
+  return !!g && g.classList.contains('kw-typeref') && g.getAttribute('data-reference-only') === 'true'
+    && !!g.querySelector('circle.kw-typeref-ring') && !g.querySelector('circle.kw-typeref-dot')
+    && g.getAttribute('aria-label') === 'reference finding:qa-nope, not held'
+    && (g.textContent || '').includes('not held');
+})()`));
 await evalJs(`document.querySelector('#knowledge-whole .knode[aria-label="qa-msg-finding"]').dispatchEvent(new MouseEvent('click', { bubbles: true }))`);
 await until('message evidence reads as a reference on the card',
   `(document.querySelector('#knowledge-whole .kw-card') || {}).textContent?.includes('evidence message: message:qa-task-1')`);
 await evalJs(`document.querySelector('#knowledge-whole g.kw-ref[data-kw-ref="message:qa-task-1"]').dispatchEvent(new MouseEvent('click', { bubbles: true }))`);
 await until('reference tag pins its card',
   `document.querySelector('#knowledge-whole .kw-card .kw-card-title')?.textContent === 'message:qa-task-1'`);
-check('reference card states its holding', await evalJs(
-  `document.querySelector('#knowledge-whole .kw-card .kw-card-state')?.textContent === 'held'`));
+check('reference card states its endpoint kind and reference-only state', await evalJs(`(() => {
+  const card = document.querySelector('#knowledge-whole .kw-card');
+  return !!card && card.querySelector('.kw-card-state')?.textContent === 'not held'
+    && [...card.querySelectorAll('.kw-card-fact')].some((row) => row.textContent === 'kind: message');
+})()`));
 check('reference card offers its finding', await evalJs(
   `document.querySelector('#knowledge-whole .kw-card .kw-card-full')?.textContent === 'Show the finding'`));
 await evalJs(`document.querySelector('#knowledge-whole .kw-card .kw-card-full').click()`);
@@ -829,25 +954,99 @@ await until('following the reference selects its finding',
 await evalJs(`document.querySelector('#knowledge-whole g.kw-ref[data-kw-ref="message:qa-missing-1"]').dispatchEvent(new MouseEvent('click', { bubbles: true }))`);
 await until('unheld reference pins its card',
   `document.querySelector('#knowledge-whole .kw-card .kw-card-title')?.textContent === 'message:qa-missing-1'`);
-check('unheld reference offers no finding', await evalJs(
-  `document.querySelector('#knowledge-whole .kw-card .kw-card-state')?.textContent === 'not held' && !document.querySelector('#knowledge-whole .kw-card button')`));
+check('unheld reference keeps its junctions and offers no finding', await evalJs(`(() => {
+  const card = document.querySelector('#knowledge-whole .kw-card');
+  if (!card || card.querySelector('.kw-card-state')?.textContent !== 'not held'
+      || card.querySelector('.kw-card-full')) return false;
+  const junctions = [...card.querySelectorAll('button.kw-junction')];
+  return junctions.some((row) => row.getAttribute('data-dir') === 'in'
+      && row.getAttribute('aria-label') === 'Incoming answers from finding qa-worker-finding')
+    && junctions.some((row) => row.getAttribute('data-dir') === 'out'
+      && row.getAttribute('aria-label') === 'Outgoing references to external:qa-log-8');
+})()`));
 {
   const db = new DatabaseSync(DB);
   db.prepare("UPDATE knowledge SET evidence='message:qa-missing-1' WHERE id='qa-msg-finding'").run();
   db.close();
 }
 await evalJs(`document.getElementById('reconnect').click()`);
-await until('an absent cited message remains unheld',
-  `!!document.querySelector('#knowledge-whole g.kw-ref[data-kw-ref="message:qa-missing-1"].unheld')
-    && !!document.querySelector('#knowledge-whole g.kw-ref[data-kw-ref="message:qa-task-1"].unheld')`);
+await until('the refreshed citation points to the absent message', `(() => {
+  const edge = document.querySelector('#knowledge-whole g.kw-edge-cited[data-from="finding:qa-msg-finding"]');
+  return !!edge && edge.getAttribute('data-to') === 'message:qa-missing-1'
+    && edge.getAttribute('data-provenance') === 'recorded-evidence'
+    && edge.getAttribute('data-rel-name') === 'Cited'
+    && ['message:qa-missing-1', 'message:qa-task-1'].every((id) => {
+      const g = document.querySelector('#knowledge-whole g.kw-ref[data-kw-ref="' + id + '"]');
+      return !!g && g.getAttribute('data-reference-only') === 'true'
+        && !!g.querySelector('circle.kw-typeref-ring')
+        && g.getAttribute('aria-label') === 'reference ' + id + ', not held';
+    });
+})()`);
+await evalJs(`document.querySelector('#knowledge-whole g.kw-ref[data-kw-ref="message:qa-missing-1"]').dispatchEvent(new MouseEvent('click', { bubbles: true }))`);
+check('the absent cited message offers no finding', await evalJs(`(() => {
+  const card = document.querySelector('#knowledge-whole .kw-card');
+  return !!card && card.querySelector('.kw-card-title')?.textContent === 'message:qa-missing-1'
+    && card.querySelector('.kw-card-state')?.textContent === 'not held'
+    && !card.querySelector('.kw-card-full');
+})()`));
+await evalJs(`document.querySelector('#knowledge-whole g.kw-ref[data-kw-ref="message:qa-task-1"]').dispatchEvent(new MouseEvent('click', { bubbles: true }))`);
+check('the uncited retained message offers no finding', await evalJs(`(() => {
+  const card = document.querySelector('#knowledge-whole .kw-card');
+  return !!card && card.querySelector('.kw-card-title')?.textContent === 'message:qa-task-1'
+    && card.querySelector('.kw-card-state')?.textContent === 'not held'
+    && !card.querySelector('.kw-card-full');
+})()`));
 {
   const db = new DatabaseSync(DB);
   db.prepare("UPDATE knowledge SET evidence='message:qa-task-1' WHERE id='qa-msg-finding'").run();
   db.close();
 }
 await evalJs(`document.getElementById('reconnect').click()`);
-await until('restoring the retained citation restores the held tag',
-  `!!document.querySelector('#knowledge-whole g.kw-ref[data-kw-ref="message:qa-task-1"]:not(.unheld)')`);
+await until('restoring the retained citation restores its recorded pointer', `(() => {
+  const edge = document.querySelector('#knowledge-whole g.kw-edge-cited[data-from="finding:qa-msg-finding"]');
+  const g = document.querySelector('#knowledge-whole g.kw-ref[data-kw-ref="message:qa-task-1"]');
+  return !!edge && edge.getAttribute('data-to') === 'message:qa-task-1'
+    && edge.getAttribute('data-provenance') === 'recorded-evidence'
+    && edge.getAttribute('data-rel-name') === 'Cited'
+    && !!g && g.getAttribute('data-reference-only') === 'true'
+    && !!g.querySelector('circle.kw-typeref-ring')
+    && g.getAttribute('aria-label') === 'reference message:qa-task-1, not held';
+})()`);
+const restoredOverviewPayload = await evalJs(`(async () => {
+  const meta = document.querySelector('meta[name="orchestra-api-base"]');
+  const base = String((meta && meta.content) || location.origin).replace(/\\/+$/, '');
+  return await (await fetch(base + '/orchestra/knowledge/overview?actor=worker')).json();
+})()`);
+check('restored citation retains its message body and delivery pointer', (() => {
+  const node = restoredOverviewPayload.nodes.find((row) => row.reference === 'message:qa-task-1');
+  const finding = restoredOverviewPayload.findings.find((row) => row.id === 'qa-msg-finding');
+  const message = finding && finding.evidenceMessage;
+  return !!node && node.kind === 'message' && node.referenceOnly === true
+    && Array.isArray(node.deliveryRead) && node.deliveryRead.length === 2
+    && node.deliveryRead[0] === 'delivery' && node.deliveryRead[1] === 'qa-task-1'
+    && !!finding && finding.evidence === 'message:qa-task-1' && !!message
+    && message.id === 'qa-task-1' && message.sender === 'root' && message.recipient === 'worker'
+    && message.body === 'Retained task input.';
+})());
+await evalJs(`document.querySelector('#knowledge-whole g.kw-ref[data-kw-ref="message:qa-task-1"]').dispatchEvent(new MouseEvent('click', { bubbles: true }))`);
+check('restored citation offers its finding', await evalJs(
+  `document.querySelector('#knowledge-whole .kw-card .kw-card-title')?.textContent === 'message:qa-task-1'
+    && document.querySelector('#knowledge-whole .kw-card .kw-card-full')?.textContent === 'Show the finding'`));
+await evalJs(`document.querySelector('#knowledge-whole .kw-card .kw-card-full').click()`);
+await until('following the restored reference selects its finding',
+  `document.querySelector('#knowledge-whole .kw-card .kw-card-title')?.textContent === 'Worker message finding.'`);
+await evalJs(`document.querySelector('#roster .doc-row[data-doc-id="worker"] .doc-open').click()`);
+await until('actor selection clears the cited finding before the ranking probe',
+  `document.getElementById('map-scope').textContent === 'worker · 2 items'
+    && location.hash === '#seat=worker'
+    && !document.querySelector('#knowledge-whole .knode.selected')
+    && document.querySelector('#knowledge-whole .kw-card .kw-card-title')?.textContent === 'worker'`);
+await evalJs(`document.getElementById('map-scope-all').click()`);
+await until('all records restore the unselected finding ranking',
+  `document.getElementById('map-scope').textContent === 'All held records · 3 items'
+    && !document.querySelector('#knowledge-whole .knode.selected')
+    && !!document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]')
+    && !!document.querySelector('#knowledge-whole .knode[aria-label="qa-aide-finding"]')`);
 check('conductor anchors read distinct from player anchors', await evalJs(
   `!!document.querySelector('#knowledge-whole .kw-anchor[data-kw-id="lead"] rect.role-conductor') && !document.querySelector('#knowledge-whole .kw-anchor[data-kw-id="worker"] rect.role-conductor')`));
 check('most promoted findings carry visible claims', await evalJs(
@@ -882,36 +1081,75 @@ check('the finding posture states what its facts hold', await evalJs(`(() => {
   const lines = [...block.querySelectorAll('p')].map((p) => p.textContent || '');
   return lines.some((line) => /(evidence cited|no evidence cited)/.test(line)
     && /(limits stated|no limits stated)/.test(line)
-    && /(shared \d+ times?|not shared)/.test(line));
+    && /(shared [0-9]+ times?|not shared)/.test(line));
 })()`));
+await evalJs(`document.querySelector('#knowledge-whole .knode[aria-label="qa-msg-finding"]').dispatchEvent(new MouseEvent('click', { bubbles: true }))`);
+await until('the citation probes select the finding with retained message evidence',
+  `document.querySelector('#selection #sel-sec-finding h2')?.textContent === 'Finding qa-msg-finding · Worker message finding.'
+    && document.querySelector('#knowledge-whole .kw-card .kw-card-title')?.textContent === 'Worker message finding.'
+    && location.hash === '#finding=qa-msg-finding'`);
+const citationMessage = restoredOverviewPayload.findings.find((row) => row.id === 'qa-msg-finding').evidenceMessage;
 check('the evidence citation carries its number, tail and full title', await evalJs(`(() => {
+  const expected = ${JSON.stringify(citationMessage)};
   const block = document.querySelector('#selection #sel-sec-finding');
   if (!block) return false;
-  const cite = [...block.querySelectorAll('p')].find((p) => /^\[\d+\] message /.test(p.textContent || ''));
-  if (!cite) return false;
-  const tail = (cite.textContent || '').replace(/^\[\d+\] message /, '').split(' ')[0];
-  const id = cite.getAttribute('title') || '';
-  return tail.startsWith('\u2026') && id.endsWith(tail.replace(/^\u2026/, '')) && id.length > tail.length;
+  const cite = [...block.querySelectorAll('p')].find((p) => p.title === expected.id);
+  const read = block.querySelector('.sel-msg');
+  return !!cite && cite.textContent === '[1] message ' + expected.id + ' · ' + expected.body.length + ' characters'
+    && !!read && read.title === expected.id
+    && read.textContent === 'Read evidence ' + expected.id
+    && read.getAttribute('aria-label') === 'Read evidence ' + expected.id
+    && read.getAttribute('aria-expanded') === 'false';
 })()`));
-check('a message reference draws its full id and holds no body until read', await evalJs(`(async () => {
+check('a message reference draws its full id and keeps its body collapsed until read', await evalJs(`(async () => {
+  const expected = ${JSON.stringify(citationMessage)};
   const block = document.querySelector('#selection #sel-sec-finding');
   if (!block) return false;
-  const cite = [...block.querySelectorAll('p')].find((p) => /^\\[\\d+\\] message /.test(p.textContent || ''));
+  const cite = [...block.querySelectorAll('p')].find((p) => p.title === expected.id);
   if (!cite) return false;
-  const full = cite.getAttribute('title') || '';
-  if (full.slice(0, 8) !== 'message:') return false;
+  const full = cite.getAttribute('title');
   const meta = document.querySelector('meta[name="orchestra-api-base"]');
   const base = String((meta && meta.content) || location.origin).replace(/\\/+$/, '');
-  const response = await fetch(base + '/orchestra/message?id=' + encodeURIComponent(full.slice(8)));
+  const response = await fetch(base + '/orchestra/message?id=' + encodeURIComponent(full));
   const payload = await response.json();
-  const body = payload && payload.message && payload.message.body;
-  return typeof body === 'string' && body.length > 0 && !(block.textContent || '').includes(body);
+  const message = payload && payload.message;
+  return !!message && message.id === expected.id
+    && message.sender === expected.sender && message.recipient === expected.recipient
+    && typeof message.body === 'string' && message.body.length > 0 && message.body === expected.body
+    && !(block.textContent || '').includes(message.body);
 })()`));
+await evalJs(`document.querySelector('#selection #sel-sec-finding .sel-msg').click()`);
+await until('reading the cited message shows its retained body', `(() => {
+  const expected = ${JSON.stringify(citationMessage)};
+  const block = document.querySelector('#selection #sel-sec-finding');
+  const read = block && block.querySelector('.sel-msg');
+  const body = block && block.querySelector('.sel-body');
+  return !!read && read.getAttribute('aria-expanded') === 'true'
+    && read.getAttribute('aria-label') === 'Hide evidence ' + expected.id
+    && !!body && body.textContent === expected.body
+    && block.textContent.includes('from ' + expected.sender)
+    && block.textContent.includes('to ' + expected.recipient);
+})()`);
 check('the prose holds its measure and leading as element style', await evalJs(`(() => {
-  const prose = document.querySelector('#selection .sel-lead');
-  if (!prose) return false;
-  return prose.style.maxWidth === '33em' && prose.style.lineHeight === '1.5';
+  const expected = ${JSON.stringify(citationMessage)};
+  const prose = document.querySelector('#selection #sel-sec-finding .sel-body');
+  return !!prose && prose.textContent === expected.body
+    && prose.style.maxWidth === '33em' && prose.style.lineHeight === '1.5';
 })()`));
+await evalJs(`document.querySelector('#selection #sel-sec-finding .sel-msg').click()`);
+await until('hiding the cited message restores its collapsed reference', `(() => {
+  const expected = ${JSON.stringify(citationMessage)};
+  const block = document.querySelector('#selection #sel-sec-finding');
+  const read = block && block.querySelector('.sel-msg');
+  return !!read && read.getAttribute('aria-expanded') === 'false'
+    && read.getAttribute('aria-label') === 'Read evidence ' + expected.id
+    && !(block.textContent || '').includes(expected.body);
+})()`);
+await evalJs(`document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]').dispatchEvent(new MouseEvent('click', { bubbles: true }))`);
+await until('the finding interactions restore the original worker record',
+  `document.querySelector('#selection #sel-sec-finding h2')?.textContent === 'Finding qa-worker-finding · Worker retained finding.'
+    && document.querySelector('#knowledge-whole .kw-card .kw-card-title')?.textContent === 'Worker retained finding.'
+    && location.hash === '#finding=qa-worker-finding'`);
 await evalJs(`document.querySelector('#knowledge-whole svg.kw-canvas').dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}))`);
 check('escape dismisses the pinned card', await evalJs(
   `!document.querySelector('#knowledge-whole .kw-card') && document.querySelectorAll('#knowledge-whole .kw-hover-dim').length === 0`));
@@ -1020,11 +1258,14 @@ check('a live frame does not restore a dismissed relation card', await evalJs(`(
     .every((e) => !e.classList.contains('kw-hover-dim'));
   return !rel && unlit;
 })()`));
+const workerShareEdgesBefore = await evalJs(
+  `[...document.querySelectorAll('#knowledge-whole .kw-edge-share[aria-label="promotion from worker"]')].length`);
 baton('promote', 'qa-worker-live-share', 'aide', 'worker', 'aide', 'qa-worker-live-finding');
 await until('live promotion updates the shared count through native SSE',
   `(document.querySelector('#roster .doc-row[data-doc-id="worker"] .kw-compact') || {}).textContent?.includes('2 shared')`);
-await until('live promotion draws the second recorded share edge through native SSE',
-  `[...document.querySelectorAll('#knowledge-whole .kw-edge-share[aria-label="promotion from worker"]')].length === 2`);
+await until('live promotion draws its recorded share edge through native SSE',
+  `document.querySelectorAll('#knowledge-whole .kw-edge-share[aria-label="promotion from worker"]').length === ${workerShareEdgesBefore + 1}
+    && !!document.querySelector('#knowledge-whole .kw-edge-share[data-from="worker"][data-to="qa-worker-live-finding"]')`);
 await evalJs(`document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]').dispatchEvent(new MouseEvent('mouseover', { bubbles: true }))`);
 check('one-hop hover dims the second finding by the same author', await evalJs(
   `document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-live-finding"]').classList.contains('kw-hover-dim')`));
@@ -1332,7 +1573,7 @@ check('the stage draws its seats inside the Agents region', await evalJs(
 check('the stage draws a seam only where the payload places both ends', await evalJs(`(async () => {
   const meta = document.querySelector('meta[name="orchestra-api-base"]');
   const base = String((meta && meta.content) || location.origin).replace(/\\/+$/, '');
-  const payload = await (await fetch(base + '/orchestra/knowledge/overview')).json();
+  const payload = await (await fetch(base + '/orchestra/knowledge/overview?actor=aide')).json();
   const seats = new Set([...document.querySelectorAll('#attention-band .att-seat[data-att-id]')]
     .map((seat) => seat.getAttribute('data-att-id') || '').filter(Boolean));
   const unheld = new Set((payload.nodes || []).filter((node) => node.referenceOnly === true)
@@ -1397,7 +1638,7 @@ check('a reference bead states that the store does not hold what it names', awai
   if (!beads.length) return true;
   const meta = document.querySelector('meta[name="orchestra-api-base"]');
   const base = String((meta && meta.content) || location.origin).replace(/\\/+$/, '');
-  const payload = await (await fetch(base + '/orchestra/knowledge/overview')).json();
+  const payload = await (await fetch(base + '/orchestra/knowledge/overview?actor=aide')).json();
   const held = new Set((payload.nodes || []).filter((node) => node.referenceOnly === false)
     .map((node) => String(node.reference || '')));
   return beads.every((bead) => {
@@ -1538,7 +1779,16 @@ check('ordinary owed work leaves the rail hidden', await evalJs(
 const queuedDotColor = await evalJs(
   `getComputedStyle(document.querySelector('#selection .sel-dot')).backgroundColor`);
 check('queued and running record states look different', queuedDotColor !== runningDotColor);
-for (const id of ['qa-guidance-native', 'qa-guidance-1', 'qa-guidance-2', 'qa-guidance-lane-focus']) {
+const promotionNotice = JSON.parse(baton('delivery', 'qa-relation-live-frame:promotion-notice'));
+check('the worker reads its recorded promotion notice',
+  promotionNotice.recipient === 'worker' && promotionNotice.kind === 'question'
+    && JSON.parse(promotionNotice.body).finding === 'qa-worker-finding');
+const promotedFinding = JSON.parse(baton('knowledge', 'worker', '--id', 'qa-worker-finding'));
+check('the worker reviews the complete promoted finding',
+  promotedFinding.id === 'qa-worker-finding' && promotedFinding.evidence === 'Worker evidence.'
+    && promotedFinding.limits === 'Worker limits.');
+for (const id of ['qa-guidance-native', 'qa-guidance-1', 'qa-guidance-2', 'qa-guidance-lane-focus',
+                  'qa-relation-live-frame:promotion-notice']) {
   baton('ack', id, 'worker', 'fixture-ui-read');
 }
 committed();
@@ -2101,6 +2351,67 @@ check('a reference the store does not hold ends in an open bead, and a held end 
     const beads = [...document.querySelectorAll('circle.att-ref')];
     if (!beads.length) return false;
     return beads.every((bead) => /the store does not hold this record/.test(bead.textContent || ''));
+  })()`));
+
+check('the Knowledge map reserves depth zero for the Principal and keeps a parentless player at unknown depth',
+  await evalJs(`(() => {
+    const actors = ${JSON.stringify(fixturePayload.actors || {})};
+    const principal = 'fixture-knowledge-root';
+    const ghost = 'fixture-knowledge-ghost';
+    if (actors[principal]?.role !== 'principal-conductor' || actors[principal]?.parent !== '') return false;
+    if (actors[ghost]?.role !== 'player' || actors[ghost]?.parent !== '') return false;
+    const tiers = [...document.querySelectorAll('#knowledge-whole text.kw-tier')]
+      .map((node) => ({ y: Number(node.getAttribute('y')), label: node.getAttribute('aria-label') || '' }))
+      .sort((a, b) => a.y - b.y);
+    if (!tiers.length || !tiers.some((tier) => tier.label === 'depth unknown')) return false;
+    const depthAt = (anchor) => {
+      const mark = anchor.querySelector('rect.kw-actor');
+      if (!mark) return null;
+      const y = Number(mark.getAttribute('y')) + Number(mark.getAttribute('height')) / 2;
+      const tier = tiers.find((row, i) => y >= row.y - 4
+        && (i + 1 === tiers.length || y < tiers[i + 1].y - 4));
+      if (!tier) return null;
+      if (tier.label === 'depth unknown') return -1;
+      const match = /^depth ([0-9]+)$/.exec(tier.label);
+      return match ? Number(match[1]) : null;
+    };
+    const anchors = [...document.querySelectorAll('#knowledge-whole .kw-anchor[data-kw-id]')];
+    const zero = anchors.filter((anchor) => depthAt(anchor) === 0)
+      .map((anchor) => anchor.getAttribute('data-kw-id') || '').sort();
+    const orphan = anchors.find((anchor) => anchor.getAttribute('data-kw-id') === ghost);
+    return zero.join(',') === principal && !!orphan && depthAt(orphan) === -1;
+  })()`));
+
+check('a collapsed ensemble stays on its first drawn member tier when its first recorded member is quiet',
+  await evalJs(`(async () => {
+    const document_ = await (await fetch('fixtures/fixture-knowledge.json')).json();
+    const ensemble = (document_.ensembles || []).find((row) => row.id === 'fixture-knowledge-ensemble');
+    const whole = document.querySelector('#knowledge-whole');
+    if (!ensemble || !whole || ensemble.members[0] !== 'fixture-knowledge-player-b') return false;
+    const anchor = (id) => whole.querySelector('.kw-anchor[data-kw-id="' + CSS.escape(id) + '"]');
+    if (anchor(ensemble.members[0])) return false;
+    const firstDrawn = ensemble.members.find((id) => !!anchor(id));
+    if (firstDrawn !== 'fixture-knowledge-conductor-a') return false;
+    const tierOf = (mark) => {
+      if (!mark) return '';
+      const y = Number(mark.getAttribute('y')) + Number(mark.getAttribute('height')) / 2;
+      const tiers = [...whole.querySelectorAll('text.kw-tier')]
+        .map((node) => ({ y: Number(node.getAttribute('y')), label: node.getAttribute('aria-label') || '' }))
+        .sort((a, b) => a.y - b.y);
+      return (tiers.find((row, i) => y >= row.y - 4
+        && (i + 1 === tiers.length || y < tiers[i + 1].y - 4)) || {}).label || '';
+    };
+    const expected = tierOf(anchor(firstDrawn).querySelector('rect.kw-actor'));
+    if (expected !== 'depth 1') return false;
+    const hull = whole.querySelector('.kw-hull[data-kw-hull="fixture-knowledge-ensemble"]');
+    if (!hull) return false;
+    hull.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    const lozenge = whole.querySelector('.kw-lozenge[data-kw-hull="fixture-knowledge-ensemble"]');
+    if (!lozenge) return false;
+    const sameTier = tierOf(lozenge.querySelector('rect.kw-lozenge-box')) === expected;
+    lozenge.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    return sameTier && !!anchor(firstDrawn)
+      && !whole.querySelector('.kw-lozenge[data-kw-hull="fixture-knowledge-ensemble"]');
   })()`));
 
 // The assertion compares drawn tier membership with reporting depth derived from

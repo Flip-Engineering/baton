@@ -423,9 +423,9 @@
       "owner": "fixture-knowledge-conductor-a",
       "coupling": "tight",
       "members": [
+        "fixture-knowledge-player-b",
         "fixture-knowledge-conductor-a",
         "fixture-knowledge-player-a",
-        "fixture-knowledge-player-b",
         "fixture-knowledge-player-c"
       ],
       "sections": [
@@ -711,7 +711,7 @@
       "fixture-knowledge-ghost": {
         "authored": 1,
         "received": 0,
-        "role": "",
+        "role": "player",
         "parent": ""
       },
       "fixture-knowledge-operator": {

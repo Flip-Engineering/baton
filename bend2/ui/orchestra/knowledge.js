@@ -152,7 +152,7 @@
       const entry = meta[cur];
       const p = entry ? entry.parent : undefined;
       if (p === null || p === undefined) return -1;
-      if (p === "") return d;
+      if (p === "") return roleOf(cur) === "principal-conductor" ? d : -1;
       cur = p;
       d += 1;
     }
@@ -925,8 +925,9 @@
         // A scope that seats none of the members seats no lozenge: in a
         // group scope the members are absent, not collapsed.
         // Ensemble members are sessions; the tier map pairs kind and id.
-        if (!members.some((m) => tierOf.has(kwKey("session", m)))) continue;
-        const tier = tiers.find((t) => t.d === tierOf.get(kwKey("session", members[0]))) || tiers[0];
+        const firstSeated = members.find((m) => tierOf.has(kwKey("session", m)));
+        if (firstSeated === undefined) continue;
+        const tier = tiers.find((t) => t.d === tierOf.get(kwKey("session", firstSeated)));
         if (!tier) continue;
         const n = lozenges.get(tier.d) || 0;
         lozenges.set(tier.d, n + 1);
@@ -2389,8 +2390,8 @@
     // The key folds behind one disclosure: the button names which
     // vocabularies wait inside, and the rows stay in the document
     // whether open or shut, so counts read the same either way. The
-    // edge-name note sits beside the button, visible at rest, since a
-    // folded key cannot carry the affordance.
+    // edge note describes the drawn edge interactions and stays visible
+    // when the key rows are folded.
     const kwKeyParts = [];
     {
       let edges = false, families = false, groups = false, marks = false;
@@ -2421,9 +2422,14 @@
         if (next && typeof next.focus === "function") next.focus();
       }
     });
-    if (kwMidpointsDrawn > 0) {
+    if (kwMidpointsDrawn > 0 || kwTypedAuthored > 0 || kwTypedCited > 0) {
       const kwKeyNote = kwEl(container, "p", { class: "kw-legend-note muted" });
-      kwKeyNote.textContent = "Edge names appear on hover or focus.";
+      const notes = [];
+      if (kwMidpointsDrawn > 0) notes.push("Edge names appear on hover or focus.");
+      if (kwTypedAuthored > 0 || kwTypedCited > 0) {
+        notes.push("Select an edge to read its relation and endpoints.");
+      }
+      kwKeyNote.textContent = notes.join(" ");
     }
     // The exemplar teaches the transfer nouns on one real chain: the
     // first promotion whose three ends all draw, with the canvas's own
@@ -3798,7 +3804,7 @@
       parts += 1;
     }
     if (!parts) return null;
-    container.insertBefore(band, svg);
+    container.insertBefore(band, container.firstChild);
     return band;
   }
 
