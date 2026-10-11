@@ -1,4 +1,5 @@
 """Native control commands with retained fixture processes and real Git worktrees."""
+import hashlib
 import json
 import os
 import pathlib
@@ -865,6 +866,97 @@ class Control(unittest.TestCase):
 
     def dispatch_log(self, ident, suffix='.stdout'):
         return pathlib.Path(str(self.db) + '.dispatch-' + ident.encode().hex() + suffix)
+
+    def dispatch_digest_log(self, ident, suffix='.stdout'):
+        digest = hashlib.sha256(str(self.db).encode() + b'\x00' + ident.encode()).hexdigest()
+        return pathlib.Path(str(self.db) + '.dispatch-' + digest + suffix)
+
+    def test_dispatch_log_uses_bounded_identity_for_oversized_ids(self):
+        self.root()
+        self.recruit('leaf')
+        self.receiver('leaf')
+        # The observed 121-byte conflict-report identity: its hex form makes a
+        # 267-byte component against the 255-byte filesystem limit.
+        long_id = ('receive:provider694-deepseek-contract-worker-20261008:18032:'
+                   '5f1f33508618c9994de33b1a28e79465:observation-conflict:unknown')
+        self.assertEqual(len(long_id), 121)
+        self.dispatch('dispatch-file', long_id, 'root', 'leaf', 'task', self.task)
+        stream, native = self.accept('leaf')
+        self.finish(stream, 'Oversized-identity task completed.')
+        self.exited('leaf')
+        saved = self.call('delivery', long_id)
+        self.assertEqual((saved['sender'], saved['recipient'], saved['body']),
+                         ('root', 'leaf', self.task.read_text()))
+        self.assertEqual(self.call('turns', 'leaf')[0]['reportBody'],
+                         'Oversized-identity task completed.')
+        self.assertEqual(self.call('player', 'leaf')['native'], native['native'])
+        stdout = self.dispatch_digest_log(long_id)
+        stderr = self.dispatch_digest_log(long_id, '.stderr')
+        self.assertTrue(stat.S_ISREG(stdout.stat().st_mode), str(stdout))
+        self.assertTrue(stat.S_ISREG(stderr.stat().st_mode), str(stderr))
+        self.assertFalse(self.dispatch_log(long_id).exists())
+
+        # Byte-length boundary: basename(state.db)+'.dispatch-'+hex+suffix is
+        # exactly 255 bytes for a 115-byte identity and 257 for 116 bytes.
+        fitting = 'f' * 115
+        oversized = 'f' * 116
+        self.dispatch('dispatch-file', fitting, 'root', 'leaf', 'task', self.task)
+        stream, _ = self.accept('leaf')
+        self.finish(stream, 'Fitting short-identity task completed.')
+        self.exited('leaf')
+        self.assertTrue(self.dispatch_log(fitting).exists())
+        self.dispatch('dispatch-file', oversized, 'root', 'leaf', 'task', self.task)
+        stream, _ = self.accept('leaf')
+        self.finish(stream, 'Second oversized task completed.')
+        self.exited('leaf')
+        self.assertTrue(self.dispatch_digest_log(oversized).exists())
+        self.assertFalse(self.dispatch_log(oversized).exists())
+
+        # Distinct identities sharing a long prefix bind to distinct bounded
+        # identities with their own retained reports.
+        first = 'same-prefix-' + 'p' * 117 + '-first'
+        second = 'same-prefix-' + 'p' * 117 + '-second'
+        for ident, body in ((first, 'Same-prefix first completed.'),
+                            (second, 'Same-prefix second completed.')):
+            self.dispatch('dispatch-file', ident, 'root', 'leaf', 'task', self.task)
+            stream, _ = self.accept('leaf')
+            self.finish(stream, body)
+            self.exited('leaf')
+            self.assertEqual(self.call('delivery', ident)['body'], self.task.read_text())
+            self.assertTrue(self.dispatch_digest_log(ident).exists())
+        self.assertNotEqual(self.dispatch_digest_log(first), self.dispatch_digest_log(second))
+        bodies = [row['reportBody'] for row in self.call('turns', 'leaf')]
+        self.assertIn('Same-prefix first completed.', bodies)
+        self.assertIn('Same-prefix second completed.', bodies)
+
+    def test_dispatch_log_refuses_when_even_bounded_identity_does_not_fit(self):
+        # A database basename long enough that even the 64-character bounded
+        # identity exceeds the component limit: the dispatch is refused, the
+        # committed input stays retained, and no execution row appears.
+        long_db = self.directory / ('d' * 248 + '.db')
+        def against_db(*args):
+            return subprocess.run([str(EXE), str(long_db), *map(str, args)],
+                                  env=self.environment, capture_output=True, text=True)
+        for args in (['attach', 'root', 'codex', 'saved-root', ''],
+                     ['role', 'root', 'principal-conductor'],
+                     ['attach', 'operator', 'operator', '', ''],
+                     ['role', 'operator', 'operator'],
+                     ['recruit', 'leaf', 'root', 'omp', 'leaf', 'low',
+                      str(self.repo), 'leaf-branch', str(self.checkouts / 'leaf'), self.base]):
+            result = against_db(*args)
+            self.assertEqual(result.returncode, 0, result.stderr)
+        refused = against_db('dispatch-file', 'refused-long-name', 'root', 'leaf',
+                             'task', self.task)
+        self.assertNotEqual(refused.returncode, 0, refused.stdout)
+        self.assertIn('Native control setup failed', refused.stdout + refused.stderr)
+        with sqlite3.connect(long_db) as database:
+            row = database.execute(
+                "SELECT sender,recipient,kind,body,receipt FROM messages "
+                "WHERE id='refused-long-name'").fetchone()
+            self.assertEqual(row, ('root', 'leaf', 'task', self.task.read_text(), None))
+            self.assertEqual(database.execute(
+                "SELECT COUNT(*) FROM executions").fetchone()[0], 0)
+        self.assertEqual(list(long_db.parent.glob(long_db.name + '.dispatch-*')), [])
 
     def report_logged(self, body):
         log = pathlib.Path(str(self.db) + '.root.log')
