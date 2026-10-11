@@ -2137,19 +2137,35 @@ check('a walk step re-lights the edge it names and pins its card', await evalJs(
   const label = steps[0].getAttribute('aria-label') || '';
   const ends = label.replace(/^Re-light /, '').split(/ from | to /);
   if (ends.length < 3) return false;
+  const named = [...document.querySelectorAll('#knowledge-whole g.kw-edge-typed')]
+    .find((edge) => edge.getAttribute('data-from') === ends[1]
+      && edge.getAttribute('data-to') === ends[2]
+      && edge.getAttribute('data-rel-name') === ends[0]);
+  if (!named) return false;
+  const fromKind = named.getAttribute('data-from-kind') || '';
+  const toKind = named.getAttribute('data-to-kind') || '';
+  const edgeId = named.getAttribute('data-edge') || '';
+  if (!fromKind || !toKind || !edgeId) return false;
   steps[0].click();
   const card = document.querySelector('#knowledge-whole .kw-card');
-  if (!card) return false;
-  const words = card.textContent || '';
-  // The activation focuses the edge it lights, so the lit edge is the
-  // focused element: its own ends must be the ends the step named.
+  const fact = card && card.querySelector('.kw-card-fact');
+  const title = card && card.querySelector('.kw-card-title');
+  const record = card && card.querySelector('.kw-card-ref');
+  if (!fact || !title || !record) return false;
+  // The walk keeps raw endpoints; the card labels findings by kind and bare id.
+  const endpointLabel = (kind, raw) => {
+    const finding = kind === 'finding' ? /^finding:(.+)$/.exec(raw) : null;
+    const id = finding ? finding[1] : raw;
+    return kind === 'ref' ? id : kind + ' ' + id;
+  };
   const lit = document.activeElement;
   const litFrom = lit && lit.getAttribute ? (lit.getAttribute('data-from') || '') : '';
   const litTo = lit && lit.getAttribute ? (lit.getAttribute('data-to') || '') : '';
-  return words.includes(ends[1]) && words.includes(ends[2])
-    && (litFrom === ends[1] || litFrom === ends[2])
-    && (litTo === ends[1] || litTo === ends[2])
-    && litFrom !== litTo;
+  return lit === named && litFrom === ends[1] && litTo === ends[2]
+    && lit.getAttribute('data-from-kind') === fromKind
+    && lit.getAttribute('data-to-kind') === toKind && litFrom !== litTo
+    && title.textContent === ends[0] && record.textContent === 'edge ' + edgeId
+    && fact.textContent === endpointLabel(fromKind, litFrom) + ' → ' + endpointLabel(toKind, litTo);
 })()`));
 check('the key rows follow the drawn provenance', await evalJs(`(() => {
   const words = (document.querySelector('#knowledge-whole') || { textContent: '' }).textContent || '';
