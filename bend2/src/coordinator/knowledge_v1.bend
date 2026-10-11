@@ -453,6 +453,10 @@ def v1_node_kinds() -> String:
 def v1_edge_kinds() -> String:
   edge_kinds()
 
+# The readable legacy vocabulary, reserved for explicit legacy citations
+# with legacy provenance. Admission resolution never consults it:
+# synthesis-native-correct-20261011 requires legacy rows never satisfy
+# a scientific v1 reference.
 def v1_legacy_kinds() -> String:
   "'fact','decision','finding','instruction','constraint','context-ref','note'"
 
@@ -559,10 +563,12 @@ def v1_resourceref_ok(+r: String) -> String:
 def v1_ref_shape_ok(+r: String) -> String:
   "(" ++ v1_noderef_ok(r) ++ " OR " ++ v1_edgeref_ok(r) ++ " OR " ++ v1_resourceref_ok(r) ++ ")"
 
+# A node reference resolves only to a transaction-local v1 node or a
+# stored v1 node with the exact declared kind. Legacy rows never
+# satisfy a reference, even when kinds overlap both versions.
 def v1_node_match(+r: String, +batch: String) -> String:
   "((EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.nodes') m WHERE json_extract(m.value,'$.id')==" ++ v1_x(r, "$.id") ++ " AND json_extract(m.value,'$.kind')==" ++ v1_x(r, "$.kind") ++ "))"
-  ++ " OR (EXISTS(SELECT 1 FROM knowledge_v1 WHERE id==" ++ v1_x(r, "$.id") ++ " AND kind==" ++ v1_x(r, "$.kind") ++ "))"
-  ++ " OR (EXISTS(SELECT 1 FROM knowledge WHERE id==" ++ v1_x(r, "$.id") ++ " AND kind==" ++ v1_x(r, "$.kind") ++ " AND " ++ v1_x(r, "$.kind") ++ " IN (" ++ v1_legacy_kinds() ++ "))))"
+  ++ " OR (EXISTS(SELECT 1 FROM knowledge_v1 WHERE id==" ++ v1_x(r, "$.id") ++ " AND kind==" ++ v1_x(r, "$.kind") ++ ")))"
 
 def v1_edge_match(+r: String, +edgekind: String, +batch: String) -> String:
   "((EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.edges') m WHERE json_extract(m.value,'$.id')==" ++ v1_x(r, "$.id") ++ " AND json_extract(m.value,'$.kind')==" ++ edgekind ++ "))"

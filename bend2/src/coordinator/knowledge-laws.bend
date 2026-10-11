@@ -488,13 +488,14 @@ law v1_promote_queries_and_answers:
 def v1_promote_queries_and_answers(db,id,promoter,source_kind,source,destination_kind,destination,finding):
   {==}
 
-# Unification (synthesis-v1-unify-20261011): the legacy overlap leg reads
-# the real legacy knowledge table; the nonexistent knowledge_entries name
-# from the hyphen branch is gone.
-law v1_legacy_overlap_reads_the_real_legacy_table:
-  {K1.v1_node_match("r", "batch") == "((EXISTS(SELECT 1 FROM json_each(batch,'$.nodes') m WHERE json_extract(m.value,'$.id')==json_extract(r,'$.id') AND json_extract(m.value,'$.kind')==json_extract(r,'$.kind')))" ++ " OR (EXISTS(SELECT 1 FROM knowledge_v1 WHERE id==json_extract(r,'$.id') AND kind==json_extract(r,'$.kind')))" ++ " OR (EXISTS(SELECT 1 FROM knowledge WHERE id==json_extract(r,'$.id') AND kind==json_extract(r,'$.kind') AND json_extract(r,'$.kind') IN ('fact','decision','finding','instruction','constraint','context-ref','note'))))" : String}
+# Correction synthesis-native-correct-20261011: a node reference resolves
+# only to transaction-local v1 or stored v1 identities with the exact
+# declared kind. Legacy rows never satisfy a reference, even when kinds
+# overlap both versions; they appear solely as explicit legacy citations.
+law v1_node_match_resolves_v1_identities_only:
+  {K1.v1_node_match("r", "batch") == "((EXISTS(SELECT 1 FROM json_each(batch,'$.nodes') m WHERE json_extract(m.value,'$.id')==json_extract(r,'$.id') AND json_extract(m.value,'$.kind')==json_extract(r,'$.kind')))" ++ " OR (EXISTS(SELECT 1 FROM knowledge_v1 WHERE id==json_extract(r,'$.id') AND kind==json_extract(r,'$.kind'))))" : String}
 
-def v1_legacy_overlap_reads_the_real_legacy_table():
+def v1_node_match_resolves_v1_identities_only():
   {==}
 
 # Unification: the v1-local restatements of the knowledge.bend builders
