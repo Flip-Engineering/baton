@@ -1,87 +1,12 @@
 import Base
 import ./attempt-custody.bend as Custody
 
-# Laws over the attempt-custody decoder. Every equation names a real decision
-# function of the decoder, in the shapes the writers define: the manifest's
-# version-dependent argv offset and its length-colon-bytes element, the
-# release-segment derivation shared by every surface that names the runtime
-# identity, the bounded field readers, and the graceful-absent contracts that
-# keep an unreadable record an empty fact rather than an approximation.
-
-# The drop boundary: dropping zero characters returns the text unchanged, and
-# dropping exactly the header length leaves what follows it.
-law custody_drop_at_zero_returns_the_text:
-  {Custody.custody_drop("abcdef",0) == "abcdef" : String}
-
-def custody_drop_at_zero_returns_the_text():
-  {==}
-
-law custody_drop_at_sixty_four_leaves_the_tail:
-  {Custody.custody_drop("xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxtail",64) == "tail" : String}
-
-def custody_drop_at_sixty_four_leaves_the_tail():
-  {==}
-
-# The argv offset by manifest version, derived from the writer's field counts:
-# 8 magic characters, count uint64 lengths, 8 keep_stdin and reserved characters.
-# BATONRP1 carries six fields, BATONRP2 eight.
-law manifest_argv_offset_is_sixty_four_for_rpv1:
-  {Custody.manifest_argv_offset(Some{"BATONRP1"}) == Some{64} : Maybe<U32>}
-
-def manifest_argv_offset_is_sixty_four_for_rpv1():
-  {==}
-
-law manifest_argv_offset_is_eighty_for_rpv2:
-  {Custody.manifest_argv_offset(Some{"BATONRP2"}) == Some{80} : Maybe<U32>}
-
-def manifest_argv_offset_is_eighty_for_rpv2():
-  {==}
-
-law manifest_argv_offset_refuses_an_unknown_version:
-  {Custody.manifest_argv_offset(Some{"BATONXX9"}) == None{} : Maybe<U32>}
-
-def manifest_argv_offset_refuses_an_unknown_version():
-  {==}
-
-# A well-formed length-colon-bytes element yields exactly its declared bytes.
-law manifest_argv_element_decodes_one_element:
-  {Custody.manifest_argv_element("11:/bin/baton2") == IO.pure(String,"/bin/baton2") : IO(String)}
-
-def manifest_argv_element_decodes_one_element():
-  {==}
-
-# A declared length longer than the remaining bytes is absent, never truncated.
-law manifest_argv_element_refuses_a_short_element:
-  {Custody.manifest_argv_element("99:/bin/baton2") == IO.pure(String,"") : IO(String)}
-
-def manifest_argv_element_refuses_a_short_element():
-  {==}
-
-# Digits that end without a colon delimit no length and are refused.
-law custody_digits_refuse_digits_without_a_colon:
-  {Custody.custody_digits("123",0,False{}) == None{} : Maybe<U32>}
-
-def custody_digits_refuse_digits_without_a_colon():
-  {==}
-
-law custody_digits_refuse_a_non_digit:
-  {Custody.custody_digits("x:rest",0,False{}) == None{} : Maybe<U32>}
-
-def custody_digits_refuse_a_non_digit():
-  {==}
-
-# The take reads exactly the declared count and refuses a shorter remainder.
-law custody_take_reads_exactly_the_declared_count:
-  {Custody.custody_take("baton",0,5,"") == Some{"baton"} : Maybe<String>}
-
-def custody_take_reads_exactly_the_declared_count():
-  {==}
-
-law custody_take_refuses_a_short_remainder:
-  {Custody.custody_take("bato",0,5,"") == None{} : Maybe<String>}
-
-def custody_take_refuses_a_short_remainder():
-  {==}
+# Laws over the attempt-custody projection. Every equation names a real decision
+# function of the module in the shapes its inputs define: the release-segment
+# derivation shared by every surface that names the runtime identity, the
+# retained-file readers, and the explicit outcome contracts of the passive job
+# read — a refused read renders unavailable, an unusable body renders corrupt,
+# and no fact is ever silently defaulted.
 
 # The release segment is derived from the actual layout
 # releases/<segment>/bin/<name>: two path components above the binary, one past
@@ -98,12 +23,11 @@ law release_segment_names_none_for_a_flat_path:
 def release_segment_names_none_for_a_flat_path():
   {==}
 
-# A record the reader refuses, including the manifest's binary header bytes, is
-# an absent identity: empty, not approximated.
-law manifest_identity_is_absent_when_the_read_fails:
-  {Custody.manifest_identity_read(Fail{(2,"read refused")}) == IO.pure(String,"") : IO(String)}
+# The recorded pid is absent when its file cannot be read.
+law recorded_pid_is_absent_when_the_read_fails:
+  {Custody.recorded_pid_read(Fail{(2,"absent")}) == IO.pure(String,"") : IO(String)}
 
-def manifest_identity_is_absent_when_the_read_fails():
+def recorded_pid_is_absent_when_the_read_fails():
   {==}
 
 # The acknowledged marker is present exactly when its read succeeds.
@@ -121,16 +45,25 @@ law custody_facts_are_empty_without_a_recorded_directory:
 def custody_facts_are_empty_without_a_recorded_directory():
   {==}
 
-# An attach refusal is an explicit unavailable outcome, never a silent default.
-law custody_lifecycle_is_unavailable_when_attach_refuses:
-  {Custody.lifecycle_attached("db",Fail{(2,"refused")}) == IO.pure(String,"{\"lifecycleState\":\"unavailable\"}") : IO(String)}
+# A refused passive job read is an explicit unavailable outcome, never a silent
+# default.
+law custody_job_is_unavailable_when_the_passive_read_refuses:
+  {Custody.custody_job("db",Fail{(2,"refused")},"","false") == IO.pure(String,"{\"jobRead\":\"unavailable\"}") : IO(String)}
 
-def custody_lifecycle_is_unavailable_when_attach_refuses():
+def custody_job_is_unavailable_when_the_passive_read_refuses():
   {==}
 
-# A refused state read is an explicit transport outcome.
-law custody_lifecycle_is_transport_when_the_state_read_fails:
-  {Custody.lifecycle_extract("db",Fail{(5,"io")}) == IO.pure(String,"{\"lifecycleState\":\"transport\"}") : IO(String)}
+# An argv0 the body cannot yield is an empty binary path, which the composing
+# read labels as the unreadable manifest record it is.
+law job_argv0_is_empty_when_the_extraction_fails:
+  {Custody.job_argv0_read(Fail{(5,"io")}) == IO.pure(String,"") : IO(String)}
 
-def custody_lifecycle_is_transport_when_the_state_read_fails():
+def job_argv0_is_empty_when_the_extraction_fails():
+  {==}
+
+# A render the database cannot produce is an explicit corrupt outcome.
+law custody_render_is_corrupt_when_the_query_fails:
+  {Custody.custody_rendered(Fail{(5,"io")}) == IO.pure(String,"{\"jobRead\":\"corrupt\"}") : IO(String)}
+
+def custody_render_is_corrupt_when_the_query_fails():
   {==}
