@@ -4498,7 +4498,7 @@
       if (!uses.length) continue;
       const disclosureKey = key + ":" + direction;
       const section = kwEl(parent, "details", { class: "kw-science-reference-uses",
-        "data-science-uses": direction });
+        "data-science-uses": direction, "data-science-uses-key": disclosureKey });
       section.open = read.referencesOpen.has(disclosureKey);
       section.addEventListener("toggle", () => {
         if (!section.isConnected) return;
@@ -4612,6 +4612,11 @@
       const key = identity.getAttribute("data-science-identity");
       if (identity.open) read.identityOpen.add(key);
       else read.identityOpen.delete(key);
+    }
+    for (const references of container.querySelectorAll("details[data-science-uses-key]")) {
+      const key = references.getAttribute("data-science-uses-key");
+      if (references.open) read.referencesOpen.add(key);
+      else read.referencesOpen.delete(key);
     }
     const previous = container.contains(document.activeElement) ? document.activeElement : null;
     const reading = previous && previous.closest(".kw-science-region");
