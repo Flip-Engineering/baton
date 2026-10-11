@@ -182,7 +182,7 @@ const TOOLS = [
   },
   {
     name: 'baton2_knowledge',
-    description: 'Discover finding metadata or read an exact finding and its complete evidence as the attached session. Index rows carry literal detailRead argv, and retained-message metadata carries literal deliveryRead argv.',
+    description: 'Discover finding metadata or read an exact finding and its complete evidence as the attached session. Index rows carry literal detailRead argv, and retained-message metadata carries literal deliveryRead argv. Versioned knowledge-v1 nodes and edges read back with their complete payloads, authored provenance and schemaVersion 1; legacy rows keep their original labels with legacy provenance.',
     inputSchema: { type: 'object', properties: {
       scope: { type: 'string', description: 'universal, worker, group, or all (the default discovery view)' },
       subject: { type: 'string', description: 'Worker or Ensemble ID; universal can name its Principal Conductor' },
@@ -238,6 +238,20 @@ const TOOLS = [
         }, required: ['id', 'source', 'relation', 'target'], additionalProperties: false,
       } },
     }, required: ['id', 'claim', 'evidence', 'limits'], additionalProperties: false },
+  },
+  {
+    name: 'baton2_knowledge_record_v1',
+    description: 'Record one knowledge-v1 node from its JSON payload object with id, kind, statement, context, method, evidence, limits and uncertainty. Refuses unknown kinds, malformed shapes and conflicting IDs.',
+    inputSchema: { type: 'object', properties: {
+      node: { type: 'object', description: 'Knowledge-v1 node payload' },
+    }, required: ['node'], additionalProperties: false },
+  },
+  {
+    name: 'baton2_knowledge_relate_v1',
+    description: 'Record one knowledge-v1 edge from its JSON payload object with id, kind, source, target, basis and rationale. Refuses unknown kinds, malformed shapes, unresolvable references and conflicting IDs.',
+    inputSchema: { type: 'object', properties: {
+      edge: { type: 'object', description: 'Knowledge-v1 edge payload' },
+    }, required: ['edge'], additionalProperties: false },
   },
   {
     name: 'baton2_knowledge_relate',
@@ -758,6 +772,12 @@ function handleToolCall(msg) {
         break;
       case 'baton2_knowledge_relate':
         result = coord('relate', args.id, sessionId, args.source, args.relation, args.target);
+        break;
+      case 'baton2_knowledge_record_v1':
+        result = coord('record-v1', JSON.stringify(args.node));
+        break;
+      case 'baton2_knowledge_relate_v1':
+        result = coord('relate-v1', JSON.stringify(args.edge));
         break;
       case 'baton2_knowledge_promote':
         result = args.sourceKind === undefined && args.destinationKind === undefined

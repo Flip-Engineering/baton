@@ -7,6 +7,8 @@ import ../coordinator/commands.bend as C
 import ./delivery.bend as Delivery
 import ./store.bend as Store
 import ../host/sqlite.bend as DB
+import ./knowledge_v1.bend as V1
+import ../git/text.bend as Tx
 
 # The notice a record writes for the author's immediate parent.
 def notice_id(finding: String) -> String:
@@ -20,6 +22,18 @@ def knowledge_schema() -> String:
 
 def commit_sql(statements: String) -> String:
   "BEGIN IMMEDIATE;" ++ C.schema() ++ knowledge_schema() ++ statements ++ "COMMIT;"
+
+# v1 writes install the provisional v1 tables alongside the legacy schema.
+# The law on commit_sql above stays untouched; only v1 entries use this.
+def commit_v1_sql(statements: String) -> String:
+  "BEGIN IMMEDIATE;" ++ C.schema() ++ knowledge_schema() ++ V1.schema_sql() ++ statements ++ "COMMIT;"
+
+# Legacy rows in full-detail reads carry their original kind and claim
+# verbatim alongside the mapped v1 envelope keys: statement mirrors claim,
+# details is null, provenance and schemaVersion name the legacy source. The
+# mapping never claims v1 conformance for old rows.
+def legacy_v1_envelope(+item: String) -> String:
+  "json_patch(" ++ item ++ ",json_object('statement',json_extract(" ++ item ++ ",'$.claim'),'details',json('null'),'provenance','legacy','schemaVersion','legacy'))"
 
 # The answer a write gives: the stored row as it stands, or a refusal naming the
 # rule that refused it.
@@ -121,11 +135,13 @@ def relations_value(+db: String, reader: String, scope: String, subject: String)
     present : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM sqlite_master WHERE type='table' AND name='knowledge_relations';"))
     relations_when_present(db,reader,scope,subject,String.eq(present,"1\n"))
 
-def scoped_read_sql(+reader: String, scope: String, subject: String, typed: Bool, +groups: Bool) -> String:
-  "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT " ++ knowledge_item_with_types(typed,groups) ++ " AS item FROM knowledge k WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") AND " ++ scope_findings_sql(scope,subject,groups) ++ " ORDER BY k.rowid);"
+def scoped_read_sql(+reader: String, scope: String, subject: String, typed: Bool, +groups: Bool, +v1: Bool) -> String:
+  +legacy = "SELECT " ++ knowledge_item_with_types(typed,groups) ++ " AS item FROM knowledge k WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") AND " ++ scope_findings_sql(scope,subject,groups)
+  +inner = Bool.pick(String,v1,legacy ++ " UNION ALL " ++ V1.read_nodes_sql(reader,scope,subject) ++ " UNION ALL " ++ V1.read_edges_sql(reader,scope,subject),legacy ++ " ORDER BY k.rowid")
+  "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (" ++ inner ++ ");"
 
 def read_sql_with_types(reader: String, typed: Bool) -> String:
-  scoped_read_sql(reader,"all","",typed,True{})
+  scoped_read_sql(reader,"all","",typed,True{},False{})
 
 def read_sql(+reader: String) -> String:
   read_sql_with_types(reader,True{})
@@ -144,23 +160,33 @@ def detail_read(+reader: String, +scope: String, +subject: String, +scoped: Bool
 def knowledge_index_item_with_types(+reader: String, +scope: String, +subject: String, +scoped: Bool, +typed: Bool) -> String:
   "json_object('id',k.id,'author',k.author,'kind'," ++ Bool.pick(String,typed,"k.kind","'finding'") ++ ",'evidence',k.evidence,'claimBytes',length(CAST(k.claim AS BLOB)),'limitsBytes',length(CAST(k.limits AS BLOB)),'evidenceMessage'," ++ evidence_index() ++ ",'destinations'," ++ knowledge_destinations() ++ ",'promotionCount',(SELECT count(*) FROM knowledge_promotions p WHERE p.finding=k.id),'relationCount'," ++ Bool.pick(String,typed,"(SELECT count(*) FROM knowledge_relations r WHERE r.source IN(k.id,'finding:'||k.id) OR r.target IN(k.id,'finding:'||k.id))","0") ++ ",'detailRead'," ++ detail_read(reader,scope,subject,scoped) ++ ")"
 
-def scoped_index_sql(+reader: String, +scope: String, +subject: String, +scoped: Bool, +typed: Bool, groups: Bool) -> String:
-  "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT " ++ knowledge_index_item_with_types(reader,scope,subject,scoped,typed) ++ " AS item FROM knowledge k WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") AND " ++ scope_findings_sql(scope,subject,groups) ++ " ORDER BY k.rowid);"
+def scoped_index_sql(+reader: String, +scope: String, +subject: String, +scoped: Bool, +typed: Bool, groups: Bool, +v1: Bool) -> String:
+  +legacy = "SELECT " ++ knowledge_index_item_with_types(reader,scope,subject,scoped,typed) ++ " AS item FROM knowledge k WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") AND " ++ scope_findings_sql(scope,subject,groups)
+  +inner = Bool.pick(String,v1,legacy ++ " UNION ALL " ++ V1.index_nodes_sql(reader,scope,subject,scoped) ++ " UNION ALL " ++ V1.index_edges_sql(reader,scope,subject,scoped),legacy ++ " ORDER BY k.rowid")
+  "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (" ++ inner ++ ");"
 
 def scoped_detail_sql(+reader: String, +scope: String, +subject: String, +id: String, +typed: Bool, +groups: Bool) -> String:
-  "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT " ++ knowledge_item_with_types(typed,groups) ++ " AS item FROM knowledge k WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") AND " ++ scope_findings_sql(scope,subject,groups) ++ " AND k.id=" ++ C.q(id) ++ " ORDER BY k.rowid);"
+  "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT " ++ legacy_v1_envelope(knowledge_item_with_types(typed,groups)) ++ " AS item FROM knowledge k WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") AND " ++ scope_findings_sql(scope,subject,groups) ++ " AND k.id=" ++ C.q(id) ++ " ORDER BY k.rowid);"
 
 def index_value(+db: String, +reader: String, +scope: String, +subject: String, +scoped: Bool) -> IO(String):
   do IO<String>:
     typed : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM pragma_table_info('knowledge') WHERE name='kind';"))
     groups : Bool <- promotion_groups_value(db)
-    IO.try(String,DB.Sql.read(db,scoped_index_sql(reader,scope,subject,scoped,String.eq(typed,"1\n"),groups)))
+    v1tables : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN('knowledge_v1_nodes','knowledge_v1_edges');"))
+    IO.try(String,DB.Sql.read(db,scoped_index_sql(reader,scope,subject,scoped,String.eq(typed,"1\n"),groups,String.eq(v1tables,"2\n"))))
 
+# Full-detail reads check the v1 tables first so v1 nodes and edges return
+# complete payloads; anything else falls back to the mapped legacy envelope.
+# The v1 tables may not exist on databases that predate them, so the v1
+# lookup runs only when both tables are present.
 def detail_value(+db: String, +reader: String, +scope: String, +subject: String, +id: String) -> IO(String):
   do IO<String>:
     typed : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM pragma_table_info('knowledge') WHERE name='kind';"))
     groups : Bool <- promotion_groups_value(db)
-    IO.try(String,DB.Sql.read(db,scoped_detail_sql(reader,scope,subject,id,String.eq(typed,"1\n"),groups)))
+    v1present : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN('knowledge_v1_nodes','knowledge_v1_edges');"))
+    v1 : String <- IO.try(String,DB.Sql.read(db,Bool.pick(String,String.eq(v1present,"2\n"),V1.detail_sql(reader,scope,subject,id),"SELECT json('[]');")))
+    legacy : String <- IO.try(String,DB.Sql.read(db,scoped_detail_sql(reader,scope,subject,id,String.eq(typed,"1\n"),groups)))
+    IO.pure(String,Bool.pick(String,Tx.starts_with(v1,"[]"),legacy,v1))
 
 # A read of an older database retains its existing findings before any writer
 # installs the new columns and relationship table.
@@ -168,7 +194,8 @@ def read_scope_value(+db: String, reader: String, scope: String, subject: String
   do IO<String>:
     typed : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM pragma_table_info('knowledge') WHERE name='kind';"))
     groups : Bool <- promotion_groups_value(db)
-    IO.try(String,DB.Sql.read(db,scoped_read_sql(reader,scope,subject,String.eq(typed,"1\n"),groups)))
+    v1tables : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN('knowledge_v1_nodes','knowledge_v1_edges');"))
+    IO.try(String,DB.Sql.read(db,scoped_read_sql(reader,scope,subject,String.eq(typed,"1\n"),groups,String.eq(v1tables,"2\n"))))
 
 def read_value(db: String, reader: String) -> IO(String):
   read_scope_value(db,reader,"all","")
@@ -176,17 +203,19 @@ def read_value(db: String, reader: String) -> IO(String):
 # Search and traversal share the same holdings as complete knowledge reads.
 # Knowledge references normalize bare stored IDs to finding:ID. Returned nodes
 # retain their authored kind, complete content and literal detailRead argv.
-def graph_nodes_sql(+reader: String, +scope: String, +subject: String, +typed: Bool, +groups: Bool) -> String:
-  "SELECT k.id,'finding:'||k.id AS reference," ++ Bool.pick(String,typed,"k.kind","'finding'") ++ " AS kind,k.claim,k.evidence,k.limits,json_patch(" ++ knowledge_index_item_with_types(reader,scope,subject,True{},typed) ++ ",json_patch(" ++ knowledge_item_with_types(typed,groups) ++ ",json_object('reference','finding:'||k.id))) AS item FROM knowledge k WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") AND " ++ scope_findings_sql(scope,subject,groups)
+def graph_nodes_sql(+reader: String, +scope: String, +subject: String, +typed: Bool, +groups: Bool, v1: Bool) -> String:
+  +base = "SELECT k.id,'finding:'||k.id AS reference," ++ Bool.pick(String,typed,"k.kind","'finding'") ++ " AS kind,k.claim,k.evidence,k.limits,json_patch(" ++ knowledge_index_item_with_types(reader,scope,subject,True{},typed) ++ ",json_patch(" ++ knowledge_item_with_types(typed,groups) ++ ",json_object('reference','finding:'||k.id))) AS item FROM knowledge k WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") AND " ++ scope_findings_sql(scope,subject,groups)
+  Bool.pick(String,v1,base ++ " UNION ALL " ++ V1.nodes_fragment(reader,scope,subject),base)
 
-def graph_edges_sql(+reader: String, scope: String, subject: String, groups: Bool, +typed: Bool, present: Bool) -> String:
-  Bool.pick(String,present,
+def graph_edges_sql(+reader: String, scope: String, subject: String, groups: Bool, +typed: Bool, present: Bool, v1: Bool) -> String:
+  +authored = Bool.pick(String,present,
     "SELECT r.id,r.source,r.target,r.relation," ++ reference_sql("r.source") ++ " AS source_ref," ++ reference_sql("r.target") ++ " AS target_ref,json_patch(" ++ relation_item(typed) ++ ",json_object('source'," ++ reference_sql("r.source") ++ ",'target'," ++ reference_sql("r.target") ++ ",'provenance','authored')) AS item FROM knowledge_relations r WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") AND " ++ scope_relations_sql(scope,subject,groups),
     "SELECT '' AS id,'' AS source,'' AS target,'' AS relation,'' AS source_ref,'' AS target_ref,json('{}') AS item WHERE 0")
-  ++ " UNION ALL SELECT 'citation:'||id,reference,evidence,'Cited',reference,evidence,json_object('id','citation:'||id,'author',json_extract(item,'$.author'),'source',reference,'sourceReference',reference,'sourceKind',kind,'relation','Cited','target',evidence,'targetReference',evidence,'targetKind'," ++ reference_kind("nodes.evidence",typed) ++ ",'provenance','recorded-evidence') FROM nodes WHERE substr(evidence,1,8)='message:' OR substr(evidence,1,8)='finding:' OR substr(evidence,1,5)='file:' OR substr(evidence,1,7)='http://' OR substr(evidence,1,8)='https://' OR substr(evidence,1,9)='external:'"
+  +cited = " UNION ALL SELECT 'citation:'||id,reference,evidence,'Cited',reference,evidence,json_object('id','citation:'||id,'author',json_extract(item,'$.author'),'source',reference,'sourceReference',reference,'sourceKind',kind,'relation','Cited','target',evidence,'targetReference',evidence,'targetKind'," ++ reference_kind("nodes.evidence",typed) ++ ",'provenance','recorded-evidence') FROM nodes WHERE substr(evidence,1,8)='message:' OR substr(evidence,1,8)='finding:' OR substr(evidence,1,5)='file:' OR substr(evidence,1,7)='http://' OR substr(evidence,1,8)='https://' OR substr(evidence,1,9)='external:'"
+  Bool.pick(String,v1,authored ++ cited ++ " UNION ALL " ++ V1.edges_fragment(reader,scope,subject) ++ " UNION ALL " ++ V1.v1_citation_fragment(),authored ++ cited)
 
-def graph_ctes(+reader: String, +scope: String, +subject: String, +typed: Bool, +groups: Bool, present: Bool) -> String:
-  "WITH RECURSIVE nodes AS (" ++ graph_nodes_sql(reader,scope,subject,typed,groups) ++ "), edges AS (" ++ graph_edges_sql(reader,scope,subject,groups,typed,present) ++ ")"
+def graph_ctes(+reader: String, +scope: String, +subject: String, +typed: Bool, +groups: Bool, present: Bool, v1: Bool) -> String:
+  "WITH RECURSIVE nodes AS (" ++ graph_nodes_sql(reader,scope,subject,typed,groups,v1) ++ "), edges AS (" ++ graph_edges_sql(reader,scope,subject,groups,typed,present,v1) ++ ")"
 
 def search_text() -> String:
   "lower(id||' '||kind||' '||claim||' '||evidence||' '||limits||' '||coalesce(json_extract(item,'$.evidenceMessage.body'),''))"
@@ -202,17 +231,20 @@ def search_score(+query: String) -> String:
   "CASE WHEN lower(id)=lower(" ++ C.q(query) ++ ") THEN 100 ELSE 0 END + CASE WHEN instr(lower(claim),lower(" ++ C.q(query) ++ "))>0 THEN 30 ELSE 0 END + CASE WHEN lower(kind)=lower(" ++ C.q(query) ++ ") THEN 10 ELSE 0 END + (SELECT count(*) FROM edges e WHERE e.source_ref=nodes.reference OR e.target_ref=nodes.reference)"
 
 def graph_answer(reader: String, +scope: String, +subject: String, +selected: String, +edge_filter: String) -> String:
-  ", selected_edges AS (SELECT * FROM edges e WHERE " ++ edge_filter ++ "), references_in_view AS (SELECT reference FROM selected UNION SELECT source_ref FROM selected_edges UNION SELECT target_ref FROM selected_edges) SELECT json_object('scope',json_object('kind'," ++ C.q(scope) ++ ",'id'," ++ C.q(subject) ++ "),'roots',(SELECT coalesce(json_group_array(reference),json('[]')) FROM selected),'nodes',(SELECT coalesce(json_group_array(json(item)),json('[]')) FROM nodes WHERE reference IN(SELECT reference FROM references_in_view)),'edges',(SELECT coalesce(json_group_array(json(item)),json('[]')) FROM selected_edges),'references',(SELECT coalesce(json_group_array(json_object('reference',reference,'kind',coalesce((SELECT json_extract(e.item,'$.sourceKind') FROM selected_edges e WHERE e.source_ref=reference LIMIT 1),(SELECT json_extract(e.item,'$.targetKind') FROM selected_edges e WHERE e.target_ref=reference LIMIT 1),CASE WHEN substr(reference,1,8)='message:' THEN 'message' WHEN substr(reference,1,8)='finding:' THEN 'finding' ELSE 'external' END),'detailRead',CASE WHEN substr(reference,1,8)='finding:' THEN json_array('knowledge-scope'," ++ C.q(reader) ++ ",'all','','--id',substr(reference,9)) ELSE NULL END,'deliveryRead',CASE WHEN substr(reference,1,8)='message:' THEN json_array('delivery',substr(reference,9)) ELSE NULL END)),json('[]')) FROM references_in_view WHERE reference NOT IN(SELECT reference FROM nodes))" ++ selected ++ ");"
+  ", selected_edges AS (SELECT * FROM edges e WHERE " ++ edge_filter ++ "), references_in_view AS (SELECT reference FROM selected UNION SELECT source_ref FROM selected_edges UNION SELECT target_ref FROM selected_edges) SELECT json_object('scope',json_object('kind'," ++ C.q(scope) ++ ",'id'," ++ C.q(subject) ++ "),'roots',(SELECT coalesce(json_group_array(reference),json('[]')) FROM selected),'nodes',(SELECT coalesce(json_group_array(json(item)),json('[]')) FROM nodes WHERE reference IN(SELECT reference FROM references_in_view)),'edges',(SELECT coalesce(json_group_array(json(item)),json('[]')) FROM selected_edges),'references',(SELECT coalesce(json_group_array(json_object('reference',reference,'kind',coalesce((SELECT json_extract(e.item,'$.sourceKind') FROM selected_edges e WHERE e.source_ref=reference LIMIT 1),(SELECT json_extract(e.item,'$.targetKind') FROM selected_edges e WHERE e.target_ref=reference LIMIT 1),CASE WHEN substr(reference,1,8)='message:' THEN 'message' WHEN substr(reference,1,8)='finding:' THEN 'finding' ELSE 'external' END),'detailRead',CASE WHEN substr(reference,1,8)='finding:' THEN json_array('knowledge-scope'," ++ C.q(reader) ++ ",'all','','--id',substr(reference,9)) WHEN substr(reference,1,3)='v1:' THEN json_array('knowledge-scope'," ++ C.q(reader) ++ ",'all','','--id',substr(reference,4)) ELSE NULL END,'deliveryRead',CASE WHEN substr(reference,1,8)='message:' THEN json_array('delivery',substr(reference,9)) ELSE NULL END)),json('[]')) FROM references_in_view WHERE reference NOT IN(SELECT reference FROM nodes))" ++ selected ++ ");"
 
-def search_sql(+reader: String, +scope: String, +subject: String, +query: String, +typed: Bool, groups: Bool, present: Bool) -> String:
-  graph_ctes(reader,scope,subject,typed,groups,present)
+def search_sql(+reader: String, +scope: String, +subject: String, +query: String, +typed: Bool, groups: Bool, present: Bool, v1: Bool) -> String:
+  graph_ctes(reader,scope,subject,typed,groups,present,v1)
   ++ ", matches AS (SELECT *," ++ search_score(query) ++ " AS score FROM nodes WHERE " ++ search_terms(String.split(query,Char.from_u32(32))) ++ "), selected AS (SELECT reference FROM matches)"
   ++ graph_answer(reader,scope,subject,",'query'," ++ C.q(query) ++ ",'matches',(SELECT coalesce(json_group_array(json_patch(json(item),json_object('matchScore',score))),json('[]')) FROM (SELECT item,score FROM matches ORDER BY score DESC,id))","source_ref IN(SELECT reference FROM selected) OR target_ref IN(SELECT reference FROM selected)")
 
+def traversal_symmetric() -> String:
+  "e.relation IN(" ++ V1.symmetric_kinds() ++ ") AND substr(e.source_ref,1,3)='v1:' AND substr(e.target_ref,1,3)='v1:'"
+
 def traversal_join(+direction: String) -> String:
   match direction:
-    case "out": "e.source_ref=w.reference"
-    case "in": "e.target_ref=w.reference"
+    case "out": "(e.source_ref=w.reference OR (e.target_ref=w.reference AND " ++ traversal_symmetric() ++ "))"
+    case "in": "(e.target_ref=w.reference OR (e.source_ref=w.reference AND " ++ traversal_symmetric() ++ "))"
     case _: "(e.source_ref=w.reference OR e.target_ref=w.reference)"
 
 def traversal_relation(+relation: String) -> String:
@@ -222,23 +254,25 @@ def traversal_filter(+direction: String, +relation: String) -> String:
   +joined = traversal_join(direction)
   "EXISTS(SELECT 1 FROM walk w WHERE " ++ joined ++ ") AND " ++ traversal_relation(relation)
 
-def traverse_sql(+reader: String, +scope: String, +subject: String, +reference: String, +direction: String, +relation: String, +recursive: Bool, typed: Bool, groups: Bool, present: Bool) -> String:
+def traverse_sql(+reader: String, +scope: String, +subject: String, +reference: String, +direction: String, +relation: String, +recursive: Bool, typed: Bool, groups: Bool, present: Bool, v1: Bool) -> String:
   +seed = reference_sql(C.q(reference))
-  graph_ctes(reader,scope,subject,typed,groups,present)
+  graph_ctes(reader,scope,subject,typed,groups,present,v1)
   ++ ", walk(reference) AS (SELECT " ++ seed ++ Bool.pick(String,recursive," UNION SELECT CASE WHEN e.source_ref=w.reference THEN e.target_ref ELSE e.source_ref END FROM edges e JOIN walk w ON " ++ traversal_join(direction) ++ " WHERE " ++ traversal_relation(relation),"") ++ "), selected AS (SELECT reference FROM walk)"
   ++ graph_answer(reader,scope,subject,",'reference'," ++ seed ++ ",'direction'," ++ C.q(direction) ++ ",'relation'," ++ C.q(relation) ++ ",'recursive'," ++ Bool.pick(String,recursive,"json('true')","json('false')"),traversal_filter(direction,relation))
 
-def graph_read_sql(+reader: String, +scope: String, +subject: String, +query: String, search: Bool, direction: String, relation: String, recursive: Bool, typed: String, +groups: Bool, present: String) -> String:
+def graph_read_sql(+reader: String, +scope: String, +subject: String, +query: String, search: Bool, direction: String, relation: String, recursive: Bool, typed: String, +groups: Bool, present: String, v1tables: String) -> String:
   +types = String.eq(typed,"1\n")
   +edges = String.eq(present,"1\n")
-  Bool.pick(String,search,search_sql(reader,scope,subject,query,types,groups,edges),traverse_sql(reader,scope,subject,query,direction,relation,recursive,types,groups,edges))
+  +v1 = String.eq(v1tables,"2\n")
+  Bool.pick(String,search,search_sql(reader,scope,subject,query,types,groups,edges,v1),traverse_sql(reader,scope,subject,query,direction,relation,recursive,types,groups,edges,v1))
 
 def graph_read(+db: String, +reader: String, +scope: String, +subject: String, +query: String, search: Bool, direction: String, relation: String, recursive: Bool) -> IO(Unit):
   do IO<Unit>:
     typed : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM pragma_table_info('knowledge') WHERE name='kind';"))
     +groups : Bool <- promotion_groups_value(db)
     present : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM sqlite_master WHERE type='table' AND name='knowledge_relations';"))
-    saved : String <- IO.try(String,DB.Sql.read(db,graph_read_sql(reader,scope,subject,query,search,direction,relation,recursive,typed,groups,present)))
+    v1tables : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN('knowledge_v1_nodes','knowledge_v1_edges');"))
+    saved : String <- IO.try(String,DB.Sql.read(db,graph_read_sql(reader,scope,subject,query,search,direction,relation,recursive,typed,groups,present,v1tables)))
     IO.write(saved)
 
 # The stored finding, read back only when it is this invocation's own finding:
@@ -377,12 +411,29 @@ def record_linked(+db: String, +id: String, author: String, kind: String, claim:
       answered(delivery))
 
 def tool_help() -> String:
-  "\nrecord-linked ID AUTHOR KIND CLAIM EVIDENCE LIMITS LINKS_JSON\nknowledge-search READER universal|worker|group|all SUBJECT QUERY [--pretty]\nknowledge-traverse READER universal|worker|group|all SUBJECT REFERENCE in|out|both RELATION neighbors|recursive [--pretty]\nLINKS_JSON is an array of authored {id,source,relation,target} links committed with the typed record. Use kinds such as evidence, finding, hypothesis, experiment, decision or principle and directed relationships such as Supports, Contradicts, Produced, Informed, DerivedFrom, TestedBy or Supersedes. Types and relationships remain authored strings. Search matches every space-separated term against ID, kind, claim, evidence, limits and retained evidence message bodies, ranks lexical matches and connectivity, and returns matches with typed neighbors and complete record reads. Traversal follows incoming, outgoing or both directions; an empty RELATION includes all relationships. Recursive traversal follows the connected subgraph and terminates on cycles. Structured evidence references appear as Cited edges. Scope selects the same explicit holdings as knowledge-scope.\n"
+  "\nrecord-linked ID AUTHOR KIND CLAIM EVIDENCE LIMITS LINKS_JSON\nrecord-v1 NODE_JSON records one knowledge-v1 node object with id, author, kind, statement, context, evidence, limits, uncertainty and typed details. relate-v1 EDGE_JSON records one knowledge-v1 edge object with id, kind, source, target, basis and rationale. Both refuse unknown kinds, malformed shapes, unresolvable references and conflicting IDs.\nknowledge-search READER universal|worker|group|all SUBJECT QUERY [--pretty]\nknowledge-traverse READER universal|worker|group|all SUBJECT REFERENCE in|out|both RELATION neighbors|recursive [--pretty]\nLINKS_JSON is an array of authored {id,source,relation,target} links committed with the typed record. Use kinds such as evidence, finding, hypothesis, experiment, decision or principle and directed relationships such as Supports, Contradicts, Produced, Informed, DerivedFrom, TestedBy or Supersedes. Types and relationships remain authored strings. Search matches every space-separated term against ID, kind, claim, evidence, limits and retained evidence message bodies, ranks lexical matches and connectivity, and returns matches with typed neighbors and complete record reads. Traversal follows incoming, outgoing or both directions; an empty RELATION includes all relationships. Recursive traversal follows the connected subgraph and terminates on cycles. Structured evidence references appear as Cited edges. Scope selects the same explicit holdings as knowledge-scope.\n"
 
 def relate(db: String, id: String, author: String, source: String, relation: String, target: String) -> IO(Unit):
   do IO<Unit>:
     saved : String <- IO.try(String,Store.transact_sql(db,commit_sql(relation_statements(id,author,source,relation,target))))
     write_answer(saved)
+
+# v1 writes mirror the legacy record path: one transaction writes the row and
+# the parent notice, a refusal exits 2 with the naming rule, and the answer is
+# the stored envelope. The row id lives inside the JSON payload, so the notice
+# delivery reads it back first. Edges mirror relate: no parent delivery.
+def record_v1(+db: String, +node: String) -> IO(Unit):
+  do IO<Unit>:
+    raw : String <- IO.try(String,DB.Sql.read(db,"SELECT json_extract(" ++ C.q(node) ++ ",'$.id');"))
+    +saved : String <- IO.try(String,Store.transact_sql(db,commit_v1_sql(V1.node_statements(node))))
+    Bool.pick(IO(Unit),Store.refused(saved),IO.die(Unit,2,saved),do IO<Unit>:
+      delivery : Result<&1,&1,U32 & String,String> <- deliver_record(db,Tx.trim_nl(raw),saved)
+      answered(delivery))
+
+def relate_v1(+db: String, +edge: String) -> IO(Unit):
+  do IO<Unit>:
+    +saved : String <- IO.try(String,Store.transact_sql(db,commit_v1_sql(V1.edge_statements(edge))))
+    Bool.pick(IO(Unit),Store.refused(saved),IO.die(Unit,2,saved),write_answer(saved))
 
 # Read: the shared findings as a JSON array. An unregistered reader receives the
 # empty array.

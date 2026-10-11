@@ -75,6 +75,8 @@ type Command is Data:
   KnowledgeSearch{reader: String, scope: String, subject: String, query: String}
   KnowledgeTraverse{reader: String, scope: String, subject: String, reference: String, direction: String, relation: String, recursive: Bool}
   KnowledgeRelate{id: String, author: String, source: String, relation: String, target: String}
+  KnowledgeRecordV1{json: String}
+  KnowledgeRelateV1{json: String}
   KnowledgeRead{reader: String}
   KnowledgeReadScope{reader: String, scope: String, subject: String}
   KnowledgeRelations{reader: String, scope: String, subject: String}
@@ -594,6 +596,8 @@ def sql(command: Command) -> String:
     case KnowledgeSearch{reader,scope,subject,query}: ""
     case KnowledgeTraverse{reader,scope,subject,reference,direction,relation,recursive}: ""
     case KnowledgeRelate{id,author,source,relation,target}: ""
+    case KnowledgeRecordV1{json}: ""
+    case KnowledgeRelateV1{json}: ""
     case KnowledgeRead{reader}: ""
     case KnowledgeReadScope{reader,scope,subject}: ""
     case KnowledgeRelations{reader,scope,subject}: ""
@@ -656,6 +660,8 @@ def parse_verb_id(+verb: String, +id: String) -> Command:
     case "delivery": Delivery{id}
     case "worktree": Worktree{id}
     case "turns": Turns{id}
+    case "record-v1": KnowledgeRecordV1{id}
+    case "relate-v1": KnowledgeRelateV1{id}
     case "project": Project{id}
     case "project-sessions": ProjectSessions{id}
     case "resume": Resume{id,False{}}

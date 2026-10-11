@@ -33,7 +33,17 @@ def refused(+saved: String) -> Bool:
             Bool.or(Tx.starts_with(saved,"{\"error\":\"finding-id-conflict\""),
               Bool.or(Tx.starts_with(saved,"{\"error\":\"knowledge-notice-conflict\""),
                 Bool.or(Tx.starts_with(saved,"{\"error\":\"promotion-id-conflict\""),
-                  Tx.starts_with(saved,"{\"error\":\"promotion-notice-conflict\"")))))))))
+                  Bool.or(Tx.starts_with(saved,"{\"error\":\"promotion-notice-conflict\""),
+                    Bool.or(Tx.starts_with(saved,"{\"error\":\"v1-unknown-node-kind\""),
+                      Bool.or(Tx.starts_with(saved,"{\"error\":\"v1-node-shape\""),
+                        Bool.or(Tx.starts_with(saved,"{\"error\":\"v1-unknown-author\""),
+                          Bool.or(Tx.starts_with(saved,"{\"error\":\"v1-node-id-conflict\""),
+                            Bool.or(Tx.starts_with(saved,"{\"error\":\"v1-unknown-edge-kind\""),
+                              Bool.or(Tx.starts_with(saved,"{\"error\":\"v1-edge-shape\""),
+                                Bool.or(Tx.starts_with(saved,"{\"error\":\"v1-unresolved-endpoint\""),
+                                  Bool.or(Tx.starts_with(saved,"{\"error\":\"v1-endpoint-kind-mismatch\""),
+                                    Bool.or(Tx.starts_with(saved,"{\"error\":\"v1-proof-rule\""),
+                                      Tx.starts_with(saved,"{\"error\":\"v1-edge-id-conflict\"")))))))))))))))))))
 
 # Change-publication contract for the coordinator queue. The projection
 # installer runs before the writer's own transaction begins; the committed
