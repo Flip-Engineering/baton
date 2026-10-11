@@ -410,7 +410,7 @@ static void br_note(BrKeeper *keeper,const char *name,int error) {
   br_file(keeper->directory,name,text,(size_t)n,0);
 }
 static void br_manifest_free(BrManifest *manifest) {
-  for(int i=0;i<8;i++) free(manifest->field[i]);
+  for(int i=0;i<8;i++) {free(manifest->field[i]);manifest->field[i]=NULL;}
 }
 static int br_manifest_read(const char *directory,BrManifest *manifest) {
   char *path=br_path(directory,"manifest");
@@ -3783,15 +3783,17 @@ static int br_instance_job(BatonProcessCall *call) {
   char *argv0=NULL;
   const char *manifest_cause="absent";
   BrManifest manifest={0};
-  if(!br_manifest_read(directory,&manifest)) {
+  int manifest_error=br_manifest_read(directory,&manifest);
+  if(!manifest_error) {
     char **argv=br_argv(manifest.field[0],(size_t)manifest.header.lengths[0]);
     if(argv && argv[0]) {
       argv0=strdup(argv[0]);
       manifest_cause=argv0?"read":"invalid";
-    } else manifest_cause="invalid";
-    if(argv) {for(int i=0;argv[i];i++)free(argv[i]);free(argv);}
+      if(!argv0)manifest_error=ENOMEM;
+    } else {manifest_cause="invalid";manifest_error=ENOMEM;}
+    free(argv);
     br_manifest_free(&manifest);
-  }
+  } else manifest_cause=manifest_error==ENOENT?"absent":"invalid";
   BrLifecycle lifecycle;
   const char *lifecycle_state=br_lifecycle_state(directory,&lifecycle,&(uint64_t){0},&(int){0},&(int){0});
   int lifecycle_valid=!memcmp(lifecycle.magic,BR_LIFECYCLE_MAGIC,8) && lifecycle.schema==1;
@@ -3801,7 +3803,7 @@ static int br_instance_job(BatonProcessCall *call) {
   const char *format=
     "{\"attempt\":%llu,\"generation\":%llu,\"spool_bytes\":%llu,\"checkpoint_offset\":%llu,"
     "\"checkpoint_verified\":%s,\"status\":%d,\"status_known\":%s,\"observing\":%s,"
-    "\"owner_known\":%s,\"manifest_read\":\"%s\",\"argv0\":\"%s\",\"lifecycle_state\":\"%s\","
+    "\"owner_known\":%s,\"manifest_read\":\"%s\",\"manifest_error\":%d,\"argv0\":\"%s\",\"lifecycle_state\":\"%s\","
     "\"lifecycle_read\":\"%s\",\"spawn_latched\":%s,\"cancelled\":%s,\"observer_ready\":%s,"
     "\"checkpoint_state\":\"%s\"}";
   int needed=snprintf(NULL,0,format,
@@ -3812,7 +3814,7 @@ static int br_instance_job(BatonProcessCall *call) {
     status_known?"true":"false",
     owner_known&&state.observing?"true":"false",
     owner_known?"true":"false",
-    manifest_cause,escaped_argv0?escaped_argv0:"",
+    manifest_cause,manifest_error,escaped_argv0?escaped_argv0:"",
     lifecycle_state,lifecycle_valid?"read":"invalid",
     lifecycle_valid&&lifecycle.latched?"true":"false",
     lifecycle_valid&&lifecycle.cancelled?"true":"false",
@@ -3835,7 +3837,7 @@ static int br_instance_job(BatonProcessCall *call) {
     status_known?"true":"false",
     owner_known&&state.observing?"true":"false",
     owner_known?"true":"false",
-    manifest_cause,escaped_argv0?escaped_argv0:"",
+    manifest_cause,manifest_error,escaped_argv0?escaped_argv0:"",
     lifecycle_state,lifecycle_valid?"read":"invalid",
     lifecycle_valid&&lifecycle.latched?"true":"false",
     lifecycle_valid&&lifecycle.cancelled?"true":"false",
