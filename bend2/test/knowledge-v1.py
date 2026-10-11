@@ -127,6 +127,7 @@ class KnowledgeV1(unittest.TestCase):
         self.assertEqual(answer['details'], payload['details'])
         self.assertEqual(answer['provenance'], 'authored')
         self.assertEqual(answer['schemaVersion'], 1)
+        self.assertEqual(answer['schemaId'], 'urn:baton:knowledge:schema:1')
         self.assertEqual(answer['promotions'], [])
         self.assertEqual(answer['relations'], [])
         notice = self.call('delivery', 'v1-question:notice')
@@ -203,6 +204,21 @@ class KnowledgeV1(unittest.TestCase):
         answer = self.relate(strong)
         self.assertEqual(answer['kind'], 'proves')
 
+    def test_produces_matrix_follows_study_outputs(self):
+        self.record(node('grand', 'v1-gen-study', 'study'))
+        self.record(node('grand', 'v1-gen-hypothesis', 'hypothesis'))
+        admitted = self.relate(edge('grand', 'v1-generated', 'produces',
+                                    ('v1-gen-study', 'study'),
+                                    ('v1-gen-hypothesis', 'hypothesis'),
+                                    details={'method': 'test method'}))
+        self.assertEqual(admitted['kind'], 'produces')
+        self.record(node('grand', 'v1-other-study', 'study'))
+        refused = self.call('relate-v1', json.dumps(edge(
+            'grand', 'v1-study-loop', 'produces',
+            ('v1-gen-study', 'study'), ('v1-other-study', 'study'),
+            details={'method': 'test method'})), success=False)
+        self.assertIn('v1-endpoint-kind-mismatch', refused.stderr)
+
     def test_relate_v1_edge_round_trip_and_traversal(self):
         self.record(node('grand', 'v1-study', 'study'))
         self.record(node('grand', 'v1-ask', 'question'))
@@ -215,6 +231,7 @@ class KnowledgeV1(unittest.TestCase):
         self.assertEqual(answer['basis'], [{'id': 'v1-ask', 'kind': 'question'}])
         self.assertEqual(answer['provenance'], 'authored')
         self.assertEqual(answer['schemaVersion'], 1)
+        self.assertEqual(answer['schemaId'], 'urn:baton:knowledge:schema:1')
         walked = self.call('knowledge-traverse', 'root', 'all', '', 'v1:v1-study',
                            'out', '', 'neighbors')
         self.assertIn('v1:v1-study', walked['roots'])
@@ -270,6 +287,7 @@ class KnowledgeV1(unittest.TestCase):
             self.assertEqual(stored['kind'], item['kind'])
             self.assertEqual(stored['provenance'], 'authored')
             self.assertEqual(stored['schemaVersion'], 1)
+            self.assertEqual(stored['schemaId'], 'urn:baton:knowledge:schema:1')
         for item in example['edges']:
             stored = self.detail(item['id'])
             for field in ('source', 'target', 'context', 'basis', 'rationale',

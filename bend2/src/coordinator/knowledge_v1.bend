@@ -200,7 +200,7 @@ def v1_edge_promotions() -> String:
 
 def v1_edge_envelope(+alias: String) -> String:
   +r = alias ++ "."
-  "json_object('id'," ++ r ++ "id,'author'," ++ r ++ "author,'kind'," ++ r ++ "kind,'source',json(" ++ r ++ "source),'target',json(" ++ r ++ "target),'context',json(" ++ r ++ "context),'basis',json(" ++ r ++ "basis),'rationale'," ++ r ++ "rationale,'limits'," ++ r ++ "limits,'uncertainty'," ++ r ++ "uncertainty,'details',json(" ++ r ++ "details),'provenance'," ++ r ++ "provenance,'schemaVersion'," ++ r ++ "schemaVersion,'promotions'," ++ v1_edge_promotions() ++ ")"
+  "json_object('id'," ++ r ++ "id,'author'," ++ r ++ "author,'kind'," ++ r ++ "kind,'schemaId','urn:baton:knowledge:schema:1','source',json(" ++ r ++ "source),'target',json(" ++ r ++ "target),'context',json(" ++ r ++ "context),'basis',json(" ++ r ++ "basis),'rationale'," ++ r ++ "rationale,'limits'," ++ r ++ "limits,'uncertainty'," ++ r ++ "uncertainty,'details',json(" ++ r ++ "details),'provenance'," ++ r ++ "provenance,'schemaVersion'," ++ r ++ "schemaVersion,'promotions'," ++ v1_edge_promotions() ++ ")"
 
 def v1_promotions() -> String:
   "(SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_patch(json_object('finding',p.finding,'author',p.author,'source',p.source,'destination',p.destination,'promotedBy',p.promoted_by),json_object('sourceKind',p.source_kind,'destinationKind',p.destination_kind)) AS item FROM knowledge_promotions p WHERE p.finding=n.id))"
@@ -210,7 +210,7 @@ def v1_node_relations() -> String:
 
 def node_envelope(+alias: String) -> String:
   +n = alias ++ "."
-  "json_object('id'," ++ n ++ "id,'author'," ++ n ++ "author,'kind'," ++ n ++ "kind,'statement'," ++ n ++ "statement,'context',json(" ++ n ++ "context),'evidence',json(" ++ n ++ "evidence),'limits'," ++ n ++ "limits,'uncertainty'," ++ n ++ "uncertainty,'details',json(" ++ n ++ "details),'provenance'," ++ n ++ "provenance,'schemaVersion'," ++ n ++ "schemaVersion,'promotions'," ++ v1_promotions() ++ ",'relations'," ++ v1_node_relations() ++ ")"
+  "json_object('id'," ++ n ++ "id,'author'," ++ n ++ "author,'kind'," ++ n ++ "kind,'schemaId','urn:baton:knowledge:schema:1','statement'," ++ n ++ "statement,'context',json(" ++ n ++ "context),'evidence',json(" ++ n ++ "evidence),'limits'," ++ n ++ "limits,'uncertainty'," ++ n ++ "uncertainty,'details',json(" ++ n ++ "details),'provenance'," ++ n ++ "provenance,'schemaVersion'," ++ n ++ "schemaVersion,'promotions'," ++ v1_promotions() ++ ",'relations'," ++ v1_node_relations() ++ ")"
 
 def node_answer(+node: String) -> String:
   +j = C.q(node)
@@ -295,7 +295,7 @@ def edge_matrix(+kind: String, +sk: String, +tk: String) -> String:
   ++ " WHEN 'replicates' THEN " ++ sk ++ " IN('study','observation') AND " ++ tk ++ " IN('study','observation')"
   ++ " WHEN 'derived-from' THEN " ++ sk ++ " IN('question','claim','hypothesis','observation','research-finding','study','evidence','argument','proposal','decision') AND " ++ tk ++ " IN('question','claim','hypothesis','observation','research-finding','study','evidence','argument','proposal','decision')"
   ++ " WHEN 'investigates' THEN " ++ sk ++ " IN('study','hypothesis') AND " ++ tk ++ " IN('question')"
-  ++ " WHEN 'produces' THEN " ++ sk ++ " IN('study') AND " ++ tk ++ " IN('observation','research-finding','evidence')"
+  ++ " WHEN 'produces' THEN " ++ sk ++ " IN('study') AND " ++ tk ++ " IN('question','hypothesis','observation','research-finding','evidence','argument','proposal')"
   ++ " WHEN 'informs' THEN " ++ sk ++ " IN('claim','hypothesis','observation','research-finding','argument') AND " ++ tk ++ " IN('proposal','decision')"
   ++ " WHEN 'supersedes' THEN " ++ sk ++ " IN('question','claim','hypothesis','observation','research-finding','study','evidence','argument','proposal','decision','edge') AND " ++ tk ++ " IN('question','claim','hypothesis','observation','research-finding','study','evidence','argument','proposal','decision','edge')"
   ++ " ELSE 0 END"

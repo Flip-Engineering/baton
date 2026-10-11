@@ -225,7 +225,7 @@ const TOOLS = [
   },
   {
     name: 'baton2_knowledge_record',
-    description: 'Record typed evidence, findings, hypotheses, experiments, decisions or principles with cited sources and limits. Optional links commit authored causal relationships with the record in one transaction. A committed record notifies the immediate parent.',
+    description: 'Legacy compatibility: record typed evidence, findings, hypotheses, experiments, decisions or principles with cited sources and limits. Optional links commit authored causal relationships with the record in one transaction. A committed record notifies the immediate parent. New generation uses baton2_knowledge_record_v1 with the closed knowledge-v1 kinds.',
     inputSchema: { type: 'object', properties: {
       id: { type: 'string' }, claim: { type: 'string' },
       kind: { type: 'string', description: 'Authored item type; omitted means finding. Types are free-form.' },
@@ -241,7 +241,7 @@ const TOOLS = [
   },
   {
     name: 'baton2_knowledge_record_v1',
-    description: 'Record one knowledge-v1 node from its JSON payload object with id, kind, statement, context, method, evidence, limits and uncertainty. Refuses unknown kinds, malformed shapes and conflicting IDs.',
+    description: 'Record one knowledge-v1 node from its JSON payload object with id, author, kind, statement, context, evidence, limits, uncertainty and typed details. Refuses unknown kinds, malformed shapes and conflicting IDs.',
     inputSchema: { type: 'object', properties: {
       node: { type: 'object', description: 'Knowledge-v1 node payload' },
     }, required: ['node'], additionalProperties: false },
@@ -255,7 +255,7 @@ const TOOLS = [
   },
   {
     name: 'baton2_knowledge_relate',
-    description: 'Connect two knowledge or evidence references with an authored relationship. The direction is source relation target, such as a correction Supersedes an earlier finding.',
+    description: 'Legacy compatibility: connect two knowledge or evidence references with an authored relationship. The direction is source relation target, such as a correction Supersedes an earlier finding. New generation uses baton2_knowledge_relate_v1 with the closed knowledge-v1 kinds.',
     inputSchema: { type: 'object', properties: {
       id: { type: 'string' },
       source: { type: 'string', description: 'Reference such as finding:ID, message:ID or an external source' },
