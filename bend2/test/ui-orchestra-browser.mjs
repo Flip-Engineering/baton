@@ -1534,9 +1534,9 @@ check('a cut recorded text states plainly that it continues', await evalJs(`(() 
   if (!lead) return false;
   const line = (lead.textContent || '').trim();
   if (!line) return false;
-  const first = (${JSON.stringify(pendingBody)}.split('\n').map((s) => s.trim()).find((s) => s) || '');
+  const first = (${JSON.stringify(pendingBody)}.split('\\n').map((s) => s.trim()).find((s) => s) || '');
   const whole = Boolean(first) && line.includes(first) && !/\u2026/.test(line);
-  const cut = /\u2026\s*continues/.test(line);
+  const cut = /\u2026\\s*continues/.test(line);
   return whole || cut;
 })()`));
 await evalJs(`(() => {
