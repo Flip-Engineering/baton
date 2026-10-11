@@ -390,12 +390,6 @@ def completion_sql_expr(+id: String, +player: String, +event: String) -> String:
 def muse_final_body_expr(+event: String) -> String:
   "CASE WHEN json_extract(" ++ event ++ ",'$.baton.finalResponse.status')='selected' THEN json_extract(" ++ event ++ ",'$.baton.finalResponse.text') ELSE " ++ terminal_body_expr(event) ++ " END"
 
-def muse_final_sql(+id: String, +player: String, +event: String) -> String:
-  observation_frame_sql(event)
-  ++ observe_identity_sql_expr(player,observation_frame())
-  ++ completion_sql_body_expr(id,player,observation_frame(),muse_final_body_expr(observation_frame()))
-  ++ "DROP TABLE temp.baton_observation_frame;"
-
 # The SQL query owns this temporary frame relation for its complete transaction.
 # Identity, report and turn statements read the same complete valid JSON frame.
 def observation_frame_sql(+event: String) -> String:
@@ -403,6 +397,12 @@ def observation_frame_sql(+event: String) -> String:
 
 def observation_frame() -> String:
   "(SELECT value FROM temp.baton_observation_frame)"
+
+def muse_final_sql(+id: String, +player: String, +event: String) -> String:
+  observation_frame_sql(event)
+  ++ observe_identity_sql_expr(player,observation_frame())
+  ++ completion_sql_body_expr(id,player,observation_frame(),muse_final_body_expr(observation_frame()))
+  ++ "DROP TABLE temp.baton_observation_frame;"
 
 def completion_sql(+id: String, +player: String, +event: String) -> String:
   observation_frame_sql(event) ++ completion_sql_expr(id,player,observation_frame()) ++ "DROP TABLE temp.baton_observation_frame;"
@@ -596,7 +596,7 @@ def sql(command: Command) -> String:
     case SectionMember{ensemble,id,owner,player,action}: section_member_sql(ensemble,id,owner,player,action)
     case Orchestra{}: orchestra_sql()
     case Turns{id}:
-      "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_object('id',t.id,'player',t.worker,'eventType',coalesce(json_extract(t.event,'$.type'),json_extract(t.event,'$.payload_type')),'reportBody',m.body,'receipt',m.receipt) AS item FROM turns t JOIN messages m ON m.id=t.id WHERE t.worker=" ++ q(id) ++ " ORDER BY m.seq);"
+      "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_patch(json_object('id',t.id,'player',t.worker,'eventType',coalesce(json_extract(t.event,'$.type'),json_extract(t.event,'$.payload_type')),'reportBody',m.body,'receipt',m.receipt),CASE WHEN json_type(t.event,'$.baton.finalResponse')='object' THEN json_object('finalResponse',json(json_extract(t.event,'$.baton.finalResponse'))) ELSE json('{}') END) AS item FROM turns t JOIN messages m ON m.id=t.id WHERE t.worker=" ++ q(id) ++ " ORDER BY m.seq);"
     case Project{path}: ""
     case ProjectSessions{path}: ""
     case Resume{session,lift_stop}: ""

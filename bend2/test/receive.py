@@ -941,6 +941,7 @@ class Receive(unittest.TestCase):
                 "SELECT event FROM turns WHERE worker='parent' ORDER BY rowid LIMIT 1"
             ).fetchone()[0])
         selected = event['baton']['finalResponse']
+        self.assertEqual(turns[0]['finalResponse'], selected)
         self.assertEqual((selected['status'], selected['source'], selected['sessionId'],
                           selected['runId'], selected['messageId'], selected['responseId'],
                           selected['providerItemId'], selected['assistantSequence'],
@@ -972,6 +973,7 @@ class Receive(unittest.TestCase):
                 "SELECT event FROM turns WHERE worker='parent' ORDER BY rowid LIMIT 1"
             ).fetchone()[0])
         final_response = event['baton']['finalResponse']
+        self.assertEqual(turns[0]['finalResponse'], final_response)
         self.assertEqual(final_response['status'], 'unavailable')
         self.assertEqual(final_response['diagnostic']['code'], 'assistantBoundaryMissing')
         self.assertGreater(final_response['exportUtf8Bytes'], len(cumulative.encode()))
@@ -1484,10 +1486,16 @@ class Receive(unittest.TestCase):
         evidence['recordedNativeId'] = native
         # Reports remain queued while OMP is active; guidance may be steered live.
         self.coord('message', 'second', 'root', 'parent', 'report', 'Queued before observer loss.')
-        original_body = 'Original completion retained through observer loss: ' + harness
+        authored_body = 'Original completion retained through observer loss: ' + harness
+        original_body = authored_body
+        if harness == 'muse':
+            original_body = 'Intermediate Muse summary before observer loss.\n' + authored_body
+        terminal_action = {'body': original_body, 'hold_exit': True, 'report_input': True}
+        if harness == 'muse':
+            terminal_action['final_body'] = authored_body
         log = self.output_log('parent')
         if terminal_before_loss:
-            self.action(original, body=original_body, hold_exit=True, report_input=True)
+            self.action(original, **terminal_action)
             self.assertEqual(json.loads(original.readline()),
                              {'terminal_written': True, 'input_after_prompt': ''})
             self.eventually(lambda: log.exists() and original_body in log.read_text(),
@@ -1510,7 +1518,7 @@ class Receive(unittest.TestCase):
                         'automatic recovery did not retain output from the original native')
         evidence['postLossOutputRetained'] = True
         if not terminal_before_loss:
-            self.action(original, body=original_body, hold_exit=True, report_input=True)
+            self.action(original, **terminal_action)
             self.assertEqual(json.loads(original.readline()),
                              {'terminal_written': True, 'input_after_prompt': ''})
         evidence['originalPromptRepeated'] = False
@@ -1546,7 +1554,7 @@ class Receive(unittest.TestCase):
         self.assertIn('[id: second]', resumed['prompt'])
         self.assertIn('[id: third]', resumed['prompt'])
         self.assertNotIn('[id: first]', resumed['prompt'])
-        self.assertIn(original_body, notified['prompt'])
+        self.assertIn(authored_body, notified['prompt'])
         evidence['parentNotified'] = True
         follow_up_body = 'Queued inputs completed after recovery: ' + harness
         self.action(continuation, body=follow_up_body)
@@ -1562,11 +1570,24 @@ class Receive(unittest.TestCase):
         evidence['pendingInputDrained'] = True
         turns = self.coord('turns', 'parent')
         evidence['turnsAfterRecovery'] = turns
-        self.assertEqual([t['reportBody'] for t in turns], [original_body, follow_up_body])
+        self.assertEqual([t['reportBody'] for t in turns], [authored_body, follow_up_body])
         self.assertTrue(all(t['receipt'] == 'native-reviewed' for t in turns))
         if evidence.get('turnsBeforeLoss'):
             self.assertEqual(turns[0]['id'], evidence['turnsBeforeLoss'][0]['id'])
-        evidence['originalCompletionRetained'] = turns[0]['reportBody'] == original_body
+        evidence['originalCompletionRetained'] = turns[0]['reportBody'] == authored_body
+        if harness == 'muse':
+            selected = turns[0]['finalResponse']
+            self.assertEqual((selected['status'], selected['source'], selected['sessionId'],
+                              selected['runId'], selected['messageId'], selected['responseId'],
+                              selected['providerItemId'], selected['assistantSequence'],
+                              selected['terminalSequence'], selected['assistantCandidateCount'],
+                              selected['textUtf8Bytes'], selected['textSha256'], selected['text']),
+                             ('selected', 'muse-export-v1', native, 'fixture-primary',
+                              'fixture-message', 'fixture-response', 'fixture-provider-item', 10, 11, 1,
+                              len(authored_body.encode()), hashlib.sha256(authored_body.encode()).hexdigest(),
+                              authored_body))
+            self.assertNotEqual(turns[0]['reportBody'], original_body)
+            evidence['finalResponse'] = selected
         evidence['retainedNativeFrames'] = [json.loads(line) for line in log.read_text().splitlines()]
         self.assertEqual(self.coord('player', 'parent')['native'], native)
         self.shutdown_idle_database_owner('fixture keeper or recovery did not exit')
