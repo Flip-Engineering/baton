@@ -912,8 +912,10 @@ class Control(unittest.TestCase):
         self.assertTrue(self.dispatch_digest_log(oversized).exists())
         self.assertFalse(self.dispatch_log(oversized).exists())
 
-        # Distinct identities sharing a long prefix bind to distinct bounded
-        # identities with their own retained reports.
+        # Distinct identities sharing a long prefix (135 and 136 bytes) bind
+        # to distinct bounded identities with their own retained reports.
+        # The original orchestra.db conflict component is 271 bytes; this
+        # state.db fixture's is 267 - both far above the limit.
         first = 'same-prefix-' + 'p' * 117 + '-first'
         second = 'same-prefix-' + 'p' * 117 + '-second'
         for ident, body in ((first, 'Same-prefix first completed.'),
@@ -931,9 +933,12 @@ class Control(unittest.TestCase):
 
     def test_dispatch_log_refuses_when_even_bounded_identity_does_not_fit(self):
         # A database basename long enough that even the 64-character bounded
-        # identity exceeds the component limit: the dispatch is refused, the
-        # committed input stays retained, and no execution row appears.
-        long_db = self.directory / ('d' * 248 + '.db')
+        # identity exceeds the component limit, while ordinary SQLite
+        # auxiliary names still fit: 180 bytes of basename make the bounded
+        # dispatch component 261 bytes and leave -wal/-shm at 184 bytes.
+        # The dispatch is refused, the committed input stays retained, and no
+        # execution row appears.
+        long_db = self.directory / ('d' * 176 + '.db')
         def against_db(*args):
             return subprocess.run([str(EXE), str(long_db), *map(str, args)],
                                   env=self.environment, capture_output=True, text=True)
