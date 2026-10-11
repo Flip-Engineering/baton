@@ -328,7 +328,7 @@ static int br_checkpoint_load(const char *directory,int spool_fd,uint32_t schema
                               uint64_t *offset,char **state,size_t *length);
 static int br_checkpoint_store(const char *directory,int spool_fd,uint32_t schema,
                                uint64_t incarnation,uint64_t offset,const char *state,size_t length);
-static int br_checkpoint_verified_offset(const char *directory,int spool_fd,uint64_t *offset);
+static int br_checkpoint_verified_offset(const char *directory,int spool_fd,uint64_t *offset,char **state_out);
 static uint64_t br_attempt_identity(const char *directory);
 static int br_checkpoint_custody(const char *directory,int spool_fd,BrBirth *birth,
                                  uint64_t *manifest,uint64_t *spool_device,uint64_t *spool_inode);
@@ -1706,12 +1706,16 @@ static int br_checkpoint_offset(const char *directory,uint64_t *offset) {
   *offset=checkpoint.offset;
   return 0;
 }
-/* The recorded offset only when the whole record verifies against this attempt's
+/* The recorded offset and, for a passive caller that reads recorded facts
+   without joining an observer, the checkpoint's state bytes. The caller owns
+   the returned buffer and frees it; passing a NULL state_out keeps the old
+   offset-only behaviour. The record is verified against this attempt's
    custody: structure, checksum over header and state bytes, attempt identity,
    native birth, manifest, spool identity and offset bounds. The caller's schema
    is not required to validate an offset, so it is not compared here. */
-static int br_checkpoint_verified_offset(const char *directory,int spool_fd,uint64_t *offset) {
+static int br_checkpoint_verified_offset(const char *directory,int spool_fd,uint64_t *offset,char **state_out) {
   *offset=0;
+  if(state_out)*state_out=NULL;
   char *path=br_checkpoint_path(directory);
   if(!path)return ENOMEM;
   int fd=open(path,O_RDONLY|O_CLOEXEC);
@@ -1743,9 +1747,11 @@ static int br_checkpoint_verified_offset(const char *directory,int spool_fd,uint
   checkpoint=stored;
   if(!error && checkpoint.check!=br_checkpoint_check(&checkpoint,state?state:"",(size_t)checkpoint.length))
     error=EINVAL;
-  free(state);close(fd);free(path);
-  if(error)return error;
+  close(fd);free(path);
+  if(error) {free(state);return error;}
   *offset=stored.offset;
+  if(state_out)*state_out=state;
+  else free(state);
   return 0;
 }
  /* The durable attempt identity: a digest of the attempt's canonical directory.
@@ -3721,6 +3727,57 @@ static int br_instance_attach_owned(BatonProcessCall *call) {
    terminal status when it is recorded. One attempt has at most one observation
    owner; any number of callers can read the retained result through this
    reference, which is why a duplicate admission is not an EBUSY dead end. */
+/* Argv element zero of a length-colon-bytes encoded argv field: a decimal
+   length, a colon, then that many bytes. A malformed or absent field yields
+   NULL, which the caller renders as an empty string. */
+static char *br_argv_element_zero(const char *field) {
+  if(!field)return NULL;
+  unsigned long length=0;
+  const char *at=field;
+  while(*at>='0' && *at<='9') {
+    if(length>(unsigned long)SIZE_MAX/10)return NULL;
+    length=length*10+(unsigned long)(*at-'0');
+    at++;
+  }
+  if(*at!=':' || !length)return NULL;
+  at++;
+  char *value=malloc(length+1);
+  if(!value)return NULL;
+  memcpy(value,at,length);
+  value[length]=0;
+  return value;
+}
+
+/* One string field of a JSON object body, returned with its escaping intact so
+   the caller can embed it inside quotes. A bounded scan: the key, a colon, the
+   opening quote, then the value up to an unescaped closing quote. */
+static char *br_state_field(const char *body,const char *key) {
+  if(!body || !key || !*key)return NULL;
+  size_t key_length=strlen(key);
+  const char *at=body;
+  while((at=strstr(at,"\""))) {
+    if(!strncmp(at+1,key,key_length) && at[1+key_length]=='"' && at[2+key_length]==':'
+       && at[3+key_length]=='"') {
+      const char *value=at+4+key_length;
+      const char *scan=value;
+      while(*scan) {
+        if(*scan=='\\' && scan[1])scan+=2;
+        else if(*scan=='"')break;
+        else scan++;
+      }
+      if(*scan!='"')return NULL;
+      size_t length=(size_t)(scan-value);
+      char *field=malloc(length+1);
+      if(!field)return NULL;
+      memcpy(field,value,length);
+      field[length]=0;
+      return field;
+    }
+    at++;
+  }
+  return NULL;
+}
+
 static int br_instance_job(BatonProcessCall *call) {
   char *directory=realpath(call->directory,NULL);
   if(!directory)return errno;
@@ -3753,7 +3810,8 @@ static int br_instance_job(BatonProcessCall *call) {
   struct stat info;
   int spool_fd=spool?open(spool,O_RDONLY|O_CLOEXEC):-1;
   if(spool_fd>=0 && !fstat(spool_fd,&info))spool_bytes=(uint64_t)info.st_size;
-  if(spool_fd>=0 && !br_checkpoint_verified_offset(directory,spool_fd,&checkpoint_offset))
+  char *checkpoint_state=NULL;
+  if(spool_fd>=0 && !br_checkpoint_verified_offset(directory,spool_fd,&checkpoint_offset,&checkpoint_state))
     checkpoint_verified=1;
   if(spool_fd>=0)close(spool_fd);
   free(spool);
@@ -3764,23 +3822,60 @@ static int br_instance_job(BatonProcessCall *call) {
   if(!spool_bytes && owner_known)spool_bytes=state.spool_bytes;
   if(!checkpoint_verified && owner_known)checkpoint_offset=state.checkpoint_offset;
   if(!status_known && owner_known) {status=state.status;status_known=(int)state.status_known;}
-  char text[288];
-  int written=snprintf(text,sizeof(text),
+  /* The three recorded facts this passive reference additionally carries for the
+     custody projection, each read from the retained files: the admitted binary
+     path from the manifest's argv element zero, the lifecycle token with its
+     latch words, and the checkpoint's guidance cursor from the verified state
+     bytes. None of these joins the attempt's observer, opens its socket or
+     positions a reader. */
+  char *argv0=NULL;
+  BrManifest manifest={0};
+  if(!br_manifest_read(directory,&manifest)) {
+    argv0=br_argv_element_zero(manifest.count?manifest.field[0]:NULL);
+    br_manifest_free(&manifest);
+  }
+  BrLifecycle lifecycle;
+  const char *lifecycle_state=br_lifecycle_state(directory,&lifecycle,&(uint64_t){0},&(int){0},&(int){0});
+  int lifecycle_valid=!memcmp(lifecycle.magic,BR_LIFECYCLE_MAGIC,8) && lifecycle.schema==1;
+  if(!lifecycle_valid)lifecycle_state="unavailable";
+  char *guidance=br_state_field(checkpoint_state,"guidance_cursor");
+  char *escaped_argv0=argv0?br_json_escape(argv0):NULL;
+  const char *format=
     "{\"attempt\":%llu,\"generation\":%llu,\"spool_bytes\":%llu,\"checkpoint_offset\":%llu,"
     "\"checkpoint_verified\":%s,\"status\":%d,\"status_known\":%s,\"observing\":%s,"
-    "\"owner_known\":%s}",
+    "\"owner_known\":%s,\"argv0\":\"%s\",\"lifecycle_state\":\"%s\",\"spawn_latched\":%s,"
+    "\"cancelled\":%s,\"observer_ready\":%s,\"guidance_cursor\":\"%s\"}";
+  int needed=snprintf(NULL,0,format,
     (unsigned long long)(owner_known?state.attempt:0),
     (unsigned long long)(owner_known?state.generation:0),
     (unsigned long long)spool_bytes,(unsigned long long)checkpoint_offset,
     checkpoint_verified?"true":"false",status,
     status_known?"true":"false",
     owner_known&&state.observing?"true":"false",
-    owner_known?"true":"false");
-  call->text=malloc((size_t)written+1);
-  if(!call->text) {free(directory);return ENOMEM;}
-  memcpy(call->text,text,(size_t)written+1);
-  call->length=(size_t)written;
-  free(directory);
+    owner_known?"true":"false",
+    escaped_argv0?escaped_argv0:"",lifecycle_state,
+    lifecycle_valid&&lifecycle.latched?"true":"false",
+    lifecycle_valid&&lifecycle.cancelled?"true":"false",
+    lifecycle_valid&&lifecycle.observer_ready?"true":"false",
+    guidance?guidance:"");
+  if(needed<0) {free(guidance);free(escaped_argv0);free(argv0);free(checkpoint_state);free(directory);call->error=EOVERFLOW;return;}
+  call->text=malloc((size_t)needed+1);
+  if(!call->text) {free(guidance);free(escaped_argv0);free(argv0);free(checkpoint_state);free(directory);call->error=ENOMEM;return;}
+  int written=snprintf(call->text,(size_t)needed+1,format,
+    (unsigned long long)(owner_known?state.attempt:0),
+    (unsigned long long)(owner_known?state.generation:0),
+    (unsigned long long)spool_bytes,(unsigned long long)checkpoint_offset,
+    checkpoint_verified?"true":"false",status,
+    status_known?"true":"false",
+    owner_known&&state.observing?"true":"false",
+    owner_known?"true":"false",
+    escaped_argv0?escaped_argv0:"",lifecycle_state,
+    lifecycle_valid&&lifecycle.latched?"true":"false",
+    lifecycle_valid&&lifecycle.cancelled?"true":"false",
+    lifecycle_valid&&lifecycle.observer_ready?"true":"false",
+    guidance?guidance:"");
+  call->length=written<0?0:(size_t)written;
+  free(guidance);free(escaped_argv0);free(argv0);free(checkpoint_state);free(directory);
   return 0;
 }
 static int br_instance_shutdown(BatonProcessCall *call) {

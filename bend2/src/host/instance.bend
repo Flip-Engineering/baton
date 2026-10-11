@@ -93,8 +93,12 @@ def Instance.replay(handle: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
 
 # A compact reference to a retained job: the owner-side attempt identity when an
 # owner holds it, the retained output extent, the committed checkpoint offset and
-# the terminal status when it is recorded. One attempt has one observation owner;
-# any number of callers read the retained result through this reference.
+# the terminal status when it is recorded, plus the recorded custody facts the
+# projection reads from the retained files: argv0, the lifecycle token with its
+# latch words, and the checkpoint's guidance cursor from the verified state
+# bytes. One attempt has one observation owner; any number of callers read the
+# retained result through this reference without joining that owner or moving a
+# reader.
 def Instance.job(database: String, directory: String) -> IO(Result<&1,&1,U32 & String,String>):
   import "./process-spawn.c"
 
