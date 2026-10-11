@@ -1001,12 +1001,15 @@ class Control(unittest.TestCase):
         self.root()
         self.recruit('leaf')
         self.receiver('leaf')
-        # Forty lambda characters are 40 code points but 120 UTF-8 bytes, so
-        # a character count would predict the hex form fits while the byte
-        # length pushes the component to 265: the bounded identity is
+        # Sixty lambda characters make 67 code points but 130 UTF-8 bytes
+        # (each lambda occupies two bytes and the smiley four), so a
+        # character count would predict the hex form fits while the byte
+        # length pushes the component to 285: the bounded identity is
         # required, and the body/native assertions carry the same UTF-8.
-        utf8_id = 'utf8-' + 'λ' * 40 + '-🙂'
-        self.assertEqual(len(utf8_id.encode()), 5 + 120 + 4)
+        utf8_id = 'utf8-' + 'λ' * 60 + '-🙂'
+        self.assertEqual(len(utf8_id), 67)
+        self.assertEqual(len(utf8_id.encode()), 130)
+        self.assertEqual(len(utf8_id.encode()) * 2 + 25, 285)
         body = 'UTF-8 boundary λ task completed 🙂.'
         self.dispatch('dispatch-file', utf8_id, 'root', 'leaf', 'task', self.task)
         stream, native = self.accept('leaf')
