@@ -488,30 +488,192 @@ jobs:
           path: ${{ env.FINAL_NATIVE_CONTEXT_EVIDENCE }}/logs/receive-guidance.*
           if-no-files-found: warn
           retention-days: 14
-      - name: Run existing provider continuation cases before observer recovery
+      - name: 'Run provider continuation 1/9: Receive.test_codex_direct_hands_off_to_the_next_profile_and_resumes_the_same_native'
         if: ${{ !cancelled() && matrix.suite == 'receive' }}
         shell: bash
         run: |
           set -euo pipefail
           cd owned
-          "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" receive-provider-continuation \
+          "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" receive-provider-continuation-01 \
             env PYTHONUNBUFFERED=1 BEND="$PWD/.scratch/bend2/bend" \
             python3 -u bend2/test/receive.py -v \
-              Receive.test_codex_direct_hands_off_to_the_next_profile_and_resumes_the_same_native \
-              Receive.test_codex_direct_chains_two_handoffs_with_distinct_reports \
-              Receive.test_codex_recovered_direct_hands_off_to_the_next_profile \
-              Receive.test_omp_direct_retries_the_same_conversation_after_a_rate_refusal \
-              Receive.test_omp_rate_error_continues_same_conversation_without_new_account \
-              Receive.test_omp_direct_continues_after_a_settled_socket_closure \
-              Receive.test_omp_socket_closure_continues_the_accepted_task \
-              Receive.test_muse_transport_timeout_continues_the_accepted_task \
+              Receive.test_codex_direct_hands_off_to_the_next_profile_and_resumes_the_same_native
+      - name: 'Retain provider continuation 1/9: Receive.test_codex_direct_hands_off_to_the_next_profile_and_resumes_the_same_native'
+        if: ${{ always() && matrix.suite == 'receive' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: final-native-context-receive-provider-continuation-01-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.FINAL_NATIVE_CONTEXT_EVIDENCE }}/logs/receive-provider-continuation-01.*
+            ${{ env.FINAL_NATIVE_CONTEXT_EVIDENCE }}/logs/runtime.txt
+          if-no-files-found: warn
+          retention-days: 14
+      - name: 'Run provider continuation 2/9: Receive.test_codex_direct_chains_two_handoffs_with_distinct_reports'
+        if: ${{ !cancelled() && matrix.suite == 'receive' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd owned
+          "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" receive-provider-continuation-02 \
+            env PYTHONUNBUFFERED=1 BEND="$PWD/.scratch/bend2/bend" \
+            python3 -u bend2/test/receive.py -v \
+              Receive.test_codex_direct_chains_two_handoffs_with_distinct_reports
+      - name: 'Retain provider continuation 2/9: Receive.test_codex_direct_chains_two_handoffs_with_distinct_reports'
+        if: ${{ always() && matrix.suite == 'receive' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: final-native-context-receive-provider-continuation-02-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.FINAL_NATIVE_CONTEXT_EVIDENCE }}/logs/receive-provider-continuation-02.*
+            ${{ env.FINAL_NATIVE_CONTEXT_EVIDENCE }}/logs/runtime.txt
+          if-no-files-found: warn
+          retention-days: 14
+      - name: 'Run provider continuation 3/9: Receive.test_codex_recovered_direct_hands_off_to_the_next_profile'
+        if: ${{ !cancelled() && matrix.suite == 'receive' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd owned
+          "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" receive-provider-continuation-03 \
+            env PYTHONUNBUFFERED=1 BEND="$PWD/.scratch/bend2/bend" \
+            python3 -u bend2/test/receive.py -v \
+              Receive.test_codex_recovered_direct_hands_off_to_the_next_profile
+      - name: 'Retain provider continuation 3/9: Receive.test_codex_recovered_direct_hands_off_to_the_next_profile'
+        if: ${{ always() && matrix.suite == 'receive' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: final-native-context-receive-provider-continuation-03-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.FINAL_NATIVE_CONTEXT_EVIDENCE }}/logs/receive-provider-continuation-03.*
+            ${{ env.FINAL_NATIVE_CONTEXT_EVIDENCE }}/logs/runtime.txt
+          if-no-files-found: warn
+          retention-days: 14
+      - name: 'Run provider continuation 4/9: Receive.test_omp_direct_retries_the_same_conversation_after_a_rate_refusal'
+        if: ${{ !cancelled() && matrix.suite == 'receive' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd owned
+          "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" receive-provider-continuation-04 \
+            env PYTHONUNBUFFERED=1 BEND="$PWD/.scratch/bend2/bend" \
+            python3 -u bend2/test/receive.py -v \
+              Receive.test_omp_direct_retries_the_same_conversation_after_a_rate_refusal
+      - name: 'Retain provider continuation 4/9: Receive.test_omp_direct_retries_the_same_conversation_after_a_rate_refusal'
+        if: ${{ always() && matrix.suite == 'receive' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: final-native-context-receive-provider-continuation-04-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.FINAL_NATIVE_CONTEXT_EVIDENCE }}/logs/receive-provider-continuation-04.*
+            ${{ env.FINAL_NATIVE_CONTEXT_EVIDENCE }}/logs/runtime.txt
+          if-no-files-found: warn
+          retention-days: 14
+      - name: 'Run provider continuation 5/9: Receive.test_omp_rate_error_continues_same_conversation_without_new_account'
+        if: ${{ !cancelled() && matrix.suite == 'receive' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd owned
+          "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" receive-provider-continuation-05 \
+            env PYTHONUNBUFFERED=1 BEND="$PWD/.scratch/bend2/bend" \
+            python3 -u bend2/test/receive.py -v \
+              Receive.test_omp_rate_error_continues_same_conversation_without_new_account
+      - name: 'Retain provider continuation 5/9: Receive.test_omp_rate_error_continues_same_conversation_without_new_account'
+        if: ${{ always() && matrix.suite == 'receive' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: final-native-context-receive-provider-continuation-05-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.FINAL_NATIVE_CONTEXT_EVIDENCE }}/logs/receive-provider-continuation-05.*
+            ${{ env.FINAL_NATIVE_CONTEXT_EVIDENCE }}/logs/runtime.txt
+          if-no-files-found: warn
+          retention-days: 14
+      - name: 'Run provider continuation 6/9: Receive.test_omp_direct_continues_after_a_settled_socket_closure'
+        if: ${{ !cancelled() && matrix.suite == 'receive' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd owned
+          "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" receive-provider-continuation-06 \
+            env PYTHONUNBUFFERED=1 BEND="$PWD/.scratch/bend2/bend" \
+            python3 -u bend2/test/receive.py -v \
+              Receive.test_omp_direct_continues_after_a_settled_socket_closure
+      - name: 'Retain provider continuation 6/9: Receive.test_omp_direct_continues_after_a_settled_socket_closure'
+        if: ${{ always() && matrix.suite == 'receive' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: final-native-context-receive-provider-continuation-06-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.FINAL_NATIVE_CONTEXT_EVIDENCE }}/logs/receive-provider-continuation-06.*
+            ${{ env.FINAL_NATIVE_CONTEXT_EVIDENCE }}/logs/runtime.txt
+          if-no-files-found: warn
+          retention-days: 14
+      - name: 'Run provider continuation 7/9: Receive.test_omp_socket_closure_continues_the_accepted_task'
+        if: ${{ !cancelled() && matrix.suite == 'receive' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd owned
+          "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" receive-provider-continuation-07 \
+            env PYTHONUNBUFFERED=1 BEND="$PWD/.scratch/bend2/bend" \
+            python3 -u bend2/test/receive.py -v \
+              Receive.test_omp_socket_closure_continues_the_accepted_task
+      - name: 'Retain provider continuation 7/9: Receive.test_omp_socket_closure_continues_the_accepted_task'
+        if: ${{ always() && matrix.suite == 'receive' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: final-native-context-receive-provider-continuation-07-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.FINAL_NATIVE_CONTEXT_EVIDENCE }}/logs/receive-provider-continuation-07.*
+            ${{ env.FINAL_NATIVE_CONTEXT_EVIDENCE }}/logs/runtime.txt
+          if-no-files-found: warn
+          retention-days: 14
+      - name: 'Run provider continuation 8/9: Receive.test_muse_transport_timeout_continues_the_accepted_task'
+        if: ${{ !cancelled() && matrix.suite == 'receive' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd owned
+          "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" receive-provider-continuation-08 \
+            env PYTHONUNBUFFERED=1 BEND="$PWD/.scratch/bend2/bend" \
+            python3 -u bend2/test/receive.py -v \
+              Receive.test_muse_transport_timeout_continues_the_accepted_task
+      - name: 'Retain provider continuation 8/9: Receive.test_muse_transport_timeout_continues_the_accepted_task'
+        if: ${{ always() && matrix.suite == 'receive' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: final-native-context-receive-provider-continuation-08-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.FINAL_NATIVE_CONTEXT_EVIDENCE }}/logs/receive-provider-continuation-08.*
+            ${{ env.FINAL_NATIVE_CONTEXT_EVIDENCE }}/logs/runtime.txt
+          if-no-files-found: warn
+          retention-days: 14
+      - name: 'Run provider continuation 9/9: Receive.test_omp_usage_window_exhaustion_keeps_its_account_failure'
+        if: ${{ !cancelled() && matrix.suite == 'receive' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd owned
+          "$FINAL_NATIVE_CONTEXT_EVIDENCE/run-recorded.sh" receive-provider-continuation-09 \
+            env PYTHONUNBUFFERED=1 BEND="$PWD/.scratch/bend2/bend" \
+            python3 -u bend2/test/receive.py -v \
               Receive.test_omp_usage_window_exhaustion_keeps_its_account_failure
+      - name: 'Retain provider continuation 9/9: Receive.test_omp_usage_window_exhaustion_keeps_its_account_failure'
+        if: ${{ always() && matrix.suite == 'receive' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: final-native-context-receive-provider-continuation-09-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.FINAL_NATIVE_CONTEXT_EVIDENCE }}/logs/receive-provider-continuation-09.*
+            ${{ env.FINAL_NATIVE_CONTEXT_EVIDENCE }}/logs/runtime.txt
+          if-no-files-found: warn
+          retention-days: 14
       - name: Retain provider continuation output before observer recovery and the full suite
         if: ${{ always() && matrix.suite == 'receive' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: final-native-context-receive-provider-continuation-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ env.FINAL_NATIVE_CONTEXT_EVIDENCE }}/logs/receive-provider-continuation.*
+          path: ${{ env.FINAL_NATIVE_CONTEXT_EVIDENCE }}/logs/receive-provider-continuation-*.*
           if-no-files-found: warn
           retention-days: 14
       - name: Run existing observer recovery cases
