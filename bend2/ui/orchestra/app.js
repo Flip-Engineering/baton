@@ -1534,6 +1534,7 @@ function connectEvents() {
     else if (msg.cursor) setCursor(msg.cursor);
     state.opened = true;
     setConn("live");
+    if (state.gapHeld && state.gapText === "Stream lost. Re-reading current state.") clearGapNotice();
     if (state.gapHeld) setNotice(state.gapText);
     else setNotice("");
   });
