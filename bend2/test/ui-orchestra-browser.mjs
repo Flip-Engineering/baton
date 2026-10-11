@@ -1176,11 +1176,10 @@ await until('a record relation statement lights its map edges', `(() => {
 await evalJs(`(() => { const svg = document.querySelector('#knowledge-whole svg.kw-canvas');
   svg.focus(); svg.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true})); return true; })()`);
 await until('Escape clears the relation card and its light', `(() => {
-  const rel = [...document.querySelectorAll('#knowledge-whole .kw-card')]
-    .some((c) => (c.querySelector('.kw-card-state') || {}).textContent === 'typed edge');
+  const card = document.querySelector('#knowledge-whole .kw-card');
   const unlit = [...document.querySelectorAll('#knowledge-whole g.kw-edge-typed')]
     .every((e) => !e.classList.contains('kw-hover-dim'));
-  return !rel && unlit;
+  return !card && unlit;
 })()`);
 await evalJs(`(() => { const b = document.querySelector('#selection .sel-focus'); b.click(); return true; })()`);
 await evalJs(`(() => { const b = document.querySelector('#selection .sel-focus'); b.click(); return true; })()`);
@@ -1190,7 +1189,7 @@ await until('activating the same relation again pins its card after a dismissal'
   const state = card && card.querySelector('.kw-card-state');
   const lit = document.querySelector('#selection .sel-lit .sel-focus');
   const name = lit ? ((lit.dataset.selkey || '').split('|')[1] || '') : '';
-  return !!title && !!state && state.textContent === 'typed edge'
+  return !!title && !!state && state.textContent === 'relation'
     && !!name && title.textContent === name;
 })()`);
 const shareEdgesBefore = await evalJs(`document.querySelectorAll('#knowledge-whole .kw-edge-share').length`);
@@ -1204,7 +1203,7 @@ check('a live frame keeps the card of a still-named relation', await evalJs(`(()
   const state = card && card.querySelector('.kw-card-state');
   const lit = document.querySelector('#selection .sel-lit .sel-focus');
   const name = lit ? ((lit.dataset.selkey || '').split('|')[1] || '') : '';
-  return !!title && !!state && state.textContent === 'typed edge'
+  return !!title && !!state && state.textContent === 'relation'
     && !!name && title.textContent === name;
 })()`));
 await evalJs(`(() => { const row = document.querySelector('#roster .doc-row[data-doc-id="aide"] .doc-open');
@@ -1253,7 +1252,7 @@ await until('live record draws the new whole-canvas node through native SSE',
   `document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-live-finding"]')`);
 check('a live frame does not restore a dismissed relation card', await evalJs(`(() => {
   const rel = [...document.querySelectorAll('#knowledge-whole .kw-card')]
-    .some((c) => (c.querySelector('.kw-card-state') || {}).textContent === 'typed edge');
+    .some((c) => (c.querySelector('.kw-card-state') || {}).textContent === 'relation');
   const unlit = [...document.querySelectorAll('#knowledge-whole g.kw-edge-typed')]
     .every((e) => !e.classList.contains('kw-hover-dim'));
   return !rel && unlit;
