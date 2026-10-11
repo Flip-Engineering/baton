@@ -181,14 +181,13 @@ def node_notice(+node: String) -> String:
 def node_errors(+node: String) -> String:
   +j = C.q(node)
   +id = "json_extract(" ++ j ++ ",'$.id')"
-  +stored = "'id',id,'author',author,'kind',kind"
   v1_error("v1-node-shape","'id'," ++ id ++ ",'condition','Node payload is not a JSON object.'","NOT json_valid(" ++ j ++ ") OR json_type(" ++ j ++ ")<>'object'")
   ++ v1_error("v1-unknown-node-kind","'kind'," ++ node_kind_of(node) ++ ",'condition','Node kind is not one of the ten closed v1 kinds.'","json_valid(" ++ j ++ ") AND (" ++ node_kind_of(node) ++ " IS NULL OR " ++ node_kind_of(node) ++ " NOT IN(" ++ node_kinds() ++ "))")
   ++ v1_error("v1-node-shape","'id'," ++ id ++ ",'condition','Node needs non-empty id, author and statement, object context with scope, subjects, conditions and assumptions, array evidence of id or uri references, text limits and uncertainty, and the typed details its kind requires.'","json_valid(" ++ j ++ ") AND " ++ node_kind_of(node) ++ " IN(" ++ node_kinds() ++ ") AND NOT (" ++ node_shape_ok(node) ++ ")")
   ++ v1_error("v1-unresolved-endpoint","'id'," ++ id ++ ",'condition','A node reference names no stored v1 node or edge.','next','Record the referenced row first, then retry the node.'","json_valid(" ++ j ++ ") AND " ++ node_kind_of(node) ++ " IN(" ++ node_kinds() ++ ") AND " ++ node_shape_ok(node) ++ " AND NOT (" ++ node_refs_resolve(node) ++ ")")
   ++ v1_error("v1-endpoint-kind-mismatch","'id'," ++ id ++ ",'condition','A node reference is stored under a different kind than declared.','next','Retain the stored rows, then retry with matching declared kinds.'","json_valid(" ++ j ++ ") AND " ++ node_kind_of(node) ++ " IN(" ++ node_kinds() ++ ") AND " ++ node_shape_ok(node) ++ " AND " ++ node_refs_resolve(node) ++ " AND NOT (" ++ node_refs_match(node) ++ ")")
   ++ v1_error("v1-unknown-author","'author',json_extract(" ++ j ++ ",'$.author'),'condition','Node author is not a registered session.'","NOT EXISTS(SELECT 1 FROM sessions WHERE id=json_extract(" ++ j ++ ",'$.author'))")
-  ++ v1_error("v1-node-id-conflict","'id'," ++ id ++ ",'stored',(SELECT json_object(" ++ stored ++ ") FROM knowledge_v1 WHERE id=" ++ id ++ "),'condition','This v1 node identity is already stored with different content.','next','Retain the stored record, then retry the new input under a different ID.'","EXISTS(SELECT 1 FROM knowledge_v1 WHERE id=" ++ id ++ " AND NOT (" ++ node_same(node) ++ "))")
+  ++ v1_error("v1-node-id-conflict","'id'," ++ id ++ ",'stored',(SELECT json_object('id',id,'author',author,'kind',kind) FROM knowledge_v1 WHERE id=" ++ id ++ "),'condition','This v1 node identity is already stored with different content.','next','Retain the stored record, then retry the new input under a different ID.'","EXISTS(SELECT 1 FROM knowledge_v1 WHERE id=" ++ id ++ " AND NOT (" ++ node_same(node) ++ "))")
   ++ v1_error("v1-node-id-conflict","'id'," ++ id ++ ",'stored',(SELECT json_object('id',id,'author',author,'kind',kind) FROM knowledge_edges_v1 WHERE id=" ++ id ++ "),'condition','This identity is already stored as a v1 edge. Node and edge identities share one namespace.','next','Retain the stored record, then retry the new input under a different ID.'","EXISTS(SELECT 1 FROM knowledge_edges_v1 WHERE id=" ++ id ++ ")")
 
 def v1_edge_promotions() -> String:
@@ -349,7 +348,6 @@ def edge_answer(+edge: String) -> String:
 def edge_errors(+edge: String) -> String:
   +j = C.q(edge)
   +id = "json_extract(" ++ j ++ ",'$.id')"
-  +stored = "'id',id,'author',author,'kind',kind"
   v1_error("v1-edge-shape","'id'," ++ id ++ ",'condition','Edge payload is not a JSON object.'","NOT json_valid(" ++ j ++ ") OR json_type(" ++ j ++ ")<>'object'")
   ++ v1_error("v1-unknown-edge-kind","'kind'," ++ edge_kind_of(edge) ++ ",'condition','Edge kind is not one of the sixteen closed v1 kinds.'","json_valid(" ++ j ++ ") AND (" ++ edge_kind_of(edge) ++ " IS NULL OR " ++ edge_kind_of(edge) ++ " NOT IN(" ++ edge_kinds() ++ "))")
   ++ v1_error("v1-edge-shape","'id'," ++ id ++ ",'condition','Edge needs non-empty id, author and rationale, object endpoints with id and kind, object context with scope, subjects, conditions and assumptions, array basis of id or uri references, text limits and uncertainty, and the typed details its kind requires.'","json_valid(" ++ j ++ ") AND " ++ edge_kind_of(edge) ++ " IN(" ++ edge_kinds() ++ ") AND NOT (" ++ edge_shape_ok(edge) ++ ")")
@@ -357,7 +355,7 @@ def edge_errors(+edge: String) -> String:
   ++ v1_error("v1-endpoint-kind-mismatch","'id'," ++ id ++ ",'condition','An edge reference is stored under a different kind than declared, or the edge-kind matrix rejects the declared endpoint pair.','next','Retain the stored rows, then retry with matching declared kinds.'","json_valid(" ++ j ++ ") AND " ++ edge_kind_of(edge) ++ " IN(" ++ edge_kinds() ++ ") AND " ++ edge_shape_ok(edge) ++ " AND " ++ edge_refs_resolve(edge) ++ " AND NOT (" ++ edge_refs_match(edge) ++ ")")
   ++ v1_error("v1-proof-rule","'id'," ++ id ++ ",'condition','An implies edge cites no deduction or formal-proof argument, or a proves or disproves edge starts from no such argument.','next','Retain the stored rows, then retry with a qualifying argument.'","json_valid(" ++ j ++ ") AND " ++ edge_kind_of(edge) ++ " IN(" ++ edge_kinds() ++ ") AND " ++ edge_shape_ok(edge) ++ " AND " ++ edge_refs_resolve(edge) ++ " AND " ++ edge_refs_match(edge) ++ " AND NOT (" ++ edge_proof_ok(edge) ++ ")")
   ++ v1_error("v1-unknown-author","'author',json_extract(" ++ j ++ ",'$.author'),'condition','Edge author is not a registered session.'","NOT EXISTS(SELECT 1 FROM sessions WHERE id=json_extract(" ++ j ++ ",'$.author'))")
-  ++ v1_error("v1-edge-id-conflict","'id'," ++ id ++ ",'stored',(SELECT json_object(" ++ stored ++ ") FROM knowledge_edges_v1 WHERE id=" ++ id ++ "),'condition','This v1 edge identity is already stored with different content.','next','Retain the stored record, then retry the new input under a different ID.'","EXISTS(SELECT 1 FROM knowledge_edges_v1 WHERE id=" ++ id ++ " AND NOT (" ++ edge_same(edge) ++ "))")
+  ++ v1_error("v1-edge-id-conflict","'id'," ++ id ++ ",'stored',(SELECT json_object('id',id,'author',author,'kind',kind) FROM knowledge_edges_v1 WHERE id=" ++ id ++ "),'condition','This v1 edge identity is already stored with different content.','next','Retain the stored record, then retry the new input under a different ID.'","EXISTS(SELECT 1 FROM knowledge_edges_v1 WHERE id=" ++ id ++ " AND NOT (" ++ edge_same(edge) ++ "))")
   ++ v1_error("v1-edge-id-conflict","'id'," ++ id ++ ",'stored',(SELECT json_object('id',id,'author',author,'kind',kind) FROM knowledge_v1 WHERE id=" ++ id ++ "),'condition','This identity is already stored as a v1 node. Node and edge identities share one namespace.','next','Retain the stored record, then retry the new input under a different ID.'","EXISTS(SELECT 1 FROM knowledge_v1 WHERE id=" ++ id ++ ")")
 
 def edge_statements(+edge: String) -> String:
@@ -402,7 +400,7 @@ def edges_fragment(+reader: String, +scope: String, +subject: String) -> String:
 # entry must resolve to a stored typed record by raw id with its declared
 # kind, so dangling references produce no citation edge.
 def v1_citation_fragment() -> String:
-  "SELECT 'citation:'||v.id AS id,json_extract(e.value,'$.id') AS source,v.evidence AS target,'Cited' AS relation,json_extract(e.value,'$.id') AS source_ref,v.reference AS target_ref,json_object('id','citation:'||v.id,'author',json_extract(v.item,'$.author'),'source',json_extract(e.value,'$.id'),'sourceReference',json_extract(e.value,'$.id'),'sourceKind','evidence','relation','Cited','target',v.reference,'targetReference',v.reference,'targetKind',v.kind,'provenance','recorded-evidence') AS item FROM (SELECT id,reference,kind,evidence,item FROM nodes WHERE json_extract(item,'$.schemaVersion')=1) AS v,json_each(v.evidence) AS e WHERE json_extract(e.value,'$.id') IS NOT NULL AND ((json_extract(e.value,'$.kind')<>'edge' AND EXISTS(SELECT 1 FROM knowledge_v1 n WHERE n.id=json_extract(e.value,'$.id') AND n.kind=json_extract(e.value,'$.kind'))) OR (json_extract(e.value,'$.kind')='edge' AND EXISTS(SELECT 1 FROM knowledge_edges_v1 g WHERE g.id=json_extract(e.value,'$.id') AND g.kind=json_extract(e.value,'$.edgeKind'))))"
+  "SELECT 'citation:'||v.id AS id," ++ v1_x("e.value", "$.id") ++ " AS source,v.evidence AS target,'Cited' AS relation," ++ v1_x("e.value", "$.id") ++ " AS source_ref,v.reference AS target_ref,json_object('id','citation:'||v.id,'author',json_extract(v.item,'$.author'),'source'," ++ v1_x("e.value", "$.id") ++ ",'sourceReference'," ++ v1_x("e.value", "$.id") ++ ",'sourceKind','evidence','relation','Cited','target',v.reference,'targetReference',v.reference,'targetKind',v.kind,'provenance','recorded-evidence') AS item FROM (SELECT id,reference,kind,evidence,item FROM nodes WHERE json_extract(item,'$.schemaVersion')=1) AS v," ++ v1_each_path("v.evidence", "") ++ " AS e WHERE " ++ v1_x("e.value", "$.id") ++ " IS NOT NULL AND ((" ++ v1_x("e.value", "$.kind") ++ "<>'edge' AND EXISTS(SELECT 1 FROM knowledge_v1 n WHERE n.id=" ++ v1_x("e.value", "$.id") ++ " AND n.kind=" ++ v1_x("e.value", "$.kind") ++ ")) OR (" ++ v1_x("e.value", "$.kind") ++ "='edge' AND EXISTS(SELECT 1 FROM knowledge_edges_v1 g WHERE g.id=" ++ v1_x("e.value", "$.id") ++ " AND g.kind=" ++ v1_x("e.value", "$.edgeKind") ++ "))))"
 
 # Complete scope reads union v1 rows beside legacy rows with their full
 # envelopes; v1 rows follow legacy rows in stored order.
@@ -516,10 +514,12 @@ def v1_refusal(+rule: String, +instance: String) -> String:
   "{\"error\":\"v1-refused\",\"rule\":" ++ C.q(rule) ++ ",\"id\":" ++ C.q(instance) ++ "}"
 
 def v1_t(+v: String, +p: String) -> String:
-  "json_type(" ++ v ++ "," ++ C.q(p) ++ ")"
+  "(CASE WHEN json_valid(" ++ v ++ ") THEN json_type(" ++ v ++ "," ++ C.q(p) ++ ") END)"
 
 def v1_x(+v: String, +p: String) -> String:
-  "json_extract(" ++ v ++ "," ++ C.q(p) ++ ")"
+  "(CASE WHEN json_valid(" ++ v ++ ") THEN json_extract(" ++ v ++ "," ++ C.q(p) ++ ") END)"
+def v1_each_path(+x: String, +path: String) -> String:
+  "json_each(CASE WHEN json_valid(" ++ x ++ ") THEN (" ++ x ++ ") END" ++ path ++ ")"
 
 def v1_req_text(+v: String, +p: String) -> String:
   "(" ++ v1_t(v, p) ++ " IS NULL OR " ++ v1_t(v, p) ++ "!='text' OR " ++ v1_x(v, p) ++ "='')"
@@ -543,7 +543,7 @@ def v1_opt_array(+v: String, +p: String) -> String:
   "(" ++ v1_t(v, p) ++ " IS NOT NULL AND " ++ v1_t(v, p) ++ "!='null' AND " ++ v1_t(v, p) ++ "!='array')"
 
 def v1_req_str_array(+v: String, +p: String) -> String:
-  "(" ++ v1_req_array(v, p) ++ " OR (EXISTS(SELECT 1 FROM json_each(" ++ v1_x(v, p) ++ ") WHERE json_type(value,'$')!='text')))"
+  "(" ++ v1_req_array(v, p) ++ " OR (EXISTS(SELECT 1 FROM " ++ v1_each_path(v1_x(v, p), "") ++ " WHERE " ++ v1_t("value", "$") ++ "!='text')))"
 
 def v1_req_number(+v: String, +p: String) -> String:
   "(" ++ v1_t(v, p) ++ " IS NULL OR (" ++ v1_t(v, p) ++ "!='integer' AND " ++ v1_t(v, p) ++ "!='real'))"
@@ -558,18 +558,18 @@ def v1_opt_sha(+v: String, +p: String) -> String:
   "(" ++ v1_t(v, p) ++ " IS NOT NULL AND " ++ v1_t(v, p) ++ "!='null' AND (" ++ v1_t(v, p) ++ "!='text' OR length(" ++ v1_x(v, p) ++ ")!=64 OR " ++ v1_x(v, p) ++ " GLOB '*[^a-f0-9]*'))"
 
 def v1_closed(+v: String, +p: String, +members: String) -> String:
-  "(EXISTS(SELECT 1 FROM json_each(" ++ v1_x(v, p) ++ ") WHERE key NOT IN (" ++ members ++ ")))"
+  "(EXISTS(SELECT 1 FROM " ++ v1_each_path(v1_x(v, p), "") ++ " WHERE key NOT IN (" ++ members ++ ")))"
 
 def v1_noderef_ok(+r: String) -> String:
-  "((SELECT COUNT(*) FROM json_each(" ++ r ++ "))==2 AND " ++ v1_req_text(r, "$.id") ++ "==0 AND " ++ v1_req_enum(r, "$.kind", v1_node_kinds()) ++ "==0)"
+  "((SELECT COUNT(*) FROM " ++ v1_each_path(r, "") ++ ")==2 AND " ++ v1_req_text(r, "$.id") ++ "==0 AND " ++ v1_req_enum(r, "$.kind", v1_node_kinds()) ++ "==0)"
 
 def v1_edgeref_ok(+r: String) -> String:
-  "((SELECT COUNT(*) FROM json_each(" ++ r ++ "))==3 AND " ++ v1_req_text(r, "$.id") ++ "==0 AND " ++ v1_t(r, "$.kind") ++ "=='text' AND " ++ v1_x(r, "$.kind") ++ "=='edge' AND " ++ v1_req_enum(r, "$.edgeKind", v1_edge_kinds()) ++ "==0)"
+  "((SELECT COUNT(*) FROM " ++ v1_each_path(r, "") ++ ")==3 AND " ++ v1_req_text(r, "$.id") ++ "==0 AND " ++ v1_t(r, "$.kind") ++ "=='text' AND " ++ v1_x(r, "$.kind") ++ "=='edge' AND " ++ v1_req_enum(r, "$.edgeKind", v1_edge_kinds()) ++ "==0)"
 
 def v1_resourceref_ok(+r: String) -> String:
-  "(((SELECT COUNT(*) FROM json_each(" ++ r ++ "))==2 AND " ++ v1_t(r, "$.kind") ++ "=='text' AND " ++ v1_x(r, "$.kind") ++ "=='message' AND " ++ v1_req_text(r, "$.id") ++ "==0)"
-  ++ " OR ((SELECT COUNT(*) FROM json_each(" ++ r ++ "))==2 AND " ++ v1_t(r, "$.kind") ++ "=='text' AND " ++ v1_x(r, "$.kind") ++ "=='url' AND " ++ v1_req_text(r, "$.uri") ++ "==0)"
-  ++ " OR (" ++ v1_t(r, "$.kind") ++ "=='text' AND " ++ v1_x(r, "$.kind") ++ "=='artifact' AND " ++ v1_req_text(r, "$.uri") ++ "==0 AND ((SELECT COUNT(*) FROM json_each(" ++ r ++ "))==2 OR ((SELECT COUNT(*) FROM json_each(" ++ r ++ "))==3 AND " ++ v1_opt_sha(r, "$.sha256") ++ "==0))))"
+  "(((SELECT COUNT(*) FROM " ++ v1_each_path(r, "") ++ ")==2 AND " ++ v1_t(r, "$.kind") ++ "=='text' AND " ++ v1_x(r, "$.kind") ++ "=='message' AND " ++ v1_req_text(r, "$.id") ++ "==0)"
+  ++ " OR ((SELECT COUNT(*) FROM " ++ v1_each_path(r, "") ++ ")==2 AND " ++ v1_t(r, "$.kind") ++ "=='text' AND " ++ v1_x(r, "$.kind") ++ "=='url' AND " ++ v1_req_text(r, "$.uri") ++ "==0)"
+  ++ " OR (" ++ v1_t(r, "$.kind") ++ "=='text' AND " ++ v1_x(r, "$.kind") ++ "=='artifact' AND " ++ v1_req_text(r, "$.uri") ++ "==0 AND ((SELECT COUNT(*) FROM " ++ v1_each_path(r, "") ++ ")==2 OR ((SELECT COUNT(*) FROM " ++ v1_each_path(r, "") ++ ")==3 AND " ++ v1_opt_sha(r, "$.sha256") ++ "==0))))"
 
 def v1_ref_shape_ok(+r: String) -> String:
   "(" ++ v1_noderef_ok(r) ++ " OR " ++ v1_edgeref_ok(r) ++ " OR " ++ v1_resourceref_ok(r) ++ ")"
@@ -578,11 +578,11 @@ def v1_ref_shape_ok(+r: String) -> String:
 # stored v1 node with the exact declared kind. Legacy rows never
 # satisfy a reference, even when kinds overlap both versions.
 def v1_node_match(+r: String, +batch: String) -> String:
-  "((EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.nodes') m WHERE json_extract(m.value,'$.id')==" ++ v1_x(r, "$.id") ++ " AND json_extract(m.value,'$.kind')==" ++ v1_x(r, "$.kind") ++ "))"
+  "((EXISTS(SELECT 1 FROM " ++ v1_each_path(batch, ",'$.nodes'") ++ " m WHERE " ++ v1_x("m.value", "$.id") ++ "==" ++ v1_x(r, "$.id") ++ " AND " ++ v1_x("m.value", "$.kind") ++ "==" ++ v1_x(r, "$.kind") ++ "))"
   ++ " OR (EXISTS(SELECT 1 FROM knowledge_v1 WHERE id==" ++ v1_x(r, "$.id") ++ " AND kind==" ++ v1_x(r, "$.kind") ++ ")))"
 
 def v1_edge_match(+r: String, +edgekind: String, +batch: String) -> String:
-  "((EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.edges') m WHERE json_extract(m.value,'$.id')==" ++ v1_x(r, "$.id") ++ " AND json_extract(m.value,'$.kind')==" ++ edgekind ++ "))"
+  "((EXISTS(SELECT 1 FROM " ++ v1_each_path(batch, ",'$.edges'") ++ " m WHERE " ++ v1_x("m.value", "$.id") ++ "==" ++ v1_x(r, "$.id") ++ " AND " ++ v1_x("m.value", "$.kind") ++ "==" ++ edgekind ++ "))"
   ++ " OR (EXISTS(SELECT 1 FROM knowledge_edges_v1 WHERE id==" ++ v1_x(r, "$.id") ++ " AND kind==" ++ edgekind ++ ")))"
 
 def v1_ref_resolved(+r: String, +batch: String) -> String:
@@ -591,10 +591,10 @@ def v1_ref_resolved(+r: String, +batch: String) -> String:
   ++ " OR " ++ v1_resourceref_ok(r) ++ ")"
 
 def v1_ref_each_shape(+arr: String) -> String:
-  "(EXISTS(SELECT 1 FROM json_each(" ++ arr ++ ") WHERE " ++ v1_ref_shape_ok("value") ++ "==0))"
+  "(EXISTS(SELECT 1 FROM " ++ v1_each_path(arr, "") ++ " WHERE " ++ v1_ref_shape_ok("value") ++ "==0))"
 
 def v1_ref_each_resolved(+arr: String, +batch: String) -> String:
-  "(EXISTS(SELECT 1 FROM json_each(" ++ arr ++ ") WHERE " ++ v1_ref_shape_ok("value") ++ " AND " ++ v1_ref_resolved("value", batch) ++ "==0))"
+  "(EXISTS(SELECT 1 FROM " ++ v1_each_path(arr, "") ++ " WHERE " ++ v1_ref_shape_ok("value") ++ " AND " ++ v1_ref_resolved("value", batch) ++ "==0))"
 
 def v1_context_violated(+v: String, +p: String) -> String:
   "(" ++ v1_req_object(v, p)
@@ -653,13 +653,13 @@ def v1_causalvar_violated(+v: String, +p: String) -> String:
   ++ " OR " ++ v1_req_text(v, p ++ ".property")
   ++ " OR (" ++ v1_t(v, p ++ ".value") ++ " IS NOT NULL AND " ++ v1_t(v, p ++ ".value") ++ "!='null' AND " ++ v1_result_violated(v, p ++ ".value") ++ "))"
 def v1_questionref_ok(+r: String) -> String:
-  "((SELECT COUNT(*) FROM json_each(" ++ r ++ "))==2 AND " ++ v1_req_text(r, "$.id") ++ "==0 AND " ++ v1_t(r, "$.kind") ++ "=='text' AND " ++ v1_x(r, "$.kind") ++ "=='question')"
+  "((SELECT COUNT(*) FROM " ++ v1_each_path(r, "") ++ ")==2 AND " ++ v1_req_text(r, "$.id") ++ "==0 AND " ++ v1_t(r, "$.kind") ++ "=='text' AND " ++ v1_x(r, "$.kind") ++ "=='question')"
 
 def v1_hypothesisref_ok(+r: String) -> String:
-  "((SELECT COUNT(*) FROM json_each(" ++ r ++ "))==2 AND " ++ v1_req_text(r, "$.id") ++ "==0 AND " ++ v1_t(r, "$.kind") ++ "=='text' AND " ++ v1_x(r, "$.kind") ++ "=='hypothesis')"
+  "((SELECT COUNT(*) FROM " ++ v1_each_path(r, "") ++ ")==2 AND " ++ v1_req_text(r, "$.id") ++ "==0 AND " ++ v1_t(r, "$.kind") ++ "=='text' AND " ++ v1_x(r, "$.kind") ++ "=='hypothesis')"
 
 def v1_argumentref_ok(+r: String) -> String:
-  "((SELECT COUNT(*) FROM json_each(" ++ r ++ "))==2 AND " ++ v1_req_text(r, "$.id") ++ "==0 AND " ++ v1_t(r, "$.kind") ++ "=='text' AND " ++ v1_x(r, "$.kind") ++ "=='argument')"
+  "((SELECT COUNT(*) FROM " ++ v1_each_path(r, "") ++ ")==2 AND " ++ v1_req_text(r, "$.id") ++ "==0 AND " ++ v1_t(r, "$.kind") ++ "=='text' AND " ++ v1_x(r, "$.kind") ++ "=='argument')"
 
 def v1_question_details_violated(+d: String) -> String:
   "(" ++ v1_closed(d, "$.details", "'topic','openQuestions'")
@@ -674,7 +674,7 @@ def v1_hypothesis_details_violated(+d: String) -> String:
   "(" ++ v1_closed(d, "$.details", "'explanation','predictions','overturnConditions'")
   ++ " OR " ++ v1_req_text(d, "$.details.explanation")
   ++ " OR " ++ v1_req_array(d, "$.details.predictions")
-  ++ " OR (EXISTS(SELECT 1 FROM json_each(" ++ v1_x(d, "$.details.predictions") ++ ") WHERE " ++ v1_prediction_violated("value", "$") ++ "))"
+  ++ " OR (EXISTS(SELECT 1 FROM " ++ v1_each_path(v1_x(d, "$.details.predictions"), "") ++ " WHERE " ++ v1_prediction_violated("value", "$") ++ "))"
   ++ " OR " ++ v1_req_str_array(d, "$.details.overturnConditions") ++ ")"
 
 def v1_observation_details_violated(+d: String) -> String:
@@ -698,12 +698,12 @@ def v1_finding_details_violated(+d: String) -> String:
 def v1_study_details_violated(+d: String) -> String:
   "(" ++ v1_closed(d, "$.details", "'questions','method','design','state','outputs','studyIdentity'")
   ++ " OR " ++ v1_req_array(d, "$.details.questions")
-  ++ " OR (EXISTS(SELECT 1 FROM json_each(" ++ v1_x(d, "$.details.questions") ++ ") WHERE " ++ v1_questionref_ok("value") ++ "==0))"
+  ++ " OR (EXISTS(SELECT 1 FROM " ++ v1_each_path(v1_x(d, "$.details.questions"), "") ++ " WHERE " ++ v1_questionref_ok("value") ++ "==0))"
   ++ " OR " ++ v1_method_shape_violated(d, "$.details.method")
   ++ " OR " ++ v1_req_text(d, "$.details.design")
   ++ " OR " ++ v1_req_enum(d, "$.details.state", "'planned','in-progress','completed'")
   ++ " OR " ++ v1_req_array(d, "$.details.outputs")
-  ++ " OR (EXISTS(SELECT 1 FROM json_each(" ++ v1_x(d, "$.details.outputs") ++ ") WHERE " ++ v1_noderef_ok("value") ++ "==0))"
+  ++ " OR (EXISTS(SELECT 1 FROM " ++ v1_each_path(v1_x(d, "$.details.outputs"), "") ++ " WHERE " ++ v1_noderef_ok("value") ++ "==0))"
   ++ " OR " ++ v1_req_text(d, "$.details.studyIdentity") ++ ")"
 
 def v1_evidence_details_violated(+d: String) -> String:
@@ -727,7 +727,7 @@ def v1_proposal_details_violated(+d: String) -> String:
   ++ " OR " ++ v1_req_text(d, "$.details.proposedAction")
   ++ " OR " ++ v1_req_text(d, "$.details.rationale")
   ++ " OR " ++ v1_req_array(d, "$.details.alternatives")
-  ++ " OR (EXISTS(SELECT 1 FROM json_each(" ++ v1_x(d, "$.details.alternatives") ++ ") WHERE " ++ v1_noderef_ok("value") ++ "==0))" ++ ")"
+  ++ " OR (EXISTS(SELECT 1 FROM " ++ v1_each_path(v1_x(d, "$.details.alternatives"), "") ++ " WHERE " ++ v1_noderef_ok("value") ++ "==0))" ++ ")"
 
 def v1_decision_details_violated(+d: String) -> String:
   "(" ++ v1_closed(d, "$.details", "'selected','rationale','alternatives'")
@@ -735,7 +735,7 @@ def v1_decision_details_violated(+d: String) -> String:
   ++ " OR " ++ v1_noderef_ok(v1_x(d, "$.details.selected")) ++ "==0"
   ++ " OR " ++ v1_req_text(d, "$.details.rationale")
   ++ " OR " ++ v1_req_array(d, "$.details.alternatives")
-  ++ " OR (EXISTS(SELECT 1 FROM json_each(" ++ v1_x(d, "$.details.alternatives") ++ ") WHERE " ++ v1_noderef_ok("value") ++ "==0))" ++ ")"
+  ++ " OR (EXISTS(SELECT 1 FROM " ++ v1_each_path(v1_x(d, "$.details.alternatives"), "") ++ " WHERE " ++ v1_noderef_ok("value") ++ "==0))" ++ ")"
 
 def v1_node_envelope() -> String:
   "'id','author','kind','statement','context','evidence','limits','uncertainty','details'"
@@ -754,7 +754,7 @@ def v1_node_envelope_violated() -> String:
   ++ " OR " ++ v1_req_object("n.value", "$.details") ++ ")"
 
 def v1_node_details_violated() -> String:
-  "((json_extract(n.value,'$.kind')=='question' AND " ++ v1_question_details_violated("n.value") ++ ") OR (json_extract(n.value,'$.kind')=='claim' AND " ++ v1_claim_details_violated("n.value") ++ ") OR (json_extract(n.value,'$.kind')=='hypothesis' AND " ++ v1_hypothesis_details_violated("n.value") ++ ") OR (json_extract(n.value,'$.kind')=='observation' AND " ++ v1_observation_details_violated("n.value") ++ ") OR (json_extract(n.value,'$.kind')=='research-finding' AND " ++ v1_finding_details_violated("n.value") ++ ") OR (json_extract(n.value,'$.kind')=='study' AND " ++ v1_study_details_violated("n.value") ++ ") OR (json_extract(n.value,'$.kind')=='evidence' AND " ++ v1_evidence_details_violated("n.value") ++ ") OR (json_extract(n.value,'$.kind')=='argument' AND " ++ v1_argument_details_violated("n.value") ++ ") OR (json_extract(n.value,'$.kind')=='proposal' AND " ++ v1_proposal_details_violated("n.value") ++ ") OR (json_extract(n.value,'$.kind')=='decision' AND " ++ v1_decision_details_violated("n.value") ++ "))"
+  "((" ++ v1_x("n.value", "$.kind") ++ "=='question' AND " ++ v1_question_details_violated("n.value") ++ ") OR (" ++ v1_x("n.value", "$.kind") ++ "=='claim' AND " ++ v1_claim_details_violated("n.value") ++ ") OR (" ++ v1_x("n.value", "$.kind") ++ "=='hypothesis' AND " ++ v1_hypothesis_details_violated("n.value") ++ ") OR (" ++ v1_x("n.value", "$.kind") ++ "=='observation' AND " ++ v1_observation_details_violated("n.value") ++ ") OR (" ++ v1_x("n.value", "$.kind") ++ "=='research-finding' AND " ++ v1_finding_details_violated("n.value") ++ ") OR (" ++ v1_x("n.value", "$.kind") ++ "=='study' AND " ++ v1_study_details_violated("n.value") ++ ") OR (" ++ v1_x("n.value", "$.kind") ++ "=='evidence' AND " ++ v1_evidence_details_violated("n.value") ++ ") OR (" ++ v1_x("n.value", "$.kind") ++ "=='argument' AND " ++ v1_argument_details_violated("n.value") ++ ") OR (" ++ v1_x("n.value", "$.kind") ++ "=='proposal' AND " ++ v1_proposal_details_violated("n.value") ++ ") OR (" ++ v1_x("n.value", "$.kind") ++ "=='decision' AND " ++ v1_decision_details_violated("n.value") ++ "))"
 
 def v1_mechanism_violated(+v: String, +p: String) -> String:
   "(" ++ v1_req_object(v, p)
@@ -791,7 +791,7 @@ def v1_causes_details_violated(+d: String) -> String:
   ++ " OR " ++ v1_mechanism_violated(d, "$.details.mechanism")
   ++ " OR " ++ v1_req_enum(d, "$.details.identification", "'intervention','natural-experiment','mechanistic-inference','causal-model'")
   ++ " OR " ++ v1_req_array(d, "$.details.alternativeExplanations")
-  ++ " OR (EXISTS(SELECT 1 FROM json_each(" ++ v1_x(d, "$.details.alternativeExplanations") ++ ") WHERE " ++ v1_hypothesisref_ok("value") ++ "==0))"
+  ++ " OR (EXISTS(SELECT 1 FROM " ++ v1_each_path(v1_x(d, "$.details.alternativeExplanations"), "") ++ " WHERE " ++ v1_hypothesisref_ok("value") ++ "==0))"
   ++ " OR " ++ v1_causalvar_violated(d, "$.details.exposure")
   ++ " OR " ++ v1_causalvar_violated(d, "$.details.outcome") ++ ")"
 
@@ -846,58 +846,58 @@ def v1_edge_envelope_violated() -> String:
   ++ " OR " ++ v1_req_object("e.value", "$.details") ++ ")"
 
 def v1_edge_details_violated() -> String:
-  "((json_extract(e.value,'$.kind')=='supports' AND " ++ v1_supports_details_violated("e.value") ++ ") OR (json_extract(e.value,'$.kind')=='challenges' AND " ++ v1_challenges_details_violated("e.value") ++ ") OR (json_extract(e.value,'$.kind')=='contradicts' AND " ++ v1_contradicts_details_violated("e.value") ++ ") OR (json_extract(e.value,'$.kind')=='negates' AND " ++ v1_negates_details_violated("e.value") ++ ") OR (json_extract(e.value,'$.kind')=='implies' AND " ++ v1_implies_details_violated("e.value") ++ ") OR (json_extract(e.value,'$.kind')=='proves' AND " ++ v1_proves_details_violated("e.value") ++ ") OR (json_extract(e.value,'$.kind')=='disproves' AND " ++ v1_disproves_details_violated("e.value") ++ ") OR (json_extract(e.value,'$.kind')=='causes' AND " ++ v1_causes_details_violated("e.value") ++ ") OR (json_extract(e.value,'$.kind')=='correlates-with' AND " ++ v1_correlates_details_violated("e.value") ++ ") OR (json_extract(e.value,'$.kind')=='competes-with' AND " ++ v1_competes_details_violated("e.value") ++ ") OR (json_extract(e.value,'$.kind')=='replicates' AND " ++ v1_replicates_details_violated("e.value") ++ ") OR (json_extract(e.value,'$.kind')=='derived-from' AND " ++ v1_derived_details_violated("e.value") ++ ") OR (json_extract(e.value,'$.kind')=='investigates' AND " ++ v1_investigates_details_violated("e.value") ++ ") OR (json_extract(e.value,'$.kind')=='produces' AND " ++ v1_produces_details_violated("e.value") ++ ") OR (json_extract(e.value,'$.kind')=='informs' AND " ++ v1_informs_details_violated("e.value") ++ ") OR (json_extract(e.value,'$.kind')=='supersedes' AND " ++ v1_supersedes_details_violated("e.value") ++ "))"
+  "((" ++ v1_x("e.value", "$.kind") ++ "=='supports' AND " ++ v1_supports_details_violated("e.value") ++ ") OR (" ++ v1_x("e.value", "$.kind") ++ "=='challenges' AND " ++ v1_challenges_details_violated("e.value") ++ ") OR (" ++ v1_x("e.value", "$.kind") ++ "=='contradicts' AND " ++ v1_contradicts_details_violated("e.value") ++ ") OR (" ++ v1_x("e.value", "$.kind") ++ "=='negates' AND " ++ v1_negates_details_violated("e.value") ++ ") OR (" ++ v1_x("e.value", "$.kind") ++ "=='implies' AND " ++ v1_implies_details_violated("e.value") ++ ") OR (" ++ v1_x("e.value", "$.kind") ++ "=='proves' AND " ++ v1_proves_details_violated("e.value") ++ ") OR (" ++ v1_x("e.value", "$.kind") ++ "=='disproves' AND " ++ v1_disproves_details_violated("e.value") ++ ") OR (" ++ v1_x("e.value", "$.kind") ++ "=='causes' AND " ++ v1_causes_details_violated("e.value") ++ ") OR (" ++ v1_x("e.value", "$.kind") ++ "=='correlates-with' AND " ++ v1_correlates_details_violated("e.value") ++ ") OR (" ++ v1_x("e.value", "$.kind") ++ "=='competes-with' AND " ++ v1_competes_details_violated("e.value") ++ ") OR (" ++ v1_x("e.value", "$.kind") ++ "=='replicates' AND " ++ v1_replicates_details_violated("e.value") ++ ") OR (" ++ v1_x("e.value", "$.kind") ++ "=='derived-from' AND " ++ v1_derived_details_violated("e.value") ++ ") OR (" ++ v1_x("e.value", "$.kind") ++ "=='investigates' AND " ++ v1_investigates_details_violated("e.value") ++ ") OR (" ++ v1_x("e.value", "$.kind") ++ "=='produces' AND " ++ v1_produces_details_violated("e.value") ++ ") OR (" ++ v1_x("e.value", "$.kind") ++ "=='informs' AND " ++ v1_informs_details_violated("e.value") ++ ") OR (" ++ v1_x("e.value", "$.kind") ++ "=='supersedes' AND " ++ v1_supersedes_details_violated("e.value") ++ "))"
 
 def v1_batch_violated(+batch: String) -> String:
   "(json_valid(" ++ batch ++ ")!=1"
-  ++ " OR (EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ") WHERE key NOT IN ('schemaVersion','nodes','edges')))"
+  ++ " OR (EXISTS(SELECT 1 FROM " ++ v1_each_path(batch, "") ++ " WHERE key NOT IN ('schemaVersion','nodes','edges')))"
   ++ " OR " ++ v1_t(batch, "$.schemaVersion") ++ " IS NULL OR " ++ v1_x(batch, "$.schemaVersion") ++ "!=1"
   ++ " OR " ++ v1_t(batch, "$.nodes") ++ " IS NULL OR " ++ v1_t(batch, "$.nodes") ++ "!='array'"
   ++ " OR " ++ v1_t(batch, "$.edges") ++ " IS NULL OR " ++ v1_t(batch, "$.edges") ++ "!='array')"
 
 def v1_structure_violated(+batch: String) -> String:
   "(" ++ v1_batch_violated(batch)
-  ++ " OR (EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.nodes') n WHERE " ++ v1_node_envelope_violated() ++ " OR " ++ v1_node_details_violated() ++ "))"
-  ++ " OR (EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.edges') e WHERE " ++ v1_edge_envelope_violated() ++ " OR " ++ v1_edge_details_violated() ++ ")))"
+  ++ " OR (EXISTS(SELECT 1 FROM " ++ v1_each_path(batch, ",'$.nodes'") ++ " n WHERE " ++ v1_node_envelope_violated() ++ " OR " ++ v1_node_details_violated() ++ "))"
+  ++ " OR (EXISTS(SELECT 1 FROM " ++ v1_each_path(batch, ",'$.edges'") ++ " e WHERE " ++ v1_edge_envelope_violated() ++ " OR " ++ v1_edge_details_violated() ++ ")))"
 
 def v1_structure_offender(+batch: String) -> String:
-  "(SELECT COALESCE((SELECT json_extract(n.value,'$.id') FROM json_each(" ++ batch ++ ",'$.nodes') n WHERE " ++ v1_node_envelope_violated() ++ " OR " ++ v1_node_details_violated() ++ " LIMIT 1), (SELECT json_extract(e.value,'$.id') FROM json_each(" ++ batch ++ ",'$.edges') e WHERE " ++ v1_edge_envelope_violated() ++ " OR " ++ v1_edge_details_violated() ++ " LIMIT 1), 'batch'))"
+  "(SELECT COALESCE((SELECT " ++ v1_x("n.value", "$.id") ++ " FROM " ++ v1_each_path(batch, ",'$.nodes'") ++ " n WHERE " ++ v1_node_envelope_violated() ++ " OR " ++ v1_node_details_violated() ++ " LIMIT 1), (SELECT " ++ v1_x("e.value", "$.id") ++ " FROM " ++ v1_each_path(batch, ",'$.edges'") ++ " e WHERE " ++ v1_edge_envelope_violated() ++ " OR " ++ v1_edge_details_violated() ++ " LIMIT 1), 'batch'))"
 
 def v1_epside_node(+ep: String, +roles: String, +batch: String) -> String:
-  "((SELECT COUNT(*) FROM json_each(" ++ ep ++ "))==2 AND " ++ v1_req_text(ep, "$.id") ++ "==0 AND " ++ v1_req_enum(ep, "$.kind", roles) ++ "==0 AND " ++ v1_node_match(ep, batch) ++ ")"
+  "((SELECT COUNT(*) FROM " ++ v1_each_path(ep, "") ++ ")==2 AND " ++ v1_req_text(ep, "$.id") ++ "==0 AND " ++ v1_req_enum(ep, "$.kind", roles) ++ "==0 AND " ++ v1_node_match(ep, batch) ++ ")"
 
 def v1_epside_edge(+ep: String, +batch: String) -> String:
   "(" ++ v1_edgeref_ok(ep) ++ " AND " ++ v1_edge_match(ep, v1_x(ep, "$.edgeKind"), batch) ++ ")"
 
 def v1_supersedes_paired(+batch: String) -> String:
-  "((" ++ v1_epside_node("json_extract(e.value,'$.source')", v1_node_kinds(), batch) ++ " AND " ++ v1_epside_node("json_extract(e.value,'$.target')", v1_node_kinds(), batch) ++ ") OR (" ++ v1_epside_edge("json_extract(e.value,'$.source')", batch) ++ " AND " ++ v1_epside_edge("json_extract(e.value,'$.target')", batch) ++ "))"
+  "((" ++ v1_epside_node("" ++ v1_x("e.value", "$.source") ++ "", v1_node_kinds(), batch) ++ " AND " ++ v1_epside_node("" ++ v1_x("e.value", "$.target") ++ "", v1_node_kinds(), batch) ++ ") OR (" ++ v1_epside_edge("" ++ v1_x("e.value", "$.source") ++ "", batch) ++ " AND " ++ v1_epside_edge("" ++ v1_x("e.value", "$.target") ++ "", batch) ++ "))"
 
 def v1_edge_endpoints_bad(+batch: String) -> String:
-  "((json_extract(e.value,'$.kind')=='supports' AND NOT(" ++ v1_epside_node("json_extract(e.value,'$.source')", "'evidence','observation','research-finding','argument'", batch) ++ " AND (" ++ v1_epside_node("json_extract(e.value,'$.target')", "'claim','hypothesis','research-finding','proposal'", batch) ++ " OR " ++ v1_epside_edge("json_extract(e.value,'$.target')", batch) ++ ")))"
-  ++ " OR (json_extract(e.value,'$.kind')=='challenges' AND NOT(" ++ v1_epside_node("json_extract(e.value,'$.source')", "'evidence','observation','research-finding','argument'", batch) ++ " AND (" ++ v1_epside_node("json_extract(e.value,'$.target')", "'claim','hypothesis','research-finding','proposal','argument','study'", batch) ++ " OR " ++ v1_epside_edge("json_extract(e.value,'$.target')", batch) ++ ")))"
-  ++ " OR (json_extract(e.value,'$.kind')=='contradicts' AND NOT(" ++ v1_epside_node("json_extract(e.value,'$.source')", "'claim','hypothesis','research-finding','observation'", batch) ++ " AND " ++ v1_epside_node("json_extract(e.value,'$.target')", "'claim','hypothesis','research-finding','observation'", batch) ++ "))"
-  ++ " OR (json_extract(e.value,'$.kind')=='negates' AND NOT(" ++ v1_epside_node("json_extract(e.value,'$.source')", "'claim','hypothesis','research-finding'", batch) ++ " AND " ++ v1_epside_node("json_extract(e.value,'$.target')", "'claim','hypothesis','research-finding'", batch) ++ "))"
-  ++ " OR (json_extract(e.value,'$.kind')=='implies' AND NOT(" ++ v1_epside_node("json_extract(e.value,'$.source')", "'claim','hypothesis','research-finding'", batch) ++ " AND " ++ v1_epside_node("json_extract(e.value,'$.target')", "'claim','hypothesis','research-finding'", batch) ++ "))"
-  ++ " OR (json_extract(e.value,'$.kind')=='proves' AND NOT(" ++ v1_epside_node("json_extract(e.value,'$.source')", "'argument'", batch) ++ " AND " ++ v1_epside_node("json_extract(e.value,'$.target')", "'claim','hypothesis','research-finding'", batch) ++ "))"
-  ++ " OR (json_extract(e.value,'$.kind')=='disproves' AND NOT(" ++ v1_epside_node("json_extract(e.value,'$.source')", "'argument'", batch) ++ " AND " ++ v1_epside_node("json_extract(e.value,'$.target')", "'claim','hypothesis','research-finding'", batch) ++ "))"
-  ++ " OR (json_extract(e.value,'$.kind')=='causes' AND NOT(" ++ v1_epside_node("json_extract(e.value,'$.source')", "'observation','research-finding','hypothesis'", batch) ++ " AND " ++ v1_epside_node("json_extract(e.value,'$.target')", "'observation','research-finding','hypothesis'", batch) ++ "))"
-  ++ " OR (json_extract(e.value,'$.kind')=='correlates-with' AND NOT(" ++ v1_epside_node("json_extract(e.value,'$.source')", "'observation','research-finding'", batch) ++ " AND " ++ v1_epside_node("json_extract(e.value,'$.target')", "'observation','research-finding'", batch) ++ "))"
-  ++ " OR (json_extract(e.value,'$.kind')=='competes-with' AND NOT(" ++ v1_epside_node("json_extract(e.value,'$.source')", "'hypothesis'", batch) ++ " AND " ++ v1_epside_node("json_extract(e.value,'$.target')", "'hypothesis'", batch) ++ "))"
-  ++ " OR (json_extract(e.value,'$.kind')=='replicates' AND NOT(" ++ v1_epside_node("json_extract(e.value,'$.source')", "'study','observation'", batch) ++ " AND " ++ v1_epside_node("json_extract(e.value,'$.target')", "'study','observation'", batch) ++ "))"
-  ++ " OR (json_extract(e.value,'$.kind')=='derived-from' AND NOT(" ++ v1_epside_node("json_extract(e.value,'$.source')", v1_node_kinds(), batch) ++ " AND " ++ v1_epside_node("json_extract(e.value,'$.target')", v1_node_kinds(), batch) ++ "))"
-  ++ " OR (json_extract(e.value,'$.kind')=='investigates' AND NOT(" ++ v1_epside_node("json_extract(e.value,'$.source')", "'study','hypothesis'", batch) ++ " AND " ++ v1_epside_node("json_extract(e.value,'$.target')", "'question'", batch) ++ "))"
-  ++ " OR (json_extract(e.value,'$.kind')=='produces' AND NOT(" ++ v1_epside_node("json_extract(e.value,'$.source')", "'study'", batch) ++ " AND " ++ v1_epside_node("json_extract(e.value,'$.target')", "'observation','research-finding','evidence'", batch) ++ "))"
-  ++ " OR (json_extract(e.value,'$.kind')=='informs' AND NOT(" ++ v1_epside_node("json_extract(e.value,'$.source')", "'claim','hypothesis','observation','research-finding','argument'", batch) ++ " AND " ++ v1_epside_node("json_extract(e.value,'$.target')", "'proposal','decision'", batch) ++ "))"
-  ++ " OR (json_extract(e.value,'$.kind')=='supersedes' AND NOT(" ++ v1_supersedes_paired(batch) ++ ")))"
+  "((" ++ v1_x("e.value", "$.kind") ++ "=='supports' AND NOT(" ++ v1_epside_node("" ++ v1_x("e.value", "$.source") ++ "", "'evidence','observation','research-finding','argument'", batch) ++ " AND (" ++ v1_epside_node("" ++ v1_x("e.value", "$.target") ++ "", "'claim','hypothesis','research-finding','proposal'", batch) ++ " OR " ++ v1_epside_edge("" ++ v1_x("e.value", "$.target") ++ "", batch) ++ ")))"
+  ++ " OR (" ++ v1_x("e.value", "$.kind") ++ "=='challenges' AND NOT(" ++ v1_epside_node("" ++ v1_x("e.value", "$.source") ++ "", "'evidence','observation','research-finding','argument'", batch) ++ " AND (" ++ v1_epside_node("" ++ v1_x("e.value", "$.target") ++ "", "'claim','hypothesis','research-finding','proposal','argument','study'", batch) ++ " OR " ++ v1_epside_edge("" ++ v1_x("e.value", "$.target") ++ "", batch) ++ ")))"
+  ++ " OR (" ++ v1_x("e.value", "$.kind") ++ "=='contradicts' AND NOT(" ++ v1_epside_node("" ++ v1_x("e.value", "$.source") ++ "", "'claim','hypothesis','research-finding','observation'", batch) ++ " AND " ++ v1_epside_node("" ++ v1_x("e.value", "$.target") ++ "", "'claim','hypothesis','research-finding','observation'", batch) ++ "))"
+  ++ " OR (" ++ v1_x("e.value", "$.kind") ++ "=='negates' AND NOT(" ++ v1_epside_node("" ++ v1_x("e.value", "$.source") ++ "", "'claim','hypothesis','research-finding'", batch) ++ " AND " ++ v1_epside_node("" ++ v1_x("e.value", "$.target") ++ "", "'claim','hypothesis','research-finding'", batch) ++ "))"
+  ++ " OR (" ++ v1_x("e.value", "$.kind") ++ "=='implies' AND NOT(" ++ v1_epside_node("" ++ v1_x("e.value", "$.source") ++ "", "'claim','hypothesis','research-finding'", batch) ++ " AND " ++ v1_epside_node("" ++ v1_x("e.value", "$.target") ++ "", "'claim','hypothesis','research-finding'", batch) ++ "))"
+  ++ " OR (" ++ v1_x("e.value", "$.kind") ++ "=='proves' AND NOT(" ++ v1_epside_node("" ++ v1_x("e.value", "$.source") ++ "", "'argument'", batch) ++ " AND " ++ v1_epside_node("" ++ v1_x("e.value", "$.target") ++ "", "'claim','hypothesis','research-finding'", batch) ++ "))"
+  ++ " OR (" ++ v1_x("e.value", "$.kind") ++ "=='disproves' AND NOT(" ++ v1_epside_node("" ++ v1_x("e.value", "$.source") ++ "", "'argument'", batch) ++ " AND " ++ v1_epside_node("" ++ v1_x("e.value", "$.target") ++ "", "'claim','hypothesis','research-finding'", batch) ++ "))"
+  ++ " OR (" ++ v1_x("e.value", "$.kind") ++ "=='causes' AND NOT(" ++ v1_epside_node("" ++ v1_x("e.value", "$.source") ++ "", "'observation','research-finding','hypothesis'", batch) ++ " AND " ++ v1_epside_node("" ++ v1_x("e.value", "$.target") ++ "", "'observation','research-finding','hypothesis'", batch) ++ "))"
+  ++ " OR (" ++ v1_x("e.value", "$.kind") ++ "=='correlates-with' AND NOT(" ++ v1_epside_node("" ++ v1_x("e.value", "$.source") ++ "", "'observation','research-finding'", batch) ++ " AND " ++ v1_epside_node("" ++ v1_x("e.value", "$.target") ++ "", "'observation','research-finding'", batch) ++ "))"
+  ++ " OR (" ++ v1_x("e.value", "$.kind") ++ "=='competes-with' AND NOT(" ++ v1_epside_node("" ++ v1_x("e.value", "$.source") ++ "", "'hypothesis'", batch) ++ " AND " ++ v1_epside_node("" ++ v1_x("e.value", "$.target") ++ "", "'hypothesis'", batch) ++ "))"
+  ++ " OR (" ++ v1_x("e.value", "$.kind") ++ "=='replicates' AND NOT(" ++ v1_epside_node("" ++ v1_x("e.value", "$.source") ++ "", "'study','observation'", batch) ++ " AND " ++ v1_epside_node("" ++ v1_x("e.value", "$.target") ++ "", "'study','observation'", batch) ++ "))"
+  ++ " OR (" ++ v1_x("e.value", "$.kind") ++ "=='derived-from' AND NOT(" ++ v1_epside_node("" ++ v1_x("e.value", "$.source") ++ "", v1_node_kinds(), batch) ++ " AND " ++ v1_epside_node("" ++ v1_x("e.value", "$.target") ++ "", v1_node_kinds(), batch) ++ "))"
+  ++ " OR (" ++ v1_x("e.value", "$.kind") ++ "=='investigates' AND NOT(" ++ v1_epside_node("" ++ v1_x("e.value", "$.source") ++ "", "'study','hypothesis'", batch) ++ " AND " ++ v1_epside_node("" ++ v1_x("e.value", "$.target") ++ "", "'question'", batch) ++ "))"
+  ++ " OR (" ++ v1_x("e.value", "$.kind") ++ "=='produces' AND NOT(" ++ v1_epside_node("" ++ v1_x("e.value", "$.source") ++ "", "'study'", batch) ++ " AND " ++ v1_epside_node("" ++ v1_x("e.value", "$.target") ++ "", "'observation','research-finding','evidence'", batch) ++ "))"
+  ++ " OR (" ++ v1_x("e.value", "$.kind") ++ "=='informs' AND NOT(" ++ v1_epside_node("" ++ v1_x("e.value", "$.source") ++ "", "'claim','hypothesis','observation','research-finding','argument'", batch) ++ " AND " ++ v1_epside_node("" ++ v1_x("e.value", "$.target") ++ "", "'proposal','decision'", batch) ++ "))"
+  ++ " OR (" ++ v1_x("e.value", "$.kind") ++ "=='supersedes' AND NOT(" ++ v1_supersedes_paired(batch) ++ ")))"
 
 def v1_q_each_dangling(+arr: String, +batch: String) -> String:
-  "(EXISTS(SELECT 1 FROM json_each(" ++ arr ++ ") WHERE " ++ v1_questionref_ok("value") ++ " AND " ++ v1_node_match("value", batch) ++ "==0))"
+  "(EXISTS(SELECT 1 FROM " ++ v1_each_path(arr, "") ++ " WHERE " ++ v1_questionref_ok("value") ++ " AND " ++ v1_node_match("value", batch) ++ "==0))"
 
 def v1_h_each_dangling(+arr: String, +batch: String) -> String:
-  "(EXISTS(SELECT 1 FROM json_each(" ++ arr ++ ") WHERE " ++ v1_hypothesisref_ok("value") ++ " AND " ++ v1_node_match("value", batch) ++ "==0))"
+  "(EXISTS(SELECT 1 FROM " ++ v1_each_path(arr, "") ++ " WHERE " ++ v1_hypothesisref_ok("value") ++ " AND " ++ v1_node_match("value", batch) ++ "==0))"
 
 def v1_noderef_each_dangling(+arr: String, +batch: String) -> String:
-  "(EXISTS(SELECT 1 FROM json_each(" ++ arr ++ ") WHERE " ++ v1_noderef_ok("value") ++ " AND " ++ v1_node_match("value", batch) ++ "==0))"
+  "(EXISTS(SELECT 1 FROM " ++ v1_each_path(arr, "") ++ " WHERE " ++ v1_noderef_ok("value") ++ " AND " ++ v1_node_match("value", batch) ++ "==0))"
 
 def v1_node_refs_bad(+batch: String) -> String:
   "(" ++ v1_context_dangling("n.value", "$.context", batch)
@@ -924,86 +924,86 @@ def v1_edge_refs_bad(+batch: String) -> String:
   ++ " OR (" ++ v1_t("e.value", "$.details.outcome.subject") ++ "=='object' AND " ++ v1_ref_shape_ok(v1_x("e.value", "$.details.outcome.subject")) ++ " AND " ++ v1_ref_resolved(v1_x("e.value", "$.details.outcome.subject"), batch) ++ "==0))"
 
 def v1_endpoint_violated(+batch: String) -> String:
-  "((EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.edges') e WHERE " ++ v1_edge_endpoints_bad(batch) ++ "))"
-  ++ " OR (EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.nodes') n WHERE " ++ v1_node_refs_bad(batch) ++ "))"
-  ++ " OR (EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.edges') e WHERE " ++ v1_edge_refs_bad(batch) ++ ")))"
+  "((EXISTS(SELECT 1 FROM " ++ v1_each_path(batch, ",'$.edges'") ++ " e WHERE " ++ v1_edge_endpoints_bad(batch) ++ "))"
+  ++ " OR (EXISTS(SELECT 1 FROM " ++ v1_each_path(batch, ",'$.nodes'") ++ " n WHERE " ++ v1_node_refs_bad(batch) ++ "))"
+  ++ " OR (EXISTS(SELECT 1 FROM " ++ v1_each_path(batch, ",'$.edges'") ++ " e WHERE " ++ v1_edge_refs_bad(batch) ++ ")))"
 
 def v1_endpoint_offender(+batch: String) -> String:
-  "(SELECT COALESCE((SELECT json_extract(e.value,'$.id') FROM json_each(" ++ batch ++ ",'$.edges') e WHERE " ++ v1_edge_endpoints_bad(batch) ++ " LIMIT 1), (SELECT json_extract(n.value,'$.id') FROM json_each(" ++ batch ++ ",'$.nodes') n WHERE " ++ v1_node_refs_bad(batch) ++ " LIMIT 1), (SELECT json_extract(e.value,'$.id') FROM json_each(" ++ batch ++ ",'$.edges') e WHERE " ++ v1_edge_refs_bad(batch) ++ " LIMIT 1), 'batch'))"
+  "(SELECT COALESCE((SELECT " ++ v1_x("e.value", "$.id") ++ " FROM " ++ v1_each_path(batch, ",'$.edges'") ++ " e WHERE " ++ v1_edge_endpoints_bad(batch) ++ " LIMIT 1), (SELECT " ++ v1_x("n.value", "$.id") ++ " FROM " ++ v1_each_path(batch, ",'$.nodes'") ++ " n WHERE " ++ v1_node_refs_bad(batch) ++ " LIMIT 1), (SELECT " ++ v1_x("e.value", "$.id") ++ " FROM " ++ v1_each_path(batch, ",'$.edges'") ++ " e WHERE " ++ v1_edge_refs_bad(batch) ++ " LIMIT 1), 'batch'))"
 
 def v1_author_row_bad(+t: String, +author: String) -> String:
-  "(json_extract(" ++ t ++ ".value,'$.author') IS NULL OR json_extract(" ++ t ++ ".value,'$.author')!=" ++ author ++ ")"
+  "(" ++ v1_x(t ++ ".value", "$.author") ++ " IS NULL OR " ++ v1_x(t ++ ".value", "$.author") ++ "!=" ++ author ++ ")"
 
 def v1_author_violated(+batch: String, +author: String) -> String:
-  "((EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.nodes') n WHERE " ++ v1_author_row_bad("n", author) ++ "))"
-  ++ " OR (EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.edges') e WHERE " ++ v1_author_row_bad("e", author) ++ "))"
+  "((EXISTS(SELECT 1 FROM " ++ v1_each_path(batch, ",'$.nodes'") ++ " n WHERE " ++ v1_author_row_bad("n", author) ++ "))"
+  ++ " OR (EXISTS(SELECT 1 FROM " ++ v1_each_path(batch, ",'$.edges'") ++ " e WHERE " ++ v1_author_row_bad("e", author) ++ "))"
   ++ " OR (NOT EXISTS(SELECT 1 FROM sessions WHERE id=" ++ author ++ ")))"
 
 def v1_author_offender(+batch: String, +author: String) -> String:
-  "(SELECT COALESCE((SELECT json_extract(n.value,'$.id') FROM json_each(" ++ batch ++ ",'$.nodes') n WHERE " ++ v1_author_row_bad("n", author) ++ " LIMIT 1), (SELECT json_extract(e.value,'$.id') FROM json_each(" ++ batch ++ ",'$.edges') e WHERE " ++ v1_author_row_bad("e", author) ++ " LIMIT 1), 'batch'))"
+  "(SELECT COALESCE((SELECT " ++ v1_x("n.value", "$.id") ++ " FROM " ++ v1_each_path(batch, ",'$.nodes'") ++ " n WHERE " ++ v1_author_row_bad("n", author) ++ " LIMIT 1), (SELECT " ++ v1_x("e.value", "$.id") ++ " FROM " ++ v1_each_path(batch, ",'$.edges'") ++ " e WHERE " ++ v1_author_row_bad("e", author) ++ " LIMIT 1), 'batch'))"
 
 # Node and edge identities share one v1 namespace: a node id taken by a
 # stored or batch edge is a conflict under either rule, so a bare v1 id
 # stays unambiguous as node XOR edge.
 def v1_node_identity_bad(+t: String, +batch: String) -> String:
-  "((EXISTS(SELECT 1 FROM knowledge_v1 WHERE id==json_extract(" ++ t ++ ".value,'$.id') AND payload!=" ++ t ++ ".value))"
-  ++ " OR (EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.nodes') m WHERE m.fullkey!=" ++ t ++ ".fullkey AND json_extract(m.value,'$.id')==json_extract(" ++ t ++ ".value,'$.id') AND m.value!=" ++ t ++ ".value))"
-  ++ " OR (EXISTS(SELECT 1 FROM knowledge_edges_v1 WHERE id==json_extract(" ++ t ++ ".value,'$.id')))"
-  ++ " OR (EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.edges') m WHERE json_extract(m.value,'$.id')==json_extract(" ++ t ++ ".value,'$.id'))))"
+  "((EXISTS(SELECT 1 FROM knowledge_v1 WHERE id==" ++ v1_x(t ++ ".value", "$.id") ++ " AND payload!=" ++ t ++ ".value))"
+  ++ " OR (EXISTS(SELECT 1 FROM " ++ v1_each_path(batch, ",'$.nodes'") ++ " m WHERE m.fullkey!=" ++ t ++ ".fullkey AND " ++ v1_x("m.value", "$.id") ++ "==" ++ v1_x(t ++ ".value", "$.id") ++ " AND m.value!=" ++ t ++ ".value))"
+  ++ " OR (EXISTS(SELECT 1 FROM knowledge_edges_v1 WHERE id==" ++ v1_x(t ++ ".value", "$.id") ++ "))"
+  ++ " OR (EXISTS(SELECT 1 FROM " ++ v1_each_path(batch, ",'$.edges'") ++ " m WHERE " ++ v1_x("m.value", "$.id") ++ "==" ++ v1_x(t ++ ".value", "$.id") ++ ")))"
 
 def v1_edge_identity_bad(+t: String, +batch: String) -> String:
-  "((EXISTS(SELECT 1 FROM knowledge_edges_v1 WHERE id==json_extract(" ++ t ++ ".value,'$.id') AND payload!=" ++ t ++ ".value))"
-  ++ " OR (EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.edges') m WHERE m.fullkey!=" ++ t ++ ".fullkey AND json_extract(m.value,'$.id')==json_extract(" ++ t ++ ".value,'$.id') AND m.value!=" ++ t ++ ".value))"
-  ++ " OR (EXISTS(SELECT 1 FROM knowledge_v1 WHERE id==json_extract(" ++ t ++ ".value,'$.id')))"
-  ++ " OR (EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.nodes') m WHERE json_extract(m.value,'$.id')==json_extract(" ++ t ++ ".value,'$.id'))))"
+  "((EXISTS(SELECT 1 FROM knowledge_edges_v1 WHERE id==" ++ v1_x(t ++ ".value", "$.id") ++ " AND payload!=" ++ t ++ ".value))"
+  ++ " OR (EXISTS(SELECT 1 FROM " ++ v1_each_path(batch, ",'$.edges'") ++ " m WHERE m.fullkey!=" ++ t ++ ".fullkey AND " ++ v1_x("m.value", "$.id") ++ "==" ++ v1_x(t ++ ".value", "$.id") ++ " AND m.value!=" ++ t ++ ".value))"
+  ++ " OR (EXISTS(SELECT 1 FROM knowledge_v1 WHERE id==" ++ v1_x(t ++ ".value", "$.id") ++ "))"
+  ++ " OR (EXISTS(SELECT 1 FROM " ++ v1_each_path(batch, ",'$.nodes'") ++ " m WHERE " ++ v1_x("m.value", "$.id") ++ "==" ++ v1_x(t ++ ".value", "$.id") ++ ")))"
 
 def v1_identity_violated(+batch: String) -> String:
-  "((EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.nodes') n WHERE " ++ v1_node_identity_bad("n", batch) ++ "))"
-  ++ " OR (EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.edges') e WHERE " ++ v1_edge_identity_bad("e", batch) ++ ")))"
+  "((EXISTS(SELECT 1 FROM " ++ v1_each_path(batch, ",'$.nodes'") ++ " n WHERE " ++ v1_node_identity_bad("n", batch) ++ "))"
+  ++ " OR (EXISTS(SELECT 1 FROM " ++ v1_each_path(batch, ",'$.edges'") ++ " e WHERE " ++ v1_edge_identity_bad("e", batch) ++ ")))"
 
 def v1_identity_offender(+batch: String) -> String:
-  "(SELECT COALESCE((SELECT json_extract(n.value,'$.id') FROM json_each(" ++ batch ++ ",'$.nodes') n WHERE " ++ v1_node_identity_bad("n", batch) ++ " LIMIT 1), (SELECT json_extract(e.value,'$.id') FROM json_each(" ++ batch ++ ",'$.edges') e WHERE " ++ v1_edge_identity_bad("e", batch) ++ " LIMIT 1), 'batch'))"
+  "(SELECT COALESCE((SELECT " ++ v1_x("n.value", "$.id") ++ " FROM " ++ v1_each_path(batch, ",'$.nodes'") ++ " n WHERE " ++ v1_node_identity_bad("n", batch) ++ " LIMIT 1), (SELECT " ++ v1_x("e.value", "$.id") ++ " FROM " ++ v1_each_path(batch, ",'$.edges'") ++ " e WHERE " ++ v1_edge_identity_bad("e", batch) ++ " LIMIT 1), 'batch'))"
 
 def v1_batch_arg_method(+aid: String, +methods: String, +batch: String) -> String:
-  "(EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.nodes') m WHERE json_extract(m.value,'$.id')==" ++ aid ++ " AND json_extract(m.value,'$.kind')=='argument' AND json_extract(m.value,'$.details.method') IN (" ++ methods ++ ")))"
+  "(EXISTS(SELECT 1 FROM " ++ v1_each_path(batch, ",'$.nodes'") ++ " m WHERE " ++ v1_x("m.value", "$.id") ++ "==" ++ aid ++ " AND " ++ v1_x("m.value", "$.kind") ++ "=='argument' AND " ++ v1_x("m.value", "$.details.method") ++ " IN (" ++ methods ++ ")))"
 
 def v1_stored_arg_method(+aid: String, +methods: String) -> String:
   "(EXISTS(SELECT 1 FROM knowledge_v1 WHERE id==" ++ aid ++ " AND kind='argument' AND json_extract(details,'$.method') IN (" ++ methods ++ ")))"
 
 def v1_batch_arg_counter(+sid: String, +batch: String) -> String:
-  "(EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.nodes') m WHERE json_extract(m.value,'$.id')==" ++ sid ++ " AND json_extract(m.value,'$.kind')=='argument' AND json_extract(m.value,'$.details.method') IN ('deduction','formal-proof','counterexample') AND (json_extract(m.value,'$.details.method')!='counterexample' OR json_type(m.value,'$.details.witness') IS NOT NULL)))"
+  "(EXISTS(SELECT 1 FROM " ++ v1_each_path(batch, ",'$.nodes'") ++ " m WHERE " ++ v1_x("m.value", "$.id") ++ "==" ++ sid ++ " AND " ++ v1_x("m.value", "$.kind") ++ "=='argument' AND " ++ v1_x("m.value", "$.details.method") ++ " IN ('deduction','formal-proof','counterexample') AND (" ++ v1_x("m.value", "$.details.method") ++ "!='counterexample' OR " ++ v1_t("m.value", "$.details.witness") ++ " IS NOT NULL)))"
 
 def v1_stored_arg_counter(+sid: String) -> String:
   "(EXISTS(SELECT 1 FROM knowledge_v1 WHERE id==" ++ sid ++ " AND kind='argument' AND json_extract(details,'$.method') IN ('deduction','formal-proof','counterexample') AND (json_extract(details,'$.method')!='counterexample' OR json_type(details,'$.witness') IS NOT NULL)))"
 
 def v1_method_edge_bad(+batch: String) -> String:
-  "((json_extract(e.value,'$.kind')=='implies' AND NOT(" ++ v1_batch_arg_method("json_extract(e.value,'$.details.argument.id')", "'deduction','formal-proof'", batch) ++ " OR " ++ v1_stored_arg_method("json_extract(e.value,'$.details.argument.id')", "'deduction','formal-proof'") ++ "))"
-  ++ " OR (json_extract(e.value,'$.kind')=='proves' AND NOT(" ++ v1_batch_arg_method("json_extract(e.value,'$.source.id')", "'deduction','formal-proof'", batch) ++ " OR " ++ v1_stored_arg_method("json_extract(e.value,'$.source.id')", "'deduction','formal-proof'") ++ "))"
-  ++ " OR (json_extract(e.value,'$.kind')=='disproves' AND NOT(" ++ v1_batch_arg_counter("json_extract(e.value,'$.source.id')", batch) ++ " OR " ++ v1_stored_arg_counter("json_extract(e.value,'$.source.id')") ++ ")))"
+  "((" ++ v1_x("e.value", "$.kind") ++ "=='implies' AND NOT(" ++ v1_batch_arg_method("" ++ v1_x("e.value", "$.details.argument.id") ++ "", "'deduction','formal-proof'", batch) ++ " OR " ++ v1_stored_arg_method("" ++ v1_x("e.value", "$.details.argument.id") ++ "", "'deduction','formal-proof'") ++ "))"
+  ++ " OR (" ++ v1_x("e.value", "$.kind") ++ "=='proves' AND NOT(" ++ v1_batch_arg_method("" ++ v1_x("e.value", "$.source.id") ++ "", "'deduction','formal-proof'", batch) ++ " OR " ++ v1_stored_arg_method("" ++ v1_x("e.value", "$.source.id") ++ "", "'deduction','formal-proof'") ++ "))"
+  ++ " OR (" ++ v1_x("e.value", "$.kind") ++ "=='disproves' AND NOT(" ++ v1_batch_arg_counter("" ++ v1_x("e.value", "$.source.id") ++ "", batch) ++ " OR " ++ v1_stored_arg_counter("" ++ v1_x("e.value", "$.source.id") ++ "") ++ ")))"
 
 def v1_method_violated(+batch: String) -> String:
-  "(EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.edges') e WHERE " ++ v1_method_edge_bad(batch) ++ "))"
+  "(EXISTS(SELECT 1 FROM " ++ v1_each_path(batch, ",'$.edges'") ++ " e WHERE " ++ v1_method_edge_bad(batch) ++ "))"
 
 def v1_method_offender(+batch: String) -> String:
-  "(SELECT COALESCE((SELECT json_extract(e.value,'$.id') FROM json_each(" ++ batch ++ ",'$.edges') e WHERE " ++ v1_method_edge_bad(batch) ++ " LIMIT 1), 'batch'))"
+  "(SELECT COALESCE((SELECT " ++ v1_x("e.value", "$.id") ++ " FROM " ++ v1_each_path(batch, ",'$.edges'") ++ " e WHERE " ++ v1_method_edge_bad(batch) ++ " LIMIT 1), 'batch'))"
 
 def v1_target_is_study(+tid: String, +batch: String) -> String:
-  "((EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.nodes') m WHERE json_extract(m.value,'$.id')==" ++ tid ++ " AND json_extract(m.value,'$.kind')=='study')) OR (EXISTS(SELECT 1 FROM knowledge_v1 WHERE id==" ++ tid ++ " AND kind='study')))"
+  "((EXISTS(SELECT 1 FROM " ++ v1_each_path(batch, ",'$.nodes'") ++ " m WHERE " ++ v1_x("m.value", "$.id") ++ "==" ++ tid ++ " AND " ++ v1_x("m.value", "$.kind") ++ "=='study')) OR (EXISTS(SELECT 1 FROM knowledge_v1 WHERE id==" ++ tid ++ " AND kind='study')))"
 
 def v1_target_identity(+tid: String, +batch: String) -> String:
-  "(SELECT COALESCE((SELECT json_extract(m.value,'$.details.studyIdentity') FROM json_each(" ++ batch ++ ",'$.nodes') m WHERE json_extract(m.value,'$.id')==" ++ tid ++ " AND json_extract(m.value,'$.kind')=='study' LIMIT 1), (SELECT json_extract(details,'$.details.studyIdentity') FROM knowledge_v1 WHERE id==" ++ tid ++ " AND kind='study' LIMIT 1)))"
+  "(SELECT COALESCE((SELECT " ++ v1_x("m.value", "$.details.studyIdentity") ++ " FROM " ++ v1_each_path(batch, ",'$.nodes'") ++ " m WHERE " ++ v1_x("m.value", "$.id") ++ "==" ++ tid ++ " AND " ++ v1_x("m.value", "$.kind") ++ "=='study' LIMIT 1), (SELECT json_extract(details,'$.details.studyIdentity') FROM knowledge_v1 WHERE id==" ++ tid ++ " AND kind='study' LIMIT 1)))"
 
 def v1_source_study_ok(+sid: String, +tident: String, +batch: String) -> String:
-  "((EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.nodes') m WHERE json_extract(m.value,'$.id')==" ++ sid ++ " AND json_extract(m.value,'$.kind')=='study' AND json_extract(m.value,'$.details.studyIdentity')==" ++ tident ++ ")) OR (EXISTS(SELECT 1 FROM knowledge_v1 WHERE id==" ++ sid ++ " AND kind='study' AND json_extract(details,'$.details.studyIdentity')==" ++ tident ++ ")))"
+  "((EXISTS(SELECT 1 FROM " ++ v1_each_path(batch, ",'$.nodes'") ++ " m WHERE " ++ v1_x("m.value", "$.id") ++ "==" ++ sid ++ " AND " ++ v1_x("m.value", "$.kind") ++ "=='study' AND " ++ v1_x("m.value", "$.details.studyIdentity") ++ "==" ++ tident ++ ")) OR (EXISTS(SELECT 1 FROM knowledge_v1 WHERE id==" ++ sid ++ " AND kind='study' AND json_extract(details,'$.details.studyIdentity')==" ++ tident ++ ")))"
 
 def v1_study_edge_bad(+batch: String) -> String:
-  "(json_extract(e.value,'$.kind')=='supersedes' AND json_type(e.value,'$.source.edgeKind') IS NULL AND json_type(e.value,'$.target.edgeKind') IS NULL AND " ++ v1_target_is_study("json_extract(e.value,'$.target.id')", batch) ++ " AND NOT " ++ v1_source_study_ok("json_extract(e.value,'$.source.id')", v1_target_identity("json_extract(e.value,'$.target.id')", batch), batch) ++ ")"
+  "(" ++ v1_x("e.value", "$.kind") ++ "=='supersedes' AND " ++ v1_t("e.value", "$.source.edgeKind") ++ " IS NULL AND " ++ v1_t("e.value", "$.target.edgeKind") ++ " IS NULL AND " ++ v1_target_is_study("" ++ v1_x("e.value", "$.target.id") ++ "", batch) ++ " AND NOT " ++ v1_source_study_ok("" ++ v1_x("e.value", "$.source.id") ++ "", v1_target_identity("" ++ v1_x("e.value", "$.target.id") ++ "", batch), batch) ++ ")"
 
 def v1_study_violated(+batch: String) -> String:
-  "(EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.edges') e WHERE " ++ v1_study_edge_bad(batch) ++ "))"
+  "(EXISTS(SELECT 1 FROM " ++ v1_each_path(batch, ",'$.edges'") ++ " e WHERE " ++ v1_study_edge_bad(batch) ++ "))"
 
 def v1_study_offender(+batch: String) -> String:
-  "(SELECT COALESCE((SELECT json_extract(e.value,'$.id') FROM json_each(" ++ batch ++ ",'$.edges') e WHERE " ++ v1_study_edge_bad(batch) ++ " LIMIT 1), 'batch'))"
+  "(SELECT COALESCE((SELECT " ++ v1_x("e.value", "$.id") ++ " FROM " ++ v1_each_path(batch, ",'$.edges'") ++ " e WHERE " ++ v1_study_edge_bad(batch) ++ " LIMIT 1), 'batch'))"
 
 def v1_blocked(+batch: String, +author: String) -> String:
   "(" ++ v1_structure_violated(batch)
@@ -1017,7 +1017,7 @@ def v1_refusal_sql(+rule: String, +offender: String) -> String:
   "('{\"error\":\"v1-refused\",\"rule\":\"" ++ rule ++ "\",\"id\":' || json_quote(" ++ offender ++ ") || '}')"
 
 def v1_admitted_sql(+batch: String) -> String:
-  "('{\"admitted\":{\"nodes\":' || COALESCE((SELECT json_group_array(json_extract(value,'$.id')) FROM json_each(" ++ batch ++ ",'$.nodes')), json('[]')) || ',\"edges\":' || COALESCE((SELECT json_group_array(json_extract(value,'$.id')) FROM json_each(" ++ batch ++ ",'$.edges')), json('[]')) || '}}')"
+  "('{\"admitted\":{\"nodes\":' || COALESCE((SELECT json_group_array(" ++ v1_x("value", "$.id") ++ ") FROM " ++ v1_each_path(batch, ",'$.nodes'") ++ "), json('[]')) || ',\"edges\":' || COALESCE((SELECT json_group_array(" ++ v1_x("value", "$.id") ++ ") FROM " ++ v1_each_path(batch, ",'$.edges'") ++ "), json('[]')) || '}}')"
 
 def v1_answer(+batch: String, +author: String) -> String:
   "SELECT CASE WHEN " ++ v1_structure_violated(batch) ++ " THEN " ++ v1_refusal_sql("structure", v1_structure_offender(batch))
@@ -1029,22 +1029,22 @@ def v1_answer(+batch: String, +author: String) -> String:
   ++ " ELSE " ++ v1_admitted_sql(batch) ++ " END;"
 
 def v1_node_supersedes(+batch: String) -> String:
-  "(SELECT json_extract(se.value,'$.target.id') FROM json_each(" ++ batch ++ ",'$.edges') se WHERE json_extract(se.value,'$.kind')=='supersedes' AND json_type(se.value,'$.source.edgeKind') IS NULL AND json_extract(se.value,'$.source.id')==json_extract(n.value,'$.id') LIMIT 1)"
+  "(SELECT " ++ v1_x("se.value", "$.target.id") ++ " FROM " ++ v1_each_path(batch, ",'$.edges'") ++ " se WHERE " ++ v1_x("se.value", "$.kind") ++ "=='supersedes' AND " ++ v1_t("se.value", "$.source.edgeKind") ++ " IS NULL AND " ++ v1_x("se.value", "$.source.id") ++ "==" ++ v1_x("n.value", "$.id") ++ " LIMIT 1)"
 
 def v1_edge_supersedes(+batch: String) -> String:
-  "(SELECT json_extract(se.value,'$.target.id') FROM json_each(" ++ batch ++ ",'$.edges') se WHERE json_extract(se.value,'$.kind')=='supersedes' AND json_type(se.value,'$.source.edgeKind') IS NOT NULL AND json_extract(se.value,'$.source.id')==json_extract(e.value,'$.id') LIMIT 1)"
+  "(SELECT " ++ v1_x("se.value", "$.target.id") ++ " FROM " ++ v1_each_path(batch, ",'$.edges'") ++ " se WHERE " ++ v1_x("se.value", "$.kind") ++ "=='supersedes' AND " ++ v1_t("se.value", "$.source.edgeKind") ++ " IS NOT NULL AND " ++ v1_x("se.value", "$.source.id") ++ "==" ++ v1_x("e.value", "$.id") ++ " LIMIT 1)"
 
 def v1_node_insert(+batch: String, +author: String) -> String:
-  "INSERT INTO knowledge_v1(id,author,kind,statement,context,evidence,limits,uncertainty,details,schema_version,supersedes,payload) SELECT json_extract(n.value,'$.id')," ++ author ++ ",json_extract(n.value,'$.kind'),json_extract(n.value,'$.statement'),json_extract(n.value,'$.context'),json_extract(n.value,'$.evidence'),json_extract(n.value,'$.limits'),json_extract(n.value,'$.uncertainty'),json_extract(n.value,'$.details'),1," ++ v1_node_supersedes(batch) ++ ",n.value FROM json_each(" ++ batch ++ ",'$.nodes') n WHERE NOT " ++ v1_blocked(batch, author) ++ " AND NOT EXISTS(SELECT 1 FROM knowledge_v1 WHERE id==json_extract(n.value,'$.id'));"
+  "INSERT INTO knowledge_v1(id,author,kind,statement,context,evidence,limits,uncertainty,details,schema_version,supersedes,payload) SELECT " ++ v1_x("n.value", "$.id") ++ "," ++ author ++ "," ++ v1_x("n.value", "$.kind") ++ "," ++ v1_x("n.value", "$.statement") ++ "," ++ v1_x("n.value", "$.context") ++ "," ++ v1_x("n.value", "$.evidence") ++ "," ++ v1_x("n.value", "$.limits") ++ "," ++ v1_x("n.value", "$.uncertainty") ++ "," ++ v1_x("n.value", "$.details") ++ ",1," ++ v1_node_supersedes(batch) ++ ",n.value FROM " ++ v1_each_path(batch, ",'$.nodes'") ++ " n WHERE NOT " ++ v1_blocked(batch, author) ++ " AND NOT EXISTS(SELECT 1 FROM knowledge_v1 WHERE id==" ++ v1_x("n.value", "$.id") ++ ");"
 
 def v1_edge_insert(+batch: String, +author: String) -> String:
-  "INSERT INTO knowledge_edges_v1(id,author,kind,source,target,context,basis,rationale,limits,uncertainty,details,schema_version,supersedes,payload) SELECT json_extract(e.value,'$.id')," ++ author ++ ",json_extract(e.value,'$.kind'),json_extract(e.value,'$.source'),json_extract(e.value,'$.target'),json_extract(e.value,'$.context'),json_extract(e.value,'$.basis'),json_extract(e.value,'$.rationale'),json_extract(e.value,'$.limits'),json_extract(e.value,'$.uncertainty'),json_extract(e.value,'$.details'),1," ++ v1_edge_supersedes(batch) ++ ",e.value FROM json_each(" ++ batch ++ ",'$.edges') e WHERE NOT " ++ v1_blocked(batch, author) ++ " AND NOT EXISTS(SELECT 1 FROM knowledge_edges_v1 WHERE id==json_extract(e.value,'$.id'));"
+  "INSERT INTO knowledge_edges_v1(id,author,kind,source,target,context,basis,rationale,limits,uncertainty,details,schema_version,supersedes,payload) SELECT " ++ v1_x("e.value", "$.id") ++ "," ++ author ++ "," ++ v1_x("e.value", "$.kind") ++ "," ++ v1_x("e.value", "$.source") ++ "," ++ v1_x("e.value", "$.target") ++ "," ++ v1_x("e.value", "$.context") ++ "," ++ v1_x("e.value", "$.basis") ++ "," ++ v1_x("e.value", "$.rationale") ++ "," ++ v1_x("e.value", "$.limits") ++ "," ++ v1_x("e.value", "$.uncertainty") ++ "," ++ v1_x("e.value", "$.details") ++ ",1," ++ v1_edge_supersedes(batch) ++ ",e.value FROM " ++ v1_each_path(batch, ",'$.edges'") ++ " e WHERE NOT " ++ v1_blocked(batch, author) ++ " AND NOT EXISTS(SELECT 1 FROM knowledge_edges_v1 WHERE id==" ++ v1_x("e.value", "$.id") ++ ");"
 
 def v1_node_fill(+batch: String, +author: String) -> String:
-  "UPDATE knowledge_v1 SET supersedes=(SELECT json_extract(se.value,'$.target.id') FROM json_each(" ++ batch ++ ",'$.edges') se WHERE json_extract(se.value,'$.kind')=='supersedes' AND json_type(se.value,'$.source.edgeKind') IS NULL AND json_extract(se.value,'$.source.id')==knowledge_v1.id LIMIT 1) WHERE supersedes IS NULL AND EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.edges') se WHERE json_extract(se.value,'$.kind')=='supersedes' AND json_type(se.value,'$.source.edgeKind') IS NULL AND json_extract(se.value,'$.source.id')==knowledge_v1.id) AND NOT " ++ v1_blocked(batch, author) ++ ";"
+  "UPDATE knowledge_v1 SET supersedes=(SELECT " ++ v1_x("se.value", "$.target.id") ++ " FROM " ++ v1_each_path(batch, ",'$.edges'") ++ " se WHERE " ++ v1_x("se.value", "$.kind") ++ "=='supersedes' AND " ++ v1_t("se.value", "$.source.edgeKind") ++ " IS NULL AND " ++ v1_x("se.value", "$.source.id") ++ "==knowledge_v1.id LIMIT 1) WHERE supersedes IS NULL AND EXISTS(SELECT 1 FROM " ++ v1_each_path(batch, ",'$.edges'") ++ " se WHERE " ++ v1_x("se.value", "$.kind") ++ "=='supersedes' AND " ++ v1_t("se.value", "$.source.edgeKind") ++ " IS NULL AND " ++ v1_x("se.value", "$.source.id") ++ "==knowledge_v1.id) AND NOT " ++ v1_blocked(batch, author) ++ ";"
 
 def v1_edge_fill(+batch: String, +author: String) -> String:
-  "UPDATE knowledge_edges_v1 SET supersedes=(SELECT json_extract(se.value,'$.target.id') FROM json_each(" ++ batch ++ ",'$.edges') se WHERE json_extract(se.value,'$.kind')=='supersedes' AND json_type(se.value,'$.source.edgeKind') IS NOT NULL AND json_extract(se.value,'$.source.id')==knowledge_edges_v1.id LIMIT 1) WHERE supersedes IS NULL AND EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.edges') se WHERE json_extract(se.value,'$.kind')=='supersedes' AND json_type(se.value,'$.source.edgeKind') IS NOT NULL AND json_extract(se.value,'$.source.id')==knowledge_edges_v1.id) AND NOT " ++ v1_blocked(batch, author) ++ ";"
+  "UPDATE knowledge_edges_v1 SET supersedes=(SELECT " ++ v1_x("se.value", "$.target.id") ++ " FROM " ++ v1_each_path(batch, ",'$.edges'") ++ " se WHERE " ++ v1_x("se.value", "$.kind") ++ "=='supersedes' AND " ++ v1_t("se.value", "$.source.edgeKind") ++ " IS NOT NULL AND " ++ v1_x("se.value", "$.source.id") ++ "==knowledge_edges_v1.id LIMIT 1) WHERE supersedes IS NULL AND EXISTS(SELECT 1 FROM " ++ v1_each_path(batch, ",'$.edges'") ++ " se WHERE " ++ v1_x("se.value", "$.kind") ++ "=='supersedes' AND " ++ v1_t("se.value", "$.source.edgeKind") ++ " IS NOT NULL AND " ++ v1_x("se.value", "$.source.id") ++ "==knowledge_edges_v1.id) AND NOT " ++ v1_blocked(batch, author) ++ ";"
 
 def v1_commit_sql(+batch: String, +author: String) -> String:
   "BEGIN IMMEDIATE;" ++ C.schema() ++ v1_legacy_schema() ++ v1_schema() ++ v1_node_insert(batch, author) ++ v1_edge_insert(batch, author) ++ v1_node_fill(batch, author) ++ v1_edge_fill(batch, author) ++ v1_answer(batch, author) ++ "COMMIT;"

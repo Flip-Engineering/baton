@@ -370,40 +370,40 @@ def v1_a_refused_answer_carries_the_v1_prefix(saved):
   {==}
 
 law v1_required_text_rejects_missing_wrong_and_empty:
-  {K1.v1_req_text("value", "$.id") == "(json_type(value,'$.id') IS NULL OR json_type(value,'$.id')!='text' OR json_extract(value,'$.id')='')" : String}
+  {K1.v1_req_text("value", "$.id")    == "((CASE WHEN json_valid(value) THEN json_type(value,'$.id') END) IS NULL OR (CASE WHEN json_valid(value) THEN json_type(value,'$.id') END)!='text' OR (CASE WHEN json_valid(value) THEN json_extract(value,'$.id') END)='')" : String}
 
 def v1_required_text_rejects_missing_wrong_and_empty():
   {==}
 
 law v1_a_node_reference_carries_id_and_closed_kind:
-  {K1.v1_noderef_ok("r") == "((SELECT COUNT(*) FROM json_each(r))==2 AND (json_type(r,'$.id') IS NULL OR json_type(r,'$.id')!='text' OR json_extract(r,'$.id')='')==0 AND (json_type(r,'$.kind') IS NULL OR json_type(r,'$.kind')!='text' OR json_extract(r,'$.kind') NOT IN ('question','claim','hypothesis','observation','research-finding','study','evidence','argument','proposal','decision'))==0)" : String}
+  {K1.v1_noderef_ok("r")    == "((SELECT COUNT(*) FROM json_each(CASE WHEN json_valid(r) THEN (r) END))==2 AND ((CASE WHEN json_valid(r) THEN json_type(r,'$.id') END) IS NULL OR (CASE WHEN json_valid(r) THEN json_type(r,'$.id') END)!='text' OR (CASE WHEN json_valid(r) THEN json_extract(r,'$.id') END)='')==0 AND ((CASE WHEN json_valid(r) THEN json_type(r,'$.kind') END) IS NULL OR (CASE WHEN json_valid(r) THEN json_type(r,'$.kind') END)!='text' OR (CASE WHEN json_valid(r) THEN json_extract(r,'$.kind') END) NOT IN ('question','claim','hypothesis','observation','research-finding','study','evidence','argument','proposal','decision'))==0)" : String}
 
 def v1_a_node_reference_carries_id_and_closed_kind():
   {==}
 
 law v1_an_edge_reference_carries_id_edge_and_edge_kind:
-  {K1.v1_edgeref_ok("r") == "((SELECT COUNT(*) FROM json_each(r))==3 AND (json_type(r,'$.id') IS NULL OR json_type(r,'$.id')!='text' OR json_extract(r,'$.id')='')==0 AND json_type(r,'$.kind')=='text' AND json_extract(r,'$.kind')=='edge' AND (json_type(r,'$.edgeKind') IS NULL OR json_type(r,'$.edgeKind')!='text' OR json_extract(r,'$.edgeKind') NOT IN ('supports','challenges','contradicts','negates','implies','proves','disproves','causes','correlates-with','competes-with','replicates','derived-from','investigates','produces','informs','supersedes'))==0)" : String}
+  {K1.v1_edgeref_ok("r")    == "((SELECT COUNT(*) FROM json_each(CASE WHEN json_valid(r) THEN (r) END))==3 AND ((CASE WHEN json_valid(r) THEN json_type(r,'$.id') END) IS NULL OR (CASE WHEN json_valid(r) THEN json_type(r,'$.id') END)!='text' OR (CASE WHEN json_valid(r) THEN json_extract(r,'$.id') END)='')==0 AND (CASE WHEN json_valid(r) THEN json_type(r,'$.kind') END)=='text' AND (CASE WHEN json_valid(r) THEN json_extract(r,'$.kind') END)=='edge' AND ((CASE WHEN json_valid(r) THEN json_type(r,'$.edgeKind') END) IS NULL OR (CASE WHEN json_valid(r) THEN json_type(r,'$.edgeKind') END)!='text' OR (CASE WHEN json_valid(r) THEN json_extract(r,'$.edgeKind') END) NOT IN ('supports','challenges','contradicts','negates','implies','proves','disproves','causes','correlates-with','competes-with','replicates','derived-from','investigates','produces','informs','supersedes'))==0)" : String}
 
 def v1_an_edge_reference_carries_id_edge_and_edge_kind():
   {==}
 
 law v1_a_batch_checks_validity_closure_version_and_arrays:
   for batch: String
-  {K1.v1_batch_violated(batch) == "(json_valid(" ++ batch ++ ")!=1 OR (EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ") WHERE key NOT IN ('schemaVersion','nodes','edges'))) OR json_type(" ++ batch ++ ",'$.schemaVersion') IS NULL OR json_extract(" ++ batch ++ ",'$.schemaVersion')!=1 OR json_type(" ++ batch ++ ",'$.nodes') IS NULL OR json_type(" ++ batch ++ ",'$.nodes')!='array' OR json_type(" ++ batch ++ ",'$.edges') IS NULL OR json_type(" ++ batch ++ ",'$.edges')!='array')" : String}
+  {K1.v1_batch_violated(batch) == "(json_valid(" ++ batch ++ ")!=1 OR (EXISTS(SELECT 1 FROM " ++ K1.v1_each_path(batch, "") ++ " WHERE key NOT IN ('schemaVersion','nodes','edges'))) OR " ++ K1.v1_t(batch, "$.schemaVersion") ++ " IS NULL OR " ++ K1.v1_x(batch, "$.schemaVersion") ++ "!=1 OR " ++ K1.v1_t(batch, "$.nodes") ++ " IS NULL OR " ++ K1.v1_t(batch, "$.nodes") ++ "!='array' OR " ++ K1.v1_t(batch, "$.edges") ++ " IS NULL OR " ++ K1.v1_t(batch, "$.edges") ++ "!='array')" : String}
 
 def v1_a_batch_checks_validity_closure_version_and_arrays(batch):
   {==}
 
 law v1_structure_checks_batch_then_nodes_then_edges:
   for batch: String
-  {K1.v1_structure_violated(batch) == "(" ++ K1.v1_batch_violated(batch) ++ " OR (EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.nodes') n WHERE " ++ K1.v1_node_envelope_violated() ++ " OR " ++ K1.v1_node_details_violated() ++ ")) OR (EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.edges') e WHERE " ++ K1.v1_edge_envelope_violated() ++ " OR " ++ K1.v1_edge_details_violated() ++ ")))" : String}
+  {K1.v1_structure_violated(batch) == "(" ++ K1.v1_batch_violated(batch) ++ " OR (EXISTS(SELECT 1 FROM " ++ K1.v1_each_path(batch, ",'$.nodes'") ++ " n WHERE " ++ K1.v1_node_envelope_violated() ++ " OR " ++ K1.v1_node_details_violated() ++ ")) OR (EXISTS(SELECT 1 FROM " ++ K1.v1_each_path(batch, ",'$.edges'") ++ " e WHERE " ++ K1.v1_edge_envelope_violated() ++ " OR " ++ K1.v1_edge_details_violated() ++ ")))" : String}
 
 def v1_structure_checks_batch_then_nodes_then_edges(batch):
   {==}
 
 law v1_the_endpoint_rule_covers_edges_and_internal_references:
   for batch: String
-  {K1.v1_endpoint_violated(batch) == "((EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.edges') e WHERE " ++ K1.v1_edge_endpoints_bad(batch) ++ ")) OR (EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.nodes') n WHERE " ++ K1.v1_node_refs_bad(batch) ++ ")) OR (EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.edges') e WHERE " ++ K1.v1_edge_refs_bad(batch) ++ ")))" : String}
+  {K1.v1_endpoint_violated(batch) == "((EXISTS(SELECT 1 FROM " ++ K1.v1_each_path(batch, ",'$.edges'") ++ " e WHERE " ++ K1.v1_edge_endpoints_bad(batch) ++ ")) OR (EXISTS(SELECT 1 FROM " ++ K1.v1_each_path(batch, ",'$.nodes'") ++ " n WHERE " ++ K1.v1_node_refs_bad(batch) ++ ")) OR (EXISTS(SELECT 1 FROM " ++ K1.v1_each_path(batch, ",'$.edges'") ++ " e WHERE " ++ K1.v1_edge_refs_bad(batch) ++ ")))" : String}
 
 def v1_the_endpoint_rule_covers_edges_and_internal_references(batch):
   {==}
@@ -435,7 +435,7 @@ def v1_the_commit_writes_before_it_answers(batch, author):
 law v1_node_inserts_skip_identical_rows:
   for batch: String
   for author: String
-  {K1.v1_node_insert(batch, author) == "INSERT INTO knowledge_v1(id,author,kind,statement,context,evidence,limits,uncertainty,details,schema_version,supersedes,payload) SELECT json_extract(n.value,'$.id')," ++ author ++ ",json_extract(n.value,'$.kind'),json_extract(n.value,'$.statement'),json_extract(n.value,'$.context'),json_extract(n.value,'$.evidence'),json_extract(n.value,'$.limits'),json_extract(n.value,'$.uncertainty'),json_extract(n.value,'$.details'),1," ++ K1.v1_node_supersedes(batch) ++ ",n.value FROM json_each(" ++ batch ++ ",'$.nodes') n WHERE NOT " ++ K1.v1_blocked(batch, author) ++ " AND NOT EXISTS(SELECT 1 FROM knowledge_v1 WHERE id==json_extract(n.value,'$.id'));" : String}
+  {K1.v1_node_insert(batch, author) == "INSERT INTO knowledge_v1(id,author,kind,statement,context,evidence,limits,uncertainty,details,schema_version,supersedes,payload) SELECT " ++ K1.v1_x("n.value", "$.id") ++ "," ++ author ++ "," ++ K1.v1_x("n.value", "$.kind") ++ "," ++ K1.v1_x("n.value", "$.statement") ++ "," ++ K1.v1_x("n.value", "$.context") ++ "," ++ K1.v1_x("n.value", "$.evidence") ++ "," ++ K1.v1_x("n.value", "$.limits") ++ "," ++ K1.v1_x("n.value", "$.uncertainty") ++ "," ++ K1.v1_x("n.value", "$.details") ++ ",1," ++ K1.v1_node_supersedes(batch) ++ ",n.value FROM " ++ K1.v1_each_path(batch, ",'$.nodes'") ++ " n WHERE NOT " ++ K1.v1_blocked(batch, author) ++ " AND NOT EXISTS(SELECT 1 FROM knowledge_v1 WHERE id==" ++ K1.v1_x("n.value", "$.id") ++ ");" : String}
 
 def v1_node_inserts_skip_identical_rows(batch, author):
   {==}
@@ -493,7 +493,7 @@ def v1_promote_queries_and_answers(db,id,promoter,source_kind,source,destination
 # declared kind. Legacy rows never satisfy a reference, even when kinds
 # overlap both versions; they appear solely as explicit legacy citations.
 law v1_node_match_resolves_v1_identities_only:
-  {K1.v1_node_match("r", "batch") == "((EXISTS(SELECT 1 FROM json_each(batch,'$.nodes') m WHERE json_extract(m.value,'$.id')==json_extract(r,'$.id') AND json_extract(m.value,'$.kind')==json_extract(r,'$.kind')))" ++ " OR (EXISTS(SELECT 1 FROM knowledge_v1 WHERE id==json_extract(r,'$.id') AND kind==json_extract(r,'$.kind'))))" : String}
+  {K1.v1_node_match("r", "batch") == "((EXISTS(SELECT 1 FROM " ++ K1.v1_each_path("batch", ",'$.nodes'") ++ " m WHERE " ++ K1.v1_x("m.value", "$.id") ++ "==" ++ K1.v1_x("r", "$.id") ++ " AND " ++ K1.v1_x("m.value", "$.kind") ++ "==" ++ K1.v1_x("r", "$.kind") ++ "))" ++ " OR (EXISTS(SELECT 1 FROM knowledge_v1 WHERE id==" ++ K1.v1_x("r", "$.id") ++ " AND kind==" ++ K1.v1_x("r", "$.kind") ++ ")))" : String}
 
 def v1_node_match_resolves_v1_identities_only():
   {==}
@@ -561,14 +561,14 @@ def v1_endpoint_fields_matches_knowledge_builder(row, groups):
 # duplicates; the study rule covers supersedes progress.
 law v1_identity_rule_covers_stored_and_batch_duplicates:
   for batch: String
-  {K1.v1_identity_violated(batch) == "((EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.nodes') n WHERE " ++ K1.v1_node_identity_bad("n", batch) ++ "))" ++ " OR (EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.edges') e WHERE " ++ K1.v1_edge_identity_bad("e", batch) ++ ")))" : String}
+  {K1.v1_identity_violated(batch) == "((EXISTS(SELECT 1 FROM " ++ K1.v1_each_path(batch, ",'$.nodes'") ++ " n WHERE " ++ K1.v1_node_identity_bad("n", batch) ++ "))" ++ " OR (EXISTS(SELECT 1 FROM " ++ K1.v1_each_path(batch, ",'$.edges'") ++ " e WHERE " ++ K1.v1_edge_identity_bad("e", batch) ++ ")))" : String}
 
 def v1_identity_rule_covers_stored_and_batch_duplicates(batch):
   {==}
 
 law v1_study_rule_covers_supersedes_progress:
   for batch: String
-  {K1.v1_study_violated(batch) == "(EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.edges') e WHERE " ++ K1.v1_study_edge_bad(batch) ++ "))" : String}
+  {K1.v1_study_violated(batch) == "(EXISTS(SELECT 1 FROM " ++ K1.v1_each_path(batch, ",'$.edges'") ++ " e WHERE " ++ K1.v1_study_edge_bad(batch) ++ "))" : String}
 
 def v1_study_rule_covers_supersedes_progress(batch):
   {==}
@@ -579,7 +579,7 @@ def v1_study_rule_covers_supersedes_progress(batch):
 law v1_node_identity_covers_shared_namespace:
   for t: String
   for batch: String
-  {K1.v1_node_identity_bad(t, batch) == "((EXISTS(SELECT 1 FROM knowledge_v1 WHERE id==json_extract(" ++ t ++ ".value,'$.id') AND payload!=" ++ t ++ ".value))" ++ " OR (EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.nodes') m WHERE m.fullkey!=" ++ t ++ ".fullkey AND json_extract(m.value,'$.id')==json_extract(" ++ t ++ ".value,'$.id') AND m.value!=" ++ t ++ ".value))" ++ " OR (EXISTS(SELECT 1 FROM knowledge_edges_v1 WHERE id==json_extract(" ++ t ++ ".value,'$.id')))" ++ " OR (EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.edges') m WHERE json_extract(m.value,'$.id')==json_extract(" ++ t ++ ".value,'$.id'))))" : String}
+  {K1.v1_node_identity_bad(t, batch) == "((EXISTS(SELECT 1 FROM knowledge_v1 WHERE id==" ++ K1.v1_x(t ++ ".value", "$.id") ++ " AND payload!=" ++ t ++ ".value))" ++ " OR (EXISTS(SELECT 1 FROM " ++ K1.v1_each_path(batch, ",'$.nodes'") ++ " m WHERE m.fullkey!=" ++ t ++ ".fullkey AND " ++ K1.v1_x("m.value", "$.id") ++ "==" ++ K1.v1_x(t ++ ".value", "$.id") ++ " AND m.value!=" ++ t ++ ".value))" ++ " OR (EXISTS(SELECT 1 FROM knowledge_edges_v1 WHERE id==" ++ K1.v1_x(t ++ ".value", "$.id") ++ "))" ++ " OR (EXISTS(SELECT 1 FROM " ++ K1.v1_each_path(batch, ",'$.edges'") ++ " m WHERE " ++ K1.v1_x("m.value", "$.id") ++ "==" ++ K1.v1_x(t ++ ".value", "$.id") ++ ")))" : String}
 
 def v1_node_identity_covers_shared_namespace(t, batch):
   {==}
@@ -587,7 +587,7 @@ def v1_node_identity_covers_shared_namespace(t, batch):
 law v1_edge_identity_covers_shared_namespace:
   for t: String
   for batch: String
-  {K1.v1_edge_identity_bad(t, batch) == "((EXISTS(SELECT 1 FROM knowledge_edges_v1 WHERE id==json_extract(" ++ t ++ ".value,'$.id') AND payload!=" ++ t ++ ".value))" ++ " OR (EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.edges') m WHERE m.fullkey!=" ++ t ++ ".fullkey AND json_extract(m.value,'$.id')==json_extract(" ++ t ++ ".value,'$.id') AND m.value!=" ++ t ++ ".value))" ++ " OR (EXISTS(SELECT 1 FROM knowledge_v1 WHERE id==json_extract(" ++ t ++ ".value,'$.id')))" ++ " OR (EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.nodes') m WHERE json_extract(m.value,'$.id')==json_extract(" ++ t ++ ".value,'$.id'))))" : String}
+  {K1.v1_edge_identity_bad(t, batch) == "((EXISTS(SELECT 1 FROM knowledge_edges_v1 WHERE id==" ++ K1.v1_x(t ++ ".value", "$.id") ++ " AND payload!=" ++ t ++ ".value))" ++ " OR (EXISTS(SELECT 1 FROM " ++ K1.v1_each_path(batch, ",'$.edges'") ++ " m WHERE m.fullkey!=" ++ t ++ ".fullkey AND " ++ K1.v1_x("m.value", "$.id") ++ "==" ++ K1.v1_x(t ++ ".value", "$.id") ++ " AND m.value!=" ++ t ++ ".value))" ++ " OR (EXISTS(SELECT 1 FROM knowledge_v1 WHERE id==" ++ K1.v1_x(t ++ ".value", "$.id") ++ "))" ++ " OR (EXISTS(SELECT 1 FROM " ++ K1.v1_each_path(batch, ",'$.nodes'") ++ " m WHERE " ++ K1.v1_x("m.value", "$.id") ++ "==" ++ K1.v1_x(t ++ ".value", "$.id") ++ ")))" : String}
 
 def v1_edge_identity_covers_shared_namespace(t, batch):
   {==}
@@ -727,7 +727,7 @@ def v1_edge_promotions_read_the_v1_table():
   {==}
 
 law v1_citation_fragment_routes_on_schema_version:
-  {K1.v1_citation_fragment() == "SELECT 'citation:'||v.id AS id,json_extract(e.value,'$.id') AS source,v.evidence AS target,'Cited' AS relation,json_extract(e.value,'$.id') AS source_ref,v.reference AS target_ref,json_object('id','citation:'||v.id,'author',json_extract(v.item,'$.author'),'source',json_extract(e.value,'$.id'),'sourceReference',json_extract(e.value,'$.id'),'sourceKind','evidence','relation','Cited','target',v.reference,'targetReference',v.reference,'targetKind',v.kind,'provenance','recorded-evidence') AS item FROM (SELECT id,reference,kind,evidence,item FROM nodes WHERE json_extract(item,'$.schemaVersion')=1) AS v,json_each(v.evidence) AS e WHERE json_extract(e.value,'$.id') IS NOT NULL AND ((json_extract(e.value,'$.kind')<>'edge' AND EXISTS(SELECT 1 FROM knowledge_v1 n WHERE n.id=json_extract(e.value,'$.id') AND n.kind=json_extract(e.value,'$.kind'))) OR (json_extract(e.value,'$.kind')='edge' AND EXISTS(SELECT 1 FROM knowledge_edges_v1 g WHERE g.id=json_extract(e.value,'$.id') AND g.kind=json_extract(e.value,'$.edgeKind'))))" : String}
+  {K1.v1_citation_fragment()    == "SELECT 'citation:'||v.id AS id,(CASE WHEN json_valid(e.value) THEN json_extract(e.value,'$.id') END) AS source,v.evidence AS target,'Cited' AS relation,(CASE WHEN json_valid(e.value) THEN json_extract(e.value,'$.id') END) AS source_ref,v.reference AS target_ref,json_object('id','citation:'||v.id,'author',json_extract(v.item,'$.author'),'source',(CASE WHEN json_valid(e.value) THEN json_extract(e.value,'$.id') END),'sourceReference',(CASE WHEN json_valid(e.value) THEN json_extract(e.value,'$.id') END),'sourceKind','evidence','relation','Cited','target',v.reference,'targetReference',v.reference,'targetKind',v.kind,'provenance','recorded-evidence') AS item FROM (SELECT id,reference,kind,evidence,item FROM nodes WHERE json_extract(item,'$.schemaVersion')=1) AS v,json_each(CASE WHEN json_valid(v.evidence) THEN (v.evidence) END) AS e WHERE (CASE WHEN json_valid(e.value) THEN json_extract(e.value,'$.id') END) IS NOT NULL AND (((CASE WHEN json_valid(e.value) THEN json_extract(e.value,'$.kind') END)<>'edge' AND EXISTS(SELECT 1 FROM knowledge_v1 n WHERE n.id=(CASE WHEN json_valid(e.value) THEN json_extract(e.value,'$.id') END) AND n.kind=(CASE WHEN json_valid(e.value) THEN json_extract(e.value,'$.kind') END))) OR ((CASE WHEN json_valid(e.value) THEN json_extract(e.value,'$.kind') END)='edge' AND EXISTS(SELECT 1 FROM knowledge_edges_v1 g WHERE g.id=(CASE WHEN json_valid(e.value) THEN json_extract(e.value,'$.id') END) AND g.kind=(CASE WHEN json_valid(e.value) THEN json_extract(e.value,'$.edgeKind') END)))))" : String}
 
 def v1_citation_fragment_routes_on_schema_version():
   {==}
@@ -837,7 +837,7 @@ def v1_stored_counterexample_reads_witness_on_details(sid):
 
 law v1_supersedes_pairs_node_to_node_and_edge_to_edge:
   for batch: String
-  {K1.v1_supersedes_paired(batch) == "((" ++ K1.v1_epside_node("json_extract(e.value,'$.source')", K1.v1_node_kinds(), batch) ++ " AND " ++ K1.v1_epside_node("json_extract(e.value,'$.target')", K1.v1_node_kinds(), batch) ++ ") OR (" ++ K1.v1_epside_edge("json_extract(e.value,'$.source')", batch) ++ " AND " ++ K1.v1_epside_edge("json_extract(e.value,'$.target')", batch) ++ "))" : String}
+  {K1.v1_supersedes_paired(batch) == "((" ++ K1.v1_epside_node("" ++ K1.v1_x("e.value", "$.source") ++ "", K1.v1_node_kinds(), batch) ++ " AND " ++ K1.v1_epside_node("" ++ K1.v1_x("e.value", "$.target") ++ "", K1.v1_node_kinds(), batch) ++ ") OR (" ++ K1.v1_epside_edge("" ++ K1.v1_x("e.value", "$.source") ++ "", batch) ++ " AND " ++ K1.v1_epside_edge("" ++ K1.v1_x("e.value", "$.target") ++ "", batch) ++ "))" : String}
 
 def v1_supersedes_pairs_node_to_node_and_edge_to_edge(batch):
   {==}
