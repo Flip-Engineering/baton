@@ -11,7 +11,7 @@
 import Base
 import ../coordinator/commands.bend as C
 import ./knowledge.bend as K
-import ./knowledge-v1.bend as K1
+import ./knowledge_v1.bend as K1
 import ./delivery.bend as Delivery
 import ./store.bend as Store
 import ../host/sqlite.bend as DB
@@ -486,4 +486,88 @@ law v1_promote_queries_and_answers:
   {K1.v1_promote_scoped(db,id,promoter,source_kind,source,destination_kind,destination,finding) == v1_promote_io(db,id,promoter,source_kind,source,destination_kind,destination,finding) : IO(Unit)}
 
 def v1_promote_queries_and_answers(db,id,promoter,source_kind,source,destination_kind,destination,finding):
+  {==}
+
+# Unification (synthesis-v1-unify-20261011): the legacy overlap leg reads
+# the real legacy knowledge table; the nonexistent knowledge_entries name
+# from the hyphen branch is gone.
+law v1_legacy_overlap_reads_the_real_legacy_table:
+  {K1.v1_node_match("r", "batch") == "((EXISTS(SELECT 1 FROM json_each(batch,'$.nodes') m WHERE json_extract(m.value,'$.id')==json_extract(r,'$.id') AND json_extract(m.value,'$.kind')==json_extract(r,'$.kind')))" ++ " OR (EXISTS(SELECT 1 FROM knowledge_v1 WHERE id==json_extract(r,'$.id') AND kind==json_extract(r,'$.kind')))" ++ " OR (EXISTS(SELECT 1 FROM knowledge WHERE id==json_extract(r,'$.id') AND kind==json_extract(r,'$.kind') AND json_extract(r,'$.kind') IN ('fact','decision','finding','instruction','constraint','context-ref','note'))))" : String}
+
+def v1_legacy_overlap_reads_the_real_legacy_table():
+  {==}
+
+# Unification: the v1-local restatements of the knowledge.bend builders
+# evaluate to exactly the shared strings, so the promotion laws above
+# keep pinning the same text without an import cycle.
+law v1_legacy_schema_matches_knowledge_schema:
+  {K1.v1_legacy_schema() == K.knowledge_schema() : String}
+
+def v1_legacy_schema_matches_knowledge_schema():
+  {==}
+
+law v1_promotion_admitted_matches_knowledge_builder:
+  for promoter: String
+  for kind: String
+  for destination: String
+  {K1.v1_promotion_admitted(promoter, kind, destination) == K.promotion_admitted(promoter, kind, destination) : String}
+
+def v1_promotion_admitted_matches_knowledge_builder(promoter, kind, destination):
+  {==}
+
+law v1_source_carries_matches_knowledge_builder:
+  for kind: String
+  for source: String
+  {K1.v1_source_carries(kind, source) == K.source_carries(kind, source) : String}
+
+def v1_source_carries_matches_knowledge_builder(kind, source):
+  {==}
+
+law v1_promotion_coordinates_matches_knowledge_builder:
+  for id: String
+  for promoter: String
+  for source_kind: String
+  for source: String
+  for destination_kind: String
+  for destination: String
+  for finding: String
+  {K1.v1_promotion_coordinates(id, promoter, source_kind, source, destination_kind, destination, finding) == K.promotion_coordinates(id, promoter, source_kind, source, destination_kind, destination, finding) : String}
+
+def v1_promotion_coordinates_matches_knowledge_builder(id, promoter, source_kind, source, destination_kind, destination, finding):
+  {==}
+
+law v1_conflict_builder_matches_knowledge_builder:
+  for name: String
+  for table: String
+  for id: String
+  for guards: String
+  for same: String
+  for stored: String
+  {K1.v1_knowledge_conflict_sql(name, table, id, guards, same, stored) == K.knowledge_conflict_sql(name, table, id, guards, same, stored) : String}
+
+def v1_conflict_builder_matches_knowledge_builder(name, table, id, guards, same, stored):
+  {==}
+
+law v1_endpoint_fields_matches_knowledge_builder:
+  for row: String
+  for groups: Bool
+  {K1.v1_endpoint_fields(row, groups) == K.endpoint_fields(row, groups) : String}
+
+def v1_endpoint_fields_matches_knowledge_builder(row, groups):
+  {==}
+
+# Unification: the identity rule covers stored rows and within-batch
+# duplicates; the study rule covers supersedes progress.
+law v1_identity_rule_covers_stored_and_batch_duplicates:
+  for batch: String
+  {K1.v1_identity_violated(batch) == "((EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.nodes') n WHERE " ++ K1.v1_node_identity_bad("n", batch) ++ "))" ++ " OR (EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.edges') e WHERE " ++ K1.v1_edge_identity_bad("e", batch) ++ ")))" : String}
+
+def v1_identity_rule_covers_stored_and_batch_duplicates(batch):
+  {==}
+
+law v1_study_rule_covers_supersedes_progress:
+  for batch: String
+  {K1.v1_study_violated(batch) == "(EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.edges') e WHERE " ++ K1.v1_study_edge_bad(batch) ++ "))" : String}
+
+def v1_study_rule_covers_supersedes_progress(batch):
   {==}
