@@ -917,7 +917,15 @@ class Control(unittest.TestCase):
                     stream, start = self.accept(session)
                     self.assertEqual(start['cwd'], assignment['workspace'])
                     self.assertEqual(start['resume'], native)
-                    self.assertEqual(start['prompt'], self.task.read_text())
+                    retained_input = self.call('delivery', ident + ':task-input')
+                    self.assertEqual((retained_input['id'], retained_input['sender'],
+                                      retained_input['recipient'], retained_input['kind'],
+                                      retained_input['body']),
+                                     (ident + ':task-input', session, session,
+                                      'task-assignment', self.task.read_text()))
+                    self.assertTrue(start['prompt'].endswith(
+                        'Message (task-assignment) from ' + session + ' [id: ' +
+                        retained_input['id'] + ']:\n' + retained_input['body']), start['prompt'])
                     effort_option = '--reasoning-effort' if harness == 'muse' else '--effort'
                     self.assertEqual(start['args'][start['args'].index(effort_option) + 1], 'low')
                     self.finish(stream, ident + ' completed.')
@@ -929,29 +937,60 @@ class Control(unittest.TestCase):
 
     def instant_direct_harness(self, name):
         executable = self.directory / name
+        completion_code = FIXTURE[FIXTURE.index('def command(*value):'):
+                                  FIXTURE.index('def acknowledge():')]
         executable.write_text('#!' + sys.executable + '\n' + r'''
-import json,pathlib,sys
+import json,os,pathlib,subprocess,sys
+home=pathlib.Path(__file__).resolve().parent
+config=json.loads((home/'fixture.json').read_text())
 args=sys.argv[1:]
+model=args[args.index('--model')+1]
+session=config.get('sessions',{}).get(model,model)
 if '--prompt-file' in args:
     prompt=pathlib.Path(args[args.index('--prompt-file')+1]).read_text()
-else:
-    prompt=json.loads(sys.stdin.readline())['message']['content']
-pathlib.Path(__file__).with_suffix('.effect').write_text(prompt)
-if '--prompt-file' in args:
     print(json.dumps({'stream':{'kind':'session','id':'instant-native'},
                       'payload_type':'run.model.configured',
-                      'payload':{'kind':'run_model_configured',
-                                 'model_id':args[args.index('--model')+1]}}))
+                      'payload':{'kind':'run_model_configured','model_id':model}}),flush=True)
     print(json.dumps({'stream':{'kind':'session','id':'instant-native'},
                       'payload_type':'turn.input.user',
-                      'payload':{'kind':'turn_input_user','command_id':'fixture-primary'}}))
+                      'payload':{'kind':'turn_input_user','command_id':'fixture-primary'}}),flush=True)
+else:
+    prompt=json.loads(sys.stdin.readline())['message']['content']
+''' + completion_code + r'''
+state=command('session',session)
+assert state['code']==0,state
+completion=json.loads(state['stdout'])['taskCompletion']
+assignment=command('delivery',completion['assignmentId'])
+assert assignment['code']==0,assignment
+assignment=json.loads(assignment['stdout'])
+assert (assignment['sender'],assignment['recipient'],assignment['kind'])==(session,session,'task-assignment'),assignment
+body=assignment['body']
+assert prompt.endswith('\n'+body),prompt
+assert 'Message (task-assignment) from '+session+' [id: '+assignment['id']+']:' in prompt,prompt
+pathlib.Path(__file__).with_suffix('.effect').write_text(body)
+accepted=command('ack',assignment['id'],session,'fixture-native-reviewed')
+assert accepted['code']==0,accepted
+fixture_completion(body)
+state=command('session',session)
+assert state['code']==0,state
+completion=json.loads(state['stdout'])['taskCompletion']
+assert completion['confirmed'] and not completion['open'],completion
+request=command('delivery',completion['requestId'])
+assert request['code']==0,request
+request=json.loads(request['stdout'])
+assert (request['sender'],request['recipient'],request['kind'],request['body'],request['receipt'])==(session,completion['coordinator'],'completion-request',body,'Fixture coordinator reviewed the result.'),request
+confirmation=command('delivery',request['id']+':confirmed')
+assert confirmation['code']==0,confirmation
+confirmation=json.loads(confirmation['stdout'])
+assert (confirmation['sender'],confirmation['recipient'],confirmation['kind'],confirmation['body'],confirmation['receipt'])==(completion['coordinator'],session,'completion-confirmed',request['id'],'Fixture worker handled confirmation.'),confirmation
+if '--prompt-file' in args:
     print(json.dumps({'stream':{'kind':'session','id':'instant-native'},
                       'payload_type':'run.terminal.completed',
                       'payload':{'kind':'run_terminal','terminal':'completed',
-                                 'command_id':'fixture-primary','text':prompt}}))
+                                 'command_id':'fixture-primary','text':body}}),flush=True)
 else:
-    print(json.dumps({'type':'result','result':prompt,
-                      'session_id':'instant-native','is_error':False}))
+    print(json.dumps({'type':'result','result':body,
+                      'session_id':'instant-native','is_error':False}),flush=True)
 ''')
         executable.chmod(0o700)
         return executable
@@ -1042,7 +1081,15 @@ else:
                     self.assertEqual(resumed['attempt'], ident)
                     self.assertEqual(resumed['launch']['state'], 'launched')
                     stream, started = self.accept(session)
-                    self.assertEqual(started['prompt'], original)
+                    retained_input = self.call('delivery', ident + ':task-input')
+                    self.assertEqual((retained_input['id'], retained_input['sender'],
+                                      retained_input['recipient'], retained_input['kind'],
+                                      retained_input['body']),
+                                     (ident + ':task-input', session, session,
+                                      'task-assignment', original))
+                    self.assertTrue(started['prompt'].endswith(
+                        'Message (task-assignment) from ' + session + ' [id: ' +
+                        retained_input['id'] + ']:\n' + retained_input['body']), started['prompt'])
                     self.assertEqual(started['resume'], native)
                     self.assertEqual(started['cwd'], assignment['workspace'])
                     self.assertEqual(started['args'][started['args'].index('--model') + 1], assignment['model'])
