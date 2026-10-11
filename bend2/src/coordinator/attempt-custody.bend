@@ -28,12 +28,15 @@ def read_host(+db: String, snapshot: String, directory: String) -> IO(String):
     body : String <- IO.try(String,Custody.Instance.job(db,directory))
     render(db,snapshot,body)
 
-def read_recorded(+db: String, +snapshot: String) -> IO(String):
-  match String.is_empty(snapshot):
+def read_recorded_case(+db: String, +snapshot: String, empty: Bool) -> IO(String):
+  match empty:
     case True{}: IO.die(String,1,"No recorded execution for this session.")
     case False{}: do IO<String>:
       directory : String <- recorded_directory(db,snapshot)
       read_host(db,snapshot,directory)
+
+def read_recorded(+db: String, +snapshot: String) -> IO(String):
+  read_recorded_case(db,snapshot,String.is_empty(snapshot))
 
 def read(+db: String, session: String) -> IO(String):
   do IO<String>:
