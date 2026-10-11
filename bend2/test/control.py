@@ -872,6 +872,15 @@ class Control(unittest.TestCase):
         digest = hashlib.sha256(str(self.db).encode() + b'\x00' + ident.encode()).hexdigest()
         return pathlib.Path(str(self.db) + '.dispatch-' + digest + suffix)
 
+    def assert_no_dispatch_log(self, ident):
+        # The legacy hex component for an oversized identity exceeds the
+        # filesystem name limit, and asking the filesystem about that name
+        # can report ENAMETOOLONG rather than absence. Absence is decided by
+        # comparing against the names enumerated from the parent directory.
+        names = {entry.name for entry in self.directory.iterdir()}
+        for suffix in ('.stdout', '.stderr'):
+            self.assertNotIn(self.dispatch_log(ident, suffix).name, names)
+
     def test_dispatch_log_uses_bounded_identity_for_oversized_ids(self):
         self.root()
         self.recruit('leaf')
@@ -895,7 +904,7 @@ class Control(unittest.TestCase):
         stderr = self.dispatch_digest_log(long_id, '.stderr')
         self.assertTrue(stat.S_ISREG(stdout.stat().st_mode), str(stdout))
         self.assertTrue(stat.S_ISREG(stderr.stat().st_mode), str(stderr))
-        self.assertFalse(self.dispatch_log(long_id).exists())
+        self.assert_no_dispatch_log(long_id)
 
         # Byte-length boundary: basename(state.db)+'.dispatch-'+hex+suffix is
         # exactly 255 bytes for a 115-byte identity and 257 for 116 bytes.
@@ -911,7 +920,7 @@ class Control(unittest.TestCase):
         self.finish(stream, 'Second oversized task completed.')
         self.exited('leaf')
         self.assertTrue(self.dispatch_digest_log(oversized).exists())
-        self.assertFalse(self.dispatch_log(oversized).exists())
+        self.assert_no_dispatch_log(oversized)
 
         # Distinct identities sharing a long prefix (135 and 136 bytes) bind
         # to distinct bounded identities with their own retained reports.
@@ -1025,7 +1034,7 @@ class Control(unittest.TestCase):
         stderr = self.dispatch_digest_log(utf8_id, '.stderr')
         self.assertTrue(stat.S_ISREG(stdout.stat().st_mode), str(stdout))
         self.assertTrue(stat.S_ISREG(stderr.stat().st_mode), str(stderr))
-        self.assertFalse(self.dispatch_log(utf8_id).exists())
+        self.assert_no_dispatch_log(utf8_id)
 
     def report_logged(self, body):
         log = pathlib.Path(str(self.db) + '.root.log')
