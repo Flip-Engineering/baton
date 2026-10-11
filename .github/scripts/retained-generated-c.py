@@ -85,10 +85,11 @@ def verify_producer(root, manifest):
             and plan['sourceCommit'] == manifest['sourceCommit']
             and plan['sourceManifest']['sha256'] == build['sourceManifestSha256'],
             'Suite admission and source plan differ from the actual build')
-    expected = [Path(item['sourcePath']).name for item in plan['suites']]
-    require(expected and [row['suite'] for row in results] == expected
+    expected = [(Path(item['sourcePath']).name, item.get('selector')) for item in plan['suites']]
+    require(expected and [(row['suite'], row.get('selector')) for row in results] == expected
             and qualification['results'] == [
-                {'suite': row['suite'], 'exitCode': row['exitCode']} for row in results],
+                {key: row[key] for key in ('suite', 'selector', 'exitCode') if key in row}
+                for row in results],
             'Completed suites differ from their admitted source plan')
     for row in results:
         require(row['exitCode'] == 0 and row['ownedProcessesAfter'] == []
