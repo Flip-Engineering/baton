@@ -171,8 +171,10 @@ class KnowledgeV1(unittest.TestCase):
                 verb = 'relate-v1' if payload.get('source') else 'record-v1'
                 refused = self.call(verb, json.dumps(payload), success=False)
                 self.assertIn(error, refused.stderr)
+        # Unparseable payloads never reach the v1 builders: the shared native
+        # JSON reader refuses first with its own wording (turn.bend lane).
         garbage = self.call('record-v1', '{not json', success=False)
-        self.assertIn('v1-node-shape', garbage.stderr)
+        self.assertIn('malformed JSON', garbage.stderr)
 
     def test_edge_reference_resolution_refusals(self):
         self.record(node('grand', 'v1-obs', 'observation'))
@@ -323,10 +325,13 @@ class KnowledgeV1(unittest.TestCase):
                   'Anchor claim', 'run:legacy', 'Legacy limits')
         self.call('relate', 'legacy-link', 'grand', 'legacy-anchor',
                   'Supports', 'legacy-anchor')
-        self.record(node('grand', 'v1-anchor', 'question'))
-        self.record(node('grand', 'v1-other', 'question'))
+        # supports admits evidence, observation, research-finding and argument
+        # sources with claim, hypothesis, research-finding, proposal and edge
+        # targets (semantics edgeTypes.supports); question pairs are refused.
+        self.record(node('grand', 'v1-anchor', 'evidence'))
+        self.record(node('grand', 'v1-other', 'claim'))
         self.relate(edge('grand', 'v1-link', 'supports',
-                         ('v1-anchor', 'question'), ('v1-other', 'question'),
+                         ('v1-anchor', 'evidence'), ('v1-other', 'claim'),
                          details={'bearing': 'test bearing'}))
         rows = {row['id']: row for row in
                 self.call('knowledge-relations', 'root', 'all', '')}

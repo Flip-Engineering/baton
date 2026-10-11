@@ -45,7 +45,7 @@ def symmetric_kinds() -> String:
 # edges with a matching edgeKind. External resources may be unavailable and
 # are never claimed as fetched.
 def ref_resource(+v: String) -> String:
-  "json_extract(" ++ v ++ ",'$.uri') IS NOT NULL OR json_extract(" ++ v ++ ",'$.kind') IN('message','artifact','url')"
+  "(json_extract(" ++ v ++ ",'$.uri') IS NOT NULL OR json_extract(" ++ v ++ ",'$.kind') IN('message','artifact','url'))"
 
 def ref_node_hit(+v: String) -> String:
   "EXISTS(SELECT 1 FROM knowledge_v1 n WHERE n.id=json_extract(" ++ v ++ ",'$.id'))"
@@ -57,8 +57,8 @@ def ref_resolved(+v: String) -> String:
   "(" ++ ref_resource(v) ++ " OR " ++ ref_node_hit(v) ++ " OR " ++ ref_edge_hit(v) ++ ")"
 
 def ref_matched(+v: String) -> String:
-  "(" ++ ref_resource(v)
-  ++ " OR (json_extract(" ++ v ++ ",'$.kind')<>'edge' AND EXISTS(SELECT 1 FROM knowledge_v1 n WHERE n.id=json_extract(" ++ v ++ ",'$.id') AND n.kind=json_extract(" ++ v ++ ",'$.kind')))"
+  "((" ++ ref_resource(v)
+  ++ ") OR (json_extract(" ++ v ++ ",'$.kind')<>'edge' AND EXISTS(SELECT 1 FROM knowledge_v1 n WHERE n.id=json_extract(" ++ v ++ ",'$.id') AND n.kind=json_extract(" ++ v ++ ",'$.kind')))"
   ++ " OR (json_extract(" ++ v ++ ",'$.kind')='edge' AND EXISTS(SELECT 1 FROM knowledge_edges_v1 e WHERE e.id=json_extract(" ++ v ++ ",'$.id') AND e.kind=json_extract(" ++ v ++ ",'$.edgeKind'))))"
 
 # Every entry of the array at path is an object naming an id or a uri.
@@ -194,7 +194,7 @@ def node_errors(+node: String) -> String:
   +stored : String = "'id',id,'author',author,'kind',kind"
   v1_error("v1-node-shape","'id'," ++ id ++ ",'condition','Node payload is not a JSON object.'","NOT json_valid(" ++ j ++ ") OR json_type(" ++ j ++ ")<>'object'")
   ++ v1_error("v1-unknown-node-kind","'kind'," ++ node_kind_of(node) ++ ",'condition','Node kind is not one of the ten closed v1 kinds.'","json_valid(" ++ j ++ ") AND (" ++ node_kind_of(node) ++ " IS NULL OR " ++ node_kind_of(node) ++ " NOT IN(" ++ node_kinds() ++ "))")
-  ++ v1_error("v1-node-shape","'id'," ++ id ++ ",'condition','Node needs non-empty id, author and statement, object context with scope, subjects, conditions and assumptions, array evidence of id or uri references, text limits and uncertainty, and the typed details its kind requires.'","json_valid(" ++ j ++ ") AND " ++ node_kind_of(node) ++ " IN(" ++ node_kinds() ++ ") AND NOT (" ++ node_shape_ok(node) ++ ")")
+  ++ v1_error("v1-node-shape","'id'," ++ id ++ ",'condition','Node needs non-empty id, author and statement, object context with scope, subjects, conditions and assumptions, array evidence of id or uri references, text limits and uncertainty, and the typed details its kind requires.'","json_valid(" ++ j ++ ") AND " ++ node_kind_of(node) ++ " IN(" ++ node_kinds() ++ ") AND coalesce(NOT (" ++ node_shape_ok(node) ++ "),1)")
   ++ v1_error("v1-unresolved-endpoint","'id'," ++ id ++ ",'condition','A node reference names no stored v1 node or edge.','next','Record the referenced row first, then retry the node.'","json_valid(" ++ j ++ ") AND " ++ node_kind_of(node) ++ " IN(" ++ node_kinds() ++ ") AND " ++ node_shape_ok(node) ++ " AND NOT (" ++ node_refs_resolve(node) ++ ")")
   ++ v1_error("v1-endpoint-kind-mismatch","'id'," ++ id ++ ",'condition','A node reference is stored under a different kind than declared.','next','Retain the stored rows, then retry with matching declared kinds.'","json_valid(" ++ j ++ ") AND " ++ node_kind_of(node) ++ " IN(" ++ node_kinds() ++ ") AND " ++ node_shape_ok(node) ++ " AND " ++ node_refs_resolve(node) ++ " AND NOT (" ++ node_refs_match(node) ++ ")")
   ++ v1_error("v1-unknown-author","'author',json_extract(" ++ j ++ ",'$.author'),'condition','Node author is not a registered session.'","NOT EXISTS(SELECT 1 FROM sessions WHERE id=json_extract(" ++ j ++ ",'$.author'))")
@@ -365,7 +365,7 @@ def edge_errors(+edge: String) -> String:
   +stored : String = "'id',id,'author',author,'kind',kind"
   v1_error("v1-edge-shape","'id'," ++ id ++ ",'condition','Edge payload is not a JSON object.'","NOT json_valid(" ++ j ++ ") OR json_type(" ++ j ++ ")<>'object'")
   ++ v1_error("v1-unknown-edge-kind","'kind'," ++ edge_kind_of(edge) ++ ",'condition','Edge kind is not one of the sixteen closed v1 kinds.'","json_valid(" ++ j ++ ") AND (" ++ edge_kind_of(edge) ++ " IS NULL OR " ++ edge_kind_of(edge) ++ " NOT IN(" ++ edge_kinds() ++ "))")
-  ++ v1_error("v1-edge-shape","'id'," ++ id ++ ",'condition','Edge needs non-empty id, author and rationale, object endpoints with id and kind, object context with scope, subjects, conditions and assumptions, array basis of id or uri references, text limits and uncertainty, and the typed details its kind requires.'","json_valid(" ++ j ++ ") AND " ++ edge_kind_of(edge) ++ " IN(" ++ edge_kinds() ++ ") AND NOT (" ++ edge_shape_ok(edge) ++ ")")
+  ++ v1_error("v1-edge-shape","'id'," ++ id ++ ",'condition','Edge needs non-empty id, author and rationale, object endpoints with id and kind, object context with scope, subjects, conditions and assumptions, array basis of id or uri references, text limits and uncertainty, and the typed details its kind requires.'","json_valid(" ++ j ++ ") AND " ++ edge_kind_of(edge) ++ " IN(" ++ edge_kinds() ++ ") AND coalesce(NOT (" ++ edge_shape_ok(edge) ++ "),1)")
   ++ v1_error("v1-unresolved-endpoint","'id'," ++ id ++ ",'condition','An edge endpoint, basis, context or detail reference names no stored v1 node or edge.','next','Record the referenced row first, then retry the edge.'","json_valid(" ++ j ++ ") AND " ++ edge_kind_of(edge) ++ " IN(" ++ edge_kinds() ++ ") AND " ++ edge_shape_ok(edge) ++ " AND NOT (" ++ edge_refs_resolve(edge) ++ ")")
   ++ v1_error("v1-endpoint-kind-mismatch","'id'," ++ id ++ ",'condition','An edge reference is stored under a different kind than declared, or the edge-kind matrix rejects the declared endpoint pair.','next','Retain the stored rows, then retry with matching declared kinds.'","json_valid(" ++ j ++ ") AND " ++ edge_kind_of(edge) ++ " IN(" ++ edge_kinds() ++ ") AND " ++ edge_shape_ok(edge) ++ " AND " ++ edge_refs_resolve(edge) ++ " AND NOT (" ++ edge_refs_match(edge) ++ ")")
   ++ v1_error("v1-proof-rule","'id'," ++ id ++ ",'condition','An implies edge cites no deduction or formal-proof argument, or a proves or disproves edge starts from no such argument.','next','Retain the stored rows, then retry with a qualifying argument.'","json_valid(" ++ j ++ ") AND " ++ edge_kind_of(edge) ++ " IN(" ++ edge_kinds() ++ ") AND " ++ edge_shape_ok(edge) ++ " AND " ++ edge_refs_resolve(edge) ++ " AND " ++ edge_refs_match(edge) ++ " AND NOT (" ++ edge_proof_ok(edge) ++ ")")

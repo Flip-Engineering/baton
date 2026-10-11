@@ -33,7 +33,7 @@ def commit_v1_sql(statements: String) -> String:
 # details is null, provenance and schemaVersion name the legacy source. The
 # mapping never claims v1 conformance for old rows.
 def legacy_v1_envelope(+item: String) -> String:
-  "json_patch(" ++ item ++ ",json_object('statement',json_extract(" ++ item ++ ",'$.claim'),'details',json('null'),'provenance','legacy','schemaVersion','legacy'))"
+  "json_set(" ++ item ++ ",'$.statement',json_extract(" ++ item ++ ",'$.claim'),'$.details',json('null'),'$.provenance','legacy','$.schemaVersion','legacy')"
 
 # The answer a write gives: the stored row as it stands, or a refusal naming the
 # rule that refused it.
@@ -380,7 +380,7 @@ def v1_promotion_insert(+id: String, +promoter: String, +source_kind: String, +s
 def v1_promotion_statement(+id: String, +promoter: String, +source_kind: String, +source: String, +destination_kind: String, +destination: String, +finding: String) -> String:
   +admitted = "EXISTS(SELECT 1 FROM knowledge_v1 k WHERE k.id=" ++ C.q(finding) ++ " AND " ++ promotion_admitted(promoter,destination_kind,destination) ++ " AND " ++ v1_source_carries(source_kind,source) ++ ") OR EXISTS(SELECT 1 FROM knowledge_edges_v1 k WHERE k.id=" ++ C.q(finding) ++ " AND " ++ promotion_admitted(promoter,destination_kind,destination) ++ " AND " ++ v1_source_carries(source_kind,source) ++ ")"
   v1_promotion_insert(id,promoter,source_kind,source,destination_kind,destination,finding,"knowledge_v1") ++ v1_promotion_insert(id,promoter,source_kind,source,destination_kind,destination,finding,"knowledge_edges_v1")
-  ++ knowledge_conflict_sql("promotion-id-conflict","knowledge_promotions_v1",C.q(id),admitted,v1_promotion_coordinates(id,promoter,source_kind,source,destination_kind,destination,finding),"'recordId',record_id,'source',source,'sourceKind',source_kind,'destination',destination,'destinationKind',destination_kind")
+  ++ knowledge_conflict_sql("promotion-id-conflict","knowledge_promotions_v1",C.q(id),"(" ++ admitted ++ ")",v1_promotion_coordinates(id,promoter,source_kind,source,destination_kind,destination,finding),"'recordId',record_id,'source',source,'sourceKind',source_kind,'destination',destination,'destinationKind',destination_kind")
 
 def v1_promotion_notice_body() -> String:
   "json_object('promotion',p.id,'recordId',p.record_id,'author',p.author,'source',p.source,'destination',p.destination,'promotedBy',p.promoted_by,'sourceKind',p.source_kind,'destinationKind',p.destination_kind)"
