@@ -1939,7 +1939,14 @@ await until('restored execution clears the failed row',
 
 // reconnect: drop the server, restart on the same port, no duplicated transitions
 server.close(); server.closeAllConnections?.();
-await until('page notices the lost stream', `!document.getElementById('notice').hidden && /unavailable/i.test(document.getElementById('notice').textContent)`);
+await until('page notices the lost stream', `(() => {
+  const notice = document.getElementById('notice');
+  const body = notice && notice.textContent;
+  return !!notice && !notice.hidden && (
+    body === 'Stream lost. Re-reading current state.'
+    || (body.startsWith('Snapshot endpoint unreachable (') && body.endsWith('). Retrying in 1s.'))
+  );
+})()`);
 const server2 = createOrchestraServer({ databasePath: DB, reader: 'root', subject: 'root',
   subscribeCommittedChanges, port: portB });
 await new Promise((r) => server2.on('listening', r));
