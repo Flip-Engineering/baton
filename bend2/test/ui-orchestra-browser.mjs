@@ -217,8 +217,8 @@ baton('record', 'qa-msg-finding', 'worker', 'Worker message finding.',
 const initialFindings = [...fixtureFindings.values()];
 const initialWorkerRecords = initialFindings.filter((finding) => finding.author === 'worker').length;
 const initialScopeText = {
-  worker: `worker · ${initialWorkerRecords} items`,
-  all: `All held records · ${initialFindings.length} items`,
+  worker: `worker · ${initialWorkerRecords} records`,
+  all: `All held records · ${initialFindings.length} records`,
 };
 
 async function fileIdentity(path) {
@@ -715,7 +715,7 @@ check('Agents give every row a staff and bands a rehearsal letter', await evalJs
     && !!document.querySelector('#roster .doc-row .staff-note');
 })()`));
 await until('map opens on the universal view',
-  `document.querySelector('#map-scope').textContent === 'Universal knowledge · 0 items'`);
+  `document.querySelector('#map-scope').textContent === 'Universal knowledge · 0 records'`);
 check('universal view holds no fixture records', await evalJs(
   `document.querySelectorAll('#knowledge-whole .knode').length === 0 && document.querySelectorAll('#knowledge-whole .kw-anchor').length === 0`));
 check('the exemplar is absent where nothing draws', await evalJs(
@@ -759,7 +759,7 @@ await until('row selection lights its own arcs',
 await until('the map draws on the page without a disclosure',
   `document.querySelector('#knowledge-whole svg.kw-canvas') && document.querySelectorAll('#knowledge-whole .kw-tier').length > 1`);
 await until('selecting a worker loads that scope holdings',
-  `(document.querySelector('#map-scope').textContent || '').endsWith(${JSON.stringify(`· ${initialWorkerRecords} items`)})`);
+  `(document.querySelector('#map-scope').textContent || '').endsWith(${JSON.stringify(`· ${initialWorkerRecords} records`)})`);
 check('promotion arcs join the rendered rows in the margin', await evalJs(
   `!!document.querySelector('#roster > svg.kw-arcs') && !!document.querySelector('#roster .kw-arc[data-from="worker"][data-to="aide"]')`));
 check('sharing seats carry a holding halo in the row gutter', await evalJs(
@@ -845,13 +845,13 @@ check('all-records toggle states its pressed state', await evalJs(
   `document.getElementById('map-scope-all').getAttribute('aria-pressed') === 'true' && document.getElementById('map-scope-all').textContent === 'Back to universal knowledge'`));
 await evalJs(`document.getElementById('map-scope-all').click()`);
 await until('leaving all-records returns to universal knowledge',
-  `document.querySelector('#map-scope').textContent === 'Universal knowledge · 0 items'`);
+  `document.querySelector('#map-scope').textContent === 'Universal knowledge · 0 records'`);
 await evalJs(`document.querySelector('#roster .doc-row[data-doc-id="worker"] .doc-open').click()`);
 await until('worker scope restores its holdings',
-  `(document.querySelector('#map-scope').textContent || '').endsWith(${JSON.stringify(`· ${initialWorkerRecords} items`)}) && !!document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]')`);
+  `(document.querySelector('#map-scope').textContent || '').endsWith(${JSON.stringify(`· ${initialWorkerRecords} records`)}) && !!document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]')`);
 await evalJs(`document.dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true, cancelable:true}))`);
 await until('Escape clears the worker selection and returns to universal holdings',
-  `document.getElementById('map-scope').textContent === 'Universal knowledge · 0 items'
+  `document.getElementById('map-scope').textContent === 'Universal knowledge · 0 records'
     && !document.querySelector('#roster .doc-open[aria-current="true"]')
     && !document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]')
     && location.hash === ''`);
@@ -861,10 +861,10 @@ await until('worker holdings reopen after clearing the selection',
     && !!document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]')`);
 await evalJs(`document.querySelector('#roster [data-doc-group="qa-ensemble"]').click()`);
 await until('ensemble band opens the owner holdings on the map',
-  `document.querySelector('#map-scope').textContent === 'Group qa-ensemble · 1 item' && !!document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]')`);
+  `document.querySelector('#map-scope').textContent === 'Group qa-ensemble · 1 record' && !!document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]')`);
 await evalJs(`document.querySelector('#roster .doc-row[data-doc-id="worker"] .doc-open').click()`);
 await until('worker scope restores after the ensemble probe',
-  `(document.querySelector('#map-scope').textContent || '').endsWith(${JSON.stringify(`· ${initialWorkerRecords} items`)}) && !!document.querySelector('#knowledge-whole .knode[aria-label="qa-msg-finding"]')`);
+  `(document.querySelector('#map-scope').textContent || '').endsWith(${JSON.stringify(`· ${initialWorkerRecords} records`)}) && !!document.querySelector('#knowledge-whole .knode[aria-label="qa-msg-finding"]')`);
 check('tiers read as ruled bands', await evalJs(
   `document.querySelectorAll('#knowledge-whole .kw-tier-rule').length >= 2`));
 await captureSurfaceEvidence('knowledge-authored-layout.png', '#knowledge-whole');
@@ -1686,7 +1686,7 @@ await until('roster actor selection shows the actor card on the map',
   `document.querySelector('#knowledge-whole .kw-card .kw-card-title')?.textContent === 'aide'`);
 await evalJs(`document.querySelector('#roster .doc-row[data-doc-id="worker"] .doc-open').click()`);
 await until('live probes read the worker scope',
-  `(document.querySelector('#map-scope').textContent || '').endsWith(${JSON.stringify(`· ${initialWorkerRecords} items`)}) && !!document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]')`);
+  `(document.querySelector('#map-scope').textContent || '').endsWith(${JSON.stringify(`· ${initialWorkerRecords} records`)}) && !!document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]')`);
 await evalJs(`document.querySelector('#knowledge-whole svg.kw-canvas').dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}))`);
 check('Escape dismisses the worker map before the live frame', await evalJs(`(() => {
   const card = document.querySelector('#knowledge-whole .kw-card');
@@ -1695,7 +1695,7 @@ check('Escape dismisses the worker map before the live frame', await evalJs(`(()
   return !card && unlit
     && document.querySelector('#selection h2')?.textContent === 'worker'
     && location.hash === '#seat=worker'
-    && (document.querySelector('#map-scope').textContent || '').endsWith(${JSON.stringify(`· ${initialWorkerRecords} items`)});
+    && (document.querySelector('#map-scope').textContent || '').endsWith(${JSON.stringify(`· ${initialWorkerRecords} records`)});
 })()`));
 baton('record', 'qa-worker-live-finding', 'worker', 'Worker live finding.',
   'Live evidence.', 'Live limits.');
@@ -1970,7 +1970,7 @@ await evalJs(`document.querySelector('#ribbon [data-focus="ribbon-list"]').click
 await until('phase B ribbon list opens', `document.querySelectorAll('#ribbon .ribbon-row').length > 0`);
 await evalJs(`document.querySelector('#roster .doc-row[data-doc-id="aide"] .doc-open').click()`);
 await until('phase B knowledge scope settles on the aide holdings',
-  `(document.querySelector('#map-scope').textContent || '').endsWith('· 3 items')`);
+  `(document.querySelector('#map-scope').textContent || '').endsWith('· 3 records')`);
 check('phase B rows carry compact knowledge lines', await evalJs(
   `!!document.querySelector('#roster .doc-row[data-doc-id="worker"] .kw-compact') && !!document.querySelector('#roster .doc-row[data-doc-id="aide"] .kw-compact')`));
 
@@ -2655,7 +2655,7 @@ check('an unheld endpoint draws the hollow ring and a held one the dot', await e
 // Read the complete fixture in All held records for the raw edge counts.
 const staticUniversalScope = await evalJs(`document.getElementById('map-scope').textContent`);
 const staticAllScope = 'All held records · ' + fixturePayload.findings.length
-  + (fixturePayload.findings.length === 1 ? ' item' : ' items');
+  + (fixturePayload.findings.length === 1 ? ' record' : ' records');
 const denseRoutingRedraw = await beginRedrawEvidence('dense complete holdings');
 await evalJs(`document.getElementById('map-scope-all').click()`);
 await until('all held records draw the complete fixture before semantic edge counts',

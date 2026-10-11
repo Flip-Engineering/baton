@@ -909,3 +909,54 @@ g.kw-hull-section {
   .kw-canvas * { transition: none; }
   .kw-new { animation: none; }
 }
+
+
+.kw-science { container: knowledge-science / inline-size; }
+.kw-science-tools { position: sticky; top: 0; z-index: 3; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 12px; padding: 10px 0; border-bottom: 1px solid var(--hairline); background: var(--paper); }
+.kw-science-filters { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }
+.kw-science-filters input { flex: 1; min-width: min(100%, 210px); }
+.kw-science-tools button, .kw-science-filters input, .kw-science-filters select { font: inherit; padding: 7px 10px; }
+.kw-science-caption { font-size: 13px; color: var(--muted); margin: 10px 0 20px; }
+.kw-science-index { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 22px; }
+.kw-science-kind-group > h3, .kw-science-incoming > h3, .kw-science-outgoing > h3 { margin: 0 0 12px; font-size: 15px; }
+.kw-science-node, .kw-science-connection { padding: 16px; margin: 0 0 14px; border: 1px solid var(--hairline); border-radius: 7px; background: var(--paper); overflow-wrap: anywhere; }
+.kw-science-kind { margin: 0 0 8px; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+.kw-science-statement, .kw-science-reference, .kw-science-relation { padding: 0; border: 0; background: transparent; color: var(--ink); text-align: left; font: inherit; cursor: pointer; }
+.kw-science-statement { font-size: 16px; line-height: 1.5; }
+.kw-science-statement:hover, .kw-science-reference:hover { text-decoration: underline; text-underline-offset: 3px; }
+.kw-science-author, .kw-science-degree { margin: 9px 0 0; font-size: 12px; color: var(--muted); }
+.kw-science-reference-id { display: block; margin: 7px 0; font-size: 11px; overflow-wrap: anywhere; }
+.kw-science-uncertainty, .kw-science-assertion-note { padding-left: 10px; border-left: 2px solid var(--hairline); font-size: 13px; line-height: 1.55; }
+.kw-science-neighborhood { display: grid; grid-template-columns: minmax(0, 1fr); gap: 22px; align-items: start; }
+.kw-science-detail { grid-row: 1; padding: 20px; border: 1px solid var(--ink); border-radius: 8px; background: var(--paper); min-width: 0; overflow-wrap: anywhere; scroll-margin-top: 64px; }
+.kw-science-region { min-width: 0; scroll-margin-top: 64px; }
+.kw-science-region:focus { outline: 2px solid var(--selection); outline-offset: 3px; }
+.kw-science-connections-nav { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0; }
+.kw-science-connections-nav button, .kw-science-record-return { font-size: 12px; text-align: left; }
+.kw-science-record-return { margin: 0 0 14px; }
+.kw-science-detail-title { font-size: 20px; line-height: 1.45; margin: 8px 0 16px; }
+.kw-science-field { margin: 14px 0 0; }
+.kw-science-field > h4 { font-size: 12px; font-weight: 600; margin: 0 0 5px; text-transform: capitalize; }
+.kw-science-field .kw-science-field { padding-left: 12px; border-left: 1px solid var(--hairline); }
+.kw-science-value, .kw-science-rationale { margin: 5px 0; white-space: pre-wrap; font-size: 14px; line-height: 1.6; }
+.kw-science-values { margin: 6px 0; padding-left: 20px; }
+.kw-science-values > li { margin: 8px 0; }
+.kw-science-connection .kw-science-node { margin: 12px 0 0; }
+.kw-science-relation { font-size: 14px; font-weight: 600; text-transform: capitalize; text-decoration: underline; text-underline-offset: 3px; }
+.kw-science-identity { margin-top: 20px; font-size: 12px; }
+.kw-science-edge-index { margin: 28px 0; }
+.kw-science-edge-index .kw-science-connection { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 16px; }
+.kw-science-edge-index .kw-science-rationale { flex-basis: 100%; }
+.kw-science-legacy { margin-top: 16px; }
+@container knowledge-science (min-width: 680px) {
+  .kw-science-neighborhood { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .kw-science-detail { grid-column: 1 / -1; }
+}
+@container knowledge-science (min-width: 1040px) {
+  .kw-science-neighborhood { grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr) minmax(0, 1fr); }
+  .kw-science-incoming { grid-column: 1; grid-row: 1; }
+  .kw-science-detail { grid-column: 2; }
+  .kw-science-outgoing { grid-column: 3; grid-row: 1; }
+}
+
+.kw-science-message-body { margin: 12px 0; padding: 12px; border-left: 2px solid var(--hairline); white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 13px; line-height: 1.6; }

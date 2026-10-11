@@ -1,0 +1,264 @@
+{
+  "schemaVersion": 1,
+  "schemaId": "urn:baton:knowledge:schema:1",
+  "edgeTypes": {
+    "supports": {
+      "meaning": "Evidence or reasoning bears positively on the target under the stated context.",
+      "sourceKinds": [
+        "evidence",
+        "observation",
+        "research-finding",
+        "argument"
+      ],
+      "targetKinds": [
+        "claim",
+        "hypothesis",
+        "research-finding",
+        "proposal",
+        "edge"
+      ]
+    },
+    "challenges": {
+      "meaning": "Evidence or reasoning identifies a defeater, weakness or competing interpretation.",
+      "sourceKinds": [
+        "evidence",
+        "observation",
+        "research-finding",
+        "argument"
+      ],
+      "targetKinds": [
+        "claim",
+        "hypothesis",
+        "research-finding",
+        "proposal",
+        "argument",
+        "study",
+        "edge"
+      ]
+    },
+    "contradicts": {
+      "meaning": "Source and target cannot jointly hold within the asserted overlap.",
+      "sourceKinds": [
+        "claim",
+        "hypothesis",
+        "research-finding",
+        "observation"
+      ],
+      "targetKinds": [
+        "claim",
+        "hypothesis",
+        "research-finding",
+        "observation"
+      ]
+    },
+    "negates": {
+      "meaning": "Source states the logical complement of the target in the stated context.",
+      "sourceKinds": [
+        "claim",
+        "hypothesis",
+        "research-finding"
+      ],
+      "targetKinds": [
+        "claim",
+        "hypothesis",
+        "research-finding"
+      ]
+    },
+    "implies": {
+      "meaning": "Source entails the target by the cited argument and assumptions.",
+      "sourceKinds": [
+        "claim",
+        "hypothesis",
+        "research-finding"
+      ],
+      "targetKinds": [
+        "claim",
+        "hypothesis",
+        "research-finding"
+      ]
+    },
+    "proves": {
+      "meaning": "The source argument establishes the target under its explicit premises and context.",
+      "sourceKinds": [
+        "argument"
+      ],
+      "targetKinds": [
+        "claim",
+        "hypothesis",
+        "research-finding"
+      ]
+    },
+    "disproves": {
+      "meaning": "The source argument refutes the target under the stated context.",
+      "sourceKinds": [
+        "argument"
+      ],
+      "targetKinds": [
+        "claim",
+        "hypothesis",
+        "research-finding"
+      ]
+    },
+    "causes": {
+      "meaning": "An authored causal assertion relates an explicitly represented exposure to an outcome under its context. Source and target nodes describe the exposure and outcome; the relation concerns those phenomena. Basis records and identification describe the inference.",
+      "sourceKinds": [
+        "observation",
+        "research-finding",
+        "hypothesis"
+      ],
+      "targetKinds": [
+        "observation",
+        "research-finding",
+        "hypothesis"
+      ]
+    },
+    "correlates-with": {
+      "meaning": "The source and target have a stated empirical association.",
+      "sourceKinds": [
+        "observation",
+        "research-finding"
+      ],
+      "targetKinds": [
+        "observation",
+        "research-finding"
+      ]
+    },
+    "competes-with": {
+      "meaning": "Two hypotheses offer alternative explanations of the same question.",
+      "sourceKinds": [
+        "hypothesis"
+      ],
+      "targetKinds": [
+        "hypothesis"
+      ]
+    },
+    "replicates": {
+      "meaning": "A study or observation repeats an earlier procedure and states agreement and differences.",
+      "sourceKinds": [
+        "study",
+        "observation"
+      ],
+      "targetKinds": [
+        "study",
+        "observation"
+      ]
+    },
+    "derived-from": {
+      "meaning": "The source was constructed or interpreted using the target.",
+      "sourceKinds": [
+        "question",
+        "claim",
+        "hypothesis",
+        "observation",
+        "research-finding",
+        "study",
+        "evidence",
+        "argument",
+        "proposal",
+        "decision"
+      ],
+      "targetKinds": [
+        "question",
+        "claim",
+        "hypothesis",
+        "observation",
+        "research-finding",
+        "study",
+        "evidence",
+        "argument",
+        "proposal",
+        "decision"
+      ]
+    },
+    "investigates": {
+      "meaning": "A study or hypothesis addresses the target scientific question.",
+      "sourceKinds": [
+        "study",
+        "hypothesis"
+      ],
+      "targetKinds": [
+        "question"
+      ]
+    },
+    "produces": {
+      "meaning": "A study produced the target record.",
+      "sourceKinds": [
+        "study"
+      ],
+      "targetKinds": [
+        "question",
+        "hypothesis",
+        "observation",
+        "research-finding",
+        "evidence",
+        "argument",
+        "proposal"
+      ]
+    },
+    "informs": {
+      "meaning": "The source contributes to the rationale for a proposed action or decision.",
+      "sourceKinds": [
+        "claim",
+        "hypothesis",
+        "observation",
+        "research-finding",
+        "argument"
+      ],
+      "targetKinds": [
+        "proposal",
+        "decision"
+      ]
+    },
+    "supersedes": {
+      "meaning": "The source revises a prior record while preserving its identity and content.",
+      "sourceKinds": [
+        "question",
+        "claim",
+        "hypothesis",
+        "observation",
+        "research-finding",
+        "study",
+        "evidence",
+        "argument",
+        "proposal",
+        "decision",
+        "edge"
+      ],
+      "targetKinds": [
+        "question",
+        "claim",
+        "hypothesis",
+        "observation",
+        "research-finding",
+        "study",
+        "evidence",
+        "argument",
+        "proposal",
+        "decision",
+        "edge"
+      ]
+    }
+  },
+  "semanticRules": [
+    "Resolve every node and edge reference in endpoints, context, evidence, basis, methods, study questions and outputs, premises, alternatives and type details to its stored or transaction-local identity. Declared kinds must equal actual kinds. Resource references retain their complete identifiers and provenance; external resources may be unavailable and must not be claimed as fetched.",
+    "Bind all authored rows to the authenticated or CLI-selected session.",
+    "Keep scientific applicability in context independently of session, group and universal holdings.",
+    "Implies requires a deduction or formal-proof argument and states the inference rule under its assumptions. Proves requires a deduction or formal-proof argument. Disproves requires a deduction, formal-proof or counterexample argument; a counterexample argument names a witness and states the target scope it violates. Inductive and abductive arguments can support propositions with their uncertainty.",
+    "Support and causal assertions retain their own basis and rationale. Citations record source use; citation presence does not establish the cited proposition.",
+    "IDs preserve complete content. Identical writes are idempotent; conflicting writes retain the original and require a new ID. Supersedes records revision.",
+    "The type of a logical or causal edge expresses an authored assertion. Storage and schema validation do not perform theorem proving or causal identification.",
+    "Read legacy rows with their original kind, relationship labels and payloads. Mark their schema version as legacy. Migration requires an authored classification with the complete new type payload; no scientific assertion is inferred from an old label.",
+    "Study nodes are immutable descriptions of a named studyIdentity at a stage of its work. A new study record with the same studyIdentity and a supersedes edge records progress, method changes or newly generated outputs.",
+    "Edge references resolve to authored edge identities and declared edge kinds. Support and challenge can address an assertion directly; supersedes relates node revisions to nodes or edge revisions to edges. Scientific criticisms retain their author and rationale.",
+    "A causal mechanism explicitly distinguishes unknown, proposed and established. Identification and the supporting basis describe the evidence for the effect; mechanism status describes the explanation of how it arises.",
+    "Causes details name the represented exposure and outcome through typed causal variables. Source and target node statements must describe these variables. The relation does not describe the act of creating either record; produces and derived-from describe research outputs and derivation."
+  ],
+  "referenceSemantics": {
+    "entity": "A physical, digital or conceptual entity identified by its complete URI. Labels are descriptive metadata and do not establish identity equivalence.",
+    "artifact": "An information carrier such as a dataset, document or retained output. A content hash identifies the supplied bytes when recorded.",
+    "subject": "The reference denotes what the recorded property is predicated of. A document may itself be observed; subject slots retain the full typed reference union.",
+    "causalVariableSubject": "Exposure and outcome subjects identify the things to which those variables apply. An information carrier is the subject only when the causal claim concerns that carrier.",
+    "sourceRead": "References to source or basis material retain identifiers and recorded hashes. Retrieval reports actual availability and causes. Entity URIs may be opaque URNs; recording one does not assert it was retrieved.",
+    "identity": "The URI is the external entity identifier. Assertions retain their existing record identities and content-conflict rules. Distinct entity URIs remain distinct references; no equivalence is inferred from labels."
+  }
+}

@@ -33,7 +33,9 @@ def refused(+saved: String) -> Bool:
             Bool.or(Tx.starts_with(saved,"{\"error\":\"finding-id-conflict\""),
               Bool.or(Tx.starts_with(saved,"{\"error\":\"knowledge-notice-conflict\""),
                 Bool.or(Tx.starts_with(saved,"{\"error\":\"promotion-id-conflict\""),
-                  Tx.starts_with(saved,"{\"error\":\"promotion-notice-conflict\"")))))))))
+                  Bool.or(Tx.starts_with(saved,"{\"error\":\"promotion-notice-conflict\""),
+                    Tx.starts_with(saved,"{\"error\":\"v1-refused\""))))))))))
+
 
 # Change-publication contract for the coordinator queue. The projection
 # installer runs before the writer's own transaction begins; the committed

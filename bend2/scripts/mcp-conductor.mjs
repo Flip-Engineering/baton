@@ -13,7 +13,7 @@
 // coordinator executable for mutations. No npm dependencies; node stdlib only.
 
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { createServer, createConnection } from 'node:net';
 import { fileURLToPath } from 'node:url';
@@ -72,6 +72,43 @@ function coordinatorSurface() {
 const commandSurface = coordinatorSurface();
 const batchMessaging = ['outbox', 'delivery-batch', 'message-batch'].every((name) => commandSurface.includes(name));
 const inputDetail = commandSurface.includes('input MESSAGE_ID');
+const commandNames = new Set(commandSurface.match(/\b[a-z][a-z0-9-]*\b/g) ?? []);
+const attemptCustody = commandNames.has('attempt-custody');
+const scientificKnowledge = ['record-v1', 'relate-v1', 'knowledge-admit-v1',
+  'knowledge-v1-detail', 'promote-v1-scoped'].every((name) => commandNames.has(name));
+const scientificTools = new Set(['baton2_knowledge_record_v1', 'baton2_knowledge_relate_v1',
+  'baton2_knowledge_admit_v1', 'baton2_knowledge_detail_v1', 'baton2_knowledge_promote_v1']);
+const scientificSchemaPath = existsSync(resolve(__dirname, 'knowledge-v1.schema.json'))
+  ? resolve(__dirname, 'knowledge-v1.schema.json')
+  : resolve(ROOT, 'docs/bend2/knowledge-v1.schema.json');
+const scientificSchema = scientificKnowledge
+  ? JSON.parse(readFileSync(scientificSchemaPath, 'utf8')) : null;
+
+function scientificInputSchema(definition) {
+  if (!scientificSchema) return { type: 'object' };
+  const selected = { $schema: scientificSchema.$schema, type: 'object', $ref: `#/$defs/${definition}` };
+  const defs = {};
+  function collect(value) {
+    if (!value || typeof value !== 'object') return;
+    if (typeof value.$ref === 'string' && value.$ref.startsWith('#/$defs/')) {
+      const name = value.$ref.slice('#/$defs/'.length);
+      if (!(name in defs)) {
+        defs[name] = scientificSchema.$defs[name];
+        collect(defs[name]);
+      }
+    }
+    for (const item of Object.values(value)) collect(item);
+  }
+  collect(selected);
+  return { ...selected, $defs: defs };
+}
+
+function scientificAuthor(record) {
+  if (record?.author !== sessionId) {
+    throw new Error(`Scientific authorship must name the attached session ${sessionId}. The supplied author is ${JSON.stringify(record?.author)}.`);
+  }
+}
+
 const batchMessageTools = new Set([
   'baton2_delivery_batch',
   'baton2_outbox',
@@ -80,7 +117,15 @@ const batchMessageTools = new Set([
 const unavailableTools = new Set([
   ...(!batchMessaging ? batchMessageTools : []),
   ...(!inputDetail ? ['baton2_input'] : []),
+  ...(!attemptCustody ? ['baton2_attempt_custody'] : []),
+  ...(!scientificKnowledge ? scientificTools : []),
 ]);
+
+function knowledgeInstructions() {
+  return scientificKnowledge
+    ? "Use baton2_knowledge_admit_v1 to record a scientific graph or baton2_knowledge_record_v1 and baton2_knowledge_relate_v1 for individual typed records. Use the closed schema for observations, research findings, hypotheses, proposals, evidence and arguments. The schema validates record structure and referenced argument methods; authors remain responsible for scientific content. baton2_knowledge_detail_v1 reads the complete scientific record. Legacy finding tools retain their stored identities and compatibility."
+    : "This native version provides legacy finding tools. Use baton2_knowledge_record to retain a finding with its evidence and limits, and baton2_knowledge_relate for its authored links. Scientific schema-v1 tools become available with the corresponding native commands.";
+}
 
 function messageInstructions() {
   const messaging = batchMessaging
@@ -251,8 +296,42 @@ const TOOLS = [
     }, required: ['reference'], additionalProperties: false },
   },
   {
+    name: 'baton2_knowledge_record_v1',
+    description: 'Record one scientific knowledge node under schema v1. Use the attached session as author. The typed details describe the question, assertion, method, observation, research finding, evidence, argument, proposal or decision. Admission retains the complete record and notifies the author\'s immediate parent.',
+    inputSchema: scientificInputSchema('node'),
+  },
+  {
+    name: 'baton2_knowledge_relate_v1',
+    description: 'Record one typed scientific relationship under schema v1. Use the attached session as author. Endpoint kinds, evidence basis, scientific context and kind-specific details are validated. Supports and challenges express evidentiary bearing; implies, proves and disproves require the associated argument method. Causal assertions retain identification and alternative explanations.',
+    inputSchema: scientificInputSchema('edge'),
+  },
+  {
+    name: 'baton2_knowledge_admit_v1',
+    description: 'Record a scientific graph as one schema-v1 transaction. Every node and edge author must name the attached session. References may resolve within this batch or to previously stored scientific records. A refused batch preserves the existing graph and identifies the violated rule.',
+    inputSchema: scientificSchema ?? { type: 'object' },
+  },
+  {
+    name: 'baton2_knowledge_detail_v1',
+    description: 'Read a complete scientific schema-v1 node or edge by its raw record ID within selected holdings. The answer retains typed context, methods, references, limits, uncertainty and promotions.',
+    inputSchema: { type: 'object', properties: {
+      id: { type: 'string', minLength: 1 },
+      scope: { type: 'string', enum: ['universal', 'worker', 'group', 'all'] },
+      subject: { type: 'string' },
+    }, required: ['id'], additionalProperties: false },
+  },
+  {
+    name: 'baton2_knowledge_promote_v1',
+    description: 'Promote one scientific schema-v1 node or edge from its recorded holdings into a session or Ensemble as the attached destination owner.',
+    inputSchema: { type: 'object', properties: {
+      id: { type: 'string', minLength: 1 }, source: { type: 'string', minLength: 1 },
+      destination: { type: 'string', minLength: 1 }, recordId: { type: 'string', minLength: 1 },
+      sourceKind: { type: 'string', enum: ['session', 'group'] },
+      destinationKind: { type: 'string', enum: ['session', 'group'] },
+    }, required: ['id', 'source', 'destination', 'recordId'], additionalProperties: false },
+  },
+  {
     name: 'baton2_knowledge_record',
-    description: 'Record typed evidence, findings, hypotheses, experiments, decisions or principles with cited sources and limits. Optional links commit authored causal relationships with the record in one transaction. A committed record notifies the immediate parent.',
+    description: 'Legacy compatibility: record an existing finding workflow with cited sources and limits. Optional links commit authored causal relationships with the record in one transaction. A committed record notifies the immediate parent.',
     inputSchema: { type: 'object', properties: {
       id: { type: 'string' }, claim: { type: 'string' },
       kind: { type: 'string', description: 'Authored item type; omitted means finding. Types are free-form.' },
@@ -268,7 +347,7 @@ const TOOLS = [
   },
   {
     name: 'baton2_knowledge_relate',
-    description: 'Connect two knowledge or evidence references with an authored relationship. The direction is source relation target, such as a correction Supersedes an earlier finding.',
+    description: 'Legacy compatibility: connect two stored finding or evidence references. The direction is source relation target, such as a correction Supersedes an earlier finding.',
     inputSchema: { type: 'object', properties: {
       id: { type: 'string' },
       source: { type: 'string', description: 'Reference such as finding:ID, message:ID or an external source' },
@@ -278,7 +357,7 @@ const TOOLS = [
   },
   {
     name: 'baton2_knowledge_promote',
-    description: 'Promote a finding from its recorded source into a session or Ensemble as the attached destination owner.',
+    description: 'Legacy compatibility: promote a finding from its recorded source into a session or Ensemble as the attached destination owner.',
     inputSchema: { type: 'object', properties: {
       id: { type: 'string', description: 'Promotion ID' }, source: { type: 'string' },
       destination: { type: 'string' }, finding: { type: 'string', description: 'Finding ID' },
@@ -443,6 +522,13 @@ const TOOLS = [
       required: ['id'], additionalProperties: false },
   },
   {
+    name: 'baton2_attempt_custody',
+    description: 'Read a session\'s recorded execution and complete passive host job state. The response retains process custody, output and checkpoint positions, lifecycle facts and their recorded read causes. Host and database failures retain their code and text.',
+    inputSchema: { type: 'object', properties: {
+      session: { type: 'string', minLength: 1, description: 'Session ID (default: attached session)' },
+    }, additionalProperties: false },
+  },
+  {
     name: 'baton2_delivery_batch',
     description: 'Read selected complete stored messages and their receipts in the supplied order. Each item retains its own found, absent or refused result.',
     inputSchema: { type: 'object', properties: {
@@ -587,7 +673,10 @@ const TOOLS = [
   },
 ];
 
-const AVAILABLE_TOOLS = TOOLS.filter((tool) => !unavailableTools.has(tool.name));
+const legacyKnowledgeWrites = new Set(['baton2_knowledge_record', 'baton2_knowledge_relate',
+  'baton2_knowledge_promote']);
+const AVAILABLE_TOOLS = TOOLS.filter((tool) => !unavailableTools.has(tool.name)
+  && !(scientificKnowledge && legacyKnowledgeWrites.has(tool.name)));
 
 // State.
 let deliveryReady = null;
@@ -695,7 +784,7 @@ function handleMessage(msg) {
         experimental: { 'claude/channel': {} },
       },
       serverInfo: { name: 'baton-conductor', version: '0.1.0' },
-      instructions: `Baton2 ${hasParent(selectedSession()) ? 'Associate' : 'Principal'} Conductor attachment for session ${sessionId}. Use baton2_join for shared-checkout work and baton2_recruit when a separate worktree is needed. Name the target branch, remote and integration Conductor in the assignment. Commit completed changes. The integration Conductor lands or reconciles contributions and pushes the integrated target with baton2_push. After publication and turn completion, relocate the same Player with baton2_receiver to the shared checkout and retire clean unused merged task worktrees and branches through ordinary Git. Preserve active or unfinished work, explicit stops and receiver/toolchain dependencies. Use baton2_receiver to register a Player's Codex, OMP, Muse or Claude Code receive endpoint, then baton2_dispatch_file to send task or guidance files. Use baton2_dispatch_turn to launch a registered Player's task file with its recorded route. Use baton2_configure to save future effort on the same harness and model during active or stopped sessions, keeping the receiver, current turn and stop. Change harness or model after the current attempt ends and any stop is lifted. Configuration keeps the Player's identity, work, native conversation and pending input. Use baton2_context_engines to discover installed context modules; scope:"session" includes the attached project settings. Use baton2_context_install to acquire a module from a supplied built module directory or extracted distribution. Use baton2_context_query_file for request files and baton2_context_result for retained query results. Use baton2_knowledge_search to find a topic in selected holdings and baton2_knowledge_traverse to follow authored links and citations. Follow returned detailRead commands for complete findings and deliveryRead commands for cited messages. Finding references outside selected holdings carry an explicit all-scope detail read; reading preserves their holdings. Use baton2_knowledge for exact findings or metadata and baton2_knowledge_relations for directed links, including links between retained messages or external references. ${messageInstructions()} The optional kind supports authored completion-request and completion-confirmed messages. Workers ask their immediate parent to confirm task completion and continue useful work until its reply. The parent sends completion-confirmed with the request ID as its body when the task is complete, or sends guidance for further work. Native turn settlement and inbox receipts do not finish the task. The coordinator CLI ask and ask-file send questions as your recorded session to its parent; a parentless Principal Conductor reaches the registered operator. Use baton2_player and baton2_players to inspect Players and both Conductor tiers. Use baton2_role, baton2_ensemble, baton2_ensemble_member, baton2_section and baton2_section_member to configure responsibilities and membership. Use baton2_orchestra to inspect the system. Use baton2_turns for turn history and baton2_land or baton2_land_checked to land a Player's changes. Supply commit to select a reviewed ancestor while later work remains on the recorded branch.`,
+      instructions: `Baton2 ${hasParent(selectedSession()) ? 'Associate' : 'Principal'} Conductor attachment for session ${sessionId}. Use baton2_join for shared-checkout work and baton2_recruit when a separate worktree is needed. Name the target branch, remote and integration Conductor in the assignment. Commit completed changes. The integration Conductor lands or reconciles contributions and pushes the integrated target with baton2_push. After publication and turn completion, relocate the same Player with baton2_receiver to the shared checkout and retire clean unused merged task worktrees and branches through ordinary Git. Preserve active or unfinished work, explicit stops and receiver/toolchain dependencies. Use baton2_receiver to register a Player's Codex, OMP, Muse or Claude Code receive endpoint, then baton2_dispatch_file to send task or guidance files. Use baton2_dispatch_turn to launch a registered Player's task file with its recorded route. Use baton2_configure to save future effort on the same harness and model during active or stopped sessions, keeping the receiver, current turn and stop. Change harness or model after the current attempt ends and any stop is lifted. Configuration keeps the Player's identity, work, native conversation and pending input. Use baton2_context_engines to discover installed context modules; scope:"session" includes the attached project settings. Use baton2_context_install to acquire a module from a supplied built module directory or extracted distribution. Use baton2_context_query_file for request files and baton2_context_result for retained query results. ${knowledgeInstructions()} Use baton2_knowledge_search to find a topic in selected holdings and baton2_knowledge_traverse to follow authored links and citations. Follow returned detailRead commands for complete findings and deliveryRead commands for cited messages. Finding references outside selected holdings carry an explicit all-scope detail read; reading preserves their holdings. Use baton2_knowledge for exact findings or metadata and baton2_knowledge_relations for directed links, including links between retained messages or external references. ${messageInstructions()} The optional kind supports authored completion-request and completion-confirmed messages. Workers ask their immediate parent to confirm task completion and continue useful work until its reply. The parent sends completion-confirmed with the request ID as its body when the task is complete, or sends guidance for further work. Native turn settlement and inbox receipts do not finish the task. The coordinator CLI ask and ask-file send questions as your recorded session to its parent; a parentless Principal Conductor reaches the registered operator. Use baton2_player and baton2_players to inspect Players and both Conductor tiers. Use baton2_role, baton2_ensemble, baton2_ensemble_member, baton2_section and baton2_section_member to configure responsibilities and membership. Use baton2_orchestra to inspect the system. Use baton2_turns for turn history and baton2_land or baton2_land_checked to land a Player's changes. Supply commit to select a reviewed ancestor while later work remains on the recorded branch.`,
     });
     return;
   }
@@ -823,6 +912,30 @@ function handleToolCall(msg) {
           ...(args.pretty === true ? ['--pretty'] : []));
         break;
       }
+      case 'baton2_knowledge_record_v1':
+        scientificAuthor(args);
+        result = coord('record-v1', JSON.stringify(args));
+        break;
+      case 'baton2_knowledge_relate_v1':
+        scientificAuthor(args);
+        result = coord('relate-v1', JSON.stringify(args));
+        break;
+      case 'baton2_knowledge_admit_v1':
+        if (Array.isArray(args?.nodes)) args.nodes.forEach(scientificAuthor);
+        if (Array.isArray(args?.edges)) args.edges.forEach(scientificAuthor);
+        result = coord('knowledge-admit-v1', sessionId, JSON.stringify(args));
+        break;
+      case 'baton2_knowledge_detail_v1': {
+        const scope = args.scope ?? 'worker';
+        result = coord('knowledge-v1-detail', sessionId, scope,
+          args.subject ?? (scope === 'worker' ? sessionId : ''), args.id);
+        break;
+      }
+      case 'baton2_knowledge_promote_v1':
+        result = coord('promote-v1-scoped', args.id, sessionId,
+          args.sourceKind ?? 'session', args.source,
+          args.destinationKind ?? 'session', args.destination, args.recordId);
+        break;
       case 'baton2_knowledge_record':
         result = args.links !== undefined
           ? coord('record-linked', args.id, sessionId, args.kind ?? 'finding',
@@ -902,6 +1015,9 @@ function handleToolCall(msg) {
         break;
       case 'baton2_input':
         result = coord('input', args.id);
+        break;
+      case 'baton2_attempt_custody':
+        result = coord('attempt-custody', args?.session ?? sessionId);
         break;
       case 'baton2_delivery_batch':
         result = coord('delivery-batch', JSON.stringify(args.ids));

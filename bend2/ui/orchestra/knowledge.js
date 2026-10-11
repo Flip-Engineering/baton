@@ -4225,17 +4225,35 @@
     const mode = (opts && opts.mode) || "whole";
     let state = kwSizeObservers.get(container);
     if (mode !== "whole" || (opts && opts.notice)) {
-      if (state) state.observer.disconnect();
+      if (state) { state.observer.disconnect(); state.events.abort(); }
       kwSizeObservers.delete(container);
       return;
     }
     if (typeof ResizeObserver !== "function") return;
     if (!state) {
-      state = { width: container.clientWidth, data, opts, observer: null };
+      state = { width: container.clientWidth, data, opts, observer: null,
+        events: new AbortController(), readingVisible: false };
+      state.captureReading = () => {
+        if (!container.isConnected) {
+          state.observer.disconnect();
+          state.events.abort();
+          kwSizeObservers.delete(container);
+          return;
+        }
+        if (container.clientWidth !== state.width) return;
+        const active = container.contains(document.activeElement) ? document.activeElement : null;
+        const reading = active && active.closest(".kw-science-region, .kw-card");
+        state.readingVisible = !!reading && kwScientificReadingVisible(reading);
+      };
+      window.addEventListener("scroll", state.captureReading, { passive: true, signal: state.events.signal });
+      container.addEventListener("focusin", state.captureReading, { signal: state.events.signal });
       state.observer = new ResizeObserver(() => {
-        if (!container.isConnected || !kwLastRender || kwLastRender.container !== container) return;
+        if (!container.isConnected) return;
         const width = container.clientWidth;
-        if (width > 0 && width !== state.width) renderKnowledge(container, state.data, state.opts, true);
+        if (width > 0 && width !== state.width) {
+          renderKnowledge(container, state.data, state.opts, state.readingVisible);
+          state.captureReading();
+        }
       });
       kwSizeObservers.set(container, state);
       state.observer.observe(container);
@@ -4243,10 +4261,409 @@
     state.width = container.clientWidth;
     state.data = data;
     state.opts = opts;
+    state.captureReading();
+  }
+
+  // Scientific records retain their typed payloads and authored edge orientation.
+  // The overview groups node kinds; a selected record reads its actual neighbors.
+  const KW_SCIENCE_KINDS = ["question", "hypothesis", "study", "observation", "evidence",
+    "research-finding", "claim", "argument", "proposal", "decision"];
+  const KW_SCIENCE_EDGES = ["supports", "challenges", "contradicts", "negates", "implies",
+    "proves", "disproves", "causes", "correlates-with", "competes-with", "replicates",
+    "derived-from", "investigates", "produces", "informs", "supersedes"];
+  const kwScientificReads = new WeakMap();
+
+  function kwScienceLabel(value) {
+    return String(value).replace(/([a-z])([A-Z])/g, "$1 $2").replace(/[-_]/g, " ");
+  }
+
+  function kwScientificGraph(overview) {
+    const nodes = new Map();
+    const edges = new Map();
+    const scientific = overview.scientific || {};
+    const rootVersioned = scientific.schemaVersion === 1
+      && scientific.schemaId === "urn:baton:knowledge:schema:1";
+    const nodeRows = [...(rootVersioned ? scientific.nodes || [] : []),
+      ...(overview.findings || []).filter((row) => row && row.schemaVersion === 1),
+      ...(overview.nodes || []).filter((row) => row && row.schemaVersion === 1)];
+    const envelope = (row) => ({
+      ...row,
+      schemaVersion: row.schemaVersion === undefined ? scientific.schemaVersion : row.schemaVersion,
+      ...(row.schemaId || !scientific.schemaId ? {} : { schemaId: scientific.schemaId }),
+    });
+    for (const row of nodeRows) {
+      if (row && KW_SCIENCE_KINDS.includes(row.kind) && typeof row.statement === "string")
+        nodes.set(String(row.id), envelope(row));
+    }
+    const edgeRows = [...(rootVersioned ? scientific.edges || [] : []),
+      ...(overview.relations || []).filter((row) => row && row.schemaVersion === 1),
+      ...(overview.edges || []).filter((row) => row && row.schemaVersion === 1),
+      ...Array.from(nodes.values()).flatMap((node) => node.relations || [])];
+    for (const row of edgeRows) {
+      if (row && KW_SCIENCE_EDGES.includes(row.kind) && row.source && row.target)
+        edges.set(String(row.id), envelope(row));
+    }
+    return { nodes, edges };
+  }
+
+  function kwScientificKey(row) {
+    return (row.source && row.target ? "edge:" : "node:") + row.id;
+  }
+
+  function kwScientificResolve(graph, reference) {
+    if (!reference) return null;
+    const row = reference.kind === "edge" ? graph.edges.get(String(reference.id))
+      : graph.nodes.get(String(reference.id));
+    return row && (reference.kind === "edge" ? row.kind === reference.edgeKind
+      : row.kind === reference.kind) ? row : null;
+  }
+
+  function kwScientificMatches(reference, row) {
+    return reference && String(reference.id) === String(row.id)
+      && (row.source ? reference.kind === "edge" && reference.edgeKind === row.kind
+        : reference.kind === row.kind);
+  }
+
+  function kwScientificField(parent, label, value, graph, activate) {
+    if (value === null || value === undefined || value === "") return;
+    const field = kwEl(parent, "div", { class: "kw-science-field" });
+    kwEl(field, "h4", null, kwScienceLabel(label));
+    kwScientificValue(field, value, graph, activate);
+  }
+
+  function kwScientificValue(parent, value, graph, activate) {
+    if (Array.isArray(value)) {
+      if (!value.length) { kwEl(parent, "p", { class: "muted" }, "None recorded"); return; }
+      const list = kwEl(parent, "ul", { class: "kw-science-values" });
+      for (const item of value) kwScientificValue(kwEl(list, "li"), item, graph, activate);
+      return;
+    }
+    if (value && typeof value === "object") {
+      // Exact typed references resolve within the returned scientific graph.
+      const target = kwScientificResolve(graph, value);
+      const sameKind = !!target;
+      if (sameKind) {
+        const open = kwEl(parent, "button", { class: "kw-science-reference", type: "button",
+          "data-science-focus": "reference:" + value.kind + ":" + value.id },
+        target.statement || target.rationale || target.id);
+        open.addEventListener("click", () => activate(kwScientificKey(target)));
+        kwEl(parent, "span", { class: "kw-science-reference-id mono" }, value.kind + " · " + value.id);
+        return;
+      }
+      if (value.kind && (value.id || value.uri) && !Object.hasOwn(value, "statement")) {
+        if (value.kind === "entity" && typeof value.label === "string")
+          kwEl(parent, "p", { class: "kw-science-value" }, value.label);
+        kwEl(parent, "p", { class: "kw-science-reference-id mono" },
+          value.kind + " · " + String(value.id || value.uri));
+        if (value.uri && /^https?:\/\//i.test(value.uri)) {
+          kwEl(parent, "a", { href: value.uri, target: "_blank", rel: "noopener noreferrer" },
+            value.kind === "entity" ? "Open entity URI" : "Open source");
+        }
+        if (value.sha256) kwEl(parent, "p", { class: "mono" }, "SHA-256 " + value.sha256);
+        if (value.kind === "edge" && value.edgeKind) kwEl(parent, "p", null, kwScienceLabel(value.edgeKind));
+        if (value.kind === "message" && value.id) {
+          const held = graph.messages[String(value.id)];
+          if (held && held.state === "ok" && held.message) {
+            const message = held.message;
+            kwEl(parent, "p", { class: "kw-science-author" },
+              [message.kind, message.sender && "From " + message.sender,
+                message.recipient && "To " + message.recipient].filter(Boolean).join(" · "));
+            if (typeof message.body === "string") {
+              kwEl(parent, "pre", { class: "kw-science-message-body", tabindex: "-1",
+                "data-science-focus": "message:" + value.id,
+                "aria-label": "Supporting message " + value.id }, message.body);
+              if (message.body === "") kwEl(parent, "p", { class: "muted" }, "Stored body is empty.");
+            }
+          } else {
+            if (held) {
+              kwEl(parent, "p", { class: "muted" }, "Message read: " + held.state);
+              if (held.status) kwEl(parent, "p", null, "Status " + held.status);
+              if (held.reason) kwEl(parent, "p", { class: "kw-science-value" }, held.reason);
+            }
+            if (typeof graph.onReadMessage === "function") {
+              const read = kwEl(parent, "button", { type: "button", class: "kw-science-reference",
+                "data-science-focus": "message:" + value.id },
+              held && held.state === "reading" ? "Reading supporting message…" : "Read supporting message");
+              const reading = !!held && held.state === "reading";
+              read.setAttribute("aria-disabled", String(reading));
+              read.addEventListener("click", () => {
+                if (!reading) graph.onReadMessage(String(value.id));
+              });
+            }
+          }
+        } else if (KW_SCIENCE_KINDS.includes(value.kind) || value.kind === "edge") {
+          kwEl(parent, "p", { class: "muted" }, "Referenced record is outside this returned graph.");
+          if (typeof graph.onOpenReference === "function") {
+            const open = kwEl(parent, "button", { type: "button", class: "kw-science-reference",
+              "data-science-focus": "outside:" + value.kind + ":" + value.id }, "Open in all holdings");
+            open.addEventListener("click", () => graph.onOpenReference(value));
+          }
+        } else if (value.kind === "entity") {
+          kwEl(parent, "p", { class: "muted" }, "Referenced entity");
+        } else {
+          kwEl(parent, "p", { class: "muted" }, kwScienceLabel(value.kind) + " resource");
+        }
+        return;
+      }
+      for (const [key, item] of Object.entries(value)) kwScientificField(parent, key, item, graph, activate);
+      return;
+    }
+    kwEl(parent, "p", { class: "kw-science-value" }, String(value));
+  }
+
+  function kwScientificTile(parent, row, graph, activate) {
+    const tile = kwEl(parent, "article", { class: "kw-science-node", "data-science-id": row.id,
+      "data-science-kind": row.kind });
+    kwEl(tile, "p", { class: "kw-science-kind" }, kwScienceLabel(row.kind));
+    const open = kwEl(tile, "button", { class: "kw-science-statement", type: "button",
+      "data-science-focus": "node:" + row.id }, row.statement || row.rationale || row.id);
+    open.addEventListener("click", () => activate(kwScientificKey(row)));
+    kwEl(tile, "p", { class: "kw-science-author" }, "By " + row.author);
+    kwEl(tile, "p", { class: "kw-science-reference-id mono" }, row.id);
+    if (row.uncertainty) kwEl(tile, "p", { class: "kw-science-uncertainty" }, row.uncertainty);
+    const connected = Array.from(graph.edges.values()).filter((edge) =>
+      kwScientificMatches(edge.source, row) || kwScientificMatches(edge.target, row)).length;
+    kwEl(tile, "p", { class: "kw-science-degree" }, connected + (connected === 1 ? " relation" : " relations"));
+    return tile;
+  }
+
+  function kwScientificDetail(parent, row, graph, activate, read, connections) {
+    kwEl(parent, "p", { class: "kw-science-kind" }, kwScienceLabel(row.kind));
+    kwEl(parent, "h3", { class: "kw-science-detail-title" }, row.statement || row.rationale || row.id);
+    kwEl(parent, "p", { class: "kw-science-author" }, "Authored by " + row.author);
+    kwEl(parent, "p", { class: "kw-science-reference-id mono" }, row.id);
+    const navigation = kwEl(parent, "nav", { class: "kw-science-connections-nav",
+      "aria-label": "Relations for the selected record" });
+    for (const connection of connections) {
+      const jump = kwEl(navigation, "button", { type: "button",
+        "data-science-focus": "jump:" + connection.side }, connection.label);
+      jump.addEventListener("click", connection.open);
+    }
+    if (row.source) {
+      kwScientificField(parent, "Source", row.source, graph, activate);
+      kwScientificField(parent, "Target", row.target, graph, activate);
+      kwScientificField(parent, "Rationale", row.rationale, graph, activate);
+      kwScientificField(parent, "Basis", row.basis, graph, activate);
+      if (["proves", "disproves", "implies"].includes(row.kind)) {
+        kwEl(parent, "p", { class: "kw-science-assertion-note" },
+          "This relation records the author's inference. Its argument and premises are available for review.");
+      }
+    } else kwScientificField(parent, "Evidence", row.evidence, graph, activate);
+    kwScientificField(parent, "Context", row.context, graph, activate);
+    kwScientificField(parent, "Details", row.details, graph, activate);
+    kwScientificField(parent, "Limits", row.limits, graph, activate);
+    kwScientificField(parent, "Uncertainty", row.uncertainty, graph, activate);
+    const key = kwScientificKey(row);
+    const identity = kwEl(parent, "details", { class: "kw-science-identity",
+      "data-science-identity": key });
+    identity.open = read.identityOpen.has(key);
+    identity.addEventListener("toggle", () => {
+      if (!identity.isConnected) return;
+      if (identity.open) read.identityOpen.add(key);
+      else read.identityOpen.delete(key);
+    });
+    kwEl(identity, "summary", { "data-science-focus": "identity:" + key }, "Record identity and sharing");
+    for (const key of ["schemaVersion", "schemaId", "provenance", "promotions", "detailRead"])
+      kwScientificField(identity, key, row[key], graph, activate);
+  }
+
+  function kwScientificConnection(parent, edge, selected, graph, activate) {
+    const outgoing = kwScientificMatches(edge.source, selected);
+    const endpoint = outgoing ? edge.target : edge.source;
+    const row = kwScientificResolve(graph, endpoint);
+    const entry = kwEl(parent, "article", { class: "kw-science-connection", "data-science-edge": edge.id });
+    const relation = kwEl(entry, "button", { class: "kw-science-relation", type: "button",
+      "data-science-focus": "edge:" + edge.id },
+    (outgoing ? "→ " : "← ") + kwScienceLabel(edge.kind));
+    relation.addEventListener("click", () => activate(kwScientificKey(edge)));
+    kwEl(entry, "p", { class: "kw-science-rationale" }, edge.rationale);
+    if (row) kwScientificTile(entry, row, graph, activate);
+    else kwScientificValue(entry, endpoint, graph, activate);
+    if (edge.uncertainty) kwEl(entry, "p", { class: "kw-science-uncertainty" }, edge.uncertainty);
+  }
+
+  function kwScientificReadingVisible(detail) {
+    const rect = detail.getBoundingClientRect();
+    const viewport = window.visualViewport;
+    const top = viewport ? viewport.offsetTop : 0;
+    const bottom = top + (viewport ? viewport.height : window.innerHeight);
+    return rect.bottom > top && rect.top < bottom;
+  }
+
+  function kwRenderScientific(container, data, opts, graph, readingResize = false) {
+    container.classList.add("kw-science");
+    let read = kwScientificReads.get(container);
+    if (!read) {
+      read = { selected: "", addressSelected: "", query: "", relation: "", history: [], legacy: false, identityOpen: new Set() };
+      kwScientificReads.set(container, read);
+    }
+    const requested = (opts && opts.scientificSelected) || "";
+    if (requested !== read.addressSelected) {
+      read.selected = requested;
+      read.addressSelected = requested;
+    }
+    const select = (key) => {
+      read.selected = key;
+      read.addressSelected = key;
+      if (opts) opts.scientificSelected = key;
+      if (opts && typeof opts.onSelectScientific === "function") opts.onSelectScientific(key);
+    };
+    graph.messages = data.messages || {};
+    graph.onReadMessage = opts && opts.onReadMessage;
+    graph.onOpenReference = opts && opts.onOpenScientificReference;
+    for (const identity of container.querySelectorAll("details[data-science-identity]")) {
+      const key = identity.getAttribute("data-science-identity");
+      if (identity.open) read.identityOpen.add(key);
+      else read.identityOpen.delete(key);
+    }
+    const previous = container.contains(document.activeElement) ? document.activeElement : null;
+    const reading = previous && previous.closest(".kw-science-region");
+    const restoreReading = reading && (readingResize || kwScientificReadingVisible(reading));
+    const focus = previous && previous.getAttribute("data-science-focus");
+    const caret = previous && typeof previous.selectionStart === "number"
+      ? [previous.selectionStart, previous.selectionEnd] : null;
+    container.textContent = "";
+    const overview = data.overview || {};
+    const redraw = () => kwRenderScientific(container, data, opts, graph);
+    const focusDetail = () => {
+      const detail = container.querySelector(".kw-science-detail");
+      if (detail) { detail.scrollIntoView({ block: "start", inline: "nearest" }); detail.focus({ preventScroll: true }); }
+    };
+    const activate = (id) => {
+      if (read.selected !== String(id)) read.history.push(read.selected);
+      select(String(id));
+      redraw();
+      focusDetail();
+    };
+    const tools = kwEl(container, "div", { class: "kw-science-tools" });
+    const home = kwEl(tools, "button", { type: "button", "data-science-focus": "overview" }, "All records");
+    home.addEventListener("click", () => { select(""); redraw(); });
+    if (read.history.length) {
+      const back = kwEl(tools, "button", { type: "button", "data-science-focus": "back" }, "Back");
+      back.addEventListener("click", () => { select(read.history.pop()); redraw(); focusDetail(); });
+    }
+    const filters = kwEl(container, "div", { class: "kw-science-filters" });
+    const search = kwEl(filters, "input", { type: "search", placeholder: "Search scientific records…",
+      "aria-label": "Search scientific records", "data-science-focus": "search" });
+    search.value = read.query;
+    search.addEventListener("input", () => {
+      if (read.selected) { read.history.push(read.selected); select(""); }
+      read.query = search.value;
+      redraw();
+    });
+    const relation = kwEl(filters, "select", { "aria-label": "Filter relations", "data-science-focus": "relation-filter" });
+    kwEl(relation, "option", { value: "" }, "All relations");
+    for (const kind of KW_SCIENCE_EDGES) if (Array.from(graph.edges.values()).some((edge) => edge.kind === kind))
+      kwEl(relation, "option", { value: kind }, kwScienceLabel(kind));
+    relation.value = read.relation;
+    relation.addEventListener("change", () => { read.relation = relation.value; redraw(); });
+    kwEl(container, "p", { class: "kw-science-caption" },
+      graph.nodes.size + " scientific records · " + graph.edges.size + " authored relations");
+    const selected = read.selected.startsWith("edge:") ? graph.edges.get(read.selected.slice(5))
+      : read.selected.startsWith("node:") ? graph.nodes.get(read.selected.slice(5)) : null;
+    const matches = (row) => !read.query || JSON.stringify(row).toLocaleLowerCase().includes(read.query.toLocaleLowerCase());
+    const edges = Array.from(graph.edges.values()).filter((edge) => !read.relation || edge.kind === read.relation);
+    if (selected) {
+      const neighborhood = kwEl(container, "div", { class: "kw-science-neighborhood" });
+      const openRegion = (side) => {
+        const region = neighborhood.querySelector('[data-science-focus="' + side + '"]');
+        if (region) {
+          region.scrollIntoView({ block: "start", inline: "nearest" });
+          region.focus({ preventScroll: true });
+        }
+      };
+      const incomingEdges = edges.filter((edge) => kwScientificMatches(edge.target, selected));
+      const outgoingEdges = edges.filter((edge) => kwScientificMatches(edge.source, selected));
+      const incoming = kwEl(neighborhood, "section", { class: "kw-science-incoming kw-science-region",
+        tabindex: "-1", "data-science-focus": "incoming", "aria-label": "Incoming relations" });
+      kwEl(incoming, "h3", null, selected.source ? "Source and incoming assertions" : "Incoming relations");
+      const returnFromIncoming = kwEl(incoming, "button", { type: "button", class: "kw-science-record-return",
+        "data-science-focus": "return:incoming" }, "Return to record");
+      returnFromIncoming.addEventListener("click", () => openRegion("detail"));
+      if (selected.source) {
+        const source = kwScientificResolve(graph, selected.source);
+        if (source) kwScientificTile(incoming, source, graph, activate);
+        else kwScientificValue(incoming, selected.source, graph, activate);
+      }
+      const detail = kwEl(neighborhood, "section", { class: "kw-science-detail kw-science-region", tabindex: "-1",
+        "data-science-focus": "detail", "aria-label": "Selected scientific record" });
+      kwScientificDetail(detail, selected, graph, activate, read, [
+        { side: "incoming", label: selected.source ? "Source and incoming assertions"
+          : "Incoming relations · " + incomingEdges.length, open: () => openRegion("incoming") },
+        { side: "outgoing", label: selected.target ? "Target and outgoing assertions"
+          : "Outgoing relations · " + outgoingEdges.length, open: () => openRegion("outgoing") },
+      ]);
+      const outgoing = kwEl(neighborhood, "section", { class: "kw-science-outgoing kw-science-region",
+        tabindex: "-1", "data-science-focus": "outgoing", "aria-label": "Outgoing relations" });
+      kwEl(outgoing, "h3", null, selected.target ? "Target and outgoing assertions" : "Outgoing relations");
+      const returnFromOutgoing = kwEl(outgoing, "button", { type: "button", class: "kw-science-record-return",
+        "data-science-focus": "return:outgoing" }, "Return to record");
+      returnFromOutgoing.addEventListener("click", () => openRegion("detail"));
+      if (selected.target) {
+        const target = kwScientificResolve(graph, selected.target);
+        if (target) kwScientificTile(outgoing, target, graph, activate);
+        else kwScientificValue(outgoing, selected.target, graph, activate);
+      }
+      for (const [side, connected] of [[incoming, incomingEdges], [outgoing, outgoingEdges]]) {
+        for (const edge of connected) kwScientificConnection(side, edge, selected, graph, activate);
+        if (!connected.length) kwEl(side, "p", { class: "muted" }, "No relations in this reading");
+      }
+    } else {
+      const index = kwEl(container, "div", { class: "kw-science-index" });
+      for (const kind of KW_SCIENCE_KINDS) {
+        const held = Array.from(graph.nodes.values()).filter((row) => row.kind === kind && matches(row));
+        if (!held.length) continue;
+        const group = kwEl(index, "section", { class: "kw-science-kind-group" });
+        kwEl(group, "h3", null, kwScienceLabel(kind) + " · " + held.length);
+        for (const row of held) kwScientificTile(group, row, graph, activate);
+      }
+      const connections = kwEl(container, "section", { class: "kw-science-edge-index" });
+      kwEl(connections, "h3", null, "Authored relations");
+      for (const edge of edges.filter(matches)) {
+        const row = kwEl(connections, "article", { class: "kw-science-connection" });
+        const open = kwEl(row, "button", { class: "kw-science-relation", type: "button",
+          "data-science-focus": "edge:" + edge.id }, kwScienceLabel(edge.kind));
+        open.addEventListener("click", () => activate(kwScientificKey(edge)));
+        kwScientificValue(row, edge.source, graph, activate);
+        kwEl(row, "span", { "aria-hidden": "true" }, " → ");
+        kwScientificValue(row, edge.target, graph, activate);
+        kwEl(row, "p", { class: "kw-science-rationale" }, edge.rationale);
+      }
+    }
+    const legacy = (overview.findings || []).filter((row) => row.schemaVersion !== 1);
+    if (legacy.length) {
+      const toggle = kwEl(container, "button", { type: "button", "data-science-focus": "legacy",
+        "aria-expanded": read.legacy ? "true" : "false" }, "Legacy records · " + legacy.length);
+      toggle.addEventListener("click", () => { read.legacy = !read.legacy; redraw(); });
+      if (read.legacy) {
+        const list = kwEl(container, "section", { class: "kw-science-legacy" });
+        kwEl(list, "p", null, "These records retain their original labels and content.");
+        renderKnowledge(list, data, { ...opts, legacyOnly: true });
+      }
+    }
+    if (focus) {
+      const restored = Array.from(container.querySelectorAll("[data-science-focus]"))
+        .find((control) => control.getAttribute("data-science-focus") === focus);
+      if (restored) {
+        restored.focus({ preventScroll: true });
+        const region = restored.closest(".kw-science-region");
+        if (restoreReading && region && !kwScientificReadingVisible(region))
+          region.scrollIntoView({ block: "start", inline: "nearest" });
+        if (caret && typeof restored.setSelectionRange === "function") restored.setSelectionRange(...caret);
+      }
+    }
+    return { findings: graph.nodes.size + legacy.length, promotions: (overview.promotions || []).length };
   }
 
   function renderKnowledge(container, data, opts, readingResize = false) {
     if (!container) return null;
+    const scientific = kwScientificGraph((data && data.overview) || {});
+    if ((!opts || opts.mode !== "band") && !(opts && opts.legacyOnly)
+      && !(opts && opts.notice) && (scientific.nodes.size || scientific.edges.size)) {
+      kwWatchWidth(container, data, opts);
+      return kwRenderScientific(container, data, opts, scientific, readingResize);
+    }
+    container.classList.remove("kw-science");
     kwWatchWidth(container, data, opts);
     const active = document.activeElement;
     let focused = null;
@@ -4357,12 +4774,42 @@
     };
   }
 
+  const kwArcSizeObservers = new WeakMap();
+
+  function kwWatchArcSize(mount, data) {
+    let state = kwArcSizeObservers.get(mount);
+    if (!(data && data.promotions && data.promotions.length)) {
+      if (state) state.observer.disconnect();
+      kwArcSizeObservers.delete(mount);
+      return;
+    }
+    if (typeof ResizeObserver !== "function") return;
+    if (!state) {
+      state = { width: mount.clientWidth, height: mount.clientHeight, data, observer: null };
+      state.observer = new ResizeObserver(() => {
+        if (!mount.isConnected) {
+          state.observer.disconnect();
+          kwArcSizeObservers.delete(mount);
+          return;
+        }
+        if (mount.clientWidth !== state.width || mount.clientHeight !== state.height)
+          renderArcs(mount, state.data);
+      });
+      kwArcSizeObservers.set(mount, state);
+      state.observer.observe(mount);
+    }
+    state.width = mount.clientWidth;
+    state.height = mount.clientHeight;
+    state.data = data;
+  }
+
   // Roster overlay: one arc per recorded promotion joins the source
   // row to the destination row in the margin gutter, so sharing reads
   // at a glance in the default view. Rows that are not rendered take
   // no arc. The selection lights its own arcs.
   function renderArcs(mount, data) {
     if (!mount || typeof document === "undefined") return;
+    kwWatchArcSize(mount, data);
     const old = mount.querySelector(":scope > svg.kw-arcs");
     if (old) old.remove();
     const promotions = (data && data.promotions) || [];
@@ -4378,7 +4825,7 @@
       mid.set(row.getAttribute("data-doc-id"),
         row.offsetTop + row.offsetHeight / 2);
     }
-    const width = mount.scrollWidth || mount.clientWidth || 0;
+    const width = mount.clientWidth || 0;
     const height = mount.scrollHeight || mount.clientHeight || 0;
     if (!width || !height) return;
     const svg = kwSvg(mount, "svg", {

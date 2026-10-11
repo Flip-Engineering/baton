@@ -1,0 +1,3347 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:baton:knowledge:schema:1",
+  "title": "Baton scientific knowledge graph version 1",
+  "description": "Draft structured contract. Node and edge assertions retain authors, method and evidence references, scientific applicability, assumptions, limits and uncertainty. Schema validation establishes record structure. Authors retain responsibility for scientific content.",
+  "type": "object",
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "nodes": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/node"
+      }
+    },
+    "edges": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/edge"
+      }
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "nodes",
+    "edges"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "nodeReference": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "question",
+            "claim",
+            "hypothesis",
+            "observation",
+            "research-finding",
+            "study",
+            "evidence",
+            "argument",
+            "proposal",
+            "decision"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "kind"
+      ],
+      "additionalProperties": false
+    },
+    "resourceReference": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "message"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "kind",
+            "id"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "artifact"
+            },
+            "uri": {
+              "type": "string",
+              "minLength": 1
+            },
+            "sha256": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            }
+          },
+          "required": [
+            "kind",
+            "uri"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "url"
+            },
+            "uri": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "kind",
+            "uri"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "reference": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/nodeReference"
+        },
+        {
+          "$ref": "#/$defs/resourceReference"
+        },
+        {
+          "$ref": "#/$defs/edgeReference"
+        },
+        {
+          "$ref": "#/$defs/entityReference"
+        }
+      ]
+    },
+    "context": {
+      "type": "object",
+      "properties": {
+        "scope": {
+          "type": "string",
+          "minLength": 1
+        },
+        "subjects": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/reference"
+          }
+        },
+        "conditions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "assumptions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "scope",
+        "subjects",
+        "conditions",
+        "assumptions"
+      ],
+      "additionalProperties": false
+    },
+    "result": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "text"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "quantity"
+            },
+            "value": {
+              "type": "number"
+            },
+            "unit": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "kind",
+            "value",
+            "unit"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "boolean"
+            },
+            "value": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "structured"
+            },
+            "value": {}
+          },
+          "required": [
+            "kind",
+            "value"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "prediction": {
+      "type": "object",
+      "properties": {
+        "statement": {
+          "type": "string",
+          "minLength": 1
+        },
+        "conditions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "observables": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "statement",
+        "conditions",
+        "observables"
+      ],
+      "additionalProperties": false
+    },
+    "method": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "field-observation"
+            },
+            "procedure": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "kind",
+            "procedure"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "literature-synthesis"
+            },
+            "searchStrategy": {
+              "type": "string",
+              "minLength": 1
+            },
+            "inclusionCriteria": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "sources": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/reference"
+              }
+            }
+          },
+          "required": [
+            "kind",
+            "searchStrategy",
+            "inclusionCriteria",
+            "sources"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "experiment"
+            },
+            "protocol": {
+              "type": "string",
+              "minLength": 1
+            },
+            "interventions": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "controls": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "kind",
+            "protocol",
+            "interventions",
+            "controls"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "simulation"
+            },
+            "model": {
+              "$ref": "#/$defs/reference"
+            },
+            "parameters": {
+              "type": "object"
+            },
+            "procedure": {
+              "type": "string",
+              "minLength": 1
+            },
+            "randomness": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "model",
+            "parameters",
+            "procedure"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "kind": {
+              "const": "analysis"
+            },
+            "procedure": {
+              "type": "string",
+              "minLength": 1
+            },
+            "inputs": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/reference"
+              }
+            }
+          },
+          "required": [
+            "kind",
+            "procedure",
+            "inputs"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "questionDetails": {
+      "type": "object",
+      "properties": {
+        "topic": {
+          "type": "string",
+          "minLength": 1
+        },
+        "openQuestions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "topic",
+        "openQuestions"
+      ],
+      "additionalProperties": false
+    },
+    "claimDetails": {
+      "type": "object",
+      "properties": {
+        "quantification": {
+          "type": "string",
+          "enum": [
+            "singular",
+            "universal",
+            "existential",
+            "unspecified"
+          ]
+        }
+      },
+      "required": [
+        "quantification"
+      ],
+      "additionalProperties": false
+    },
+    "hypothesisDetails": {
+      "type": "object",
+      "properties": {
+        "explanation": {
+          "type": "string",
+          "minLength": 1
+        },
+        "predictions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/prediction"
+          }
+        },
+        "overturnConditions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "explanation",
+        "predictions",
+        "overturnConditions"
+      ],
+      "additionalProperties": false
+    },
+    "observationDetails": {
+      "type": "object",
+      "properties": {
+        "subject": {
+          "$ref": "#/$defs/reference"
+        },
+        "property": {
+          "type": "string",
+          "minLength": 1
+        },
+        "procedure": {
+          "type": "string",
+          "minLength": 1
+        },
+        "result": {
+          "$ref": "#/$defs/result"
+        },
+        "phenomenonTime": {
+          "type": "string",
+          "minLength": 1
+        },
+        "resultTime": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "subject",
+        "property",
+        "procedure",
+        "result",
+        "phenomenonTime"
+      ],
+      "additionalProperties": false
+    },
+    "research-findingDetails": {
+      "type": "object",
+      "properties": {
+        "method": {
+          "$ref": "#/$defs/method"
+        },
+        "inputs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/reference"
+          }
+        },
+        "inference": {
+          "type": "string",
+          "minLength": 1
+        },
+        "overturnConditions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "method",
+        "inputs",
+        "inference",
+        "overturnConditions"
+      ],
+      "additionalProperties": false
+    },
+    "studyDetails": {
+      "type": "object",
+      "properties": {
+        "questions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "kind": {
+                "const": "question"
+              }
+            },
+            "required": [
+              "id",
+              "kind"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "method": {
+          "$ref": "#/$defs/method"
+        },
+        "design": {
+          "type": "string",
+          "minLength": 1
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "planned",
+            "in-progress",
+            "completed"
+          ]
+        },
+        "outputs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/nodeReference"
+          }
+        },
+        "studyIdentity": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "questions",
+        "method",
+        "design",
+        "state",
+        "outputs",
+        "studyIdentity"
+      ],
+      "additionalProperties": false
+    },
+    "evidenceDetails": {
+      "type": "object",
+      "properties": {
+        "source": {
+          "$ref": "#/$defs/resourceReference"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1
+        },
+        "selection": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "source",
+        "description"
+      ],
+      "additionalProperties": false
+    },
+    "argumentDetails": {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "enum": [
+            "deduction",
+            "formal-proof",
+            "counterexample",
+            "induction",
+            "abduction"
+          ]
+        },
+        "premises": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/reference"
+          }
+        },
+        "derivation": {
+          "type": "string",
+          "minLength": 1
+        },
+        "witness": {
+          "$ref": "#/$defs/reference"
+        }
+      },
+      "required": [
+        "method",
+        "premises",
+        "derivation"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "method": {
+                "const": "counterexample"
+              }
+            },
+            "required": [
+              "method"
+            ]
+          },
+          "then": {
+            "required": [
+              "witness"
+            ]
+          }
+        }
+      ]
+    },
+    "proposalDetails": {
+      "type": "object",
+      "properties": {
+        "purpose": {
+          "type": "string",
+          "minLength": 1
+        },
+        "proposedAction": {
+          "type": "string",
+          "minLength": 1
+        },
+        "rationale": {
+          "type": "string",
+          "minLength": 1
+        },
+        "alternatives": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/nodeReference"
+          }
+        }
+      },
+      "required": [
+        "purpose",
+        "proposedAction",
+        "rationale",
+        "alternatives"
+      ],
+      "additionalProperties": false
+    },
+    "decisionDetails": {
+      "type": "object",
+      "properties": {
+        "selected": {
+          "$ref": "#/$defs/nodeReference"
+        },
+        "rationale": {
+          "type": "string",
+          "minLength": 1
+        },
+        "alternatives": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/nodeReference"
+          }
+        }
+      },
+      "required": [
+        "selected",
+        "rationale",
+        "alternatives"
+      ],
+      "additionalProperties": false
+    },
+    "node": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "author": {
+              "type": "string",
+              "minLength": 1
+            },
+            "kind": {
+              "const": "question"
+            },
+            "statement": {
+              "type": "string",
+              "minLength": 1
+            },
+            "context": {
+              "$ref": "#/$defs/context"
+            },
+            "evidence": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/reference"
+              }
+            },
+            "limits": {
+              "type": "string"
+            },
+            "uncertainty": {
+              "type": "string"
+            },
+            "details": {
+              "$ref": "#/$defs/questionDetails"
+            }
+          },
+          "required": [
+            "id",
+            "author",
+            "kind",
+            "statement",
+            "context",
+            "evidence",
+            "limits",
+            "uncertainty",
+            "details"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "author": {
+              "type": "string",
+              "minLength": 1
+            },
+            "kind": {
+              "const": "claim"
+            },
+            "statement": {
+              "type": "string",
+              "minLength": 1
+            },
+            "context": {
+              "$ref": "#/$defs/context"
+            },
+            "evidence": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/reference"
+              }
+            },
+            "limits": {
+              "type": "string"
+            },
+            "uncertainty": {
+              "type": "string"
+            },
+            "details": {
+              "$ref": "#/$defs/claimDetails"
+            }
+          },
+          "required": [
+            "id",
+            "author",
+            "kind",
+            "statement",
+            "context",
+            "evidence",
+            "limits",
+            "uncertainty",
+            "details"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "author": {
+              "type": "string",
+              "minLength": 1
+            },
+            "kind": {
+              "const": "hypothesis"
+            },
+            "statement": {
+              "type": "string",
+              "minLength": 1
+            },
+            "context": {
+              "$ref": "#/$defs/context"
+            },
+            "evidence": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/reference"
+              }
+            },
+            "limits": {
+              "type": "string"
+            },
+            "uncertainty": {
+              "type": "string"
+            },
+            "details": {
+              "$ref": "#/$defs/hypothesisDetails"
+            }
+          },
+          "required": [
+            "id",
+            "author",
+            "kind",
+            "statement",
+            "context",
+            "evidence",
+            "limits",
+            "uncertainty",
+            "details"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "author": {
+              "type": "string",
+              "minLength": 1
+            },
+            "kind": {
+              "const": "observation"
+            },
+            "statement": {
+              "type": "string",
+              "minLength": 1
+            },
+            "context": {
+              "$ref": "#/$defs/context"
+            },
+            "evidence": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/reference"
+              }
+            },
+            "limits": {
+              "type": "string"
+            },
+            "uncertainty": {
+              "type": "string"
+            },
+            "details": {
+              "$ref": "#/$defs/observationDetails"
+            }
+          },
+          "required": [
+            "id",
+            "author",
+            "kind",
+            "statement",
+            "context",
+            "evidence",
+            "limits",
+            "uncertainty",
+            "details"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "author": {
+              "type": "string",
+              "minLength": 1
+            },
+            "kind": {
+              "const": "research-finding"
+            },
+            "statement": {
+              "type": "string",
+              "minLength": 1
+            },
+            "context": {
+              "$ref": "#/$defs/context"
+            },
+            "evidence": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/reference"
+              }
+            },
+            "limits": {
+              "type": "string"
+            },
+            "uncertainty": {
+              "type": "string"
+            },
+            "details": {
+              "$ref": "#/$defs/research-findingDetails"
+            }
+          },
+          "required": [
+            "id",
+            "author",
+            "kind",
+            "statement",
+            "context",
+            "evidence",
+            "limits",
+            "uncertainty",
+            "details"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "author": {
+              "type": "string",
+              "minLength": 1
+            },
+            "kind": {
+              "const": "study"
+            },
+            "statement": {
+              "type": "string",
+              "minLength": 1
+            },
+            "context": {
+              "$ref": "#/$defs/context"
+            },
+            "evidence": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/reference"
+              }
+            },
+            "limits": {
+              "type": "string"
+            },
+            "uncertainty": {
+              "type": "string"
+            },
+            "details": {
+              "$ref": "#/$defs/studyDetails"
+            }
+          },
+          "required": [
+            "id",
+            "author",
+            "kind",
+            "statement",
+            "context",
+            "evidence",
+            "limits",
+            "uncertainty",
+            "details"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "author": {
+              "type": "string",
+              "minLength": 1
+            },
+            "kind": {
+              "const": "evidence"
+            },
+            "statement": {
+              "type": "string",
+              "minLength": 1
+            },
+            "context": {
+              "$ref": "#/$defs/context"
+            },
+            "evidence": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/reference"
+              }
+            },
+            "limits": {
+              "type": "string"
+            },
+            "uncertainty": {
+              "type": "string"
+            },
+            "details": {
+              "$ref": "#/$defs/evidenceDetails"
+            }
+          },
+          "required": [
+            "id",
+            "author",
+            "kind",
+            "statement",
+            "context",
+            "evidence",
+            "limits",
+            "uncertainty",
+            "details"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "author": {
+              "type": "string",
+              "minLength": 1
+            },
+            "kind": {
+              "const": "argument"
+            },
+            "statement": {
+              "type": "string",
+              "minLength": 1
+            },
+            "context": {
+              "$ref": "#/$defs/context"
+            },
+            "evidence": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/reference"
+              }
+            },
+            "limits": {
+              "type": "string"
+            },
+            "uncertainty": {
+              "type": "string"
+            },
+            "details": {
+              "$ref": "#/$defs/argumentDetails"
+            }
+          },
+          "required": [
+            "id",
+            "author",
+            "kind",
+            "statement",
+            "context",
+            "evidence",
+            "limits",
+            "uncertainty",
+            "details"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "author": {
+              "type": "string",
+              "minLength": 1
+            },
+            "kind": {
+              "const": "proposal"
+            },
+            "statement": {
+              "type": "string",
+              "minLength": 1
+            },
+            "context": {
+              "$ref": "#/$defs/context"
+            },
+            "evidence": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/reference"
+              }
+            },
+            "limits": {
+              "type": "string"
+            },
+            "uncertainty": {
+              "type": "string"
+            },
+            "details": {
+              "$ref": "#/$defs/proposalDetails"
+            }
+          },
+          "required": [
+            "id",
+            "author",
+            "kind",
+            "statement",
+            "context",
+            "evidence",
+            "limits",
+            "uncertainty",
+            "details"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "author": {
+              "type": "string",
+              "minLength": 1
+            },
+            "kind": {
+              "const": "decision"
+            },
+            "statement": {
+              "type": "string",
+              "minLength": 1
+            },
+            "context": {
+              "$ref": "#/$defs/context"
+            },
+            "evidence": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/reference"
+              }
+            },
+            "limits": {
+              "type": "string"
+            },
+            "uncertainty": {
+              "type": "string"
+            },
+            "details": {
+              "$ref": "#/$defs/decisionDetails"
+            }
+          },
+          "required": [
+            "id",
+            "author",
+            "kind",
+            "statement",
+            "context",
+            "evidence",
+            "limits",
+            "uncertainty",
+            "details"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "supportsEdgeDetails": {
+      "type": "object",
+      "properties": {
+        "bearing": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "bearing"
+      ],
+      "additionalProperties": false
+    },
+    "challengesEdgeDetails": {
+      "type": "object",
+      "properties": {
+        "challengedElement": {
+          "type": "string",
+          "minLength": 1
+        },
+        "bearing": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "challengedElement",
+        "bearing"
+      ],
+      "additionalProperties": false
+    },
+    "contradictsEdgeDetails": {
+      "type": "object",
+      "properties": {
+        "overlap": {
+          "type": "string",
+          "minLength": 1
+        },
+        "conflict": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "overlap",
+        "conflict"
+      ],
+      "additionalProperties": false
+    },
+    "negatesEdgeDetails": {
+      "type": "object",
+      "properties": {
+        "targetProposition": {
+          "type": "string",
+          "minLength": 1
+        },
+        "complement": {
+          "type": "string",
+          "minLength": 1
+        },
+        "quantifierScope": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "targetProposition",
+        "complement",
+        "quantifierScope"
+      ],
+      "additionalProperties": false
+    },
+    "impliesEdgeDetails": {
+      "type": "object",
+      "properties": {
+        "argument": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "argument"
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "kind"
+          ],
+          "additionalProperties": false
+        },
+        "inferenceRule": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "argument",
+        "inferenceRule"
+      ],
+      "additionalProperties": false
+    },
+    "provesEdgeDetails": {
+      "type": "object",
+      "properties": {
+        "conclusion": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "conclusion"
+      ],
+      "additionalProperties": false
+    },
+    "disprovesEdgeDetails": {
+      "type": "object",
+      "properties": {
+        "refutedProposition": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scopeOverlap": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "refutedProposition",
+        "scopeOverlap"
+      ],
+      "additionalProperties": false
+    },
+    "causesEdgeDetails": {
+      "type": "object",
+      "properties": {
+        "mechanism": {
+          "oneOf": [
+            {
+              "type": "object",
+              "properties": {
+                "status": {
+                  "const": "unknown"
+                },
+                "reason": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "status",
+                "reason"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "status": {
+                  "enum": [
+                    "proposed",
+                    "established"
+                  ]
+                },
+                "description": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "status",
+                "description"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "identification": {
+          "type": "string",
+          "enum": [
+            "intervention",
+            "natural-experiment",
+            "mechanistic-inference",
+            "causal-model"
+          ]
+        },
+        "alternativeExplanations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "hypothesis"
+                ]
+              }
+            },
+            "required": [
+              "id",
+              "kind"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "exposure": {
+          "$ref": "#/$defs/causalVariable"
+        },
+        "outcome": {
+          "$ref": "#/$defs/causalVariable"
+        }
+      },
+      "required": [
+        "mechanism",
+        "identification",
+        "alternativeExplanations",
+        "exposure",
+        "outcome"
+      ],
+      "additionalProperties": false
+    },
+    "correlates-withEdgeDetails": {
+      "type": "object",
+      "properties": {
+        "association": {
+          "type": "string",
+          "minLength": 1
+        },
+        "confounders": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "association",
+        "confounders"
+      ],
+      "additionalProperties": false
+    },
+    "competes-withEdgeDetails": {
+      "type": "object",
+      "properties": {
+        "question": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "kind": {
+              "type": "string",
+              "enum": [
+                "question"
+              ]
+            }
+          },
+          "required": [
+            "id",
+            "kind"
+          ],
+          "additionalProperties": false
+        },
+        "comparison": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "question",
+        "comparison"
+      ],
+      "additionalProperties": false
+    },
+    "replicatesEdgeDetails": {
+      "type": "object",
+      "properties": {
+        "procedureOverlap": {
+          "type": "string",
+          "minLength": 1
+        },
+        "independence": {
+          "type": "string",
+          "minLength": 1
+        },
+        "agreement": {
+          "type": "string",
+          "minLength": 1
+        },
+        "differences": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "procedureOverlap",
+        "independence",
+        "agreement",
+        "differences"
+      ],
+      "additionalProperties": false
+    },
+    "derived-fromEdgeDetails": {
+      "type": "object",
+      "properties": {
+        "derivation": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "derivation"
+      ],
+      "additionalProperties": false
+    },
+    "investigatesEdgeDetails": {
+      "type": "object",
+      "properties": {
+        "purpose": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "purpose"
+      ],
+      "additionalProperties": false
+    },
+    "producesEdgeDetails": {
+      "type": "object",
+      "properties": {
+        "method": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "method"
+      ],
+      "additionalProperties": false
+    },
+    "informsEdgeDetails": {
+      "type": "object",
+      "properties": {
+        "contribution": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "contribution"
+      ],
+      "additionalProperties": false
+    },
+    "supersedesEdgeDetails": {
+      "type": "object",
+      "properties": {
+        "revision": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "revision"
+      ],
+      "additionalProperties": false
+    },
+    "edge": {
+      "oneOf": [
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "author": {
+              "type": "string",
+              "minLength": 1
+            },
+            "kind": {
+              "const": "supports"
+            },
+            "source": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "evidence",
+                    "observation",
+                    "research-finding",
+                    "argument"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "kind"
+              ],
+              "additionalProperties": false
+            },
+            "target": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "claim",
+                        "hypothesis",
+                        "research-finding",
+                        "proposal"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "kind"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "$ref": "#/$defs/edgeReference"
+                }
+              ]
+            },
+            "context": {
+              "$ref": "#/$defs/context"
+            },
+            "basis": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/reference"
+              }
+            },
+            "rationale": {
+              "type": "string",
+              "minLength": 1
+            },
+            "limits": {
+              "type": "string"
+            },
+            "uncertainty": {
+              "type": "string"
+            },
+            "details": {
+              "$ref": "#/$defs/supportsEdgeDetails"
+            }
+          },
+          "required": [
+            "id",
+            "author",
+            "kind",
+            "source",
+            "target",
+            "context",
+            "basis",
+            "rationale",
+            "limits",
+            "uncertainty",
+            "details"
+          ],
+          "additionalProperties": false,
+          "description": "Evidence or reasoning bears positively on the target under the stated context."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "author": {
+              "type": "string",
+              "minLength": 1
+            },
+            "kind": {
+              "const": "challenges"
+            },
+            "source": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "evidence",
+                    "observation",
+                    "research-finding",
+                    "argument"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "kind"
+              ],
+              "additionalProperties": false
+            },
+            "target": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "claim",
+                        "hypothesis",
+                        "research-finding",
+                        "proposal",
+                        "argument",
+                        "study"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "kind"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "$ref": "#/$defs/edgeReference"
+                }
+              ]
+            },
+            "context": {
+              "$ref": "#/$defs/context"
+            },
+            "basis": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/reference"
+              }
+            },
+            "rationale": {
+              "type": "string",
+              "minLength": 1
+            },
+            "limits": {
+              "type": "string"
+            },
+            "uncertainty": {
+              "type": "string"
+            },
+            "details": {
+              "$ref": "#/$defs/challengesEdgeDetails"
+            }
+          },
+          "required": [
+            "id",
+            "author",
+            "kind",
+            "source",
+            "target",
+            "context",
+            "basis",
+            "rationale",
+            "limits",
+            "uncertainty",
+            "details"
+          ],
+          "additionalProperties": false,
+          "description": "Evidence or reasoning identifies a defeater, weakness or competing interpretation."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "author": {
+              "type": "string",
+              "minLength": 1
+            },
+            "kind": {
+              "const": "contradicts"
+            },
+            "source": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "claim",
+                    "hypothesis",
+                    "research-finding",
+                    "observation"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "kind"
+              ],
+              "additionalProperties": false
+            },
+            "target": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "claim",
+                    "hypothesis",
+                    "research-finding",
+                    "observation"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "kind"
+              ],
+              "additionalProperties": false
+            },
+            "context": {
+              "$ref": "#/$defs/context"
+            },
+            "basis": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/reference"
+              }
+            },
+            "rationale": {
+              "type": "string",
+              "minLength": 1
+            },
+            "limits": {
+              "type": "string"
+            },
+            "uncertainty": {
+              "type": "string"
+            },
+            "details": {
+              "$ref": "#/$defs/contradictsEdgeDetails"
+            }
+          },
+          "required": [
+            "id",
+            "author",
+            "kind",
+            "source",
+            "target",
+            "context",
+            "basis",
+            "rationale",
+            "limits",
+            "uncertainty",
+            "details"
+          ],
+          "additionalProperties": false,
+          "description": "Source and target cannot jointly hold within the asserted overlap."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "author": {
+              "type": "string",
+              "minLength": 1
+            },
+            "kind": {
+              "const": "negates"
+            },
+            "source": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "claim",
+                    "hypothesis",
+                    "research-finding"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "kind"
+              ],
+              "additionalProperties": false
+            },
+            "target": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "claim",
+                    "hypothesis",
+                    "research-finding"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "kind"
+              ],
+              "additionalProperties": false
+            },
+            "context": {
+              "$ref": "#/$defs/context"
+            },
+            "basis": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/reference"
+              }
+            },
+            "rationale": {
+              "type": "string",
+              "minLength": 1
+            },
+            "limits": {
+              "type": "string"
+            },
+            "uncertainty": {
+              "type": "string"
+            },
+            "details": {
+              "$ref": "#/$defs/negatesEdgeDetails"
+            }
+          },
+          "required": [
+            "id",
+            "author",
+            "kind",
+            "source",
+            "target",
+            "context",
+            "basis",
+            "rationale",
+            "limits",
+            "uncertainty",
+            "details"
+          ],
+          "additionalProperties": false,
+          "description": "Source states the logical complement of the target in the stated context."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "author": {
+              "type": "string",
+              "minLength": 1
+            },
+            "kind": {
+              "const": "implies"
+            },
+            "source": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "claim",
+                    "hypothesis",
+                    "research-finding"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "kind"
+              ],
+              "additionalProperties": false
+            },
+            "target": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "claim",
+                    "hypothesis",
+                    "research-finding"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "kind"
+              ],
+              "additionalProperties": false
+            },
+            "context": {
+              "$ref": "#/$defs/context"
+            },
+            "basis": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/reference"
+              }
+            },
+            "rationale": {
+              "type": "string",
+              "minLength": 1
+            },
+            "limits": {
+              "type": "string"
+            },
+            "uncertainty": {
+              "type": "string"
+            },
+            "details": {
+              "$ref": "#/$defs/impliesEdgeDetails"
+            }
+          },
+          "required": [
+            "id",
+            "author",
+            "kind",
+            "source",
+            "target",
+            "context",
+            "basis",
+            "rationale",
+            "limits",
+            "uncertainty",
+            "details"
+          ],
+          "additionalProperties": false,
+          "description": "Source entails the target by the cited argument and assumptions."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "author": {
+              "type": "string",
+              "minLength": 1
+            },
+            "kind": {
+              "const": "proves"
+            },
+            "source": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "argument"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "kind"
+              ],
+              "additionalProperties": false
+            },
+            "target": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "claim",
+                    "hypothesis",
+                    "research-finding"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "kind"
+              ],
+              "additionalProperties": false
+            },
+            "context": {
+              "$ref": "#/$defs/context"
+            },
+            "basis": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/reference"
+              }
+            },
+            "rationale": {
+              "type": "string",
+              "minLength": 1
+            },
+            "limits": {
+              "type": "string"
+            },
+            "uncertainty": {
+              "type": "string"
+            },
+            "details": {
+              "$ref": "#/$defs/provesEdgeDetails"
+            }
+          },
+          "required": [
+            "id",
+            "author",
+            "kind",
+            "source",
+            "target",
+            "context",
+            "basis",
+            "rationale",
+            "limits",
+            "uncertainty",
+            "details"
+          ],
+          "additionalProperties": false,
+          "description": "The source argument establishes the target under its explicit premises and context."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "author": {
+              "type": "string",
+              "minLength": 1
+            },
+            "kind": {
+              "const": "disproves"
+            },
+            "source": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "argument"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "kind"
+              ],
+              "additionalProperties": false
+            },
+            "target": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "claim",
+                    "hypothesis",
+                    "research-finding"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "kind"
+              ],
+              "additionalProperties": false
+            },
+            "context": {
+              "$ref": "#/$defs/context"
+            },
+            "basis": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/reference"
+              }
+            },
+            "rationale": {
+              "type": "string",
+              "minLength": 1
+            },
+            "limits": {
+              "type": "string"
+            },
+            "uncertainty": {
+              "type": "string"
+            },
+            "details": {
+              "$ref": "#/$defs/disprovesEdgeDetails"
+            }
+          },
+          "required": [
+            "id",
+            "author",
+            "kind",
+            "source",
+            "target",
+            "context",
+            "basis",
+            "rationale",
+            "limits",
+            "uncertainty",
+            "details"
+          ],
+          "additionalProperties": false,
+          "description": "The source argument refutes the target under the stated context."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "author": {
+              "type": "string",
+              "minLength": 1
+            },
+            "kind": {
+              "const": "causes"
+            },
+            "source": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "observation",
+                    "research-finding",
+                    "hypothesis"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "kind"
+              ],
+              "additionalProperties": false
+            },
+            "target": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "observation",
+                    "research-finding",
+                    "hypothesis"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "kind"
+              ],
+              "additionalProperties": false
+            },
+            "context": {
+              "$ref": "#/$defs/context"
+            },
+            "basis": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/reference"
+              }
+            },
+            "rationale": {
+              "type": "string",
+              "minLength": 1
+            },
+            "limits": {
+              "type": "string"
+            },
+            "uncertainty": {
+              "type": "string"
+            },
+            "details": {
+              "$ref": "#/$defs/causesEdgeDetails"
+            }
+          },
+          "required": [
+            "id",
+            "author",
+            "kind",
+            "source",
+            "target",
+            "context",
+            "basis",
+            "rationale",
+            "limits",
+            "uncertainty",
+            "details"
+          ],
+          "additionalProperties": false,
+          "description": "An authored causal explanation links source to target and states its identification basis."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "author": {
+              "type": "string",
+              "minLength": 1
+            },
+            "kind": {
+              "const": "correlates-with"
+            },
+            "source": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "observation",
+                    "research-finding"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "kind"
+              ],
+              "additionalProperties": false
+            },
+            "target": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "observation",
+                    "research-finding"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "kind"
+              ],
+              "additionalProperties": false
+            },
+            "context": {
+              "$ref": "#/$defs/context"
+            },
+            "basis": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/reference"
+              }
+            },
+            "rationale": {
+              "type": "string",
+              "minLength": 1
+            },
+            "limits": {
+              "type": "string"
+            },
+            "uncertainty": {
+              "type": "string"
+            },
+            "details": {
+              "$ref": "#/$defs/correlates-withEdgeDetails"
+            }
+          },
+          "required": [
+            "id",
+            "author",
+            "kind",
+            "source",
+            "target",
+            "context",
+            "basis",
+            "rationale",
+            "limits",
+            "uncertainty",
+            "details"
+          ],
+          "additionalProperties": false,
+          "description": "The source and target have a stated empirical association."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "author": {
+              "type": "string",
+              "minLength": 1
+            },
+            "kind": {
+              "const": "competes-with"
+            },
+            "source": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "hypothesis"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "kind"
+              ],
+              "additionalProperties": false
+            },
+            "target": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "hypothesis"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "kind"
+              ],
+              "additionalProperties": false
+            },
+            "context": {
+              "$ref": "#/$defs/context"
+            },
+            "basis": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/reference"
+              }
+            },
+            "rationale": {
+              "type": "string",
+              "minLength": 1
+            },
+            "limits": {
+              "type": "string"
+            },
+            "uncertainty": {
+              "type": "string"
+            },
+            "details": {
+              "$ref": "#/$defs/competes-withEdgeDetails"
+            }
+          },
+          "required": [
+            "id",
+            "author",
+            "kind",
+            "source",
+            "target",
+            "context",
+            "basis",
+            "rationale",
+            "limits",
+            "uncertainty",
+            "details"
+          ],
+          "additionalProperties": false,
+          "description": "Two hypotheses offer alternative explanations of the same question."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "author": {
+              "type": "string",
+              "minLength": 1
+            },
+            "kind": {
+              "const": "replicates"
+            },
+            "source": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "study",
+                    "observation"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "kind"
+              ],
+              "additionalProperties": false
+            },
+            "target": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "study",
+                    "observation"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "kind"
+              ],
+              "additionalProperties": false
+            },
+            "context": {
+              "$ref": "#/$defs/context"
+            },
+            "basis": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/reference"
+              }
+            },
+            "rationale": {
+              "type": "string",
+              "minLength": 1
+            },
+            "limits": {
+              "type": "string"
+            },
+            "uncertainty": {
+              "type": "string"
+            },
+            "details": {
+              "$ref": "#/$defs/replicatesEdgeDetails"
+            }
+          },
+          "required": [
+            "id",
+            "author",
+            "kind",
+            "source",
+            "target",
+            "context",
+            "basis",
+            "rationale",
+            "limits",
+            "uncertainty",
+            "details"
+          ],
+          "additionalProperties": false,
+          "description": "A study or observation repeats an earlier procedure and states agreement and differences."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "author": {
+              "type": "string",
+              "minLength": 1
+            },
+            "kind": {
+              "const": "derived-from"
+            },
+            "source": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "question",
+                    "claim",
+                    "hypothesis",
+                    "observation",
+                    "research-finding",
+                    "study",
+                    "evidence",
+                    "argument",
+                    "proposal",
+                    "decision"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "kind"
+              ],
+              "additionalProperties": false
+            },
+            "target": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "question",
+                    "claim",
+                    "hypothesis",
+                    "observation",
+                    "research-finding",
+                    "study",
+                    "evidence",
+                    "argument",
+                    "proposal",
+                    "decision"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "kind"
+              ],
+              "additionalProperties": false
+            },
+            "context": {
+              "$ref": "#/$defs/context"
+            },
+            "basis": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/reference"
+              }
+            },
+            "rationale": {
+              "type": "string",
+              "minLength": 1
+            },
+            "limits": {
+              "type": "string"
+            },
+            "uncertainty": {
+              "type": "string"
+            },
+            "details": {
+              "$ref": "#/$defs/derived-fromEdgeDetails"
+            }
+          },
+          "required": [
+            "id",
+            "author",
+            "kind",
+            "source",
+            "target",
+            "context",
+            "basis",
+            "rationale",
+            "limits",
+            "uncertainty",
+            "details"
+          ],
+          "additionalProperties": false,
+          "description": "The source was constructed or interpreted using the target."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "author": {
+              "type": "string",
+              "minLength": 1
+            },
+            "kind": {
+              "const": "investigates"
+            },
+            "source": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "study",
+                    "hypothesis"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "kind"
+              ],
+              "additionalProperties": false
+            },
+            "target": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "question"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "kind"
+              ],
+              "additionalProperties": false
+            },
+            "context": {
+              "$ref": "#/$defs/context"
+            },
+            "basis": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/reference"
+              }
+            },
+            "rationale": {
+              "type": "string",
+              "minLength": 1
+            },
+            "limits": {
+              "type": "string"
+            },
+            "uncertainty": {
+              "type": "string"
+            },
+            "details": {
+              "$ref": "#/$defs/investigatesEdgeDetails"
+            }
+          },
+          "required": [
+            "id",
+            "author",
+            "kind",
+            "source",
+            "target",
+            "context",
+            "basis",
+            "rationale",
+            "limits",
+            "uncertainty",
+            "details"
+          ],
+          "additionalProperties": false,
+          "description": "A study or hypothesis addresses the target scientific question."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "author": {
+              "type": "string",
+              "minLength": 1
+            },
+            "kind": {
+              "const": "produces"
+            },
+            "source": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "study"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "kind"
+              ],
+              "additionalProperties": false
+            },
+            "target": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "question",
+                    "hypothesis",
+                    "observation",
+                    "research-finding",
+                    "evidence",
+                    "argument",
+                    "proposal"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "kind"
+              ],
+              "additionalProperties": false
+            },
+            "context": {
+              "$ref": "#/$defs/context"
+            },
+            "basis": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/reference"
+              }
+            },
+            "rationale": {
+              "type": "string",
+              "minLength": 1
+            },
+            "limits": {
+              "type": "string"
+            },
+            "uncertainty": {
+              "type": "string"
+            },
+            "details": {
+              "$ref": "#/$defs/producesEdgeDetails"
+            }
+          },
+          "required": [
+            "id",
+            "author",
+            "kind",
+            "source",
+            "target",
+            "context",
+            "basis",
+            "rationale",
+            "limits",
+            "uncertainty",
+            "details"
+          ],
+          "additionalProperties": false,
+          "description": "A study produced the target record."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "author": {
+              "type": "string",
+              "minLength": 1
+            },
+            "kind": {
+              "const": "informs"
+            },
+            "source": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "claim",
+                    "hypothesis",
+                    "observation",
+                    "research-finding",
+                    "argument"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "kind"
+              ],
+              "additionalProperties": false
+            },
+            "target": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "proposal",
+                    "decision"
+                  ]
+                }
+              },
+              "required": [
+                "id",
+                "kind"
+              ],
+              "additionalProperties": false
+            },
+            "context": {
+              "$ref": "#/$defs/context"
+            },
+            "basis": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/reference"
+              }
+            },
+            "rationale": {
+              "type": "string",
+              "minLength": 1
+            },
+            "limits": {
+              "type": "string"
+            },
+            "uncertainty": {
+              "type": "string"
+            },
+            "details": {
+              "$ref": "#/$defs/informsEdgeDetails"
+            }
+          },
+          "required": [
+            "id",
+            "author",
+            "kind",
+            "source",
+            "target",
+            "context",
+            "basis",
+            "rationale",
+            "limits",
+            "uncertainty",
+            "details"
+          ],
+          "additionalProperties": false,
+          "description": "The source contributes to the rationale for a proposed action or decision."
+        },
+        {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "author": {
+              "type": "string",
+              "minLength": 1
+            },
+            "kind": {
+              "const": "supersedes"
+            },
+            "source": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "question",
+                        "claim",
+                        "hypothesis",
+                        "observation",
+                        "research-finding",
+                        "study",
+                        "evidence",
+                        "argument",
+                        "proposal",
+                        "decision"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "kind"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "$ref": "#/$defs/edgeReference"
+                }
+              ]
+            },
+            "target": {
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "question",
+                        "claim",
+                        "hypothesis",
+                        "observation",
+                        "research-finding",
+                        "study",
+                        "evidence",
+                        "argument",
+                        "proposal",
+                        "decision"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "id",
+                    "kind"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "$ref": "#/$defs/edgeReference"
+                }
+              ]
+            },
+            "context": {
+              "$ref": "#/$defs/context"
+            },
+            "basis": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/reference"
+              }
+            },
+            "rationale": {
+              "type": "string",
+              "minLength": 1
+            },
+            "limits": {
+              "type": "string"
+            },
+            "uncertainty": {
+              "type": "string"
+            },
+            "details": {
+              "$ref": "#/$defs/supersedesEdgeDetails"
+            }
+          },
+          "required": [
+            "id",
+            "author",
+            "kind",
+            "source",
+            "target",
+            "context",
+            "basis",
+            "rationale",
+            "limits",
+            "uncertainty",
+            "details"
+          ],
+          "additionalProperties": false,
+          "description": "The source revises a prior record while preserving its identity and content.",
+          "allOf": [
+            {
+              "if": {
+                "properties": {
+                  "source": {
+                    "properties": {
+                      "kind": {
+                        "const": "edge"
+                      }
+                    },
+                    "required": [
+                      "kind"
+                    ]
+                  }
+                }
+              },
+              "then": {
+                "properties": {
+                  "target": {
+                    "$ref": "#/$defs/edgeReference"
+                  }
+                }
+              },
+              "else": {
+                "properties": {
+                  "target": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "question",
+                          "claim",
+                          "hypothesis",
+                          "observation",
+                          "research-finding",
+                          "study",
+                          "evidence",
+                          "argument",
+                          "proposal",
+                          "decision"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "kind"
+                    ],
+                    "additionalProperties": false
+                  }
+                }
+              }
+            }
+          ]
+        }
+      ]
+    },
+    "edgeReference": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "const": "edge"
+        },
+        "edgeKind": {
+          "type": "string",
+          "enum": [
+            "supports",
+            "challenges",
+            "contradicts",
+            "negates",
+            "implies",
+            "proves",
+            "disproves",
+            "causes",
+            "correlates-with",
+            "competes-with",
+            "replicates",
+            "derived-from",
+            "investigates",
+            "produces",
+            "informs",
+            "supersedes"
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "kind",
+        "edgeKind"
+      ],
+      "additionalProperties": false
+    },
+    "causalVariable": {
+      "type": "object",
+      "properties": {
+        "subject": {
+          "$ref": "#/$defs/reference"
+        },
+        "property": {
+          "type": "string",
+          "minLength": 1
+        },
+        "value": {
+          "$ref": "#/$defs/result"
+        }
+      },
+      "required": [
+        "subject",
+        "property"
+      ],
+      "additionalProperties": false
+    },
+    "entityReference": {
+      "type": "object",
+      "description": "An identified physical, digital or conceptual entity. Subject slots name the thing whose property is observed or asserted. The URI identifies the entity; the optional label describes it.",
+      "properties": {
+        "kind": {
+          "const": "entity"
+        },
+        "uri": {
+          "type": "string",
+          "minLength": 1
+        },
+        "label": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "uri"
+      ],
+      "additionalProperties": false
+    }
+  }
+}

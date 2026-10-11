@@ -471,6 +471,7 @@
     if (window.KnowledgeLayer && window.KnowledgeLayer.renderKnowledge) {
       window.KnowledgeLayer.renderKnowledge(wholeMount, {
         overview: data.knowledge,
+        messages: data.messages || {},
         // The recorded ensembles with their members: the map groups the tiers
         // its members occupy without reading the roster rows.
         ensembles: data.ensembles || [],
@@ -490,6 +491,10 @@
         query: opts.knowledgeQuery || "",
         notice: opts.knowledgeNotice || "",
         onSelectFinding: opts.onSelectFinding,
+        onReadMessage: opts.onReadMessage,
+        scientificSelected: opts.scientificSelected,
+        onSelectScientific: opts.onSelectScientific,
+        onOpenScientificReference: opts.onOpenScientificReference,
         onSelectActor: opts.onSelect,
         onSelectEnsemble: opts.onSelectEnsemble,
         // The card's one move into the record, forwarded so the card renders it.

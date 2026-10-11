@@ -1,0 +1,158 @@
+# Scientific knowledge model
+
+Baton Knowledge v1 records scientific questions, observations, explanations,
+arguments and proposed actions. Its relations carry the reasoning and evidence
+that connect those records. Issue #710 covers implementation; issue #682 covers
+the graph reading and navigation interface.
+
+## Schema
+
+[knowledge-v1.schema.json](knowledge-v1.schema.json) defines the admission
+payload with JSON Schema 2020-12. Its identity is
+`urn:baton:knowledge:schema:1`. The root carries `schemaVersion: 1`, `nodes` and
+`edges`. Each node and edge has a declared type with a closed field set.
+[knowledge-v1-semantics.json](knowledge-v1-semantics.json) defines the allowed
+endpoint types, reference resolution and inference rules.
+
+[knowledge-v1-scientific-example.json](knowledge-v1-scientific-example.json)
+illustrates a study of riparian shade and water temperature. Its records are
+fictional. It exercises the schema without asserting an empirical result.
+
+## Standards alignment
+
+The admission format uses [JSON Schema 2020-12](https://json-schema.org/draft/2020-12/json-schema-validation).
+Observation fields follow the concepts in
+[W3C SOSA](https://www.w3.org/TR/vocab-ssn/#SOSAObservation): subject, observed
+property, procedure, result, phenomenon time and result time. Provenance follows
+[W3C PROV-O](https://www.w3.org/TR/prov-o/): records have authors, research
+activities generate outputs, and derived records retain their sources.
+
+These mappings guide interpretation of the JSON contract. An RDF export would
+represent the authored observation record as a provenance entity and the
+observation activity separately as `sosa:Observation`. A study's execution maps
+to `prov:Activity`; its description and planned design remain entities.
+`derived-from` maps to `prov:wasDerivedFrom` for entity endpoints. A study's
+`produces` relation maps from output to execution through `prov:wasGeneratedBy`.
+The current interface reads the versioned JSON graph.
+
+The [SEPIO information model](https://github.com/sepio-framework/sepio-linkml)
+also informs the distinction between information, scientific assertions and
+evidence interpretation. Its
+[Statement and EvidenceLine classes](https://github.com/sepio-framework/sepio-linkml/blob/main/src/sepio_linkml/schema/sepio_classes.yaml)
+separate an assertion from an argument that assesses a proposition using one or
+more information items. Baton observations and findings retain their content
+and method. An argument groups premises; a support or challenge relation records
+the author's interpretation, target, basis and rationale. These are conceptual
+mappings. A conforming SEPIO profile or export requires explicit field and
+identity mappings.
+
+Evidence direction, strength and source quality are separate judgments. Baton
+records the relation's direction and the author's uncertainty and limits. A
+reader assesses shared sources and dependencies between premises when weighing
+several arguments. Repeated citations of the same information do not establish
+independent evidence.
+
+## Node types
+
+| Type | Content |
+| --- | --- |
+| `question` | A research question, topic and remaining questions. |
+| `claim` | A proposition with its quantification. |
+| `hypothesis` | An explanatory proposition, predictions and conditions that would overturn it. |
+| `observation` | A measured or observed result, subject, property, procedure and time. |
+| `research-finding` | An inference drawn from named inputs through a stated method. |
+| `study` | A named investigation, its questions, method, design, state and outputs. |
+| `evidence` | A source record, its description and selection. |
+| `argument` | Premises, an inference method, a derivation and an applicable witness. |
+| `proposal` | A proposed action, purpose, rationale and alternatives. |
+| `decision` | A selected proposal or other typed record, rationale and alternatives. |
+
+Every node retains the author's identity, statement, evidence references, limits
+and uncertainty. Scientific context records applicability, subjects, conditions
+and assumptions. A finding's method and inference remain available when another
+record cites it.
+
+## Relations
+
+Each relation is an authored assertion with typed source and target references,
+context, basis, rationale, limits, uncertainty and type-specific details.
+
+| Relation | Meaning |
+| --- | --- |
+| `supports` | Evidence or an argument bears on a proposition or another relation. |
+| `challenges` | A source contests a proposition, method, inference or relation. |
+| `contradicts` | Two propositions conflict within their stated overlap. |
+| `negates` | One proposition is the logical complement of another under the recorded quantifier scope. |
+| `implies` | A proposition entails another through a cited deductive argument and inference rule. |
+| `proves` | A deductive argument establishes its stated conclusion. |
+| `disproves` | An argument refutes a proposition within its scope, with a witness for a counterexample. |
+| `causes` | A represented exposure affects a represented outcome through a stated causal identification. |
+| `correlates-with` | Two represented observations or propositions have a stated association and confounders. |
+| `competes-with` | Two hypotheses offer alternatives for the same research question. |
+| `replicates` | A study or observation repeats an earlier procedure and records agreement and differences. |
+| `derived-from` | A record derives from another through a stated method. |
+| `investigates` | A study or hypothesis addresses a research question. |
+| `produces` | A study generates an observation, finding, evidence, question, hypothesis, argument or proposal. |
+| `informs` | A source contributes to a proposal or decision's rationale. |
+| `supersedes` | A new record or relation explicitly revises an earlier identity. |
+
+Schema validation checks structure and endpoint types. Admission resolves the
+declared references and enforces the inference-method requirements. Readers
+review the recorded argument, premises, context and limits when assessing an
+authored proof or causal assertion.
+
+`supports` records evidentiary bearing and its limits. A supporting source may
+also support a competing hypothesis. `negates` records a logical complement
+under explicit quantifier scope; `contradicts` records the stated incompatibility
+of two propositions. `implies` needs the cited argument and inference rule.
+
+`proves` and `disproves` retain authored deductions and counterexamples. Reviewing
+a counterexample requires checking that its witness falls within the target
+proposition's quantifier and applicability. Empirical findings usually carry
+support or challenge relations. Proof and causal assertions retain their
+reasoning for review; their presence does not establish verified truth.
+
+The `causes` details name exposure and outcome variables, their subjects,
+properties and values. They retain the mechanism, identification method and
+alternative explanations. `produces` describes research outputs. `derived-from`
+describes the derivation of a record.
+
+## Entity and source references
+
+A closed `entity` reference carries its URI and an optional readable label. It
+identifies a physical, digital or conceptual thing. In an observation or causal
+variable subject slot it names the thing whose property is recorded. This role
+follows SOSA's feature of interest. An `artifact` reference identifies an
+information carrier, such as a dataset or document, and may record its content
+hash. A document can itself be the subject of an observation.
+
+Entity URIs may be opaque URNs. Labels describe their referents; they do not
+establish equivalence between different URIs. Source reads retain actual
+availability and failure causes. The example identifies stream reaches as
+entities and its field dataset as an artifact. Authored assertions retain the
+record identity and revision rules below.
+
+## Identity and reads
+
+V1 nodes and edges share one identity namespace. An identical repeat write is
+idempotent. Conflicting content retains its existing identity and requires a new
+ID. An explicit `supersedes` relation records a revision. Study revisions retain
+the same `studyIdentity` and state their revised method or outputs.
+
+Identity comparison ignores object member order and decodes JSON string escapes.
+Array order, container types and complete values remain significant. Numeric
+tokens retain their original spelling and precision: `1` and `1.0` are distinct
+for record identity. Repeated object labels retain their occurrence order within
+that label. Admission stores the first complete payload for an identical ID,
+including repeated records in one batch.
+
+References carry the declared node type or the edge type through `edgeKind`.
+Admission resolves every nested reference to a stored v1 record or a record in
+the same transaction. Resource references retain their complete identifiers and
+provenance. External resource reads report their actual result and cause.
+
+Read envelopes add schema identity, provenance, promotions and recorded
+relations to the complete authored payload. Legacy records retain their original
+content and labels with their own schema provenance. Promotion and holding
+queries use the record's version namespace. Session and Ensemble holdings govern
+visibility; the scientific context describes applicability.

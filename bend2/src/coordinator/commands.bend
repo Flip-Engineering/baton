@@ -44,6 +44,7 @@ type Command is Data:
   Session{id: String}
   Delivery{id: String}
   InputDetail{id: String}
+  AttemptCustody{session: String}
   DeliveryBatch{input: String}
   DeliveryBatchFile{path: String}
   Pending{}
@@ -81,6 +82,13 @@ type Command is Data:
   KnowledgeSearch{reader: String, scope: String, subject: String, query: String}
   KnowledgeTraverse{reader: String, scope: String, subject: String, reference: String, direction: String, relation: String, recursive: Bool}
   KnowledgeRelate{id: String, author: String, source: String, relation: String, target: String}
+  KnowledgeRecordV1{json: String}
+  KnowledgeRelateV1{json: String}
+  KnowledgeAdmitV1{author: String, json: String}
+  KnowledgeAdmitV1File{author: String, path: String}
+  KnowledgeV1Detail{reader: String, scope: String, subject: String, id: String}
+  KnowledgePromoteV1{id: String, promoter: String, source: String, destination: String, record: String}
+  KnowledgePromoteV1Scoped{id: String, promoter: String, source_kind: String, source: String, destination_kind: String, destination: String, record: String}
   KnowledgeRead{reader: String}
   KnowledgeReadScope{reader: String, scope: String, subject: String}
   KnowledgeRelations{reader: String, scope: String, subject: String}
@@ -620,6 +628,13 @@ def sql(command: Command) -> String:
     case KnowledgeSearch{reader,scope,subject,query}: ""
     case KnowledgeTraverse{reader,scope,subject,reference,direction,relation,recursive}: ""
     case KnowledgeRelate{id,author,source,relation,target}: ""
+    case KnowledgeRecordV1{json}: ""
+    case KnowledgeRelateV1{json}: ""
+    case KnowledgeAdmitV1{author,json}: ""
+    case KnowledgeAdmitV1File{author,path}: ""
+    case KnowledgeV1Detail{reader,scope,subject,id}: ""
+    case KnowledgePromoteV1{id,promoter,source,destination,record}: ""
+    case KnowledgePromoteV1Scoped{id,promoter,source_kind,source,destination_kind,destination,record}: ""
     case KnowledgeRead{reader}: ""
     case KnowledgeReadScope{reader,scope,subject}: ""
     case KnowledgeRelations{reader,scope,subject}: ""
@@ -635,6 +650,7 @@ def sql(command: Command) -> String:
     case ContextInstall{module_id,source}: ""
     case ContextQueryFile{owner,query,path}: ""
     case ContextResult{query}: ""
+    case AttemptCustody{session}: ""
     case Serve{}: ""
     case OwnerStatus{}: ""
     case Help{}: ""
@@ -657,6 +673,8 @@ def parse_verb_only(+verb: String) -> Command:
 
 def parse_verb_id(+verb: String, +id: String) -> Command:
   match verb:
+    case "record-v1": KnowledgeRecordV1{id}
+    case "relate-v1": KnowledgeRelateV1{id}
     case "context-engines": ContextEngines{id}
     case "context-result": ContextResult{id}
     case "logs": Logs{id,""}
@@ -682,6 +700,7 @@ def parse_verb_id(+verb: String, +id: String) -> Command:
     case "session": Session{id}
     case "delivery": Delivery{id}
     case "input": InputDetail{id}
+    case "attempt-custody": AttemptCustody{id}
     case "delivery-batch": DeliveryBatch{id}
     case "delivery-batch-file": DeliveryBatchFile{id}
     case "worktree": Worktree{id}
@@ -698,6 +717,8 @@ def parse_verb_id(+verb: String, +id: String) -> Command:
 
 def parse_verb_session_id(+verb: String, +session: String, +id: String) -> Command:
   match verb:
+    case "knowledge-admit-v1": KnowledgeAdmitV1{session,id}
+    case "knowledge-admit-v1-file": KnowledgeAdmitV1File{session,id}
     case "message-batch": MessageBatch{session,id}
     case "message-batch-file": MessageBatchFile{session,id}
     case "context-install": ContextInstall{session,id}
@@ -777,6 +798,7 @@ def parse_verb_three_args(+verb: String, +id: String, +one: String, +two: String
 
 def parse_verb_four_args(+verb: String, +id: String, +one: String, +two: String, +three: String) -> Command:
   match verb:
+    case "knowledge-v1-detail": KnowledgeV1Detail{id,one,two,three}
     case "knowledge-search": KnowledgeSearch{id,one,two,three}
     case "knowledge":
       Bool.pick(Command,Bool.and(String.eq(one,"--id"),String.eq(three,"--pretty")),Pretty{KnowledgeDetail{id,two}},
@@ -809,12 +831,14 @@ def parse_verb_five_args(+verb: String, +id: String, +one: String, +two: String,
     case "record": KnowledgeRecord{id,one,two,three,four}
     case "relate": KnowledgeRelate{id,one,two,three,four}
     case "promote": KnowledgePromote{id,one,two,three,four}
+    case "promote-v1": KnowledgePromoteV1{id,one,two,three,four}
     case _: Invalid{}
 
 def parse_receive(+verb: String, +session: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, +message: String) -> Command:
   match verb:
     case "receive": Receive{session,cmd,model,effort,cwd,log,message}
     case "promote-scoped": KnowledgePromoteScoped{session,cmd,model,effort,cwd,log,message}
+    case "promote-v1-scoped": KnowledgePromoteV1Scoped{session,cmd,model,effort,cwd,log,message}
     case _: Invalid{}
 
 def parse_verb_nine_args(+verb: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +session: String) -> Command:

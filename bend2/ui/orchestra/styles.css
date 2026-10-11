@@ -610,6 +610,7 @@ button:active { background: var(--wash); }
   margin: 0;
   padding: 0;
   list-style: none;
+  container: actor-roster / inline-size;
 }
 
 .doc-band { margin: 0 0 8px; }
@@ -855,6 +856,23 @@ button:active { background: var(--wash); }
 /* The author's recorded findings sit on the author's own row: the halo and the
    slur carry the graphic, and the layer holds the line to one compact row. */
 .doc-row-knowledge { min-height: var(--row); padding: 0 8px 6px 14px; }
+
+@container actor-roster (max-width: 680px) {
+  .doc-open {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) repeat(3, auto);
+    gap: 6px 8px;
+    padding: 8px 28px 8px 8px;
+  }
+  .doc-name {
+    grid-column: 1 / -1;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .doc-open .doc-lead { grid-column: 1; grid-row: 2; min-width: 0; }
+  .doc-age, .doc-pending, .doc-owed { grid-row: 2; }
+  .doc-staff { grid-column: 1 / -1; grid-row: 3; min-width: 0; margin: 0; }
+}
 
 
 /* The plate's figures double as the index: a figure that jumps takes the ink of a link
