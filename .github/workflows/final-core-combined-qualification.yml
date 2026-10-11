@@ -33,6 +33,14 @@ on:
         required: false
         type: boolean
         default: false
+      retained_generated_c_handoff:
+        description: UUID of the separately staged completed Main C handoff in runner storage
+        required: false
+        type: string
+      retained_generated_c_manifest_sha256:
+        description: SHA256 of that handoff's complete source, build and suite manifest
+        required: false
+        type: string
 
 permissions:
   actions: read
@@ -41,8 +49,8 @@ permissions:
 env:
   BEND_NO_TELEMETRY: '1'
   PRODUCT_SOURCE_SHA: ${{ inputs.fixture_source_sha || 'e23916a6b117d6e5a6339661bce1cb6a573ef80c' }}
-  PRODUCT_RUN_ID: ${{ inputs.product_run_id || github.run_id }}
-  PRODUCT_RUN_ATTEMPT: ${{ inputs.product_run_attempt || github.run_attempt }}
+  PRODUCT_RUN_ID: ${{ inputs.retained_generated_c_handoff && github.run_id || inputs.product_run_id || github.run_id }}
+  PRODUCT_RUN_ATTEMPT: ${{ inputs.retained_generated_c_handoff && github.run_attempt || inputs.product_run_attempt || github.run_attempt }}
   CANONICAL_DARWIN_RUN_ID: ''
   CANONICAL_DARWIN_SOURCE_SHA: 'e23916a6b117d6e5a6339661bce1cb6a573ef80c'
 
@@ -158,6 +166,64 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+  retained_generated_c:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.retained_generated_c_handoff }}
+    runs-on: [self-hosted, Linux, X64, baton2-native-linux-x64]
+    steps:
+      - name: Check out generated C product source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ env.PRODUCT_SOURCE_SHA }}
+          path: owned
+      - name: Check out this bridge driver
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.sha }}
+          path: driver
+      - name: Copy the completed generated C handoff into this run
+        shell: bash
+        env:
+          HANDOFF_UUID: ${{ inputs.retained_generated_c_handoff }}
+          HANDOFF_MANIFEST_SHA256: ${{ inputs.retained_generated_c_manifest_sha256 }}
+          DARWIN_FROM_GENERATED_C: ${{ inputs.darwin_from_generated_c }}
+          RUNTIME_SUITE: ${{ inputs.runtime_suite }}
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/final-native-context-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-generated-c-bridge"
+          mkdir "$evidence"
+          printf 'GENERATED_C_BRIDGE_EVIDENCE=%s\n' "$evidence" >> "$GITHUB_ENV"
+          status=0
+          set +e
+          python3 driver/.github/scripts/retained-generated-c.py publish \
+            --handoff "$HANDOFF_UUID" --manifest-sha256 "$HANDOFF_MANIFEST_SHA256" \
+            --source "$GITHUB_WORKSPACE/owned" --output "$evidence/generated" \
+            --verification "$evidence/generated/bridge-verification.json" \
+            > "$evidence/bridge.stdout" 2> "$evidence/bridge.stderr"
+          status=$?
+          set -e
+          printf '%s\n' "$status" > "$evidence/bridge.exit-status"
+          if [[ "$status" != 0 ]]; then
+            cat "$evidence/bridge.stderr"
+          fi
+          exit "$status"
+      - name: Publish the verified generated C and producer evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: final-native-context-binaries-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ env.GENERATED_C_BRIDGE_EVIDENCE }}/generated/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Retain the bridge output
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: final-native-context-generated-c-bridge-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.GENERATED_C_BRIDGE_EVIDENCE }}/bridge.*
+            ${{ env.GENERATED_C_BRIDGE_EVIDENCE }}/generated/bridge-verification.json
+          if-no-files-found: warn
+          retention-days: 14
+
   darwin_publication:
     if: ${{ !cancelled() && !inputs.runtime_suite && github.event_name == 'push' && needs.build.result == 'success' }}
     needs: build
@@ -196,8 +262,8 @@ jobs:
           fi
 
   darwin:
-    if: ${{ !cancelled() && (!inputs.runtime_suite || (inputs.runtime_suite == 'darwin-package-only' && !inputs.darwin_from_generated_c)) && (github.event_name == 'workflow_dispatch' || needs.build.result == 'success') && (github.event_name == 'workflow_dispatch' || needs.darwin_publication.result == 'success') }}
-    needs: [build, darwin_publication]
+    if: ${{ !cancelled() && (!inputs.runtime_suite || (inputs.runtime_suite == 'darwin-package-only' && !inputs.darwin_from_generated_c)) && (github.event_name == 'workflow_dispatch' || needs.build.result == 'success') && (github.event_name == 'workflow_dispatch' || needs.darwin_publication.result == 'success') && (!inputs.retained_generated_c_handoff || needs.retained_generated_c.result == 'success') }}
+    needs: [build, darwin_publication, retained_generated_c]
     runs-on: macos-15
     steps:
       - name: Check out product source
@@ -229,6 +295,12 @@ jobs:
           if [[ -n "$ORIGINAL_DARWIN_RUN_JSON" ]]; then
             printf '%s\n' "$ORIGINAL_DARWIN_RUN_JSON" > "$evidence/original-darwin-run.json"
           fi
+      - name: Check out the selected bridge driver
+        if: ${{ inputs.retained_generated_c_handoff }}
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ github.sha }}
+          path: driver
       - name: Download the original Darwin package
         if: ${{ !inputs.darwin_from_generated_c && (github.event_name == 'workflow_dispatch' || env.CANONICAL_DARWIN_RUN_ID) }}
         uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
@@ -332,6 +404,19 @@ jobs:
           repository: Flip-Engineering/baton
           github-token: ${{ github.token }}
           path: generated
+      - name: Verify the transferred generated C and complete producer source
+        if: ${{ inputs.retained_generated_c_handoff }}
+        shell: bash
+        env:
+          HANDOFF_MANIFEST_SHA256: ${{ inputs.retained_generated_c_manifest_sha256 }}
+        run: |
+          set -euo pipefail
+          python3 driver/.github/scripts/retained-generated-c.py verify \
+            --input "$GITHUB_WORKSPACE/generated" --source "$GITHUB_WORKSPACE/owned" \
+            --manifest-sha256 "$HANDOFF_MANIFEST_SHA256" \
+            --verification "$FINAL_NATIVE_CONTEXT_EVIDENCE/generated-c-verification.json" \
+            > "$FINAL_NATIVE_CONTEXT_EVIDENCE/generated-c-verification.stdout" \
+            2> "$FINAL_NATIVE_CONTEXT_EVIDENCE/generated-c-verification.stderr"
       - name: Install Bend package notices
         if: ${{ inputs.darwin_from_generated_c || (github.event_name == 'push' && !env.CANONICAL_DARWIN_RUN_ID) }}
         shell: bash
@@ -365,6 +450,19 @@ jobs:
             cat "$FINAL_NATIVE_CONTEXT_EVIDENCE/package.stderr"
           fi
           exit "$status"
+      - name: Retain actual generated C provenance inside the Darwin package
+        if: ${{ inputs.retained_generated_c_handoff }}
+        shell: bash
+        env:
+          HANDOFF_MANIFEST_SHA256: ${{ inputs.retained_generated_c_manifest_sha256 }}
+        run: |
+          set -euo pipefail
+          python3 driver/.github/scripts/retained-generated-c.py bind-package \
+            --input "$GITHUB_WORKSPACE/generated" --source "$GITHUB_WORKSPACE/owned" \
+            --manifest-sha256 "$HANDOFF_MANIFEST_SHA256" \
+            --package "$PACKAGE_DIRECTORY" \
+            > "$FINAL_NATIVE_CONTEXT_EVIDENCE/generated-c-package-binding.stdout" \
+            2> "$FINAL_NATIVE_CONTEXT_EVIDENCE/generated-c-package-binding.stderr"
       - name: Exercise extracted Darwin package
         shell: bash
         run: |
@@ -401,7 +499,7 @@ jobs:
           retention-days: 14
 
   runtime:
-    if: ${{ !cancelled() && inputs.runtime_suite != 'darwin-package-only' && !inputs.darwin_from_generated_c && (github.event_name == 'workflow_dispatch' || needs.build.result == 'success') }}
+    if: ${{ !cancelled() && !inputs.retained_generated_c_handoff && inputs.runtime_suite != 'darwin-package-only' && !inputs.darwin_from_generated_c && (github.event_name == 'workflow_dispatch' || needs.build.result == 'success') }}
     needs: build
     runs-on: ubuntu-24.04
     strategy:
