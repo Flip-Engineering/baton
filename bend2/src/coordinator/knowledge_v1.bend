@@ -185,7 +185,7 @@ def node_notice(+node: String) -> String:
 def node_errors(+node: String) -> String:
   +j = C.q(node)
   +id = "json_extract(" ++ j ++ ",'$.id')"
-  +stored = "'id',id,'author',author,'kind',kind"
+  +stored : String = "'id',id,'author',author,'kind',kind"
   v1_error("v1-node-shape","'id'," ++ id ++ ",'condition','Node payload is not a JSON object.'","NOT json_valid(" ++ j ++ ") OR json_type(" ++ j ++ ")<>'object'")
   ++ v1_error("v1-unknown-node-kind","'kind'," ++ node_kind_of(node) ++ ",'condition','Node kind is not one of the ten closed v1 kinds.'","json_valid(" ++ j ++ ") AND (" ++ node_kind_of(node) ++ " IS NULL OR " ++ node_kind_of(node) ++ " NOT IN(" ++ node_kinds() ++ "))")
   ++ v1_error("v1-node-shape","'id'," ++ id ++ ",'condition','Node needs non-empty id, author and statement, object context with scope, subjects, conditions and assumptions, array evidence of id or uri references, text limits and uncertainty, and the typed details its kind requires.'","json_valid(" ++ j ++ ") AND " ++ node_kind_of(node) ++ " IN(" ++ node_kinds() ++ ") AND NOT (" ++ node_shape_ok(node) ++ ")")
@@ -353,7 +353,7 @@ def edge_answer(+edge: String) -> String:
 def edge_errors(+edge: String) -> String:
   +j = C.q(edge)
   +id = "json_extract(" ++ j ++ ",'$.id')"
-  +stored = "'id',id,'author',author,'kind',kind"
+  +stored : String = "'id',id,'author',author,'kind',kind"
   v1_error("v1-edge-shape","'id'," ++ id ++ ",'condition','Edge payload is not a JSON object.'","NOT json_valid(" ++ j ++ ") OR json_type(" ++ j ++ ")<>'object'")
   ++ v1_error("v1-unknown-edge-kind","'kind'," ++ edge_kind_of(edge) ++ ",'condition','Edge kind is not one of the sixteen closed v1 kinds.'","json_valid(" ++ j ++ ") AND (" ++ edge_kind_of(edge) ++ " IS NULL OR " ++ edge_kind_of(edge) ++ " NOT IN(" ++ edge_kinds() ++ "))")
   ++ v1_error("v1-edge-shape","'id'," ++ id ++ ",'condition','Edge needs non-empty id, author and rationale, object endpoints with id and kind, object context with scope, subjects, conditions and assumptions, array basis of id or uri references, text limits and uncertainty, and the typed details its kind requires.'","json_valid(" ++ j ++ ") AND " ++ edge_kind_of(edge) ++ " IN(" ++ edge_kinds() ++ ") AND NOT (" ++ edge_shape_ok(edge) ++ ")")
