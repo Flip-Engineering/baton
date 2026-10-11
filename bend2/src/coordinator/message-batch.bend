@@ -1,5 +1,5 @@
 import Base
-import ./commands.bend as C
+import ../coordinator/commands.bend as C
 import ./store.bend as Store
 import ./wake.bend as Wake
 import ../host/sqlite.bend as DB
