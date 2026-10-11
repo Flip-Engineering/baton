@@ -83,6 +83,10 @@ const scientificSchemaPath = existsSync(resolve(__dirname, 'knowledge-v1.schema.
   : resolve(ROOT, 'docs/bend2/knowledge-v1.schema.json');
 const scientificSchema = scientificKnowledge
   ? JSON.parse(readFileSync(scientificSchemaPath, 'utf8')) : null;
+if (scientificKnowledge) {
+  const packagedJSON = resolve(__dirname, 'ui/knowledge-json.js');
+  await import(existsSync(packagedJSON) ? packagedJSON : resolve(__dirname, '../ui/orchestra/knowledge-json.js'));
+}
 
 function scientificInputSchema(definition) {
   if (!scientificSchema) return { type: 'object' };
@@ -168,7 +172,9 @@ process.stdin.on('data', (chunk) => {
     inputBuffer = inputBuffer.slice(newline + 1);
     if (!body.trim()) continue;
     try {
-      handleMessage(JSON.parse(body));
+      const message = JSON.parse(body);
+      handleMessage(scientificKnowledge && scientificTools.has(message.params?.name)
+        ? KnowledgeJSON.parse(body) : message);
     } catch (error) {
       process.stderr.write(`mcp-conductor: parse error: ${error.message}\n`);
     }
@@ -914,16 +920,16 @@ function handleToolCall(msg) {
       }
       case 'baton2_knowledge_record_v1':
         scientificAuthor(args);
-        result = coord('record-v1', JSON.stringify(args));
+        result = coord('record-v1', KnowledgeJSON.stringify(args));
         break;
       case 'baton2_knowledge_relate_v1':
         scientificAuthor(args);
-        result = coord('relate-v1', JSON.stringify(args));
+        result = coord('relate-v1', KnowledgeJSON.stringify(args));
         break;
       case 'baton2_knowledge_admit_v1':
         if (Array.isArray(args?.nodes)) args.nodes.forEach(scientificAuthor);
         if (Array.isArray(args?.edges)) args.edges.forEach(scientificAuthor);
-        result = coord('knowledge-admit-v1', sessionId, JSON.stringify(args));
+        result = coord('knowledge-admit-v1', sessionId, KnowledgeJSON.stringify(args));
         break;
       case 'baton2_knowledge_detail_v1': {
         const scope = args.scope ?? 'worker';

@@ -167,6 +167,42 @@ function close(server) {
   });
 }
 
+test('scientific overview and actor reads preserve authored numeric source text', async (t) => {
+  const f = fixture();
+  const db = new DatabaseSync(f.databasePath);
+  db.exec('CREATE TABLE knowledge_v1 (id TEXT PRIMARY KEY)');
+  db.close();
+  const quantityText = '{"integer":9007199254740993,"decimal":0.123456789012345678901234567890,"array":[1e3,-0]}';
+  const recordsText = '[{"schemaVersion":1,"schemaId":"urn:baton:knowledge:schema:1",'
+    + '"id":"measured-quantity","kind":"observation","author":"child",'
+    + '"statement":"Measured quantities retain their recorded precision.","details":' + quantityText + '}]';
+  const answer = join(f.directory, 'scientific-answer.json');
+  writeFileSync(answer, recordsText);
+  const coordinator = join(f.directory, 'scientific-coordinator');
+  writeFileSync(coordinator, '#!' + process.execPath + '\n'
+    + 'const fs = require("node:fs");\n'
+    + 'if (process.argv[3] !== "knowledge-scope") process.exit(1);\n'
+    + 'process.stdout.write(fs.readFileSync(' + JSON.stringify(answer) + ', "utf8"));\n');
+  chmodSync(coordinator, 0o755);
+  const server = createOrchestraServer({ databasePath: f.databasePath, reader: 'root',
+    baton2Executable: coordinator });
+  t.after(async () => { await close(server); rmSync(f.directory, { recursive: true, force: true }); });
+  const base = await listen(server);
+  for (const path of ['/orchestra/knowledge/overview?scope=all', '/orchestra/knowledge?actor=child']) {
+    const response = await fetch(base + path);
+    assert.equal(response.status, 200);
+    const text = await response.text();
+    assert.ok(text.includes(quantityText), text);
+    const parsed = KnowledgeJSON.parse(text);
+    const record = parsed.scientific.nodes[0];
+    assert.equal(typeof record.details.integer, 'number');
+    assert.equal(typeof record.details.decimal, 'number');
+    assert.equal(KnowledgeJSON.numberSource(record.details, 'integer', record.details.integer), '9007199254740993');
+    assert.equal(KnowledgeJSON.numberSource(record.details, 'decimal', record.details.decimal), '0.123456789012345678901234567890');
+    if (path.includes('?actor=')) assert.equal(parsed.scientific.authored[0].id, record.id);
+  }
+});
+
 test('snapshot binds a selected subtree to the reader and preserves recorded unknowns', async (t) => {
   const f = fixture();
   const notifications = commitNotifications();

@@ -4324,18 +4324,22 @@
         : reference.kind === row.kind);
   }
 
-  function kwScientificField(parent, label, value, graph, activate) {
+  function kwScientificField(parent, label, value, graph, activate, owner = null) {
     if (value === null || value === undefined || value === "") return;
     const field = kwEl(parent, "div", { class: "kw-science-field" });
     kwEl(field, "h4", null, kwScienceLabel(label));
-    kwScientificValue(field, value, graph, activate);
+    kwScientificValue(field, value, graph, activate,
+      KnowledgeJSON.numberSource(owner, label, value));
   }
 
-  function kwScientificValue(parent, value, graph, activate) {
+  function kwScientificValue(parent, value, graph, activate, numberText = null) {
     if (Array.isArray(value)) {
       if (!value.length) { kwEl(parent, "p", { class: "muted" }, "None recorded"); return; }
       const list = kwEl(parent, "ul", { class: "kw-science-values" });
-      for (const item of value) kwScientificValue(kwEl(list, "li"), item, graph, activate);
+      for (const [index, item] of value.entries()) {
+        kwScientificValue(kwEl(list, "li"), item, graph, activate,
+          KnowledgeJSON.numberSource(value, index, item));
+      }
       return;
     }
     if (value && typeof value === "object") {
@@ -4405,10 +4409,10 @@
         }
         return;
       }
-      for (const [key, item] of Object.entries(value)) kwScientificField(parent, key, item, graph, activate);
+      for (const [key, item] of Object.entries(value)) kwScientificField(parent, key, item, graph, activate, value);
       return;
     }
-    kwEl(parent, "p", { class: "kw-science-value" }, String(value));
+    kwEl(parent, "p", { class: "kw-science-value" }, numberText === null ? String(value) : numberText);
   }
 
   function kwScientificTile(parent, row, graph, activate) {
@@ -4561,7 +4565,7 @@
       graph.nodes.size + " scientific records · " + graph.edges.size + " authored relations");
     const selected = read.selected.startsWith("edge:") ? graph.edges.get(read.selected.slice(5))
       : read.selected.startsWith("node:") ? graph.nodes.get(read.selected.slice(5)) : null;
-    const matches = (row) => !read.query || JSON.stringify(row).toLocaleLowerCase().includes(read.query.toLocaleLowerCase());
+    const matches = (row) => !read.query || KnowledgeJSON.stringify(row).toLocaleLowerCase().includes(read.query.toLocaleLowerCase());
     const edges = Array.from(graph.edges.values()).filter((edge) => !read.relation || edge.kind === read.relation);
     if (selected) {
       const neighborhood = kwEl(container, "div", { class: "kw-science-neighborhood" });

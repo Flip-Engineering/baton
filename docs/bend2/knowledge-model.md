@@ -157,6 +157,14 @@ content and labels with their own schema provenance. Promotion and holding
 queries use the record's version namespace. Session and Ensemble holdings govern
 visibility; the scientific context describes applicability.
 
+Scientific MCP authoring, HTTP reads and the Knowledge inspector retain the
+original JSON text of numeric fields. Numbers remain JSON numbers on the wire.
+The JavaScript adapters associate each numeric token with its containing object
+or array, and use that token when serializing, displaying or searching the
+record. Contributors preserve those object identities when projecting complete
+records. Scientific uncertainty, units and measurement scale retain their own
+schema fields.
+
 Search and traversal project each node's explicit evidence reference as a
 `Cited` link from the citing record to its source. These links carry
 `recorded-evidence` provenance and complete typed endpoints. Their `projectionKey`

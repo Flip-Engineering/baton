@@ -21,6 +21,8 @@ if len(sys.argv) > 2 and sys.argv[2] == 'help':
         sys.stdout.write('outbox\\ndelivery-batch\\nmessage-batch\\ninput MESSAGE_ID\\n')
     else:
         sys.stdout.write('delivery\\nmessage\\n')
+    if values.get('scientific', False):
+        sys.stdout.write('record-v1\\nrelate-v1\\nknowledge-admit-v1\\nknowledge-v1-detail\\npromote-v1-scoped\\n')
     sys.exit(0)
 time.sleep(values['delay'])
 sys.stdout.write(values['stdout'])
@@ -36,7 +38,8 @@ sys.exit(values['code'])
 
 class McpCommand(unittest.TestCase):
     def command(self, stdout='', stderr='', code=0, delay=0, *,
-                tool='baton2_status', arguments=None, session=None, expected_args=None):
+                tool='baton2_status', arguments=None, session=None, expected_args=None,
+                raw_arguments=None, scientific=False):
         with tempfile.TemporaryDirectory() as home:
             home = pathlib.Path(home)
             executable = home / 'fixture-coordinator'
@@ -45,7 +48,7 @@ class McpCommand(unittest.TestCase):
             executable.chmod(0o755)
             executable.with_suffix('.json').write_text(json.dumps({
                 'stdout': stdout, 'stderr': stderr, 'code': code,
-                'delay': delay, 'completed': str(completed), 'batch': True,
+                'delay': delay, 'completed': str(completed), 'batch': True, 'scientific': scientific,
             }))
             requests = [
                 {'jsonrpc': '2.0', 'id': 1, 'method': 'initialize', 'params': {}},
@@ -53,10 +56,16 @@ class McpCommand(unittest.TestCase):
                 {'jsonrpc': '2.0', 'id': 3, 'method': 'tools/call',
                  'params': {'name': tool, 'arguments': arguments or {}}},
             ]
+            request_text = ''.join(json.dumps(row) + '\n' for row in requests)
+            if raw_arguments is not None:
+                request_text = ''.join(json.dumps(row) + '\n' for row in requests[:-1])
+                request_text += ('{"jsonrpc":"2.0","id":3,"method":"tools/call",'
+                                 '"params":{"name":' + json.dumps(tool)
+                                 + ',"arguments":' + raw_arguments + '}}\n')
             result = subprocess.run(
                 ['node', str(MCP_SCRIPT), str(home / 'state.db'), str(executable)]
                 + ([] if session is None else ['--session', session]),
-                input=''.join(json.dumps(row) + '\n' for row in requests),
+                input=request_text,
                 text=True, capture_output=True,
             )
             self.assertEqual(result.returncode, 0, result.stderr)
@@ -71,6 +80,26 @@ class McpCommand(unittest.TestCase):
             self.assertGreater(child['pid'], 0)
             self.assertEqual(child['argv'], [str(home / 'state.db')] + (expected_args or ['status']))
             return replies[2]['result']
+
+    def test_scientific_authoring_preserves_numeric_tokens_through_stdio(self):
+        quantities = ('{"integer":9007199254740993,'
+                      '"decimal":0.123456789012345678901234567890,"array":[1e3,-0]}')
+        record = ('{"schemaVersion":1,"schemaId":"urn:baton:knowledge:schema:1",'
+                  '"id":"measurement","kind":"observation","author":"reader",'
+                  '"statement":"Recorded quantities","details":' + quantities + '}')
+        edge = ('{"schemaVersion":1,"schemaId":"urn:baton:knowledge:schema:1",'
+                '"id":"inference","kind":"supports","author":"reader",'
+                '"source":{"id":"measurement","kind":"observation"},'
+                '"target":{"id":"claim","kind":"claim"},"context":' + quantities + '}')
+        transaction = '{"nodes":[' + record + '],"edges":[' + edge + ']}'
+        for tool, payload, expected in (
+                ('baton2_knowledge_record_v1', record, ['record-v1', record]),
+                ('baton2_knowledge_relate_v1', edge, ['relate-v1', edge]),
+                ('baton2_knowledge_admit_v1', transaction, ['knowledge-admit-v1', 'reader', transaction])):
+            with self.subTest(tool=tool):
+                result = self.command(tool=tool, raw_arguments=payload, scientific=True,
+                                      session='reader', expected_args=expected)
+                self.assertFalse(result.get('isError', False), result)
 
     def native_controls(self):
         player = "Player's review λ"

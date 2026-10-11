@@ -5,6 +5,7 @@ import { extname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { createNativeOwnerSubscriber } from './native-owner-subscription.mjs';
+import './knowledge-json.js';
 
 const CONTRACT_VERSION = 1;
 const CONTENT_TYPES = new Map([
@@ -19,7 +20,7 @@ function json(response, status, value) {
     'cache-control': 'no-store',
     'x-content-type-options': 'nosniff',
   });
-  response.end(JSON.stringify(value));
+  response.end(KnowledgeJSON.stringify(value));
 }
 
 // A read against a database another connection is writing returns busy. That is
@@ -67,7 +68,8 @@ function coordinatorAnswer(response, operation, result) {
     return null;
   }
   try {
-    return JSON.parse(result.stdout);
+    return operation === 'scientific-knowledge'
+      ? KnowledgeJSON.parse(result.stdout) : JSON.parse(result.stdout);
   } catch (error) {
     json(response, 502, { error: `${operation}-output-invalid`, cause: error.message, execution: result });
     return null;

@@ -1063,7 +1063,7 @@ async function loadKnowledgeOverview() {
   }
   try {
     const res = await fetch(state.apiBase + "/orchestra/knowledge/overview" + asked);
-    const answered = await res.json();
+    const answered = KnowledgeJSON.parse(await res.text());
     if (!res.ok) {
       const execution = answered && answered.execution;
       const cause = [answered && answered.error, answered && answered.cause,
@@ -1130,7 +1130,7 @@ async function loadActorKnowledge(id) {
       data = { refused: true, reason: body.error || "reader-scope-denied" };
     }
     else if (!res.ok) data = { error: "the endpoint answered " + res.status };
-    else data = await res.json();
+    else data = KnowledgeJSON.parse(await res.text());
   } catch (e) {
     data = { error: e && e.message ? e.message : String(e) };
   }
@@ -1288,7 +1288,7 @@ async function loadGraphRecord(actor, findingId) {
     const res = await fetch(state.apiBase + "/orchestra/knowledge?actor=" + encodeURIComponent(actor));
     if (res.status === 403) data = { refused: true };
     else if (!res.ok) data = { error: "the endpoint answered " + res.status };
-    else data = await res.json();
+    else data = KnowledgeJSON.parse(await res.text());
   } catch (e) {
     data = { error: e && e.message ? e.message : String(e) };
   }
@@ -1502,7 +1502,7 @@ async function loadSnapshot() {
     throw new Error("snapshot request failed: " + (e && e.message ? e.message : e));
   }
   if (!res.ok) throw new Error("snapshot request returned " + res.status);
-  const data = await res.json();
+  const data = KnowledgeJSON.parse(await res.text());
   applySnapshot(data, name ? "DOM behavior fixture " + name + ", not live state" : "Live snapshot");
 }
 
