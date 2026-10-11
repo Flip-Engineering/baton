@@ -305,12 +305,19 @@ def request_identity(req: J.Json) -> String:
 # SQL builders. The document is embedded as a quoted literal; a request's own
 # bytes never become SQL syntax, and the literal encoder doubles every quote.
 
-def sql_quote_go(s: String, +acc: String) -> String:
+def sql_quote_char(+head: Char, tail: String, quote: Bool) -> String:
+  match quote:
+    case True{}: SCon{head, SCon{head, tail}}
+    case False{}: SCon{head, tail}
+
+def sql_quote_reversed(s: String, +acc: String) -> String:
   match s:
     case SNil{}: acc
     case SCon{+head, +tail}:
-      sql_quote_go(tail, acc ++ Bool.pick(String, U32.is_eq(Char.to_u32(head), 39),
-        "\u{27}\u{27}", SCon{head, SNil{}}))
+      sql_quote_reversed(tail, sql_quote_char(head, acc, U32.is_eq(Char.to_u32(head), 39)))
+
+def sql_quote_go(s: String, +acc: String) -> String:
+  acc ++ reverse(sql_quote_reversed(s, SNil{}))
 
 def sql_quote(s: String) -> String:
   "\u{27}" ++ sql_quote_go(s, SNil{}) ++ "\u{27}"
@@ -765,6 +772,30 @@ def request_validate(req: J.Json) -> Verdict:
     case J.Jarr{+head, +tail}: VRefused{"requestNotObject"}
     case J.Jpair{key, value, rest}: VRefused{"requestNotObject"}
     case J.Jnil{}: VRefused{"requestNotObject"}
+
+law sql_quote_preserves_an_empty_string:
+  {sql_quote("") == "\u{27}\u{27}" : String}
+
+def sql_quote_preserves_an_empty_string():
+  {==}
+
+law sql_quote_empty_body_preserves_the_supplied_prefix:
+  {sql_quote_go("", "keep\u{27} λ🧪") == "keep\u{27} λ🧪" : String}
+
+def sql_quote_empty_body_preserves_the_supplied_prefix():
+  {==}
+
+law sql_quote_body_preserves_prefix_and_scalar_order:
+  {sql_quote_go("a\u{27}\u{27}λ🧪\\\n\t", "keep\u{27} ") == "keep\u{27} a\u{27}\u{27}\u{27}\u{27}λ🧪\\\n\t" : String}
+
+def sql_quote_body_preserves_prefix_and_scalar_order():
+  {==}
+
+law sql_quote_keeps_json_apostrophes_inside_the_sql_literal:
+  {validity_sql("{\"text\":\"a\u{27}b λ🧪\"}") == "WITH raw(t) AS (SELECT \u{27}{\"text\":\"a\u{27}\u{27}b λ🧪\"}\u{27}) SELECT json_valid(t) FROM raw;" : String}
+
+def sql_quote_keeps_json_apostrophes_inside_the_sql_literal():
+  {==}
 
 # A duplicated member is the same defect whatever the member value kind is, so the
 # subquery restricts the counted node to a member of an object and compares siblings by
