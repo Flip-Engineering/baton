@@ -356,6 +356,12 @@ def promotion_statement(+id: String, +promoter: String, +source_kind: String, +s
   ++ " ON CONFLICT(id) DO NOTHING;"
   ++ knowledge_conflict_sql("promotion-id-conflict","knowledge_promotions",C.q(id),"EXISTS(SELECT 1 FROM knowledge k WHERE k.id=" ++ C.q(finding) ++ " AND " ++ promotion_admitted(promoter,destination_kind,destination) ++ " AND " ++ source_carries(source_kind,source) ++ ")",promotion_coordinates(id,promoter,source_kind,source,destination_kind,destination,finding),"'finding',finding,'source',source,'sourceKind',source_kind,'destination',destination,'destinationKind',destination_kind")
 
+# Promotion notice identity is shared by both versions: each promotion row
+# carries one deterministic notice id, so exactly one version writes rows
+# and twin suppression holds across tables.
+def promotion_notice_id(id: String) -> String:
+  id ++ ":promotion-notice"
+
 # v1 promotions live in knowledge_promotions_v1 keyed by raw record_id into
 # the single v1 node/edge namespace; table separation is the version scoping.
 # The promoter-owns-destination rule is shared with legacy promotion; the
@@ -395,9 +401,6 @@ def v1_promotion_answer(+id: String, +promoter: String, +source_kind: String, +s
 
 def promotion_answer(id: String, promoter: String, source_kind: String, source: String, destination_kind: String, destination: String, finding: String) -> String:
   "SELECT json_patch(json_object('id',id,'finding',finding,'author',author,'source',source,'destination',destination,'promotedBy',promoted_by)," ++ endpoint_fields("",True{}) ++ ") FROM knowledge_promotions WHERE " ++ promotion_coordinates(id,promoter,source_kind,source,destination_kind,destination,finding) ++ ";"
-
-def promotion_notice_id(id: String) -> String:
-  id ++ ":promotion-notice"
 
 def promotion_notice_body() -> String:
   "json_patch(json_object('promotion',p.id,'finding',p.finding,'author',p.author,'source',p.source,'destination',p.destination,'promotedBy',p.promoted_by)," ++ endpoint_fields("p.",True{}) ++ ")"

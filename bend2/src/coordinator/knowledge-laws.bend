@@ -176,7 +176,7 @@ law m1_the_promote_statement_carries_the_promotion_notice_and_answer:
   for source: String
   for destination: String
   for finding: String
-  {K.promote_statements(id, promoter, source, destination, finding) == K.promotion_statement(id,promoter,source,destination,finding) ++ K.promotion_notice_statement(id,promoter,source,destination,finding) ++ K.promotion_answer(id,promoter,source,destination,finding) : String}
+  {K.promote_statements(id, promoter, source, destination, finding) == K.promotion_statement(id,promoter,source,destination,finding) ++ K.promotion_notice_statement(id,promoter,source,destination,finding) ++ K.promotion_answer(id,promoter,source,destination,finding) ++ K.v1_promotion_statement(id,promoter,source,destination,finding) ++ K.v1_promotion_notice_statement(id,promoter,source,destination,finding) ++ K.v1_promotion_answer(id,promoter,source,destination,finding) : String}
 
 def m1_the_promote_statement_carries_the_promotion_notice_and_answer(id, promoter, source, destination, finding):
   {==}
