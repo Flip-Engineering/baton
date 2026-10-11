@@ -105,7 +105,7 @@ def queue_claim_sql(+id: String, +condition: String, +recipient: String, +native
   ++ "SELECT CASE WHEN changes()=1 THEN (SELECT token FROM codex_inbox_wakes WHERE session=" ++ C.q(recipient) ++ ") ELSE '' END;COMMIT;"
 
 def queue_pointer(db: String, id: String, recipient: String, pending: String) -> String:
-  "Baton input is pending.\n{\"database\":" ++ J.string_literal(db) ++ ",\"message\":" ++ J.string_literal(id) ++ ",\"recipient\":" ++ J.string_literal(recipient) ++ ",\"pendingCount\":" ++ pending ++ "}\nRead all owed input with baton2 DATABASE inbox RECIPIENT. Read selected complete messages with baton2 DATABASE delivery-batch IDS_JSON. Inspect authored messages and receipts with baton2 DATABASE outbox RECIPIENT. Send structured messages with baton2 DATABASE message-batch RECIPIENT MESSAGES_JSON. Handle the work and acknowledge each of your own messages with baton2 DATABASE ack MESSAGE RECIPIENT RECEIPT. This notification records public input admission; Baton receipts remain pending until you accept the input."
+  "Baton input is pending.\n{\"database\":" ++ J.string_literal(db) ++ ",\"message\":" ++ J.string_literal(id) ++ ",\"recipient\":" ++ J.string_literal(recipient) ++ ",\"pendingCount\":" ++ pending ++ "}\nRead all owed input with baton2 DATABASE inbox RECIPIENT. Read any complete message with baton2 DATABASE delivery MESSAGE. Handle the work and acknowledge each of your own messages with baton2 DATABASE ack MESSAGE RECIPIENT RECEIPT. This notification records public input admission; Baton receipts remain pending until you accept the input."
 
 def queue_waited(output: String, result: Result<&1,&1,U32 & String,String>) -> Result<&1,&1,U32 & String,String>:
   match result:

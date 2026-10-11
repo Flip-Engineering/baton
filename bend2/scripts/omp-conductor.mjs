@@ -15,7 +15,7 @@
 //
 // No npm dependencies; node stdlib only.
 
-import { spawn, execFileSync } from 'node:child_process';
+import { spawn, spawnSync, execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -72,6 +72,23 @@ if (!dbPath) {
 const COORD = resolve(coordinatorExe);
 const DB = resolve(dbPath);
 
+function supportsBatchMessaging() {
+  const help = spawnSync(COORD, [DB, 'help'], { encoding: 'utf8', maxBuffer: Infinity });
+  const surface = String(help.stdout ?? '') + String(help.stderr ?? '');
+  return ['outbox', 'delivery-batch', 'message-batch'].every((name) => surface.includes(name));
+}
+
+const batchMessaging = supportsBatchMessaging();
+
+function batchMessagingCommands(command, recipient) {
+  if (!batchMessaging) return [];
+  return [
+    `  ${command} outbox ${recipient} — show your authored messages and current receipts`,
+    `  ${command} delivery-batch IDS_JSON — read selected complete messages in request order`,
+    `  ${command} message-batch ${recipient} MESSAGES_JSON — send structured messages to multiple recipients`,
+  ];
+}
+
 function systemPrompt(session) {
   const command = shellQuote(COORD) + ' ' + shellQuote(DB);
   const recipient = shellQuote(sessionId);
@@ -92,12 +109,11 @@ function systemPrompt(session) {
     `  ${command} receiver PLAYER HARNESS_CMD OUTPUT_LOG [CWD] — register or relocate a Player's receive endpoint`,
     `  ${command} turns PLAYER    — show a player's turn history`,
     `  ${command} inbox ${recipient}      — show your pending messages`,
-    `  ${command} outbox ${recipient} — show your authored messages and current receipts`,
-    `  ${command} delivery-batch IDS_JSON — read selected complete messages in request order`,
+    `  ${command} delivery MESSAGE — read one complete stored message and its receipt`,
+    ...batchMessagingCommands(command, recipient),
     `  ${command} pending         — list all undelivered messages`,
     `  ${command} ack ID ${recipient} RECEIPT — acknowledge a message`,
     `  ${command} message ID ${recipient} PLAYER guidance BODY — send guidance to a player`,
-    `  ${command} message-batch ${recipient} MESSAGES_JSON — send structured messages to multiple recipients`,
     `  ${command} ask ID ${recipient} BODY — send a question to your recorded parent or, for a parentless Principal, the registered operator`,
     `  ${command} ask-file ID ${recipient} PATH — send a complete question from a file or stdin with PATH -`,
     `  ${command} role SESSION [player|principal-conductor|associate-conductor|operator] — read or assign responsibility`,

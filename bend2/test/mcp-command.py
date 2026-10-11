@@ -16,6 +16,12 @@ import sys
 import time
 
 values = json.loads(Path(__file__).with_suffix('.json').read_text())
+if len(sys.argv) > 2 and sys.argv[2] == 'help':
+    if values.get('batch', True):
+        sys.stdout.write('outbox\\ndelivery-batch\\nmessage-batch\\n')
+    else:
+        sys.stdout.write('delivery\\nmessage\\n')
+    sys.exit(0)
 time.sleep(values['delay'])
 sys.stdout.write(values['stdout'])
 sys.stdout.flush()
@@ -39,7 +45,7 @@ class McpCommand(unittest.TestCase):
             executable.chmod(0o755)
             executable.with_suffix('.json').write_text(json.dumps({
                 'stdout': stdout, 'stderr': stderr, 'code': code,
-                'delay': delay, 'completed': str(completed),
+                'delay': delay, 'completed': str(completed), 'batch': True,
             }))
             requests = [
                 {'jsonrpc': '2.0', 'id': 1, 'method': 'initialize', 'params': {}},
@@ -136,6 +142,35 @@ class McpCommand(unittest.TestCase):
         item = send_schema['properties']['messages']['items']
         self.assertEqual(set(item['required']), {'id', 'player', 'body'})
         self.assertFalse(item['additionalProperties'])
+
+    def test_batch_message_tools_require_recorded_executable_support(self):
+        with tempfile.TemporaryDirectory() as home:
+            home = pathlib.Path(home)
+            executable = home / 'fixture-coordinator'
+            executable.write_text('#!' + sys.executable + '\n' + CHILD)
+            executable.chmod(0o755)
+            executable.with_suffix('.json').write_text(json.dumps({
+                'stdout': '', 'stderr': '', 'code': 0, 'delay': 0,
+                'completed': str(home / 'completed.json'), 'batch': False,
+            }))
+            requests = [
+                {'jsonrpc': '2.0', 'id': 1, 'method': 'initialize', 'params': {}},
+                {'jsonrpc': '2.0', 'id': 2, 'method': 'tools/list', 'params': {}},
+            ]
+            result = subprocess.run(
+                ['node', str(MCP_SCRIPT), str(home / 'state.db'), str(executable)],
+                input=''.join(json.dumps(row) + '\n' for row in requests),
+                text=True, capture_output=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            replies = [json.loads(line) for line in result.stdout.splitlines()]
+            tools = {row['name'] for row in replies[1]['result']['tools']}
+            self.assertTrue({'baton2_delivery', 'baton2_guide'} <= tools)
+            self.assertTrue({'baton2_delivery_batch', 'baton2_outbox',
+                             'baton2_message_batch'}.isdisjoint(tools))
+            instructions = replies[0]['result']['instructions']
+            self.assertIn('baton2_delivery reads one complete stored message', instructions)
+            self.assertNotIn('baton2_delivery_batch', instructions)
 
     def test_native_control_tools_advertise_typed_arguments(self):
         self.command()
