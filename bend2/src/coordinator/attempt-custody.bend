@@ -18,9 +18,9 @@ import ../git/text.bend as Tx
 # outcomes, never silent defaults.
 
 # The binary path of the recorded attempt, taken from the passive reference's
-# argv0 field. An absent field is an empty path, and the composing read labels
-# the manifest record unreadable, which is also the outcome of the retained text
-# copy when the reader refuses its binary header.
+# argv0 field. The host carries the manifest's read cause beside it, so an
+# absent field renders an empty binary path with that cause rather than an
+# inferred label; the retained text copy stays the labeled fallback it is.
 def job_argv0(db: String, body: String) -> IO(String):
   do IO<String>:
     extracted : Result<&1,&1,U32 & String,String> <- IO.try(String,DB.Sql.query(db,"WITH job(value) AS (VALUES(" ++ C.q(body) ++ ")) SELECT coalesce(CASE WHEN json_valid(value) THEN json_extract(value,'$.argv0') END,'') FROM job;"))
@@ -103,10 +103,16 @@ def custody_job(db: String, job: Result<&1,&1,U32 & String,String>, pid: String,
       binary : String <- job_argv0(db,body)
       custody_render(db,body,binary,pid,marker)
 
+# The rendered custody facts. The read causes come from the host's own
+# manifest_read and lifecycle_read keys, so a refused or invalid record
+# survives into the projection instead of being erased by an empty fact. The
+# guidance cursor is read from the checkpoint's state bytes nested inside the
+# reference, under a json_valid guard, and the validated checkpoint_offset
+# stays a distinct field from the application cursor.
 def custody_render(db: String, body: String, binary: String, pid: String, marker: String) -> IO(String):
   do IO<String>:
     +release : String <- IO.pure(String,release_segment(binary))
-    rendered : Result<&1,&1,U32 & String,String> <- IO.try(String,DB.Sql.query(db,"WITH job(value) AS (VALUES(" ++ C.q(body) ++ ")) SELECT CASE WHEN json_valid(value) THEN json_object('jobRead','read','binaryPath',coalesce(json_extract(value,'$.argv0'),''),'manifestRead',CASE WHEN coalesce(json_extract(value,'$.argv0'),'')='' THEN 'unreadable-record' ELSE 'read' END,'release'," ++ C.q(release) ++ ",'recordedPid'," ++ C.q(pid) ++ ",'acknowledged',json(" ++ marker ++ "),'guidanceCursor',coalesce(json_extract(value,'$.guidance_cursor'),''),'checkpointOffset',coalesce(json_extract(value,'$.checkpoint_offset'),0),'checkpointVerified',coalesce(json_extract(value,'$.checkpoint_verified'),json('false')),'lifecycleState',coalesce(json_extract(value,'$.lifecycle_state'),''),'spawnLatched',coalesce(json_extract(value,'$.spawn_latched'),json('false')),'cancelled',coalesce(json_extract(value,'$.cancelled'),json('false')),'observerReady',coalesce(json_extract(value,'$.observer_ready'),json('false'))) ELSE json_object('jobRead','corrupt') END FROM job;"))
+    rendered : Result<&1,&1,U32 & String,String> <- IO.try(String,DB.Sql.query(db,"WITH job(value) AS (VALUES(" ++ C.q(body) ++ ")) SELECT CASE WHEN json_valid(value) THEN json_object('jobRead','read','binaryPath',coalesce(json_extract(value,'$.argv0'),''),'manifestRead',coalesce(json_extract(value,'$.manifest_read'),'absent'),'release'," ++ C.q(release) ++ ",'recordedPid'," ++ C.q(pid) ++ ",'acknowledged',json(" ++ marker ++ "),'guidanceCursor',CASE WHEN json_valid(coalesce(json_extract(value,'$.checkpoint_state'),'')) THEN coalesce(json_extract(json_extract(value,'$.checkpoint_state'),'$.guidance_cursor'),'') ELSE '' END,'checkpointOffset',coalesce(json_extract(value,'$.checkpoint_offset'),0),'checkpointVerified',coalesce(json_extract(value,'$.checkpoint_verified'),json('false')),'lifecycleState',coalesce(json_extract(value,'$.lifecycle_state'),''),'lifecycleRead',coalesce(json_extract(value,'$.lifecycle_read'),'invalid'),'spawnLatched',coalesce(json_extract(value,'$.spawn_latched'),json('false')),'cancelled',coalesce(json_extract(value,'$.cancelled'),json('false')),'observerReady',coalesce(json_extract(value,'$.observer_ready'),json('false'))) ELSE json_object('jobRead','corrupt') END FROM job;"))
     custody_rendered(rendered)
 
 def custody_rendered(rendered: Result<&1,&1,U32 & String,String>) -> IO(String):

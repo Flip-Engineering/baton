@@ -451,6 +451,7 @@ static int br_manifest_read(const char *directory,BrManifest *manifest) {
       else if(i!=3 && i!=7 && strlen(manifest->field[i])!=n) error=EINVAL;
     }
   }
+  if(error)br_manifest_free(manifest);
   return error;
 }
 static int br_read_file(const char *directory,const char *name,void *bytes,size_t length) {
@@ -3727,57 +3728,6 @@ static int br_instance_attach_owned(BatonProcessCall *call) {
    terminal status when it is recorded. One attempt has at most one observation
    owner; any number of callers can read the retained result through this
    reference, which is why a duplicate admission is not an EBUSY dead end. */
-/* Argv element zero of a length-colon-bytes encoded argv field: a decimal
-   length, a colon, then that many bytes. A malformed or absent field yields
-   NULL, which the caller renders as an empty string. */
-static char *br_argv_element_zero(const char *field) {
-  if(!field)return NULL;
-  unsigned long length=0;
-  const char *at=field;
-  while(*at>='0' && *at<='9') {
-    if(length>(unsigned long)SIZE_MAX/10)return NULL;
-    length=length*10+(unsigned long)(*at-'0');
-    at++;
-  }
-  if(*at!=':' || !length)return NULL;
-  at++;
-  char *value=malloc(length+1);
-  if(!value)return NULL;
-  memcpy(value,at,length);
-  value[length]=0;
-  return value;
-}
-
-/* One string field of a JSON object body, returned with its escaping intact so
-   the caller can embed it inside quotes. A bounded scan: the key, a colon, the
-   opening quote, then the value up to an unescaped closing quote. */
-static char *br_state_field(const char *body,const char *key) {
-  if(!body || !key || !*key)return NULL;
-  size_t key_length=strlen(key);
-  const char *at=body;
-  while((at=strstr(at,"\""))) {
-    if(!strncmp(at+1,key,key_length) && at[1+key_length]=='"' && at[2+key_length]==':'
-       && at[3+key_length]=='"') {
-      const char *value=at+4+key_length;
-      const char *scan=value;
-      while(*scan) {
-        if(*scan=='\\' && scan[1])scan+=2;
-        else if(*scan=='"')break;
-        else scan++;
-      }
-      if(*scan!='"')return NULL;
-      size_t length=(size_t)(scan-value);
-      char *field=malloc(length+1);
-      if(!field)return NULL;
-      memcpy(field,value,length);
-      field[length]=0;
-      return field;
-    }
-    at++;
-  }
-  return NULL;
-}
-
 static int br_instance_job(BatonProcessCall *call) {
   char *directory=realpath(call->directory,NULL);
   if(!directory)return errno;
@@ -3823,28 +3773,37 @@ static int br_instance_job(BatonProcessCall *call) {
   if(!checkpoint_verified && owner_known)checkpoint_offset=state.checkpoint_offset;
   if(!status_known && owner_known) {status=state.status;status_known=(int)state.status_known;}
   /* The three recorded facts this passive reference additionally carries for the
-     custody projection, each read from the retained files: the admitted binary
-     path from the manifest's argv element zero, the lifecycle token with its
-     latch words, and the checkpoint's guidance cursor from the verified state
-     bytes. None of these joins the attempt's observer, opens its socket or
-     positions a reader. */
+     custody projection, each read from the retained files with its read cause
+     preserved: the admitted binary path from the manifest's argv element zero
+     through the existing br_argv parser over the validated field, the lifecycle
+     token with its latch words, and the checkpoint's validated state bytes,
+     which the caller's JSON projection reads for the guidance cursor. None of
+     these joins the attempt's observer, opens its socket or positions a
+     reader. */
   char *argv0=NULL;
+  const char *manifest_cause="absent";
   BrManifest manifest={0};
   if(!br_manifest_read(directory,&manifest)) {
-    argv0=br_argv_element_zero(manifest.count?manifest.field[0]:NULL);
+    char **argv=br_argv(manifest.field[0],(size_t)manifest.header.lengths[0]);
+    if(argv && argv[0]) {
+      argv0=strdup(argv[0]);
+      manifest_cause=argv0?"read":"invalid";
+    } else manifest_cause="invalid";
+    if(argv) {for(int i=0;argv[i];i++)free(argv[i]);free(argv);}
     br_manifest_free(&manifest);
   }
   BrLifecycle lifecycle;
   const char *lifecycle_state=br_lifecycle_state(directory,&lifecycle,&(uint64_t){0},&(int){0},&(int){0});
   int lifecycle_valid=!memcmp(lifecycle.magic,BR_LIFECYCLE_MAGIC,8) && lifecycle.schema==1;
   if(!lifecycle_valid)lifecycle_state="unavailable";
-  char *guidance=br_state_field(checkpoint_state,"guidance_cursor");
   char *escaped_argv0=argv0?br_json_escape(argv0):NULL;
+  char *escaped_state=checkpoint_state?br_json_escape(checkpoint_state):NULL;
   const char *format=
     "{\"attempt\":%llu,\"generation\":%llu,\"spool_bytes\":%llu,\"checkpoint_offset\":%llu,"
     "\"checkpoint_verified\":%s,\"status\":%d,\"status_known\":%s,\"observing\":%s,"
-    "\"owner_known\":%s,\"argv0\":\"%s\",\"lifecycle_state\":\"%s\",\"spawn_latched\":%s,"
-    "\"cancelled\":%s,\"observer_ready\":%s,\"guidance_cursor\":\"%s\"}";
+    "\"owner_known\":%s,\"manifest_read\":\"%s\",\"argv0\":\"%s\",\"lifecycle_state\":\"%s\","
+    "\"lifecycle_read\":\"%s\",\"spawn_latched\":%s,\"cancelled\":%s,\"observer_ready\":%s,"
+    "\"checkpoint_state\":\"%s\"}";
   int needed=snprintf(NULL,0,format,
     (unsigned long long)(owner_known?state.attempt:0),
     (unsigned long long)(owner_known?state.generation:0),
@@ -3853,14 +3812,21 @@ static int br_instance_job(BatonProcessCall *call) {
     status_known?"true":"false",
     owner_known&&state.observing?"true":"false",
     owner_known?"true":"false",
-    escaped_argv0?escaped_argv0:"",lifecycle_state,
+    manifest_cause,escaped_argv0?escaped_argv0:"",
+    lifecycle_state,lifecycle_valid?"read":"invalid",
     lifecycle_valid&&lifecycle.latched?"true":"false",
     lifecycle_valid&&lifecycle.cancelled?"true":"false",
     lifecycle_valid&&lifecycle.observer_ready?"true":"false",
-    guidance?guidance:"");
-  if(needed<0) {free(guidance);free(escaped_argv0);free(argv0);free(checkpoint_state);free(directory);call->error=EOVERFLOW;return;}
+    escaped_state?escaped_state:"");
+  if(needed<0) {
+    free(escaped_state);free(escaped_argv0);free(argv0);free(checkpoint_state);free(directory);
+    return EOVERFLOW;
+  }
   call->text=malloc((size_t)needed+1);
-  if(!call->text) {free(guidance);free(escaped_argv0);free(argv0);free(checkpoint_state);free(directory);call->error=ENOMEM;return;}
+  if(!call->text) {
+    free(escaped_state);free(escaped_argv0);free(argv0);free(checkpoint_state);free(directory);
+    return ENOMEM;
+  }
   int written=snprintf(call->text,(size_t)needed+1,format,
     (unsigned long long)(owner_known?state.attempt:0),
     (unsigned long long)(owner_known?state.generation:0),
@@ -3869,13 +3835,14 @@ static int br_instance_job(BatonProcessCall *call) {
     status_known?"true":"false",
     owner_known&&state.observing?"true":"false",
     owner_known?"true":"false",
-    escaped_argv0?escaped_argv0:"",lifecycle_state,
+    manifest_cause,escaped_argv0?escaped_argv0:"",
+    lifecycle_state,lifecycle_valid?"read":"invalid",
     lifecycle_valid&&lifecycle.latched?"true":"false",
     lifecycle_valid&&lifecycle.cancelled?"true":"false",
     lifecycle_valid&&lifecycle.observer_ready?"true":"false",
-    guidance?guidance:"");
+    escaped_state?escaped_state:"");
   call->length=written<0?0:(size_t)written;
-  free(guidance);free(escaped_argv0);free(argv0);free(checkpoint_state);free(directory);
+  free(escaped_state);free(escaped_argv0);free(argv0);free(checkpoint_state);free(directory);
   return 0;
 }
 static int br_instance_shutdown(BatonProcessCall *call) {
