@@ -136,8 +136,10 @@ record identity and revision rules below.
 
 V1 nodes and edges share one identity namespace. An identical repeat write is
 idempotent. Conflicting content retains its existing identity and requires a new
-ID. An explicit `supersedes` relation records a revision. Study revisions retain
-the same `studyIdentity` and state their revised method or outputs.
+ID. Each explicit `supersedes` relation records a revision and its rationale.
+A revision can name multiple predecessors; the authored relations retain its
+complete history. Study revisions retain the same `studyIdentity` and state their
+revised method or outputs.
 
 Identity comparison ignores object member order and decodes JSON string escapes.
 Array order, container types and complete values remain significant. Numeric
@@ -164,6 +166,20 @@ or array, and use that token when serializing, displaying or searching the
 record. Contributors preserve those object identities when projecting complete
 records. Scientific uncertainty, units and measurement scale retain their own
 schema fields.
+
+The Knowledge inspector places each type's scientific details first: measured
+results for observations, inference and inputs for findings, predictions for
+hypotheses, and premises and derivation for arguments. Connection cards show the
+relation author, basis, scope, limits and uncertainty. Logical and causal labels
+identify authored assertions whose reasoning remains available in the complete
+relation record.
+
+The inspector counts authored relations and explicit reference uses separately.
+`References made` and `Referenced by` expose the stored reference paths in
+evidence, context, details and relation basis within the returned reading. These
+paths retain their recorded roles, including premises, inputs and study outputs.
+Each reference opens its complete record. The local evidence array appears as
+`Cited records`.
 
 Search and traversal project each node's explicit evidence reference as a
 `Cited` link from the citing record to its source. These links carry

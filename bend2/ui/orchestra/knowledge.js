@@ -4303,7 +4303,34 @@
       if (row && KW_SCIENCE_EDGES.includes(row.kind) && row.source && row.target)
         edges.set(String(row.id), envelope(row));
     }
-    return { nodes, edges };
+    const graph = { nodes, edges, referencesMade: new Map(), referencedBy: new Map() };
+    for (const row of [...nodes.values(), ...edges.values()]) {
+      for (const field of ["evidence", "context", "details", "basis"])
+        kwScientificReferenceUses(graph, row, row[field], field);
+    }
+    return graph;
+  }
+
+  function kwScientificReferenceUses(graph, source, value, path) {
+    if (Array.isArray(value)) {
+      for (const [index, item] of value.entries())
+        kwScientificReferenceUses(graph, source, item, path + "[" + index + "]");
+      return;
+    }
+    if (!value || typeof value !== "object") return;
+    if (typeof value.id === "string" && (KW_SCIENCE_KINDS.includes(value.kind)
+      || value.kind === "edge" && KW_SCIENCE_EDGES.includes(value.edgeKind))) {
+      const sourceKey = kwScientificKey(source);
+      const targetKey = (value.kind === "edge" ? "edge:" : "node:") + value.id;
+      const use = { source, reference: value, path };
+      for (const [index, key] of [[graph.referencesMade, sourceKey], [graph.referencedBy, targetKey]]) {
+        if (!index.has(key)) index.set(key, []);
+        index.get(key).push(use);
+      }
+      return;
+    }
+    for (const [key, item] of Object.entries(value))
+      kwScientificReferenceUses(graph, source, item, path + "." + key);
   }
 
   function kwScientificKey(row) {
@@ -4427,8 +4454,69 @@
     if (row.uncertainty) kwEl(tile, "p", { class: "kw-science-uncertainty" }, row.uncertainty);
     const connected = Array.from(graph.edges.values()).filter((edge) =>
       kwScientificMatches(edge.source, row) || kwScientificMatches(edge.target, row)).length;
-    kwEl(tile, "p", { class: "kw-science-degree" }, connected + (connected === 1 ? " relation" : " relations"));
+    const key = kwScientificKey(row);
+    const uses = (graph.referencesMade.get(key) || []).length
+      + (graph.referencedBy.get(key) || []).filter((use) => kwScientificMatches(use.reference, row)).length;
+    kwEl(tile, "p", { class: "kw-science-degree" },
+      connected + (connected === 1 ? " authored relation" : " authored relations")
+      + " · " + uses + (uses === 1 ? " reference use" : " reference uses"));
     return tile;
+  }
+
+  function kwScientificDetails(parent, row, graph, activate) {
+    const preferred = {
+      observation: ["result", "property", "subject", "phenomenonTime", "resultTime", "procedure"],
+      "research-finding": ["inference", "inputs", "method", "overturnConditions"],
+      hypothesis: ["predictions", "overturnConditions", "explanation"],
+      argument: ["premises", "derivation", "witness", "method"],
+      study: ["questions", "state", "outputs", "method", "design", "studyIdentity"],
+      evidence: ["description", "source", "selection"],
+      proposal: ["proposedAction", "purpose", "rationale", "alternatives"],
+      decision: ["selected", "rationale", "alternatives"],
+      causes: ["exposure", "outcome", "identification", "alternativeExplanations", "mechanism"],
+    }[row.kind] || [];
+    const details = row.details || {};
+    const section = kwEl(parent, "section", { class: "kw-science-details" });
+    kwEl(section, "h4", null, "Scientific details");
+    for (const field of [...preferred, ...Object.keys(details).filter((key) => !preferred.includes(key))])
+      kwScientificField(section, field, details[field], graph, activate, details);
+  }
+
+  function kwScientificAssertionNote(parent, kind) {
+    const text = ["proves", "disproves", "implies", "negates", "contradicts"].includes(kind)
+      ? "Authored logical assertion. Review its proposition, scope and reasoning."
+      : kind === "causes" ? "Authored causal assertion. Review its identification, assumptions and alternatives." : "";
+    if (text) kwEl(parent, "p", { class: "kw-science-assertion-note" }, text);
+  }
+
+  function kwScientificUses(parent, row, graph, activate, read) {
+    const key = kwScientificKey(row);
+    for (const [direction, uses, title] of [
+      ["made", graph.referencesMade.get(key) || [], "References made"],
+      ["by", (graph.referencedBy.get(key) || []).filter((use) => kwScientificMatches(use.reference, row)), "Referenced by"],
+    ]) {
+      if (!uses.length) continue;
+      const disclosureKey = key + ":" + direction;
+      const section = kwEl(parent, "details", { class: "kw-science-reference-uses",
+        "data-science-uses": direction });
+      section.open = read.referencesOpen.has(disclosureKey);
+      section.addEventListener("toggle", () => {
+        if (!section.isConnected) return;
+        if (section.open) read.referencesOpen.add(disclosureKey);
+        else read.referencesOpen.delete(disclosureKey);
+      });
+      kwEl(section, "summary", { "data-science-focus": "uses:" + disclosureKey }, title + " · " + uses.length);
+      kwEl(section, "p", { class: "muted" }, "Explicit reference uses within this reading");
+      for (const use of uses) {
+        const entry = kwEl(section, "article", { class: "kw-science-reference-use", "data-science-reference-path": use.path });
+        kwEl(entry, "p", { class: "kw-science-reference-id mono" }, use.path);
+        const reference = direction === "made" ? use.reference :
+          { kind: use.source.source ? "edge" : use.source.kind, id: use.source.id,
+            ...(use.source.source ? { edgeKind: use.source.kind } : {}) };
+        kwScientificValue(entry, reference, graph, activate);
+        kwEl(entry, "p", { class: "kw-science-author" }, "Referenced by " + use.source.author);
+      }
+    }
   }
 
   function kwScientificDetail(parent, row, graph, activate, read, connections) {
@@ -4448,13 +4536,12 @@
       kwScientificField(parent, "Target", row.target, graph, activate);
       kwScientificField(parent, "Rationale", row.rationale, graph, activate);
       kwScientificField(parent, "Basis", row.basis, graph, activate);
-      if (["proves", "disproves", "implies"].includes(row.kind)) {
-        kwEl(parent, "p", { class: "kw-science-assertion-note" },
-          "This relation records the author's inference. Its argument and premises are available for review.");
-      }
-    } else kwScientificField(parent, "Evidence", row.evidence, graph, activate);
+      kwScientificAssertionNote(parent, row.kind);
+    }
+    kwScientificDetails(parent, row, graph, activate);
+    if (!row.source) kwScientificField(parent, "Cited records", row.evidence, graph, activate);
+    kwScientificUses(parent, row, graph, activate, read);
     kwScientificField(parent, "Context", row.context, graph, activate);
-    kwScientificField(parent, "Details", row.details, graph, activate);
     kwScientificField(parent, "Limits", row.limits, graph, activate);
     kwScientificField(parent, "Uncertainty", row.uncertainty, graph, activate);
     const key = kwScientificKey(row);
@@ -4480,7 +4567,12 @@
       "data-science-focus": "edge:" + edge.id },
     (outgoing ? "→ " : "← ") + kwScienceLabel(edge.kind));
     relation.addEventListener("click", () => activate(kwScientificKey(edge)));
+    kwEl(entry, "p", { class: "kw-science-author" }, "Relation authored by " + edge.author);
     kwEl(entry, "p", { class: "kw-science-rationale" }, edge.rationale);
+    kwScientificAssertionNote(entry, edge.kind);
+    kwScientificField(entry, "Basis", edge.basis, graph, activate);
+    kwScientificField(entry, "Scope", edge.context && edge.context.scope, graph, activate);
+    kwScientificField(entry, "Limits", edge.limits, graph, activate);
     if (row) kwScientificTile(entry, row, graph, activate);
     else kwScientificValue(entry, endpoint, graph, activate);
     if (edge.uncertainty) kwEl(entry, "p", { class: "kw-science-uncertainty" }, edge.uncertainty);
@@ -4498,7 +4590,8 @@
     container.classList.add("kw-science");
     let read = kwScientificReads.get(container);
     if (!read) {
-      read = { selected: "", addressSelected: "", query: "", relation: "", history: [], legacy: false, identityOpen: new Set() };
+      read = { selected: "", addressSelected: "", query: "", relation: "", history: [], legacy: false,
+        identityOpen: new Set(), referencesOpen: new Set() };
       kwScientificReads.set(container, read);
     }
     const requested = (opts && opts.scientificSelected) || "";
@@ -4628,6 +4721,8 @@
         const open = kwEl(row, "button", { class: "kw-science-relation", type: "button",
           "data-science-focus": "edge:" + edge.id }, kwScienceLabel(edge.kind));
         open.addEventListener("click", () => activate(kwScientificKey(edge)));
+        kwEl(row, "p", { class: "kw-science-author" }, "Relation authored by " + edge.author);
+        kwScientificAssertionNote(row, edge.kind);
         kwScientificValue(row, edge.source, graph, activate);
         kwEl(row, "span", { "aria-hidden": "true" }, " → ");
         kwScientificValue(row, edge.target, graph, activate);

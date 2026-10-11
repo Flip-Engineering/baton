@@ -936,6 +936,11 @@ g.kw-hull-section {
 .kw-science-record-return { margin: 0 0 14px; }
 .kw-science-detail-title { font-size: 20px; line-height: 1.45; margin: 8px 0 16px; }
 .kw-science-field { margin: 14px 0 0; }
+.kw-science-details { margin-top: 18px; }
+.kw-science-details > h4 { margin: 0 0 8px; font-size: 13px; }
+.kw-science-reference-uses { margin-top: 18px; font-size: 13px; }
+.kw-science-reference-uses > summary { cursor: pointer; font-weight: 600; }
+.kw-science-reference-use { padding: 10px 0; border-bottom: 1px solid var(--hairline); }
 .kw-science-field > h4 { font-size: 12px; font-weight: 600; margin: 0 0 5px; text-transform: capitalize; }
 .kw-science-field .kw-science-field { padding-left: 12px; border-left: 1px solid var(--hairline); }
 .kw-science-value, .kw-science-rationale { margin: 5px 0; white-space: pre-wrap; font-size: 14px; line-height: 1.6; }

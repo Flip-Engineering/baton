@@ -486,6 +486,74 @@ class KnowledgeV1(unittest.TestCase):
         self.refused(self.batch([other], [invalid], success=False), 'study')
         self.assertEqual(self.call('knowledge-v1-detail', 'root', 'all', '', 'different-study'), [])
 
+    def test_revision_edges_preserve_multiple_predecessors_with_old_scalar_columns(self):
+        import sqlite3
+        with sqlite3.connect(self.db) as db:
+            for table in ('knowledge_v1', 'knowledge_edges_v1'):
+                columns = {row[1] for row in db.execute(f'PRAGMA table_info({table})')}
+                self.assertNotIn('supersedes', columns)
+                db.execute(f'ALTER TABLE {table} ADD COLUMN supersedes TEXT')
+
+        evidence = node('grand', 'revision-evidence', 'evidence')
+        older_nodes = [node('grand', ident, 'claim') for ident in
+                       ('revision-node-a', 'revision-node-b')]
+        older_edges = [edge('grand', ident, 'supports',
+                            ('revision-evidence', 'evidence'), (older['id'], 'claim'),
+                            details={'bearing': 'The evidence bears on this claim.'})
+                       for ident, older in zip(('revision-edge-a', 'revision-edge-b'), older_nodes)]
+        self.batch([evidence, *older_nodes], older_edges)
+
+        revised_node = node('grand', 'revision-node-new', 'claim')
+        revised_edge = edge('grand', 'revision-edge-new', 'supports',
+                            ('revision-evidence', 'evidence'), (revised_node['id'], 'claim'),
+                            details={'bearing': 'The evidence bears on the revised claim.'})
+        def revision(ident, source, target):
+            return edge('grand', ident, 'supersedes', ('unused', 'claim'), ('unused', 'claim'),
+                        source=source, target=target,
+                        details={'revision': 'This authored record revises the earlier record.'})
+
+        node_source = {'id': revised_node['id'], 'kind': 'claim'}
+        edge_source = {'id': revised_edge['id'], 'kind': 'edge', 'edgeKind': 'supports'}
+        first = [revision('revision-node-link-a', node_source,
+                          {'id': older_nodes[0]['id'], 'kind': 'claim'}),
+                 revision('revision-edge-link-a', edge_source,
+                          {'id': older_edges[0]['id'], 'kind': 'edge', 'edgeKind': 'supports'})]
+        self.batch([revised_node], [revised_edge, *first])
+        with sqlite3.connect(self.db) as db:
+            self.assertIsNone(db.execute('SELECT supersedes FROM knowledge_v1 WHERE id=?',
+                                         (revised_node['id'],)).fetchone()[0])
+            self.assertIsNone(db.execute('SELECT supersedes FROM knowledge_edges_v1 WHERE id=?',
+                                         (revised_edge['id'],)).fetchone()[0])
+            db.execute('UPDATE knowledge_v1 SET supersedes=? WHERE id=?',
+                       (older_nodes[0]['id'], revised_node['id']))
+            db.execute('UPDATE knowledge_edges_v1 SET supersedes=? WHERE id=?',
+                       (older_edges[0]['id'], revised_edge['id']))
+
+        later = [revision('revision-node-link-b', node_source,
+                          {'id': older_nodes[1]['id'], 'kind': 'claim'}),
+                 revision('revision-edge-link-b', edge_source,
+                          {'id': older_edges[1]['id'], 'kind': 'edge', 'edgeKind': 'supports'})]
+        self.batch([], later)
+        revisions = {item['id']: item for item in self.call('knowledge-relations', 'root', 'all', '')
+                     if item['relation'] == 'supersedes'}
+        expected = {item['id']: item for item in first + later}
+        self.assertEqual(set(revisions), set(expected))
+        for ident, payload in expected.items():
+            with self.subTest(revision=ident):
+                self.assertEqual(revisions[ident]['source'], payload['source']['id'])
+                self.assertEqual(revisions[ident]['target'], payload['target']['id'])
+                stored = self.detail(ident)
+                for field, value in payload.items():
+                    self.assertEqual(stored[field], value, field)
+        self.assertEqual({item['id'] for item in self.detail(revised_node['id'])['relations']
+                          if item['kind'] == 'supersedes'},
+                         {item['id'] for item in first + later if item['source']['kind'] == 'claim'})
+        with sqlite3.connect(self.db) as db:
+            self.assertEqual(db.execute('SELECT supersedes FROM knowledge_v1 WHERE id=?',
+                                        (revised_node['id'],)).fetchone()[0], older_nodes[0]['id'])
+            self.assertEqual(db.execute('SELECT supersedes FROM knowledge_edges_v1 WHERE id=?',
+                                        (revised_edge['id'],)).fetchone()[0], older_edges[0]['id'])
+
     def test_live_changes_include_scientific_records_and_promotions(self):
         import sqlite3
         self.record(node('grand', 'live-claim', 'claim'))

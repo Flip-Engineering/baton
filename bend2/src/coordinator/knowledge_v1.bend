@@ -141,8 +141,8 @@ def v1_legacy_schema() -> String:
   ++ "CREATE TABLE IF NOT EXISTS knowledge_relations (id TEXT UNIQUE NOT NULL, author TEXT NOT NULL, source TEXT NOT NULL, relation TEXT NOT NULL, target TEXT NOT NULL);"
 
 def v1_schema() -> String:
-  "CREATE TABLE IF NOT EXISTS knowledge_v1 (id TEXT UNIQUE NOT NULL,author TEXT NOT NULL,kind TEXT NOT NULL,statement TEXT NOT NULL,context TEXT NOT NULL,evidence TEXT NOT NULL,limits TEXT NOT NULL DEFAULT '',uncertainty TEXT NOT NULL DEFAULT '',details TEXT NOT NULL,schema_version INTEGER NOT NULL DEFAULT 1,supersedes TEXT,payload TEXT NOT NULL);"
-  ++ "CREATE TABLE IF NOT EXISTS knowledge_edges_v1 (id TEXT UNIQUE NOT NULL,author TEXT NOT NULL,kind TEXT NOT NULL,source TEXT NOT NULL,target TEXT NOT NULL,context TEXT NOT NULL,basis TEXT NOT NULL,rationale TEXT NOT NULL,limits TEXT NOT NULL DEFAULT '',uncertainty TEXT NOT NULL DEFAULT '',details TEXT NOT NULL,schema_version INTEGER NOT NULL DEFAULT 1,supersedes TEXT,payload TEXT NOT NULL);"
+  "CREATE TABLE IF NOT EXISTS knowledge_v1 (id TEXT UNIQUE NOT NULL,author TEXT NOT NULL,kind TEXT NOT NULL,statement TEXT NOT NULL,context TEXT NOT NULL,evidence TEXT NOT NULL,limits TEXT NOT NULL DEFAULT '',uncertainty TEXT NOT NULL DEFAULT '',details TEXT NOT NULL,schema_version INTEGER NOT NULL DEFAULT 1,payload TEXT NOT NULL);"
+  ++ "CREATE TABLE IF NOT EXISTS knowledge_edges_v1 (id TEXT UNIQUE NOT NULL,author TEXT NOT NULL,kind TEXT NOT NULL,source TEXT NOT NULL,target TEXT NOT NULL,context TEXT NOT NULL,basis TEXT NOT NULL,rationale TEXT NOT NULL,limits TEXT NOT NULL DEFAULT '',uncertainty TEXT NOT NULL DEFAULT '',details TEXT NOT NULL,schema_version INTEGER NOT NULL DEFAULT 1,payload TEXT NOT NULL);"
   ++ "CREATE TABLE IF NOT EXISTS knowledge_promotions_v1 (id TEXT UNIQUE NOT NULL,record_id TEXT NOT NULL,author TEXT NOT NULL,source_kind TEXT NOT NULL DEFAULT 'session',source TEXT NOT NULL,destination_kind TEXT NOT NULL DEFAULT 'session',destination TEXT NOT NULL,promoted_by TEXT NOT NULL);"
 
 # Scientific records use one versioned node and edge namespace.
@@ -741,28 +741,13 @@ def v1_admitted_sql(+batch: String) -> String:
 def v1_answer(+batch: String, +author: String) -> String:
   "SELECT CASE WHEN " ++ v1_blocked(batch,author) ++ " THEN (SELECT json_object('error','v1-refused','rule',rule,'id',record_id) FROM _baton_knowledge_v1_checks WHERE record_id IS NOT NULL ORDER BY priority LIMIT 1) ELSE " ++ v1_admitted_sql(batch) ++ " END;"
 
-def v1_node_supersedes(+batch: String) -> String:
-  "(SELECT json_extract(se.value,'$.target.id') FROM json_each(" ++ batch ++ ",'$.edges') se WHERE json_extract(se.value,'$.kind')=='supersedes' AND json_type(se.value,'$.source.edgeKind') IS NULL AND json_extract(se.value,'$.source.id')==json_extract(n.value,'$.id') LIMIT 1)"
-
-def v1_edge_supersedes(+batch: String) -> String:
-  "(SELECT json_extract(se.value,'$.target.id') FROM json_each(" ++ batch ++ ",'$.edges') se WHERE json_extract(se.value,'$.kind')=='supersedes' AND json_type(se.value,'$.source.edgeKind') IS NOT NULL AND json_extract(se.value,'$.source.id')==json_extract(e.value,'$.id') LIMIT 1)"
-
-
 def v1_node_insert(+batch: String, +author: String) -> String:
   +input = v1_guarded_batch(batch,author)
-  "INSERT INTO knowledge_v1(id,author,kind,statement,context,evidence,limits,uncertainty,details,schema_version,supersedes,payload) SELECT json_extract(n.value,'$.id')," ++ author ++ ",json_extract(n.value,'$.kind'),json_extract(n.value,'$.statement'),json_extract(n.value,'$.context'),json_extract(n.value,'$.evidence'),json_extract(n.value,'$.limits'),json_extract(n.value,'$.uncertainty'),json_extract(n.value,'$.details'),1," ++ v1_node_supersedes(input) ++ ",n.value FROM json_each(" ++ input ++ ",'$.nodes') n WHERE NOT " ++ v1_blocked(batch, author) ++ " AND NOT EXISTS(SELECT 1 FROM knowledge_v1 WHERE id==json_extract(n.value,'$.id')) AND NOT EXISTS(SELECT 1 FROM _baton_knowledge_v1_nodes earlier WHERE earlier.key<n.key AND json_extract(earlier.value,'$.id')=json_extract(n.value,'$.id'));"
+  "INSERT INTO knowledge_v1(id,author,kind,statement,context,evidence,limits,uncertainty,details,schema_version,payload) SELECT json_extract(n.value,'$.id')," ++ author ++ ",json_extract(n.value,'$.kind'),json_extract(n.value,'$.statement'),json_extract(n.value,'$.context'),json_extract(n.value,'$.evidence'),json_extract(n.value,'$.limits'),json_extract(n.value,'$.uncertainty'),json_extract(n.value,'$.details'),1,n.value FROM json_each(" ++ input ++ ",'$.nodes') n WHERE NOT " ++ v1_blocked(batch, author) ++ " AND NOT EXISTS(SELECT 1 FROM knowledge_v1 WHERE id==json_extract(n.value,'$.id')) AND NOT EXISTS(SELECT 1 FROM _baton_knowledge_v1_nodes earlier WHERE earlier.key<n.key AND json_extract(earlier.value,'$.id')=json_extract(n.value,'$.id'));"
 
 def v1_edge_insert(+batch: String, +author: String) -> String:
   +input = v1_guarded_batch(batch,author)
-  "INSERT INTO knowledge_edges_v1(id,author,kind,source,target,context,basis,rationale,limits,uncertainty,details,schema_version,supersedes,payload) SELECT json_extract(e.value,'$.id')," ++ author ++ ",json_extract(e.value,'$.kind'),json_extract(e.value,'$.source'),json_extract(e.value,'$.target'),json_extract(e.value,'$.context'),json_extract(e.value,'$.basis'),json_extract(e.value,'$.rationale'),json_extract(e.value,'$.limits'),json_extract(e.value,'$.uncertainty'),json_extract(e.value,'$.details'),1," ++ v1_edge_supersedes(input) ++ ",e.value FROM json_each(" ++ input ++ ",'$.edges') e WHERE NOT " ++ v1_blocked(batch, author) ++ " AND NOT EXISTS(SELECT 1 FROM knowledge_edges_v1 WHERE id==json_extract(e.value,'$.id')) AND NOT EXISTS(SELECT 1 FROM _baton_knowledge_v1_edges earlier WHERE earlier.key<e.key AND json_extract(earlier.value,'$.id')=json_extract(e.value,'$.id'));"
-
-def v1_node_fill(+batch: String, +author: String) -> String:
-  +input = v1_guarded_batch(batch,author)
-  "UPDATE knowledge_v1 SET supersedes=(SELECT json_extract(se.value,'$.target.id') FROM json_each(" ++ input ++ ",'$.edges') se WHERE json_extract(se.value,'$.kind')=='supersedes' AND json_type(se.value,'$.source.edgeKind') IS NULL AND json_extract(se.value,'$.source.id')==knowledge_v1.id LIMIT 1) WHERE supersedes IS NULL AND EXISTS(SELECT 1 FROM json_each(" ++ input ++ ",'$.edges') se WHERE json_extract(se.value,'$.kind')=='supersedes' AND json_type(se.value,'$.source.edgeKind') IS NULL AND json_extract(se.value,'$.source.id')==knowledge_v1.id) AND NOT " ++ v1_blocked(batch, author) ++ ";"
-
-def v1_edge_fill(+batch: String, +author: String) -> String:
-  +input = v1_guarded_batch(batch,author)
-  "UPDATE knowledge_edges_v1 SET supersedes=(SELECT json_extract(se.value,'$.target.id') FROM json_each(" ++ input ++ ",'$.edges') se WHERE json_extract(se.value,'$.kind')=='supersedes' AND json_type(se.value,'$.source.edgeKind') IS NOT NULL AND json_extract(se.value,'$.source.id')==knowledge_edges_v1.id LIMIT 1) WHERE supersedes IS NULL AND EXISTS(SELECT 1 FROM json_each(" ++ input ++ ",'$.edges') se WHERE json_extract(se.value,'$.kind')=='supersedes' AND json_type(se.value,'$.source.edgeKind') IS NOT NULL AND json_extract(se.value,'$.source.id')==knowledge_edges_v1.id) AND NOT " ++ v1_blocked(batch, author) ++ ";"
+  "INSERT INTO knowledge_edges_v1(id,author,kind,source,target,context,basis,rationale,limits,uncertainty,details,schema_version,payload) SELECT json_extract(e.value,'$.id')," ++ author ++ ",json_extract(e.value,'$.kind'),json_extract(e.value,'$.source'),json_extract(e.value,'$.target'),json_extract(e.value,'$.context'),json_extract(e.value,'$.basis'),json_extract(e.value,'$.rationale'),json_extract(e.value,'$.limits'),json_extract(e.value,'$.uncertainty'),json_extract(e.value,'$.details'),1,e.value FROM json_each(" ++ input ++ ",'$.edges') e WHERE NOT " ++ v1_blocked(batch, author) ++ " AND NOT EXISTS(SELECT 1 FROM knowledge_edges_v1 WHERE id==json_extract(e.value,'$.id')) AND NOT EXISTS(SELECT 1 FROM _baton_knowledge_v1_edges earlier WHERE earlier.key<e.key AND json_extract(earlier.value,'$.id')=json_extract(e.value,'$.id'));"
 
 def v1_check_sql(+priority: String, +rule: String, +violated: String, +offender: String) -> String:
   "INSERT INTO _baton_knowledge_v1_checks(priority,rule,record_id) SELECT " ++ priority ++ "," ++ C.q(rule) ++ ",CASE WHEN EXISTS(SELECT 1 FROM _baton_knowledge_v1_checks WHERE record_id IS NOT NULL) THEN NULL WHEN " ++ violated ++ " THEN " ++ offender ++ " ELSE NULL END;"
@@ -846,7 +831,6 @@ def v1_commit_sql(+input: String, +author: String) -> String:
   "BEGIN IMMEDIATE;" ++ C.schema() ++ v1_legacy_schema() ++ v1_schema()
   ++ v1_preflight_sql(input,batch,author)
   ++ v1_node_insert(batch,author) ++ v1_edge_insert(batch,author)
-  ++ v1_node_fill(batch,author) ++ v1_edge_fill(batch,author)
   ++ v1_notice_insert(batch,author) ++ v1_answer(batch,author)
   ++ "DROP TABLE _baton_knowledge_v1_identity_conflicts;DROP TABLE _baton_knowledge_v1_identity_bags;DROP TABLE _baton_knowledge_v1_identity_counts;DROP TABLE _baton_knowledge_v1_identity_tokens;DROP TABLE _baton_knowledge_v1_identity_tree;DROP TABLE _baton_knowledge_v1_identity_records;DROP TABLE _baton_knowledge_v1_nodes;DROP TABLE _baton_knowledge_v1_edges;DROP TABLE _baton_knowledge_v1_objects;DROP TABLE _baton_knowledge_v1_targets;DROP TABLE _baton_knowledge_v1_checks;DROP TABLE _baton_knowledge_v1_input;COMMIT;"
 
