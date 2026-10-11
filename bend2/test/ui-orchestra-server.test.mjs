@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawn, spawnSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -1031,7 +1031,7 @@ execFileSync(command[0], [...command.slice(1), 'ack', message, 'child', 'project
   assert.equal(priorResponse.status, 200);
   const prior = await priorResponse.json();
   assert.equal(prior.project.project, project.project);
-  assert.equal(prior.project.database, resolve(databasePath));
+  assert.equal(prior.project.database, realpathSync(databasePath));
   assert.deepEqual(prior.sessions.map((session) => session.id), ['child', 'previous-root']);
   assert.equal(prior.sessions[1].native, 'saved-previous-project-native');
   assert.equal(prior.sessions[0].native, 'saved-project-native');
