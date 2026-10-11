@@ -275,9 +275,10 @@ async function openInbox(executable, database, session, threadId) {
     close() { db.close(); },
     pointer(row) {
       return 'Baton input is pending.\n' + JSON.stringify({ database, recipient: session, message: row.message, pendingCount: row.pendingCount }) +
-        '\nRead all owed input with baton2 DATABASE inbox RECIPIENT. Read complete stored bodies with baton2 DATABASE delivery MESSAGE. ' +
+        '\nRead all owed input with baton2 DATABASE inbox RECIPIENT. Read selected complete messages with baton2 DATABASE delivery-batch IDS_JSON. ' +
+        'Inspect authored messages and receipts with baton2 DATABASE outbox RECIPIENT. Send structured messages with baton2 DATABASE message-batch RECIPIENT MESSAGES_JSON. ' +
         'Handle the work in this continuation. Acknowledge each handled own message with baton2 DATABASE ack MESSAGE RECIPIENT RECEIPT. ' +
-        'Read your inbox again before ending the turn. Admission is separate from handling and acknowledgement. ' +
+        'Read your inbox again before ending the turn. Admission records the queued input. The recipient-owned receipt records handling and acknowledgement. ' +
         'A native turn ending does not finish your task. Continue your assignment until its immediate coordinator confirms completion. ' +
         (row.parent ? 'When the task is ready, send one completion-request message from ' + session + ' to ' + row.parent +
           ' with your result and remaining work. Continue useful work while it is reviewed. The coordinator sends guidance or completion-confirmed with the request ID as its body. ' :

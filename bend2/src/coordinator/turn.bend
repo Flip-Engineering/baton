@@ -196,7 +196,7 @@ def direct_task_prompt(+db: String, +player: String, +id: String, prompt: String
     executable : String <- IO.try(String,Lock.SessionLock.executable())
     parent : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce(parent,'') FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
     header : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(id ++ ":task-input") ++ " AND recipient=" ++ C.q(player) ++ " AND kind='task-assignment') THEN 'Message (task-assignment) from ' || " ++ C.q(player) ++ " || ' [id: ' || " ++ C.q(id ++ ":task-input") ++ " || ']:' ELSE '' END;"))
-    IO.pure(String,task_instructions() ++ knowledge_instructions() ++ "Coordinator executable, database and session argv: " ++ P.argv([executable,db,player]) ++ ". Recorded parent: " ++ Tx.trim_nl(parent) ++ ".\nRead your inbox with inbox SESSION. Use message REQUEST_ID SESSION PARENT completion-request SUMMARY and acknowledge each handled input with ack MESSAGE_ID SESSION RECEIPT.\n" ++ Tx.trim_nl(header) ++ "\n" ++ prompt)
+    IO.pure(String,task_instructions() ++ knowledge_instructions() ++ "Coordinator executable, database and session argv: " ++ P.argv([executable,db,player]) ++ ". Recorded parent: " ++ Tx.trim_nl(parent) ++ ".\nRead your inbox with inbox SESSION and your authored messages with outbox SESSION. delivery-batch IDS_JSON reads selected complete messages. message-batch SESSION MESSAGES_JSON sends structured messages to multiple recipients. Use message REQUEST_ID SESSION PARENT completion-request SUMMARY and acknowledge each handled input with ack MESSAGE_ID SESSION RECEIPT.\n" ++ Tx.trim_nl(header) ++ "\n" ++ prompt)
 
 def generation_log(+log: String, +id: String) -> String:
   Logs.attempt_log(log,id)

@@ -262,6 +262,63 @@ class Messaging(unittest.TestCase):
         self.assertEqual(self.send('retained', 'leaf-a', 'leaf-b')['receipt'], 'native accepted')
         self.assertEqual(self.endpoint_output(), delivered)
 
+    def test_batch_send_and_selected_reads_keep_item_results_and_complete_records(self):
+        first_body = "First batch body with unicode λ🙂.\nSecond line.\n"
+        failing_endpoint = json.dumps([sys.executable, '-c', 'import sys;sys.exit(7)'])
+        self.call('connect', 'leaf-b', '', failing_endpoint)
+        messages = [
+            {'id': 'batch-first', 'recipient': 'leaf-a', 'kind': 'guidance',
+             'body': first_body},
+            {'id': 'batch-refused', 'recipient': 'other-root', 'kind': 'guidance',
+             'body': 'This route is refused.'},
+            {'id': 'batch-second', 'recipient': 'leaf-b', 'kind': 'custom',
+             'body': "Second recipient's body."},
+            7,
+        ]
+        result = self.call('message-batch', 'root',
+                           json.dumps(messages, ensure_ascii=False, separators=(',', ':')))
+        self.assertEqual([row['status'] for row in result],
+                         ['admitted', 'refused', 'pending', 'refused'])
+        self.assertEqual(result[0]['admission']['status'], 'admitted')
+        self.assertEqual(result[0]['wake']['status'], 'accepted')
+        self.assertEqual(result[0]['receiptStatus'], 'pending')
+        self.assertEqual(result[0]['delivery']['body'], first_body)
+        self.assertEqual(result[0]['detailRead'], ['delivery', 'batch-first'])
+        self.assertIn('message-route-denied', result[1]['admission']['cause'])
+        self.assertEqual(result[2]['admission']['status'], 'admitted')
+        self.assertEqual(result[2]['wake']['status'], 'refused')
+        self.assertIn('exit 7', result[2]['wake']['cause'])
+        self.assertEqual(result[2]['delivery']['body'], "Second recipient's body.")
+        self.assertEqual(result[3]['admission']['cause'], 'batchItem:itemNotObject')
+        self.assertEqual(self.endpoint_output().splitlines(), [b'batch-first'])
+        with closing(sqlite3.connect(self.db)) as db:
+            before = db.execute("SELECT count(*) FROM messages WHERE id LIKE 'batch-%'").fetchone()[0]
+        replay = self.call('message-batch', 'root',
+                           json.dumps(messages, ensure_ascii=False, separators=(',', ':')))
+        self.assertEqual([row['status'] for row in replay],
+                         ['admitted', 'refused', 'pending', 'refused'])
+        with closing(sqlite3.connect(self.db)) as db:
+            after = db.execute("SELECT count(*) FROM messages WHERE id LIKE 'batch-%'").fetchone()[0]
+        self.assertEqual((before, after), (2, 2))
+        outbox = self.call('outbox', 'root')
+        self.assertEqual([row['id'] for row in outbox], ['batch-first', 'batch-second'])
+        self.assertEqual(outbox[0]['body'], first_body)
+        self.assertEqual(outbox[0]['detailRead'], ['delivery', 'batch-first'])
+        self.assertTrue(all(row['sender'] == 'root' for row in outbox))
+        self.call('ack', 'batch-first', 'leaf-a', 'handled by fixture actor')
+        ids = ['batch-second', 'batch-first', 'missing-batch', 'batch-first']
+        selected = self.call('delivery-batch-file', '-',
+                             stdin=json.dumps(ids, separators=(',', ':')))
+        self.assertEqual([row['id'] for row in selected], ids)
+        self.assertEqual([row['status'] for row in selected],
+                         ['found', 'found', 'absent', 'found'])
+        self.assertEqual([row.get('receiptStatus') for row in selected],
+                         ['pending', 'acknowledged', None, 'acknowledged'])
+        self.assertIsNone(selected[0]['delivery']['receipt'])
+        self.assertEqual(selected[1]['delivery']['receipt'], 'handled by fixture actor')
+        self.assertEqual(selected[1]['delivery']['body'], first_body)
+        self.assertEqual(selected[2]['detailRead'], ['delivery', 'missing-batch'])
+
     def test_changed_coordinates_cannot_reuse_an_accepted_message_identity(self):
         self.send('accepted', 'root', 'leaf-a')
         for sender, recipient, kind, body in [

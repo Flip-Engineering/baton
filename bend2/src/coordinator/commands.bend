@@ -29,6 +29,8 @@ type Command is Data:
   EnsembleMember{id: String, owner: String, session: String, action: String}
   Message{id: String, sender: String, recipient: String, kind: String, body: String}
   MessageFile{id: String, sender: String, recipient: String, kind: String, path: String}
+  MessageBatch{sender: String, input: String}
+  MessageBatchFile{sender: String, path: String}
   TaskContinue{session: String, id: String}
   Observe{id: String, player: String, event: String, sealed: Bool}
   ObserveFile{id: String, player: String, path: String}
@@ -41,10 +43,13 @@ type Command is Data:
   Ack{id: String, recipient: String, receipt: String}
   Session{id: String}
   Delivery{id: String}
+  DeliveryBatch{input: String}
+  DeliveryBatchFile{path: String}
   Pending{}
   PendingIndex{}
   Inbox{id: String}
   InboxIndex{id: String}
+  Outbox{id: String}
   MessageIndex{inbox: Bool, condition: String, state: String}
   Land{player: String, repo: String, target: String}
   LandAt{player: String, repo: String, target: String, commit: String}
@@ -539,6 +544,8 @@ def sql(command: Command) -> String:
     case Inbox{id}:
       "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_patch(json_object('id',id,'sender',sender,'recipient',recipient,'kind',kind,'body',body)," ++ input_state_sql("messages") ++ ") AS item FROM messages WHERE recipient=" ++ q(id) ++ " AND receipt IS NULL ORDER BY seq);"
     case InboxIndex{id}: message_index_sql("messages m","m.recipient=" ++ q(id),"m.receipt IS NULL")
+    case Outbox{id}:
+      "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_patch(" ++ delivery_row() ++ ",json_object('detailRead',json_array('delivery',m.id))) AS item FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.sender=" ++ q(id) ++ " ORDER BY m.seq);"
     case MessageIndex{inbox,condition,state}:
       message_index_sql(Bool.pick(String,inbox,"messages m","messages m JOIN sessions s ON s.id=m.recipient"),condition,state)
     case Status{}:
@@ -559,6 +566,10 @@ def sql(command: Command) -> String:
     case ObserveFile{id,player,path}: ""
     case ReportFile{id,sender,path}: ""
     case MessageFile{id,sender,recipient,kind,path}: ""
+    case MessageBatch{sender,input}: ""
+    case MessageBatchFile{sender,path}: ""
+    case DeliveryBatch{input}: ""
+    case DeliveryBatchFile{path}: ""
     case AskFile{id,player,path}: ""
     case NativeReply{parent,id,response}: ""
     case NativeReplyFile{parent,id,path}: ""
@@ -652,8 +663,11 @@ def parse_verb_id(+verb: String, +id: String) -> Command:
     case "role": RoleRead{id}
     case "ensemble": EnsembleRead{id}
     case "inbox": Inbox{id}
+    case "outbox": Outbox{id}
     case "session": Session{id}
     case "delivery": Delivery{id}
+    case "delivery-batch": DeliveryBatch{id}
+    case "delivery-batch-file": DeliveryBatchFile{id}
     case "worktree": Worktree{id}
     case "turns": Turns{id}
     case "project": Project{id}
@@ -668,6 +682,8 @@ def parse_verb_id(+verb: String, +id: String) -> Command:
 
 def parse_verb_session_id(+verb: String, +session: String, +id: String) -> Command:
   match verb:
+    case "message-batch": MessageBatch{session,id}
+    case "message-batch-file": MessageBatchFile{session,id}
     case "context-install": ContextInstall{session,id}
     case "pending": Bool.pick(Command,Bool.or(Bool.and(String.eq(session,"--index"),String.eq(id,"--pretty")),Bool.and(String.eq(session,"--pretty"),String.eq(id,"--index"))),Pretty{PendingIndex{}},Invalid{})
     case "resume": match id:
@@ -684,6 +700,9 @@ def parse_verb_session_id(+verb: String, +session: String, +id: String) -> Comma
     case "inbox": match id:
       case "--pretty": Pretty{Inbox{session}}
       case "--index": InboxIndex{session}
+      case _: Invalid{}
+    case "outbox": match id:
+      case "--pretty": Pretty{Outbox{session}}
       case _: Invalid{}
     case "delivery": match id:
       case "--pretty": Pretty{Delivery{session}}

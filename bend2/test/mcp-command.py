@@ -109,6 +109,34 @@ class McpCommand(unittest.TestCase):
                              expected_args=['message','message-λ','attached-λ',recipient,
                                             kind or 'guidance',body])
 
+    def test_batch_message_tools_forward_structured_arrays_with_attached_authorship(self):
+        ids = ['message-one', "message two's λ"]
+        self.command(tool='baton2_delivery_batch', arguments={'ids': ids},
+                     session='reader', expected_args=['delivery-batch',
+                         json.dumps(ids, ensure_ascii=False, separators=(',', ':'))])
+        messages = [
+            {'id': 'one', 'player': 'leaf-a', 'body': 'First body.\n'},
+            {'id': "two's λ", 'player': 'leaf-b', 'kind': 'custom',
+             'body': 'Second λ🙂 body.'},
+        ]
+        native = [
+            {'id': 'one', 'recipient': 'leaf-a', 'kind': 'guidance',
+             'body': 'First body.\n'},
+            {'id': "two's λ", 'recipient': 'leaf-b', 'kind': 'custom',
+             'body': 'Second λ🙂 body.'},
+        ]
+        self.command(tool='baton2_message_batch', arguments={'messages': messages},
+                     session='attached-λ', expected_args=['message-batch', 'attached-λ',
+                         json.dumps(native, ensure_ascii=False, separators=(',', ':'))])
+        self.command(tool='baton2_outbox', arguments={}, session='attached-λ',
+                     expected_args=['outbox', 'attached-λ'])
+        read_schema = self.tools['baton2_delivery_batch']['inputSchema']
+        self.assertEqual(read_schema['properties']['ids']['type'], 'array')
+        send_schema = self.tools['baton2_message_batch']['inputSchema']
+        item = send_schema['properties']['messages']['items']
+        self.assertEqual(set(item['required']), {'id', 'player', 'body'})
+        self.assertFalse(item['additionalProperties'])
+
     def test_native_control_tools_advertise_typed_arguments(self):
         self.command()
         contracts = {
