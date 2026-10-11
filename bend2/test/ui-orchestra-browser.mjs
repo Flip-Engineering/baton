@@ -1529,22 +1529,20 @@ await until('ribbon rows name the recorded far side',
 await evalJs(`document.querySelector('#roster .doc-row[data-doc-id="aide"] .doc-open').click()`);
 await until('pending message has a read control',
   `document.querySelector('#selection [data-selkey="sel:msg:qa-aide-receipt"]') !== null`);
-check('a cut recorded text states plainly that it continues', await evalJs(`(() => {
-  const lead = document.querySelector('#selection .sel-lead');
-  if (!lead) return false;
-  const line = (lead.textContent || '').trim();
-  if (!line) return false;
-  const first = (${JSON.stringify(pendingBody)}.split('\\n').map((s) => s.trim()).find((s) => s) || '');
-  const whole = Boolean(first) && line.includes(first) && !/\u2026/.test(line);
-  const cut = /\u2026\\s*continues/.test(line);
-  return whole || cut;
-})()`));
 await evalJs(`(() => {
   const button = document.querySelector('#selection [data-selkey="sel:msg:qa-aide-receipt"]');
   button.focus(); button.click();
 })()`);
 await until('pending message displays its complete stored body',
   `[...document.querySelectorAll('#selection .sel-body')].some((node) => node.textContent === ${JSON.stringify(pendingBody)})`);
+check('the opened short message retains its complete stored text', await evalJs(`(() => {
+  const button = document.querySelector('#selection #sel-sec-queued [data-selkey="sel:msg:qa-aide-receipt"]');
+  const body = button && button.nextElementSibling;
+  return !!button && button.title === 'guidance qa-aide-receipt'
+    && button.getAttribute('aria-expanded') === 'true'
+    && !!body && body.classList.contains('sel-body')
+    && body.textContent === ${JSON.stringify(pendingBody)};
+})()`));
 check('queued list names the owed total', await evalJs(
   `[...document.querySelectorAll('#selection h2')].some((h) => (h.textContent || '').startsWith('Queued '))`));
 check('message body remains open and focused after its asynchronous read', await evalJs(
@@ -1555,6 +1553,47 @@ check('keyboard find shortcut focuses the visible query', await evalJs(
   `document.activeElement === document.getElementById('doc-find')`));
 baton('ack', 'qa-aide-receipt', 'aide', 'fixture-ui-read');
 committed();
+const longPendingBody = '  Retain this complete quotation and every recorded line. Review the remaining evidence without changing the stored text, its spaces, or its punctuation.\n\nRetain this complete evidence with its blank line and exact trailing spaces for the full-body quotation check.  ';
+const longPreview = 'Retain this complete quotation and every recorded line.\u2026 continues \u00b7 ' + longPendingBody.length + ' characters';
+baton('message', 'qa-aide-long-quote', 'root', 'aide', 'guidance', longPendingBody);
+committed();
+await until('long pending message has its own read control',
+  `document.querySelector('#selection #sel-sec-queued [data-selkey="sel:msg:qa-aide-long-quote"]') !== null`);
+await evalJs(`document.querySelector('#selection #sel-sec-queued [data-selkey="sel:msg:qa-aide-long-quote"]').click()`);
+await until('the opened long message draws its own lead', `(() => {
+  const button = document.querySelector('#selection #sel-sec-queued [data-selkey="sel:msg:qa-aide-long-quote"]');
+  const lead = button && button.nextElementSibling;
+  return !!lead && lead.classList.contains('sel-lead');
+})()`);
+check('a cut recorded text states plainly that it continues', await evalJs(`(() => {
+  const button = document.querySelector('#selection #sel-sec-queued [data-selkey="sel:msg:qa-aide-long-quote"]');
+  const lead = button && button.nextElementSibling;
+  const full = lead && lead.nextElementSibling;
+  return !!button && button.title === 'guidance qa-aide-long-quote'
+    && button.getAttribute('aria-expanded') === 'true'
+    && !!lead && lead.classList.contains('sel-lead')
+    && lead.textContent === ${JSON.stringify(longPreview)}
+    && !!full && full.dataset.selkey === 'sel:full:msg:qa-aide-long-quote'
+    && full.getAttribute('aria-expanded') === 'false'
+    && (!full.nextElementSibling || full.nextElementSibling.textContent !== ${JSON.stringify(longPendingBody)});
+})()`));
+await evalJs(`document.querySelector('#selection #sel-sec-queued [data-selkey="sel:full:msg:qa-aide-long-quote"]').click()`);
+await until('the long message displays its complete stored body', `(() => {
+  const button = document.querySelector('#selection #sel-sec-queued [data-selkey="sel:msg:qa-aide-long-quote"]');
+  const lead = button && button.nextElementSibling;
+  const full = lead && lead.nextElementSibling;
+  const body = full && full.nextElementSibling;
+  return !!lead && lead.classList.contains('sel-lead')
+    && lead.textContent === ${JSON.stringify(longPreview)}
+    && !!full && full.dataset.selkey === 'sel:full:msg:qa-aide-long-quote'
+    && full.getAttribute('aria-expanded') === 'true'
+    && !!body && body.classList.contains('sel-body')
+    && body.textContent === ${JSON.stringify(longPendingBody)};
+})()`);
+baton('ack', 'qa-aide-long-quote', 'aide', 'fixture-ui-read');
+committed();
+await until('the acknowledged long message leaves the queued record',
+  `document.querySelector('#selection #sel-sec-queued [data-selkey="sel:msg:qa-aide-long-quote"]') === null`);
 const ribbonRowsBefore = await evalJs(`document.querySelectorAll('#ribbon .ribbon-row').length`);
 
 // live committed update without reload
