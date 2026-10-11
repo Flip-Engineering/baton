@@ -563,15 +563,15 @@ def v1_closed(+v: String, +p: String, +members: String) -> String:
   "(EXISTS(SELECT 1 FROM " ++ v1_each_path(v1_x(v, p), "") ++ " WHERE key NOT IN (" ++ members ++ ")))"
 
 def v1_noderef_ok(+r: String) -> String:
-  "((SELECT COUNT(*) FROM " ++ v1_each_path(r, "") ++ ")==2 AND " ++ v1_req_text(r, "$.id") ++ "==0 AND " ++ v1_req_enum(r, "$.kind", v1_node_kinds()) ++ "==0)"
+  "(" ++ v1_closed(r, "$", "'id','kind'") ++ "==0 AND " ++ v1_req_text(r, "$.id") ++ "==0 AND " ++ v1_req_enum(r, "$.kind", v1_node_kinds()) ++ "==0)"
 
 def v1_edgeref_ok(+r: String) -> String:
-  "((SELECT COUNT(*) FROM " ++ v1_each_path(r, "") ++ ")==3 AND " ++ v1_req_text(r, "$.id") ++ "==0 AND " ++ v1_t(r, "$.kind") ++ "=='text' AND " ++ v1_x(r, "$.kind") ++ "=='edge' AND " ++ v1_req_enum(r, "$.edgeKind", v1_edge_kinds()) ++ "==0)"
+  "(" ++ v1_closed(r, "$", "'id','kind','edgeKind'") ++ "==0 AND " ++ v1_req_text(r, "$.id") ++ "==0 AND " ++ v1_t(r, "$.kind") ++ "=='text' AND " ++ v1_x(r, "$.kind") ++ "=='edge' AND " ++ v1_req_enum(r, "$.edgeKind", v1_edge_kinds()) ++ "==0)"
 
 def v1_resourceref_ok(+r: String) -> String:
-  "(((SELECT COUNT(*) FROM " ++ v1_each_path(r, "") ++ ")==2 AND " ++ v1_t(r, "$.kind") ++ "=='text' AND " ++ v1_x(r, "$.kind") ++ "=='message' AND " ++ v1_req_text(r, "$.id") ++ "==0)"
-  ++ " OR ((SELECT COUNT(*) FROM " ++ v1_each_path(r, "") ++ ")==2 AND " ++ v1_t(r, "$.kind") ++ "=='text' AND " ++ v1_x(r, "$.kind") ++ "=='url' AND " ++ v1_req_text(r, "$.uri") ++ "==0)"
-  ++ " OR (" ++ v1_t(r, "$.kind") ++ "=='text' AND " ++ v1_x(r, "$.kind") ++ "=='artifact' AND " ++ v1_req_text(r, "$.uri") ++ "==0 AND ((SELECT COUNT(*) FROM " ++ v1_each_path(r, "") ++ ")==2 OR ((SELECT COUNT(*) FROM " ++ v1_each_path(r, "") ++ ")==3 AND " ++ v1_opt_sha(r, "$.sha256") ++ "==0))))"
+  "((" ++ v1_closed(r, "$", "'id','kind'") ++ "==0 AND " ++ v1_t(r, "$.kind") ++ "=='text' AND " ++ v1_x(r, "$.kind") ++ "=='message' AND " ++ v1_req_text(r, "$.id") ++ "==0)"
+  ++ " OR (" ++ v1_closed(r, "$", "'kind','uri'") ++ "==0 AND " ++ v1_t(r, "$.kind") ++ "=='text' AND " ++ v1_x(r, "$.kind") ++ "=='url' AND " ++ v1_req_text(r, "$.uri") ++ "==0)"
+  ++ " OR (" ++ v1_t(r, "$.kind") ++ "=='text' AND " ++ v1_x(r, "$.kind") ++ "=='artifact' AND " ++ v1_req_text(r, "$.uri") ++ "==0 AND (" ++ v1_closed(r, "$", "'kind','uri','sha256'") ++ "==0 AND " ++ v1_opt_sha(r, "$.sha256") ++ "==0)))"
 
 def v1_ref_shape_ok(+r: String) -> String:
   "(" ++ v1_noderef_ok(r) ++ " OR " ++ v1_edgeref_ok(r) ++ " OR " ++ v1_resourceref_ok(r) ++ ")"
@@ -655,13 +655,13 @@ def v1_causalvar_violated(+v: String, +p: String) -> String:
   ++ " OR " ++ v1_req_text(v, p ++ ".property")
   ++ " OR (" ++ v1_t(v, p ++ ".value") ++ " IS NOT NULL AND " ++ v1_t(v, p ++ ".value") ++ "!='null' AND " ++ v1_result_violated(v, p ++ ".value") ++ "))"
 def v1_questionref_ok(+r: String) -> String:
-  "((SELECT COUNT(*) FROM " ++ v1_each_path(r, "") ++ ")==2 AND " ++ v1_req_text(r, "$.id") ++ "==0 AND " ++ v1_t(r, "$.kind") ++ "=='text' AND " ++ v1_x(r, "$.kind") ++ "=='question')"
+  "(" ++ v1_closed(r, "$", "'id','kind'") ++ "==0 AND " ++ v1_req_text(r, "$.id") ++ "==0 AND " ++ v1_t(r, "$.kind") ++ "=='text' AND " ++ v1_x(r, "$.kind") ++ "=='question')"
 
 def v1_hypothesisref_ok(+r: String) -> String:
-  "((SELECT COUNT(*) FROM " ++ v1_each_path(r, "") ++ ")==2 AND " ++ v1_req_text(r, "$.id") ++ "==0 AND " ++ v1_t(r, "$.kind") ++ "=='text' AND " ++ v1_x(r, "$.kind") ++ "=='hypothesis')"
+  "(" ++ v1_closed(r, "$", "'id','kind'") ++ "==0 AND " ++ v1_req_text(r, "$.id") ++ "==0 AND " ++ v1_t(r, "$.kind") ++ "=='text' AND " ++ v1_x(r, "$.kind") ++ "=='hypothesis')"
 
 def v1_argumentref_ok(+r: String) -> String:
-  "((SELECT COUNT(*) FROM " ++ v1_each_path(r, "") ++ ")==2 AND " ++ v1_req_text(r, "$.id") ++ "==0 AND " ++ v1_t(r, "$.kind") ++ "=='text' AND " ++ v1_x(r, "$.kind") ++ "=='argument')"
+  "(" ++ v1_closed(r, "$", "'id','kind'") ++ "==0 AND " ++ v1_req_text(r, "$.id") ++ "==0 AND " ++ v1_t(r, "$.kind") ++ "=='text' AND " ++ v1_x(r, "$.kind") ++ "=='argument')"
 
 def v1_question_details_violated(+d: String) -> String:
   "(" ++ v1_closed(d, "$.details", "'topic','openQuestions'")
@@ -866,7 +866,7 @@ def v1_structure_offender(+batch: String) -> String:
   "(SELECT COALESCE((SELECT " ++ v1_x("n.value", "$.id") ++ " FROM " ++ v1_each_path(batch, ",'$.nodes'") ++ " n WHERE " ++ v1_node_envelope_violated() ++ " OR " ++ v1_node_details_violated() ++ " LIMIT 1), (SELECT " ++ v1_x("e.value", "$.id") ++ " FROM " ++ v1_each_path(batch, ",'$.edges'") ++ " e WHERE " ++ v1_edge_envelope_violated() ++ " OR " ++ v1_edge_details_violated() ++ " LIMIT 1), 'batch'))"
 
 def v1_epside_node(+ep: String, +roles: String, +batch: String) -> String:
-  "((SELECT COUNT(*) FROM " ++ v1_each_path(ep, "") ++ ")==2 AND " ++ v1_req_text(ep, "$.id") ++ "==0 AND " ++ v1_req_enum(ep, "$.kind", roles) ++ "==0 AND " ++ v1_node_match(ep, batch) ++ ")"
+  "(" ++ v1_closed(ep, "$", "'id','kind'") ++ "==0 AND " ++ v1_req_text(ep, "$.id") ++ "==0 AND " ++ v1_req_enum(ep, "$.kind", roles) ++ "==0 AND " ++ v1_node_match(ep, batch) ++ ")"
 
 def v1_epside_edge(+ep: String, +batch: String) -> String:
   "(" ++ v1_edgeref_ok(ep) ++ " AND " ++ v1_edge_match(ep, v1_x(ep, "$.edgeKind"), batch) ++ ")"
