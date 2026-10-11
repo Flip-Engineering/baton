@@ -1194,7 +1194,6 @@ await until('activating the same relation again pins its card after a dismissal'
 })()`);
 const shareEdgesBefore = await evalJs(`document.querySelectorAll('#knowledge-whole .kw-edge-share').length`);
 baton('promote', 'qa-relation-live-frame', 'worker', 'aide', 'worker', 'qa-worker-finding');
-committed();
 await until('a live frame renders while the relation is still named',
   `document.querySelectorAll('#knowledge-whole .kw-edge-share').length > ${JSON.stringify(shareEdgesBefore)}`);
 check('a live frame keeps the card of a still-named relation', await evalJs(`(() => {
