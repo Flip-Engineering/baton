@@ -1619,8 +1619,33 @@ await until('owed report marks the aide row',
     return mark !== null && mark.textContent === '1'; })()`);
 // The stage is one tab stop: focus announces the cursor seat, arrows walk,
 // Enter opens.
-await evalJs(`document.querySelector('#attention-band svg.att-stage').focus()`);
-const stageFirst = await evalJs(`(document.querySelector('#attention-band .att-sr').textContent || '').split(',')[0].trim()`);
+await send(pageWs, 'Page.bringToFront');
+const stageFocus = await evalJs(`(() => {
+  const strip = document.getElementById('attention-band');
+  const stage = strip && strip.querySelector('svg.att-stage');
+  const live = strip && strip.querySelector('.att-sr');
+  const cursor = strip && strip.querySelector('.att-seat.att-cursor');
+  if (stage) stage.focus();
+  const active = document.activeElement;
+  return {
+    pageHasFocus: document.hasFocus(),
+    stagePresent: !!stage,
+    stageCurrent: !!stage && stage === strip.querySelector('svg.att-stage'),
+    stageConnected: !!stage && stage.isConnected,
+    stageKey: stage ? stage.getAttribute('data-att-key') : '',
+    activeIsStage: !!stage && active === stage,
+    activeKey: active && active.getAttribute ? active.getAttribute('data-att-key') : '',
+    liveAdjacent: !!live && !!stage && stage.nextElementSibling === live,
+    liveParentIsStrip: !!live && live.parentElement === strip,
+    cursorId: cursor ? cursor.getAttribute('data-att-id') : '',
+    announcement: live ? live.textContent || '' : '',
+  };
+})()`);
+check('stage focus reaches the current page and stage',
+  stageFocus.pageHasFocus && stageFocus.stageCurrent && stageFocus.stageConnected
+    && stageFocus.activeIsStage && stageFocus.liveAdjacent && !!stageFocus.cursorId,
+  JSON.stringify(stageFocus));
+const stageFirst = stageFocus.announcement.split(',')[0].trim();
 check('stage focus announces its cursor seat', ['root', 'lead', 'worker', 'aide'].includes(stageFirst), stageFirst);
 check('the stage draws its seats inside the Agents region', await evalJs(
   `!!document.querySelector('#staves #attention-band svg.att-stage')
