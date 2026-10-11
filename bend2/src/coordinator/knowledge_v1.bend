@@ -92,12 +92,6 @@ def nodes_fragment(+reader: String, +scope: String, +subject: String) -> String:
 def edges_fragment(+reader: String, +scope: String, +subject: String) -> String:
   "SELECT r.id,json_extract(r.source,'$.id') AS source,json_extract(r.target,'$.id') AS target,r.kind AS relation,'v1:'||json_extract(r.source,'$.id') AS source_ref,'v1:'||json_extract(r.target,'$.id') AS target_ref," ++ v1_edge_envelope("r") ++ " AS item FROM knowledge_edges_v1 r WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") AND " ++ v1_edge_scope(scope,subject)
 
-# Recorded-evidence citation edges for v1 evidence references, mirroring the
-# legacy Cited edges so provenance stays distinguished on every surface. It
-# reads the already-scoped nodes CTE and only v1 rows, whose evidence column
-# is a JSON array; legacy rows keep plain-text evidence and never reach
-# json_each here.
-
 def read_nodes_sql(+reader: String, +scope: String, +subject: String) -> String:
   "SELECT " ++ node_envelope("n") ++ " AS item FROM knowledge_v1 n WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") AND " ++ v1_node_scope(scope,subject)
 
@@ -121,8 +115,16 @@ def detail_sql(+reader: String, +scope: String, +subject: String, +id: String) -
 # commit builder law stays untouched: record_v1 uses commit_v1_sql with
 # node_statements, relate_v1 with edge_statements.
 
+# Graph reference keys identify scientific records and external sources.
+# Artifact hashes identify a cited version of an information carrier.
+def citation_reference(+value: String) -> String:
+  "CASE json_extract(" ++ value ++ ",'$.kind') WHEN 'message' THEN 'message:'||json_extract(" ++ value ++ ",'$.id') WHEN 'artifact' THEN 'resource:'||json_array('artifact',json_extract(" ++ value ++ ",'$.uri'),json_extract(" ++ value ++ ",'$.sha256')) WHEN 'url' THEN 'resource:'||json_array('url',json_extract(" ++ value ++ ",'$.uri')) WHEN 'entity' THEN 'resource:'||json_array('entity',json_extract(" ++ value ++ ",'$.uri')) ELSE 'v1:'||json_extract(" ++ value ++ ",'$.id') END"
+
+# Each scoped scientific record has one Cited link per evidence reference.
+# A link points from the citing record to its source and retains the complete
+# typed reference. Authored scientific edges retain their stored orientation.
 def v1_citation_fragment() -> String:
-  "SELECT 'citation:'||v.id AS id,json_extract(e.value,'$.id') AS source,v.evidence AS target,'Cited' AS relation,json_extract(e.value,'$.id') AS source_ref,v.reference AS target_ref,json_object('id','citation:'||v.id,'author',json_extract(v.item,'$.author'),'source',json_extract(e.value,'$.id'),'sourceReference',json_extract(e.value,'$.id'),'sourceKind','evidence','relation','Cited','target',v.reference,'targetReference',v.reference,'targetKind',v.kind,'provenance','recorded-evidence') AS item FROM (SELECT id,reference,kind,evidence,item FROM nodes WHERE json_extract(item,'$.schemaVersion')=1) AS v,json_each(v.evidence) AS e WHERE json_extract(e.value,'$.id') IS NOT NULL AND ((json_extract(e.value,'$.kind')<>'edge' AND EXISTS(SELECT 1 FROM knowledge_v1 n WHERE n.id=json_extract(e.value,'$.id') AND n.kind=json_extract(e.value,'$.kind'))) OR (json_extract(e.value,'$.kind')='edge' AND EXISTS(SELECT 1 FROM knowledge_edges_v1 g WHERE g.id=json_extract(e.value,'$.id') AND g.kind=json_extract(e.value,'$.edgeKind'))))"
+  "SELECT 'citation:'||v.reference||':'||e.key AS id,v.id AS source,coalesce(json_extract(e.value,'$.id'),json_extract(e.value,'$.uri')) AS target,'Cited' AS relation,v.reference AS source_ref," ++ citation_reference("e.value") ++ " AS target_ref,json_object('id','citation:'||v.reference||':'||e.key,'projectionKey',json_array('recorded-evidence',v.reference,e.key),'author',json_extract(v.item,'$.author'),'source',json_object('id',v.id,'kind',v.kind),'sourceReference',v.reference,'sourceKind',v.kind,'relation','Cited','target',json(e.value),'targetReference'," ++ citation_reference("e.value") ++ ",'targetKind',json_extract(e.value,'$.kind'),'provenance','recorded-evidence') AS item FROM (SELECT id,reference,kind,evidence,item FROM nodes WHERE json_extract(item,'$.schemaVersion')=1) AS v,json_each(CASE WHEN json_extract(v.item,'$.schemaVersion')=1 THEN v.evidence ELSE '[]' END) AS e"
 
 # Complete scope reads union v1 rows beside legacy rows with their full
 # envelopes; v1 rows follow legacy rows in stored order.

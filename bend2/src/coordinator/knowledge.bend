@@ -224,13 +224,25 @@ def search_terms(parts: List<&2,String>) -> String:
 def search_score(+query: String) -> String:
   "CASE WHEN lower(id)=lower(" ++ C.q(query) ++ ") THEN 100 ELSE 0 END + CASE WHEN instr(lower(claim),lower(" ++ C.q(query) ++ "))>0 THEN 30 ELSE 0 END + CASE WHEN lower(kind)=lower(" ++ C.q(query) ++ ") THEN 10 ELSE 0 END + (SELECT count(*) FROM edges e WHERE e.source_ref=nodes.reference OR e.target_ref=nodes.reference)"
 
-def graph_answer(+reader: String, +scope: String, +subject: String, +selected: String, +edge_filter: String) -> String:
-  ", selected_edges AS (SELECT * FROM edges e WHERE " ++ edge_filter ++ "), references_in_view AS (SELECT reference FROM selected UNION SELECT source_ref FROM selected_edges UNION SELECT target_ref FROM selected_edges) SELECT json_object('scope',json_object('kind'," ++ C.q(scope) ++ ",'id'," ++ C.q(subject) ++ "),'roots',(SELECT coalesce(json_group_array(reference),json('[]')) FROM selected),'nodes',(SELECT coalesce(json_group_array(json(item)),json('[]')) FROM nodes WHERE reference IN(SELECT reference FROM references_in_view)),'edges',(SELECT coalesce(json_group_array(json(item)),json('[]')) FROM selected_edges),'references',(SELECT coalesce(json_group_array(json_object('reference',reference,'kind',coalesce((SELECT json_extract(e.item,'$.sourceKind') FROM selected_edges e WHERE e.source_ref=reference LIMIT 1),(SELECT json_extract(e.item,'$.targetKind') FROM selected_edges e WHERE e.target_ref=reference LIMIT 1),CASE WHEN substr(reference,1,8)='message:' THEN 'message' WHEN substr(reference,1,8)='finding:' THEN 'finding' ELSE 'external' END),'detailRead',CASE WHEN substr(reference,1,8)='finding:' THEN json_array('knowledge-scope'," ++ C.q(reader) ++ ",'all','','--id',substr(reference,9)) WHEN substr(reference,1,3)='v1:' THEN json_array('knowledge-scope'," ++ C.q(reader) ++ ",'all','','--id',substr(reference,4)) ELSE NULL END,'deliveryRead',CASE WHEN substr(reference,1,8)='message:' THEN json_array('delivery',substr(reference,9)) ELSE NULL END)),json('[]')) FROM references_in_view WHERE reference NOT IN(SELECT reference FROM nodes))" ++ selected ++ ");"
+def graph_reference_kind(+reader: String, v1: Bool) -> String:
+  "coalesce((SELECT coalesce(json_extract(e.item,'$.sourceKind'),json_extract(e.item,'$.source.kind')) FROM selected_edges e WHERE e.source_ref=reference LIMIT 1),(SELECT coalesce(json_extract(e.item,'$.targetKind'),json_extract(e.item,'$.target.kind')) FROM selected_edges e WHERE e.target_ref=reference LIMIT 1),"
+  ++ Bool.pick(String,v1,"(SELECT kind FROM knowledge_v1 WHERE 'v1:'||id=reference AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ")),(SELECT 'edge' FROM knowledge_edges_v1 WHERE 'v1:'||id=reference AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ")),","")
+  ++ "CASE WHEN substr(reference,1,8)='message:' THEN 'message' WHEN substr(reference,1,8)='finding:' THEN 'finding' ELSE 'external' END)"
 
-def search_sql(+reader: String, +scope: String, +subject: String, +query: String, +typed: Bool, groups: Bool, present: Bool, v1: Bool) -> String:
+def graph_reference_identity(+reader: String, v1: Bool) -> String:
+  "coalesce((SELECT CASE WHEN json_type(e.item,'$.source')='object' THEN json_extract(e.item,'$.source') END FROM selected_edges e WHERE e.source_ref=reference LIMIT 1),(SELECT CASE WHEN json_type(e.item,'$.target')='object' THEN json_extract(e.item,'$.target') END FROM selected_edges e WHERE e.target_ref=reference LIMIT 1)"
+  ++ Bool.pick(String,v1,",(SELECT json_object('id',id,'kind',kind) FROM knowledge_v1 WHERE 'v1:'||id=reference AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ")),(SELECT json_object('id',id,'kind','edge','edgeKind',kind) FROM knowledge_edges_v1 WHERE 'v1:'||id=reference AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ "))","") ++ ")"
+
+def graph_reference_item(+reader: String, +v1: Bool) -> String:
+  "json_patch(json_object('reference',reference,'kind'," ++ graph_reference_kind(reader,v1) ++ ",'detailRead',CASE WHEN substr(reference,1,8)='finding:' THEN json_array('knowledge-scope'," ++ C.q(reader) ++ ",'all','','--id',substr(reference,9)) WHEN substr(reference,1,3)='v1:' THEN json_array('knowledge-v1-detail'," ++ C.q(reader) ++ ",'all','',substr(reference,4)) ELSE NULL END,'deliveryRead',CASE WHEN substr(reference,1,8)='message:' THEN json_array('delivery',substr(reference,9)) ELSE NULL END),CASE WHEN " ++ graph_reference_identity(reader,v1) ++ " IS NOT NULL THEN json_object('identity',json(" ++ graph_reference_identity(reader,v1) ++ ")) ELSE json('{}') END)"
+
+def graph_answer(+reader: String, +scope: String, +subject: String, +selected: String, +edge_filter: String, v1: Bool) -> String:
+  ", selected_edges AS (SELECT * FROM edges e WHERE " ++ edge_filter ++ "), references_in_view AS (SELECT reference FROM selected UNION SELECT source_ref FROM selected_edges UNION SELECT target_ref FROM selected_edges) SELECT json_object('scope',json_object('kind'," ++ C.q(scope) ++ ",'id'," ++ C.q(subject) ++ "),'roots',(SELECT coalesce(json_group_array(reference),json('[]')) FROM selected),'nodes',(SELECT coalesce(json_group_array(json(item)),json('[]')) FROM nodes WHERE reference IN(SELECT reference FROM references_in_view)),'edges',(SELECT coalesce(json_group_array(json(item)),json('[]')) FROM selected_edges),'references',(SELECT coalesce(json_group_array(" ++ graph_reference_item(reader,v1) ++ "),json('[]')) FROM references_in_view WHERE reference NOT IN(SELECT reference FROM nodes))" ++ selected ++ ");"
+
+def search_sql(+reader: String, +scope: String, +subject: String, +query: String, +typed: Bool, groups: Bool, present: Bool, +v1: Bool) -> String:
   graph_ctes(reader,scope,subject,typed,groups,present,v1)
   ++ ", matches AS (SELECT *," ++ search_score(query) ++ " AS score FROM nodes WHERE " ++ search_terms(String.split(query,Char.from_u32(32))) ++ "), selected AS (SELECT reference FROM matches)"
-  ++ graph_answer(reader,scope,subject,",'query'," ++ C.q(query) ++ ",'matches',(SELECT coalesce(json_group_array(json_patch(json(item),json_object('matchScore',score))),json('[]')) FROM (SELECT item,score FROM matches ORDER BY score DESC,id))","source_ref IN(SELECT reference FROM selected) OR target_ref IN(SELECT reference FROM selected)")
+  ++ graph_answer(reader,scope,subject,",'query'," ++ C.q(query) ++ ",'matches',(SELECT coalesce(json_group_array(json_patch(json(item),json_object('matchScore',score))),json('[]')) FROM (SELECT item,score FROM matches ORDER BY score DESC,id))","source_ref IN(SELECT reference FROM selected) OR target_ref IN(SELECT reference FROM selected)",v1)
 
 def traversal_symmetric() -> String:
   "e.relation IN(" ++ V1.symmetric_kinds() ++ ") AND substr(e.source_ref,1,3)='v1:' AND substr(e.target_ref,1,3)='v1:'"
@@ -248,11 +260,14 @@ def traversal_filter(+direction: String, +relation: String) -> String:
   +joined = traversal_join(direction)
   "EXISTS(SELECT 1 FROM walk w WHERE " ++ joined ++ ") AND " ++ traversal_relation(relation)
 
-def traverse_sql(+reader: String, +scope: String, +subject: String, +reference: String, +direction: String, +relation: String, +recursive: Bool, typed: Bool, groups: Bool, present: Bool, v1: Bool) -> String:
-  +seed = reference_sql(C.q(reference))
+def traversal_seed(+reference: String) -> String:
+  "CASE WHEN substr(" ++ reference ++ ",1,3)='v1:' OR substr(" ++ reference ++ ",1,9)='resource:' THEN " ++ reference ++ " ELSE " ++ reference_sql(reference) ++ " END"
+
+def traverse_sql(+reader: String, +scope: String, +subject: String, +reference: String, +direction: String, +relation: String, +recursive: Bool, typed: Bool, groups: Bool, present: Bool, +v1: Bool) -> String:
+  +seed = traversal_seed(C.q(reference))
   graph_ctes(reader,scope,subject,typed,groups,present,v1)
   ++ ", walk(reference) AS (SELECT " ++ seed ++ Bool.pick(String,recursive," UNION SELECT CASE WHEN e.source_ref=w.reference THEN e.target_ref ELSE e.source_ref END FROM edges e JOIN walk w ON " ++ traversal_join(direction) ++ " WHERE " ++ traversal_relation(relation),"") ++ "), selected AS (SELECT reference FROM walk)"
-  ++ graph_answer(reader,scope,subject,",'reference'," ++ seed ++ ",'direction'," ++ C.q(direction) ++ ",'relation'," ++ C.q(relation) ++ ",'recursive'," ++ Bool.pick(String,recursive,"json('true')","json('false')"),traversal_filter(direction,relation))
+  ++ graph_answer(reader,scope,subject,",'reference'," ++ seed ++ ",'direction'," ++ C.q(direction) ++ ",'relation'," ++ C.q(relation) ++ ",'recursive'," ++ Bool.pick(String,recursive,"json('true')","json('false')"),traversal_filter(direction,relation),v1)
 
 def graph_read_sql(+reader: String, +scope: String, +subject: String, +query: String, search: Bool, direction: String, relation: String, recursive: Bool, typed: String, +groups: Bool, present: String, v1tables: String) -> String:
   +types = String.eq(typed,"1\n")

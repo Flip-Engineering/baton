@@ -156,3 +156,20 @@ relations to the complete authored payload. Legacy records retain their original
 content and labels with their own schema provenance. Promotion and holding
 queries use the record's version namespace. Session and Ensemble holdings govern
 visibility; the scientific context describes applicability.
+
+Search and traversal project each node's explicit evidence reference as a
+`Cited` link from the citing record to its source. These links carry
+`recorded-evidence` provenance and complete typed endpoints. Their `projectionKey`
+contains the provenance, scientific record reference and evidence array index.
+Consumers use that key for projected links and the stored identity for authored
+edges. Citation links retain their own identity when an authored edge uses the
+same display ID.
+
+Scientific record keys use `v1:` followed by the stored ID. Message keys use
+`message:` followed by the message ID. External source keys use `resource:`
+followed by a JSON array containing the reference kind, URI and optional artifact
+hash. Complete references retain their original URI, content hash and entity
+label. Sources outside the selected holdings carry their declared kind.
+Scientific records carry a literal detail command that explicitly reads all
+holdings; message sources carry a delivery command. Other external sources
+retain their complete typed URI and metadata.

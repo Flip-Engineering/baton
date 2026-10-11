@@ -327,6 +327,124 @@ class KnowledgeV1(unittest.TestCase):
         self.assertEqual(self.call(*scoped[1]['detailRead']), [self.detail('v1-link')])
         self.assertEqual(self.call('knowledge-relations', 'root', 'worker', 'sibling'), [])
 
+    def test_citations_keep_typed_sources_and_outside_scope_navigation(self):
+        self.record(node('sibling', 'cited-observation', 'observation'))
+        self.record(node('sibling', 'cited-claim', 'claim'))
+        self.relate(edge('sibling', 'cited-support', 'supports',
+                         ('cited-observation', 'observation'), ('cited-claim', 'claim'),
+                         details={'bearing': 'The observation bears on the claim.'}))
+        self.call('message', 'cited-message', 'sibling', 'grand', 'report',
+                  'The researcher records a source description.')
+        uri = 'https://example.invalid/research-source'
+        references = [
+            {'id': 'cited-observation', 'kind': 'observation'},
+            {'id': 'cited-support', 'kind': 'edge', 'edgeKind': 'supports'},
+            {'id': 'cited-message', 'kind': 'message'},
+            {'kind': 'artifact', 'uri': uri, 'sha256': 'a' * 64},
+            {'kind': 'url', 'uri': uri},
+            {'kind': 'entity', 'uri': uri, 'label': 'The observed research site'},
+        ]
+        self.record(node('grand', 'citing-claim', 'claim', evidence=references))
+        self.call('record-typed', 'citing-claim', 'grand', 'finding',
+                  'A separate legacy claim', 'run:legacy', 'Legacy scope')
+        graph = self.call('knowledge-traverse', 'root', 'worker', 'grand',
+                          'v1:citing-claim', 'out', 'Cited', 'neighbors')
+        self.assertEqual({item['reference'] for item in graph['nodes']},
+                         {'v1:citing-claim'})
+        self.assertEqual(len(graph['edges']), len(references))
+        self.assertEqual(len({item['id'] for item in graph['edges']}), len(references))
+        targets = {item['targetReference']: item for item in graph['edges']}
+        expected_keys = [
+            'v1:cited-observation', 'v1:cited-support', 'message:cited-message',
+            'resource:' + json.dumps(['artifact', uri, 'a' * 64], separators=(',', ':')),
+            'resource:' + json.dumps(['url', uri], separators=(',', ':')),
+            'resource:' + json.dumps(['entity', uri], separators=(',', ':')),
+        ]
+        self.assertEqual(set(targets), set(expected_keys))
+        outside = {item['reference']: item for item in graph['references']}
+        for index, (key, reference) in enumerate(zip(expected_keys, references)):
+            citation = targets[key]
+            self.assertEqual(citation['sourceReference'], 'v1:citing-claim')
+            self.assertEqual(citation['source'], {'id': 'citing-claim', 'kind': 'claim'})
+            self.assertEqual(citation['target'], reference)
+            self.assertEqual(citation['targetKind'], reference['kind'])
+            self.assertEqual(citation['provenance'], 'recorded-evidence')
+            self.assertEqual(citation['projectionKey'],
+                             ['recorded-evidence', 'v1:citing-claim', index])
+            self.assertEqual(outside[key]['kind'], reference['kind'])
+            self.assertEqual(outside[key]['identity'], reference)
+        for ident in ('cited-observation', 'cited-support'):
+            read = outside['v1:' + ident]['detailRead']
+            self.assertEqual(read, ['knowledge-v1-detail', 'root', 'all', '', ident])
+            self.assertEqual(self.call(*read), [self.detail(ident)])
+        self.assertEqual(self.call(*outside['message:cited-message']['deliveryRead'])['body'],
+                         'The researcher records a source description.')
+        all_graph = self.call('knowledge-traverse', 'root', 'all', '',
+                              'v1:citing-claim', 'out', 'Cited', 'neighbors')
+        self.assertEqual({item['reference'] for item in all_graph['nodes']},
+                         {'v1:citing-claim', 'v1:cited-observation'})
+        self.relate(edge('grand', 'outside-support', 'supports',
+                         ('cited-observation', 'observation'), ('citing-claim', 'claim'),
+                         details={'bearing': 'This observation also bears on the citing claim.'}))
+        authored = self.call('knowledge-traverse', 'root', 'worker', 'grand',
+                             'v1:citing-claim', 'in', 'supports', 'neighbors')
+        outside_observation = next(item for item in authored['references']
+                                   if item['reference'] == 'v1:cited-observation')
+        self.assertEqual(outside_observation['kind'], 'observation')
+        self.assertEqual(outside_observation['identity'], references[0])
+        self.assertEqual(self.call(*outside_observation['detailRead']),
+                         [self.detail('cited-observation')])
+        self.relate(edge('grand', 'citation:v1:citing-claim:0', 'supports',
+                         ('cited-observation', 'observation'), ('citing-claim', 'claim'),
+                         details={'bearing': 'An authored edge can use this record ID.'}))
+        mixed = self.call('knowledge-traverse', 'root', 'worker', 'grand',
+                          'v1:citing-claim', 'both', '', 'neighbors')
+        shared_id = [item for item in mixed['edges']
+                     if item['id'] == 'citation:v1:citing-claim:0']
+        self.assertEqual({item['provenance'] for item in shared_id},
+                         {'authored', 'recorded-evidence'})
+        self.assertEqual(next(item['projectionKey'] for item in shared_id
+                              if item['provenance'] == 'recorded-evidence'),
+                         ['recorded-evidence', 'v1:citing-claim', 0])
+        adversarial = [
+            {'kind': 'url', 'uri': 'v1:cited-observation'},
+            {'kind': 'url', 'uri': 'message:cited-message'},
+            {'kind': 'artifact', 'uri': 'urn:source#sha256=' + 'a' * 64},
+            {'kind': 'artifact', 'uri': 'urn:source', 'sha256': 'a' * 64},
+        ]
+        self.record(node('grand', 'alias-citing-claim', 'claim', evidence=adversarial))
+        aliases = self.call('knowledge-traverse', 'root', 'all', '',
+                            'v1:alias-citing-claim', 'out', 'Cited', 'neighbors')
+        self.assertEqual({item['reference'] for item in aliases['nodes']},
+                         {'v1:alias-citing-claim'})
+        self.assertEqual(len({item['targetReference'] for item in aliases['edges']}), 4)
+        self.assertEqual([item['target'] for item in sorted(aliases['edges'],
+                                                          key=lambda item: item['projectionKey'][2])],
+                         adversarial)
+        self.call('record-typed', 'v1:cited-claim', 'grand', 'finding',
+                  'A legacy ID contains the scientific prefix', 'run:legacy', 'Legacy scope')
+        self.call('relate', 'legacy-prefixed-link', 'grand', 'v1:cited-claim',
+                  'Supports', 'citing-claim')
+        legacy = next(item for item in self.call('knowledge-relations', 'root', 'worker', 'grand')
+                      if item['id'] == 'legacy-prefixed-link')
+        self.assertEqual((legacy['sourceReference'], legacy['targetReference'], legacy['sourceKind']),
+                         ('finding:v1:cited-claim', 'finding:citing-claim', 'finding'))
+        for ident, identity in (
+                ('cited-claim', {'id': 'cited-claim', 'kind': 'claim'}),
+                ('cited-support', references[1])):
+            isolated = self.call('knowledge-traverse', 'root', 'worker', 'grand',
+                                 'v1:' + ident, 'out', 'Cited', 'neighbors')
+            self.assertEqual(isolated['nodes'], [])
+            self.assertEqual(isolated['edges'], [])
+            self.assertEqual(isolated['references'][0]['kind'], identity['kind'])
+            self.assertEqual(isolated['references'][0]['identity'], identity)
+            self.assertEqual(self.call(*isolated['references'][0]['detailRead']),
+                             [self.detail(ident)])
+            missing_reader = self.call('knowledge-traverse', 'missing-reader', 'worker', 'grand',
+                                       'v1:' + ident, 'out', 'Cited', 'neighbors')
+            self.assertNotIn('identity', missing_reader['references'][0])
+            self.assertEqual(missing_reader['references'][0]['kind'], 'external')
+
     def test_study_revision_uses_prior_stored_identity(self):
         original = node('grand', 'study-first', 'study')
         self.record(original)
