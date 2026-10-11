@@ -873,10 +873,8 @@ class Control(unittest.TestCase):
         return pathlib.Path(str(self.db) + '.dispatch-' + digest + suffix)
 
     def assert_no_dispatch_log(self, ident):
-        # The legacy hex component for an oversized identity exceeds the
-        # filesystem name limit, and asking the filesystem about that name
-        # can report ENAMETOOLONG rather than absence. Absence is decided by
-        # comparing against the names enumerated from the parent directory.
+        # Oversized component lookups can raise ENAMETOOLONG. Enumerate the
+        # parent directory to check absence of both legacy log names.
         names = {entry.name for entry in self.directory.iterdir()}
         for suffix in ('.stdout', '.stderr'):
             self.assertNotIn(self.dispatch_log(ident, suffix).name, names)
