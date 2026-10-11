@@ -106,6 +106,11 @@ class KnowledgeV1(unittest.TestCase):
         return self.call('recruit', name, parent, 'requested-harness', 'requested-model', 'high',
                          str(self.repo), name + '-branch', str(self.checkouts / name), self.base)
 
+    def call_rows(self, *args):
+        p = subprocess.run([str(EXE), str(self.db), *args], text=True, capture_output=True)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        return [json.loads(line) for line in p.stdout.splitlines() if line.strip()]
+
     def record(self, payload):
         return self.call('record-v1', json.dumps(payload))
 
@@ -268,6 +273,86 @@ class KnowledgeV1(unittest.TestCase):
         self.assertEqual([row['id'] for row in reread], ['v1-mixed'])
         found = self.call('knowledge-search', 'root', 'all', '', 'limits')
         self.assertEqual({n['id'] for n in found['nodes']}, {'legacy-finding', 'v1-mixed'})
+
+    def test_mixed_promotion_reaches_v1_rows_without_cross_talk(self):
+        self.call('record-typed', 'shared-id', 'grand', 'finding',
+                  'A legacy claim', 'run:legacy', 'Legacy limits')
+        self.record(node('grand', 'shared-id', 'question'))
+        answers = self.call_rows('promote', 'legacy-promo-1', 'sibling', 'grand',
+                                 'sibling', 'shared-id')
+        self.assertEqual(len(answers), 2)
+        legacy = [row for row in answers if 'finding' in row][0]
+        self.assertEqual(legacy['finding'], 'shared-id')
+
+        def versions():
+            items = [row for row in self.call('knowledge-scope', 'root', 'all', '')
+                     if row['id'] == 'shared-id']
+            self.assertEqual(len(items), 2)
+            old = [row for row in items if 'claim' in row][0]
+            new = [row for row in items if 'statement' in row][0]
+            return old, new
+        old, new = versions()
+        self.assertEqual(len(old['promotions']), 1)
+        self.assertEqual(old['promotions'][0]['finding'], 'shared-id')
+        self.assertNotIn('recordId', old['promotions'][0])
+        self.assertEqual(len(new['promotions']), 1)
+        self.assertEqual(new['promotions'][0]['recordId'], 'shared-id')
+        self.assertNotIn('finding', new['promotions'][0])
+        answers = self.call_rows('promote', 'v1-promo-1', 'sibling', 'grand',
+                                 'sibling', 'shared-id')
+        self.assertEqual(len(answers), 2)
+        v1 = [row for row in answers if 'recordId' in row][0]
+        self.assertEqual(v1['recordId'], 'shared-id')
+        self.assertEqual(v1['schemaVersion'], 1)
+        self.assertEqual(v1['promotedBy'], 'sibling')
+        self.assertEqual(v1['sourceKind'], 'session')
+        self.assertEqual(v1['destinationKind'], 'session')
+        old, new = versions()
+        self.assertEqual(len(old['promotions']), 2)
+        self.assertEqual(len(new['promotions']), 2)
+        self.assertEqual(new['promotions'][1]['recordId'], 'shared-id')
+        held = [row['id'] for row in
+                self.call('knowledge-scope', 'sibling', 'worker', 'sibling')]
+        self.assertIn('shared-id', held)
+        notice = self.call('delivery', 'v1-promo-1:promotion-notice')
+        self.assertEqual(notice['recipient'], 'sibling')
+        self.assertEqual(json.loads(notice['body'])['finding'], 'shared-id')
+
+    def test_mixed_relations_read(self):
+        self.call('record-typed', 'legacy-anchor', 'grand', 'finding',
+                  'Anchor claim', 'run:legacy', 'Legacy limits')
+        self.call('relate', 'legacy-link', 'grand', 'legacy-anchor',
+                  'Supports', 'legacy-anchor')
+        self.record(node('grand', 'v1-anchor', 'question'))
+        self.record(node('grand', 'v1-other', 'question'))
+        self.relate(edge('grand', 'v1-link', 'supports',
+                         ('v1-anchor', 'question'), ('v1-other', 'question'),
+                         details={'bearing': 'test bearing'}))
+        rows = {row['id']: row for row in
+                self.call('knowledge-relations', 'root', 'all', '')}
+        self.assertIn('legacy-link', rows)
+        self.assertIn('v1-link', rows)
+        self.assertNotIn('provenance', rows['legacy-link'])
+        self.assertEqual(rows['v1-link']['provenance'], 'authored')
+        self.assertEqual(rows['v1-link']['schemaVersion'], 1)
+        self.assertEqual(rows['v1-link']['schemaId'], 'urn:baton:knowledge:schema:1')
+        self.assertEqual(rows['v1-link']['sourceReference'], 'v1:v1-anchor')
+        self.assertEqual(rows['v1-link']['relation'], 'supports')
+        reread = self.call(*rows['v1-link']['detailRead'])
+        self.assertEqual([row['id'] for row in reread], ['v1-link'])
+
+    def test_edge_promotion_admission(self):
+        self.record(node('grand', 'v1-arg-node', 'argument'))
+        self.record(node('grand', 'v1-claim-node', 'claim'))
+        self.relate(edge('grand', 'v1-arg-edge', 'supports',
+                         ('v1-arg-node', 'argument'), ('v1-claim-node', 'claim'),
+                         details={'bearing': 'test bearing'}))
+        answer = self.call('promote', 'v1-edge-promo', 'sibling', 'grand',
+                           'sibling', 'v1-arg-edge')
+        self.assertEqual(answer['recordId'], 'v1-arg-edge')
+        stored = self.detail('v1-arg-edge')
+        self.assertEqual(len(stored['promotions']), 1)
+        self.assertEqual(stored['promotions'][0]['destination'], 'sibling')
 
     def test_scientific_example_round_trip(self):
         example = json.loads(FIXTURE.read_text())

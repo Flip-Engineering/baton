@@ -117,8 +117,10 @@ def promotion_groups_value(db: String) -> IO(Bool):
     present : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM pragma_table_info('knowledge_promotions') WHERE name IN('source_kind','destination_kind');"))
     IO.pure(Bool,String.eq(present,"2\n"))
 
-def relations_read_sql(+reader: String, scope: String, subject: String, groups: Bool, typed: Bool) -> String:
-  "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT " ++ relation_item(typed) ++ " AS item FROM knowledge_relations r WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") AND " ++ scope_relations_sql(scope,subject,groups) ++ " ORDER BY r.id);"
+def relations_read_sql(+reader: String, +scope: String, +subject: String, groups: Bool, typed: Bool, +v1: Bool) -> String:
+  +base = "SELECT " ++ relation_item(typed) ++ " AS item FROM knowledge_relations r WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") AND " ++ scope_relations_sql(scope,subject,groups)
+  +inner = Bool.pick(String,v1,base ++ " ORDER BY r.id LIMIT -1 UNION ALL SELECT " ++ V1.v1_relation_item(reader,scope,subject) ++ " AS item FROM knowledge_edges_v1 e WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") AND " ++ V1.v1_relations_scope(scope,subject),base ++ " ORDER BY r.id")
+  "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (" ++ inner ++ ");"
 
 def relations_when_present(+db: String, reader: String, scope: String, subject: String,
                            present: Bool) -> IO(String):
@@ -128,7 +130,8 @@ def relations_when_present(+db: String, reader: String, scope: String, subject: 
       do IO<String>:
         groups : Bool <- promotion_groups_value(db)
         typed : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM pragma_table_info('knowledge') WHERE name='kind';"))
-        IO.try(String,DB.Sql.read(db,relations_read_sql(reader,scope,subject,groups,String.eq(typed,"1\n"))))
+        v1tables : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN('knowledge_v1','knowledge_edges_v1','knowledge_promotions_v1');"))
+        IO.try(String,DB.Sql.read(db,relations_read_sql(reader,scope,subject,groups,String.eq(typed,"1\n"),String.eq(v1tables,"3\n"))))
 
 def relations_value(+db: String, reader: String, scope: String, subject: String) -> IO(String):
   do IO<String>:
@@ -172,8 +175,8 @@ def index_value(+db: String, +reader: String, +scope: String, +subject: String, 
   do IO<String>:
     typed : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM pragma_table_info('knowledge') WHERE name='kind';"))
     groups : Bool <- promotion_groups_value(db)
-    v1tables : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN('knowledge_v1_nodes','knowledge_v1_edges');"))
-    IO.try(String,DB.Sql.read(db,scoped_index_sql(reader,scope,subject,scoped,String.eq(typed,"1\n"),groups,String.eq(v1tables,"2\n"))))
+    v1tables : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN('knowledge_v1','knowledge_edges_v1','knowledge_promotions_v1');"))
+    IO.try(String,DB.Sql.read(db,scoped_index_sql(reader,scope,subject,scoped,String.eq(typed,"1\n"),groups,String.eq(v1tables,"3\n"))))
 
 # Full-detail reads check the v1 tables first so v1 nodes and edges return
 # complete payloads; anything else falls back to the mapped legacy envelope.
@@ -183,8 +186,8 @@ def detail_value(+db: String, +reader: String, +scope: String, +subject: String,
   do IO<String>:
     typed : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM pragma_table_info('knowledge') WHERE name='kind';"))
     groups : Bool <- promotion_groups_value(db)
-    v1present : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN('knowledge_v1_nodes','knowledge_v1_edges');"))
-    +v1 : String <- IO.try(String,DB.Sql.read(db,Bool.pick(String,String.eq(v1present,"2\n"),V1.detail_sql(reader,scope,subject,id),"SELECT json('[]');")))
+    v1present : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN('knowledge_v1','knowledge_edges_v1','knowledge_promotions_v1');"))
+    +v1 : String <- IO.try(String,DB.Sql.read(db,Bool.pick(String,String.eq(v1present,"3\n"),V1.detail_sql(reader,scope,subject,id),"SELECT json('[]');")))
     legacy : String <- IO.try(String,DB.Sql.read(db,scoped_detail_sql(reader,scope,subject,id,String.eq(typed,"1\n"),groups)))
     IO.pure(String,Bool.pick(String,Tx.starts_with(v1,"[]"),legacy,v1))
 
@@ -194,8 +197,8 @@ def read_scope_value(+db: String, reader: String, scope: String, subject: String
   do IO<String>:
     typed : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM pragma_table_info('knowledge') WHERE name='kind';"))
     groups : Bool <- promotion_groups_value(db)
-    v1tables : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN('knowledge_v1_nodes','knowledge_v1_edges');"))
-    IO.try(String,DB.Sql.read(db,scoped_read_sql(reader,scope,subject,String.eq(typed,"1\n"),groups,String.eq(v1tables,"2\n"))))
+    v1tables : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN('knowledge_v1','knowledge_edges_v1','knowledge_promotions_v1');"))
+    IO.try(String,DB.Sql.read(db,scoped_read_sql(reader,scope,subject,String.eq(typed,"1\n"),groups,String.eq(v1tables,"3\n"))))
 
 def read_value(db: String, reader: String) -> IO(String):
   read_scope_value(db,reader,"all","")
@@ -263,7 +266,7 @@ def traverse_sql(+reader: String, +scope: String, +subject: String, +reference: 
 def graph_read_sql(+reader: String, +scope: String, +subject: String, +query: String, search: Bool, direction: String, relation: String, recursive: Bool, typed: String, +groups: Bool, present: String, v1tables: String) -> String:
   +types = String.eq(typed,"1\n")
   +edges = String.eq(present,"1\n")
-  +v1 = String.eq(v1tables,"2\n")
+  +v1 = String.eq(v1tables,"3\n")
   Bool.pick(String,search,search_sql(reader,scope,subject,query,types,groups,edges,v1),traverse_sql(reader,scope,subject,query,direction,relation,recursive,types,groups,edges,v1))
 
 def graph_read(+db: String, +reader: String, +scope: String, +subject: String, +query: String, search: Bool, direction: String, relation: String, recursive: Bool) -> IO(Unit):
@@ -271,7 +274,7 @@ def graph_read(+db: String, +reader: String, +scope: String, +subject: String, +
     typed : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM pragma_table_info('knowledge') WHERE name='kind';"))
     +groups : Bool <- promotion_groups_value(db)
     present : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM sqlite_master WHERE type='table' AND name='knowledge_relations';"))
-    v1tables : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN('knowledge_v1_nodes','knowledge_v1_edges');"))
+    v1tables : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN('knowledge_v1','knowledge_edges_v1','knowledge_promotions_v1');"))
     saved : String <- IO.try(String,DB.Sql.read(db,graph_read_sql(reader,scope,subject,query,search,direction,relation,recursive,typed,groups,present,v1tables)))
     IO.write(saved)
 
@@ -353,6 +356,43 @@ def promotion_statement(+id: String, +promoter: String, +source_kind: String, +s
   ++ " ON CONFLICT(id) DO NOTHING;"
   ++ knowledge_conflict_sql("promotion-id-conflict","knowledge_promotions",C.q(id),"EXISTS(SELECT 1 FROM knowledge k WHERE k.id=" ++ C.q(finding) ++ " AND " ++ promotion_admitted(promoter,destination_kind,destination) ++ " AND " ++ source_carries(source_kind,source) ++ ")",promotion_coordinates(id,promoter,source_kind,source,destination_kind,destination,finding),"'finding',finding,'source',source,'sourceKind',source_kind,'destination',destination,'destinationKind',destination_kind")
 
+# v1 promotions live in knowledge_promotions_v1 keyed by raw record_id into
+# the single v1 node/edge namespace; table separation is the version scoping.
+# The promoter-owns-destination rule is shared with legacy promotion; the
+# source-carry mirrors authorship-or-prior-chain against each v1 table, and
+# edge promotion admission resolves an admitted node or edge.
+def v1_source_carries(+kind: String, +source: String) -> String:
+  "((" ++ C.q(kind) ++ "='session' AND " ++ C.q(source) ++ "=k.author) OR EXISTS(SELECT 1 FROM knowledge_promotions_v1 prev WHERE prev.record_id=k.id AND prev.destination_kind=" ++ C.q(kind) ++ " AND prev.destination=" ++ C.q(source) ++ "))"
+
+def v1_promotion_coordinates(+id: String, +promoter: String, +source_kind: String, +source: String, +destination_kind: String, +destination: String, +finding: String) -> String:
+  "id=" ++ C.q(id) ++ " AND record_id=" ++ C.q(finding) ++ " AND source_kind=" ++ C.q(source_kind) ++ " AND source=" ++ C.q(source) ++ " AND destination_kind=" ++ C.q(destination_kind) ++ " AND destination=" ++ C.q(destination) ++ " AND promoted_by=" ++ C.q(promoter)
+
+def v1_promotion_insert(+id: String, +promoter: String, +source_kind: String, +source: String, +destination_kind: String, +destination: String, +finding: String, +table: String) -> String:
+  "INSERT INTO knowledge_promotions_v1(id,record_id,author,source_kind,source,destination_kind,destination,promoted_by) SELECT " ++ C.q(id) ++ ",k.id,k.author," ++ C.q(source_kind) ++ "," ++ C.q(source) ++ "," ++ C.q(destination_kind) ++ "," ++ C.q(destination) ++ "," ++ C.q(promoter) ++ " FROM " ++ table ++ " k WHERE k.id=" ++ C.q(finding) ++ " AND " ++ promotion_admitted(promoter,destination_kind,destination) ++ " AND " ++ v1_source_carries(source_kind,source)
+  ++ " ON CONFLICT(id) DO NOTHING;"
+
+def v1_promotion_statement(+id: String, +promoter: String, +source_kind: String, +source: String, +destination_kind: String, +destination: String, +finding: String) -> String:
+  +admitted = "EXISTS(SELECT 1 FROM knowledge_v1 k WHERE k.id=" ++ C.q(finding) ++ " AND " ++ promotion_admitted(promoter,destination_kind,destination) ++ " AND " ++ v1_source_carries(source_kind,source) ++ ") OR EXISTS(SELECT 1 FROM knowledge_edges_v1 k WHERE k.id=" ++ C.q(finding) ++ " AND " ++ promotion_admitted(promoter,destination_kind,destination) ++ " AND " ++ v1_source_carries(source_kind,source) ++ ")"
+  v1_promotion_insert(id,promoter,source_kind,source,destination_kind,destination,finding,"knowledge_v1") ++ v1_promotion_insert(id,promoter,source_kind,source,destination_kind,destination,finding,"knowledge_edges_v1")
+  ++ knowledge_conflict_sql("promotion-id-conflict","knowledge_promotions_v1",C.q(id),admitted,v1_promotion_coordinates(id,promoter,source_kind,source,destination_kind,destination,finding),"'recordId',record_id,'source',source,'sourceKind',source_kind,'destination',destination,'destinationKind',destination_kind")
+
+def v1_promotion_notice_body() -> String:
+  "json_object('promotion',p.id,'recordId',p.record_id,'author',p.author,'source',p.source,'destination',p.destination,'promotedBy',p.promoted_by,'sourceKind',p.source_kind,'destinationKind',p.destination_kind)"
+
+def v1_promotion_notice_stored_body(+id: String) -> String:
+  "(SELECT " ++ v1_promotion_notice_body() ++ " FROM knowledge_promotions_v1 p WHERE p.id=" ++ C.q(id) ++ ")"
+
+def v1_promotion_notice_statement(+id: String, +promoter: String, +source_kind: String, +source: String, +destination_kind: String, +destination: String, +finding: String) -> String:
+  +coordinates = v1_promotion_coordinates(id,promoter,source_kind,source,destination_kind,destination,finding)
+  +owner = promotion_owner(destination_kind,destination)
+  +twin = "EXISTS(SELECT 1 FROM knowledge_promotions p WHERE p.id=" ++ C.q(id) ++ " AND p.finding=" ++ C.q(finding) ++ " AND p.source_kind=" ++ C.q(source_kind) ++ " AND p.source=" ++ C.q(source) ++ " AND p.destination_kind=" ++ C.q(destination_kind) ++ " AND p.destination=" ++ C.q(destination) ++ " AND p.promoted_by=" ++ C.q(promoter) ++ ")"
+  "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(promotion_notice_id(id)) ++ ",p.promoted_by," ++ owner ++ ",'question'," ++ v1_promotion_notice_body() ++ " FROM knowledge_promotions_v1 p WHERE " ++ coordinates
+  ++ " ON CONFLICT(id) DO NOTHING;"
+  ++ knowledge_conflict_sql("promotion-notice-conflict","messages",C.q(promotion_notice_id(id)),"EXISTS(SELECT 1 FROM knowledge_promotions_v1 WHERE " ++ coordinates ++ ") AND NOT (" ++ twin ++ ")","sender=" ++ C.q(promoter) ++ " AND recipient=" ++ owner ++ " AND kind='question' AND body=" ++ v1_promotion_notice_stored_body(id),"'sender',sender,'recipient',recipient")
+
+def v1_promotion_answer(+id: String, +promoter: String, +source_kind: String, +source: String, +destination_kind: String, +destination: String, +finding: String) -> String:
+  "SELECT json_object('schemaVersion',1,'id',id,'recordId',record_id,'author',author,'source',source,'destination',destination,'promotedBy',promoted_by,'sourceKind',source_kind,'destinationKind',destination_kind) FROM knowledge_promotions_v1 WHERE " ++ v1_promotion_coordinates(id,promoter,source_kind,source,destination_kind,destination,finding) ++ ";"
+
 def promotion_answer(id: String, promoter: String, source_kind: String, source: String, destination_kind: String, destination: String, finding: String) -> String:
   "SELECT json_patch(json_object('id',id,'finding',finding,'author',author,'source',source,'destination',destination,'promotedBy',promoted_by)," ++ endpoint_fields("",True{}) ++ ") FROM knowledge_promotions WHERE " ++ promotion_coordinates(id,promoter,source_kind,source,destination_kind,destination,finding) ++ ";"
 
@@ -368,12 +408,14 @@ def promotion_notice_stored_body(id: String) -> String:
 def promotion_notice_statement(+id: String, +promoter: String, +source_kind: String, +source: String, +destination_kind: String, +destination: String, +finding: String) -> String:
   +coordinates = promotion_coordinates(id,promoter,source_kind,source,destination_kind,destination,finding)
   +owner = promotion_owner(destination_kind,destination)
+  +v1twin = "EXISTS(SELECT 1 FROM knowledge_promotions_v1 p WHERE p.id=" ++ C.q(id) ++ " AND p.record_id=" ++ C.q(finding) ++ " AND p.source_kind=" ++ C.q(source_kind) ++ " AND p.source=" ++ C.q(source) ++ " AND p.destination_kind=" ++ C.q(destination_kind) ++ " AND p.destination=" ++ C.q(destination) ++ " AND p.promoted_by=" ++ C.q(promoter) ++ ")"
   "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(promotion_notice_id(id)) ++ ",p.promoted_by," ++ owner ++ ",'question'," ++ promotion_notice_body() ++ " FROM knowledge_promotions p WHERE " ++ coordinates
   ++ " ON CONFLICT(id) DO NOTHING;"
-  ++ knowledge_conflict_sql("promotion-notice-conflict","messages",C.q(promotion_notice_id(id)),"EXISTS(SELECT 1 FROM knowledge_promotions WHERE " ++ coordinates ++ ")","sender=" ++ C.q(promoter) ++ " AND recipient=" ++ owner ++ " AND kind='question' AND body=" ++ promotion_notice_stored_body(id),"'sender',sender,'recipient',recipient")
+  ++ knowledge_conflict_sql("promotion-notice-conflict","messages",C.q(promotion_notice_id(id)),"EXISTS(SELECT 1 FROM knowledge_promotions WHERE " ++ coordinates ++ ") AND NOT (" ++ v1twin ++ ")","sender=" ++ C.q(promoter) ++ " AND recipient=" ++ owner ++ " AND kind='question' AND body=" ++ promotion_notice_stored_body(id),"'sender',sender,'recipient',recipient")
 
 def promote_statements(+id: String, +promoter: String, +source_kind: String, +source: String, +destination_kind: String, +destination: String, +finding: String) -> String:
   promotion_statement(id,promoter,source_kind,source,destination_kind,destination,finding) ++ promotion_notice_statement(id,promoter,source_kind,source,destination_kind,destination,finding) ++ promotion_answer(id,promoter,source_kind,source,destination_kind,destination,finding)
+  ++ v1_promotion_statement(id,promoter,source_kind,source,destination_kind,destination,finding) ++ v1_promotion_notice_statement(id,promoter,source_kind,source,destination_kind,destination,finding) ++ v1_promotion_answer(id,promoter,source_kind,source,destination_kind,destination,finding)
 
 # A committed record whose notice could not be delivered refuses with the retry
 # path; the write itself stands.
@@ -471,7 +513,7 @@ def deliver_promotion(db: String, id: String, saved: String) -> IO(Result<&1,&1,
 
 def promote_scoped(+db: String, +id: String, promoter: String, source_kind: String, source: String, destination_kind: String, destination: String, finding: String) -> IO(Unit):
   do IO<Unit>:
-    +saved : String <- IO.try(String,Store.transact_sql(db,commit_sql(promote_statements(id,promoter,source_kind,source,destination_kind,destination,finding))))
+    +saved : String <- IO.try(String,Store.transact_sql(db,commit_v1_sql(promote_statements(id,promoter,source_kind,source,destination_kind,destination,finding))))
     Bool.pick(IO(Unit),Store.refused(saved),IO.die(Unit,2,saved),do IO<Unit>:
       delivery : Result<&1,&1,U32 & String,String> <- deliver_promotion(db,id,saved)
       answered(delivery))

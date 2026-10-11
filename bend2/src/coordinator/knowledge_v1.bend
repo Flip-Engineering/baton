@@ -15,9 +15,15 @@ import ./delivery.bend as Delivery
 import ./store.bend as Store
 import ../host/sqlite.bend as DB
 
+# Provisional DDL kept structurally aligned with the authoritative lane A
+# tables; lane A owns the DDL and this builder is removed at integration.
+# Authoritative columns reproduced verbatim: the envelope key stays
+# schemaVersion while the column is schema_version, and provenance stays a
+# read-time literal since the authoritative tables carry no such column.
 def schema_sql() -> String:
-  "CREATE TABLE IF NOT EXISTS knowledge_v1_nodes(id TEXT UNIQUE NOT NULL, author TEXT NOT NULL, kind TEXT NOT NULL, statement TEXT NOT NULL, context TEXT NOT NULL, evidence TEXT NOT NULL, limits TEXT NOT NULL, uncertainty TEXT NOT NULL, details TEXT NOT NULL, provenance TEXT NOT NULL DEFAULT 'authored', schemaVersion INTEGER NOT NULL DEFAULT 1);"
-  ++ "CREATE TABLE IF NOT EXISTS knowledge_v1_edges(id TEXT UNIQUE NOT NULL, author TEXT NOT NULL, kind TEXT NOT NULL, source TEXT NOT NULL, target TEXT NOT NULL, context TEXT NOT NULL, basis TEXT NOT NULL, rationale TEXT NOT NULL, limits TEXT NOT NULL, uncertainty TEXT NOT NULL, details TEXT NOT NULL, provenance TEXT NOT NULL DEFAULT 'authored', schemaVersion INTEGER NOT NULL DEFAULT 1);"
+  "CREATE TABLE IF NOT EXISTS knowledge_v1(id TEXT UNIQUE, author TEXT, kind TEXT, statement TEXT, context TEXT, evidence TEXT, limits TEXT DEFAULT '', uncertainty TEXT DEFAULT '', details TEXT, schema_version INTEGER DEFAULT 1, supersedes TEXT, payload TEXT);"
+  ++ "CREATE TABLE IF NOT EXISTS knowledge_edges_v1(id TEXT UNIQUE, author TEXT, kind TEXT, source TEXT, target TEXT, context TEXT, basis TEXT, rationale TEXT, limits TEXT DEFAULT '', uncertainty TEXT DEFAULT '', details TEXT, schema_version INTEGER DEFAULT 1, supersedes TEXT, payload TEXT);"
+  ++ "CREATE TABLE IF NOT EXISTS knowledge_promotions_v1(id TEXT UNIQUE, record_id TEXT, author TEXT, source_kind TEXT DEFAULT 'session', source TEXT, destination_kind TEXT DEFAULT 'session', destination TEXT, promoted_by TEXT);"
 
 def node_kinds() -> String:
   "'question','claim','hypothesis','observation','research-finding','study','evidence','argument','proposal','decision'"
@@ -42,18 +48,18 @@ def ref_resource(+v: String) -> String:
   "json_extract(" ++ v ++ ",'$.uri') IS NOT NULL OR json_extract(" ++ v ++ ",'$.kind') IN('message','artifact','url')"
 
 def ref_node_hit(+v: String) -> String:
-  "EXISTS(SELECT 1 FROM knowledge_v1_nodes n WHERE n.id=json_extract(" ++ v ++ ",'$.id'))"
+  "EXISTS(SELECT 1 FROM knowledge_v1 n WHERE n.id=json_extract(" ++ v ++ ",'$.id'))"
 
 def ref_edge_hit(+v: String) -> String:
-  "EXISTS(SELECT 1 FROM knowledge_v1_edges e WHERE e.id=json_extract(" ++ v ++ ",'$.id'))"
+  "EXISTS(SELECT 1 FROM knowledge_edges_v1 e WHERE e.id=json_extract(" ++ v ++ ",'$.id'))"
 
 def ref_resolved(+v: String) -> String:
   "(" ++ ref_resource(v) ++ " OR " ++ ref_node_hit(v) ++ " OR " ++ ref_edge_hit(v) ++ ")"
 
 def ref_matched(+v: String) -> String:
   "(" ++ ref_resource(v)
-  ++ " OR (json_extract(" ++ v ++ ",'$.kind')<>'edge' AND EXISTS(SELECT 1 FROM knowledge_v1_nodes n WHERE n.id=json_extract(" ++ v ++ ",'$.id') AND n.kind=json_extract(" ++ v ++ ",'$.kind')))"
-  ++ " OR (json_extract(" ++ v ++ ",'$.kind')='edge' AND EXISTS(SELECT 1 FROM knowledge_v1_edges e WHERE e.id=json_extract(" ++ v ++ ",'$.id') AND e.kind=json_extract(" ++ v ++ ",'$.edgeKind'))))"
+  ++ " OR (json_extract(" ++ v ++ ",'$.kind')<>'edge' AND EXISTS(SELECT 1 FROM knowledge_v1 n WHERE n.id=json_extract(" ++ v ++ ",'$.id') AND n.kind=json_extract(" ++ v ++ ",'$.kind')))"
+  ++ " OR (json_extract(" ++ v ++ ",'$.kind')='edge' AND EXISTS(SELECT 1 FROM knowledge_edges_v1 e WHERE e.id=json_extract(" ++ v ++ ",'$.id') AND e.kind=json_extract(" ++ v ++ ",'$.edgeKind'))))"
 
 # Every entry of the array at path is an object naming an id or a uri.
 # Absent paths hold no entries and pass.
@@ -167,7 +173,7 @@ def node_same(+node: String) -> String:
 
 def node_insert(+node: String) -> String:
   +j = C.q(node)
-  "INSERT INTO knowledge_v1_nodes(id,author,kind,statement,context,evidence,limits,uncertainty,details) SELECT json_extract(" ++ j ++ ",'$.id'),json_extract(" ++ j ++ ",'$.author'),json_extract(" ++ j ++ ",'$.kind'),json_extract(" ++ j ++ ",'$.statement'),json_extract(" ++ j ++ ",'$.context'),json_extract(" ++ j ++ ",'$.evidence'),json_extract(" ++ j ++ ",'$.limits'),json_extract(" ++ j ++ ",'$.uncertainty'),json_extract(" ++ j ++ ",'$.details') WHERE EXISTS(SELECT 1 FROM sessions WHERE id=json_extract(" ++ j ++ ",'$.author')) AND " ++ node_kind_of(node) ++ " IN(" ++ node_kinds() ++ ") AND " ++ node_shape_ok(node) ++ " AND " ++ node_refs_resolve(node) ++ " AND " ++ node_refs_match(node)
+  "INSERT INTO knowledge_v1(id,author,kind,statement,context,evidence,limits,uncertainty,details,payload) SELECT json_extract(" ++ j ++ ",'$.id'),json_extract(" ++ j ++ ",'$.author'),json_extract(" ++ j ++ ",'$.kind'),json_extract(" ++ j ++ ",'$.statement'),json_extract(" ++ j ++ ",'$.context'),json_extract(" ++ j ++ ",'$.evidence'),json_extract(" ++ j ++ ",'$.limits'),json_extract(" ++ j ++ ",'$.uncertainty'),json_extract(" ++ j ++ ",'$.details')," ++ j ++ " WHERE EXISTS(SELECT 1 FROM sessions WHERE id=json_extract(" ++ j ++ ",'$.author')) AND " ++ node_kind_of(node) ++ " IN(" ++ node_kinds() ++ ") AND " ++ node_shape_ok(node) ++ " AND " ++ node_refs_resolve(node) ++ " AND " ++ node_refs_match(node)
   ++ " ON CONFLICT(id) DO NOTHING;"
 
 def node_notice(+node: String) -> String:
@@ -177,7 +183,7 @@ def node_notice(+node: String) -> String:
   +nid = "json_extract(" ++ j ++ ",'$.id')||':notice'"
   +parent = "(SELECT parent FROM sessions WHERE id=" ++ author ++ ")"
   +body = "json_object('finding'," ++ id ++ ",'author'," ++ author ++ ")"
-  +same = "EXISTS(SELECT 1 FROM knowledge_v1_nodes WHERE id=" ++ id ++ " AND " ++ node_same(node) ++ ")"
+  +same = "EXISTS(SELECT 1 FROM knowledge_v1 WHERE id=" ++ id ++ " AND " ++ node_same(node) ++ ")"
   "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ nid ++ "," ++ author ++ "," ++ parent ++ ",'question'," ++ body ++ " WHERE " ++ same ++ " AND " ++ parent ++ " IS NOT NULL"
   ++ " ON CONFLICT(id) DO NOTHING;"
   ++ "SELECT json_object('error','knowledge-notice-conflict','id'," ++ nid ++ ",'stored',json_object('sender',sender,'recipient',recipient,'kind',kind),'condition','This knowledge identity is already stored with different content.','next','Read knowledge and retain the stored record, then retry the new input under a different ID.') FROM messages WHERE id=" ++ nid ++ " AND " ++ parent ++ " IS NOT NULL AND " ++ same ++ " AND NOT (sender=" ++ author ++ " AND recipient=" ++ parent ++ " AND kind='question' AND body=" ++ body ++ ");"
@@ -192,30 +198,33 @@ def node_errors(+node: String) -> String:
   ++ v1_error("v1-unresolved-endpoint","'id'," ++ id ++ ",'condition','A node reference names no stored v1 node or edge.','next','Record the referenced row first, then retry the node.'","json_valid(" ++ j ++ ") AND " ++ node_kind_of(node) ++ " IN(" ++ node_kinds() ++ ") AND " ++ node_shape_ok(node) ++ " AND NOT (" ++ node_refs_resolve(node) ++ ")")
   ++ v1_error("v1-endpoint-kind-mismatch","'id'," ++ id ++ ",'condition','A node reference is stored under a different kind than declared.','next','Retain the stored rows, then retry with matching declared kinds.'","json_valid(" ++ j ++ ") AND " ++ node_kind_of(node) ++ " IN(" ++ node_kinds() ++ ") AND " ++ node_shape_ok(node) ++ " AND " ++ node_refs_resolve(node) ++ " AND NOT (" ++ node_refs_match(node) ++ ")")
   ++ v1_error("v1-unknown-author","'author',json_extract(" ++ j ++ ",'$.author'),'condition','Node author is not a registered session.'","NOT EXISTS(SELECT 1 FROM sessions WHERE id=json_extract(" ++ j ++ ",'$.author'))")
-  ++ v1_error("v1-node-id-conflict","'id'," ++ id ++ ",'stored',(SELECT json_object(" ++ stored ++ ") FROM knowledge_v1_nodes WHERE id=" ++ id ++ "),'condition','This v1 node identity is already stored with different content.','next','Retain the stored record, then retry the new input under a different ID.'","EXISTS(SELECT 1 FROM knowledge_v1_nodes WHERE id=" ++ id ++ " AND NOT (" ++ node_same(node) ++ "))")
-  ++ v1_error("v1-node-id-conflict","'id'," ++ id ++ ",'stored',(SELECT json_object('id',id,'author',author,'kind',kind) FROM knowledge_v1_edges WHERE id=" ++ id ++ "),'condition','This identity is already stored as a v1 edge. Node and edge identities share one namespace.','next','Retain the stored record, then retry the new input under a different ID.'","EXISTS(SELECT 1 FROM knowledge_v1_edges WHERE id=" ++ id ++ ")")
+  ++ v1_error("v1-node-id-conflict","'id'," ++ id ++ ",'stored',(SELECT json_object(" ++ stored ++ ") FROM knowledge_v1 WHERE id=" ++ id ++ "),'condition','This v1 node identity is already stored with different content.','next','Retain the stored record, then retry the new input under a different ID.'","EXISTS(SELECT 1 FROM knowledge_v1 WHERE id=" ++ id ++ " AND NOT (" ++ node_same(node) ++ "))")
+  ++ v1_error("v1-node-id-conflict","'id'," ++ id ++ ",'stored',(SELECT json_object('id',id,'author',author,'kind',kind) FROM knowledge_edges_v1 WHERE id=" ++ id ++ "),'condition','This identity is already stored as a v1 edge. Node and edge identities share one namespace.','next','Retain the stored record, then retry the new input under a different ID.'","EXISTS(SELECT 1 FROM knowledge_edges_v1 WHERE id=" ++ id ++ ")")
 
 def v1_edge_promotions() -> String:
-  "(SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_patch(json_object('finding',p.finding,'author',p.author,'source',p.source,'destination',p.destination,'promotedBy',p.promoted_by),json_object('sourceKind',p.source_kind,'destinationKind',p.destination_kind)) AS item FROM knowledge_promotions p WHERE p.finding=r.id))"
+  "(SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_object('schemaVersion',1,'id',p.id,'recordId',p.record_id,'author',p.author,'source',p.source,'destination',p.destination,'promotedBy',p.promoted_by,'sourceKind',p.source_kind,'destinationKind',p.destination_kind) AS item FROM knowledge_promotions_v1 p WHERE p.record_id=r.id))"
 
 def v1_edge_envelope(+alias: String) -> String:
   +r = alias ++ "."
-  "json_object('id'," ++ r ++ "id,'author'," ++ r ++ "author,'kind'," ++ r ++ "kind,'schemaId','urn:baton:knowledge:schema:1','source',json(" ++ r ++ "source),'target',json(" ++ r ++ "target),'context',json(" ++ r ++ "context),'basis',json(" ++ r ++ "basis),'rationale'," ++ r ++ "rationale,'limits'," ++ r ++ "limits,'uncertainty'," ++ r ++ "uncertainty,'details',json(" ++ r ++ "details),'provenance'," ++ r ++ "provenance,'schemaVersion'," ++ r ++ "schemaVersion,'promotions'," ++ v1_edge_promotions() ++ ")"
+  "json_object('id'," ++ r ++ "id,'author'," ++ r ++ "author,'kind'," ++ r ++ "kind,'schemaId','urn:baton:knowledge:schema:1','source',json(" ++ r ++ "source),'target',json(" ++ r ++ "target),'context',json(" ++ r ++ "context),'basis',json(" ++ r ++ "basis),'rationale'," ++ r ++ "rationale,'limits'," ++ r ++ "limits,'uncertainty'," ++ r ++ "uncertainty,'details',json(" ++ r ++ "details),'provenance','authored','schemaVersion'," ++ r ++ "schema_version,'promotions'," ++ v1_edge_promotions() ++ ")"
 
+# Promotion envelopes resolve through knowledge_promotions_v1 keyed by raw
+# record_id. Table separation is the version scoping: a legacy row and a v1
+# row sharing a bare ID never share promotion admission or holding.
 def v1_promotions() -> String:
-  "(SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_patch(json_object('finding',p.finding,'author',p.author,'source',p.source,'destination',p.destination,'promotedBy',p.promoted_by),json_object('sourceKind',p.source_kind,'destinationKind',p.destination_kind)) AS item FROM knowledge_promotions p WHERE p.finding=n.id))"
+  "(SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_object('schemaVersion',1,'id',p.id,'recordId',p.record_id,'author',p.author,'source',p.source,'destination',p.destination,'promotedBy',p.promoted_by,'sourceKind',p.source_kind,'destinationKind',p.destination_kind) AS item FROM knowledge_promotions_v1 p WHERE p.record_id=n.id))"
 
 def v1_node_relations() -> String:
-  "(SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT " ++ v1_edge_envelope("r") ++ " AS item FROM knowledge_v1_edges r WHERE json_extract(r.source,'$.id')=n.id OR json_extract(r.target,'$.id')=n.id ORDER BY r.id))"
+  "(SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT " ++ v1_edge_envelope("r") ++ " AS item FROM knowledge_edges_v1 r WHERE json_extract(r.source,'$.id')=n.id OR json_extract(r.target,'$.id')=n.id ORDER BY r.id))"
 
 def node_envelope(+alias: String) -> String:
   +n = alias ++ "."
-  "json_object('id'," ++ n ++ "id,'author'," ++ n ++ "author,'kind'," ++ n ++ "kind,'schemaId','urn:baton:knowledge:schema:1','statement'," ++ n ++ "statement,'context',json(" ++ n ++ "context),'evidence',json(" ++ n ++ "evidence),'limits'," ++ n ++ "limits,'uncertainty'," ++ n ++ "uncertainty,'details',json(" ++ n ++ "details),'provenance'," ++ n ++ "provenance,'schemaVersion'," ++ n ++ "schemaVersion,'promotions'," ++ v1_promotions() ++ ",'relations'," ++ v1_node_relations() ++ ")"
+  "json_object('id'," ++ n ++ "id,'author'," ++ n ++ "author,'kind'," ++ n ++ "kind,'schemaId','urn:baton:knowledge:schema:1','statement'," ++ n ++ "statement,'context',json(" ++ n ++ "context),'evidence',json(" ++ n ++ "evidence),'limits'," ++ n ++ "limits,'uncertainty'," ++ n ++ "uncertainty,'details',json(" ++ n ++ "details),'provenance','authored','schemaVersion'," ++ n ++ "schema_version,'promotions'," ++ v1_promotions() ++ ",'relations'," ++ v1_node_relations() ++ ")"
 
 def node_answer(+node: String) -> String:
   +j = C.q(node)
   +id = "json_extract(" ++ j ++ ",'$.id')"
-  "SELECT " ++ node_envelope("n") ++ " FROM knowledge_v1_nodes n WHERE n.id=" ++ id ++ ";"
+  "SELECT " ++ node_envelope("n") ++ " FROM knowledge_v1 n WHERE n.id=" ++ id ++ ";"
 
 def node_statements(+node: String) -> String:
   node_insert(node) ++ node_notice(node) ++ node_errors(node) ++ node_answer(node)
@@ -256,9 +265,9 @@ def edge_refs_shaped(+edge: String) -> String:
 # method; it performs no inference.
 def edge_proof_ok(+edge: String) -> String:
   +j = C.q(edge)
-  "(json_extract(" ++ j ++ ",'$.kind')<>'implies' OR EXISTS(SELECT 1 FROM knowledge_v1_nodes n WHERE n.id=json_extract(" ++ j ++ ",'$.details.argument.id') AND n.kind='argument' AND json_extract(n.details,'$.method') IN('deduction','formal-proof')))"
-  ++ " AND (json_extract(" ++ j ++ ",'$.kind')<>'proves' OR EXISTS(SELECT 1 FROM knowledge_v1_nodes n WHERE n.id=json_extract(" ++ j ++ ",'$.source.id') AND n.kind='argument' AND json_extract(n.details,'$.method') IN('deduction','formal-proof')))"
-  ++ " AND (json_extract(" ++ j ++ ",'$.kind')<>'disproves' OR EXISTS(SELECT 1 FROM knowledge_v1_nodes n WHERE n.id=json_extract(" ++ j ++ ",'$.source.id') AND n.kind='argument' AND json_extract(n.details,'$.method') IN('deduction','formal-proof','counterexample')))"
+  "(json_extract(" ++ j ++ ",'$.kind')<>'implies' OR EXISTS(SELECT 1 FROM knowledge_v1 n WHERE n.id=json_extract(" ++ j ++ ",'$.details.argument.id') AND n.kind='argument' AND json_extract(n.details,'$.method') IN('deduction','formal-proof')))"
+  ++ " AND (json_extract(" ++ j ++ ",'$.kind')<>'proves' OR EXISTS(SELECT 1 FROM knowledge_v1 n WHERE n.id=json_extract(" ++ j ++ ",'$.source.id') AND n.kind='argument' AND json_extract(n.details,'$.method') IN('deduction','formal-proof')))"
+  ++ " AND (json_extract(" ++ j ++ ",'$.kind')<>'disproves' OR EXISTS(SELECT 1 FROM knowledge_v1 n WHERE n.id=json_extract(" ++ j ++ ",'$.source.id') AND n.kind='argument' AND json_extract(n.details,'$.method') IN('deduction','formal-proof','counterexample')))"
 
 def edge_shape_ok(+edge: String) -> String:
   +j = C.q(edge)
@@ -303,10 +312,10 @@ def edge_matrix(+kind: String, +sk: String, +tk: String) -> String:
 # An endpoint resolves when its declared kind equals a stored row of that
 # kind: v1 nodes by id and kind, v1 edges by id with matching edgeKind.
 def endpoint_resolved(+endpoint: String) -> String:
-  "((json_extract(" ++ endpoint ++ ",'$.kind')<>'edge' AND EXISTS(SELECT 1 FROM knowledge_v1_nodes n WHERE n.id=json_extract(" ++ endpoint ++ ",'$.id') AND n.kind=json_extract(" ++ endpoint ++ ",'$.kind'))) OR (json_extract(" ++ endpoint ++ ",'$.kind')='edge' AND EXISTS(SELECT 1 FROM knowledge_v1_edges e WHERE e.id=json_extract(" ++ endpoint ++ ",'$.id') AND e.kind=json_extract(" ++ endpoint ++ ",'$.edgeKind'))))"
+  "((json_extract(" ++ endpoint ++ ",'$.kind')<>'edge' AND EXISTS(SELECT 1 FROM knowledge_v1 n WHERE n.id=json_extract(" ++ endpoint ++ ",'$.id') AND n.kind=json_extract(" ++ endpoint ++ ",'$.kind'))) OR (json_extract(" ++ endpoint ++ ",'$.kind')='edge' AND EXISTS(SELECT 1 FROM knowledge_edges_v1 e WHERE e.id=json_extract(" ++ endpoint ++ ",'$.id') AND e.kind=json_extract(" ++ endpoint ++ ",'$.edgeKind'))))"
 
 def endpoint_present(+endpoint: String) -> String:
-  "(EXISTS(SELECT 1 FROM knowledge_v1_nodes n WHERE n.id=json_extract(" ++ endpoint ++ ",'$.id')) OR EXISTS(SELECT 1 FROM knowledge_v1_edges e WHERE e.id=json_extract(" ++ endpoint ++ ",'$.id')))"
+  "(EXISTS(SELECT 1 FROM knowledge_v1 n WHERE n.id=json_extract(" ++ endpoint ++ ",'$.id')) OR EXISTS(SELECT 1 FROM knowledge_edges_v1 e WHERE e.id=json_extract(" ++ endpoint ++ ",'$.id')))"
 
 def edge_endpoints_ok(+edge: String) -> String:
   +j = C.q(edge)
@@ -342,13 +351,13 @@ def edge_same(+edge: String) -> String:
 
 def edge_insert(+edge: String) -> String:
   +j = C.q(edge)
-  "INSERT INTO knowledge_v1_edges(id,author,kind,source,target,context,basis,rationale,limits,uncertainty,details) SELECT json_extract(" ++ j ++ ",'$.id'),json_extract(" ++ j ++ ",'$.author'),json_extract(" ++ j ++ ",'$.kind'),json_extract(" ++ j ++ ",'$.source'),json_extract(" ++ j ++ ",'$.target'),json_extract(" ++ j ++ ",'$.context'),json_extract(" ++ j ++ ",'$.basis'),json_extract(" ++ j ++ ",'$.rationale'),json_extract(" ++ j ++ ",'$.limits'),json_extract(" ++ j ++ ",'$.uncertainty'),json_extract(" ++ j ++ ",'$.details') WHERE EXISTS(SELECT 1 FROM sessions WHERE id=json_extract(" ++ j ++ ",'$.author')) AND " ++ edge_kind_of(edge) ++ " IN(" ++ edge_kinds() ++ ") AND " ++ edge_shape_ok(edge) ++ " AND " ++ edge_refs_resolve(edge) ++ " AND " ++ edge_refs_match(edge) ++ " AND " ++ edge_proof_ok(edge)
+  "INSERT INTO knowledge_edges_v1(id,author,kind,source,target,context,basis,rationale,limits,uncertainty,details,payload) SELECT json_extract(" ++ j ++ ",'$.id'),json_extract(" ++ j ++ ",'$.author'),json_extract(" ++ j ++ ",'$.kind'),json_extract(" ++ j ++ ",'$.source'),json_extract(" ++ j ++ ",'$.target'),json_extract(" ++ j ++ ",'$.context'),json_extract(" ++ j ++ ",'$.basis'),json_extract(" ++ j ++ ",'$.rationale'),json_extract(" ++ j ++ ",'$.limits'),json_extract(" ++ j ++ ",'$.uncertainty'),json_extract(" ++ j ++ ",'$.details')," ++ j ++ " WHERE EXISTS(SELECT 1 FROM sessions WHERE id=json_extract(" ++ j ++ ",'$.author')) AND " ++ edge_kind_of(edge) ++ " IN(" ++ edge_kinds() ++ ") AND " ++ edge_shape_ok(edge) ++ " AND " ++ edge_refs_resolve(edge) ++ " AND " ++ edge_refs_match(edge) ++ " AND " ++ edge_proof_ok(edge)
   ++ " ON CONFLICT(id) DO NOTHING;"
 
 def edge_answer(+edge: String) -> String:
   +j = C.q(edge)
   +id = "json_extract(" ++ j ++ ",'$.id')"
-  "SELECT " ++ v1_edge_envelope("r") ++ " FROM knowledge_v1_edges r WHERE r.id=" ++ id ++ ";"
+  "SELECT " ++ v1_edge_envelope("r") ++ " FROM knowledge_edges_v1 r WHERE r.id=" ++ id ++ ";"
 
 def edge_errors(+edge: String) -> String:
   +j = C.q(edge)
@@ -361,8 +370,8 @@ def edge_errors(+edge: String) -> String:
   ++ v1_error("v1-endpoint-kind-mismatch","'id'," ++ id ++ ",'condition','An edge reference is stored under a different kind than declared, or the edge-kind matrix rejects the declared endpoint pair.','next','Retain the stored rows, then retry with matching declared kinds.'","json_valid(" ++ j ++ ") AND " ++ edge_kind_of(edge) ++ " IN(" ++ edge_kinds() ++ ") AND " ++ edge_shape_ok(edge) ++ " AND " ++ edge_refs_resolve(edge) ++ " AND NOT (" ++ edge_refs_match(edge) ++ ")")
   ++ v1_error("v1-proof-rule","'id'," ++ id ++ ",'condition','An implies edge cites no deduction or formal-proof argument, or a proves or disproves edge starts from no such argument.','next','Retain the stored rows, then retry with a qualifying argument.'","json_valid(" ++ j ++ ") AND " ++ edge_kind_of(edge) ++ " IN(" ++ edge_kinds() ++ ") AND " ++ edge_shape_ok(edge) ++ " AND " ++ edge_refs_resolve(edge) ++ " AND " ++ edge_refs_match(edge) ++ " AND NOT (" ++ edge_proof_ok(edge) ++ ")")
   ++ v1_error("v1-unknown-author","'author',json_extract(" ++ j ++ ",'$.author'),'condition','Edge author is not a registered session.'","NOT EXISTS(SELECT 1 FROM sessions WHERE id=json_extract(" ++ j ++ ",'$.author'))")
-  ++ v1_error("v1-edge-id-conflict","'id'," ++ id ++ ",'stored',(SELECT json_object(" ++ stored ++ ") FROM knowledge_v1_edges WHERE id=" ++ id ++ "),'condition','This v1 edge identity is already stored with different content.','next','Retain the stored record, then retry the new input under a different ID.'","EXISTS(SELECT 1 FROM knowledge_v1_edges WHERE id=" ++ id ++ " AND NOT (" ++ edge_same(edge) ++ "))")
-  ++ v1_error("v1-edge-id-conflict","'id'," ++ id ++ ",'stored',(SELECT json_object('id',id,'author',author,'kind',kind) FROM knowledge_v1_nodes WHERE id=" ++ id ++ "),'condition','This identity is already stored as a v1 node. Node and edge identities share one namespace.','next','Retain the stored record, then retry the new input under a different ID.'","EXISTS(SELECT 1 FROM knowledge_v1_nodes WHERE id=" ++ id ++ ")")
+  ++ v1_error("v1-edge-id-conflict","'id'," ++ id ++ ",'stored',(SELECT json_object(" ++ stored ++ ") FROM knowledge_edges_v1 WHERE id=" ++ id ++ "),'condition','This v1 edge identity is already stored with different content.','next','Retain the stored record, then retry the new input under a different ID.'","EXISTS(SELECT 1 FROM knowledge_edges_v1 WHERE id=" ++ id ++ " AND NOT (" ++ edge_same(edge) ++ "))")
+  ++ v1_error("v1-edge-id-conflict","'id'," ++ id ++ ",'stored',(SELECT json_object('id',id,'author',author,'kind',kind) FROM knowledge_v1 WHERE id=" ++ id ++ "),'condition','This identity is already stored as a v1 node. Node and edge identities share one namespace.','next','Retain the stored record, then retry the new input under a different ID.'","EXISTS(SELECT 1 FROM knowledge_v1 WHERE id=" ++ id ++ ")")
 
 def edge_statements(+edge: String) -> String:
   edge_insert(edge) ++ edge_errors(edge) ++ edge_answer(edge)
@@ -380,23 +389,39 @@ def v1_scope_holders(+scope: String, +subject: String) -> String:
 def v1_node_scope(+scope: String, +subject: String) -> String:
   match scope:
     case "all": "1"
-    case "group": "EXISTS(SELECT 1 FROM knowledge_promotions p WHERE p.finding=n.id AND p.destination_kind='group' AND p.destination=" ++ C.q(subject) ++ ")"
-    case _: "(n.author IN(" ++ v1_scope_holders(scope,subject) ++ ") OR EXISTS(SELECT 1 FROM knowledge_promotions p WHERE p.finding=n.id AND p.destination_kind='session' AND p.destination IN(" ++ v1_scope_holders(scope,subject) ++ ")))"
+    case "group": "EXISTS(SELECT 1 FROM knowledge_promotions_v1 p WHERE p.record_id=n.id AND p.destination_kind='group' AND p.destination=" ++ C.q(subject) ++ ")"
+    case _: "(n.author IN(" ++ v1_scope_holders(scope,subject) ++ ") OR EXISTS(SELECT 1 FROM knowledge_promotions_v1 p WHERE p.record_id=n.id AND p.destination_kind='session' AND p.destination IN(" ++ v1_scope_holders(scope,subject) ++ ")))"
 
 def v1_edge_scope(+scope: String, +subject: String) -> String:
   match scope:
     case "all": "1"
-    case "group": "EXISTS(SELECT 1 FROM knowledge_promotions p WHERE p.finding=r.id AND p.destination_kind='group' AND p.destination=" ++ C.q(subject) ++ ")"
-    case _: "(r.author IN(" ++ v1_scope_holders(scope,subject) ++ ") OR EXISTS(SELECT 1 FROM knowledge_promotions p WHERE p.finding=r.id AND p.destination_kind='session' AND p.destination IN(" ++ v1_scope_holders(scope,subject) ++ ")))"
+    case "group": "EXISTS(SELECT 1 FROM knowledge_promotions_v1 p WHERE p.record_id=r.id AND p.destination_kind='group' AND p.destination=" ++ C.q(subject) ++ ")"
+    case _: "(r.author IN(" ++ v1_scope_holders(scope,subject) ++ ") OR EXISTS(SELECT 1 FROM knowledge_promotions_v1 p WHERE p.record_id=r.id AND p.destination_kind='session' AND p.destination IN(" ++ v1_scope_holders(scope,subject) ++ ")))"
+
+# Relations reads union v1 authored edges beside legacy rows. The mixed item
+# keeps bare source/target ids like the legacy shape and adds v1 references,
+# authored provenance, schemaVersion 1, the schemaId, and literal detailRead
+# argv that resolves through either table.
+def v1_relation_item(+reader: String, +scope: String, +subject: String) -> String:
+  "json_object('id',e.id,'author',e.author,'source',json_extract(e.source,'$.id'),'sourceReference','v1:'||json_extract(e.source,'$.id'),'sourceKind',json_extract(e.source,'$.kind'),'relation',e.kind,'target',json_extract(e.target,'$.id'),'targetReference','v1:'||json_extract(e.target,'$.id'),'targetKind',json_extract(e.target,'$.kind'),'provenance','authored','schemaVersion',1,'schemaId','urn:baton:knowledge:schema:1','detailRead',json_array('knowledge-scope'," ++ C.q(reader) ++ "," ++ C.q(scope) ++ "," ++ C.q(subject) ++ ",'--id',e.id))"
+
+def v1_relations_scope(+scope: String, +subject: String) -> String:
+  +holders = v1_scope_holders(scope,subject)
+  +touch_node = "EXISTS(SELECT 1 FROM knowledge_v1 n WHERE (n.id=json_extract(e.source,'$.id') OR n.id=json_extract(e.target,'$.id')) AND " ++ v1_node_scope(scope,subject) ++ ")"
+  +touch_edge = "EXISTS(SELECT 1 FROM knowledge_edges_v1 r WHERE (r.id=json_extract(e.source,'$.id') OR r.id=json_extract(e.target,'$.id')) AND " ++ v1_edge_scope(scope,subject) ++ ")"
+  match scope:
+    case "all": "1"
+    case "group": "(" ++ touch_node ++ " OR " ++ touch_edge ++ ")"
+    case _: "(e.author IN(" ++ holders ++ ") OR " ++ touch_node ++ " OR " ++ touch_edge ++ ")"
 
 # Graph fragments plug into the legacy nodes/edges CTEs with the same
 # columns. v1 references carry the v1: prefix so they cannot collide with
 # bare legacy IDs; stored orientation is preserved verbatim.
 def nodes_fragment(+reader: String, +scope: String, +subject: String) -> String:
-  "SELECT n.id,'v1:'||n.id AS reference,n.kind,n.statement AS claim,n.evidence,n.limits,json_patch(" ++ node_envelope("n") ++ ",json_object('reference','v1:'||n.id,'detailRead',json_array('knowledge-scope'," ++ C.q(reader) ++ "," ++ C.q(scope) ++ "," ++ C.q(subject) ++ ",'--id',n.id))) AS item FROM knowledge_v1_nodes n WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") AND " ++ v1_node_scope(scope,subject)
+  "SELECT n.id,'v1:'||n.id AS reference,n.kind,n.statement AS claim,n.evidence,n.limits,json_patch(" ++ node_envelope("n") ++ ",json_object('reference','v1:'||n.id,'detailRead',json_array('knowledge-scope'," ++ C.q(reader) ++ "," ++ C.q(scope) ++ "," ++ C.q(subject) ++ ",'--id',n.id))) AS item FROM knowledge_v1 n WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") AND " ++ v1_node_scope(scope,subject)
 
 def edges_fragment(+reader: String, +scope: String, +subject: String) -> String:
-  "SELECT r.id,json_extract(r.source,'$.id') AS source,json_extract(r.target,'$.id') AS target,r.kind AS relation,'v1:'||json_extract(r.source,'$.id') AS source_ref,'v1:'||json_extract(r.target,'$.id') AS target_ref," ++ v1_edge_envelope("r") ++ " AS item FROM knowledge_v1_edges r WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") AND " ++ v1_edge_scope(scope,subject)
+  "SELECT r.id,json_extract(r.source,'$.id') AS source,json_extract(r.target,'$.id') AS target,r.kind AS relation,'v1:'||json_extract(r.source,'$.id') AS source_ref,'v1:'||json_extract(r.target,'$.id') AS target_ref," ++ v1_edge_envelope("r") ++ " AS item FROM knowledge_edges_v1 r WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") AND " ++ v1_edge_scope(scope,subject)
 
 # Recorded-evidence citation edges for v1 evidence references, mirroring the
 # legacy Cited edges so provenance stays distinguished on every surface. It
@@ -409,22 +434,22 @@ def v1_citation_fragment() -> String:
 # Complete scope reads union v1 rows beside legacy rows with their full
 # envelopes; v1 rows follow legacy rows in stored order.
 def read_nodes_sql(+reader: String, +scope: String, +subject: String) -> String:
-  "SELECT " ++ node_envelope("n") ++ " AS item FROM knowledge_v1_nodes n WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") AND " ++ v1_node_scope(scope,subject)
+  "SELECT " ++ node_envelope("n") ++ " AS item FROM knowledge_v1 n WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") AND " ++ v1_node_scope(scope,subject)
 
 def read_edges_sql(+reader: String, +scope: String, +subject: String) -> String:
-  "SELECT " ++ v1_edge_envelope("r") ++ " AS item FROM knowledge_v1_edges r WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") AND " ++ v1_edge_scope(scope,subject)
+  "SELECT " ++ v1_edge_envelope("r") ++ " AS item FROM knowledge_edges_v1 r WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") AND " ++ v1_edge_scope(scope,subject)
 
 # Index rows carry metadata with literal detailRead argv, mirroring the legacy
 # index shape with v1 provenance instead of legacy evidence fields.
 def index_nodes_sql(+reader: String, +scope: String, +subject: String, +scoped: Bool) -> String:
-  "SELECT json_object('id',n.id,'author',n.author,'kind',n.kind,'statementBytes',length(CAST(n.statement AS BLOB)),'limitsBytes',length(CAST(n.limits AS BLOB)),'provenance',n.provenance,'schemaVersion',n.schemaVersion,'promotionCount',(SELECT count(*) FROM knowledge_promotions p WHERE p.finding=n.id),'relationCount',(SELECT count(*) FROM knowledge_v1_edges r WHERE json_extract(r.source,'$.id')=n.id OR json_extract(r.target,'$.id')=n.id),'detailRead'," ++ Bool.pick(String,scoped,"json_array('knowledge-scope'," ++ C.q(reader) ++ "," ++ C.q(scope) ++ "," ++ C.q(subject) ++ ",'--id',n.id)","json_array('knowledge'," ++ C.q(reader) ++ ",'--id',n.id)") ++ ") AS item FROM knowledge_v1_nodes n WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") AND " ++ v1_node_scope(scope,subject)
+  "SELECT json_object('id',n.id,'author',n.author,'kind',n.kind,'statementBytes',length(CAST(n.statement AS BLOB)),'limitsBytes',length(CAST(n.limits AS BLOB)),'provenance','authored','schemaVersion',n.schema_version,'promotionCount',(SELECT count(*) FROM knowledge_promotions_v1 p WHERE p.record_id=n.id),'relationCount',(SELECT count(*) FROM knowledge_edges_v1 r WHERE json_extract(r.source,'$.id')=n.id OR json_extract(r.target,'$.id')=n.id),'detailRead'," ++ Bool.pick(String,scoped,"json_array('knowledge-scope'," ++ C.q(reader) ++ "," ++ C.q(scope) ++ "," ++ C.q(subject) ++ ",'--id',n.id)","json_array('knowledge'," ++ C.q(reader) ++ ",'--id',n.id)") ++ ") AS item FROM knowledge_v1 n WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") AND " ++ v1_node_scope(scope,subject)
 
 def index_edges_sql(+reader: String, +scope: String, +subject: String, +scoped: Bool) -> String:
-  "SELECT json_object('id',r.id,'author',r.author,'kind',r.kind,'rationaleBytes',length(CAST(r.rationale AS BLOB)),'limitsBytes',length(CAST(r.limits AS BLOB)),'provenance',r.provenance,'schemaVersion',r.schemaVersion,'detailRead'," ++ Bool.pick(String,scoped,"json_array('knowledge-scope'," ++ C.q(reader) ++ "," ++ C.q(scope) ++ "," ++ C.q(subject) ++ ",'--id',r.id)","json_array('knowledge'," ++ C.q(reader) ++ ",'--id',r.id)") ++ ") AS item FROM knowledge_v1_edges r WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") AND " ++ v1_edge_scope(scope,subject)
+  "SELECT json_object('id',r.id,'author',r.author,'kind',r.kind,'rationaleBytes',length(CAST(r.rationale AS BLOB)),'limitsBytes',length(CAST(r.limits AS BLOB)),'provenance','authored','schemaVersion',r.schema_version,'detailRead'," ++ Bool.pick(String,scoped,"json_array('knowledge-scope'," ++ C.q(reader) ++ "," ++ C.q(scope) ++ "," ++ C.q(subject) ++ ",'--id',r.id)","json_array('knowledge'," ++ C.q(reader) ++ ",'--id',r.id)") ++ ") AS item FROM knowledge_edges_v1 r WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") AND " ++ v1_edge_scope(scope,subject)
 
 def detail_sql(+reader: String, +scope: String, +subject: String, +id: String) -> String:
-  "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT " ++ node_envelope("n") ++ " AS item FROM knowledge_v1_nodes n WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") AND " ++ v1_node_scope(scope,subject) ++ " AND n.id=" ++ C.q(id)
-  ++ " UNION ALL SELECT " ++ v1_edge_envelope("r") ++ " AS item FROM knowledge_v1_edges r WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") AND " ++ v1_edge_scope(scope,subject) ++ " AND r.id=" ++ C.q(id) ++ ");"
+  "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT " ++ node_envelope("n") ++ " AS item FROM knowledge_v1 n WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") AND " ++ v1_node_scope(scope,subject) ++ " AND n.id=" ++ C.q(id)
+  ++ " UNION ALL SELECT " ++ v1_edge_envelope("r") ++ " AS item FROM knowledge_edges_v1 r WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") AND " ++ v1_edge_scope(scope,subject) ++ " AND r.id=" ++ C.q(id) ++ ");"
 
 # Write entries live in knowledge.bend beside the legacy record path so the
 # commit builder law stays untouched: record_v1 uses commit_v1_sql with
