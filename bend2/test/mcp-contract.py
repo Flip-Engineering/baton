@@ -126,7 +126,7 @@ class McpContract(unittest.TestCase):
     def test_player_read_returns_the_native_rows(self):
         native = self.coord('player', 'w1').stdout
         result = self.tool('baton2_player', {'player': 'w1'})
-        self.assertFalse(result.get('isError', False))
+        self.assertFalse(result.get('isError', False), result)
         self.assertEqual(json.loads(result['content'][0]['text']), json.loads(native))
 
     def test_relationship_discovery_returns_message_and_external_links(self):
@@ -262,6 +262,17 @@ class McpContract(unittest.TestCase):
         self.assertIn('Error: Command failed:', prefix)
         self.assertEqual(stdout, cli.stdout)
         self.assertEqual(stderr, cli.stderr)
+
+    def test_is_error_result_carries_its_error_content(self):
+        cli = self.coord('ack', 'contentless-refusal', 'root', 'receipt', ok=False)
+        self.assertNotEqual(cli.returncode, 0)
+        result = self.tool('baton2_ack', {'id': 'contentless-refusal', 'receipt': 'receipt'})
+        self.assertTrue(result['isError'])
+        self.assertTrue(result.get('content'), 'an isError result must still carry its content')
+        text = result['content'][0]['text']
+        self.assertTrue(text.strip(), 'the refusal content must not be empty')
+        self.assertIn(f'exit code: {cli.returncode}', text)
+        self.assertIn(cli.stderr.strip().splitlines()[0], text)
 
     def test_workers_replay_alias_returns_the_native_legacy_rows(self):
         # baton2_workers replays the stored-call alias onto the native legacy
