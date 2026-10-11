@@ -516,7 +516,7 @@ def read_v1_detail(+db: String, +reader: String, +scope: String, +subject: Strin
     IO.write(answer)
 
 # Scientific promotion writes target one versioned record and notice.
-def promote_v1_scoped(+db: String, +id: String, promoter: String, source_kind: String, source: String, destination_kind: String, destination: String, record: String) -> IO(Unit):
+def promote_v1_scoped(+db: String, +id: String, +promoter: String, +source_kind: String, +source: String, +destination_kind: String, +destination: String, +record: String) -> IO(Unit):
   do IO<Unit>:
     +saved : String <- IO.try(String,Store.transact_sql(db,commit_v1_sql(v1_promotion_statement(id,promoter,source_kind,source,destination_kind,destination,record) ++ v1_promotion_notice_statement(id,promoter,source_kind,source,destination_kind,destination,record) ++ v1_promotion_answer(id,promoter,source_kind,source,destination_kind,destination,record))))
     Bool.pick(IO(Unit),Store.refused(saved),IO.die(Unit,2,saved),do IO<Unit>:
