@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 import pathlib
+import select
 import signal
 import socket
 import sqlite3
@@ -935,10 +936,10 @@ class Control(unittest.TestCase):
         # A database basename long enough that even the 64-character bounded
         # identity exceeds the component limit, while ordinary SQLite
         # auxiliary names still fit: 180 bytes of basename make the bounded
-        # dispatch component 261 bytes and leave -wal/-shm at 184 bytes.
-        # The dispatch is refused, the committed input stays retained, and no
-        # execution row appears.
-        long_db = self.directory / ('d' * 176 + '.db')
+        # dispatch component 261 bytes and leave -wal/-shm at 184 bytes and
+        # the rollback journal at 188. The dispatch is refused, the
+        # committed input stays retained, and no execution row appears.
+        long_db = self.directory / ('d' * 177 + '.db')
         def against_db(*args):
             return subprocess.run([str(EXE), str(long_db), *map(str, args)],
                                   env=self.environment, capture_output=True, text=True)
@@ -962,6 +963,66 @@ class Control(unittest.TestCase):
             self.assertEqual(database.execute(
                 "SELECT COUNT(*) FROM executions").fetchone()[0], 0)
         self.assertEqual(list(long_db.parent.glob(long_db.name + '.dispatch-*')), [])
+
+
+    def test_oversized_digest_path_refuses_symlink_and_fifo_and_spawns_nothing(self):
+        self.root()
+        self.recruit('leaf')
+        self.receiver('leaf')
+        original = self.directory / 'preserved-digest-output'
+        original.write_text('Unrelated digest-path bytes remain.\n')
+        for kind in ('symlink', 'fifo'):
+            with self.subTest(kind=kind):
+                ident = 'oversized-unsafe-' + kind + '-' + 'u' * 110
+                output = self.dispatch_digest_log(ident)
+                if kind == 'symlink':
+                    output.symlink_to(original)
+                else:
+                    os.mkfifo(output)
+                before = self.process_rows()
+                self.call('dispatch-file', ident, 'root', 'leaf', 'task',
+                          self.task, ok=False)
+                saved = self.call('delivery', ident)
+                self.assertEqual((saved['sender'], saved['recipient'],
+                                  saved['body'], saved['receipt']),
+                                 ('root', 'leaf', self.task.read_text(), None))
+                self.assertEqual(original.read_text(),
+                                 'Unrelated digest-path bytes remain.\n')
+                self.assertEqual(self.rows('SELECT * FROM executions'), [])
+                # No native child was spawned: nothing new is running for
+                # this fixture directory and no connection is pending.
+                self.assertEqual(self.process_rows(), before)
+                self.assertFalse(select.select([self.server], [], [], 0)[0])
+                mode = output.lstat().st_mode
+                self.assertTrue(stat.S_ISLNK(mode) if kind == 'symlink'
+                                else stat.S_ISFIFO(mode))
+
+    def test_utf8_boundary_identity_measures_bytes_and_preserves_content(self):
+        self.root()
+        self.recruit('leaf')
+        self.receiver('leaf')
+        # Forty lambda characters are 40 code points but 120 UTF-8 bytes, so
+        # a character count would predict the hex form fits while the byte
+        # length pushes the component to 265: the bounded identity is
+        # required, and the body/native assertions carry the same UTF-8.
+        utf8_id = 'utf8-' + 'λ' * 40 + '-🙂'
+        self.assertEqual(len(utf8_id.encode()), 5 + 120 + 4)
+        body = 'UTF-8 boundary λ task completed 🙂.'
+        self.dispatch('dispatch-file', utf8_id, 'root', 'leaf', 'task', self.task)
+        stream, native = self.accept('leaf')
+        self.finish(stream, body)
+        self.exited('leaf')
+        saved = self.call('delivery', utf8_id)
+        self.assertEqual((saved['sender'], saved['recipient']),
+                         ('root', 'leaf'))
+        self.assertEqual(saved['body'], self.task.read_text())
+        self.assertEqual(self.call('turns', 'leaf')[0]['reportBody'], body)
+        self.assertEqual(self.call('player', 'leaf')['native'], native['native'])
+        stdout = self.dispatch_digest_log(utf8_id)
+        stderr = self.dispatch_digest_log(utf8_id, '.stderr')
+        self.assertTrue(stat.S_ISREG(stdout.stat().st_mode), str(stdout))
+        self.assertTrue(stat.S_ISREG(stderr.stat().st_mode), str(stderr))
+        self.assertFalse(self.dispatch_log(utf8_id).exists())
 
     def report_logged(self, body):
         log = pathlib.Path(str(self.db) + '.root.log')
