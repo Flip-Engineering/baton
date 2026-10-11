@@ -490,7 +490,7 @@ def promote(db: String, id: String, promoter: String, source: String, destinatio
   promote_scoped(db,id,promoter,"session",source,"session",destination,finding)
 
 # Single-record convenience writes share the scientific batch validator.
-def scientific_single(+db: String, +payload: String, node: Bool) -> IO(Unit):
+def scientific_single(+db: String, +payload: String, +node: Bool) -> IO(Unit):
   do IO<Unit>:
     +input : String <- IO.pure(String,C.q(payload))
     +value : String <- IO.pure(String,"(CASE WHEN json_valid(" ++ input ++ ") THEN " ++ input ++ " ELSE '{}' END)")
