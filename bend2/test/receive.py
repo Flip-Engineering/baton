@@ -2338,12 +2338,12 @@ class Receive(unittest.TestCase):
         direct = self.spawn('turn', 'root', 'direct-handoff', str(self.fixture), 'root', 'low',
                             str(self.directory), str(task),
                             str(self.directory / 'direct-handoff.jsonl'), '')
-        first, started = self.accept('root')
+        first, started = self.accept_child(direct, 'root')
         self.assertEqual(started['codexHome'], str(store_a))
         self.assertIn(body, started['prompt'])
         self.action(first, fail=True, ack=False, fail_message=cause)
         self.action(first, exit_fixture=True)
-        second, resumed = self.accept('root')
+        second, resumed = self.accept_child(direct, 'root')
         launches = [json.loads(line) for line in
                     (self.directory / 'native-launches.jsonl').read_text().splitlines()]
         self.assertEqual(len(launches), 2)
@@ -2418,17 +2418,17 @@ class Receive(unittest.TestCase):
         direct = self.spawn('turn', 'root', 'direct-handoff-chain', str(self.fixture), 'root', 'low',
                             str(self.directory), str(task),
                             str(self.directory / 'direct-handoff-chain.jsonl'), '')
-        first, started = self.accept('root')
+        first, started = self.accept_child(direct, 'root')
         self.assertEqual(started['codexHome'], str(store_a))
         self.action(first, fail=True, ack=False, fail_message=cause)
         self.action(first, exit_fixture=True)
-        second, resumed_b = self.accept('root')
+        second, resumed_b = self.accept_child(direct, 'root')
         self.assertEqual(resumed_b['codexHome'], str(store_b))
         self.assertEqual(resumed_b['native'], started['native'])
         self.assertIn(body, resumed_b['prompt'])
         self.action(second, fail=True, ack=False, fail_message=cause)
         self.action(second, exit_fixture=True)
-        third, resumed_c = self.accept('root')
+        third, resumed_c = self.accept_child(direct, 'root')
         launches = [json.loads(line) for line in
                     (self.directory / 'native-launches.jsonl').read_text().splitlines()]
         self.assertEqual(len(launches), 3)
