@@ -1,5 +1,6 @@
 """Native inbox delivery with controlled harness processes and real coordinator state."""
 import fcntl
+import hashlib
 import json
 import os
 import pathlib
@@ -125,6 +126,22 @@ FIXTURE = r'''import json,os,pathlib,re,socket,subprocess,sys,time
 home=pathlib.Path(__file__).resolve().parent
 config=json.loads((home/'fixture.json').read_text())
 args=sys.argv[1:]
+if args[:1]==['export']:
+    session=args[args.index('--session')+1]
+    output=pathlib.Path(args[args.index('--out')+1])
+    saved=json.loads((home/('muse-export-'+session.encode().hex()+'.json')).read_text())
+    def record(sequence,event):
+        return {'kind':'record','envelope':{'durability':'durable','sequence':sequence,
+                'stream':{'kind':'session','id':session},
+                'payload':{'kind':'run','run_id':saved['runId'],'event':event}}}
+    messages=[] if saved['mode']=='missing' else [record(10,{
+        'kind':'assistant_message_committed','message_id':saved['messageId'],
+        'response_id':saved['responseId'],'provider_item_id':saved['providerItemId'],
+        'text':saved['text']})]
+    document={'export_schema_version':1,'exporter_version':'receive-fixture',
+              'events':messages+[record(11,{'kind':'terminal','terminal':'completed'})]}
+    output.write_text(json.dumps(document))
+    sys.exit(0)
 if args[:1]==['legacy_keeper']:
     import array,ctypes,fcntl,select,struct
     legacy=config['legacy_keeper']
@@ -471,6 +488,12 @@ while True:
                           'session_id':native,'is_error':failure,
                           'result':action.get('fail_message','fixture provider failed') if failure else body}),flush=True)
     elif muse:
+        if not failure:
+            export={'runId':'fixture-primary','messageId':'fixture-message',
+                    'responseId':'fixture-response','providerItemId':'fixture-provider-item',
+                    'text':action.get('final_body',body),
+                    'mode':action.get('export_mode','selected')}
+            (home/('muse-export-'+native.encode().hex()+'.json')).write_text(json.dumps(export))
         payload={'kind':'run_terminal','terminal':'failed' if failure else 'completed',
                  'command_id':'fixture-primary',
                  'text':action.get('fail_message','fixture provider failed') if failure else body}
@@ -899,6 +922,58 @@ class Receive(unittest.TestCase):
         self.finish(observer)
         self.assertEqual([turn['reportBody'] for turn in self.coord('turns', 'parent')],
                          ['Original result complete.', 'Queued result complete.'])
+
+    def test_muse_receive_reports_the_durable_final_assistant_message(self):
+        self.player(harness='muse')
+        self.prepare_input('muse-final-task', 'parent', 'Return the final authored response.', kind='task')
+        self.connect('parent')
+        observer = self.spawn(*self.receive_args('parent'))
+        stream, _ = self.accept('parent')
+        final = 'The final authored Muse response.\nIt has an exact durable boundary.'
+        cumulative = 'An older intermediate summary.\n' + final
+        self.action(stream, body=cumulative, final_body=final)
+        self.assertEqual(stream.readline(), b'')
+        self.finish(observer)
+        turns = self.coord('turns', 'parent')
+        self.assertEqual([turn['reportBody'] for turn in turns], [final])
+        with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
+            event = json.loads(database.execute(
+                "SELECT event FROM turns WHERE worker='parent' ORDER BY rowid LIMIT 1"
+            ).fetchone()[0])
+        selected = event['baton']['finalResponse']
+        self.assertEqual((selected['status'], selected['source'], selected['sessionId'],
+                          selected['runId'], selected['messageId'], selected['responseId'],
+                          selected['providerItemId'], selected['assistantSequence'],
+                          selected['terminalSequence'], selected['assistantCandidateCount'],
+                          selected['textUtf8Bytes'], selected['textSha256'], selected['text']),
+                         ('selected', 'muse-export-v1', 'native-parent', 'fixture-primary',
+                          'fixture-message', 'fixture-response', 'fixture-provider-item', 10, 11, 1,
+                          len(final.encode()), hashlib.sha256(final.encode()).hexdigest(), final))
+        self.assertEqual(event['payload']['text'], cumulative)
+        self.assertEqual(self.coord('delivery', turns[0]['id'])['body'], final)
+
+    def test_muse_receive_preserves_terminal_text_when_final_boundary_is_missing(self):
+        self.player(harness='muse')
+        self.prepare_input('muse-missing-final-task', 'parent',
+                           'Preserve the observed terminal if the export is incomplete.', kind='task')
+        self.connect('parent')
+        observer = self.spawn(*self.receive_args('parent'))
+        stream, _ = self.accept('parent')
+        cumulative = 'The complete cumulative terminal stays available.'
+        self.action(stream, body=cumulative, export_mode='missing')
+        self.assertEqual(stream.readline(), b'')
+        self.finish(observer)
+        turns = self.coord('turns', 'parent')
+        self.assertEqual([turn['reportBody'] for turn in turns], [cumulative])
+        with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
+            event = json.loads(database.execute(
+                "SELECT event FROM turns WHERE worker='parent' ORDER BY rowid LIMIT 1"
+            ).fetchone()[0])
+        final_response = event['baton']['finalResponse']
+        self.assertEqual(final_response['status'], 'unavailable')
+        self.assertEqual(final_response['diagnostic']['code'], 'assistantBoundaryMissing')
+        self.assertTrue(final_response['diagnosticLog'].endswith('/muse-final-response.stderr'))
+        self.assertEqual(event['payload']['text'], cumulative)
 
     def test_workers_continue_successful_native_turns_until_their_coordinator_confirms(self):
         for harness in ('codex', 'omp', 'muse', 'claude-code'):
@@ -1513,6 +1588,9 @@ class Receive(unittest.TestCase):
                     fixture.exercise_observer_loss(harness, retry=False)
                 finally:
                     fixture.doCleanups()
+
+    def test_muse_final_response_is_extracted_after_observer_recovery(self):
+        self.exercise_observer_loss('muse', retry=True)
 
     def test_observer_loss_after_terminal_keeps_lock_until_native_exit(self):
         for harness in ('codex', 'omp'):

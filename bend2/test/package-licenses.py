@@ -127,7 +127,8 @@ class PackageLicenses(unittest.TestCase):
         names = [harness + '-' + suffix + '.mjs'
                  for harness in ('codex', 'omp', 'mcp') for suffix in ('conductor', 'root')]
         names.extend(('context-provider.mjs', 'context-project-policy.mjs',
-                      'context-query-artifact.mjs', 'context-worktree-capture.mjs'))
+                      'context-query-artifact.mjs', 'context-worktree-capture.mjs',
+                      'muse-final-response.mjs'))
         for name in names:
             shutil.copyfile(ROOT / 'bend2/scripts' / name, scripts / name)
         helper = self.source / 'bend2/harness/git-series.mjs'

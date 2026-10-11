@@ -33,6 +33,7 @@ type Command is Data:
   MessageBatchFile{sender: String, path: String}
   TaskContinue{session: String, id: String}
   Observe{id: String, player: String, event: String, sealed: Bool}
+  MuseFinal{id: String, player: String, event: String}
   ObserveFile{id: String, player: String, path: String}
   Report{id: String, sender: String, body: String}
   ReportFile{id: String, sender: String, path: String}
@@ -378,10 +379,22 @@ def completion_pending_sql(+player: String) -> String:
 def completion_oldest_sql(+player: String) -> String:
   "(SELECT id FROM messages WHERE recipient=" ++ q(player) ++ " AND receipt IS NULL AND NOT " ++ stopped_session_sql(q(player)) ++ " ORDER BY seq LIMIT 1)"
 
-def completion_sql_expr(+id: String, +player: String, +event: String) -> String:
-  "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ q(id) ++ ",id," ++ report_recipient("sessions.id") ++ ",'report'," ++ terminal_body_expr(event) ++ " FROM sessions WHERE id=" ++ q(player) ++ " AND " ++ report_recipient("sessions.id") ++ " IS NOT NULL AND " ++ terminal_expr(event) ++ message_upsert() ++ message_conflict_sql(q(id),q(player),report_recipient(q(player)),"'report'",terminal_body_expr(event),report_recipient(q(player)) ++ " IS NOT NULL AND " ++ terminal_expr(event))
-  ++ "INSERT INTO turns(id,worker,event) SELECT " ++ q(id) ++ "," ++ q(player) ++ "," ++ event ++ " WHERE " ++ report_recipient(q(player)) ++ " IS NOT NULL AND " ++ terminal_expr(event) ++ " AND EXISTS(SELECT 1 FROM messages WHERE id=" ++ q(id) ++ " AND sender=" ++ q(player) ++ " AND recipient=" ++ report_recipient(q(player)) ++ " AND kind='report' AND body=" ++ terminal_body_expr(event) ++ ") ON CONFLICT(id) DO NOTHING;"
+def completion_sql_body_expr(+id: String, +player: String, +event: String, +body: String) -> String:
+  "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ q(id) ++ ",id," ++ report_recipient("sessions.id") ++ ",'report'," ++ body ++ " FROM sessions WHERE id=" ++ q(player) ++ " AND " ++ report_recipient("sessions.id") ++ " IS NOT NULL AND " ++ terminal_expr(event) ++ message_upsert() ++ message_conflict_sql(q(id),q(player),report_recipient(q(player)),"'report'",body,report_recipient(q(player)) ++ " IS NOT NULL AND " ++ terminal_expr(event))
+  ++ "INSERT INTO turns(id,worker,event) SELECT " ++ q(id) ++ "," ++ q(player) ++ "," ++ event ++ " WHERE " ++ report_recipient(q(player)) ++ " IS NOT NULL AND " ++ terminal_expr(event) ++ " AND EXISTS(SELECT 1 FROM messages WHERE id=" ++ q(id) ++ " AND sender=" ++ q(player) ++ " AND recipient=" ++ report_recipient(q(player)) ++ " AND kind='report' AND body=" ++ body ++ ") ON CONFLICT(id) DO NOTHING;"
   ++ "SELECT json_object('player',id,'native',native,'eventType',coalesce(json_extract(" ++ event ++ ",'$.type'),json_extract(" ++ event ++ ",'$.payload_type')),'reportId',CASE WHEN " ++ report_recipient("sessions.id") ++ " IS NOT NULL AND " ++ terminal_expr(event) ++ " THEN " ++ q(id) ++ " ELSE NULL END,'reconciliation',CASE WHEN " ++ completion_pending_sql(player) ++ ">0 THEN json_object('pendingCount'," ++ completion_pending_sql(player) ++ ",'oldestPendingId'," ++ completion_oldest_sql(player) ++ ",'next','Reconcile the pending input before completion; wake the session or record the blocked cause.') ELSE NULL END) FROM sessions WHERE id=" ++ q(player) ++ ";"
+
+def completion_sql_expr(+id: String, +player: String, +event: String) -> String:
+  completion_sql_body_expr(id,player,event,terminal_body_expr(event))
+
+def muse_final_body_expr(+event: String) -> String:
+  "CASE WHEN json_extract(" ++ event ++ ",'$.baton.finalResponse.status')='selected' THEN json_extract(" ++ event ++ ",'$.baton.finalResponse.text') ELSE " ++ terminal_body_expr(event) ++ " END"
+
+def muse_final_sql(+id: String, +player: String, +event: String) -> String:
+  observation_frame_sql(event)
+  ++ observe_identity_sql_expr(player,observation_frame())
+  ++ completion_sql_body_expr(id,player,observation_frame(),muse_final_body_expr(observation_frame()))
+  ++ "DROP TABLE temp.baton_observation_frame;"
 
 # The SQL query owns this temporary frame relation for its complete transaction.
 # Identity, report and turn statements read the same complete valid JSON frame.
@@ -531,6 +544,7 @@ def sql(command: Command) -> String:
     case TaskContinue{+session,+id}:
       task_continuation_sql(session,id) ++ "SELECT json_object('session',id,'continuationId',(SELECT id FROM messages WHERE id=" ++ q(id ++ ":task-continuation") ++ " AND recipient=" ++ q(session) ++ " AND receipt IS NULL),'taskCompletion'," ++ task_state_sql("sessions.id") ++ ") FROM sessions WHERE id=" ++ q(session) ++ ";"
     case Observe{id,player,event,sealed}: observe_sql(id,player,event,sealed)
+    case MuseFinal{id,player,event}: muse_final_sql(id,player,event)
     case Attach{+id, harness, native, endpoint}:
       "INSERT INTO sessions(id,harness,native,endpoint) VALUES(" ++ q(id) ++ "," ++ q(harness) ++ "," ++ q(native) ++ "," ++ q(endpoint) ++ ") ON CONFLICT(id) DO UPDATE SET harness=excluded.harness,native=excluded.native,endpoint=excluded.endpoint WHERE sessions.parent IS NULL;"
       ++ "SELECT json_object('error','attach-parent-conflict','session',id,'parent',parent,'condition','The session is already registered with a parent.','next','Read session ID and use connect or receiver to update its native endpoint.') FROM sessions WHERE id=" ++ q(id) ++ " AND parent IS NOT NULL;"

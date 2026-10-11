@@ -583,6 +583,20 @@ def terminal_event(event: String, previous: String, selected: Bool) -> IO(String
     case False{}: IO.pure(String,previous)
     case True{}: IO.pure(String,event)
 
+def muse_completed_terminal(+db: String, +event: String, enabled: Bool) -> IO(Bool):
+  match enabled:
+    case False{}: IO.pure(Bool,False{})
+    case True{}: do IO<Bool>:
+      completed : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN json_extract(" ++ C.q(event) ++ ",'$.payload.kind')='run_terminal' AND json_extract(" ++ C.q(event) ++ ",'$.payload.terminal')='completed' ELSE 0 END;"))
+      IO.pure(Bool,String.eq(completed,"1\n"))
+
+def muse_pending_event(+db: String, +event: String, enabled: Bool) -> IO(String):
+  match enabled:
+    case False{}: IO.pure(String,event)
+    case True{}: do IO<String>:
+      pending : String <- IO.try(String,DB.Sql.query(db,"SELECT json_set(" ++ C.q(event) ++ ",'$.baton.finalResponse',json_object('status','pending','source','muse-export-v1'));"))
+      IO.pure(String,Tx.trim_nl(pending))
+
 def codex_frames(db: String, +previous: String, +line: String, codex: Bool) -> IO(String):
   match codex:
     case False{}: IO.pure(String,previous)
@@ -710,7 +724,7 @@ def consume_exhausted(+db: String, +player: String, +id: String, +log: String, h
     IO.pure(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>,(Ended{status_text(unshared_result(String,status)),event,error,incomplete},deliveries))
 
 @unsafe
-def consume(+db: String, +player: String, +id: String, +log: String, +policy: Logs.Policy, +held: String, +log_failed: Bool, +handle: U32, +harness: String, +cursor: String, +last_message: String, +primary: String, +current: String, +terminal: String, +filter: String, +requested: String, +codex_log: String, +first_error: String, +sender: Chan(Result<&1,&1,U32 & String,Unit>), +attempt: String, +checkpoint_state: Observer.State, +incomplete_observation: Bool, +wake_sub: U32, wake_on: Bool, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, result: Result<&1,&1,U32 & String,WakeRead>) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
+def consume(+db: String, +player: String, +id: String, +log: String, +policy: Logs.Policy, +held: String, +log_failed: Bool, +handle: U32, +harness: String, +cursor: String, +last_message: String, +primary: String, +current: String, +terminal: String, +filter: String, +requested: String, +codex_log: String, +first_error: String, +sender: Chan(Result<&1,&1,U32 & String,Unit>), +attempt: String, +checkpoint_state: Observer.State, +incomplete_observation: Bool, +wake_sub: U32, wake_on: Bool, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, defer_muse: Bool, result: Result<&1,&1,U32 & String,WakeRead>) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
   match result:
     case Fail{error}: do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
       wake_closed : Result<&1,&1,U32 & String,Unit> <- wake_close(wake_sub,wake_on)
@@ -734,7 +748,7 @@ def consume(+db: String, +player: String, +id: String, +log: String, +policy: Lo
         pending => consume_exhausted(db,player,id,log,held,log_failed,handle,harness,codex_log,terminal,filter,requested,first_error,sender,attempt,checkpoint_state,incomplete_observation,pending,wake_sub,alive),
         pending => do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
           next : Result<&1,&1,U32 & String,WakeRead> <- wake_line(handle,wake_sub,alive)
-          consume(db,player,id,log,policy,held,log_failed,handle,harness,drained,last_message,primary,current,terminal,filter,requested,codex_log,first_error,sender,attempt,checkpoint_state,incomplete_observation,wake_sub,alive,pending,next)))
+          consume(db,player,id,log,policy,held,log_failed,handle,harness,drained,last_message,primary,current,terminal,filter,requested,codex_log,first_error,sender,attempt,checkpoint_state,incomplete_observation,wake_sub,alive,pending,defer_muse,next)))
       continuation(deliveries)
     case Done{AwakeLine{+line,notice,+alive}}:
       do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
@@ -767,9 +781,12 @@ def consume(+db: String, +player: String, +id: String, +log: String, +policy: Lo
           +observation_sealed : Bool <- IO.pure(Bool,terminal_observation_sealed(sealed,terminal_frame,admitted,state))
           conflict_note : Unit <- completion_conflict_note(db,player,id,event,String.eq(state,"conflict"))
           +episode : String <- deferred_note(db,player,id,event,terminal,next_primary,next_current,Observer.episode(checkpoint_state),Bool.and(sealed,terminal_frame),String.eq(harness,"muse\n"))
-          +observed : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,String> <- shared_result_io(String,observe_event(db,player,id,event,relevant,Bool.or(observation_sealed,failed)))
           +terminal_selected : Bool <- IO.pure(Bool,Bool.and(relevant,Bool.and(admitted,Bool.not(sealed))))
-          +ended : String <- terminal_event(event,terminal,terminal_selected)
+          +defer_candidate : Bool <- IO.pure(Bool,Bool.and(defer_muse,Bool.and(String.eq(harness,"muse\n"),Bool.and(terminal_selected,Bool.not(Bool.or(observation_sealed,failed))))))
+          +deferred_final : Bool <- muse_completed_terminal(db,event,defer_candidate)
+          +stored_event : String <- muse_pending_event(db,event,deferred_final)
+          +observed : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,String> <- shared_result_io(String,observe_event(db,player,id,stored_event,relevant,Bool.or(Bool.or(observation_sealed,failed),deferred_final)))
+          +ended : String <- terminal_event(stored_event,terminal,terminal_selected)
           +closed_input : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,Unit> <- shared_result_io(Unit,close_input(handle,Bool.not(Bool.and(String.eq(harness,"omp\n"),Bool.and(String.is_empty(terminal),Bool.not(String.is_empty(ended)))))))
           +codex_frame : Bool <- IO.pure(Bool,String.eq(harness,"codex\n"))
           +codex_state : String <- codex_frames(db,codex_log,line,codex_frame)
@@ -786,7 +803,7 @@ def consume(+db: String, +player: String, +id: String, +log: String, +policy: Lo
             +next_error : String <- IO.pure(String,append_write_error(append_write_error(append_store_error(append_write_error(append_error(first_error,question_text),unshared_result(Unit,written)),unshared_result(String,observed)),unshared_result(Unit,closed_input)),unshared_result(Unit,checkpointed)))
             +next_incomplete : Bool <- IO.pure(Bool,Bool.or(incomplete_observation,Bool.or(request_incomplete,Bool.or(observation_store_failed(unshared_result(String,observed)),Bool.or(checkpoint_write_failed(unshared_result(Unit,closed_input)),Bool.or(checkpoint_write_failed(unshared_result(Unit,checkpointed)),failed))))))
             next : Result<&1,&1,U32 & String,WakeRead> <- wake_line(handle,wake_sub,alive)
-            consume(db,player,id,log,current_policy,next_held,failed,handle,harness,next_cursor,message,next_primary,next_current,ended,next_filter,requested,codex_state,next_error,sender,attempt,next_checkpoint,next_incomplete,wake_sub,alive,wakes,next)))
+            consume(db,player,id,log,current_policy,next_held,failed,handle,harness,next_cursor,message,next_primary,next_current,ended,next_filter,requested,codex_state,next_error,sender,attempt,next_checkpoint,next_incomplete,wake_sub,alive,wakes,defer_muse,next)))
 
 def direct_observed(observation: Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>) -> IO(Outcome):
   (outcome,deliveries)=observation
@@ -807,13 +824,13 @@ def started(+db: String, +player: String, +id: String, +log: String, prompt: Str
         with_restore_result(Outcome,restored,restore_error => restore_failed => do IO<Outcome>:
           sender : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,send_prompt(handle,prompt,harness,level))
           first : Result<&1,&1,U32 & String,WakeRead> <- plain_wake_line(handle)
-          observation : Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- consume(db,player,id,generation,policy,"",False{},handle,harness,"0\n","","","","","",requested,"",restore_error,sender,"",Observer.empty(),restore_failed,0,False{},Nil{},first)
+          observation : Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- consume(db,player,id,generation,policy,"",False{},handle,harness,"0\n","","","","","",requested,"",restore_error,sender,"",Observer.empty(),restore_failed,0,False{},Nil{},False{},first)
           direct_observed(observation))
 
 # The retained process sends its initial input once. Reattachment reads the same
 # attempt from its first frame so native completion can be reconstructed.
 @unsafe
-def retained_output(+db: String, +player: String, +id: String, +log: String, +harness: String, attempt: String, +handle: U32, +supplied_requested: String) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
+def retained_output_mode(+db: String, +player: String, +id: String, +log: String, +harness: String, attempt: String, +handle: U32, +supplied_requested: String, defer_muse: Bool) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
   do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
     +generation : String <- IO.pure(String,generation_log(log,id))
     +policy : Logs.Policy <- Logs.open_attempt(db,player,log,id)
@@ -833,7 +850,63 @@ def retained_output(+db: String, +player: String, +id: String, +log: String, +ha
     +requested : String <- IO.pure(String,Bool.pick(String,String.eq(supplied_requested,"unknown"),Omp.filter_requested(Observer.filter_mode(checkpoint_state)),supplied_requested))
     codex_log : String <- IO.pure(String,Observer.codex_log(checkpoint_state))
     held : String <- IO.pure(String,Observer.held(checkpoint_state))
-    consume(db,player,id,generation,policy,held,False{},handle,harness,cursor,last_message,primary,current,terminal,filter,requested,codex_log,"",sender,attempt,checkpoint_state,False{},wake_sub,wake_on,Nil{},first)
+    consume(db,player,id,generation,policy,held,False{},handle,harness,cursor,last_message,primary,current,terminal,filter,requested,codex_log,"",sender,attempt,checkpoint_state,False{},wake_sub,wake_on,Nil{},defer_muse,first)
+
+def retained_output(+db: String, +player: String, +id: String, +log: String, +harness: String, attempt: String, +handle: U32, +supplied_requested: String) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
+  retained_output_mode(db,player,id,log,harness,attempt,handle,supplied_requested,False{})
+
+def retained_receive_output(+db: String, +player: String, +id: String, +log: String, +harness: String, attempt: String, +handle: U32, +supplied_requested: String) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
+  retained_output_mode(db,player,id,log,harness,attempt,handle,supplied_requested,True{})
+
+def muse_final_pending(+db: String, +event: String, muse: Bool) -> IO(Bool):
+  match muse:
+    case False{}: IO.pure(Bool,False{})
+    case True{}: do IO<Bool>:
+      pending : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN json_extract(" ++ C.q(event) ++ ",'$.baton.finalResponse.status')='pending' ELSE 0 END;"))
+      IO.pure(Bool,String.eq(pending,"1\n"))
+
+def muse_final_context(+db: String, +event: String) -> IO(List<String>):
+  do IO<List<String>>:
+    fields : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce(json_extract(" ++ C.q(event) ++ ",'$.stream.id'),'') || char(9) || coalesce(json_extract(" ++ C.q(event) ++ ",'$.payload.command_id'),'');"))
+    IO.pure(List<String>,Tx.split_tabs(Tx.trim_nl(fields)))
+
+def muse_final_extract(+cmd: String, +cwd: String, +attempt: String, fields: List<String>) -> IO(String):
+  match fields:
+    case +session <> +run <> Nil{}:
+      Bool.pick(IO(String),Bool.or(String.is_empty(session),String.is_empty(run)),
+        IO.pure(String,Muse.unavailable("terminalIdentity","The completed Muse terminal lacks its session or run identity")),
+        Muse.final_response(cmd,session,run,attempt ++ "/muse-export.json",attempt ++ "/muse-final-response.stderr",cwd))
+    case other: IO.pure(String,Muse.unavailable("terminalIdentity","The completed Muse terminal has an invalid session and run identity shape"))
+
+def muse_final_event(+db: String, +event: String, +extraction: String, +diagnostic: String) -> IO(String):
+  do IO<String>:
+    enriched : String <- IO.try(String,DB.Sql.query(db,"WITH extracted(value) AS (VALUES(" ++ C.q(extraction) ++ ")) SELECT json_set(" ++ C.q(event) ++ ",'$.baton.finalResponse',CASE WHEN json_valid(value) AND json_extract(value,'$.status') IN ('selected','unavailable') THEN json_set(json(value),'$.diagnosticLog'," ++ C.q(diagnostic) ++ ") ELSE json_object('status','unavailable','diagnostic',json_object('code','helperOutput','detail',value),'diagnosticLog'," ++ C.q(diagnostic) ++ ") END) FROM extracted;"))
+    IO.pure(String,Tx.trim_nl(enriched))
+
+def muse_final_saved(+status: String, +event: String, +error: String, incomplete: Bool, saved: Result<&1,&1,U32 & String,String>) -> IO(Outcome):
+  match saved:
+    case Done{value}: IO.pure(Outcome,Ended{status,event,error,incomplete})
+    case Fail{failure}: IO.pure(Outcome,Ended{status,event,append_error(error,"Muse final-response observation failed: " ++ error_text(failure)),True{}})
+
+def muse_final_observe(+db: String, +player: String, +id: String, +cmd: String, +cwd: String, +attempt: String, +status: String, +event: String, +error: String, incomplete: Bool) -> IO(Outcome):
+  do IO<Outcome>:
+    fields : List<String> <- muse_final_context(db,event)
+    extraction : String <- muse_final_extract(cmd,cwd,attempt,fields)
+    enriched : String <- muse_final_event(db,event,extraction,attempt ++ "/muse-final-response.stderr")
+    saved : Result<&1,&1,U32 & String,String> <- Store.apply(db,C.MuseFinal{id,player,event: enriched})
+    muse_final_saved(status,enriched,error,incomplete,saved)
+
+def muse_final_selected(+db: String, +player: String, +id: String, +cmd: String, +cwd: String, +attempt: String, +status: String, +event: String, +error: String, incomplete: Bool, pending: Bool) -> IO(Outcome):
+  match pending:
+    case True{}: muse_final_observe(db,player,id,cmd,cwd,attempt,status,event,error,incomplete)
+    case False{}: IO.pure(Outcome,Ended{status,event,error,incomplete})
+
+def finalize_retained_receive(+db: String, +player: String, +id: String, +harness: String, +cmd: String, +cwd: String, +attempt: String, observation: Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
+  match observation:
+    case (Ended{+status,+event,+error,incomplete},+deliveries): do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
+      pending : Bool <- muse_final_pending(db,event,String.eq(harness,"muse\n"))
+      final : Outcome <- muse_final_selected(db,player,id,cmd,cwd,attempt,status,event,error,incomplete,pending)
+      IO.pure(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>,(final,deliveries))
 
 def muse_retained_arguments(cmd: String, model: String, effort: String, prompt_file: String, +session: String) -> List<String>:
   Muse.resume_arguments(cmd,model,effort,prompt_file,session)
