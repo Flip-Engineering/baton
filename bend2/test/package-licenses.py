@@ -128,12 +128,16 @@ class PackageLicenses(unittest.TestCase):
                  for harness in ('codex', 'omp', 'mcp') for suffix in ('conductor', 'root')]
         names.extend(('context-provider.mjs', 'context-project-policy.mjs',
                       'context-query-artifact.mjs', 'context-worktree-capture.mjs',
-                      'muse-final-response.mjs'))
+                      'muse-final-response.mjs', 'codex-inbox-wake.mjs'))
         for name in names:
             shutil.copyfile(ROOT / 'bend2/scripts' / name, scripts / name)
         helper = self.source / 'bend2/harness/git-series.mjs'
         helper.parent.mkdir(parents=True)
         shutil.copyfile(ROOT / 'bend2/harness/git-series.mjs', helper)
+        shutil.copyfile(ROOT / 'bend2/harness/native-history.mjs',
+                        self.source / 'bend2/harness/native-history.mjs')
+        shutil.copyfile(ROOT / 'docs/bend2/knowledge-v1.schema.json',
+                        self.source / 'docs/bend2/knowledge-v1.schema.json')
         shutil.copytree(ROOT / 'bend2/ui/orchestra', self.source / 'bend2/ui/orchestra')
         PACKAGE.stage_adapters(self.payload)
         return names
@@ -146,6 +150,10 @@ class PackageLicenses(unittest.TestCase):
             path = 'libexec/baton2/' + name
             data = (ROOT / 'bend2/scripts' / name).read_bytes()
             self.assertEqual((prefix / path).read_bytes(), data)
+        for source, name in (('bend2/harness/native-history.mjs', 'native-history.mjs'),
+                             ('docs/bend2/knowledge-v1.schema.json', 'knowledge-v1.schema.json')):
+            self.assertEqual((prefix / 'libexec/baton2' / name).read_bytes(),
+                             (ROOT / source).read_bytes())
 
     def test_extracted_git_helper_selects_author_with_its_source_absent(self):
         self.stage_runtime_files()
