@@ -20,7 +20,7 @@ on:
         required: false
         type: string
       runtime_suite:
-        description: One existing runtime suite to recheck; empty runs the full selection
+        description: Existing runtime suite, empty for the full matrix, or darwin-package-only for retained Darwin package and smoke
         required: false
         type: string
       browser_capture_only:
@@ -196,7 +196,7 @@ jobs:
           fi
 
   darwin:
-    if: ${{ !cancelled() && !inputs.runtime_suite && (github.event_name == 'workflow_dispatch' || needs.build.result == 'success') && (github.event_name == 'workflow_dispatch' || needs.darwin_publication.result == 'success') }}
+    if: ${{ !cancelled() && (!inputs.runtime_suite || (inputs.runtime_suite == 'darwin-package-only' && !inputs.darwin_from_generated_c)) && (github.event_name == 'workflow_dispatch' || needs.build.result == 'success') && (github.event_name == 'workflow_dispatch' || needs.darwin_publication.result == 'success') }}
     needs: [build, darwin_publication]
     runs-on: macos-15
     steps:
@@ -401,7 +401,7 @@ jobs:
           retention-days: 14
 
   runtime:
-    if: ${{ !cancelled() && !inputs.darwin_from_generated_c && (github.event_name == 'workflow_dispatch' || needs.build.result == 'success') }}
+    if: ${{ !cancelled() && inputs.runtime_suite != 'darwin-package-only' && !inputs.darwin_from_generated_c && (github.event_name == 'workflow_dispatch' || needs.build.result == 'success') }}
     needs: build
     runs-on: ubuntu-24.04
     strategy:
