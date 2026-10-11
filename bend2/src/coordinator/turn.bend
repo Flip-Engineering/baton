@@ -892,8 +892,8 @@ def muse_final_observe(+db: String, +player: String, +id: String, +cmd: String, 
   do IO<Outcome>:
     fields : List<String> <- muse_final_context(db,event)
     extraction : String <- muse_final_extract(cmd,cwd,attempt,fields)
-    enriched : String <- muse_final_event(db,event,extraction,attempt ++ "/muse-final-response.stderr")
-    saved : Result<&1,&1,U32 & String,String> <- Store.apply(db,C.MuseFinal{id,player,event: enriched})
+    +enriched : String <- muse_final_event(db,event,extraction,attempt ++ "/muse-final-response.stderr")
+    saved : Result<&1,&1,U32 & String,String> <- Store.apply(db,C.MuseFinal{id,player,enriched})
     muse_final_saved(status,enriched,error,incomplete,saved)
 
 def muse_final_selected(+db: String, +player: String, +id: String, +cmd: String, +cwd: String, +attempt: String, +status: String, +event: String, +error: String, incomplete: Bool, pending: Bool) -> IO(Outcome):
