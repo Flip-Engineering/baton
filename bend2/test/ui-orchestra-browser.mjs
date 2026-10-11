@@ -1254,6 +1254,16 @@ await until('roster actor selection shows the actor card on the map',
 await evalJs(`document.querySelector('#roster .doc-row[data-doc-id="worker"] .doc-open').click()`);
 await until('live probes read the worker scope',
   `(document.querySelector('#map-scope').textContent || '').endsWith('· 2 items') && !!document.querySelector('#knowledge-whole .knode[aria-label="qa-worker-finding"]')`);
+await evalJs(`document.querySelector('#knowledge-whole svg.kw-canvas').dispatchEvent(new KeyboardEvent('keydown', {key:'Escape', bubbles:true}))`);
+check('Escape dismisses the worker map before the live frame', await evalJs(`(() => {
+  const card = document.querySelector('#knowledge-whole .kw-card');
+  const unlit = [...document.querySelectorAll('#knowledge-whole g.kw-edge-typed')]
+    .every((e) => !e.classList.contains('kw-hover-dim'));
+  return !card && unlit
+    && document.querySelector('#selection h2')?.textContent === 'worker'
+    && location.hash === '#seat=worker'
+    && (document.querySelector('#map-scope').textContent || '').endsWith('· 2 items');
+})()`));
 baton('record', 'qa-worker-live-finding', 'worker', 'Worker live finding.',
   'Live evidence.', 'Live limits.');
 await until('live record updates the author compact line through native SSE',
