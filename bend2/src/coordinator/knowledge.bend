@@ -119,7 +119,9 @@ def promotion_groups_value(db: String) -> IO(Bool):
 
 def relations_read_sql(+reader: String, +scope: String, +subject: String, groups: Bool, typed: Bool, +v1: Bool) -> String:
   +base = "SELECT " ++ relation_item(typed) ++ " AS item FROM knowledge_relations r WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") AND " ++ scope_relations_sql(scope,subject,groups)
-  +inner = Bool.pick(String,v1,base ++ " ORDER BY r.id LIMIT -1 UNION ALL SELECT " ++ V1.v1_relation_item(reader,scope,subject) ++ " AS item FROM knowledge_edges_v1 e WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") AND " ++ V1.v1_relations_scope(scope,subject),base ++ " ORDER BY r.id")
+  +legacy_branch = "SELECT " ++ relation_item(typed) ++ " AS item,0 AS o,r.id AS k FROM knowledge_relations r WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") AND " ++ scope_relations_sql(scope,subject,groups)
+  +v1_branch = "SELECT " ++ V1.v1_relation_item(reader,scope,subject) ++ " AS item,1 AS o,e.id AS k FROM knowledge_edges_v1 e WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(reader) ++ ") AND " ++ V1.v1_relations_scope(scope,subject)
+  +inner = Bool.pick(String,v1,"SELECT item FROM (" ++ legacy_branch ++ " UNION ALL " ++ v1_branch ++ ") ORDER BY o,k",base ++ " ORDER BY r.id")
   "SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (" ++ inner ++ ");"
 
 def relations_when_present(+db: String, reader: String, scope: String, subject: String,

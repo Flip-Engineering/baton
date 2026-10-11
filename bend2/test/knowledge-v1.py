@@ -359,17 +359,39 @@ class KnowledgeV1(unittest.TestCase):
         self.assertEqual(len(stored['promotions']), 1)
         self.assertEqual(stored['promotions'][0]['destination'], 'sibling')
 
+    def attempt(self, verb, payload):
+        return subprocess.run([str(EXE), str(self.db), verb, json.dumps(payload)],
+                              text=True, capture_output=True)
+
+    def record_in_dependency_order(self, verb, items):
+        # The pinned fixture is not topologically ordered (shade-study
+        # precedes its outputs), and write-time admission refuses forward
+        # references, so commit each row once its references resolve. Any
+        # refusal other than unresolved-endpoint fails immediately; rows
+        # still pending after a pass with no progress are unresolvable.
+        pending = [dict(item, author='grand') for item in items]
+        for _ in range(len(pending) + 1):
+            if not pending:
+                return
+            progressed = False
+            for payload in list(pending):
+                tried = self.attempt(verb, payload)
+                if tried.returncode == 0:
+                    pending.remove(payload)
+                    progressed = True
+                else:
+                    self.assertIn('v1-unresolved-endpoint', tried.stderr,
+                                  (payload.get('id'), tried.stderr))
+            if not progressed:
+                self.fail('unresolvable references: '
+                          + ','.join(item['id'] for item in pending))
+        self.assertEqual(pending, [])
+
     def test_scientific_example_round_trip(self):
         example = json.loads(FIXTURE.read_text())
         self.assertEqual(example['schemaVersion'], 1)
-        for item in example['nodes']:
-            payload = dict(item)
-            payload['author'] = 'grand'
-            self.record(payload)
-        for item in example['edges']:
-            payload = dict(item)
-            payload['author'] = 'grand'
-            self.relate(payload)
+        self.record_in_dependency_order('record-v1', example['nodes'])
+        self.record_in_dependency_order('relate-v1', example['edges'])
         for item in example['nodes']:
             stored = self.detail(item['id'])
             for field in ('statement', 'context', 'evidence', 'limits', 'uncertainty', 'details'):
