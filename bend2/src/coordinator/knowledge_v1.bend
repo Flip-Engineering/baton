@@ -405,14 +405,14 @@ def v1_edge_scope(+scope: String, +subject: String) -> String:
 def v1_relation_item(+reader: String, +scope: String, +subject: String) -> String:
   "json_object('id',e.id,'author',e.author,'source',json_extract(e.source,'$.id'),'sourceReference','v1:'||json_extract(e.source,'$.id'),'sourceKind',json_extract(e.source,'$.kind'),'relation',e.kind,'target',json_extract(e.target,'$.id'),'targetReference','v1:'||json_extract(e.target,'$.id'),'targetKind',json_extract(e.target,'$.kind'),'provenance','authored','schemaVersion',1,'schemaId','urn:baton:knowledge:schema:1','detailRead',json_array('knowledge-scope'," ++ C.q(reader) ++ "," ++ C.q(scope) ++ "," ++ C.q(subject) ++ ",'--id',e.id))"
 
+def v1_touch_either(+scope: String, +subject: String) -> String:
+  "(EXISTS(SELECT 1 FROM knowledge_v1 n WHERE (n.id=json_extract(e.source,'$.id') OR n.id=json_extract(e.target,'$.id')) AND " ++ v1_node_scope(scope,subject) ++ ") OR EXISTS(SELECT 1 FROM knowledge_edges_v1 r WHERE (r.id=json_extract(e.source,'$.id') OR r.id=json_extract(e.target,'$.id')) AND " ++ v1_edge_scope(scope,subject) ++ "))"
+
 def v1_relations_scope(+scope: String, +subject: String) -> String:
-  +holders = v1_scope_holders(scope,subject)
-  +touch_node = "EXISTS(SELECT 1 FROM knowledge_v1 n WHERE (n.id=json_extract(e.source,'$.id') OR n.id=json_extract(e.target,'$.id')) AND " ++ v1_node_scope(scope,subject) ++ ")"
-  +touch_edge = "EXISTS(SELECT 1 FROM knowledge_edges_v1 r WHERE (r.id=json_extract(e.source,'$.id') OR r.id=json_extract(e.target,'$.id')) AND " ++ v1_edge_scope(scope,subject) ++ ")"
   match scope:
     case "all": "1"
-    case "group": "(" ++ touch_node ++ " OR " ++ touch_edge ++ ")"
-    case _: "(e.author IN(" ++ holders ++ ") OR " ++ touch_node ++ " OR " ++ touch_edge ++ ")"
+    case "group": v1_touch_either(scope,subject)
+    case _: "(e.author IN(" ++ v1_scope_holders(scope,subject) ++ ") OR " ++ v1_touch_either(scope,subject) ++ ")"
 
 # Graph fragments plug into the legacy nodes/edges CTEs with the same
 # columns. v1 references carry the v1: prefix so they cannot collide with
