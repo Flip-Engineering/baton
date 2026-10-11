@@ -330,10 +330,10 @@ def m14_the_knowledge_verb_refuses_a_missing_argument():
 # transaction that checks six rules in order before writing, and a
 # violation answers a v1-refused refusal naming its rule and instance.
 # The storage validator checks structure and method classification only.
-law v1_the_v1_schema_creates_both_tables_beside_legacy:
-  {K1.v1_schema() == "CREATE TABLE IF NOT EXISTS knowledge_v1 (id TEXT UNIQUE NOT NULL,author TEXT NOT NULL,kind TEXT NOT NULL,statement TEXT NOT NULL,context TEXT NOT NULL,evidence TEXT NOT NULL,limits TEXT NOT NULL DEFAULT '',uncertainty TEXT NOT NULL DEFAULT '',details TEXT NOT NULL,schema_version INTEGER NOT NULL DEFAULT 1,supersedes TEXT,payload TEXT NOT NULL);" ++ "CREATE TABLE IF NOT EXISTS knowledge_edges_v1 (id TEXT UNIQUE NOT NULL,author TEXT NOT NULL,kind TEXT NOT NULL,source TEXT NOT NULL,target TEXT NOT NULL,context TEXT NOT NULL,basis TEXT NOT NULL,rationale TEXT NOT NULL,limits TEXT NOT NULL DEFAULT '',uncertainty TEXT NOT NULL DEFAULT '',details TEXT NOT NULL,schema_version INTEGER NOT NULL DEFAULT 1,supersedes TEXT,payload TEXT NOT NULL);" : String}
+law v1_the_v1_schema_creates_v1_tables_beside_legacy:
+  {K1.v1_schema() == "CREATE TABLE IF NOT EXISTS knowledge_v1 (id TEXT UNIQUE NOT NULL,author TEXT NOT NULL,kind TEXT NOT NULL,statement TEXT NOT NULL,context TEXT NOT NULL,evidence TEXT NOT NULL,limits TEXT NOT NULL DEFAULT '',uncertainty TEXT NOT NULL DEFAULT '',details TEXT NOT NULL,schema_version INTEGER NOT NULL DEFAULT 1,supersedes TEXT,payload TEXT NOT NULL);" ++ "CREATE TABLE IF NOT EXISTS knowledge_edges_v1 (id TEXT UNIQUE NOT NULL,author TEXT NOT NULL,kind TEXT NOT NULL,source TEXT NOT NULL,target TEXT NOT NULL,context TEXT NOT NULL,basis TEXT NOT NULL,rationale TEXT NOT NULL,limits TEXT NOT NULL DEFAULT '',uncertainty TEXT NOT NULL DEFAULT '',details TEXT NOT NULL,schema_version INTEGER NOT NULL DEFAULT 1,supersedes TEXT,payload TEXT NOT NULL);" ++ "CREATE TABLE IF NOT EXISTS knowledge_promotions_v1 (id TEXT UNIQUE NOT NULL,record_id TEXT NOT NULL,author TEXT NOT NULL,source_kind TEXT NOT NULL DEFAULT 'session',source TEXT NOT NULL,destination_kind TEXT NOT NULL DEFAULT 'session',destination TEXT NOT NULL,promoted_by TEXT NOT NULL);" : String}
 
-def v1_the_v1_schema_creates_both_tables_beside_legacy():
+def v1_the_v1_schema_creates_v1_tables_beside_legacy():
   {==}
 
 law v1_node_kinds_are_the_ten_closed_kinds:
@@ -448,7 +448,7 @@ law v1_a_promotion_reads_the_v1_row:
   for destination_kind: String
   for destination: String
   for finding: String
-  {K1.v1_promotion_statement(id,promoter,source_kind,source,destination_kind,destination,finding) == "INSERT INTO knowledge_promotions(id,finding,author,source_kind,source,destination_kind,destination,promoted_by) SELECT " ++ C.q(id) ++ ",k.id,k.author," ++ C.q(source_kind) ++ "," ++ C.q(source) ++ "," ++ C.q(destination_kind) ++ "," ++ C.q(destination) ++ "," ++ C.q(promoter) ++ " FROM knowledge_v1 k WHERE k.id=" ++ C.q(finding) ++ " AND " ++ K.promotion_admitted(promoter,destination_kind,destination) ++ " AND " ++ K.source_carries(source_kind,source) ++ " ON CONFLICT(id) DO NOTHING;" ++ K.knowledge_conflict_sql("promotion-id-conflict","knowledge_promotions",C.q(id),"EXISTS(SELECT 1 FROM knowledge_v1 k WHERE k.id=" ++ C.q(finding) ++ " AND " ++ K.promotion_admitted(promoter,destination_kind,destination) ++ " AND " ++ K.source_carries(source_kind,source) ++ ")",K.promotion_coordinates(id,promoter,source_kind,source,destination_kind,destination,finding),"'finding',finding,'source',source,'sourceKind',source_kind,'destination',destination,'destinationKind',destination_kind") : String}
+  {K1.v1_promotion_statement(id,promoter,source_kind,source,destination_kind,destination,finding) == "INSERT INTO knowledge_promotions_v1(id,record_id,author,source_kind,source,destination_kind,destination,promoted_by) SELECT " ++ C.q(id) ++ ",k.id,k.author," ++ C.q(source_kind) ++ "," ++ C.q(source) ++ "," ++ C.q(destination_kind) ++ "," ++ C.q(destination) ++ "," ++ C.q(promoter) ++ " FROM knowledge_v1 k WHERE k.id=" ++ C.q(finding) ++ " AND " ++ K.promotion_admitted(promoter,destination_kind,destination) ++ " AND " ++ K.source_carries(source_kind,source) ++ " ON CONFLICT(id) DO NOTHING;" ++ K.knowledge_conflict_sql("promotion-id-conflict","knowledge_promotions_v1",C.q(id),"EXISTS(SELECT 1 FROM knowledge_v1 k WHERE k.id=" ++ C.q(finding) ++ " AND " ++ K.promotion_admitted(promoter,destination_kind,destination) ++ " AND " ++ K.source_carries(source_kind,source) ++ ")",K1.v1_promotion_record_coordinates(id,promoter,source_kind,source,destination_kind,destination,finding),"'recordId',record_id,'source',source,'sourceKind',source_kind,'destination',destination,'destinationKind',destination_kind") : String}
 
 def v1_a_promotion_reads_the_v1_row(id,promoter,source_kind,source,destination_kind,destination,finding):
   {==}
@@ -590,4 +590,33 @@ law v1_edge_identity_covers_shared_namespace:
   {K1.v1_edge_identity_bad(t, batch) == "((EXISTS(SELECT 1 FROM knowledge_edges_v1 WHERE id==json_extract(" ++ t ++ ".value,'$.id') AND payload!=" ++ t ++ ".value))" ++ " OR (EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.edges') m WHERE m.fullkey!=" ++ t ++ ".fullkey AND json_extract(m.value,'$.id')==json_extract(" ++ t ++ ".value,'$.id') AND m.value!=" ++ t ++ ".value))" ++ " OR (EXISTS(SELECT 1 FROM knowledge_v1 WHERE id==json_extract(" ++ t ++ ".value,'$.id')))" ++ " OR (EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.nodes') m WHERE json_extract(m.value,'$.id')==json_extract(" ++ t ++ ".value,'$.id'))))" : String}
 
 def v1_edge_identity_covers_shared_namespace(t, batch):
+  {==}
+
+# Ruling synthesis-promotion-table-ruling-20261011: v1 promotions live
+# in knowledge_promotions_v1 keyed by the raw record id; reads carry
+# schemaVersion 1 and recordId.
+law v1_promotion_record_coordinates_match_record_id:
+  for id: String
+  for promoter: String
+  for source_kind: String
+  for source: String
+  for destination_kind: String
+  for destination: String
+  for finding: String
+  {K1.v1_promotion_record_coordinates(id, promoter, source_kind, source, destination_kind, destination, finding) == "id=" ++ C.q(id) ++ " AND record_id=" ++ C.q(finding) ++ " AND source_kind=" ++ C.q(source_kind) ++ " AND source=" ++ C.q(source) ++ " AND destination_kind=" ++ C.q(destination_kind) ++ " AND destination=" ++ C.q(destination) ++ " AND promoted_by=" ++ C.q(promoter) : String}
+
+def v1_promotion_record_coordinates_match_record_id(id, promoter, source_kind, source, destination_kind, destination, finding):
+  {==}
+
+law v1_promotion_reads_carry_schema_version_and_record_id:
+  for id: String
+  for promoter: String
+  for source_kind: String
+  for source: String
+  for destination_kind: String
+  for destination: String
+  for finding: String
+  {K1.v1_promotion_answer(id, promoter, source_kind, source, destination_kind, destination, finding) == "SELECT json_patch(json_object('schemaVersion',1,'id',id,'recordId',record_id,'author',author,'source',source,'destination',destination,'promotedBy',promoted_by)," ++ K1.v1_endpoint_fields("",True{}) ++ ") FROM knowledge_promotions_v1 WHERE " ++ K1.v1_promotion_record_coordinates(id,promoter,source_kind,source,destination_kind,destination,finding) ++ ";" : String}
+
+def v1_promotion_reads_carry_schema_version_and_record_id(id, promoter, source_kind, source, destination_kind, destination, finding):
   {==}

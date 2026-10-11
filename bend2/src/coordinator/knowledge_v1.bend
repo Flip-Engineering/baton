@@ -439,7 +439,8 @@ def detail_sql(+reader: String, +scope: String, +subject: String, +id: String) -
 # restated below as v1-local defs with identical output).
 # v1 records live in knowledge_v1 and knowledge_edges_v1 beside the
 # untouched legacy knowledge, knowledge_relations and
-# knowledge_promotions tables. Admission runs one BEGIN IMMEDIATE
+# knowledge_promotions tables. V1 promotions write only
+# knowledge_promotions_v1 with the raw record id. Admission runs one BEGIN IMMEDIATE
 # transaction: every rule is checked over the whole batch first, then
 # all rows are written, then COMMIT. Any violation answers a
 # v1-refused refusal and writes nothing. A node reference resolves
@@ -485,6 +486,11 @@ def v1_source_carries(+kind: String, +source: String) -> String:
 def v1_promotion_coordinates(+id: String, +promoter: String, +source_kind: String, +source: String, +destination_kind: String, +destination: String, +finding: String) -> String:
   "id=" ++ C.q(id) ++ " AND finding=" ++ C.q(finding) ++ " AND source_kind=" ++ C.q(source_kind) ++ " AND source=" ++ C.q(source) ++ " AND destination_kind=" ++ C.q(destination_kind) ++ " AND destination=" ++ C.q(destination) ++ " AND promoted_by=" ++ C.q(promoter)
 
+# Record coordinates for the v1 promotions table: same shape against
+# record_id, the raw scientific record id in the single v1 namespace.
+def v1_promotion_record_coordinates(+id: String, +promoter: String, +source_kind: String, +source: String, +destination_kind: String, +destination: String, +finding: String) -> String:
+  "id=" ++ C.q(id) ++ " AND record_id=" ++ C.q(finding) ++ " AND source_kind=" ++ C.q(source_kind) ++ " AND source=" ++ C.q(source) ++ " AND destination_kind=" ++ C.q(destination_kind) ++ " AND destination=" ++ C.q(destination) ++ " AND promoted_by=" ++ C.q(promoter)
+
 def v1_knowledge_conflict_sql(+name: String, +table: String, +id: String, +guards: String, +same: String, +stored: String) -> String:
   "SELECT json_object('error'," ++ C.q(name) ++ ",'id'," ++ id ++ ",'stored',json_object(" ++ stored ++ "),'condition','This knowledge identity is already stored with different content.','next','Read knowledge and retain the stored record, then retry the new input under a different ID.') FROM " ++ table ++ " WHERE id=" ++ id ++ " AND " ++ guards ++ " AND NOT (" ++ same ++ ");"
 
@@ -497,6 +503,7 @@ def v1_endpoint_fields(+row: String, groups: Bool) -> String:
 def v1_schema() -> String:
   "CREATE TABLE IF NOT EXISTS knowledge_v1 (id TEXT UNIQUE NOT NULL,author TEXT NOT NULL,kind TEXT NOT NULL,statement TEXT NOT NULL,context TEXT NOT NULL,evidence TEXT NOT NULL,limits TEXT NOT NULL DEFAULT '',uncertainty TEXT NOT NULL DEFAULT '',details TEXT NOT NULL,schema_version INTEGER NOT NULL DEFAULT 1,supersedes TEXT,payload TEXT NOT NULL);"
   ++ "CREATE TABLE IF NOT EXISTS knowledge_edges_v1 (id TEXT UNIQUE NOT NULL,author TEXT NOT NULL,kind TEXT NOT NULL,source TEXT NOT NULL,target TEXT NOT NULL,context TEXT NOT NULL,basis TEXT NOT NULL,rationale TEXT NOT NULL,limits TEXT NOT NULL DEFAULT '',uncertainty TEXT NOT NULL DEFAULT '',details TEXT NOT NULL,schema_version INTEGER NOT NULL DEFAULT 1,supersedes TEXT,payload TEXT NOT NULL);"
+  ++ "CREATE TABLE IF NOT EXISTS knowledge_promotions_v1 (id TEXT UNIQUE NOT NULL,record_id TEXT NOT NULL,author TEXT NOT NULL,source_kind TEXT NOT NULL DEFAULT 'session',source TEXT NOT NULL,destination_kind TEXT NOT NULL DEFAULT 'session',destination TEXT NOT NULL,promoted_by TEXT NOT NULL);"
 
 def v1_refused(+saved: String) -> Bool:
   Tx.starts_with(saved, "{\"error\":\"v1-refused\"")
@@ -1040,13 +1047,18 @@ def v1_admit(+db: String, +author: String, +batchJson: String) -> IO(Unit):
     +saved : String <- IO.try(String,Store.transact_sql(db,v1_commit_sql(C.q(batchJson),C.q(author))))
     Bool.pick(IO(Unit),v1_refused(saved),IO.die(Unit,2,saved),IO.write(saved))
 
+# V1 promotions write only knowledge_promotions_v1 with the raw record
+# id; legacy knowledge_promotions rows and read sites keep their exact
+# legacy namespace. Source-carry and destination-owner semantics stay
+# shared; the conflict keeps the original promotion-id-conflict cause.
 def v1_promotion_statement(+id: String, +promoter: String, +source_kind: String, +source: String, +destination_kind: String, +destination: String, +finding: String) -> String:
-  "INSERT INTO knowledge_promotions(id,finding,author,source_kind,source,destination_kind,destination,promoted_by) SELECT " ++ C.q(id) ++ ",k.id,k.author," ++ C.q(source_kind) ++ "," ++ C.q(source) ++ "," ++ C.q(destination_kind) ++ "," ++ C.q(destination) ++ "," ++ C.q(promoter) ++ " FROM knowledge_v1 k WHERE k.id=" ++ C.q(finding) ++ " AND " ++ v1_promotion_admitted(promoter,destination_kind,destination) ++ " AND " ++ v1_source_carries(source_kind,source)
+  "INSERT INTO knowledge_promotions_v1(id,record_id,author,source_kind,source,destination_kind,destination,promoted_by) SELECT " ++ C.q(id) ++ ",k.id,k.author," ++ C.q(source_kind) ++ "," ++ C.q(source) ++ "," ++ C.q(destination_kind) ++ "," ++ C.q(destination) ++ "," ++ C.q(promoter) ++ " FROM knowledge_v1 k WHERE k.id=" ++ C.q(finding) ++ " AND " ++ v1_promotion_admitted(promoter,destination_kind,destination) ++ " AND " ++ v1_source_carries(source_kind,source)
   ++ " ON CONFLICT(id) DO NOTHING;"
-  ++ v1_knowledge_conflict_sql("promotion-id-conflict","knowledge_promotions",C.q(id),"EXISTS(SELECT 1 FROM knowledge_v1 k WHERE k.id=" ++ C.q(finding) ++ " AND " ++ v1_promotion_admitted(promoter,destination_kind,destination) ++ " AND " ++ v1_source_carries(source_kind,source) ++ ")",v1_promotion_coordinates(id,promoter,source_kind,source,destination_kind,destination,finding),"'finding',finding,'source',source,'sourceKind',source_kind,'destination',destination,'destinationKind',destination_kind")
+  ++ v1_knowledge_conflict_sql("promotion-id-conflict","knowledge_promotions_v1",C.q(id),"EXISTS(SELECT 1 FROM knowledge_v1 k WHERE k.id=" ++ C.q(finding) ++ " AND " ++ v1_promotion_admitted(promoter,destination_kind,destination) ++ " AND " ++ v1_source_carries(source_kind,source) ++ ")",v1_promotion_record_coordinates(id,promoter,source_kind,source,destination_kind,destination,finding),"'recordId',record_id,'source',source,'sourceKind',source_kind,'destination',destination,'destinationKind',destination_kind")
 
+# V1 promotion reads carry schemaVersion 1 and the raw record id.
 def v1_promotion_answer(+id: String, +promoter: String, +source_kind: String, +source: String, +destination_kind: String, +destination: String, +finding: String) -> String:
-  "SELECT json_patch(json_object('id',id,'finding',finding,'author',author,'source',source,'destination',destination,'promotedBy',promoted_by)," ++ v1_endpoint_fields("",True{}) ++ ") FROM knowledge_promotions WHERE " ++ v1_promotion_coordinates(id,promoter,source_kind,source,destination_kind,destination,finding) ++ ";"
+  "SELECT json_patch(json_object('schemaVersion',1,'id',id,'recordId',record_id,'author',author,'source',source,'destination',destination,'promotedBy',promoted_by)," ++ v1_endpoint_fields("",True{}) ++ ") FROM knowledge_promotions_v1 WHERE " ++ v1_promotion_record_coordinates(id,promoter,source_kind,source,destination_kind,destination,finding) ++ ";"
 
 def v1_promote_scoped(+db: String, +id: String, +promoter: String, +source_kind: String, +source: String, +destination_kind: String, +destination: String, +finding: String) -> IO(Unit):
   do IO<Unit>:
