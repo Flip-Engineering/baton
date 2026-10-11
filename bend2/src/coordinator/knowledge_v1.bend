@@ -869,6 +869,9 @@ def v1_epside_node(+ep: String, +roles: String, +batch: String) -> String:
 def v1_epside_edge(+ep: String, +batch: String) -> String:
   "(" ++ v1_edgeref_ok(ep) ++ " AND " ++ v1_edge_match(ep, v1_x(ep, "$.edgeKind"), batch) ++ ")"
 
+def v1_supersedes_paired(+batch: String) -> String:
+  "((" ++ v1_epside_node("json_extract(e.value,'$.source')", v1_node_kinds(), batch) ++ " AND " ++ v1_epside_node("json_extract(e.value,'$.target')", v1_node_kinds(), batch) ++ ") OR (" ++ v1_epside_edge("json_extract(e.value,'$.source')", batch) ++ " AND " ++ v1_epside_edge("json_extract(e.value,'$.target')", batch) ++ "))"
+
 def v1_edge_endpoints_bad(+batch: String) -> String:
   "((json_extract(e.value,'$.kind')=='supports' AND NOT(" ++ v1_epside_node("json_extract(e.value,'$.source')", "'evidence','observation','research-finding','argument'", batch) ++ " AND (" ++ v1_epside_node("json_extract(e.value,'$.target')", "'claim','hypothesis','research-finding','proposal'", batch) ++ " OR " ++ v1_epside_edge("json_extract(e.value,'$.target')", batch) ++ ")))"
   ++ " OR (json_extract(e.value,'$.kind')=='challenges' AND NOT(" ++ v1_epside_node("json_extract(e.value,'$.source')", "'evidence','observation','research-finding','argument'", batch) ++ " AND (" ++ v1_epside_node("json_extract(e.value,'$.target')", "'claim','hypothesis','research-finding','proposal','argument','study'", batch) ++ " OR " ++ v1_epside_edge("json_extract(e.value,'$.target')", batch) ++ ")))"
@@ -885,7 +888,7 @@ def v1_edge_endpoints_bad(+batch: String) -> String:
   ++ " OR (json_extract(e.value,'$.kind')=='investigates' AND NOT(" ++ v1_epside_node("json_extract(e.value,'$.source')", "'study','hypothesis'", batch) ++ " AND " ++ v1_epside_node("json_extract(e.value,'$.target')", "'question'", batch) ++ "))"
   ++ " OR (json_extract(e.value,'$.kind')=='produces' AND NOT(" ++ v1_epside_node("json_extract(e.value,'$.source')", "'study'", batch) ++ " AND " ++ v1_epside_node("json_extract(e.value,'$.target')", "'observation','research-finding','evidence'", batch) ++ "))"
   ++ " OR (json_extract(e.value,'$.kind')=='informs' AND NOT(" ++ v1_epside_node("json_extract(e.value,'$.source')", "'claim','hypothesis','observation','research-finding','argument'", batch) ++ " AND " ++ v1_epside_node("json_extract(e.value,'$.target')", "'proposal','decision'", batch) ++ "))"
-  ++ " OR (json_extract(e.value,'$.kind')=='supersedes' AND NOT((" ++ v1_epside_node("json_extract(e.value,'$.source')", v1_node_kinds(), batch) ++ " OR " ++ v1_epside_edge("json_extract(e.value,'$.source')", batch) ++ ") AND (" ++ v1_epside_node("json_extract(e.value,'$.target')", v1_node_kinds(), batch) ++ " OR " ++ v1_epside_edge("json_extract(e.value,'$.target')", batch) ++ "))))"
+  ++ " OR (json_extract(e.value,'$.kind')=='supersedes' AND NOT(" ++ v1_supersedes_paired(batch) ++ ")))"
 
 def v1_q_each_dangling(+arr: String, +batch: String) -> String:
   "(EXISTS(SELECT 1 FROM json_each(" ++ arr ++ ") WHERE " ++ v1_questionref_ok("value") ++ " AND " ++ v1_node_match("value", batch) ++ "==0))"
@@ -971,7 +974,7 @@ def v1_batch_arg_counter(+sid: String, +batch: String) -> String:
   "(EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.nodes') m WHERE json_extract(m.value,'$.id')==" ++ sid ++ " AND json_extract(m.value,'$.kind')=='argument' AND json_extract(m.value,'$.details.method') IN ('deduction','formal-proof','counterexample') AND (json_extract(m.value,'$.details.method')!='counterexample' OR json_type(m.value,'$.details.witness') IS NOT NULL)))"
 
 def v1_stored_arg_counter(+sid: String) -> String:
-  "(EXISTS(SELECT 1 FROM knowledge_v1 WHERE id==" ++ sid ++ " AND kind='argument' AND json_extract(details,'$.method') IN ('deduction','formal-proof','counterexample') AND (json_extract(details,'$.method')!='counterexample' OR json_type(details,'$.details.witness') IS NOT NULL)))"
+  "(EXISTS(SELECT 1 FROM knowledge_v1 WHERE id==" ++ sid ++ " AND kind='argument' AND json_extract(details,'$.method') IN ('deduction','formal-proof','counterexample') AND (json_extract(details,'$.method')!='counterexample' OR json_type(details,'$.witness') IS NOT NULL)))"
 
 def v1_method_edge_bad(+batch: String) -> String:
   "((json_extract(e.value,'$.kind')=='implies' AND NOT(" ++ v1_batch_arg_method("json_extract(e.value,'$.details.argument.id')", "'deduction','formal-proof'", batch) ++ " OR " ++ v1_stored_arg_method("json_extract(e.value,'$.details.argument.id')", "'deduction','formal-proof'") ++ "))"

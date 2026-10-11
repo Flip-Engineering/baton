@@ -827,3 +827,17 @@ law v1_index_edges_unscoped_row:
 
 def v1_index_edges_unscoped_row(reader,scope,subject):
   {==}
+
+law v1_stored_counterexample_reads_witness_on_details:
+  for sid: String
+  {K1.v1_stored_arg_counter(sid) == "(EXISTS(SELECT 1 FROM knowledge_v1 WHERE id==" ++ sid ++ " AND kind='argument' AND json_extract(details,'$.method') IN ('deduction','formal-proof','counterexample') AND (json_extract(details,'$.method')!='counterexample' OR json_type(details,'$.witness') IS NOT NULL)))" : String}
+
+def v1_stored_counterexample_reads_witness_on_details(sid):
+  {==}
+
+law v1_supersedes_pairs_node_to_node_and_edge_to_edge:
+  for batch: String
+  {K1.v1_supersedes_paired(batch) == "((" ++ K1.v1_epside_node("json_extract(e.value,'$.source')", K1.v1_node_kinds(), batch) ++ " AND " ++ K1.v1_epside_node("json_extract(e.value,'$.target')", K1.v1_node_kinds(), batch) ++ ") OR (" ++ K1.v1_epside_edge("json_extract(e.value,'$.source')", batch) ++ " AND " ++ K1.v1_epside_edge("json_extract(e.value,'$.target')", batch) ++ "))" : String}
+
+def v1_supersedes_pairs_node_to_node_and_edge_to_edge(batch):
+  {==}
