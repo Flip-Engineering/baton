@@ -572,3 +572,22 @@ law v1_study_rule_covers_supersedes_progress:
 
 def v1_study_rule_covers_supersedes_progress(batch):
   {==}
+
+# Discriminator synthesis-native-promotion-discriminator-20261011: node
+# and edge identities share one v1 namespace, so each identity check
+# refuses ids taken by the other table, stored or in-batch.
+law v1_node_identity_covers_shared_namespace:
+  for t: String
+  for batch: String
+  {K1.v1_node_identity_bad(t, batch) == "((EXISTS(SELECT 1 FROM knowledge_v1 WHERE id==json_extract(" ++ t ++ ".value,'$.id') AND payload!=" ++ t ++ ".value))" ++ " OR (EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.nodes') m WHERE m.fullkey!=" ++ t ++ ".fullkey AND json_extract(m.value,'$.id')==json_extract(" ++ t ++ ".value,'$.id') AND m.value!=" ++ t ++ ".value))" ++ " OR (EXISTS(SELECT 1 FROM knowledge_edges_v1 WHERE id==json_extract(" ++ t ++ ".value,'$.id')))" ++ " OR (EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.edges') m WHERE json_extract(m.value,'$.id')==json_extract(" ++ t ++ ".value,'$.id'))))" : String}
+
+def v1_node_identity_covers_shared_namespace(t, batch):
+  {==}
+
+law v1_edge_identity_covers_shared_namespace:
+  for t: String
+  for batch: String
+  {K1.v1_edge_identity_bad(t, batch) == "((EXISTS(SELECT 1 FROM knowledge_edges_v1 WHERE id==json_extract(" ++ t ++ ".value,'$.id') AND payload!=" ++ t ++ ".value))" ++ " OR (EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.edges') m WHERE m.fullkey!=" ++ t ++ ".fullkey AND json_extract(m.value,'$.id')==json_extract(" ++ t ++ ".value,'$.id') AND m.value!=" ++ t ++ ".value))" ++ " OR (EXISTS(SELECT 1 FROM knowledge_v1 WHERE id==json_extract(" ++ t ++ ".value,'$.id')))" ++ " OR (EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.nodes') m WHERE json_extract(m.value,'$.id')==json_extract(" ++ t ++ ".value,'$.id'))))" : String}
+
+def v1_edge_identity_covers_shared_namespace(t, batch):
+  {==}

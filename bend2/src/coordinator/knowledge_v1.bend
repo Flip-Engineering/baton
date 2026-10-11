@@ -928,13 +928,20 @@ def v1_author_violated(+batch: String, +author: String) -> String:
 def v1_author_offender(+batch: String, +author: String) -> String:
   "(SELECT COALESCE((SELECT json_extract(n.value,'$.id') FROM json_each(" ++ batch ++ ",'$.nodes') n WHERE " ++ v1_author_row_bad("n", author) ++ " LIMIT 1), (SELECT json_extract(e.value,'$.id') FROM json_each(" ++ batch ++ ",'$.edges') e WHERE " ++ v1_author_row_bad("e", author) ++ " LIMIT 1), 'batch'))"
 
+# Node and edge identities share one v1 namespace: a node id taken by a
+# stored or batch edge is a conflict under either rule, so a bare v1 id
+# stays unambiguous as node XOR edge.
 def v1_node_identity_bad(+t: String, +batch: String) -> String:
   "((EXISTS(SELECT 1 FROM knowledge_v1 WHERE id==json_extract(" ++ t ++ ".value,'$.id') AND payload!=" ++ t ++ ".value))"
-  ++ " OR (EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.nodes') m WHERE m.fullkey!=" ++ t ++ ".fullkey AND json_extract(m.value,'$.id')==json_extract(" ++ t ++ ".value,'$.id') AND m.value!=" ++ t ++ ".value)))"
+  ++ " OR (EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.nodes') m WHERE m.fullkey!=" ++ t ++ ".fullkey AND json_extract(m.value,'$.id')==json_extract(" ++ t ++ ".value,'$.id') AND m.value!=" ++ t ++ ".value))"
+  ++ " OR (EXISTS(SELECT 1 FROM knowledge_edges_v1 WHERE id==json_extract(" ++ t ++ ".value,'$.id')))"
+  ++ " OR (EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.edges') m WHERE json_extract(m.value,'$.id')==json_extract(" ++ t ++ ".value,'$.id'))))"
 
 def v1_edge_identity_bad(+t: String, +batch: String) -> String:
   "((EXISTS(SELECT 1 FROM knowledge_edges_v1 WHERE id==json_extract(" ++ t ++ ".value,'$.id') AND payload!=" ++ t ++ ".value))"
-  ++ " OR (EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.edges') m WHERE m.fullkey!=" ++ t ++ ".fullkey AND json_extract(m.value,'$.id')==json_extract(" ++ t ++ ".value,'$.id') AND m.value!=" ++ t ++ ".value)))"
+  ++ " OR (EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.edges') m WHERE m.fullkey!=" ++ t ++ ".fullkey AND json_extract(m.value,'$.id')==json_extract(" ++ t ++ ".value,'$.id') AND m.value!=" ++ t ++ ".value))"
+  ++ " OR (EXISTS(SELECT 1 FROM knowledge_v1 WHERE id==json_extract(" ++ t ++ ".value,'$.id')))"
+  ++ " OR (EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.nodes') m WHERE json_extract(m.value,'$.id')==json_extract(" ++ t ++ ".value,'$.id'))))"
 
 def v1_identity_violated(+batch: String) -> String:
   "((EXISTS(SELECT 1 FROM json_each(" ++ batch ++ ",'$.nodes') n WHERE " ++ v1_node_identity_bad("n", batch) ++ "))"
