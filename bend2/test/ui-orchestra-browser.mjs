@@ -1594,13 +1594,13 @@ baton('ack', 'qa-aide-long-quote', 'aide', 'fixture-ui-read');
 committed();
 await until('the acknowledged long message leaves the queued record',
   `document.querySelector('#selection #sel-sec-queued [data-selkey="sel:msg:qa-aide-long-quote"]') === null`);
-const ribbonRowsBefore = await evalJs(`document.querySelectorAll('#ribbon .ribbon-row').length`);
+const ribbonMaxBefore = await evalJs(`Number(document.querySelector('#ribbon .ribbon-slider').getAttribute('aria-valuemax'))`);
 
 // live committed update without reload
 baton('message', 'qa-guidance-2', 'root', 'worker', 'guidance', 'Live update probe.');
 committed();
 await until('committed message arrives live without reload',
-  `window.__qaMark === 42 && document.querySelectorAll('#ribbon .ribbon-row').length > ${ribbonRowsBefore}`);
+  `window.__qaMark === 42 && Number(document.querySelector('#ribbon .ribbon-slider').getAttribute('aria-valuemax')) > ${ribbonMaxBefore}`);
 check('pending badge updates live on the worker row', await evalJs(
   `document.querySelector('#roster .doc-row[data-doc-id="worker"] .doc-pending') !== null`));
 check('arrival dot marks the worker row on new owed work', await evalJs(
