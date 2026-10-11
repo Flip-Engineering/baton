@@ -300,6 +300,33 @@ class KnowledgeV1(unittest.TestCase):
                              'structure')
                 self.assertEqual(self.call('knowledge-v1-detail', 'root', 'all', '', ident), [])
 
+    def test_mixed_relations_read_keeps_identity_and_scope(self):
+        self.call('record-typed', 'legacy-anchor', 'grand', 'finding',
+                  'Anchor claim', 'run:legacy', 'Legacy limits')
+        self.call('relate', 'legacy-link', 'grand', 'legacy-anchor',
+                  'Supports', 'legacy-anchor')
+        self.batch([node('grand', 'v1-anchor', 'evidence'),
+                    node('grand', 'v1-other', 'claim')],
+                   [edge('grand', 'v1-link', 'supports',
+                         ('v1-anchor', 'evidence'), ('v1-other', 'claim'),
+                         details={'bearing': 'The evidence bears on the claim.'})])
+        rows = self.call('knowledge-relations', 'root', 'all', '')
+        self.assertEqual([row['id'] for row in rows], ['legacy-link', 'v1-link'])
+        legacy, scientific = rows
+        self.assertNotIn('provenance', legacy)
+        self.assertEqual(scientific['provenance'], 'authored')
+        self.assertEqual(scientific['schemaVersion'], 1)
+        self.assertEqual(scientific['schemaId'], 'urn:baton:knowledge:schema:1')
+        self.assertEqual(scientific['sourceReference'], 'v1:v1-anchor')
+        self.assertEqual(scientific['relation'], 'supports')
+        self.assertEqual(self.call(*scientific['detailRead']), [self.detail('v1-link')])
+        scoped = self.call('knowledge-relations', 'root', 'worker', 'grand')
+        self.assertEqual([row['id'] for row in scoped], ['legacy-link', 'v1-link'])
+        self.assertEqual(scoped[1]['detailRead'],
+                         ['knowledge-v1-detail', 'root', 'worker', 'grand', 'v1-link'])
+        self.assertEqual(self.call(*scoped[1]['detailRead']), [self.detail('v1-link')])
+        self.assertEqual(self.call('knowledge-relations', 'root', 'worker', 'sibling'), [])
+
     def test_study_revision_uses_prior_stored_identity(self):
         original = node('grand', 'study-first', 'study')
         self.record(original)
