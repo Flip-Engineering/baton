@@ -202,7 +202,7 @@ def admission_result(+db: String, +index: String, +id: String, +sender: String, 
 
 def send_one(+db: String, +index: String, +id: String, +sender: String, +recipient: String, +kind: String, +body: String) -> IO(String):
   do IO<String>:
-    +command = C.Message{id,sender,recipient,kind,body}
+    command : C.Command = C.Message{id,sender,recipient,kind,body}
     result : Result<&1,&1,U32 & String,String> <- Store.apply(db,command)
     admission_result(db,index,id,sender,recipient,kind,command,result)
 
