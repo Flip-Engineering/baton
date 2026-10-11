@@ -1866,10 +1866,12 @@ const promotionNotice = JSON.parse(baton('delivery', 'qa-relation-live-frame:pro
 check('the worker reads its recorded promotion notice',
   promotionNotice.recipient === 'worker' && promotionNotice.kind === 'question'
     && JSON.parse(promotionNotice.body).finding === 'qa-worker-finding');
-const promotedFinding = JSON.parse(baton('knowledge', 'worker', '--id', 'qa-worker-finding'));
+const promotedFindings = JSON.parse(baton('knowledge', 'worker', '--id', 'qa-worker-finding'));
 check('the worker reviews the complete promoted finding',
-  promotedFinding.id === 'qa-worker-finding' && promotedFinding.evidence === 'Worker evidence.'
-    && promotedFinding.limits === 'Worker limits.');
+  Array.isArray(promotedFindings) && promotedFindings.length === 1
+    && promotedFindings[0].id === 'qa-worker-finding'
+    && promotedFindings[0].evidence === 'Worker evidence.'
+    && promotedFindings[0].limits === 'Worker limits.');
 for (const id of ['qa-guidance-native', 'qa-guidance-1', 'qa-guidance-2', 'qa-guidance-lane-focus',
                   'qa-relation-live-frame:promotion-notice']) {
   baton('ack', id, 'worker', 'fixture-ui-read');
