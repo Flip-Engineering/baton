@@ -903,7 +903,7 @@ def muse_final_selected(+db: String, +player: String, +id: String, +cmd: String,
 
 def finalize_retained_receive(+db: String, +player: String, +id: String, +harness: String, +cmd: String, +cwd: String, +attempt: String, observation: Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
   match observation:
-    case (Ended{+status,+event,+error,incomplete},+deliveries): do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
+    case (Ended{+status,+event,+error,incomplete},deliveries): do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
       pending : Bool <- muse_final_pending(db,event,String.eq(harness,"muse\n"))
       final : Outcome <- muse_final_selected(db,player,id,cmd,cwd,attempt,status,event,error,incomplete,pending)
       IO.pure(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>,(final,deliveries))
