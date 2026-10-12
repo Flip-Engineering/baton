@@ -1618,7 +1618,8 @@ else:
         for registration in ('receiver', 'configure'):
             with self.subTest(registration=registration):
                 session = 'registered-' + registration
-                assignment = self.recruit(session, 'muse')
+                initial_harness = 'codex' if registration == 'configure' else 'muse'
+                assignment = self.recruit(session, initial_harness)
                 native = 'saved-' + session
                 self.call('connect', session, native, '')
                 message = session + '-owed'
@@ -1633,7 +1634,13 @@ else:
                     self.receiver(session)
                 else:
                     self.call('configure', session, 'muse', session, 'low', self.fixture, log,
-                              'muse', session, 'low')
+                              initial_harness, session, 'low')
+                registered = self.call('session', session)
+                self.assertEqual(registered['harness'], 'muse')
+                self.assertEqual(registered['native'], native)
+                self.assertEqual(registered['endpointArgv'],
+                                 [str(EXE.resolve()), str(self.db.resolve()), 'receive', session,
+                                  str(self.fixture.resolve()), '', '', '', str(log.resolve())])
                 stream, start = self.accept(session)
                 self.assertEqual(start['resume'], native)
                 self.assertEqual(start['native'], native)
