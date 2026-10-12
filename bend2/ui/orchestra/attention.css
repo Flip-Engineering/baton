@@ -43,8 +43,9 @@
 .lane-strip .att-stage-view { color: var(--ink); border-color: var(--muted); font: 12px var(--sans); }
 .lane-strip .att-ensemble-details { flex-basis: 100%; padding: 10px; }
 .lane-strip .att-ensemble-details > summary { cursor: pointer; font: 13px var(--sans); }
-.lane-strip .att-peer-boundary { fill: none; stroke: #5a6474; stroke-width: 1; }
-.lane-strip .att-peer-name { fill: var(--ink); font: 12px var(--sans); }
+.lane-strip .att-peer-boundary { fill: var(--wash); fill-opacity: .45; stroke: #78869a; stroke-width: 1; }
+.lane-strip .att-peer-heading { fill: #78869a; fill-opacity: .22; }
+.lane-strip .att-peer-name { fill: var(--ink); font: 500 12px var(--sans); }
 .lane-strip .att-peer-name[role="button"] { cursor: pointer; text-decoration: underline; }
 
 .lane-strip .att-stage:focus { outline: none; }

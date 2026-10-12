@@ -74,7 +74,8 @@ export async function qualifyKnowledgeGraphs({ origin, send, out, scientificExam
       && labels.every(n=>parseFloat(getComputedStyle(n).fontSize)>=12)
       && Math.abs(svg.getBoundingClientRect().width-svg.viewBox.baseVal.width)<1
       && mount.querySelectorAll('.att-peer-group').length===16
-      && [...mount.querySelectorAll('.att-peer-name')].every(n=>n.textContent.includes('group-'))
+      && [...mount.querySelectorAll('.att-peer-group')].every(n=>n.querySelector('.att-peer-name').textContent.includes('group ')
+        && n.querySelector('title').textContent.includes(n.dataset.attEnsemble))
       && peers.every(p=>p.querySelector('title').textContent.includes(p.dataset.attId));
     mount.remove();return okay;
   })()`);

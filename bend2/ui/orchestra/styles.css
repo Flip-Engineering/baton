@@ -971,70 +971,42 @@ button:active { background: var(--wash); }
 .doc-band-open:hover,
 .doc-band-open:focus-visible { border-bottom-color: var(--selection); }
 
-/* ── the project surface ─────────────────────────────────────────────────── */
-/* A reader returning to a project: its conversations as one compact row of chips, the
-   selected conversation's retained report read whole, and continuing it beside the report. */
-
-.project-body { margin: 6px 0 0; }
-
-.project-list {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 10px;
-  margin: 0 0 8px;
-  padding: 0;
-  list-style: none;
+/* Recorded project identity, conversations, receipts and reports. */
+.project-body { margin: 12px 0 0; min-width: 0; }
+.project-body h3 { font-size: var(--step2); overflow-wrap: anywhere; }
+.project-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 20px; margin: 12px 0; }
+.project-facts > div { min-width: 0; }
+.project-facts dt { color: var(--muted); font: var(--step0)/1.4 var(--sans); }
+.project-facts dd { margin: 2px 0 0; font: var(--step0)/1.5 var(--mono); overflow-wrap: anywhere; white-space: pre-wrap; }
+.project-identity { padding-bottom: 16px; border-bottom: 1px solid var(--hairline); }
+.project-selected-title { margin-top: 16px; white-space: normal; }
+.project-list { display: block; max-height: 420px; overflow-y: auto; overscroll-behavior: contain; margin: 20px 0 0; padding: 3px; list-style: none; border-top: 1px solid var(--hairline); }
+.project-list li + li { border-top: 1px solid var(--hairline); }
+.project-conversation { padding: 14px 12px; }
+.project-conversation.is-selected { background: var(--surface); box-shadow: inset 3px 0 var(--selection); }
+.project-session { display: block; width: 100%; padding: 2px 0; border: 0; border-radius: var(--radius); background: transparent; color: var(--ink); text-align: left; font: inherit; cursor: pointer; }
+.project-session:hover { background: var(--wash); }
+.project-session:focus-visible { outline: 2px solid var(--selection); outline-offset: -2px; }
+.project-session-id { font: 600 var(--step1)/1.5 var(--mono); overflow-wrap: anywhere; }
+.project-current { margin-left: 12px; color: var(--selection); font: var(--step0)/1.5 var(--sans); }
+.project-session-facts { margin-bottom: 0; }
+.project-session.is-stopped .project-session-id { color: var(--attention); }
+.project-resume { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 12px; margin: 12px 0; }
+.project-resume button:disabled { cursor: default; opacity: .65; }
+.project-outcome { margin: 0; min-width: 0; max-width: 100%; white-space: normal; font-size: var(--step1); overflow-wrap: anywhere; }
+.project-resume .project-outcome { flex-basis: 100%; }
+.project-response { margin: 16px 0; padding: 12px 16px; border-left: 3px solid var(--selection); background: var(--surface); }
+.project-response h4 { margin: 0; font-size: var(--step1); }
+.project-detail { margin: 12px 0 0; }
+.project-detail > summary { font-size: var(--step1); cursor: pointer; }
+.project-report { max-height: 420px; overflow: auto; margin: 8px 0; padding: 12px; background: var(--wash); white-space: pre-wrap; overflow-wrap: anywhere; font: var(--step0)/1.6 var(--mono); color: var(--ink); }
+@media (max-width: 760px) {
+  .project-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 12px; }
 }
-
-.project-session {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 8px;
-  padding: 3px 9px;
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius);
-  background: var(--surface);
-  color: var(--ink);
-  font: inherit;
-  cursor: pointer;
-}
-
-.project-session.is-selected { outline: 2px solid var(--selection); outline-offset: 1px; }
-
-
-.project-report {
-  margin: 0 0 8px;
-  padding: 8px 10px;
-  background: var(--wash);
-  border-left: 2px solid var(--hairline);
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  font-family: var(--mono);
-  font-size: var(--step0);
-  color: var(--ink);
-}
-
-.project-resume { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 12px; }
-
-.project-outcome { margin: 0; font-size: var(--step1); }
-
-/* The open conversation: its state and the one action, with the reports behind a disclosure. */
-.project-pending { margin-left: 6px; color: var(--attention); }
-
-.project-detail { margin: 6px 0 0; }
-
-.project-detail > summary { color: var(--muted); font-size: var(--step0); cursor: pointer; }
-
-/* Show the stopped marker beside recorded stopped sessions. */
-.project-session.is-stopped { color: var(--attention); border-color: var(--attention); }
-
-.project-session.is-stopped::before {
-  content: "";
-  width: 7px;
-  height: 3px;
-  margin-right: 6px;
-  border-radius: 1px;
-  background: var(--attention);
+@media (max-width: 480px) {
+  .project-identity { grid-template-columns: minmax(0, 1fr); }
+  .project-conversation { padding: 12px 8px; }
+  .project-response { padding: 12px; }
 }
 
 /* The plate's contents line: each section with what it holds, so the page states its own shape. */
