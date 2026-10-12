@@ -91,7 +91,6 @@ const el = {
   fixtureNotice: document.getElementById("fixture-notice"),
   // The document shell.
   attentionBand: document.getElementById("attention-band"),
-  roster: document.getElementById("roster"),
   selection: document.getElementById("selection"),
   ribbon: document.getElementById("ribbon"),
   knowledgeWhole: document.getElementById("knowledge-whole"),
@@ -260,13 +259,12 @@ function fact(label, value, tone, jump) {
   return node;
 }
 
-// Focus the first seat in one of these states, revealing the recorded rows first when the
-// seat is not on screen. The roster's own control states how many rows that adds.
+// Focus the first actor matching a state without changing the viewing position.
 function focusFirstRow(matches) {
   const wanted = [...state.players.values()].filter(matches).map((p) => p.id);
   const find = () => {
     for (const id of wanted) {
-      const control = el.roster.querySelector('.doc-row[data-doc-id="' + CSS.escape(id) + '"] .doc-open');
+      const control = el.attentionBand.querySelector('.att-seat[data-att-id="' + CSS.escape(id) + '"]');
       if (control) return control;
     }
     return null;
@@ -279,8 +277,7 @@ function focusFirstRow(matches) {
     control = find();
   }
   if (!control) return;
-  control.focus();
-  if (typeof control.scrollIntoView === "function") control.scrollIntoView({ block: "nearest" });
+  control.focus({ preventScroll: true });
 }
 
 // The separator between two figures on the plate line. It carries the space
@@ -707,18 +704,17 @@ function fixtureScopedKnowledge(scope) {
 // The keyboard spine: move the row cursor by one over the rows on screen and focus the
 // row's own control, so Enter opens the record. False when there is nowhere to move.
 function stepRow(delta) {
-  if (!el.roster) return false;
-  const rows = [...el.roster.querySelectorAll(".doc-row")];
+  if (!el.attentionBand) return false;
+  const rows = [...el.attentionBand.querySelectorAll(".att-seat")];
   if (!rows.length) return false;
   const current = rows.findIndex((row) => row.contains(document.activeElement));
   const next = current < 0
     ? (delta > 0 ? 0 : rows.length - 1)
     : Math.min(rows.length - 1, Math.max(0, current + delta));
   if (next === current) return false;
-  const control = rows[next].querySelector(".doc-open");
+  const control = rows[next];
   if (!control) return false;
-  control.focus();
-  if (typeof control.scrollIntoView === "function") control.scrollIntoView({ block: "nearest" });
+  control.focus({ preventScroll: true });
   return true;
 }
 
@@ -951,6 +947,8 @@ function renderProject() {
   const listTop = el.projectBody.querySelector(".project-list")?.scrollTop || 0;
   const opened = new Set([...el.projectBody.querySelectorAll("details[open]")]
     .map(node => node.dataset.projectDetail));
+  const minHeight = el.projectBody.style.minHeight;
+  el.projectBody.style.minHeight = el.projectBody.getBoundingClientRect().height + "px";
   projectDrawn = signature;
   const project = state.project;
   if (el.projectState) {
@@ -1001,7 +999,7 @@ function renderProject() {
     knowledge.textContent = "Open shared knowledge";
     knowledge.addEventListener("click", () => {
       setKnowledgeScope({ kind: "actor", id: chosenSession.id });
-      document.querySelector("#map")?.scrollIntoView({ block: "start", behavior: "instant" });
+
     });
     row.appendChild(knowledge);
     const said = document.createElement("p");
@@ -1096,8 +1094,7 @@ function renderProject() {
         if (next === undefined) return;
         event.preventDefault();
         const button = list.children[next].querySelector("button");
-        button.focus();
-        button.scrollIntoView({ block: "nearest", behavior: "instant" });
+        button.focus({ preventScroll: true });
       });
       item.appendChild(open);
       projectFacts(item, entries, "project-session-facts");
@@ -1112,6 +1109,7 @@ function renderProject() {
   const back = key
     ? el.projectBody.querySelector('[data-project-key="' + CSS.escape(key) + '"]') : null;
   if (back && typeof back.focus === "function") back.focus({ preventScroll: true });
+  el.projectBody.style.minHeight = minHeight;
 }
 
 // The plate's index states what each section holds, from the facts those sections draw - the
@@ -1267,55 +1265,26 @@ function followGraphAuthor(id) {
   void loadActorWork(actor);
 }
 
-// Open the record at a finding: select it, render, then land the record on its block.
-// The map's pinned card and any future caller use this one path, so the block a reader
-// lands on is the block the record keeps.
+// Select a finding while preserving the current page position.
 function openRecordAt(id) {
   if (!id) return;
   state.findingId = id;
   writeFindingAddress(id);
   markDrawnStale();
   renderDocument();
-  const land = () => {
-    const block = el.selection && el.selection.querySelector("#sel-sec-finding");
-    if (block && typeof block.scrollIntoView === "function") {
-      block.scrollIntoView({ block: "start" });
-      block.setAttribute("tabindex", "-1");
-      block.focus({ preventScroll: true });
-      return true;
-    }
-    return false;
-  };
-  // A click arrives during a pointer gesture, which defers the repaint; the block exists
-  // after the flush, so one frame later is the retry.
-  if (!land() && typeof requestAnimationFrame === "function") requestAnimationFrame(land);
 }
 
-// The way back: a reader who has read a record returns to the mark that holds it, with
-// the surface it lives on in view. A seat selects through the same path the staves use,
-// so the map, the stage and the roster agree on what is selected; a finding keeps the
-// address, so the return move is one a reader can pass on.
 function locateEntity(ref) {
   const id = String(ref || "");
   if (!id) return;
   if (state.players.has(id)) {
     select(id);
-    reveal(el.attentionBand);
     return;
   }
   state.findingId = id;
   writeFindingAddress(id);
   markDrawnStale();
   renderDocument();
-  reveal(el.knowledgeWhole);
-}
-
-// Bring a mount's region into view. The surfaces sit as sections in one page scroll, so
-// the landing a reader wants is the section that holds the mount, not its first pixel.
-function reveal(mount) {
-  const region = mount && typeof mount.closest === "function" ? mount.closest("section") : null;
-  const target = region || mount;
-  if (target && typeof target.scrollIntoView === "function") target.scrollIntoView({ block: "start" });
 }
 
 // Open the complete claim, evidence and limits beside the graph.
@@ -1864,15 +1833,13 @@ function init() {
     });
   }
 
-  // Query changes move to the first visible match while retaining typing focus.
+  // Query changes filter actors while retaining typing focus.
   if (el.find) {
     el.find.addEventListener("input", () => {
       const query = el.find.value.trim();
       if (query === state.docQuery) return;
       state.docQuery = query;
       renderDocument();
-      const match = el.roster.querySelector(".doc-cursor");
-      if (match) match.scrollIntoView({ block: "nearest" });
     });
   }
   if (el.projectLoad) {
@@ -1885,16 +1852,6 @@ function init() {
       state.scope = state.scope === "all" ? "live" : "all";
       el.showEnded.setAttribute("aria-pressed", state.scope === "all" ? "true" : "false");
       renderDocument();
-    });
-  }
-  if (el.roster) {
-    // A band naming one recorded ensemble opens that group's own knowledge on the
-    // map; the map's scope line states which holdings it drew.
-    el.roster.addEventListener("click", (ev) => {
-      const open = ev.target && ev.target.closest ? ev.target.closest("[data-doc-group]") : null;
-      if (!open) return;
-      const group = open.getAttribute("data-doc-group");
-      selectEnsemble(group);
     });
   }
   if (el.mapScopeAll) {
@@ -1912,12 +1869,10 @@ function init() {
     const target = ev.target;
     if (target && target.closest
       && target.closest("input, textarea, select, [contenteditable], #ribbon, #attention-band")) return;
-    // j and k step from anywhere; the arrow keys step only once focus is already in the
-    // roster, so they keep scrolling the page.
-    const inRoster = Boolean(target && target.closest && target.closest("#roster"));
-    if (ev.key === "j" || (inRoster && ev.key === "ArrowDown")) { if (stepRow(1)) ev.preventDefault(); }
-    else if (ev.key === "k" || (inRoster && ev.key === "ArrowUp")) { if (stepRow(-1)) ev.preventDefault(); }
-    else if (ev.key === "/") { if (el.find) { ev.preventDefault(); el.find.focus(); } }
+    // The stage owns arrow keys; j and k focus its actors from the page.
+    if (ev.key === "j") { if (stepRow(1)) ev.preventDefault(); }
+    else if (ev.key === "k") { if (stepRow(-1)) ev.preventDefault(); }
+    else if (ev.key === "/") { if (el.find) { ev.preventDefault(); el.find.focus({ preventScroll: true }); } }
     else if (ev.key === "Escape" && state.selectionId) { clearSelection(); ev.preventDefault(); }
   });
   // The whole-orchestra canvas draws on demand: opening its disclosure repaints,
@@ -1945,7 +1900,7 @@ function init() {
       || ["INPUT", "SELECT", "TEXTAREA"].includes(active.tagName));
     if (ev.key === "/" && !inField && el.find) {
       ev.preventDefault();
-      el.find.focus();
+      el.find.focus({ preventScroll: true });
     }
   });
 
@@ -2011,6 +1966,7 @@ function documentPlayers() {
       role: p.role || "",
       model: p.observedModel || p.model || "",
       status,
+      taskCompletion: p.taskCompletion || null,
       pendingCount: p.pendingCount || 0,
       // Reports this seat was sent and never acknowledged. The snapshot records
       // the count, and it is a different kind of waiting from a queued input.
@@ -2219,6 +2175,7 @@ function drawnNow(data) {
     rows.push([
       p.id, p.status, p.pendingCount, p.unacknowledgedCount,
       p.owesWork ? 1 : 0, p.notProgressing ? 1 : 0, p.action, p.actionAt,
+      p.taskCompletion && p.taskCompletion.open === true ? 1 : 0,
       (p.ensembles || []).join(","),
     ].join("~"));
   }
@@ -2284,25 +2241,18 @@ function renderDocument() {
   renderProject();
   renderPlateIndex();
   const active = document.activeElement;
-  const rowFocus = active && active.dataset ? active.dataset.docKey : null;
   let knowledgeFocus = null;
-  let knowledgeMount = null;
   if (active && active.closest) {
     for (const name of ["data-kw-id", "data-kw-node"]) {
       if (active.hasAttribute(name)) {
         knowledgeFocus = '[' + name + '="' + CSS.escape(active.getAttribute(name)) + '"]';
-        const row = active.closest(".doc-row");
-        knowledgeMount = row ? row.dataset.docId : "whole";
       }
     }
     if (active.hasAttribute("data-science-focus")) {
       knowledgeFocus = '[data-science-focus="' + CSS.escape(active.getAttribute("data-science-focus")) + '"]';
-      knowledgeMount = "whole";
     }
     if (active.hasAttribute("data-kw-focus")) {
       knowledgeFocus = '[data-kw-focus="' + CSS.escape(active.getAttribute("data-kw-focus")) + '"]';
-      const row = active.closest(".doc-row");
-      knowledgeMount = row ? row.dataset.docId : "whole";
     }
   }
   const findings = (state.knowledge && state.knowledge.findings) || [];
@@ -2332,12 +2282,12 @@ function renderDocument() {
   }
   const result = window.OversightDocument.render({
     attention: el.attentionBand,
-    roster: el.roster,
+    legend: document.getElementById("orchestra-legend"),
     selection: el.selection,
     ribbon: el.ribbon,
     knowledgeWhole: el.knowledgeWhole,
     counts: el.counts,
-    // The document owns the roster's scope, so it owns the control that names it.
+    // The scope control includes recorded history on request.
     scopeControl: el.showEnded,
   }, documentData(), {
     selectedId: state.selectionId,
@@ -2416,13 +2366,7 @@ function renderDocument() {
     onListOpen: () => {},
   });
   if (knowledgeFocus) {
-    const mount = knowledgeMount === "whole" ? el.knowledgeWhole
-      : el.roster.querySelector('[data-doc-id="' + CSS.escape(knowledgeMount) + '"]');
-    const next = mount && mount.querySelector(knowledgeFocus);
-    if (next) next.focus({ preventScroll: true });
-  }
-  if (rowFocus) {
-    const next = el.roster.querySelector('[data-doc-key="' + CSS.escape(rowFocus) + '"]');
+    const next = el.knowledgeWhole.querySelector(knowledgeFocus);
     if (next) next.focus({ preventScroll: true });
   }
   renderShell();

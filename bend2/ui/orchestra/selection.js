@@ -457,7 +457,7 @@ function selSecNav(entries) {
     link.addEventListener("click", function (ev) {
       ev.preventDefault();
       var target = document.getElementById(entry[0]);
-      if (target && typeof target.scrollIntoView === "function") target.scrollIntoView();
+      if (target) { target.tabIndex = -1; target.focus({ preventScroll: true }); }
     });
     nav.appendChild(link);
   });
@@ -1170,7 +1170,7 @@ function renderSelection(mount, data, options) {
   }
   if (focused) {
     var next = mount.querySelector("[data-selkey=\"" + CSS.escape(focused) + "\"]");
-    if (next && typeof next.focus === "function") next.focus();
+    if (next && typeof next.focus === "function") next.focus({ preventScroll: true });
   }
 }
 

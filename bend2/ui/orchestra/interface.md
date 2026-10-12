@@ -204,10 +204,10 @@ Pending counts render as badges next to the status in every case.
 
 ## Rendered areas
 
-The page contains an attention strip, an agent roster, a selected record,
-knowledge surfaces, and a history ribbon. Quiet actors are folded initially.
-The find field marks matching actors in place. Adjacent ensemble members carry
-their ensemble label.
+The page combines the active orchestra and its recorded activity. Running actors,
+actors with owed input, and actors with open assignments appear initially, with
+their recorded ancestors for reporting context. Show history includes all recorded
+actors. The find field filters actors by name, role or work.
 
 The selected record reads the actor's work and complete pending message bodies
 on demand. A selected finding shows its claim, evidence, limits, author, and
@@ -216,11 +216,15 @@ recorded promotion steps.
 The orchestra graph places every reporting depth on one horizontal row. Ensemble
 groups contain peers within that row. Fit hierarchy shows the complete structure;
 Read labels preserves readable text and horizontal navigation.
+The legend appears above the shared timeline and hierarchy. Each actor draws its
+events on the same time range as the timeline. Selecting an event reads its
+original record and preserves the page position.
 
 The knowledge graph draws knowledge records, cited resources and directed
 relations. Connected components and relation paths determine placement. Cyclic
 relations remain together. Selecting a node or relation opens its content,
-evidence, scope, limits and neighboring relations while retaining the graph.
+evidence, scope, limits and neighboring relations. Selection retains the complete
+graph context, camera and page position. Record details scroll within their panel.
 Authors and sharing are available in the record details. Search and relation
 filters highlight matching records within the complete graph. Pan, zoom and Fit
 graph control the viewport.

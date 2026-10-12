@@ -10,6 +10,7 @@
 
 :root {
   color-scheme: light;
+  scrollbar-gutter: stable;
 
   /* Paper: the written score, warm as stock rather than screen grey. */
   --paper: #efe8db;
@@ -1020,3 +1021,9 @@ button:active { background: var(--wash); }
   min-width: 0;
 }
 .doc-band-memberships .doc-band-name { overflow-wrap: anywhere; }
+
+/* Selection redraws preserve the page and each reading surface. */
+html, body, .sheet, .kw-science, .lane-strip, .record-col { overflow-anchor: none; }
+.paper .record-col { position: static; height: 360px; overflow: auto; padding: 16px; border: 1px solid var(--hairline); margin: 16px 0 24px; }
+.paper .pit { padding: 12px; margin: 12px 0; }
+.paper > .staves-col { min-width: 0; }

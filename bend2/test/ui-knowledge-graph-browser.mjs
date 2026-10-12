@@ -16,6 +16,7 @@ export async function qualifyKnowledgeGraphs({ origin, send, out, scientificExam
   };
   const check = async (name, expression) => {
     const value = await evaluate(expression);
+    if(value!==true) { const detail=await evaluate("window.positionCheck || null"); console.log(JSON.stringify({name,detail})); }
     assert.equal(value, true, name);
     results.push({ name, passed: true });
     console.log('PASS ' + name);
@@ -32,11 +33,17 @@ export async function qualifyKnowledgeGraphs({ origin, send, out, scientificExam
   };
   const screenshot = async (name) => {
     const selector = name.startsWith('orchestra') ? '.att-stage-viewport' : '#knowledge-whole';
+    const viewport = await evaluate('({width:innerWidth,height:innerHeight,x:scrollX,y:scrollY})');
+    const height = await evaluate(`document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect().height`);
+    await send('Emulation.setDeviceMetricsOverride', { width: viewport.width, height: Math.ceil(height) + 60, deviceScaleFactor: 1, mobile: false });
+    await evaluate(`document.querySelector(${JSON.stringify(selector)}).scrollIntoView({block:'start',behavior:'instant'});new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))`);
     const box = await evaluate(`(() => { const r=document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect();
       return {x:r.x+scrollX,y:r.y+scrollY,width:r.width,height:r.height}; })()`);
-    const value = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true,
+    const value = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false,
       clip:{...box,scale:1} });
     writeFileSync(join(out, name), Buffer.from(value.result.data, 'base64'));
+    await send('Emulation.setDeviceMetricsOverride', { width: viewport.width, height: viewport.height, deviceScaleFactor: 1, mobile: false });
+    await evaluate(`scrollTo(${viewport.x},${viewport.y});new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))`);
   };
   await send('Page.enable');
   await send('Runtime.enable');
@@ -79,6 +86,54 @@ export async function qualifyKnowledgeGraphs({ origin, send, out, scientificExam
       && peers.every(p=>p.querySelector('title').textContent.includes(p.dataset.attId));
     mount.remove();return okay;
   })()`);
+  await check('active orchestra excludes completed historical actors and retains reporting ancestors', `(() => {
+    const actors=[{id:'old-root',role:'principal-conductor',status:'completed'},
+      {id:'historical-complete',parent:'old-root',role:'player',status:'completed'},
+      {id:'historical-failure',parent:'old-root',role:'player',status:'failed'},
+      {id:'current-running',parent:'old-root',role:'player',status:'running'},
+      {id:'current-owed',parent:'old-root',role:'player',status:'completed',owedTotal:1},
+      {id:'current-open',parent:'old-root',role:'player',status:'completed',taskCompletion:{open:true}}];
+    const mount=document.createElement('div');mount.className='lane-strip';document.body.appendChild(mount);
+    const control=document.createElement('button');
+    OversightDocument.render({attention:mount,scopeControl:control},{players:actors,events:[]},{scope:'live'});
+    const ids=[...mount.querySelectorAll('.att-seat')].map(n=>n.dataset.attId);
+    const live=ids.length===4 && !ids.includes('historical-complete') && !ids.includes('historical-failure');
+    OversightDocument.render({attention:mount,scopeControl:control},{players:actors,events:[]},{scope:'all'});
+    const history=mount.querySelectorAll('.att-seat').length===6;
+    mount.remove();return live && history;
+  })()`);
+  await check('assignment changes update the active orchestra without another activity change', `(() => {
+    const actor={id:'assignment-change',execution:{phase:'exited'},taskCompletion:{open:false}};
+    state.players.set(actor.id,actor);renderDocument();
+    const absent=!document.querySelector('[data-att-id="assignment-change"]');
+    actor.taskCompletion.open=true;renderDocument();
+    const open=!!document.querySelector('[data-att-id="assignment-change"]');
+    actor.taskCompletion.open=false;renderDocument();
+    const closed=!document.querySelector('[data-att-id="assignment-change"]');
+    state.players.delete(actor.id);renderDocument();return absent && open && closed;
+  })()`);
+  await check('orchestra legend precedes timeline and redundant actor lists are absent', `(() => {
+    const legend=document.querySelector('#orchestra-legend .att-legend');const timeline=document.querySelector('#ribbon');
+    return !!legend && !!(legend.compareDocumentPosition(timeline)&Node.DOCUMENT_POSITION_FOLLOWING)
+      && !document.querySelector('.lane-chip, .ribbon-chip, .doc-row')
+      && document.querySelectorAll('.att-activity-staff').length===document.querySelectorAll('.att-seat').length;
+  })()`);
+  await check('actor activity shares the active time range and opens the original event', `(() => {
+    const attention=document.createElement('div');attention.className='lane-strip';document.body.appendChild(attention);
+    const ribbon=document.createElement('div');document.body.appendChild(ribbon);
+    const players=[{id:'timeline-a',status:'running'},{id:'timeline-b',status:'running'},{id:'timeline-history',status:'completed'}];
+    const events=[{session:'timeline-a',seq:'12',kind:'message:report',at:'2026-10-12T19:00:00Z'},
+      {session:'timeline-b',seq:'11',kind:'message:task',at:'2026-10-12T18:00:00Z'},
+      {session:'timeline-history',seq:'10',kind:'execution',at:'2020-01-01T00:00:00Z'}];
+    let selected=-1;
+    OversightDocument.render({attention,ribbon},{players,events},{scope:'live',onSelectEvent:index=>selected=index});
+    const staff=attention.querySelector('[data-att-activity="timeline-b"]');
+    const note=staff.querySelector('[data-att-event="1"]');
+    const atStart=Number(note.getAttribute('cx'))===Number(staff.querySelector('line').getAttribute('x1'));
+    note.dispatchEvent(new MouseEvent('click',{bubbles:true}));
+    const exact=selected===1 && !attention.querySelector('[data-att-event="2"]');
+    attention.remove();ribbon.remove();return atStart && exact;
+  })()`);
   await check('knowledge contains records and citations without actor membership', `(() => {
     const root = document.querySelector('#knowledge-whole');
     return root.querySelectorAll('.kg-node').length > 0 && root.querySelectorAll('.kg-edge').length > 0
@@ -97,12 +152,7 @@ export async function qualifyKnowledgeGraphs({ origin, send, out, scientificExam
       && detail.textContent.includes('Limits') && !!document.querySelector('.kg-canvas');
   })()`);
   await check('selection retains the whole graph', `document.querySelectorAll('.kg-node').length > 4 && document.querySelectorAll('.kg-edge').length > 2`);
-  await check('selected finding and its citations fit beside the evidence reader', `(() => {
-    const canvas=document.querySelector('.kg-canvas').getBoundingClientRect();
-    const nodes=[...document.querySelectorAll('.kg-node:not(.is-dim)')];
-    return nodes.length>1 && nodes.every(n=>{const b=n.getBoundingClientRect();
-      return b.left>=canvas.left && b.right<=canvas.right && b.top>=canvas.top && b.bottom<=canvas.bottom;});
-  })()`);
+  await check('selection keeps every knowledge record visible', `!document.querySelector('.kg-node.is-dim, .kg-edge.is-dim')`);
   await screenshot('knowledge-legacy.png');
 
   // Render the same public layer with a complete typed payload.
@@ -118,6 +168,7 @@ export async function qualifyKnowledgeGraphs({ origin, send, out, scientificExam
       onOpenScientificReference:ref => { window.outsideReference = ref; }};
     window.drawKnowledge = () => KnowledgeLayer.renderKnowledge(document.querySelector('#knowledge-whole'), graphData, graphOptions);
     drawKnowledge();
+    document.querySelector('[data-science-focus="fit-graph"]').click();
     document.querySelector('#map').scrollIntoView();
     return true;
   })()`);
@@ -134,6 +185,50 @@ export async function qualifyKnowledgeGraphs({ origin, send, out, scientificExam
       && edge.querySelector('.kg-edge-line').getAttribute('marker-end').startsWith('url(');
   })`);
   await screenshot('knowledge-scientific.png');
+  await check('knowledge selection preserves page position, camera and node positions', `(async () => {
+    scrollTo(0, document.querySelector('#map').offsetTop + 80);
+    await new Promise(r=>requestAnimationFrame(r));
+    const position=()=>({x:scrollX,y:scrollY,transform:document.querySelector('.kg-world').getAttribute('transform'),
+      canvas:document.querySelector('.kg-canvas').getBoundingClientRect().toJSON(),
+      nodes:[...document.querySelectorAll('.kg-node')].map(n=>[n.dataset.knowledgeNode,n.getBoundingClientRect().toJSON()])});
+    const before=position();
+    document.querySelector('.kg-node[data-knowledge-node="shade-hypothesis"]').dispatchEvent(new MouseEvent('click',{bubbles:true}));
+    await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+    const after=position();
+    document.querySelector('[data-science-focus="overview"]').click();
+    await new Promise(r=>requestAnimationFrame(r));
+    window.positionCheck={before,after,clear:position()};
+    return JSON.stringify(before)===JSON.stringify(after) && JSON.stringify(before)===JSON.stringify(position())
+      && !document.querySelector('.kg-node.is-dim, .kg-edge.is-dim');
+  })()`);
+  await check('manual camera survives node, relation, Back and clear clicks', `(async () => {
+    document.querySelector('[data-science-focus="zoom-in"]').click();
+    const camera=document.querySelector('.kg-world').getAttribute('transform');const y=scrollY;
+    for(const selector of ['.kg-edge[data-relation="causes"]','.kw-science-outgoing .kw-science-statement','[data-science-focus="back"]','[data-science-focus="overview"]']) {
+      document.querySelector(selector).dispatchEvent(new MouseEvent('click',{bubbles:true}));
+      await new Promise(r=>requestAnimationFrame(r));
+      if(document.querySelector('.kg-world').getAttribute('transform')!==camera || scrollY!==y)return false;
+    }
+    document.querySelector('[data-science-focus="fit-graph"]').click();return true;
+  })()`);
+  const pointerTarget = await evaluate(`(async () => {
+    document.querySelector('[data-science-focus="overview"]').click();
+    scrollTo(0, document.querySelector('#map').offsetTop + 80);
+    await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+    window.pointerPosition={x:scrollX,y:scrollY,camera:document.querySelector('.kg-world').getAttribute('transform')};
+    const box=document.querySelector('.kg-node[data-knowledge-node="shade-hypothesis"]').getBoundingClientRect();
+    return {x:box.x+box.width/2,y:box.y+box.height/2};
+  })()`);
+  await send('Input.dispatchMouseEvent', {type:'mousePressed',button:'left',clickCount:1,...pointerTarget});
+  await send('Input.dispatchMouseEvent', {type:'mouseReleased',button:'left',clickCount:1,...pointerTarget});
+  await evaluate('new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))');
+  await check('pointer selection keeps page, camera and complete knowledge context', `(() => {
+    const selected=document.querySelector('.kg-node.is-selected');
+    return selected?.dataset.knowledgeNode==='shade-hypothesis' && scrollX===pointerPosition.x && scrollY===pointerPosition.y
+      && document.querySelector('.kg-world').getAttribute('transform')===pointerPosition.camera
+      && !document.querySelector('.kg-node.is-dim, .kg-edge.is-dim');
+  })()`);
+
   await evaluate(`document.querySelector('.kg-edge[data-relation="causes"]').dispatchEvent(new MouseEvent('click',{bubbles:true}))`);
   await check('causal relation exposes identification and alternatives', `(() => {
     const detail = document.querySelector('.kw-science-detail');
@@ -148,13 +243,7 @@ export async function qualifyKnowledgeGraphs({ origin, send, out, scientificExam
     document.querySelector('[data-science-focus="back"]').click();
     return selectedKnowledge.startsWith('edge:') && !!document.querySelector('.kg-edge.is-selected');
   })()`);
-  await check('selected relation endpoints remain readable beside its evidence', `(() => {
-    const svg=document.querySelector('.kg-canvas').getBoundingClientRect();
-    const endpoints=[...document.querySelectorAll('.kg-node:not(.is-dim)')];
-    return parseInt(document.querySelector('.kg-zoom-level').textContent)>=70
-      && endpoints.length===2 && endpoints.every(n=>{const b=n.getBoundingClientRect();
-        return b.left>=svg.left && b.right<=svg.right && b.top>=svg.top && b.bottom<=svg.bottom;});
-  })()`);
+  await check('relation selection keeps the complete context visible', `!document.querySelector('.kg-node.is-dim, .kg-edge.is-dim')`);
   await screenshot('knowledge-causal-relation.png');
   await evaluate(`document.querySelector('[data-science-focus="overview"]').click()`);
   await check('search highlights matches without dropping relationships', `(() => {
@@ -177,6 +266,7 @@ export async function qualifyKnowledgeGraphs({ origin, send, out, scientificExam
     const filter = document.querySelector('[data-science-focus="relation-filter"]'); filter.value=''; filter.dispatchEvent(new Event('change'));`);
   await check('zoom and fit work', `(() => {
     const read = () => document.querySelector('.kg-zoom-level').textContent;
+    document.querySelector('[data-science-focus="fit-graph"]').click();
     const before = read(); document.querySelector('[data-science-focus="zoom-in"]').click();
     const after = read(); document.querySelector('[data-science-focus="fit-graph"]').click();
     return before !== after && read() === before;

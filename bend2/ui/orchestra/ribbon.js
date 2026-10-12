@@ -609,70 +609,6 @@ function renderRibbon(container, data, options) {
     else setPosition(position - step);
   });
 
-  // The seats that moved most in this window; a chip jumps to that seat's
-  // newest recorded change.
-  const busiestSeats = [...seatTally.entries()]
-    .sort((a, b) => (b[1] - a[1]) || (a[0] < b[0] ? -1 : 1))
-    .slice(0, RIBBON_CHIPS_MAX);
-  const seatRow = document.createElement("div");
-  seatRow.className = "ribbon-seats";
-  if (busiestSeats.length) {
-    const label = document.createElement("span");
-    label.className = "ribbon-seats-label";
-    label.textContent = "Busiest agents";
-    seatRow.appendChild(label);
-    for (const entry of busiestSeats) {
-      const chip = document.createElement("button");
-      chip.type = "button";
-      chip.className = "ribbon-chip";
-      chip.dataset.focus = "ribbon-seat:" + entry[0];
-      chip.dataset.seat = entry[0];
-      // What the seat last recorded, and the kinds its entries carry. A seat's
-      // ink mix is the window's own mix for every busy seat, so the chip carries
-      // the seat's recency instead: a lit dot while its entries are arriving,
-      // and the read-out in the title.
-      const kindsHeld = [...(seatKinds.get(entry[0]) || new Map()).entries()]
-        .sort((a, b) => (b[1] - a[1]) || (a[0] < b[0] ? -1 : 1));
-      const at = seatNewest.get(entry[0]);
-      const newestAt = at !== undefined && events[at] ? events[at].at || "" : "";
-      const newestMs = Date.parse(newestAt);
-      const seatLive = Number.isFinite(newestMs) && (Date.now() - newestMs) < RIBBON_LIVE_MS;
-      chip.title = entry[0] + ", " + ribbonCount(entry[1]) + " recorded entries in this window"
-        + (kindsHeld.length
-          ? " \u00b7 " + kindsHeld.slice(0, 3)
-            .map((row) => row[0] + " " + ribbonCount(row[1])).join(", ")
-          : "")
-        + (newestAt ? " \u00b7 newest " + (ribbonAge(newestAt) || newestAt) : "")
-        + " \u00b7 opens this agent's record";
-      const value = document.createElement("span");
-      value.className = "ribbon-chip-count";
-      value.textContent = ribbonCount(entry[1]);
-      chip.appendChild(value);
-      const id = document.createElement("span");
-      id.className = "ribbon-chip-id";
-      id.textContent = ribbonShort(entry[0]);
-      chip.appendChild(id);
-      // The head's own live test, at the seat's scale: the mark the page already
-      // uses for entries arriving.
-      if (seatLive) {
-        const lit = document.createElement("span");
-        lit.className = "ribbon-chip-live";
-        lit.setAttribute("aria-hidden", "true");
-        chip.appendChild(lit);
-      }
-      // The spine navigates: a chip opens the seat through the shell when the
-      // shell passes that callback, and otherwise moves the needle to the seat's
-      // newest recorded entry.
-      const opensSeat = typeof opts.onSelectActor === "function";
-      if (String(opts.selectedId || "") === entry[0]) chip.setAttribute("aria-current", "true");
-      chip.addEventListener("click", () => {
-        if (opensSeat) opts.onSelectActor(entry[0]);
-        else if (typeof opts.onSelectEvent === "function") opts.onSelectEvent(at);
-      });
-      seatRow.appendChild(chip);
-    }
-  }
-
   const actions = document.createElement("div");
   actions.className = "ribbon-actions";
   const now = document.createElement("button");
@@ -702,7 +638,6 @@ function renderRibbon(container, data, options) {
 
   container.appendChild(head);
   container.appendChild(slider);
-  container.appendChild(seatRow);
   container.appendChild(actions);
 
   if (listOpen) {

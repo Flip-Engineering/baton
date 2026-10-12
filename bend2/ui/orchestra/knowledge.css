@@ -122,9 +122,11 @@
 .kg-zoom-level { font: 12px var(--sans); min-width: 3ch; }
 .kg-empty { padding: 12px 0; color: var(--muted); }
 .kg-content { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; }
-.kg-content .kw-science-neighborhood { display: flex; flex-direction: column; margin-top: 0; max-height: 520px; overflow: auto; }
+.kg-content .kw-science-neighborhood { display: flex; flex-direction: column; margin-top: 0; height: 520px; overflow: auto; }
 .kg-content .kw-science-detail { order: -1; }
 @container knowledge-science (min-width: 960px) {
-  .kg-content.has-selection { grid-template-columns: minmax(0, 1.8fr) minmax(320px, 1fr); }
+  .kg-content { grid-template-columns: minmax(0, 1.8fr) minmax(320px, 1fr); }
 }
 .kw-science-kind { text-transform: none; letter-spacing: normal; }
+
+.kg-reader-prompt { height: 520px; margin: 0; padding: 20px; border: 1px solid var(--hairline); color: var(--muted); }

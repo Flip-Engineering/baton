@@ -492,14 +492,6 @@
     if (edge.uncertainty) kwEl(entry, "p", { class: "kw-science-uncertainty" }, edge.uncertainty);
   }
 
-  function kwScientificReadingVisible(detail) {
-    const rect = detail.getBoundingClientRect();
-    const viewport = window.visualViewport;
-    const top = viewport ? viewport.offsetTop : 0;
-    const bottom = top + (viewport ? viewport.height : window.innerHeight);
-    return rect.bottom > top && rect.top < bottom;
-  }
-
   function kwRenderScientific(container, data, opts, graph, readingResize = false) {
     container.classList.add("kw-science");
     let read = kwScientificReads.get(container);
@@ -537,31 +529,26 @@
       else read.referencesOpen.delete(key);
     }
     const previous = container.contains(document.activeElement) ? document.activeElement : null;
-    const reading = previous && previous.closest(".kw-science-region");
-    const restoreReading = reading && (readingResize || kwScientificReadingVisible(reading));
+    const readerTop = container.querySelector(".kw-science-neighborhood")?.scrollTop || 0;
     const focus = previous && previous.getAttribute("data-science-focus");
     const caret = previous && typeof previous.selectionStart === "number"
       ? [previous.selectionStart, previous.selectionEnd] : null;
+    const minHeight = container.style.minHeight;
+    container.style.minHeight = container.getBoundingClientRect().height + "px";
     container.textContent = "";
     const overview = data.overview || {};
     const redraw = () => kwRenderScientific(container, data, opts, graph);
-    const focusDetail = () => {
-      const detail = container.querySelector(".kw-science-detail");
-      if (detail) detail.focus({ preventScroll: true });
-    };
     const activate = (id) => {
       if (read.selected !== String(id)) read.history.push(read.selected);
       select(String(id));
       redraw();
-      focusDetail();
     };
     const tools = kwEl(container, "div", { class: "kw-science-tools" });
     const home = kwEl(tools, "button", { type: "button", "data-science-focus": "overview" }, "Clear selection");
     home.addEventListener("click", () => { select(""); redraw(); });
-    if (read.history.length) {
-      const back = kwEl(tools, "button", { type: "button", "data-science-focus": "back" }, "Back");
-      back.addEventListener("click", () => { select(read.history.pop()); redraw(); focusDetail(); });
-    }
+    const back = kwEl(tools, "button", { type: "button", "data-science-focus": "back" }, "Back");
+    back.disabled = !read.history.length;
+    back.addEventListener("click", () => { if (read.history.length) { select(read.history.pop()); redraw(); } });
     const filters = kwEl(container, "div", { class: "kw-science-filters" });
     const search = kwEl(filters, "input", { type: "search", placeholder: "Find knowledge or a relation…",
       "aria-label": "Search knowledge records", "data-science-focus": "search" });
@@ -587,12 +574,12 @@
     const content = kwEl(container, "div", { class: "kg-content" + (selected ? " has-selection" : "") });
     kwKnowledgeCanvas(content, graph, read, activate, tools, container);
     if (!graph.nodes.size && !graph.edges.size) kwEl(container, "p", { class: "kg-empty" }, "No knowledge records in this scope.");
+    if (!selected) kwEl(content, "p", { class: "kg-reader-prompt" }, "Select a knowledge record or relation to read its evidence and limits.");
     if (selected) {
       const neighborhood = kwEl(content, "div", { class: "kw-science-neighborhood" });
       const openRegion = (side) => {
         const region = neighborhood.querySelector('[data-science-focus="' + side + '"]');
         if (region) {
-          region.scrollIntoView({ block: "start", inline: "nearest" });
           region.focus({ preventScroll: true });
         }
       };
@@ -633,17 +620,17 @@
         if (!connected.length) kwEl(side, "p", { class: "muted" }, "No relations in this reading");
       }
     }
+    const reader = container.querySelector(".kw-science-neighborhood");
+    if (reader) reader.scrollTop = readerTop;
     if (focus) {
       const restored = Array.from(container.querySelectorAll("[data-science-focus]"))
         .find((control) => control.getAttribute("data-science-focus") === focus);
       if (restored) {
         restored.focus({ preventScroll: true });
-        const region = restored.closest(".kw-science-region");
-        if (restoreReading && region && !kwScientificReadingVisible(region))
-          region.scrollIntoView({ block: "start", inline: "nearest" });
         if (caret && typeof restored.setSelectionRange === "function") restored.setSelectionRange(...caret);
       }
     }
+    container.style.minHeight = minHeight;
     return { findings: graph.nodes.size, promotions: (overview.promotions || []).length };
   }
 
@@ -850,22 +837,15 @@
     kwSvg(marker, "path", { d: "M 0 0 L 8 4 L 0 8 Z", class: "kg-arrow" });
     const world = kwSvg(svg, "g", { class: "kg-world" });
     let camera = kwGraphViews.get(viewOwner);
-    if (!camera) { camera = { x: 0, y: 0, k: 1, fitted: true }; kwGraphViews.set(viewOwner, camera); }
+    const initialView = !camera;
+    if (!camera) { camera = { x: 0, y: 0, k: 1 }; kwGraphViews.set(viewOwner, camera); }
     const zoomLabel = kwEl(tools, "output", { class: "kg-zoom-level", "aria-label": "Graph scale" });
     const paint = () => {
       world.setAttribute("transform", "translate(" + camera.x + " " + camera.y + ") scale(" + camera.k + ")");
       zoomLabel.textContent = Math.round(camera.k * 100) + "%";
     };
-    const fit = (selection = false) => {
+    const fit = () => {
       let boxes = Array.from(layout.positions.values());
-      if (selection && read.selected) {
-        const selected = graph.edges.get(read.selected.slice(5));
-        const focus = read.selected.startsWith("edge:") && selected
-          ? [layout.endpointKey(selected.source), layout.endpointKey(selected.target)]
-          : [read.selected, ...layout.links.filter((link) => link.from === read.selected || link.to === read.selected)
-            .flatMap((link) => [link.from, link.to])];
-        boxes = Array.from(new Set(focus)).map((key) => layout.positions.get(key)).filter(Boolean);
-      }
       if (!boxes.length) boxes = [{x:0,y:0,width:layout.width,height:layout.height}];
       const left = Math.min(...boxes.map((box) => box.x)) - 40;
       const top = Math.min(...boxes.map((box) => box.y)) - 40;
@@ -874,23 +854,17 @@
       camera.k = Math.min(1, width / (right - left), height / (bottom - top));
       camera.x = (width - (right - left) * camera.k) / 2 - left * camera.k;
       camera.y = (height - (bottom - top) * camera.k) / 2 - top * camera.k;
-      camera.fitted = true; paint();
+      paint();
     };
     const zoom = (factor, x = width / 2, y = height / 2) => {
       const k = camera.k * factor;
       camera.x = x - (x - camera.x) * factor;
       camera.y = y - (y - camera.y) * factor;
-      camera.k = k; camera.fitted = false; paint();
+      camera.k = k; paint();
     };
     for (const [word, action] of [["Zoom in", () => zoom(1.25)], ["Zoom out", () => zoom(.8)], ["Fit graph", () => fit()]]) {
       const button = kwEl(tools, "button", { type: "button", "data-science-focus": word.toLowerCase().replaceAll(" ", "-") }, word);
       button.addEventListener("click", action);
-    }
-    const keys = new Set([read.selected]);
-    const selectedEdge = read.selected.startsWith("edge:") && graph.edges.get(read.selected.slice(5));
-    if (selectedEdge) { keys.add(layout.endpointKey(selectedEdge.source)); keys.add(layout.endpointKey(selectedEdge.target)); }
-    for (const link of layout.links) if (link.from === read.selected || link.to === read.selected) {
-      keys.add(link.from); keys.add(link.to); keys.add(kwScientificKey(link.row));
     }
     const matches = (row) => !read.query || KnowledgeJSON.stringify(row).toLocaleLowerCase().includes(read.query.toLocaleLowerCase());
     const edgeLayer = kwSvg(world, "g", { class: "kg-relations" });
@@ -903,7 +877,7 @@
       const {d, lx, ly} = kwKnowledgeRoute(from, to, lane, link.from === link.to);
       const key = kwScientificKey(link.row);
       const dim = read.relation && link.row.kind !== read.relation || read.query && !matches(link.row)
-        && !matches(from.row) && !matches(to.row) || read.selected && !keys.has(key);
+        && !matches(from.row) && !matches(to.row);
       const edge = kwSvg(edgeLayer, "g", { class: "kg-edge" + (link.row.referenceUse ? " is-reference-use" : "") + (dim ? " is-dim" : "")
         + (key === read.selected ? " is-selected" : ""), role: "button", tabindex: "0",
         "data-science-focus": key, "data-knowledge-edge": link.row.id,
@@ -922,7 +896,7 @@
     const nodeLayer = kwSvg(world, "g", { class: "kg-records" });
     for (const [key, box] of layout.positions) {
       const row = box.row;
-      const dim = read.query && !matches(row) || read.selected && !keys.has(key)
+      const dim = read.query && !matches(row)
         || read.relation && !layout.links.some((link) => link.row.kind === read.relation && (link.from === key || link.to === key));
       const node = kwSvg(nodeLayer, "g", { class: "kg-node" + (row.outside || row.resource ? " is-reference" : "")
         + (dim ? " is-dim" : "") + (read.selected === key ? " is-selected" : ""),
@@ -945,7 +919,7 @@
       node.addEventListener("click", open);
       node.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); open(); } });
     }
-    if (camera.fitted) fit(!!read.selected); else paint();
+    if (initialView) fit(); else paint();
     let drag = null;
     svg.addEventListener("pointerdown", (event) => {
       if (event.button !== 0 || event.target.closest(".kg-node, .kg-edge")) return;
@@ -957,7 +931,7 @@
       if (!drag) return;
       camera.x = drag.cx + (event.clientX - drag.x) * width / drag.rect.width;
       camera.y = drag.cy + (event.clientY - drag.y) * height / drag.rect.height;
-      camera.fitted = false; paint();
+      paint();
     });
     svg.addEventListener("pointerup", () => { drag = null; });
     svg.addEventListener("pointercancel", () => { drag = null; });
@@ -975,7 +949,7 @@
       else if (event.key === "0") { event.preventDefault(); fit(); }
       else if (event.key === "Escape") { event.preventDefault(); activate(""); }
       else if (event.key.startsWith("Arrow")) {
-        event.preventDefault(); camera.fitted = false;
+        event.preventDefault();
         camera.x += event.key === "ArrowLeft" ? 50 : event.key === "ArrowRight" ? -50 : 0;
         camera.y += event.key === "ArrowUp" ? 50 : event.key === "ArrowDown" ? -50 : 0; paint();
       }
