@@ -1047,7 +1047,13 @@ class Control(unittest.TestCase):
         text = 'fixture output λ ' * 30000
         self.assertEqual(self.action(streams[0][1], output=text), {'output_written': len(text)})
         for name, stream, _ in streams:
-            body = text if name == 'omp-leaf' else 'Concurrent Codex task completed.'
+            # The large payload stays on the output action and the output
+            # log frames below: the completion exchange passes the finish
+            # body as one argv element to the coordinator CLI, and the
+            # kernel caps a single argument string at 131072 bytes.
+            body = ('Large concurrent output task completed λ '
+                    if name == 'omp-leaf' else
+                    'Concurrent Codex task completed.')
             self.finish(stream, body)
             self.exited(name)
             self.assertEqual(self.call('turns', name)[0]['reportBody'], body)
@@ -1134,13 +1140,14 @@ class Control(unittest.TestCase):
         self.assertIn('Same-prefix second completed.', bodies)
 
     def test_dispatch_log_refuses_when_even_bounded_identity_does_not_fit(self):
-        # A database basename long enough that even the 64-character bounded
-        # identity exceeds the component limit, while ordinary SQLite
-        # auxiliary names still fit: 180 bytes of basename make the bounded
-        # dispatch component 261 bytes and leave -wal/-shm at 184 bytes and
-        # the rollback journal at 188. The dispatch is refused, the
-        # committed input stays retained, and no execution row appears.
-        long_db = self.directory / ('d' * 177 + '.db')
+        # A database basename long enough that both log forms exceed the
+        # component limit, while ordinary SQLite auxiliary names still fit.
+        # The hex form of the 17-byte identity needs 51 bytes of overhead,
+        # so 205 bytes of basename push it to 256; the bounded identity
+        # needs 81, reaching 286; -wal/-shm stay at 209 and the rollback
+        # journal at 213. The dispatch is refused, the committed input
+        # stays retained, and no execution row appears.
+        long_db = self.directory / ('d' * 202 + '.db')
         self.addCleanup(self.shutdown_database, long_db)
         def against_db(*args):
             argv = [str(EXE), str(long_db), *map(str, args)]
