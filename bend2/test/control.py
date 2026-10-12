@@ -78,14 +78,25 @@ def captured_stream(value):
     return {'text': str(value)}
 
 
+def captured_byte_length(captured):
+    # The actual payload length: base64 bytes decode to their original
+    # length; text forms measure their UTF-8 bytes.
+    if captured is None:
+        return -1
+    if 'base64' in captured:
+        return len(base64.b64decode(captured['base64']))
+    return len(captured['text'].encode('utf-8'))
+
+
 def longer_stream(first, second):
-    # The longest captured buffer keeps first-timeout partials when the
-    # post-kill read yields less.
+    # The buffer carrying more actual payload bytes wins, so a shorter
+    # first-timeout capture stored as base64 plus text cannot outrank a
+    # longer post-kill capture on representation size alone.
     if first is None:
         return second
     if second is None:
         return first
-    return second if len(json.dumps(second)) > len(json.dumps(first)) else first
+    return second if captured_byte_length(second) > captured_byte_length(first) else first
 
 
 def run_recorded_child(case, argv, timeout, database=None, expected=None):
@@ -110,24 +121,30 @@ def run_recorded_child(case, argv, timeout, database=None, expected=None):
     except subprocess.TimeoutExpired as first:
         child.kill()
         record['direct_wait_completed'] = False
-        stdout = captured_stream(getattr(first, 'output', None))
-        stderr = captured_stream(getattr(first, 'stderr', None))
+        first_stdout = captured_stream(getattr(first, 'output', None))
+        first_stderr = captured_stream(getattr(first, 'stderr', None))
+        record['firstTimeoutStdout'] = first_stdout
+        record['firstTimeoutStderr'] = first_stderr
+        stdout, stderr = first_stdout, first_stderr
         record['childFate'] = 'killed-reaped'
+        post_stdout = post_stderr = None
         try:
             full_stdout, full_stderr = child.communicate(timeout=10)
-            stdout = longer_stream(stdout, {'text': full_stdout})
-            stderr = longer_stream(stderr, {'text': full_stderr})
+            post_stdout = {'text': full_stdout}
+            post_stderr = {'text': full_stderr}
         except subprocess.TimeoutExpired as second:
             record['childFate'] = 'killed-pipes-held-by-descendants'
-            stdout = longer_stream(stdout,
-                                   captured_stream(getattr(second, 'output', None)))
-            stderr = longer_stream(stderr,
-                                   captured_stream(getattr(second, 'stderr', None)))
+            post_stdout = captured_stream(getattr(second, 'output', None))
+            post_stderr = captured_stream(getattr(second, 'stderr', None))
             for stream in (child.stdout, child.stderr):
                 try:
                     stream.close()
                 except (OSError, ValueError):
                     pass
+        record['postKillStdout'] = post_stdout
+        record['postKillStderr'] = post_stderr
+        stdout = longer_stream(stdout, post_stdout)
+        stderr = longer_stream(stderr, post_stderr)
         try:
             child.wait(timeout=10)
             record['direct_wait_completed'] = True
