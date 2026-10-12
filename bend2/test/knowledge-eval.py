@@ -179,7 +179,9 @@ class KnowledgeEval(unittest.TestCase):
         rows = self.call('knowledge-scope', 'root', 'all', '', '--id', 'ev-nope')
         self.assertEqual(rows, [])
 
-    def test_kindless_reference_names_mismatch_not_generic_refusal(self):
+    def test_kindless_reference_names_shape(self):
+        # The contract reference types require kind on every id reference,
+        # so a kind-less basis entry is malformed shape, not a mismatch.
         argument = node('grand', 'ev-arg', 'argument', details={
             'method': 'deduction', 'premises': [], 'derivation': 'test derivation'})
         self.record(argument)
@@ -189,7 +191,7 @@ class KnowledgeEval(unittest.TestCase):
                        basis=[{'id': 'ev-claim'}],
                        details={'conclusion': 'test conclusion'})
         refused = self.call('relate-v1', json.dumps(payload), success=False)
-        self.assertIn('v1-endpoint-kind-mismatch', refused.stderr)
+        self.assertIn('v1-edge-shape', refused.stderr)
 
     def test_proves_without_conclusion_names_shape(self):
         argument = node('grand', 'ev-arg2', 'argument', details={

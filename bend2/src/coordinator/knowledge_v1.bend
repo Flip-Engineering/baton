@@ -83,9 +83,12 @@ def ref_matched(+v: String) -> String:
   ++ " OR (json_extract(" ++ v ++ ",'$.kind')='edge' AND EXISTS(SELECT 1 FROM knowledge_edges_v1 e WHERE e.id=json_extract(" ++ v ++ ",'$.id') AND e.kind=json_extract(" ++ v ++ ",'$.edgeKind'))))"
 
 # Every entry of the array at path is an object naming an id or a uri.
-# Absent paths hold no entries and pass.
+# The contract reference types require kind on every id reference, so an
+# id without a uri must declare its kind; kind-less ids would otherwise
+# slip through matching, which needs the declared kind. Absent paths hold
+# no entries and pass.
 def refs_shaped(+payload: String, +path: String) -> String:
-  "NOT EXISTS(SELECT 1 FROM json_each(json_extract(" ++ payload ++ "," ++ C.q(path) ++ ")) WHERE json_type(value)<>'object' OR (json_extract(value,'$.id') IS NULL AND json_extract(value,'$.uri') IS NULL))"
+  "NOT EXISTS(SELECT 1 FROM json_each(json_extract(" ++ payload ++ "," ++ C.q(path) ++ ")) WHERE json_type(value)<>'object' OR (json_extract(value,'$.id') IS NULL AND json_extract(value,'$.uri') IS NULL) OR (json_extract(value,'$.uri') IS NULL AND json_extract(value,'$.kind') IS NULL))"
 
 # No entry at path names an unresolvable reference. Malformed JSON extracts
 # to NULL and holds no entries, so invalid payloads fail shape instead.
@@ -106,7 +109,7 @@ def one_matched(+payload: String, +path: String) -> String:
 
 def one_shaped(+payload: String, +path: String) -> String:
   +v = "json_extract(" ++ payload ++ "," ++ C.q(path) ++ ")"
-  "(" ++ v ++ " IS NULL OR (json_type(" ++ payload ++ "," ++ C.q(path) ++ ")='object' AND json_extract(" ++ v ++ ",'$.id') IS NOT NULL AND json_extract(" ++ v ++ ",'$.id')<>''))"
+  "(" ++ v ++ " IS NULL OR (json_type(" ++ payload ++ "," ++ C.q(path) ++ ")='object' AND json_extract(" ++ v ++ ",'$.id') IS NOT NULL AND json_extract(" ++ v ++ ",'$.id')<>'' AND (json_extract(" ++ v ++ ",'$.uri') IS NOT NULL OR json_extract(" ++ v ++ ",'$.kind') IS NOT NULL)))"
 
 # A refusal row naming the rule, mirroring the legacy conflict shape.
 def v1_error(+name: String, +detail: String, +cond: String) -> String:
