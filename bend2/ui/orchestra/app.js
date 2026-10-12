@@ -54,6 +54,7 @@ const state = {
   // the outcome of continuing one. Read on demand; the actor it belongs to travels with it.
   project: null,
   projectNotice: "",
+  projectError: null,
   // The project read's own outcome: "" before any read, then reading, none,
   // missing, error or ok. The record reads this so a read that did not answer
   // is named rather than left out.
@@ -756,7 +757,11 @@ async function loadProject(actor) {
   state.projectPending = request;
   state.projectActor = actor || "";
   state.projectRead = actor ? "reading" : "none";
+  state.projectNotice = actor ? "Reading the recorded project…" : "";
+  state.projectError = null;
+  state.project = null;
   state.resume = null;
+  renderProject();
   if (!actor) {
     state.project = null;
     state.projectPending = null;
@@ -783,16 +788,19 @@ async function loadProject(actor) {
     state.projectPending = null;
     if (res.status === 400 && body.error === "project-workspace-required") {
       state.project = null;
-      state.projectNotice = shortSeatId(actor) + " has no recorded workspace.";
+      state.projectNotice = actor + " has no recorded workspace. Select a conversation with a recorded project workspace.";
+      state.projectError = { status: res.status, body };
       state.projectRead = "missing";
     } else if (!res.ok) {
       state.project = null;
       state.projectNotice = "The project could not be read (" + res.status + ").";
+      state.projectError = { status: res.status, body };
       state.projectRead = "error";
     } else {
       state.project = {
         actor,
         name: projectName(body.project),
+        identity: body.project,
         sessions: body.sessions || [],
         selected: body.selected || null,
       };
@@ -804,6 +812,7 @@ async function loadProject(actor) {
     state.projectPending = null;
     state.project = null;
     state.projectNotice = "The project could not be read.";
+    state.projectError = { body: { cause: String(e && e.message ? e.message : e) } };
     state.projectRead = "error";
   }
   markDrawnStale();
@@ -835,8 +844,10 @@ async function resumeSession(session, liftStop) {
       const delivery = body.delivery || null;
       outcome = Object.assign(outcome, {
         ok: true,
-        messageId: body.message || "",
-        receipt: (delivery && delivery.receipt) || "",
+        answer: body,
+        delivery,
+        messageId: body.message ?? "",
+        receipt: delivery ? delivery.receipt : null,
         latestReportId: body.latestReportId || "",
         latestReport: body.latestReport || "",
       });
@@ -847,6 +858,7 @@ async function resumeSession(session, liftStop) {
       outcome = Object.assign(outcome, {
         ok: false,
         status: res.status,
+        answer: body,
         // Retain stop metadata and the returned refusal.
         stopped: projectStopped(state.project && state.project.selected) || /terminally stopped/i.test(words),
         refused: {
@@ -872,37 +884,60 @@ async function resumeSession(session, liftStop) {
   renderDocumentSoon();
 }
 
-// Compare rendered session and resume fields before updating the DOM.
+// Redraw when any displayed metadata or complete report changes.
 function projectSignature() {
-  const project = state.project;
-  const resume = state.resume;
-  const parts = [state.projectNotice];
-  if (project) {
-    parts.push(project.actor, project.name, String(project.sessions.length));
-    project.sessions.forEach((session) => {
-      parts.push([session.id, session.latestReportId || "", session.pendingCount || 0,
-        projectStopped(session) ? "stopped" : ""].join(":"));
-    });
-    const chosen = project.selected;
-    // The rendered values themselves, not a length or a digest: equal-length changes to a
-    // report, a notice or a refusal must redraw, and an unrelated frame must not.
-    parts.push(chosen ? [chosen.id, chosen.latestReportId || "",
-      String(chosen.latestReport || "")].join(":") : "-");
-  } else {
-    parts.push("-");
+  return JSON.stringify([state.projectNotice, state.projectRead, state.projectError,
+    state.project, state.resume]);
+}
+
+function projectValue(value) {
+  return value === undefined || value === null || value === "" ? "unknown" : String(value);
+}
+
+function projectFacts(parent, entries, className = "") {
+  const facts = document.createElement("dl");
+  facts.className = "project-facts " + className;
+  for (const [label, value] of entries) {
+    const pair = document.createElement("div");
+    const term = document.createElement("dt");
+    const detail = document.createElement("dd");
+    term.textContent = label;
+    detail.textContent = projectValue(value);
+    pair.append(term, detail);
+    facts.appendChild(pair);
   }
-  if (resume) {
-    const refusal = resume.refused || {};
-    parts.push([resume.session, resume.pending ? "pending" : resume.ok ? "ok" : "refused",
-      resume.receipt || "", resume.messageId || "", resume.latestReportId || "",
-      String(resume.latestReport || ""), resume.stopped ? "stopped" : "",
-      refusal.error || "", refusal.status === undefined ? "" : String(refusal.status),
-      refusal.code === undefined || refusal.code === null ? "" : String(refusal.code),
-      refusal.stdout || "", refusal.stderr || ""].join(":"));
-  } else {
-    parts.push("none");
+  parent.appendChild(facts);
+  return facts;
+}
+
+function projectReport(parent, label, id, body, key) {
+  const detail = document.createElement("details");
+  detail.className = "project-detail";
+  detail.dataset.projectDetail = key;
+  const summary = document.createElement("summary");
+  summary.textContent = label;
+  detail.appendChild(summary);
+  projectFacts(detail, [["Report ID", id]]);
+  const content = document.createElement("pre");
+  content.className = "project-report";
+  content.textContent = body === undefined || body === null || body === ""
+    ? "No report body is recorded for this conversation." : String(body);
+  detail.appendChild(content);
+  parent.appendChild(detail);
+}
+
+function projectFailure(parent, failure) {
+  const body = failure.body || {};
+  const execution = body.execution || {};
+  projectFacts(parent, [["HTTP status", failure.status], ["Error", body.error],
+    ["Cause", body.cause], ["Exit code", execution.code], ["Signal", execution.signal]]);
+  for (const [label, value] of [["stdout", execution.stdout], ["stderr", execution.stderr]]) {
+    if (value === undefined || value === null || value === "") continue;
+    const content = document.createElement("pre");
+    content.className = "project-report";
+    content.textContent = label + ":\n" + value;
+    parent.appendChild(content);
   }
-  return parts.join("|");
 }
 
 let projectDrawn = "";
@@ -913,117 +948,170 @@ function renderProject() {
   if (signature === projectDrawn) return;
   const active = document.activeElement;
   const key = active && active.dataset ? active.dataset.projectKey || "" : "";
+  const listTop = el.projectBody.querySelector(".project-list")?.scrollTop || 0;
+  const opened = new Set([...el.projectBody.querySelectorAll("details[open]")]
+    .map(node => node.dataset.projectDetail));
   projectDrawn = signature;
   const project = state.project;
   if (el.projectState) {
     el.projectState.textContent = project
-      ? (project.name || "project") + " \u00b7 " + project.sessions.length
-        + (project.sessions.length === 1 ? " conversation" : " conversations")
-      : (state.projectNotice || "Nothing read yet.");
+      ? project.sessions.length + (project.sessions.length === 1 ? " recorded conversation" : " recorded conversations")
+      : (state.projectNotice || "Select a conversation to read its recorded project.");
   }
   el.projectBody.textContent = "";
-  if (project && project.sessions.length) {
-    const list = document.createElement("ul");
-    list.className = "project-list";
-    project.sessions.forEach((session) => {
-      const item = document.createElement("li");
-      const open = document.createElement("button");
-      const chosen = project.selected && project.selected.id === session.id;
-      open.type = "button";
-      open.className = "project-session" + (chosen ? " is-selected" : "")
-        + (projectStopped(session) ? " is-stopped" : "");
-      open.dataset.projectKey = "session:" + session.id;
-      open.title = session.id + (projectStopped(session) ? " \u00b7 stopped" : "")
-        + (session.latestReportId ? " \u00b7 report kept" : "");
-      text(open, shortSeatId(session.id || ""));
-      if (session.pendingCount) {
-        const mark = document.createElement("span");
-        mark.className = "project-pending mono";
-        text(mark, String(session.pendingCount));
-        open.appendChild(mark);
-      }
-      open.addEventListener("click", () => {
-        void loadProject(session.id);
-        // The knowledge overview answers for any recorded actor, so the map follows the
-        // conversation the reader picked - prior ones included.
-        setKnowledgeScope({ kind: "actor", id: session.id });
-      });
-      item.appendChild(open);
-      list.appendChild(item);
-    });
-    el.projectBody.appendChild(list);
+  if (state.projectError) projectFailure(el.projectBody, state.projectError);
+  if (project) {
+    const identity = typeof project.identity === "object" && project.identity ? project.identity : {};
+    const heading = document.createElement("h3");
+    heading.textContent = "Recorded project identity";
+    el.projectBody.appendChild(heading);
+    projectFacts(el.projectBody, [["Project", identity.project], ["Canonical workspace", identity.canonical],
+      ["Requested workspace", identity.input], ["Database", identity.database], ["Pointer", identity.pointer],
+      ["Identity rule", identity.rule], ["Git result", identity.git?.ok], ["Git cause", identity.git?.cause]], "project-identity");
   }
   const chosenSession = project && project.selected ? project.selected : null;
   if (chosenSession) {
+    const heading = document.createElement("h3");
+    heading.className = "project-selected-title";
+    heading.textContent = "Selected conversation: " + projectValue(chosenSession.id);
+    el.projectBody.appendChild(heading);
     const row = document.createElement("div");
     row.className = "project-resume";
     const resume = state.resume && state.resume.session === chosenSession.id ? state.resume : null;
-    const stopped = projectStopped(chosenSession);
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "doc-scope-btn";
-    button.dataset.projectKey = "continue";
-    if (resume && resume.pending) {
-      button.disabled = true;
-      text(button, "Continuing\u2026");
-    } else if (stopped) {
-      text(button, "Lift the stop and continue");
-      button.title = "The session is recorded as stopped; the stop stands until it is lifted here.";
-    } else {
-      text(button, "Continue");
-      button.title = "Continue " + chosenSession.id + " through its recorded receiver.";
-    }
-    button.addEventListener("click", () => { void resumeSession(chosenSession.id, stopped); });
-    row.appendChild(button);
+    const stopped = projectStopped(chosenSession) || Boolean(resume?.stopped);
+    const continuing = Boolean(resume?.pending);
+    const addAction = (label, liftStop, key) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "doc-scope-btn";
+      button.dataset.projectKey = key;
+      button.textContent = label;
+      button.disabled = continuing || (stopped && !liftStop);
+      button.title = liftStop ? "Explicitly lift the recorded stop and continue this conversation."
+        : "Continue this conversation through its recorded receiver.";
+      button.addEventListener("click", () => { void resumeSession(chosenSession.id, liftStop); });
+      row.appendChild(button);
+    };
+    addAction("Continue", false, "continue");
+    if (stopped) addAction("Lift stop and continue", true, "lift-stop");
+    const knowledge = document.createElement("button");
+    knowledge.type = "button";
+    knowledge.className = "doc-scope-btn";
+    knowledge.dataset.projectKey = "knowledge";
+    knowledge.textContent = "Open shared knowledge";
+    knowledge.addEventListener("click", () => {
+      setKnowledgeScope({ kind: "actor", id: chosenSession.id });
+      document.querySelector("#map")?.scrollIntoView({ block: "start", behavior: "instant" });
+    });
+    row.appendChild(knowledge);
     const said = document.createElement("p");
     said.className = "project-outcome";
-    if (resume && resume.pending) text(said, "asking the coordinator\u2026");
-    else if (resume && resume.ok) text(said, "accepted");
-    else if (resume && resume.ok === false) text(said, "not continued");
-    else if (stopped) text(said, "stopped");
-    else if (chosenSession.latestReportId) text(said, "a report is kept");
-    else text(said, "ready to continue");
-    if (chosenSession.pendingCount) {
-      text(said, " \u00b7 " + chosenSession.pendingCount + " waiting");
-    }
+    said.setAttribute("role", "status");
+    if (continuing) said.textContent = "Waiting for the coordinator response…";
+    else if (resume?.ok === false) said.textContent = "Resume refused. The returned cause is recorded below.";
+    else if (resume?.delivery) said.textContent = resume.receipt === null || resume.receipt === undefined
+      ? "Delivery pending: no recipient receipt is recorded." : "Recipient receipt recorded.";
+    else if (resume?.ok) said.textContent = projectValue(resume.answer?.cause);
+    else if (stopped) said.textContent = "The recorded stop remains in effect.";
+    else said.textContent = "Continue sends owed input through the recorded receiver.";
     row.appendChild(said);
     el.projectBody.appendChild(row);
-    // Expand the report and resume response on request.
-    const detail = document.createElement("details");
-    detail.className = "project-detail";
-    const summary = document.createElement("summary");
-    text(summary, "The report and the coordinator's answer");
-    detail.appendChild(summary);
-    const reportBody = document.createElement("pre");
-    reportBody.className = "project-report";
-    text(reportBody, chosenSession.latestReport
-      ? String(chosenSession.latestReport)
-      : "No report is kept for this conversation.");
-    detail.appendChild(reportBody);
-    if (resume) {
-      const facts = document.createElement("p");
-      facts.className = "muted";
-      const bits = [];
-      if (resume.ok) {
-        bits.push(resume.receipt ? "delivery receipt " + resume.receipt : "the coordinator accepted the resume");
-        if (resume.messageId) bits.push("message " + resume.messageId);
-        if (resume.latestReportId) bits.push("report kept " + resume.latestReportId);
-        bits.push("an admission is not completed work, and that report predates this request");
-      } else if (resume.refused) {
-        bits.push(resume.refused.error || "no cause was recorded");
-        if (resume.refused.status) bits.push("status " + resume.refused.status);
-        if (resume.refused.code !== undefined && resume.refused.code !== null) bits.push("code " + resume.refused.code);
-        if (resume.refused.stdout) bits.push("stdout: " + resume.refused.stdout);
-        if (resume.refused.stderr) bits.push("stderr: " + resume.refused.stderr);
+    if (resume && !continuing) {
+      const response = document.createElement("section");
+      response.className = "project-response";
+      const heading = document.createElement("h4");
+      heading.textContent = "Resume response";
+      response.appendChild(heading);
+      if (resume.ok && resume.delivery) {
+        projectFacts(response, [["Message ID", resume.messageId], ["Recipient", resume.delivery.recipient],
+          ["Kind", resume.delivery.kind], ["Receipt", resume.receipt ?? "pending (no recipient receipt)"]]);
+      } else if (resume.ok) {
+        projectFacts(response, [["Result", resume.answer?.ok], ["Cause", resume.answer?.cause]]);
+      } else {
+        projectFailure(response, { status: resume.status,
+          body: resume.answer || { error: resume.refused?.error } });
       }
-      text(facts, bits.join(" \u00b7 "));
-      detail.appendChild(facts);
+      if (resume.ok && (resume.latestReportId || resume.latestReport)) {
+        projectReport(response, "Retained report returned by resume", resume.latestReportId,
+          resume.latestReport, "resume:" + chosenSession.id);
+      }
+      el.projectBody.appendChild(response);
     }
-    el.projectBody.appendChild(detail);
+    projectReport(el.projectBody, "Retained report from the project read", chosenSession.latestReportId,
+      chosenSession.latestReport, "selected:" + chosenSession.id);
+  } else if (project) {
+    const notice = document.createElement("p");
+    notice.className = "project-outcome";
+    notice.textContent = "No conversation is selected in this project. Select a recorded conversation below.";
+    el.projectBody.appendChild(notice);
+  }
+  if (project && project.sessions.length) {
+    const list = document.createElement("ul");
+    list.className = "project-list";
+    list.setAttribute("aria-label", "Recorded project conversations");
+    project.sessions.forEach((session, index) => {
+      const item = document.createElement("li");
+      const open = document.createElement("button");
+      const chosen = chosenSession && chosenSession.id === session.id;
+      const stopped = projectStopped(session);
+      item.className = "project-conversation" + (chosen ? " is-selected" : "") + (stopped ? " is-stopped" : "");
+      open.type = "button";
+      open.className = "project-session" + (chosen ? " is-selected" : "") + (stopped ? " is-stopped" : "");
+      open.dataset.projectKey = "session:" + session.id;
+      open.setAttribute("aria-pressed", chosen ? "true" : "false");
+      const title = document.createElement("span");
+      title.className = "project-session-id";
+      title.textContent = projectValue(session.id);
+      open.appendChild(title);
+      if (session.id === project.actor) {
+        const current = document.createElement("span");
+        current.className = "project-current";
+        current.textContent = "current";
+        open.appendChild(current);
+      }
+      const entries = [["Role", session.role], ["Kind", session.kind], ["Parent", session.parent],
+        ["Configured harness", session.harness], ["Configured model", session.model], ["Configured effort", session.effort]];
+      if (["Harness", "Model", "Effort"].some(label => session["observed" + label]
+        && session["observed" + label] !== session[label.toLowerCase()])) {
+        entries.push(["Observed harness", session.observedHarness], ["Observed model", session.observedModel],
+          ["Observed effort", session.observedEffort]);
+      }
+      entries.push(["Workspace", session.workspace], ["Branch", session.branch], ["Native conversation", session.native],
+        ["Execution phase", session.execution?.phase], ["Execution status", session.execution?.status],
+        ["Pending input", session.pendingCount], ["Unacknowledged input", session.unacknowledgedCount],
+        ["Latest report ID", session.latestReportId]);
+      if (session.stop) entries.push(["Stop status", session.stop.status], ["Stop reason", session.stop.reason],
+        ["Stop outcome", session.stop.outcome], ["Stopped attempt", session.stop.attempt]);
+      else entries.push(["Stop", "none recorded"]);
+      open.addEventListener("click", () => {
+        void loadProject(session.id);
+        setKnowledgeScope({ kind: "actor", id: session.id });
+      });
+      open.addEventListener("keydown", event => {
+        let next;
+        if (event.key === "ArrowDown") next = Math.min(index + 1, project.sessions.length - 1);
+        else if (event.key === "ArrowUp") next = Math.max(index - 1, 0);
+        else if (event.key === "Home") next = 0;
+        else if (event.key === "End") next = project.sessions.length - 1;
+        if (next === undefined) return;
+        event.preventDefault();
+        const button = list.children[next].querySelector("button");
+        button.focus();
+        button.scrollIntoView({ block: "nearest", behavior: "instant" });
+      });
+      item.appendChild(open);
+      projectFacts(item, entries, "project-session-facts");
+      list.appendChild(item);
+    });
+    el.projectBody.appendChild(list);
+    list.scrollTop = listTop;
+  }
+  for (const detail of el.projectBody.querySelectorAll("details")) {
+    if (opened.has(detail.dataset.projectDetail)) detail.open = true;
   }
   const back = key
     ? el.projectBody.querySelector('[data-project-key="' + CSS.escape(key) + '"]') : null;
-  if (back && typeof back.focus === "function") back.focus();
+  if (back && typeof back.focus === "function") back.focus({ preventScroll: true });
 }
 
 // The plate's index states what each section holds, from the facts those sections draw - the

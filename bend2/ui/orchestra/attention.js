@@ -491,6 +491,29 @@
     return lines;
   }
 
+  // Display identifier words together; the exact identifier remains in the title.
+  function readableName(id) {
+    return String(id || "").replace(/[-_.]20\d{6}$/, "").replace(/[-_.]+/g, " ");
+  }
+
+  function wordLines(text, width, measure) {
+    var words = String(text || "").split(/\s+/);
+    var lines = [];
+    var line = "";
+    words.forEach(function (word) {
+      var next = line ? line + " " + word : word;
+      if (line && measure(next) > width) { lines.push(line); line = ""; }
+      if (measure(word) > width) {
+        if (line) { lines.push(line); line = ""; }
+        var parts = captionLines(word, width, measure);
+        lines = lines.concat(parts.slice(0, -1));
+        line = parts[parts.length - 1];
+      } else line = line ? line + " " + word : word;
+    });
+    if (line) lines.push(line);
+    return lines.length ? lines : [""];
+  }
+
   function roleWord(role) {
     if (role === "principal-conductor") return "Principal conductor";
     if (role === "associate-conductor") return "Associate conductor";
@@ -524,7 +547,6 @@
       });
       return owned || ids.slice().sort()[0];
     };
-    var groupShort = shortForms(plan.ensembles.map(function (e) { return String(e.id); }));
     var widths = [];
     var parentOrder = new Map();
     plan.tiers.forEach(function (tier) {
@@ -575,8 +597,8 @@
       tier.groups.forEach(function (band) {
         var bandWidth = band.rows.length * cardWidth + (band.rows.length - 1) * cardGap;
         band.label = band.id || (band.parent ? "Reports to " + band.parent : "");
-        var label = overview ? (groupShort[band.id] || band.label.replace(/-20\d{6}/g, "")) : band.label;
-        band.caption = captionLines(label, Math.max(20, bandWidth), groupMeasure);
+        var label = readableName(band.label);
+        band.caption = wordLines(label, Math.max(20, bandWidth - 16), groupMeasure);
         if (overview && band.caption.length > 2) {
           band.caption = band.caption.slice(0, 2);
           band.caption[1] = band.caption[1].slice(0, -1) + "…";
@@ -587,8 +609,8 @@
       var widestCaption = 1;
       var captions = new Map();
       tier.rows.forEach(function (member) {
-        var lines = captionLines(compact ? member.short : member.id,
-          compact ? Math.max(12, cardWidth - 8) : cardWidth - 62, captionMeasure);
+        var lines = compact ? wordLines(readableName(member.id), Math.max(12, cardWidth - 8), captionMeasure)
+          : captionLines(member.id, cardWidth - 62, captionMeasure);
         if (compact && lines.length > 3) {
           lines = lines.slice(0, 3);
           lines[2] = lines[2].slice(0, -1) + "…";
@@ -831,7 +853,7 @@
     var state = svgEl("text", { "class": "att-seat-state", x: 0, y: entry.stateY });
     var stateText = seat.word + (entry.context && !laid.compact ? " · reporting context" : "");
     if (laid.compact && !laid.dense) {
-      captionLines(stateText, entry.width - 8, textMeasure(null, 10)).forEach(function (words, index) {
+      wordLines(stateText, entry.width - 8, textMeasure(null, 10)).forEach(function (words, index) {
         var part = svgEl("tspan", { x: 0, y: entry.stateY + index * 12 });
         setText(part, words);
         state.appendChild(part);
@@ -1357,6 +1379,8 @@
         "data-att-group-depth": band.depth });
       group.appendChild(svgEl("rect", { "class": "att-peer-boundary", x: band.x, y: band.y,
         width: band.width, height: band.height, rx: 4 }));
+      group.appendChild(svgEl("rect", { "class": "att-peer-heading", x: band.x, y: band.y,
+        width: band.width, height: band.caption.length * 16 + 10, rx: 4 }));
       var name = svgEl("text", { "class": "att-peer-name", x: band.x + laid.groupPadding, y: band.y + 18 });
       band.caption.forEach(function (words, index) {
         var line = svgEl("tspan", { x: band.x + laid.groupPadding, y: band.y + 18 + index * 16 });
@@ -1400,36 +1424,6 @@
         fresh: Math.max(0, Math.min(1, 1 - times[recentIds[a2]].age / RECENT_WINDOW_MS)),
         age: ageText(times[recentIds[a2]].at, now),
       };
-    }
-
-    // The baton, drawn under the seats so it never hides one.
-    var holderId = "";
-    var byId = new Map(plan.rows.map(function (row) { return [row.id, row]; }));
-    var ancestor = byId.get(plan.batonTarget);
-    var visited = new Set();
-    while (ancestor && !visited.has(ancestor.id)) {
-      visited.add(ancestor.id);
-      if (ancestor.role === "principal-conductor" && !ancestor.parent) {
-        holderId = ancestor.id;
-        break;
-      }
-      ancestor = byId.get(ancestor.parent);
-    }
-    var holder = positions[holderId];
-    var target = positions[plan.batonTarget];
-    if (holder && target && holder !== target) {
-      var rise = arcLift(target.y - 10, target.y - 10, 46);
-      var baton = svgEl("path", {
-        "class": "att-baton",
-        d: "M " + holder.x + " " + (holder.y + 10)
-          + " C " + holder.x + " " + (holder.y + 10 + rise)
-          + " " + target.x + " " + (target.y - 10 - rise)
-          + " " + target.x + " " + (target.y - 10),
-      });
-      var batonNote = svgEl("title");
-      setText(batonNote, "the baton \u2014 " + target.seat.id + " acted most recently");
-      baton.appendChild(batonNote);
-      svg.appendChild(baton);
     }
 
     for (var i = 0; i < laid.seats.length; i += 1) {
@@ -1722,6 +1716,7 @@
         button.type = "button";
         button.className = "att-stage-view";
         button.dataset.attKey = "view:" + item[1];
+        button.setAttribute("aria-pressed", view.fit === item[1] ? "true" : "false");
         setText(button, item[0]);
         button.addEventListener("click", function () { fitStage(item[1]); });
         tools.appendChild(button);
