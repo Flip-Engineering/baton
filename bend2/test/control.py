@@ -21,13 +21,47 @@ ROOT = pathlib.Path(__file__).resolve().parents[2]
 EXE = ROOT / '.scratch/bend2/baton2'
 
 
-def shutdown_fixture_owner(case):
+def bank_failure_evidence(case):
+    # Failures, errors and subtest failures are recorded on the result's
+    # public failure and error lists before cleanups run. Write them to the
+    # fixture directory first, so every later cleanup step works with its
+    # evidence already retained.
+    outcome = getattr(case, '_outcome', None)
+    result = getattr(outcome, 'result', None)
+    recorded = []
+    if result is None:
+        recorded.append('failure-retention: no result object was available '
+                        'on the outcome; nothing could be banked')
+    else:
+        for name in ('failures', 'errors'):
+            for entry in getattr(result, name, None) or ():
+                recorded.append(entry[1] if isinstance(entry, tuple)
+                                else str(entry))
+        if not recorded:
+            recorded.append('failure-retention: no failure or error was '
+                            'recorded on the result at cleanup time')
+    try:
+        (case.directory / 'failure-tracebacks.txt').write_text(
+            '\n'.join(recorded) + '\n')
+    except OSError as error:
+        # Retention must not mask the primary failure.
+        print('failure-retention: could not write evidence:', error,
+              file=sys.stderr)
+
+
+def shutdown_fixture_owner(case, timeout=30):
+    bank_failure_evidence(case)
     config = json.loads((case.directory / 'fixture.json').read_text())
     argv = [config['exe'], '--instance-shutdown', str(case.db)]
-    result = subprocess.run(argv, env=case.environment, capture_output=True,
-                            text=True)
+    try:
+        result = subprocess.run(argv, env=case.environment, capture_output=True,
+                                text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise AssertionError('Instance shutdown timed out after '
+                             + str(timeout) + 's for ' + str(case.db))
     with (case.directory / 'commands.jsonl').open('a') as output:
         output.write(json.dumps({'argv': argv, 'code': result.returncode,
+                                 'expectedShutdownResult': 0,
                                  'stdout': result.stdout, 'stderr': result.stderr,
                                  'direct_wait_completed': True}) + '\n')
     case.assertEqual(result.returncode, 0, result.stderr)
@@ -314,11 +348,63 @@ class Control(unittest.TestCase):
                 return result
             time.sleep(.01)
 
-    def process_rows(self):
-        result = subprocess.run(['ps', '-axo', 'pid=,ppid=,stat=,command='],
-                                check=True, capture_output=True, text=True)
+    def process_rows(self, timeout=30):
+        try:
+            result = subprocess.run(['ps', '-axo', 'pid=,ppid=,stat=,command='],
+                                    check=True, capture_output=True, text=True,
+                                    timeout=timeout)
+        except subprocess.TimeoutExpired:
+            raise
         return [line for line in result.stdout.splitlines()
                 if str(self.directory) in line and not line.strip().split(None, 3)[2].startswith('Z')]
+
+    def shutdown_database(self, database, timeout=30):
+        # One coordinator database gets an explicit, recorded shutdown with
+        # its exact expected result: the instance shutdown call reports
+        # success both for a live owner and for a database with no owner.
+        bank_failure_evidence(self)
+        argv = [str(EXE), '--instance-shutdown', str(database)]
+        try:
+            result = subprocess.run(argv, env=self.environment,
+                                    capture_output=True, text=True,
+                                    timeout=timeout)
+        except subprocess.TimeoutExpired:
+            raise AssertionError('Instance shutdown timed out after '
+                                 + str(timeout) + 's for ' + str(database))
+        with (self.directory / 'commands.jsonl').open('a') as output:
+            output.write(json.dumps({'argv': argv, 'code': result.returncode,
+                                     'expectedShutdownResult': 0,
+                                     'stdout': result.stdout,
+                                     'stderr': result.stderr,
+                                     'direct_wait_completed': True}) + '\n')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result
+
+    def settle_fixtures(self, budget=60.0):
+        # The settle observes the fixture directory under one shared budget:
+        # each enumeration is bounded by the time remaining, and a timeout
+        # or deadline report reuses the cached rows the loop already holds.
+        # The fate of owned children is settled before this point: fixture
+        # natives exit through exit_fixture and direct CLI children are
+        # awaited at their call sites.
+        bank_failure_evidence(self)
+        deadline = time.monotonic() + budget
+        rows = []
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                self.fail('Fixture processes did not settle within '
+                          + str(budget) + ' seconds: '
+                          + json.dumps(rows, indent=1))
+            try:
+                rows = self.process_rows(timeout=min(30.0, remaining))
+            except subprocess.TimeoutExpired:
+                self.fail('Process enumeration exceeded the remaining budget '
+                          + 'of ' + str(remaining) + ' seconds; cached rows: '
+                          + json.dumps(rows, indent=1))
+            if not rows:
+                return
+            time.sleep(min(.01, max(0.0, deadline - time.monotonic())))
 
     def exited(self, session):
         row = self.eventually(lambda: next((row for row in self.rows(
@@ -328,6 +414,7 @@ class Control(unittest.TestCase):
         return row
 
     def close_fixtures(self):
+        bank_failure_evidence(self)
         for stream, connection in self.controls:
             try:
                 connection.sendall(b'{"exit_fixture":true}\n')
@@ -340,7 +427,7 @@ class Control(unittest.TestCase):
             connection.close()
         self.server.close()
         shutdown_fixture_owner(self)
-        self.eventually(lambda: not self.process_rows())
+        self.settle_fixtures()
 
     def test_start_detaches_native_subscription_and_operator_report(self):
         for harness in ('codex', 'omp'):
@@ -528,7 +615,7 @@ class Control(unittest.TestCase):
         self.finish(stream, 'Original project report.')
         self.exited(session)
         shutdown_fixture_owner(self)
-        self.eventually(lambda: not self.process_rows())
+        self.settle_fixtures()
         original = self.call('session', session)
         endpoint = original['endpointArgv']
         unfinished = pathlib.Path(assignment['workspace']) / 'unfinished.txt'
@@ -589,7 +676,7 @@ class Control(unittest.TestCase):
                 self.assertEqual(self.call('player', session)['blockedCause'], 'provider-failure')
                 self.assertEqual(self.call('inbox', session), [])
                 shutdown_fixture_owner(self)
-                self.eventually(lambda: not self.process_rows())
+                self.settle_fixtures()
 
                 resume_args = []
                 if harness == 'muse':
@@ -625,7 +712,7 @@ class Control(unittest.TestCase):
                 self.assertEqual(self.call('inbox', session), [])
                 self.assertEqual(self.rows('SELECT * FROM session_stops WHERE session=?', (session,)), [])
                 shutdown_fixture_owner(self)
-                self.eventually(lambda: not self.process_rows())
+                self.settle_fixtures()
 
     def test_project_resume_keeps_queued_delivery_separate_from_history_and_preserves_stops(self):
         self.root()
@@ -639,7 +726,7 @@ class Control(unittest.TestCase):
         self.finish(original_stream, 'Historical project report.')
         self.exited(session)
         shutdown_fixture_owner(self)
-        self.eventually(lambda: not self.process_rows())
+        self.settle_fixtures()
 
         self.dispatch('dispatch-file', 'project-active-task', 'root', session, 'task', self.task)
         active, started = self.accept(session)
@@ -741,7 +828,7 @@ class Control(unittest.TestCase):
         self.finish(stream, 'Completed contribution is ready to integrate.')
         self.exited('completed')
         shutdown_fixture_owner(self)
-        self.eventually(lambda: not self.process_rows())
+        self.settle_fixtures()
         original = self.call('session', 'completed')
         history = self.rows('SELECT * FROM messages ORDER BY seq'), self.rows('SELECT * FROM turns')
         stops = self.rows('SELECT * FROM session_stops')
@@ -947,9 +1034,28 @@ class Control(unittest.TestCase):
         # the rollback journal at 188. The dispatch is refused, the
         # committed input stays retained, and no execution row appears.
         long_db = self.directory / ('d' * 177 + '.db')
+        self.addCleanup(self.shutdown_database, long_db)
         def against_db(*args):
-            return subprocess.run([str(EXE), str(long_db), *map(str, args)],
-                                  env=self.environment, capture_output=True, text=True)
+            child = subprocess.Popen([str(EXE), str(long_db), *map(str, args)],
+                                     env=self.environment, stdout=subprocess.PIPE,
+                                     stderr=subprocess.PIPE, text=True)
+            try:
+                stdout, stderr = child.communicate(timeout=120)
+            except subprocess.TimeoutExpired:
+                child.kill()
+                child.communicate()
+                self.fail('Command against ' + str(long_db)
+                          + ' exceeded 120 seconds: '
+                          + ' '.join(map(str, args)))
+            with (self.directory / 'commands.jsonl').open('a') as output:
+                output.write(json.dumps({'argv': list(map(str, args)),
+                                         'database': str(long_db),
+                                         'pid': child.pid,
+                                         'code': child.returncode,
+                                         'stdout': stdout, 'stderr': stderr,
+                                         'direct_wait_completed': True}) + '\n')
+            return subprocess.CompletedProcess(child.args, child.returncode,
+                                               stdout, stderr)
         for args in (['attach', 'root', 'codex', 'saved-root', ''],
                      ['role', 'root', 'principal-conductor'],
                      ['attach', 'operator', 'operator', '', ''],
@@ -1101,7 +1207,7 @@ class Control(unittest.TestCase):
                     self.assertEqual(self.call('delivery', ident)['recipient'], 'root')
                     self.assertEqual(self.call('player', session)['native'], native)
                     shutdown_fixture_owner(self)
-                    self.eventually(lambda: not self.process_rows())
+                    self.settle_fixtures()
 
     def instant_direct_harness(self, name):
         executable = self.directory / name
@@ -1337,7 +1443,7 @@ else:
                 self.assertEqual(self.rows('SELECT id FROM messages WHERE id=?',
                                           (session + '-replacement',)), [])
                 shutdown_fixture_owner(self)
-                self.eventually(lambda: not self.process_rows())
+                self.settle_fixtures()
 
     def test_direct_turn_delivers_pending_input_after_native_exit(self):
         self.root()
@@ -1390,7 +1496,7 @@ else:
                         stdout, stderr = child.communicate()
                         self.assertEqual(child.returncode, 0, stderr)
                     shutdown_fixture_owner(self)
-                    self.eventually(lambda: not self.process_rows())
+                    self.settle_fixtures()
 
     def test_direct_turn_preserves_a_configured_receiver(self):
         self.root()
@@ -1441,7 +1547,7 @@ else:
                 self.assertEqual(self.call('session', session)['native'], native)
                 self.assertEqual(len(self.call('turns', session)), 1)
                 shutdown_fixture_owner(self)
-                self.eventually(lambda: not self.process_rows())
+                self.settle_fixtures()
 
     def test_completed_turn_replay_repairs_an_absent_receiver_and_delivers_pending_input(self):
         self.root()
@@ -1455,7 +1561,7 @@ else:
         self.finish(stream, 'The original task is complete.')
         self.exited('legacy-muse')
         shutdown_fixture_owner(self)
-        self.eventually(lambda: not self.process_rows())
+        self.settle_fixtures()
 
         self.call('connect', 'legacy-muse', native, '')
         self.call('message', 'owed-legacy-input', 'root', 'legacy-muse', 'task',
