@@ -487,3 +487,5 @@
 .lane-strip .att-dense .att-seat-label,
 .lane-strip .att-dense .att-seat-state { display: none; }
 .lane-strip .att-dense .att-seat-card { rx: 3px; }
+
+.lane-strip .att-parent-link { opacity: 0.4; }

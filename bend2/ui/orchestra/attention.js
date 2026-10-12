@@ -526,6 +526,7 @@
     };
     var groupShort = shortForms(plan.ensembles.map(function (e) { return String(e.id); }));
     var widths = [];
+    var parentOrder = new Map();
     plan.tiers.forEach(function (tier) {
       var bands = new Map();
       tier.rows.forEach(function (row) {
@@ -534,10 +535,19 @@
         if (!bands.has(key)) bands.set(key, { id: ensemble, parent: row.parent, rows: [] });
         bands.get(key).rows.push(row);
       });
+      function reportOrder(band) {
+        return band.rows.reduce(function (sum, row) { return sum + (parentOrder.get(row.parent) || 0); }, 0) / band.rows.length;
+      }
       tier.groups = Array.from(bands.values()).sort(function (a, b) {
-        return String(a.id || a.parent).localeCompare(String(b.id || b.parent));
+        return reportOrder(a) - reportOrder(b) || String(a.id || a.parent).localeCompare(String(b.id || b.parent));
       });
-      tier.groups.forEach(function (band) { band.rows.sort(function (a, b) { return a.id.localeCompare(b.id); }); });
+      var rank = 0;
+      tier.groups.forEach(function (band) {
+        band.rows.sort(function (a, b) {
+          return (parentOrder.get(a.parent) || 0) - (parentOrder.get(b.parent) || 0) || a.id.localeCompare(b.id);
+        });
+        band.rows.forEach(function (row) { parentOrder.set(row.id, rank++); });
+      });
     });
     if (overview) plan.tiers.forEach(function (tier) {
       var gaps = Math.max(0, tier.rows.length - tier.groups.length) * cardGap
@@ -819,7 +829,14 @@
     }
     group.appendChild(name);
     var state = svgEl("text", { "class": "att-seat-state", x: 0, y: entry.stateY });
-    setText(state, seat.word + (entry.context && !laid.compact ? " · reporting context" : ""));
+    var stateText = seat.word + (entry.context && !laid.compact ? " · reporting context" : "");
+    if (laid.compact && !laid.dense) {
+      captionLines(stateText, entry.width - 8, textMeasure(null, 10)).forEach(function (words, index) {
+        var part = svgEl("tspan", { x: 0, y: entry.stateY + index * 12 });
+        setText(part, words);
+        state.appendChild(part);
+      });
+    } else setText(state, stateText);
     group.appendChild(state);
     var memberships = svgEl("text", { "class": "att-seat-memberships", x: 0, y: entry.stateY + 17 });
     setText(memberships, seat.memberOf.length

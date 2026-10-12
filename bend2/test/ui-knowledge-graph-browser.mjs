@@ -96,6 +96,12 @@ export async function qualifyKnowledgeGraphs({ origin, send, out, scientificExam
       && detail.textContent.includes('Limits') && !!document.querySelector('.kg-canvas');
   })()`);
   await check('selection retains the whole graph', `document.querySelectorAll('.kg-node').length > 4 && document.querySelectorAll('.kg-edge').length > 2`);
+  await check('selected finding and its citations fit beside the evidence reader', `(() => {
+    const canvas=document.querySelector('.kg-canvas').getBoundingClientRect();
+    const nodes=[...document.querySelectorAll('.kg-node:not(.is-dim)')];
+    return nodes.length>1 && nodes.every(n=>{const b=n.getBoundingClientRect();
+      return b.left>=canvas.left && b.right<=canvas.right && b.top>=canvas.top && b.bottom<=canvas.bottom;});
+  })()`);
   await screenshot('knowledge-legacy.png');
 
   // Render the same public layer with a complete typed payload.
