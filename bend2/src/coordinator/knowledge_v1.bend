@@ -220,7 +220,7 @@ def node_notice(+node: String) -> String:
   +author = "json_extract(" ++ j ++ ",'$.author')"
   +nid = "json_extract(" ++ j ++ ",'$.id')||':notice'"
   +parent = "(SELECT parent FROM sessions WHERE id=" ++ author ++ ")"
-  +body = "json_object('finding'," ++ id ++ ",'author'," ++ author ++ ")"
+  +body = "json_object('finding'," ++ id ++ ",'author'," ++ author ++ ",'evaluationRequestId'," ++ eval_request_id(id,C.q("session"),author,C.q("authored")) ++ ",'evaluationDestinationKind','session','evaluationDestination'," ++ author ++ ")"
   +same = "EXISTS(SELECT 1 FROM knowledge_v1 WHERE id=" ++ id ++ " AND " ++ node_same(node) ++ ")"
   "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ nid ++ "," ++ author ++ "," ++ parent ++ ",'question'," ++ body ++ " WHERE " ++ same ++ " AND " ++ parent ++ " IS NOT NULL"
   ++ " ON CONFLICT(id) DO NOTHING;"
@@ -409,6 +409,18 @@ def edge_eval_request(+edge: String) -> String:
   +j = C.q(edge)
   eval_insert(C.q("knowledge_edges_v1"),"json_extract(" ++ j ++ ",'$.id')",C.q("session"),"json_extract(" ++ j ++ ",'$.author')",C.q("authored"),"json_extract(" ++ j ++ ",'$.author')","coalesce((" ++ edge_admitted(edge) ++ "),0)")
 
+# Authored-availability notice for edges: edges carry no parent notice, so
+# the evaluation request prompts its author destination directly through an
+# ordinary question message, and normal inbox recovery surfaces undelivered
+# review.
+def edge_eval_notice_id(+edge: String) -> String:
+  +j = C.q(edge)
+  "'eval:v1:' || json_extract(" ++ j ++ ",'$.id') || ':session:' || json_extract(" ++ j ++ ",'$.author') || ':authored:notice'"
+
+def edge_eval_notice(+edge: String) -> String:
+  +j = C.q(edge)
+  "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ edge_eval_notice_id(edge) ++ ",json_extract(" ++ j ++ ",'$.author'),(SELECT id FROM sessions WHERE id=json_extract(" ++ j ++ ",'$.author')),'question',json_object('evaluationRequest'," ++ eval_request_id("json_extract(" ++ j ++ ",'$.id')",C.q("session"),"json_extract(" ++ j ++ ",'$.author')",C.q("authored")) ++ ",'recordId',json_extract(" ++ j ++ ",'$.id'),'destinationKind','session','destination',json_extract(" ++ j ++ ",'$.author'),'requestedBy',json_extract(" ++ j ++ ",'$.author'),'trigger','authored') WHERE coalesce((" ++ edge_admitted(edge) ++ "),0) ON CONFLICT(id) DO NOTHING;"
+
 def edge_answer(+edge: String) -> String:
   +j = C.q(edge)
   +id = "json_extract(" ++ j ++ ",'$.id')"
@@ -429,7 +441,7 @@ def edge_errors(+edge: String) -> String:
   ++ v1_error("v1-edge-id-conflict","'id'," ++ id ++ ",'stored',(SELECT json_object('id',id,'author',author,'kind',kind) FROM knowledge_v1 WHERE id=" ++ id ++ "),'condition','This identity is already stored as a v1 node. Node and edge identities share one namespace.','next','Retain the stored record, then retry the new input under a different ID.'","EXISTS(SELECT 1 FROM knowledge_v1 WHERE id=" ++ id ++ ")")
 
 def edge_statements(+edge: String) -> String:
-  edge_insert(edge) ++ edge_eval_request(edge) ++ edge_errors(edge) ++ edge_answer(edge)
+  edge_insert(edge) ++ edge_eval_request(edge) ++ edge_eval_notice(edge) ++ edge_errors(edge) ++ edge_answer(edge)
 
 # Holdings for v1 rows mirror the legacy holdings: author membership or an
 # explicit promotion of the row id. Session, group and universal holdings

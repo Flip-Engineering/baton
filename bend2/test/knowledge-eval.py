@@ -193,6 +193,39 @@ class KnowledgeEval(unittest.TestCase):
         refused = self.call('relate-v1', json.dumps(payload), success=False)
         self.assertIn('v1-edge-shape', refused.stderr)
 
+    def test_edge_notice_prompts_author_destination(self):
+        self.record(node('grand', 'ev-ns', 'evidence'))
+        self.record(node('grand', 'ev-nd', 'claim'))
+        self.relate(edge('grand', 'ev-ne', 'supports',
+                         ('ev-ns', 'evidence'), ('ev-nd', 'claim'),
+                         details={'bearing': 'test bearing'}))
+        notice = self.call('delivery', 'eval:v1:ev-ne:session:grand:authored:notice')
+        self.assertEqual(notice['recipient'], 'grand')
+        body = json.loads(notice['body'])
+        self.assertEqual(body['evaluationRequest'],
+                         'eval:v1:ev-ne:session:grand:authored')
+        self.assertEqual(body['destination'], 'grand')
+        self.assertEqual(body['trigger'], 'authored')
+
+    def test_proof_rule_fires_for_unqualified_arguments(self):
+        # implies and disproves need no conclusion; with a non-deduction
+        # source argument the proof predicate fails and names v1-proof-rule.
+        self.record(node('grand', 'ev-weak-arg', 'argument'))
+        self.record(node('grand', 'ev-src-claim', 'claim'))
+        self.record(node('grand', 'ev-tgt-claim', 'claim'))
+        implies = edge('grand', 'ev-imp', 'implies',
+                       ('ev-src-claim', 'claim'), ('ev-tgt-claim', 'claim'),
+                       details={'argument': {'id': 'ev-weak-arg', 'kind': 'argument'},
+                                'inferenceRule': 'test rule'})
+        refused = self.call('relate-v1', json.dumps(implies), success=False)
+        self.assertIn('v1-proof-rule', refused.stderr)
+        disproves = edge('grand', 'ev-dis', 'disproves',
+                         ('ev-weak-arg', 'argument'), ('ev-tgt-claim', 'claim'),
+                         details={'refutedProposition': 'test proposition',
+                                  'scopeOverlap': 'test overlap'})
+        refused = self.call('relate-v1', json.dumps(disproves), success=False)
+        self.assertIn('v1-proof-rule', refused.stderr)
+
     def test_proves_without_conclusion_names_shape(self):
         argument = node('grand', 'ev-arg2', 'argument', details={
             'method': 'deduction', 'premises': [], 'derivation': 'test derivation'})

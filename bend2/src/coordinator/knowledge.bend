@@ -445,10 +445,11 @@ def eval_explicit_statements(+record_id: String, +dest_kind: String, +dest: Stri
   ++ eval_answer_row(eval_explicit_id(record_id,dest_kind,dest),"")
 
 # Retained decisions are rationale rows only: the decider must be the
-# destination session or own the destination group, and recording a decision
-# gates nothing. The last disposition wins; no state machine is enforced.
+# destination session for session-kind requests or own the destination
+# group for group-kind requests, and recording a decision gates nothing.
+# The last disposition wins; no state machine is enforced.
 def eval_decision_statements(+request_id: String, +decider: String, +decision: String, +rationale: String) -> String:
-  "UPDATE knowledge_evaluations SET decision=" ++ C.q(decision) ++ ",rationale=" ++ C.q(rationale) ++ ",decided_by=" ++ C.q(decider) ++ " WHERE id=" ++ C.q(request_id) ++ " AND EXISTS(SELECT 1 FROM knowledge_evaluations e WHERE e.id=" ++ C.q(request_id) ++ " AND (" ++ C.q(decider) ++ "=e.destination OR " ++ C.q(decider) ++ " IN (SELECT owner FROM ensembles WHERE id=e.destination)))"
+  "UPDATE knowledge_evaluations SET decision=" ++ C.q(decision) ++ ",rationale=" ++ C.q(rationale) ++ ",decided_by=" ++ C.q(decider) ++ " WHERE id=" ++ C.q(request_id) ++ " AND EXISTS(SELECT 1 FROM knowledge_evaluations e WHERE e.id=" ++ C.q(request_id) ++ " AND ((e.destination_kind='session' AND " ++ C.q(decider) ++ "=e.destination) OR (e.destination_kind='group' AND " ++ C.q(decider) ++ " IN (SELECT owner FROM ensembles WHERE id=e.destination))));"
   ++ eval_answer_row(C.q(request_id)," AND decided_by=" ++ C.q(decider))
 
 def promotion_notice_body() -> String:
@@ -515,7 +516,8 @@ def relate(db: String, id: String, author: String, source: String, relation: Str
 # v1 writes mirror the legacy record path: one transaction writes the row and
 # the parent notice, a refusal exits 2 with the naming rule, and the answer is
 # the stored envelope. The row id lives inside the JSON payload, so the notice
-# delivery reads it back first. Edges mirror relate: no parent delivery.
+# delivery reads it back first. Edges carry no parent notice; their
+# evaluation request prompts the author destination instead.
 def record_v1(+db: String, +node: String) -> IO(Unit):
   do IO<Unit>:
     raw : String <- IO.try(String,DB.Sql.read(db,"SELECT json_extract(" ++ C.q(node) ++ ",'$.id');"))
@@ -524,10 +526,21 @@ def record_v1(+db: String, +node: String) -> IO(Unit):
       delivery : Result<&1,&1,U32 & String,String> <- deliver_record(db,Tx.trim_nl(raw),saved)
       answered(delivery))
 
+# Edges mirror the record path: one transaction writes the row, its
+# evaluation request and the author notice, the notice is then delivered as
+# an ordinary message, and the answer is the stored envelope.
+def deliver_edge_eval(db: String, nid: String, saved: String) -> IO(Result<&1,&1,U32 & String,String>):
+  match saved:
+    case SNil{}: IO.pure(Result<&1,&1,U32 & String,String>,Done{SNil{}})
+    case SCon{h,t}: Delivery.deliver(db,nid,"1",SCon{h,t})
+
 def relate_v1(+db: String, +edge: String) -> IO(Unit):
   do IO<Unit>:
     +saved : String <- IO.try(String,Store.transact_sql(db,commit_v1_sql(V1.edge_statements(edge))))
-    Bool.pick(IO(Unit),Store.refused(saved),IO.die(Unit,2,saved),write_answer(saved))
+    Bool.pick(IO(Unit),Store.refused(saved),IO.die(Unit,2,saved),do IO<Unit>:
+      raw : String <- IO.try(String,DB.Sql.read(db,"SELECT 'eval:v1:' || json_extract(" ++ C.q(edge) ++ ",'$.id') || ':session:' || json_extract(" ++ C.q(edge) ++ ",'$.author') || ':authored:notice';"))
+      delivery : Result<&1,&1,U32 & String,String> <- deliver_edge_eval(db,Tx.trim_nl(raw),saved)
+      answered(delivery))
 
 # Read: the shared findings as a JSON array. An unregistered reader receives the
 # empty array.

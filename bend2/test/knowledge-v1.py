@@ -138,7 +138,11 @@ class KnowledgeV1(unittest.TestCase):
         notice = self.call('delivery', 'v1-question:notice')
         self.assertEqual(notice['recipient'], 'worker')
         self.assertEqual(json.loads(notice['body']),
-                         {'finding': 'v1-question', 'author': 'grand'})
+                         {'finding': 'v1-question', 'author': 'grand',
+                          'evaluationRequestId':
+                              'eval:v1:v1-question:session:grand:authored',
+                          'evaluationDestinationKind': 'session',
+                          'evaluationDestination': 'grand'})
 
     def test_identical_rewrite_is_idempotent_and_conflict_refuses(self):
         payload = node('grand', 'v1-stable', 'claim', 'held statement')
