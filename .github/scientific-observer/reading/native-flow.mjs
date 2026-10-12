@@ -191,6 +191,14 @@ function check(name, actual) {
   writeJson('checks.json', checks);
   if (actual !== true) throw new Error(name + ': ' + JSON.stringify(actual));
 }
+function recordNavigationTrace(trace, fields) {
+  Object.assign(trace, fields);
+  try { writeJson('navigation-history.json', navigationHistory); }
+  catch (error) {
+    try { process.stderr.write('Navigation trace observation failed: ' + String(error) + '\n'); }
+    catch {}
+  }
+}
 function attach(ws) {
   ws.onmessage = (event) => {
     const message = JSON.parse(event.data);
@@ -210,6 +218,10 @@ function attach(ws) {
     }
     const call = pending.get(message.id);
     if (call) {
+      if (call.navigationTrace) {
+        recordNavigationTrace(call.navigationTrace, {replyReceivedAt:new Date().toISOString(),
+          replyHasError:Boolean(message.error)});
+      }
       pending.delete(message.id);
       if (message.error) call.reject(new Error(JSON.stringify(message.error)));
       else call.resolve(message);
@@ -217,12 +229,20 @@ function attach(ws) {
   };
   ws.onclose = (event) => {
     for (const [id, call] of pending) if (call.ws === ws) {
+      if (call.navigationTrace) {
+        recordNavigationTrace(call.navigationTrace, {socketClosedAt:new Date().toISOString(),
+          socketCloseCode:event.code});
+      }
       call.reject(new Error('CDP closed ' + event.code + ': ' + event.reason)); pending.delete(id);
     }
     navigations.get(ws)?.reject(new Error('CDP closed during navigation'));
   };
   ws.onerror = (event) => {
     for (const [id, call] of pending) if (call.ws === ws) {
+      if (call.navigationTrace) {
+        recordNavigationTrace(call.navigationTrace, {socketErrorAt:new Date().toISOString(),
+          socketErrorType:event.type});
+      }
       call.reject(new Error('CDP error ' + event.type)); pending.delete(id);
     }
   };
@@ -232,14 +252,27 @@ async function socket(url) {
   await new Promise((resolve, reject) => { ws.onopen = resolve; ws.onerror = reject; });
   attach(ws); return ws;
 }
-function send(ws, method, params = {}) {
+function send(ws, method, params = {}, navigationTrace = null) {
   if (ws.readyState !== WebSocket.OPEN)
     return Promise.reject(new Error('CDP socket is not open for ' + method + ': ' + ws.readyState));
   const id = ++sequence;
+  if (navigationTrace) {
+    recordNavigationTrace(navigationTrace, {commandId:id,sendAttemptedAt:new Date().toISOString()});
+  }
   return new Promise((resolve, reject) => {
-    pending.set(id, { ws, resolve, reject });
-    try { ws.send(JSON.stringify({ id, method, params })); }
-    catch (error) { pending.delete(id); reject(error); }
+    pending.set(id, { ws, resolve, reject, navigationTrace });
+    try {
+      ws.send(JSON.stringify({ id, method, params }));
+      if (navigationTrace) {
+        recordNavigationTrace(navigationTrace, {sendReturnedAt:new Date().toISOString()});
+      }
+    } catch (error) {
+      if (navigationTrace) {
+        recordNavigationTrace(navigationTrace, {sendErrorAt:new Date().toISOString(),
+          sendError:errorRecord(error)});
+      }
+      pending.delete(id); reject(error);
+    }
   });
 }
 async function evaluate(expression) {
@@ -414,7 +447,7 @@ try {
       await Promise.all([(async () => {
         trace.navigate = {request:{method:'Page.navigate',params:{url}}};
         writeJson('navigation-history.json',navigationHistory);
-        const result = await send(pageWs,'Page.navigate',{url});
+        const result = await send(pageWs,'Page.navigate',{url},trace.navigate);
         trace.navigate.response=result;writeJson('navigation-history.json',navigationHistory);
         if (result.result.errorText) throw new Error(JSON.stringify(result.result));
         navigation.frameId=result.result.frameId;
