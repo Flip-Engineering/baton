@@ -14,3 +14,13 @@ Baton2 follow-up work for contributors.
   in [#696](https://github.com/Flip-Engineering/baton/issues/696),
   [#705](https://github.com/Flip-Engineering/baton/issues/705) and
   [#676](https://github.com/Flip-Engineering/baton/issues/676).
+
+- [#703: Manage persistent project settings through installed Baton](https://github.com/Flip-Engineering/baton/issues/703).
+  This work remains unfinished. Provide public commands to read and save
+  project-local settings that survive reopened and new sessions, worktrees and
+  package upgrades. Show effective defaults and explicit session overrides.
+  Include model choices for roles and Contributor preference as project defaults.
+  Isolate projects and preserve active native routes, conversations and explicit
+  stops. Credentials remain in the native providers' external account stores.
+  Root coordinates the work; `semantic-controls-next` owns the installed CLI/MCP
+  surface, and Root owns UI changes.
