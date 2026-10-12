@@ -1,4 +1,5 @@
 """Native control commands with retained fixture processes and real Git worktrees."""
+import base64
 import hashlib
 import json
 import os
@@ -30,37 +31,61 @@ def bank_failure_evidence(case):
     # already retained.
     outcome = getattr(case, '_outcome', None)
     result = getattr(outcome, 'result', None)
-    recorded = []
+    recorded = ['failure-retention owner: ' + case.id()]
     if result is None:
         recorded.append('failure-retention: no result object was available '
                         'on the outcome; nothing could be banked')
     else:
         for name in ('failures', 'errors'):
             for entry in getattr(result, name, None) or ():
-                traceback = entry[1] if isinstance(entry, tuple) else str(entry)
-                recorded.append('[' + name + '][' + case.id() + ']\n'
+                if isinstance(entry, tuple):
+                    traceback = entry[1]
+                    origin = entry[0].id() if hasattr(entry[0], 'id') else str(entry[0])
+                else:
+                    traceback = str(entry)
+                    origin = 'unknown'
+                recorded.append('[' + name + '][' + origin + ']\n'
                                 + traceback)
-        if not recorded:
+        if len(recorded) == 1:
             recorded.append('failure-retention: no failure or error was '
                             'recorded on the result at cleanup time')
     try:
         (case.directory / 'failure-tracebacks.txt').write_text(
             '\n'.join(recorded) + '\n')
     except OSError as error:
-        # Retention must not mask the primary failure; entries from other
-        # tests in a shared suite result stay identified by their labels.
-        try:
-            print('failure-retention: could not write evidence:', error,
-                  file=sys.stderr)
-        except OSError:
-            pass
+        # Retention must not mask the primary failure; each entry carries
+        # the id of the test that recorded it, which stays distinct from
+        # the bank owner above.
+        report_write_error('failure-retention', error)
 
 
 def report_write_error(prefix, error):
     try:
         print(prefix + ': could not write evidence:', error, file=sys.stderr)
-    except OSError:
+    except (OSError, ValueError):
         pass
+
+
+def captured_stream(value):
+    # TimeoutExpired carries partial output as bytes or text. Keep both an
+    # exact serializable copy (base64 for byte values) and a decoded
+    # display form, so partial data survives the record write.
+    if value is None:
+        return None
+    if isinstance(value, bytes):
+        return {'base64': base64.b64encode(value).decode('ascii'),
+                'text': value.decode('utf-8', 'replace')}
+    return {'text': str(value)}
+
+
+def longer_stream(first, second):
+    # The longest captured buffer keeps first-timeout partials when the
+    # post-kill read yields less.
+    if first is None:
+        return second
+    if second is None:
+        return first
+    return second if len(json.dumps(second)) > len(json.dumps(first)) else first
 
 
 def run_recorded_child(case, argv, timeout, database=None, expected=None):
@@ -68,8 +93,9 @@ def run_recorded_child(case, argv, timeout, database=None, expected=None):
     # appends the complete argv, pid, deadline, exit status and streams to
     # commands.jsonl on every path, including timeouts. The timeout path
     # signals only this Popen child, reaps it with a bounded wait, and
-    # records an unresolved fate when descendant processes still hold the
-    # pipes instead of waiting for them.
+    # records the pipe status separately from the reap: a completed wait
+    # with pipes still open is a reaped child with descendant-held pipes,
+    # while a wait that times out is recorded unreaped.
     child = subprocess.Popen(argv, env=case.environment,
                              stdout=subprocess.PIPE,
                              stderr=subprocess.PIPE, text=True)
@@ -81,22 +107,30 @@ def run_recorded_child(case, argv, timeout, database=None, expected=None):
         record['stdout'], record['stderr'] = child.communicate(timeout=timeout)
         record['code'] = child.returncode
         record['childFate'] = 'exited'
-    except subprocess.TimeoutExpired:
+    except subprocess.TimeoutExpired as first:
         child.kill()
         record['direct_wait_completed'] = False
-        stdout = stderr = ''
+        stdout = captured_stream(getattr(first, 'output', None))
+        stderr = captured_stream(getattr(first, 'stderr', None))
         record['childFate'] = 'killed-reaped'
         try:
-            stdout, stderr = child.communicate(timeout=10)
-        except subprocess.TimeoutExpired:
+            full_stdout, full_stderr = child.communicate(timeout=10)
+            stdout = longer_stream(stdout, {'text': full_stdout})
+            stderr = longer_stream(stderr, {'text': full_stderr})
+        except subprocess.TimeoutExpired as second:
             record['childFate'] = 'killed-pipes-held-by-descendants'
+            stdout = longer_stream(stdout,
+                                   captured_stream(getattr(second, 'output', None)))
+            stderr = longer_stream(stderr,
+                                   captured_stream(getattr(second, 'stderr', None)))
             for stream in (child.stdout, child.stderr):
                 try:
                     stream.close()
-                except OSError:
+                except (OSError, ValueError):
                     pass
         try:
             child.wait(timeout=10)
+            record['direct_wait_completed'] = True
         except subprocess.TimeoutExpired:
             record['childFate'] = 'unreaped'
         record['stdout'] = stdout
