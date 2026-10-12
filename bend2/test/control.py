@@ -240,7 +240,11 @@ def fixture_completion(body):
     parent=completion['coordinator']
     request=completion['requestId'] or ('fixture-completion-'+str(os.getpid()))
     if not completion['requestId']:
-        sent=command('message',request,session,parent,'completion-request',body)
+        completion_file=pathlib.Path(__file__).resolve().parent/(
+            'fixture-completion-'+request+'.txt')
+        completion_file.write_text(body,encoding='utf-8')
+        sent=command('message-file',request,session,parent,'completion-request',
+                     str(completion_file))
         assert sent['code']==0,sent
     read=command('delivery',request)
     assert read['code']==0,read
@@ -1047,13 +1051,7 @@ class Control(unittest.TestCase):
         text = 'fixture output λ ' * 30000
         self.assertEqual(self.action(streams[0][1], output=text), {'output_written': len(text)})
         for name, stream, _ in streams:
-            # The large payload stays on the output action and the output
-            # log frames below: the completion exchange passes the finish
-            # body as one argv element to the coordinator CLI, and the
-            # kernel caps a single argument string at 131072 bytes.
-            body = ('Large concurrent output task completed λ '
-                    if name == 'omp-leaf' else
-                    'Concurrent Codex task completed.')
+            body = text if name == 'omp-leaf' else 'Concurrent Codex task completed.'
             self.finish(stream, body)
             self.exited(name)
             self.assertEqual(self.call('turns', name)[0]['reportBody'], body)
