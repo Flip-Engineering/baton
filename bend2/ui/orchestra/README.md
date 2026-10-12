@@ -29,26 +29,29 @@ then open `http://localhost:8137/index.html`.
 
 ## Interface
 
-The page shows an attention strip, an agent roster, a selected record, knowledge
-graphs, and a history ribbon. Quiet agents are folded initially; the quiet-agent
-control reveals them. Ensemble labels group adjacent members in the roster.
-The find field marks matching agents in place.
+The page combines the active orchestra with recorded activity. Running actors,
+actors with owed input, and actors with open assignments appear initially.
+Their recorded ancestors provide reporting context. Show history includes all
+recorded actors. The find field filters actors by name, role or work.
 
 Selecting an agent opens its task, current input, request, report, and pending
 message references. A message reference opens its complete stored body.
 Selecting a finding opens its claim, evidence, limits, author, and sharing steps.
 
-Each author's roster row carries a compact knowledge surface. The whole knowledge
-graph draws knowledge records and cited resources joined by named, directed
+The knowledge graph draws knowledge records and cited resources joined by named, directed
 relations. Selecting a record or relation opens its content, evidence, scope,
 reasoning and limits. Provenance and sharing appear in record details.
+Selection preserves the page position, graph camera and complete graph context.
+The detail panel scrolls within its own area.
 
 The agent hierarchy places equal reporting depths on one horizontal row and
 groups peers by their recorded ensembles. Fit hierarchy shows the complete
 structure; Read labels provides full-size cards with horizontal scrolling.
 
-The history ribbon shows committed changes by event kind. Its position selects a
-change for reading; the record list opens from the ribbon.
+The legend precedes the orchestra and activity view. Each actor shows its recorded
+events on the shared time range. The history ribbon shows committed changes by
+event kind. Selecting an event opens its recorded details. An event list opens
+from the ribbon on request.
 
 The page reads snapshot, event-stream, knowledge, work, and message endpoints.
 Text renders through `textContent`.

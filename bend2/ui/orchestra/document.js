@@ -1,5 +1,5 @@
-/* Read-only oversight document. Text is assigned through textContent.
-   Rows follow the recorded activity order. Selecting a row opens its record.
+/* Read-only orchestra, activity, knowledge and selected record views.
+   Text is assigned through textContent.
 
    window.OversightDocument.render(data, opts)
      data.players    [{id, parent, role, model, status, pendingCount, unacknowledgedCount,
@@ -8,35 +8,17 @@
      data.ensembles  [{id, owner, coupling, members[]}]
      data.events     newest first, as the page holds them
      data.knowledge  the overview, or null
-     opts.mounts     {attention, roster, knowledge, selection, ribbon,
+     opts.mounts     {attention, legend, selection, ribbon,
                       knowledgeWhole, counts}
      opts.selectedId, opts.selectedFindingId, opts.query
      opts.position   reading position in the recorded history
-     opts.scope      "live" for work in flight and seats the record holds, "all"
-                     for everything recorded (the staves' control names the rest)
+     opts.scope      "live" for running actors and open work, "all" for history
      opts.onSelect(id), opts.onSelectEnsemble(id), opts.onSelectFinding(id), opts.onScrub(index),
      opts.onSelectEvent(index), opts.onListOpen(open), opts.onOpenRecord(id), opts.onLocate(ref)
 
-   attention.js reads activity for the summary; order.js orders the rows. */
+   attention.js draws reporting depth and recorded activity. */
 (function () {
   "use strict";
-
-  // The active view excludes ended, unknown and explicitly stopped actors.
-  // All recorded actors remain reachable through the scope control.
-  function isQuiet(mark) {
-    if (!mark) return true;
-    return mark.tone === "ended" || mark.tone === "unknown" || mark.tone === "stopped";
-  }
-
-  // Derive the row state from the current attempt and pending input.
-  function workState(p) {
-    if (!p) return "quiet";
-    if (p.status === "failed") return "failed";
-    if (p.status === "stopped") return "stopped";
-    if (p.status === "running") return "working";
-    if ((p.owedTotal || 0) > 0 || p.owesWork === true || p.status === "pending") return "queued";
-    return "quiet";
-  }
 
   function el(tag, className, text) {
     var node = document.createElement(tag);
@@ -70,216 +52,17 @@
     return Math.round(hours / 24) + "d";
   }
 
-  function matchesQuery(p, query) {
-    if (!query) return true;
-    var q = String(query).toLowerCase();
-    return [p.id, p.role, p.model, p.action, p.taskTitle, p.status]
-      .concat(p.ensembles || [])
-      .some(function (value) {
-        return value && String(value).toLowerCase().indexOf(q) !== -1;
-      });
-  }
-
-  /* One staff row: who the actor is, what it is doing, the staff of what it has
-     recorded, then the counts of what it owes. The row's detail carries the
-     bookkeeping: model, branch, workspace. */
-  // The staff: one actor's recorded entries across the window the page holds,
-  // left to right in time, ruled in five lines. A filled head is a committed
-  // entry; an open head is the newest entry of a seat that is playing now. The
-  // newest entries win the cap, so a busy actor keeps its recent history.
-  var STAFF_NOTES = 28;
-
-  function staffTone(ev) {
-    var kind = String((ev && ev.kind) || "").toLowerCase();
-    if (kind.indexOf("fail") !== -1) return "kind-failed";
-    if (kind.indexOf("promot") !== -1 || kind.indexOf("shar") !== -1
-      || kind.indexOf("finding") !== -1) return "kind-compose";
-    if (kind.indexOf("execution") !== -1 || kind.indexOf("phase") !== -1) return "kind-run";
-    if (kind.indexOf("message") !== -1 || kind.indexOf("receipt") !== -1
-      || kind.indexOf("report") !== -1 || kind.indexOf("guidance") !== -1) {
-      return "kind-message";
-    }
-    return "kind-quiet";
-  }
-
-  function staffNoteText(ev) {
-    var parts = [String((ev && ev.kind) || "entry")];
-    if (ev && ev.counterpart) parts.push("with " + ev.counterpart);
-    if (ev && ev.summary) parts.push(ev.summary);
-    if (ev && ev.at) parts.push(ageText(ev.at) || ev.at);
-    return parts.join(" · ");
-  }
-
-  function staffFor(p, opts) {
-    var staff = el("span", "doc-staff");
-    staff.setAttribute("aria-hidden", "true");
-    var events = opts.events || [];
-    if (!events.length) return staff;
-    var first = Infinity;
-    var last = -Infinity;
-    for (var i = 0; i < events.length; i += 1) {
-      var stamp = events[i] && events[i].at ? Date.parse(events[i].at) : NaN;
-      if (isNaN(stamp)) continue;
-      if (stamp < first) first = stamp;
-      if (stamp > last) last = stamp;
-    }
-    if (first === Infinity) return staff;
-    if (last === first) last = first + 1;
-    var mine = [];
-    for (i = 0; i < events.length; i += 1) {
-      var ev = events[i];
-      if (!ev || ev.session !== p.id || !ev.at) continue;
-      var time = Date.parse(ev.at);
-      if (isNaN(time)) continue;
-      mine.push({ ev: ev, left: ((time - first) / (last - first)) * 100 });
-      if (mine.length >= STAFF_NOTES) break;
-    }
-    mine.reverse();
-    for (i = 0; i < mine.length; i += 1) {
-      var note = el("span", "staff-note " + staffTone(mine[i].ev));
-      if (p.live === true && i === mine.length - 1) note.classList.add("open");
-      note.style.left = mine[i].left.toFixed(2) + "%";
-      note.title = staffNoteText(mine[i].ev);
-      staff.appendChild(note);
-    }
-    return staff;
-  }
-
-  // The rehearsal mark: A, B, C ... for each run of rows, the way a score names
-  // the place a passage starts.
-  function rehearsalMark(index) {
-    var letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
-    var out = "";
-    var n = index + 1;
-    while (n > 0) {
-      var rest = (n - 1) % 26;
-      out = letters.charAt(rest) + out;
-      n = Math.floor((n - 1) / 26);
-    }
-    return out;
-  }
-
-  // The default roster is the work in flight: a seat playing now, or a seat whose turn
-  // ended and waits on input. A held seat, the work a seat owes and the quiet record
-  // are recorded state, and the control adds them with their count.
-  function scopeLive(state_) {
-    return state_ === "working" || state_ === "queued";
-  }
-
-  // The control names the scope it would add, with the number of rows it adds, and
-  // says so on the button itself rather than in a title.
   function renderScopeControl(node, hidden, scope) {
     if (!node) return;
     node.textContent = "";
     if (scope === "all") {
-      text(node, "Show live only");
+      node.textContent = "Active orchestra";
       node.setAttribute("aria-pressed", "true");
     } else {
-      text(node, hidden ? "Show " + hidden + " more recorded" : "Show all recorded");
+      node.textContent = hidden ? "Show history (" + hidden + ")" : "Show history";
       node.setAttribute("aria-pressed", "false");
     }
   }
-
-  function rowFor(p, mark, opts) {
-    var state = workState(p);
-    var li = el("li", "doc-row state-" + state + " tone-" + (mark ? mark.tone : "unknown"));
-    li.dataset.docId = p.id;
-    li.dataset.docState = state;
-    li.tabIndex = -1;
-    var selected = opts.selectedId === p.id;
-    if (selected) li.classList.add("selected");
-
-    var button = el("button", "doc-open");
-    button.type = "button";
-    button.dataset.docKey = "row:" + p.id;
-    button.setAttribute("aria-current", selected ? "true" : "false");
-
-    var name = el("span", "doc-name mono", p.id);
-    name.title = p.id;
-    button.appendChild(name);
-
-    var lead = el("span", "doc-lead");
-    // The glyph carries the state; the word stays only for the states an operator names
-    // (queued, stopped, failed), where the state key is the word. Playing, owes work and
-    // quiet read from the glyph, the rule ink and the count marks, with the word in the
-    // title and the row's label.
-    var named = state === "queued" || state === "stopped" || state === "failed"
-      ? state
-      : "";
-    var glyph = el("span", "doc-glyph state-" + state);
-    glyph.setAttribute("aria-hidden", "true");
-    lead.appendChild(glyph);
-    var workEl = el("span", "doc-work " + state, named);
-    workEl.title = (named ? named + " \u00b7 " : "") + (p.action || p.taskTitle || "no work recorded");
-    lead.appendChild(workEl);
-    button.appendChild(lead);
-
-    var age = ageText(p.actionAt);
-    if (age) button.appendChild(el("span", "doc-age mono", age));
-
-    // The badge counts the pending input set only. Owed reports read beside it
-    // on the owed mark, so the two numbers are two different kinds of waiting.
-    var pending = p.pendingCount || 0;
-    if (pending > 0) {
-      button.appendChild(el("span", "doc-pending mono", pending));
-    }
-    // Owed reports: the reports this seat was sent and never acknowledged, read
-    // from the stored sample's kinds. The badge beside this counts the queued
-    // input set, so the two marks stay two different kinds of waiting, and the
-    // title states what the seat owes across every kind.
-    var reports = p.reportCount || 0;
-    if (reports > 0) {
-      var owedMark = el("span", "doc-owed mono", reports);
-      owedMark.title = reports + (reports === 1 ? " owed report" : " owed reports")
-        + (p.owedTotal > reports ? ", of " + p.owedTotal + " messages owed" : "");
-      button.appendChild(owedMark);
-    }
-
-    // The actor's own staff, drawn from the entries the page holds.
-    var staff = staffFor(p, opts);
-    button.appendChild(staff);
-
-    // The staff and the marks are drawn for the eye; the label states the same
-    // facts to a reader who cannot see them, in the same state words the row shows.
-    var spoken = [p.id, named || state];
-    if (p.action) spoken.push(p.action);
-    if (pending > 0) spoken.push(pending + " pending");
-    if (reports > 0) spoken.push(reports + (reports === 1 ? " report owed" : " reports owed"));
-    if (age) spoken.push("last change " + age + " ago");
-    var notes = staff.querySelectorAll(".staff-note").length;
-    if (notes) {
-      spoken.push(notes + " recorded " + (notes === 1 ? "entry" : "entries") + " in the window");
-    }
-    button.setAttribute("aria-label", spoken.join(", "));
-
-    button.addEventListener("click", function () {
-      if (typeof opts.onSelect === "function") opts.onSelect(p.id);
-    });
-    li.appendChild(button);
-
-    // This author's recorded findings sit on this row, so the knowledge layer is
-    // the rows rather than a second surface below them.
-    if (opts.knowledgeAuthors && opts.knowledgeAuthors[p.id] && window.KnowledgeLayer) {
-      var kw = el("div", "doc-row-knowledge");
-      window.KnowledgeLayer.renderKnowledge(kw, { overview: opts.overview }, {
-        mode: "band",
-        width: opts.knowledgeWidth,
-        authorIds: [p.id],
-        selectedId: opts.selectedFindingId,
-        query: opts.knowledgeQuery || "",
-        onSelectFinding: opts.onSelectFinding,
-        onSelectActor: opts.onSelect,
-        onSelectEnsemble: opts.onSelectEnsemble,
-        // The card's one move into the record, so a row's card offers it too.
-        onOpenRecord: opts.onOpenRecord,
-        // The way back, so a row's card can return a reader to the mark it names.
-        onLocate: opts.onLocate,
-      });
-      li.appendChild(kw);
-    }
-    return li;
-  }
-
 
   // The fallback record: a definition list of the recorded fields, drawn when the
   // selection module is not present. Full recorded detail belongs in the record, so
@@ -292,161 +75,6 @@
         || item[1] === undefined ? "unknown" : String(item[1])));
     });
     return dl;
-  }
-
-  // Draw one state marker per member and announce the totals.
-  function bandTicks(members) {
-    var line = el("span", "doc-band-ticks");
-    var counts = {};
-    var order = [];
-    members.forEach(function (p) {
-      var value = workState(p);
-      if (counts[value] === undefined) { counts[value] = 0; order.push(value); }
-      counts[value] += 1;
-      line.appendChild(el("i", "doc-tick state-" + value));
-    });
-    var spoken = order.map(function (value) { return counts[value] + " " + value; });
-    line.setAttribute("role", "img");
-    line.setAttribute("aria-label", spoken.join(", ") || "no members recorded");
-    line.title = spoken.join(" · ") || "no members recorded";
-    return line;
-  }
-
-  // One mark per recorded actor, in the roster's state order. The mark's ink is
-  // its state and the shapes stay small, so the fleet's proportion reads at a
-  // glance where two numerals cannot show it. A fleet past the mark count keeps
-  // the row bounded and states the remainder as a count.
-  var FLEET_MARKS = 120;
-  function fleetSpine(players) {
-    var rank = { working: 0, queued: 1, stopped: 2, failed: 3, quiet: 4 };
-    var sorted = players.slice().sort(function (a, b) {
-      var sa = rank[workState(a)], sb = rank[workState(b)];
-      return (sa === undefined ? 9 : sa) - (sb === undefined ? 9 : sb);
-    });
-    var line = el("span", "doc-fleet");
-    var counts = {};
-    var order = [];
-    var marks = 0;
-    sorted.forEach(function (p) {
-      var value = workState(p);
-      if (counts[value] === undefined) { counts[value] = 0; order.push(value); }
-      counts[value] += 1;
-      if (marks < FLEET_MARKS) { line.appendChild(el("i", "doc-fleet-mark state-" + value)); marks += 1; }
-    });
-    if (sorted.length > FLEET_MARKS) line.appendChild(el("b", "doc-fleet-rest", "+" + (sorted.length - FLEET_MARKS)));
-    var spoken = order.map(function (value) { return counts[value] + " " + value; });
-    line.setAttribute("role", "img");
-    line.setAttribute("aria-label", spoken.join(", ") || "no actors recorded");
-    line.title = spoken.join(" · ") || "no actors recorded";
-    return line;
-  }
-
-  // Each run names all recorded memberships shared by its rows.
-  function renderRoster(mount, ordered, opts) {
-    if (!mount) return;
-    mount.textContent = "";
-    if (!ordered.length) {
-      mount.appendChild(el("p", "muted", opts.query
-        ? "No actor matches." : "No actors recorded."));
-      return;
-    }
-    opts.knowledgeWidth = Math.max(100, mount.clientWidth - 22);
-    var shown = 0;
-    var hidden = 0;
-    var bandIndex = 0;
-    var lastEnsemble = null;
-    var run = null;
-    // Each band's members, so its head can carry their states as one line.
-    var bandMembers = new Map();
-    ordered.forEach(function (p) {
-      var key = (p.ensembles || []).join(" · ");
-      if (!bandMembers.has(key)) bandMembers.set(key, []);
-      bandMembers.get(key).push(p);
-    });
-    ordered.forEach(function (p) {
-      var mark = typeof stateMark === "function" ? stateMark(p) : null;
-      // Live scope shows running or queued actors.
-      if (opts.scope !== "all" && !scopeLive(workState(p))) {
-        hidden += 1;
-        return;
-      }
-      var ensemble = (p.ensembles || []).join(" · ");
-      if (ensemble !== lastEnsemble || !run) {
-        run = el("section", "doc-band");
-        run.dataset.docEnsemble = ensemble;
-        // The reader's position: the band their selection names takes the selection
-        // ink, and every other band stands exactly as it did.
-        if ((p.ensembles || []).indexOf(opts.selectedEnsemble) >= 0) run.classList.add("is-selected");
-        var head = el("p", "doc-band-head");
-        // The rehearsal mark names this run of rows, so a reader can point at
-        // the place it starts.
-        var bandMark = el("span", "doc-bracket", rehearsalMark(bandIndex));
-        bandMark.title = ensemble || "not in a recorded ensemble";
-        bandIndex += 1;
-        head.appendChild(bandMark);
-        var names = el("span", "doc-band-memberships");
-        var memberships = p.ensembles || [];
-        if (!memberships.length) names.appendChild(el("span", "doc-band-name", "not in a recorded ensemble"));
-        memberships.forEach(function (id) {
-          var bandName = el("button", "doc-band-name doc-band-open", id);
-          bandName.type = "button";
-          bandName.dataset.docGroup = id;
-          bandName.title = "Show " + id + "'s holdings";
-          names.appendChild(bandName);
-        });
-        head.appendChild(names);
-        head.appendChild(bandTicks(bandMembers.get(ensemble) || []));
-        run.appendChild(head);
-        mount.appendChild(run);
-        lastEnsemble = ensemble;
-      }
-      var matched = matchesQuery(p, opts.query);
-      var li = rowFor(p, mark, opts);
-      if (!matched) li.classList.add("doc-dim");
-      else if (!opts.cursorSet && opts.query) {
-        li.classList.add("doc-cursor");
-        opts.cursorSet = true;
-      }
-      run.appendChild(li);
-      shown += 1;
-    });
-    if (!shown) {
-      mount.appendChild(el("p", "muted", opts.scope === "all"
-        ? "No actors recorded."
-        : (hidden
-          ? "Nothing is running or queued. "
-            + hidden + " more recorded."
-          : "No actors recorded.")));
-    }
-    // The control names the scope it adds and how many rows that is.
-    renderScopeControl(opts.scopeControl, hidden, opts.scope);
-    // Promotion arcs join the rendered rows through the knowledge layer.
-    // One hook line; the layer owns the overlay and its geometry.
-    if (window.KnowledgeLayer && typeof window.KnowledgeLayer.renderArcs === "function") {
-      window.KnowledgeLayer.renderArcs(mount, {
-        promotions: (opts.overview && opts.overview.promotions) || [],
-        // Supply current actor states and pending counts to the overlay.
-        players: ordered.map(function (p) {
-          return {
-            id: p.id,
-            status: p.status || "",
-            pendingCount: p.pendingCount || 0,
-            unacknowledgedCount: p.unacknowledgedCount || 0,
-            owedTotal: p.owedTotal || 0,
-            // The two reads with their own names: the work the actor owes its
-            // own inbox, and whether the current attempt is stopped or failed.
-            owesWork: p.owesWork === true,
-            notProgressing: p.notProgressing === true,
-            at: p.actionAt || "",
-          };
-        }),
-        // What each actor holds in the knowledge record: authored and received
-        // counts per actor id, as the overview reports them.
-        actors: (opts.overview && opts.overview.actors) || {},
-        selectedFindingId: opts.selectedFindingId || "",
-        selectedId: opts.selectedId || "",
-      });
-    }
   }
 
   /* The knowledge map reads the returned records and their relations. */
@@ -489,14 +117,15 @@
 
     var reading = null;
     if (mounts.attention && typeof window.renderAttention === "function") {
-      // The roster quiet filter selects the active Stage actors. Recorded
+      // The active filter selects actors with running or unfinished work. Recorded
       // ancestors remain visible as quiet reporting context in the Stage.
       var quietIds = [];
       players.forEach(function (p) {
-        var mark = typeof stateMark === "function" ? stateMark(p) : null;
-        if (isQuiet(mark)) quietIds.push(p.id);
+        if (p.status !== "running" && !(p.owedTotal > 0 || p.owesWork === true || p.status === "pending")
+          && !(p.taskCompletion && p.taskCompletion.open === true)) quietIds.push(p.id);
       });
       reading = window.renderAttention(mounts.attention, players, {
+        legendMount: mounts.legend,
         onSelect: options.onSelect,
         onSelectEnsemble: options.onSelectEnsemble,
         selectedEnsemble: options.selectedEnsemble,
@@ -516,30 +145,12 @@
         // Quiet actors, by id, and whether the reader asked for them.
         quietIds: quietIds,
         showEnded: options.scope === "all",
+        query: options.query || "",
+        onSelectEvent: options.onSelectEvent,
       }) || null;
     }
 
-    // Which authors carry a finding decides which rows carry a knowledge block.
-    var overview = data.knowledge || null;
-    var knowledgeAuthors = Object.create(null);
-    if (overview && overview.findings) {
-      for (var i = 0; i < overview.findings.length; i += 1) {
-        var author = overview.findings[i] && overview.findings[i].author;
-        if (author) knowledgeAuthors[author] = true;
-      }
-    }
-
-    var ro = Object.assign({}, options, {
-      cursorSet: false,
-      overview,
-      knowledgeAuthors,
-      // The entries the page holds, newest first: the staves draw their window
-      // from the same list the axis reads.
-      events: data.events || [],
-      // The document owns the scope control, since it owns the scope.
-      scopeControl: mounts.scopeControl,
-    });
-    renderRoster(mounts.roster, ordered, ro);
+    renderScopeControl(mounts.scopeControl, players.length - (reading ? reading.drawnSeats : 0), options.scope);
     renderWhole(mounts.knowledgeWhole, data, options);
 
     if (mounts.selection) {
@@ -576,7 +187,7 @@
         mounts.selection.textContent = "";
         if (!seat) {
           mounts.selection.appendChild(el("p", "muted",
-            "Select a row."));
+            "Select an actor."));
         } else {
           mounts.selection.appendChild(el("h2", "doc-section", seat.id));
           mounts.selection.appendChild(detailList([
@@ -590,12 +201,16 @@
 
     if (mounts.ribbon) {
       if (typeof renderRibbon === "function") {
-        renderRibbon(mounts.ribbon, { events: data.events || [],
+        var visibleIds = new Set(reading ? reading.stage.tiers.flatMap(function (tier) { return tier.rows.map(function (row) { return row.id; }); }) : []);
+        var events = data.events || [];
+        var ribbonEvents = events.filter(function (event) { return visibleIds.has(event.session); });
+        var eventIndex = function (index) { return events.indexOf(ribbonEvents[index]); };
+        renderRibbon(mounts.ribbon, { events: ribbonEvents,
           // What the window is: the page's subject, and the open conversation when there is one.
           subject: data.subject || "", conversationId: options.projectConversation || "" }, {
-          position: options.position || 0,
-          onScrub: options.onScrub,
-          onSelectEvent: options.onSelectEvent,
+          position: Math.max(0, ribbonEvents.indexOf(events[options.position || 0])),
+          onScrub: function (index) { if (options.onScrub) options.onScrub(eventIndex(index)); },
+          onSelectEvent: function (index) { if (options.onSelectEvent) options.onSelectEvent(eventIndex(index)); },
           onListOpen: options.onListOpen,
           // A chip opens that seat through the shell, and the chip for the
           // selected seat carries aria-current.
@@ -615,9 +230,6 @@
         mounts.counts.appendChild(stat("running", counts.running || 0, "running"));
         mounts.counts.appendChild(statSeparator());
         mounts.counts.appendChild(stat("actors recorded", players.length, ""));
-        // The same fleet as one mark per seat, so the shape of it reads beside
-        // the numerals and the row speaks its totals once.
-        mounts.counts.appendChild(fleetSpine(players));
       }
     }
     return { ordered: ordered, reading: reading };

@@ -490,3 +490,8 @@
 .lane-strip .att-dense .att-seat-card { rx: 3px; }
 
 .lane-strip .att-parent-link { opacity: 0.4; }
+
+.lane-strip .att-legend { order: -2; padding: 12px 10px; }
+.lane-strip .att-staff-line { stroke: var(--muted); stroke-opacity: .35; stroke-width: .7; }
+.lane-strip .att-activity-note { fill: var(--attention); cursor: pointer; }
+.lane-strip .att-activity-note:focus-visible { stroke: var(--ink); stroke-width: 2; }

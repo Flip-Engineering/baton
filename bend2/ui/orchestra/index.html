@@ -13,14 +13,13 @@
 </head>
 <body>
 
-<a class="skip" href="#pit">Skip to Activity</a>
+<a class="skip" href="#staves">Skip to Orchestra</a>
 
 <header class="plate">
   <h1 class="plate-title">Baton</h1>
   <p class="plate-sub">a live score</p>
   <nav class="plate-nav" aria-label="Move to a section">
-    <a href="#pit">Activity <span class="plate-count" id="plate-pit"></span></a>
-    <a href="#staves">Agents <span class="plate-count" id="plate-staves"></span></a>
+    <a href="#staves">Orchestra <span class="plate-count" id="plate-staves"></span></a>
     <a href="#map">Knowledge <span class="plate-count" id="plate-map"></span></a>
     <a href="#record">Selected actor <span class="plate-count" id="plate-record"></span></a>
     <a href="#project">Project <span class="plate-count" id="plate-project"></span></a>
@@ -38,41 +37,24 @@
 
 <main class="sheet">
 
-  <!-- The hall: what is playing now. The run's axis is the page spine, one
-       time grid for the whole page; the seats sit on their tiers under it. -->
-  <section class="pit" id="pit" tabindex="-1" aria-labelledby="pit-title">
-    <div class="pit-head">
-      <h2 id="pit-title" class="movement">Activity</h2>
-      <p class="doc-counts" id="doc-counts"></p>
-    </div>
-    <div id="ribbon" class="doc-ribbon"></div>
-  </section>
-
-  <!-- The written surfaces and the record. The record is a rail beside them, so a
-       selection from the map or the staves never moves the reader away from where
-       they made it. -->
-
   <!-- Recorded reporting hierarchy and actor details. -->
   <section class="paper" id="staves" tabindex="-1" aria-labelledby="staves-title">
     <div class="staves-col">
       <div class="movement-row">
-        <h2 id="staves-title" class="movement">Agents</h2>
+        <h2 id="staves-title" class="movement">Orchestra and activity</h2><p class="doc-counts" id="doc-counts"></p>
         <div class="doc-tools">
           <label class="doc-find">
             <span class="doc-find-label">Find an actor</span>
             <input type="search" id="doc-find" autocomplete="off"
-              placeholder="name or role" aria-controls="roster">
+              placeholder="name or role" aria-controls="attention-band">
           </label>
           <button type="button" id="doc-ended" aria-pressed="false">Show quiet seats</button>
           <button type="button" id="reconnect">Reconnect</button>
         </div>
       </div>
-      <!-- One mark per actor, above the rows that list them. -->
+      <div id="orchestra-legend" class="lane-strip"></div>
+      <div class="pit" id="pit"><div id="ribbon" class="doc-ribbon"></div></div>
       <div id="attention-band" class="lane-strip"></div>
-    </div>
-    <div class="work">
-    <div class="work-main">
-      <ul class="doc-roster" id="roster"></ul>
     </div>
 
   <aside class="record-col" id="record" tabindex="-1" aria-labelledby="selection-title">
@@ -80,7 +62,6 @@
     <div id="selection" class="doc-selection"></div>
   </aside>
 
-    </div>
   </section>
 
   <!-- Knowledge records and their recorded relations. -->

@@ -120,7 +120,7 @@ try {
     console.log('PASS ' + name); writeFileSync(join(out, 'project-checks.json'), JSON.stringify(checks, null, 2));
   };
   const screenshot = async name => {
-    const viewport = await evaluate(`({width:innerWidth,height:innerHeight})`);
+    const viewport = await evaluate(`({width:innerWidth,height:innerHeight,x:scrollX,y:scrollY})`);
     const height = await evaluate(`document.querySelector('#project').getBoundingClientRect().height`);
     await send('Emulation.setDeviceMetricsOverride', { width: viewport.width, height: Math.ceil(height) + 60, deviceScaleFactor: 1, mobile: false });
     await evaluate(`document.querySelector('#project').scrollIntoView({block:'start',behavior:'instant'})`);
@@ -128,7 +128,8 @@ try {
     const box = await evaluate(`(()=>{const b=document.querySelector('#project').getBoundingClientRect();return{x:b.x+scrollX,y:b.y+scrollY,width:b.width,height:b.height}})()`);
     const value = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false, clip: { ...box, scale: 1 } });
     writeFileSync(join(out, name + '.png'), Buffer.from(value.result.data, 'base64'));
-    await send('Emulation.setDeviceMetricsOverride', { ...viewport, deviceScaleFactor: 1, mobile: false });
+    await send('Emulation.setDeviceMetricsOverride', { width:viewport.width, height:viewport.height, deviceScaleFactor: 1, mobile: false });
+    await evaluate(`scrollTo(${viewport.x},${viewport.y});new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))`);
   };
   await send('Page.enable'); await send('Runtime.enable');
   await send('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1100, deviceScaleFactor: 1, mobile: false });

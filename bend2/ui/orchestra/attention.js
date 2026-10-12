@@ -1,7 +1,7 @@
 /* Read-only actor stage. Reporting tiers follow complete recorded parent chains.
    Each drawn actor has one seat with its complete identifier, role and current state.
    Parent links and recorded coordination relations use separate drawing classes.
-   Ensemble panels retain every membership, owner, coupling value and capability section.
+   Each actor includes activity on the shared time range.
    Keyboard arrows walk drawn actors; Enter and Space open the current actor. */
 
 (function () {
@@ -16,7 +16,6 @@
   var CARD_INSET = 14;
   var CAPTION_LINE = 18;
   var SEAT_RADIUS = 12;
-  var STRIP_LIMIT = 12;   // strip rows before the fold
   var ID_SHOWN = 30;      // characters of an id before the ellipsis
   var SHORT_KEEP = 24;    // an id this short is already its own short form
   var STAMP = /^\d{4,}$/; // a trailing date stamp is not part of a name
@@ -49,7 +48,6 @@
   };
 
   var SVG_NS = "http://www.w3.org/2000/svg";
-  var expandedByContainer = new WeakMap();
   var dataByContainer = new WeakMap();
   var readingsByContainer = new WeakMap();
   var cursorByContainer = new WeakMap();
@@ -324,7 +322,7 @@
         stale: player.stale === true,
         memberOf: memberIds(player),
         // Seated unless the shell read it quiet, or the reader asked for all.
-        seated: showEnded || !isQuiet,
+        seated: (showEnded || !isQuiet) && (!options.query || [id, player.role, player.model, player.action, player.taskTitle].join(" ").toLowerCase().includes(options.query.toLowerCase())),
       });
     }
     rows.sort(function (a, b) {
@@ -618,7 +616,7 @@
         widestCaption = Math.max(widestCaption, lines.length);
         captions.set(member.id, lines);
       });
-      var cardHeight = dense ? 36 : compact ? 62 + widestCaption * CAPTION_LINE : 70 + widestCaption * CAPTION_LINE;
+      var cardHeight = (dense ? 36 : compact ? 62 + widestCaption * CAPTION_LINE : 70 + widestCaption * CAPTION_LINE) + 34;
       var left = (w - widths[t] + 48) / 2;
       for (var r = 0; r < tier.groups.length; r += 1) {
         var band = tier.groups[r];
@@ -753,6 +751,8 @@
       "data-att-id": seat.id,
       "data-att-state": seat.reading,
       "data-att-depth": entry.depth,
+      tabindex: -1,
+      role: "button",
     });
     // A state that has just changed flashes in its own ink: the ink travels on the
     // group as currentColor, so the flash adds the state's colour and never another
@@ -1426,6 +1426,11 @@
       };
     }
 
+    var visibleIds = new Set(laid.seats.map(function (entry) { return entry.seat.id; }));
+    var events = (options.events || []).map(function (event, index) { return { event: event, index: index, at: Date.parse(event.at) }; })
+      .filter(function (item) { return visibleIds.has(item.event.session); });
+    var stamps = events.filter(function (item) { return isFinite(item.at); }).map(function (item) { return item.at; });
+    var oldest = Math.min.apply(null, stamps), newest = Math.max.apply(null, stamps);
     for (var i = 0; i < laid.seats.length; i += 1) {
       var entry = laid.seats[i];
       var node = seatNode(entry, options, {
@@ -1433,6 +1438,25 @@
         recent: recent[entry.seat.id] || null,
         cursor: entry.seat.id === cursorId,
       }, laid);
+      var staff = svgEl("g", { "class": "att-activity-staff", "data-att-activity": entry.seat.id });
+      var left = -entry.width / 2 + 6, right = entry.width / 2 - 6;
+      var staffY = entry.bottom - entry.y - 22;
+      for (var line = 0; line < 5; line += 1) staff.appendChild(svgEl("line", {
+        "class": "att-staff-line", x1: left, x2: right, y1: staffY + line * 3, y2: staffY + line * 3 }));
+      events.filter(function (item) { return item.event.session === entry.seat.id && isFinite(item.at); }).forEach(function (item) {
+        var x = left + (right - left) * (newest === oldest ? 1 : (item.at - oldest) / (newest - oldest));
+        var note = svgEl("circle", { "class": "att-activity-note", cx: x, cy: staffY + 6, r: 2.5,
+          role: "button", tabindex: "0", "data-att-event": item.index,
+          "aria-label": item.event.kind + " · " + (item.event.summary || "") + " · " + item.event.at });
+        var title = svgEl("title"); setText(title, note.getAttribute("aria-label")); note.appendChild(title);
+        var open = function (event) { event.stopPropagation();
+          if (typeof options.onSelectEvent === "function") options.onSelectEvent(item.index);
+          if (typeof options.onSelect === "function") options.onSelect(entry.seat.id); };
+        note.addEventListener("click", open);
+        note.addEventListener("keydown", function (event) { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); open(event); } });
+        staff.appendChild(note);
+      });
+      node.appendChild(staff);
       node.setAttribute("transform", "translate(" + entry.x + " " + entry.y + ")");
       svg.appendChild(node);
     }
@@ -1492,33 +1516,6 @@
     return legend;
   }
 
-  // One row per seat the record holds or that owes work. The mark carries the
-  // state, so the strip scans by shape; the state's word and any exact count stay
-  // in the title and the accessible label.
-  function chipNode(row, options) {
-    var chip = document.createElement("button");
-    chip.type = "button";
-    chip.className = "lane-chip" + (row.notProgressing ? " att-need" : "")
-      + (options.selectedId === row.id ? " selected" : "");
-    chip.dataset.attKey = "chip:" + row.id;
-    var spoken = row.id + ", " + row.word + (row.activity ? ", " + activityText(row) : "")
-      + (row.stopNote ? ", " + row.stopNote : "");
-    chip.setAttribute("title", spoken);
-    chip.setAttribute("aria-label", spoken + ". Select to open the actor.");
-    var mark = svgEl("svg", {
-      "class": "att-chip-mark", width: 12, height: 12, viewBox: "-6 -6 12 12",
-      "aria-hidden": "true", focusable: "false",
-    });
-    mark.appendChild(shapeNode(row.reading, 4.4));
-    chip.appendChild(mark);
-    chip.appendChild(span("lane-id mono", row.short));
-    if (row.activity) chip.appendChild(span("att-activity", activityText(row)));
-    chip.addEventListener("click", function () {
-      if (typeof options.onSelect === "function") options.onSelect(row.id);
-    });
-    return chip;
-  }
-
   function groupMemberIds(list) {
     var ids = [];
     (Array.isArray(list) ? list : []).forEach(function (member) {
@@ -1526,77 +1523,6 @@
       if (id && ids.indexOf(String(id)) < 0) ids.push(String(id));
     });
     return ids;
-  }
-
-  function ensembleContext(plan, options) {
-    if (!plan.ensembles.length) return null;
-    var context = document.createElement("section");
-    context.className = "att-ensembles";
-    context.setAttribute("aria-label", "Ensembles and capability sections");
-    context.appendChild(span("att-context-heading", "Ensembles and sections"));
-    var groups = document.createElement("div");
-    groups.className = "att-ensemble-grid";
-    context.appendChild(groups);
-    function actorButton(id, kind) {
-      var button = document.createElement("button");
-      button.type = "button";
-      button.className = "att-member";
-      button.dataset.attKey = kind + ":" + id;
-      button.dataset.attMember = id;
-      setText(button, id);
-      button.addEventListener("click", function () {
-        if (typeof options.onSelect === "function") options.onSelect(id);
-      });
-      return button;
-    }
-    plan.ensembles.forEach(function (ensemble) {
-      if (!ensemble || !ensemble.id) return;
-      var id = String(ensemble.id);
-      var group = document.createElement("section");
-      group.className = "att-ensemble" + (options.selectedEnsemble === id ? " is-selected" : "");
-      group.dataset.attEnsemble = id;
-      var heading = document.createElement(typeof options.onSelectEnsemble === "function" ? "button" : "h3");
-      heading.className = "att-ensemble-name";
-      setText(heading, id);
-      if (heading.tagName === "BUTTON") {
-        heading.type = "button";
-        heading.dataset.attKey = "ensemble:" + id;
-        heading.title = "Show " + id + "'s holdings";
-        heading.addEventListener("click", function () { options.onSelectEnsemble(id); });
-      }
-      group.appendChild(heading);
-      var coupling = String(ensemble.coupling || "");
-      var couplingRead = span("att-coupling", coupling === "tight" ? "Tight coupling"
-        : coupling === "loose" ? "Loose coupling" : coupling ? coupling + " coupling" : "Coupling unrecorded");
-      couplingRead.dataset.attCoupling = coupling;
-      group.appendChild(couplingRead);
-      var owner = document.createElement("div");
-      owner.className = "att-ensemble-owner";
-      owner.appendChild(span(null, "Owner "));
-      if (ensemble.owner) owner.appendChild(actorButton(String(ensemble.owner), "owner:" + id));
-      else owner.appendChild(span(null, "unrecorded"));
-      group.appendChild(owner);
-      var members = document.createElement("div");
-      members.className = "att-members";
-      members.appendChild(span("att-members-label", "Members"));
-      var ids = groupMemberIds(ensemble.members);
-      ids.forEach(function (member) { members.appendChild(actorButton(member, "member:" + id)); });
-      if (!ids.length) members.appendChild(span("att-context-empty", "No members recorded"));
-      group.appendChild(members);
-      (Array.isArray(ensemble.sections) ? ensemble.sections : []).forEach(function (section) {
-        if (!section) return;
-        var part = document.createElement("section");
-        part.className = "att-capability";
-        part.dataset.attSection = String(section.id || "");
-        part.appendChild(span("att-capability-name", String(section.capability || section.id || "Capability unrecorded")));
-        groupMemberIds(section.members).forEach(function (member) {
-          part.appendChild(actorButton(member, "section:" + id + ":" + String(section.id || "")));
-        });
-        group.appendChild(part);
-      });
-      groups.appendChild(group);
-    });
-    return context;
   }
 
   function mountWidth(container) {
@@ -1641,7 +1567,6 @@
     result.width = mountWidth(container);
     if (!container) return result;
 
-    var expanded = expandedByContainer.get(container) || false;
     var cursor = cursorByContainer.get(container);
     if (typeof cursor !== "number") cursor = 0;
 
@@ -1667,7 +1592,12 @@
     var view = stageViews.get(container) || { fit: true, scroll: 0 };
     if (oldViewport) view.scroll = oldViewport.scrollLeft;
     stageViews.set(container, view);
+    var minHeight = container.style.minHeight;
+    container.style.minHeight = container.getBoundingClientRect().height + "px";
     container.textContent = "";
+    var legendMount = opts.legendMount || container;
+    if (legendMount !== container) legendMount.textContent = "";
+    legendMount.appendChild(legendNode());
     dataByContainer.set(container, data);
     optionsByContainer.set(container, opts);
     observeWidth(container);
@@ -1737,10 +1667,6 @@
 
     function redrawCursor() {
       renderAttention(container, dataByContainer.get(container), opts);
-      var current = container.querySelector(".att-seat.att-cursor");
-      if (current && typeof current.scrollIntoView === "function") {
-        current.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" });
-      }
     }
 
     function moveCursor(step) {
@@ -1760,6 +1686,16 @@
     }
 
     if (stage.svg) {
+      stage.svg.addEventListener("focusin", function (event) {
+        var seat = event.target.closest && event.target.closest(".att-seat");
+        if (!seat) return;
+        var index = stage.order.indexOf(seat.dataset.attId);
+        if (index < 0) return;
+        cursor = index;
+        cursorByContainer.set(container, cursor);
+        cursorSeatByContainer.set(container, seat.dataset.attId);
+        cursorRow = result.rows.find(function (row) { return row.id === seat.dataset.attId; });
+      });
       stage.svg.addEventListener("focus", function () {
         if (cursorRow) {
           setText(live, cursorRow.id + ", " + cursorRow.word
@@ -1771,6 +1707,7 @@
       });
 
       stage.svg.addEventListener("keydown", function (event) {
+        if (event.defaultPrevented) return;
         var key = event.key;
         if (key === "ArrowRight" || key === "ArrowDown") { event.preventDefault(); moveCursor(1); return; }
         if (key === "ArrowLeft" || key === "ArrowUp") { event.preventDefault(); moveCursor(-1); return; }
@@ -1794,74 +1731,12 @@
       });
     }
 
-    var listed = result.listed;
-    var shown = expanded ? listed : listed.slice(0, STRIP_LIMIT);
-
-    // The legend decodes the marks the pit draws. With no seat seated and nothing
-    // listed there is nothing to decode, so the pit keeps one line.
-    if (laid.order.length || listed.length) container.appendChild(legendNode());
-    var context = ensembleContext(result.stage, opts);
-    if (context) {
-      var disclosure = document.createElement("details");
-      disclosure.className = "att-ensemble-details";
-      var summary = document.createElement("summary");
-      setText(summary, "Ensemble membership and sections");
-      disclosure.appendChild(summary);
-      disclosure.appendChild(context);
-      container.appendChild(disclosure);
-    }
-
-    var folded = listed.length - shown.length;
-    result.strip = {
-      shown: shown.length,
-      total: listed.length,
-      folded: folded,
-      expanded: expanded,
-      notProgressing: result.notProgressing.length,
-    };
-
-    // The quiet line is added and the pass continues to the restoration below: a
-    // rebuild must give back focus and the reader's place, or the next key goes
-    // nowhere. Do not return here.
-    if (!listed.length) {
-      var quiet = document.createElement("p");
-      quiet.className = "att-quiet";
-      setText(quiet, "Nothing is failed, stopped, queued or owing work. "
-        + result.counts.running + " running.");
-      container.appendChild(quiet);
-    }
-
-    for (var k = 0; k < shown.length; k += 1) {
-      container.appendChild(chipNode(shown[k], opts));
-    }
-
-    // The fold: its word states the reach, and its figure is the exact count.
-    if (folded > 0 || expanded) {
-      var fold = document.createElement("button");
-      fold.type = "button";
-      fold.className = "lane-chip att-fold";
-      fold.dataset.attKey = "fold";
-      fold.setAttribute("aria-expanded", expanded ? "true" : "false");
-      setText(fold, expanded ? "fewer" : "+" + folded + " more");
-      fold.setAttribute("title", expanded
-        ? "Show the " + STRIP_LIMIT + " highest"
-        : "Show all " + listed.length + ", " + folded + " folded");
-      fold.setAttribute("aria-label", expanded
-        ? "Show the " + STRIP_LIMIT + " highest"
-        : "Show all " + listed.length + " seats the record holds or that owe work, "
-          + folded + " folded");
-      fold.addEventListener("click", function () {
-        expandedByContainer.set(container, !expanded);
-        renderAttention(container, dataByContainer.get(container), opts);
-      });
-      container.appendChild(fold);
-    }
-
     // Preserve keyboard focus across redraws without moving the page.
     if (restore) {
       var back = container.querySelector('[data-att-key="' + cssEscape(restore) + '"]');
       if (back && typeof back.focus === "function") back.focus({ preventScroll: true });
     }
+    container.style.minHeight = minHeight;
     return result;
   }
 
