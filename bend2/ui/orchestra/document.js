@@ -449,45 +449,16 @@
     }
   }
 
-  /* The map: the whole recorded ensemble on the paper ground. It is a main view,
-     so it draws whenever its mount is in the page. It is the recorded ensemble,
-     but a reader still asks how a seat is doing; the shell holds those reads, so
-     they travel with the map's payload keyed by actor id. */
-  function actorReads(players) {
-    var out = Object.create(null);
-    (players || []).forEach(function (p) {
-      out[p.id] = {
-        status: p.status || "unknown",
-        notProgressing: p.notProgressing === true,
-        owesWork: p.owesWork === true,
-        owedTotal: p.owedTotal || 0,
-      };
-    });
-    return out;
-  }
-
+  /* The knowledge map reads the returned records and their relations. */
   function renderWhole(wholeMount, data, opts) {
     if (!wholeMount) return;
     if (window.KnowledgeLayer && window.KnowledgeLayer.renderKnowledge) {
       window.KnowledgeLayer.renderKnowledge(wholeMount, {
         overview: data.knowledge,
         messages: data.messages || {},
-        // The recorded ensembles with their members: the map groups the tiers
-        // its members occupy without reading the roster rows.
-        ensembles: data.ensembles || [],
-        // The recorded sections in the snapshot route's shape, so the map can
-        // hull section membership the way it hulls ensembles once the server
-        // projects the field; nothing draws while it is absent.
-        sections: (data.knowledge && data.knowledge.sections) || [],
-        // The per-actor reads, so the map's card states how a seat is doing and
-        // not only what it holds.
-        actorReads: actorReads(data.players),
       }, {
         mode: "whole",
         selectedId: opts.selectedFindingId,
-        // The shell's actor selection, so the map lights the actor a reader picked
-        // in the staves or the rail, not only the finding it holds.
-        selectedActorId: opts.selectedId || "",
         query: opts.knowledgeQuery || "",
         notice: opts.knowledgeNotice || "",
         onSelectFinding: opts.onSelectFinding,
@@ -495,8 +466,6 @@
         scientificSelected: opts.scientificSelected,
         onSelectScientific: opts.onSelectScientific,
         onOpenScientificReference: opts.onOpenScientificReference,
-        onSelectActor: opts.onSelect,
-        onSelectEnsemble: opts.onSelectEnsemble,
         // The card's one move into the record, forwarded so the card renders it.
         onOpenRecord: opts.onOpenRecord,
         // The way back: the shell selects the mark and shows its surface.

@@ -2311,6 +2311,7 @@ function renderDocument() {
     scientificSelected: state.scientificSelected,
     onSelectScientific: (key) => {
       state.scientificSelected = key;
+      state.findingId = "";
       const scope = state.knowledgeScope || { kind: "universal", id: "" };
       const address = new URLSearchParams({ science: key, scope: scope.kind, holder: scope.id || "" });
       if (typeof history.replaceState === "function") history.replaceState(null, "", "#" + address);

@@ -52,10 +52,7 @@
        selection from the map or the staves never moves the reader away from where
        they made it. -->
 
-  <div class="work">
-  <div class="work-main">
-
-  <!-- The written score: one staff per actor. -->
+  <!-- Recorded reporting hierarchy and actor details. -->
   <section class="paper" id="staves" tabindex="-1" aria-labelledby="staves-title">
     <div class="staves-col">
       <div class="movement-row">
@@ -72,11 +69,21 @@
       </div>
       <!-- One mark per actor, above the rows that list them. -->
       <div id="attention-band" class="lane-strip"></div>
+    </div>
+    <div class="work">
+    <div class="work-main">
       <ul class="doc-roster" id="roster"></ul>
+    </div>
+
+  <aside class="record-col" id="record" tabindex="-1" aria-labelledby="selection-title">
+    <h2 id="selection-title" class="movement">The actor you selected</h2>
+    <div id="selection" class="doc-selection"></div>
+  </aside>
+
     </div>
   </section>
 
-  <!-- The map: the whole recorded ensemble. -->
+  <!-- Knowledge records and their recorded relations. -->
   <section class="map" id="map" tabindex="-1" aria-labelledby="map-title">
     <div class="movement-row">
       <h2 id="map-title" class="movement">Knowledge</h2>
@@ -91,14 +98,6 @@
     </div>
   </section>
 
-  </div>
-
-  <aside class="record-col" id="record" tabindex="-1" aria-labelledby="selection-title">
-    <h2 id="selection-title" class="movement">The actor you selected</h2>
-    <div id="selection" class="doc-selection"></div>
-  </aside>
-
-  </div>
   <!-- Read prior sessions from the selected actor's recorded workspace. -->
   <section class="project" id="project" tabindex="-1" aria-labelledby="project-title">
     <div class="movement-row">
