@@ -1518,15 +1518,21 @@ def direct_first_started(+db: String, +player: String, +id: String, +cmd: String
 
 # Setup completes before the request enters native custody. Its failures keep
 # the saved input available for an explicit resume of the same turn.
+def direct_setup_receiver(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, +session: String, +harness: String, +directory: String, prompt: String, receiver: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,DirectSetup>):
+  match receiver:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,DirectSetup>,Fail{error})
+    case Done{unit}: do IO<Result<&1,&1,U32 & String,DirectSetup>>:
+      executable : String <- IO.try(String,Lock.SessionLock.executable())
+      recovery : String <- IO.pure(String,direct_recovery_argv(executable,db,player,id,cmd,model,effort,cwd,log,harness,directory,session))
+      policy : Logs.Policy <- Logs.policy(db,player)
+      +level : String <- IO.pure(String,policy_level(policy))
+      launch : RetainedLaunch <- IO.try(RetainedLaunch,retained_prepare(db,player,directory,cmd,model,effort,session,harness,db ++ ".sessions",prompt,level,True{}))
+      IO.pure(Result<&1,&1,U32 & String,DirectSetup>,Done{Ready{launch,recovery,level}})
+
 def direct_setup(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, +session: String, +harness: String, +directory: String, prompt: String) -> IO(Result<&1,&1,U32 & String,DirectSetup>):
   do IO<Result<&1,&1,U32 & String,DirectSetup>>:
-    receiver : Unit <- Control.default_receiver(db,player,cmd,model,effort,cwd,log)
-    executable : String <- IO.try(String,Lock.SessionLock.executable())
-    recovery : String <- IO.pure(String,direct_recovery_argv(executable,db,player,id,cmd,model,effort,cwd,log,harness,directory,session))
-    policy : Logs.Policy <- Logs.policy(db,player)
-    +level : String <- IO.pure(String,policy_level(policy))
-    launch : RetainedLaunch <- IO.try(RetainedLaunch,retained_prepare(db,player,directory,cmd,model,effort,session,harness,db ++ ".sessions",prompt,level,True{}))
-    IO.pure(Result<&1,&1,U32 & String,DirectSetup>,Done{Ready{launch,recovery,level}})
+    receiver : Result<&1,&1,U32 & String,Unit> <- Control.default_receiver_result(db,player,cmd,model,effort,cwd,log)
+    direct_setup_receiver(db,player,id,cmd,model,effort,cwd,log,session,harness,directory,prompt,receiver)
 
 def direct_setup_result(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, task: String, +log: String, session: String, +harness: String, +directory: String, +prompt: String, +lock: U32, setup: Result<&1,&1,U32 & String,DirectSetup>) -> IO(Unit):
   match setup:

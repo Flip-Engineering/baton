@@ -278,22 +278,34 @@ def recorded_field(db: String, player: String, column: String) -> IO(String):
 # A direct turn records its launch arguments as the default wake route.
 # Replaying a completed turn repairs an absent route. Existing routes and
 # terminal stops keep their recorded state.
-def default_receiver_absent(+db: String, +player: String, cmd: String, +model: String, effort: String, cwd: String, log: String, absent: Bool) -> IO(Unit):
+def default_receiver_output_result(+db: String, +player: String, cmd: String, +model: String, effort: String, cwd: String, +executable: String, database: String, output: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match output:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error})
+    case Done{path}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      identity : String & String <- IO.try(String & String,Host.Control.identity(executable))
+      endpoint : String <- IO.pure(String,"[" ++ strings(identity_args([executable,database,"receive",player,cmd,model,effort,cwd,path],model,identity)) ++ "]")
+      saved : String <- IO.try(String,DB.Sql.query(db,"UPDATE sessions SET endpoint=" ++ C.q(endpoint) ++ " WHERE id=" ++ C.q(player) ++ " AND coalesce(endpoint,'')='' AND NOT " ++ C.stopped_session_sql(C.q(player)) ++ ";"))
+      IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
+
+def default_receiver_absent_result(+db: String, +player: String, cmd: String, +model: String, effort: String, cwd: String, log: String, absent: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match absent:
-    case False{}: IO.pure(Unit,Unit{})
-    case True{}: do IO<Unit>:
+    case False{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
+    case True{}: do IO<Result<&1,&1,U32 & String,Unit>>:
       +executable : String <- IO.try(String,Lock.SessionLock.executable())
       database : String <- IO.try(String,Lock.SessionLock.canonical(db))
-      output : String <- IO.try(String,Host.Control.output(log))
-      identity : String & String <- IO.try(String & String,Host.Control.identity(executable))
-      endpoint : String <- IO.pure(String,"[" ++ strings(identity_args([executable,database,"receive",player,cmd,model,effort,cwd,output],model,identity)) ++ "]")
-      saved : String <- IO.try(String,DB.Sql.query(db,"UPDATE sessions SET endpoint=" ++ C.q(endpoint) ++ " WHERE id=" ++ C.q(player) ++ " AND coalesce(endpoint,'')='' AND NOT " ++ C.stopped_session_sql(C.q(player)) ++ ";"))
-      IO.pure(Unit,Unit{})
+      output : Result<&1,&1,U32 & String,String> <- Host.Control.output(log)
+      default_receiver_output_result(db,player,cmd,model,effort,cwd,executable,database,output)
+
+def default_receiver_absent(+db: String, +player: String, cmd: String, +model: String, effort: String, cwd: String, log: String, absent: Bool) -> IO(Unit):
+  IO.try(Unit,default_receiver_absent_result(db,player,cmd,model,effort,cwd,log,absent))
+
+def default_receiver_result(+db: String, +player: String, cmd: String, model: String, effort: String, cwd: String, log: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    endpoint : String <- recorded_field(db,player,"endpoint")
+    default_receiver_absent_result(db,player,cmd,model,effort,cwd,log,String.is_empty(endpoint))
 
 def default_receiver(+db: String, +player: String, cmd: String, model: String, effort: String, cwd: String, log: String) -> IO(Unit):
-  do IO<Unit>:
-    endpoint : String <- recorded_field(db,player,"endpoint")
-    default_receiver_absent(db,player,cmd,model,effort,cwd,log,String.is_empty(endpoint))
+  IO.try(Unit,default_receiver_result(db,player,cmd,model,effort,cwd,log))
 
 def dispatch_turn(+db: String, +player: String, +id: String, +cmd: String, log: String, +task: String) -> IO(String):
   do IO<String>:
