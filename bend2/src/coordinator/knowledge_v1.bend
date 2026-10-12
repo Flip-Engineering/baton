@@ -15,6 +15,26 @@ import ./delivery.bend as Delivery
 import ./store.bend as Store
 import ../host/sqlite.bend as DB
 
+# Evaluation requests are independent durable review rows keyed
+# deterministically by record, destination and trigger. A request commits in
+# the same transaction as its triggering authored event (record, relate or
+# first promotion) through the shared transactional outbox; ordinary notice
+# delivery follows afterward. Independence means a request never requires a
+# promotion and a promotion never requires a request: each firing insert
+# carries ON CONFLICT DO NOTHING on its deterministic id, so byte-equal
+# replay, redelivery and twin hits never reopen a request, and refused
+# writes commit nothing. Decisions are retained rationale rows only; no
+# accepted-decision prerequisite gates any promotion. The DDL is provisional
+# like the v1 tables above; lane A owns it at integration.
+def eval_schema_sql() -> String:
+  "CREATE TABLE IF NOT EXISTS knowledge_evaluations(id TEXT UNIQUE, record_table TEXT, record_id TEXT, destination_kind TEXT DEFAULT 'session', destination TEXT, trigger TEXT, requested_by TEXT, decision TEXT, rationale TEXT, decided_by TEXT);"
+
+def eval_request_id(+record_id: String, +dest_kind: String, +dest: String, +trigger: String) -> String:
+  "'eval:v1:' || " ++ record_id ++ " || ':' || " ++ dest_kind ++ " || ':' || " ++ dest ++ " || ':' || " ++ trigger
+
+def eval_insert(+record_table: String, +record_id: String, +dest_kind: String, +dest: String, +trigger: String, +requester: String, +gate: String) -> String:
+  "INSERT INTO knowledge_evaluations(id,record_table,record_id,destination_kind,destination,trigger,requested_by,decision,rationale,decided_by) SELECT " ++ eval_request_id(record_id,dest_kind,dest,trigger) ++ "," ++ record_table ++ "," ++ record_id ++ "," ++ dest_kind ++ "," ++ dest ++ "," ++ trigger ++ "," ++ requester ++ ",NULL,NULL,NULL WHERE " ++ gate ++ " ON CONFLICT(id) DO NOTHING;"
+
 # Provisional DDL kept structurally aligned with the authoritative lane A
 # tables; lane A owns the DDL and this builder is removed at integration.
 # Authoritative columns reproduced verbatim: the envelope key stays
@@ -24,6 +44,7 @@ def schema_sql() -> String:
   "CREATE TABLE IF NOT EXISTS knowledge_v1(id TEXT UNIQUE, author TEXT, kind TEXT, statement TEXT, context TEXT, evidence TEXT, limits TEXT DEFAULT '', uncertainty TEXT DEFAULT '', details TEXT, schema_version INTEGER DEFAULT 1, supersedes TEXT, payload TEXT);"
   ++ "CREATE TABLE IF NOT EXISTS knowledge_edges_v1(id TEXT UNIQUE, author TEXT, kind TEXT, source TEXT, target TEXT, context TEXT, basis TEXT, rationale TEXT, limits TEXT DEFAULT '', uncertainty TEXT DEFAULT '', details TEXT, schema_version INTEGER DEFAULT 1, supersedes TEXT, payload TEXT);"
   ++ "CREATE TABLE IF NOT EXISTS knowledge_promotions_v1(id TEXT UNIQUE, record_id TEXT, author TEXT, source_kind TEXT DEFAULT 'session', source TEXT, destination_kind TEXT DEFAULT 'session', destination TEXT, promoted_by TEXT);"
+  ++ eval_schema_sql()
 
 def node_kinds() -> String:
   "'question','claim','hypothesis','observation','research-finding','study','evidence','argument','proposal','decision'"
@@ -171,10 +192,24 @@ def node_same(+node: String) -> String:
   +j = C.q(node)
   "author=json_extract(" ++ j ++ ",'$.author') AND kind=json_extract(" ++ j ++ ",'$.kind') AND statement=json_extract(" ++ j ++ ",'$.statement') AND context=json_extract(" ++ j ++ ",'$.context') AND evidence=json_extract(" ++ j ++ ",'$.evidence') AND limits=json_extract(" ++ j ++ ",'$.limits') AND uncertainty=json_extract(" ++ j ++ ",'$.uncertainty') AND details=json_extract(" ++ j ++ ",'$.details')"
 
+# The exact admission predicate node_insert enforces, factored so the
+# evaluation firing below gates on the identical condition.
+def node_admitted(+node: String) -> String:
+  +j = C.q(node)
+  "EXISTS(SELECT 1 FROM sessions WHERE id=json_extract(" ++ j ++ ",'$.author')) AND " ++ node_kind_of(node) ++ " IN(" ++ node_kinds() ++ ") AND " ++ node_shape_ok(node) ++ " AND " ++ node_refs_resolve(node) ++ " AND " ++ node_refs_match(node)
+
 def node_insert(+node: String) -> String:
   +j = C.q(node)
-  "INSERT INTO knowledge_v1(id,author,kind,statement,context,evidence,limits,uncertainty,details,payload) SELECT json_extract(" ++ j ++ ",'$.id'),json_extract(" ++ j ++ ",'$.author'),json_extract(" ++ j ++ ",'$.kind'),json_extract(" ++ j ++ ",'$.statement'),json_extract(" ++ j ++ ",'$.context'),json_extract(" ++ j ++ ",'$.evidence'),json_extract(" ++ j ++ ",'$.limits'),json_extract(" ++ j ++ ",'$.uncertainty'),json_extract(" ++ j ++ ",'$.details')," ++ j ++ " WHERE EXISTS(SELECT 1 FROM sessions WHERE id=json_extract(" ++ j ++ ",'$.author')) AND " ++ node_kind_of(node) ++ " IN(" ++ node_kinds() ++ ") AND " ++ node_shape_ok(node) ++ " AND " ++ node_refs_resolve(node) ++ " AND " ++ node_refs_match(node)
+  "INSERT INTO knowledge_v1(id,author,kind,statement,context,evidence,limits,uncertainty,details,payload) SELECT json_extract(" ++ j ++ ",'$.id'),json_extract(" ++ j ++ ",'$.author'),json_extract(" ++ j ++ ",'$.kind'),json_extract(" ++ j ++ ",'$.statement'),json_extract(" ++ j ++ ",'$.context'),json_extract(" ++ j ++ ",'$.evidence'),json_extract(" ++ j ++ ",'$.limits'),json_extract(" ++ j ++ ",'$.uncertainty'),json_extract(" ++ j ++ ",'$.details')," ++ j ++ " WHERE " ++ node_admitted(node)
   ++ " ON CONFLICT(id) DO NOTHING;"
+
+# Authored-availability firing: an accepted node write opens one evaluation
+# request addressed to its author in the same transaction. The gate repeats
+# the insert admission null-proofed, so refused writes and twin-suppressed
+# rows fire nothing, and the deterministic id makes replay idempotent.
+def node_eval_request(+node: String) -> String:
+  +j = C.q(node)
+  eval_insert(C.q("knowledge_v1"),"json_extract(" ++ j ++ ",'$.id')",C.q("session"),"json_extract(" ++ j ++ ",'$.author')",C.q("authored"),"json_extract(" ++ j ++ ",'$.author')","coalesce((" ++ node_admitted(node) ++ "),0)")
 
 def node_notice(+node: String) -> String:
   +j = C.q(node)
@@ -196,7 +231,7 @@ def node_errors(+node: String) -> String:
   ++ v1_error("v1-unknown-node-kind","'kind'," ++ node_kind_of(node) ++ ",'condition','Node kind is not one of the ten closed v1 kinds.'","json_valid(" ++ j ++ ") AND (" ++ node_kind_of(node) ++ " IS NULL OR " ++ node_kind_of(node) ++ " NOT IN(" ++ node_kinds() ++ "))")
   ++ v1_error("v1-node-shape","'id'," ++ id ++ ",'condition','Node needs non-empty id, author and statement, object context with scope, subjects, conditions and assumptions, array evidence of id or uri references, text limits and uncertainty, and the typed details its kind requires.'","json_valid(" ++ j ++ ") AND " ++ node_kind_of(node) ++ " IN(" ++ node_kinds() ++ ") AND coalesce(NOT (" ++ node_shape_ok(node) ++ "),1)")
   ++ v1_error("v1-unresolved-endpoint","'id'," ++ id ++ ",'condition','A node reference names no stored v1 node or edge.','next','Record the referenced row first, then retry the node.'","json_valid(" ++ j ++ ") AND " ++ node_kind_of(node) ++ " IN(" ++ node_kinds() ++ ") AND " ++ node_shape_ok(node) ++ " AND NOT (" ++ node_refs_resolve(node) ++ ")")
-  ++ v1_error("v1-endpoint-kind-mismatch","'id'," ++ id ++ ",'condition','A node reference is stored under a different kind than declared.','next','Retain the stored rows, then retry with matching declared kinds.'","json_valid(" ++ j ++ ") AND " ++ node_kind_of(node) ++ " IN(" ++ node_kinds() ++ ") AND " ++ node_shape_ok(node) ++ " AND " ++ node_refs_resolve(node) ++ " AND NOT (" ++ node_refs_match(node) ++ ")")
+  ++ v1_error("v1-endpoint-kind-mismatch","'id'," ++ id ++ ",'condition','A node reference is stored under a different kind than declared.','next','Retain the stored rows, then retry with matching declared kinds.'","json_valid(" ++ j ++ ") AND " ++ node_kind_of(node) ++ " IN(" ++ node_kinds() ++ ") AND " ++ node_shape_ok(node) ++ " AND " ++ node_refs_resolve(node) ++ " AND NOT coalesce((" ++ node_refs_match(node) ++ "),0)")
   ++ v1_error("v1-unknown-author","'author',json_extract(" ++ j ++ ",'$.author'),'condition','Node author is not a registered session.'","NOT EXISTS(SELECT 1 FROM sessions WHERE id=json_extract(" ++ j ++ ",'$.author'))")
   ++ v1_error("v1-node-id-conflict","'id'," ++ id ++ ",'stored',(SELECT json_object(" ++ stored ++ ") FROM knowledge_v1 WHERE id=" ++ id ++ "),'condition','This v1 node identity is already stored with different content.','next','Retain the stored record, then retry the new input under a different ID.'","EXISTS(SELECT 1 FROM knowledge_v1 WHERE id=" ++ id ++ " AND NOT (" ++ node_same(node) ++ "))")
   ++ v1_error("v1-node-id-conflict","'id'," ++ id ++ ",'stored',(SELECT json_object('id',id,'author',author,'kind',kind) FROM knowledge_edges_v1 WHERE id=" ++ id ++ "),'condition','This identity is already stored as a v1 edge. Node and edge identities share one namespace.','next','Retain the stored record, then retry the new input under a different ID.'","EXISTS(SELECT 1 FROM knowledge_edges_v1 WHERE id=" ++ id ++ ")")
@@ -204,9 +239,15 @@ def node_errors(+node: String) -> String:
 def v1_edge_promotions() -> String:
   "(SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_object('schemaVersion',1,'id',p.id,'recordId',p.record_id,'author',p.author,'source',p.source,'destination',p.destination,'promotedBy',p.promoted_by,'sourceKind',p.source_kind,'destinationKind',p.destination_kind) AS item FROM knowledge_promotions_v1 p WHERE p.record_id=r.id))"
 
+# Open evaluation requests travel on every v1 envelope as retained review
+# state: pending rows and recorded decisions alike, oldest first. Legacy
+# envelopes carry no such member; legacy rows never open requests.
+def v1_evaluations(+idcol: String) -> String:
+  "(SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT json_object('requestId',e.id,'trigger',e.trigger,'destinationKind',e.destination_kind,'destination',e.destination,'requestedBy',e.requested_by,'decision',e.decision,'rationale',e.rationale,'decidedBy',e.decided_by) AS item FROM knowledge_evaluations e WHERE e.record_id=" ++ idcol ++ " ORDER BY e.rowid))"
+
 def v1_edge_envelope(+alias: String) -> String:
   +r = alias ++ "."
-  "json_object('id'," ++ r ++ "id,'author'," ++ r ++ "author,'kind'," ++ r ++ "kind,'schemaId','urn:baton:knowledge:schema:1','source',json(" ++ r ++ "source),'target',json(" ++ r ++ "target),'context',json(" ++ r ++ "context),'basis',json(" ++ r ++ "basis),'rationale'," ++ r ++ "rationale,'limits'," ++ r ++ "limits,'uncertainty'," ++ r ++ "uncertainty,'details',json(" ++ r ++ "details),'provenance','authored','schemaVersion'," ++ r ++ "schema_version,'promotions'," ++ v1_edge_promotions() ++ ")"
+  "json_object('id'," ++ r ++ "id,'author'," ++ r ++ "author,'kind'," ++ r ++ "kind,'schemaId','urn:baton:knowledge:schema:1','source',json(" ++ r ++ "source),'target',json(" ++ r ++ "target),'context',json(" ++ r ++ "context),'basis',json(" ++ r ++ "basis),'rationale'," ++ r ++ "rationale,'limits'," ++ r ++ "limits,'uncertainty'," ++ r ++ "uncertainty,'details',json(" ++ r ++ "details),'provenance','authored','schemaVersion'," ++ r ++ "schema_version,'promotions'," ++ v1_edge_promotions() ++ ",'evaluations'," ++ v1_evaluations(r ++ "id") ++ ")"
 
 # Promotion envelopes resolve through knowledge_promotions_v1 keyed by raw
 # record_id. Table separation is the version scoping: a legacy row and a v1
@@ -219,7 +260,7 @@ def v1_node_relations() -> String:
 
 def node_envelope(+alias: String) -> String:
   +n = alias ++ "."
-  "json_object('id'," ++ n ++ "id,'author'," ++ n ++ "author,'kind'," ++ n ++ "kind,'schemaId','urn:baton:knowledge:schema:1','statement'," ++ n ++ "statement,'context',json(" ++ n ++ "context),'evidence',json(" ++ n ++ "evidence),'limits'," ++ n ++ "limits,'uncertainty'," ++ n ++ "uncertainty,'details',json(" ++ n ++ "details),'provenance','authored','schemaVersion'," ++ n ++ "schema_version,'promotions'," ++ v1_promotions() ++ ",'relations'," ++ v1_node_relations() ++ ")"
+  "json_object('id'," ++ n ++ "id,'author'," ++ n ++ "author,'kind'," ++ n ++ "kind,'schemaId','urn:baton:knowledge:schema:1','statement'," ++ n ++ "statement,'context',json(" ++ n ++ "context),'evidence',json(" ++ n ++ "evidence),'limits'," ++ n ++ "limits,'uncertainty'," ++ n ++ "uncertainty,'details',json(" ++ n ++ "details),'provenance','authored','schemaVersion'," ++ n ++ "schema_version,'promotions'," ++ v1_promotions() ++ ",'relations'," ++ v1_node_relations() ++ ",'evaluations'," ++ v1_evaluations(n ++ "id") ++ ")"
 
 def node_answer(+node: String) -> String:
   +j = C.q(node)
@@ -227,7 +268,7 @@ def node_answer(+node: String) -> String:
   "SELECT " ++ node_envelope("n") ++ " FROM knowledge_v1 n WHERE n.id=" ++ id ++ ";"
 
 def node_statements(+node: String) -> String:
-  node_insert(node) ++ node_notice(node) ++ node_errors(node) ++ node_answer(node)
+  node_insert(node) ++ node_eval_request(node) ++ node_notice(node) ++ node_errors(node) ++ node_answer(node)
 
 def edge_kind_of(+edge: String) -> String:
   "json_extract(" ++ C.q(edge) ++ ",'$.kind')"
@@ -349,10 +390,21 @@ def edge_same(+edge: String) -> String:
   +j = C.q(edge)
   "author=json_extract(" ++ j ++ ",'$.author') AND kind=json_extract(" ++ j ++ ",'$.kind') AND source=json_extract(" ++ j ++ ",'$.source') AND target=json_extract(" ++ j ++ ",'$.target') AND context=json_extract(" ++ j ++ ",'$.context') AND basis=json_extract(" ++ j ++ ",'$.basis') AND rationale=json_extract(" ++ j ++ ",'$.rationale') AND limits=json_extract(" ++ j ++ ",'$.limits') AND uncertainty=json_extract(" ++ j ++ ",'$.uncertainty') AND details=json_extract(" ++ j ++ ",'$.details')"
 
+# The exact admission predicate edge_insert enforces, factored so the
+# evaluation firing below gates on the identical condition.
+def edge_admitted(+edge: String) -> String:
+  +j = C.q(edge)
+  "EXISTS(SELECT 1 FROM sessions WHERE id=json_extract(" ++ j ++ ",'$.author')) AND " ++ edge_kind_of(edge) ++ " IN(" ++ edge_kinds() ++ ") AND " ++ edge_shape_ok(edge) ++ " AND " ++ edge_refs_resolve(edge) ++ " AND " ++ edge_refs_match(edge) ++ " AND " ++ edge_proof_ok(edge)
+
 def edge_insert(+edge: String) -> String:
   +j = C.q(edge)
-  "INSERT INTO knowledge_edges_v1(id,author,kind,source,target,context,basis,rationale,limits,uncertainty,details,payload) SELECT json_extract(" ++ j ++ ",'$.id'),json_extract(" ++ j ++ ",'$.author'),json_extract(" ++ j ++ ",'$.kind'),json_extract(" ++ j ++ ",'$.source'),json_extract(" ++ j ++ ",'$.target'),json_extract(" ++ j ++ ",'$.context'),json_extract(" ++ j ++ ",'$.basis'),json_extract(" ++ j ++ ",'$.rationale'),json_extract(" ++ j ++ ",'$.limits'),json_extract(" ++ j ++ ",'$.uncertainty'),json_extract(" ++ j ++ ",'$.details')," ++ j ++ " WHERE EXISTS(SELECT 1 FROM sessions WHERE id=json_extract(" ++ j ++ ",'$.author')) AND " ++ edge_kind_of(edge) ++ " IN(" ++ edge_kinds() ++ ") AND " ++ edge_shape_ok(edge) ++ " AND " ++ edge_refs_resolve(edge) ++ " AND " ++ edge_refs_match(edge) ++ " AND " ++ edge_proof_ok(edge)
+  "INSERT INTO knowledge_edges_v1(id,author,kind,source,target,context,basis,rationale,limits,uncertainty,details,payload) SELECT json_extract(" ++ j ++ ",'$.id'),json_extract(" ++ j ++ ",'$.author'),json_extract(" ++ j ++ ",'$.kind'),json_extract(" ++ j ++ ",'$.source'),json_extract(" ++ j ++ ",'$.target'),json_extract(" ++ j ++ ",'$.context'),json_extract(" ++ j ++ ",'$.basis'),json_extract(" ++ j ++ ",'$.rationale'),json_extract(" ++ j ++ ",'$.limits'),json_extract(" ++ j ++ ",'$.uncertainty'),json_extract(" ++ j ++ ",'$.details')," ++ j ++ " WHERE " ++ edge_admitted(edge)
   ++ " ON CONFLICT(id) DO NOTHING;"
+
+# Authored-availability firing for edges, mirroring the node path.
+def edge_eval_request(+edge: String) -> String:
+  +j = C.q(edge)
+  eval_insert(C.q("knowledge_edges_v1"),"json_extract(" ++ j ++ ",'$.id')",C.q("session"),"json_extract(" ++ j ++ ",'$.author')",C.q("authored"),"json_extract(" ++ j ++ ",'$.author')","coalesce((" ++ edge_admitted(edge) ++ "),0)")
 
 def edge_answer(+edge: String) -> String:
   +j = C.q(edge)
@@ -367,14 +419,14 @@ def edge_errors(+edge: String) -> String:
   ++ v1_error("v1-unknown-edge-kind","'kind'," ++ edge_kind_of(edge) ++ ",'condition','Edge kind is not one of the sixteen closed v1 kinds.'","json_valid(" ++ j ++ ") AND (" ++ edge_kind_of(edge) ++ " IS NULL OR " ++ edge_kind_of(edge) ++ " NOT IN(" ++ edge_kinds() ++ "))")
   ++ v1_error("v1-edge-shape","'id'," ++ id ++ ",'condition','Edge needs non-empty id, author and rationale, object endpoints with id and kind, object context with scope, subjects, conditions and assumptions, array basis of id or uri references, text limits and uncertainty, and the typed details its kind requires.'","json_valid(" ++ j ++ ") AND " ++ edge_kind_of(edge) ++ " IN(" ++ edge_kinds() ++ ") AND coalesce(NOT (" ++ edge_shape_ok(edge) ++ "),1)")
   ++ v1_error("v1-unresolved-endpoint","'id'," ++ id ++ ",'condition','An edge endpoint, basis, context or detail reference names no stored v1 node or edge.','next','Record the referenced row first, then retry the edge.'","json_valid(" ++ j ++ ") AND " ++ edge_kind_of(edge) ++ " IN(" ++ edge_kinds() ++ ") AND " ++ edge_shape_ok(edge) ++ " AND NOT (" ++ edge_refs_resolve(edge) ++ ")")
-  ++ v1_error("v1-endpoint-kind-mismatch","'id'," ++ id ++ ",'condition','An edge reference is stored under a different kind than declared, or the edge-kind matrix rejects the declared endpoint pair.','next','Retain the stored rows, then retry with matching declared kinds.'","json_valid(" ++ j ++ ") AND " ++ edge_kind_of(edge) ++ " IN(" ++ edge_kinds() ++ ") AND " ++ edge_shape_ok(edge) ++ " AND " ++ edge_refs_resolve(edge) ++ " AND NOT (" ++ edge_refs_match(edge) ++ ")")
-  ++ v1_error("v1-proof-rule","'id'," ++ id ++ ",'condition','An implies edge cites no deduction or formal-proof argument, or a proves or disproves edge starts from no such argument.','next','Retain the stored rows, then retry with a qualifying argument.'","json_valid(" ++ j ++ ") AND " ++ edge_kind_of(edge) ++ " IN(" ++ edge_kinds() ++ ") AND " ++ edge_shape_ok(edge) ++ " AND " ++ edge_refs_resolve(edge) ++ " AND " ++ edge_refs_match(edge) ++ " AND NOT (" ++ edge_proof_ok(edge) ++ ")")
+  ++ v1_error("v1-endpoint-kind-mismatch","'id'," ++ id ++ ",'condition','An edge reference is stored under a different kind than declared, or the edge-kind matrix rejects the declared endpoint pair.','next','Retain the stored rows, then retry with matching declared kinds.'","json_valid(" ++ j ++ ") AND " ++ edge_kind_of(edge) ++ " IN(" ++ edge_kinds() ++ ") AND " ++ edge_shape_ok(edge) ++ " AND " ++ edge_refs_resolve(edge) ++ " AND NOT coalesce((" ++ edge_refs_match(edge) ++ "),0)")
+  ++ v1_error("v1-proof-rule","'id'," ++ id ++ ",'condition','An implies edge cites no deduction or formal-proof argument, or a proves or disproves edge starts from no such argument.','next','Retain the stored rows, then retry with a qualifying argument.'","json_valid(" ++ j ++ ") AND " ++ edge_kind_of(edge) ++ " IN(" ++ edge_kinds() ++ ") AND " ++ edge_shape_ok(edge) ++ " AND " ++ edge_refs_resolve(edge) ++ " AND " ++ edge_refs_match(edge) ++ " AND NOT coalesce((" ++ edge_proof_ok(edge) ++ "),0)")
   ++ v1_error("v1-unknown-author","'author',json_extract(" ++ j ++ ",'$.author'),'condition','Edge author is not a registered session.'","NOT EXISTS(SELECT 1 FROM sessions WHERE id=json_extract(" ++ j ++ ",'$.author'))")
   ++ v1_error("v1-edge-id-conflict","'id'," ++ id ++ ",'stored',(SELECT json_object(" ++ stored ++ ") FROM knowledge_edges_v1 WHERE id=" ++ id ++ "),'condition','This v1 edge identity is already stored with different content.','next','Retain the stored record, then retry the new input under a different ID.'","EXISTS(SELECT 1 FROM knowledge_edges_v1 WHERE id=" ++ id ++ " AND NOT (" ++ edge_same(edge) ++ "))")
   ++ v1_error("v1-edge-id-conflict","'id'," ++ id ++ ",'stored',(SELECT json_object('id',id,'author',author,'kind',kind) FROM knowledge_v1 WHERE id=" ++ id ++ "),'condition','This identity is already stored as a v1 node. Node and edge identities share one namespace.','next','Retain the stored record, then retry the new input under a different ID.'","EXISTS(SELECT 1 FROM knowledge_v1 WHERE id=" ++ id ++ ")")
 
 def edge_statements(+edge: String) -> String:
-  edge_insert(edge) ++ edge_errors(edge) ++ edge_answer(edge)
+  edge_insert(edge) ++ edge_eval_request(edge) ++ edge_errors(edge) ++ edge_answer(edge)
 
 # Holdings for v1 rows mirror the legacy holdings: author membership or an
 # explicit promotion of the row id. Session, group and universal holdings
