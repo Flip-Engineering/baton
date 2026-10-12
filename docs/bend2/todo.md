@@ -15,6 +15,19 @@ Baton2 follow-up work for contributors.
   [#705](https://github.com/Flip-Engineering/baton/issues/705) and
   [#676](https://github.com/Flip-Engineering/baton/issues/676).
 
+- [#671: Deliver pending guidance into live headless Muse conversations](https://github.com/Flip-Engineering/baton/issues/671).
+  The retained `semantic-impl-code` attempt has six pending guidance inputs and
+  owns managed build session 29. Muse receives an initial prompt file with stdin
+  closed; the current live guidance bridge is enabled for OMP. Provide a supported
+  headless input path that preserves the conversation, managed work, parent,
+  explicit stops and complete bodies. Distinguish admission, recipient receipt
+  and model handling. The existing managed-command runtime wake can continue the
+  same conversation. [#705](https://github.com/Flip-Engineering/baton/issues/705)
+  covers reconciliation after terminal custody; the continuation requirement is
+  recorded in [#572](https://github.com/Flip-Engineering/baton/issues/572).
+  [Retained source and custody evidence](https://github.com/Flip-Engineering/baton/issues/671#issuecomment-6133386222)
+  records the current input gap and build qualification limits.
+
 - [#703: Manage persistent project settings through installed Baton](https://github.com/Flip-Engineering/baton/issues/703).
   This work remains unfinished. Provide public commands to read and save
   project-local settings that survive reopened and new sessions, worktrees and
