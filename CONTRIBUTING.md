@@ -5,6 +5,8 @@ Develop the native coordinator on `bend2-rewrite`. Read
 [the architecture](docs/bend2/architecture.md) for module responsibilities.
 Coordinate changes on the selected integration branch. Preserve other agents'
 source, branches, worktrees, uncommitted work and retained execution evidence.
+The [Baton2 todo](docs/bend2/todo.md) links current implementation and
+qualification follow-up work to its GitHub issues.
 
 Baton2 project source is licensed under the [Apache License 2.0](LICENSE).
 Preserve [project attribution](NOTICE) and the vendored Bend reference's upstream
