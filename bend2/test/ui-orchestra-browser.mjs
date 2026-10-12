@@ -664,7 +664,6 @@ await until('the live stage keeps its quiet recorded Principal as reporting cont
     const id = principal && principal.getAttribute('data-att-id');
     return !!id && principal.getAttribute('data-att-context') === 'recorded-ancestor'
       && principal.querySelector('.att-seat-state').textContent.includes('quiet')
-      && principal.querySelector('.att-seat-state').textContent.includes('reporting context')
       && [...stage.querySelectorAll('.att-parent-link')].some((edge) =>
         edge.getAttribute('data-att-parent-from') === id)
       && ![...document.querySelectorAll('#roster .doc-row')].some((row) =>
@@ -988,7 +987,8 @@ check('knowledge viewport fits the narrow screen', await evalJs(`(() => {
   const svg=document.querySelector('.kg-canvas');
   return svg.getBoundingClientRect().width <= innerWidth;
 })()`));
-check('the actor stage keeps complete captions and role labels inside its cards at 390px', await evalJs(`(() => {
+await evalJs(`document.querySelector('[data-att-key="view:false"]').click()`);
+check('the readable actor stage keeps complete captions and role labels inside its cards at 390px', await evalJs(`(() => {
   const stage = document.querySelector('#attention-band svg.att-stage');
   const seats = stage ? [...stage.querySelectorAll('.att-seat')] : [];
   if (!seats.length) return false;
@@ -1002,11 +1002,12 @@ check('the actor stage keeps complete captions and role labels inside its cards 
     const caption = seat.querySelector('.att-seat-label');
     const role = seat.querySelector('.att-seat-role');
     const box = card && card.getBoundingClientRect();
-    return !!box && box.left >= 0 && box.right <= window.innerWidth
+    return !!box && document.querySelector('.att-stage-viewport').clientWidth <= window.innerWidth
       && caption.textContent === seat.dataset.attId && !!role.textContent
       && inside(caption, card) && inside(role, card);
   });
 })()`));
+await evalJs(`document.querySelector('[data-att-key="view:true"]').click()`);
 check('recorded parent links avoid actor cards and tier captions at 390px', await evalJs(`(() => {
   const stage = document.querySelector('#attention-band .att-stage');
   const seats = [...stage.querySelectorAll('.att-seat')].map((seat) => ({

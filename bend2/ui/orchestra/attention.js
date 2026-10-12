@@ -500,10 +500,11 @@
   }
 
   // Peers retain equal vertical positions at every viewport width.
-  function layoutStage(plan, width, container) {
+  function layoutStage(plan, width, container, overview) {
     var viewport = Math.max(160, width || 640);
     var cardWidth = CARD_MIN;
-    var groupGap = 44;
+    var groupGap = overview ? 8 : 44;
+    var cardGap = overview ? 4 : CARD_GAP;
     var groups = [];
     var memberships = new Map();
     plan.ensembles.forEach(function (ensemble) {
@@ -523,6 +524,7 @@
       });
       return owned || ids.slice().sort()[0];
     };
+    var groupShort = shortForms(plan.ensembles.map(function (e) { return String(e.id); }));
     var widths = [];
     plan.tiers.forEach(function (tier) {
       var bands = new Map();
@@ -536,7 +538,16 @@
         return String(a.id || a.parent).localeCompare(String(b.id || b.parent));
       });
       tier.groups.forEach(function (band) { band.rows.sort(function (a, b) { return a.id.localeCompare(b.id); }); });
-      widths.push(tier.rows.length * cardWidth + Math.max(0, tier.rows.length - tier.groups.length) * CARD_GAP
+    });
+    if (overview) plan.tiers.forEach(function (tier) {
+      var gaps = Math.max(0, tier.rows.length - tier.groups.length) * cardGap
+        + Math.max(0, tier.groups.length - 1) * groupGap;
+      cardWidth = Math.min(cardWidth, Math.max(12, (viewport - gaps - 48) / tier.rows.length));
+    });
+    var compact = cardWidth < 150;
+    var dense = cardWidth < 48;
+    plan.tiers.forEach(function (tier) {
+      widths.push(tier.rows.length * cardWidth + Math.max(0, tier.rows.length - tier.groups.length) * cardGap
         + Math.max(0, tier.groups.length - 1) * groupGap + 48);
     });
     var w = Math.max.apply(null, [viewport].concat(widths));
@@ -552,34 +563,44 @@
       tier.rowsOnTier = 1;
       var groupLines = 1;
       tier.groups.forEach(function (band) {
-        var bandWidth = band.rows.length * cardWidth + (band.rows.length - 1) * CARD_GAP;
+        var bandWidth = band.rows.length * cardWidth + (band.rows.length - 1) * cardGap;
         band.label = band.id || (band.parent ? "Reports to " + band.parent : "");
-        band.caption = captionLines(band.label, bandWidth, groupMeasure);
+        var label = overview ? (groupShort[band.id] || band.label.replace(/-20\d{6}/g, "")) : band.label;
+        band.caption = captionLines(label, Math.max(20, bandWidth), groupMeasure);
+        if (overview && band.caption.length > 2) {
+          band.caption = band.caption.slice(0, 2);
+          band.caption[1] = band.caption[1].slice(0, -1) + "…";
+        }
         groupLines = Math.max(groupLines, band.caption.length);
       });
       var top = y + 42 + groupLines * 16;
       var widestCaption = 1;
       var captions = new Map();
       tier.rows.forEach(function (member) {
-        var lines = captionLines(member.id, cardWidth - 62, captionMeasure);
+        var lines = captionLines(compact ? member.short : member.id,
+          compact ? Math.max(12, cardWidth - 8) : cardWidth - 62, captionMeasure);
+        if (compact && lines.length > 3) {
+          lines = lines.slice(0, 3);
+          lines[2] = lines[2].slice(0, -1) + "…";
+        }
         widestCaption = Math.max(widestCaption, lines.length);
         captions.set(member.id, lines);
       });
-      var cardHeight = 70 + widestCaption * CAPTION_LINE;
+      var cardHeight = dense ? 36 : compact ? 62 + widestCaption * CAPTION_LINE : 70 + widestCaption * CAPTION_LINE;
       var left = (w - widths[t] + 48) / 2;
       for (var r = 0; r < tier.groups.length; r += 1) {
         var band = tier.groups[r];
         var members = band.rows;
-        var bandWidth = members.length * cardWidth + (members.length - 1) * CARD_GAP;
+        var bandWidth = members.length * cardWidth + (members.length - 1) * cardGap;
         groups.push({ id: band.id, parent: band.parent, depth: tier.depth,
-          x: left - 10, y: y + 26, width: bandWidth + 20, height: cardHeight + top - y - 10,
+          x: left - (overview ? 2 : 10), y: y + 26, width: bandWidth + (overview ? 4 : 20), height: cardHeight + top - y - 10,
           label: band.label, caption: band.caption,
           rows: members });
         for (var m = 0; m < members.length; m += 1) {
           var seat = { seat: members[m], depth: tier.depth,
-            context: plan.contextIds.has(members[m].id), x: left + cardWidth / 2 + m * (cardWidth + CARD_GAP),
-            y: top + 35, top: top, bottom: top + cardHeight, width: cardWidth,
-            height: cardHeight, caption: captions.get(members[m].id), stateY: -2 + widestCaption * CAPTION_LINE,
+            context: plan.contextIds.has(members[m].id), x: left + cardWidth / 2 + m * (cardWidth + cardGap),
+            y: top + (compact ? 18 : 35), top: top, bottom: top + cardHeight, width: cardWidth,
+            height: cardHeight, caption: captions.get(members[m].id), stateY: (compact ? 24 : -2) + widestCaption * CAPTION_LINE,
             trail: { dir: 1, pad: SEAT_RADIUS + 1, room: SEAT_RADIUS * 1.8 } };
           seats.push(seat);
           order.push(members[m].id);
@@ -591,7 +612,7 @@
     }
     var content = Math.max(0, y - 10);
     return { seats: seats, order: order, height: content, content: content,
-      groups: groups, radius: SEAT_RADIUS, gap: CARD_GAP,
+      groups: groups, radius: SEAT_RADIUS, gap: cardGap, compact: compact, dense: dense, groupPadding: overview ? 2 : 10,
       perRow: Math.max.apply(null, [0].concat(plan.tiers.map(function (tier) { return tier.rows.length; }))),
       rows: plan.tiers.length, gutter: w - 12, parentGutter: 24,
       plateY: 12, width: w, viewport: viewport };
@@ -691,7 +712,7 @@
     var radius = laid.radius;
     var paint = PAINT[seat.reading] || PAINT.quiet;
     var group = svgEl("g", {
-      "class": "att-seat"
+      "class": "att-seat" + (laid.compact ? " att-compact" : "") + (laid.dense ? " att-dense" : "")
         + (marks.fresh ? " att-new" : "")
         + (seat.live ? " att-working" : "")
         + (options.selectedId === seat.id ? " att-selected" : "")
@@ -716,7 +737,7 @@
     setText(role, roleWord(seat.role));
     group.appendChild(role);
 
-    var glyph = svgEl("g", { transform: "translate(" + (-entry.width / 2 + 23) + " -5)" });
+    var glyph = svgEl("g", { transform: laid.compact ? "translate(0 0)" + (laid.dense ? " scale(0.35)" : " scale(0.7)") : "translate(" + (-entry.width / 2 + 23) + " -5)" });
     group.appendChild(glyph);
     if (seat.live) {
       var halo = svgEl("circle", { "class": "att-halo", r: radius + 5, cx: 0, cy: 0 });
@@ -790,15 +811,15 @@
     ring.style.fill = "none";
     glyph.appendChild(ring);
 
-    var name = svgEl("text", { "class": "att-seat-label", x: 13, y: -2 });
+    var name = svgEl("text", { "class": "att-seat-label", x: laid.compact ? 0 : 13, y: laid.compact ? 28 : -2 });
     for (var line = 0; line < entry.caption.length; line += 1) {
-      var part = svgEl("tspan", { x: 13, y: -2 + line * CAPTION_LINE });
+      var part = svgEl("tspan", { x: laid.compact ? 0 : 13, y: (laid.compact ? 28 : -2) + line * CAPTION_LINE });
       setText(part, entry.caption[line]);
       name.appendChild(part);
     }
     group.appendChild(name);
     var state = svgEl("text", { "class": "att-seat-state", x: 0, y: entry.stateY });
-    setText(state, seat.word + (entry.context ? " · reporting context" : ""));
+    setText(state, seat.word + (entry.context && !laid.compact ? " · reporting context" : ""));
     group.appendChild(state);
     var memberships = svgEl("text", { "class": "att-seat-memberships", x: 0, y: entry.stateY + 17 });
     setText(memberships, seat.memberOf.length
@@ -1319,9 +1340,9 @@
         "data-att-group-depth": band.depth });
       group.appendChild(svgEl("rect", { "class": "att-peer-boundary", x: band.x, y: band.y,
         width: band.width, height: band.height, rx: 4 }));
-      var name = svgEl("text", { "class": "att-peer-name", x: band.x + 10, y: band.y + 18 });
+      var name = svgEl("text", { "class": "att-peer-name", x: band.x + laid.groupPadding, y: band.y + 18 });
       band.caption.forEach(function (words, index) {
-        var line = svgEl("tspan", { x: band.x + 10, y: band.y + 18 + index * 16 });
+        var line = svgEl("tspan", { x: band.x + laid.groupPadding, y: band.y + 18 + index * 16 });
         setText(line, words);
         name.appendChild(line);
       });
@@ -1645,7 +1666,7 @@
       events: (data && data.events) || opts.events || null,
     };
 
-    var laid = layoutStage(result.stage, result.width, container);
+    var laid = layoutStage(result.stage, result.width, container, view.fit);
     var priorSeat = cursorSeatByContainer.get(container);
     if (priorSeat && laid.order.indexOf(priorSeat) >= 0) cursor = laid.order.indexOf(priorSeat);
     if (laid.order.length) cursor = ((cursor % laid.order.length) + laid.order.length) % laid.order.length;
@@ -1671,11 +1692,13 @@
       var tools = document.createElement("div");
       tools.className = "att-stage-tools";
       container.insertBefore(tools, viewport);
+      stage.svg.style.width = laid.width + "px";
+      stage.svg.style.height = laid.height + "px";
+      viewport.scrollLeft = view.fit ? 0 : view.scroll;
       function fitStage(fit) {
+        if (view.fit === fit) return;
         view.fit = fit;
-        stage.svg.style.width = (fit ? result.width : laid.width) + "px";
-        stage.svg.style.height = (fit ? laid.height * result.width / laid.width : laid.height) + "px";
-        viewport.scrollLeft = fit ? 0 : view.scroll;
+        renderAttention(container, data, opts);
       }
       [["Fit hierarchy", true], ["Read labels", false]].forEach(function (item) {
         var button = document.createElement("button");
@@ -1686,7 +1709,6 @@
         button.addEventListener("click", function () { fitStage(item[1]); });
         tools.appendChild(button);
       });
-      fitStage(view.fit);
     }
 
     var live = document.createElement("div");
@@ -1705,7 +1727,7 @@
       renderAttention(container, dataByContainer.get(container), opts);
       var current = container.querySelector(".att-seat.att-cursor");
       if (current && typeof current.scrollIntoView === "function") {
-        current.scrollIntoView({ block: "nearest", inline: "nearest" });
+        current.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "instant" });
       }
     }
 

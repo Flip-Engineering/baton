@@ -61,6 +61,23 @@ export async function qualifyKnowledgeGraphs({ origin, send, out, scientificExam
     return [...nodes.values()].every(n => !nodes.has(n.dataset.attParent) || !!document.querySelector(
       '.att-parent-link[data-att-parent-from="' + n.dataset.attParent + '"][data-att-parent-to="' + n.dataset.attId + '"]'));
   })()`);
+  await check('dense hierarchy keeps readable depth labels and every peer', `(() => {
+    const mount=document.createElement('div');mount.className='lane-strip';mount.style.width='1200px';document.body.appendChild(mount);
+    const players=[{id:'overview-root',role:'principal-conductor',parent:''}];
+    const ensembles=[];
+    for(let i=0;i<80;i++)players.push({id:'overview-player-'+i,role:'player',parent:'overview-root',memberEnsembles:['overview-group-'+Math.floor(i/5)]});
+    for(let i=0;i<16;i++)ensembles.push({id:'overview-group-'+i,owner:'overview-root',members:players.slice(1+i*5,6+i*5).map(p=>p.id)});
+    renderAttention(mount,{players,ensembles},{showEnded:true});
+    const svg=mount.querySelector('.att-stage');const peers=[...mount.querySelectorAll('.att-seat[data-att-depth="1"]')];
+    const labels=[...mount.querySelectorAll('.att-section-label')];
+    const okay=peers.length===80 && new Set(peers.map(p=>p.transform.baseVal.consolidate().matrix.f)).size===1
+      && labels.every(n=>parseFloat(getComputedStyle(n).fontSize)>=12)
+      && Math.abs(svg.getBoundingClientRect().width-svg.viewBox.baseVal.width)<1
+      && mount.querySelectorAll('.att-peer-group').length===16
+      && [...mount.querySelectorAll('.att-peer-name')].every(n=>n.textContent.includes('group-'))
+      && peers.every(p=>p.querySelector('title').textContent.includes(p.dataset.attId));
+    mount.remove();return okay;
+  })()`);
   await check('knowledge contains records and citations without actor membership', `(() => {
     const root = document.querySelector('#knowledge-whole');
     return root.querySelectorAll('.kg-node').length > 0 && root.querySelectorAll('.kg-edge').length > 0

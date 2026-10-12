@@ -477,3 +477,13 @@
   width: 24px;
   border-top: 1.5px solid var(--ink);
 }
+
+/* The overview retains screen-size labels and uses state marks in dense rows. */
+.lane-strip .att-compact .att-seat-role,
+.lane-strip .att-compact .att-seat-memberships { display: none; }
+.lane-strip .att-compact .att-seat-label { font-size: 12px; }
+.lane-strip .att-compact .att-seat-state { font-size: 10px; }
+.lane-strip .att-compact[data-att-context] .att-seat-card { stroke-dasharray: 3 2; }
+.lane-strip .att-dense .att-seat-label,
+.lane-strip .att-dense .att-seat-state { display: none; }
+.lane-strip .att-dense .att-seat-card { rx: 3px; }
