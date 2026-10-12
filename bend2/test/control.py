@@ -802,7 +802,16 @@ class Control(unittest.TestCase):
                                             'resume', session, *resume_args], env=self.environment,
                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                 continued, start = self.accept(session)
-                self.assertEqual((start['native'], start['resume']), (first['native'], first['native']))
+                self.assertEqual(start['native'], first['native'])
+                if harness == 'omp':
+                    first_sessions = pathlib.Path(first['args'][
+                        first['args'].index('--session-dir') + 1])
+                    session_file = first_sessions / ('fixture_' + first['native'] + '.jsonl')
+                    self.assertEqual(start['resume'], str(session_file))
+                    session_header = json.loads(session_file.read_text().splitlines()[0])
+                    self.assertEqual(session_header, {'type': 'session', 'id': first['native']})
+                else:
+                    self.assertEqual(start['resume'], first['native'])
                 self.assertEqual(start['cwd'], assignment['workspace'])
                 self.assertIn(failed['id'], start['prompt'])
                 self.assertIn('Continue unfinished work', start['prompt'])
