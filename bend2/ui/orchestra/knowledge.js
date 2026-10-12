@@ -690,6 +690,32 @@
   const kwGraphViews = new WeakMap();
   let kwGraphSerial = 0;
 
+  function kwKnowledgeRoute(from, to, lane, same) {
+    const dx = to.x - from.x;
+    const x1 = dx > 0 ? from.x + from.width : from.x;
+    const x2 = dx > 0 ? to.x : to.x + to.width;
+    const y1 = from.y + from.height / 2, y2 = to.y + to.height / 2;
+    let d, lx, ly, mx, my;
+    if (same) {
+      const lift = 34 + lane * 26;
+      d = "M " + (from.x + 70) + " " + from.y + " C " + (from.x + 70) + " " + (from.y - lift)
+        + " " + (from.x + 200) + " " + (from.y - lift) + " " + (from.x + 200) + " " + from.y;
+      lx = mx = from.x + 135; ly = my = from.y - lift * .75;
+    } else if (Math.abs(dx) < 1) {
+      const outside = from.x + from.width + 58 + lane * 25;
+      d = "M " + (from.x + from.width) + " " + y1 + " C " + outside + " " + y1
+        + " " + outside + " " + y2 + " " + (to.x + to.width) + " " + y2;
+      mx = from.x + from.width + (outside - from.x - from.width) * .75;
+      lx = mx; ly = my = (y1 + y2) / 2;
+    } else {
+      const middle = (x1 + x2) / 2 + lane * 20;
+      d = "M " + x1 + " " + y1 + " C " + middle + " " + y1 + " " + middle + " " + y2 + " " + x2 + " " + y2;
+      mx = (x1 + x2 + 6 * middle) / 8; my = (y1 + y2) / 2;
+      lx = mx; ly = my + lane * 24;
+    }
+    return { d, lx, ly, mx, my };
+  }
+
   // Strongly connected components keep cycles together. Directed paths set columns.
   function kwKnowledgeLayout(graph) {
     const records = new Map(Array.from(graph.nodes.values()).map((row) => [kwScientificKey(row), row]));
@@ -783,12 +809,28 @@
       }
       top += count * 148 + 60;
     }
-    for (const [key, row] of records) if (key.startsWith("edge:")) {
-      const from = positions.get(endpointKey(row.source)), to = positions.get(endpointKey(row.target));
-      const x = from && to ? (from.x + from.width + to.x) / 2 : 28;
-      const y = from && to ? (from.y + to.y) / 2 + 42 : top;
-      positions.set(key, { x, y, width: 18, height: 18, row, junction: true });
+    const pairLanes = new Map(), lanes = new Map();
+    for (const link of links) {
+      const pair = link.from + "\u0000" + link.to;
+      const lane = pairLanes.get(pair) || 0; pairLanes.set(pair, lane + 1);
+      lanes.set(kwScientificKey(link.row), lane);
     }
+    const placing = new Set();
+    const placeJunction = (key) => {
+      if (positions.has(key)) return positions.get(key);
+      const row = records.get(key);
+      if (!row) return null;
+      if (placing.has(key)) return {x:28,y:top,width:18,height:18};
+      placing.add(key);
+      const fromKey = endpointKey(row.source), toKey = endpointKey(row.target);
+      const from = positions.get(fromKey) || (fromKey.startsWith("edge:") && placeJunction(fromKey));
+      const to = positions.get(toKey) || (toKey.startsWith("edge:") && placeJunction(toKey));
+      const route = from && to ? kwKnowledgeRoute(from, to, lanes.get(key) || 0, fromKey === toKey) : null;
+      const box = {x:route ? route.mx - 9 : 28,y:route ? route.my - 9 : top,
+        width:18,height:18,row,junction:true};
+      positions.set(key,box); placing.delete(key); return box;
+    };
+    for (const key of records.keys()) if (key.startsWith("edge:")) placeJunction(key);
     return { records, links, positions, width, height: Math.max(180, top), endpointKey };
   }
 
@@ -856,26 +898,7 @@
       if (!from || !to) continue;
       const pair = link.from + "\u0000" + link.to;
       const lane = pairCounts.get(pair) || 0; pairCounts.set(pair, lane + 1);
-      const dx = to.x - from.x;
-      const x1 = dx > 0 ? from.x + from.width : from.x;
-      const x2 = dx > 0 ? to.x : to.x + to.width;
-      const y1 = from.y + from.height / 2, y2 = to.y + to.height / 2;
-      let d, lx, ly;
-      if (link.from === link.to) {
-        const lift = 34 + lane * 26;
-        d = "M " + (from.x + 70) + " " + from.y + " C " + (from.x + 70) + " " + (from.y - lift)
-          + " " + (from.x + 200) + " " + (from.y - lift) + " " + (from.x + 200) + " " + from.y;
-        lx = from.x + 135; ly = from.y - lift * .75;
-      } else if (Math.abs(dx) < 1) {
-        const outside = from.x + from.width + 58 + lane * 25;
-        d = "M " + (from.x + from.width) + " " + y1 + " C " + outside + " " + y1
-          + " " + outside + " " + y2 + " " + (to.x + to.width) + " " + y2;
-        lx = outside - 12; ly = (y1 + y2) / 2;
-      } else {
-        const middle = (x1 + x2) / 2 + lane * 20;
-        d = "M " + x1 + " " + y1 + " C " + middle + " " + y1 + " " + middle + " " + y2 + " " + x2 + " " + y2;
-        lx = (x1 + x2) / 2; ly = (y1 + y2) / 2 + lane * 24;
-      }
+      const {d, lx, ly} = kwKnowledgeRoute(from, to, lane, link.from === link.to);
       const key = kwScientificKey(link.row);
       const dim = read.relation && link.row.kind !== read.relation || read.query && !matches(link.row)
         && !matches(from.row) && !matches(to.row) || read.selected && !keys.has(key);
