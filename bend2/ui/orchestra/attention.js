@@ -56,6 +56,7 @@
   var cursorSeatByContainer = new WeakMap();
   var optionsByContainer = new WeakMap();
   var resizeByContainer = new WeakMap();
+  var stageViews = new WeakMap();
 
   /* ── readings ─────────────────────────────────────────────────────────── */
 
@@ -406,8 +407,7 @@
     return depth;
   }
 
-  // Reporting tiers group siblings under their recorded parent. Ensemble and section
-  // membership remain independent context and preserve overlapping membership.
+  // Each reporting depth occupies one row. Recorded ensembles group peers within it.
   function stagePlan(rows, seated, ensembles) {
     var depth = parentDepths(rows);
     var byId = new Map(rows.map(function (row) { return [row.id, row]; }));
@@ -446,16 +446,7 @@
           : "principal conductors", conductors: true, rows: members });
         continue;
       }
-      var siblings = new Map();
-      for (var m = 0; m < members.length; m += 1) {
-        var parent = members[m].parent;
-        if (!siblings.has(parent)) siblings.set(parent, []);
-        siblings.get(parent).push(members[m]);
-      }
-      siblings.forEach(function (band, parent) {
-        tiers.push({ depth: level, parent: parent,
-          label: "depth " + level + " \u00b7 reports to " + parent, rows: band });
-      });
+      tiers.push({ depth: level, label: "depth " + level, rows: members });
     }
     if (orphans.length) tiers.push({ depth: -1, label: "unknown ancestry", rows: orphans });
 
@@ -508,75 +499,102 @@
     return role || "Role unrecorded";
   }
 
-  // Keep readable cards at the available CSS width. Additional actors add rows.
+  // Peers retain equal vertical positions at every viewport width.
   function layoutStage(plan, width, container) {
-    var w = Math.max(160, width || 640);
-    var drawnIds = new Set();
-    plan.tiers.forEach(function (tier) {
-      tier.rows.forEach(function (row) { drawnIds.add(row.id); });
-    });
-    var parentIds = [];
-    var parents = new Set();
-    plan.tiers.forEach(function (tier) {
-      tier.rows.forEach(function (row) {
-        if (row.parent && drawnIds.has(row.parent) && !parents.has(row.parent)) {
-          parents.add(row.parent);
-          parentIds.push(row.parent);
-        }
+    var viewport = Math.max(160, width || 640);
+    var cardWidth = CARD_MIN;
+    var groupGap = 44;
+    var groups = [];
+    var memberships = new Map();
+    plan.ensembles.forEach(function (ensemble) {
+      if (!ensemble || !ensemble.id) return;
+      groupMemberIds(ensemble.members).forEach(function (id) {
+        if (!memberships.has(id)) memberships.set(id, []);
+        memberships.get(id).push(String(ensemble.id));
       });
     });
-    // Each recorded parent has a separate connection lane beside the actor cards.
-    var parentGutter = Math.min(w / 3, Math.max(CARD_INSET, 8 + parentIds.length * 6));
-    var parentLanes = Object.create(null);
-    for (var p = 0; p < parentIds.length; p += 1) {
-      parentLanes[parentIds[p]] = (p + 1) * parentGutter / (parentIds.length + 1);
-    }
-    var usable = w - parentGutter - CARD_INSET;
-    var perRow = Math.max(1, Math.floor((usable + CARD_GAP) / (CARD_MIN + CARD_GAP)));
-    var cardWidth = Math.min(CARD_MAX, (usable - (perRow - 1) * CARD_GAP) / perRow);
+    var primary = function (row) {
+      var ids = memberships.get(row.id) || row.memberOf || [];
+      if (!ids.length) return "";
+      // A parent's owned ensemble keeps its direct report group together.
+      var owned = ids.find(function (id) {
+        var ensemble = plan.ensembles.find(function (e) { return String(e.id) === id; });
+        return ensemble && ensemble.owner === row.parent;
+      });
+      return owned || ids.slice().sort()[0];
+    };
+    var widths = [];
+    plan.tiers.forEach(function (tier) {
+      var bands = new Map();
+      tier.rows.forEach(function (row) {
+        var ensemble = primary(row);
+        var key = ensemble ? "ensemble:" + ensemble : "parent:" + (row.parent || "");
+        if (!bands.has(key)) bands.set(key, { id: ensemble, parent: row.parent, rows: [] });
+        bands.get(key).rows.push(row);
+      });
+      tier.groups = Array.from(bands.values()).sort(function (a, b) {
+        return String(a.id || a.parent).localeCompare(String(b.id || b.parent));
+      });
+      tier.groups.forEach(function (band) { band.rows.sort(function (a, b) { return a.id.localeCompare(b.id); }); });
+      widths.push(tier.rows.length * cardWidth + Math.max(0, tier.rows.length - tier.groups.length) * CARD_GAP
+        + Math.max(0, tier.groups.length - 1) * groupGap + 48);
+    });
+    var w = Math.max.apply(null, [viewport].concat(widths));
     var captionMeasure = textMeasure(container, 13);
-    var headerMeasure = textMeasure(container, 12);
+    var groupMeasure = textMeasure(container, 12);
     var seats = [];
     var order = [];
     var y = 30;
-    var totalRows = 0;
     for (var t = 0; t < plan.tiers.length; t += 1) {
       var tier = plan.tiers[t];
       tier.y = y;
-      tier.header = captionLines(tier.label, Math.max(1, usable - 44), headerMeasure);
-      var top = y + tier.header.length * 16 + 20;
-      var rowsOnTier = Math.ceil(tier.rows.length / perRow);
-      tier.rowsOnTier = rowsOnTier;
-      for (var r = 0; r < rowsOnTier; r += 1) {
-        var members = tier.rows.slice(r * perRow, (r + 1) * perRow);
-        var widestCaption = 1;
-        var captions = members.map(function (member) {
-          var lines = captionLines(member.id, Math.max(1, cardWidth - 28), captionMeasure);
-          widestCaption = Math.max(widestCaption, lines.length);
-          return lines;
-        });
-        var cardHeight = 114 + widestCaption * CAPTION_LINE;
-        var rowWidth = members.length * cardWidth + (members.length - 1) * CARD_GAP;
-        var left = parentGutter + (usable - rowWidth) / 2;
+      tier.header = [tier.label];
+      tier.rowsOnTier = 1;
+      var groupLines = 1;
+      tier.groups.forEach(function (band) {
+        var bandWidth = band.rows.length * cardWidth + (band.rows.length - 1) * CARD_GAP;
+        band.label = band.id || (band.parent ? "Reports to " + band.parent : "");
+        band.caption = captionLines(band.label, bandWidth, groupMeasure);
+        groupLines = Math.max(groupLines, band.caption.length);
+      });
+      var top = y + 42 + groupLines * 16;
+      var widestCaption = 1;
+      var captions = new Map();
+      tier.rows.forEach(function (member) {
+        var lines = captionLines(member.id, cardWidth - 62, captionMeasure);
+        widestCaption = Math.max(widestCaption, lines.length);
+        captions.set(member.id, lines);
+      });
+      var cardHeight = 70 + widestCaption * CAPTION_LINE;
+      var left = (w - widths[t] + 48) / 2;
+      for (var r = 0; r < tier.groups.length; r += 1) {
+        var band = tier.groups[r];
+        var members = band.rows;
+        var bandWidth = members.length * cardWidth + (members.length - 1) * CARD_GAP;
+        groups.push({ id: band.id, parent: band.parent, depth: tier.depth,
+          x: left - 10, y: y + 26, width: bandWidth + 20, height: cardHeight + top - y - 10,
+          label: band.label, caption: band.caption,
+          rows: members });
         for (var m = 0; m < members.length; m += 1) {
-          var seat = { seat: members[m], context: plan.contextIds.has(members[m].id), x: left + cardWidth / 2 + m * (cardWidth + CARD_GAP),
-            y: top + 48, top: top, bottom: top + cardHeight, width: cardWidth,
-            height: cardHeight, caption: captions[m], stateY: 34 + widestCaption * CAPTION_LINE,
+          var seat = { seat: members[m], depth: tier.depth,
+            context: plan.contextIds.has(members[m].id), x: left + cardWidth / 2 + m * (cardWidth + CARD_GAP),
+            y: top + 35, top: top, bottom: top + cardHeight, width: cardWidth,
+            height: cardHeight, caption: captions.get(members[m].id), stateY: -2 + widestCaption * CAPTION_LINE,
             trail: { dir: 1, pad: SEAT_RADIUS + 1, room: SEAT_RADIUS * 1.8 } };
           seats.push(seat);
           order.push(members[m].id);
         }
-        top += cardHeight + 32;
-        totalRows += 1;
+        left += bandWidth + groupGap;
       }
-      tier.bottom = top - 20;
-      y = top + 18;
+      tier.bottom = top + cardHeight + 16;
+      y = tier.bottom + 52;
     }
     var content = Math.max(0, y - 10);
     return { seats: seats, order: order, height: content, content: content,
-      radius: SEAT_RADIUS, gap: CARD_GAP, perRow: perRow, rows: totalRows,
-      gutter: w - 12, parentGutter: parentGutter, parentLanes: parentLanes,
-      plateY: 12, width: w };
+      groups: groups, radius: SEAT_RADIUS, gap: CARD_GAP,
+      perRow: Math.max.apply(null, [0].concat(plan.tiers.map(function (tier) { return tier.rows.length; }))),
+      rows: plan.tiers.length, gutter: w - 12, parentGutter: 24,
+      plateY: 12, width: w, viewport: viewport };
   }
 
   /* ── drawing ──────────────────────────────────────────────────────────── */
@@ -681,6 +699,7 @@
       "data-att-key": "seat:" + seat.id,
       "data-att-id": seat.id,
       "data-att-state": seat.reading,
+      "data-att-depth": entry.depth,
     });
     // A state that has just changed flashes in its own ink: the ink travels on the
     // group as currentColor, so the flash adds the state's colour and never another
@@ -693,14 +712,16 @@
     group.appendChild(svgEl("rect", { "class": "att-seat-card",
       x: -entry.width / 2, y: entry.top - entry.y, width: entry.width,
       height: entry.height, rx: 8 }));
-    var role = svgEl("text", { "class": "att-seat-role", x: 0, y: -27 });
+    var role = svgEl("text", { "class": "att-seat-role", x: 0, y: -19 });
     setText(role, roleWord(seat.role));
     group.appendChild(role);
 
+    var glyph = svgEl("g", { transform: "translate(" + (-entry.width / 2 + 23) + " -5)" });
+    group.appendChild(glyph);
     if (seat.live) {
       var halo = svgEl("circle", { "class": "att-halo", r: radius + 5, cx: 0, cy: 0 });
       halo.style.fill = paint.ink;
-      group.appendChild(halo);
+      glyph.appendChild(halo);
     }
 
     // The fermata ring: a mark whose work the record holds still.
@@ -708,7 +729,7 @@
       var held = svgEl("circle", { "class": "att-ring", r: radius + 4, cx: 0, cy: 0 });
       held.style.fill = "none";
       held.style.stroke = paint.ink;
-      group.appendChild(held);
+      glyph.appendChild(held);
     }
 
     // The role mark for a conductor's recorded role: a whole ring at radius + 7 in
@@ -717,10 +738,10 @@
     // selection ring marks focus at radius + 3. The enclosure uses radius + 7, and
     // its shape identifies the conductor's role.
     if (seat.role === "principal-conductor" || seat.role === "associate-conductor") {
-      group.appendChild(roleMark(seat.role, radius));
+      glyph.appendChild(roleMark(seat.role, radius));
     }
 
-    group.appendChild(shapeNode(seat.reading, radius));
+    glyph.appendChild(shapeNode(seat.reading, radius));
 
     // The trail: the pit's reading of activity, on its own band above the mark where
     // no name sits and no other mark reaches. Its length grades how recently the seat
@@ -742,7 +763,7 @@
       });
       trail.style.strokeWidth = (1.1 + marks.recent.fresh * 0.9).toFixed(2);
       trail.style.opacity = (0.6 + marks.recent.fresh * 0.4).toFixed(2);
-      group.appendChild(trail);
+      glyph.appendChild(trail);
     }
 
     // What the seat owes, as units: one mark per item its own record states - queued input
@@ -757,7 +778,7 @@
       var pitch = 3.6;
       var lead = -((units - 1) * pitch) / 2;
       for (var u = 0; u < units; u += 1) {
-        group.appendChild(svgEl("line", {
+        glyph.appendChild(svgEl("line", {
           "class": "att-owed",
           x1: lead + u * pitch, y1: radius + 4,
           x2: lead + u * pitch, y2: radius + 4.5,
@@ -767,11 +788,11 @@
 
     var ring = svgEl("circle", { "class": "att-seat-ring", r: radius + 3, cx: 0, cy: 0 });
     ring.style.fill = "none";
-    group.appendChild(ring);
+    glyph.appendChild(ring);
 
-    var name = svgEl("text", { "class": "att-seat-label", x: 0, y: 34 });
+    var name = svgEl("text", { "class": "att-seat-label", x: 13, y: -2 });
     for (var line = 0; line < entry.caption.length; line += 1) {
-      var part = svgEl("tspan", { x: 0, y: 34 + line * CAPTION_LINE });
+      var part = svgEl("tspan", { x: 13, y: -2 + line * CAPTION_LINE });
       setText(part, entry.caption[line]);
       name.appendChild(part);
     }
@@ -1281,19 +1302,43 @@
       var child = laid.seats[p];
       var parent = positions[child.seat.parent];
       if (!parent || parent === child || parent.bottom >= child.top) continue;
-      var lane = laid.parentLanes[parent.seat.id];
-      var leave = parent.bottom + 12;
-      var arrive = child.top - 12;
+      var middle = (parent.bottom + child.top) / 2;
       var link = svgEl("path", { "class": "att-parent-link",
         "data-att-parent-from": parent.seat.id, "data-att-parent-to": child.seat.id,
-        d: "M " + parent.x + " " + parent.bottom + " V " + leave
-          + " H " + lane + " V " + arrive + " H " + child.x + " V " + child.top });
+        d: "M " + parent.x + " " + parent.bottom + " C " + parent.x + " " + middle
+          + " " + child.x + " " + middle + " " + child.x + " " + child.top });
       var note = svgEl("title");
       setText(note, child.seat.id + " reports to " + parent.seat.id);
       link.appendChild(note);
       svg.appendChild(link);
     }
 
+    laid.groups.forEach(function (band) {
+      if (!band.label) return;
+      var group = svgEl("g", { "class": "att-peer-group", "data-att-ensemble": band.id,
+        "data-att-group-depth": band.depth });
+      group.appendChild(svgEl("rect", { "class": "att-peer-boundary", x: band.x, y: band.y,
+        width: band.width, height: band.height, rx: 4 }));
+      var name = svgEl("text", { "class": "att-peer-name", x: band.x + 10, y: band.y + 18 });
+      band.caption.forEach(function (words, index) {
+        var line = svgEl("tspan", { x: band.x + 10, y: band.y + 18 + index * 16 });
+        setText(line, words);
+        name.appendChild(line);
+      });
+      group.appendChild(name);
+      var title = svgEl("title");
+      setText(title, band.label + ". " + band.rows.map(function (row) { return row.id; }).join(", "));
+      group.appendChild(title);
+      if (band.id && typeof options.onSelectEnsemble === "function") {
+        name.setAttribute("role", "button");
+        name.setAttribute("tabindex", "0");
+        name.addEventListener("click", function () { options.onSelectEnsemble(band.id); });
+        name.addEventListener("keydown", function (event) {
+          if (event.key === "Enter" || event.key === " ") { event.preventDefault(); options.onSelectEnsemble(band.id); }
+        });
+      }
+      svg.appendChild(group);
+    });
     svg.appendChild(labels);
     var now = Date.now();
 
@@ -1348,8 +1393,6 @@
       baton.appendChild(batonNote);
       svg.appendChild(baton);
     }
-
-    relationThreads(svg, positions, relations && relations.knowledge, relations && relations.events, laid, options);
 
     for (var i = 0; i < laid.seats.length; i += 1) {
       var entry = laid.seats[i];
@@ -1588,6 +1631,10 @@
       restore = active.dataset.attKey || null;
     }
 
+    var oldViewport = container.querySelector(".att-stage-viewport");
+    var view = stageViews.get(container) || { fit: true, scroll: 0 };
+    if (oldViewport) view.scroll = oldViewport.scrollLeft;
+    stageViews.set(container, view);
     container.textContent = "";
     dataByContainer.set(container, data);
     optionsByContainer.set(container, opts);
@@ -1616,7 +1663,30 @@
       stage.svg = stageSvg(result, laid, opts, fresh, cursorId, relations, container);
       stage.height = laid.height;
       result.drawnHeight = laid.height;
-      container.appendChild(stage.svg);
+      var viewport = document.createElement("div");
+      viewport.className = "att-stage-viewport";
+      viewport.setAttribute("aria-label", "Orchestra hierarchy. Scroll horizontally to read all peers.");
+      container.appendChild(viewport);
+      viewport.appendChild(stage.svg);
+      var tools = document.createElement("div");
+      tools.className = "att-stage-tools";
+      container.insertBefore(tools, viewport);
+      function fitStage(fit) {
+        view.fit = fit;
+        stage.svg.style.width = (fit ? result.width : laid.width) + "px";
+        stage.svg.style.height = (fit ? laid.height * result.width / laid.width : laid.height) + "px";
+        viewport.scrollLeft = fit ? 0 : view.scroll;
+      }
+      [["Fit hierarchy", true], ["Read labels", false]].forEach(function (item) {
+        var button = document.createElement("button");
+        button.type = "button";
+        button.className = "att-stage-view";
+        button.dataset.attKey = "view:" + item[1];
+        setText(button, item[0]);
+        button.addEventListener("click", function () { fitStage(item[1]); });
+        tools.appendChild(button);
+      });
+      fitStage(view.fit);
     }
 
     var live = document.createElement("div");
@@ -1697,7 +1767,15 @@
     // listed there is nothing to decode, so the pit keeps one line.
     if (laid.order.length || listed.length) container.appendChild(legendNode());
     var context = ensembleContext(result.stage, opts);
-    if (context) container.appendChild(context);
+    if (context) {
+      var disclosure = document.createElement("details");
+      disclosure.className = "att-ensemble-details";
+      var summary = document.createElement("summary");
+      setText(summary, "Ensemble membership and sections");
+      disclosure.appendChild(summary);
+      disclosure.appendChild(context);
+      container.appendChild(disclosure);
+    }
 
     var folded = listed.length - shown.length;
     result.strip = {

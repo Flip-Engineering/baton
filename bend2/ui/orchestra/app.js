@@ -70,6 +70,7 @@ const state = {
   includeUnshared: false,
   knowledgeSearch: "",
   findingId: null,
+  scientificSelected: "",
   ribbonSeq: null,
   graphRecord: null,
   graphRecordRequest: null,
@@ -600,7 +601,7 @@ function scopeLabel(kind, id) {
 // recorded owner's, ?scope=all for every held record, and nothing for universal.
 function knowledgeScopeQuery() {
   const scope = state.knowledgeScope || { kind: "universal", id: "" };
-  if (scope.kind === "actor" && scope.id) return "?actor=" + encodeURIComponent(scope.id);
+  if ((scope.kind === "actor" || scope.kind === "worker") && scope.id) return "?actor=" + encodeURIComponent(scope.id);
   if (scope.kind === "group" && scope.id) return "?group=" + encodeURIComponent(scope.id);
   if (scope.kind === "all") return "?scope=all";
   return "";
@@ -1034,7 +1035,9 @@ function renderPlateIndex() {
   const project = state.project;
   const set = (node, value) => { if (node) node.textContent = value; };
   set(el.platePit, running ? running + " running" : "nothing running");
-  set(el.plateMap, findings.length ? findings.length + (findings.length === 1 ? " finding" : " findings") : "no findings");
+  const scientific = state.knowledge && state.knowledge.scientific;
+  const records = findings.length + (scientific ? scientific.nodes.length + scientific.edges.length : 0);
+  set(el.plateMap, records ? records + (records === 1 ? " knowledge record" : " knowledge records") : "no knowledge records");
   set(el.plateStaves, state.players.size ? state.players.size + " seats" : "no seats");
   set(el.plateRecord, state.selectionId ? shortSeatId(state.selectionId) : "none selected");
   set(el.plateProject, project ? project.sessions.length + " conversations" : "");
@@ -1060,8 +1063,14 @@ async function loadKnowledgeOverview() {
   }
   try {
     const res = await fetch(state.apiBase + "/orchestra/knowledge/overview" + asked);
-    if (!res.ok) throw new Error("the endpoint answered " + res.status);
-    const answered = await res.json();
+    const answered = KnowledgeJSON.parse(await res.text());
+    if (!res.ok) {
+      const execution = answered && answered.execution;
+      const cause = [answered && answered.error, answered && answered.cause,
+        execution && execution.error && execution.error.message,
+        execution && execution.stderr, execution && execution.stdout].filter(Boolean).join("\n");
+      throw new Error("The endpoint answered " + res.status + (cause ? ":\n" + cause : ""));
+    }
     // The reader may have moved scope while this was in flight; the newer read owns
     // the map.
     if (asked !== knowledgeScopeQuery()) return;
@@ -1088,8 +1097,10 @@ function renderMapScope() {
   const kind = stated ? stated.kind : (state.knowledge ? "unstated" : asked.kind);
   const id = (stated && stated.id) || asked.id;
   const findings = (state.knowledge && state.knowledge.findings) || [];
+  const scientific = (state.knowledge && state.knowledge.scientific) || {};
+  const records = findings.length + (scientific.nodes || []).length + (scientific.edges || []).length;
   const what = scopeLabel(kind, id);
-  const count = findings.length + (findings.length === 1 ? " item" : " items");
+  const count = records + (records === 1 ? " record" : " records");
   el.mapScope.textContent = what + " · " + count;
   if (el.mapScopeAll) {
     const all = kind === "all";
@@ -1119,7 +1130,7 @@ async function loadActorKnowledge(id) {
       data = { refused: true, reason: body.error || "reader-scope-denied" };
     }
     else if (!res.ok) data = { error: "the endpoint answered " + res.status };
-    else data = await res.json();
+    else data = KnowledgeJSON.parse(await res.text());
   } catch (e) {
     data = { error: e && e.message ? e.message : String(e) };
   }
@@ -1277,7 +1288,7 @@ async function loadGraphRecord(actor, findingId) {
     const res = await fetch(state.apiBase + "/orchestra/knowledge?actor=" + encodeURIComponent(actor));
     if (res.status === 403) data = { refused: true };
     else if (!res.ok) data = { error: "the endpoint answered " + res.status };
-    else data = await res.json();
+    else data = KnowledgeJSON.parse(await res.text());
   } catch (e) {
     data = { error: e && e.message ? e.message : String(e) };
   }
@@ -1491,7 +1502,7 @@ async function loadSnapshot() {
     throw new Error("snapshot request failed: " + (e && e.message ? e.message : e));
   }
   if (!res.ok) throw new Error("snapshot request returned " + res.status);
-  const data = await res.json();
+  const data = KnowledgeJSON.parse(await res.text());
   applySnapshot(data, name ? "DOM behavior fixture " + name + ", not live state" : "Live snapshot");
 }
 
@@ -1728,6 +1739,12 @@ function init() {
   if (seatAddress) state.pendingSeat = decodeURIComponent(seatAddress[1]);
   const findingAddress = String(location.hash || "").match(/^#finding=(.+)$/);
   if (findingAddress) state.findingId = decodeURIComponent(findingAddress[1]);
+  const scientificAddress = new URLSearchParams(String(location.hash || "").slice(1));
+  if (scientificAddress.has("science")) {
+    state.scientificSelected = scientificAddress.get("science") || "";
+    state.knowledgeScope = { kind: scientificAddress.get("scope") || "universal",
+      id: scientificAddress.get("holder") || "" };
+  }
   const relationAddress = String(location.hash || "").match(/^#relation=([^:]*):([^:]*):(.*)$/);
   if (relationAddress) {
     state.pendingRelation = {
@@ -2132,6 +2149,7 @@ function drawnNow(data) {
       : "none",
     state.selectionId || "",
     state.findingId || "",
+    state.scientificSelected || "",
     state.docQuery || "",
     state.scope === "all" ? 1 : 0,
     state.ribbonSeq || "",
@@ -2188,6 +2206,10 @@ function renderDocument() {
         const row = active.closest(".doc-row");
         knowledgeMount = row ? row.dataset.docId : "whole";
       }
+    }
+    if (active.hasAttribute("data-science-focus")) {
+      knowledgeFocus = '[data-science-focus="' + CSS.escape(active.getAttribute("data-science-focus")) + '"]';
+      knowledgeMount = "whole";
     }
     if (active.hasAttribute("data-kw-focus")) {
       knowledgeFocus = '[data-kw-focus="' + CSS.escape(active.getAttribute("data-kw-focus")) + '"]';
@@ -2286,6 +2308,20 @@ function renderDocument() {
     focusRelationSeq: state.knowledgeFocusSeq || 0,
     // The ensemble the reader has selected, so the roster marks the band they are on.
     selectedEnsemble: state.ensembleId || "",
+    scientificSelected: state.scientificSelected,
+    onSelectScientific: (key) => {
+      state.scientificSelected = key;
+      state.findingId = "";
+      const scope = state.knowledgeScope || { kind: "universal", id: "" };
+      const address = new URLSearchParams({ science: key, scope: scope.kind, holder: scope.id || "" });
+      if (typeof history.replaceState === "function") history.replaceState(null, "", "#" + address);
+    },
+    onOpenScientificReference: (reference) => {
+      state.scientificSelected = (reference.kind === "edge" ? "edge:" : "node:") + reference.id;
+      setKnowledgeScope({ kind: "all", id: "" });
+      const address = new URLSearchParams({ science: state.scientificSelected, scope: "all", holder: "" });
+      if (typeof history.replaceState === "function") history.replaceState(null, "", "#" + address);
+    },
     onReadMessage: (id) => { void loadMessageBody(id); },
     onScrub: selectHistoryEvent,
     onSelectEvent: selectHistoryEvent,

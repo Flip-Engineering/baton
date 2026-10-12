@@ -5,6 +5,7 @@ import { extname, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { createNativeOwnerSubscriber } from './native-owner-subscription.mjs';
+import './knowledge-json.js';
 
 const CONTRACT_VERSION = 1;
 const CONTENT_TYPES = new Map([
@@ -19,7 +20,7 @@ function json(response, status, value) {
     'cache-control': 'no-store',
     'x-content-type-options': 'nosniff',
   });
-  response.end(JSON.stringify(value));
+  response.end(KnowledgeJSON.stringify(value));
 }
 
 // A read against a database another connection is writing returns busy. That is
@@ -67,7 +68,8 @@ function coordinatorAnswer(response, operation, result) {
     return null;
   }
   try {
-    return JSON.parse(result.stdout);
+    return operation === 'scientific-knowledge'
+      ? KnowledgeJSON.parse(result.stdout) : JSON.parse(result.stdout);
   } catch (error) {
     json(response, 502, { error: `${operation}-output-invalid`, cause: error.message, execution: result });
     return null;
@@ -830,6 +832,51 @@ function knowledgeTablesReady(db) {
   return found && found.n === 2;
 }
 
+function scientificKnowledgePresent() {
+  return !!one(db, "SELECT 1 AS present FROM sqlite_master WHERE type='table' AND name IN ('knowledge_v1','knowledge_edges_v1','knowledge_promotions_v1')");
+}
+
+// Complete native scoped reads retain each scientific envelope unchanged.
+function scientificKnowledgeEnvelope(records, actor = null) {
+  const complete = records.filter((record) => record?.schemaVersion === 1 && record.schemaId === 'urn:baton:knowledge:schema:1');
+  const scientific = {
+    schemaVersion: 1,
+    schemaId: 'urn:baton:knowledge:schema:1',
+    nodes: complete.filter((record) => Object.hasOwn(record, 'statement')),
+    edges: complete.filter((record) => Object.hasOwn(record, 'source') && Object.hasOwn(record, 'target')),
+  };
+  if (actor !== null) {
+    scientific.authored = complete.filter((record) => record.author === actor);
+    scientific.received = complete.flatMap((record) => (record.promotions || [])
+      .filter((promotion) => promotion.destinationKind === 'session' && promotion.destination === actor)
+      .map((promotion) => ({ promotion, record })));
+  }
+  return scientific;
+}
+
+async function readScientificKnowledge(response, kind, id, actor = null) {
+  if (!baton2Executable) {
+    json(response, 503, { error: 'scientific-knowledge-coordinator-unavailable' });
+    return null;
+  }
+  const args = ['knowledge-scope', reader, kind, id];
+  const result = await coordinatorCommand(baton2Executable, databasePath, args);
+  const execution = { argv: [baton2Executable, databasePath, ...args], ...result };
+  const records = coordinatorAnswer(response, 'scientific-knowledge', execution);
+  if (response.headersSent) return null;
+  if (!Array.isArray(records)) {
+    json(response, 502, { error: 'scientific-knowledge-output-invalid',
+      cause: 'The complete scoped read did not return an array.', output: records, execution });
+    return null;
+  }
+  const refusal = records.find((record) => record?.error);
+  if (refusal) {
+    json(response, 502, { error: 'scientific-knowledge-failed', cause: refusal, execution });
+    return null;
+  }
+  return scientificKnowledgeEnvelope(records, actor);
+}
+
 function knowledgeFindings(db, where = '', ...args) {
   const typed = rows(db, "PRAGMA table_info('knowledge')").some((column) => column.name === 'kind');
   return rows(db, `SELECT k.id, k.author, ${typed ? 'k.kind' : "'finding'"} AS kind,
@@ -1158,9 +1205,16 @@ function knowledgeForActor(db, session) {
         const actor = url.searchParams.get('actor');
         const kind = group ? 'group' : actor ? 'worker' : url.searchParams.get('scope') || 'universal';
         const selected = group || actor || url.searchParams.get('subject') || '';
-        return json(response, 200, knowledgeOverview(db, kind, selected));
+        const value = knowledgeOverview(db, kind, selected);
+        if (scientificKnowledgePresent()) {
+          const scientific = await readScientificKnowledge(response, kind, selected);
+          if (response.headersSent) return;
+          value.scientific = scientific;
+          value.empty = value.empty && !scientific.nodes.length && !scientific.edges.length;
+        }
+        return json(response, 200, value);
       } catch (error) {
-        return json(response, 503, { error: 'knowledge-unavailable' });
+        return json(response, 503, { error: 'knowledge-unavailable', cause: error instanceof Error ? error.message : String(error) });
       }
     }
     if (url.pathname === '/orchestra/work') {
@@ -1184,9 +1238,16 @@ function knowledgeForActor(db, session) {
       try {
         const scope = visibleScope(db, reader, subject);
         if (!scope || !scope.includes(actor)) return json(response, 403, { error: 'reader-scope-denied' });
-        return json(response, 200, knowledgeForActor(db, actor));
+        const value = knowledgeForActor(db, actor);
+        if (scientificKnowledgePresent()) {
+          const scientific = await readScientificKnowledge(response, 'worker', actor, actor);
+          if (response.headersSent) return;
+          value.scientific = scientific;
+          value.empty = value.empty && !scientific.nodes.length && !scientific.edges.length;
+        }
+        return json(response, 200, value);
       } catch (error) {
-        return json(response, 503, { error: 'knowledge-unavailable' });
+        return json(response, 503, { error: 'knowledge-unavailable', cause: error instanceof Error ? error.message : String(error) });
       }
     }
     // A selected supporting record reads one complete stored message body on

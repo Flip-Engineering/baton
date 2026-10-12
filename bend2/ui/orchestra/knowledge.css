@@ -1,7 +1,4 @@
-/* Knowledge layer: findings attached to their authors, promotion
-   paths between bands, and the collapsed whole-orchestra canvas.
-   Self-sufficient styles with page-token fallbacks; the document
-   stylesheet may replace the tokens without breaking this module. */
+/* Knowledge graph, record reading and compact orchestra annotations. */
 
 .kw-band { display: block; }
 
@@ -12,813 +9,6 @@
   overflow: hidden;
   text-overflow: ellipsis;
 }
-
-.kw-anchor, .knode, .kw-cluster { cursor: pointer; }
-
-.kw-cluster-box {
-  fill: var(--paper, #fbfcfe);
-  stroke: var(--muted, #5b6478);
-  stroke-width: 1.5px;
-}
-
-.kw-cluster-count {
-  font-size: var(--step0, 12px);
-  fill: var(--ink, #141a26);
-}
-
-.kw-maptools {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  align-items: center;
-  margin: 0 0 8px;
-}
-
-.kw-search {
-  flex: 1 1 auto;
-  min-width: 120px;
-  max-width: 320px;
-  font-size: var(--step0, 12px);
-  padding: 4px 8px;
-  color: var(--ink, #141a26);
-  background: var(--paper, #fbfcfe);
-  border: 1px solid var(--muted, #5b6478);
-  border-radius: 4px;
-}
-
-.kw-zoom {
-  font-size: var(--step0, 12px);
-  padding: 4px 10px;
-  color: var(--ink, #141a26);
-  background: none;
-  border: 1px solid var(--muted, #5b6478);
-  border-radius: 4px;
-  cursor: pointer;
-}
-
-.kw-zoom-level {
-  font-size: var(--step0, 12px);
-  min-width: 44px;
-  text-align: right;
-}
-
-.kw-search-status {
-  margin: 0;
-  font-size: var(--step0, 12px);
-  white-space: nowrap;
-}
-
-/* Search result count and label. */
-.kw-search-status.has-count {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 5px;
-  font-family: var(--mono, ui-monospace, Menlo, Consolas, monospace);
-}
-
-.kw-search-count {
-  font-size: var(--step2, 15px);
-  font-weight: 600;
-  color: var(--ink, #141a26);
-  line-height: 1;
-}
-
-.kw-search-word {
-  font-size: var(--step0, 12px);
-  color: var(--muted, #5b6478);
-}
-
-/* The walk bar: a wrapped breadcrumb row under the search box, one
-   button per visited edge, separators quiet. */
-.kw-walk {
-  flex: 1 1 100%;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 2px 6px;
-  align-items: baseline;
-  margin: 0;
-  font-size: var(--step0, 12px);
-}
-
-.kw-walk-sep {
-  color: var(--muted, #5b6478);
-}
-
-.kw-walk-step {
-  padding: 0;
-  background: none;
-  border: none;
-  font: inherit;
-  font-size: var(--step0, 12px);
-  color: var(--ink, #141a26);
-  text-decoration: underline;
-  cursor: pointer;
-}
-
-/* The earlier/fewer disclosure reads as a control beside the steps,
-   opening the full retained walk in the bar's own flow. */
-.kw-walk-earlier,
-.kw-walk-fewer {
-  padding: 0 4px;
-  background: none;
-  border: 1px solid var(--muted, #5b6478);
-  border-radius: 4px;
-  font: inherit;
-  font-size: var(--step0, 12px);
-  color: var(--ink, #141a26);
-  cursor: pointer;
-}
-
-/* The direction control: two toggle buttons beside the walk, using
-   the page's pressed treatment. */
-.kw-direction {
-  flex: 1 1 100%;
-  display: flex;
-  gap: 6px;
-  margin: 0;
-}
-
-.kw-direction-btn {
-  font-size: var(--step0, 12px);
-  padding: 1px 8px;
-  color: var(--ink, #141a26);
-  background: none;
-  border: 1px solid var(--muted, #5b6478);
-  border-radius: 4px;
-  cursor: pointer;
-}
-
-.kw-direction-btn[aria-pressed="true"] {
-  border-color: var(--selection, #2a3e6b);
-  color: var(--selection, #2a3e6b);
-}
-
-/* The provenance filter sits with the zoom buttons and shares their
-   shape; pressed reads through the same treatment. */
-.kw-prov {
-  font-size: var(--step0, 12px);
-  padding: 4px 10px;
-  color: var(--ink, #141a26);
-  background: none;
-  border: 1px solid var(--muted, #5b6478);
-  border-radius: 4px;
-  cursor: pointer;
-}
-
-.kw-prov[aria-pressed="true"] {
-  border-color: var(--selection, #2a3e6b);
-  color: var(--selection, #2a3e6b);
-}
-
-/* The match list takes its own wrapped row inside the tools, between
-   the status and the buttons, and the page carries its length: the
-   frame no longer clips, so the list needs no window of its own. The
-   lane holds zero inner scrollers. */
-.kw-match-list {
-  flex: 1 1 100%;
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  border-top: 1px solid var(--hairline, #d5c9b4);
-  border-bottom: 1px solid var(--hairline, #d5c9b4);
-}
-
-/* The macro band: census and flow field above the canvas. The two
-   parts sit side by side where they fit and stack on narrow frames. */
-.kw-macro {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 24px;
-  align-items: flex-start;
-  margin: 0 0 8px;
-}
-
-.kw-census {
-  flex: 1 1 220px;
-  min-width: 0;
-  max-width: 340px;
-}
-
-/* A tier row reads label, length, counts: the bar encodes findings
-   by length, the numbers state findings then actors. */
-.kw-tier-row {
-  display: grid;
-  grid-template-columns: 92px 1fr auto;
-  gap: 8px;
-  align-items: center;
-  width: 100%;
-  padding: 2px 0;
-  background: none;
-  border: none;
-  cursor: pointer;
-  font: inherit;
-  color: var(--ink, #141a26);
-  text-align: left;
-}
-
-.kw-tier-lab {
-  font-size: 11px;
-}
-
-.kw-tier-bar {
-  display: block;
-  height: 8px;
-  min-width: 0;
-  background: var(--muted, #5b6478);
-  border-radius: 2px;
-}
-
-.kw-tier-num {
-  font-size: 11px;
-  color: var(--muted, #5b6478);
-}
-
-.kw-flow {
-  flex: 1 1 240px;
-  min-width: 0;
-}
-
-.kw-flow-cap {
-  margin: 0 0 4px;
-  font-size: 11px;
-}
-
-.kw-flow-grid {
-  border-collapse: collapse;
-  font-size: 11px;
-}
-
-.kw-flow-h {
-  font-weight: normal;
-  color: var(--muted, #5b6478);
-  padding: 1px 4px;
-}
-
-th.kw-flow-h {
-  text-align: left;
-}
-
-/* Column headers run vertical so thirteen columns fit a narrow frame. */
-.kw-flow-v {
-  writing-mode: vertical-rl;
-  text-align: left;
-  vertical-align: bottom;
-  padding: 4px 1px;
-}
-
-.kw-flow-grid td {
-  border: 1px solid var(--paper, #fbfcfe);
-  min-width: 20px;
-  height: 20px;
-  padding: 1px 4px;
-  text-align: center;
-}
-
-/* Cell density in four steps of the selection ink. The two middle
-   steps keep ink numerals (about 9.8 and 5.7 to 1); the full cell
-   takes paper numerals (about 10.2 to 1). */
-.kw-mx-0 {
-  background: transparent;
-}
-
-.kw-mx-1 {
-  background-color: color-mix(in srgb, var(--selection, #2a3e6b) 30%, var(--paper, #fbfcfe));
-  color: var(--ink, #141a26);
-}
-
-.kw-mx-2 {
-  background-color: color-mix(in srgb, var(--selection, #2a3e6b) 55%, var(--paper, #fbfcfe));
-  color: var(--ink, #141a26);
-}
-
-.kw-mx-3 {
-  background-color: var(--selection, #2a3e6b);
-  color: var(--paper, #fbfcfe);
-}
-
-/* The exemplar teaches one real transfer beside the folded key. */
-.kw-exemplar {
-  margin: 4px 0 8px;
-}
-
-.kw-exemplar-map {
-  display: block;
-}
-
-.kw-exemplar-word {
-  font-size: 11px;
-  fill: var(--ink, #141a26);
-}
-
-.kw-exemplar-word.muted {
-  fill: var(--muted, #5b6478);
-}
-
-.kw-match {
-  display: block;
-  width: 100%;
-  text-align: left;
-  font: inherit;
-  color: var(--ink, #1b1712);
-  background: none;
-  border: none;
-  border-bottom: 1px solid var(--hairline, #d5c9b4);
-  padding: 5px 8px;
-  cursor: pointer;
-}
-
-.kw-match-list li:last-child .kw-match {
-  border-bottom: none;
-}
-
-.kw-match:hover {
-  background: var(--surface, #f5efe3);
-}
-
-.kw-match-current {
-  background: var(--surface, #f5efe3);
-}
-
-.kw-match-current .kw-match-type {
-  color: var(--ink, #1b1712);
-  font-weight: 600;
-}
-
-.kw-match-type {
-  display: block;
-  font-family: var(--mono, ui-monospace, Menlo, Consolas, monospace);
-  font-size: 11px;
-  color: var(--muted, #6a6257);
-}
-
-.kw-match-text {
-  display: block;
-  font-size: var(--step0, 12px);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.kw-match-note {
-  display: block;
-  font-size: 11px;
-  color: var(--muted, #6a6257);
-}
-
-.kw-card {
-  /* Record details remain in page flow at their complete height. */
-  max-width: none;
-  margin: 0;
-  padding: 16px;
-  background: var(--paper, #fbfcfe);
-  border: 1px solid var(--muted, #5b6478);
-  border-radius: 6px;
-}
-
-.kw-workspace {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 20px;
-  align-items: start;
-}
-
-.kw-workspace:not(.kw-workspace-wide) .kw-drawing { max-width: 1000px; width: 100%; }
-.kw-workspace-wide { grid-template-columns: minmax(0, 1fr) 320px; }
-.kw-drawing { min-width: 0; }
-.kw-inspector { min-width: 0; grid-row: 1; }
-.kw-workspace-wide .kw-inspector { grid-column: 2; position: sticky; top: 16px; }
-.kw-workspace-wide .kw-drawing { grid-column: 1; grid-row: 1; }
-
-.kw-inspector:has(> .kw-inspector-title) {
-  padding: 16px;
-  border: 1px dashed var(--hairline, #d5c9b4);
-  border-radius: 8px;
-}
-.kw-inspector-title { margin: 0 0 8px; font-size: 16px; }
-.kw-inspector > p { margin: 0; font-size: 13px; line-height: 1.6; }
-.kw-card { overflow-wrap: anywhere; line-height: 1.55; }
-.kw-card:focus { outline: 2px solid var(--ink, #141a26); outline-offset: 3px; }
-.kw-card-return { margin: 0 0 12px; font-size: 13px; }
-.kw-card-state { font-size: 12px; color: var(--muted, #5b6478); }
-.kw-connections { margin-top: 16px; border-top: 1px solid var(--hairline, #d5c9b4); }
-.kw-connections h4 { margin: 12px 0 8px; font-size: 13px; font-weight: 600; }
-.kw-connection { padding: 8px 0; border-top: 1px solid var(--hairline, #d5c9b4); }
-.kw-connection:first-of-type { border-top: 0; }
-.kw-connection-edge, .kw-connection-node {
-  display: block;
-  width: 100%;
-  padding: 4px 0;
-  border: 0;
-  background: transparent;
-  color: var(--ink, #141a26);
-  text-align: left;
-  font: inherit;
-  overflow-wrap: anywhere;
-  cursor: pointer;
-}
-.kw-connection-edge { font-size: 11px; color: var(--muted, #5b6478); }
-.kw-connection-node { font-size: 13px; text-decoration: underline; text-underline-offset: 3px; }
-.kw-connection-node:hover, .kw-connection-edge:hover { color: var(--selection, #2a3e6b); }
-.kw-gesture-note { font-size: 11px; }
-
-.kw-memberships { margin: 12px 0 20px; }
-.kw-memberships h3 { margin: 0 0 10px; font-size: 14px; }
-.kw-ensemble-entry { padding: 8px 0; border-top: 1px solid var(--hairline, #d5c9b4); }
-.kw-ensemble-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 14px; }
-.kw-ensemble-toggle {
-  border: 0;
-  padding: 0;
-  color: var(--ink, #141a26);
-  background: transparent;
-  font: inherit;
-  font-weight: 600;
-  overflow-wrap: anywhere;
-  text-align: left;
-}
-.kw-ensemble-toggle::before { content: "− "; color: var(--muted, #5b6478); }
-.kw-ensemble-toggle[aria-expanded="false"]::before { content: "+ "; }
-.kw-ensemble-facts { font-size: 12px; color: var(--muted, #5b6478); overflow-wrap: anywhere; }
-.kw-ensemble-members, .kw-section-members { margin-top: 8px; font-size: 12px; }
-.kw-ensemble-members > summary, .kw-section-members > summary { cursor: pointer; }
-.kw-member-list { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 0; }
-.kw-member {
-  border: 1px solid var(--hairline, #d5c9b4);
-  border-radius: 4px;
-  padding: 4px 8px;
-  background: var(--paper, #fbfcfe);
-  color: var(--ink, #141a26);
-  font: inherit;
-  font-size: 12px;
-  overflow-wrap: anywhere;
-  text-align: left;
-  cursor: pointer;
-}
-.kw-member:hover { border-color: var(--selection, #2a3e6b); }
-.kw-author-card, .kw-finding-card {
-  fill: var(--paper, #fbfcfe);
-  stroke: var(--hairline, #d5c9b4);
-  stroke-width: 1;
-  pointer-events: none;
-}
-.kw-author-card { fill: var(--surface, #f5efe3); }
-.kw-record-hit { fill: transparent; stroke: transparent; pointer-events: all; }
-.kw-canvas .kw-role, .kw-canvas .kw-finding-meta {
-  font-family: var(--sans, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif);
-  font-size: 11px;
-  fill: var(--muted, #5b6478);
-  stroke: var(--paper, #fbfcfe);
-  stroke-width: 3px;
-  paint-order: stroke;
-}
-
-/* The pinned card reads in three layers: the node's identity and its
-   state word lead, one line states the fact that matters, and the
-   reference rows sit quiet underneath. */
-.kw-card-lead,
-.kw-card-title,
-.kw-card-state,
-.kw-card-status {
-  margin: 0;
-  font-size: 17px;
-  color: var(--ink, #141a26);
-}
-
-.kw-card-state {
-  margin-top: 2px;
-}
-
-.kw-card-full,
-.kw-card-open {
-  margin: 8px 0 0;
-  padding: 0;
-  background: none;
-  border: none;
-  font: inherit;
-  font-size: var(--step0, 12px);
-  color: var(--ink, #141a26);
-  text-decoration: underline;
-  cursor: pointer;
-}
-
-.kw-card-open {
-  display: block;
-}
-
-/* Reference tags: a relation end that names a message or an external
-   record draws as a tag, never as an actor square or finding disc. A
-   dashed outline states that the overview holds no record for it. */
-.kw-ref {
-  cursor: pointer;
-}
-
-.kw-ref-tag {
-  fill: var(--paper, #fbfcfe);
-  stroke: var(--ink, #141a26);
-  stroke-width: 1.5;
-}
-
-g.kw-ref.unheld .kw-ref-tag {
-  stroke-dasharray: 3 2;
-}
-
-/* The folded fan's counted mark: a filled lozenge, so it reads as
-   one thing holding many rather than one more outline tag. */
-.kw-folded-tag {
-  fill: var(--ink, #141a26);
-}
-
-g.kw-folded .kw-ref-word {
-  fill: var(--paper, #fbfcfe);
-}
-
-/* Family glyphs sit on the stub in ink with a paper halo, so the
-   dotted edge never swallows them. */
-.kw-ref-glyph {
-  fill: var(--ink, #141a26);
-  stroke: var(--paper, #fbfcfe);
-  stroke-width: 2px;
-  paint-order: stroke;
-}
-
-.kw-ref-glyph-ring {
-  fill: var(--paper, #fbfcfe);
-  stroke: var(--ink, #141a26);
-}
-
-.kw-ref-word {
-  font-size: var(--step0, 12px);
-  fill: var(--ink, #141a26);
-}
-
-/* Typed endpoints: a hollow ring when the store holds no record, a
-   filled dot when the record exists but the endpoint has no tier
-   seat. Neither borrows a node's shape or fill. */
-.kw-typeref {
-  cursor: pointer;
-}
-
-.kw-typeref-ring {
-  fill: var(--paper, #fbfcfe);
-  stroke: var(--ink, #141a26);
-  stroke-width: 1.5;
-}
-
-.kw-typeref-dot {
-  fill: var(--ink, #141a26);
-}
-
-.kw-card-fact {
-  margin: 6px 0 0;
-  font-size: 14px;
-}
-
-.kw-card-refs {
-  margin: 6px 0 0;
-}
-
-.kw-card-ref {
-  margin: 2px 0 0;
-  font-size: var(--step0, 12px);
-  color: var(--muted, #5b6478);
-}
-
-/* Junction rows: each drawn edge touching the ring is a full-width
-   keyboard stop in the card's scroll, direction first. */
-.kw-junction {
-  display: block;
-  width: 100%;
-  margin: 2px 0 0;
-  padding: 2px 0;
-  background: none;
-  border: none;
-  border-top: 1px solid var(--hairline, #d5c9b4);
-  font: inherit;
-  font-size: var(--step0, 12px);
-  color: var(--ink, #141a26);
-  text-align: left;
-  cursor: pointer;
-}
-
-.kw-hull-line {
-  fill: var(--attention, #a2611f);
-  fill-opacity: 0.06;
-  stroke: var(--attention, #a2611f);
-  stroke-width: 1.5px;
-  stroke-linejoin: round;
-}
-
-.kw-hull, .kw-lozenge { cursor: pointer; }
-
-.kw-hull-label {
-  font-size: var(--step2, 15px);
-  fill: var(--muted, #5b6478);
-}
-
-/* A section hull is static, so it takes no pointer; its label runs
-   smaller than an ensemble's, naming a part rather than the whole. */
-g.kw-hull-section {
-  cursor: default;
-}
-
-.kw-hull-section-label {
-  font-size: var(--step0, 12px);
-}
-
-/* Depth labels and full-width tier separators. */
-.kw-tier {
-  font-size: 11px;
-  fill: var(--muted, #5b6478);
-}
-
-.kw-tier-word {
-  font-size: 11px;
-  fill: var(--muted, #5b6478);
-}
-
-.kw-tier-num {
-  font-size: 14px;
-  fill: var(--ink, #141a26);
-}
-
-.kw-tier-rule {
-  stroke: var(--hairline, #d8dce6);
-  stroke-width: 1px;
-}
-
-/* An empty scope rests on one ruled staff with its state in the
-   page's reading voice. */
-.kw-staff {
-  stroke: var(--staff, #c3b7a3);
-  stroke-width: 1px;
-}
-
-.kw-canvas .kw-empty {
-  font-family: var(--sans, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif);
-  font-size: var(--step1, 13px);
-  fill: var(--muted, #5b6478);
-}
-
-/* A collapsed hull's lozenge is a key: the name stays quiet and the
-   seat count reads as a figure. */
-.kw-lozenge-name {
-  font-size: 11px;
-  fill: var(--muted, #5b6478);
-}
-
-.kw-lozenge-count {
-  font-size: var(--step2, 15px);
-  font-weight: 600;
-  fill: var(--ink, #141a26);
-}
-
-.kw-lozenge-box {
-  fill: var(--paper, #fbfcfe);
-  stroke: var(--attention, #a2611f);
-  stroke-width: 1.5px;
-  stroke-dasharray: 4 2;
-}
-
-.kw-canvas {
-  display: block;
-  max-width: 100%;
-  height: auto;
-}
-
-.kw-canvas text {
-  font-family: var(--mono, ui-monospace, Menlo, Consolas, monospace);
-  font-size: var(--step0, 12px);
-  fill: var(--muted, #5b6478);
-}
-
-.kw-canvas .kw-word, .kw-canvas .kw-name {
-  font-family: var(--sans, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif);
-}
-
-.kw-canvas .kw-word {
-  font-size: 14px;
-}
-
-/* Recorded-relation names sit on their edge's midpoint with a paper
-   halo so crossing lines never swallow the word. */
-.kw-rel-name {
-  font-size: 11px;
-  fill: var(--ink, #141a26);
-  paint-order: stroke;
-  stroke: var(--paper, #fbfcfe);
-  stroke-width: 3px;
-}
-
-/* Midpoint names stay back until their edge has hover or keyboard
-   focus, so the overview reads as strokes while every edge keeps its
-   path into its name. Settling still reserves their boxes. */
-.kw-edge-relate .kw-rel-name {
-  display: none;
-}
-
-.kw-edge-relate:hover .kw-rel-name,
-.kw-edge-relate:focus-within .kw-rel-name {
-  display: inline;
-}
-
-.kw-canvas .kw-name {
-  font-size: 13px;
-}
-
-.kw-canvas .kw-word, .kw-canvas .kw-name {
-  paint-order: stroke;
-  stroke: var(--paper, #fbfcfe);
-  stroke-width: 3px;
-}
-
-@keyframes kw-arrive {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-
-.kw-new { animation: kw-arrive 600ms ease-out; }
-
-.kw-actor { fill: var(--muted, #5b6478); }
-
-.kw-actor.role-conductor { fill: var(--ink, #141a26); }
-
-.kw-actor.role-operator { fill: var(--selection, #2a3e6b); }
-
-/* A seat whose work the record holds takes the attention ink, the same read
-   the pit's fermata ring uses. */
-.kw-actor.kw-not-progressing {
-  stroke: var(--attention, #a2611f);
-  stroke-width: 2px;
-}
-
-.knode.selected .kw-finding { stroke: var(--selection, #2a3e6b); stroke-width: 2px; }
-
-.kw-finding { fill: var(--ink, #141a26); stroke-linejoin: round; }
-
-.kw-finding.unshared {
-  fill: var(--paper, #fbfcfe);
-  stroke: var(--attention, #a2611f);
-  stroke-width: 1.5px;
-}
-
-.kw-halo {
-  fill: none;
-  stroke: var(--attention, #a2611f);
-  stroke-width: 1px;
-  opacity: 0.55;
-}
-
-/* A group seats as its own hollow node, larger than an actor anchor
-   so the two never read as one kind. */
-.kw-group-box {
-  fill: var(--paper, #fbfcfe);
-  stroke: var(--ink, #141a26);
-  stroke-width: 2px;
-}
-
-/* Kind family rings, drawn tight around the mark: a solid seal for
-   resolutions, a dashed ring for open questions. Records and other
-   kinds draw no ring. The share halo sits further out. */
-.kw-seal {
-  fill: none;
-  stroke: var(--ink, #141a26);
-  stroke-width: 1.25px;
-}
-
-.kw-open {
-  fill: none;
-  stroke: var(--ink, #141a26);
-  stroke-width: 1.25px;
-  stroke-dasharray: 2 2;
-}
-
-.kw-edge-authorship { stroke: var(--muted, #5b6478); stroke-width: 1px; }
-
-.kw-edge-share { fill: none; stroke: var(--attention, #a2611f); stroke-width: 1.5px; }
-
-.kw-edge-deliver { fill: none; stroke: var(--muted, #5b6478); stroke-width: 1.5px; }
-
-.kw-edge-promote {
-  fill: none;
-  stroke: var(--selection, #2a3e6b);
-  stroke-width: 1.5px;
-  stroke-dasharray: 5 3;
-}
-
-/* The hover read rests on these contrasts against the paper
-   (#fbfcfe). Lit ink reads about 17 to 1, muted about 5.8 to 1 and
-   the ochre about 4.8 to 1, so every kept mark is legible. The dimmed
-   layer sits at 0.3, which leaves the weakest dimmed ink (muted) near
-   1.7 to 1 and the strongest (ink) near 2.1 to 1: above noticeability
-   for presence and shape, below anything that competes with the read.
-   At 0.15 the weakest marks fell near 1.2 to 1, below reliable
-   perception for thin strokes and small words, so the value was
-   raised. It stays below 3 to 1 by design: that level would need an
-   opacity near 0.7, which collapses the lit-and-dim distinction the
-   interaction depends on. The dimmed layer carries no meaning on its
-   own; every mark reads at full ink in the un-dimmed state, one
-   gesture away, and leaving the node restores it. */
-.kw-dim { opacity: 0.3; }
-.kw-hover-dim { opacity: 0.3; }
 
 .kw-arcs {
   position: absolute;
@@ -849,63 +39,92 @@ g.kw-hull-section {
 
 .kw-row-arrival { fill: var(--attention, #a2611f); }
 
-.kw-legend-keys {
-  list-style: none;
-  margin: 0 0 8px;
-  padding: 0;
-  font-size: 11px;
-  line-height: 1.7;
-  max-width: 78ch;
-  columns: 24ch;
-  column-gap: 24px;
+.kw-science { container: knowledge-science / inline-size; }
+.kw-science-tools { position: sticky; top: 0; z-index: 3; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 12px; padding: 10px 0; border-bottom: 1px solid var(--hairline); background: var(--paper); }
+.kw-science-filters { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }
+.kw-science-filters input { flex: 1; min-width: min(100%, 210px); }
+.kw-science-tools button, .kw-science-filters input, .kw-science-filters select { font: inherit; padding: 7px 10px; }
+.kw-science-caption { font-size: 13px; color: var(--muted); margin: 10px 0 20px; }
+.kw-science-index { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 22px; }
+.kw-science-kind-group > h3, .kw-science-incoming > h3, .kw-science-outgoing > h3 { margin: 0 0 12px; font-size: 15px; }
+.kw-science-node, .kw-science-connection { padding: 16px; margin: 0 0 14px; border: 1px solid var(--hairline); border-radius: 7px; background: var(--paper); overflow-wrap: anywhere; }
+.kw-science-kind { margin: 0 0 8px; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+.kw-science-statement, .kw-science-reference, .kw-science-relation { padding: 0; border: 0; background: transparent; color: var(--ink); text-align: left; font: inherit; cursor: pointer; }
+.kw-science-statement { font-size: 16px; line-height: 1.5; }
+.kw-science-statement:hover, .kw-science-reference:hover { text-decoration: underline; text-underline-offset: 3px; }
+.kw-science-author, .kw-science-degree { margin: 9px 0 0; font-size: 12px; color: var(--muted); }
+.kw-science-reference-id { display: block; margin: 7px 0; font-size: 11px; overflow-wrap: anywhere; }
+.kw-science-uncertainty, .kw-science-assertion-note { padding-left: 10px; border-left: 2px solid var(--hairline); font-size: 13px; line-height: 1.55; }
+.kw-science-neighborhood { display: grid; grid-template-columns: minmax(0, 1fr); gap: 22px; align-items: start; }
+.kw-science-detail { grid-row: 1; padding: 20px; border: 1px solid var(--ink); border-radius: 8px; background: var(--paper); min-width: 0; overflow-wrap: anywhere; scroll-margin-top: 64px; }
+.kw-science-region { min-width: 0; scroll-margin-top: 64px; }
+.kw-science-region:focus { outline: 2px solid var(--selection); outline-offset: 3px; }
+.kw-science-connections-nav { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0; }
+.kw-science-connections-nav button, .kw-science-record-return { font-size: 12px; text-align: left; }
+.kw-science-record-return { margin: 0 0 14px; }
+.kw-science-detail-title { font-size: 20px; line-height: 1.45; margin: 8px 0 16px; }
+.kw-science-field { margin: 14px 0 0; }
+.kw-science-details { margin-top: 18px; }
+.kw-science-details > h4 { margin: 0 0 8px; font-size: 13px; }
+.kw-science-reference-uses { margin-top: 18px; font-size: 13px; }
+.kw-science-reference-uses > summary { cursor: pointer; font-weight: 600; }
+.kw-science-reference-use { padding: 10px 0; border-bottom: 1px solid var(--hairline); }
+.kw-science-field > h4 { font-size: 12px; font-weight: 600; margin: 0 0 5px; text-transform: capitalize; }
+.kw-science-field .kw-science-field { padding-left: 12px; border-left: 1px solid var(--hairline); }
+.kw-science-value, .kw-science-rationale { margin: 5px 0; white-space: pre-wrap; font-size: 14px; line-height: 1.6; }
+.kw-science-values { margin: 6px 0; padding-left: 20px; }
+.kw-science-values > li { margin: 8px 0; }
+.kw-science-connection .kw-science-node { margin: 12px 0 0; }
+.kw-science-relation { font-size: 14px; font-weight: 600; text-transform: capitalize; text-decoration: underline; text-underline-offset: 3px; }
+.kw-science-identity { margin-top: 20px; font-size: 12px; }
+.kw-science-edge-index { margin: 28px 0; }
+.kw-science-edge-index .kw-science-connection { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 16px; }
+.kw-science-edge-index .kw-science-rationale { flex-basis: 100%; }
+.kw-science-legacy { margin-top: 16px; }
+@container knowledge-science (min-width: 680px) {
+  .kw-science-neighborhood { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .kw-science-detail { grid-column: 1 / -1; }
+}
+@container knowledge-science (min-width: 1040px) {
+  .kw-science-neighborhood { grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr) minmax(0, 1fr); }
+  .kw-science-incoming { grid-column: 1; grid-row: 1; }
+  .kw-science-detail { grid-column: 2; }
+  .kw-science-outgoing { grid-column: 3; grid-row: 1; }
 }
 
-.kw-legend-keys li {
-  display: block;
-  break-inside: avoid;
-  margin: 0 0 2px;
-}
+.kw-science-message-body { margin: 12px 0; padding: 12px; border-left: 2px solid var(--hairline); white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 13px; line-height: 1.6; }
 
-.kw-legend-swatch {
-  width: 26px;
-  height: 12px;
-  margin-right: 6px;
-  vertical-align: -2px;
+/* The canvas keeps the graph visible while the selected record is read below it. */
+.kg-frame { border: 1px solid var(--hairline); background: var(--paper); }
+.kg-canvas { display: block; width: 100%; height: 520px; touch-action: pan-y; cursor: grab; }
+.kg-canvas:active { cursor: grabbing; }
+.kg-canvas:focus-visible { outline: 2px solid var(--selection); outline-offset: 2px; }
+.kg-node, .kg-edge { cursor: pointer; }
+.kg-node-boundary { fill: var(--paper); stroke: var(--ink); stroke-width: 1.2; }
+.kg-node.is-reference .kg-node-boundary { stroke-dasharray: 5 3; }
+.kg-node.is-selected .kg-node-boundary, .kg-node:focus-visible .kg-node-boundary { stroke: var(--selection); stroke-width: 3; }
+.kg-node-words { color: var(--ink); font: 15px/1.4 var(--sans); }
+.kg-node-kind { display: block; font-size: 11px; color: var(--muted); margin-bottom: 6px; }
+.kg-node-statement { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; overflow-wrap: anywhere; }
+.kg-edge-line { fill: none; stroke: var(--muted); stroke-width: 1.5; }
+.kg-edge.is-reference-use .kg-edge-line { stroke-dasharray: 4 3; stroke-opacity: .45; }
+.kg-edge.is-reference-use .kg-edge-label { opacity: 0; }
+.kg-edge.is-reference-use:hover .kg-edge-label,
+.kg-edge.is-reference-use:focus-visible .kg-edge-label,
+.kg-edge.is-reference-use.is-selected .kg-edge-label { opacity: 1; }
+.kg-arrow { fill: var(--muted); }
+.kg-edge-hit { fill: none; stroke: transparent; stroke-width: 18; }
+.kg-edge-label { fill: var(--ink); font: 12px var(--sans); text-anchor: middle; paint-order: stroke; stroke: var(--paper); stroke-width: 6px; stroke-linejoin: round; }
+.kg-edge.is-selected .kg-edge-line, .kg-edge:focus-visible .kg-edge-line { stroke: var(--selection); stroke-width: 3; }
+.kg-edge.is-selected .kg-edge-label { fill: var(--selection); font-weight: 600; }
+.kg-node.is-dim, .kg-edge.is-dim { opacity: .22; }
+.kg-node.is-dim:focus-visible, .kg-edge.is-dim:focus-visible { opacity: 1; }
+.kg-zoom-level { font: 12px var(--sans); min-width: 3ch; }
+.kg-empty { padding: 12px 0; color: var(--muted); }
+.kg-content { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; }
+.kg-content .kw-science-neighborhood { display: flex; flex-direction: column; margin-top: 0; max-height: 520px; overflow: auto; }
+.kg-content .kw-science-detail { order: -1; }
+@container knowledge-science (min-width: 960px) {
+  .kg-content.has-selection { grid-template-columns: minmax(0, 1.8fr) minmax(320px, 1fr); }
 }
-
-/* The key's relation disclosure: a quiet button among the rows. */
-.kw-key-toggle {
-  font-size: inherit;
-  color: var(--ink, #141a26);
-  background: none;
-  border: 1px solid var(--muted, #5b6478);
-  border-radius: 4px;
-  padding: 1px 8px;
-  cursor: pointer;
-}
-
-/* The folded key's button and its edge-name note: two short lines
-   where the open key stood. */
-.kw-key-fold {
-  margin: 0 0 4px;
-}
-
-.kw-legend-note {
-  margin: 0 0 4px;
-  font-size: 11px;
-  color: var(--muted, #5b6478);
-}
-
-.kw-rel-swatch {
-  width: 26px;
-  height: 12px;
-  margin-right: 6px;
-  vertical-align: -2px;
-}
-
-:focus-visible { outline: 2px solid var(--selection, #2a3e6b); }
-
-@media (prefers-reduced-motion: reduce) {
-  .kw-canvas * { transition: none; }
-  .kw-new { animation: none; }
-}
+.kw-science-kind { text-transform: none; letter-spacing: normal; }

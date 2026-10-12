@@ -33,9 +33,19 @@
 .lane-strip .att-stage {
   display: block;
   overflow: visible;
-  width: 100%;
+  width: auto;
+  min-width: 100%;
   flex: 0 0 100%;
 }
+
+.lane-strip .att-stage-viewport { flex: 0 0 100%; min-width: 0; overflow-x: auto; }
+.lane-strip .att-stage-tools { display: flex; gap: 8px; flex-basis: 100%; padding: 10px; }
+.lane-strip .att-stage-view { color: var(--ink); border-color: var(--muted); font: 12px var(--sans); }
+.lane-strip .att-ensemble-details { flex-basis: 100%; padding: 10px; }
+.lane-strip .att-ensemble-details > summary { cursor: pointer; font: 13px var(--sans); }
+.lane-strip .att-peer-boundary { fill: none; stroke: #5a6474; stroke-width: 1; }
+.lane-strip .att-peer-name { fill: var(--ink); font: 12px var(--sans); }
+.lane-strip .att-peer-name[role="button"] { cursor: pointer; text-decoration: underline; }
 
 .lane-strip .att-stage:focus { outline: none; }
 

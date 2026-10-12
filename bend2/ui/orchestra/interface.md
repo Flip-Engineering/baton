@@ -213,10 +213,17 @@ The selected record reads the actor's work and complete pending message bodies
 on demand. A selected finding shows its claim, evidence, limits, author, and
 recorded promotion steps.
 
-Compact knowledge surfaces attach findings to their authors' rows. The full graph
-opens from a disclosure and places actors by parent depth, including an
-unknown-depth group. Its directed edges represent authorship, sharing, delivery,
-and promotion.
+The orchestra graph places every reporting depth on one horizontal row. Ensemble
+groups contain peers within that row. Fit hierarchy shows the complete structure;
+Read labels preserves readable text and horizontal navigation.
+
+The knowledge graph draws knowledge records, cited resources and directed
+relations. Connected components and relation paths determine placement. Cyclic
+relations remain together. Selecting a node or relation opens its content,
+evidence, scope, limits and neighboring relations while retaining the graph.
+Authors and sharing are available in the record details. Search and relation
+filters highlight matching records within the complete graph. Pan, zoom and Fit
+graph control the viewport.
 
 The history ribbon colors committed changes by kind. Selecting a position reads
 that event; a control opens the event list.

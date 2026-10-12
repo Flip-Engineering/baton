@@ -1,0 +1,696 @@
+{
+  "schemaVersion": 1,
+  "nodes": [
+    {
+      "id": "shade-question",
+      "author": "example-researcher",
+      "kind": "question",
+      "statement": "How does loss of riparian shade affect midday stream temperature?",
+      "context": {
+        "scope": "Illustrative stream reaches during one summer field campaign. All records are fictional schema examples.",
+        "subjects": [
+          {
+            "kind": "entity",
+            "uri": "urn:example:stream-reaches",
+            "label": "Illustrative stream reaches"
+          }
+        ],
+        "conditions": [
+          "Midday measurements",
+          "Comparable stream discharge"
+        ],
+        "assumptions": [
+          "Thermometers are calibrated",
+          "Sampling reaches are comparable"
+        ]
+      },
+      "evidence": [],
+      "limits": "Illustrative record; no empirical result is claimed.",
+      "uncertainty": "",
+      "details": {
+        "topic": "Riparian shade and stream heat balance",
+        "openQuestions": [
+          "How strongly does discharge moderate the effect?"
+        ]
+      }
+    },
+    {
+      "id": "shade-hypothesis",
+      "author": "example-researcher",
+      "kind": "hypothesis",
+      "statement": "Reducing riparian shade increases midday water temperature through increased solar input.",
+      "context": {
+        "scope": "Illustrative stream reaches during one summer field campaign. All records are fictional schema examples.",
+        "subjects": [
+          {
+            "kind": "entity",
+            "uri": "urn:example:stream-reaches",
+            "label": "Illustrative stream reaches"
+          }
+        ],
+        "conditions": [
+          "Midday measurements",
+          "Comparable stream discharge"
+        ],
+        "assumptions": [
+          "Thermometers are calibrated",
+          "Sampling reaches are comparable"
+        ]
+      },
+      "evidence": [],
+      "limits": "Illustrative record; no empirical result is claimed.",
+      "uncertainty": "",
+      "details": {
+        "explanation": "Lower canopy cover increases solar energy reaching the water.",
+        "predictions": [
+          {
+            "statement": "The exposed reach warms relative to the shaded control under matched discharge.",
+            "conditions": [
+              "Comparable incoming water temperatures"
+            ],
+            "observables": [
+              "Water temperature",
+              "Solar irradiance"
+            ]
+          }
+        ],
+        "overturnConditions": [
+          "The temperature difference persists when irradiance is matched."
+        ]
+      }
+    },
+    {
+      "id": "air-hypothesis",
+      "author": "example-researcher",
+      "kind": "hypothesis",
+      "statement": "An air-temperature change explains the apparent water warming.",
+      "context": {
+        "scope": "Illustrative stream reaches during one summer field campaign. All records are fictional schema examples.",
+        "subjects": [
+          {
+            "kind": "entity",
+            "uri": "urn:example:stream-reaches",
+            "label": "Illustrative stream reaches"
+          }
+        ],
+        "conditions": [
+          "Midday measurements",
+          "Comparable stream discharge"
+        ],
+        "assumptions": [
+          "Thermometers are calibrated",
+          "Sampling reaches are comparable"
+        ]
+      },
+      "evidence": [],
+      "limits": "Illustrative record; no empirical result is claimed.",
+      "uncertainty": "",
+      "details": {
+        "explanation": "Both reaches respond to a changing regional air mass.",
+        "predictions": [
+          {
+            "statement": "Both reaches warm comparably as air temperature rises.",
+            "conditions": [
+              "Comparable discharge"
+            ],
+            "observables": [
+              "Air temperature",
+              "Water temperature"
+            ]
+          }
+        ],
+        "overturnConditions": [
+          "The exposed reach warms alone while air temperature is stable."
+        ]
+      }
+    },
+    {
+      "id": "field-data",
+      "author": "example-researcher",
+      "kind": "evidence",
+      "statement": "The example field dataset retains paired temperature, irradiance, discharge and air measurements.",
+      "context": {
+        "scope": "Illustrative stream reaches during one summer field campaign. All records are fictional schema examples.",
+        "subjects": [
+          {
+            "kind": "entity",
+            "uri": "urn:example:stream-reaches",
+            "label": "Illustrative stream reaches"
+          }
+        ],
+        "conditions": [
+          "Midday measurements",
+          "Comparable stream discharge"
+        ],
+        "assumptions": [
+          "Thermometers are calibrated",
+          "Sampling reaches are comparable"
+        ]
+      },
+      "evidence": [],
+      "limits": "Illustrative record; no empirical result is claimed.",
+      "uncertainty": "",
+      "details": {
+        "source": {
+          "kind": "artifact",
+          "uri": "urn:example:fictional-field-data"
+        },
+        "description": "Fictional dataset used to illustrate record structure."
+      }
+    },
+    {
+      "id": "shade-study",
+      "author": "example-researcher",
+      "kind": "study",
+      "statement": "A paired shade intervention investigates the temperature response.",
+      "context": {
+        "scope": "Illustrative stream reaches during one summer field campaign. All records are fictional schema examples.",
+        "subjects": [
+          {
+            "kind": "entity",
+            "uri": "urn:example:stream-reaches",
+            "label": "Illustrative stream reaches"
+          }
+        ],
+        "conditions": [
+          "Midday measurements",
+          "Comparable stream discharge"
+        ],
+        "assumptions": [
+          "Thermometers are calibrated",
+          "Sampling reaches are comparable"
+        ]
+      },
+      "evidence": [
+        {
+          "id": "field-data",
+          "kind": "evidence"
+        }
+      ],
+      "limits": "Illustrative record; no empirical result is claimed.",
+      "uncertainty": "",
+      "details": {
+        "questions": [
+          {
+            "id": "shade-question",
+            "kind": "question"
+          }
+        ],
+        "method": {
+          "kind": "experiment",
+          "protocol": "Measure paired shaded and temporarily unshaded reaches during matched midday periods.",
+          "interventions": [
+            "Temporarily reduce artificial shade over a study reach."
+          ],
+          "controls": [
+            "Matched shaded reach",
+            "Measure discharge and air temperature concurrently."
+          ]
+        },
+        "design": "Paired measurements before and during a shade intervention.",
+        "state": "completed",
+        "outputs": [
+          {
+            "id": "temperature-observation",
+            "kind": "observation"
+          },
+          {
+            "id": "warming-finding",
+            "kind": "research-finding"
+          }
+        ],
+        "studyIdentity": "fictional-shade-campaign"
+      }
+    },
+    {
+      "id": "temperature-observation",
+      "author": "example-researcher",
+      "kind": "observation",
+      "statement": "The exposed reach measured 2.1 degrees Celsius warmer than its paired shaded reach at midday.",
+      "context": {
+        "scope": "Illustrative stream reaches during one summer field campaign. All records are fictional schema examples.",
+        "subjects": [
+          {
+            "kind": "entity",
+            "uri": "urn:example:stream-reaches",
+            "label": "Illustrative stream reaches"
+          }
+        ],
+        "conditions": [
+          "Midday measurements",
+          "Comparable stream discharge"
+        ],
+        "assumptions": [
+          "Thermometers are calibrated",
+          "Sampling reaches are comparable"
+        ]
+      },
+      "evidence": [
+        {
+          "id": "field-data",
+          "kind": "evidence"
+        }
+      ],
+      "limits": "Illustrative record; no empirical result is claimed.",
+      "uncertainty": "One illustrative paired measurement; sampling spread is not specified.",
+      "details": {
+        "subject": {
+          "kind": "entity",
+          "uri": "urn:example:exposed-reach",
+          "label": "Illustrative exposed stream reach"
+        },
+        "property": "Paired midday water-temperature difference",
+        "procedure": "Subtract the calibrated shaded-reach reading from the exposed-reach reading.",
+        "result": {
+          "kind": "quantity",
+          "value": 2.1,
+          "unit": "degree Celsius"
+        },
+        "phenomenonTime": "Fictional campaign day 3, local midday"
+      }
+    },
+    {
+      "id": "warming-finding",
+      "author": "example-researcher",
+      "kind": "research-finding",
+      "statement": "The campaign observations support a shade-related warming mechanism under the sampled conditions.",
+      "context": {
+        "scope": "Illustrative stream reaches during one summer field campaign. All records are fictional schema examples.",
+        "subjects": [
+          {
+            "kind": "entity",
+            "uri": "urn:example:stream-reaches",
+            "label": "Illustrative stream reaches"
+          }
+        ],
+        "conditions": [
+          "Midday measurements",
+          "Comparable stream discharge"
+        ],
+        "assumptions": [
+          "Thermometers are calibrated",
+          "Sampling reaches are comparable"
+        ]
+      },
+      "evidence": [
+        {
+          "id": "temperature-observation",
+          "kind": "observation"
+        },
+        {
+          "id": "field-data",
+          "kind": "evidence"
+        }
+      ],
+      "limits": "Illustrative record; no empirical result is claimed.",
+      "uncertainty": "The small example campaign supports a provisional interpretation.",
+      "details": {
+        "method": {
+          "kind": "experiment",
+          "protocol": "Measure paired shaded and temporarily unshaded reaches during matched midday periods.",
+          "interventions": [
+            "Temporarily reduce artificial shade over a study reach."
+          ],
+          "controls": [
+            "Matched shaded reach",
+            "Measure discharge and air temperature concurrently."
+          ]
+        },
+        "inputs": [
+          {
+            "id": "temperature-observation",
+            "kind": "observation"
+          },
+          {
+            "id": "field-data",
+            "kind": "evidence"
+          }
+        ],
+        "inference": "The exposed-control difference and concurrent irradiance change favor the solar-input explanation.",
+        "overturnConditions": [
+          "A discharge or upstream-temperature difference explains the observations."
+        ]
+      }
+    },
+    {
+      "id": "warming-argument",
+      "author": "example-researcher",
+      "kind": "argument",
+      "statement": "Increased solar input is a plausible explanation of the observed warming.",
+      "context": {
+        "scope": "Illustrative stream reaches during one summer field campaign. All records are fictional schema examples.",
+        "subjects": [
+          {
+            "kind": "entity",
+            "uri": "urn:example:stream-reaches",
+            "label": "Illustrative stream reaches"
+          }
+        ],
+        "conditions": [
+          "Midday measurements",
+          "Comparable stream discharge"
+        ],
+        "assumptions": [
+          "Thermometers are calibrated",
+          "Sampling reaches are comparable"
+        ]
+      },
+      "evidence": [
+        {
+          "id": "temperature-observation",
+          "kind": "observation"
+        },
+        {
+          "id": "warming-finding",
+          "kind": "research-finding"
+        }
+      ],
+      "limits": "Illustrative record; no empirical result is claimed.",
+      "uncertainty": "Competing explanations remain open.",
+      "details": {
+        "method": "abduction",
+        "premises": [
+          {
+            "id": "shade-hypothesis",
+            "kind": "hypothesis"
+          },
+          {
+            "id": "temperature-observation",
+            "kind": "observation"
+          }
+        ],
+        "derivation": "Compare the solar-input and regional-air-temperature explanations against the paired observation."
+      }
+    },
+    {
+      "id": "shade-proposal",
+      "author": "example-researcher",
+      "kind": "proposal",
+      "statement": "Extend the study with independently sampled reaches and irradiance measurements.",
+      "context": {
+        "scope": "Illustrative stream reaches during one summer field campaign. All records are fictional schema examples.",
+        "subjects": [
+          {
+            "kind": "entity",
+            "uri": "urn:example:stream-reaches",
+            "label": "Illustrative stream reaches"
+          }
+        ],
+        "conditions": [
+          "Midday measurements",
+          "Comparable stream discharge"
+        ],
+        "assumptions": [
+          "Thermometers are calibrated",
+          "Sampling reaches are comparable"
+        ]
+      },
+      "evidence": [
+        {
+          "id": "warming-finding",
+          "kind": "research-finding"
+        }
+      ],
+      "limits": "Illustrative record; no empirical result is claimed.",
+      "uncertainty": "",
+      "details": {
+        "purpose": "Evaluate generality and distinguish competing explanations.",
+        "proposedAction": "Repeat the paired study across additional reaches and discharge conditions.",
+        "rationale": "The current interpretation has limited geographic and temporal coverage.",
+        "alternatives": []
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "study-question",
+      "author": "example-researcher",
+      "kind": "investigates",
+      "source": {
+        "id": "shade-study",
+        "kind": "study"
+      },
+      "target": {
+        "id": "shade-question",
+        "kind": "question"
+      },
+      "context": {
+        "scope": "Illustrative stream reaches during one summer field campaign. All records are fictional schema examples.",
+        "subjects": [
+          {
+            "kind": "entity",
+            "uri": "urn:example:stream-reaches",
+            "label": "Illustrative stream reaches"
+          }
+        ],
+        "conditions": [
+          "Midday measurements",
+          "Comparable stream discharge"
+        ],
+        "assumptions": [
+          "Thermometers are calibrated",
+          "Sampling reaches are comparable"
+        ]
+      },
+      "basis": [
+        {
+          "id": "shade-question",
+          "kind": "question"
+        },
+        {
+          "id": "shade-hypothesis",
+          "kind": "hypothesis"
+        }
+      ],
+      "rationale": "The design addresses the stated shade question.",
+      "limits": "Illustrative assertion only.",
+      "uncertainty": "Applicability outside the example campaign is unknown.",
+      "details": {
+        "purpose": "Estimate the water-temperature response to changing shade."
+      }
+    },
+    {
+      "id": "study-observation",
+      "author": "example-researcher",
+      "kind": "produces",
+      "source": {
+        "id": "shade-study",
+        "kind": "study"
+      },
+      "target": {
+        "id": "temperature-observation",
+        "kind": "observation"
+      },
+      "context": {
+        "scope": "Illustrative stream reaches during one summer field campaign. All records are fictional schema examples.",
+        "subjects": [
+          {
+            "kind": "entity",
+            "uri": "urn:example:stream-reaches",
+            "label": "Illustrative stream reaches"
+          }
+        ],
+        "conditions": [
+          "Midday measurements",
+          "Comparable stream discharge"
+        ],
+        "assumptions": [
+          "Thermometers are calibrated",
+          "Sampling reaches are comparable"
+        ]
+      },
+      "basis": [
+        {
+          "id": "field-data",
+          "kind": "evidence"
+        }
+      ],
+      "rationale": "The observation is an output of the stated procedure.",
+      "limits": "Illustrative assertion only.",
+      "uncertainty": "Applicability outside the example campaign is unknown.",
+      "details": {
+        "method": "Paired temperature measurements during shade intervention."
+      }
+    },
+    {
+      "id": "observation-hypothesis",
+      "author": "example-researcher",
+      "kind": "supports",
+      "source": {
+        "id": "temperature-observation",
+        "kind": "observation"
+      },
+      "target": {
+        "id": "shade-hypothesis",
+        "kind": "hypothesis"
+      },
+      "context": {
+        "scope": "Illustrative stream reaches during one summer field campaign. All records are fictional schema examples.",
+        "subjects": [
+          {
+            "kind": "entity",
+            "uri": "urn:example:stream-reaches",
+            "label": "Illustrative stream reaches"
+          }
+        ],
+        "conditions": [
+          "Midday measurements",
+          "Comparable stream discharge"
+        ],
+        "assumptions": [
+          "Thermometers are calibrated",
+          "Sampling reaches are comparable"
+        ]
+      },
+      "basis": [
+        {
+          "id": "field-data",
+          "kind": "evidence"
+        }
+      ],
+      "rationale": "The observation increases the plausibility of the shade hypothesis within the campaign context.",
+      "limits": "Illustrative assertion only.",
+      "uncertainty": "Applicability outside the example campaign is unknown.",
+      "details": {
+        "bearing": "The observed temperature difference matches the directional prediction."
+      }
+    },
+    {
+      "id": "hypothesis-rival",
+      "author": "example-researcher",
+      "kind": "competes-with",
+      "source": {
+        "id": "shade-hypothesis",
+        "kind": "hypothesis"
+      },
+      "target": {
+        "id": "air-hypothesis",
+        "kind": "hypothesis"
+      },
+      "context": {
+        "scope": "Illustrative stream reaches during one summer field campaign. All records are fictional schema examples.",
+        "subjects": [
+          {
+            "kind": "entity",
+            "uri": "urn:example:stream-reaches",
+            "label": "Illustrative stream reaches"
+          }
+        ],
+        "conditions": [
+          "Midday measurements",
+          "Comparable stream discharge"
+        ],
+        "assumptions": [
+          "Thermometers are calibrated",
+          "Sampling reaches are comparable"
+        ]
+      },
+      "basis": [
+        {
+          "id": "temperature-observation",
+          "kind": "observation"
+        }
+      ],
+      "rationale": "Both explanations address the same observed response.",
+      "limits": "Illustrative assertion only.",
+      "uncertainty": "Applicability outside the example campaign is unknown.",
+      "details": {
+        "question": {
+          "id": "shade-question",
+          "kind": "question"
+        },
+        "comparison": "Solar input and regional air warming offer different explanations of the temperature response."
+      }
+    },
+    {
+      "id": "finding-observation",
+      "author": "example-researcher",
+      "kind": "derived-from",
+      "source": {
+        "id": "warming-finding",
+        "kind": "research-finding"
+      },
+      "target": {
+        "id": "temperature-observation",
+        "kind": "observation"
+      },
+      "context": {
+        "scope": "Illustrative stream reaches during one summer field campaign. All records are fictional schema examples.",
+        "subjects": [
+          {
+            "kind": "entity",
+            "uri": "urn:example:stream-reaches",
+            "label": "Illustrative stream reaches"
+          }
+        ],
+        "conditions": [
+          "Midday measurements",
+          "Comparable stream discharge"
+        ],
+        "assumptions": [
+          "Thermometers are calibrated",
+          "Sampling reaches are comparable"
+        ]
+      },
+      "basis": [
+        {
+          "id": "field-data",
+          "kind": "evidence"
+        }
+      ],
+      "rationale": "The finding states an inference drawn from the observation.",
+      "limits": "Illustrative assertion only.",
+      "uncertainty": "Applicability outside the example campaign is unknown.",
+      "details": {
+        "derivation": "Interpret the paired observation with concurrent measurements and study design."
+      }
+    },
+    {
+      "id": "finding-proposal",
+      "author": "example-researcher",
+      "kind": "informs",
+      "source": {
+        "id": "warming-finding",
+        "kind": "research-finding"
+      },
+      "target": {
+        "id": "shade-proposal",
+        "kind": "proposal"
+      },
+      "context": {
+        "scope": "Illustrative stream reaches during one summer field campaign. All records are fictional schema examples.",
+        "subjects": [
+          {
+            "kind": "entity",
+            "uri": "urn:example:stream-reaches",
+            "label": "Illustrative stream reaches"
+          }
+        ],
+        "conditions": [
+          "Midday measurements",
+          "Comparable stream discharge"
+        ],
+        "assumptions": [
+          "Thermometers are calibrated",
+          "Sampling reaches are comparable"
+        ]
+      },
+      "basis": [
+        {
+          "id": "temperature-observation",
+          "kind": "observation"
+        },
+        {
+          "id": "warming-argument",
+          "kind": "argument"
+        }
+      ],
+      "rationale": "The proposal follows the stated limitations of the finding.",
+      "limits": "Illustrative assertion only.",
+      "uncertainty": "Applicability outside the example campaign is unknown.",
+      "details": {
+        "contribution": "Limited coverage and competing explanations motivate further sampling."
+      }
+    }
+  ]
+}

@@ -39,9 +39,13 @@ message references. A message reference opens its complete stored body.
 Selecting a finding opens its claim, evidence, limits, author, and sharing steps.
 
 Each author's roster row carries a compact knowledge surface. The whole knowledge
-graph opens from a disclosure and places agents and findings by parent depth.
-Agents with missing parent metadata appear in an unknown-depth group. Directed
-edges show authorship, sharing, delivery, and promotion.
+graph draws knowledge records and cited resources joined by named, directed
+relations. Selecting a record or relation opens its content, evidence, scope,
+reasoning and limits. Provenance and sharing appear in record details.
+
+The agent hierarchy places equal reporting depths on one horizontal row and
+groups peers by their recorded ensembles. Fit hierarchy shows the complete
+structure; Read labels provides full-size cards with horizontal scrolling.
 
 The history ribbon shows committed changes by event kind. Its position selects a
 change for reading; the record list opens from the ribbon.
