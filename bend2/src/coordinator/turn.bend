@@ -108,6 +108,12 @@ def exit_failure(db: String, player: String, id: String, status: String, success
     case True{}: IO.pure(Unit,Unit{})
     case False{}: report(db,player,id ++ ":exit","Player process ended with " ++ status)
 
+def muse_quota_note(+db: String, +player: String, +id: String, +event: String) -> IO(Unit):
+  do IO<Unit>:
+    harness : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce(harness,'') FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
+    matched : String <- IO.try(String,DB.Sql.query(db,Subs.muse_subscription_quota_sql(event)))
+    Bool.pick(IO(Unit),Bool.and(String.eq(harness,"muse\n"),String.eq(matched,"1\n")),report(db,player,id ++ ":muse-contributor-option",Subs.muse_contributor_guidance()),IO.pure(Unit,Unit{}))
+
 def failed(+status: String, +event: String, error: String) -> Bool:
   Bool.or(Bool.not(String.eq(status,"exit 0")),Bool.or(String.is_empty(event),Bool.not(String.is_empty(error))))
 
@@ -138,11 +144,12 @@ def with_frame_step(-R: Type, step: List<String> & String, next: List<String> ->
 def delivery_result(+error: String) -> Result<&1,&1,U32 & String,Unit>:
   Bool.pick(Result<&1,&1,U32 & String,Unit>,String.is_empty(error),Done{Unit{}},Fail{(1,error)})
 
-def prepare_finished(+db: String, +player: String, +id: String, log: String, stderr: String, +error: String, +status: String, event: String) -> IO(Unit):
+def prepare_finished(+db: String, +player: String, +id: String, log: String, stderr: String, +error: String, +status: String, +event: String) -> IO(Unit):
   do IO<Unit>:
     result : String <- IO.try(String,DB.Sql.query(db,"SELECT count(*) FROM turns WHERE id=" ++ C.q(id) ++ ";"))
     noted : Unit <- diagnostic(db,player,id,error,event,String.is_empty(error))
     missing : Unit <- result_missing(db,player,id,log,stderr,status,String.eq(result,"1\n"))
+    quota_note : Unit <- muse_quota_note(db,player,id,event)
     exit_failure(db,player,id,status,String.eq(status,"exit 0"))
 
 def prepare_player(db: String, player: String, id: String, log: String, stderr: String, error: String, status: String, event: String, early: Bool) -> IO(Unit):

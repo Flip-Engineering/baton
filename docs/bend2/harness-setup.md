@@ -131,6 +131,15 @@ Muse uses its existing authenticated installation. The native adapter requires
 `exec --json --prompt-file` and resumes through `--session-id`. Preserve Muse's
 conversation storage when reconnecting the recorded native identity.
 
+For Muse implementer work, select `muse-spark-1.3-contributor` at `high` effort.
+The native adapter passes `--contributor-mode on` for this exact model. Keep
+`muse-wonder-full-1.0` available for conductor work. Muse Code Contributor mode
+permits submitted content to be used for model training. Account limits still
+apply. The Muse API has separate paid usage pricing. The [Muse Code subscription
+documentation](https://dev.meta.ai/docs/muse-code/subscriptions) describes the
+mode and training terms; [API pricing](https://dev.meta.ai/docs/pricing-rate-limits)
+describes the separate API charges.
+
 ## Native controls
 
 Follow [installation](installation.md) for the coordinator and host dependencies.
