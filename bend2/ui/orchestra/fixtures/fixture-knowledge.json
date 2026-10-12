@@ -712,6 +712,16 @@
         "source": "fixture-knowledge-ghost",
         "destination": "fixture-knowledge-root",
         "promotedBy": "fixture-knowledge-root"
+      },
+      {
+        "id": "fixture-promotion-ensemble-1",
+        "finding": "fixture-finding-a2",
+        "author": "fixture-knowledge-player-a",
+        "source": "fixture-knowledge-player-a",
+        "sourceKind": "session",
+        "destination": "fixture-knowledge-ensemble",
+        "destinationKind": "group",
+        "promotedBy": "fixture-knowledge-conductor-a"
       }
     ],
     "actors": {

@@ -16,7 +16,13 @@ export async function qualifyKnowledgeGraphs({ origin, send, out, scientificExam
   };
   const check = async (name, expression) => {
     const value = await evaluate(expression);
-    if(value!==true) { const detail=await evaluate("window.positionCheck || null"); console.log(JSON.stringify({name,detail})); }
+    if (value !== true) {
+      const detail = await evaluate("({position:window.positionCheck || null, scope:document.querySelector('#map-scope')?.textContent, tier:document.querySelector('#map')?.dataset.knowledgeTier, nodes:[...document.querySelectorAll('.kg-node')].map(n=>n.dataset.knowledgeNode)})");
+      console.log(JSON.stringify({name,detail}));
+      writeFileSync(join(out, 'graph-failure.html'), await evaluate('document.documentElement.outerHTML'));
+      const screenshot = await send('Page.captureScreenshot', {format:'png'});
+      writeFileSync(join(out, 'graph-failure.png'), Buffer.from(screenshot.result.data, 'base64'));
+    }
     assert.equal(value, true, name);
     results.push({ name, passed: true });
     console.log('PASS ' + name);
@@ -32,7 +38,7 @@ export async function qualifyKnowledgeGraphs({ origin, send, out, scientificExam
     })`);
   };
   const screenshot = async (name) => {
-    const selector = name.startsWith('orchestra') ? '.att-stage-viewport' : '#knowledge-whole';
+    const selector = name.includes('-tier.') ? '#map' : name.startsWith('orchestra') ? '.att-stage-viewport' : '#knowledge-whole';
     const viewport = await evaluate('({width:innerWidth,height:innerHeight,x:scrollX,y:scrollY})');
     const height = await evaluate(`document.querySelector(${JSON.stringify(selector)}).getBoundingClientRect().height`);
     await send('Emulation.setDeviceMetricsOverride', { width: viewport.width, height: Math.ceil(height) + 60, deviceScaleFactor: 1, mobile: false });
@@ -139,6 +145,67 @@ export async function qualifyKnowledgeGraphs({ origin, send, out, scientificExam
     return root.querySelectorAll('.kg-node').length > 0 && root.querySelectorAll('.kg-edge').length > 0
       && !root.querySelector('.kw-memberships, .kw-anchor, .kw-actor, .kw-ensemble-entry')
       && [...root.querySelectorAll('[data-knowledge-kind]')].every(n => !['session', 'group'].includes(n.dataset.knowledgeKind));
+  })()`);
+  await check('orchestra tier shows principal holdings and hides individual records', `(() => {
+    return document.querySelector('button[data-knowledge-tier="universal"]').getAttribute('aria-pressed') === 'true'
+      && document.querySelector('#map').dataset.knowledgeTier === 'universal'
+      && document.querySelector('#map-scope').textContent.startsWith('Orchestra:')
+      && !!document.querySelector('.kg-node[data-knowledge-node="fixture-finding-root-1"]')
+      && !document.querySelector('.kg-node[data-knowledge-node="fixture-finding-a4"]');
+  })()`);
+  await check('actor selection preserves the chosen orchestra knowledge tier', `(async () => {
+    document.querySelector('.att-seat[data-att-id="fixture-knowledge-player-a"]').dispatchEvent(new MouseEvent('click',{bubbles:true}));
+    await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+    return document.querySelector('#map').dataset.knowledgeTier === 'universal'
+      && !!document.querySelector('.kg-node[data-knowledge-node="fixture-finding-root-1"]');
+  })()`);
+  await check('individual tier reads selected holder with unchanged page position', `(async () => {
+    const y=scrollY;
+    document.querySelector('button[data-knowledge-tier="worker"]').click();
+    await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+    return scrollY===y && document.querySelector('#map').dataset.knowledgeTier === 'worker'
+      && document.querySelector('#map-scope-holder').value === 'fixture-knowledge-player-a'
+      && !!document.querySelector('.kg-node[data-knowledge-node="fixture-finding-a4"]')
+      && !document.querySelector('.kg-node[data-knowledge-node="fixture-finding-root-1"]');
+  })()`);
+  await check('ensemble tier holds explicit group promotions only', `(async () => {
+    document.querySelector('button[data-knowledge-tier="group"]').click();
+    await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+    return document.querySelector('#map').dataset.knowledgeTier === 'group'
+      && document.querySelector('#map-scope-holder').value === 'fixture-knowledge-ensemble'
+      && !!document.querySelector('.kg-node[data-knowledge-node="fixture-finding-a2"]')
+      && !document.querySelector('.kg-node[data-knowledge-node="fixture-finding-b1"]')
+      && !document.querySelector('.kg-node[data-knowledge-node="fixture-finding-a4"]');
+  })()`);
+  await check('changing ensemble holder preserves an empty tier without borrowing owner records', `(async () => {
+    const control=document.querySelector('#map-scope-holder');
+    control.value='fixture-knowledge-ensemble-cross';control.dispatchEvent(new Event('change',{bubbles:true}));
+    await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+    return document.querySelector('#map').dataset.knowledgeTier==='group'
+      && document.querySelectorAll('.kg-node,.kg-edge').length===0
+      && document.querySelector('#map-scope').textContent.includes('0 records');
+  })()`);
+  await check('orchestra tier returns to its recorded root holder', `(async () => {
+    document.querySelector('button[data-knowledge-tier="universal"]').click();
+    await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+    return document.querySelector('#map-scope-holder').value==='fixture-knowledge-root'
+      && !!document.querySelector('.kg-node[data-knowledge-node="fixture-finding-root-1"]')
+      && !document.querySelector('.kg-node[data-knowledge-node="fixture-finding-a4"]');
+  })()`);
+  await screenshot('knowledge-orchestra-tier.png');
+  await navigate(origin + '/index.html?fixture=fixture-knowledge&knowledge-tier=group&knowledge-holder=fixture-knowledge-ensemble#seat=fixture-knowledge-player-a');
+  await check('shared address restores ensemble holdings independently of selected actor', `document.querySelector('#map').dataset.knowledgeTier==='group'
+    && document.querySelector('#map-scope-holder').value==='fixture-knowledge-ensemble'
+    && !!document.querySelector('.kg-node[data-knowledge-node="fixture-finding-a2"]')
+    && !document.querySelector('.kg-node[data-knowledge-node="fixture-finding-a4"]')`);
+  await screenshot('knowledge-ensemble-tier.png');
+  await check('explicit tier changes update the shareable address without page navigation', `(async () => {
+    const y=scrollY;
+    document.querySelector('button[data-knowledge-tier="worker"]').click();
+    await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+    const address=new URL(location.href);
+    return scrollY===y && address.searchParams.get('knowledge-tier')==='worker'
+      && address.searchParams.get('knowledge-holder')==='fixture-knowledge-player-a';
   })()`);
   await evaluate(`document.querySelector('#map-scope-all').click()`);
   await check('empty space never creates an actor knowledge node', `(() => {

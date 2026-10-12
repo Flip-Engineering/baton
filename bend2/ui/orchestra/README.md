@@ -44,6 +44,15 @@ reasoning and limits. Provenance and sharing appear in record details.
 Selection preserves the page position, graph camera and complete graph context.
 The detail panel scrolls within its own area.
 
+The knowledge tier controls select Orchestra, Ensemble or Individual holdings.
+Orchestra holdings belong to the selected Principal Conductor. Ensemble holdings
+contain records explicitly promoted into the selected ensemble. Individual
+holdings contain the selected actor's authored and received records. All tiers
+reads every holding. The selected tier and holder appear above the graph and in
+the page address. Selecting an actor follows its holdings when Individual is
+selected. References to records outside the selected holdings remain labeled in
+the graph.
+
 The agent hierarchy places equal reporting depths on one horizontal row and
 groups peers by their recorded ensembles. Fit hierarchy shows the complete
 structure; Read labels provides full-size cards with horizontal scrolling.

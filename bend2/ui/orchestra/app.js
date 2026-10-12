@@ -39,9 +39,9 @@ const state = {
   knowledgeActor: null,
   knowledgeActorId: "",
   knowledgeActorRequest: null,
-  // The knowledge the map is showing: universal by default, the selected worker's or
-  // group's holdings once one is chosen, all held records only when asked for.
+  // The selected knowledge tier and its recorded holder.
   knowledgeScope: { kind: "universal", id: "" },
+  knowledgeScopeExplicit: false,
   // The ensemble a reader has selected, when they picked one: the position the roster
   // marks and the address names, cleared when a seat selection takes the hash.
   ensembleId: null,
@@ -104,6 +104,7 @@ const el = {
   projectBody: document.getElementById("project-body"),
   projectLoad: document.getElementById("project-load"),
   mapScopeAll: document.getElementById("map-scope-all"),
+  mapScopeHolder: document.getElementById("map-scope-holder"),
   counts: document.getElementById("doc-counts"),
   find: document.getElementById("doc-find"),
   showEnded: document.getElementById("doc-ended"),
@@ -469,9 +470,8 @@ function select(id) {
   state.ensembleId = null;
   // A new selection clears the relation the record had asked the map to light.
   state.knowledgeFocusRelation = "";
-  // The map follows the selection into that worker's own holdings. Universal is the
-  // default and stays one click away on the map's own control.
-  if (state.knowledgeScope.kind !== "actor" || state.knowledgeScope.id !== id) {
+  // Individual holdings follow the selected actor within the chosen tier.
+  if (["actor", "worker"].includes(state.knowledgeScope.kind) && state.knowledgeScope.id !== id) {
     setKnowledgeScope({ kind: "actor", id: id });
   }
   // The project read follows the selection: an open project reloads for the new seat, and an
@@ -582,40 +582,93 @@ function fixtureActorKnowledge(id) {
     empty: authored.length === 0 && received.length === 0 && relations.length === 0 };
 }
 
-// Omit a repeated worker label when the holder's name includes that word.
 function scopeLabel(kind, id) {
   const holder = shortSeatId(id || "");
-  if (kind === "all") return "All held records";
+  if (kind === "all") return "All tiers";
   if (kind === "unstated") return "Held records";
-  if (kind === "group") return "Group " + (holder || "not named");
+  if (kind === "group") return "Ensemble: " + (holder || "choose a holder");
   if (kind === "worker" || kind === "actor") {
-    if (!holder) return "Worker holdings";
-    return holder.toLowerCase().indexOf("worker") === -1 ? "Worker " + holder : holder;
+    return "Individual: " + (holder || "choose a holder");
   }
-  return "Universal knowledge";
+  return "Orchestra" + (holder ? ": " + holder : " holdings");
 }
 
-// The scope the map shows: ?actor=ID for a worker's holdings, ?group=ENSEMBLE for the
-// recorded owner's, ?scope=all for every held record, and nothing for universal.
+function knowledgeTier(kind) { return kind === "actor" ? "worker" : kind; }
+
+function orchestraHolder() {
+  const known = (state.fixtureKnowledge || state.knowledge || {}).actors || {};
+  let id = state.subject || state.selectionId || "";
+  const seen = new Set();
+  while (id && !seen.has(id)) {
+    seen.add(id);
+    const actor = state.players.get(id) || known[id];
+    if (!actor) break;
+    if (!actor.parent && ["principal-conductor", "conductor"].includes(actor.role)) return id;
+    id = actor.parent || "";
+  }
+  const roots = [...state.players.values()].filter(p => !p.parent
+    && ["principal-conductor", "conductor"].includes(p.role));
+  return roots.length === 1 ? roots[0].id : "";
+}
+
+function knowledgeHolders(kind) {
+  if (kind === "group") return [...state.ensembles.values()].map(g => g.id).sort();
+  if (kind === "all") return [];
+  const known = (state.fixtureKnowledge || state.knowledge || {}).actors || {};
+  const actors = new Map(Object.entries(known).map(([id, actor]) => [id, { ...actor, id }]));
+  for (const actor of state.players.values()) actors.set(actor.id, actor);
+  return [...actors.values()].filter(p => kind === "worker" || (!p.parent
+    && ["principal-conductor", "conductor"].includes(p.role))).map(p => p.id).sort();
+}
+
+function chooseKnowledgeTier(kind) {
+  let id = "";
+  if (kind === "universal") id = orchestraHolder();
+  if (kind === "worker") id = state.selectionId || state.subject || knowledgeHolders(kind)[0] || "";
+  if (kind === "group") {
+    const selected = state.players.get(state.selectionId);
+    const group = [...state.ensembles.values()].find(g => g.owner === state.selectionId
+      || (g.members || []).includes(selected ? selected.id : state.selectionId));
+    id = state.ensembleId || (group && group.id) || knowledgeHolders(kind)[0] || "";
+  }
+  state.scientificSelected = "";
+  state.findingId = null;
+  setKnowledgeScope({ kind, id });
+}
+
+// Scope reads select authored or explicitly promoted holdings.
 function knowledgeScopeQuery() {
   const scope = state.knowledgeScope || { kind: "universal", id: "" };
-  if ((scope.kind === "actor" || scope.kind === "worker") && scope.id) return "?actor=" + encodeURIComponent(scope.id);
-  if (scope.kind === "group" && scope.id) return "?group=" + encodeURIComponent(scope.id);
+  if (scope.kind === "actor" || scope.kind === "worker") return scope.id ? "?actor=" + encodeURIComponent(scope.id) : "?scope=worker";
+  if (scope.kind === "group") return scope.id ? "?group=" + encodeURIComponent(scope.id) : "?scope=group";
   if (scope.kind === "all") return "?scope=all";
-  return "";
+  return scope.id ? "?scope=universal&subject=" + encodeURIComponent(scope.id) : "";
 }
 
 function setKnowledgeScope(scope) {
+  state.knowledgeScopeExplicit = true;
   state.knowledgeScope = scope || { kind: "universal", id: "" };
+  if (typeof history.replaceState === "function") {
+    const address = new URL(location.href);
+    address.searchParams.set("knowledge-tier", knowledgeTier(state.knowledgeScope.kind));
+    if (state.knowledgeScope.id) address.searchParams.set("knowledge-holder", state.knowledgeScope.id);
+    else address.searchParams.delete("knowledge-holder");
+    const scientific = new URLSearchParams(address.hash.slice(1));
+    if (scientific.has("science")) {
+      if (state.scientificSelected) {
+        scientific.set("scope", state.knowledgeScope.kind);
+        scientific.set("holder", state.knowledgeScope.id || "");
+        address.hash = scientific.toString();
+      } else address.hash = "";
+    }
+    history.replaceState(null, "", address.pathname + address.search + address.hash);
+  }
   renderMapScope();
   void loadKnowledgeOverview();
 }
 
-// The scope answered from the fixture with the rule the server applies: holders are the
-// parentless conductors for universal, the named session for a worker, the recorded owner
-// for a group, and null (every record) only for all. A scope holds what its holders
-// authored or had promoted into it, plus the actors and ancestors it touches; a relation
-// stays when a holder authored it or an end is held, the other end as the reference it is.
+// Fixture holdings use the live predicates. Ensemble holdings require a group
+// promotion. Authored relationships retain their outside references.
 function fixtureScopedKnowledge(scope) {
   const source = state.fixtureKnowledge || null;
   if (!source) return null;
@@ -637,8 +690,10 @@ function fixtureScopedKnowledge(scope) {
     });
     if (asking.id) holders = holders.filter((id) => id === asking.id);
   }
-  const held = holders === null ? findings : findings.filter((f) => holders.includes(f.author)
-    || allPromotions.some((p) => p.finding === f.id && holders.includes(p.destination)));
+  const held = holders === null ? findings : findings.filter((f) => asking.kind === "group"
+    ? allPromotions.some(p => p.finding === f.id && p.destinationKind === "group" && p.destination === asking.id)
+    : holders.includes(f.author) || allPromotions.some(p => p.finding === f.id
+      && (p.destinationKind || "session") === "session" && holders.includes(p.destination)));
   const present = new Set(held.map((f) => f.id));
   const promotions = allPromotions.filter((p) => present.has(p.finding));
   const touches = (end) => {
@@ -650,7 +705,13 @@ function fixtureScopedKnowledge(scope) {
   // it; otherwise the ones a holder authored or that touch a held finding, with the
   // other end kept as the reference it is.
   const heldRelations = holders === null ? relations
-    : relations.filter((r) => holders.includes(r.author) || touches(r.source) || touches(r.target));
+    : relations.filter((r) => (asking.kind !== "group" && holders.includes(r.author)) || touches(r.source) || touches(r.target));
+  const relationIds = new Set(heldRelations.map(r => r.id));
+  const heldEdges = holders === null ? (source.edges || []) : (source.edges || []).filter(edge =>
+    relationIds.has(edge.id) || (edge.provenance === "recorded-evidence" && touches(edge.source)));
+  const references = new Set(heldEdges.flatMap(edge => [edge.source, edge.target]));
+  const heldNodes = holders === null ? (source.nodes || []) : (source.nodes || []).filter(node =>
+    present.has(node.id) || (node.referenceOnly && references.has(node.reference)));
   const actors = {};
   const touch = (id) => {
     if (id === null || id === undefined || id === "") return null;
@@ -696,6 +757,8 @@ function fixtureScopedKnowledge(scope) {
     findings: held,
     promotions,
     relations: heldRelations,
+    nodes: heldNodes,
+    edges: heldEdges,
     actors,
     empty: held.length === 0 && promotions.length === 0 && heldRelations.length === 0,
   });
@@ -724,7 +787,6 @@ function clearSelection() {
   state.knowledgeOpen = false;
   state.findingId = null;
   state.knowledgeFocusRelation = "";
-  setKnowledgeScope({ kind: "universal", id: "" });
   if (typeof history.replaceState === "function") {
     history.replaceState(null, "", location.pathname + location.search);
   }
@@ -1130,6 +1192,9 @@ function renderPlateIndex() {
 }
 
 async function loadKnowledgeOverview() {
+  if (!state.knowledgeScopeExplicit && state.knowledgeScope.kind === "universal" && !state.knowledgeScope.id) {
+    state.knowledgeScope.id = orchestraHolder();
+  }
   const asked = knowledgeScopeQuery();
   if (state.fixtureName) {
     state.knowledge = fixtureScopedKnowledge(state.knowledgeScope);
@@ -1172,9 +1237,7 @@ async function loadKnowledgeOverview() {
   renderDocumentSoon();
 }
 
-// The map states which scope it drew, read from the scope the answer carries, and
-// offers the one step to every held record. The universal view is the default and
-// stays the way back.
+// Controls show the requested tier; the status names the holdings actually drawn.
 function renderMapScope() {
   if (!el.mapScope) return;
   const asked = state.knowledgeScope || { kind: "universal", id: "" };
@@ -1188,10 +1251,35 @@ function renderMapScope() {
   const what = scopeLabel(kind, id);
   const count = records + (records === 1 ? " record" : " records");
   el.mapScope.textContent = what + " · " + count;
+  const tier = knowledgeTier(asked.kind);
+  const map = document.getElementById("map");
+  if (map) map.dataset.knowledgeTier = knowledgeTier(kind);
+  for (const button of document.querySelectorAll("[data-knowledge-tier]")) {
+    if (button.tagName !== "BUTTON") continue;
+    button.setAttribute("aria-pressed", button.dataset.knowledgeTier === tier ? "true" : "false");
+  }
   if (el.mapScopeAll) {
-    const all = kind === "all";
+    const all = tier === "all";
     el.mapScopeAll.setAttribute("aria-pressed", all ? "true" : "false");
-    el.mapScopeAll.textContent = all ? "Back to universal knowledge" : "All held records";
+    el.mapScopeAll.textContent = "All tiers";
+  }
+  if (el.mapScopeHolder) {
+    const ids = knowledgeHolders(tier);
+    if (asked.id && !ids.includes(asked.id)) ids.push(asked.id);
+    const options = ids.length ? (tier === "universal" && !asked.id ? ["", ...ids] : ids) : [""];
+    const signature = JSON.stringify([tier, options]);
+    if (el.mapScopeHolder.dataset.options !== signature) {
+      el.mapScopeHolder.replaceChildren(...options.map(value => {
+        const option = document.createElement("option");
+        option.value = value;
+        option.textContent = value || (tier === "all" ? "Every holder"
+          : tier === "universal" && ids.length ? "All orchestra holdings" : "No recorded holder");
+        return option;
+      }));
+      el.mapScopeHolder.dataset.options = signature;
+    }
+    el.mapScopeHolder.value = asked.id || "";
+    el.mapScopeHolder.disabled = tier === "all" || !ids.length;
   }
 }
 
@@ -1529,9 +1617,6 @@ function applySnapshot(data, label) {
     const addressed = state.pendingSeat;
     state.pendingSeat = "";
     state.selectionId = addressed;
-    // The address restores the whole selection, not only the id: the map opens on
-    // that actor's holdings, the scope a row click sets.
-    setKnowledgeScope({ kind: "actor", id: addressed });
   }
   // A relation address opens what its seam stands for, once, on the same first
   // snapshot: the finding end for a cited relation, the claiming seat otherwise.
@@ -1771,7 +1856,7 @@ function selectEnsemble(id) {
   if (!group) return;
   state.ensembleId = group;
   writeEnsembleAddress(group);
-  setKnowledgeScope({ kind: "group", id: group });
+  if (state.knowledgeScope.kind === "group") setKnowledgeScope({ kind: "group", id: group });
   markDrawnStale();
 }
 
@@ -1818,6 +1903,11 @@ function init() {
     state.ensembleId = decodeURIComponent(ensembleAddress[1]);
     state.knowledgeScope = { kind: "group", id: state.ensembleId };
   }
+  const addressedTier = query.get("knowledge-tier");
+  if (["universal", "worker", "group", "all"].includes(addressedTier)) {
+    state.knowledgeScopeExplicit = true;
+    state.knowledgeScope = { kind: addressedTier, id: query.get("knowledge-holder") || "" };
+  }
 
   // The plate's section links move the reader without taking the record's address
   // with them: the seat or finding address stays in the bar, so a reload restores
@@ -1856,12 +1946,16 @@ function init() {
   }
   if (el.mapScopeAll) {
     el.mapScopeAll.addEventListener("click", () => {
-      // Universal knowledge is the default view; the one control discovers every
-      // held record and the same control names the way back.
       const all = (state.knowledgeScope || {}).kind === "all";
-      setKnowledgeScope(all ? { kind: "universal", id: "" } : { kind: "all", id: "" });
+      chooseKnowledgeTier(all ? "universal" : "all");
     });
   }
+  for (const button of document.querySelectorAll("button[data-knowledge-tier]")) {
+    button.addEventListener("click", () => chooseKnowledgeTier(button.dataset.knowledgeTier));
+  }
+  if (el.mapScopeHolder) el.mapScopeHolder.addEventListener("change", () => {
+    setKnowledgeScope({ kind: knowledgeTier(state.knowledgeScope.kind), id: el.mapScopeHolder.value });
+  });
   // The keyboard spine: one cursor walks the rows the reader can see, from anywhere in
   // the page. Typing fields and the pit and axis own their own keys, so both are left alone.
   document.addEventListener("keydown", (ev) => {

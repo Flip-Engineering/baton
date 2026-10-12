@@ -68,11 +68,18 @@
   <section class="map" id="map" tabindex="-1" aria-labelledby="map-title">
     <div class="movement-row">
       <h2 id="map-title" class="movement">Knowledge</h2>
-      <div class="doc-scope-row">
-        <span id="map-scope" class="doc-scope" role="status">Universal knowledge</span>
-        <button type="button" id="map-scope-all" class="doc-scope-btn" aria-pressed="false">All held
-          records</button>
+    </div>
+    <div class="knowledge-scope-bar">
+      <div class="knowledge-tiers" role="group" aria-label="Knowledge tier">
+        <button type="button" data-knowledge-tier="universal" aria-pressed="true">Orchestra</button>
+        <button type="button" data-knowledge-tier="group" aria-pressed="false">Ensemble</button>
+        <button type="button" data-knowledge-tier="worker" aria-pressed="false">Individual</button>
+        <button type="button" id="map-scope-all" aria-pressed="false">All tiers</button>
       </div>
+      <label class="knowledge-holder">Holder
+        <select id="map-scope-holder" aria-label="Knowledge holder"></select>
+      </label>
+      <span id="map-scope" class="knowledge-scope-state" role="status">Orchestra knowledge</span>
     </div>
     <div class="map-frame">
       <div id="knowledge-whole" class="doc-whole-mount"></div>

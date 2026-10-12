@@ -931,6 +931,49 @@ button:active { background: var(--wash); }
   border-bottom-color: var(--attention);
 }
 
+.knowledge-scope-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 24px;
+  min-height: 56px;
+  padding: 8px 0 16px;
+}
+
+.knowledge-tiers { display: flex; flex-wrap: wrap; gap: 4px; }
+.knowledge-tiers button {
+  appearance: none;
+  font: inherit;
+  font-size: var(--step2);
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: 2px solid transparent;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+.knowledge-tiers button[aria-pressed="true"] {
+  color: var(--selection);
+  border-bottom-color: currentColor;
+  background: var(--surface);
+}
+.knowledge-tiers button:hover { color: var(--ink); }
+.knowledge-tiers button:focus-visible,
+.knowledge-holder select:focus-visible { outline: 2px solid var(--selection); outline-offset: 2px; }
+.knowledge-holder { display: flex; align-items: center; gap: 8px; font-size: var(--step1); color: var(--muted); }
+.knowledge-holder select {
+  font: inherit;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  padding: 6px;
+  width: min(280px, 55vw);
+}
+.knowledge-scope-state { font-size: var(--step1); color: var(--muted); }
+.map[data-knowledge-tier="group"] .knowledge-tiers button[aria-pressed="true"] { color: var(--attention); }
+.map[data-knowledge-tier="worker"] .knowledge-tiers button[aria-pressed="true"] { color: var(--running); }
+
 /* A band's members as one state line: a tick per seat in the same inks the rows use,
    so a group's activity reads at a glance. */
 .doc-band-ticks {
