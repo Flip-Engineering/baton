@@ -23,6 +23,17 @@ also has a Claude Code adapter; this hierarchy did not qualify that route.
 
 ## Codex subscription login
 
+For this project's Orchestra, use `gpt-6.1-sol` for OpenAI implementation and
+source-review work. Use `gpt-6-luna` for focused tasks when the account's current
+model catalog lists it. Reserve `gpt-6-astra` for Principal and Associate
+Conductors. Confirm the selected model through the authenticated client's
+`model/list` response. The [Codex model documentation](https://learn.chatgpt.com/docs/models?surface=cli)
+describes account and client availability.
+
+Change an existing Player's model with `configure` after its current attempt
+ends. Keep its session identity, native conversation, assignment and workspace.
+Register an executable that supports the selected model for future turns.
+
 Use the existing ChatGPT subscription login. Select the native executable
 explicitly and check its login method:
 
