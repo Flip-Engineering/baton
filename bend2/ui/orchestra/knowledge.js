@@ -861,8 +861,10 @@
       if (selection && read.selected) {
         const selected = graph.edges.get(read.selected.slice(5));
         const focus = read.selected.startsWith("edge:") && selected
-          ? [layout.endpointKey(selected.source), layout.endpointKey(selected.target)] : [read.selected];
-        boxes = focus.map((key) => layout.positions.get(key)).filter(Boolean);
+          ? [layout.endpointKey(selected.source), layout.endpointKey(selected.target)]
+          : [read.selected, ...layout.links.filter((link) => link.from === read.selected || link.to === read.selected)
+            .flatMap((link) => [link.from, link.to])];
+        boxes = Array.from(new Set(focus)).map((key) => layout.positions.get(key)).filter(Boolean);
       }
       if (!boxes.length) boxes = [{x:0,y:0,width:layout.width,height:layout.height}];
       const left = Math.min(...boxes.map((box) => box.x)) - 40;
