@@ -22,10 +22,12 @@ EXE = ROOT / '.scratch/bend2/baton2'
 
 
 def bank_failure_evidence(case):
-    # Failures, errors and subtest failures are recorded on the result's
-    # public failure and error lists before cleanups run. Write them to the
-    # fixture directory first, so every later cleanup step works with its
-    # evidence already retained.
+    # Failures, errors and subtest failures are recorded on the runner
+    # result's failure and error lists before cleanups run. The result is
+    # reached through the private _outcome attribute; the lists themselves
+    # are the records the runner maintains. Write them to the fixture
+    # directory first, so every later cleanup step works with its evidence
+    # already retained.
     outcome = getattr(case, '_outcome', None)
     result = getattr(outcome, 'result', None)
     recorded = []
@@ -35,8 +37,9 @@ def bank_failure_evidence(case):
     else:
         for name in ('failures', 'errors'):
             for entry in getattr(result, name, None) or ():
-                recorded.append(entry[1] if isinstance(entry, tuple)
-                                else str(entry))
+                traceback = entry[1] if isinstance(entry, tuple) else str(entry)
+                recorded.append('[' + name + '][' + case.id() + ']\n'
+                                + traceback)
         if not recorded:
             recorded.append('failure-retention: no failure or error was '
                             'recorded on the result at cleanup time')
@@ -44,27 +47,83 @@ def bank_failure_evidence(case):
         (case.directory / 'failure-tracebacks.txt').write_text(
             '\n'.join(recorded) + '\n')
     except OSError as error:
-        # Retention must not mask the primary failure.
-        print('failure-retention: could not write evidence:', error,
-              file=sys.stderr)
+        # Retention must not mask the primary failure; entries from other
+        # tests in a shared suite result stay identified by their labels.
+        try:
+            print('failure-retention: could not write evidence:', error,
+                  file=sys.stderr)
+        except OSError:
+            pass
+
+
+def report_write_error(prefix, error):
+    try:
+        print(prefix + ': could not write evidence:', error, file=sys.stderr)
+    except OSError:
+        pass
+
+
+def run_recorded_child(case, argv, timeout, database=None, expected=None):
+    # One direct-child runner for the fixture's owned subprocesses. It
+    # appends the complete argv, pid, deadline, exit status and streams to
+    # commands.jsonl on every path, including timeouts. The timeout path
+    # signals only this Popen child, reaps it with a bounded wait, and
+    # records an unresolved fate when descendant processes still hold the
+    # pipes instead of waiting for them.
+    child = subprocess.Popen(argv, env=case.environment,
+                             stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, text=True)
+    record = {'argv': [str(part) for part in argv],
+              'database': str(database) if database is not None else None,
+              'pid': child.pid, 'deadlineSeconds': timeout,
+              'direct_wait_completed': True}
+    try:
+        record['stdout'], record['stderr'] = child.communicate(timeout=timeout)
+        record['code'] = child.returncode
+        record['childFate'] = 'exited'
+    except subprocess.TimeoutExpired:
+        child.kill()
+        record['direct_wait_completed'] = False
+        stdout = stderr = ''
+        record['childFate'] = 'killed-reaped'
+        try:
+            stdout, stderr = child.communicate(timeout=10)
+        except subprocess.TimeoutExpired:
+            record['childFate'] = 'killed-pipes-held-by-descendants'
+            for stream in (child.stdout, child.stderr):
+                try:
+                    stream.close()
+                except OSError:
+                    pass
+        try:
+            child.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            record['childFate'] = 'unreaped'
+        record['stdout'] = stdout
+        record['stderr'] = stderr
+        record['code'] = child.returncode
+    if expected:
+        record.update(expected)
+    try:
+        with (case.directory / 'commands.jsonl').open('a') as output:
+            output.write(json.dumps(record) + '\n')
+    except OSError as error:
+        # An evidence write failure must not mask a primary failure.
+        report_write_error('command-record', error)
+    return record, child
 
 
 def shutdown_fixture_owner(case, timeout=30):
     bank_failure_evidence(case)
     config = json.loads((case.directory / 'fixture.json').read_text())
     argv = [config['exe'], '--instance-shutdown', str(case.db)]
-    try:
-        result = subprocess.run(argv, env=case.environment, capture_output=True,
-                                text=True, timeout=timeout)
-    except subprocess.TimeoutExpired:
-        raise AssertionError('Instance shutdown timed out after '
-                             + str(timeout) + 's for ' + str(case.db))
-    with (case.directory / 'commands.jsonl').open('a') as output:
-        output.write(json.dumps({'argv': argv, 'code': result.returncode,
-                                 'expectedShutdownResult': 0,
-                                 'stdout': result.stdout, 'stderr': result.stderr,
-                                 'direct_wait_completed': True}) + '\n')
-    case.assertEqual(result.returncode, 0, result.stderr)
+    record, _ = run_recorded_child(case, argv, timeout,
+                                   database=str(case.db),
+                                   expected={'expectedShutdownResult': 0})
+    if record['childFate'] != 'exited':
+        raise AssertionError('Instance shutdown did not complete for '
+                             + str(case.db) + ': ' + json.dumps(record))
+    case.assertEqual(record['code'], 0, record['stderr'])
 
 
 FIXTURE = r'''import json,os,pathlib,re,socket,subprocess,sys
@@ -364,21 +423,14 @@ class Control(unittest.TestCase):
         # success both for a live owner and for a database with no owner.
         bank_failure_evidence(self)
         argv = [str(EXE), '--instance-shutdown', str(database)]
-        try:
-            result = subprocess.run(argv, env=self.environment,
-                                    capture_output=True, text=True,
-                                    timeout=timeout)
-        except subprocess.TimeoutExpired:
-            raise AssertionError('Instance shutdown timed out after '
-                                 + str(timeout) + 's for ' + str(database))
-        with (self.directory / 'commands.jsonl').open('a') as output:
-            output.write(json.dumps({'argv': argv, 'code': result.returncode,
-                                     'expectedShutdownResult': 0,
-                                     'stdout': result.stdout,
-                                     'stderr': result.stderr,
-                                     'direct_wait_completed': True}) + '\n')
-        self.assertEqual(result.returncode, 0, result.stderr)
-        return result
+        record, _ = run_recorded_child(self, argv, timeout,
+                                       database=str(database),
+                                       expected={'expectedShutdownResult': 0})
+        if record['childFate'] != 'exited':
+            raise AssertionError('Instance shutdown did not complete for '
+                                 + str(database) + ': ' + json.dumps(record))
+        self.assertEqual(record['code'], 0, record['stderr'])
+        return record
 
     def settle_fixtures(self, budget=60.0):
         # The settle observes the fixture directory under one shared budget:
@@ -403,6 +455,10 @@ class Control(unittest.TestCase):
                           + 'of ' + str(remaining) + ' seconds; cached rows: '
                           + json.dumps(rows, indent=1))
             if not rows:
+                if time.monotonic() >= deadline:
+                    self.fail('Fixture enumeration returned empty after the '
+                              + 'shared settle budget was spent; cached rows: '
+                              + json.dumps(rows, indent=1))
                 return
             time.sleep(min(.01, max(0.0, deadline - time.monotonic())))
 
@@ -1036,26 +1092,15 @@ class Control(unittest.TestCase):
         long_db = self.directory / ('d' * 177 + '.db')
         self.addCleanup(self.shutdown_database, long_db)
         def against_db(*args):
-            child = subprocess.Popen([str(EXE), str(long_db), *map(str, args)],
-                                     env=self.environment, stdout=subprocess.PIPE,
-                                     stderr=subprocess.PIPE, text=True)
-            try:
-                stdout, stderr = child.communicate(timeout=120)
-            except subprocess.TimeoutExpired:
-                child.kill()
-                child.communicate()
+            argv = [str(EXE), str(long_db), *map(str, args)]
+            record, child = run_recorded_child(self, argv, 120,
+                                               database=str(long_db))
+            if record['childFate'] != 'exited':
                 self.fail('Command against ' + str(long_db)
-                          + ' exceeded 120 seconds: '
-                          + ' '.join(map(str, args)))
-            with (self.directory / 'commands.jsonl').open('a') as output:
-                output.write(json.dumps({'argv': list(map(str, args)),
-                                         'database': str(long_db),
-                                         'pid': child.pid,
-                                         'code': child.returncode,
-                                         'stdout': stdout, 'stderr': stderr,
-                                         'direct_wait_completed': True}) + '\n')
-            return subprocess.CompletedProcess(child.args, child.returncode,
-                                               stdout, stderr)
+                          + ' did not complete: ' + json.dumps(record))
+            return subprocess.CompletedProcess(child.args, record['code'],
+                                               record['stdout'],
+                                               record['stderr'])
         for args in (['attach', 'root', 'codex', 'saved-root', ''],
                      ['role', 'root', 'principal-conductor'],
                      ['attach', 'operator', 'operator', '', ''],
