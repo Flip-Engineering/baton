@@ -303,7 +303,7 @@ def knowledge_conflict_sql(+name: String, +table: String, +id: String, +guards: 
 def notice_statement(+id: String, +author: String, +claim: String, +evidence: String, +limits: String) -> String:
   "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(notice_id(id)) ++ "," ++ C.q(author) ++ "," ++ notice_target(author) ++ ",'question'," ++ notice_body(id,author) ++ " WHERE EXISTS(SELECT 1 FROM knowledge WHERE id=" ++ C.q(id) ++ " AND author=" ++ C.q(author) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits) ++ ") AND " ++ notice_target(author) ++ " IS NOT NULL"
   ++ " ON CONFLICT(id) DO NOTHING;"
-  ++ knowledge_conflict_sql("knowledge-notice-conflict","messages",C.q(notice_id(id)),notice_target(author) ++ " IS NOT NULL AND EXISTS(SELECT 1 FROM knowledge WHERE id=" ++ C.q(id) ++ " AND author=" ++ C.q(author) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits) ++ ")", "sender=" ++ C.q(author) ++ " AND recipient=" ++ notice_target(author) ++ " AND kind='question' AND json_extract(body,'$.finding')=" ++ C.q(id) ++ " AND json_extract(body,'$.author')=" ++ C.q(author),"'sender',sender,'recipient',recipient,'kind',kind")
+  ++ knowledge_conflict_sql("knowledge-notice-conflict","messages",C.q(notice_id(id)),notice_target(author) ++ " IS NOT NULL AND EXISTS(SELECT 1 FROM knowledge WHERE id=" ++ C.q(id) ++ " AND author=" ++ C.q(author) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits) ++ ")", "sender=" ++ C.q(author) ++ " AND recipient=" ++ notice_target(author) ++ " AND kind='question' AND body=" ++ notice_body(id,author),"'sender',sender,'recipient',recipient,'kind',kind")
 
 def finding_statement(+id: String, +author: String, +claim: String, +evidence: String, +limits: String) -> String:
   "INSERT INTO knowledge(id,author,claim,evidence,limits) SELECT " ++ C.q(id) ++ "," ++ C.q(author) ++ "," ++ C.q(claim) ++ "," ++ C.q(evidence) ++ "," ++ C.q(limits) ++ " WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(author) ++ ")"
@@ -386,13 +386,31 @@ def v1_promotion_statement(+id: String, +promoter: String, +source_kind: String,
   v1_promotion_insert(id,promoter,source_kind,source,destination_kind,destination,finding,"knowledge_v1") ++ v1_promotion_insert(id,promoter,source_kind,source,destination_kind,destination,finding,"knowledge_edges_v1")
   ++ knowledge_conflict_sql("promotion-id-conflict","knowledge_promotions_v1",C.q(id),"(" ++ v1_promotion_admitted(promoter,source_kind,source,destination_kind,destination,finding) ++ ")",v1_promotion_coordinates(id,promoter,source_kind,source,destination_kind,destination,finding),"'recordId',record_id,'source',source,'sourceKind',source_kind,'destination',destination,'destinationKind',destination_kind")
 
-# Handoff firing: an admitted v1 promotion opens one evaluation request
+# Post-insert stored promotion: the promotion row with these exact
+# coordinates must stand. Refused transactions commit without rollback,
+# so an admission gate would commit evaluation side effects for refused
+# promotion-id conflicts. Stored coordinates fire fresh promotions,
+# stay silent on conflicts, and redeliver idempotently.
+def v1_promotion_stored(+id: String, +promoter: String, +source_kind: String, +source: String, +destination_kind: String, +destination: String, +finding: String) -> String:
+  "EXISTS(SELECT 1 FROM knowledge_promotions_v1 WHERE " ++ v1_promotion_coordinates(id,promoter,source_kind,source,destination_kind,destination,finding) ++ ")"
+
+# Handoff firing: a stored v1 promotion opens one evaluation request
 # addressed to the promotion destination in the same transaction. The
 # request id names no promotion id, so the first promotion opens the
 # request and re-promotion, redelivery and twin hits keep it.
-def v1_promote_eval_request(+promoter: String, +source_kind: String, +source: String, +destination_kind: String, +destination: String, +finding: String) -> String:
+def v1_promote_eval_request(+id: String, +promoter: String, +source_kind: String, +source: String, +destination_kind: String, +destination: String, +finding: String) -> String:
   +table = "(SELECT CASE WHEN EXISTS(SELECT 1 FROM knowledge_v1 WHERE id=" ++ C.q(finding) ++ ") THEN 'knowledge_v1' ELSE 'knowledge_edges_v1' END)"
-  V1.eval_insert(table,C.q(finding),C.q(destination_kind),C.q(destination),C.q("handoff"),C.q(promoter),"coalesce((" ++ v1_promotion_admitted(promoter,source_kind,source,destination_kind,destination,finding) ++ "),0)")
+  V1.eval_insert(table,C.q(finding),C.q(destination_kind),C.q(destination),C.q("handoff"),C.q(promoter),v1_promotion_stored(id,promoter,source_kind,source,destination_kind,destination,finding))
+
+# Handoff evaluation-event notice: a distinct deterministic notice for the
+# handoff request, so a legacy-first promotion twin retains its original
+# notice while the new request still opens its own owed event.
+def v1_handoff_eval_notice_id(+destination_kind: String, +destination: String, +finding: String) -> String:
+  V1.eval_request_id(C.q(finding),C.q(destination_kind),C.q(destination),C.q("handoff")) ++ " || ':notice'"
+
+def v1_handoff_eval_notice(+id: String, +promoter: String, +source_kind: String, +source: String, +destination_kind: String, +destination: String, +finding: String) -> String:
+  +owner = promotion_owner(destination_kind,destination)
+  "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ v1_handoff_eval_notice_id(destination_kind,destination,finding) ++ "," ++ C.q(promoter) ++ "," ++ owner ++ ",'question',json_object('evaluationRequest'," ++ V1.eval_request_id(C.q(finding),C.q(destination_kind),C.q(destination),C.q("handoff")) ++ ",'recordId'," ++ C.q(finding) ++ ",'destinationKind'," ++ C.q(destination_kind) ++ ",'destination'," ++ C.q(destination) ++ ",'requestedBy'," ++ C.q(promoter) ++ ",'trigger','handoff') WHERE " ++ v1_promotion_stored(id,promoter,source_kind,source,destination_kind,destination,finding) ++ " ON CONFLICT(id) DO NOTHING;"
 
 def v1_promotion_notice_body() -> String:
   "json_object('promotion',p.id,'recordId',p.record_id,'author',p.author,'source',p.source,'destination',p.destination,'promotedBy',p.promoted_by,'sourceKind',p.source_kind,'destinationKind',p.destination_kind,'evaluationRequestId'," ++ V1.eval_request_id("p.record_id","p.destination_kind","p.destination",C.q("handoff")) ++ ")"
@@ -428,20 +446,39 @@ def eval_answer_row(+id_expr: String, +extra: String) -> String:
 def eval_explicit_id(+record_id: String, +dest_kind: String, +dest: String) -> String:
   V1.eval_request_id(C.q(record_id),C.q(dest_kind),C.q(dest),C.q("explicit"))
 
-def eval_notice_id_str(+record_id: String, +dest_kind: String, +dest: String) -> String:
-  "eval:v1:" ++ record_id ++ ":" ++ dest_kind ++ ":" ++ dest ++ ":explicit:notice"
-
 def eval_notice_body() -> String:
   "json_object('evaluationRequest',e.id,'recordId',e.record_id,'destinationKind',e.destination_kind,'destination',e.destination,'requestedBy',e.requested_by,'trigger',e.trigger)"
 
+# The destination must exist under the requested kind: a session-kind
+# request names a live session, a group-kind request a live Ensemble, and
+# any other kind admits nothing. The requester must be a registered
+# session. Refusals name their rule and commit neither the request nor
+# the notice row.
+def eval_endpoint_exists(kind: String, +destination: String) -> String:
+  match kind:
+    case "session": "(EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(destination) ++ "))"
+    case "group": "(EXISTS(SELECT 1 FROM ensembles WHERE id=" ++ C.q(destination) ++ "))"
+    case _: "(1=0)"
+
+def eval_explicit_record(+record_id: String) -> String:
+  "(EXISTS(SELECT 1 FROM knowledge_v1 WHERE id=" ++ C.q(record_id) ++ ") OR EXISTS(SELECT 1 FROM knowledge_edges_v1 WHERE id=" ++ C.q(record_id) ++ "))"
+
+def eval_explicit_requester(+requester: String) -> String:
+  "(EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(requester) ++ "))"
+
+def eval_explicit_errors(+record_id: String, +dest_kind: String, +dest: String, +requester: String) -> String:
+  "SELECT json_object('error','eval-unknown-record','recordId'," ++ C.q(record_id) ++ ") WHERE NOT " ++ eval_explicit_record(record_id) ++ ";"
+  ++ "SELECT json_object('error','eval-unknown-destination','destinationKind'," ++ C.q(dest_kind) ++ ",'destination'," ++ C.q(dest) ++ ") WHERE " ++ eval_explicit_record(record_id) ++ " AND NOT " ++ eval_endpoint_exists(dest_kind,dest) ++ ";"
+  ++ "SELECT json_object('error','eval-unknown-requester','requestedBy'," ++ C.q(requester) ++ ") WHERE " ++ eval_explicit_record(record_id) ++ " AND " ++ eval_endpoint_exists(dest_kind,dest) ++ " AND NOT " ++ eval_explicit_requester(requester) ++ ";"
+
 def eval_explicit_statements(+record_id: String, +dest_kind: String, +dest: String, +requester: String) -> String:
   +table = "(SELECT CASE WHEN EXISTS(SELECT 1 FROM knowledge_v1 WHERE id=" ++ C.q(record_id) ++ ") THEN 'knowledge_v1' ELSE 'knowledge_edges_v1' END)"
-  +record = "(EXISTS(SELECT 1 FROM knowledge_v1 WHERE id=" ++ C.q(record_id) ++ ") OR EXISTS(SELECT 1 FROM knowledge_edges_v1 WHERE id=" ++ C.q(record_id) ++ "))"
-  +endpoint = "(EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(dest) ++ ") OR EXISTS(SELECT 1 FROM ensembles WHERE id=" ++ C.q(dest) ++ "))"
+  +gate = eval_explicit_record(record_id) ++ " AND " ++ eval_endpoint_exists(dest_kind,dest) ++ " AND " ++ eval_explicit_requester(requester)
   +owner = promotion_owner(dest_kind,dest)
   +nid = eval_explicit_id(record_id,dest_kind,dest) ++ " || ':notice'"
-  V1.eval_insert(table,C.q(record_id),C.q(dest_kind),C.q(dest),C.q("explicit"),C.q(requester),"coalesce((" ++ record ++ " AND " ++ endpoint ++ " AND " ++ C.q(dest_kind) ++ " IN ('session','group')),0)")
+  V1.eval_insert(table,C.q(record_id),C.q(dest_kind),C.q(dest),C.q("explicit"),C.q(requester),"coalesce((" ++ gate ++ "),0)")
   ++ "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ nid ++ "," ++ C.q(requester) ++ "," ++ owner ++ ",'question'," ++ eval_notice_body() ++ " FROM knowledge_evaluations e WHERE e.id=" ++ eval_explicit_id(record_id,dest_kind,dest) ++ " ON CONFLICT(id) DO NOTHING;"
+  ++ eval_explicit_errors(record_id,dest_kind,dest,requester)
   ++ eval_answer_row(eval_explicit_id(record_id,dest_kind,dest),"")
 
 # Retained decisions are rationale rows only: the decider must be the
@@ -468,7 +505,7 @@ def promotion_notice_statement(+id: String, +promoter: String, +source_kind: Str
 
 def promote_statements(+id: String, +promoter: String, +source_kind: String, +source: String, +destination_kind: String, +destination: String, +finding: String) -> String:
   promotion_statement(id,promoter,source_kind,source,destination_kind,destination,finding) ++ promotion_notice_statement(id,promoter,source_kind,source,destination_kind,destination,finding) ++ promotion_answer(id,promoter,source_kind,source,destination_kind,destination,finding)
-  ++ v1_promotion_statement(id,promoter,source_kind,source,destination_kind,destination,finding) ++ v1_promote_eval_request(promoter,source_kind,source,destination_kind,destination,finding) ++ v1_promotion_notice_statement(id,promoter,source_kind,source,destination_kind,destination,finding) ++ v1_promotion_answer(id,promoter,source_kind,source,destination_kind,destination,finding)
+  ++ v1_promotion_statement(id,promoter,source_kind,source,destination_kind,destination,finding) ++ v1_promote_eval_request(id,promoter,source_kind,source,destination_kind,destination,finding) ++ v1_handoff_eval_notice(id,promoter,source_kind,source,destination_kind,destination,finding) ++ v1_promotion_notice_statement(id,promoter,source_kind,source,destination_kind,destination,finding) ++ v1_promotion_answer(id,promoter,source_kind,source,destination_kind,destination,finding)
 
 # A committed record whose notice could not be delivered refuses with the retry
 # path; the write itself stands.
@@ -476,6 +513,18 @@ def answered(delivery: Result<&1,&1,U32 & String,String>) -> IO(Unit):
   match delivery:
     case Fail{error}: IO.die(Unit,1,"The row is committed and its notice is undelivered. Read the pending inbox and retry the delivery.")
     case Done{output}: write_answer(output)
+
+# A committed write whose notices could not be delivered refuses with the
+# retry path; the first failure names the undelivered notice.
+def answered_both(first: Result<&1,&1,U32 & String,String>, second: Result<&1,&1,U32 & String,String>) -> IO(Unit):
+  match first:
+    case Fail{error}: answered(first)
+    case Done{output}: answered(second)
+
+def deliver_eval_message(db: String, nid: String, saved: String) -> IO(Result<&1,&1,U32 & String,String>):
+  match saved:
+    case SNil{}: IO.pure(Result<&1,&1,U32 & String,String>,Done{SNil{}})
+    case SCon{h,t}: Delivery.deliver(db,nid,"1",SCon{h,t})
 
 # Record: one transaction writes the finding and the notice, the notice is then
 # delivered as an ordinary message, and the answer is the stored finding.
@@ -523,23 +572,20 @@ def record_v1(+db: String, +node: String) -> IO(Unit):
     raw : String <- IO.try(String,DB.Sql.read(db,"SELECT json_extract(" ++ C.q(node) ++ ",'$.id');"))
     +saved : String <- IO.try(String,Store.transact_sql(db,commit_v1_sql(V1.node_statements(node))))
     Bool.pick(IO(Unit),Store.refused(saved),IO.die(Unit,2,saved),do IO<Unit>:
-      delivery : Result<&1,&1,U32 & String,String> <- deliver_record(db,Tx.trim_nl(raw),saved)
-      answered(delivery))
+      first : Result<&1,&1,U32 & String,String> <- deliver_record(db,Tx.trim_nl(raw),saved)
+      nid : String <- IO.try(String,DB.Sql.read(db,"SELECT " ++ V1.node_eval_notice_id(node) ++ ";"))
+      second : Result<&1,&1,U32 & String,String> <- deliver_eval_message(db,Tx.trim_nl(nid),saved)
+      answered_both(first,second))
 
 # Edges mirror the record path: one transaction writes the row, its
 # evaluation request and the author notice, the notice is then delivered as
 # an ordinary message, and the answer is the stored envelope.
-def deliver_edge_eval(db: String, nid: String, saved: String) -> IO(Result<&1,&1,U32 & String,String>):
-  match saved:
-    case SNil{}: IO.pure(Result<&1,&1,U32 & String,String>,Done{SNil{}})
-    case SCon{h,t}: Delivery.deliver(db,nid,"1",SCon{h,t})
-
 def relate_v1(+db: String, +edge: String) -> IO(Unit):
   do IO<Unit>:
     +saved : String <- IO.try(String,Store.transact_sql(db,commit_v1_sql(V1.edge_statements(edge))))
     Bool.pick(IO(Unit),Store.refused(saved),IO.die(Unit,2,saved),do IO<Unit>:
-      raw : String <- IO.try(String,DB.Sql.read(db,"SELECT 'eval:v1:' || json_extract(" ++ C.q(edge) ++ ",'$.id') || ':session:' || json_extract(" ++ C.q(edge) ++ ",'$.author') || ':authored:notice';"))
-      delivery : Result<&1,&1,U32 & String,String> <- deliver_edge_eval(db,Tx.trim_nl(raw),saved)
+      raw : String <- IO.try(String,DB.Sql.read(db,"SELECT " ++ V1.edge_eval_notice_id(edge) ++ ";"))
+      delivery : Result<&1,&1,U32 & String,String> <- deliver_eval_message(db,Tx.trim_nl(raw),saved)
       answered(delivery))
 
 # Read: the shared findings as a JSON array. An unregistered reader receives the
@@ -580,24 +626,27 @@ def promote_scoped(+db: String, +id: String, promoter: String, source_kind: Stri
   do IO<Unit>:
     +saved : String <- IO.try(String,Store.transact_sql(db,commit_v1_sql(promote_statements(id,promoter,source_kind,source,destination_kind,destination,finding))))
     Bool.pick(IO(Unit),Store.refused(saved),IO.die(Unit,2,saved),do IO<Unit>:
-      delivery : Result<&1,&1,U32 & String,String> <- deliver_promotion(db,id,saved)
-      answered(delivery))
+      first : Result<&1,&1,U32 & String,String> <- deliver_promotion(db,id,saved)
+      nid : String <- IO.try(String,DB.Sql.read(db,"SELECT " ++ v1_handoff_eval_notice_id(destination_kind,destination,finding) ++ ";"))
+      second : Result<&1,&1,U32 & String,String> <- deliver_eval_message(db,Tx.trim_nl(nid),saved)
+      answered_both(first,second))
 
 def promote(db: String, id: String, promoter: String, source: String, destination: String, finding: String) -> IO(Unit):
   promote_scoped(db,id,promoter,"session",source,"session",destination,finding)
 
 # Explicit request: one transaction writes the request and its destination
 # notice, then delivers the notice and answers the stored request.
-def deliver_eval_notice(db: String, record_id: String, dest_kind: String, dest: String, saved: String) -> IO(Result<&1,&1,U32 & String,String>):
+def deliver_eval_message(db: String, nid: String, saved: String) -> IO(Result<&1,&1,U32 & String,String>):
   match saved:
     case SNil{}: IO.pure(Result<&1,&1,U32 & String,String>,Done{SNil{}})
-    case SCon{h,t}: Delivery.deliver(db,eval_notice_id_str(record_id,dest_kind,dest),"1",SCon{h,t})
+    case SCon{h,t}: Delivery.deliver(db,nid,"1",SCon{h,t})
 
 def request_evaluation(+db: String, +record_id: String, +dest_kind: String, +dest: String, +requester: String) -> IO(Unit):
   do IO<Unit>:
     +saved : String <- IO.try(String,Store.transact_sql(db,commit_v1_sql(eval_explicit_statements(record_id,dest_kind,dest,requester))))
     Bool.pick(IO(Unit),Store.refused(saved),IO.die(Unit,2,saved),do IO<Unit>:
-      delivery : Result<&1,&1,U32 & String,String> <- deliver_eval_notice(db,record_id,dest_kind,dest,saved)
+      raw : String <- IO.try(String,DB.Sql.read(db,"SELECT " ++ eval_explicit_id(record_id,dest_kind,dest) ++ " || ':notice';"))
+      delivery : Result<&1,&1,U32 & String,String> <- deliver_eval_message(db,Tx.trim_nl(raw),saved)
       answered(delivery))
 
 # Decision: one transaction records the rationale row and answers it. No
