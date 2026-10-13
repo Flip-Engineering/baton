@@ -29,8 +29,13 @@ import ../host/sqlite.bend as DB
 def eval_schema_sql() -> String:
   "CREATE TABLE IF NOT EXISTS knowledge_evaluations(id TEXT UNIQUE, record_table TEXT, record_id TEXT, destination_kind TEXT DEFAULT 'session', destination TEXT, trigger TEXT, requested_by TEXT, decision TEXT, rationale TEXT, decided_by TEXT);"
 
+# Evaluation identity length-prefixes the two free-form coordinates
+# (record and destination IDs admit colons) while the closed kind and
+# trigger vocabularies stay bare. Distinct coordinate tuples always produce
+# distinct identities, so no second admitted record reuses the first
+# record's request, and envelope and notice linkage resolve exactly.
 def eval_request_id(+record_id: String, +dest_kind: String, +dest: String, +trigger: String) -> String:
-  "'eval:v1:' || " ++ record_id ++ " || ':' || " ++ dest_kind ++ " || ':' || " ++ dest ++ " || ':' || " ++ trigger
+  "'eval:v1:' || length(" ++ record_id ++ ") || ':' || " ++ record_id ++ " || ':' || " ++ dest_kind ++ " || ':' || length(" ++ dest ++ ") || ':' || " ++ dest ++ " || ':' || " ++ trigger
 
 def eval_insert(+record_table: String, +record_id: String, +dest_kind: String, +dest: String, +trigger: String, +requester: String, +gate: String) -> String:
   "INSERT INTO knowledge_evaluations(id,record_table,record_id,destination_kind,destination,trigger,requested_by,decision,rationale,decided_by) SELECT " ++ eval_request_id(record_id,dest_kind,dest,trigger) ++ "," ++ record_table ++ "," ++ record_id ++ "," ++ dest_kind ++ "," ++ dest ++ "," ++ trigger ++ "," ++ requester ++ ",NULL,NULL,NULL WHERE " ++ gate ++ " ON CONFLICT(id) DO NOTHING;"
@@ -206,13 +211,35 @@ def node_insert(+node: String) -> String:
   "INSERT INTO knowledge_v1(id,author,kind,statement,context,evidence,limits,uncertainty,details,payload) SELECT json_extract(" ++ j ++ ",'$.id'),json_extract(" ++ j ++ ",'$.author'),json_extract(" ++ j ++ ",'$.kind'),json_extract(" ++ j ++ ",'$.statement'),json_extract(" ++ j ++ ",'$.context'),json_extract(" ++ j ++ ",'$.evidence'),json_extract(" ++ j ++ ",'$.limits'),json_extract(" ++ j ++ ",'$.uncertainty'),json_extract(" ++ j ++ ",'$.details')," ++ j ++ " WHERE " ++ node_admitted(node)
   ++ " ON CONFLICT(id) DO NOTHING;"
 
-# Authored-availability firing: an accepted node write opens one evaluation
-# request addressed to its author in the same transaction. The gate repeats
-# the insert admission null-proofed, so refused writes and twin-suppressed
-# rows fire nothing, and the deterministic id makes replay idempotent.
+# Post-insert stored equality: the stored row must equal the incoming
+# payload in its table with no same-ID row in the other table. Refused
+# transactions commit their SELECT error rows without rolling back, so a
+# payload-admission gate would commit evaluation side effects for refused
+# same-ID rewrites. Stored equality fires fresh writes, stays silent on
+# conflicts, and replays idempotently through the deterministic id.
+def node_stored(+node: String) -> String:
+  +j = C.q(node)
+  +id = "json_extract(" ++ j ++ ",'$.id')"
+  "EXISTS(SELECT 1 FROM knowledge_v1 WHERE id=" ++ id ++ " AND " ++ node_same(node) ++ ") AND NOT EXISTS(SELECT 1 FROM knowledge_edges_v1 WHERE id=" ++ id ++ ")"
+
+# Authored-availability firing: a stored node write opens one evaluation
+# request addressed to its author in the same transaction.
 def node_eval_request(+node: String) -> String:
   +j = C.q(node)
-  eval_insert(C.q("knowledge_v1"),"json_extract(" ++ j ++ ",'$.id')",C.q("session"),"json_extract(" ++ j ++ ",'$.author')",C.q("authored"),"json_extract(" ++ j ++ ",'$.author')","coalesce((" ++ node_admitted(node) ++ "),0)")
+  eval_insert(C.q("knowledge_v1"),"json_extract(" ++ j ++ ",'$.id')",C.q("session"),"json_extract(" ++ j ++ ",'$.author')",C.q("authored"),"json_extract(" ++ j ++ ",'$.author')",node_stored(node))
+
+# Authored-availability notice for nodes: a distinct deterministic
+# evaluation-event notice addressed to the author destination. The shared
+# record notice keeps its original finding/author body and receipt, so a
+# legacy-first twin retains its notice while the new request still opens
+# its own owed event.
+def node_eval_notice_id(+node: String) -> String:
+  +j = C.q(node)
+  "json_extract(" ++ j ++ ",'$.id') || ':eval-notice'"
+
+def node_eval_notice(+node: String) -> String:
+  +j = C.q(node)
+  "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ node_eval_notice_id(node) ++ ",json_extract(" ++ j ++ ",'$.author'),(SELECT id FROM sessions WHERE id=json_extract(" ++ j ++ ",'$.author')),'question',json_object('evaluationRequest'," ++ eval_request_id("json_extract(" ++ j ++ ",'$.id')",C.q("session"),"json_extract(" ++ j ++ ",'$.author')",C.q("authored")) ++ ",'recordId',json_extract(" ++ j ++ ",'$.id'),'destinationKind','session','destination',json_extract(" ++ j ++ ",'$.author'),'requestedBy',json_extract(" ++ j ++ ",'$.author'),'trigger','authored') WHERE " ++ node_stored(node) ++ " ON CONFLICT(id) DO NOTHING;"
 
 def node_notice(+node: String) -> String:
   +j = C.q(node)
@@ -220,11 +247,11 @@ def node_notice(+node: String) -> String:
   +author = "json_extract(" ++ j ++ ",'$.author')"
   +nid = "json_extract(" ++ j ++ ",'$.id')||':notice'"
   +parent = "(SELECT parent FROM sessions WHERE id=" ++ author ++ ")"
-  +body = "json_object('finding'," ++ id ++ ",'author'," ++ author ++ ",'evaluationRequestId'," ++ eval_request_id(id,C.q("session"),author,C.q("authored")) ++ ",'evaluationDestinationKind','session','evaluationDestination'," ++ author ++ ")"
+  +body = "json_object('finding'," ++ id ++ ",'author'," ++ author ++ ")"
   +same = "EXISTS(SELECT 1 FROM knowledge_v1 WHERE id=" ++ id ++ " AND " ++ node_same(node) ++ ")"
   "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ nid ++ "," ++ author ++ "," ++ parent ++ ",'question'," ++ body ++ " WHERE " ++ same ++ " AND " ++ parent ++ " IS NOT NULL"
   ++ " ON CONFLICT(id) DO NOTHING;"
-  ++ "SELECT json_object('error','knowledge-notice-conflict','id'," ++ nid ++ ",'stored',json_object('sender',sender,'recipient',recipient,'kind',kind),'condition','This knowledge identity is already stored with different content.','next','Read knowledge and retain the stored record, then retry the new input under a different ID.') FROM messages WHERE id=" ++ nid ++ " AND " ++ parent ++ " IS NOT NULL AND " ++ same ++ " AND NOT (sender=" ++ author ++ " AND recipient=" ++ parent ++ " AND kind='question' AND json_extract(body,'$.finding')=" ++ id ++ " AND json_extract(body,'$.author')=" ++ author ++ ");"
+  ++ "SELECT json_object('error','knowledge-notice-conflict','id'," ++ nid ++ ",'stored',json_object('sender',sender,'recipient',recipient,'kind',kind),'condition','This knowledge identity is already stored with different content.','next','Read knowledge and retain the stored record, then retry the new input under a different ID.') FROM messages WHERE id=" ++ nid ++ " AND " ++ parent ++ " IS NOT NULL AND " ++ same ++ " AND NOT (sender=" ++ author ++ " AND recipient=" ++ parent ++ " AND kind='question' AND body=" ++ body ++ ");"
 
 def node_errors(+node: String) -> String:
   +j = C.q(node)
@@ -271,7 +298,7 @@ def node_answer(+node: String) -> String:
   "SELECT " ++ node_envelope("n") ++ " FROM knowledge_v1 n WHERE n.id=" ++ id ++ ";"
 
 def node_statements(+node: String) -> String:
-  node_insert(node) ++ node_eval_request(node) ++ node_notice(node) ++ node_errors(node) ++ node_answer(node)
+  node_insert(node) ++ node_eval_request(node) ++ node_eval_notice(node) ++ node_notice(node) ++ node_errors(node) ++ node_answer(node)
 
 def edge_kind_of(+edge: String) -> String:
   "json_extract(" ++ C.q(edge) ++ ",'$.kind')"
@@ -404,10 +431,15 @@ def edge_insert(+edge: String) -> String:
   "INSERT INTO knowledge_edges_v1(id,author,kind,source,target,context,basis,rationale,limits,uncertainty,details,payload) SELECT json_extract(" ++ j ++ ",'$.id'),json_extract(" ++ j ++ ",'$.author'),json_extract(" ++ j ++ ",'$.kind'),json_extract(" ++ j ++ ",'$.source'),json_extract(" ++ j ++ ",'$.target'),json_extract(" ++ j ++ ",'$.context'),json_extract(" ++ j ++ ",'$.basis'),json_extract(" ++ j ++ ",'$.rationale'),json_extract(" ++ j ++ ",'$.limits'),json_extract(" ++ j ++ ",'$.uncertainty'),json_extract(" ++ j ++ ",'$.details')," ++ j ++ " WHERE " ++ edge_admitted(edge)
   ++ " ON CONFLICT(id) DO NOTHING;"
 
+def edge_stored(+edge: String) -> String:
+  +j = C.q(edge)
+  +id = "json_extract(" ++ j ++ ",'$.id')"
+  "EXISTS(SELECT 1 FROM knowledge_edges_v1 WHERE id=" ++ id ++ " AND " ++ edge_same(edge) ++ ") AND NOT EXISTS(SELECT 1 FROM knowledge_v1 WHERE id=" ++ id ++ ")"
+
 # Authored-availability firing for edges, mirroring the node path.
 def edge_eval_request(+edge: String) -> String:
   +j = C.q(edge)
-  eval_insert(C.q("knowledge_edges_v1"),"json_extract(" ++ j ++ ",'$.id')",C.q("session"),"json_extract(" ++ j ++ ",'$.author')",C.q("authored"),"json_extract(" ++ j ++ ",'$.author')","coalesce((" ++ edge_admitted(edge) ++ "),0)")
+  eval_insert(C.q("knowledge_edges_v1"),"json_extract(" ++ j ++ ",'$.id')",C.q("session"),"json_extract(" ++ j ++ ",'$.author')",C.q("authored"),"json_extract(" ++ j ++ ",'$.author')",edge_stored(edge))
 
 # Authored-availability notice for edges: edges carry no parent notice, so
 # the evaluation request prompts its author destination directly through an
@@ -415,11 +447,11 @@ def edge_eval_request(+edge: String) -> String:
 # review.
 def edge_eval_notice_id(+edge: String) -> String:
   +j = C.q(edge)
-  "'eval:v1:' || json_extract(" ++ j ++ ",'$.id') || ':session:' || json_extract(" ++ j ++ ",'$.author') || ':authored:notice'"
+  "json_extract(" ++ j ++ ",'$.id') || ':eval-notice'"
 
 def edge_eval_notice(+edge: String) -> String:
   +j = C.q(edge)
-  "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ edge_eval_notice_id(edge) ++ ",json_extract(" ++ j ++ ",'$.author'),(SELECT id FROM sessions WHERE id=json_extract(" ++ j ++ ",'$.author')),'question',json_object('evaluationRequest'," ++ eval_request_id("json_extract(" ++ j ++ ",'$.id')",C.q("session"),"json_extract(" ++ j ++ ",'$.author')",C.q("authored")) ++ ",'recordId',json_extract(" ++ j ++ ",'$.id'),'destinationKind','session','destination',json_extract(" ++ j ++ ",'$.author'),'requestedBy',json_extract(" ++ j ++ ",'$.author'),'trigger','authored') WHERE coalesce((" ++ edge_admitted(edge) ++ "),0) ON CONFLICT(id) DO NOTHING;"
+  "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ edge_eval_notice_id(edge) ++ ",json_extract(" ++ j ++ ",'$.author'),(SELECT id FROM sessions WHERE id=json_extract(" ++ j ++ ",'$.author')),'question',json_object('evaluationRequest'," ++ eval_request_id("json_extract(" ++ j ++ ",'$.id')",C.q("session"),"json_extract(" ++ j ++ ",'$.author')",C.q("authored")) ++ ",'recordId',json_extract(" ++ j ++ ",'$.id'),'destinationKind','session','destination',json_extract(" ++ j ++ ",'$.author'),'requestedBy',json_extract(" ++ j ++ ",'$.author'),'trigger','authored') WHERE " ++ edge_stored(edge) ++ " ON CONFLICT(id) DO NOTHING;"
 
 def edge_answer(+edge: String) -> String:
   +j = C.q(edge)
