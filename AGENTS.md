@@ -27,6 +27,10 @@ does not justify adding a mechanism. Remove unused APIs, duplicate state and
 procedural requirements that obstruct ordinary work. Judge removals by whether
 the affected real work runs. Issue #598 records this requirement.
 
+State that can be derived from a durable source is derived again after a crash.
+A duplicate wake notice or a repeated operation is an acceptable crash result.
+Do not add a separate durable store to prevent that result.
+
 ## No budget control flow
 
 Budgets must never control admission, continuation, completion, input acceptance,
@@ -48,12 +52,20 @@ one.
 
 ## No bookkeeping ledgers in place of function
 
-Do not model code changes or test outcomes as entries in a hand-maintained ledger. That means no
-checked-in list of expected test failures, no "converged" declarations, no census file, and no test
-that pins counts or line numbers of other code. A landing gate answers one question: does this change
-break something that works on the target? It runs the selected tests on the target and on the
-change, and blocks only on a test that passes on the target and fails with the change. Known breakage
-lives in the issue tracker. The existing expected-red manifest is being removed (#580); do not add to it.
+Do not require hand-maintained records to accompany functional changes. That means no checked-in
+list of expected test failures, no "converged" declarations, no census file, no test that pins
+counts or line numbers of other code, and no author-written declaration of a fact that tooling
+can derive. Tests assert independently specified behavior, including protocol constants and
+functional fixtures. Tooling derives inventories from their sources when it uses them. A count
+in a review record is a measurement at that commit. Known breakage lives in the issue tracker.
+
+Selected tests run on the target and candidate. A candidate failure blocks when the target has
+no failure with the same file, test and failure type. A new selected test failure blocks. An
+incomplete verdict cannot authorize landing. Every selected file must be accounted for.
+
+Runtime decisions about agent work derive from durable source and current state. Editing review
+records must not change check selection, admission, refusal, permissions or continuation. Status,
+census and completion declarations must not be prerequisites for continuing work.
 
 # Writing rules
 
