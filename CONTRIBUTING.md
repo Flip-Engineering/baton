@@ -47,8 +47,9 @@ review and conflict correction.
 ## Publication
 
 Review the final diff and the results for affected behavior. Fetch the current
-remote branch and integrate its changes before publishing. Push `main` and
-`bend2-rewrite` fast-forward only. Verify the actual remote advertisement and distinguish local
+remote branch and integrate its changes before publishing. Publish `main` with
+a fast-forward push. Updates to the retained `bend2-rewrite` branch require
+coordination of that branch's source. Verify the actual remote advertisement and distinguish local
 checks, source publication, hosted CI, artifact installation and a release.
 
 Native workflow qualification uses the harnesses' existing logins.
