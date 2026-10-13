@@ -4,17 +4,35 @@ name: bend2-native-development
   pull_request:
     branches: [bend2-rewrite, main]
     paths:
+      - '.github/workflows/bend2-native.yml'
+      - 'LICENSE'
+      - 'NOTICE'
       - 'bend2/src/**'
       - 'bend2/scripts/build-native.sh'
       - 'bend2/scripts/package-native.py'
+      - 'bend2/scripts/smoke-native-artifact.py'
+      - 'bend2/scripts/*.mjs'
+      - 'bend2/harness/**'
+      - 'bend2/ui/**'
+      - 'bend2/context/**'
       - 'docs/bend2/reference/toolchain/install-2.0.25.sh'
+      - 'docs/bend2/reference/upstream/LICENSE'
   push:
     branches: [bend2-rewrite, main]
     paths:
+      - '.github/workflows/bend2-native.yml'
+      - 'LICENSE'
+      - 'NOTICE'
       - 'bend2/src/**'
       - 'bend2/scripts/build-native.sh'
       - 'bend2/scripts/package-native.py'
+      - 'bend2/scripts/smoke-native-artifact.py'
+      - 'bend2/scripts/*.mjs'
+      - 'bend2/harness/**'
+      - 'bend2/ui/**'
+      - 'bend2/context/**'
       - 'docs/bend2/reference/toolchain/install-2.0.25.sh'
+      - 'docs/bend2/reference/upstream/LICENSE'
   workflow_dispatch:
     inputs:
       release_version:
