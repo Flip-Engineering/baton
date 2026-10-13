@@ -77,7 +77,7 @@ and recovery limits.
 [Contributing](CONTRIBUTING.md) covers source acceptance.
 [Readiness](docs/bend2/readiness.md) records qualification and remaining release
 requirements. The [1.0 scope](docs/bend2/release-1.0.md) states the supported
-workflow and recovery boundaries. Development uses the `bend2-rewrite` branch.
+workflow and recovery boundaries. Development uses the `main` branch.
 
 ## License
 

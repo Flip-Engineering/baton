@@ -1,6 +1,7 @@
 # Contributing to Baton2
 
-Develop the native coordinator on `bend2-rewrite`. Read
+Develop the native coordinator on `main`. The `bend2-rewrite` branch retains
+the native development history. Read
 [AGENTS.md](AGENTS.md) for the code and writing rules, and
 [the architecture](docs/bend2/architecture.md) for module responsibilities.
 Coordinate changes on the selected integration branch. Preserve other agents'
@@ -46,8 +47,8 @@ review and conflict correction.
 ## Publication
 
 Review the final diff and the results for affected behavior. Fetch the current
-remote branch and integrate its changes before publishing. Push `bend2-rewrite`
-fast-forward only. Verify the actual remote advertisement and distinguish local
+remote branch and integrate its changes before publishing. Push `main` and
+`bend2-rewrite` fast-forward only. Verify the actual remote advertisement and distinguish local
 checks, source publication, hosted CI, artifact installation and a release.
 
 Native workflow qualification uses the harnesses' existing logins.

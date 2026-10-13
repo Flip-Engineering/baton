@@ -3,7 +3,7 @@
 ## Current status
 
 Baton2 has a native coordinator, harness supervision, retained messaging, scoped
-knowledge and checked Git landing. Development and verification use `bend2-rewrite`.
+knowledge and checked Git landing. Development and verification use `main`.
 The current native hierarchy, Git workflow and scoped process-loss recovery
 qualifications passed. A same-host staged source build passed. The [native development artifact procedure](native-artifacts.md) binds packaging
 to complete exact-source gates and extracted use. Hosted artifact execution and
