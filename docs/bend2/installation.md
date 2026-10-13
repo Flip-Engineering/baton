@@ -1,8 +1,10 @@
 # Native installation
 
-Baton 2.0 is developed on `main`. The Darwin arm64 package carries the complete native payload: the
-executable, the packaged Conductor adapters, the Git identity helper, notices,
-complete gate logs and the source/build manifest. The [historical 1.0 scope](release-1.0.md)
+Baton 2.0 is developed on `main`. The Darwin arm64 archive contains the native
+executable, packaged Conductor adapters, Git identity helper, selected context
+providers, notices and source/build manifest. Build logs are retained in the
+package output directory. Hosted CI also retains the smoke logs.
+The [historical 1.0 scope](release-1.0.md)
 records the supported platform and qualifications of that archive.
 A source build produces a native executable and remains the procedure
 for other hosts and architectures. The original npm package and its smoke checks

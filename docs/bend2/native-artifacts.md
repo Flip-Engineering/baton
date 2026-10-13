@@ -4,7 +4,7 @@
 
 ## Build and package
 
-Build dependencies are Python 3, Git, clang, SQLite development files, and Bend 2.0.25. Install Bend with the versioned [toolchain installer](../reference/toolchain/install-2.0.25.sh). The installer verifies the official compiler archive.
+Build dependencies are Python 3, Git, clang, SQLite development files, and Bend 2.0.25. Install Bend with the versioned [toolchain installer](reference/toolchain/install-2.0.25.sh). The installer verifies the official compiler archive.
 
 On Darwin arm64, run:
 
