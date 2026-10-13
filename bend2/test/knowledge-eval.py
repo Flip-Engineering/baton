@@ -50,6 +50,13 @@ def edge(author, ident, kind, source, target, **overrides):
     return payload
 
 
+def req(record_id, destination, trigger='authored', kind='session'):
+    # Mirrors eval_request_id: the two free-form coordinates are
+    # length-prefixed so distinct tuples never share an identity.
+    return (f'eval:v1:{len(record_id)}:{record_id}:{kind}:'
+            f'{len(destination)}:{destination}:{trigger}')
+
+
 class KnowledgeEval(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(dir=ROOT / '.scratch/bend2')
@@ -111,7 +118,7 @@ class KnowledgeEval(unittest.TestCase):
     def test_authored_request_opens_on_record_v1(self):
         answer = self.record(node('grand', 'ev-q1', 'question'))
         self.assertEqual(answer['evaluations'], [{
-            'requestId': 'eval:v1:ev-q1:session:grand:authored',
+            'requestId': req('ev-q1', 'grand'),
             'trigger': 'authored',
             'destinationKind': 'session',
             'destination': 'grand',
@@ -121,6 +128,106 @@ class KnowledgeEval(unittest.TestCase):
             'decidedBy': None,
         }])
         self.assertEqual(self.evaluations('ev-q1'), answer['evaluations'])
+        owed = self.call('delivery', 'ev-q1:eval-notice')
+        self.assertEqual(owed['recipient'], 'grand')
+        self.assertEqual(json.loads(owed['body'])['evaluationRequest'],
+                         req('ev-q1', 'grand'))
+        self.assertIsNone(owed['receipt'])
+
+    def test_colon_tuples_keep_distinct_identities(self):
+        # Under plain colon joining these two legal tuples shared one id;
+        # length-prefixing keeps them distinct with exact linkage.
+        self.player('c')
+        self.player('b:session:c')
+        self.record(node('c', 'a:session:b', 'question'))
+        self.record(node('b:session:c', 'a', 'question'))
+        first = req('a:session:b', 'c')
+        second = req('a', 'b:session:c')
+        self.assertNotEqual(first, second)
+        self.assertEqual([row['requestId'] for row in self.evaluations('a:session:b')],
+                         [first])
+        self.assertEqual([row['requestId'] for row in self.evaluations('a')],
+                         [second])
+        for ident, nid, dest in ((first, 'a:session:b:eval-notice', 'c'),
+                                (second, 'a:eval-notice', 'b:session:c')):
+            owed = self.call('delivery', nid)
+            self.assertEqual(owed['recipient'], dest)
+            self.assertEqual(json.loads(owed['body'])['evaluationRequest'], ident)
+
+    def test_legacy_first_twin_keeps_notice_and_opens_eval_event(self):
+        self.call('record-typed', 'twin-1', 'grand', 'finding',
+                  'Twin claim', 'run:twin', 'Twin limits')
+        stored = self.call('delivery', 'twin-1:notice')
+        self.assertEqual(json.loads(stored['body']),
+                         {'finding': 'twin-1', 'author': 'grand'})
+        self.record(node('grand', 'twin-1', 'question'))
+        again = self.call('delivery', 'twin-1:notice')
+        self.assertEqual((again['sender'], again['recipient'], again['kind'],
+                          json.loads(again['body'])),
+                         (stored['sender'], stored['recipient'], stored['kind'],
+                          json.loads(stored['body'])))
+        self.assertEqual(again['receipt'], stored['receipt'])
+        owed = self.call('delivery', 'twin-1:eval-notice')
+        self.assertEqual(owed['recipient'], 'grand')
+        self.assertEqual(json.loads(owed['body'])['evaluationRequest'],
+                         req('twin-1', 'grand'))
+        self.assertIsNone(owed['receipt'])
+        # Byte-equal replay opens nothing further.
+        self.record(node('grand', 'twin-1', 'question'))
+        self.assertEqual(len(self.evaluations('twin-1')), 1)
+
+    def test_receipted_legacy_first_twin_still_owes_eval_event(self):
+        self.call('record-typed', 'twin-2', 'grand', 'finding',
+                  'Twin claim', 'run:twin', 'Twin limits')
+        self.call('ack', 'twin-2:notice', 'worker', 'Reviewed legacy twin.')
+        stored = self.call('delivery', 'twin-2:notice')
+        self.assertEqual(stored['receipt'], 'Reviewed legacy twin.')
+        self.record(node('grand', 'twin-2', 'question'))
+        again = self.call('delivery', 'twin-2:notice')
+        self.assertEqual(again['receipt'], 'Reviewed legacy twin.')
+        self.assertEqual(json.loads(again['body']),
+                         {'finding': 'twin-2', 'author': 'grand'})
+        owed = self.call('delivery', 'twin-2:eval-notice')
+        self.assertEqual(json.loads(owed['body'])['evaluationRequest'],
+                         req('twin-2', 'grand'))
+        self.assertIsNone(owed['receipt'])
+
+    def test_changed_author_node_conflict_commits_no_eval_or_notice(self):
+        self.record(node('grand', 'ev-clash', 'question'))
+        before = self.evaluations('ev-clash')
+        self.assertEqual(len(before), 1)
+        clash = node('sibling', 'ev-clash', 'question')
+        refused = self.call('record-v1', json.dumps(clash), success=False)
+        self.assertIn('v1-node-id-conflict', refused.stderr)
+        self.assertIn('grand', refused.stderr)
+        self.assertEqual(self.evaluations('ev-clash'), before)
+        self.assertEqual(self.detail('ev-clash')['author'], 'grand')
+        kept = self.call('delivery', 'ev-clash:eval-notice')
+        self.assertEqual(kept['recipient'], 'grand')
+        self.assertEqual(json.loads(kept['body'])['evaluationRequest'],
+                         req('ev-clash', 'grand'))
+        self.assertEqual(json.loads(kept['body'])['requestedBy'], 'grand')
+
+    def test_changed_author_edge_conflict_commits_no_eval_or_notice(self):
+        self.record(node('grand', 'ev-cs', 'evidence'))
+        self.record(node('grand', 'ev-cd', 'claim'))
+        self.relate(edge('grand', 'ev-ce', 'supports',
+                         ('ev-cs', 'evidence'), ('ev-cd', 'claim'),
+                         details={'bearing': 'test bearing'}))
+        before = self.evaluations('ev-ce')
+        self.assertEqual(len(before), 1)
+        clash = edge('sibling', 'ev-ce', 'supports',
+                     ('ev-cs', 'evidence'), ('ev-cd', 'claim'),
+                     details={'bearing': 'test bearing'})
+        refused = self.call('relate-v1', json.dumps(clash), success=False)
+        self.assertIn('v1-edge-id-conflict', refused.stderr)
+        self.assertIn('grand', refused.stderr)
+        self.assertEqual(self.evaluations('ev-ce'), before)
+        kept = self.call('delivery', 'ev-ce:eval-notice')
+        self.assertEqual(kept['recipient'], 'grand')
+        self.assertEqual(json.loads(kept['body'])['evaluationRequest'],
+                         req('ev-ce', 'grand'))
+        self.assertEqual(json.loads(kept['body'])['requestedBy'], 'grand')
 
     def test_authored_request_opens_on_relate_v1(self):
         self.record(node('grand', 'ev-src', 'evidence'))
@@ -129,7 +236,7 @@ class KnowledgeEval(unittest.TestCase):
                                   ('ev-src', 'evidence'), ('ev-dst', 'claim'),
                                   details={'bearing': 'test bearing'}))
         self.assertEqual([row['requestId'] for row in answer['evaluations']],
-                         ['eval:v1:ev-e1:session:grand:authored'])
+                         [req('ev-e1', 'grand')])
         self.assertEqual(answer['evaluations'][0]['trigger'], 'authored')
 
     def test_handoff_request_opens_on_first_promotion(self):
@@ -138,11 +245,16 @@ class KnowledgeEval(unittest.TestCase):
                                  'sibling', 'ev-h1')
         v1 = [row for row in answers if 'recordId' in row][0]
         self.assertEqual(v1['evaluationRequestId'],
-                         'eval:v1:ev-h1:session:sibling:handoff')
+                         req('ev-h1', 'sibling', 'handoff'))
         notice = self.call('delivery', 'ev-hp1:promotion-notice')
         self.assertEqual(notice['recipient'], 'sibling')
         self.assertEqual(json.loads(notice['body'])['evaluationRequestId'],
-                         'eval:v1:ev-h1:session:sibling:handoff')
+                         req('ev-h1', 'sibling', 'handoff'))
+        owed = self.call('delivery', 'ev-hp1:eval-notice')
+        self.assertEqual(owed['recipient'], 'sibling')
+        self.assertEqual(json.loads(owed['body'])['evaluationRequest'],
+                         req('ev-h1', 'sibling', 'handoff'))
+        self.assertIsNone(owed['receipt'])
         held = self.evaluations('ev-h1')
         self.assertEqual([(row['trigger'], row['destination']) for row in held],
                          [('authored', 'grand'), ('handoff', 'sibling')])
@@ -199,11 +311,10 @@ class KnowledgeEval(unittest.TestCase):
         self.relate(edge('grand', 'ev-ne', 'supports',
                          ('ev-ns', 'evidence'), ('ev-nd', 'claim'),
                          details={'bearing': 'test bearing'}))
-        notice = self.call('delivery', 'eval:v1:ev-ne:session:grand:authored:notice')
+        notice = self.call('delivery', 'ev-ne:eval-notice')
         self.assertEqual(notice['recipient'], 'grand')
         body = json.loads(notice['body'])
-        self.assertEqual(body['evaluationRequest'],
-                         'eval:v1:ev-ne:session:grand:authored')
+        self.assertEqual(body['evaluationRequest'], req('ev-ne', 'grand'))
         self.assertEqual(body['destination'], 'grand')
         self.assertEqual(body['trigger'], 'authored')
 
