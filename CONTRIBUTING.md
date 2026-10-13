@@ -62,7 +62,7 @@ and missing observations explicit in their evidence.
 ## Original implementation and historical records
 
 The original JavaScript implementation and prototype are retained in Git
-history and the `master` branch. The preserved `evidence/pre-native-only-f85647cc`
+history and the `archive/javascript` branch. The preserved `evidence/pre-native-only-f85647cc`
 source also contains their branch-local tree before removal. Use a separate
 checkout at an explicit revision when comparing original Baton with Baton2.
 The comparison driver takes `--old-repo` and `--old-ref` and reads that source.

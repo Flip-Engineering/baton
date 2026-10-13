@@ -1,6 +1,6 @@
 # Native installation
 
-The native coordinator is built from `bend2-rewrite`. Baton2 1.0 ships as a
+The native coordinator is developed on `main`. Baton2 1.0 ships as a
 versioned Darwin arm64 archive that carries the complete native payload: the
 executable, the packaged Conductor adapters, the Git identity helper, notices,
 complete gate logs and the source/build manifest. [Baton2 1.0 scope](release-1.0.md)
