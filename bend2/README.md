@@ -1,4 +1,4 @@
-# Baton2 command guide
+# Baton command guide
 
 The [architecture](../docs/bend2/architecture.md) describes the implemented
 coordinator, native harness adapters, Git operations and recovery.
@@ -477,7 +477,7 @@ describes scoped retrieval and explicit all-data discovery.
 ## Native Conductor delivery
 
 These controls require current development source; the
-[released 1.0 installation](../docs/bend2/installation.md#install-the-released-archive)
+[historical 1.0 installation](../docs/bend2/installation.md#install-the-historical-10-archive)
 retains its version-specific interface. Set the installed coordinator, native
 Codex executable, repository and mutable state paths, and save the Principal's
 task in `TASK_FILE`:

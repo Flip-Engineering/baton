@@ -1,4 +1,4 @@
-# Contributing to Baton2
+# Contributing to Baton
 
 Develop the native coordinator on `main`. The `bend2-rewrite` branch retains
 the native development history. Read
@@ -6,10 +6,10 @@ the native development history. Read
 [the architecture](docs/bend2/architecture.md) for module responsibilities.
 Coordinate changes on the selected integration branch. Preserve other agents'
 source, branches, worktrees, uncommitted work and retained execution evidence.
-The [Baton2 todo](docs/bend2/todo.md) links current implementation and
+The [Baton todo](docs/bend2/todo.md) links current implementation and
 qualification follow-up work to its GitHub issues.
 
-Baton2 project source is licensed under the [Apache License 2.0](LICENSE).
+Baton project source is licensed under the [Apache License 2.0](LICENSE).
 Preserve [project attribution](NOTICE) and the vendored Bend reference's upstream
 license notices in distributions.
 
@@ -64,7 +64,7 @@ and missing observations explicit in their evidence.
 The original JavaScript implementation and prototype are retained in Git
 history and the `archive/javascript` branch. The preserved `evidence/pre-native-only-f85647cc`
 source also contains their branch-local tree before removal. Use a separate
-checkout at an explicit revision when comparing original Baton with Baton2.
+checkout at an explicit revision when comparing the JavaScript and native implementations.
 The comparison driver takes `--old-repo` and `--old-ref` and reads that source.
 The JS landing adapter reads the target repository's runner and selected tests.
 

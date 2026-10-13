@@ -1,8 +1,8 @@
-# Baton2 readiness
+# Baton 2.0 readiness
 
 ## Current status
 
-Baton2 has a native coordinator, harness supervision, retained messaging, scoped
+Baton has a native coordinator, harness supervision, retained messaging, scoped
 knowledge and checked Git landing. Development and verification use `main`.
 The current native hierarchy, Git workflow and scoped process-loss recovery
 qualifications passed. A same-host staged source build passed. The [native development artifact procedure](native-artifacts.md) binds packaging
@@ -11,8 +11,9 @@ release distribution require their own successful qualification.
 
 The September prototype [go/no-go record](go-no-go.md) remains historical evidence.
 The [implemented architecture](architecture.md) defines the current native workflow,
-recovery and publication paths. The [1.0 scope](release-1.0.md) and the six release
-gates below define 1.0 acceptance. Full working-day use remains unqualified.
+recovery and publication paths. The [historical 1.0 scope](release-1.0.md) records
+the earlier archive's acceptance. The six release gates below apply to Baton 2.0.
+Full working-day use remains unqualified.
 
 ## Published evidence
 
@@ -99,7 +100,7 @@ successful hierarchy outcome.
 
 ## Release gates
 
-Before a 1.0 release:
+Before publishing Baton 2.0:
 
 1. Resolve observed coordinator defects and publish their measured repairs.
 2. Resolve the supported-workflow qualification failures identified by the

@@ -52,7 +52,7 @@ python3 "$BATON2_RUN/source-retained/bend2/scripts/smoke-native-artifact.py" \
 mv "$BATON2_RUN/source-retained" "$BATON2_SOURCE"
 ~~~
 
-The archive root is baton2-development-darwin-arm64 by default. --release-version 1.0.0 selects baton2-1.0.0-darwin-arm64 and records the release version in the manifest. Release versions start with a letter or digit and contain letters, digits, dots, underscores, plus signs or hyphens. Release packaging requires the project root LICENSE.
+The archive root is `baton2-development-darwin-arm64` by default. Baton 2.0 uses `--release-version 2.0.0`, which selects `baton2-2.0.0-darwin-arm64` and records `2.0.0` in the manifest. Release versions start with a letter or digit and contain letters, digits, dots, underscores, plus signs or hyphens. Release packaging requires the project root LICENSE.
 
 ## Package contents and distribution terms
 

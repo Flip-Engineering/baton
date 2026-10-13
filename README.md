@@ -1,6 +1,6 @@
-# Baton2
+# Baton 2.0
 
-Baton2 coordinates native coding agents on one host. A Principal Conductor
+Baton coordinates native coding agents on one host. A Principal Conductor
 recruits agents, sends tasks and guidance, receives reports, reviews committed
 changes, lands them onto a Git branch and publishes that branch to an explicit
 remote. Associate Conductors coordinate delegated teams.
@@ -42,7 +42,7 @@ baton2 /absolute/path/state.db inbox operator --pretty
 
 `start` records the Principal and operator, configures its receiver and starts
 detached task delivery. Inspect reports, receipts and turns for completion.
-The immutable 1.0 archive retains its version-specific interface and launch
+The historical 1.0 archive retains its version-specific interface and launch
 requirements in the installation guide.
 
 ## Coordination
@@ -76,11 +76,11 @@ and recovery limits.
 
 [Contributing](CONTRIBUTING.md) covers source acceptance.
 [Readiness](docs/bend2/readiness.md) records qualification and remaining release
-requirements. The [1.0 scope](docs/bend2/release-1.0.md) states the supported
-workflow and recovery boundaries. Development uses the `main` branch.
+requirements. The [historical 1.0 scope](docs/bend2/release-1.0.md) records that
+archive's workflow and recovery boundaries. Development uses the `main` branch.
 
 ## License
 
-Baton2 project source is licensed under the [Apache License 2.0](LICENSE).
+Baton project source is licensed under the [Apache License 2.0](LICENSE).
 [NOTICE](NOTICE) records project attribution. The [upstream Bend reference](docs/bend2/reference/upstream/LICENSE)
 and compiler/runtime retain their separate license notices.

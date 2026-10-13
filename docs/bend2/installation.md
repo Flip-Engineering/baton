@@ -1,19 +1,18 @@
 # Native installation
 
-The native coordinator is developed on `main`. Baton2 1.0 ships as a
-versioned Darwin arm64 archive that carries the complete native payload: the
+Baton 2.0 is developed on `main`. The Darwin arm64 package carries the complete native payload: the
 executable, the packaged Conductor adapters, the Git identity helper, notices,
-complete gate logs and the source/build manifest. [Baton2 1.0 scope](release-1.0.md)
-states the supported platform and the finite qualifications of the released
-workflow. A source build produces a native executable and remains the procedure
+complete gate logs and the source/build manifest. The [historical 1.0 scope](release-1.0.md)
+records the supported platform and qualifications of that archive.
+A source build produces a native executable and remains the procedure
 for other hosts and architectures. The original npm package and its smoke checks
 are retained with the original implementation in Git history.
 [Native development artifacts](native-artifacts.md) describe archive packaging,
 the extracted smoke procedure and hosted CI.
 
-## Install the released archive
+## Install the historical 1.0 archive
 
-Baton2 1.0 ships for macOS 27 arm64 from immutable source
+The archive published as `baton2-v1.0.0` targets macOS 27 arm64 from immutable source
 `ea514a28e080317b223414af9a2327a6b53384e6`. The procedure downloads the archive
 and its two sidecar files, verifies the frozen digests, extracts the complete
 payload under a version prefix and creates the ordinary `~/.local/bin/baton2`
@@ -147,7 +146,7 @@ systems and architectures need their own build and execution qualification.
 ## Install a context module
 
 Acquire a module from a locally supplied, already-built module directory or an
-extracted Baton2 distribution:
+extracted Baton distribution:
 
 ```sh
 baton2 /absolute/path/state.db context-install typescript /absolute/path/distribution
