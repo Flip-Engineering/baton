@@ -224,7 +224,7 @@ def node_notice(+node: String) -> String:
   +same = "EXISTS(SELECT 1 FROM knowledge_v1 WHERE id=" ++ id ++ " AND " ++ node_same(node) ++ ")"
   "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ nid ++ "," ++ author ++ "," ++ parent ++ ",'question'," ++ body ++ " WHERE " ++ same ++ " AND " ++ parent ++ " IS NOT NULL"
   ++ " ON CONFLICT(id) DO NOTHING;"
-  ++ "SELECT json_object('error','knowledge-notice-conflict','id'," ++ nid ++ ",'stored',json_object('sender',sender,'recipient',recipient,'kind',kind),'condition','This knowledge identity is already stored with different content.','next','Read knowledge and retain the stored record, then retry the new input under a different ID.') FROM messages WHERE id=" ++ nid ++ " AND " ++ parent ++ " IS NOT NULL AND " ++ same ++ " AND NOT (sender=" ++ author ++ " AND recipient=" ++ parent ++ " AND kind='question' AND body=" ++ body ++ ");"
+  ++ "SELECT json_object('error','knowledge-notice-conflict','id'," ++ nid ++ ",'stored',json_object('sender',sender,'recipient',recipient,'kind',kind),'condition','This knowledge identity is already stored with different content.','next','Read knowledge and retain the stored record, then retry the new input under a different ID.') FROM messages WHERE id=" ++ nid ++ " AND " ++ parent ++ " IS NOT NULL AND " ++ same ++ " AND NOT (sender=" ++ author ++ " AND recipient=" ++ parent ++ " AND kind='question' AND json_extract(body,'$.finding')=" ++ id ++ " AND json_extract(body,'$.author')=" ++ author ++ ");"
 
 def node_errors(+node: String) -> String:
   +j = C.q(node)
