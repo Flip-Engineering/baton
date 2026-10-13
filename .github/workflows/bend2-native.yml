@@ -69,6 +69,49 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          export BUN_JSC_maxPerThreadStackUsage=67108864
+          unset BEND_GENERATED_C
+          settings="$BATON2_NATIVE_RUN/build-settings"
+          test ! -e "$settings"
+          mkdir "$settings"
+          printf 'GITHUB_SHA=%s\nGITHUB_RUN_ID=%s\nGITHUB_RUN_ATTEMPT=%s\nBUN_JSC_maxPerThreadStackUsage=%s\nBEND_ARGUMENT=%s\nCC=%s\nBEND_GENERATED_C=%s\n' \
+            "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" \
+            "$BUN_JSC_maxPerThreadStackUsage" "$BATON2_NATIVE_RUN/toolchain-home/bin/bend" \
+            "${CC:-clang}" "${BEND_GENERATED_C:-}" > "$settings/environment.txt"
+          cp "$BATON2_NATIVE_RUN/build-source/.github/workflows/bend2-native.yml" "$settings/workflow.yml"
+          shasum -a 256 "$BATON2_NATIVE_RUN/toolchain-home/bin/bend" > "$settings/compiler.sha256"
+          stat -L -f '%z' "$BATON2_NATIVE_RUN/toolchain-home/bin/bend" > "$settings/compiler.size"
+          file -L "$BATON2_NATIVE_RUN/toolchain-home/bin/bend" > "$settings/compiler.file"
+          ulimit -a > "$settings/limits-soft-before.txt"
+          ulimit -H -a > "$settings/limits-hard-before.txt"
+          requested_stack_kib=65536
+          hard_stack_kib=$(ulimit -H -s)
+          chosen_stack_kib="$requested_stack_kib"
+          case "$hard_stack_kib" in
+            unlimited) ;;
+            ''|*[!0-9]*)
+              printf 'Invalid inherited stack hard limit: %s\n' "$hard_stack_kib" \
+                > "$settings/stack-selection.stderr"
+              exit 1
+              ;;
+            *)
+              if [ "$hard_stack_kib" -lt "$chosen_stack_kib" ]; then
+                chosen_stack_kib="$hard_stack_kib"
+              fi
+              ;;
+          esac
+          printf 'requested_kib=%s\ninherited_hard_kib=%s\nchosen_kib=%s\n' \
+            "$requested_stack_kib" "$hard_stack_kib" "$chosen_stack_kib" \
+            > "$settings/stack-selection.txt"
+          stack_status=0
+          ulimit -S -s "$chosen_stack_kib" > "$settings/stack-setting.stdout" \
+            2> "$settings/stack-setting.stderr" || stack_status=$?
+          printf '%s\n' "$stack_status" > "$settings/stack-setting.status"
+          ulimit -a > "$settings/limits-soft-after.txt"
+          ulimit -H -a > "$settings/limits-hard-after.txt"
+          ulimit -s > "$settings/stack-kib.txt"
+          test "$stack_status" -eq 0
+          test "$(cat "$settings/stack-kib.txt")" = "$chosen_stack_kib"
           package_args=(
             --output "$BATON2_NATIVE_RUN/package"
             --bend "$BATON2_NATIVE_RUN/toolchain-home/bin/bend"
@@ -116,6 +159,7 @@ jobs:
             ${{ env.BATON2_NATIVE_RUN }}/package/
             ${{ env.BATON2_NATIVE_RUN }}/smoke/
             ${{ env.BATON2_NATIVE_RUN }}/toolchain/
+            ${{ env.BATON2_NATIVE_RUN }}/build-settings/
             ${{ env.BATON2_NATIVE_RUN }}/clone.log
             ${{ env.BATON2_NATIVE_RUN }}/package-command.stdout
             ${{ env.BATON2_NATIVE_RUN }}/package-command.stderr
