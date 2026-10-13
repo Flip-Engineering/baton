@@ -43,9 +43,10 @@ The native workflow moves its owned build source directory, then runs [smoke-nat
 For a manual smoke, use the archive filename, SHA256 from SHA256SUMS, and manifest produced by packaging:
 
 ~~~sh
+BATON2_ARCHIVE_NAME=$(awk 'NR==1 {print $2}' "$BATON2_RUN/package/SHA256SUMS")
 mv "$BATON2_SOURCE" "$BATON2_RUN/source-retained"
 python3 "$BATON2_RUN/source-retained/bend2/scripts/smoke-native-artifact.py" \
-  --archive "$BATON2_RUN/package/baton2-development-darwin-arm64-<commit>.tar.gz" \
+  --archive "$BATON2_RUN/package/$BATON2_ARCHIVE_NAME" \
   --sha256 "$(awk '{print $1}' "$BATON2_RUN/package/SHA256SUMS")" \
   --manifest "$BATON2_RUN/package/manifest.json" \
   --unavailable-source "$BATON2_SOURCE" --output "$BATON2_RUN/smoke"
@@ -64,4 +65,10 @@ Packaging copies the project LICENSE and NOTICE when present, and retains the pi
 
 [.github/workflows/bend2-native.yml](../../.github/workflows/bend2-native.yml) builds and packages the Darwin arm64 artifact on `macos-15`, runs the extracted-artifact smoke, and retains the package, build output and smoke output.
 
-The workflow produces development artifacts. Real-provider execution, installation, signing, and release publication have separate delivery records.
+Pushes and pull requests produce development artifacts. To request a release-version archive from `main`, dispatch the same workflow with a version identifier:
+
+~~~sh
+gh workflow run bend2-native.yml --ref main -f release_version=2.0.0
+~~~
+
+Leaving `release_version` blank produces a development archive. The workflow passes a nonempty version to `package-native.py`, reads the archive filename and checksum from `SHA256SUMS`, and runs the extracted-artifact smoke against the package manifest. The uploaded artifact name includes the selected version, source commit and run attempt. Inspect the run's actual source commit, package, toolchain, build and smoke records, and complete package and smoke command streams. A completed workflow produces an archive candidate; real-provider execution, installation, signing and release publication require separate delivery records.

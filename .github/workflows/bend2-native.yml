@@ -15,6 +15,13 @@ name: bend2-native-development
       - 'bend2/scripts/build-native.sh'
       - 'bend2/scripts/package-native.py'
       - 'docs/bend2/reference/toolchain/install-2.0.25.sh'
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: 'Release archive version; leave blank for a development archive'
+        required: false
+        default: ''
+        type: string
 
 permissions:
   contents: read
@@ -22,6 +29,8 @@ permissions:
 jobs:
   darwin-arm64:
     runs-on: macos-15
+    env:
+      BATON2_RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.release_version || '' }}
     steps:
       - name: Checkout exact source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -60,10 +69,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python3 "$BATON2_NATIVE_RUN/build-source/bend2/scripts/package-native.py" \
-            --output "$BATON2_NATIVE_RUN/package" \
-            --bend "$BATON2_NATIVE_RUN/toolchain-home/bin/bend" \
+          package_args=(
+            --output "$BATON2_NATIVE_RUN/package"
+            --bend "$BATON2_NATIVE_RUN/toolchain-home/bin/bend"
             --compiler-archive "$BATON2_NATIVE_RUN/toolchain/bend-2.0.25-darwin-arm64.tar.gz"
+          )
+          if [[ -n "$BATON2_RELEASE_VERSION" ]]; then
+            package_args+=(--release-version "$BATON2_RELEASE_VERSION")
+          fi
+          python3 "$BATON2_NATIVE_RUN/build-source/bend2/scripts/package-native.py" "${package_args[@]}" \
+            > "$BATON2_NATIVE_RUN/package-command.stdout" \
+            2> "$BATON2_NATIVE_RUN/package-command.stderr"
 
       - name: Exercise extracted artifact with build path unavailable
         shell: bash
@@ -74,22 +90,36 @@ jobs:
           test ! -e "$retained"
           mv "$build" "$retained"
           trap 'mv "$retained" "$build"' EXIT
-          archive="$BATON2_NATIVE_RUN/package/baton2-development-darwin-arm64-$GITHUB_SHA.tar.gz"
-          sha=$(awk '{print $1}' "$BATON2_NATIVE_RUN/package/SHA256SUMS")
+          package="$BATON2_NATIVE_RUN/package"
+          sums="$package/SHA256SUMS"
+          test "$(wc -l < "$sums")" -eq 1
+          read -r sha archive_name < "$sums"
+          [[ "$sha" =~ ^[0-9a-f]{64}$ ]]
+          test "$archive_name" = "$(basename "$archive_name")"
+          [[ "$archive_name" == baton2-*-darwin-arm64-"$GITHUB_SHA".tar.gz ]]
+          printf '%s  %s\n' "$sha" "$archive_name" | cmp - "$sums"
+          (cd "$package" && shasum -a 256 -c SHA256SUMS)
+          archive="$package/$archive_name"
           python3 "$GITHUB_WORKSPACE/bend2/scripts/smoke-native-artifact.py" \
             --archive "$archive" --sha256 "$sha" \
-            --manifest "$BATON2_NATIVE_RUN/package/manifest.json" \
-            --unavailable-source "$build" --output "$BATON2_NATIVE_RUN/smoke"
+            --manifest "$package/manifest.json" \
+            --unavailable-source "$build" --output "$BATON2_NATIVE_RUN/smoke" \
+            > "$BATON2_NATIVE_RUN/smoke-command.stdout" \
+            2> "$BATON2_NATIVE_RUN/smoke-command.stderr"
 
       - name: Retain native artifact and validation evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: baton2-development-darwin-arm64-${{ github.sha }}-${{ github.run_attempt }}
+          name: baton2-${{ github.event_name == 'workflow_dispatch' && inputs.release_version || 'development' }}-darwin-arm64-${{ github.sha }}-${{ github.run_attempt }}
           path: |
             ${{ env.BATON2_NATIVE_RUN }}/package/
             ${{ env.BATON2_NATIVE_RUN }}/smoke/
             ${{ env.BATON2_NATIVE_RUN }}/toolchain/
             ${{ env.BATON2_NATIVE_RUN }}/clone.log
+            ${{ env.BATON2_NATIVE_RUN }}/package-command.stdout
+            ${{ env.BATON2_NATIVE_RUN }}/package-command.stderr
+            ${{ env.BATON2_NATIVE_RUN }}/smoke-command.stdout
+            ${{ env.BATON2_NATIVE_RUN }}/smoke-command.stderr
           if-no-files-found: error
           include-hidden-files: true
