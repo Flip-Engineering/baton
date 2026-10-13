@@ -4,6 +4,15 @@ The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3
 retain findings, ownership and acceptance requirements. This page links current
 Baton2 follow-up work for contributors.
 
+- [#713: Route unchanged native-turn reports through the coordinator](https://github.com/Flip-Engineering/baton/issues/713).
+  Successful turn settlement can create a self-addressed task continuation
+  while the assignment is open and the worker inbox is empty. Wonder Full and
+  Synthesis repeated unchanged held-work reports; later Muse turns returned
+  quota errors. Deliver the turn report to the recorded coordinator for its
+  next-work decision. Keep the worker assignment, original input, provider
+  errors and owned validation process intact. New guidance reaches the same
+  native conversation through ordinary delivery.
+
 - [#712: Report gone native attempts without stale running state](https://github.com/Flip-Engineering/baton/issues/712).
   Normal CLI and Orchestra UI observations must show a gone or unknown native
   attempt accurately when its process and keeper are absent and terminal status
@@ -35,5 +44,8 @@ Baton2 follow-up work for contributors.
   Include model choices for roles and Contributor preference as project defaults.
   Isolate projects and preserve active native routes, conversations and explicit
   stops. Credentials remain in the native providers' external account stores.
+  A linked-worktree `--project ... project-sessions` read exited 2 when its
+  pointer resolved under the shared Git common directory; see the
+  [observed #703 pointer failure](https://github.com/Flip-Engineering/baton/issues/703#issuecomment-6135011161).
   Root coordinates the work; `semantic-controls-next` owns the installed CLI/MCP
   surface, and Root owns UI changes.
