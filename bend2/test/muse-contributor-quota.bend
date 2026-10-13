@@ -1,5 +1,4 @@
 import Base
-import ../src/coordinator/subscription-fallback.bend as Subs
 import ../src/coordinator/turn.bend as Turn
 import ../src/coordinator/commands.bend as C
 import ../src/harness/muse-player.bend as Muse
@@ -34,26 +33,27 @@ def fixture(+db: String) -> IO(Unit):
     wonder : Unit <- check("wonder-full-route-unchanged",wonder_args(Muse.arguments("/fixture/bin/muse","muse-wonder-full-1.0","high","/fixture/task")))
     +reason : String <- IO.pure(String,"API error 429 [request_id=4a883f25-1542-43e1-bcdf-08b6eb1bf0fc]: Subscription quota exhausted. Your usage window resets at 2026-10-12T23:25:59Z. (rate_limit_error)")
     +refusal : String <- IO.pure(String,"{\"payload_type\":\"run.terminal.failed\",\"payload\":{\"kind\":\"run_terminal\",\"terminal\":\"failed\",\"reason\":\"" ++ reason ++ "\"}}")
-    matched : String <- IO.try(String,DB.Sql.query(":memory:",Subs.muse_subscription_quota_sql(refusal)))
-    original : Unit <- check("observed-full-429-shape",String.eq(matched,"1\n"))
+    +contributor_reason : String <- IO.pure(String,"API error 429 [request_id=f9e12f59-6d51-4ddf-b37b-2959e7f78b78]: Subscription quota exhausted. Your usage window resets at 2026-10-12T23:25:59Z. (rate_limit_error)")
+    +contributor_refusal : String <- IO.pure(String,"{\"payload_type\":\"run.terminal.failed\",\"payload\":{\"kind\":\"run_terminal\",\"terminal\":\"failed\",\"reason\":\"" ++ contributor_reason ++ "\"}}")
     +other : String <- IO.pure(String,"{\"payload_type\":\"run.terminal.failed\",\"payload\":{\"kind\":\"run_terminal\",\"terminal\":\"failed\",\"reason\":\"API error 429: temporary rate limit\"}}")
-    unrelated : String <- IO.try(String,DB.Sql.query(":memory:",Subs.muse_subscription_quota_sql(other)))
-    other_error : Unit <- check("unrelated-429-unaffected",String.eq(unrelated,"0\n"))
     +success : String <- IO.pure(String,"{\"payload_type\":\"run.terminal.completed\",\"payload\":{\"kind\":\"run_terminal\",\"terminal\":\"completed\",\"reason\":\"Subscription quota exhausted.\"}}")
-    completed : String <- IO.try(String,DB.Sql.query(":memory:",Subs.muse_subscription_quota_sql(success)))
-    no_note : Unit <- check("completed-turn-unaffected",String.eq(completed,"0\n"))
-    prepared : String <- IO.try(String,DB.Sql.query(db,C.schema() ++ "INSERT INTO sessions(id,parent,harness) VALUES('parent',NULL,'muse'),('muse-child','parent','muse'),('other-child','parent','codex');" ++ "INSERT INTO messages(id,sender,recipient,kind,body) VALUES('muse-turn','parent','muse-child','task-assignment','task'),('other-turn','parent','other-child','task-assignment','task'),('unrelated-turn','parent','muse-child','task-assignment','task'),('completed-turn','parent','muse-child','task-assignment','task');" ++ "INSERT INTO turns(id,worker,event) VALUES('muse-turn','muse-child'," ++ C.q(refusal) ++ "),('other-turn','other-child'," ++ C.q(refusal) ++ "),('unrelated-turn','muse-child'," ++ C.q(other) ++ "),('completed-turn','muse-child'," ++ C.q(success) ++ ");"))
+    prepared : String <- IO.try(String,DB.Sql.query(db,C.schema() ++ "INSERT INTO sessions(id,parent,harness,model,effort) VALUES('parent',NULL,'muse','',''),('muse-child','parent','muse','muse-wonder-full-1.0','high'),('contributor-child','parent','muse','muse-spark-1.3-contributor','high'),('other-child','parent','codex','','');" ++ "INSERT INTO messages(id,sender,recipient,kind,body) VALUES('muse-turn','parent','muse-child','task-assignment','task'),('contributor-turn','parent','contributor-child','task-assignment','task'),('other-turn','parent','other-child','task-assignment','task'),('unrelated-turn','parent','muse-child','task-assignment','task'),('completed-turn','parent','muse-child','task-assignment','task');" ++ "INSERT INTO turns(id,worker,event) VALUES('muse-turn','muse-child'," ++ C.q(refusal) ++ "),('contributor-turn','contributor-child'," ++ C.q(contributor_refusal) ++ "),('other-turn','other-child'," ++ C.q(refusal) ++ "),('unrelated-turn','muse-child'," ++ C.q(other) ++ "),('completed-turn','muse-child'," ++ C.q(success) ++ ");"))
     reported : Unit <- Turn.prepare_finished(db,"muse-child","muse-turn","/fixture/log","","","exit 1",refusal)
     replayed : Unit <- Turn.prepare_finished(db,"muse-child","muse-turn","/fixture/log","","","exit 1",refusal)
+    contributor_result : Unit <- Turn.prepare_finished(db,"contributor-child","contributor-turn","/fixture/log","","","exit 1",contributor_refusal)
     other_harness : Unit <- Turn.prepare_finished(db,"other-child","other-turn","/fixture/log","","","exit 0",refusal)
     other_cause : Unit <- Turn.prepare_finished(db,"muse-child","unrelated-turn","/fixture/log","","","exit 0",other)
     success_result : Unit <- Turn.prepare_finished(db,"muse-child","completed-turn","/fixture/log","","","exit 0",success)
-    saved : String <- IO.try(String,DB.Sql.query(db,"SELECT count(*) FROM messages WHERE id='muse-turn:muse-contributor-option' AND sender='muse-child' AND recipient='parent' AND kind='report' AND instr(body,'muse-spark-1.3-contributor')>0 AND instr(body,'model training')>0;"))
-    once : Unit <- check("one-parent-report-after-repeat",String.eq(saved,"1\n"))
-    other_reports : String <- IO.try(String,DB.Sql.query(db,"SELECT count(*) FROM messages WHERE id IN ('other-turn:muse-contributor-option','unrelated-turn:muse-contributor-option','completed-turn:muse-contributor-option');"))
-    unaffected : Unit <- check("non-muse-and-nonquota-unaffected",String.eq(other_reports,"0\n"))
+    saved : String <- IO.try(String,DB.Sql.query(db,"SELECT count(*) FROM messages WHERE id='muse-turn:exit' AND sender='muse-child' AND recipient='parent' AND kind='report' AND body='Player process ended with exit 1';"))
+    once : Unit <- check("one-original-exit-report-after-repeat",String.eq(saved,"1\n"))
+    contributor_exit : String <- IO.try(String,DB.Sql.query(db,"SELECT count(*) FROM messages WHERE id='contributor-turn:exit' AND sender='contributor-child' AND recipient='parent' AND kind='report' AND body='Player process ended with exit 1';"))
+    contributor_reported : Unit <- check("failed-contributor-exit-report-retained",String.eq(contributor_exit,"1\n"))
+    option_reports : String <- IO.try(String,DB.Sql.query(db,"SELECT count(*) FROM messages WHERE id IN ('muse-turn:muse-contributor-option','contributor-turn:muse-contributor-option','other-turn:muse-contributor-option','unrelated-turn:muse-contributor-option','completed-turn:muse-contributor-option');"))
+    no_availability_claim : Unit <- check("failed-trial-adds-no-quota-option",String.eq(option_reports,"0\n"))
     retained : String <- IO.try(String,DB.Sql.query(db,"SELECT json_extract(event,'$.payload.reason') FROM turns WHERE id='muse-turn';"))
     original_reason : Unit <- check("original-provider-reason-and-reset-retained",String.eq(retained,reason ++ "\n"))
+    retained_contributor : String <- IO.try(String,DB.Sql.query(db,"SELECT json_extract(event,'$.payload.reason') FROM turns WHERE id='contributor-turn';"))
+    contributor_reason_saved : Unit <- check("failed-contributor-reason-and-reset-retained",String.eq(retained_contributor,contributor_reason ++ "\n"))
     IO.print("muse-contributor-quota-ok")
 
 def owner_cli(args: List<String>) -> IO(Unit):

@@ -225,9 +225,6 @@ def record_line(+profile: Profile) -> String:
 def handoff_body(harness: String, refused: String, bound: String, store: String, cause: String) -> String:
   "subscription profile handoff: harness=" ++ harness ++ "; refused profile=" ++ refused ++ "; bound profile=" ++ bound ++ "; credential store=" ++ store ++ "; original cause: " ++ cause
 
-def muse_contributor_guidance() -> String:
-  "Muse Code Spark Contributor can remain available after standard subscription usage is exhausted. For implementer work, select harness=muse, model=muse-spark-1.3-contributor, effort=high. Contributor mode permits submitted content to be used for model training. Account limits still apply."
-
 def all_refused_body(harness: String, refused: String, cause: String) -> String:
   "subscription profiles exhausted: harness=" ++ harness ++ "; profile=" ++ refused ++ " was the last operator-listed profile and the provider reported usage exhaustion; cause: " ++ cause
 
@@ -269,11 +266,6 @@ def exhausted_marker_sql(+text: String) -> String:
 # provider's subscription-limit wording and the returned cause.
 def exhausted_reason_sql(event: String) -> String:
   "WITH frame(value) AS (VALUES(" ++ C.q(event) ++ ")), diagnostic(failed,text) AS MATERIALIZED (SELECT " ++ failed_terminal_sql_expr("frame.value") ++ "," ++ usage_text_sql_expr("frame.value") ++ " FROM frame) SELECT CASE WHEN diagnostic.failed=1 AND " ++ exhausted_marker_sql("diagnostic.text") ++ "=1 THEN 'provider-reported usage exhaustion: ' || diagnostic.text ELSE '' END FROM diagnostic;"
-
-# The observed Muse Code subscription refusal is a run.terminal.failed event.
-# This predicate controls one supplemental report for that terminal event.
-def muse_subscription_quota_sql(event: String) -> String:
-  "WITH frame(value) AS (VALUES(" ++ C.q(event) ++ ")) SELECT CASE WHEN json_valid(value) THEN CASE WHEN json_extract(value,'$.payload_type')='run.terminal.failed' AND json_extract(value,'$.payload.kind')='run_terminal' AND json_extract(value,'$.payload.terminal')='failed' AND instr(coalesce(json_extract(value,'$.payload.reason'),''),'API error 429')=1 AND instr(coalesce(json_extract(value,'$.payload.reason'),''),'Subscription quota exhausted.')>0 THEN 1 ELSE 0 END ELSE 0 END FROM frame;"
 
 # The operator list and the per-session record are plain files beside the database,
 # like the other coordinator sidecars: no schema, no daemon, no environment lookup.
