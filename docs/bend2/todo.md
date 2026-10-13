@@ -4,6 +4,22 @@ The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3
 retain findings, ownership and acceptance requirements. This page links current
 Baton2 follow-up work for contributors.
 
+- [#715: Simplify agent commands with a contextual action grammar](https://github.com/Flip-Engineering/baton/issues/715).
+  Extend the implicit project and session context introduced in
+  [#714](https://github.com/Flip-Engineering/baton/issues/714) to inspection,
+  assignments, decisions, managed work and project operations. Support batches
+  with an individual outcome for each item.
+  - [ ] Record delivered and read status through the recipient harness.
+  - [ ] Record routine handling from the recipient turn without a separate
+    acknowledgement command for every message.
+  - [ ] Preserve incomplete handling after failed or interrupted turns,
+    original receipt history, explicit stops and replay behavior.
+  - [ ] Keep replies, decisions and matched task completion independently
+    recorded. Coordinate recipient settlement changes with
+    [#713](https://github.com/Flip-Engineering/baton/issues/713).
+  - [ ] Update inbox selection and pending notes for native message status;
+    validate batch outcomes and installed commands on the remote runner.
+
 - [#713: Route unchanged native-turn reports through the coordinator](https://github.com/Flip-Engineering/baton/issues/713).
   Successful turn settlement can create a self-addressed task continuation
   while the assignment is open and the worker inbox is empty. Wonder Full and
