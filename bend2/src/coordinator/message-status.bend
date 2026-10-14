@@ -27,7 +27,7 @@ def projection(+message: String) -> String:
 def decorate_observed_sql(saved: String, read: Bool, known: Bool) -> String:
   "SELECT coalesce(json_group_array(json(item)),'[]') FROM (SELECT json_patch(j.value,json_object('nativeInputStatus'," ++ Bool.pick(String,known,projection(exposed(read,"id")),"json_object('delivered','unrecorded','read','unrecorded','handled','unrecorded','attempts',json('[]'))") ++ ")) AS item FROM json_each(" ++ q(saved) ++ ") j ORDER BY CAST(j.key AS INTEGER));"
 
-def decorate_detail_sql(saved: String) -> String:
+def decorate_detail_sql(+saved: String) -> String:
   "SELECT json_set(" ++ q(saved) ++ ",'$.message.nativeInputStatus',json(" ++ projection("json_extract(" ++ q(saved) ++ ",'$.message.id')") ++ "),'$.attemptRelation',json_object('status',CASE WHEN EXISTS(SELECT 1 FROM message_reads r WHERE r.message=json_extract(" ++ q(saved) ++ ",'$.message.id')) THEN 'recorded' ELSE 'unrecorded' END,'attempts',json(coalesce((SELECT json_group_array(json_object('id',r.attempt,'recipient',r.recipient,'native',r.native,'identity',r.identity,'handled',r.handled)) FROM message_reads r WHERE r.message=json_extract(" ++ q(saved) ++ ",'$.message.id')),'[]'))));"
 
 def current_sql(session: String, directory: String) -> String:
