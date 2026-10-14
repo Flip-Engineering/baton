@@ -312,11 +312,11 @@ def initial_observed(+db: String, +session: String, +attempt: String, +event: St
 
 def settle_codex_if(+db: String, +session: String, +native: String, +turn: String, +status: String, known: Bool) -> IO(Unit):
   match known:
-    case False{}: print("{\"status\":\"unrecorded\"}")
+    case False{}: IO.write("{\"status\":\"unrecorded\"}\n")
     case True{}: do IO<Unit>:
       stored : String <- Bool.pick(IO(String),String.eq(status,"completed"),IO.try(String,Store.transact_sql(db,Status.settle_codex_sql(session,native,turn))),IO.pure(String,""))
       result : String <- IO.try(String,DB.Sql.read(db,"SELECT json_object('session'," ++ C.q(session) ++ ",'native'," ++ C.q(native) ++ ",'turnId'," ++ C.q(turn) ++ ",'nativeStatus'," ++ C.q(status) ++ ",'status',CASE WHEN EXISTS(SELECT 1 FROM message_reads WHERE recipient=" ++ C.q(session) ++ " AND native=" ++ C.q(native) ++ " AND attempt=" ++ C.q(Status.codex_attempt(turn)) ++ " AND identity=" ++ Status.codex_identity(native,turn) ++ " AND handled IS NOT NULL) THEN 'settled' WHEN EXISTS(SELECT 1 FROM message_reads WHERE recipient=" ++ C.q(session) ++ " AND native=" ++ C.q(native) ++ " AND attempt=" ++ C.q(Status.codex_attempt(turn)) ++ ") THEN 'incomplete' ELSE 'unrecorded' END);"))
-      print(Tx.trim_nl(result))
+      IO.write(Tx.trim_nl(result) ++ "\n")
 
 def settle_codex(+db: String, session: String, native: String, turn: String, status: String) -> IO(Unit):
   do IO<Unit>:
