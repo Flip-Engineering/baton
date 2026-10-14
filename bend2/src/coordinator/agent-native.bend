@@ -506,7 +506,7 @@ def with_identity(result: Result<&1,&1,U32 & String,List<&2,D.Option>>, +db: Str
   match result:
     case Fail{(code,cause)}: IO.pure(String,refused(index,verb,Nil{},code,cause))
     case Done{+options}:
-      args = Con{exe,Con{db,legacy_args(session,verb,options,saved)}}
+      args : List<String> = Con{exe,Con{db,legacy_args(session,verb,options,saved)}}
       +path = db ++ ".agent-command-" ++ nonce ++ "-" ++ U32.show(index) ++ ".stderr"
       run_input(db,index,verb,args,path)
 
