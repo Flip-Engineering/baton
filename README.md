@@ -61,17 +61,21 @@ session, message and input request, with commands to inspect them. Use
 `--to SESSION` adds input to the same recorded assignment automatically.
 In the selected actor context, `task-input-read --current` reads its latest
 complete dispatch input and setup outcome.
-Scratchpads are deliberate working notes kept separately from dispatched input.
-Reports route to the
-coordinating agent or operator inbox. Use the
+Reports route to the coordinating agent or operator inbox. Use the
 [command guide](bend2/README.md) to inspect turns and receipts, send further
 instructions, and manage contributions.
 
-Agents use `baton inbox`, `baton read MESSAGE_ID...`, and `baton send TARGET
---kind KIND --text TEXT` with their recorded project and native session. Named
-arguments and independent batch clauses also cover receiver controls,
+Agents read complete owed input with `baton inbox` and carry out the assigned
+work. Successful native turns record handling of their consumed input;
+`baton acknowledge` records explicit handling. `baton report --text TEXT` sends a
+result to the recorded coordinator. A worker uses `baton completion-request --text
+SUMMARY` to request review of its completed assignment. A coordinator uses `baton
+completion-confirmed --to PLAYER` or `baton guide --to PLAYER --text TEXT` for its
+decision. Baton resolves the current project, actor, request and handling receipt.
+Named arguments and independent batch clauses also cover receiver controls,
 worktrees, knowledge and project settings. The [agent command
-guide](docs/bend2/agent-commands.md) describes context selection and each action.
+guide](docs/bend2/agent-commands.md) describes context selection, optional selected
+message reads and each action.
 
 ## Documentation
 

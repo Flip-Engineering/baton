@@ -7,11 +7,14 @@ absolute paths for `B2`, `DB`, `TRIAL_REPO`, `TRIAL_STATE`, `TRIAL_OMP`,
 `AGENTS.md`, the issue and relevant source. Divide useful independent work
 among your Players and coordinate overlapping edits in the shared checkout.
 
-Set `ASSOCIATE_ID` from the assignment. Use that ID as each Player's parent.
-Read and handle every owed task and report before acknowledging it with
-`ack MESSAGE_ID "$ASSOCIATE_ID" RECEIPT`. Your supervisor delivers your final
-response to your immediate parent. State completed behavior, published work
-and unfinished implementation in that response.
+Baton resolves your current actor and records it as each new Player's
+parent. Read complete owed tasks and reports with `inbox`. Successful
+native settlement records handling of the exact consumed input. Use `acknowledge`
+for explicit handling; Baton selects your complete owned reads and creates their
+receipts. Your supervisor delivers your final response to your immediate parent.
+State completed behavior, published work and unfinished implementation in that
+response. Use `completion-request --text SUMMARY` when your assignment is ready
+for the Principal's review.
 
 Use the recorded parent for upward messages. Descendant routes and explicitly
 tight Ensemble membership support direct coordination. Declare loose or tight
@@ -27,21 +30,25 @@ applicable remote tests. Ask it to commit completed changes and report actual
 remaining work. Replace `N` and `A` with the issue and Player names:
 
 ```sh
-"$B2" "$DB" join issue-N-worker-A "$ASSOCIATE_ID" omp deepseek/deepseek-flash low   "$TRIAL_REPO"
-"$B2" "$DB" receiver issue-N-worker-A "$TRIAL_OMP"   "$TRIAL_STATE/issue-N-worker-A-native.jsonl"
-"$B2" "$DB" dispatch-file issue-N-worker-A-task-1 "$ASSOCIATE_ID" issue-N-worker-A   task "$TRIAL_STATE/issue-N-worker-A-task.md"
+"$B2" "$DB" dispatch --project "$TRIAL_REPO" --to issue-N-worker-A \
+  --harness omp --model deepseek/deepseek-flash --effort low \
+  --command "$TRIAL_OMP" --text \
+  "For issue N, implement REQUESTED_CHANGE in ASSIGNED_PATHS. Target: TARGET_BRANCH. Constraints: CONSTRAINTS. Remote check: $TRIAL_CHECK. Selected tests: TEST_PATHS. Commit completed changes and report remaining work."
 ```
 
-The receiver selects the recorded route, workspace and native conversation.
-Further input is handled in that conversation. Run independent Players
+Replace the capitalized assignment placeholders with the complete task before
+dispatching. Baton creates the Player, transcript and receiver through the
+product operation. Further input uses its recorded route, workspace and native
+conversation. Run independent Players
 concurrently and continue useful work while their turns are active.
 
-A Muse Player can use the same shared checkout and receiver workflow:
+A Muse Player uses the same dispatch operation:
 
 ```sh
-"$B2" "$DB" join issue-N-worker-M "$ASSOCIATE_ID" muse muse-spark-1.3-contributor high   "$TRIAL_REPO"
-"$B2" "$DB" receiver issue-N-worker-M "$TRIAL_MUSE"   "$TRIAL_STATE/issue-N-worker-M-native.jsonl"
-"$B2" "$DB" dispatch-file issue-N-worker-M-task-1 "$ASSOCIATE_ID" issue-N-worker-M   task "$TRIAL_STATE/issue-N-worker-M-task.md"
+"$B2" "$DB" dispatch --project "$TRIAL_REPO" --to issue-N-worker-M \
+  --harness muse --model muse-spark-1.3-contributor --effort high \
+  --command "$TRIAL_MUSE" --text \
+  "For issue N, implement REQUESTED_CHANGE in ASSIGNED_PATHS. Target: TARGET_BRANCH. Constraints: CONSTRAINTS. Remote check: $TRIAL_CHECK. Selected tests: TEST_PATHS. Commit completed changes and report remaining work."
 ```
 
 Use `recruit` when the task needs a separate worktree. Record the target and
@@ -53,12 +60,15 @@ conversations for corrections and continued work.
 Send a correction to the same Player. OMP accepts guidance during its turn:
 
 ```sh
-"$B2" "$DB" message issue-N-worker-A-guidance-1 "$ASSOCIATE_ID" issue-N-worker-A   guidance 'The additional requirement and its reason'
+"$B2" "$DB" guide --to issue-N-worker-A --text 'The additional requirement and its reason'
 ```
 
-Use `dispatch-file` for further task input. Read `delivery MESSAGE_ID`, turn
-reports, the actual source changes and relevant check results. Acknowledge your
-own handled messages. Preserve pending input and explicit stops.
+Use `dispatch --to PLAYER --text TEXT` for complete further task input. Baton
+selects continuation of an existing assignment and stores its input and setup
+outcome in the database. Read complete reports with `inbox`, inspect turn history,
+and review the actual source changes and relevant check results. Use
+`completion-confirmed --to PLAYER` after reviewing that Player's current completion
+request, or guide it through remaining work. Preserve pending input and explicit stops.
 
 Commit completed shared-checkout changes without including another Player's
 unfinished edits. Integrate separate-checkout contributions into the intended

@@ -43,7 +43,35 @@ python3 bend2/test/external/compare-original.py --old-repo /path/to/old/baton \
   --old-ref FULL_COMMIT --output /fresh/owned/comparison-test
 ```
 
-## Coordinator storage
+## Agent commands
+
+Choose an available model and dispatch complete task input through the project:
+
+```sh
+baton dispatch 'Review the assigned source and report the result.' \
+  --project /path/to/repository --harness codex --model MODEL --effort high
+```
+
+Within the launched native context, Baton resolves the current database and actor.
+Read complete owed input, perform the assigned work and report its result:
+
+```sh
+baton inbox
+baton acknowledge
+baton report --text 'The result and remaining work.'
+```
+
+Successful native turns record handling of their exact consumed input.
+`acknowledge` records explicit handling with native owned reads and a generated
+receipt. A worker uses `completion-request --text SUMMARY` when its assignment is
+ready for its parent's review. A coordinator reviews a Player's request with
+`completion-confirmed --to PLAYER`, or sends further work with `guide --to PLAYER
+--text TEXT`. Use `dispatch
+--to PLAYER --text TEXT` for complete task input to an existing conversation.
+The [agent command guide](../docs/bend2/agent-commands.md) describes named actions,
+independent batches, explicit selected-message reads and context overrides.
+
+## Low-level coordinator storage
 
 The executable stores sessions and messages and supervises foreground Claude
 Code, Codex, OMP and Muse turns. Recruitment creates a Git worktree and records its resolved base. Native parent
@@ -56,6 +84,9 @@ target run does not show, and advances the target through a compare-and-swap
 ref update. A target that moved meanwhile returns a retry instruction and leaves
 the candidate and Player work available. The next `land-checked` invocation
 prepares and checks against the current target.
+
+The following database-first forms expose explicit storage and administrative
+identities. They remain available for integrations and exact replay:
 
 ```sh
 .scratch/bend2/baton2 state.db attach root claude-code ROOT_SESSION ENDPOINT
@@ -74,7 +105,7 @@ prepares and checks against the current target.
 Commands return JSON. `report` saves the full
 body and pending parent delivery in one SQLite transaction. A matching retry
 returns the stored message with its current delivery receipt. Conflicting reuse of
-an ID fails. `ack` records native acceptance after the adapter observes it.
+an ID fails. The explicit `ack` form records the supplied recipient handling receipt.
 
 `observe-file ID PLAYER PATH` consumes one
 native harness event. An initialization event (type `session`) updates the
@@ -224,20 +255,23 @@ has registered none.
 
 When the parentless `operator` session has the operator role, a Principal's
 native terminal result is retained in its turn history and sent to that session.
-`start` registers this operator. `inbox operator --pretty` reads pending reports;
-`ack REPORT_ID operator RECEIPT` records the operator's review. Subordinate
+`dispatch` registers the operator during routine task setup. `baton as operator
+inbox` reads its pending reports. A native actor can use `acknowledge`
+for its complete owned reads. Administrative review outside a native turn can
+use the explicit `ack REPORT_ID operator RECEIPT` compatibility form. Subordinate
 reports go to their recorded parent.
 
 During an OMP turn, send guidance with:
 
 ```sh
-.scratch/bend2/baton2 state.db message guide1 root worker1 guidance "Focus the review on recovery."
+baton guide --to worker1 --text 'Focus the review on recovery.'
 ```
 
 The supervisor listens for newly committed guidance throughout an active OMP
 turn and forwards it through OMP's `steer` command. The native response remains
-in the observed stream. The Player records a receipt with `ack` after handling
-the guidance. Guidance with no receipt remains in its inbox for continuation.
+in the observed stream. Successful native settlement records handling of the
+guidance consumed by that turn. `acknowledge` records explicit handling from
+complete owned reads. Unhandled guidance remains pending.
 
 `join ID PARENT HARNESS MODEL EFFORT WORKSPACE` registers a Player in an
 existing checkout. The recorded workspace is absolute; branch and base come
@@ -526,8 +560,8 @@ appended. An empty final argument explicitly replays pending input.
 The receiver reads pending messages and supervises the native turn. When that
 session already has a native turn, delivery returns `queued`; the active
 supervisor checks for incoming messages after releasing session ownership.
-Reports remain pending until the recipient acknowledges them with `ack`. Native
-events append to `OUTPUT_LOG`, and report writers retain receiver output at
+Reports remain pending until recipient handling is recorded. Native events are
+written to the attempt generation registered for `OUTPUT_LOG`, and report writers retain receiver output at
 `DATABASE.root.log`. A failed native turn leaves unacknowledged messages pending.
 
 When the Bend receive observer exits while its retained process owner and
@@ -824,7 +858,7 @@ sequence.
 
 Start the Principal through the native controls above. Supply the repository,
 integration branch, mutable state directory, native executable paths, check
-program and task-file paths in its assignment. The
+program and complete task text in its assignment. The
 [Principal Conductor instructions](trial/principal-conductor-instructions.md)
 and [Associate Conductor instructions](trial/associate-conductor-instructions.md)
 describe shared source work, detached task delivery, review, publication and

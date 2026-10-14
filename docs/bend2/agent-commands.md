@@ -163,6 +163,8 @@ baton bind --harness codex --model model-key --effort high
 
 `turn` uses the selected session's model, effort, workspace and native identity
 for omitted fields. `receive` uses its recorded receiver and native defaults.
+The `turn --file PATH` compatibility form imports an existing caller-authored
+UTF-8 file. Use `dispatch` for routine task input and native setup.
 `profile-bind` binds an existing named account through the native profile
 operation; an omitted harness selects the recorded harness. `connect` and
 `bind` preserve the native identity when `--native` is omitted. An explicit

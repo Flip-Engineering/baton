@@ -196,9 +196,10 @@ for registry configuration and publication authority.
 
 A worker's assignment remains open across successful native turns. When its
 work is ready, it sends a `completion-request` message to its immediate parent.
-The parent reviews the result and replies with `completion-confirmed`, using
-the request ID alone as the body, or sends guidance for remaining work. The
-worker's current request remains available while the parent reviews it. New
+The parent reviews the result with `completion-confirmed --to PLAYER`, or sends
+`guide --to PLAYER --text TEXT` for remaining work. Baton resolves the current
+request addressed to that coordinator. The worker's current request remains
+available while the parent reviews it. New
 tasks and guidance begin further work. Message receipts record the worker's
 handling of retained input. Explicit operator stops remain effective.
 Parentless Principal Conductors follow their operator input.
@@ -207,9 +208,9 @@ Codex, OMP, Muse and Claude native receivers preserve the recorded conversation
 when further input arrives. Native settlement delivers the turn report to the
 recorded coordinator, which decides whether further work is needed. The
 managed Codex App watcher observes public turn settlement and delivers owed
-input through the public turn interface. `continue-task SESSION TURN_ID`
+input through the public turn interface. `continue-task --session PLAYER`
 explicitly queues continuation input for an open assignment that has no current
-completion request and wakes its recorded receiver. `resume SESSION` retries
+completion request and wakes its recorded receiver. `resume --session PLAYER` retries
 delivery of queued input through the same receiver.
 `session SESSION` exposes the current assignment, request, coordinator and
 confirmation in `taskCompletion`.
@@ -227,9 +228,11 @@ baton2 /absolute/path/orchestra.db delivery REPORT_ID --pretty
 
 `delivery` returns the complete message, receipt and recipient endpoint.
 `turns` includes native turn history and report bodies. Inspect complete parent
-reports, native logs and acceptance receipts before landing work. `ack` records
-message acceptance; Git review and landing have their own results. Capture
-complete stdout when a harness tool display truncates a long report.
+reports, native logs and handling receipts before landing work. Successful native
+turn settlement records consumed input handling, and `acknowledge` records it
+explicitly from the current native owned reads. Administrative commands retain
+explicit message and receipt selectors. Git review and landing have their own
+results. Capture complete stdout when a harness tool display truncates a long report.
 
 ## Recovery
 
