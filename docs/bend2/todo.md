@@ -2,7 +2,25 @@
 
 The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3Aissue%20is%3Aopen)
 retain findings, ownership and acceptance requirements. This page links current
-Baton2 follow-up work for contributors.
+Baton follow-up work for contributors. Every open issue has a link on this page.
+
+- [#722: Repair composed coordinator parsing](https://github.com/Flip-Engineering/baton/issues/722).
+  The pinned native compiler ended with SIGTRAP on `57e67d1d` and `ef735693`.
+  A retained remote Node diagnostic of the compiler derivative ended during
+  `Main.normal_cli` lowering with a stack overflow; native crash attribution
+  remains unverified. Preserve the complete grammar and output while repairing
+  source representation. Exact compiler, target/candidate and package acceptance
+  block the [#717](https://github.com/Flip-Engineering/baton/issues/717) release.
+
+- [#721: Add Antigravity CLI agent harness support](https://github.com/Flip-Engineering/baton/issues/721).
+  Verify the supported CLI protocol and add dispatch, resumption, complete
+  events, provider settings, receiver controls and coordinator reporting.
+  Preserve native identity, pending work and explicit stops. Qualify the
+  packaged harness remotely and through ordinary installed use. Coordinate
+  with [#671](https://github.com/Flip-Engineering/baton/issues/671),
+  [#703](https://github.com/Flip-Engineering/baton/issues/703),
+  [#713](https://github.com/Flip-Engineering/baton/issues/713) and
+  [#715](https://github.com/Flip-Engineering/baton/issues/715).
 
 - [#718: Coalesce pending-input notices during failed Codex turns](https://github.com/Flip-Engineering/baton/issues/718).
   Repeated provider failures appended the same pending-input notice to the
@@ -18,15 +36,20 @@ Baton2 follow-up work for contributors.
   recipient receipts and the coordinator's exact completion confirmation.
 
 - [#717: Publish and activate the current Baton release](https://github.com/Flip-Engineering/baton/issues/717).
+  Version 2.0.0 includes all qualified command, grammar and syntax improvements
+  from #714, #715 and #716 with #713, #718 and #720. The README name is `Baton`.
   Qualify the composed source on remote runners, publish its exact tag and
   platform artifacts, and install the complete package through the ordinary
   command path. Retain active conversations, managed work, prior installation
   prefixes and explicit stops during receiver migration. Unfinished feature
   acceptance remains recorded in its original issues.
 
-- [#716: Start ordinary work from task text](https://github.com/Flip-Engineering/baton/issues/716).
-  The integrated source in [ordinary task input](task-start-716.md) accepts
-  complete text, stdin and UTF-8 files through CLI and MCP. It consumes the
+- [#716: Dispatch task text and retain it in the database](https://github.com/Flip-Engineering/baton/issues/716).
+  The [dispatch interface](task-start-716.md) uses `baton dispatch "task text"`
+  and complete stdin input through CLI and MCP. Retain requests, complete text
+  and setup outcomes in the database. Generated Markdown and task-source files
+  are banned; the deliberate scratchpad supplies agent knowledge through its
+  own operation. Caller-supplied UTF-8 import remains optional. It consumes the
   strict named-route reader from corrected #703 source `25f29f0d` and preserves
   the original #703 ownership. Remote target/candidate, full package and
   installed task-entry qualification remain part of the current #717 release.
@@ -37,7 +60,9 @@ Baton2 follow-up work for contributors.
   to inspection, assignments, decisions, managed work, knowledge and project
   operations. Each batch item retains its full input and individual outcome.
   Native input status derives from complete recipient reads and the matching
-  native terminal report. Remote qualification and active installation remain
+  native terminal report, including full `pending` and Pretty reads. Foreign
+  recipient rows and metadata-only reads remain observational. Remote
+  qualification and active installation remain
   part of the current #717 release.
   - [ ] Record delivered and read status through the recipient harness.
   - [ ] Record routine handling from the recipient turn without a separate
@@ -95,3 +120,42 @@ Baton2 follow-up work for contributors.
   [observed #703 pointer failure](https://github.com/Flip-Engineering/baton/issues/703#issuecomment-6135011161).
   Root coordinates the work; `semantic-controls-next` owns the installed CLI/MCP
   surface, and Root owns UI changes.
+
+## Other open work
+
+- [#711: Baton2: preserve authored numeric precision in scientific knowledge reads](https://github.com/Flip-Engineering/baton/issues/711).
+- [#710: Define structured causal and evidentiary Knowledge nodes and edges with provenance and uncertainty](https://github.com/Flip-Engineering/baton/issues/710).
+- [#709: Make Baton2 the main branch after current delivery settles](https://github.com/Flip-Engineering/baton/issues/709).
+- [#708: Large native frames keep receive observers busy after model exit](https://github.com/Flip-Engineering/baton/issues/708).
+- [#707: Baton2: expose useful shared object evaluation and agent handoff](https://github.com/Flip-Engineering/baton/issues/707).
+- [#706: Adopt an unreaped retained turn when new input arrives](https://github.com/Flip-Engineering/baton/issues/706).
+- [#704: Repair an absent receiver when replaying a completed direct turn](https://github.com/Flip-Engineering/baton/issues/704).
+- [#702: Baton2: multiple Claude and Codex subscriptions with usage-exhaustion fallback](https://github.com/Flip-Engineering/baton/issues/702).
+- [#694: Baton2: expose OpenCode Go usage limits and availability to orchestrators](https://github.com/Flip-Engineering/baton/issues/694).
+- [#686: Baton2: reduce log volume with practical verbosity and cleanup](https://github.com/Flip-Engineering/baton/issues/686).
+- [#685: Pending notifications must wake idle seats or require inbox review](https://github.com/Flip-Engineering/baton/issues/685).
+- [#684: Baton2 orchestra must not emit orphaned section memberships](https://github.com/Flip-Engineering/baton/issues/684).
+- [#682: Baton2: optional live browser view of Orchestra structure and status](https://github.com/Flip-Engineering/baton/issues/682).
+- [#681: Baton2: preserve pending work when a provider quota failure requires model failover](https://github.com/Flip-Engineering/baton/issues/681).
+- [#680: Baton2: stale quota failures prevent current provider use](https://github.com/Flip-Engineering/baton/issues/680).
+- [#679: Baton2 native checks fail before replay assertions on a large report argument](https://github.com/Flip-Engineering/baton/issues/679).
+- [#678: Baton2: existing Players cannot change their configured provider through native controls](https://github.com/Flip-Engineering/baton/issues/678).
+- [#677: Baton2: prevent duplicate heavy validation and qualify remote execution placement](https://github.com/Flip-Engineering/baton/issues/677).
+- [#675: Baton2: qualify hosted parallel Bend2 validation](https://github.com/Flip-Engineering/baton/issues/675).
+- [#674: Native landing advances a checked-out branch without updating its worktree](https://github.com/Flip-Engineering/baton/issues/674).
+- [#673: Native landing cannot select a reviewed commit while a Player continues](https://github.com/Flip-Engineering/baton/issues/673).
+- [#672: Direct turns admit replacement while the previous child survives observer loss](https://github.com/Flip-Engineering/baton/issues/672).
+- [#670: Baton2: classify OMP model errors separately from host exit status](https://github.com/Flip-Engineering/baton/issues/670).
+- [#669: Baton2: OMP terminal elision markers break native report extraction](https://github.com/Flip-Engineering/baton/issues/669).
+- [#668: Baton2: ordinary delivery waits for the recipient endpoint lifetime](https://github.com/Flip-Engineering/baton/issues/668).
+- [#666: Baton2: queued parent report receives no wake after observer recovery](https://github.com/Flip-Engineering/baton/issues/666).
+- [#664: Baton2: diagnose audit check failures whose original stderr was omitted](https://github.com/Flip-Engineering/baton/issues/664).
+- [#644: The resident retains 346 worktrees (8.2 GiB under .baton) while the host runs out of disk](https://github.com/Flip-Engineering/baton/issues/644).
+- [#598: Remove mechanisms that serve no observed failure: hypothetical hardening, check-in gating, redundant durability, property accounting](https://github.com/Flip-Engineering/baton/issues/598).
+- [#592: Production architecture for waking the root and seats (the #564 configured-target implementation is rejected and removed)](https://github.com/Flip-Engineering/baton/issues/592).
+- [#539: Rewrite Baton in Bend2: language review, adversarial architecture review, laws file, and rewrite plan](https://github.com/Flip-Engineering/baton/issues/539).
+- [#530: Hardcoded numeric ceilings gate real work throughout the goal/plan policy and beyond — remove the control-flow pattern, not just retune the numbers](https://github.com/Flip-Engineering/baton/issues/530).
+- [#714: Simplify agent inbox commands with a contextual action grammar](https://github.com/Flip-Engineering/baton/issues/714).
+- [#705: Reconcile a completed retained attempt before admitting its next turn](https://github.com/Flip-Engineering/baton/issues/705).
+- [#696: Baton2: recover lost retained custody and checkpoint stream observation](https://github.com/Flip-Engineering/baton/issues/696).
+- [#676: Baton2: share one native instance across connected agents](https://github.com/Flip-Engineering/baton/issues/676).

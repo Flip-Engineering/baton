@@ -19,6 +19,14 @@ in `docs/bend2/host-crash-2026-10-05.md`.
 
 # Banned runtime patterns
 
+## Database task storage
+
+Tasks are dispatches to Baton agents. Store complete task text, dispatch requests
+and setup outcomes in the database. Generated Markdown and task-source files are
+banned. The deliberate scratchpad tool supplies agent knowledge through its own
+operation. Native transcripts retain their existing runtime evidence role.
+Issue #716 owns the dispatch interface and database acceptance.
+
 ## Mechanisms need an observed failure
 
 Checks, gates, guards, recovery layers and accounting must serve a named real
