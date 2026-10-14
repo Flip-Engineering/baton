@@ -92,14 +92,16 @@ def body_value(body: A.Body) -> IO(Result<&1,&1,U32 & String,String>):
     case A.Missing{}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,"send body is missing.")})
     case A.Bad{cause}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,cause)})
 
+def captured_body_value(stdin: Native.Stdin, body: A.Body) -> IO(Result<&1,&1,U32 & String,String>):
+  match stdin:
+    case Native.Captured{path}: body_value(A.File{path})
+    case Native.CaptureFailed{code,cause}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{(code,"stdin: " ++ cause)})
+    case Native.Unused{}: body_value(body)
+
 def captured_body(body: A.Body, stdin: Native.Stdin, wanted: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   match wanted:
     case False{}: body_value(body)
-    case True{}:
-      match stdin:
-        case Native.Captured{path}: body_value(A.File{path})
-        case Native.CaptureFailed{code,cause}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{(code,"stdin: " ++ cause)})
-        case Native.Unused{}: body_value(body)
+    case True{}: captured_body_value(stdin,body)
 
 def stdin_body(body: A.Body) -> Bool:
   match body:

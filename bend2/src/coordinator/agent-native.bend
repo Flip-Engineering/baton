@@ -89,23 +89,28 @@ def replaced_options(options: List<D.Option>, +path: String) -> List<D.Option>:
     case D.Field{+name,+value} <> rest:
       Con{D.Field{name,Bool.pick(String,stdin_option(name,value),path,value)},replaced_options(rest,path)}
 
+def stdin_replaced_value(stdin: Stdin, options: List<D.Option>) -> Result<&1,&1,U32 & String,List<D.Option>>:
+  match stdin:
+    case Captured{path}: Done{replaced_options(options,path)}
+    case CaptureFailed{code,cause}: Fail{(code,"stdin: " ++ cause)}
+    case Unused{}: Fail{(2,"The invocation did not retain its requested stdin input.")}
+
 def stdin_replaced(options: List<D.Option>, stdin: Stdin, wanted: Bool) -> Result<&1,&1,U32 & String,List<D.Option>>:
   match wanted:
     case False{}: Done{options}
-    case True{}:
-      match stdin:
-        case Captured{path}: Done{replaced_options(options,path)}
-        case CaptureFailed{code,cause}: Fail{(code,"stdin: " ++ cause)}
-        case Unused{}: Fail{(2,"The invocation did not retain its requested stdin input.")}
+    case True{}: stdin_replaced_value(stdin,options)
+
+def add_option_tail(tail: Result<&1,&1,U32 & String,List<D.Option>>,
+                    name: String, value: String) -> Result<&1,&1,U32 & String,List<D.Option>>:
+  match tail:
+    case Fail{error}: Fail{error}
+    case Done{options}: Done{Con{D.Field{name,value},options}}
 
 def add_option(+name: String, result: Result<&1,&1,U32 & String,String>,
                tail: Result<&1,&1,U32 & String,List<D.Option>>) -> Result<&1,&1,U32 & String,List<D.Option>>:
   match result:
     case Fail{(code,cause)}: Fail{(code,name ++ ": " ++ cause)}
-    case Done{value}:
-      match tail:
-        case Fail{error}: Fail{error}
-        case Done{options}: Done{Con{D.Field{name,value},options}}
+    case Done{value}: add_option_tail(tail,name,value)
 
 def load_options(+verb: String, options: List<D.Option>) -> IO(Result<&1,&1,U32 & String,List<D.Option>>):
   match options:
