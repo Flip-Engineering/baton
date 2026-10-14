@@ -80,6 +80,7 @@ const batchMessageTools = new Set([
 const unavailableTools = new Set([
   ...(!batchMessaging ? batchMessageTools : []),
   ...(!inputDetail ? ['baton2_input'] : []),
+  ...(!commandSurface.includes('task --stdin') ? ['baton2_task'] : []),
 ]);
 
 function messageInstructions() {
@@ -137,9 +138,13 @@ process.stdin.on('end', () => {
 
 // Coordinator CLI helper.
 function coord(...args) {
+  return coordInput(undefined, ...args);
+}
+
+function coordInput(input, ...args) {
   try {
     return execFileSync(coordinatorExe, [dbPath, ...args], {
-      encoding: 'utf8', maxBuffer: Infinity,
+      encoding: 'utf8', input, maxBuffer: Infinity,
     }).trim();
   } catch (error) {
     const status = Number.isInteger(error.status) ? `\nexit code: ${error.status}` : '';
@@ -160,6 +165,17 @@ const messageIndexProperties = {
 
 // Tool definitions exposed to the attached Conductor.
 const TOOLS = [
+  {
+    name: 'baton2_task',
+    description: 'Start task text or a UTF-8 file through the installed task operation. The attached session is the sender. New sessions use an explicit named saved route or explicit provider settings; select session and continue:true to preserve an open assignment. Complete input, setup errors and inspect identities are retained.',
+    inputSchema: { type: 'object', properties: {
+      text: { type: 'string' }, file: { type: 'string' }, project: { type: 'string' },
+      session: { type: 'string' }, continue: { type: 'boolean' }, new: { type: 'boolean' },
+      route: { type: 'string' }, harness: { type: 'string' }, command: { type: 'string' },
+      model: { type: 'string' }, effort: { type: 'string' }, workspace: { type: 'string' },
+      outputLog: { type: 'string' }, taskId: { type: 'string' },
+    }, oneOf: [{ required: ['text'] }, { required: ['file'] }], additionalProperties: false },
+  },
   {
     name: 'baton2_project',
     description: 'Describe a project and register this coordinator database under its shared Git directory.',
@@ -767,6 +783,26 @@ function handleToolCall(msg) {
   try {
     let result;
     switch (name) {
+      case 'baton2_task': {
+        const flags = ['--sender', sessionId];
+        const project = args.project ?? selectedSession()?.workspace;
+        if (!project) throw new Error('Task project context is absent. Pass project with the recorded checkout path.');
+        flags.push('--project', project);
+        for (const [field, flag] of [['session', '--session'], ['route', '--route'],
+          ['harness', '--harness'], ['command', '--command'], ['model', '--model'],
+          ['effort', '--effort'], ['workspace', '--workspace'], ['outputLog', '--output-log'],
+          ['taskId', '--task-id']]) {
+          if (args[field] !== undefined) flags.push(flag, args[field]);
+        }
+        if (args.continue === true) flags.push('--continue');
+        if (args.new === true) flags.push('--new');
+        if ((args.text === undefined) === (args.file === undefined)) {
+          throw new Error('Task input requires exactly one text or UTF-8 file value.');
+        }
+        result = args.text !== undefined ? coordInput(args.text, 'task', '--stdin', ...flags)
+          : coord('task', '--file', args.file, ...flags);
+        break;
+      }
       case 'baton2_project':
         result = coord('project', args.path);
         break;

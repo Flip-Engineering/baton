@@ -105,6 +105,8 @@ def stage_adapters(payload):
             shutil.copyfile(ROOT / 'bend2/scripts' / name, directory / name)
     shutil.copyfile(ROOT / 'bend2/harness/git-series.mjs', directory / 'git-series.mjs')
     shutil.copyfile(ROOT / 'bend2/harness/native-history.mjs', directory / 'native-history.mjs')
+    shutil.copyfile(ROOT / 'bend2/harness/project-settings.mjs', directory / 'project-settings.mjs')
+    shutil.copyfile(ROOT / 'bend2/harness/task-start.mjs', directory / 'task-start.mjs')
     shutil.copyfile(ROOT / 'bend2/scripts/codex-inbox-wake.mjs', directory / 'codex-inbox-wake.mjs')
     shutil.copytree(ROOT / 'bend2/ui/orchestra', directory / 'ui')
     shutil.copyfile(ROOT / 'bend2/scripts/context-provider.mjs', directory / 'context-provider.mjs')

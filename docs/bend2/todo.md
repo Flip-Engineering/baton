@@ -25,9 +25,11 @@ Baton2 follow-up work for contributors.
   acceptance remains recorded in its original issues.
 
 - [#716: Start ordinary work from task text](https://github.com/Flip-Engineering/baton/issues/716).
-  Accept task text, stdin and UTF-8 files through the CLI and MCP. Resolve the
-  project, session and configured defaults, retain setup and transcripts, and
-  verify the installed command paths. This acceptance remains part of #717.
+  The integrated source in [ordinary task input](task-start-716.md) accepts
+  complete text, stdin and UTF-8 files through CLI and MCP. It consumes the
+  strict named-route reader from corrected #703 source `25f29f0d` and preserves
+  the original #703 ownership. Remote target/candidate, full package and
+  installed task-entry qualification remain part of the current #717 release.
 
 - [#715: Simplify agent commands with a contextual action grammar](https://github.com/Flip-Engineering/baton/issues/715).
   Extend the implicit project and session context introduced in

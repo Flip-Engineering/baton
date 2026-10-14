@@ -18,7 +18,7 @@ import time
 values = json.loads(Path(__file__).with_suffix('.json').read_text())
 if len(sys.argv) > 2 and sys.argv[2] == 'help':
     if values.get('batch', True):
-        sys.stdout.write('outbox\\ndelivery-batch\\nmessage-batch\\ninput MESSAGE_ID\\n')
+        sys.stdout.write('outbox\\ndelivery-batch\\nmessage-batch\\ninput MESSAGE_ID\\ntask --stdin\\n')
     else:
         sys.stdout.write('delivery\\nmessage\\n')
     sys.exit(0)
@@ -29,6 +29,7 @@ sys.stderr.write(values['stderr'])
 sys.stderr.flush()
 Path(values['completed']).write_text(json.dumps({
     'exit_code': values['code'], 'argv': sys.argv[1:], 'pid': os.getpid(),
+    'stdin': sys.stdin.read(),
 }))
 sys.exit(values['code'])
 '''
@@ -36,7 +37,7 @@ sys.exit(values['code'])
 
 class McpCommand(unittest.TestCase):
     def command(self, stdout='', stderr='', code=0, delay=0, *,
-                tool='baton2_status', arguments=None, session=None, expected_args=None):
+                tool='baton2_status', arguments=None, session=None, expected_args=None, expected_stdin=''):
         with tempfile.TemporaryDirectory() as home:
             home = pathlib.Path(home)
             executable = home / 'fixture-coordinator'
@@ -70,7 +71,30 @@ class McpCommand(unittest.TestCase):
             self.assertEqual(child['exit_code'], code)
             self.assertGreater(child['pid'], 0)
             self.assertEqual(child['argv'], [str(home / 'state.db')] + (expected_args or ['status']))
+            self.assertEqual(child['stdin'], expected_stdin)
             return replies[2]['result']
+
+    def test_task_forwards_full_input_through_stdin_and_keeps_attached_authorship(self):
+        body = 'Complete MCP input λ🙂\nMultiline task text with "quotes".\n' * 10000
+        flags = ['--sender', 'attached-λ', '--project', '/explicit project',
+                 '--session', 'selected', '--route', 'named', '--effort', 'high', '--continue']
+        result = self.command(stdout='{"status":"admitted"}\n', tool='baton2_task',
+            arguments={'text': body, 'project': '/explicit project', 'session': 'selected',
+                       'route': 'named', 'effort': 'high', 'continue': True}, session='attached-λ',
+            expected_args=['task', '--stdin', *flags], expected_stdin=body)
+        self.assertFalse(result.get('isError', False))
+        schema = self.tools['baton2_task']['inputSchema']
+        self.assertEqual(schema['oneOf'], [{'required': ['text']}, {'required': ['file']}])
+        self.assertNotIn('sender', schema['properties'])
+        self.assertFalse(schema['additionalProperties'])
+
+    def test_task_file_forwards_literal_utf8_path_to_same_operation(self):
+        path = "/task files/plain task's λ.txt"
+        self.command(tool='baton2_task', arguments={'file': path, 'project': '/selected project',
+                     'new': True, 'harness': 'omp', 'model': 'kimi-code/k3', 'effort': 'low'},
+                     session='attached-λ', expected_args=['task', '--file', path, '--sender',
+                         'attached-λ', '--project', '/selected project', '--harness', 'omp',
+                         '--model', 'kimi-code/k3', '--effort', 'low', '--new'])
 
     def native_controls(self):
         player = "Player's review λ"
