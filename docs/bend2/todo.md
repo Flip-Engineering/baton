@@ -4,6 +4,16 @@ The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3
 retain findings, ownership and acceptance requirements. This page links current
 Baton follow-up work for contributors. Every open issue has a link on this page.
 
+- [#726: Read the registered generation in the legacy keeper recovery fixture](https://github.com/Flip-Engineering/baton/issues/726).
+  The legacy attachment marker is complete in the registered attempt generation.
+  The fixture waits on its absent base path. Resolve the recorded generation and
+  preserve the legacy recovery, native identity, custody and terminal assertions.
+  Qualify the corrected contract on target and candidate for
+  [#717](https://github.com/Flip-Engineering/baton/issues/717), retaining the
+  original incomplete run and its full evidence. Coordinate with
+  [#725](https://github.com/Flip-Engineering/baton/issues/725) and
+  [#705](https://github.com/Flip-Engineering/baton/issues/705).
+
 - [#725: Settle recovered direct turns after an earlier immutable failure report](https://github.com/Flip-Engineering/baton/issues/725).
   A completed profile retry records a successful native terminal, then recovery
   exits with a report identity conflict and leaves the execution running. Preserve
