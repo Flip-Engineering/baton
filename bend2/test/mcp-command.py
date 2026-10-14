@@ -18,7 +18,7 @@ import time
 values = json.loads(Path(__file__).with_suffix('.json').read_text())
 if len(sys.argv) > 2 and sys.argv[2] == 'help':
     if values.get('batch', True):
-        sys.stdout.write('outbox\\ndelivery-batch\\nmessage-batch\\ninput MESSAGE_ID\\ntask --stdin\\n')
+        sys.stdout.write('outbox\\ndelivery-batch\\nmessage-batch\\ninput MESSAGE_ID\\ntask --stdin\\nusage: baton2 as SESSION ACTION ARGS\\n')
     else:
         sys.stdout.write('delivery\\nmessage\\n')
     sys.exit(0)
@@ -30,6 +30,12 @@ sys.stderr.flush()
 Path(values['completed']).write_text(json.dumps({
     'exit_code': values['code'], 'argv': sys.argv[1:], 'pid': os.getpid(),
     'stdin': sys.stdin.read(),
+    'file_bodies': [Path(sys.argv[index + 1]).read_bytes().decode('utf-8')
+                    for index, value in enumerate(sys.argv[:-1])
+                    if value in ('--file', '--claim-file', '--evidence-file', '--limits-file',
+                                 '--links-file', '--query-file', '--reason-file')],
+    'requests': [json.loads(path.read_text()) for path in
+                 Path(values['completed']).parent.glob('state.db.actions/input-*/request.json')],
 }))
 sys.exit(values['code'])
 '''
@@ -37,7 +43,8 @@ sys.exit(values['code'])
 
 class McpCommand(unittest.TestCase):
     def command(self, stdout='', stderr='', code=0, delay=0, *,
-                tool='baton2_status', arguments=None, session=None, expected_args=None, expected_stdin=''):
+                tool='baton2_status', arguments=None, session=None, expected_args=None,
+                expected_stdin='', expected_files=()):
         with tempfile.TemporaryDirectory() as home:
             home = pathlib.Path(home)
             executable = home / 'fixture-coordinator'
@@ -70,8 +77,10 @@ class McpCommand(unittest.TestCase):
             child = json.loads(completed.read_text())
             self.assertEqual(child['exit_code'], code)
             self.assertGreater(child['pid'], 0)
-            self.assertEqual(child['argv'], [str(home / 'state.db')] + (expected_args or ['status']))
+            expected = expected_args(child) if callable(expected_args) else expected_args or ['status']
+            self.assertEqual(child['argv'], [str(home / 'state.db')] + expected)
             self.assertEqual(child['stdin'], expected_stdin)
+            self.assertEqual(child['file_bodies'], list(expected_files))
             return replies[2]['result']
 
     def test_task_forwards_full_input_through_stdin_and_keeps_attached_authorship(self):
@@ -95,6 +104,64 @@ class McpCommand(unittest.TestCase):
                      session='attached-λ', expected_args=['task', '--file', path, '--sender',
                          'attached-λ', '--project', '/selected project', '--harness', 'omp',
                          '--model', 'kimi-code/k3', '--effort', 'low', '--new'])
+
+    def test_contextual_action_retains_attached_identity_and_batch_argument_order(self):
+        result = self.command(stdout='[{"status":"found"}]\n', tool='baton2_action',
+            arguments={'action': 'read', 'arguments': ['first-λ', 'second-🙂']}, session='attached-λ',
+            expected_args=['as', 'attached-λ', 'read', 'first-λ', 'second-🙂'])
+        self.assertFalse(result.get('isError', False))
+        self.assertNotIn('session', self.tools['baton2_action']['inputSchema']['properties'])
+
+    def test_contextual_action_preserves_complete_bodies_for_independent_batch_items(self):
+        first = '\ufeffFull first body λ🙂\nLiteral quotes " and tabs\t.\n' * 10000
+        second = 'Second body Ω\n'
+        values = ['first', '--kind', 'report', '--text', first,
+                  '--and', 'second', '--kind', 'report', '--text', second]
+        def expected(child):
+            argv = child['argv']
+            paths = [argv[index + 1] for index, value in enumerate(argv[:-1]) if value == '--file']
+            self.assertEqual(len(paths), 2)
+            self.assertNotEqual(paths[0], paths[1])
+            self.assertEqual(child['requests'][0]['arguments'], values)
+            return ['as', 'attached-λ', 'send', 'first', '--kind', 'report', '--file', paths[0],
+                    '--and', 'second', '--kind', 'report', '--file', paths[1]]
+        result = self.command(stdout='[{"status":"sent"},{"status":"sent"}]\n',
+            tool='baton2_action', arguments={'action': 'send', 'arguments': values}, session='attached-λ',
+            expected_args=expected, expected_files=(first, second))
+        self.assertFalse(result.get('isError', False))
+
+    def test_contextual_native_body_fields_use_complete_files_in_one_batch(self):
+        bodies = tuple(('\ufeff' + name + ' λ🙂\nLast line  \n') * 10000
+                       for name in ('claim', 'evidence', 'limits', 'links', 'query', 'reason'))
+        values = ['record', '--id', 'finding-one', '--kind', 'finding',
+                  '--claim', bodies[0], '--evidence', bodies[1], '--limits', bodies[2],
+                  '--links', bodies[3], '--and', 'knowledge', 'search', '--query', bodies[4],
+                  'and', 'stop', '--session', 'worker', '--id', 'stop-one', '--reason', bodies[5]]
+        def expected(child):
+            argv = child['argv']
+            fields = ('--claim-file', '--evidence-file', '--limits-file', '--links-file',
+                      '--query-file', '--reason-file')
+            paths = [argv[argv.index(field) + 1] for field in fields]
+            self.assertEqual(len(set(paths)), len(bodies))
+            self.assertEqual(child['requests'][0]['arguments'], values)
+            self.assertEqual(child['requests'][0]['session'], 'attached-λ')
+            return ['as', 'attached-λ', 'knowledge', 'record', '--id', 'finding-one',
+                    '--kind', 'finding', '--claim-file', paths[0], '--evidence-file', paths[1],
+                    '--limits-file', paths[2], '--links-file', paths[3], '--and',
+                    'knowledge', 'search', '--query-file', paths[4], 'and', 'stop',
+                    '--session', 'worker', '--id', 'stop-one', '--reason-file', paths[5]]
+        result = self.command(stdout='[{"status":"completed"}]\n', tool='baton2_action',
+            arguments={'action': 'knowledge', 'arguments': values}, session='attached-λ',
+            expected_args=expected, expected_files=bodies)
+        self.assertFalse(result.get('isError', False))
+
+    def test_contextual_named_values_preserve_body_flag_literals(self):
+        values = ['--command', '--text', '--output-log', '--claim', '--model', '--and',
+                  '--effort', 'high', '--and', 'knowledge', 'read', '--id', '--query']
+        result = self.command(stdout='[{"status":"completed"}]\n', tool='baton2_action',
+            arguments={'action': 'configure', 'arguments': values}, session='attached-λ',
+            expected_args=['as', 'attached-λ', 'configure', *values])
+        self.assertFalse(result.get('isError', False))
 
     def native_controls(self):
         player = "Player's review λ"

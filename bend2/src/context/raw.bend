@@ -17,3 +17,8 @@ type RawRead is Data:
 
 def Raw.read_utf8(path: String) -> IO(Result<&1,&1,U32 & String,RawRead>):
   import "./raw.c"
+
+# Complete authored text preserves a valid leading BOM. Invalid UTF-8 and NUL
+# retain their byte offsets for file and stdin input.
+def Raw.read_text_utf8(path: String) -> IO(Result<&1,&1,U32 & String,RawRead>):
+  import "./raw.c"

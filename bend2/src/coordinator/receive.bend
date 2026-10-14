@@ -694,6 +694,11 @@ def start_admitted(+db: String, +session: String, +id: String, +cmd: String, rou
       start : P.RetainedStart <- IO.try(P.RetainedStart,Turn.retained(db,session,attempt,cmd,route,thinking,workspace,native,harness,storage,prompt,lock,recovery,level))
       started(db,session,id,log,cursor,native,workspace,attempt,harness,level,lock,start,again,cmd)
 
+def input_text(decoded: Req.Scalar) -> IO(String):
+  match decoded:
+    case Req.ScalarText{value}: IO.pure(String,value ++ "\n")
+    case other: IO.die(String,22,"Complete selected input could not be decoded: " ++ Req.scalar_reason(other))
+
 def selected(+db: String, +session: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, +lock: U32, +cursor: String, present: Bool, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   match present:
     case False{}: do IO<Result<&1,&1,U32 & String,Unit>>:
@@ -711,10 +716,13 @@ def selected(+db: String, +session: String, +cmd: String, +model: String, +effor
       storage : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN parent IS NULL THEN " ++ C.q(db ++ ".root-sessions") ++ " ELSE " ++ C.q(db ++ ".session-") ++ " || lower(hex(id)) END FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
       ident : String <- IO.try(String,DB.Sql.query(db,"SELECT 'receive:' || " ++ C.q(session) ++ " || ':' || CAST(" ++ C.q(cursor) ++ " AS INTEGER) || ':' || lower(hex(randomblob(16)));"))
       +id : String <- IO.pure(String,Tx.trim_nl(ident))
-      body : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce(group_concat(body,char(10)||char(10)), '') FROM (SELECT 'Message (' || kind || ') from ' || sender || ' [id: ' || id || ']:' || char(10) || body AS body FROM messages WHERE recipient=" ++ C.q(session) ++ " AND receipt IS NULL AND seq<=CAST(" ++ C.q(cursor) ++ " AS INTEGER) ORDER BY seq);"))
+      +selection : String <- IO.try(String,DB.Sql.query(db,"SELECT json_object('ids',json_group_array(id),'text',coalesce(group_concat(input,char(10)||char(10)),'')) FROM (SELECT id,'Message (' || kind || ') from ' || sender || ' [id: ' || id || ']:' || char(10) || body AS input FROM messages WHERE recipient=" ++ C.q(session) ++ " AND receipt IS NULL AND seq<=CAST(" ++ C.q(cursor) ++ " AS INTEGER) ORDER BY seq);"))
+      body_hex : String <- IO.try(String,DB.Sql.read(db,"SELECT hex(json_extract(" ++ C.q(selection) ++ ",'$.text'));"))
+      body : String <- input_text(Req.decode_scalar_utf8(Tx.hex_decode(Tx.trim_nl(body_hex))))
+      inputs : String <- IO.try(String,DB.Sql.read(db,"SELECT json_extract(" ++ C.q(selection) ++ ",'$.ids');"))
       directory : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ C.q(db ++ ".attempt-") ++ " || lower(hex(" ++ C.q(id) ++ "));"))
       +attempt : String <- IO.pure(String,Tx.trim_nl(directory))
-      recovery : String <- IO.pure(String,P.argv([executable,"--recover-receive",db,session,id,cursor,cmd,route,thinking,workspace,log,harness,attempt,native]))
+      recovery : String <- IO.pure(String,P.argv([executable,"--recover-receive",db,session,id,cursor,cmd,route,thinking,workspace,log,harness,attempt,native,Tx.trim_nl(inputs)]))
       allowed : Bool <- Stop.admit(db,session,id,"retained",attempt)
       orientation : String <- orientation_text(db,session)
       start_admitted(db,session,id,cmd,route,thinking,workspace,log,lock,cursor,native,attempt,harness,Tx.trim_nl(storage),instructions(executable,db,session,orientation) ++ body,recovery,again,allowed)
@@ -730,7 +738,13 @@ def observe_guarded(+db: String, +session: String, +id: String, cursor: String, 
     observation : Turn.Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- Turn.retained_output(db,session,id,log,harness,directory,handle,"unknown")
     completed_observation(db,session,id,log,cursor,native,cwd,directory,handle,lock,observation,again,adopted,cmd)
 
-def recover_owned(+db: String, +session: String, +directory: String, +lock: U32, args: List<&2,String>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+def recovery_arguments(args: List<&2,String>) -> List<&2,String>:
+  match args:
+    case executable <> flag <> db <> session <> id <> cursor <> cmd <> model <> effort <> cwd <> log <> harness <> directory <> native <> inputs <> Nil{}:
+      [executable,flag,db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native]
+    case other: other
+
+def recover_owned_arguments(+db: String, +session: String, +directory: String, +lock: U32, args: List<&2,String>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   match args:
     case executable <> flag <> saved_db <> saved_session <> id <> cursor <> cmd <> model <> effort <> cwd <> log <> harness <> saved_directory <> native <> Nil{}:
       do IO<Result<&1,&1,U32 & String,Unit>>:
@@ -738,6 +752,9 @@ def recover_owned(+db: String, +session: String, +directory: String, +lock: U32,
         handle : U32 <- IO.try(U32,Custody.Instance.attach_owned(db,directory,lock))
         observe_guarded(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,Some{lock},again,True{})
     case other: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(2,"Recorded native recovery arguments are invalid; retain the attempt and inspect its manifest.")})
+
+def recover_owned(db: String, session: String, directory: String, lock: U32, args: List<&2,String>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+  recover_owned_arguments(db,session,directory,lock,recovery_arguments(args),again)
 
 def acquired_attempt(db: String, session: String, cmd: String, model: String, effort: String, cwd: String, log: String, lock: U32, directory: String, recovery: Maybe<String>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   match recovery:
@@ -839,7 +856,7 @@ def recover_observer_acquired(+db: String, +session: String, id: String, cursor:
   match acquired:
     case (lock,handle): observe_guarded(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,Some{lock},u => continue_receiver(db,session,cmd,"","","",log),True{})
 
-def recover_observer_arguments(+db: String, +session: String, +directory: String, observer: U32, args: List<&2,String>) -> IO(Result<&1,&1,U32 & String,Unit>):
+def recover_observer_arguments_base(+db: String, +session: String, +directory: String, observer: U32, args: List<&2,String>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match args:
     case executable <> flag <> saved_db <> saved_session <> id <> cursor <> +cmd <> model <> effort <> cwd <> +log <> harness <> saved_directory <> native <> Nil{}:
       do IO<Result<&1,&1,U32 & String,Unit>>:
@@ -847,6 +864,9 @@ def recover_observer_arguments(+db: String, +session: String, +directory: String
         acquired : U32 & U32 <- IO.try(U32 & U32,Lock.SessionLock.recover_observer(db,session,directory,observer))
         recover_observer_acquired(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,acquired)
     case other: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(2,"Recorded native recovery arguments are invalid; retain the attempt and inspect its manifest.")})
+
+def recover_observer_arguments(db: String, session: String, directory: String, observer: U32, args: List<&2,String>) -> IO(Result<&1,&1,U32 & String,Unit>):
+  recover_observer_arguments_base(db,session,directory,observer,recovery_arguments(args))
 
 def recover_observer_recorded(+db: String, +session: String, +directory: String, observer: U32, recovery: Maybe<String>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match recovery:

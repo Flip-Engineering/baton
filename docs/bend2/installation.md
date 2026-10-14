@@ -40,6 +40,7 @@ BATON2_ARCHIVE_NAME="baton2-$BATON2_VERSION-darwin-arm64-$BATON2_SOURCE.tar.gz"
 )
 BATON2_PREFIX="$HOME/.local/share/baton2/releases/$BATON2_VERSION-$BATON2_SOURCE"
 BATON2_COMMAND="$HOME/.local/bin/baton2"
+BATON_COMMAND="$HOME/.local/bin/baton"
 mkdir -p "$HOME/.local/share/baton2/releases" "$HOME/.local/bin"
 mkdir "$BATON2_PREFIX"
 tar -xzpf "$BATON2_DOWNLOAD/$BATON2_ARCHIVE_NAME" -C "$BATON2_PREFIX" --strip-components=1
@@ -50,9 +51,13 @@ import hashlib, json, pathlib, sys
 prefix = pathlib.Path(sys.argv[1])
 manifest = json.loads((prefix / 'manifest.json').read_text())
 assert hashlib.sha256((prefix / 'bin/baton2').read_bytes()).hexdigest() == manifest['binary']['sha256']
+assert manifest['binary']['alias'] == 'bin/baton'
+assert (prefix / 'bin/baton').read_bytes() == (prefix / 'bin/baton2').read_bytes()
 PY
 ln -s "$BATON2_PREFIX/bin/baton2" "$BATON2_COMMAND.next"
 mv -f "$BATON2_COMMAND.next" "$BATON2_COMMAND"
+ln -s "$BATON2_PREFIX/bin/baton" "$BATON_COMMAND.next"
+mv -f "$BATON_COMMAND.next" "$BATON_COMMAND"
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
@@ -62,6 +67,11 @@ including selected modules and generated-C provenance, and retain earlier
 prefixes used by running receivers. Subsequent CLI commands use the selected
 executable. Existing owners, observers and recorded receivers keep their
 admitted executable paths and state.
+
+`baton` and `baton2` select the same native coordinator. The short agent commands
+resolve the registered project database and the active native session. `baton
+help` describes named arguments and batch clauses; explicit project and session
+arguments select another recorded context.
 
 Verify ordinary read commands against the existing database. After each actor's
 owned turn completes, refresh its receiver using the procedure below. Preserve

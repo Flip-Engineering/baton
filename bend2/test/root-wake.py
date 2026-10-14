@@ -304,6 +304,22 @@ while True:
         self.environment['PATH'] = str(self.directory) + os.pathsep + self.environment.get('PATH', '')
         return queued, refused
 
+    def test_native_input_witness_reads_the_actual_active_turn_without_admitting_input(self):
+        queued, _ = self.public_proxy()
+        helper = ROOT / 'bend2/scripts/codex-inbox-wake.mjs'
+        for status, turn, expected in (
+                ('active', 'first-turn-λ', 'first-turn-λ'),
+                ('active', 'second-turn-🙂', 'second-turn-🙂'),
+                ('idle', 'second-turn-🙂', None)):
+            with self.subTest(status=status, turn=turn):
+                self.public_app_state.write_text(json.dumps({'status': status, 'turn': turn, 'number': 0}))
+                result = subprocess.run(['node', str(helper), '--input-witness', 'native-app-root'],
+                                        env=self.environment, text=True, capture_output=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(json.loads(result.stdout), {
+                    'threadId': 'native-app-root', 'turnId': expected, 'active': status == 'active'})
+                self.assertFalse(queued.exists(), 'Reading a witness admitted a native input')
+
     def test_endpointless_codex_root_coalesces_owed_input_until_recipient_progress(self):
         queued, _ = self.public_proxy()
         self.coord('attach', 'root', 'codex', '', '')
@@ -344,8 +360,8 @@ while True:
         pointer = json.loads(text.splitlines()[1])
         self.assertEqual(pointer, {'database': str(self.db), 'message': 'app-root-report',
                                    'recipient': 'root', 'pendingCount': 4})
-        self.assertIn('Read all owed input with baton2 DATABASE inbox RECIPIENT', text)
-        self.assertIn('delivery-batch-file PATH', text)
+        self.assertIn('baton inbox', text)
+        self.assertIn('baton read MESSAGE_ID...', text)
         self.assertNotIn('completion-request', text)
         self.assertNotIn('ack MESSAGE', text)
         inbox = {message['id']: message for message in json.loads(self.coord('inbox', 'root'))}
@@ -541,8 +557,10 @@ while True:
             return child, output, diagnostic
 
         first, first_output, first_error = follower('first-follow')
-        self.eventually(lambda: queued.exists() and 'codexInboxAdmission' in first_output.read_text(),
-                        'the direct follower did not admit its new owed report')
+        self.eventually(lambda: any(event in first_output.read_text()
+                                    for event in ('codexInboxAdmission', 'codexInboxTurnRetained')),
+                        'the direct follower did not record its admission decision')
+        self.assertIn('codexInboxAdmission', first_output.read_text(), first_error.read_text())
         self.assertEqual(len(queued.read_text().splitlines()), 1)
         claim = self.eventually(lambda: next((value for row in self.rows(
             "SELECT cause FROM codex_inbox_wakes WHERE session='root'")

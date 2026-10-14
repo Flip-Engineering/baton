@@ -57,7 +57,7 @@ The archive root is `baton2-development-darwin-arm64` by default. `--release-ver
 
 ## Package contents and distribution terms
 
-The archive contains the native executable, manifest.json, notices/, and libexec/baton2/. The adapters select the archive's executable by default. The output directory also contains build logs, generated C when available, the manifest, archive, and archive checksum.
+The archive contains identical executable entries at `bin/baton` and `bin/baton2`, manifest.json, notices/, and libexec/baton2/. The task input, project settings and managed Codex inbox helpers are included in libexec/baton2/. The adapters select the archive's executable by default. The output directory also contains build logs, generated C when available, the manifest, archive, and archive checksum.
 
 Packaging copies the project LICENSE and NOTICE when present, and retains the pinned Bend compiler/runtime license, reference license, and license or notice files in the verified compiler archive. The manifest records the notice paths and their sources. A source snapshot without a root license is marked as unresolved for public distribution.
 
@@ -76,6 +76,8 @@ gh workflow run bend2-native.yml --ref '<candidate-branch>' \
 ~~~
 
 The manual workflow selects the existing `baton2-native-linux-x64` homelab runner by default. Its runner group permits exact trusted workflow references. `linux_runner=hosted` selects hosted Ubuntu; automatic pushes and pull requests use hosted Ubuntu. Candidate and target jobs run independently and share the available runner capacity. Leaving `release_version` blank produces a development archive. The uploaded Darwin artifact name includes the selected version, source commit and run attempt. Inspect the full native result, selected comparison, generated-C provenance, package and smoke before publishing. Real-provider execution, installed use and release publication retain their own results.
+
+`target_build_run` selects a completed exact target build from an earlier workflow artifact. The target job verifies the recorded source, successful build result, pinned compiler, C checksum and binary checksum, then restores that binary into a fresh target checkout. It runs every current selected test contract against the restored target and its exact source helpers. The new artifact retains the original build evidence and the current comparison results.
 
 ## Publish a qualified release
 

@@ -163,6 +163,28 @@ static void baton_control_call(IoWork *w) {
   BatonControl *call=(BatonControl *)w->data;
   if(call->kind==2) {baton_control_identity(call);return;}
   if(call->kind==3) {baton_control_launch(call);return;}
+  if(call->kind==6) {
+    char *directory=realpath(call->input,NULL);
+    if(!directory) {call->error=errno;return;}
+    char *slash=strrchr(directory,'/');
+    if(!slash) {free(directory);call->error=EINVAL;return;}
+    *slash=0;
+    char *candidate=baton_control_join(directory,"/../libexec/baton2/codex-inbox-wake.mjs");
+    if(!candidate) {free(directory);call->error=ENOMEM;return;}
+    call->path=realpath(candidate,NULL);
+    int error=call->path?0:errno;
+    free(candidate);
+    if(!call->path && error==ENOENT) {
+      candidate=baton_control_join(directory,"/../../bend2/scripts/codex-inbox-wake.mjs");
+      if(!candidate) {free(directory);call->error=ENOMEM;return;}
+      call->path=realpath(candidate,NULL);
+      error=call->path?0:errno;
+      free(candidate);
+    }
+    free(directory);
+    if(!call->path) call->error=error;
+    return;
+  }
   if(call->kind==5) {
     if(strchr(call->input,'/')) call->path=realpath(call->input,NULL);
     else {
@@ -267,4 +289,8 @@ static void __attribute__((constructor)) baton_control_use_command(void) {io_eff
 #ifdef CID_CONTROL_LAUNCH
 static Term baton_control_spawn(Env e,Term *f,IoWork *w) {return baton_control_begin(e,f,w,3);}
 static void __attribute__((constructor)) baton_control_use_launch(void) {io_eff(CID_CONTROL_LAUNCH,baton_control_spawn,0);}
+#endif
+#ifdef CID_CONTROL_AGENT_HELPER
+static Term baton_control_agent_helper(Env e,Term *f,IoWork *w) {return baton_control_begin(e,f,w,6);}
+static void __attribute__((constructor)) baton_control_use_agent_helper(void) {io_eff(CID_CONTROL_AGENT_HELPER,baton_control_agent_helper,0);}
 #endif

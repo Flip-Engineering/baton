@@ -25,6 +25,38 @@ static char *application_executable(void) {
 #endif
 }
 
+static int settings_entry(int argc,char **argv) {
+  if(argc<2 || strcmp(argv[1],"--project-settings")) return -1;
+  if(argc!=3) {
+    fputs("baton2: expected --project-settings PATH.\n",stderr);
+    return 1;
+  }
+  char *executable=application_executable();
+  char *directory=executable?strdup(executable):NULL;
+  char *slash=directory?strrchr(directory,'/'):NULL;
+  if(!slash) {free(directory);free(executable);perror("baton2 settings executable");return 1;}
+  *slash=0;
+  const char *suffixes[]={"/../libexec/baton2/project-settings.mjs","/../../bend2/harness/project-settings.mjs"};
+  char *helper=NULL;
+  for(size_t i=0;i<sizeof(suffixes)/sizeof(suffixes[0]);i++) {
+    size_t size=strlen(directory)+strlen(suffixes[i])+1;
+    char *candidate=malloc(size);
+    if(!candidate) break;
+    snprintf(candidate,size,"%s%s",directory,suffixes[i]);
+    helper=realpath(candidate,NULL);free(candidate);
+    if(helper) break;
+  }
+  free(directory);free(executable);
+  if(!helper) {
+    fputs("baton2: project-settings.mjs is missing from this installation. Install the complete Baton package.\n",stderr);
+    return 2;
+  }
+  char *args[]={"node",helper,"--inspect",argv[2],NULL};
+  execvp(args[0],args);
+  perror("baton2 settings: Node could not execute the installed settings operation");
+  free(helper);return 1;
+}
+
 /* The task frontend reads complete input and calls the native setup and
    admission operations. exec preserves its stdin, stdout and exit status. */
 static int task_entry(int argc,char **argv) {
@@ -77,6 +109,8 @@ int main(int argc, char **argv) {
     fputs("baton2: invalid native argument count.\n", stderr);
     return 1;
   }
+  int settings=settings_entry(argc,argv);
+  if(settings>=0) return settings;
   int task=task_entry(argc,argv);
   if(task>=0) return task;
   char **application = calloc((size_t)argc + 2, sizeof(*application));

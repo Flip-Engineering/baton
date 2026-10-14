@@ -1,4 +1,5 @@
 import Base
+import ./message-status.bend as MessageStatus
 import ./log-schema.bend as LogSchema
 
 type Command is Data:
@@ -149,6 +150,7 @@ def schema() -> String:
   ++ "CREATE TABLE IF NOT EXISTS messages (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, sender TEXT NOT NULL REFERENCES sessions(id), recipient TEXT NOT NULL REFERENCES sessions(id), kind TEXT NOT NULL, body TEXT NOT NULL, receipt TEXT);"
   ++ "CREATE TABLE IF NOT EXISTS turns (id TEXT PRIMARY KEY NOT NULL REFERENCES messages(id), worker TEXT NOT NULL REFERENCES sessions(id), event TEXT NOT NULL);"
   ++ "CREATE TABLE IF NOT EXISTS executions (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), id TEXT NOT NULL, mode TEXT NOT NULL, directory TEXT NOT NULL, phase TEXT NOT NULL, status TEXT NOT NULL DEFAULT '');"
+  ++ MessageStatus.schema()
   ++ "CREATE TABLE IF NOT EXISTS session_stops (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), id TEXT UNIQUE NOT NULL, reason TEXT NOT NULL, attempt TEXT NOT NULL DEFAULT '', directory TEXT NOT NULL DEFAULT '', signal INTEGER NOT NULL DEFAULT 15, applied_signal INTEGER NOT NULL DEFAULT 0, control_error TEXT NOT NULL DEFAULT '', outcome TEXT NOT NULL, native_status TEXT NOT NULL DEFAULT '', report_id TEXT NOT NULL DEFAULT '');"
   ++ messaging_schema()
   ++ log_schema()
@@ -208,7 +210,11 @@ def blocked_owner_sql(+session: String) -> String:
 # An assignment remains open across native turns. Its worker explicitly asks
 # the recorded parent to confirm completion through ordinary messages.
 def task_assignment_sql(+session: String) -> String:
-  "(SELECT a.seq FROM messages a WHERE a.recipient=" ++ session ++ " AND ((a.sender<>a.recipient AND a.kind IN ('task','guidance','recovery')) OR a.kind='task-assignment') ORDER BY a.seq DESC LIMIT 1)"
+  "(SELECT a.seq FROM messages a JOIN sessions assigned_worker ON assigned_worker.id=a.recipient WHERE a.recipient=" ++ session
+  ++ " AND ((assigned_worker.parent IS NULL AND ((a.sender<>a.recipient AND a.kind IN ('task','guidance','recovery')) OR a.kind='task-assignment'))"
+  ++ " OR (assigned_worker.parent IS NOT NULL AND ((a.sender=assigned_worker.parent AND a.kind IN ('task','guidance','recovery','task-assignment'))"
+  ++ " OR (a.sender=a.recipient AND a.kind='task-assignment' AND substr(a.id,-11)=':task-input'))))"
+  ++ " ORDER BY a.seq DESC LIMIT 1)"
 
 def task_request_sql(+session: String) -> String:
   "(SELECT r.id FROM messages r WHERE r.sender=" ++ session ++ " AND r.recipient=(SELECT task_parent.parent FROM sessions task_parent WHERE task_parent.id=" ++ session ++ ") AND r.kind='completion-request' AND r.seq>coalesce(" ++ task_assignment_sql(session) ++ ",0) ORDER BY r.seq DESC LIMIT 1)"

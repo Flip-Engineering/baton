@@ -5,7 +5,8 @@ import { randomBytes, createHash } from 'node:crypto';
 import { createInterface } from 'node:readline';
 
 function record(value) {
-  process.stdout.write(JSON.stringify(value) + '\n');
+  const stream = process.argv[2] === '--input-witness' ? process.stderr : process.stdout;
+  stream.write(JSON.stringify(value) + '\n');
 }
 
 class PublicProxy {
@@ -376,11 +377,13 @@ async function openInbox(executable, database, session, threadId) {
     },
     pointer(row) {
       return 'Baton input is pending.\n' + JSON.stringify({ database, recipient: session, message: row.message, pendingCount: row.pendingCount }) +
-        '\nRead all owed input with baton2 DATABASE inbox RECIPIENT. Use inbox RECIPIENT --index to discover message IDs and ' +
-        'delivery-batch-file PATH to read complete stored bodies from a JSON array of IDs in one batch. ' +
-        'Carry out the coordinator-authorized work and read your inbox again as work continues. ' +
-        'Coordinator executable/database argv: ' + JSON.stringify([executable, database]) +
-        '. Direct operator instructions and explicit stops remain effective.';
+        '\nUse baton inbox to read all complete owed input. Use baton read MESSAGE_ID... for selected complete bodies and ' +
+        'baton send TARGET --kind KIND --text TEXT and TARGET --kind KIND --file PATH for independent messages. ' +
+        'Use baton help ACTION for named arguments and context overrides. Successful recipient turns record handling of their complete inputs. ' +
+        'Explicit handling uses baton acknowledge MESSAGE_ID... --receipt TEXT, with a separate result for each message. ' +
+        'Select an explicit context with baton DATABASE as RECIPIENT ACTION. Coordinator executable/database argv: ' +
+        JSON.stringify([executable, database]) + '. ' +
+        'Carry out authorized work and read your inbox as work continues. Direct operator instructions and explicit stops remain effective.';
     },
   };
 }
@@ -547,6 +550,8 @@ async function follow(proxy, executable, database, session, threadId, inbox) {
         if (!reportedTurns.has(turn.id)) {
           const items = [...(completedItems.get(turn.id)?.values() ?? [])];
           await reportTurn(executable, database, session, threadId, turn, items);
+          await coordinatorCommand(executable, database,
+            ['settle-agent-input', session, threadId, turn.id, turn.status]);
           reportedTurns.add(turn.id);
           completedItems.delete(turn.id);
         }
@@ -625,11 +630,12 @@ async function follow(proxy, executable, database, session, threadId, inbox) {
 }
 
 const args = process.argv.slice(2);
+const inputWitness = args[0] === '--input-witness';
 const managed = args[0] === '--session' || args[0] === '--follow';
 const [mode, executable, database, session, native, message, claimToken] = managed ? args : [];
-const [threadId, pointer] = managed ? [native, undefined] : args;
-if (!threadId || (managed ? !executable || !database || !session || (mode === '--session' && message === undefined) : pointer === undefined)) {
-  process.stderr.write('usage: codex-inbox-wake.mjs THREAD INBOX_POINTER\n       codex-inbox-wake.mjs --session EXE DATABASE PLAYER THREAD MESSAGE\n       codex-inbox-wake.mjs --follow EXE DATABASE PLAYER THREAD\n');
+const [threadId, pointer] = inputWitness ? [args[1], undefined] : managed ? [native, undefined] : args;
+if (!threadId || (managed ? !executable || !database || !session || (mode === '--session' && message === undefined) : !inputWitness && pointer === undefined)) {
+  process.stderr.write('usage: codex-inbox-wake.mjs THREAD INBOX_POINTER\n       codex-inbox-wake.mjs --session EXE DATABASE PLAYER THREAD MESSAGE\n       codex-inbox-wake.mjs --follow EXE DATABASE PLAYER THREAD\n       codex-inbox-wake.mjs --input-witness THREAD\n');
   process.exitCode = 2;
 } else {
   let proxy;
@@ -643,7 +649,14 @@ if (!threadId || (managed ? !executable || !database || !session || (mode === '-
   process.once('SIGINT', interrupt);
   process.once('SIGTERM', terminate);
   try {
-    if (managed) {
+    if (inputWitness) {
+      proxy = new PublicProxy();
+      await proxy.connect();
+      const { thread } = await proxy.rpc('thread/read', { threadId, includeTurns: false });
+      const active = thread.status.type === 'active';
+      const turn = active ? await currentTurn(proxy, threadId) : null;
+      process.stdout.write(JSON.stringify({ threadId: thread.id, turnId: turn?.id ?? null, active }) + '\n');
+    } else if (managed) {
       inbox = await openInbox(executable, database, session, threadId);
       if (mode === '--follow') {
         proxy = new PublicProxy();

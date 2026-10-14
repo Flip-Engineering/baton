@@ -20,6 +20,10 @@ import ./control.bend as Control
 import ./wake.bend as Wake
 import ./message-batch.bend as MessageBatch
 import ./subscription-fallback.bend as Subscription
+import ./agent-command.bend as AgentCommand
+import ./agent-route.bend as AgentRoute
+import ./agent-input.bend as AgentInput
+import ./agent-native.bend as AgentNative
 import ../host/text.bend as T
 import ../host/process.bend as P
 import ../host/instance.bend as Custody
@@ -43,7 +47,7 @@ def run(+db: String, +command: C.Command) -> IO(Unit):
 def read_command(+db: String, +command: C.Command) -> IO(Unit):
   do IO<Unit>:
     result : String <- IO.try(String,Store.read(db,command))
-    print_result(result)
+    AgentInput.command_output(db,command,result)
 
 def task_usage() -> String:
   "task TEXT [OPTIONS]\ntask --stdin [OPTIONS]\ntask --file UTF8_FILE [OPTIONS]\ntask --help shows project, named route, explicit overrides and continuation options.\nstart-setup SESSION HARNESS HARNESS_CMD MODEL EFFORT CWD OUTPUT_LOG\nprofile-bind SESSION HARNESS LABEL STORE\n"
@@ -66,7 +70,7 @@ def log_answer(+saved: String) -> IO(Unit):
 
 def execute(+db: String, command: C.Command) -> IO(Unit):
   match command:
-    case C.Help{}: IO.write(usage() ++ Knowledge.tool_help())
+    case C.Help{}: IO.write(AgentCommand.help() ++ usage() ++ Knowledge.tool_help())
     case C.Invalid{}: IO.die(Unit,2,usage() ++ Knowledge.tool_help())
     case C.Stop{session,id,reason}: Stop.run(db,session,id,reason,False{})
     case C.ForceStop{session,id}: Stop.run(db,session,id,"",True{})
@@ -102,10 +106,10 @@ def execute(+db: String, command: C.Command) -> IO(Unit):
       do IO<Unit>:
         saved : String <- Control.status_pretty(db)
         print_result(saved)
-    case C.Pretty{read}:
+    case C.Pretty{+read}:
       do IO<Unit>:
         saved : String <- Control.pretty(db,read)
-        print_result(saved)
+        AgentInput.command_output(db,C.Pretty{read},saved)
     case C.RoleRead{session}: read_command(db,C.RoleRead{session})
     case C.EnsembleRead{id}: read_command(db,C.EnsembleRead{id})
     case C.Session{id}: read_command(db,C.Session{id})
@@ -242,6 +246,11 @@ def keeper(directory: String, lock: Maybe<&2,U32>) -> IO(Unit):
 
 def normal_cli(args: List<String>) -> IO(Unit):
   match args:
+    case db <> "agent-native-input" <> Nil{}: do IO<Unit>:
+      native_args : List<String> <- AgentNative.input(db)
+      execute(db,C.parse(native_args))
+    case db <> "settle-agent-input" <> session <> native <> turn <> status <> Nil{}:
+      AgentInput.settle_codex(db,session,native,turn,status)
     case "--project" <> path <> rest: do IO<Unit>:
       db : String <- Project.database(path)
       execute(db,C.parse(rest))
@@ -296,7 +305,7 @@ def observe_context_runtime_cli(+flag: String, +db: String, +owner: String,
     ContextRuntime.runtime_recover(db, owner, launch_query, target_dir, adapter_dir),
     normal_cli([flag, db, owner, launch_query, target_dir, adapter_dir]))
 
-def cli(args: List<String>) -> IO(Unit):
+def legacy_cli(args: List<String>) -> IO(Unit):
   match args:
     case "--project" <> path <> rest: normal_cli(Con{"--project",Con{path,rest}})
     case flag <> database <> Nil{}: instance_owner_cli(database,flag)
@@ -311,7 +320,14 @@ def cli(args: List<String>) -> IO(Unit):
       recover_direct_cli(flag, db, player, id, cmd, model, effort, cwd, log, harness, directory, native)
     case flag <> db <> session <> id <> cursor <> cmd <> model <> effort <> cwd <> log <> harness <> directory <> native <> Nil{}:
       recover_cli(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,String.eq(flag,"--recover-receive"))
+    case "--recover-receive" <> db <> session <> id <> cursor <> cmd <> model <> effort <> cwd <> log <> harness <> directory <> native <> input_messages <> Nil{}:
+      recover_cli(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,True{})
     case other: normal_cli(other)
+
+def cli(args: List<String>) -> IO(Unit):
+  match AgentRoute.parse(args):
+    case AgentRoute.Action{context}: AgentCommand.route(context)
+    case AgentRoute.Legacy{args}: legacy_cli(args)
 
 def main() -> IO(Unit):
   do IO<Unit>:

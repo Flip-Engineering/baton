@@ -198,6 +198,12 @@ def extract(archive, manifest_path, destination):
     binary = manifest['binary']
     require(binary['path'] == 'bin/baton2', 'Manifest must name the installed bin/baton2 entry')
     require(os.access(prefix / binary['path'], os.X_OK), 'Staged coordinator is not executable')
+    require(binary.get('alias') == 'bin/baton', 'Manifest must name the installed bin/baton alias')
+    alias = prefix / binary['alias']
+    require(alias.is_file() and not alias.is_symlink() and os.access(alias, os.X_OK),
+            'Staged baton alias is not an executable regular file')
+    require(archive_digest(alias) == archive_digest(prefix / binary['path']),
+            'Staged baton alias differs from the coordinator binary')
     return prefix, manifest
 
 
@@ -265,6 +271,10 @@ def main():
                            GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
         commands = Commands(output, working, environment, 'smoke')
         cli = lambda name, *args: json.loads(commands.call(name, ['baton2', str(db), *args]))
+        require('usage:' in commands.call('baton-alias-help', ['baton', 'help']),
+                'Installed baton alias did not answer help')
+        require('--stdin' in commands.call('baton-task-help', ['baton', 'task', '--help']),
+                'Installed task operation did not load its packaged input helper')
         commands.call('usage', ['baton2'], 2)
         commands.call('git-init', [git, 'init', '-q', '-b', 'main', str(repo)])
         for key, value in [('user.name', 'Native artifact fixture'), ('user.email', 'fixture@example.invalid')]:
@@ -300,6 +310,8 @@ def main():
                     for harness in ('codex', 'omp', 'mcp') for suffix in ('conductor', 'root')),
                 'The archive must contain canonical Conductor adapters and stored-endpoint compatibility entries')
         tools = [
+            ('agent-inbox', 'baton2_action', {'action': 'inbox'}),
+            ('agent-read', 'baton2_action', {'action': 'read', 'arguments': ['absent-artifact-message']}),
             ('player', 'baton2_player', {'player': 'worker'}),
             ('players', 'baton2_players', {}),
             ('role', 'baton2_role', {'session': 'root'}),
@@ -323,6 +335,11 @@ def main():
         require(responses['initialize']['result']['serverInfo']['name'] == 'baton-conductor',
                 'The staged adapter did not advertise its canonical Conductor identity')
         controls = {label: json.loads(responses[label]['result']['content'][0]['text']) for label, _, _ in tools}
+        require(controls['agent-inbox'] == [], 'The new attached root has unexpected input')
+        require(len(controls['agent-read']) == 1
+                and controls['agent-read'][0]['id'] == 'absent-artifact-message'
+                and controls['agent-read'][0]['status'] == 'missing',
+                'Packaged contextual read did not retain the missing item outcome')
         require(controls['player']['role'] == 'player' and controls['player']['kind'] == 'player',
                 'The staged Player inspection lost its runtime responsibility')
         require({entry['id'] for entry in controls['players']} == {'root', 'worker'}, 'The Player roster lost a Conductor or Player')

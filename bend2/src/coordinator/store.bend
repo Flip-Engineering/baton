@@ -3,6 +3,7 @@ import ../host/sqlite.bend as DB
 import ../host/instance.bend as Custody
 import ../coordinator/commands.bend as C
 import ../git/text.bend as Tx
+import ./message-status.bend as MessageStatus
 
 def accepted(saved: String, stopped: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   match stopped:
@@ -112,8 +113,43 @@ def commit_sql(command: C.Command) -> String:
 def commit(db: String, command: C.Command) -> IO(Result<&1, &1, U32 & String, String>):
   transact_sql(db,commit_sql(command))
 
-def read(db: String, command: C.Command) -> IO(Result<&1, &1, U32 & String, String>):
-  DB.Sql.read(db,C.sql(command))
+def message_shape(command: C.Command) -> U32:
+  match command:
+    case C.Pretty{inner}: message_shape(inner)
+    case C.Delivery{id}: 2
+    case C.InputDetail{id}: 3
+    case C.Pending{}: 1
+    case C.PendingIndex{}: 1
+    case C.Inbox{id}: 1
+    case C.InboxIndex{id}: 1
+    case C.Outbox{id}: 1
+    case C.MessageIndex{inbox,condition,state}: 1
+    case other: 0
+
+def message_projection_value(+saved: String, shape: U32, known: Bool, status: String) -> String:
+  match shape:
+    case 1: "SELECT coalesce(json_group_array(json(item)),'[]') FROM (SELECT json_patch(j.value,json_object('nativeInputStatus'," ++ status ++ ")) AS item FROM json_each(" ++ C.q(saved) ++ ") j ORDER BY CAST(j.key AS INTEGER));"
+    case 2: "SELECT json_patch(j.value,json_object('nativeInputStatus'," ++ status ++ ")) FROM (SELECT " ++ C.q(Tx.trim_nl(saved)) ++ " AS value) j;"
+    case 3:
+      Bool.pick(String,known,MessageStatus.decorate_detail_sql(saved),"SELECT json_set(" ++ C.q(Tx.trim_nl(saved)) ++ ",'$.message.nativeInputStatus',json_object('delivered','unrecorded','read','unrecorded','handled','unrecorded','attempts',json('[]')),'$.attemptRelation',json_object('status','unrecorded','attempts',json('[]')));")
+    case other: ""
+
+def message_projection(saved: String, shape: U32, +known: Bool) -> String:
+  message_projection_value(saved,shape,known,Bool.pick(String,known,MessageStatus.projection("json_extract(j.value,'$.id')"),"json_object('delivered','unrecorded','read','unrecorded','handled','unrecorded','attempts',json('[]'))"))
+
+def message_read_result(+db: String, +shape: U32, result: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String>):
+  match result:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
+    case Done{+saved}:
+      Bool.pick(IO(Result<&1,&1,U32 & String,String>),Bool.or(U32.is_eq(shape,0),String.is_empty(saved)),IO.pure(Result<&1,&1,U32 & String,String>,Done{saved}),
+        (do IO<Result<&1,&1,U32 & String,String>>:
+          exists : String <- IO.try(String,DB.Sql.read(db,MessageStatus.present_sql()))
+          DB.Sql.read(db,message_projection(saved,shape,String.eq(exists,"1\n")))))
+
+def read(+db: String, +command: C.Command) -> IO(Result<&1, &1, U32 & String, String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
+    result : Result<&1,&1,U32 & String,String> <- DB.Sql.read(db,C.sql(command))
+    message_read_result(db,message_shape(command),result)
 
 def apply(db: String, command: C.Command) -> IO(Result<&1, &1, U32 & String, String>):
   do IO<Result<&1,&1,U32 & String,String>>:

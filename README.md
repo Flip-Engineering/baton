@@ -42,21 +42,28 @@ covers native client configuration.
 
 ## Start a task
 
-Save a task in a Markdown file. Choose a model available through your configured
-Codex client, then replace `MODEL` and the absolute paths below:
+Choose a model available through your configured Codex client, then start a task
+from its complete text, standard input or a UTF-8 file. With the published
+release installed, replace `MODEL` and the absolute paths below:
 
 ```sh
-.scratch/bend2/baton2 /absolute/path/state.db start principal codex /absolute/path/codex \
-  MODEL high /absolute/path/repository /absolute/path/principal-native.jsonl \
-  task-1 /absolute/path/task.md
-.scratch/bend2/baton2 /absolute/path/state.db inbox operator --pretty
+baton task --file /absolute/path/task.md --project /absolute/path/repository \
+  --harness codex --model MODEL --effort high
+baton --project /absolute/path/repository as operator inbox
 ```
 
-`start` registers a parentless coordinating agent as `principal` and a separate
-`operator` identity, configures the agent's receiver, and dispatches the task to
-a native session. Reports route to the operator inbox. Use the
+`task` records the complete input, selects project defaults and explicit
+settings, configures the agent's receiver, and dispatches the task to a native
+session. Its result names the recorded session and task. Reports route to the
+coordinating agent or operator inbox. Use the
 [command guide](bend2/README.md) to inspect turns and receipts, send further
 instructions, and manage contributions.
+
+Agents use `baton inbox`, `baton read MESSAGE_ID...`, and `baton send TARGET
+--kind KIND --text TEXT` with their recorded project and native session. Named
+arguments and independent batch clauses also cover receiver controls,
+worktrees, knowledge and project settings. The [agent command
+guide](docs/bend2/agent-commands.md) describes context selection and each action.
 
 ## Documentation
 

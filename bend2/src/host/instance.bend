@@ -159,3 +159,13 @@ def Instance.admit(database: String, directory: String, argv: String, cwd: Strin
     case Some{value_lock}: do IO<Result<&1,&1,U32 & String,P.RetainedStart>>:
       result : Result<&1,&1,U32 & String,Maybe<U32> & String> <- Instance.admit_start(database,directory,argv,cwd,stderr,initial,keep_stdin,value_lock,recovery_argv)
       IO.pure(Result<&1,&1,U32 & String,P.RetainedStart>,Instance.started(result))
+
+# Reads the exact admitted manifest, native birth and stdout spool identity.
+# Complete requires natural exit zero and a verified checkpoint at full spool end.
+def Instance.input_witness(database: String, directory: String) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./process-spawn.c"
+
+# Returns the complete sealed prompt and the exact input IDs in its original
+# admitted recovery descriptor. Legacy descriptors retain unknown selection.
+def Instance.input_prompt(database: String, directory: String) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./process-spawn.c"

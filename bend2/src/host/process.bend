@@ -75,6 +75,10 @@ def ProcessChild.close_stdin(handle: U32) -> IO(Result<&1,&1,U32 & String,Unit>)
 def ProcessChild.read_line(handle: U32) -> IO(Result<&1,&1,U32 & String,Maybe<String>>):
   import "./process-spawn.c"
 
+# Returns complete text lines, including their actual final LF when present.
+def ProcessChild.read_text_line(handle: U32) -> IO(Result<&1,&1,U32 & String,Maybe<String>>):
+  import "./process-spawn.c"
+
 # A retained read returns a native line or an owner notice. Notice-only reads
 # return None with notice text; a native empty line returns Some{""}.
 # The final field is 1 while the subscription remains usable.

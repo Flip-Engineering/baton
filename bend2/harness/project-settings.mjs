@@ -4,7 +4,8 @@
 // the original settings feature retains its independent acceptance.
 import { execFileSync } from 'node:child_process';
 import { readFileSync, realpathSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 export const SETTINGS_SCHEMA = 'baton2-project-settings-v1';
 export const SETTINGS_RELATIVE_PATH = 'baton2/settings.json';
@@ -219,7 +220,7 @@ export function resolveProjectKey(worktree) {
     const common = execFileSync(
       'git', ['-C', canonical, 'rev-parse', '--path-format=absolute', '--git-common-dir'],
       { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] },
-    ).trim();
+    ).replace(/\n$/, '');
     if (!common) return canonical;
     return realpathSync(common);
   } catch {
@@ -231,13 +232,14 @@ export function readSettingsFile(path) {
   const bytes = readFileSync(path);
   let text;
   try {
-    text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
   } catch (error) {
-    return { status: 'refused', reason: 'projectSettingsMalformed', detail: error.message, path };
+    return { status: 'refused', reason: 'projectSettingsMalformed', detail: error.message,
+      path, bytesHex: bytes.toString('hex') };
   }
-  const decoded = decodeSettings(text);
-  if (decoded.status !== 'decoded') return { ...decoded, path };
-  return Object.freeze({ status: 'decoded', path, value: decoded.value });
+  const decoded = decodeSettings(text.startsWith('\uFEFF') ? text.slice(1) : text);
+  if (decoded.status !== 'decoded') return { ...decoded, path, body: text };
+  return Object.freeze({ status: 'decoded', path, body: text, value: decoded.value });
 }
 
 export function subscriptionLines(value) {
@@ -257,3 +259,21 @@ export function resolveRouteProfile(value, harness, label) {
   return found === null ? null : found.store;
 }
 
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const args = process.argv.slice(2);
+  let result;
+  if (args.length !== 2 || args[0] !== '--inspect') {
+    result = refused('projectSettingsArguments', 'Expected --inspect PATH');
+  } else {
+    let path = args[1];
+    try {
+      path = settingsPathFor(resolveProjectKey(path));
+      result = readSettingsFile(path);
+    } catch (error) {
+      result = { status: 'refused', reason: 'projectSettingsUnavailable', path,
+        detail: error.message, code: error.code ?? null };
+    }
+  }
+  process.stdout.write(JSON.stringify(result) + '\n');
+  process.exitCode = result.status === 'decoded' ? 0 : 1;
+}

@@ -452,6 +452,98 @@ class Coordinator(unittest.TestCase):
         self.assertEqual(self.call('delivery', 'ready-request')['receipt'],
                          'Reviewed the complete result.')
 
+    def test_parented_assignment_authority_uses_parent_and_keeps_peer_messages_pending(self):
+        self.player('peer', parent='root')
+        self.call('ensemble', 'completion-peers', 'root', 'tight')
+        for member in ('worker', 'peer'):
+            self.call('ensemble-member', 'completion-peers', 'root', member, 'add')
+
+        parent_assignments = (
+            ('parent-task', 'task'),
+            ('parent-guidance', 'guidance'),
+            ('parent-recovery', 'recovery'),
+            ('parent-task-assignment', 'task-assignment'),
+        )
+        for ident, kind in parent_assignments:
+            self.call('message', ident, 'root', 'worker', kind,
+                      'Parent-owned assignment input: ' + kind)
+            state = self.call('session', 'worker')['taskCompletion']
+            self.assertEqual(state['assignmentId'], ident)
+            self.assertEqual(state['coordinator'], 'root')
+            self.assertTrue(state['open'])
+            self.call('ack', ident, 'worker', 'Parent assignment input was reviewed.')
+
+        # A retained direct turn records a self-authored task input whose ID
+        # carries the exact public request ID suffix.
+        with sqlite3.connect(self.db) as database:
+            direct_body = 'A retained direct child task.'
+            database.execute('INSERT INTO messages(id,sender,recipient,kind,body) '
+                             'VALUES(?,?,?,?,?)',
+                             ('worker-direct:task-input', 'worker', 'worker',
+                              'task-assignment', direct_body))
+            database.execute('INSERT INTO messages(id,sender,recipient,kind,body) '
+                             'VALUES(?,?,?,?,?)',
+                             ('worker-self-assignment', 'worker', 'worker',
+                              'task-assignment', 'This unlinked self row is not a direct task input.'))
+            # Receive and project recovery paths also create self-authored rows.
+            database.execute('INSERT INTO messages(id,sender,recipient,kind,body) '
+                             'VALUES(?,?,?,?,?)',
+                             ('worker-self-recovery', 'worker', 'worker', 'recovery',
+                              'A self recovery notice does not replace the parent assignment.'))
+        state = self.call('session', 'worker')['taskCompletion']
+        self.assertEqual(state['assignmentId'], 'worker-direct:task-input')
+        self.call('ack', 'worker-self-recovery', 'worker', 'Self recovery notice was reviewed.')
+        self.call('ack', 'worker-self-assignment', 'worker', 'Unlinked self task input was reviewed.')
+
+        request = 'worker-completion-request'
+        self.call('message', request, 'worker', 'root', 'completion-request',
+                  'The parent-owned assignment is complete.')
+        peer_inputs = []
+        for kind in ('task', 'guidance', 'recovery', 'task-assignment'):
+            ident = 'peer-' + kind
+            peer_inputs.append(ident)
+            self.call('message', ident, 'peer', 'worker', kind,
+                      'Peer message remains ordinary pending input: ' + kind)
+            state = self.call('session', 'worker')['taskCompletion']
+            self.assertEqual((state['assignmentId'], state['requestId'],
+                              state['coordinator'], state['confirmed'], state['open']),
+                             ('worker-direct:task-input', request, 'root', False, True))
+            delivery = self.call('delivery', ident)
+            self.assertEqual((delivery['sender'], delivery['recipient'], delivery['kind']),
+                             ('peer', 'worker', kind))
+            self.assertIsNone(delivery['receipt'])
+
+        self.call('ack', request, 'root', 'The parent reviewed the completion request.')
+        self.call('message', 'worker-completion-confirmed', 'root', 'worker',
+                  'completion-confirmed', request)
+        state = self.call('session', 'worker')['taskCompletion']
+        self.assertEqual((state['assignmentId'], state['requestId'], state['coordinator'],
+                          state['confirmed'], state['open']),
+                         ('worker-direct:task-input', request, 'root', True, False))
+
+        self.call('message', 'parent-next-guidance', 'root', 'worker', 'guidance',
+                  'The immediate parent assigned the next task.')
+        state = self.call('session', 'worker')['taskCompletion']
+        self.assertEqual((state['assignmentId'], state['requestId'], state['coordinator'],
+                          state['confirmed'], state['open']),
+                         ('parent-next-guidance', None, 'root', False, True))
+        self.call('stop', 'worker', 'parent-authority-stop', 'Stop the child session.')
+        stopped = self.call('session', 'worker')['taskCompletion']
+        self.assertEqual((stopped['assignmentId'], stopped['open']),
+                         ('parent-next-guidance', False))
+        self.assertEqual([self.call('delivery', ident)['receipt'] for ident in peer_inputs],
+                         [None] * len(peer_inputs))
+
+        self.operator()
+        for kind in ('task', 'guidance', 'recovery', 'task-assignment'):
+            ident = 'operator-parentless-' + kind
+            self.call('message', ident, 'operator', 'root', kind,
+                      'Parentless operator assignment input: ' + kind)
+            state = self.call('session', 'root')['taskCompletion']
+            self.assertEqual((state['assignmentId'], state['coordinator'],
+                              state['requestId'], state['open']),
+                             (ident, None, None, False))
+
     def operator(self, role=True):
         self.call('attach', 'operator', 'operator', '', '')
         if role:

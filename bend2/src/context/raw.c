@@ -14,6 +14,7 @@ typedef struct {
   size_t length;
   int error;    /* host error, 0 when the read completed */
   int refusal;  /* 0 none, 1 invalid utf8, 2 nul, 3 bom */
+  int preserve_bom;
   size_t offset;
 } BatonRawRead;
 
@@ -89,14 +90,14 @@ close_file:
   if (file != stdin && fclose(file) != 0 && !call->error) call->error = errno;
   if (call->error) return;
   const unsigned char *b = (const unsigned char *)call->bytes;
-  if (baton_raw_bom(b, call->length)) { call->refusal = 3; return; }
+  if (!call->preserve_bom && baton_raw_bom(b, call->length)) { call->refusal = 3; return; }
   size_t bad = 0;
   if (baton_raw_utf8_bad(b, call->length, &bad)) { call->refusal = 1; call->offset = bad; return; }
   size_t nul = 0;
   if (baton_raw_first_nul(b, call->length, &nul)) { call->refusal = 2; call->offset = nul; return; }
 }
 
-#ifdef CID_RAW_READ_UTF8
+#if defined(CID_RAW_READ_UTF8) || defined(CID_RAW_READ_TEXT_UTF8)
 static Term baton_raw_read_pack(Env e, IoWork *w) {
   BatonRawRead *call = (BatonRawRead *)w->data;
   Term value = term_pak(CID_UNIT, 0);
@@ -116,9 +117,10 @@ static Term baton_raw_read_pack(Env e, IoWork *w) {
   return result;
 }
 
-static Term baton_raw_read_run(Env e, Term *f, IoWork *w) {
+static Term baton_raw_read_mode(Env e, Term *f, IoWork *w, int preserve_bom) {
   BatonRawRead *call = calloc(1, sizeof(*call));
   if (!call) return io_fail(e, ENOMEM, NULL);
+  call->preserve_bom = preserve_bom;
   u64 length = 0;
   call->path = io_cstr(e, f[0], &length);
   if (strlen(call->path) != length) {
@@ -128,7 +130,20 @@ static Term baton_raw_read_run(Env e, Term *f, IoWork *w) {
   w->data = (char *)call;
   return io_work(w, baton_raw_read_call, baton_raw_read_pack);
 }
+#ifdef CID_RAW_READ_UTF8
+static Term baton_raw_read_run(Env e, Term *f, IoWork *w) {
+  return baton_raw_read_mode(e, f, w, 0);
+}
 static void __attribute__((constructor)) baton_raw_read_use(void) {
   io_eff(CID_RAW_READ_UTF8, baton_raw_read_run, 0);
 }
+#endif
+#ifdef CID_RAW_READ_TEXT_UTF8
+static Term baton_raw_text_read_run(Env e, Term *f, IoWork *w) {
+  return baton_raw_read_mode(e, f, w, 1);
+}
+static void __attribute__((constructor)) baton_raw_text_read_use(void) {
+  io_eff(CID_RAW_READ_TEXT_UTF8, baton_raw_text_read_run, 0);
+}
+#endif
 #endif

@@ -32,10 +32,13 @@ Baton2 follow-up work for contributors.
   installed task-entry qualification remain part of the current #717 release.
 
 - [#715: Simplify agent commands with a contextual action grammar](https://github.com/Flip-Engineering/baton/issues/715).
-  Extend the implicit project and session context introduced in
-  [#714](https://github.com/Flip-Engineering/baton/issues/714) to inspection,
-  assignments, decisions, managed work and project operations. Support batches
-  with an individual outcome for each item.
+  The integrated [agent commands](agent-commands.md) extend the project and
+  session context from [#714](https://github.com/Flip-Engineering/baton/issues/714)
+  to inspection, assignments, decisions, managed work, knowledge and project
+  operations. Each batch item retains its full input and individual outcome.
+  Native input status derives from complete recipient reads and the matching
+  native terminal report. Remote qualification and active installation remain
+  part of the current #717 release.
   - [ ] Record delivered and read status through the recipient harness.
   - [ ] Record routine handling from the recipient turn without a separate
     acknowledgement command for every message.

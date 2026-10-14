@@ -14,6 +14,8 @@ import unittest
 SELECTED = (
     'root-wake.py', 'coordinator.py', 'receive.py', 'turn.py',
     'receive-output.py', 'fixed-coordinator.py',
+    'agent-actions.py', 'agent-input.py', 'task-start.py', 'mcp-command.py',
+    'control.py', 'control-identity.py', 'configure.py',
 )
 
 

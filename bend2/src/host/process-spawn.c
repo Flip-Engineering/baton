@@ -21,7 +21,7 @@ typedef struct {
   size_t length;
   u32 handle, signal, index;
   uint64_t owner_incarnation,owner_attempt;
-  int kind, error, eof, unstarted, fresh;
+  int kind, error, eof, unstarted, fresh, preserve_line;
   char *directory, *initial, *recovery, *detail, *database, *artifact_name, *artifact, *identity, *owner_witness;
   size_t initial_length, recovery_length, artifact_name_length, artifact_length, identity_length;
   u32 keep_stdin, lock;
@@ -56,7 +56,7 @@ enum { BP_SPAWN, BP_WRITE, BP_CLOSE, BP_READ, BP_READ_AWAKE, BP_WAIT, BP_SIGNAL,
        BP_INSTANCE_PUBLISH, BP_INSTANCE_STATE, BP_INSTANCE_PREPARE,
        BP_INSTANCE_PREPARE_WITH_FILE, BP_INSTANCE_START, BP_INSTANCE_CANCEL,
        BP_INSTANCE_OWNER_WITNESS, BP_INSTANCE_ENSURE_OWNER_WITNESS,
-       BP_INSTANCE_RECOVER };
+       BP_INSTANCE_RECOVER, BP_INSTANCE_INPUT_WITNESS, BP_INSTANCE_INPUT_PROMPT };
 
 static int baton_pipe(int fds[2]) {
   if (pipe(fds)) return errno;
@@ -215,6 +215,11 @@ typedef struct BrControl {
 /* The native process identity: pid plus its start time, so a checkpoint can be
    bound to the exact process that produced the observed bytes. */
 typedef struct { int32_t pid; uint64_t first,second; } BrBirth;
+typedef struct {
+  char magic[8];
+  BrBirth birth;
+  uint64_t manifest,length,check;
+} BrInputDelivery;
 typedef struct BatonRetained {
   int socket,spool,error,exited,status,input_closed;
   int guard,watch,life,orphan,unknown,released,acknowledged,observer_only;
@@ -333,6 +338,7 @@ static uint64_t br_attempt_identity(const char *directory);
 static int br_checkpoint_custody(const char *directory,int spool_fd,BrBirth *birth,
                                  uint64_t *manifest,uint64_t *spool_device,uint64_t *spool_inode);
 static uint64_t br_manifest_digest(const BrManifestHeader *header,char *const *fields,int count);
+static uint64_t br_digest_mix(uint64_t digest,const void *data,size_t length);
 static int br_manifest_digest_file(const char *directory,uint64_t *digest);
 static int br_artifact_name_ok(const char *name,size_t length);
 static int br_artifact_write(const char *directory,const char *name,const char *bytes,size_t length);
@@ -1142,6 +1148,16 @@ static int br_flush_commands(BrKeeper *keeper) {
       else {buffer->offset+=(size_t)n;if(buffer->offset<buffer->length)break;}
     }
     if(error && !buffer->serial)br_note(keeper,"initial-input-error",error);
+    if(!error && !buffer->serial && !buffer->close_input) {
+      BrInputDelivery delivered={.manifest=keeper->identity,.length=buffer->length};
+      memcpy(delivered.magic,"BATONIN1",8);
+      int recorded=br_read_file(keeper->directory,"native.birth",&delivered.birth,sizeof(delivered.birth));
+      if(!recorded) {
+        delivered.check=br_digest_mix(UINT64_C(1469598103934665603),&delivered,sizeof(delivered));
+        recorded=br_file(keeper->directory,"input-delivered",&delivered,sizeof(delivered),1);
+      }
+      if(recorded && recorded!=EEXIST)br_note(keeper,"input-delivery-record-error",recorded);
+    }
     int reply=0;
     if(buffer->control) {
       buffer->control->pending=0;buffer->control->answered=1;
@@ -3783,6 +3799,156 @@ static int br_instance_job(BatonProcessCall *call) {
   free(directory);
   return 0;
 }
+/* Input exposure uses the admitted native birth and manifest. Complete handling
+   additionally requires a natural zero status and a verified full spool checkpoint. */
+static int br_instance_input_witness(BatonProcessCall *call) {
+  char *directory=realpath(call->directory,NULL);
+  if(!directory)return errno;
+  int error=br_admission_verify(directory,call->database,-1);
+  BrBirth birth={0},current={0};uint64_t manifest=0,device=0,inode=0,offset=0;
+  char *spool=error?NULL:br_path(directory,"stdout");
+  int fd=spool?open(spool,O_RDONLY|O_CLOEXEC|O_NOFOLLOW):-1;
+  if(!error && fd<0)error=spool?errno:ENOMEM;
+  free(spool);
+  if(!error)error=br_checkpoint_custody(directory,fd,&birth,&manifest,&device,&inode);
+  if(!error)error=br_attempt_manifest_verify(directory);
+  if(!error && birth.pid<=1)error=EINVAL;
+  BrInputDelivery delivered={0};
+  int input_error=error?error:br_read_file(directory,"input-delivered",&delivered,sizeof(delivered));
+  int input_delivered=0;
+  BrManifest input_manifest={0};
+  if(!error && !input_error)input_error=br_manifest_read(directory,&input_manifest);
+  if(!input_error) {
+    uint64_t check=delivered.check;delivered.check=0;
+    input_delivered=!memcmp(delivered.magic,"BATONIN1",8) &&
+      delivered.manifest==manifest && delivered.length==input_manifest.header.lengths[3] && br_same_birth(delivered.birth,birth) &&
+      check==br_digest_mix(UINT64_C(1469598103934665603),&delivered,sizeof(delivered));
+    if(!input_delivered)input_error=EINVAL;
+  }
+  br_manifest_free(&input_manifest);
+  int live=0,birth_error=0,lifetime_error=0;
+  if(!error) {
+    int ended=0,life=br_lifetime(directory,&ended);
+    if(life<0 && !ended)lifetime_error=errno;
+    if(life>=0) {
+      struct pollfd observed={life,POLLIN,0};
+      int ready;do {ready=poll(&observed,1,0);}while(ready<0 && errno==EINTR);
+      if(ready<0)lifetime_error=errno;
+      else if(observed.revents&(POLLIN|POLLHUP|POLLERR))ended=1;
+      if(close(life) && !lifetime_error)lifetime_error=errno;
+    }
+    birth_error=br_birth(birth.pid,&current);
+    if(!birth_error && !lifetime_error && !ended)live=br_same_birth(birth,current);
+  }
+  /* Optional completion evidence preserves the admitted exposure identity. */
+  struct stat before={0},after={0};
+  int before_error=error?error:fstat(fd,&before)?errno:before.st_size<0?EINVAL:0;
+  int checkpoint_error=error?error:br_checkpoint_verified_offset(directory,fd,&offset);
+  int checkpoint=!checkpoint_error;
+  int after_error=error?error:fstat(fd,&after)?errno:after.st_size<0?EINVAL:0;
+  int stable=!before_error && !after_error && before.st_dev==after.st_dev &&
+    before.st_ino==after.st_ino && before.st_size==after.st_size;
+  int close_error=fd>=0 && close(fd)?errno:0;
+  char *status_path=error?NULL:br_path(directory,"status");
+  FILE *status_file=status_path?fopen(status_path,"r"):NULL;
+  int status=0,known=0,status_error=status_file?0:status_path?errno:ENOMEM;
+  if(status_file) {
+    char trailing;
+    errno=0;
+    known=fscanf(status_file,"%d %c",&status,&trailing)==1;
+    if(ferror(status_file)) {status_error=errno?errno:EIO;known=0;}
+    else if(!known)status_error=EINVAL;
+    if(fclose(status_file)) {if(!status_error)status_error=errno?errno:EIO;known=0;}
+  }
+  free(status_path);
+  int complete=!error && !status_error && !close_error && stable && known &&
+    WIFEXITED(status) && WEXITSTATUS(status)==0 && checkpoint && offset==(uint64_t)after.st_size;
+  char spool_bytes[32];
+  if(after_error)strcpy(spool_bytes,"null");
+  else snprintf(spool_bytes,sizeof(spool_bytes),"\"%llu\"",(unsigned long long)after.st_size);
+  char *escaped=!error?br_json_escape(directory):NULL;
+  if(!error && !escaped)error=ENOMEM;
+  const char *format="{\"directory\":\"%s\",\"identity\":\"%016llx:%d:%llu:%llu:%llu:%llu\","
+    "\"nativePid\":%d,\"nativeBirth\":\"%llu:%llu\",\"live\":%s,\"complete\":%s,"
+    "\"initialInputDelivered\":%s,\"initialInputBytes\":\"%llu\",\"inputDeliveryCause\":%d,"
+    "\"birthLookupCause\":%d,\"lifetimeCause\":%d,\"statusReadCause\":%d,\"checkpointCause\":%d,"
+    "\"spoolStatBeforeCause\":%d,\"spoolStatAfterCause\":%d,\"spoolCloseCause\":%d,\"spoolStable\":%s,"
+    "\"statusKnown\":%s,\"status\":%d,\"checkpointVerified\":%s,"
+    "\"consumed\":\"%llu\",\"spoolBytes\":%s}";
+  int length=error?-1:snprintf(NULL,0,format,escaped,(unsigned long long)manifest,birth.pid,
+    (unsigned long long)birth.first,(unsigned long long)birth.second,
+    (unsigned long long)device,(unsigned long long)inode,birth.pid,
+    (unsigned long long)birth.first,(unsigned long long)birth.second,
+    live?"true":"false",complete?"true":"false",input_delivered?"true":"false",(unsigned long long)delivered.length,input_error,birth_error,lifetime_error,status_error,checkpoint_error,
+    before_error,after_error,close_error,stable?"true":"false",known?"true":"false",status,
+    checkpoint?"true":"false",(unsigned long long)offset,spool_bytes);
+  if(!error && length<0)error=EIO;
+  char *text=!error?malloc((size_t)length+1):NULL;
+  if(!error && !text)error=ENOMEM;
+  if(!error) {
+    int written=snprintf(text,(size_t)length+1,format,escaped,(unsigned long long)manifest,birth.pid,
+      (unsigned long long)birth.first,(unsigned long long)birth.second,
+      (unsigned long long)device,(unsigned long long)inode,birth.pid,
+      (unsigned long long)birth.first,(unsigned long long)birth.second,
+      live?"true":"false",complete?"true":"false",input_delivered?"true":"false",(unsigned long long)delivered.length,input_error,birth_error,lifetime_error,status_error,checkpoint_error,
+      before_error,after_error,close_error,stable?"true":"false",known?"true":"false",status,
+      checkpoint?"true":"false",(unsigned long long)offset,spool_bytes);
+    if(written!=length)error=EIO;
+    else {call->text=text;text=NULL;call->length=(size_t)written;}
+  }
+  free(text);free(escaped);free(directory);return error;
+}
+static int br_instance_input_prompt(BatonProcessCall *call) {
+  char *directory=realpath(call->directory,NULL);
+  if(!directory)return errno;
+  int error=br_admission_verify(directory,call->database,-1);
+  BrManifest manifest={0};
+  if(!error)error=br_manifest_read(directory,&manifest);
+  if(!error)error=br_attempt_manifest_verify(directory);
+  if(!error && (manifest.count!=8 || strcmp(manifest.field[6],"prompt.txt")))error=ENOENT;
+  unsigned char digest[32];uint64_t length=0;
+  if(!error)error=br_artifact_binding(directory,manifest.field[6],(size_t)manifest.header.lengths[6],digest,&length);
+  if(!error && length>SIZE_MAX-1)error=EOVERFLOW;
+  char *text=!error?malloc((size_t)length+1):NULL;
+  if(!error && !text)error=ENOMEM;
+  if(!error)error=br_read_file(directory,"prompt.txt",text,(size_t)length);
+  if(!error && memchr(text,0,(size_t)length))error=EINVAL;
+  if(!error) {
+    BrSha256 sha;br_sha256_init(&sha);br_sha256_update(&sha,(unsigned char *)text,(size_t)length);
+    unsigned char held[32];br_sha256_final(&sha,held);
+    if(memcmp(held,manifest.field[7],sizeof(held)))error=EEXIST;
+  }
+  char **argv=!error?br_argv(manifest.field[4],(size_t)manifest.header.lengths[4]):NULL;
+  size_t argc=0;if(argv)while(argv[argc])argc++;
+  int direct=argc==13 && !strcmp(argv[1],"--recover-direct");
+  int receive=(argc==14 || argc==15) && !strcmp(argv[1],"--recover-receive");
+  if(!error && (!argv || (!direct && !receive)))error=EINVAL;
+  char *body=NULL,*session=NULL,*attempt=NULL,*cursor=NULL,*inputs=NULL;
+  if(!error) {
+    text[length]=0;
+    body=br_json_escape(text);session=br_json_escape(argv[3]);attempt=br_json_escape(argv[4]);
+    cursor=br_json_escape(receive?argv[5]:"");
+    if(direct && attempt) {
+      size_t size=strlen(attempt)+sizeof(":task-input")+4;
+      char *selected=malloc(size);
+      if(selected) {snprintf(selected,size,"[\"%s:task-input\"]",attempt);inputs=br_json_escape(selected);}
+      free(selected);
+    } else inputs=br_json_escape(argc==15?argv[14]:"[]");
+    if(!body || !session || !attempt || !cursor || !inputs)error=ENOMEM;
+  }
+  const char *format="{\"prompt\":\"%s\",\"session\":\"%s\",\"attempt\":\"%s\",\"cursor\":\"%s\",\"direct\":%s,\"inputMessages\":\"%s\"}";
+  int size=error?-1:snprintf(NULL,0,format,body,session,attempt,cursor,direct?"true":"false",inputs);
+  if(!error && size<0)error=EIO;
+  char *saved=!error?malloc((size_t)size+1):NULL;
+  if(!error && !saved)error=ENOMEM;
+  if(!error) {
+    int written=snprintf(saved,(size_t)size+1,format,body,session,attempt,cursor,direct?"true":"false",inputs);
+    if(written!=size)error=EIO;
+    else {call->text=saved;call->length=(size_t)size;saved=NULL;}
+  }
+  free(saved);free(body);free(session);free(attempt);free(cursor);free(inputs);free(argv);
+  free(text);br_manifest_free(&manifest);free(directory);return error;
+}
 static int br_instance_shutdown(BatonProcessCall *call) {
   for(;;) {
     BrOwnerRecord record={0};
@@ -4308,6 +4474,8 @@ static void baton_process_call(IoWork *w) {
      child->retained->observer_only) { call->error=EPERM;return; }
   if(call->kind==BP_SPAWN) { baton_child_spawn(call);return; }
   if(call->kind==BP_INSTANCE_RECOVER) { call->error=br_instance_recover(call);return; }
+  if(call->kind==BP_INSTANCE_INPUT_WITNESS) { call->error=br_instance_input_witness(call);return; }
+  if(call->kind==BP_INSTANCE_INPUT_PROMPT) { call->error=br_instance_input_prompt(call);return; }
   if(call->kind==BP_INSTANCE_OWNER_WITNESS) { br_instance_owner_witness(call,0);return; }
   if(call->kind==BP_INSTANCE_ENSURE_OWNER_WITNESS) { br_instance_owner_witness(call,1);return; }
   if(call->kind==BP_INSTANCE_SUBSCRIBE) { br_instance_subscribe_call(call);return; }
@@ -4350,7 +4518,7 @@ static void baton_process_call(IoWork *w) {
       else call->error=errno?errno:EIO;
     } else {
       call->length=(size_t)n;
-      if(call->length && call->text[call->length-1]=='\n') call->length--;
+      if(!call->preserve_line && call->length && call->text[call->length-1]=='\n') call->length--;
     }
   } else if(call->kind==BP_WAIT) {
     int status;
@@ -4381,6 +4549,7 @@ static Term baton_process_pack(Env e, IoWork *w) {
     else if(call->kind==BP_INPUT_CLOSED) value=(Term)call->signal;
     else if(call->kind==BP_WAIT) value=io_str(e,call->text,call->length);
     else if(call->kind==BP_INSTANCE_STATE || call->kind==BP_INSTANCE_RESTORE || call->kind==BP_INSTANCE_JOB ||
+            call->kind==BP_INSTANCE_INPUT_WITNESS || call->kind==BP_INSTANCE_INPUT_PROMPT ||
             call->kind==BP_INSTANCE_NOTICE || call->kind==BP_INSTANCE_OWNER_WITNESS ||
             call->kind==BP_INSTANCE_ENSURE_OWNER_WITNESS)
       value=io_str(e,call->text?call->text:"",call->length);
@@ -4454,7 +4623,7 @@ static Term baton_process_pack(Env e, IoWork *w) {
   return result;
 }
 
-static Term baton_process_begin(Env e, Term *f, IoWork *w, int kind) {
+static Term baton_process_begin_mode(Env e, Term *f, IoWork *w, int kind, int preserve_line) {
   BatonProcessCall *call=calloc(1,sizeof(*call));
   if(!call) return io_fail(e,ENOMEM,NULL);
   int acquire=kind==BP_SPAWN || kind==BP_RETAIN || kind==BP_ATTACH || kind==BP_ATTACH_OWNED ||
@@ -4462,6 +4631,7 @@ static Term baton_process_begin(Env e, Term *f, IoWork *w, int kind) {
               kind==BP_RETAIN_WITH_FILE || kind==BP_INSTANCE_ADMIT_WITH_FILE || kind==BP_INSTANCE_PREPARE_WITH_FILE ||
               kind==BP_INSTANCE_SUBSCRIBE;
   call->kind=kind;
+  call->preserve_line=preserve_line;
   if(acquire) {
     int error=baton_child_allocate(call);
     if(error) {free(call);return io_fail(e,(u32)error,NULL);}
@@ -4530,7 +4700,7 @@ static Term baton_process_begin(Env e, Term *f, IoWork *w, int kind) {
       call->cursor=io_cstr(e,f[1],&length);
       call->generation=io_cstr(e,f[2],&length);
     } else {call->text=io_cstr(e,f[1],&length);call->length=length;}
-  } else if(kind==BP_INSTANCE_ATTACH || kind==BP_INSTANCE_ATTACH_OWNED || kind==BP_INSTANCE_RECOVER || kind==BP_INSTANCE_JOB) {
+  } else if(kind==BP_INSTANCE_ATTACH || kind==BP_INSTANCE_ATTACH_OWNED || kind==BP_INSTANCE_RECOVER || kind==BP_INSTANCE_JOB || kind==BP_INSTANCE_INPUT_WITNESS || kind==BP_INSTANCE_INPUT_PROMPT) {
     u64 length=0;call->database=io_cstr(e,f[0],&length);
     call->directory=io_cstr(e,f[1],&length);
     if(strlen(call->directory)!=length)call->error=EINVAL;
@@ -4576,6 +4746,10 @@ static Term baton_process_begin(Env e, Term *f, IoWork *w, int kind) {
   return io_work(w,baton_process_call,baton_process_pack);
 }
 
+static Term baton_process_begin(Env e, Term *f, IoWork *w, int kind) {
+  return baton_process_begin_mode(e,f,w,kind,0);
+}
+
 #define BP_EFFECT(name,ID,kind) \
   static Term name##_run(Env e,Term *f,IoWork *w){return baton_process_begin(e,f,w,kind);} \
   static void __attribute__((constructor)) name##_use(void){io_eff(ID,name##_run,0);}
@@ -4590,6 +4764,14 @@ BP_EFFECT(baton_process_close,CID_PROCESSCHILD_CLOSE_STDIN,BP_CLOSE)
 #endif
 #ifdef CID_PROCESSCHILD_READ_LINE
 BP_EFFECT(baton_process_read,CID_PROCESSCHILD_READ_LINE,BP_READ)
+#endif
+#ifdef CID_PROCESSCHILD_READ_TEXT_LINE
+static Term baton_process_read_text_run(Env e,Term *f,IoWork *w) {
+  return baton_process_begin_mode(e,f,w,BP_READ,1);
+}
+static void __attribute__((constructor)) baton_process_read_text_use(void) {
+  io_eff(CID_PROCESSCHILD_READ_TEXT_LINE,baton_process_read_text_run,0);
+}
 #endif
 #ifdef CID_PROCESSCHILD_READ_AWAKE
 BP_EFFECT(baton_process_read_awake,CID_PROCESSCHILD_READ_AWAKE,BP_READ_AWAKE)
@@ -4688,6 +4870,12 @@ BP_EFFECT(baton_instance_replay,CID_INSTANCE_REPLAY,BP_INSTANCE_REPLAY)
 #endif
 #ifdef CID_INSTANCE_JOB
 BP_EFFECT(baton_instance_job,CID_INSTANCE_JOB,BP_INSTANCE_JOB)
+#endif
+#ifdef CID_INSTANCE_INPUT_WITNESS
+BP_EFFECT(baton_instance_input_witness,CID_INSTANCE_INPUT_WITNESS,BP_INSTANCE_INPUT_WITNESS)
+#endif
+#ifdef CID_INSTANCE_INPUT_PROMPT
+BP_EFFECT(baton_instance_input_prompt,CID_INSTANCE_INPUT_PROMPT,BP_INSTANCE_INPUT_PROMPT)
 #endif
 #ifdef CID_PROCESSCHILD_RETAIN_WITH_FILE
 BP_EFFECT(baton_process_retain_with_file,CID_PROCESSCHILD_RETAIN_WITH_FILE,BP_RETAIN_WITH_FILE)

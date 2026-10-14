@@ -1,4 +1,5 @@
 import Base
+import ./agent-input.bend as AgentInput
 import ../coordinator/commands.bend as C
 import ./store.bend as Store
 import ./stop.bend as Stop
@@ -193,7 +194,9 @@ def prepare(+db: String, +player: String, +id: String, log: String, stderr: Stri
   do IO<Unit>:
     +generation : String <- IO.pure(String,generation_log(log,id))
     recipient : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ C.report_recipient(C.q(player)) ++ " IS NOT NULL;"))
-    prepare_parent(db,player,id,generation,stderr,outcome,String.eq(recipient,"1\n"))
+    reported : Unit <- prepare_parent(db,player,id,generation,stderr,outcome,String.eq(recipient,"1\n"))
+    success : Bool <- settlement_success(db,outcome)
+    AgentInput.settle_if(db,player,id,success)
 
 def record_exit(db: String, player: String, +id: String, log: String, outcome: Outcome) -> IO(Unit):
   match outcome:
@@ -438,9 +441,18 @@ def terminal_observation_sealed(sealed: Bool, terminal: Bool, admitted: Bool, +s
     case True{}: True{}
     case False{}: Bool.and(terminal,Bool.or(Bool.not(admitted),Bool.not(String.is_empty(state))))
 
-def observe_event(db: String, player: String, id: String, line: String, relevant: Bool, sealed: Bool) -> IO(Result<&1,&1,U32 & String,String>):
+def observed_initial(db: String, player: String, id: String, line: String, result: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String>):
+  match result:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
+    case Done{saved}: do IO<Result<&1,&1,U32 & String,String>>:
+      observed : Unit <- AgentInput.initial_observed(db,player,id,line)
+      IO.pure(Result<&1,&1,U32 & String,String>,Done{saved})
+
+def observe_event(+db: String, +player: String, +id: String, +line: String, relevant: Bool, sealed: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   match relevant:
-    case True{}: Store.apply(db,C.Observe{id,player,line,sealed})
+    case True{}: do IO<Result<&1,&1,U32 & String,String>>:
+      stored : Result<&1,&1,U32 & String,String> <- Store.apply(db,C.Observe{id,player,line,sealed})
+      observed_initial(db,player,id,line,stored)
     case False{}: IO.pure(Result<&1,&1,U32 & String,String>,Done{""})
 
 # Later native episodes keep the first report and publish their own reports.
@@ -912,7 +924,8 @@ def retained_prepare(+db: String, +player: String, +directory: String, +cmd: Str
     +prompt_file : String <- IO.pure(String,directory ++ "/prompt.txt")
     +executable : String <- IO.try(String,Lock.SessionLock.executable())
     identity : String & String <- IO.try(String & String,HostControl.Control.identity(executable))
-    +prefix : String <- IO.pure(String,retained_identity_prefix(model,identity))
+    absolute_db : String <- IO.try(String,Lock.SessionLock.canonical(db))
+    +prefix : String <- IO.pure(String,P.argv(["/usr/bin/env","BATON_DATABASE=" ++ absolute_db,"BATON_SESSION=" ++ player,"BATON_ATTEMPT_DIRECTORY=" ++ directory]) ++ retained_identity_prefix(model,identity))
     muse_args : String <- IO.pure(String,prefix ++ P.argv(muse_retained_arguments(cmd,model,effort,prompt_file,session)))
     +omp : Bool <- IO.pure(Bool,String.eq(harness,"omp\n"))
     +claude : Bool <- IO.pure(Bool,String.eq(harness,"claude-code\n"))
@@ -933,7 +946,7 @@ def retained_mode(+db: String, player: String, +directory: String, cmd: String, 
     retained_admit(db,directory,cwd,prompt,lock,recovery,launch)
 
 def retained(+db: String, +player: String, +directory: String, +cmd: String, +model: String, +effort: String, +cwd: String, +session: String, +harness: String, +sessions: String, +prompt: String, +lock: U32, +recovery: String, +level: String) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
-  retained_mode(db,player,directory,cmd,model,effort,cwd,session,harness,sessions,prompt,lock,recovery,level,False{})
+  retained_mode(db,player,directory,cmd,model,effort,cwd,session,harness,sessions,prompt,lock,recovery,level,True{})
 
 def direct_setup_note(+db: String, +player: String, +id: String, log: String, +cause: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:

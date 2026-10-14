@@ -2,6 +2,7 @@ import Base
 import ../coordinator/commands.bend as C
 import ./store.bend as Store
 import ./wake.bend as Wake
+import ./agent-input.bend as AgentInput
 import ../host/sqlite.bend as DB
 import ../context/raw.bend as Raw
 import ../context/request.bend as Req
@@ -151,7 +152,7 @@ def read_text(+db: String, +text: String) -> IO(Unit):
     input : String <- validate(db,text)
     rows : String <- IO.try(String,DB.Sql.read(db,read_items_sql(input)))
     answer : String <- rows_json(db,Tx.split_lines(rows))
-    IO.write(answer)
+    AgentInput.batch_output(db,answer)
 
 def read_file(+db: String, +path: String) -> IO(Unit):
   do IO<Unit>:

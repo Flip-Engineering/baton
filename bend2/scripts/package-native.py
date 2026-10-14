@@ -491,6 +491,8 @@ def package(args):
         (payload / 'bin').mkdir(parents=True)
         shutil.copyfile(binary, payload / 'bin/baton2')
         (payload / 'bin/baton2').chmod(0o755)
+        shutil.copyfile(binary, payload / 'bin/baton')
+        (payload / 'bin/baton').chmod(0o755)
         stage_adapters(payload)
         selected_context = [stage_selected_context_payload(payload), stage_runtime_context_module(payload)]
         selected_context.extend(stage_clang_context_modules(payload, args.context_clang_package))
@@ -502,7 +504,7 @@ def package(args):
             'created_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
             'platform': {'system': platform.system(), 'machine': platform.machine(), 'artifact': 'darwin-arm64'},
             'source': source,
-            'binary': {'path': 'bin/baton2'},
+            'binary': {'path': 'bin/baton2', 'alias': 'bin/baton'},
             'selected_modules': selected_context,
             'build': {'command': build_record, 'compiler_archive': {
                 'url': COMPILER_ARCHIVE_URL, 'sha256': sha256(archive)}},

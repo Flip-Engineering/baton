@@ -13,7 +13,7 @@
 // coordinator executable for mutations. No npm dependencies; node stdlib only.
 
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { createServer, createConnection } from 'node:net';
 import { fileURLToPath } from 'node:url';
@@ -72,6 +72,7 @@ function coordinatorSurface() {
 const commandSurface = coordinatorSurface();
 const batchMessaging = ['outbox', 'delivery-batch', 'message-batch'].every((name) => commandSurface.includes(name));
 const inputDetail = commandSurface.includes('input MESSAGE_ID');
+const contextualActions = /baton2? as SESSION ACTION/.test(commandSurface);
 const batchMessageTools = new Set([
   'baton2_delivery_batch',
   'baton2_outbox',
@@ -81,9 +82,13 @@ const unavailableTools = new Set([
   ...(!batchMessaging ? batchMessageTools : []),
   ...(!inputDetail ? ['baton2_input'] : []),
   ...(!commandSurface.includes('task --stdin') ? ['baton2_task'] : []),
+  ...(!contextualActions ? ['baton2_action'] : []),
 ]);
 
 function messageInstructions() {
+  if (contextualActions) {
+    return 'Use baton2_action for the contextual native actions: inbox, read, send, completion-request, completion-confirmed, guide, acknowledge and domain help. The attached session supplies actor identity. Pass action and its named argument tokens; use action:help with the domain name for usage. Complete text bodies are retained as UTF-8 files before native admission. Multi-message reads, independent sends and explicit acknowledgements return each item outcome. Successful recipient turns record handling of complete inputs; failed turns retain unfinished handling. Task completion and coordinator decisions remain separate recorded actions.';
+  }
   const messaging = batchMessaging
     ? 'Use baton2_inbox or baton2_pending to see pending messages, and baton2_outbox to inspect authored messages and receipts. Their optional index:true argument returns metadata; baton2_delivery and baton2_delivery_batch read selected complete messages. Use baton2_ack to acknowledge your own fully read and handled input; retain unfinished work in your reports and project state. Use baton2_guide or baton2_message_batch to direct recipients. Each batch item keeps its own admission, wake, retained message and receipt facts.'
     : 'Use baton2_inbox or baton2_pending to see pending messages. Their optional index:true argument returns metadata. baton2_delivery reads one complete stored message and its receipt. Use baton2_ack to acknowledge your own fully read and handled input; retain unfinished work in your reports and project state. Use baton2_guide to direct one recipient.';
@@ -163,8 +168,89 @@ const messageIndexProperties = {
   pretty: { type: 'boolean', description: 'Pretty-print the JSON result' },
 };
 
+function contextualAction(action, values) {
+  if (typeof action !== 'string' || !Array.isArray(values) || values.some(value => typeof value !== 'string')) {
+    throw new Error('A contextual action requires its name and an array of argument strings.');
+  }
+  if ([action, ...values].some(value => !value.isWellFormed() || value.includes('\0'))) {
+    throw new Error('Contextual action arguments must contain complete UTF-8 text without NUL bytes.');
+  }
+  const args = [];
+  let directory;
+  let operation = action;
+  let subcommand = ['knowledge', 'project', 'context'].includes(action) ? action : null;
+  let nextOperation = false;
+  let recipient = action === 'send';
+  const switches = new Set(['--and', '--lift-stop', '--index', '--recursive', '--help']);
+  const bodyFields = new Map([
+    ['--text', '--file'], ['--claim', '--claim-file'], ['--evidence', '--evidence-file'],
+    ['--limits', '--limits-file'], ['--links', '--links-file'],
+    ['--query', '--query-file'], ['--reason', '--reason-file'],
+  ]);
+  const hasBody = (name) => name === '--text'
+    ? ['send', 'guide', 'completion-request', 'report', 'ask', 'native-reply', 'dispatch'].includes(operation)
+    : operation === 'knowledge-record' ? ['--claim', '--evidence', '--limits', '--links'].includes(name)
+      : operation === 'knowledge-search' ? name === '--query'
+        : operation === 'stop' && name === '--reason';
+  for (let i = 0; i < values.length; i++) {
+    const name = values[i];
+    if (recipient) {
+      args.push(name); recipient = false;
+      continue;
+    }
+    if (nextOperation) {
+      operation = name;
+      subcommand = ['knowledge', 'project', 'context'].includes(name) ? name : null;
+      nextOperation = false;
+      args.push(name);
+      continue;
+    }
+    if (subcommand) {
+      if (!name.startsWith('--') && name !== 'and') {
+        operation = subcommand + '-' + name;
+        subcommand = null;
+        args.push(name);
+        continue;
+      }
+      operation = subcommand + '-read';
+      subcommand = null;
+    }
+    if (name === 'and' || name === '--and') {
+      args.push(name);
+      if (action === 'send') recipient = true;
+      else nextOperation = true;
+      continue;
+    }
+    if (!name.startsWith('--') || switches.has(name) || i + 1 >= values.length) {
+      args.push(name);
+      continue;
+    }
+    const value = values[++i];
+    if (bodyFields.has(name) && hasBody(name)) {
+      if (!directory) {
+        mkdirSync(dbPath + '.actions', { recursive: true, mode: 0o700 });
+        directory = mkdtempSync(resolve(dbPath + '.actions', 'input-'));
+      }
+      const path = resolve(directory, 'body-' + i + '.txt');
+      writeFileSync(path, value, { flag: 'wx', mode: 0o600 });
+      args.push(bodyFields.get(name), path);
+    } else args.push(name, value);
+  }
+  if (directory) writeFileSync(resolve(directory, 'request.json'), JSON.stringify({
+    action, arguments: values, nativeArguments: args, session: sessionId, database: dbPath,
+  }) + '\n', { flag: 'wx', mode: 0o600 });
+  return coord('as', sessionId, action, ...args);
+}
+
 // Tool definitions exposed to the attached Conductor.
 const TOOLS = [
+  {
+    name: 'baton2_action',
+    description: 'Run a contextual native action as the attached session. Use inbox, read, send, completion-request, completion-confirmed, guide, acknowledge or help with a command domain. Named arguments and independent batch clauses use the same native grammar as baton. Complete text bodies are retained through UTF-8 files. Each item retains its outcome and actual failure cause.',
+    inputSchema: { type: 'object', properties: {
+      action: { type: 'string' }, arguments: { type: 'array', items: { type: 'string' } },
+    }, required: ['action'], additionalProperties: false },
+  },
   {
     name: 'baton2_task',
     description: 'Start task text or a UTF-8 file through the installed task operation. The attached session is the sender. New sessions use an explicit named saved route or explicit provider settings; select session and continue:true to preserve an open assignment. Complete input, setup errors and inspect identities are retained.',
@@ -783,6 +869,9 @@ function handleToolCall(msg) {
   try {
     let result;
     switch (name) {
+      case 'baton2_action':
+        result = contextualAction(args.action, args.arguments ?? []);
+        break;
       case 'baton2_task': {
         const flags = ['--sender', sessionId];
         const project = args.project ?? selectedSession()?.workspace;

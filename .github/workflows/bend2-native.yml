@@ -6,6 +6,7 @@ name: bend2-native-development
     paths:
       - '.github/workflows/bend2-native.yml'
       - '.github/scripts/record-native-checks.py'
+      - '.github/scripts/reuse-native-target.py'
       - 'LICENSE'
       - 'NOTICE'
       - 'bend2/src/**'
@@ -23,6 +24,7 @@ name: bend2-native-development
     paths:
       - '.github/workflows/bend2-native.yml'
       - '.github/scripts/record-native-checks.py'
+      - '.github/scripts/reuse-native-target.py'
       - 'LICENSE'
       - 'NOTICE'
       - 'bend2/src/**'
@@ -45,6 +47,11 @@ name: bend2-native-development
       target_commit:
         description: 'Exact target commit for the affected behavior comparison'
         required: true
+        type: string
+      target_build_run:
+        description: 'Completed workflow run containing the exact target build evidence; leave blank to build target'
+        required: false
+        default: ''
         type: string
       linux_runner:
         description: 'Linux qualification host'
@@ -170,12 +177,16 @@ jobs:
           if-no-files-found: error
 
   linux-target:
+    permissions:
+      contents: read
+      actions: read
     runs-on: ${{ fromJSON(inputs.linux_runner == 'homelab' && '["self-hosted", "Linux", "X64", "baton2-native-linux-x64"]' || '["ubuntu-24.04"]') }}
     env:
       CC: ${{ inputs.linux_runner == 'homelab' && '/usr/bin/clang-19' || 'clang' }}
       BEND_NO_TELEMETRY: '1'
       BUN_JSC_maxPerThreadStackUsage: '67108864'
       BATON2_TARGET_COMMIT: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'push' && github.event.before || inputs.target_commit }}
+      BATON2_TARGET_BUILD_RUN: ${{ inputs.target_build_run }}
     steps:
       - name: Checkout candidate test contracts and target history
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
@@ -187,6 +198,15 @@ jobs:
         uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: '22'
+      - name: Download completed target build evidence
+        if: inputs.target_build_run != ''
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.target_build_run }}
+          pattern: baton2-linux-target-*-1
+          merge-multiple: true
+          path: ${{ runner.temp }}/baton2-target-build-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Build exact target and measure affected candidate tests
         shell: bash
         run: |
@@ -235,7 +255,13 @@ jobs:
                               'elapsed_seconds': time.time() - started, 'stdout': label + '.stdout', 'stderr': label + '.stderr'})
               (evidence / 'results.json').write_text(json.dumps(records, indent=2) + '\n')
               return result.returncode
-          status = record('target-build', ['sh', 'bend2/scripts/build-native.sh'])
+          previous = os.environ.get('BATON2_TARGET_BUILD_RUN')
+          if previous:
+              transfer = pathlib.Path(os.environ['RUNNER_TEMP']) / ('baton2-target-build-' + os.environ['GITHUB_RUN_ID'] + '-' + os.environ['GITHUB_RUN_ATTEMPT'])
+              status = record('target-build-reuse', [sys.executable, str(candidate / '.github/scripts/reuse-native-target.py'),
+                              str(transfer), str(target), str(evidence), os.environ['BATON2_TARGET_COMMIT'], previous])
+          else:
+              status = record('target-build', ['sh', 'bend2/scripts/build-native.sh'])
           if status:
               raise SystemExit(status)
           contracts = {}
