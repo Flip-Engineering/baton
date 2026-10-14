@@ -671,12 +671,15 @@ the server reads the committed message and emits a Claude channel notification.
 The server stays attached to the Claude process. Its socket is created beside
 the database and closes with the server.
 
-The native Conductor reviews the report and records acceptance with
-`ack ID root RECEIPT`. It can send guidance with `message`, inspect Git state
-with `worktree`, read a declared remote's advertised branch with `remote-tip`,
-and land and publish reviewed work with `land`, `land-checked` and `push`. A
-report's receipt records the Conductor's acceptance; committing the
-report alone leaves that receipt empty.
+Within its recorded native context, the Conductor reads complete reports with
+`baton inbox` and records handling with `baton acknowledge`. Baton selects the
+owned reads and creates their receipt. `baton guide --to PLAYER --text TEXT`
+sends guidance. After reviewing a Player's current completion request, the
+Conductor records its decision with `baton completion-confirmed --to PLAYER`.
+It can inspect Git state with `worktree`, read a declared remote's advertised
+branch with `remote-tip`, and land and publish reviewed work with `land`,
+`land-checked` and `push`. Report receipts retain input handling; completion
+decisions retain the coordinator's task review.
 
 ## OMP Associate Conductors and Players
 
