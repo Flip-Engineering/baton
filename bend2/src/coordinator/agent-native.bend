@@ -403,7 +403,7 @@ def with_defaults(+db: String, +session: String, +exe: String, +nonce: String,
                   result: Result<&1,&1,U32 & String,List<D.Option>>) -> IO(String):
   match result:
     case Fail{(code,cause)}: IO.pure(String,refused(index,verb,Nil{},code,cause))
-    case Done{saved}: do IO<String>:
+    case Done{saved}:
       +args = Con{exe,Con{db,legacy_args(session,verb,options,saved)}}
       +path = db ++ ".agent-command-" ++ nonce ++ "-" ++ U32.show(index) ++ ".stderr"
       run_input(db,index,verb,args,path)
