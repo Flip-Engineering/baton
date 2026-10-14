@@ -13,7 +13,8 @@
 // coordinator executable for mutations. No npm dependencies; node stdlib only.
 
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import { resolve, dirname } from 'node:path';
 import { createServer, createConnection } from 'node:net';
 import { fileURLToPath } from 'node:url';
@@ -28,6 +29,7 @@ function hasParent(session) {
 const positional = [];
 let sessionId = 'root';
 let delivery = null;
+let inputWitness = null;
 for (let i = 2; i < process.argv.length; i++) {
   const arg = process.argv[i];
   if (arg === '--session') {
@@ -36,6 +38,9 @@ for (let i = 2; i < process.argv.length; i++) {
   } else if (arg === '--deliver') {
     delivery = { socket: process.argv[++i], message: process.argv[++i] };
     if (!delivery.socket || !delivery.message) throw new Error('--deliver requires a socket and committed message ID');
+  } else if (arg === '--input-witness') {
+    inputWitness = process.argv[++i];
+    if (inputWitness === undefined) throw new Error('--input-witness requires the connected input context');
   } else if (arg.startsWith('--')) throw new Error(`Unknown option: ${arg}`);
   else positional.push(arg);
 }
@@ -46,6 +51,104 @@ const coordinatorExe = resolve(positional[1] || (existsSync(installed) ? install
 if (!dbPath) {
   process.stderr.write('usage: mcp-conductor.mjs <database-path> [coordinator-executable] [--session ID]\n');
   process.exit(1);
+}
+
+function processFacts(pid) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) throw new Error('The connected process PID is invalid.');
+  if (process.platform === 'linux') {
+    const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
+    const fields = stat.slice(stat.lastIndexOf(')') + 2).trim().split(/\s+/);
+    if (fields[0] === 'Z' || fields[0] === 'X') throw new Error('The connected process has ended.');
+    return { pid, parent: Number(fields[1]), birth: fields[19],
+      executable: realpathSync(`/proc/${pid}/exe`),
+      argv: readFileSync(`/proc/${pid}/cmdline`, 'utf8').split('\0').filter(Boolean) };
+  }
+  if (process.platform === 'darwin') {
+    const line = execFileSync('/bin/ps', ['-p', String(pid), '-o', 'ppid=', '-o', 'lstart=', '-o', 'stat='],
+      { encoding: 'utf8', maxBuffer: Infinity }).trim();
+    const found = /^(\d+)\s+(.+?)\s+(\S+)$/.exec(line);
+    if (!found || found[3].startsWith('Z')) throw new Error('The connected process has ended.');
+    const command = execFileSync('/bin/ps', ['-ww', '-p', String(pid), '-o', 'command='],
+      { encoding: 'utf8', maxBuffer: Infinity }).replace(/\n$/, '');
+    return { pid, parent: Number(found[1]), birth: found[2], command };
+  }
+  throw new Error('Connected Claude input custody is supported on Linux and macOS.');
+}
+
+function processIdentity(facts) {
+  return { pid: facts.pid, parent: facts.parent, birth: facts.birth };
+}
+
+function sameProcess(actual, expected) {
+  return actual.pid === expected?.pid && actual.parent === expected.parent && actual.birth === expected.birth;
+}
+
+function nativeSelector(facts) {
+  if (facts.argv) {
+    for (let i = 1; i < facts.argv.length; i++) {
+      if (facts.argv[i] === '--session-id' || facts.argv[i] === '--resume') {
+        return facts.argv[i + 1] ?? '';
+      }
+      for (const flag of ['--session-id=', '--resume=']) {
+        if (facts.argv[i].startsWith(flag)) return facts.argv[i].slice(flag.length);
+      }
+    }
+    return null;
+  }
+  return /(?:^|\s)--(?:session-id|resume)(?:=|\s+)([^\s]+)/.exec(facts.command)?.[1] ?? null;
+}
+
+async function connectedInputWitness(encoded) {
+  const context = JSON.parse(encoded);
+  const database = realpathSync(dbPath);
+  const coordinator = realpathSync(coordinatorExe);
+  if (context.database !== database || context.coordinator !== coordinator || context.session !== sessionId
+      || typeof context.connection !== 'string' || !context.connection || !context.ready
+      || typeof context.native !== 'string' || !context.native) {
+    throw new Error('The connected input context does not match this database, actor and native conversation.');
+  }
+  const caller = processFacts(process.ppid);
+  const bridge = processFacts(caller.parent);
+  const client = processFacts(bridge.parent);
+  if (!sameProcess(bridge, context.bridge) || !sameProcess(client, context.client)
+      || (caller.executable && caller.executable !== coordinator)) {
+    throw new Error('The input action is outside its live coordinator, MCP bridge and native client ancestry.');
+  }
+  if (context.socket !== `conductor-${bridge.pid}-${context.connection}.sock`) {
+    throw new Error('The registered connection socket belongs to a different MCP process.');
+  }
+  const selectedNative = nativeSelector(client);
+  if (selectedNative !== null && selectedNative !== context.native) {
+    throw new Error('The native client session selector differs from the recorded conversation.');
+  }
+  const { DatabaseSync } = await import('node:sqlite');
+  const connection = new DatabaseSync(database, { readOnly: true });
+  try {
+    const selected = connection.prepare('SELECT native,harness,endpoint FROM sessions WHERE id=?').get(sessionId);
+    const stopped = connection.prepare('SELECT 1 FROM session_stops WHERE session=?').get(sessionId);
+    if (!selected || selected.harness !== 'claude-code' || selected.native !== context.native
+        || selected.endpoint !== context.endpoint || stopped) {
+      throw new Error('The connected input context is no longer the active recipient endpoint and native conversation.');
+    }
+    const endpoint = JSON.parse(selected.endpoint);
+    if (JSON.stringify(endpoint) !== JSON.stringify([process.execPath, fileURLToPath(import.meta.url),
+      database, coordinator, '--session', sessionId, '--deliver', context.socket])) {
+      throw new Error('The registered endpoint does not identify this exact connected MCP helper.');
+    }
+    process.stdout.write(JSON.stringify({ active: true, session: sessionId, native: selected.native,
+      endpoint: selected.endpoint, attempt: `claude-mcp:${context.connection}`,
+      identity: JSON.stringify(['claude-mcp', selected.native, context.connection,
+        bridge.pid, bridge.birth, client.pid, client.birth]) }) + '\n');
+  } finally { connection.close(); }
+}
+
+if (inputWitness !== null) {
+  try { await connectedInputWitness(inputWitness); }
+  catch (error) {
+    process.stderr.write(JSON.stringify({ error: 'handling-context', condition: error.message }) + '\n');
+    process.exitCode = 2;
+  }
+  process.exit(process.exitCode ?? 0);
 }
 
 // The report writer calls this one-shot client for the attached channel endpoint.
@@ -140,6 +243,8 @@ process.stdin.on('data', (chunk) => {
 });
 
 process.stdin.on('end', () => {
+  channelReady = false;
+  connectionCustody = null;
   deliveryServer?.close();
   if (db) { try { db.close(); } catch {} db = null; }
 });
@@ -153,7 +258,9 @@ function coordInput(input, ...args) {
   try {
     return execFileSync(coordinatorExe, [dbPath, ...args], {
       encoding: 'utf8', input, maxBuffer: Infinity,
-      env: { ...process.env, BATON_SESSION: sessionId, BATON_DATABASE: dbPath },
+      env: { ...process.env, BATON_SESSION: sessionId, BATON_DATABASE: dbPath,
+        BATON_MCP_INPUT: channelReady && connectionCustody
+          ? JSON.stringify({ ...connectionCustody, ready: true }) : '' },
     }).trim();
   } catch (error) {
     const status = Number.isInteger(error.status) ? `\nexit code: ${error.status}` : '';
@@ -648,6 +755,7 @@ const AVAILABLE_TOOLS = TOOLS.filter((tool) => !unavailableTools.has(tool.name))
 // State.
 let deliveryReady = null;
 let channelReady = false;
+let connectionCustody = null;
 let notifiedSeqs = new Set();
 let deliveryServer = null;
 let db = null;
@@ -699,9 +807,10 @@ function notifyPending(messageId = null) {
 }
 
 async function startDelivery() {
-  const database = resolve(dbPath);
-  const coordinator = resolve(coordinatorExe);
-  const socketName = `conductor-${process.pid}.sock`;
+  const database = realpathSync(dbPath);
+  const coordinator = realpathSync(coordinatorExe);
+  const connection = randomUUID();
+  const socketName = `conductor-${process.pid}-${connection}.sock`;
   // A relative socket name also works in deeply nested repository worktrees.
   process.chdir(dirname(database));
   deliveryServer = createServer({ allowHalfOpen: true }, (client) => {
@@ -730,6 +839,9 @@ async function startDelivery() {
   if (hasParent(existing)) coord('connect', sessionId, existing.native || '', endpoint);
   else coord('attach', sessionId, 'claude-code', existing?.native || '', endpoint);
   coord('role', sessionId, hasParent(existing) ? 'associate-conductor' : 'principal-conductor');
+  connectionCustody = { database, coordinator, session: sessionId,
+    native: selectedSession()?.native, endpoint, socket: socketName, connection,
+    bridge: processIdentity(processFacts(process.pid)), client: processIdentity(processFacts(process.ppid)) };
 }
 
 function selectedSession() {
@@ -751,7 +863,7 @@ function handleMessage(msg) {
         experimental: { 'claude/channel': {} },
       },
       serverInfo: { name: 'baton-conductor', version: '2.0.0' },
-      instructions: `Baton ${hasParent(selectedSession()) ? 'Associate' : 'Principal'} Conductor attachment for session ${sessionId}. Use baton2_join for shared-checkout work and baton2_recruit when a separate worktree is needed. Name the target branch, remote and integration Conductor in the assignment. Commit completed changes. The integration Conductor lands or reconciles contributions and pushes the integrated target with baton2_push. After publication and turn completion, relocate the same Player with baton2_receiver to the shared checkout and retire clean unused merged task worktrees and branches through ordinary Git. Preserve active or unfinished work, explicit stops and receiver/toolchain dependencies. Use the advertised task dispatch tool for complete task text or an existing UTF-8 file. Baton retains task input and setup outcomes in its database, resolves the recorded route and preserves an existing assignment. Scratchpads contain deliberately authored working notes. Baton does not generate task-source files. Use baton2_receiver to configure an ordinary receive endpoint where needed. Use baton2_configure to save future effort on the same harness and model during active or stopped sessions, keeping the receiver, current turn and stop. Change harness or model after the current attempt ends and any stop is lifted. Configuration keeps the Player's identity, work, native conversation and pending input. Use baton2_context_engines to discover installed context modules; scope:"session" includes the attached project settings. Use baton2_context_install to acquire a module from a supplied built module directory or extracted distribution. Use baton2_context_query_file for request files and baton2_context_result for retained query results. Use baton2_knowledge_search to find a topic in selected holdings and baton2_knowledge_traverse to follow authored links and citations. Follow returned detailRead commands for complete findings and deliveryRead commands for cited messages. Finding references outside selected holdings carry an explicit all-scope detail read; reading preserves their holdings. Use baton2_knowledge for exact findings or metadata and baton2_knowledge_relations for directed links, including links between retained messages or external references. ${messageInstructions()} The optional kind supports authored completion-request and completion-confirmed messages. Workers ask their immediate parent to confirm task completion and continue useful work until its reply. The parent uses completion-confirmed with the recipient when the task is complete; Baton selects that recipient's current request. Guidance carries further work. Baton generates mutation IDs and records recipient handling from actual native evidence. Agents can inspect current state without copying control IDs or receipts. Native turn settlement and inbox receipts do not finish the task. The coordinator CLI ask and ask-file send questions as your recorded session to its parent; a parentless Principal Conductor reaches the registered operator. Use baton2_player and baton2_players to inspect Players and both Conductor tiers. Use baton2_role, baton2_ensemble, baton2_ensemble_member, baton2_section and baton2_section_member to configure responsibilities and membership. Use baton2_orchestra to inspect the system. Use baton2_turns for turn history and baton2_land or baton2_land_checked to land a Player's changes. Supply commit to select a reviewed ancestor while later work remains on the recorded branch.`,
+      instructions: `Baton ${hasParent(selectedSession()) ? 'Associate' : 'Principal'} Conductor attachment for session ${sessionId}. Use baton2_join for shared-checkout work and baton2_recruit when a separate worktree is needed. Name the target branch, remote and integration Conductor in the assignment. Commit completed changes. The integration Conductor lands or reconciles contributions and pushes the integrated target with baton2_push. After publication and turn completion, relocate the same Player with baton2_receiver to the shared checkout and retire clean unused merged task worktrees and branches through ordinary Git. Preserve active or unfinished work, explicit stops and receiver/toolchain dependencies. Use the advertised task dispatch tool for complete task text or an existing UTF-8 file. Baton retains task input and setup outcomes in its database, resolves the recorded route and preserves an existing assignment. Scratchpads contain deliberately authored working notes. Baton stores complete task text in the database. Use baton2_receiver to configure an ordinary receive endpoint where needed. Use baton2_configure to save future effort on the same harness and model during active or stopped sessions, keeping the receiver, current turn and stop. Change harness or model after the current attempt ends and any stop is lifted. Configuration keeps the Player's identity, work, native conversation and pending input. Use baton2_context_engines to discover installed context modules; scope:"session" includes the attached project settings. Use baton2_context_install to acquire a module from a supplied built module directory or extracted distribution. Use baton2_context_query_file for request files and baton2_context_result for retained query results. Use baton2_knowledge_search to find a topic in selected holdings and baton2_knowledge_traverse to follow authored links and citations. Follow returned detailRead commands for complete findings and deliveryRead commands for cited messages. Finding references outside selected holdings carry an explicit all-scope detail read; reading preserves their holdings. Use baton2_knowledge for exact findings or metadata and baton2_knowledge_relations for directed links, including links between retained messages or external references. ${messageInstructions()} The optional kind supports authored completion-request and completion-confirmed messages. Workers ask their immediate parent to confirm task completion and continue useful work until its reply. The parent uses completion-confirmed with the recipient when the task is complete; Baton selects that recipient's current request. Guidance carries further work. Baton generates mutation IDs and records recipient handling from actual native evidence. Agents can inspect current state without copying control IDs or receipts. Native turn settlement and inbox receipts do not finish the task. The coordinator CLI ask and ask-file send questions as your recorded session to its parent; a parentless Principal Conductor reaches the registered operator. Use baton2_player and baton2_players to inspect Players and both Conductor tiers. Use baton2_role, baton2_ensemble, baton2_ensemble_member, baton2_section and baton2_section_member to configure responsibilities and membership. Use baton2_orchestra to inspect the system. Use baton2_turns for turn history and baton2_land or baton2_land_checked to land a Player's changes. Supply commit to select a reviewed ancestor while later work remains on the recorded branch.`,
     });
     return;
   }

@@ -103,10 +103,80 @@ def codex_handling(+db: String, +session: String) -> IO(HandlingScope):
     known : String <- Bool.pick(IO(String),String.is_empty(native),IO.pure(String,"0\n"),IO.try(String,DB.Sql.read(db,Status.codex_context_sql(session,native))))
     codex_handling_if(db,session,native,String.eq(known,"1\n"))
 
+def mcp_witness_fields(fields: List<String>, +session: String) -> IO(HandlingScope):
+  match fields:
+    case attempt_hex <> native_hex <> identity_hex <> endpoint_hex <> Nil{}: do IO<HandlingScope>:
+      attempt : String <- field(attempt_hex)
+      +native : String <- field(native_hex)
+      identity : String <- field(identity_hex)
+      endpoint : String <- field(endpoint_hex)
+      IO.pure(HandlingScope,Handling{attempt,native,identity,
+        "EXISTS(SELECT 1 FROM sessions connected WHERE connected.id=" ++ C.q(session)
+        ++ " AND connected.harness='claude-code' AND connected.native=" ++ C.q(native)
+        ++ " AND connected.endpoint=" ++ C.q(endpoint) ++ ")"})
+    case other: handling_invalid("Handling requires the matching live connected Claude input witness.")
+
+def mcp_witness(+db: String, +session: String, +witness: String) -> IO(HandlingScope):
+  do IO<HandlingScope>:
+    fields : String <- IO.try(String,DB.Sql.read(db,
+      "SELECT CASE WHEN json_valid(" ++ C.q(witness) ++ ") THEN CASE WHEN json_extract(" ++ C.q(witness)
+      ++ ",'$.active')=1 AND json_extract(" ++ C.q(witness) ++ ",'$.session')=" ++ C.q(session)
+      ++ " AND json_type(" ++ C.q(witness) ++ ",'$.attempt')='text' AND json_type(" ++ C.q(witness)
+      ++ ",'$.native')='text' AND json_type(" ++ C.q(witness) ++ ",'$.identity')='text' AND json_type(" ++ C.q(witness)
+      ++ ",'$.endpoint')='text' THEN hex(json_extract(" ++ C.q(witness) ++ ",'$.attempt'))||char(9)||hex(json_extract(" ++ C.q(witness)
+      ++ ",'$.native'))||char(9)||hex(json_extract(" ++ C.q(witness) ++ ",'$.identity'))||char(9)||hex(json_extract(" ++ C.q(witness)
+      ++ ",'$.endpoint')) ELSE '' END ELSE '' END;"))
+    mcp_witness_fields(Tx.split_tabs(Tx.trim_nl(fields)),session)
+
+def mcp_witness_result(db: String, session: String, result: G.RunRes) -> IO(HandlingScope):
+  match result:
+    case G.RRun{G.SExit{+code},+witness}:
+      Bool.pick(IO(HandlingScope),U32.is_eq(code,0),mcp_witness(db,session,witness),
+        IO.die(HandlingScope,code,"Connected Claude handling witness failed: " ++ witness))
+    case G.RRun{G.SSignal{signal},output}: IO.die(HandlingScope,2,"Connected Claude handling witness was interrupted: " ++ output)
+    case G.RSpawn{cause}: IO.die(HandlingScope,2,"Connected Claude handling witness could not start: " ++ cause)
+
+def mcp_endpoint_fields(fields: List<String>, +db: String, +session: String, context: String) -> IO(HandlingScope):
+  match fields:
+    case node_hex <> helper_hex <> Nil{}: do IO<HandlingScope>:
+      node : String <- field(node_hex)
+      helper : String <- field(helper_hex)
+      executable : String <- IO.try(String,Lock.SessionLock.executable())
+      witness : G.RunRes <- Process.runFull([node,helper,db,executable,"--session",session,"--input-witness",context],".")
+      mcp_witness_result(db,session,witness)
+    case other: handling_invalid("Handling requires the current connected Claude endpoint, native conversation and stop state.")
+
+def mcp_handling_owned(owned: Bool, +db: String, +session: String, +context: String) -> IO(HandlingScope):
+  match owned:
+    case False{}: IO.pure(HandlingScope,NoHandling{})
+    case True{}: do IO<HandlingScope>:
+      fields : String <- IO.try(String,DB.Sql.read(db,
+        "SELECT hex(json_extract(s.endpoint,'$[0]'))||char(9)||hex(json_extract(s.endpoint,'$[1]')) FROM sessions s WHERE s.id=" ++ C.q(session)
+        ++ " AND s.harness='claude-code' AND s.native<>'' AND CASE WHEN json_valid(" ++ C.q(context)
+        ++ ") THEN json_extract(" ++ C.q(context) ++ ",'$.session')=s.id AND json_extract(" ++ C.q(context)
+        ++ ",'$.native')=s.native AND json_extract(" ++ C.q(context) ++ ",'$.endpoint')=s.endpoint ELSE 0 END"
+        ++ " AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=s.id);"))
+      mcp_endpoint_fields(Tx.split_tabs(Tx.trim_nl(fields)),db,session,context)
+
+def mcp_handling(+db: String, +session: String, context: String) -> IO(HandlingScope):
+  do IO<HandlingScope>:
+    selected : String <- environment("BATON_SESSION")
+    mcp_handling_owned(String.eq(selected,session),db,session,context)
+
+def external_handling_if(empty: Bool, db: String, session: String, context: String) -> IO(HandlingScope):
+  match empty:
+    case True{}: codex_handling(db,session)
+    case False{}: mcp_handling(db,session,context)
+
+def external_handling(+db: String, +session: String) -> IO(HandlingScope):
+  do IO<HandlingScope>:
+    +context : String <- environment("BATON_MCP_INPUT")
+    external_handling_if(String.is_empty(context),db,session,context)
+
 def handling_scope(+db: String, +session: String) -> IO(HandlingScope):
   do IO<HandlingScope>:
     +directory : String <- context(db,session)
-    Bool.pick(IO(HandlingScope),String.is_empty(directory),codex_handling(db,session),
+    Bool.pick(IO(HandlingScope),String.is_empty(directory),external_handling(db,session),
       (do IO<HandlingScope>:
         ensured : Unit <- Store.ensure_before_begin(db)
         fields : String <- IO.try(String,DB.Sql.read(db,Status.current_sql(session,directory)))
@@ -182,11 +252,38 @@ def codex_record(+db: String, +session: String, +saved: String, read: Bool) -> I
     known : String <- Bool.pick(IO(String),String.is_empty(native),IO.pure(String,"0\n"),IO.try(String,DB.Sql.read(db,Status.codex_context_sql(session,native))))
     codex_record_if(db,session,native,saved,read,String.eq(known,"1\n"))
 
+def mcp_record_scope(scope: HandlingScope, +db: String, +session: String, saved: String, +read: Bool) -> IO(Unit):
+  match scope:
+    case NoHandling{}: IO.pure(Unit,Unit{})
+    case Handling{attempt,native,identity,current}: do IO<Unit>:
+      ensured : Unit <- Store.ensure_before_begin(db)
+      stored : String <- IO.try(String,Store.transact_sql(db,
+        "BEGIN IMMEDIATE;INSERT INTO message_reads(attempt,message,recipient,native,identity) SELECT " ++ C.q(attempt)
+        ++ ",m.id,m.recipient," ++ C.q(native) ++ "," ++ C.q(identity) ++ " FROM json_each(" ++ C.q(saved)
+        ++ ") j JOIN messages m ON m.id=" ++ Status.exposed(read,"id") ++ " WHERE " ++ Status.found(read)
+        ++ " AND m.recipient=" ++ C.q(session) ++ " AND m.recipient=" ++ Status.exposed(read,"recipient")
+        ++ " AND m.body=" ++ Status.exposed(read,"body") ++ " AND " ++ current
+        ++ " AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ C.q(session)
+        ++ ") ON CONFLICT(attempt,identity,message) DO NOTHING;COMMIT;"))
+      IO.pure(Unit,Unit{})
+
+def external_record_if(empty: Bool, +db: String, +session: String, +saved: String, +read: Bool, context: String) -> IO(Unit):
+  match empty:
+    case True{}: codex_record(db,session,saved,read)
+    case False{}: do IO<Unit>:
+      scope : HandlingScope <- mcp_handling(db,session,context)
+      mcp_record_scope(scope,db,session,saved,read)
+
+def external_record(+db: String, +session: String, +saved: String, +read: Bool) -> IO(Unit):
+  do IO<Unit>:
+    +context : String <- environment("BATON_MCP_INPUT")
+    external_record_if(String.is_empty(context),db,session,saved,read,context)
+
 def after_output(+db: String, +session: String, +directory: String, +saved: String, +read: Bool, output: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
   match output:
     case Fail{error}: IO.pass(Unit,Fail{error})
     case Done{unit}:
-      Bool.pick(IO(Unit),String.is_empty(directory),codex_record(db,session,saved,read),record(db,session,directory,saved,read))
+      Bool.pick(IO(Unit),String.is_empty(directory),external_record(db,session,saved,read),record(db,session,directory,saved,read))
 
 def output(+db: String, +session: String, +saved: String, +read: Bool) -> IO(Unit):
   do IO<Unit>:
@@ -214,9 +311,10 @@ def batch_session(+db: String) -> IO(String):
     +selected : String <- environment("BATON_SESSION")
     +directory : String <- context(db,selected)
     +native : String <- environment("CODEX_THREAD_ID")
+    connection : String <- environment("BATON_MCP_INPUT")
     selected_hex : String <- Bool.pick(IO(String),String.is_empty(native),IO.pure(String,"\n"),IO.try(String,DB.Sql.read(db,"SELECT CASE WHEN count(*)=1 THEN hex(min(id)) ELSE '' END FROM sessions WHERE native=" ++ C.q(native) ++ " AND harness='codex';")))
     codex : String <- field(selected_hex)
-    IO.pure(String,Bool.pick(String,String.is_empty(directory),codex,selected))
+    IO.pure(String,Bool.pick(String,Bool.and(String.is_empty(directory),String.is_empty(connection)),codex,selected))
 
 def command_pending_output(+db: String, +saved: String) -> IO(Unit):
   do IO<Unit>:

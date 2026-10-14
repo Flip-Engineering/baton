@@ -2,7 +2,9 @@
 import json
 import os
 import pathlib
+import re
 import shutil
+import sqlite3
 import subprocess
 import tempfile
 import threading
@@ -98,10 +100,13 @@ class McpRoot(unittest.TestCase):
         return p.stdout.strip()
 
     def start_mcp(self, session='root', script=MCP_SCRIPT):
+        env = dict(os.environ)
+        for name in ('BATON_ATTEMPT_DIRECTORY', 'BATON_MCP_INPUT', 'CODEX_THREAD_ID'):
+            env.pop(name, None)
         proc = subprocess.Popen(
             ['node', str(script), str(self.db), str(EXE), '--session', session],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stderr=subprocess.PIPE, env=env,
         )
         def cleanup():
             stdout_fd = proc.stdout.fileno()
@@ -151,7 +156,151 @@ class McpRoot(unittest.TestCase):
         self.assertEqual(result['id'], name)
         if ok:
             self.assertNotIn('isError', result['result'], result)
+        else:
+            return result['result']
         return json.loads(result['result']['content'][0]['text'])
+
+    def native_reads(self):
+        with sqlite3.connect(self.db) as connection:
+            connection.row_factory = sqlite3.Row
+            if not connection.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='message_reads'").fetchone():
+                return []
+            return [dict(row) for row in connection.execute(
+                'SELECT * FROM message_reads ORDER BY attempt,message')]
+
+    def process_record(self, pid):
+        stat = pathlib.Path('/proc') / str(pid) / 'stat'
+        if stat.exists():
+            fields = stat.read_text().rsplit(')', 1)[1].split()
+            return {'pid': pid, 'parent': int(fields[1]), 'birth': fields[19]}
+        result = subprocess.run(['/bin/ps', '-p', str(pid), '-o', 'ppid=',
+                                 '-o', 'lstart=', '-o', 'stat='],
+                                check=True, capture_output=True, text=True)
+        found = re.fullmatch(r'\s*(\d+)\s+(.+?)\s+(\S+)\s*', result.stdout)
+        self.assertIsNotNone(found, result)
+        return {'pid': pid, 'parent': int(found[1]), 'birth': found[2]}
+
+    def connected_claude(self):
+        self.coord('attach', 'root', 'claude-code', 'retained-claude-native', '')
+        self.coord('role', 'root', 'principal-conductor')
+        self.coord('attach', 'operator', 'terminal', '', '')
+        self.coord('role', 'operator', 'operator')
+        self.register('foreign', 'root', 'omp', 'model', 'low')
+        self.coord('message', 'connected-owned', 'operator', 'root', 'guidance',
+                   '\ufeffComplete connected input.\nλ🙂\nFinal spaces  \n')
+        self.coord('message', 'connected-foreign', 'root', 'foreign', 'guidance',
+                   'Complete foreign input.\n')
+        proc = self.start_mcp()
+        self.initialize(proc)
+        self.activate(proc)
+        return proc
+
+    def test_connected_claude_acknowledges_only_its_complete_read_set(self):
+        proc = self.connected_claude()
+        self.assertEqual(self.tool(proc, 'baton2_ack'), [])
+        self.assertEqual(self.native_reads(), [])
+        self.tool(proc, 'baton2_inbox', {'index': True})
+        self.tool(proc, 'baton2_delivery', {'id': 'connected-foreign'})
+        self.assertEqual(self.native_reads(), [])
+        inbox = self.tool(proc, 'baton2_inbox')
+        self.assertEqual([(row['id'], row['body']) for row in inbox],
+                         [('connected-owned', '\ufeffComplete connected input.\nλ🙂\nFinal spaces  \n')])
+        before = self.native_reads()
+        self.assertEqual(len(before), 1, before)
+        self.assertEqual((before[0]['message'], before[0]['recipient'], before[0]['native']),
+                         ('connected-owned', 'root', 'retained-claude-native'))
+        self.assertTrue(before[0]['attempt'].startswith('claude-mcp:'), before)
+        identity = json.loads(before[0]['identity'])
+        self.assertEqual(identity[0], 'claude-mcp')
+        self.assertIsNone(before[0]['handled'])
+        endpoint = json.loads(self.coord('session', 'root'))['endpoint']
+        copied = {'database': str(self.db.resolve()), 'coordinator': str(EXE.resolve()),
+                  'session': 'root', 'native': 'retained-claude-native', 'endpoint': endpoint,
+                  'socket': json.loads(endpoint)[-1], 'connection': identity[2], 'ready': True,
+                  'bridge': {'pid': identity[3], 'parent': identity[5], 'birth': identity[4]},
+                  'client': {'pid': identity[5], 'parent': os.getppid(), 'birth': identity[6]}}
+        outside = subprocess.run(['node', str(MCP_SCRIPT), str(self.db), str(EXE),
+            '--session', 'root', '--input-witness', json.dumps(copied)], capture_output=True, text=True)
+        self.assertEqual(outside.returncode, 2, outside)
+        self.assertEqual(json.loads(outside.stderr.splitlines()[0])['error'], 'handling-context')
+        self.assertEqual(outside.stdout, '')
+        self.assertEqual(self.native_reads(), before)
+        forged = dict(copied, bridge=self.process_record(os.getpid()),
+                      client=self.process_record(os.getppid()))
+        env = dict(os.environ, BATON_SESSION='root', BATON_DATABASE=str(self.db),
+                   BATON_MCP_INPUT=json.dumps(forged))
+        for name in ('BATON_ATTEMPT_DIRECTORY', 'CODEX_THREAD_ID'):
+            env.pop(name, None)
+        sibling = subprocess.run([str(EXE), str(self.db), 'as', 'root', 'acknowledge'],
+                                 env=env, capture_output=True, text=True)
+        self.assertEqual(sibling.returncode, 2, sibling)
+        self.assertIn('socket belongs to a different MCP process', sibling.stderr)
+        self.assertEqual(sibling.stdout, '')
+        self.assertEqual(self.native_reads(), before)
+        self.assertIsNone(json.loads(self.coord('delivery', 'connected-owned'))['receipt'])
+        self.coord('message', 'connected-unread', 'operator', 'root', 'guidance',
+                   'Arrived after the complete read.')
+        result = self.tool(proc, 'baton2_ack')
+        self.assertEqual([row['id'] for row in result], ['connected-owned'])
+        receipt = 'native-turn:' + before[0]['attempt']
+        self.assertEqual(result[0]['acknowledgement']['receipt'], receipt)
+        self.assertEqual(self.native_reads()[0]['handled'], receipt)
+        self.tool(proc, 'baton2_ack')
+        self.assertEqual(json.loads(self.coord('delivery', 'connected-owned'))['receipt'], receipt)
+        for ident in ('connected-foreign', 'connected-unread'):
+            self.assertIsNone(json.loads(self.coord('delivery', ident))['receipt'])
+
+    def test_restarted_claude_connection_rereads_before_implicit_acknowledgement(self):
+        first = self.connected_claude()
+        self.tool(first, 'baton2_inbox')
+        original = self.native_reads()[0]
+        original_endpoint = json.loads(self.coord('session', 'root'))['endpoint']
+        first.terminate()
+        first.wait()
+        second = self.start_mcp()
+        self.initialize(second)
+        self.activate(second)
+        self.assertNotEqual(json.loads(self.coord('session', 'root'))['endpoint'], original_endpoint)
+        self.assertEqual(self.tool(second, 'baton2_ack'), [])
+        self.assertIsNone(json.loads(self.coord('delivery', 'connected-owned'))['receipt'])
+        pending = self.tool(second, 'baton2_pending', {'pretty': True})
+        self.assertEqual({row['id'] for row in pending}, {'connected-owned', 'connected-foreign'})
+        reads = self.native_reads()
+        self.assertEqual({row['message'] for row in reads}, {'connected-owned'})
+        self.assertEqual(len(reads), 2, reads)
+        current = next(row for row in reads if row['attempt'] != original['attempt'])
+        self.assertNotEqual(current['identity'], original['identity'])
+        handled = self.tool(second, 'baton2_ack')
+        self.assertEqual([row['id'] for row in handled], ['connected-owned'])
+        receipt = 'native-turn:' + current['attempt']
+        self.assertEqual(handled[0]['acknowledgement']['receipt'], receipt)
+        self.assertEqual(next(row for row in self.native_reads()
+                              if row['attempt'] == original['attempt']), original)
+        self.assertIsNone(json.loads(self.coord('delivery', 'connected-foreign'))['receipt'])
+
+    def test_connected_claude_preserves_native_endpoint_and_stop_authority(self):
+        proc = self.connected_claude()
+        self.tool(proc, 'baton2_inbox')
+        before = self.native_reads()
+        original = json.loads(self.coord('session', 'root'))
+        for native, endpoint in [('changed-native', original['endpoint']),
+                                 (original['native'], '')]:
+            with self.subTest(native=native, endpoint=endpoint):
+                self.coord('connect', 'root', native, endpoint)
+                result = self.tool(proc, 'baton2_ack', ok=False)
+                self.assertTrue(result['isError'], result)
+                self.assertIn('handling', result['content'][0]['text'].lower())
+                self.assertEqual(self.native_reads(), before)
+                self.assertIsNone(json.loads(self.coord('delivery', 'connected-owned'))['receipt'])
+        self.coord('connect', 'root', original['native'], original['endpoint'])
+        self.coord('stop', 'root', 'connected-explicit-stop', 'Keep this operator stop.')
+        result = self.tool(proc, 'baton2_ack', ok=False)
+        self.assertTrue(result['isError'], result)
+        self.assertEqual(self.native_reads(), before)
+        self.assertIsNone(json.loads(self.coord('delivery', 'connected-owned'))['receipt'])
+        self.assertEqual(json.loads(self.coord('session', 'root'))['stop']['id'],
+                         'connected-explicit-stop')
 
     def test_canonical_schemas_and_section_orchestra_controls(self):
         self.coord('attach', 'principal', 'claude-code', 'native-principal', '')

@@ -675,29 +675,103 @@ class TaskStart(unittest.TestCase):
         arguments = {source: body if source == 'text' else str(task_file), 'project': str(self.repo),
                      'session': session, 'harness': 'codex', 'model': 'gpt-6-astra',
                      'effort': 'low', 'command': str(self.fixture)}
-        requests = [{'jsonrpc': '2.0', 'id': 1, 'method': 'initialize', 'params': {}},
-                    {'jsonrpc': '2.0', 'id': 2, 'method': 'tools/list', 'params': {}},
-                    {'jsonrpc': '2.0', 'id': 3, 'method': 'tools/call', 'params': {
-                        'name': tool, 'arguments': arguments}}]
-        child = subprocess.run(['node', str(script), str(self.db), str(self.binary), '--session', 'root'],
-                               input=''.join(json.dumps(row) + '\n' for row in requests),
-                               env=self.environment, capture_output=True, text=True)
-        self.assertEqual(child.returncode, 0, child.stderr)
-        replies = [json.loads(line) for line in child.stdout.splitlines()]
-        self.assertEqual([reply['id'] for reply in replies], [1, 2, 3])
-        tools = {tool['name']: tool for tool in replies[1]['result']['tools']}
-        self.assertIn('baton2_dispatch', tools)
-        self.assertIn('baton2_task', tools)
-        result = json.loads(replies[2]['result']['content'][0]['text'])
-        self.assert_retained_input(result, body)
-        self.assertEqual(self.call('delivery', result['task'])['sender'], 'root')
-        self.assertEqual(self.call('session', session)['parent'], 'root')
-        self.assertTrue(any(step['argv'][2] == 'join' for step in result['steps']))
-        stream, native = self.accept(session)
-        self.assertIn(body, native['prompt'])
-        self.finish(stream, 'The attached fixture parent confirms the complete MCP task.')
-        self.exited(session)
-        self.assertTrue(self.call('session', session)['taskCompletion']['confirmed'])
+        argv = ['node', str(script), str(self.db), str(self.binary), '--session', 'root']
+        stdout_path = self.directory / (session + '.mcp.stdout.jsonl')
+        stderr_path = self.directory / (session + '.mcp.stderr')
+        environment = dict(self.environment)
+        for name in ('BATON_ATTEMPT_DIRECTORY', 'BATON_MCP_INPUT', 'CODEX_THREAD_ID'):
+            environment.pop(name, None)
+        with stdout_path.open('wb') as output, stderr_path.open('wb') as errors:
+            child = subprocess.Popen(argv, env=environment, stdin=subprocess.PIPE,
+                                     stdout=subprocess.PIPE, stderr=errors)
+            graceful = False
+
+            def send(value):
+                child.stdin.write((json.dumps(value) + '\n').encode())
+                child.stdin.flush()
+
+            def read():
+                line = child.stdout.readline()
+                output.write(line)
+                output.flush()
+                self.assertTrue(line, f'MCP output ended; stdout={stdout_path}; stderr={stderr_path}')
+                return json.loads(line)
+
+            def response(ident):
+                while True:
+                    answer = read()
+                    if 'method' not in answer:
+                        self.assertEqual(answer['id'], ident, answer)
+                        return answer['result']
+
+            def invoke(name, value):
+                send({'jsonrpc': '2.0', 'id': name, 'method': 'tools/call',
+                      'params': {'name': name, 'arguments': value}})
+                answer = response(name)
+                self.assertNotIn('isError', answer, answer)
+                return json.loads(answer['content'][0]['text'])
+
+            def owned_reads():
+                if not self.rows("SELECT 1 FROM sqlite_master WHERE type='table' AND name='message_reads'"):
+                    return []
+                return self.rows("SELECT * FROM message_reads WHERE recipient='root' ORDER BY attempt,message")
+
+            try:
+                send({'jsonrpc': '2.0', 'id': 1, 'method': 'initialize', 'params': {}})
+                self.assertEqual(response(1)['serverInfo']['name'], 'baton-conductor')
+                send({'jsonrpc': '2.0', 'method': 'notifications/initialized'})
+                send({'jsonrpc': '2.0', 'id': 2, 'method': 'tools/list', 'params': {}})
+                tools = {item['name']: item for item in response(2)['tools']}
+                self.assertIn('baton2_dispatch', tools)
+                self.assertIn('baton2_task', tools)
+                ready = read()
+                self.assertEqual((ready['id'], ready['method']), ('conductor-channel-ready', 'ping'))
+                send({'jsonrpc': '2.0', 'id': ready['id'], 'result': {}})
+                root = self.call('session', 'root')
+                self.assertEqual((root['harness'], root['native']), ('claude-code', 'saved-root'))
+                self.assertIn(str(script), json.loads(root['endpoint']))
+                before = owned_reads()
+                result = invoke(tool, arguments)
+                self.assertEqual(result['status'], 'admitted', result)
+                self.assert_retained_input(result, body)
+                self.assertEqual(self.call('delivery', result['task'])['sender'], 'root')
+                self.assertEqual(self.call('session', session)['parent'], 'root')
+                self.assertTrue(any(step['argv'][2] == 'join' for step in result['steps']))
+                self.assertEqual(owned_reads(), before)
+                stream, native = self.accept(session)
+                self.assertIn(body, native['prompt'])
+                report = 'The attached fixture parent confirms the complete MCP task.\nλ🙂\n'
+                self.finish(stream, report)
+                self.exited(session)
+                self.assertTrue(self.call('session', session)['taskCompletion']['confirmed'])
+                self.eventually(lambda: any(row['reportBody'] == report for row in self.call('turns', session)))
+                inbox = invoke('baton2_inbox', {})
+                reports = [row for row in inbox if row['sender'] == session and row['body'] == report]
+                self.assertEqual(len(reports), 1, inbox)
+                owned = next(row for row in owned_reads() if row['message'] == reports[0]['id'])
+                self.assertEqual((owned['recipient'], owned['native']), ('root', 'saved-root'))
+                self.assertTrue(owned['attempt'].startswith('claude-mcp:'), owned)
+                self.assertIsNone(owned['handled'])
+                handled = invoke('baton2_ack', {})
+                acknowledged = next(row for row in handled if row['id'] == reports[0]['id'])
+                receipt = 'native-turn:' + owned['attempt']
+                self.assertEqual(acknowledged['acknowledgement']['receipt'], receipt)
+                self.assertEqual(self.call('delivery', reports[0]['id'])['receipt'], receipt)
+                invoke('baton2_ack', {})
+                self.assertEqual(self.call('delivery', reports[0]['id'])['receipt'], receipt)
+                child.stdin.close()
+                child.stdin = None
+                graceful = True
+            finally:
+                if not graceful and child.poll() is None:
+                    child.terminate()
+                tail, _ = child.communicate()
+                output.write(tail)
+                with (self.directory / 'commands.jsonl').open('a') as commands:
+                    commands.write(json.dumps({'argv': argv, 'code': child.returncode,
+                        'stdoutPath': str(stdout_path), 'stderrPath': str(stderr_path),
+                        'direct_wait_completed': True}) + '\n')
+        self.assertEqual(child.returncode, 0, stderr_path.read_text())
 
 
 if __name__ == '__main__':

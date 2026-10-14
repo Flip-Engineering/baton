@@ -5,10 +5,11 @@ retain findings, ownership and acceptance requirements. This page links current
 Baton follow-up work for contributors. Every open issue has a link on this page.
 
 - [#732: Infer handling receipts for connected Claude MCP sessions](https://github.com/Flip-Engineering/baton/issues/732).
-  The native Claude PTY channel reads its complete inbox through MCP, then bare
-  acknowledge lacks a retained-attempt or Codex witness. Derive handling from
-  the registered native connection and complete recipient-owned reads. Preserve
-  actor, database, native identity, body and receipt authority, and qualify the
+  Connected Claude MCP handling now derives receipts from complete owned reads,
+  the registered endpoint and native conversation, and live process ancestry.
+  The endpoint socket binds the actual bridge process and connection. Restart,
+  forged context, changed endpoint or native identity, and explicit stops retain
+  their handling checks. Qualify the
   real Claude channel for [#723](https://github.com/Flip-Engineering/baton/issues/723),
   [#727](https://github.com/Flip-Engineering/baton/issues/727) and
   [#717](https://github.com/Flip-Engineering/baton/issues/717).
@@ -67,6 +68,8 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   and [#723](https://github.com/Flip-Engineering/baton/issues/723). Their direct-turn,
   recovery, context, native route, report, steering, correction and checked-landing
   assertions remain in scope. Explicit caller-file import fixtures remain.
+  The standalone root-day and recovery drivers stage the complete executable
+  and helper prefix and retain its provenance.
   [#732](https://github.com/Flip-Engineering/baton/issues/732) records the connected
   Claude handling prerequisite. Remote real-route acceptance remains open
   for [#717](https://github.com/Flip-Engineering/baton/issues/717).
