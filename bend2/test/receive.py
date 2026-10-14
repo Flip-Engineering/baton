@@ -610,9 +610,11 @@ class Receive(unittest.TestCase):
                 return result
             time.sleep(.01)
 
-    def shutdown_idle_database_owner(self, description):
+    def shutdown_idle_database_owner(self, description, reject_start=False):
         expected = f'{EXE.resolve()} --instance-owner {self.db.resolve()}'
         def idle_processes():
+            if reject_start:
+                self.assert_no_start()
             processes = self.owned_processes()
             if not processes or [process['command'] for process in processes] == [expected]:
                 return (processes,)
@@ -720,13 +722,15 @@ class Receive(unittest.TestCase):
         self.assertEqual(started['session'], session)
         return stream, started
 
-    def accept_or_child_exit(self, child, description, failure_stream=None):
+    def accept_or_child_exit(self, child, description, failure_stream=None, allow_exit=False):
         stream = failure_stream if failure_stream is not None else child.stdout
         streams = [stream, child.stderr] if child.stderr is not stream else [stream]
         while True:
             if select.select([self.server], [], [], 0)[0]:
                 return self.accept_any()
             if child.poll() is not None:
+                if allow_exit:
+                    return None
                 stdout, stderr = self.child_communication(child)
                 self.fail(f'{description}; receive exited {child.returncode}: {stdout}{stderr}')
             if not streams:
@@ -739,6 +743,8 @@ class Receive(unittest.TestCase):
                 if not self.capture_child_output(child, output):
                     streams.remove(output)
             if child.poll() is not None:
+                if allow_exit:
+                    return None
                 stdout, stderr = self.child_communication(child)
                 self.fail(f'{description}; receive exited {child.returncode}: {stdout}{stderr}')
 
@@ -806,6 +812,13 @@ class Receive(unittest.TestCase):
         else:
             self.assertNotEqual(child.returncode, 0, stdout)
         return stdout, stderr
+
+    def finish_without_start(self, child, ok=True):
+        unexpected = self.accept_or_child_exit(
+            child, 'The settled invocation did not exit.', allow_exit=True)
+        self.assertIsNone(unexpected, 'The settled invocation admitted another native process: '
+                          + json.dumps(unexpected[1] if unexpected else None, ensure_ascii=False))
+        return self.finish(child, ok=ok)
 
     def assert_no_start(self):
         self.assertEqual(select.select([self.server], [], [], 0)[0], [],
@@ -943,10 +956,10 @@ class Receive(unittest.TestCase):
                         observer = self.spawn('turn', name, name + '-turn', self.fixture, name, 'low',
                                               self.directory, task, self.directory / (name + '.jsonl'), '')
                         assignment = name + '-turn:task-input'
-                    first, started = self.accept(name)
+                    first, started = self.accept_child(observer, name)
                     self.action(first, body='Intermediate work is retained.', complete_task=False)
                     self.assertEqual(first.readline(), b'')
-                    self.finish(observer)
+                    self.finish_without_start(observer)
                     self.assertIsNotNone(self.coord('delivery', assignment)['receipt'])
                     state = self.coord('session', name)['taskCompletion']
                     self.assertTrue(state['open'])
@@ -980,7 +993,8 @@ class Receive(unittest.TestCase):
                     self.assertTrue(self.coord('session', name)['taskCompletion']['open'])
                     self.action(second, body='The task result is ready.', complete_task=False)
                     self.assertEqual(second.readline(), b'')
-                    self.shutdown_idle_database_owner('The explicit continuation did not settle naturally.')
+                    self.shutdown_idle_database_owner(
+                        'The explicit continuation did not settle naturally.', reject_start=True)
                     state = self.coord('session', name)['taskCompletion']
                     self.assertEqual(state['requestId'], request)
                     self.assertTrue(state['open'])
@@ -1001,8 +1015,9 @@ class Receive(unittest.TestCase):
                     self.action(confirmed, body='The coordinator confirmed this task.',
                                 ack_inbox=True, complete_task=False)
                     self.assertEqual(confirmed.readline(), b'')
-                    self.finish(confirmation)
-                    self.shutdown_idle_database_owner('The confirmed worker did not settle naturally.')
+                    self.finish_without_start(confirmation)
+                    self.shutdown_idle_database_owner(
+                        'The confirmed worker did not settle naturally.', reject_start=True)
                     self.assertEqual(self.coord('inbox', name), [])
                     state = self.coord('session', name)['taskCompletion']
                     self.assertTrue(state['confirmed'])
@@ -1026,7 +1041,7 @@ class Receive(unittest.TestCase):
         self.assertEqual(requested['body'], text)
         self.action(first, body=text, complete_task=False)
         self.assertEqual(first.readline(), b'')
-        self.finish(observer)
+        self.finish_without_start(observer)
         original = self.coord('turns', 'parent')[0]
         self.coord('ack', original['id'], 'root', 'Read the complete retained result.')
         self.coord('ack', 'ready-input-request', 'root', 'The result remains under review.')
@@ -1039,7 +1054,7 @@ class Receive(unittest.TestCase):
         self.assertEqual(incoming['native'], started['native'])
         self.action(reviewed, body=text, complete_task=False)
         self.assertEqual(reviewed.readline(), b'')
-        self.finish(delivery)
+        self.finish_without_start(delivery)
         turns = self.coord('turns', 'parent')
         self.assertEqual([turn['reportBody'] for turn in turns], [text, text])
         self.assertNotEqual(turns[0]['id'], turns[1]['id'])
@@ -1060,7 +1075,7 @@ class Receive(unittest.TestCase):
         cause = 'A distinct fixture provider failure while reading the new input.'
         self.action(failed, fail=True, fail_message=cause, complete_task=False)
         self.assertEqual(failed.readline(), b'')
-        self.finish(failure, ok=False)
+        self.finish_without_start(failure, ok=False)
         turns = self.coord('turns', 'parent')
         self.assertEqual([turn['reportBody'] for turn in turns[:2]], [text, text])
         self.assertEqual(len(turns), 3)
@@ -1076,7 +1091,8 @@ class Receive(unittest.TestCase):
                          'Read the complete retained result.')
         self.assertEqual(self.coord('session', 'parent')['taskCompletion'], state)
         self.assertEqual(self.coord('inbox', 'parent'), [])
-        self.shutdown_idle_database_owner('Ready worker did not settle after its physical failure.')
+        self.shutdown_idle_database_owner(
+            'Ready worker did not settle after its physical failure.', reject_start=True)
 
     def test_ack_failure_still_joins_queued_continuation(self):
         self.player()
@@ -2198,7 +2214,7 @@ class Receive(unittest.TestCase):
             self.prepare_input(ident, 'root', body, kind='task')
             with patch.dict(os.environ, {'OPENAI_API_KEY':'controlled-unused-key', 'CODEX_API_KEY':'controlled-unused-key'}):
                 observer=self.spawn(*self.receive_args('root'))
-                control, started=self.accept('root')
+                control, started=self.accept_child(observer, 'root')
                 owned=self.owned_processes()
                 self.action(control, body=body)
                 self.finish(observer)
@@ -2257,11 +2273,12 @@ class Receive(unittest.TestCase):
         # The helper copies it into B's sessions directory, and B reads the retained task
         # content before its own acknowledgment.
         observer = self.spawn(*self.receive_args('root'))
-        first, started = self.accept('root')
+        first, started = self.accept_child(observer, 'root')
         self.assertEqual(started['codexHome'], str(store_a))
         self.action(first, fail=True, ack=ack_before_exhaustion, fail_message=cause)
         self.action(first, exit_fixture=True)
-        second, resumed = self.accept('root')
+        second, resumed = self.accept_child(observer, 'root',
+                                           'The next Codex profile did not launch after exhaustion.')
         launches = [json.loads(line) for line in
                     (self.directory / 'native-launches.jsonl').read_text().splitlines()]
         self.assertEqual(len(launches), 2)
@@ -2362,11 +2379,12 @@ class Receive(unittest.TestCase):
                      ('ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN')}
         with patch.dict(os.environ, overrides):
             observer = self.spawn(*self.receive_args('root'))
-            first, started = self.accept('root')
+            first, started = self.accept_child(observer, 'root')
             self.assertEqual(started['claudeAuthVariablesPresent'], [])
             self.action(first, fail=True, ack=False, fail_message=cause)
             self.action(first, exit_fixture=True)
-            second, resumed = self.accept('root')
+            second, resumed = self.accept_child(observer, 'root',
+                                               'The next Claude profile did not launch after exhaustion.')
             self.assertEqual(resumed['claudeAuthVariablesPresent'], [])
             self.assertEqual(resumed['native'], started['native'])
             self.assertEqual(resumed['resume'], started['native'])
@@ -2420,7 +2438,7 @@ class Receive(unittest.TestCase):
             ident = 'kept-' + str(index)
             self.prepare_input(ident, 'root', 'Cause probe.\n', kind='task')
             observer = self.spawn(*self.receive_args('root'))
-            control, started = self.accept('root')
+            control, started = self.accept_child(observer, 'root')
             self.action(control, fail=True, ack=False, fail_message=cause)
             self.action(control, exit_fixture=True)
             self.finish(observer, ok=False)
