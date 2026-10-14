@@ -6,6 +6,7 @@ import ../host/sqlite.bend as DB
 import ../host/process.bend as P
 import ../git/text.bend as Tx
 import ../host/text.bend as Text
+import ../context/request.bend as Req
 
 def with_observation(-A: Type, observation: List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool, next: List<Chan(Result<&1,&1,U32 & String,String>)> -> String -> Bool -> IO(A)) -> IO(A):
   (tasks,(error,incomplete))=observation
@@ -56,6 +57,30 @@ def send(+db: String, +id: String) -> IO(Result<&1,&1,U32 & String,String>):
     frame : String <- IO.try(String,DB.Sql.query(db,"SELECT reply FROM native_requests WHERE id=" ++ C.q(id) ++ ";"))
     result : Result<&1,&1,U32 & String,Unit> <- dispatch(Tx.trim_nl(attempt),frame,String.eq(allowed,"1\n"))
     written(db,id,result)
+
+def pending_reply_sql(+player: String, +turn: String, +attempt: String) -> String:
+  "SELECT coalesce((SELECT hex(r.id) FROM native_requests r JOIN sessions s ON s.id=r.worker AND s.parent=r.parent JOIN executions e ON e.session=r.worker AND e.id=" ++ C.q(turn) ++ " AND e.directory=r.attempt WHERE r.worker=" ++ C.q(player) ++ " AND r.attempt=" ++ C.q(attempt) ++ " AND e.phase<>'exited' AND r.reply IS NOT NULL AND r.written=0 AND r.closed IS NULL AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=r.worker) ORDER BY r.rowid LIMIT 1),'');"
+
+@unsafe
+def resume_pending(+db: String, +player: String, +turn: String, +attempt: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    +encoded : String <- IO.try(String,DB.Sql.query(db,pending_reply_sql(player,turn,attempt)))
+    match String.is_empty(Tx.trim_nl(encoded)):
+      case True{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
+      case False{}:
+        match Req.decode_scalar_utf8(Tx.hex_decode(Tx.trim_nl(encoded))):
+          case Req.ScalarText{selected}: do IO<Result<&1,&1,U32 & String,Unit>>:
+            sent : String <- IO.try(String,send(db,selected))
+            resume_pending(db,player,turn,attempt)
+          case other: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(22,"Stored native request identity could not be decoded: " ++ Req.scalar_reason(other))})
+
+def resume(+db: String, player: String, turn: String, attempt: String, enabled: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match enabled:
+    case False{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
+    case True{}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      ready : String <- IO.try(String,prepare_projection(db))
+      tables : String <- IO.try(String,DB.Sql.query(db,schema()))
+      resume_pending(db,player,turn,attempt)
 
 def deliver_pending(db: String, id: String, state: String) -> IO(Result<&1,&1,U32 & String,String>):
   match state:

@@ -1284,6 +1284,14 @@ class Receive(unittest.TestCase):
             unavailable.rename(address)
         observer.kill()
         observer.wait()
+        marker = 'Recovered observer consumed output after the stored native answer.'
+        self.action(stream, progress=marker)
+        self.assertEqual(json.loads(stream.readline()), {'progress_written': marker})
+        log = self.output_log('parent')
+        self.eventually(lambda: marker in log.read_text(),
+                        'recovered observer did not consume the pending-answer recovery marker')
+        self.assertEqual(self.native_requests()[0]['written'], 1,
+                         'recovered observer consumed new output before sending the stored native answer')
         self.action(stream, read_native_reply=True)
         self.assertEqual(json.loads(stream.readline()), {'native_reply': {
             'type': 'extension_ui_response', 'id': event['id'], 'value': 'retained answer'}})
