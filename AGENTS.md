@@ -27,6 +27,15 @@ banned. The deliberate scratchpad tool supplies agent knowledge through its own
 operation. Native transcripts retain their existing runtime evidence role.
 Issue #716 owns the dispatch interface and database acceptance.
 
+## Implicit action and handling state
+
+Baton generates action identities and resolves the current session, assignment,
+coordinator, completion request and recipient-owned handling state from recorded
+context. Agents supply semantic actions and targets. Internal IDs and receipts
+must not require agent bookkeeping when Baton can derive them. Explicit IDs
+remain optional compatibility or intentional selection inputs. Issue #723 owns
+the command, MCP and native instruction acceptance.
+
 ## Mechanisms need an observed failure
 
 Checks, gates, guards, recovery layers and accounting must serve a named real

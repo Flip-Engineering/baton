@@ -4,6 +4,19 @@ The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3
 retain findings, ownership and acceptance requirements. This page links current
 Baton follow-up work for contributors. Every open issue has a link on this page.
 
+- [#723: Infer agent action identities and handling state](https://github.com/Flip-Engineering/baton/issues/723).
+  Generate mutation identities inside Baton and resolve completion requests,
+  current assignments, complete recipient-owned input and native receipts from
+  recorded context. Agents express semantic actions and targets. Preserve
+  explicit compatibility selectors, coordinator authority, earlier receipts,
+  stops and incomplete work. Carry the behavior through CLI, MCP and agent
+  instructions in the [#717](https://github.com/Flip-Engineering/baton/issues/717)
+  release, with [#714](https://github.com/Flip-Engineering/baton/issues/714),
+  [#715](https://github.com/Flip-Engineering/baton/issues/715),
+  [#716](https://github.com/Flip-Engineering/baton/issues/716),
+  [#718](https://github.com/Flip-Engineering/baton/issues/718) and
+  [#720](https://github.com/Flip-Engineering/baton/issues/720).
+
 - [#722: Repair composed coordinator parsing](https://github.com/Flip-Engineering/baton/issues/722).
   The pinned native compiler ended with SIGTRAP on `57e67d1d` and `ef735693`.
   A retained remote Node diagnostic of the compiler derivative ended during
