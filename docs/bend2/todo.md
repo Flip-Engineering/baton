@@ -4,6 +4,20 @@ The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3
 retain findings, ownership and acceptance requirements. This page links current
 Baton follow-up work for contributors. Every open issue has a link on this page.
 
+- [#724: Expose deliberate scratchpad operations through native CLI and MCP](https://github.com/Flip-Engineering/baton/issues/724).
+  The current native command surface lacks the deliberate scratchpad operation
+  required for authored working notes feeding agent knowledge. Define complete
+  creation, reads, append and elevation with typed notes, plans and doubts,
+  author and scope provenance, and existing knowledge authority. Infer internal
+  identities through [#723](https://github.com/Flip-Engineering/baton/issues/723).
+  Preserve database task dispatch and the generated task-source file ban from
+  [#716](https://github.com/Flip-Engineering/baton/issues/716). Implementation
+  and remote installed acceptance remain open. Coordinate with
+  [#539](https://github.com/Flip-Engineering/baton/issues/539),
+  [#707](https://github.com/Flip-Engineering/baton/issues/707),
+  [#710](https://github.com/Flip-Engineering/baton/issues/710) and
+  [#717](https://github.com/Flip-Engineering/baton/issues/717).
+
 - [#723: Infer agent action identities and handling state](https://github.com/Flip-Engineering/baton/issues/723).
   Generate mutation identities inside Baton and resolve completion requests,
   current assignments, complete recipient-owned input and native receipts from
@@ -61,8 +75,9 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   The [dispatch interface](task-start-716.md) uses `baton dispatch "task text"`
   and complete stdin input through CLI and MCP. Retain requests, complete text
   and setup outcomes in the database. Generated Markdown and task-source files
-  are banned; the deliberate scratchpad supplies agent knowledge through its
-  own operation. Caller-supplied UTF-8 import remains optional. It consumes the
+  are banned. [#724](https://github.com/Flip-Engineering/baton/issues/724) records
+  the missing deliberate scratchpad operation for agent knowledge.
+  Caller-supplied UTF-8 import remains optional. It consumes the
   strict named-route reader from corrected #703 source `25f29f0d` and preserves
   the original #703 ownership. Remote target/candidate, full package and
   installed task-entry qualification remain part of the current #717 release.

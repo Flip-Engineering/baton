@@ -57,6 +57,7 @@ def observe(output, argv):
         return result
 
     unittest.TextTestRunner.run = record
+    sys.path[0] = str(path.parent)
     sys.argv = argv
     status = 0
     try:
