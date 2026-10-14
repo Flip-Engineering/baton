@@ -608,6 +608,8 @@ def sql(command: Command) -> String:
     case Receive{session,cmd,model,effort,cwd,log,message}: ""
     case RecoverObserver{session,observer}: ""
     case Start{session,harness,cmd,model,effort,cwd,log,id,task}: ""
+    case StartSetup{session,harness,cmd,model,effort,cwd,log}: ""
+    case ProfileBind{session,harness,label,store}: ""
     case Receiver{session,cmd,log,cwd}: ""
     case Configure{id,harness,model,effort,cmd,log,expected_harness,expected_model,expected_effort}: ""
     case DispatchFile{id,sender,recipient,kind,path}: ""
