@@ -93,7 +93,7 @@ def endpointless_recipient_sql(id: String, condition: String) -> String:
 
 # The claim retains admission custody for the whole inbox. Recipient progress
 # and newer coordinator control input permit another notification.
-def queue_metadata_sql(value: String) -> String:
+def queue_metadata_sql(+value: String) -> String:
   "CASE WHEN json_valid(" ++ value ++ ") THEN json_type(" ++ value ++ ")='object' AND json_type(" ++ value ++ ",'$.inputSeq')='integer' ELSE 0 END"
 
 def queue_retry_sql(recipient: String, retry: Bool) -> String:
@@ -204,7 +204,7 @@ def queue_existing(+db: String, id: String, saved: String, +recipient: String, n
     +cause : String <- queue_cause(Req.decode_scalar_utf8(Tx.hex_decode(Tx.trim_nl(row))))
     queue_coalesced(db,id,saved,recipient,cause,Bool.not(String.is_empty(cause)),next)
 
-def queue_selected(+db: String, id: String, saved: String, native: String, +recipient: String, token: String, coalesced: Bool) -> IO(Result<&1,&1,U32 & String,String>):
+def queue_selected(+db: String, +id: String, +saved: String, native: String, +recipient: String, token: String, coalesced: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   match coalesced:
     case False{}: queue_launch(db,id,saved,native,recipient,token)
     case True{}: queue_existing(db,id,saved,recipient,next_token => queue_launch(db,id,saved,native,recipient,next_token))
@@ -241,7 +241,7 @@ def endpointless(+db: String, +id: String, +condition: String, +saved: String) -
       codex_queue_mode(db,id,condition,saved,False{}),
       IO.pure(Result<&1,&1,U32 & String,String>,Done{saved}))
 
-def inbox_endpoint_selected(+db: String, +id: String, saved: String, argv: String, +recipient: String, token: String, coalesced: Bool) -> IO(Result<&1,&1,U32 & String,String>):
+def inbox_endpoint_selected(+db: String, +id: String, +saved: String, argv: String, +recipient: String, +token: String, coalesced: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   match coalesced:
     case True{}: queue_existing(db,id,saved,recipient,next_token => inbox_endpoint_selected(db,id,saved,argv,recipient,next_token,False{}))
     case False{}: do IO<Result<&1,&1,U32 & String,String>>:
@@ -259,7 +259,7 @@ def inbox_endpoint(+db: String, +id: String, +condition: String, saved: String, 
     +token : String <- IO.pure(String,Tx.trim_nl(row))
     inbox_endpoint_selected(db,id,saved,argv,recipient,token,String.is_empty(token))
 
-def endpoint_delivery(+db: String, +id: String, +condition: String, saved: String, argv: String) -> IO(Result<&1,&1,U32 & String,String>):
+def endpoint_delivery(+db: String, +id: String, +condition: String, +saved: String, +argv: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
     managed : String <- IO.try(String,DB.Sql.query(db,codex_inbox_endpoint_sql(id,condition)))
     Bool.pick(IO(Result<&1,&1,U32 & String,String>),String.eq(managed,"1\n"),inbox_endpoint(db,id,condition,saved,argv),launch(db,id,saved,argv))
