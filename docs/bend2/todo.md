@@ -4,6 +4,17 @@ The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3
 retain findings, ownership and acceptance requirements. This page links current
 Baton follow-up work for contributors. Every open issue has a link on this page.
 
+- [#725: Settle recovered direct turns after an earlier immutable failure report](https://github.com/Flip-Engineering/baton/issues/725).
+  A completed profile retry records a successful native terminal, then recovery
+  exits with a report identity conflict and leaves the execution running. Preserve
+  the original failure report and full native output while settling the recovered
+  turn. The fixture must observe the actual recovery refusal and produce a complete
+  verdict. Qualify the repair in the [#717](https://github.com/Flip-Engineering/baton/issues/717)
+  release, with [#705](https://github.com/Flip-Engineering/baton/issues/705),
+  [#712](https://github.com/Flip-Engineering/baton/issues/712),
+  [#713](https://github.com/Flip-Engineering/baton/issues/713) and
+  [#720](https://github.com/Flip-Engineering/baton/issues/720).
+
 - [#724: Expose deliberate scratchpad operations through native CLI and MCP](https://github.com/Flip-Engineering/baton/issues/724).
   The current native command surface lacks the deliberate scratchpad operation
   required for authored working notes feeding agent knowledge. Define complete
