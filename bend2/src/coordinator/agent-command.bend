@@ -97,13 +97,16 @@ def selected_receipt(scope: AgentInput.HandlingScope, +db: String, session: Stri
       id : String <- IO.try(String,message_id(db,session,""))
       IO.pure(String,"handled:" ++ id)
 
-def acknowledge_selected(+db: String, +session: String, +ids: List<String>, +receipt: String) -> IO(String):
-  Bool.pick(IO(String),String.is_empty(receipt),
-    (do IO<String>:
+def acknowledge_selected_if(empty: Bool, +db: String, +session: String, ids: List<String>, receipt: String) -> IO(String):
+  match empty:
+    case True{}: do IO<String>:
       scope : AgentInput.HandlingScope <- AgentInput.handling_scope(db,session)
       generated : String <- selected_receipt(scope,db,session)
-      ids_json(db,session,ids,generated,True{})),
-    ids_json(db,session,ids,receipt,True{}))
+      ids_json(db,session,ids,generated,True{})
+    case False{}: ids_json(db,session,ids,receipt,True{})
+
+def acknowledge_selected(+db: String, +session: String, ids: List<String>, +receipt: String) -> IO(String):
+  acknowledge_selected_if(String.is_empty(receipt),db,session,ids,receipt)
 
 def acknowledge(+db: String, +session: String, ids: List<String>, receipt: String) -> IO(String):
   match ids:
@@ -163,7 +166,7 @@ def send_id(+db: String, +session: String, +index: String, +recipient: String,
       value : Result<&1,&1,U32 & String,String> <- captured_body(body,stdin,stdin_body(body))
       send_body(db,session,index,id,recipient,kind,value)
 
-def stdin_messages(items: List<A.Message>) -> Bool:
+def stdin_messages(items: List<&2,A.Message>) -> Bool:
   match items:
     case Nil{}: False{}
     case A.Item{recipient,id,kind,body} <> rest: Bool.or(stdin_body(body),stdin_messages(rest))
@@ -174,7 +177,7 @@ def send_item(+db: String, +session: String, index: U32, stdin: Native.Stdin, it
       actual : Result<&1,&1,U32 & String,String> <- message_id(db,session,id)
       send_id(db,session,U32.show(index),recipient,kind,body,stdin,actual)
 
-def sends_tail(+db: String, +session: String, items: List<A.Message>, +index: U32, +stdin: Native.Stdin) -> IO(String):
+def sends_tail(+db: String, +session: String, items: List<&2,A.Message>, +index: U32, +stdin: Native.Stdin) -> IO(String):
   match items:
     case Nil{}: IO.pure(String,"]")
     case item <> rest: do IO<String>:
@@ -182,7 +185,7 @@ def sends_tail(+db: String, +session: String, items: List<A.Message>, +index: U3
       tail : String <- sends_tail(db,session,rest,U32.add(index,1),stdin)
       IO.pure(String,"," ++ saved ++ tail)
 
-def sends_json(+db: String, +session: String, items: List<A.Message>) -> IO(String):
+def sends_json(+db: String, +session: String, items: List<&2,A.Message>) -> IO(String):
   match items:
     case Nil{}: IO.pure(String,"[]")
     case +item <> +rest: do IO<String>:

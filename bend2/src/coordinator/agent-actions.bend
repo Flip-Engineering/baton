@@ -14,7 +14,7 @@ type Message is Data:
 type Action is Type:
   Inbox{}
   Read{ids: List<String>}
-  Send{items: List<Message>}
+  Send{items: List<&2,Message>}
   CompletionRequest{id: String, body: Body}
   CompletionConfirmed{recipient: String, request: String, id: String}
   Acknowledge{ids: List<String>, receipt: String}
@@ -43,7 +43,7 @@ def reverse_ids(ids: List<String>, tail: List<String>) -> List<String>:
     case Nil{}: tail
     case id <> rest: reverse_ids(rest,Con{id,tail})
 
-def reverse_items(items: List<Message>, tail: List<Message>) -> List<Message>:
+def reverse_items(items: List<&2,Message>, tail: List<&2,Message>) -> List<&2,Message>:
   match items:
     case Nil{}: tail
     case item <> rest: reverse_items(rest,Con{item,tail})
@@ -55,7 +55,7 @@ def body_option(body: Body, value: Body) -> Body:
     case other: Bad{"send accepts exactly one --text TEXT or --file PATH per message."}
 
 def send_done(+recipient: String, id: String, +kind: String, body: Body,
-              items: List<Message>) -> Action:
+              items: List<&2,Message>) -> Action:
   match body:
     case Missing{}: Invalid{"send requires --text TEXT or --file PATH."}
     case Bad{cause}: Invalid{cause}
@@ -65,7 +65,7 @@ def send_done(+recipient: String, id: String, +kind: String, body: Body,
         Send{reverse_items(Con{Item{recipient,id,kind,value},items},Nil{})})
 
 def send_options(args: List<String>, +recipient: String, +id: String,
-                 +kind: String, body: Body, items: List<Message>) -> Action:
+                 +kind: String, body: Body, items: List<&2,Message>) -> Action:
   match args:
     case "--id" <> +value <> rest:
       Bool.pick(Action,Bool.or(Bool.not(String.is_empty(id)),String.is_empty(value)),
@@ -248,7 +248,7 @@ def domain_action(parsed: Domain.Parsed) -> Action:
     case Domain.Calls{items}: Native{items}
     case Domain.Error{cause}: Invalid{cause}
 
-def batch_tokens(args: List<String>, value: Bool) -> Bool:
+def batch_tokens(args: List<&2,String>, value: Bool) -> Bool:
   match args:
     case Nil{}: False{}
     case +head <> rest:
@@ -259,27 +259,34 @@ def batch_tokens(args: List<String>, value: Bool) -> Bool:
             batch_tokens(rest,Bool.and(Tx.starts_with(head,"--"),
               Bool.not(Domain.member(head,["--lift-stop","--index","--recursive","--pretty"])))))
 
-def named_inspection(args: List<String>) -> Bool:
+def named_inspection(args: List<&2,String>) -> Bool:
   match args:
     case head <> rest: Domain.member(head,["--session","--id","--pretty"])
     case Nil{}: False{}
 
-def inspection_single(args: List<String>) -> Bool:
+def inspection_single(args: List<&2,String>) -> Bool:
   match args:
     case Nil{}: True{}
     case id <> Nil{}: True{}
     case other: False{}
 
-def original_form(+verb: String, +args: List<String>) -> Bool:
+def original_form(+verb: String, +args: List<&2,String>) -> Bool:
   Bool.and(Domain.member(verb,["session","player","players","assignment","completion-request","completion-confirmed","guide","acknowledge"]),
     Bool.or(Bool.and(Domain.member(verb,["session","player","assignment"]),
       Bool.and(inspection_single(args),Bool.not(named_inspection(args)))),
       Bool.and(Bool.not(batch_tokens(args,False{})),
         Bool.not(Bool.and(Domain.member(verb,["session","player","players","assignment"]),named_inspection(args))))))
 
-def parse_verb(+verb: String, +args: List<String>) -> Action:
-  Bool.pick(Action,Bool.and(Domain.known(verb),Bool.not(original_form(verb,args))),domain_action(Domain.parse(Con{verb,args})),
-    parse_action(classify_verb(verb),args))
+def parse_verb_selected(selected: Bool, verb: String, args: List<&2,String>) -> Action:
+  match selected:
+    case True{}: domain_action(Domain.parse(Con{verb,Domain.affine_strings(args)}))
+    case False{}: parse_action(classify_verb(verb),Domain.affine_strings(args))
+
+def parse_verb_shared(+verb: String, +args: List<&2,String>) -> Action:
+  parse_verb_selected(Bool.and(Domain.known(verb),Bool.not(original_form(verb,args))),verb,args)
+
+def parse_verb(verb: String, args: List<String>) -> Action:
+  parse_verb_shared(verb,Domain.shared_strings(args))
 
 def parse_one(+verb: String) -> Action:
   Bool.pick(Action,Bool.or(String.eq(verb,"help"),Bool.or(String.eq(verb,"--help"),String.eq(verb,"-h"))),

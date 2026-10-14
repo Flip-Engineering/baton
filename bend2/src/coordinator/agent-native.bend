@@ -230,31 +230,49 @@ def optional_arg(args: List<String>, option: String, value: String, present: Boo
     case True{}: J.cat_list(args,[option,value])
     case False{}: args
 
+def knowledge_index(index: Bool, prefix: List<String>, +options: List<&2,D.Option>) -> List<String>:
+  match index:
+    case True{}: J.cat_list(prefix,["--index"])
+    case False{}: optional_arg(prefix,"--id",D.value(options,"--id",""),D.present(options,"--id"))
+
 def knowledge_args(+session: String, +options: List<&2,D.Option>) -> List<String>:
   +scope = D.value(options,"--scope","worker")
   +subject = D.value(options,"--subject",session)
-  +prefix = Bool.pick(List<String>,Bool.or(D.present(options,"--scope"),D.present(options,"--subject")),
+  prefix = Bool.pick(List<String>,Bool.or(D.present(options,"--scope"),D.present(options,"--subject")),
     ["knowledge-scope",session,scope,subject],["knowledge",session])
-  Bool.pick(List<String>,D.present(options,"--index"),J.cat_list(prefix,["--index"]),
-    optional_arg(prefix,"--id",D.value(options,"--id",""),D.present(options,"--id")))
+  knowledge_index(D.present(options,"--index"),prefix,options)
 
-def native_flags(fields: List<String>, +options: List<&2,D.Option>, +args: List<String>) -> List<String>:
+def native_flag_value(flag: Bool, args: List<String>, name: String, value: String) -> List<String>:
+  match flag:
+    case True{}: J.cat_list(args,[name])
+    case False{}: J.cat_list(args,[name,value])
+
+def native_flag_selected(present: Bool, args: List<String>, +name: String, options: List<&2,D.Option>) -> List<String>:
+  match present:
+    case False{}: args
+    case True{}: native_flag_value(D.member(name,["--index","--pretty"]),args,name,D.value(options,name,""))
+
+def native_flags(fields: List<String>, +options: List<&2,D.Option>, args: List<String>) -> List<String>:
   match fields:
     case Nil{}: args
     case +name <> rest:
-      native_flags(rest,options,Bool.pick(List<String>,D.present(options,name),
-        Bool.pick(List<String>,D.member(name,["--index","--pretty"]),J.cat_list(args,[name]),J.cat_list(args,[name,D.value(options,name,"")])),args))
+      native_flags(rest,options,native_flag_selected(D.present(options,name),args,name,options))
+
+def knowledge_record_args(linked: Bool, args: List<String>, links: String) -> List<String>:
+  match linked:
+    case True{}: Con{"record-linked",J.cat_list(args,[links])}
+    case False{}: Con{"record-typed",args}
 
 def contextual_args(+session: String, verb: String, +options: List<&2,D.Option>) -> List<String>:
   match verb:
     case "completion-request":
       optional_arg(["agent-contextual-input",session,"completion-request","--text",D.value(options,"--text","")],"--id",D.value(options,"--id",""),D.present(options,"--id"))
     case "completion-confirmed":
-      +request = optional_arg(["agent-contextual-input",session,"completion-confirmed"],"--request",D.value(options,"--request",""),D.present(options,"--request"))
-      +args = optional_arg(request,"--to",D.value(options,"--to",""),D.present(options,"--to"))
+      request = optional_arg(["agent-contextual-input",session,"completion-confirmed"],"--request",D.value(options,"--request",""),D.present(options,"--request"))
+      args = optional_arg(request,"--to",D.value(options,"--to",""),D.present(options,"--to"))
       optional_arg(args,"--id",D.value(options,"--id",""),D.present(options,"--id"))
     case "acknowledge":
-      +args = Bool.pick(List<String>,D.present(options,"--message"),["agent-contextual-input",session,"acknowledge",D.value(options,"--message","")],["agent-contextual-input",session,"acknowledge"])
+      args = Bool.pick(List<String>,D.present(options,"--message"),["agent-contextual-input",session,"acknowledge",D.value(options,"--message","")],["agent-contextual-input",session,"acknowledge"])
       optional_arg(args,"--receipt",D.value(options,"--receipt",""),D.present(options,"--receipt"))
     case "guide":
       optional_arg(["agent-contextual-input",session,"guide","--to",D.value(options,"--to",""),"--text",D.value(options,"--text","")],"--id",D.value(options,"--id",""),D.present(options,"--id"))
@@ -307,7 +325,7 @@ def legacy_args_selected(+session: String, verb: String, +options: List<&2,D.Opt
     case "join": ["join",target,D.value(options,"--parent",session),D.value(options,"--harness",""),D.value(options,"--model",""),D.value(options,"--effort",""),D.value(options,"--path","")]
     case "worktree": ["worktree",target]
     case "land":
-      +args = Bool.pick(List<String>,D.present(options,"--check"),
+      args = Bool.pick(List<String>,D.present(options,"--check"),
         ["land-checked",target,D.value(options,"--repo",""),D.value(options,"--target",""),D.value(options,"--check",""),D.value(options,"--files","")],
         ["land",target,D.value(options,"--repo",""),D.value(options,"--target","")])
       optional_arg(args,"--commit",D.value(options,"--commit",""),D.present(options,"--commit"))
@@ -315,8 +333,8 @@ def legacy_args_selected(+session: String, verb: String, +options: List<&2,D.Opt
     case "remote-tip": ["remote-tip",D.value(options,"--repo",""),D.value(options,"--branch",""),D.value(options,"--remote","")]
     case "knowledge-read": knowledge_args(session,options)
     case "knowledge-record":
-      +args = [D.value(options,"--id",""),session,D.value(options,"--kind",""),D.value(options,"--claim",""),D.value(options,"--evidence",""),D.value(options,"--limits","")]
-      Bool.pick(List<String>,D.present(options,"--links"),Con{"record-linked",J.cat_list(args,[D.value(options,"--links","")])},Con{"record-typed",args})
+      args = [D.value(options,"--id",""),session,D.value(options,"--kind",""),D.value(options,"--claim",""),D.value(options,"--evidence",""),D.value(options,"--limits","")]
+      knowledge_record_args(D.present(options,"--links"),args,D.value(options,"--links",""))
     case "knowledge-relate": ["relate",D.value(options,"--id",""),session,D.value(options,"--source",""),D.value(options,"--relation",""),D.value(options,"--target","")]
     case "knowledge-promote": ["promote-scoped",D.value(options,"--id",""),session,D.value(options,"--source-kind","session"),D.value(options,"--from",session),D.value(options,"--destination-kind","session"),D.value(options,"--to",""),D.value(options,"--finding","")]
     case "knowledge-search": ["knowledge-search",session,D.value(options,"--scope","worker"),D.value(options,"--subject",session),D.value(options,"--query","")]
@@ -337,12 +355,12 @@ def legacy_args_selected(+session: String, verb: String, +options: List<&2,D.Opt
 def legacy_args(+session: String, verb: String, +options: List<&2,D.Option>, saved: List<&2,D.Option>) -> List<String>:
   legacy_args_selected(session,verb,options,saved,D.value(options,"--session",session))
 
-def args_tail(args: List<String>) -> String:
+def args_tail(args: List<&2,String>) -> String:
   match args:
     case Nil{}: "]"
     case value <> rest: "," ++ J.string_literal(value) ++ args_tail(rest)
 
-def args_json(args: List<String>) -> String:
+def args_json(args: List<&2,String>) -> String:
   match args:
     case Nil{}: "[]"
     case value <> rest: "[" ++ J.string_literal(value) ++ args_tail(rest)
@@ -376,17 +394,17 @@ def input(+db: String) -> IO(List<String>):
         input_fields(Tx.split_lines(rows))),
       IO.die(List<String>,2,"agent-native-input requires a complete JSON array of UTF-8 strings without NUL."))
 
-def dispatch_args(args: List<String>) -> List<String>:
+def dispatch_args(args: List<&2,String>) -> List<&2,String>:
   match args:
     case exe <> db <> "--project-settings" <> path <> Nil{}: [exe,"--project-settings",path]
     case exe <> db <> "agent-contextual-input" <> session <> rest: [exe,db,"agent-contextual-input",session]
     case exe <> db <> rest: [exe,db,"agent-native-input"]
     case other: Nil{}
 
-def prefix(index: U32, verb: String, +args: List<String>) -> String:
+def prefix(index: U32, verb: String, +args: List<&2,String>) -> String:
   "{\"index\":" ++ U32.show(index) ++ ",\"action\":" ++ J.string_literal(verb) ++ ",\"argv\":" ++ args_json(dispatch_args(args)) ++ ",\"nativeArgv\":" ++ args_json(args)
 
-def refused(index: U32, verb: String, args: List<String>, code: U32, cause: String) -> String:
+def refused(index: U32, verb: String, args: List<&2,String>, code: U32, cause: String) -> String:
   prefix(index,verb,args) ++ ",\"status\":\"refused\",\"code\":" ++ U32.show(code) ++ ",\"cause\":" ++ J.string_literal(cause) ++ ",\"stdout\":\"\",\"stderr\":\"\",\"waitStatus\":null}"
 
 def unit_cause(result: Result<&1,&1,U32 & String,Unit>) -> String:
@@ -449,7 +467,7 @@ def wait_child(+handle: U32, +path: String, input: String) -> IO(Outcome):
     errors : Result<&1,&1,U32 & String,String> <- Text.Text.read(path)
     IO.pure(Outcome,completed_output(output,waited,errors,wrote,closed))
 
-def run_spawn(+index: U32, +verb: String, +args: List<String>, +path: String, input: String,
+def run_spawn(+index: U32, +verb: String, args: List<&2,String>, +path: String, input: String,
               result: Result<&1,&1,U32 & String,U32>) -> IO(Result<&1,&1,U32 & String,Outcome>):
   match result:
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,Outcome>,Fail{error})
@@ -457,7 +475,7 @@ def run_spawn(+index: U32, +verb: String, +args: List<String>, +path: String, in
       result : Outcome <- wait_child(handle,path,input)
       IO.pure(Result<&1,&1,U32 & String,Outcome>,Done{result})
 
-def run(+index: U32, +verb: String, +args: List<String>, +path: String) -> IO(Result<&1,&1,U32 & String,Outcome>):
+def run(+index: U32, +verb: String, +args: List<&2,String>, +path: String) -> IO(Result<&1,&1,U32 & String,Outcome>):
   match args:
     case exe <> db <> "--project-settings" <> project <> Nil{}: do IO<Result<&1,&1,U32 & String,Outcome>>:
       spawned : Result<&1,&1,U32 & String,U32> <- P.ProcessChild.spawn(P.argv([exe,"--project-settings",project]),"",path)
@@ -470,22 +488,25 @@ def run(+index: U32, +verb: String, +args: List<String>, +path: String) -> IO(Re
       run_spawn(index,verb,args,path,args_json(legacy),spawned)
     case other: IO.pure(Result<&1,&1,U32 & String,Outcome>,Fail{(2,"Missing native executable or database context.")})
 
-def outcome_json(index: U32, verb: String, args: List<String>, path: String, result: Result<&1,&1,U32 & String,Outcome>) -> String:
+def outcome_json(index: U32, verb: String, args: List<&2,String>, path: String, result: Result<&1,&1,U32 & String,Outcome>) -> String:
   match result:
     case Fail{(code,cause)}: refused(index,verb,args,code,cause)
     case Done{Finished{+stdout,+stderr,+wait,+cause}}:
       prefix(index,verb,args) ++ ",\"status\":" ++ J.string_literal(Bool.pick(String,Bool.and(String.eq(wait,"exit 0"),String.is_empty(cause)),"completed","failed")) ++ ",\"stdout\":" ++ J.string_literal(stdout) ++ ",\"stderr\":" ++ J.string_literal(stderr) ++ ",\"waitStatus\":" ++ J.string_literal(wait) ++ ",\"cause\":" ++ J.string_literal(cause) ++ ",\"stderrPath\":" ++ J.string_literal(path) ++ "}"
 
-def run_input(+db: String, +index: U32, +verb: String, +args: List<String>, +path: String) -> IO(String):
+def run_input_shared(+db: String, +index: U32, +verb: String, +args: List<&2,String>, +path: String) -> IO(String):
   do IO<String>:
     result : Result<&1,&1,U32 & String,Outcome> <- run(index,verb,args,path)
     IO.pure(String,outcome_json(index,verb,args,path,result))
+
+def run_input(db: String, index: U32, verb: String, args: List<String>, path: String) -> IO(String):
+  run_input_shared(db,index,verb,D.shared_strings(args),path)
 
 def with_identity(result: Result<&1,&1,U32 & String,List<&2,D.Option>>, +db: String, session: String, exe: String, nonce: String, +index: U32, +verb: String, +saved: List<&2,D.Option>) -> IO(String):
   match result:
     case Fail{(code,cause)}: IO.pure(String,refused(index,verb,Nil{},code,cause))
     case Done{+options}:
-      +args = Con{exe,Con{db,legacy_args(session,verb,options,saved)}}
+      args = Con{exe,Con{db,legacy_args(session,verb,options,saved)}}
       +path = db ++ ".agent-command-" ++ nonce ++ "-" ++ U32.show(index) ++ ".stderr"
       run_input(db,index,verb,args,path)
 

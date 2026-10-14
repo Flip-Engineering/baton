@@ -24,6 +24,16 @@ type ParseState is Data:
   Active{phase: Phase, verb: String, options: List<&2,Option>, items: List<&2,Operation>}
   Failed{cause: String}
 
+def shared_strings(values: List<String>) -> List<&2,String>:
+  match values:
+    case Nil{}: Nil{}
+    case head <> rest: Con{head,shared_strings(rest)}
+
+def affine_strings(values: List<&2,String>) -> List<String>:
+  match values:
+    case Nil{}: Nil{}
+    case head <> rest: Con{head,affine_strings(rest)}
+
 def member(+value: String, values: List<String>) -> Bool:
   match values:
     case Nil{}: False{}

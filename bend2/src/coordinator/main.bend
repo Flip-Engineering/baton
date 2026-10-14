@@ -264,12 +264,15 @@ def normal_cli_kind(+head: String) -> NormalCliKind:
             Bool.pick(NormalCliKind,String.eq(head,"task-input-read"),TaskReadInput{},
               Bool.pick(NormalCliKind,String.eq(head,"agent-current-session"),AgentCurrentInput{},OrdinaryInput{})))))))
 
-def normal_cli_fallback(+db: String, +head: String, +tail: List<String>) -> IO(Unit):
-  Bool.pick(IO(Unit),String.eq(db,"--project"),
-    (do IO<Unit>:
+def normal_cli_fallback_if(project: Bool, db: String, head: String, tail: List<String>) -> IO(Unit):
+  match project:
+    case True{}: do IO<Unit>:
       selected : String <- Project.database(head)
-      execute(selected,C.parse(tail))),
-    execute(db,C.parse(Con{head,tail})))
+      execute(selected,C.parse(tail))
+    case False{}: execute(db,C.parse(Con{head,tail}))
+
+def normal_cli_fallback(+db: String, head: String, tail: List<String>) -> IO(Unit):
+  normal_cli_fallback_if(String.eq(db,"--project"),db,head,tail)
 
 def normal_native_args(+db: String, args: List<String>) -> IO(Unit):
   match args:
