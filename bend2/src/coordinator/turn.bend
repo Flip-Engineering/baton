@@ -260,11 +260,17 @@ def send_prompt(+handle: U32,prompt: String,+harness: String,level: String) -> I
     closed : Result<&1,&1,U32 & String,Unit> <- close_input(handle,String.eq(harness,"omp\n"))
     IO.pure(Result<&1,&1,U32 & String,Unit>,send_result(sent,closed))
 
-def codex_report(db: String, player: String, id: String, event: String, empty: Bool, sealed: Bool) -> IO(Unit):
+# An EOF projection preserves the terminal report already bound to this player.
+# The current native result still supplies the outcome and remains in its log.
+def codex_report_recorded_sql(+player: String, id: String) -> String:
+  "SELECT EXISTS(SELECT 1 FROM messages m JOIN turns t ON t.id=m.id WHERE m.id=" ++ C.q(id) ++ " AND m.sender=" ++ C.q(player) ++ " AND m.recipient=" ++ C.report_recipient(C.q(player)) ++ " AND m.kind='report' AND t.worker=" ++ C.q(player) ++ ");"
+
+def codex_report(+db: String, +player: String, +id: String, event: String, empty: Bool, sealed: Bool) -> IO(Unit):
   match empty:
     case True{}: IO.pure(Unit,Unit{})
     case False{}: do IO<Unit>:
-      saved : String <- IO.try(String,Store.apply(db,C.Observe{id,player,event,sealed}))
+      recorded : String <- IO.try(String,DB.Sql.query(db,codex_report_recorded_sql(player,id)))
+      saved : String <- IO.try(String,Store.apply(db,C.Observe{id,player,event,Bool.or(sealed,String.eq(recorded,"1\n"))}))
       IO.pure(Unit,Unit{})
 
 def codex_result_sql(source: String) -> String:

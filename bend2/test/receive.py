@@ -2661,7 +2661,8 @@ class Receive(unittest.TestCase):
                    if 'subscription profile handoff' in message['body']]
         self.assertEqual(len(handoff), 1)
         self.assertIn(cause, handoff[0]['body'])
-        self.assert_direct_retry_result('direct-handoff-recovered', body, cause, 'codex')
+        self.assert_direct_retry_result('direct-handoff-recovered', body, cause, 'codex',
+                                        observe_recovery=True)
 
     def test_omp_direct_retries_the_same_conversation_after_a_rate_refusal(self):
         cause = '429 Rate limit reached for requests\nRate limit reached for requests (type=1302)'
@@ -2700,10 +2701,75 @@ class Receive(unittest.TestCase):
         self.assertEqual(handoff, [])
         self.assert_direct_retry_result('direct-provider-retry', body, cause, 'omp', status)
 
-    def assert_direct_retry_result(self, ident, body, cause, harness, status=None):
+    def assert_recovery_observer_result(self, ident):
+        def current_execution():
+            with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
+                database.row_factory = sqlite3.Row
+                row = database.execute(
+                    "SELECT * FROM executions WHERE session='root' AND id=? AND mode='direct'",
+                    (ident,)).fetchone()
+            return dict(row) if row is not None else None
+
+        execution = current_execution()
+        if execution is None or execution['phase'] == 'exited':
+            return
+        directory = pathlib.Path(execution['directory'])
+        try:
+            errors = (directory / 'observer-error').read_bytes()
+            output = (directory / 'observer.log').read_bytes()
+        except FileNotFoundError:
+            return
+        failed = False
+        for line in errors.decode(errors='replace').splitlines(keepends=True):
+            fields = line.split()
+            if (line.endswith('\n') and len(fields) == 8 and fields[0] == 'pid'
+                    and fields[2:7] == ['exited', 'before', 'attach:', 'wait', 'status']):
+                try:
+                    wait_status = int(fields[7])
+                except ValueError:
+                    continue
+                failed = failed or (os.WIFEXITED(wait_status) and os.WEXITSTATUS(wait_status) != 0)
+        if not failed:
+            return
+        conflict = False
+        for line in output.decode(errors='replace').splitlines(keepends=True):
+            if not line.endswith('\n'):
+                continue
+            try:
+                frame = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            conflict = conflict or (isinstance(frame, dict)
+                                    and frame.get('error') == 'message-id-conflict'
+                                    and frame.get('id') == ident)
+        if not conflict:
+            return
+        current = current_execution()
+        if (current is None or current['phase'] == 'exited'
+                or current['directory'] != execution['directory']):
+            return
+        retained = {}
+        for name in ('status', 'stdout', 'native.stderr', 'keeper-error'):
+            try:
+                retained[name] = (directory / name).read_bytes()
+            except FileNotFoundError:
+                retained[name] = None
+        report = self.coord('delivery', ident)
+        self.fail('The recovered direct observer exited while projecting a different result '
+                  'under the retained report identity.\nExecution: '
+                  + json.dumps(current, ensure_ascii=False)
+                  + '\nStored report: ' + json.dumps(report, ensure_ascii=False)
+                  + '\nObserver wait evidence: ' + repr(errors)
+                  + '\nObserver output: ' + repr(output)
+                  + '\nRetained native evidence: ' + repr(retained))
+
+    def assert_direct_retry_result(self, ident, body, cause, harness, status=None,
+                                   observe_recovery=False):
         def settled_execution():
             execution = next(row for row in self.coord('players')
                              if row['id'] == 'root')['execution']
+            if observe_recovery:
+                self.assert_recovery_observer_result(ident)
             return execution if execution is not None and execution['phase'] == 'exited' else None
         execution = self.eventually(settled_execution,
                                     'The direct continuation did not exit naturally.')
