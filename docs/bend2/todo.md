@@ -4,13 +4,16 @@ The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3
 retain findings, ownership and acceptance requirements. This page links current
 Baton follow-up work for contributors. Every open issue has a link on this page.
 
-- [#727: Update real-route hierarchy task input and agent actions](https://github.com/Flip-Engineering/baton/issues/727).
-  `bend2/scripts/accept-kimi-hierarchy.py` generates task-source files and asks
-  native agents to copy action identifiers and receipts. Update its initial
-  and correction dispatches through [#716](https://github.com/Flip-Engineering/baton/issues/716)
+- [#727: Use database task input and contextual actions in native validation](https://github.com/Flip-Engineering/baton/issues/727).
+  The real-agent drivers `accept-kimi-hierarchy.py`, `accept-native-receive.py`,
+  `accept-hierarchy.py`, `accept-root-day.py`, `accept-git.py`,
+  `accept-knowledge-context.py` and `accept-receive-recovery.py` generate task
+  sources or require copied action identifiers and receipts. Update their initial
+  and correction input through [#716](https://github.com/Flip-Engineering/baton/issues/716)
   and contextual handling through [#723](https://github.com/Flip-Engineering/baton/issues/723).
-  Preserve concurrent native work, steering, correction lineage, checked
-  landings and source restrictions. Remote real-route acceptance remains open
+  Preserve each driver's direct-turn, recovery, context, native route, report,
+  steering, correction and checked-landing contracts. Retain explicit caller-file
+  import fixtures. Remote real-route acceptance remains open
   for [#717](https://github.com/Flip-Engineering/baton/issues/717).
 
 - [#726: Read the registered generation in the legacy keeper recovery fixture](https://github.com/Flip-Engineering/baton/issues/726).
@@ -59,7 +62,7 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   documented for administrative compatibility. Qualify these instructions in
   the [#717](https://github.com/Flip-Engineering/baton/issues/717)
   release. [#727](https://github.com/Flip-Engineering/baton/issues/727) retains
-  the external hierarchy harness's manual action and receipt instructions.
+  manual action and receipt instructions in the real-agent validation drivers.
   Coordinate with [#714](https://github.com/Flip-Engineering/baton/issues/714),
   [#715](https://github.com/Flip-Engineering/baton/issues/715),
   [#716](https://github.com/Flip-Engineering/baton/issues/716),
@@ -105,7 +108,7 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   command path. Retain active conversations, managed work, prior installation
   prefixes and explicit stops during receiver migration. Unfinished feature
   acceptance remains recorded in its original issues. [#727](https://github.com/Flip-Engineering/baton/issues/727)
-  owns the external real-route hierarchy harness update and acceptance.
+  owns real-agent validation input, instruction updates and acceptance.
 
 - [#716: Dispatch task text and retain it in the database](https://github.com/Flip-Engineering/baton/issues/716).
   The [dispatch interface](task-start-716.md) uses `baton dispatch "task text"`
@@ -120,8 +123,8 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   the original #703 ownership. Remote target/candidate, full package and
   installed task-entry qualification remain part of the current #717 release.
   [#727](https://github.com/Flip-Engineering/baton/issues/727) retains generated
-  task-source removal and database dispatch acceptance in the external
-  real-route hierarchy harness.
+  task-source removal and database input acceptance in the real-agent
+  validation drivers.
 
 - [#715: Simplify agent commands with a contextual action grammar](https://github.com/Flip-Engineering/baton/issues/715).
   The integrated [agent commands](agent-commands.md) extend the project and
