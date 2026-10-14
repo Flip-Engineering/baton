@@ -8,6 +8,8 @@ type Command is Data:
   Receive{session: String, cmd: String, model: String, effort: String, cwd: String, log: String, message: String}
   RecoverObserver{session: String, observer: String}
   Start{session: String, harness: String, cmd: String, model: String, effort: String, cwd: String, log: String, id: String, task: String}
+  StartSetup{session: String, harness: String, cmd: String, model: String, effort: String, cwd: String, log: String}
+  ProfileBind{session: String, harness: String, label: String, store: String}
   Receiver{session: String, cmd: String, log: String, cwd: String}
   Configure{id: String, harness: String, model: String, effort: String, cmd: String, log: String, expected_harness: String, expected_model: String, expected_effort: String}
   DispatchFile{id: String, sender: String, recipient: String, kind: String, path: String}
@@ -777,6 +779,7 @@ def parse_verb_three_args(+verb: String, +id: String, +one: String, +two: String
 
 def parse_verb_four_args(+verb: String, +id: String, +one: String, +two: String, +three: String) -> Command:
   match verb:
+    case "profile-bind": ProfileBind{id,one,two,three}
     case "knowledge-search": KnowledgeSearch{id,one,two,three}
     case "knowledge":
       Bool.pick(Command,Bool.and(String.eq(one,"--id"),String.eq(three,"--pretty")),Pretty{KnowledgeDetail{id,two}},
@@ -813,6 +816,7 @@ def parse_verb_five_args(+verb: String, +id: String, +one: String, +two: String,
 
 def parse_receive(+verb: String, +session: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, +message: String) -> Command:
   match verb:
+    case "start-setup": StartSetup{session,cmd,model,effort,cwd,log,message}
     case "receive": Receive{session,cmd,model,effort,cwd,log,message}
     case "promote-scoped": KnowledgePromoteScoped{session,cmd,model,effort,cwd,log,message}
     case _: Invalid{}

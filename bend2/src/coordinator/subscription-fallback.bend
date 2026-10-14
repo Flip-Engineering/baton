@@ -327,6 +327,21 @@ def profile_record_path(+db: String, session: String) -> IO(String):
     saved : String <- IO.try(String,DB.Sql.query(db,profile_record_sql(db,session)))
     IO.pure(String,Tx.trim_nl(saved))
 
+# The named profile format comes from #703 candidate 25f29f0d. Task setup
+# binds it before admitting new work. A failed append retains its IO cause.
+def bind_profile_admitted(+db: String, +session: String, harness: String, label: String, store: String, present: Bool) -> IO(Unit):
+  match present:
+    case False{}: IO.die(Unit,2,"Profile binding requires the session's recorded harness, a label without whitespace, and a nonempty external store without newlines.")
+    case True{}: do IO<Unit>:
+      path : String <- profile_record_path(db,session)
+      appended : Unit <- IO.try(Unit,Text.Text.append(path,record_line(Pr{harness,label,store}) ++ "\n"))
+      IO.write("{\"profile\":\"bound\"}\n")
+
+def bind_profile(+db: String, +session: String, +harness: String, +label: String, +store: String) -> IO(Unit):
+  do IO<Unit>:
+    admitted : String <- IO.try(String,DB.Sql.query(db,"SELECT EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ " AND harness=" ++ C.q(harness) ++ ") AND length(" ++ C.q(label) ++ ")>0 AND instr(" ++ C.q(label) ++ ",' ')=0 AND instr(" ++ C.q(label) ++ ",char(9))=0 AND instr(" ++ C.q(label) ++ ",char(10))=0 AND instr(" ++ C.q(label) ++ ",char(11))=0 AND instr(" ++ C.q(label) ++ ",char(12))=0 AND instr(" ++ C.q(label) ++ ",char(13))=0 AND length(" ++ C.q(store) ++ ")>0 AND instr(" ++ C.q(store) ++ ",char(10))=0 AND instr(" ++ C.q(store) ++ ",char(13))=0;"))
+    bind_profile_admitted(db,session,harness,label,store,String.eq(admitted,"1\n"))
+
 def exhaustion_stated(db: String, event: String) -> IO(String):
   do IO<String>:
     reason : String <- IO.try(String,DB.Sql.query(db,exhausted_reason_sql(event)))

@@ -219,14 +219,19 @@ def dispatch_file(+db: String, +id: String, sender: String, recipient: String, k
     body : String <- IO.try(String,Text.Text.read(path))
     dispatch_body(db,id,sender,recipient,kind,body)
 
-def start(+db: String, +session: String, harness: String, cmd: String, +model: String, effort: String, cwd: String, log: String, id: String, task: String) -> IO(String):
+def start_setup(+db: String, +session: String, harness: String, cmd: String, +model: String, effort: String, cwd: String, log: String) -> IO(String):
   do IO<String>:
-    body : String <- IO.try(String,Text.Text.read(task))
     workspace : String <- IO.try(String,Host.Control.workspace(cwd))
     schema : String <- IO.try(String,Store.commit(db,C.Session{session}))
     endpoint : String <- configured_endpoint(db,session,cmd,log,model)
     configured : String <- IO.try(String,DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ start_sql(session,harness,model,effort,workspace,endpoint) ++ "COMMIT;"))
     allowed : Unit <- startup_refused(Tx.trim_nl(configured))
+    IO.try(String,Store.read(db,C.Session{session}))
+
+def start(+db: String, +session: String, harness: String, cmd: String, +model: String, effort: String, cwd: String, log: String, id: String, task: String) -> IO(String):
+  do IO<String>:
+    body : String <- IO.try(String,Text.Text.read(task))
+    configured : String <- start_setup(db,session,harness,cmd,model,effort,cwd,log)
     dispatch_body(db,id,"operator",session,"task",body)
 
 law detached_dispatch_commits_authorized_input_before_launch:

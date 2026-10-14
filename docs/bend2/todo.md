@@ -4,6 +4,15 @@ The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3
 retain findings, ownership and acceptance requirements. This page links current
 Baton2 follow-up work for contributors.
 
+- [#716: Make ordinary task start own input, defaults and coordination setup](https://github.com/Flip-Engineering/baton/issues/716).
+  The separate source proposal in [ordinary task input](task-start-716.md)
+  accepts literal text, stdin and UTF-8 files through CLI and MCP. It consumes
+  the strict named-route reader from corrected #703 source `25f29f0d` and keeps
+  the original #703 ownership and full acceptance open. Remote source checks,
+  target/candidate comparison, release integration and installed task-entry
+  qualification remain required. Root coordinates integration after the
+  current #718/#720 release gates.
+
 - [#715: Simplify agent commands with a contextual action grammar](https://github.com/Flip-Engineering/baton/issues/715).
   Extend the implicit project and session context introduced in
   [#714](https://github.com/Flip-Engineering/baton/issues/714) to inspection,
