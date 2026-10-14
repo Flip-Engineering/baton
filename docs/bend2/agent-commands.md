@@ -92,9 +92,9 @@ later clause returns before any operation starts.
 ```sh
 baton session --and player --session worker --and assignment --id worker
 baton players --and attempt --and outbox
-baton completion-request --file result.txt --and assignment
+baton completion-request --text 'The assigned checks passed.' --and assignment
 baton completion-confirmed --to worker --and player --session worker
-baton guide --to worker --file next-task.txt --and pending --and orchestra
+baton guide --to worker --text 'Review the remaining source changes.' --and pending --and orchestra
 baton attempt --and attempts --and outbox
 ```
 

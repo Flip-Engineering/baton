@@ -659,16 +659,18 @@ principal `start` command accepts `claude-code` as well as `codex`, `omp` and
 `muse`.
 
 Retained OMP children send native input, selection, confirmation and editor
-questions to their registered parent. The question names its request ID and
-response shape. Use `native-reply PARENT REQUEST RESPONSE_JSON` or
-`native-reply-file PARENT REQUEST PATH` to answer through the existing keeper.
+questions to their registered parent. The question describes the response shape.
+Use `baton native-reply --text '{"value":"answer"}'` to answer the unique pending
+question through its existing keeper. `--to PLAYER` selects a child when several
+questions are pending, and `--file PATH` imports an existing JSON response.
 `stdin-written` records transport completion; subsequent native output records
 progress. See [native interaction semantics and limits](../docs/bend2/native-interactions.md).
 
-Use `stop SESSION STOP_ID REASON` to end a retained OMP or Codex session. The
+Use `baton stop --session PLAYER --reason TEXT` to end a retained OMP or Codex session. The
 command records a terminal stop, prevents further queued execution and submits
-TERM to its current native process group. `force-stop SESSION STOP_ID` explicitly
-submits KILL to the same still-owned attempt. `session`, `inbox` and `pending`
+TERM to its current native process group. `baton force-stop --session PLAYER` explicitly
+submits KILL to the same still-owned attempt. Baton generates or selects the
+recorded stop identity. `session`, `inbox` and `pending`
 retain the work, messages, receipts and stop state. The stop answer distinguishes
 signal submission from actual exit; the observer reports completion to the
 parent. Active direct `turn` execution returns an unsupported-stop refusal.
