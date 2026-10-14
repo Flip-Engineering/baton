@@ -4,6 +4,18 @@ The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3
 retain findings, ownership and acceptance requirements. This page links current
 Baton follow-up work for contributors. Every open issue has a link on this page.
 
+- [#731: Prepend a generated ideation seed to agent initialization guidance](https://github.com/Flip-Engineering/baton/issues/731).
+  Begin each agent's initialization guidance with a long application-generated
+  random seed and an instruction to use its abstract qualities when interpreting
+  the task. Retain complete prompting and original task text in the database,
+  with stable retry and recovery input across all supported harnesses. This is
+  the operator-requested adaptation of [String Seed of Thought](https://arxiv.org/abs/2510.21150).
+  Qualify native initial input and the installed route for
+  [#716](https://github.com/Flip-Engineering/baton/issues/716),
+  [#723](https://github.com/Flip-Engineering/baton/issues/723),
+  [#727](https://github.com/Flip-Engineering/baton/issues/727) and
+  [#717](https://github.com/Flip-Engineering/baton/issues/717).
+
 - [#730: Infer contextual knowledge evidence from retained reports](https://github.com/Flip-Engineering/baton/issues/730).
   The real-agent knowledge driver requires a copied report identity as evidence.
   Provide semantic selection of a retained report or current input with complete
