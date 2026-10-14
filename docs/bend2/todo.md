@@ -14,10 +14,10 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   [#717](https://github.com/Flip-Engineering/baton/issues/717).
 
 - [#731: Prepend a generated ideation seed to agent initialization guidance](https://github.com/Flip-Engineering/baton/issues/731).
-  Begin each agent's initialization guidance with a long application-generated
-  random seed and an instruction to use its abstract qualities when interpreting
-  the task. Retain complete prompting and original task text in the database,
-  with stable retry and recovery input across all supported harnesses. This is
+  Native initialization prepends an application-generated random seed and an
+  instruction to use its abstract qualities when interpreting the task. The
+  implementation retains complete prompting and original task text in the
+  database, with stable retry and recovery input across supported harnesses. This is
   the operator-requested adaptation of [String Seed of Thought](https://arxiv.org/abs/2510.21150).
   Qualify native initial input and the installed route for
   [#716](https://github.com/Flip-Engineering/baton/issues/716),
@@ -26,22 +26,22 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   [#717](https://github.com/Flip-Engineering/baton/issues/717).
 
 - [#730: Infer contextual knowledge evidence from retained reports](https://github.com/Flip-Engineering/baton/issues/730).
-  The real-agent knowledge driver requires a copied report identity as evidence.
-  Provide semantic selection of a retained report or current input with complete
-  provenance and precise ambiguity handling. Preserve explicit evidence references,
-  claim, limits and promotion assertions. Carry the command through native CLI,
-  MCP and the driver for [#723](https://github.com/Flip-Engineering/baton/issues/723),
+  `knowledge record --evidence report` selects the unique authored report after
+  the current assignment to its canonical coordinator. Native CLI, MCP and the
+  real-agent driver preserve complete evidence and explicit references. Missing
+  and ambiguous reports return a precise refusal. Remote qualification remains
+  open for [#723](https://github.com/Flip-Engineering/baton/issues/723),
   [#727](https://github.com/Flip-Engineering/baton/issues/727) and
   [#717](https://github.com/Flip-Engineering/baton/issues/717).
 
 - [#729: Resume stored native replies when the observer reconnects](https://github.com/Flip-Engineering/baton/issues/729).
   The target in workflow `38649718256` retains a complete pending native reply
   while its restored observer cursor equals the complete spool. The observer,
-  native input and selected fixture form a closed wait cycle. Derive pending
-  replies from the recorded attempt during reattachment and retain transport,
-  authority, complete bodies, stops and native identity. Give the fixture a
-  causal recovery boundary that produces a complete target verdict. Preserve
-  the original run before a controlled stop. Coordinate with
+  native input and selected fixture form a closed wait cycle. The implementation
+  derives pending replies from the recorded attempt during reattachment and
+  retains transport, authority, complete bodies, stops and native identity. The
+  fixture now checks a causal recovery boundary. Original evidence was preserved
+  before the completed controlled stop. Remote qualification remains open with
   [#717](https://github.com/Flip-Engineering/baton/issues/717),
   [#723](https://github.com/Flip-Engineering/baton/issues/723),
   [#725](https://github.com/Flip-Engineering/baton/issues/725),
@@ -62,17 +62,16 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
 - [#727: Use database task input and contextual actions in native validation](https://github.com/Flip-Engineering/baton/issues/727).
   The real-agent drivers `accept-kimi-hierarchy.py`, `accept-native-receive.py`,
   `accept-hierarchy.py`, `accept-root-day.py`, `accept-git.py`,
-  `accept-knowledge-context.py` and `accept-receive-recovery.py` generate task
-  sources or require copied action identifiers and receipts. Update their initial
-  and correction input through [#716](https://github.com/Flip-Engineering/baton/issues/716)
-  and contextual handling through [#723](https://github.com/Flip-Engineering/baton/issues/723).
-  Preserve each driver's direct-turn, recovery, context, native route, report,
-  steering, correction and checked-landing contracts. Retain explicit caller-file
-  import fixtures. Remote real-route acceptance remains open
+  `accept-knowledge-context.py` and `accept-receive-recovery.py` now submit full
+  task text and contextual actions through [#716](https://github.com/Flip-Engineering/baton/issues/716)
+  and [#723](https://github.com/Flip-Engineering/baton/issues/723). Their direct-turn,
+  recovery, context, native route, report, steering, correction and checked-landing
+  assertions remain in scope. Explicit caller-file import fixtures remain.
+  [#732](https://github.com/Flip-Engineering/baton/issues/732) records the connected
+  Claude handling prerequisite. Remote real-route acceptance remains open
   for [#717](https://github.com/Flip-Engineering/baton/issues/717).
   [#728](https://github.com/Flip-Engineering/baton/issues/728) records the
-  current candidate C-generation failure; driver implementation proceeds
-  while its diagnosis retains separate source and runtime evidence.
+  current candidate C-generation failure and its diagnostic evidence.
 
 - [#726: Read the registered generation in the legacy keeper recovery fixture](https://github.com/Flip-Engineering/baton/issues/726).
   The legacy attachment marker is complete in the registered attempt generation.
