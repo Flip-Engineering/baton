@@ -19,10 +19,13 @@ def record_sql(+session: String, +attempt: String, guidance: String) -> String:
   ++ "INSERT INTO native_initial_inputs(attempt,session,turn,seed,instruction,guidance) SELECT " ++ C.q(attempt) ++ ",e.session,e.id,coalesce((SELECT seed FROM native_initial_inputs WHERE session=e.session AND turn=e.id ORDER BY rowid LIMIT 1),lower(hex(randomblob(64))))," ++ C.q(instruction()) ++ "," ++ C.q(guidance) ++ " FROM executions e WHERE e.session=" ++ C.q(session) ++ " AND e.directory=" ++ C.q(attempt) ++ " ON CONFLICT(attempt) DO NOTHING;"
   ++ "SELECT hex(n.seed || char(10,10) || n.instruction || char(10,10) || n.guidance) FROM native_initial_inputs n JOIN executions e ON e.session=n.session AND e.id=n.turn AND e.directory=n.attempt WHERE n.session=" ++ C.q(session) ++ " AND n.attempt=" ++ C.q(attempt) ++ ";COMMIT;"
 
-def decoded(+encoded: String) -> IO(Result<&1,&1,U32 & String,String>):
-  match Req.decode_scalar_utf8(Tx.hex_decode(Tx.trim_nl(encoded))):
+def decoded_scalar(scalar: Req.Scalar) -> IO(Result<&1,&1,U32 & String,String>):
+  match scalar:
     case Req.ScalarText{text}: IO.pure(Result<&1,&1,U32 & String,String>,Done{text})
     case other: IO.pure(Result<&1,&1,U32 & String,String>,Fail{(22,"Stored native initialization input could not be decoded: " ++ Req.scalar_reason(other))})
+
+def decoded(encoded: String) -> IO(Result<&1,&1,U32 & String,String>):
+  decoded_scalar(Req.decode_scalar_utf8(Tx.hex_decode(Tx.trim_nl(encoded))))
 
 def prepare(+db: String, session: String, attempt: String, guidance: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
