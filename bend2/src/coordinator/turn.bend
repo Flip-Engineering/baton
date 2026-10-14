@@ -10,6 +10,7 @@ import ../host/session-lock.bend as Lock
 import ../host/control.bend as HostControl
 import ./guidance.bend as Guidance
 import ./native-requests.bend as NativeRequests
+import ./native-initial-input.bend as NativeInitialInput
 import ./observer-checkpoint.bend as Observer
 import ./../coordinator/logs.bend as Logs
 import ../host/log-checkpoint.bend as Checkpoint
@@ -30,7 +31,7 @@ type Outcome is Data:
   Ended{status: String, event: String, error: String, incomplete: Bool}
 
 type RetainedLaunch is Data:
-  Prepared{arguments: String, input: String, keep_stdin: U32, file_input: Bool}
+  Prepared{arguments: String, input: String, prompt: String, keep_stdin: U32, file_input: Bool}
 
 type DirectSetup is Data:
   Ready{launch: RetainedLaunch, recovery: String, level: String}
@@ -929,6 +930,7 @@ def retained_native(+db: String, +player: String, +sessions: String, +session: S
 
 def retained_prepare(+db: String, +player: String, +directory: String, +cmd: String, +model: String, +effort: String, +session: String, +harness: String, +sessions: String, +prompt: String, +level: String, seal_prompt: Bool) -> IO(Result<&1,&1,U32 & String,RetainedLaunch>):
   do IO<Result<&1,&1,U32 & String,RetainedLaunch>>:
+    +initial : String <- IO.try(String,NativeInitialInput.prepare(db,player,directory,prompt))
     +native : String <- retained_native(db,player,sessions,session,harness)
     +prompt_file : String <- IO.pure(String,directory ++ "/prompt.txt")
     +executable : String <- IO.try(String,Lock.SessionLock.executable())
@@ -942,12 +944,12 @@ def retained_prepare(+db: String, +player: String, +directory: String, +cmd: Str
     history : String <- current_history(db,player)
     +args : String <- IO.pure(String,prefix ++ Bool.pick(String,String.is_empty(store),retained_arguments(omp,claude,cmd,model,effort,sessions,native),retained_profile_arguments(omp,claude,Subs.store_binding(Tx.trim_nl(harness),store),Subs.history_override(Tx.trim_nl(harness),history),cmd,model,effort,sessions,native)))
     +muse : Bool <- IO.pure(Bool,String.eq(harness,"muse\n"))
-    IO.pure(Result<&1,&1,U32 & String,RetainedLaunch>,Done{Prepared{Bool.pick(String,muse,muse_args,args),retained_input(muse,omp,claude,prompt,level),retained_keep_stdin(muse,omp,claude),Bool.or(muse,seal_prompt)}})
+    IO.pure(Result<&1,&1,U32 & String,RetainedLaunch>,Done{Prepared{Bool.pick(String,muse,muse_args,args),retained_input(muse,omp,claude,initial,level),initial,retained_keep_stdin(muse,omp,claude),Bool.or(muse,seal_prompt)}})
 
 def retained_admit(+db: String, +directory: String, +cwd: String, +prompt: String, +lock: U32, +recovery: String, launch: RetainedLaunch) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
   match launch:
-    case Prepared{+arguments,+input,+keep_stdin,file_input}:
-      Bool.pick(IO(Result<&1,&1,U32 & String,P.RetainedStart>),file_input,Custody.Instance.admit_with_file(db,directory,arguments,cwd,directory ++ "/native.stderr","prompt.txt",prompt,input,keep_stdin,Some{lock},recovery),Custody.Instance.admit(db,directory,arguments,cwd,directory ++ "/native.stderr",input,keep_stdin,Some{lock},recovery))
+    case Prepared{+arguments,+input,+initial,+keep_stdin,file_input}:
+      Bool.pick(IO(Result<&1,&1,U32 & String,P.RetainedStart>),file_input,Custody.Instance.admit_with_file(db,directory,arguments,cwd,directory ++ "/native.stderr","prompt.txt",initial,input,keep_stdin,Some{lock},recovery),Custody.Instance.admit(db,directory,arguments,cwd,directory ++ "/native.stderr",input,keep_stdin,Some{lock},recovery))
 
 def retained_mode(+db: String, player: String, +directory: String, cmd: String, model: String, effort: String, cwd: String, session: String, harness: String, sessions: String, +prompt: String, lock: U32, recovery: String, level: String, seal_prompt: Bool) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
   do IO<Result<&1,&1,U32 & String,P.RetainedStart>>:
@@ -1679,7 +1681,7 @@ def direct_prelaunch_request(+db: String, +player: String, +lock: U32, request: 
       released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
       IO.die(Unit,2,"The session has no interrupted direct setup to resume; inspect its current execution and input.")
     case Some{Saved{+id,+harness,+command,+model,+effort,+workspace,task_path,+task,+output,+native,+directory,original_directory}}: do IO<Unit>:
-      retained : Result<&1,&1,U32 & String,String> <- T.Text.read(directory ++ "/prompt.txt")
+      retained : Result<&1,&1,U32 & String,String> <- NativeInitialInput.guidance(db,directory)
       prompt : String <- direct_saved_prompt(db,player,id,directory,original_directory,workspace,task,retained)
       choose(db,player,id,command,model,effort,workspace,task_path,output,native,harness ++ "\n",directory,prompt,lock,False{})
 
@@ -1696,7 +1698,7 @@ def recover_retained(+db: String, +player: String, +id: String, +cmd: String, +m
   do IO<Unit>:
     +recorded_harness : String <- IO.try(String,DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
     valid_harness : Unit <- Stop.error_result("Recorded direct recovery harness differs from the current session; preserve the attempt and inspect its manifest.",String.eq(Tx.trim_nl(recorded_harness),harness))
-    prompt : String <- IO.try(String,T.Text.read(directory ++ "/prompt.txt"))
+    prompt : String <- IO.try(String,NativeInitialInput.guidance(db,directory))
     +handle : U32 <- IO.try(U32,Custody.Instance.attach(db,directory))
     reconciled : Unit <- Stop.observing(db,player,id,directory)
     observation : Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- retained_output(db,player,id,log,recorded_harness,directory,handle,"unknown")

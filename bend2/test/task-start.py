@@ -116,6 +116,24 @@ class TaskStart(unittest.TestCase):
         admission = next(step for step in result['steps'] if step['argv'][2] == 'message-batch-file')
         self.assertEqual(admission['argv'][-1], '-')
 
+    def assert_initial_prompt(self, result, body, native):
+        execution = self.rows('SELECT * FROM executions WHERE session=?', (result['session'],))[0]
+        rows = self.rows('SELECT * FROM native_initial_inputs WHERE attempt=?', (execution['directory'],))
+        self.assertEqual(len(rows), 1)
+        initial = rows[0]
+        self.assertEqual((initial['session'], initial['turn']), (result['session'], execution['id']))
+        self.assertRegex(initial['seed'], r'^[0-9a-f]{128}$')
+        self.assertIn('abstract qualities', initial['instruction'])
+        self.assertIn('task', initial['instruction'])
+        self.assertIn(body, initial['guidance'])
+        prefix = initial['seed'] + '\n\n' + initial['instruction'] + '\n\n'
+        self.assertEqual(native['prompt'], prefix + initial['guidance'])
+        self.assertEqual(native['prompt'].count(prefix), 1)
+        self.assertEqual((pathlib.Path(initial['attempt']) / 'prompt.txt').read_bytes(),
+                         native['prompt'].encode())
+        self.assertEqual(self.call('delivery', result['task'])['body'], body)
+        return initial['seed']
+
     def failed_turn(self, session, stream, report):
         self.finish(stream, report, fail=True)
         self.exited(session)
@@ -126,6 +144,7 @@ class TaskStart(unittest.TestCase):
 
     def test_complete_text_stdin_and_utf8_file_use_owned_setup_and_transcripts(self):
         body = '\ufeffTask λ🙂\nReview "quotes" and the entire input.\n' * 2000
+        seeds = set()
         for source in ('argument', 'stdin', 'file'):
             with self.subTest(source=source):
                 session = 'task-' + source
@@ -150,10 +169,27 @@ class TaskStart(unittest.TestCase):
                                  ('principal-conductor', None, str(self.repo.resolve())))
                 stream, native = self.accept(session)
                 self.assertIn(body, native['prompt'])
+                seed = self.assert_initial_prompt(result, body, native)
+                self.assertNotIn(seed, seeds)
+                seeds.add(seed)
                 self.assertEqual(native['cwd'], str(self.repo.resolve()))
                 self.failed_turn(session, stream, 'Retained provider error λ🙂\n' + source)
                 self.assertTrue(pathlib.Path(result['outputLog']).is_file())
                 self.assertEqual(self.call('delivery', result['task'])['receipt'], 'fixture-native-reviewed')
+
+    def test_muse_file_and_claude_stdin_receive_complete_seeded_initial_input(self):
+        for harness in ('muse', 'claude-code'):
+            with self.subTest(harness=harness):
+                session = 'seeded-' + harness
+                self.route(session)
+                body = '\ufeffReview the complete task λ🙂\nPreserve trailing spaces  '
+                result = self.task_call('--to', session, '--harness', harness,
+                    '--model', 'gpt-6-astra', '--effort', 'low', '--command', self.fixture,
+                    '--stdin', stdin=body.encode())
+                self.assert_retained_input(result, body)
+                stream, native = self.accept(session)
+                self.assert_initial_prompt(result, body, native)
+                self.failed_turn(session, stream, 'Retained seeded ' + harness + ' result.')
 
     def test_saved_named_route_explicit_overrides_and_path_command_preserve_settings(self):
         original = self.settings([{'name': 'selected', 'harness': 'omp', 'model': 'kimi-code/k3',
@@ -172,6 +208,7 @@ class TaskStart(unittest.TestCase):
         self.assertEqual(result['command'], {'executable': str(self.fixture.resolve()), 'source': 'PATH'})
         self.assertEqual(self.settings_path.read_bytes(), original)
         stream, native = self.accept('named')
+        self.assert_initial_prompt(result, body, native)
         self.assertEqual(native['args'][native['args'].index('--model') + 1], 'kimi-code/k3')
         self.assertEqual(native['args'][native['args'].index('--thinking') + 1], 'high')
         self.failed_turn('named', stream, 'Retain the named route result.')

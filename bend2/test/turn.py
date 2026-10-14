@@ -620,6 +620,32 @@ assert sys.stdin.read()==''
         prompt=(self.cwd/'fresh-prompt.txt').read_text()
         self.assertIn(self.task.read_text(),prompt)
         self.assertIn('fresh conversation',prompt)
+        with sqlite3.connect(self.db) as connection:
+            connection.row_factory = sqlite3.Row
+            initial = [dict(row) for row in connection.execute(
+                'SELECT * FROM native_initial_inputs WHERE session=? AND turn=? ORDER BY rowid',
+                ('omp-worker', 'omp-resume-gone'))]
+            request = dict(connection.execute(
+                'SELECT * FROM direct_turn_requests WHERE id=?', ('omp-resume-gone',)).fetchone())
+            execution = dict(connection.execute(
+                'SELECT * FROM executions WHERE session=?', ('omp-worker',)).fetchone())
+        self.assertEqual({row['attempt'] for row in initial},
+                         {request['directory'], request['directory'] + '.fresh'})
+        self.assertEqual({row['seed'] for row in initial}, {initial[0]['seed']})
+        self.assertRegex(initial[0]['seed'], r'^[0-9a-f]{128}$')
+        self.assertEqual(request['task'], self.task.read_text())
+        for row in initial:
+            self.assertIn('abstract qualities', row['instruction'])
+            self.assertIn(self.task.read_text(), row['guidance'])
+            prefix = row['seed'] + '\n\n' + row['instruction'] + '\n\n'
+            rendered = prefix + row['guidance']
+            self.assertEqual((pathlib.Path(row['attempt']) / 'prompt.txt').read_bytes(), rendered.encode())
+            self.assertEqual(rendered.count(prefix), 1)
+            if row['attempt'] == execution['directory']:
+                self.assertEqual(prompt, rendered)
+                self.assertIn('fresh conversation', row['guidance'])
+        raw = json.loads(self.call('delivery', 'omp-resume-gone:task-input'))
+        self.assertEqual(raw['body'], self.task.read_text())
         inbox=json.loads(self.call('inbox','root'))
         self.assertEqual(inbox[-1]['body'],'fresh answer')
         self.assertIn('omp-resume-gone:recovery',[r['id'] for r in inbox])

@@ -172,6 +172,13 @@ task-source files. Use the actor context and `task-input-read --current` to read
 its latest dispatch input and outcome. Inspect turns and reports to establish
 completion.
 
+Each native execution begins its guidance with a generated 128-character random
+hexadecimal seed and an instruction to use its abstract qualities when
+interpreting the task. The database retains the seed, instruction and complete
+guidance alongside the original authored task. Fresh-conversation and profile
+retries reuse that execution's seed. Observer recovery reads the retained input.
+Codex, OMP, Muse and Claude Code receive the same initialization format.
+
 Use `recruit` for subordinate sessions and retain the returned workspace and
 base. Configure a Codex, OMP, Muse or Claude Code session with
 `receiver SESSION HARNESS_COMMAND OUTPUT_LOG [CWD]`; the command generates the
