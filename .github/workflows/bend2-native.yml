@@ -63,6 +63,7 @@ jobs:
   linux-candidate:
     runs-on: ${{ fromJSON(inputs.linux_runner == 'homelab' && '["self-hosted", "Linux", "X64", "baton2-native-linux-x64"]' || '["ubuntu-24.04"]') }}
     env:
+      CC: ${{ inputs.linux_runner == 'homelab' && '/usr/bin/clang-19' || 'clang' }}
       BEND_NO_TELEMETRY: '1'
       BUN_JSC_maxPerThreadStackUsage: '67108864'
     steps:
@@ -102,7 +103,7 @@ jobs:
           unset BEND_GENERATED_C
           ulimit -s unlimited
           ulimit -a > "$BATON2_LINUX_RUN/evidence/limits.txt"
-          clang --version > "$BATON2_LINUX_RUN/evidence/clang.txt"
+          "$CC" --version > "$BATON2_LINUX_RUN/evidence/clang.txt"
           node --version > "$BATON2_LINUX_RUN/evidence/node.txt"
           python3 --version > "$BATON2_LINUX_RUN/evidence/python.txt"
           uname -a > "$BATON2_LINUX_RUN/evidence/host.txt"
@@ -171,6 +172,7 @@ jobs:
   linux-target:
     runs-on: ${{ fromJSON(inputs.linux_runner == 'homelab' && '["self-hosted", "Linux", "X64", "baton2-native-linux-x64"]' || '["ubuntu-24.04"]') }}
     env:
+      CC: ${{ inputs.linux_runner == 'homelab' && '/usr/bin/clang-19' || 'clang' }}
       BEND_NO_TELEMETRY: '1'
       BUN_JSC_maxPerThreadStackUsage: '67108864'
       BATON2_TARGET_COMMIT: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'push' && github.event.before || inputs.target_commit }}
@@ -210,7 +212,7 @@ jobs:
           unset BEND_GENERATED_C
           ulimit -s unlimited
           ulimit -a > "$run/evidence/limits.txt"
-          clang --version > "$run/evidence/clang.txt"
+          "$CC" --version > "$run/evidence/clang.txt"
           node --version > "$run/evidence/node.txt"
           python3 --version > "$run/evidence/python.txt"
           uname -a > "$run/evidence/host.txt"
