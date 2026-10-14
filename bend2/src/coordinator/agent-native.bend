@@ -333,7 +333,7 @@ def legacy_args_selected(+session: String, verb: String, +options: List<&2,D.Opt
     case "remote-tip": ["remote-tip",D.value(options,"--repo",""),D.value(options,"--branch",""),D.value(options,"--remote","")]
     case "knowledge-read": knowledge_args(session,options)
     case "knowledge-record":
-      args = [D.value(options,"--id",""),session,D.value(options,"--kind",""),D.value(options,"--claim",""),D.value(options,"--evidence",""),D.value(options,"--limits","")]
+      args : List<String> = [D.value(options,"--id",""),session,D.value(options,"--kind",""),D.value(options,"--claim",""),D.value(options,"--evidence",""),D.value(options,"--limits","")]
       knowledge_record_args(D.present(options,"--links"),args,D.value(options,"--links",""))
     case "knowledge-relate": ["relate",D.value(options,"--id",""),session,D.value(options,"--source",""),D.value(options,"--relation",""),D.value(options,"--target","")]
     case "knowledge-promote": ["promote-scoped",D.value(options,"--id",""),session,D.value(options,"--source-kind","session"),D.value(options,"--from",session),D.value(options,"--destination-kind","session"),D.value(options,"--to",""),D.value(options,"--finding","")]
