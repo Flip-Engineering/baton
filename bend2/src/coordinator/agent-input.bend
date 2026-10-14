@@ -209,6 +209,15 @@ def command_message_output(+db: String, +saved: String, detail: Bool) -> IO(Unit
     observed : String <- IO.try(String,DB.Sql.read(db,"SELECT json_array(json_object('status','found','delivery',json(" ++ message ++ ")));"))
     command_owned_output(db,recipient,saved,observed,True{})
 
+def batch_session(+db: String) -> IO(String):
+  do IO<String>:
+    +selected : String <- environment("BATON_SESSION")
+    +directory : String <- context(db,selected)
+    +native : String <- environment("CODEX_THREAD_ID")
+    selected_hex : String <- Bool.pick(IO(String),String.is_empty(native),IO.pure(String,"\n"),IO.try(String,DB.Sql.read(db,"SELECT CASE WHEN count(*)=1 THEN hex(min(id)) ELSE '' END FROM sessions WHERE native=" ++ C.q(native) ++ " AND harness='codex';")))
+    codex : String <- field(selected_hex)
+    IO.pure(String,Bool.pick(String,String.is_empty(directory),codex,selected))
+
 def command_pending_output(+db: String, +saved: String) -> IO(Unit):
   do IO<Unit>:
     session : String <- batch_session(db)
@@ -225,15 +234,6 @@ def command_output_value(+db: String, command: C.Command, +saved: String) -> IO(
 
 def command_output(+db: String, command: C.Command, +saved: String) -> IO(Unit):
   Bool.pick(IO(Unit),String.is_empty(saved),IO.die(Unit,1,"No matching session or message; inspect status and the requested ID."),command_output_value(db,command,saved))
-
-def batch_session(+db: String) -> IO(String):
-  do IO<String>:
-    +selected : String <- environment("BATON_SESSION")
-    +directory : String <- context(db,selected)
-    +native : String <- environment("CODEX_THREAD_ID")
-    selected_hex : String <- Bool.pick(IO(String),String.is_empty(native),IO.pure(String,"\n"),IO.try(String,DB.Sql.read(db,"SELECT CASE WHEN count(*)=1 THEN hex(min(id)) ELSE '' END FROM sessions WHERE native=" ++ C.q(native) ++ " AND harness='codex';")))
-    codex : String <- field(selected_hex)
-    IO.pure(String,Bool.pick(String,String.is_empty(directory),codex,selected))
 
 def batch_output(+db: String, saved: String) -> IO(Unit):
   do IO<Unit>:
