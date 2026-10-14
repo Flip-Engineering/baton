@@ -331,16 +331,30 @@ def read_output(+handle: U32, stdout: String, result: Result<&1,&1,U32 & String,
           next : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_text_line(handle)
           read_output(handle,stdout ++ value,next)
 
+def completed_errors(errors: String & String, stdout: String, read_cause: String,
+                     wait: String, wait_cause: String,
+                     wrote: Result<&1,&1,U32 & String,Unit>,
+                     closed: Result<&1,&1,U32 & String,Unit>) -> Outcome:
+  match errors:
+    case (stderr,error_cause):
+      Finished{stdout,stderr,wait,
+        append_cause(unit_cause(wrote),append_cause(unit_cause(closed),append_cause(read_cause,append_cause(wait_cause,error_cause))))}
+
+def completed_wait(waited: String & String, stdout: String, read_cause: String,
+                   errors: Result<&1,&1,U32 & String,String>,
+                   wrote: Result<&1,&1,U32 & String,Unit>,
+                   closed: Result<&1,&1,U32 & String,Unit>) -> Outcome:
+  match waited:
+    case (wait,wait_cause):
+      completed_errors(string_pair(errors),stdout,read_cause,wait,wait_cause,wrote,closed)
+
 def completed_output(output: String & String, waited: Result<&1,&1,U32 & String,String>,
                      errors: Result<&1,&1,U32 & String,String>,
                      wrote: Result<&1,&1,U32 & String,Unit>,
                      closed: Result<&1,&1,U32 & String,Unit>) -> Outcome:
   match output:
     case (stdout,read_cause):
-      (wait,wait_cause) = string_pair(waited)
-      (stderr,error_cause) = string_pair(errors)
-      Finished{stdout,stderr,wait,
-        append_cause(unit_cause(wrote),append_cause(unit_cause(closed),append_cause(read_cause,append_cause(wait_cause,error_cause))))}
+      completed_wait(string_pair(waited),stdout,read_cause,errors,wrote,closed)
 
 def wait_child(+handle: U32, +path: String, input: String) -> IO(Outcome):
   do IO<Outcome>:
