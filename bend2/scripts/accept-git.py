@@ -128,9 +128,9 @@ def git(repo, *args, check=True):
     return done.stdout.strip()
 
 
-def coord(binary, db, *args, env=None, check=True):
+def coord(binary, db, *args, env=None, check=True, input=None):
     done = subprocess.run([str(binary), str(db), *[str(a) for a in args]],
-                          capture_output=True, text=True, env=env)
+                          capture_output=True, text=True, env=env, input=input)
     if check and done.returncode != 0:
         raise Failed(f"{args[0] if args else 'command'} refused: {done.stderr.strip()}")
     return done.stdout.strip(), done.returncode, done.stderr.strip()
@@ -174,12 +174,11 @@ def turn_player(binary, db, repo, run_dir, route_omp, player, branch, base,
     coord(binary, db, "recruit", player, "root", "omp", route_omp["model"],
           route_omp["effort"], repo, branch, f"wt-{player}", base)
     worktree = repo / f"wt-{player}"
-    task = run_dir / f"task-{player}-{turn}.txt"
     if guided:
-        task.write_text(
+        task = (
             f"You are Player {player}. Your working directory is {worktree}.\n"
             "The Principal Conductor left you guidance. Read it by running:\n"
-            f"  {binary} {db} inbox {player}\n"
+            f"  {binary} {db} inbox\n"
             "Then do exactly this and nothing else:\n"
             "1. Run: git rebase main\n"
             f"2. The rebase stops on {path}. Write that file so it contains the single line: {line}\n"
@@ -187,16 +186,18 @@ def turn_player(binary, db, repo, run_dir, route_omp, player, branch, base,
             "4. Run: GIT_EDITOR=true git rebase --continue\n"
             f"5. Reply with one line: done {player}\n")
     else:
-        task.write_text(
+        task = (
             f"You are Player {player}. Your working directory is {worktree}.\n"
             "Do exactly this and nothing else:\n"
             f"1. Write the file {path} so it contains the single line: {line}\n"
             f"2. Run: git add {path}\n"
             f"3. Run: git commit -m '{player} writes {line}'\n"
             f"4. Reply with one line: done {player}\n")
-    out, code, err = coord(binary, db, "turn", player, turn, route_omp["executable"],
-                           route_omp["model"], route_omp["effort"], worktree,
-                           task, run_dir / f"turn-{player}-{turn}.jsonl", session, check=False)
+    native_args = ['turn-text', player, turn, route_omp['executable'], route_omp['model'],
+                   route_omp['effort'], str(worktree), task,
+                   str(run_dir / f'turn-{player}-{turn}.jsonl'), session]
+    out, code, err = coord(binary, db, 'agent-native-input',
+                           input=json.dumps(native_args, ensure_ascii=False), check=False)
     (run_dir / f"turn-{player}-{turn}.report").write_text(out + err)
     if code != 0:
         raise Failed(f"the turn of {player} failed: {err.strip() or out.strip()}")
@@ -250,10 +251,10 @@ def scenario_landing_publishing(config, out, binary):
     coord(binary, db, "role", "operator", "operator")
     coord(binary, db, "message", "review-setup", "operator", "root", "guidance",
           "Remember this instruction for this acceptance run: when a Player report arrives, "
-          "inspect its worktree, branch diff and committed file contents, then acknowledge "
-          "the report naming what you reviewed. Do not land, push, edit, or launch Players. "
+          "inspect its worktree, branch diff and committed file contents, describe your review "
+          "in your response, then use the acknowledge action. Do not land, push, edit, or launch Players. "
           "The acceptance driver performs the Git acts after your review. "
-          "Acknowledge review-setup and end this turn. Do not poll or wait in a tool. "
+          "Use the acknowledge action for the complete handled input and end this turn. Do not poll or wait in a tool. "
           "The adapter starts your next turn when a Player report is committed.")
     root_attach(binary, db, run_dir, route_omp)
     remote = run_dir / "remote.git"

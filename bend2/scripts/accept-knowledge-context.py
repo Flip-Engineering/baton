@@ -9,6 +9,7 @@ Native capture retains every stdout byte, including cumulative message updates.
 """
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -23,7 +24,6 @@ import time
 SOURCE = Path(__file__).resolve().parents[2]
 FINDING = 'native-reply-finding'
 LOCAL_FINDING = 'producer-local-finding'
-EVIDENCE = 'producer-check-evidence'
 DOCUMENT = 'docs/bend2/examples/native-question-reply.md'
 
 
@@ -129,13 +129,12 @@ def recruit(out, run, session):
 
 def task_text(out, phase):
     cli = shlex.join([str(out / 'baton2'), str(out / 'state.db')])
-    session = 'producer' if phase == 'produce' else 'consumer'
     common = f'''Use only this run's assigned workspace and coordinator at {out}.
 Read AGENTS.md. Do not recruit, push, promote findings, change credentials or
 global configuration, stop processes, or run model sessions yourself. Preserve
 the existing source. Use the scoped knowledge command for retrieval; do not read
 the coordinator SQLite file or another Player's workspace. Acknowledge this
-task after accepting it with `{cli} ack {phase}-task {session} RECEIPT`.
+task after reading and handling it with `{cli} acknowledge`.
 End your native turn after completing the task so the parent receives its report.
 '''
     if phase == 'produce':
@@ -154,19 +153,21 @@ answering a native OMP question. State its limits accurately.
 Distinguish transport completion, native progress, message acceptance and the
 parent agent's own decision to wait for a report. Check each statement against
 the called functions and distinguish fixture behavior from a runtime guarantee.
-First publish an evidence report with `{cli} report {EVIDENCE} producer BODY`.
+First publish an evidence report with `{cli} report --text BODY`.
 Its body must include the actual command/output/status, source commit and files;
 parent review will resolve those references. Then record finding {FINDING} with:
-  {cli} record {FINDING} producer CLAIM message:{EVIDENCE} LIMITS
+  {cli} knowledge record --id {FINDING} --kind finding --claim CLAIM --evidence report --limits LIMITS
 Record a second distinct evidence-backed fact from the same investigation as
-{LOCAL_FINDING}, using the same evidence reference. It is a visibility control
+{LOCAL_FINDING}, using the same semantic evidence selector. These two finding
+names identify the subject records; Baton resolves the authored report identity.
+The second finding is a visibility control
 that the parent will leave local. Do not promote either finding. Read
-`{cli} knowledge producer` to verify both records, then give your final report.
+`{cli} knowledge read` to verify both records, then give your final report.
 Do not edit or commit tracked files in this producer task.
 '''
     target = '.scratch/knowledge-fresh.json' if phase == 'fresh-consumer' else '.scratch/knowledge-read.json'
     retrieval = f'''
-Retrieve current visible findings with `{cli} knowledge consumer` and retain
+Retrieve current visible findings with `{cli} knowledge read` and retain
 the complete JSON answer in {target}. The finding ID to use is {FINDING};
 {LOCAL_FINDING} is a local control and must be absent from your scoped answer.
 Read the finding and its evidenceMessage through that answer. Verify its author,
@@ -198,9 +199,9 @@ def visible_finding(out, reader):
     if chosen is None:
         raise RuntimeError(f'{reader} cannot retrieve the finding')
     assert chosen['author'] == 'producer'
-    assert chosen['evidence'] == 'message:' + EVIDENCE
     evidence = chosen['evidenceMessage']
-    assert evidence['id'] == EVIDENCE and evidence['sender'] == 'producer'
+    assert chosen['evidence'] == 'message:' + evidence['id']
+    assert evidence['sender'] == 'producer'
     assert evidence['recipient'] == 'root' and evidence['body'].strip()
     if reader == 'consumer':
         assert not any(row['id'] == LOCAL_FINDING for row in rows)
@@ -219,20 +220,23 @@ def verify_phase(out, phase, run, before):
     new = [row for row in records(out) if row['wrapper_pid'] not in before]
     assert len(new) == 1 and new[0]['native_exit_code'] == 0, new
     messages = state(out / 'state.db')['messages']
+    seen = visible_finding(out, 'root' if phase == 'produce' else 'consumer')
+    evidence_ids = {row['evidenceMessage']['id'] for row in seen
+                    if row['id'] in (FINDING, LOCAL_FINDING)}
     reports = [row for row in messages if row['sender'] == session
-               and row['kind'] == 'report' and row['id'] != EVIDENCE
+               and row['kind'] == 'report' and row['id'] not in evidence_ids
                and row['receipt'] is None]
     assert reports and all(row['body'].strip() for row in reports)
     deliveries = [json.loads(line) for line in (out / 'parent-deliveries.jsonl').read_text().splitlines()]
     delivered = {row['message']['id']: row['message'] for row in deliveries}
     assert all(row['id'] in delivered and delivered[row['id']]['body'] == row['body'] for row in reports)
     if phase == 'produce':
-        seen = visible_finding(out, 'root')
         assert {row['id'] for row in seen} == {FINDING, LOCAL_FINDING}
         assert not any(row['promotions'] for row in seen)
+        assert len(evidence_ids) == 1, seen
+        assert all(row['evidenceMessage'] == seen[0]['evidenceMessage'] for row in seen)
         assert command(['git', '-C', out / session, 'diff', '--name-only', run['source']]) == ''
     else:
-        seen = visible_finding(out, 'consumer')
         capture = out / session / ('.scratch/knowledge-fresh.json' if phase == 'fresh-consumer'
                                    else '.scratch/knowledge-read.json')
         assert json.loads(capture.read_text()) == seen
@@ -284,18 +288,21 @@ def run_phase(out, phase):
                 save(out / 'before-fresh-context.json', inspect_run(out))
                 call(out, 'connect', 'consumer', '', current['endpoint'])
             visible_finding(out, 'consumer')
-        task = out / f'{phase}-task.md'
-        task.write_text(task_text(out, phase))
+        task = task_text(out, phase)
         session = 'producer' if phase == 'produce' else 'consumer'
-        argv = [str(out / 'baton2'), str(out / 'state.db'), 'message-file',
-                f'{phase}-task', 'root', session, 'task', str(task)]
-        entry = {'argv': argv, 'started_unix': time.time(), 'task_sha256': digest(task)}
+        argv = [str(out / 'baton2'), str(out / 'state.db'), 'agent-native-input']
+        body = json.dumps(['message', f'{phase}-task', 'root', session, 'task', task],
+                          ensure_ascii=False).encode('utf-8')
+        entry = {'argv': argv, 'started_unix': time.time(),
+                 'task_sha256': hashlib.sha256(task.encode('utf-8')).hexdigest()}
         with (out / f'{phase}.stdout').open('wb') as stdout, \
                 (out / f'{phase}.stderr').open('wb') as stderr:
-            child = subprocess.Popen(argv, stdout=stdout, stderr=stderr, cwd=out / 'repo',
+            child = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=stdout, stderr=stderr, cwd=out / 'repo',
                                      start_new_session=True)
             entry['pid'] = child.pid
             save(out / f'{phase}-command.json', entry)
+            child.stdin.write(body)
+            child.stdin.close()
             entry.update(exit=child.wait(), ended_unix=time.time())
         save(out / f'{phase}-command.json', entry)
         if entry['exit']:
@@ -422,23 +429,28 @@ def prepare(args):
         command(['git', '-C', repo, 'checkout', '-b', 'knowledge-acceptance', revision])
         driver = out / 'driver.py'
         shutil.copy2(__file__, driver)
-        shutil.copy2(supplied, out / 'baton2')
+        helper_path = repo / 'bend2/scripts/accept-native-receive.py'
+        spec = importlib.util.spec_from_file_location('knowledge_native_acceptance', helper_path)
+        helper = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(helper)
+        binary, coordinator_provenance = helper.prepare_coordinator(source, repo, out, supplied)
         shutil.copy2(build, out / 'build.log')
         runtime = {str(path.relative_to(repo)): digest(path)
                    for path in sorted((repo / 'bend2/src').rglob('*')) if path.is_file()}
         run = {'prepared_unix': time.time(), 'source_directory': str(source), 'source': revision,
                'source_tree': command(['git', '-C', source, 'rev-parse', f'{revision}^{{tree}}']),
-               'runtime_files': runtime, 'coordinator_sha256': digest(out / 'baton2'),
+               'runtime_files': runtime, 'coordinator_sha256': digest(binary),
+               'coordinator_provenance': coordinator_provenance,
                'coordinator_origin': str(supplied), 'build_log_origin': str(build),
                'build_log_sha256': digest(out / 'build.log'), 'driver_sha256': digest(driver),
                'binary_source_linkage': 'Caller supplied; compare the retained build evidence and runtime manifest.',
                'route': route, 'native_executable_sha256': digest(Path(route['executable'])),
                'native_version': command([route['executable'], '--version']),
                'parent_endpoint': [sys.executable, str(driver), '_collect', '--output', str(out)],
-               'evidence_format': 'message:<existing-message-id>',
-               'knowledge_commands': ['record FINDING_ID AUTHOR CLAIM EVIDENCE LIMITS',
-                                      'knowledge READER',
-                                      'promote PROMOTION_ID PROMOTER SOURCE DESTINATION FINDING']}
+               'evidence_format': 'report selects the unique authored report in the current assignment; explicit message references remain available',
+               'knowledge_commands': ['knowledge record --kind finding --claim CLAIM --evidence report --limits LIMITS',
+                                      'knowledge read',
+                                      'knowledge promote --from SOURCE --to DESTINATION --finding FINDING']}
         save(out / 'run.json', run)
         for session in ['producer', 'consumer']:
             path = out / f'{session}-native'

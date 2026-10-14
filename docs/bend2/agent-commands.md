@@ -223,10 +223,11 @@ remote publication and selected checks retain their native requirements.
 ## Knowledge and project reads
 
 ```sh
-baton knowledge record --kind observation \
-  --claim-file claim.txt --evidence message:report-one --limits-file limits.txt
+baton report --text 'Complete source, command, output and status evidence.'
+baton knowledge record --id observation-one --kind observation \
+  --claim-file claim.txt --evidence report --limits-file limits.txt
 baton knowledge read
-baton knowledge relate --source message:report-one \
+baton knowledge relate --source file:src/example.py \
   --relation Supports --target finding:observation-one
 baton knowledge promote --from worker --to parent \
   --finding observation-one
@@ -240,6 +241,10 @@ baton project sessions --path /path/to/project
 
 Knowledge record fields accept complete literal text or their corresponding
 `--claim-file`, `--evidence-file`, `--limits-file` and `--links-file` arguments.
+`--evidence report` selects the unique report authored by the current actor to
+its recorded coordinator after the current assignment. An absent assignment,
+missing report or several matching reports returns a refusal. Explicit evidence
+references retain their complete supplied values for deliberate selections.
 Baton generates record, relation and promotion operation identities when omitted.
 Links use the existing authored JSON relation array; omitted link identities
 derive from the finding identity and link position. Explicit identities remain

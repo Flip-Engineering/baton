@@ -4,6 +4,7 @@ import importlib.util
 import io
 import json
 from pathlib import Path
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -19,7 +20,10 @@ DRIVER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(DRIVER)
 WAIT = ('import json,os,sys; print(json.dumps({"ready":os.getpid()}),flush=True); '
         'sys.stdin.read()')
-FAILED = {'id': 'hierarchy-failed'}
+FAILED = {'id': 'native-generated-failure', 'sender': 'root', 'recipient': 'operator',
+          'kind': 'report', 'body': DRIVER.FAILED + '\nThe retained child exit is unknown.'}
+COMPLETE = {'id': 'native-generated-completion', 'sender': 'root', 'recipient': 'operator',
+            'kind': 'report', 'body': DRIVER.COMPLETE + '\nBoth checked landings completed.'}
 
 
 class HierarchyObserver(unittest.TestCase):
@@ -60,7 +64,11 @@ class HierarchyObserver(unittest.TestCase):
     def coordinator(self, muse_harness):
         routes = {'omp': {'model': 'deepseek/deepseek-flash', 'effort': 'low'},
                   'muse': {'model': 'muse-spark-1.3-contributor', 'effort': 'low'}}
-        DRIVER.save(self.out / 'run.json', {'routes': routes})
+        tasks = {seat: {'files': ['bend2/test/' + seat + '.py'],
+                        'checks': ['bend2/test/' + seat + '.py'],
+                        'task': 'Implement the ' + seat + ' change. Preserve café and 雪.\nSecond line.'}
+                 for seat in DRIVER.PLAYERS}
+        DRIVER.save(self.out / 'run.json', {'routes': routes, 'tasks': tasks})
         DRIVER.save(self.out / 'sessions.json',
                     {'deepseek': {'harness': 'omp'}, 'muse': {'harness': muse_harness}})
         (self.out / 'lead').mkdir()
@@ -70,10 +78,14 @@ from pathlib import Path
 out=Path(__file__).parent
 with (out/'cli.calls.jsonl').open('a') as log:
     log.write(json.dumps(sys.argv[1:])+'\\n')
-if sys.argv[2]=='player':
+if sys.argv[2]=='agent-current-session':
+    print(json.dumps({'id':'lead'}))
+elif sys.argv[2]=='player':
     print(json.dumps(json.loads((out/'sessions.json').read_text())[sys.argv[3]]))
 elif sys.argv[2]=='turn':
-    (out/(sys.argv[3]+'.turn.argv.json')).write_text(json.dumps(sys.argv))
+    seat=sys.argv[sys.argv.index('--session')+1]
+    (out/(seat+'.turn.argv.json')).write_text(json.dumps(sys.argv))
+    (out/(seat+'.turn.input.json')).write_text(json.dumps(sys.stdin.read()))
 else:
     sys.exit(2)
 ''')
@@ -241,10 +253,36 @@ else:
         row.update(exit_code=0, ended_unix=time.time())
         DRIVER.save(self.out / 'native-deepseek.process.json', row)
         inspection = DRIVER.inspect_processes(self.out, [row], {})
-        self.assertFalse(DRIVER.close_failed_run(self.out, {'id': 'hierarchy-complete'}, [row], inspection))
+        self.assertFalse(DRIVER.close_failed_run(self.out, COMPLETE, [row], inspection))
         with self.assertRaises(AssertionError):
             DRIVER.verify(self.out, {'sessions': [], 'messages': []}, {}, None)
         self.assertFalse((self.out / 'failure-closure.json').exists())
+
+    def test_terminal_reports_require_root_operator_authority_and_first_line_marker(self):
+        self.assertEqual(DRIVER.terminal_status(FAILED), DRIVER.FAILED)
+        self.assertEqual(DRIVER.terminal_status(COMPLETE), DRIVER.COMPLETE)
+        for changed in [dict(FAILED, sender='lead'), dict(FAILED, recipient='lead'),
+                        dict(FAILED, kind='guidance'), dict(FAILED, body='Review\n' + DRIVER.FAILED),
+                        dict(FAILED, body=DRIVER.FAILED + ' later'), dict(FAILED, body='')]:
+            with self.subTest(changed=changed):
+                self.assertIsNone(DRIVER.terminal_status(changed))
+
+    def test_correction_requires_current_execution_exit_and_complete_custody(self):
+        directory = self.out / 'current-attempt'
+        directory.mkdir()
+        with sqlite3.connect(self.out / 'state.db') as connection:
+            connection.execute('CREATE TABLE executions(session TEXT PRIMARY KEY, id TEXT, directory TEXT, phase TEXT)')
+            connection.execute('INSERT INTO executions VALUES(?,?,?,?)',
+                               ('deepseek', 'recorded-attempt', str(directory), 'running'))
+        with self.assertRaisesRegex(RuntimeError, 'current execution has not finished'):
+            DRIVER.require_player_settled(self.out, 'deepseek')
+        with sqlite3.connect(self.out / 'state.db') as connection:
+            connection.execute("UPDATE executions SET phase='exited'")
+        (directory / 'released').write_bytes(b'released\n')
+        with self.assertRaisesRegex(RuntimeError, 'custody has not finished'):
+            DRIVER.require_player_settled(self.out, 'deepseek')
+        (directory / 'acknowledged').write_bytes(b'acknowledged\n')
+        DRIVER.require_player_settled(self.out, 'deepseek')
 
     def test_native_wrapper_retains_start_identities_and_successful_receipts(self):
         DRIVER.save(self.out / 'run.json', {'routes': {'omp': {'executable': sys.executable}}})
@@ -267,8 +305,8 @@ else:
         with self.assertRaisesRegex(RuntimeError, "muse has recorded harness 'omp'; expected 'muse'"):
             DRIVER.start_players(self.out)
         calls = [json.loads(line) for line in (self.out / 'cli.calls.jsonl').read_text().splitlines()]
-        self.assertTrue(calls)
-        self.assertTrue(all(call[1] == 'player' for call in calls))
+        self.assertEqual([call[1:] for call in calls],
+                         [['agent-current-session'], ['player', 'deepseek'], ['player', 'muse']])
         self.assertEqual(json.loads((self.out / 'sessions.json').read_text())['muse']['harness'], 'omp')
         self.assertFalse((self.out / 'player-launches.json').exists())
         self.assertFalse(list(self.out.glob('*.turn.argv.json')))
@@ -294,12 +332,17 @@ else:
         saved = {row['seat']: row for row in json.loads((self.out / 'player-launches.json').read_text())}
         self.assertEqual(set(saved), {'deepseek', 'muse'})
         for seat, route in [('deepseek', routes['omp']), ('muse', routes['muse'])]:
-            expected = [str(self.out / 'baton2'), str(self.out / 'state.db'), 'turn', seat,
-                        seat + '-turn', str(self.out / (seat + '-native')), route['model'], route['effort'],
-                        str(self.out / seat), str(self.out / (seat + '.md')), str(self.out / (seat + '.jsonl')), '']
+            expected = [str(self.out / 'baton2'), str(self.out / 'state.db'), 'turn',
+                        '--session', seat, '--id', seat + '-turn', '--command', str(self.out / (seat + '-native')),
+                        '--model', route['model'], '--effort', route['effort'], '--cwd', str(self.out / seat),
+                        '--file', '-', '--output-log', str(self.out / (seat + '.jsonl'))]
             received = json.loads((self.out / (seat + '.turn.argv.json')).read_text())
             self.assertEqual(received, expected)
             self.assertEqual(saved[seat]['argv'], received)
+            run = json.loads((self.out / 'run.json').read_text())
+            self.assertEqual(json.loads((self.out / (seat + '.turn.input.json')).read_text()),
+                             DRIVER.player_task(self.out, run, seat))
+        self.assertFalse(list(self.out.glob('*.md')))
 
 
 if __name__ == '__main__':

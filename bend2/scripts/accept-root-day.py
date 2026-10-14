@@ -95,15 +95,19 @@ class Case:
     def command(self, *args):
         return [str(self.a.coordinator), str(self.db), *map(str, args)]
 
-    def coord(self, *args):
-        return json.loads(run(self.command(*args), env=self.env))
+    def coord(self, *args, input=None):
+        return json.loads(run(self.command(*args), env=self.env, input=input))
 
-    def start(self, argv, name):
+    def start(self, argv, name, input=None):
         with (self.path / (name + '.out')).open('w') as out:
             process = subprocess.Popen(list(map(str, argv)), env=self.env,
                                        stdout=out, stderr=subprocess.STDOUT,
+                                       stdin=subprocess.PIPE if input is not None else None, text=True,
                                        start_new_session=True, cwd=ROOT)
         self.processes.append(process)
+        if input is not None:
+            process.stdin.write(input)
+            process.stdin.close()
         return process
 
     def row(self, table, ident):
@@ -122,11 +126,36 @@ class Case:
 
     def turn(self, kind, task, ident, player='w1', resume=''):
         route = self.a.routes[kind]
-        taskfile = self.path / (ident + '.txt')
-        taskfile.write_text(task)
-        return self.start(self.command('turn', player, ident, route['executable'],
-                          route['model'], route['effort'], self.path / player,
-                          taskfile, self.path / (ident + '.jsonl'), resume), ident)
+        arguments = ['turn-text', player, ident, route['executable'], route['model'],
+                     route['effort'], str(self.path / player), task,
+                     str(self.path / (ident + '.jsonl')), resume]
+        return self.start(self.command('agent-native-input'), ident,
+                          input=json.dumps(arguments, ensure_ascii=False))
+
+    def turn_events(self, ident, player='w1'):
+        with sqlite3.connect(self.db) as db:
+            if not db.execute("SELECT 1 FROM sqlite_master WHERE type='table' "
+                              "AND name='log_generations'").fetchone():
+                return
+            logs = db.execute('SELECT log FROM log_generations '
+                              'WHERE session=? AND attempt=? AND base=?',
+                              (player, ident, str(self.path / (ident + '.jsonl')))).fetchall()
+        for path, in logs:
+            yield from events(Path(path))
+
+    def sequence(self):
+        with sqlite3.connect(self.db) as db:
+            return db.execute('SELECT coalesce(max(seq),0) FROM messages').fetchone()[0]
+
+    def root_reports(self, after, *contents):
+        with sqlite3.connect(self.db) as db:
+            db.row_factory = sqlite3.Row
+            reports = [dict(row) for row in db.execute(
+                "SELECT * FROM messages WHERE sender='root' AND recipient='operator' AND kind='report' AND seq>? ORDER BY seq",
+                (after,))]
+        matching = [row for row in reports if all(text in row['body'] for text in contents)]
+        assert matching, {'after': after, 'expected_content': contents, 'reports': reports}
+        return matching
 
     def completed(self, process, ident):
         code = process.wait()
@@ -177,7 +206,7 @@ class Acceptance:
                        'bend2/src/coordinator/turn.bend and bend2/src/coordinator/commands.bend. '
                        'Explain native-session recovery with source references. Read the files '
                        'before reporting. Do not edit files, launch agents, or access the network.', 'interrupted')
-            observe(p, lambda: any(tool_started(e) for e in events(c.path / 'interrupted.jsonl'))
+            observe(p, lambda: any(tool_started(e) for e in c.turn_events('interrupted'))
                     and c.row('sessions', 'w1')['native'], 'Player tool start and session binding')
             before = c.coord('player', 'w1')
             kill_tree(p, c.path / 'crash.json')
@@ -201,7 +230,7 @@ class Acceptance:
                    'turn and identify a documentation improvement. Read all three files. '
                    'Do not edit files, launch agents, or access the network.', 'guided')
         observe(p, lambda: any(e.get('type') == 'tool_execution_start'
-                              for e in events(c.path / 'guided.jsonl')), 'OMP tool start')
+                              for e in c.turn_events('guided')), 'OMP tool start')
         marker = self.ident + '-guided'
         c.coord('message', 'guide', 'root', 'w1', 'guidance',
                 'Focus on just one documentation improvement. Start the final report with ' + marker)
@@ -247,22 +276,28 @@ sys.exit(p.wait())
             assert not (c.path / 'starts.jsonl').exists(), 'empty attach started a native turn'
             c.recruit('omp')
             marker = self.ident + '-root-' + kind
+            before = c.sequence()
             p = c.turn('omp', 'Do not use tools or edit files. Reply exactly with this report: '
-                       f'Root: remember review label {marker} for later turns, acknowledge report '
-                       f'root-report with this label, and do not edit, land, push or start Players.',
+                       f'Root: remember review label {marker} for later turns. Include it in your '
+                       'authored response and use the acknowledge action after reviewing this '
+                       'complete input. Do not edit, land, push or start Players.',
                        'root-report')
             report = c.completed(p, 'root-report')
             starts = list(events(c.path / 'starts.jsonl'))
             assert starts[0]['writerPid'] == p.pid, starts
-            assert marker in (report['receipt'] or ''), report
+            assert report['receipt'], report
+            initial_reports = c.root_reports(before, marker)
             original = c.coord('player', 'root')['native']
             assert original
             (c.path / 'native.jsonl').rename(c.path / 'first-native.jsonl')
-            p = c.start(c.command('message', 'root-interrupted', 'operator', 'root', 'guidance',
-                        'Read bend2/scripts/mcp-conductor.mjs and bend2/src/coordinator/delivery.bend '
-                        'completely and review recovery. Then acknowledge root-interrupted with '
-                        'a source finding and the review label remembered from our earlier turn. '
-                        'Do not search for the label, edit files or launch agents.'), 'root-interrupted')
+            before = c.sequence()
+            task = ('Read bend2/scripts/mcp-conductor.mjs and bend2/src/coordinator/delivery.bend '
+                    'completely and review recovery. Give a source finding and the review label '
+                    'remembered from our earlier turn in your authored response. Use the acknowledge '
+                    'action after handling the complete input. Do not search for the label, edit '
+                    'files or launch agents.')
+            p = c.start(c.command('agent-native-input'), 'root-interrupted', input=json.dumps(
+                ['message', 'root-interrupted', 'operator', 'root', 'guidance', task], ensure_ascii=False))
             observe(p, lambda: any(tool_started(e) for e in events(c.path / 'native.jsonl')),
                     'root tool start')
             kill_tree(p, c.path / 'crash.json')
@@ -271,10 +306,12 @@ sys.exit(p.wait())
             resumed = run(attach, env=self.env)
             (c.path / 'resumed.out').write_text(resumed)
             report = c.coord('delivery', 'root-interrupted')
-            assert marker in (report['receipt'] or ''), report
+            assert report['receipt'], report
+            resumed_reports = c.root_reports(before, marker)
             assert original == c.coord('player', 'root')['native']
             assert c.coord('inbox', 'root') == []
-            c.evidence({'native': original, 'starts': starts, 'pending': pending, 'resumed': report})
+            c.evidence({'native': original, 'starts': starts, 'pending': pending, 'resumed': report,
+                        'initial_memory_reports': initial_reports, 'resumed_memory_reports': resumed_reports})
 
     def claude_channel(self):
         c = self.case('root-claude-code')
@@ -285,9 +322,11 @@ sys.exit(p.wait())
         c.coord('role', 'operator', 'operator')
         marker = self.ident + '-root-claude'
         c.coord('message', 'root-setup', 'operator', 'root', 'guidance',
-                f'Remember root review label {marker}. Acknowledge root-setup with this label. '
-                'When Player reports arrive, acknowledge each with the root review label and '
-                'the complete text of that Player report as your receipt. Do not poll, edit files, '
+                f'Remember root review label {marker}. Use baton2_inbox to read complete input. '
+                'When Player reports arrive, use baton2_action with action report and --text '
+                'to publish your remembered review label and the complete text of that Player '
+                'report to operator. Then use baton2_ack with no arguments after handling the input. '
+                'Acknowledge this setup after reading it. Do not poll, edit files, '
                 'land, push or launch Players.')
         config = c.path / 'mcp.json'
         save(config, {'mcpServers': {'baton-conductor': {'command': 'node', 'args': [
@@ -308,13 +347,16 @@ sys.exit(p.wait())
         terminal = start(False)
         observe(terminal, lambda: c.row('messages', 'root-setup')['receipt'], 'Claude root setup receipt')
         c.recruit('omp')
+        before = c.sequence()
         p = c.turn('omp', 'Do not use tools or change files. Reply exactly: Player report live-channel.', 'live')
         c.completed(p, 'live')
         observe(terminal, lambda: c.row('messages', 'live')['receipt'], 'live channel acceptance')
         live = c.coord('delivery', 'live')
-        assert marker in live['receipt'] and 'live-channel' in live['receipt'], live
+        assert live['receipt'], live
+        live_reports = c.root_reports(before, marker, live['body'])
         kill_tree(terminal, c.path / 'crash.json')
         native = c.coord('player', 'w1')['native']
+        before = c.sequence()
         p = c.turn('omp', 'Do not use tools or change files. Reply exactly: Player report recovered-channel.',
                    'pending', resume=native)
         p.wait()  # Dead endpoint returns an error; the committed report is the recovery input.
@@ -324,11 +366,13 @@ sys.exit(p.wait())
         observe(terminal, lambda: c.row('messages', 'pending')['receipt'], 'resumed channel acceptance')
         observe(terminal, lambda: not c.coord('inbox', 'root'), 'all pending root receipts')
         resumed = c.coord('delivery', 'pending')
-        assert marker in resumed['receipt'] and 'recovered-channel' in resumed['receipt'], resumed
+        assert resumed['receipt'], resumed
+        resumed_reports = c.root_reports(before, marker, resumed['body'])
         terminal.send('/exit\r')
         terminal.wait()
         c.evidence({'native': session, 'live': live, 'pending': pending, 'resumed': resumed,
-                    'inbox': c.coord('inbox', 'root')})
+                    'inbox': c.coord('inbox', 'root'), 'live_memory_reports': live_reports,
+                    'resumed_memory_reports': resumed_reports})
 
     def git(self):
         script = ROOT / 'bend2/scripts/accept-git.py'

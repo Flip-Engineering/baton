@@ -298,6 +298,19 @@ class McpCommand(unittest.TestCase):
         self.failure('', diagnostic, code=2, tool='baton2_ack', session='attached-λ',
                      expected_context=['acknowledge'])
 
+    def test_semantic_report_evidence_uses_native_context_with_an_explicit_record_id(self):
+        body = '\ufeffComplete source fact.\nλ🙂\nTrailing spaces  '
+        arguments = {'id': 'semantic-finding', 'kind': 'observation',
+                     'claim': body, 'evidence': 'report', 'limits': 'Current assignment only.'}
+        self.command(tool='baton2_knowledge_record', arguments=arguments, session='attached-λ',
+                     expected_context=['knowledge', 'record', '--kind', 'observation',
+                                       '--claim', body, '--evidence', 'report',
+                                       '--limits', 'Current assignment only.',
+                                       '--id', 'semantic-finding'])
+        description = self.tools['baton2_knowledge_record']['inputSchema']['properties']['evidence']['description']
+        self.assertIn('current assignment', description)
+        self.assertIn('ambiguous', description)
+
     def test_generated_linked_knowledge_keeps_explicit_record_and_full_relationship(self):
         links = [{'source': 'message:retained-input', 'relation': 'Supports',
                   'target': 'finding:explicit-record'}]

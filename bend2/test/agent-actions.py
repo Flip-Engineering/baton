@@ -1353,6 +1353,63 @@ class AgentActions(unittest.TestCase):
         self.assertEqual(self.stored_messages(), before)
         self.assertEqual(self.legacy('knowledge', 'worker-a'), before_findings)
 
+    def test_report_evidence_selects_own_current_assignment_and_preserves_complete_body(self):
+        self.legacy('report', 'old-report', 'worker-a', 'Earlier assignment evidence.')
+        self.legacy('message', 'evidence-task', 'root', 'worker-a',
+                    'task-assignment', 'Investigate the current source.')
+        self.legacy('report', 'other-author-report', 'worker-b', 'Another actor evidence.')
+        self.legacy('message', 'other-recipient-report', 'worker-a', 'other-root',
+                    'report', 'Another recipient evidence.')
+        body = '\ufeffComplete observed source and command evidence.\nλ🙂\nTrailing spaces  '
+        rows = self.action('worker-a', 'report', '--text', body, '--and',
+                           'knowledge', 'record', '--kind', 'observation',
+                           '--claim', 'First source fact.', '--evidence', 'report',
+                           '--limits', 'Observed command only.', '--and',
+                           'knowledge', 'record', '--kind', 'finding',
+                           '--claim', 'Second source fact.', '--evidence', 'report')
+        self.assertEqual([row['status'] for row in rows], ['completed'] * 3)
+        report_id = rows[0]['nativeArgv'][3]
+        findings = self.legacy('knowledge', 'worker-a')
+        self.assertEqual(len(findings), 2)
+        for finding in findings:
+            self.assertEqual(finding['author'], 'worker-a')
+            self.assertEqual(finding['evidence'], 'message:' + report_id)
+            self.assertEqual(finding['evidenceMessage'], {'id': report_id,
+                             'sender': 'worker-a', 'recipient': 'root', 'body': body})
+        self.assertEqual(self.legacy('delivery', report_id)['body'], body)
+
+    def test_report_evidence_refuses_absent_ambiguous_and_stale_contexts(self):
+        arguments = ('knowledge', 'record', '--kind', 'finding',
+                     '--claim', 'An evidence-backed source fact.', '--evidence', 'report')
+        unassigned = self.action('worker-a', *arguments)[0]
+        self.assertEqual(unassigned['status'], 'refused')
+        self.assertIn('no retained current assignment', unassigned['cause'])
+        self.legacy('report', 'stale-report', 'worker-a', 'Stale evidence.')
+        self.legacy('message', 'current-evidence-task', 'root', 'worker-a',
+                    'task-assignment', 'Current investigation.')
+        absent = self.action('worker-a', *arguments)[0]
+        self.assertEqual(absent['status'], 'refused')
+        self.assertIn('No authored report', absent['cause'])
+        self.legacy('report', 'first-current-report', 'worker-a', 'First current evidence.\nλ🙂')
+        self.legacy('report', 'second-current-report', 'worker-a', 'Second current evidence.')
+        ambiguous = self.action('worker-a', *arguments, '--and',
+                                'ask', '--text', 'Which source evidence should be selected?')
+        self.assertEqual([row['status'] for row in ambiguous], ['refused', 'completed'])
+        self.assertIn('Several authored reports', ambiguous[0]['cause'])
+        self.assertEqual(self.legacy('knowledge', 'worker-a'), [])
+        selected = self.action('worker-a', 'knowledge', 'record', '--kind', 'finding',
+                               '--claim', 'Deliberately selected earlier evidence.',
+                               '--evidence', 'message:first-current-report')[0]
+        self.assertEqual(selected['status'], 'completed')
+        finding = self.legacy('knowledge', 'worker-a')[0]
+        self.assertEqual(finding['evidence'], 'message:first-current-report')
+        self.assertEqual(finding['evidenceMessage']['body'], 'First current evidence.\nλ🙂')
+        self.legacy('message', 'next-evidence-task', 'root', 'worker-a',
+                    'task-assignment', 'A separate investigation.')
+        newer = self.action('worker-a', *arguments)[0]
+        self.assertEqual(newer['status'], 'refused')
+        self.assertIn('No authored report', newer['cause'])
+
     def test_generated_continuation_and_stop_keep_original_work_and_retry_stop(self):
         self.legacy('configure', 'worker-b', 'codex', 'model', 'low', sys.executable,
                     str(self.directory / 'control-output.jsonl'), 'fixture', 'model', 'low')

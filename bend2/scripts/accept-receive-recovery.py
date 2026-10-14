@@ -233,8 +233,8 @@ def main():
         print(kind, flush=True)
         return row
 
-    def call(*argv):
-        return command([binary, db, *argv], cwd=seed)
+    def call(*argv, input=None):
+        return command([binary, db, *argv], cwd=seed, input=input)
 
     def owned():
         rows = process_rows()
@@ -257,10 +257,10 @@ full test suites, build, recruit agents, install tools, change authentication,
 change global configuration, or push. Use the existing Git identity.
 Do not send a report command: receive forwards your final assistant text.
 Acknowledge only the task assigned in this turn, using the coordinator CLI
-provided in the receive prompt. End the turn after your task and report.
+provided in the receive prompt: use the acknowledge action after handling its
+complete text. End the turn after your task and report.
 '''
-    initial_task = out / 'initial.md'
-    initial_task.write_text(common + f'''
+    initial_task = common + f'''
 Your first tool command must be exactly:
 {shell}
 This local tool completes the driver's observer-loss injection and returns.
@@ -269,20 +269,19 @@ Create {DOCUMENT} as a short useful usage example covering a registered Codex
 Player's receive command, pending inbox inspection and message acknowledgment.
 Use shell placeholders for paths. Check every documented command against the
 current parser. Commit this one document with a clear commit message, acknowledge
-{INITIAL}, then return a final response beginning RECOVERY_INITIAL_DONE with the
+the assigned input, then return a final response beginning RECOVERY_INITIAL_DONE with the
 commit hash, the commands checked, and any limitation. Leave any later incoming
-message for the next native turn; this turn handles only {INITIAL}.
-''')
-    followup_task = out / 'followup.md'
-    followup_task.write_text(common + f'''
+message for the next native turn; this turn handles the initial assignment.
+'''
+    followup_task = common + f'''
 Continue your existing conversation and inspect your previous committed example.
 Extend {DOCUMENT} with a brief contributor note explaining what a busy receive
 returns and how an observer recovery uses the retained attempt. Cite the relevant
 source paths, and state the implemented recovery scope precisely. Verify the
 claims against the runtime source, then commit the document update. Acknowledge
-{FOLLOWUP}, then return a final response beginning RECOVERY_FOLLOWUP_DONE with
+the assigned input, then return a final response beginning RECOVERY_FOLLOWUP_DONE with
 both your previous commit hash and the new one. Do not repeat the checkpoint tool.
-''')
+'''
     receive = ['receive', 'worker', str(wrapper), args.model, args.effort,
                str(repo), str(native_log)]
     first_pid = None
@@ -302,12 +301,13 @@ both your previous commit hash and the new one. Do not repeat the checkpoint too
                 except OSError:
                     pass
 
-            def checkpoint_command(label, *argv):
+            def checkpoint_command(label, *argv, input=None):
                 child = subprocess.Popen([str(binary), str(db), *map(str, argv)], cwd=repo,
+                                         stdin=subprocess.PIPE if input is not None else None,
                                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
                 def finished():
-                    stdout, stderr = child.communicate()
+                    stdout, stderr = child.communicate(input=input)
                     notify({'kind': 'checkpoint-command-exit', 'label': label, 'pid': child.pid,
                             'code': child.returncode, 'stdout': stdout, 'stderr': stderr})
 
@@ -346,7 +346,8 @@ both your previous commit hash and the new one. Do not repeat the checkpoint too
                                  'commit': base, 'dirty': False}, workspace
             save(out / 'recruitment.json', {'seed': str(seed), 'session': player,
                                            'worktree': workspace})
-            call('message-file', INITIAL, 'root', 'worker', 'task', str(initial_task))
+            call('agent-native-input', input=json.dumps(
+                ['message', INITIAL, 'root', 'worker', 'task', initial_task], ensure_ascii=False))
             call('connect', 'worker', '', json.dumps([str(binary), str(db), *receive]))
             with (out / 'observer.log').open('w') as log:
                 observer = subprocess.Popen([str(binary), str(db), *receive, INITIAL], cwd=repo,
@@ -396,9 +397,9 @@ both your previous commit hash and the new one. Do not repeat the checkpoint too
                             os.kill(observer.pid, signal.SIGKILL)
                             code = observer.wait()
                             assert code == -signal.SIGKILL, code
-                            followup = checkpoint_command('followup-message-queued', 'message-file',
-                                                          FOLLOWUP, 'root', 'worker', 'task',
-                                                          str(followup_task))
+                            followup = checkpoint_command('followup-message-queued', 'agent-native-input',
+                                input=json.dumps(['message', FOLLOWUP, 'root', 'worker', 'task',
+                                                  followup_task], ensure_ascii=False))
                             retry = json.loads(checkpoint_command('normal-receive-retry', *receive, INITIAL))
                             assert retry == {'session': 'worker', 'status': 'queued'}, retry
                             assert len(json_lines(out / 'launches.jsonl')) == 1

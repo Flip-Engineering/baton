@@ -309,7 +309,7 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: {
       id: { type: 'string' }, claim: { type: 'string' },
       kind: { type: 'string', description: 'Authored item type; omitted means finding. Types are free-form.' },
-      evidence: { type: 'string', description: 'Evidence reference, such as message:MESSAGE_ID' },
+      evidence: { type: 'string', description: 'Use report for the unique authored report to the current coordinator after this actor\'s current assignment. Missing or ambiguous reports refuse. Explicit references, such as message:MESSAGE_ID, preserve deliberate selections.' },
       limits: { type: 'string' },
       links: { type: 'array', description: 'Authored relationships committed with this record', items: {
         type: 'object', properties: {
@@ -908,7 +908,7 @@ function handleToolCall(msg) {
         break;
       }
       case 'baton2_knowledge_record':
-        if (args.id === undefined || args.links?.some(link => link.id === undefined)) {
+        if (args.evidence === 'report' || args.id === undefined || args.links?.some(link => link.id === undefined)) {
           result = contextualAction('knowledge', ['record', '--kind', args.kind ?? 'finding',
             '--claim', args.claim, '--evidence', args.evidence, '--limits', args.limits,
             ...(args.id === undefined ? [] : ['--id', args.id]),

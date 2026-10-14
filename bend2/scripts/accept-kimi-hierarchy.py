@@ -19,14 +19,19 @@ import os
 from pathlib import Path
 import shlex
 import shutil
+import sqlite3
 import subprocess
 import sys
 import threading
 import time
+from urllib.parse import quote
+import uuid
 
 SOURCE = Path(__file__).resolve().parents[2]
 PLAYERS = ('deepseek', 'muse')
 ADAPTER = 'bend2/scripts/check-unittest.sh'
+COMPLETE = 'HIERARCHY_COMPLETE'
+FAILED = 'HIERARCHY_FAILED'
 
 
 def save(path, value):
@@ -45,6 +50,23 @@ def command(argv, **kwargs):
         raise RuntimeError(f'{argv[0]} exited {result.returncode}:\n'
                            f'stdout:\n{result.stdout}\nstderr:\n{result.stderr}')
     return result.stdout.strip()
+
+
+def terminal_status(message):
+    if not message or message['sender'] != 'root' or message['recipient'] != 'operator' or message['kind'] != 'report':
+        return None
+    first = message['body'].splitlines()[:1]
+    return first[0] if first and first[0] in (COMPLETE, FAILED) else None
+
+
+def snapshot(db, helpers):
+    state = helpers.snapshot(db)
+    with sqlite3.connect('file:' + quote(str(db), safe='/') + '?mode=ro', uri=True) as connection:
+        connection.row_factory = sqlite3.Row
+        tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        for table in ('direct_turn_requests', 'task_input_requests'):
+            state[table] = [dict(row) for row in connection.execute('SELECT * FROM ' + table)] if table in tables else []
+    return state
 
 
 def records(out, seat=None):
@@ -93,6 +115,8 @@ def inspect_processes(out, native, known, whole_run=True):
                 owners.append({'seat': 'seed', **json.loads(seed_path.read_text())})
             if launches_path.exists():
                 owners.extend(json.loads(launches_path.read_text()))
+            if (out / 'lead-launches.json').exists():
+                owners.extend(json.loads((out / 'lead-launches.json').read_text()))
     except (OSError, RuntimeError, ValueError) as error:
         return {'checked': False, 'error': str(error), 'observed_unix': time.time()}
     expected = {}
@@ -148,7 +172,7 @@ def successful_receipts(native):
 
 
 def close_failed_run(out, terminal, native, inspection):
-    if (not terminal or terminal['id'] != 'hierarchy-failed' or not inspection['checked']
+    if (terminal_status(terminal) != FAILED or not inspection['checked']
             or inspection['processes'] or inspection['uncertain']):
         return False
     unknown = [{key: row.get(key) for key in
@@ -277,7 +301,113 @@ def native_wrapper(seat, out, arguments):
         raise
 
 
+def spawn_input(out, seat, argv, body, cwd, receipt):
+    launched = json.loads(receipt.read_text()) if receipt.exists() else []
+    log_path = out / f'{seat}-dispatch-{uuid.uuid4()}.command.log'
+    with log_path.open('xb') as log:
+        child = subprocess.Popen(list(map(str, argv)), stdin=subprocess.PIPE,
+                                 stdout=log, stderr=subprocess.STDOUT, cwd=cwd,
+                                 start_new_session=True)
+    row = {'seat': seat, 'pid': child.pid, 'started_unix': time.time(),
+           'argv': list(map(str, argv)), 'log': str(log_path)}
+    retain_process_start(row, 'pid', 'started_local')
+    launched.append(row)
+    save(receipt, launched)
+    try:
+        child.stdin.write(body.encode('utf-8'))
+        child.stdin.close()
+    except OSError as error:
+        row['input_write_error'] = repr(error)
+        save(receipt, launched)
+        raise
+    return row
+
+
+def require_actor(out, actor):
+    current = json.loads(command([out / 'baton2', out / 'state.db', 'agent-current-session']))
+    if current['id'] != actor:
+        raise RuntimeError(f'This hierarchy action belongs to {actor}; actual actor is {current["id"]}')
+
+
+def dispatch_lead(out):
+    require_actor(out, 'root')
+    run = json.loads((out / 'run.json').read_text())
+    row = spawn_input(out, 'lead', [out / 'baton2', out / 'state.db', 'dispatch',
+        '--project', out / 'repo', '--to', 'lead', '--command', out / 'lead-native', '--stdin'],
+        lead_task(out, run), out / 'repo', out / 'lead-launches.json')
+    print(json.dumps(row))
+
+
+def require_player_settled(out, seat):
+    with sqlite3.connect('file:' + quote(str(out / 'state.db'), safe='/') + '?mode=ro', uri=True) as connection:
+        connection.row_factory = sqlite3.Row
+        selected = connection.execute('SELECT * FROM executions WHERE session=?', (seat,)).fetchone()
+    if selected is None or selected['phase'] != 'exited' or not selected['directory']:
+        raise RuntimeError('The Player current execution has not finished: '
+                           + json.dumps(dict(selected) if selected else None))
+    directory = Path(selected['directory'])
+    for name, expected in [('released', b'released\n'), ('acknowledged', b'acknowledged\n')]:
+        marker = directory / name
+        if not marker.exists() or marker.read_bytes() != expected:
+            raise RuntimeError('The Player current execution custody has not finished: ' + str(marker))
+
+
+def correct_player(out, seat):
+    require_actor(out, 'lead')
+    run = json.loads((out / 'run.json').read_text())
+    session = json.loads(command([out / 'baton2', out / 'state.db', 'session', seat]))
+    route = run['routes']['omp' if seat == 'deepseek' else 'muse']
+    expected = 'omp' if seat == 'deepseek' else 'muse'
+    if (session['harness'], session['model'], session['effort'], session['workspace']) != (
+            expected, route['model'], route['effort'], str(out / seat)) or not session['native']:
+        raise RuntimeError('The recorded Player route/workspace/native differs from its original assignment')
+    native = records(out, seat)
+    if not native or not all('ended_unix' in row and 'child_ended_unix' in row for row in native):
+        raise RuntimeError('The Player has no complete retained native termination evidence')
+    known = {}
+    inspection = inspect_processes(out, native, known, whole_run=False)
+    if not inspection['checked'] or inspection['processes'] or inspection['uncertain']:
+        raise RuntimeError('The Player still has recorded processes or unresolved process identity: '
+                           + json.dumps(inspection))
+    seen = {native_id(frame) for row in native for frame in frames(Path(row['frames']))}
+    seen.discard(None)
+    if seen != {session['native']}:
+        raise RuntimeError('The Player native transcript identity differs from its recorded conversation')
+    require_player_settled(out, seat)
+    body = sys.stdin.buffer.read().decode('utf-8')
+    row = spawn_input(out, seat, [out / 'baton2', out / 'state.db', 'dispatch',
+        '--project', out / 'repo', '--to', seat, '--command', out / f'{seat}-native', '--stdin'],
+        body, out / 'lead', out / 'player-launches.json')
+    print(json.dumps(row))
+
+
+def land_reviewed(out, seat):
+    require_actor(out, 'root' if seat == 'root' else 'lead')
+    run = json.loads((out / 'run.json').read_text())
+    player = 'lead' if seat == 'root' else seat
+    checks = sorted({path for item in PLAYERS for path in run['tasks'][item]['checks']}) if seat == 'root' else run['tasks'][seat]['checks']
+    argv = [str(out / 'baton2'), str(out / 'state.db'), 'land', '--session', player,
+            '--repo', str(out / 'repo'), '--target', 'bend2-trial' if seat == 'root' else 'hierarchy-lead',
+            '--check', str(out / 'check.sh'), '--files', ' '.join(checks)]
+    result = subprocess.run(argv, capture_output=True, text=True, encoding='utf-8')
+    identity = str(uuid.uuid4())
+    save(out / f'checked-landing-{seat}-{identity}.json', {
+        'argv': argv, 'exit_code': result.returncode, 'stdout': result.stdout, 'stderr': result.stderr})
+    outcomes = json.loads(result.stdout)
+    if (result.returncode or len(outcomes) != 1 or outcomes[0]['action'] != 'land'
+            or outcomes[0]['status'] != 'completed'):
+        raise RuntimeError('Checked landing failed; retain its full outcome: ' + result.stdout + result.stderr)
+    receipt = json.loads(outcomes[0]['stdout'])
+    if receipt['status'] != 'landed':
+        raise RuntimeError('Checked landing did not return landed: ' + outcomes[0]['stdout'])
+    path = out / ('landing-root.json' if seat == 'root' else f'landing-{seat}-{identity}.json')
+    with path.open('x', encoding='utf-8') as stream:
+        stream.write(outcomes[0]['stdout'])
+    print(json.dumps({'receipt': str(path), 'landing': receipt}))
+
+
 def start_players(out):
+    require_actor(out, 'lead')
     run = json.loads((out / 'run.json').read_text())
     for seat in PLAYERS:
         assigned = json.loads(command([out / 'baton2', out / 'state.db', 'player', seat]))
@@ -289,16 +419,13 @@ def start_players(out):
     launched = []
     for seat in PLAYERS:
         route = run['routes']['omp' if seat == 'deepseek' else 'muse']
-        argv = [str(out / 'baton2'), str(out / 'state.db'), 'turn', seat, f'{seat}-turn',
-                str(out / f'{seat}-native'), route['model'], route['effort'],
-                str(out / seat), str(out / f'{seat}.md'), str(out / f'{seat}.jsonl'), '']
-        with (out / f'{seat}.command.log').open('w') as log:
-            child = subprocess.Popen(argv, stdout=log, stderr=subprocess.STDOUT,
-                                     cwd=out / 'lead', start_new_session=True)
-        launch = {'seat': seat, 'pid': child.pid, 'started_unix': time.time(), 'argv': argv}
-        retain_process_start(launch, 'pid', 'started_local')
+        argv = [out / 'baton2', out / 'state.db', 'turn', '--session', seat,
+                '--id', f'{seat}-turn', '--command', out / f'{seat}-native',
+                '--model', route['model'], '--effort', route['effort'],
+                '--cwd', out / seat, '--file', '-', '--output-log', out / f'{seat}.jsonl']
+        launch = spawn_input(out, seat, argv, player_task(out, run, seat),
+                             out / 'lead', out / 'player-launches.json')
         launched.append(launch)
-        save(out / 'player-launches.json', launched)
     print(json.dumps(launched))
 
 
@@ -370,6 +497,132 @@ def hierarchy_check(compiler):
             '  exit 2\n'
             'fi\n'
             'exec /bin/sh "$adapter" "$1"\n')
+
+
+def common_task(out):
+    return f"""Work only inside {out}; source {shlex.quote(str(out / 'environment.sh'))} in each shell.
+Use the supplied native launchers and existing login. Keep credentials, global
+configuration, historical trials and other checkouts unchanged. Preserve this
+run's sessions, branches and worktrees. Do not push. Read complete incoming input
+with `"$B2" "$DB" inbox`, then use `"$B2" "$DB" acknowledge` after handling it.
+Baton resolves the actor and handling state. Supply complete task and report
+text directly to Baton. Run only the selected Python checks.
+If a task cannot be completed, explain the concrete failure in your parent report.
+"""
+
+
+def player_task(out, run, seat):
+    return (common_task(out) + f'\nYour assigned workspace is {out / seat}, on branch hierarchy-{seat}.\n'
+            'Run file edits, tests and Git commits in that workspace.\n'
+            'REPO names the shared repository for recruitment and landing.\n'
+            'Allowed source files: ' + ', '.join(run['tasks'][seat]['files']) + '\n\n'
+            + run['tasks'][seat]['task'] + '\n')
+
+
+def lead_task(out, run):
+    tasks = run['tasks']
+    guidance = shlex.quote(tasks['guidance'])
+    return common_task(out) + f"""
+You are the Kimi Associate Conductor, session lead under Principal Conductor root.
+Deliver the two assigned changes through DeepSeek and Muse. Review their actual
+diffs and tests, then land them. Your native final response reports to root.
+Acknowledge each handled task/report. Do not issue a duplicate manual report.
+
+Recruit the two Players with these commands:
+"$B2" "$DB" recruit --session deepseek --harness omp --model "$DEEPSEEK_MODEL" --effort "$DEEPSEEK_EFFORT" --repo "$REPO" --branch hierarchy-deepseek --path "$STATE/deepseek" --base hierarchy-lead
+"$B2" "$DB" recruit --session muse --harness muse --model "$MUSE_MODEL" --effort "$MUSE_EFFORT" --repo "$REPO" --branch hierarchy-muse --path "$STATE/muse" --base hierarchy-lead
+Detach your Associate Conductor workspace so checked landing can advance
+hierarchy-lead. Run `"$PYTHON" "$STATE/acceptance.py" start-players "$STATE"`
+once to start both registered Players concurrently. This helper sends their full
+tasks through direct-turn stdin and retains them in the database.
+Run `"$PYTHON" "$STATE/acceptance.py" observe-tool "$STATE"` to observe DeepSeek's
+first live tool event. Then YOU must issue this complete guidance in your actual
+native tool call:
+"$B2" "$DB" guide --to deepseek --text {guidance}
+Inspect its result and finish this delegation turn with a progress report.
+Child reports invoke your native session. Do not wait for Player completion in
+this delegation turn.
+
+The initial direct turns register the supplied native wrappers as their receivers.
+Guidance can continue the same recorded native conversation after a turn ends.
+Review every resulting report, current execution, retained child termination and
+PID/start evidence before correcting it. Wait for the current execution and its
+receiver custody to finish. Missing completion or native identity requires a
+blocked parent report. To send a correction, pipe its full text into
+`"$PYTHON" "$STATE/acceptance.py" correct-player "$STATE" PLAYER`.
+The helper verifies the original registered route, workspace and native identity,
+checks that the retained native processes and current execution custody ended,
+and preserves the supplied wrapper through primary dispatch. Baton stores the
+complete correction and continues the existing assignment. Use no task-source
+file or correction suffix.
+Tell the Player to read its complete inbox and acknowledge its handled input.
+End your turn while its correction runs; its native response resumes you.
+
+For each Player report, inspect its actual diff and check output, acknowledge it,
+and run `"$PYTHON" "$STATE/acceptance.py" land-reviewed "$STATE" PLAYER`.
+The helper invokes checked landing onto hierarchy-lead with the assigned checks
+and retains each complete result under an automatically generated evidence name.
+Require a landed result. The selected checks are:
+deepseek: {json.dumps(tasks['deepseek']['checks'])}
+muse: {json.dumps(tasks['muse']['checks'])}
+Once both landings succeed, inspect the composed Associate Conductor tree and
+run the selected checks there using CHECK. Verify the native steering receipt
+and required regression. Report LEAD_READY with actual Player/landing/lead SHAs
+and review/test evidence. If blocked, report LEAD_BLOCKED with the evidence.
+Keep source changes limited to the assigned Player files; review and integrate
+their implementations.
+"""
+
+
+def root_task(out, run):
+    checks = sorted({path for seat in PLAYERS for path in run['tasks'][seat]['checks']})
+    return common_task(out) + f"""
+You are the subscription Codex Principal Conductor, session root. Recruit lead
+and assign its role with these commands:
+"$B2" "$DB" recruit --session lead --harness omp --model "$ASSOCIATE_MODEL" --effort "$ASSOCIATE_EFFORT" --repo "$REPO" --branch hierarchy-lead --path "$STATE/lead" --base bend2-trial
+"$B2" "$DB" role --session lead --role associate-conductor
+Run `"$PYTHON" "$STATE/acceptance.py" dispatch-lead "$STATE"` once. It dispatches
+the full task and configures the supplied lead wrapper. Acknowledge your handled
+input, then finish this turn. Each Associate Conductor report resumes this same
+Principal Conductor conversation. Read and acknowledge progress reports.
+
+On LEAD_READY, independently inspect both Player diffs, their bindings, guidance
+receipt, the lead branch diff and all selected checks. Run
+`"$PYTHON" "$STATE/acceptance.py" land-reviewed "$STATE" root` to perform checked
+landing of lead onto bend2-trial with these selected checks:
+{' '.join(checks)}
+Require the retained landed result. Verify the target tree equals the lead tree
+and run the selected checks on that target tree. Deliver your complete evidence
+directly with `"$B2" "$DB" report --text TEXT`. Its first line must be
+{COMPLETE}, followed by both levels' commits and actual review/check evidence.
+Send that report only after final checked landing and checks succeed. If the
+hierarchy cannot complete, report {FAILED} on the first line with the complete
+concrete evidence. Your final native response should briefly state that the
+operator report was sent, without repeating its first-line marker.
+Do not send guidance during report delivery or launch a direct turn for an active
+session. Your own repository checkout is detached; leave it detached.
+"""
+
+
+def guidance_call(frame, body):
+    def strings(value):
+        if isinstance(value, str):
+            yield value
+        elif isinstance(value, dict):
+            for item in value.values():
+                yield from strings(item)
+        elif isinstance(value, list):
+            for item in value:
+                yield from strings(item)
+    wanted = ['guide', '--to', 'deepseek', '--text', body]
+    for text in strings(frame.get('args', frame.get('input', {}))):
+        try:
+            tokens = shlex.split(text)
+        except ValueError:
+            continue
+        if any(tokens[index:index + len(wanted)] == wanted for index in range(len(tokens))):
+            return True
+    return False
 
 
 def verify_landings(out, run, sessions):
@@ -452,7 +705,11 @@ def verify(out, state, run, helpers):
     assert muse_terminal[-1]['payload']['text'] == messages['muse-turn']['body']
     assert any(row['sender'] == 'lead' and row['recipient'] == 'root' and row['kind'] == 'report'
                and row['receipt'] for row in state['messages'])
-    guidance = messages['unexpected-success-guidance']
+    selected_guidance = [row for row in state['messages'] if row['sender'] == 'lead'
+                        and row['recipient'] == 'deepseek' and row['kind'] == 'guidance'
+                        and row['body'] == run['tasks']['guidance']]
+    assert len(selected_guidance) == 1, selected_guidance
+    guidance = selected_guidance[0]
     receipt = json.loads(guidance['receipt'])
     assert guidance['sender'] == 'lead' and guidance['recipient'] == 'deepseek'
     assert guidance['body'] == run['tasks']['guidance']
@@ -475,9 +732,36 @@ def verify(out, state, run, helpers):
     assert observed['observed_unix'] <= steer['received_unix'] <= terminal['received_unix']
     lead_calls = [frame for row in records(out, 'lead') for frame in frames(Path(row['frames']))
                   if frame.get('type') == 'tool_execution_start'
-                  and 'unexpected-success-guidance' in json.dumps(frame.get('args', frame.get('input', {})))
-                  and 'message-file' in json.dumps(frame.get('args', frame.get('input', {})))]
+                  and guidance_call(frame, run['tasks']['guidance'])]
     assert lead_calls, 'Guidance command missing from actual lead tool-call arguments'
+    direct = {row['id']: row for row in state['direct_turn_requests']}
+    for seat in PLAYERS:
+        body = player_task(out, run, seat)
+        original = direct[f'{seat}-turn']
+        assert original['session'] == seat and original['task_path'] == '-' and original['task'] == body
+        task = messages[f'{seat}-turn:task-input']
+        assert task['sender'] == task['recipient'] == seat and task['kind'] == 'task-assignment'
+        assert task['body'] == body
+    requests = [json.loads(row['request']) for row in state['task_input_requests']]
+    outcomes = {row['id']: json.loads(row['result']) if row['result'] else None
+                for row in state['task_input_requests']}
+    for seat, actor, body in [('root', 'operator', root_task(out, run)), ('lead', 'root', lead_task(out, run))]:
+        selected = [request for request in requests if request['session'] == seat
+                    and request['sender'] == actor and request['input'].get('body') == body]
+        assert len(selected) == 1, (seat, selected)
+        request = selected[0]
+        message = messages[request['messageId']]
+        assert message['sender'] == actor and message['recipient'] == seat and message['body'] == body
+        assert message['kind'] == 'task' and outcomes[request['id']]['status'] == 'admitted'
+    corrections = [request for request in requests if request['session'] in PLAYERS]
+    for request in corrections:
+        seat = request['session']
+        assert request['sender'] == 'lead' and request['options']['command'] == str(out / f'{seat}-native')
+        assert request['input']['source'] == 'stdin' and request['input']['body']
+        message = messages[request['messageId']]
+        assert message['body'] == request['input']['body'] and message['sender'] == 'lead'
+        assert message['recipient'] == seat and message['kind'] == 'task-continuation' and message['receipt']
+        assert outcomes[request['id']]['status'] == 'admitted'
     landed = verify_landings(out, run, sessions)
     tips = landed['tips']
     for workspace in [repo, out / 'lead']:
@@ -488,7 +772,7 @@ def verify(out, state, run, helpers):
         text = command(['git', '-C', repo, 'show', f'{tips["target"]}:{check["path"]}'])
         assert all(value in text for value in check.get('contains', [])), check
         assert all(value not in text for value in check.get('absent', [])), check
-    return {'processes': processes, **landed,
+    return {'processes': processes, **landed, 'task_requests': requests,
             'player_overlap_seconds': overlap, 'guidance_observation': observed,
             'concurrent_native_processes': concurrency, 'lead_guidance_calls': lead_calls,
             'native_steer_event': steer, 'state': state}
@@ -528,6 +812,8 @@ def main():
     environment = {**os.environ, 'GIT_AUTHOR_NAME': 'Bend2 hierarchy',
                    'GIT_AUTHOR_EMAIL': 'hierarchy@example.invalid',
                    'GIT_COMMITTER_NAME': 'Bend2 hierarchy', 'GIT_COMMITTER_EMAIL': 'hierarchy@example.invalid'}
+    for key in ('BATON_SESSION', 'BATON_DATABASE', 'BATON_ATTEMPT_DIRECTORY', 'CODEX_THREAD_ID'):
+        environment.pop(key, None)
     login_env = {key: value for key, value in environment.items() if key not in ['OPENAI_API_KEY', 'CODEX_API_KEY']}
     login = subprocess.run([routes['codex']['executable'], '-c', 'forced_login_method="chatgpt"',
                             'login', 'status'], capture_output=True, text=True, env=login_env)
@@ -561,9 +847,6 @@ def main():
     assert compiler, 'the coordinator build recorded no compiler for checked landings'
     check = out / 'check.sh'
     check.write_text(hierarchy_check(compiler))
-    (out / 'guidance.txt').write_text(tasks['guidance'])
-    lead_endpoint = [str(binary), str(db), 'receive', 'lead', wrappers['lead'], '', '', '', str(out / 'lead.jsonl')]
-    save(out / 'lead-endpoint.json', lead_endpoint)
     settings = {'B2': str(binary), 'DB': str(db), 'REPO': str(repo), 'STATE': str(out),
                 'CHECK': str(check), 'PYTHON': sys.executable,
                 'ASSOCIATE_ID': 'lead', 'ASSOCIATE_BRANCH': 'hierarchy-lead',
@@ -571,146 +854,30 @@ def main():
     for seat, key in [('ASSOCIATE', 'lead'), ('LEAD', 'lead'), ('DEEPSEEK', 'omp'), ('MUSE', 'muse')]:
         settings.update({seat + '_MODEL': routes[key]['model'], seat + '_EFFORT': routes[key]['effort']})
     (out / 'environment.sh').write_text(''.join(f'export {key}={shlex.quote(value)}\n' for key, value in settings.items()))
-    common = f"""Work only inside {out}; source {out / 'environment.sh'} in each shell.
-Use the supplied native launchers and existing login. Keep credentials, global
-configuration, historical trials and other checkouts unchanged. Preserve this
-run's sessions, branches and worktrees. Do not push. Use coordinator recruitment,
-acknowledgments and checked landings. Run only the selected Python checks.
-If a task cannot be completed, explain the concrete failure in your parent report.
-"""
-    for seat in PLAYERS:
-        workspace = (f'Your assigned workspace is {out / seat}, on branch hierarchy-{seat}.\n'
-                     'Run file edits, tests and Git commits in that workspace.\n'
-                     'REPO names the shared repository for coordinator recruitment and landing.\n')
-        (out / f'{seat}.md').write_text(common + '\n' + workspace + '\nAllowed source files: ' +
-                                      ', '.join(tasks[seat]['files']) + '\n\n' + tasks[seat]['task'] + '\n')
-    checks = sorted({path for seat in PLAYERS for path in tasks[seat]['checks']})
-    (out / 'lead.md').write_text(common + f"""
-You are the Kimi Associate Conductor, session lead under Principal Conductor root. Deliver the two assigned changes
-through DeepSeek and Muse. Review their actual diffs and tests, then land them.
-Your native final responses report to root automatically. Acknowledge each incoming
-task/report after reading it. Do not issue a duplicate manual report.
-
-Recruit deepseek and muse under lead with harnesses omp and muse, models/efforts
-DEEPSEEK_MODEL/DEEPSEEK_EFFORT and MUSE_MODEL/MUSE_EFFORT. Use repository REPO,
-branches hierarchy-deepseek and hierarchy-muse, workspaces STATE/deepseek and
-STATE/muse, and base hierarchy-lead. Command:
-`B2 DB recruit ID lead HARNESS MODEL EFFORT REPO BRANCH WORKSPACE hierarchy-lead`.
-Detach your Associate Conductor workspace so land-checked can advance hierarchy-lead.
-Run `PYTHON STATE/acceptance.py start-players STATE` once to start both registered
-Players concurrently. It records their coordinator processes and returns promptly.
-Run `PYTHON STATE/acceptance.py observe-tool STATE` to observe DeepSeek's first
-tool event. Then YOU must issue this coordinator command in your native tool call:
-`B2 DB message-file unexpected-success-guidance lead deepseek guidance STATE/guidance.txt`.
-Inspect its result and finish this delegation turn with a progress report. Continue
-when child reports invoke your native session. No waiting for player completion.
-
-Both helper Players use direct turns. A guidance message to an ended player stays
-pending and does not launch its correction. Review the player's report and its
-retained child completion and PID/start evidence before writing a correction task
-under STATE. Missing completion or native identity requires a blocked parent report.
-Tell the player to read `B2 DB inbox PLAYER` and acknowledge accepted messages with
-`B2 DB ack MESSAGE_ID PLAYER RECEIPT`. Preserve the player's registered harness,
-model, effort, workspace and native identity. Keep its supplied native wrapper.
-Compare the saved harness/model/effort with the original route before launching;
-report any disagreement to root while preserving the run's stored assignment.
-Choose an unused correction suffix for the task, turn ID, native log, command log
-and later landing receipt. Preserve the initial task, report, logs and receipts.
-For either player, source environment.sh and use this detached Python launch;
-replace player and correction with the selected player and unused suffix:
-
-```sh
-"$PYTHON" - <<'PY'
-import json, os, pathlib, subprocess
-player, correction = 'muse', 'review-1'
-state = pathlib.Path(os.environ['STATE'])
-b2, db = os.environ['B2'], os.environ['DB']
-session = json.loads(subprocess.check_output([b2, db, 'player', player], text=True))
-if not session['native']:
-    raise SystemExit('No saved native identity; preserve the run and report blocked to root.')
-prefix = 'DEEPSEEK' if player == 'deepseek' else 'MUSE'
-name = player + '-correction-' + correction
-task = state / (name + '.md')
-with (state / (name + '.command.log')).open('xb') as log:
-    child = subprocess.Popen([
-        b2, db, 'turn', player, name, str(state / (player + '-native')),
-        os.environ[prefix + '_MODEL'], os.environ[prefix + '_EFFORT'],
-        session['workspace'], str(task), str(state / (name + '.jsonl')),
-        session['native'],
-    ], stdin=subprocess.DEVNULL, stdout=log, stderr=log,
-       cwd=session['workspace'], start_new_session=True)
-print(child.pid)
-PY
-```
-
-Inspect the launch result and end your Associate Conductor turn while the correction continues.
-Its native final response reports to you automatically and resumes your session.
-Review and acknowledge that report, check the correction and perform its checked
-landing. Retain the original report and each separate correction report.
-
-For each player report, inspect its actual diff and check output, acknowledge it,
-and run `B2 DB land-checked PLAYER REPO hierarchy-lead CHECK FILES`, with the player's
-selected checks in one quoted space-separated FILES argument. Save the exact JSON
-answer in STATE/landing-PLAYER.json. For a correction, preserve earlier answers
-and save the new answer as STATE/landing-PLAYER-CORRECTION.json with a distinct
-CORRECTION suffix. Require status landed. Player checks:
-deepseek: {json.dumps(tasks['deepseek']['checks'])}
-muse: {json.dumps(tasks['muse']['checks'])}
-Once both landings succeed, inspect the composed Associate Conductor tree and run the selected
-checks there using CHECK. Verify the native steering receipt and required regression.
-Report LEAD_READY with actual player/landing/lead SHAs and review/test evidence.
-If blocked, report LEAD_BLOCKED with the evidence. Keep working source changes
-limited to the player task files; you review and integrate their implementations.
-""")
-    (out / 'root.md').write_text(common + f"""
-You are the subscription Codex Principal Conductor, session root. Recruit lead under root, harness omp,
-ASSOCIATE_MODEL/ASSOCIATE_EFFORT, REPO, branch hierarchy-lead, workspace STATE/lead,
-base bend2-trial. Connect its native endpoint from STATE/lead-endpoint.json using
-`B2 DB role lead associate-conductor`, then
-`B2 DB connect lead '' ENDPOINT_JSON`. Start `B2 DB message-file lead-task root lead
-task STATE/lead.md` in a new background process session with stdout/stderr redirected
-to STATE/lead-task.command.log. Acknowledge hierarchy-task, then finish this turn.
-
-Each Associate Conductor report resumes this same native Principal Conductor. Read and acknowledge progress.
-On LEAD_READY, independently inspect both Player diffs, their bindings, guidance
-receipt, the lead branch diff, and all selected checks. Run checked landing of
-lead onto bend2-trial with CHECK and this one quoted FILES argument:
-{' '.join(checks)}
-Save the exact JSON answer to STATE/landing-root.json and require status landed.
-Verify the target tree equals the lead tree and run the selected checks on that
-target tree. Preserve a report of both levels' commits and actual review/check
-evidence in STATE/root-report.md. Deliver it using
-`B2 DB message-file hierarchy-complete root operator report STATE/root-report.md`.
-Only send hierarchy-complete after the final checked landing and checks succeed.
-If the hierarchy cannot complete, send hierarchy-failed to operator with concrete
-evidence. Do not send guidance during report delivery or launch a direct turn for
-an active session. Your own repository checkout is detached; leave it detached.
-""")
-
     def call(*argv):
         return json.loads(command([binary, db, *argv], cwd=repo, env=environment))
 
     call('attach', 'operator', 'terminal', '', '')
     call('role', 'operator', 'operator')
-    endpoint = [str(binary), str(db), 'receive', 'root', wrappers['root'], routes['codex']['model'],
-                routes['codex']['effort'], str(repo), str(out / 'root.jsonl')]
-    call('attach', 'root', 'codex', '', json.dumps(endpoint))
-    call('role', 'root', 'principal-conductor')
     try:
         with (out / 'seed.log').open('w') as log:
-            seed = subprocess.Popen([str(binary), str(db), 'message-file', 'hierarchy-task',
-                                     'operator', 'root', 'task', str(out / 'root.md')],
-                                    cwd=repo, env=environment, stdout=log, stderr=subprocess.STDOUT,
-                                    start_new_session=True)
-            seed_record = {'pid': seed.pid, 'started_unix': time.time()}
+            argv = [str(binary), str(db), 'dispatch', '--project', str(repo), '--new', '--to', 'root',
+                    '--harness', 'codex', '--model', routes['codex']['model'], '--effort', routes['codex']['effort'],
+                    '--workspace', str(repo), '--command', wrappers['root'],
+                    '--output-log', str(out / 'root.jsonl'), '--stdin']
+            seed = subprocess.Popen(argv, cwd=repo, env=environment, stdin=subprocess.PIPE,
+                                    stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+            seed_record = {'pid': seed.pid, 'started_unix': time.time(), 'argv': argv}
             retain_process_start(seed_record, 'pid', 'started_local')
             save(out / 'seed-process.json', seed_record)
+            seed.stdin.write(root_task(out, run).encode('utf-8'))
+            seed.stdin.close()
             print(f'Kimi hierarchy started: {out}', flush=True)
             known_processes = {}
             while True:
-                state = helpers.snapshot(db)
+                state = snapshot(db, helpers)
                 terminal = next((row for row in state['messages']
-                                 if row['id'] in ['hierarchy-complete', 'hierarchy-failed']), None)
+                                 if terminal_status(row)), None)
                 native = records(out)
                 inspection = inspect_processes(out, native, known_processes)
                 if not inspection['checked']:
@@ -731,14 +898,14 @@ an active session. Your own repository checkout is detached; leave it detached.
                                  'child_pids': child_pids, 'processes': rows})
                 if seed.poll() is not None and close_failed_run(out, terminal, native, inspection):
                     break
-                if (terminal and terminal['id'] == 'hierarchy-complete' and native
+                if (terminal_status(terminal) == COMPLETE and native
                         and all('ended_unix' in row for row in native)):
                     break
                 if seed.poll() not in (None, 0):
                     raise RuntimeError(f'Seed exited {seed.returncode}; inspect seed.log')
                 time.sleep(1)
             assert seed.wait() == 0
-        assert terminal['id'] == 'hierarchy-complete', terminal
+        assert terminal_status(terminal) == COMPLETE, terminal
         result = verify(out, state, run, helpers)
         save(out / 'evidence.json', {**run, **result, 'ended_unix': time.time(),
              'limitations': ['Native lifetimes overlap; this does not measure simultaneous model computation.',
@@ -746,14 +913,19 @@ an active session. Your own repository checkout is detached; leave it detached.
                              'The target is a local isolated branch; no remote publication is exercised.']})
         print(f'Kimi hierarchy verified: {out / "evidence.json"}', flush=True)
     except BaseException:
-        save(out / 'failure-state.json', helpers.snapshot(db))
+        save(out / 'failure-state.json', snapshot(db, helpers))
         raise
 
 
 if __name__ == '__main__':
     if len(sys.argv) > 1 and sys.argv[1] == 'native':
         sys.exit(native_wrapper(sys.argv[2], Path(sys.argv[3]), sys.argv[4:]))
-    elif len(sys.argv) == 3 and sys.argv[1] in ['start-players', 'start-workers', 'observe-tool']:
-        {'start-players': start_players, 'start-workers': start_players, 'observe-tool': observe_tool}[sys.argv[1]](Path(sys.argv[2]))
+    elif len(sys.argv) == 3 and sys.argv[1] in ['start-players', 'start-workers', 'observe-tool', 'dispatch-lead']:
+        {'start-players': start_players, 'start-workers': start_players, 'observe-tool': observe_tool,
+         'dispatch-lead': dispatch_lead}[sys.argv[1]](Path(sys.argv[2]))
+    elif len(sys.argv) == 4 and sys.argv[1] in ['correct-player', 'land-reviewed']:
+        if sys.argv[3] not in (*PLAYERS, 'root') or (sys.argv[1] == 'correct-player' and sys.argv[3] == 'root'):
+            raise SystemExit('Select deepseek/muse for corrections, or deepseek/muse/root for checked landing.')
+        {'correct-player': correct_player, 'land-reviewed': land_reviewed}[sys.argv[1]](Path(sys.argv[2]), sys.argv[3])
     else:
         main()

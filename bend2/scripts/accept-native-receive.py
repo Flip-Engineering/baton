@@ -11,6 +11,7 @@ optional followup text for both Players. Follow-ups verify Player session reuse.
 """
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -81,13 +82,30 @@ def omp_reports(path):
             latest = None
 
 
+def stage_native_assets(repo, out):
+    packaging = repo / 'bend2/scripts/package-native.py'
+    spec = importlib.util.spec_from_file_location('acceptance_package_native', packaging)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.stage_adapters(out)
+    return {'packaging_source': str(packaging),
+            'packaging_sha256': hashlib.sha256(packaging.read_bytes()).hexdigest(),
+            'files': {str(path.relative_to(out)): hashlib.sha256(path.read_bytes()).hexdigest()
+                      for path in sorted((out / 'libexec/baton2').rglob('*')) if path.is_file()}}
+
+
 def prepare_coordinator(source, repo, out, supplied):
-    binary = out / 'baton2'
+    binary = out / 'bin/baton2'
+    binary.parent.mkdir()
     if supplied is not None:
         shutil.copy2(supplied.resolve(), binary)
         binary.chmod(0o700)
-        return binary, {'mode': 'caller_supplied', 'path': str(supplied.resolve()),
-                        'source_linkage': 'Unverified by this driver.'}
+        provenance = {'mode': 'caller_supplied', 'path': str(supplied.resolve()),
+                      'source_linkage': 'Unverified by this driver.'}
+        provenance['native_assets'] = stage_native_assets(repo, out)
+        compatibility = out / 'baton2'
+        compatibility.symlink_to(Path('bin/baton2'))
+        return compatibility, provenance
     environment = dict(os.environ)
     compiler = environment.get('BEND')
     if compiler:
@@ -110,7 +128,10 @@ def prepare_coordinator(source, repo, out, supplied):
                                   'version': command([compiler, 'version'],
                                                      env={**environment, 'BEND_NO_TELEMETRY': '1'}),
                                   'executable_sha256': hashlib.sha256(Path(compiler).read_bytes()).hexdigest()}
-    return binary, provenance
+    provenance['native_assets'] = stage_native_assets(repo, out)
+    compatibility = out / 'baton2'
+    compatibility.symlink_to(Path('bin/baton2'))
+    return compatibility, provenance
 
 
 def main():
@@ -170,15 +191,20 @@ def main():
 
     def start_message(ident, recipient, task):
         sender = 'operator' if recipient == 'root' else 'root'
-        argv = list(map(str, [binary, db, 'message-file', ident, sender, recipient, 'task', task]))
+        argv = list(map(str, [binary, db, 'agent-native-input']))
+        native_args = ['message', ident, sender, recipient, 'task', task]
+        body = json.dumps(native_args, ensure_ascii=False).encode('utf-8')
         with (out / f'{ident}.command.log').open('w') as log:
             process = subprocess.Popen(argv, stdout=log, stderr=subprocess.STDOUT,
-                                       cwd=repo, start_new_session=True)
+                                       stdin=subprocess.PIPE, cwd=repo, start_new_session=True)
         record = {'message': ident, 'sender': sender, 'recipient': recipient,
                   'dispatch_origin': 'acceptance-driver', 'pid': process.pid,
-                  'started_unix': time.time(), 'command': argv}
+                  'started_unix': time.time(), 'command': argv,
+                  'input_sha256': hashlib.sha256(task.encode('utf-8')).hexdigest()}
         processes.append((process, record))
         save(out / 'processes.json', [row for _, row in processes])
+        process.stdin.write(body)
+        process.stdin.close()
         return process
 
     def finish_all(selected):
@@ -220,22 +246,21 @@ Do not send guidance during report delivery. End your turn after your review.
         players = [(player, marker, custom_tasks[player]['initial'])
                    for player, marker, _ in players]
     has_followups = custom_tasks is not None and 'followup' in custom_tasks['review-native']
-    root_task = out / 'root-bootstrap.md'
-    root_task.write_text(common + f"""
+    root_task = common + f"""
 You are the Codex root for a native receive acceptance run. Two OMP reviewers,
 review-native and review-validation, will independently inspect this source.
-First inspect the pinned checkout identity and receive entry point, then acknowledge
-root-bootstrap using `{coordinator_cli} ack root-bootstrap root RECEIPT`.
+First inspect the pinned checkout identity and receive entry point, then use
+`{coordinator_cli} acknowledge` after handling the complete assigned input.
 Finish this turn. Native receive will resume this same conversation when their
 reports arrive. For each report, inspect its cited source and assess its findings
-before acknowledging that report ID with a receipt describing your assessment.
-Use the pending inbox to identify all report IDs addressed to root. Preserve each
-full body; do not acknowledge missing text. Your review may identify unresolved
+before using `{coordinator_cli} acknowledge`. Use `{coordinator_cli} inbox` to
+read complete pending input. Preserve each full body; handle complete text.
+Include your assessment in your authored response. Your review may identify unresolved
 defects; acceptance of a report records that you read it, not approval of a change.
 The reviewers may receive a second task in their existing native sessions.
 Do not edit code, run tests or delegate further work. On root-followup, check all
 retained reports and receipts, summarize the findings and acknowledge the follow-up.
-""")
+"""
     call('attach', 'operator', 'terminal', '', '')
     call('role', 'operator', 'operator')
     endpoint = [str(binary), str(db), 'receive', 'root', routes['codex']['executable'],
@@ -244,14 +269,12 @@ retained reports and receipts, summarize the findings and acknowledge the follow
     call('role', 'root', 'principal-conductor')
     tasks = {}
 
-    def player_task(player, marker, ident, focus):
-        task = out / f'{ident}.md'
-        task.write_text(common + f'\n{focus}\n\n'
-                        f'Begin your final response with {marker} and the full source revision {base}.\n'
-                        f'Before returning it, acknowledge {ident} as {player} through the\n'
-                        'coordinator command provided by receive. Report findings or explain the\n'
-                        'specific checks that found no issue. Include material limitations.\n')
-        return task
+    def player_task(marker, focus):
+        return (common + f'\n{focus}\n\n'
+                f'Begin your final response with {marker} and the full source revision {base}.\n'
+                'After handling the assigned complete input, use the coordinator acknowledge\n'
+                'action. Report findings or explain the specific checks that found no issue.\n'
+                'Include material limitations.\n')
 
     for player, marker, focus in players:
         workspace = out / player
@@ -261,7 +284,7 @@ retained reports and receipts, summarize the findings and acknowledge the follow
         endpoint = [str(binary), str(db), 'receive', player, routes['omp']['executable'],
                     '', '', '', str(out / f'{player}.jsonl')]
         call('connect', player, '', json.dumps(endpoint))
-        tasks[player] = player_task(player, marker, f'task-{player}', focus)
+        tasks[player] = player_task(marker, focus)
     try:
         print(f'Native receive acceptance: {out}', flush=True)
         finish_all([start_message('root-bootstrap', 'root', root_task)])
@@ -301,16 +324,15 @@ retained reports and receipts, summarize the findings and acknowledge the follow
         check_reports(reviewed, 1)
         if has_followups:
             followups = [start_message(f'followup-{player}', player,
-                         player_task(player, marker, f'followup-{player}', custom_tasks[player]['followup']))
+                         player_task(marker, custom_tasks[player]['followup']))
                          for player, marker, _ in players]
             finish_all(followups)
             resumed = snapshot(db)
             save(out / 'worker-followup-state.json', resumed)
             check_reports(resumed, 2)
-        followup = out / 'root-followup.md'
-        followup.write_text(common + '\nRead all retained reviewer reports and your receipts. '
-                            'Summarize what should be addressed next. Acknowledge root-followup '
-                            'after this review, then finish your turn.\n')
+        followup = (common + '\nRead all retained reviewer reports and their handling state. '
+                    'Summarize what should be addressed next. Use the acknowledge action '
+                    'after this review, then finish your turn.\n')
         finish_all([start_message('root-followup', 'root', followup)])
         final = snapshot(db)
         assert next(row['native'] for row in final['sessions'] if row['id'] == 'root') == root_native

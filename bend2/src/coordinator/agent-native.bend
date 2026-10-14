@@ -222,6 +222,36 @@ def prepare_links(result: Result<&1,&1,U32 & String,List<&2,D.Option>>, +db: Str
         select_identity(db,linked_identity_sql(options),"--links",options,"Knowledge links could not retain their native identities."),
         IO.pure(Result<&1,&1,U32 & String,List<&2,D.Option>>,Done{options}))
 
+# A report selector is bounded by the actor's retained assignment and coordinator.
+def report_evidence_sql(+session: String) -> String:
+  "WITH evidence_context AS (SELECT " ++ C.q(session) ++ " AS actor," ++ C.report_recipient(C.q(session))
+  ++ " AS coordinator," ++ C.task_assignment_sql(C.q(session)) ++ " AS assignment) SELECT CASE WHEN (SELECT assignment FROM evidence_context) IS NULL THEN 'unassigned' ELSE CAST(count(*) AS TEXT) END||char(9)||hex(min('message:'||messages.id))||char(9)||'end' FROM messages,evidence_context WHERE messages.sender=evidence_context.actor AND messages.recipient=evidence_context.coordinator AND messages.kind='report' AND messages.seq>evidence_context.assignment;"
+
+def report_evidence_fields(fields: List<String>, options: List<&2,D.Option>) -> Result<&1,&1,U32 & String,List<&2,D.Option>>:
+  match fields:
+    case +count <> encoded <> "end" <> Nil{}:
+      Bool.pick(Result<&1,&1,U32 & String,List<&2,D.Option>>,String.eq(count,"1"),Done{Con{D.Field{"--evidence",decoded(encoded)},options}},
+        Fail{(2,Bool.pick(String,String.eq(count,"unassigned"),"This actor has no retained current assignment for report evidence. Select an explicit evidence reference.",
+          Bool.pick(String,String.eq(count,"0"),
+            "No authored report to this actor's coordinator exists after its current assignment. Publish the evidence with report --text, or select an explicit evidence reference.",
+            "Several authored reports belong to this actor's current assignment. Select an explicit evidence reference from the retained reports.")))})
+    case other: Fail{(2,"The contextual report evidence query returned an incomplete result.")}
+
+def report_evidence_result(result: Result<&1,&1,U32 & String,String>, options: List<&2,D.Option>) -> Result<&1,&1,U32 & String,List<&2,D.Option>>:
+  match result:
+    case Fail{error}: Fail{error}
+    case Done{value}: report_evidence_fields(Tx.split_tabs(Tx.trim_nl(value)),options)
+
+def prepare_evidence(result: Result<&1,&1,U32 & String,List<&2,D.Option>>, +db: String, +session: String, +verb: String) -> IO(Result<&1,&1,U32 & String,List<&2,D.Option>>):
+  match result:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,List<&2,D.Option>>,Fail{error})
+    case Done{+options}:
+      Bool.pick(IO(Result<&1,&1,U32 & String,List<&2,D.Option>>),Bool.and(String.eq(verb,"knowledge-record"),String.eq(D.value(options,"--evidence",""),"report")),
+        (do IO<Result<&1,&1,U32 & String,List<&2,D.Option>>>:
+          selected : Result<&1,&1,U32 & String,String> <- DB.Sql.read(db,report_evidence_sql(session))
+          IO.pure(Result<&1,&1,U32 & String,List<&2,D.Option>>,report_evidence_result(selected,options))),
+        IO.pure(Result<&1,&1,U32 & String,List<&2,D.Option>>,Done{options}))
+
 def actual(+options: List<&2,D.Option>, saved: List<&2,D.Option>, +name: String) -> String:
   D.value(options,name,D.value(saved,name,""))
 
@@ -518,7 +548,8 @@ def with_defaults(+db: String, +session: String, +exe: String, +nonce: String,
     case Done{saved}: do IO<String>:
       selected : Result<&1,&1,U32 & String,List<&2,D.Option>> <- prepare_identity(db,session,verb,options)
       linked : Result<&1,&1,U32 & String,List<&2,D.Option>> <- prepare_links(selected,db,verb)
-      with_identity(linked,db,session,exe,nonce,index,verb,saved)
+      evidenced : Result<&1,&1,U32 & String,List<&2,D.Option>> <- prepare_evidence(linked,db,session,verb)
+      with_identity(evidenced,db,session,exe,nonce,index,verb,saved)
 
 def loaded(+db: String, +session: String, exe: String, nonce: String,
            index: U32, +verb: String, result: Result<&1,&1,U32 & String,List<&2,D.Option>>) -> IO(String):
