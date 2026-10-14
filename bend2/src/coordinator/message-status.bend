@@ -2,7 +2,7 @@ import Base
 import ../context/request.bend as Req
 
 # A row records one complete owned action output in one admitted attempt.
-# Handling is recorded only after the same native attempt settles successfully.
+# Handling is recorded by the owned acknowledgement or successful settlement.
 def schema() -> String:
   "CREATE TABLE IF NOT EXISTS message_reads(attempt TEXT NOT NULL, message TEXT NOT NULL REFERENCES messages(id), recipient TEXT NOT NULL REFERENCES sessions(id), native TEXT NOT NULL, identity TEXT NOT NULL, handled TEXT, PRIMARY KEY(attempt,identity,message));"
 

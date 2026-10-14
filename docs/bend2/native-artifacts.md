@@ -53,7 +53,7 @@ python3 "$BATON2_RUN/source-retained/bend2/scripts/smoke-native-artifact.py" \
 mv "$BATON2_RUN/source-retained" "$BATON2_SOURCE"
 ~~~
 
-The archive root is `baton2-development-darwin-arm64` by default. `--release-version 1.2.0` selects `baton2-1.2.0-darwin-arm64` and records `1.2.0` in the manifest. Release versions start with a letter or digit and contain letters, digits, dots, underscores, plus signs or hyphens. Release packaging requires the project root LICENSE.
+The archive root is `baton2-development-darwin-arm64` by default. `--release-version 2.0.0` selects `baton2-2.0.0-darwin-arm64` and records `2.0.0` in the manifest. Release versions start with a letter or digit and contain letters, digits, dots, underscores, plus signs or hyphens. Release packaging requires the project root LICENSE.
 
 ## Package contents and distribution terms
 
@@ -67,11 +67,11 @@ Packaging copies the project LICENSE and NOTICE when present, and retains the pi
 
 The Darwin job verifies the generated C checksum, producer source tree and every tracked source file against its package checkout. It compiles that C with Darwin clang, includes TypeScript 5.9.3, and packages the complete producer results and target comparison under `share/baton2/generated-c-provenance`. The extracted-artifact smoke runs on `macos-15` with the owned build path unavailable. Each job retains complete command streams and actual results.
 
-Pushes and pull requests produce development artifacts. To qualify an immutable candidate for Baton 1.2.0, supply its branch and the exact target commit:
+Pushes and pull requests produce development artifacts. To qualify an immutable candidate for Baton 2.0.0, supply its branch and the exact target commit:
 
 ~~~sh
 gh workflow run bend2-native.yml --ref '<candidate-branch>' \
-  -f release_version=1.2.0 -f target_commit='<40-character-target-commit>' \
+  -f release_version=2.0.0 -f target_commit='<40-character-target-commit>' \
   -f linux_runner=homelab
 ~~~
 
@@ -86,10 +86,10 @@ Fast-forward `main` to the accepted candidate and verify the actual remote adver
 ~~~sh
 BATON2_SOURCE='<qualified-commit>'
 BATON2_PACKAGE=/absolute/path/to/qualified/package
-gh release create baton2-v1.2.0 --repo Flip-Engineering/baton \
-  --target "$BATON2_SOURCE" --latest --title 'Baton 1.2.0' \
+gh release create baton2-v2.0.0 --repo Flip-Engineering/baton \
+  --target "$BATON2_SOURCE" --latest --title 'Baton 2.0.0' \
   --notes-file /absolute/path/to/release-notes.md \
-  "$BATON2_PACKAGE/baton2-1.2.0-darwin-arm64-$BATON2_SOURCE.tar.gz" \
+  "$BATON2_PACKAGE/baton2-2.0.0-darwin-arm64-$BATON2_SOURCE.tar.gz" \
   "$BATON2_PACKAGE/manifest.json" "$BATON2_PACKAGE/SHA256SUMS"
 ~~~
 

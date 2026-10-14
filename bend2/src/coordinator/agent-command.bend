@@ -71,6 +71,47 @@ def message_id(+db: String, +session: String, +id: String) -> IO(Result<&1,&1,U3
       IO.pure(Result<&1,&1,U32 & String,String>,generated_id(session,random))),
     IO.pure(Result<&1,&1,U32 & String,String>,Done{id}))
 
+def handling_condition(+session: String, +attempt: String, +native: String, identity: String, current: String) -> String:
+  "r.recipient=" ++ C.q(session) ++ " AND r.attempt=" ++ C.q(attempt) ++ " AND r.native=" ++ C.q(native) ++ " AND r.identity=" ++ C.q(identity)
+  ++ " AND EXISTS(SELECT 1 FROM sessions s WHERE s.id=r.recipient AND s.native=r.native) AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ C.q(session) ++ ") AND " ++ current
+
+def handling_sql(+session: String, +condition: String, +receipt: String) -> String:
+  "BEGIN IMMEDIATE;UPDATE message_reads AS r SET handled=coalesce(handled," ++ C.q(receipt) ++ ") WHERE " ++ condition ++ ";"
+  ++ "UPDATE messages SET receipt=coalesce(receipt," ++ C.q(receipt) ++ ") WHERE recipient=" ++ C.q(session) ++ " AND id IN(SELECT r.message FROM message_reads r WHERE " ++ condition ++ ");"
+  ++ "DELETE FROM wake_claims WHERE session=" ++ C.q(session) ++ " AND EXISTS(SELECT 1 FROM message_reads r WHERE " ++ condition ++ ") AND NOT EXISTS(SELECT 1 FROM messages WHERE recipient=" ++ C.q(session) ++ " AND receipt IS NULL);"
+  ++ "SELECT coalesce(json_group_array(json(item)),'[]') FROM (SELECT json_object('index',row_number() OVER (ORDER BY m.seq)-1,'id',m.id,'status','acknowledged','acknowledgement',json_object('id',m.id,'receipt',m.receipt)) AS item FROM message_reads r JOIN messages m ON m.id=r.message WHERE " ++ condition ++ " ORDER BY m.seq);COMMIT;"
+
+def acknowledge_scope(scope: AgentInput.HandlingScope, +db: String, +session: String, +receipt: String) -> IO(String):
+  match scope:
+    case AgentInput.NoHandling{}:
+      IO.die(String,2,"{\"error\":\"handling-context\",\"condition\":\"No live recipient-owned native read context is available. Select the handled message explicitly for an administrative acknowledgement.\"}")
+    case AgentInput.Handling{+attempt,native,identity,current}: do IO<String>:
+      actual : String = Bool.pick(String,String.is_empty(receipt),"native-turn:" ++ attempt,receipt)
+      saved : String <- IO.try(String,Store.transact_sql(db,handling_sql(session,handling_condition(session,attempt,native,identity,current),actual)))
+      IO.pure(String,Tx.trim_nl(saved))
+
+def selected_receipt(scope: AgentInput.HandlingScope, +db: String, session: String) -> IO(String):
+  match scope:
+    case AgentInput.Handling{attempt,native,identity,current}: IO.pure(String,"native-turn:" ++ attempt)
+    case AgentInput.NoHandling{}: do IO<String>:
+      id : String <- IO.try(String,message_id(db,session,""))
+      IO.pure(String,"handled:" ++ id)
+
+def acknowledge_selected(+db: String, +session: String, +ids: List<String>, +receipt: String) -> IO(String):
+  Bool.pick(IO(String),String.is_empty(receipt),
+    (do IO<String>:
+      scope : AgentInput.HandlingScope <- AgentInput.handling_scope(db,session)
+      generated : String <- selected_receipt(scope,db,session)
+      ids_json(db,session,ids,generated,True{})),
+    ids_json(db,session,ids,receipt,True{}))
+
+def acknowledge(+db: String, +session: String, ids: List<String>, receipt: String) -> IO(String):
+  match ids:
+    case Nil{}: do IO<String>:
+      scope : AgentInput.HandlingScope <- AgentInput.handling_scope(db,session)
+      acknowledge_scope(scope,db,session,receipt)
+    case selected: acknowledge_selected(db,session,selected,receipt)
+
 def raw_body(read: Raw.RawRead) -> Result<&1,&1,U32 & String,String>:
   match read:
     case Raw.RawText{value}: Done{value}
@@ -94,7 +135,7 @@ def body_value(body: A.Body) -> IO(Result<&1,&1,U32 & String,String>):
 
 def captured_body_value(stdin: Native.Stdin, body: A.Body) -> IO(Result<&1,&1,U32 & String,String>):
   match stdin:
-    case Native.Captured{path}: body_value(A.File{path})
+    case Native.Captured{value}: IO.pure(Result<&1,&1,U32 & String,String>,Done{value})
     case Native.CaptureFailed{code,cause}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{(code,"stdin: " ++ cause)})
     case Native.Unused{}: body_value(body)
 
@@ -192,7 +233,7 @@ def confirmation_target(+db: String, +session: String, +recipient: String,
             A.Item{target,id,"completion-confirmed",A.Text{request}})
           IO.pure(String,"[" ++ item ++ "]")))
 
-def completion_confirmed(+db: String, +session: String, +recipient: String,
+def completion_confirmed_exact(+db: String, +session: String, +recipient: String,
                          +request: String, +id: String) -> IO(String):
   do IO<String>:
     row : String <- IO.try(String,DB.Sql.read(db,
@@ -200,6 +241,26 @@ def completion_confirmed(+db: String, +session: String, +recipient: String,
       C.q(session) ++ " THEN 'wrong-coordinator' ELSE hex(CAST(sender AS TEXT)) END FROM messages WHERE id=" ++
       C.q(request) ++ ";"))
     confirmation_target(db,session,recipient,request,id,Tx.trim_nl(row))
+
+def confirmation_requests_sql(+session: String, +recipient: String) -> String:
+  "SELECT hex(" ++ C.task_request_sql("worker.id") ++ ") FROM sessions worker WHERE worker.parent=" ++ C.q(session)
+  ++ " AND (" ++ C.q(recipient) ++ "='' OR worker.id=" ++ C.q(recipient) ++ ") AND " ++ C.task_request_sql("worker.id") ++ " IS NOT NULL"
+  ++ " AND NOT " ++ C.task_confirmed_sql("worker.id") ++ " ORDER BY worker.id;"
+
+def confirmation_inferred(rows: List<String>, +db: String, +session: String, +recipient: String, +id: String) -> IO(String):
+  match rows:
+    case encoded <> Nil{}: do IO<String>:
+      request : String <- AgentInput.field(encoded)
+      completion_confirmed_exact(db,session,recipient,request,id)
+    case Nil{}: confirmation_refused(session,recipient,id,"No current completion request is addressed to this coordinator for the selected Player.")
+    case other: confirmation_refused(session,recipient,id,"Multiple Players have current completion requests. Select the Player with --to.")
+
+def completion_confirmed(+db: String, +session: String, +recipient: String, +request: String, +id: String) -> IO(String):
+  Bool.pick(IO(String),String.is_empty(request),
+    (do IO<String>:
+      rows : String <- IO.try(String,DB.Sql.read(db,confirmation_requests_sql(session,recipient)))
+      confirmation_inferred(Tx.split_lines(rows),db,session,recipient,id)),
+    completion_confirmed_exact(db,session,recipient,request,id))
 
 def execute(+db: String, +session: String, action: A.Action) -> IO(Unit):
   match action:
@@ -212,7 +273,7 @@ def execute(+db: String, +session: String, action: A.Action) -> IO(Unit):
       saved : String <- ids_json(db,session,ids,"",False{})
       AgentInput.output(db,session,saved,True{})
     case A.Acknowledge{ids,receipt}: do IO<Unit>:
-      saved : String <- ids_json(db,session,ids,receipt,True{})
+      saved : String <- acknowledge(db,session,ids,receipt)
       IO.write(saved)
     case A.CompletionRequest{id,body}: do IO<Unit>:
       saved : String <- completion_request(db,session,id,body)
@@ -275,6 +336,12 @@ def implicit_session(+db: String) -> IO(String):
       (do IO<String>:
         native : String <- environment("CODEX_THREAD_ID")
         native_session(db,native)),IO.pure(String,session))
+
+def current_session(+db: String) -> IO(Unit):
+  do IO<Unit>:
+    session : String <- implicit_session(db)
+    +saved : String <- IO.try(String,DB.Sql.read(db,"SELECT json_object('id',id) FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
+    Bool.pick(IO(Unit),String.is_empty(saved),IO.die(Unit,2,"No recorded session matches the current agent context."),IO.write(saved))
 
 def implicit_database(+path: String, registered: Bool) -> IO(String):
   match registered:

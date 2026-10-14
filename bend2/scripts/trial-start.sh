@@ -47,9 +47,19 @@ if bend:
     env['BEND'] = bend
 run(*codex_argv, 'login', 'status', env=env)
 coord = state / 'baton2'
+runtime = state / 'bin/baton2'
+runtime.parent.mkdir(parents=True, exist_ok=True)
 run('sh', source / 'bend2/scripts/build-native.sh',
-    'bend2/src/coordinator/main.bend', str(coord) + '.next', env=env)
-os.replace(str(coord) + '.next', coord)
+    'bend2/src/coordinator/main.bend', str(runtime) + '.next', env=env)
+os.replace(str(runtime) + '.next', runtime)
+helpers = state / 'libexec/baton2'
+helpers.mkdir(parents=True, exist_ok=True)
+for name in ('task-start.mjs', 'project-settings.mjs', 'git-series.mjs', 'native-history.mjs'):
+    shutil.copy2(source / 'bend2/harness' / name, helpers / name)
+shutil.copy2(source / 'bend2/scripts/codex-inbox-wake.mjs', helpers / 'codex-inbox-wake.mjs')
+link = state / 'baton2.next'
+link.symlink_to(pathlib.Path('bin/baton2'))
+os.replace(link, coord)
 wrapper = state / 'codex-subscription.sh'
 wrapper.write_text('#!/bin/sh\nunset OPENAI_API_KEY CODEX_API_KEY\nexec '
                    + shlex.join(codex_argv) + ' "$@"\n')
@@ -72,7 +82,7 @@ if bend:
     settings['BEND'] = bend
 envfile = state / 'environment.sh'
 envfile.write_text(''.join(f'export {key}={q(value)}\n' for key, value in settings.items()))
-# Refresh the standing instructions while preserving operator-edited tasks.
+# Refresh standing instructions and preserve caller-authored files.
 context = ('\n\n## This trial\n\n'
     + f'Source the shell settings from {q(str(envfile))} in each shell call.\n'
     + f'The repository is {repo}; the Bend2 tools are at {source}.\n'
@@ -84,22 +94,6 @@ for name, legacy in [('principal-conductor-instructions.md', 'root-instructions.
         selected = source / 'bend2/trial' / legacy
     (state / name).write_text(selected.read_text() + context)
     (state / legacy).write_text(f'Read {state / name} for the current trial instructions.\n')
-template = state / 'task-template.md'
-template.write_text(
-    f'Read {state / "principal-conductor-instructions.md"} for the current trial workflow before acting.\n'
-    + f'Source {envfile} in each shell call.\n'
-    + 'Run the issue through one OMP Associate Conductor, which recruits and reviews its Players. '
-      'The Principal Conductor reviews and lands the Associate Conductor branch, publishes bend2-trial and reports to operator.\n\n'
-    + '## Assigned issue\n\n'
-    + 'Replace this paragraph with the issue number, requested outcome and constraints. '
-      'An unassigned template requests no issue work.\n\n'
-    + '## Selected checks\n\n'
-    + f'The configured check program is {check}. '
-      'Name the selected test paths for this issue, separated by spaces. '
-      'Include the selected paths in each Player assignment and in the Principal Conductor landing review.\n')
-first = state / 'first-task.md'
-if not first.exists():
-    first.write_text(template.read_text())
 run(coord, db, 'attach', 'operator', 'terminal', '', '')
 run(coord, db, 'role', 'operator', 'operator')
 sessions = json.loads(subprocess.check_output([str(coord), str(db), 'status'],
@@ -112,18 +106,16 @@ root_endpoint = [str(coord), str(db), 'receive', 'root', str(wrapper),
 run(coord, db, 'attach', 'root', 'codex', native_root, json.dumps(root_endpoint))
 run(coord, db, 'role', 'root', 'principal-conductor')
 run(*root_endpoint, '', env=env)
-print(f'Attached trial Principal Conductor. Task file: {first}')
+print('Attached trial Principal Conductor.')
 print(f'Current Principal Conductor instructions: {state / "principal-conductor-instructions.md"}')
 print(f'Current Associate Conductor instructions: {state / "associate-conductor-instructions.md"}')
-print(f'Refreshed issue template: {template}')
-print('Copy the template to an issue task file and fill in the assigned issue before sending it.')
-print('Existing first-task.md is preserved. Begin any older task by reading the current Principal Conductor instructions.')
-print('For the first task, edit first-task.md to name the assigned issue, then seed it:')
-print(shlex.join([str(coord), str(db), 'message-file', 'trial-first-task',
-                  'operator', 'root', 'task', str(first)]))
-print('For a later issue, use a fresh message ID and the filled task file:')
-print(shlex.join([str(coord), str(db), 'message-file', 'issue-N-task',
-                  'operator', 'root', 'task', str(state / 'issue-N-task.md')]))
+print('Dispatch complete task text with the issue, requested outcome, constraints and selected test paths:')
+print(shlex.join([str(coord), str(db), 'dispatch',
+    'Read the current Principal Conductor instructions. Handle ISSUE with OUTCOME, CONSTRAINTS and SELECTED_TEST_PATHS.',
+    '--project', str(repo), '--to', 'root']))
+print('Baton selects the current assignment and preserves the recorded conversation automatically.')
+print('Dispatch requests and setup outcomes are retained in the database. Read current input with task-input-read --current in the selected actor context.')
+print('Create a scratchpad deliberately for working notes. Existing caller-authored files remain preserved.')
 print('Read landing reports:')
 print(shlex.join([str(coord), str(db), 'inbox', 'operator']))
 print(f'Native Principal Conductor responses: {db}.root.log')

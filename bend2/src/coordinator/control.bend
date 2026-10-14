@@ -112,7 +112,7 @@ def receiver_admitted(+session: String, +endpoint: String, +cwd: String) -> Stri
 
 def receiver_update_sql(+session: String, +endpoint: String, +cwd: String, +admitted: String) -> String:
   "UPDATE sessions SET workspace=CASE WHEN " ++ C.q(cwd) ++ "<>'' THEN " ++ C.q(cwd) ++ " ELSE workspace END,endpoint=" ++ C.q(endpoint) ++ " WHERE id=" ++ C.q(session) ++ " AND " ++ admitted ++ ";"
-  ++ "SELECT json_object('error','receiver-refused','session'," ++ C.q(session) ++ ",'condition','A receiver requires a registered Codex, OMP, Muse or Claude Code session with a recorded model, a working directory and valid text argv.','next','Record the model and working directory with start SESSION HARNESS HARNESS_CMD MODEL EFFORT CWD OUTPUT_LOG TASK_ID TASK_FILE when the session records none, or pass the CWD argument when only the directory is missing. Inspect the session and retained inbox and retry. Receiver registration preserves an explicit stop; resume SESSION --lift-stop explicitly lifts it and continues pending work.') WHERE NOT " ++ admitted ++ ";"
+  ++ "SELECT json_object('error','receiver-refused','session'," ++ C.q(session) ++ ",'condition','A receiver requires a registered Codex, OMP, Muse or Claude Code session with a recorded model, a working directory and valid text argv.','next','Record the model with configure and the working directory with receiver, then dispatch complete task text with dispatch TEXT --to SESSION. Pass the CWD argument when only the directory is missing. Inspect the session and retained inbox and retry. Receiver registration preserves an explicit stop; resume SESSION --lift-stop explicitly lifts it and continues pending work.') WHERE NOT " ++ admitted ++ ";"
   ++ "SELECT json_object('session'," ++ C.q(session) ++ ",'endpoint',json(" ++ C.q(endpoint) ++ "),'workspace',(SELECT workspace FROM sessions WHERE id=" ++ C.q(session) ++ ")) WHERE " ++ admitted ++ ";"
 
 def receiver_sql(+session: String, +endpoint: String, +cwd: String) -> String:
@@ -272,7 +272,7 @@ def turn_admitted(allowed: Bool) -> IO(Unit):
 
 def task_path(path: String, stdin: Bool) -> IO(String):
   match stdin:
-    case True{}: IO.die(String,2,"A detached turn requires a task file; save the task and pass its path.")
+    case True{}: IO.die(String,2,"Legacy detached-file input requires an existing UTF-8 path. Use dispatch TEXT or dispatch --stdin to store complete task input in the database.")
     case False{}: IO.try(String,Host.Control.output(path))
 
 def recorded_field(db: String, player: String, column: String) -> IO(String):

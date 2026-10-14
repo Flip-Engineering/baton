@@ -176,14 +176,14 @@ def task_instructions() -> String:
   "Carry out the coordinator-authorized assignment. Keep unfinished work and outstanding qualification in your reports and project state. Direct operator instructions and explicit stops remain effective.\n"
 
 def knowledge_instructions() -> String:
-  "Record authored evidence, finding, hypothesis, experiment, decision and principle items. Link Supports, Contradicts, Produced, Informed, DerivedFrom, TestedBy and Supersedes as appropriate to actual evidence. Keep uncertainty and complete retained evidence. record-linked ID AUTHOR KIND CLAIM EVIDENCE LIMITS LINKS_JSON records the item with an authored array of {id,source,relation,target} links. knowledge-search READER SCOPE SUBJECT QUERY matches all query terms across records and retained evidence messages and returns typed neighbors with detail reads. knowledge-traverse READER SCOPE SUBJECT REFERENCE in|out|both RELATION neighbors|recursive follows scoped holdings and cycles; an empty RELATION includes all links. MCP baton2_knowledge_record accepts links; baton2_knowledge_search and baton2_knowledge_traverse expose the same operations.\n"
+  "Record authored evidence, findings, hypotheses, experiments, decisions and principles with knowledge record --kind KIND --claim TEXT --evidence TEXT --limits TEXT. Baton generates the finding identity. Optional --links JSON records authored source, relation and target references. Use Supports, Contradicts, Produced, Informed, DerivedFrom, TestedBy and Supersedes for the corresponding evidence relationships. knowledge search --query TEXT reads scoped findings and retained evidence; knowledge traverse --reference REFERENCE --direction in|out|both follows their recorded relations. Use help knowledge for the available actions. Preserve uncertainty and complete evidence.\n"
 
 def direct_task_prompt(+db: String, +player: String, +id: String, prompt: String) -> IO(String):
   do IO<String>:
     executable : String <- IO.try(String,Lock.SessionLock.executable())
     parent : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce(parent,'') FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
     header : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(id ++ ":task-input") ++ " AND recipient=" ++ C.q(player) ++ " AND kind='task-assignment') THEN 'Message (task-assignment) from ' || " ++ C.q(player) ++ " || ' [id: ' || " ++ C.q(id ++ ":task-input") ++ " || ']:' ELSE '' END;"))
-    IO.pure(String,task_instructions() ++ knowledge_instructions() ++ "Coordinator executable, database and session argv: " ++ P.argv([executable,db,player]) ++ ". Recorded parent: " ++ Tx.trim_nl(parent) ++ ".\nRead your inbox with inbox SESSION. Use inbox SESSION --index to discover message IDs and delivery-batch-file PATH to read their complete stored bodies in one batch. delivery MESSAGE_ID reads one complete stored message and its receipt.\n" ++ Tx.trim_nl(header) ++ "\n" ++ prompt)
+    IO.pure(String,task_instructions() ++ knowledge_instructions() ++ "Coordinator executable, database and session argv: " ++ P.argv([executable,db,player]) ++ ". Recorded parent: " ++ Tx.trim_nl(parent) ++ ".\nUse baton inbox to read complete owed input. Baton resolves your session and database from the launch context. Use baton acknowledge to record handling of the current native turn's complete owned reads. Use baton completion-request --text SUMMARY when the assignment is ready; your recorded parent resolves and confirms the current request.\n" ++ Tx.trim_nl(header) ++ "\n" ++ prompt)
 
 def generation_log(+log: String, +id: String) -> String:
   Logs.attempt_log(log,id)
@@ -1494,7 +1494,12 @@ def id_owner_sql(id: String, player: String) -> String:
 def turn_present_sql(id: String) -> String:
   "SELECT count(*) FROM messages WHERE id=" ++ C.q(id) ++ ";"
 
-def player_checked(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +session: String, +harness: String, +lock: U32, missing: Bool) -> IO(Unit):
+def supplied_task(task: String, supplied: Maybe<String>) -> IO(String):
+  match supplied:
+    case None{}: IO.try(String,T.Text.read(task))
+    case Some{value}: IO.pure(String,value)
+
+def player_checked(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +session: String, +harness: String, +lock: U32, missing: Bool, supplied: Maybe<String>) -> IO(Unit):
   match missing:
     case True{}: IO.die(Unit,2,"Player is not registered; register it before starting a turn.")
     case False{}:
@@ -1502,7 +1507,7 @@ def player_checked(+db: String, +player: String, +id: String, +cmd: String, +mod
         supported : Unit <- supported_harness(Bool.or(String.eq(harness,"omp\n"),Bool.or(String.eq(harness,"codex\n"),Bool.or(String.eq(harness,"claude-code\n"),String.eq(harness,"muse\n")))))
         foreign : String <- IO.try(String,DB.Sql.query(db,id_owner_sql(id,player)))
         identity : Unit <- matching_turn(String.eq(foreign,"0\n"))
-        +prompt : String <- IO.try(String,T.Text.read(task))
+        +prompt : String <- supplied_task(task,supplied)
         +directory : String <- direct_directory(db,id)
         request : Unit <- direct_request_checked(db,id,player,Tx.trim_nl(harness),cmd,model,effort,cwd,task,prompt,log,session,directory)
         found : String <- IO.try(String,DB.Sql.query(db,turn_present_sql(id)))
@@ -1550,14 +1555,17 @@ def unresolved_direct_execution_guard(+db: String, player: String) -> IO(Unit):
     active : String <- IO.try(String,DB.Sql.query(db,"SELECT count(*) FROM executions WHERE session=" ++ C.q(player) ++ " AND mode='direct' AND phase<>'exited';"))
     Stop.error_result("Session retains an unresolved native attempt; observe its recorded receive or direct recovery before starting another turn.",String.eq(active,"0\n"))
 
-def acquired(+db: String, +player: String, +id: String, cmd: String, model: String, effort: String, cwd: String, task: String, +log: String, session: String, missing: Bool, lock: Maybe<U32>) -> IO(Unit):
+def acquired_source(+db: String, +player: String, +id: String, cmd: String, model: String, effort: String, cwd: String, task: String, +log: String, session: String, missing: Bool, lock: Maybe<U32>, supplied: Maybe<String>) -> IO(Unit):
   match lock:
     case None{}: IO.die(Unit,2,"Session already has an active native turn; send a message to queue input.")
     case Some{handle}: do IO<Unit>:
       retained : Unit <- retained_receive_guard(db,player)
       direct : Unit <- unresolved_direct_execution_guard(db,player)
       harness : String <- IO.try(String,DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
-      player_checked(db,player,id,cmd,model,effort,cwd,task,log,session,harness,handle,missing)
+      player_checked(db,player,id,cmd,model,effort,cwd,task,log,session,harness,handle,missing,supplied)
+
+def acquired(db: String, player: String, id: String, cmd: String, model: String, effort: String, cwd: String, task: String, log: String, session: String, missing: Bool, lock: Maybe<U32>) -> IO(Unit):
+  acquired_source(db,player,id,cmd,model,effort,cwd,task,log,session,missing,lock,None{})
 
 def direct_decoded(decoded: Req.Scalar) -> IO(String):
   match decoded:
@@ -1702,3 +1710,10 @@ def run(+db: String, +player: String, id: String, cmd: String, model: String, ef
     recorded : String <- IO.try(String,Store.commit(db,C.Session{player}))
     Lock.SessionLock.acquire_session(Unit,db,player,
       +database => lock => acquired(database,player,id,cmd,model,effort,cwd,task,log,session,String.is_empty(recorded),lock))
+
+
+def run_text(+db: String, +player: String, id: String, cmd: String, model: String, effort: String, cwd: String, body: String, log: String, session: String) -> IO(Unit):
+  do IO<Unit>:
+    recorded : String <- IO.try(String,Store.commit(db,C.Session{player}))
+    Lock.SessionLock.acquire_session(Unit,db,player,
+      +database => lock => acquired_source(database,player,id,cmd,model,effort,cwd,"-",log,session,String.is_empty(recorded),lock,Some{body}))

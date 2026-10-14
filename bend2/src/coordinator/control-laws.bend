@@ -237,7 +237,7 @@ law receiver_update_changes_only_an_admitted_endpoint:
   for +cwd: String
   for +admitted: String
   {Control.receiver_update_sql(session,endpoint,cwd,admitted) == ("UPDATE sessions SET workspace=CASE WHEN " ++ C.q(cwd) ++ "<>'' THEN " ++ C.q(cwd) ++ " ELSE workspace END,endpoint=" ++ C.q(endpoint) ++ " WHERE id=" ++ C.q(session) ++ " AND " ++ admitted ++ ";"
-++ "SELECT json_object('error','receiver-refused','session'," ++ C.q(session) ++ ",'condition','A receiver requires a registered, active Codex, OMP, Muse or Claude Code session with a recorded model, a working directory and valid text argv.','next','Record the model and working directory with start SESSION HARNESS HARNESS_CMD MODEL EFFORT CWD OUTPUT_LOG TASK_ID TASK_FILE when the session records none, or pass the CWD argument when only the directory is missing. Then inspect the session and retained inbox and retry; recruit a new session after a terminal stop.') WHERE NOT " ++ admitted ++ ";"
+++ "SELECT json_object('error','receiver-refused','session'," ++ C.q(session) ++ ",'condition','A receiver requires a registered, active Codex, OMP, Muse or Claude Code session with a recorded model, a working directory and valid text argv.','next','Record the model with configure and the working directory with receiver, then dispatch complete task text with dispatch TEXT --to SESSION. Pass the CWD argument when only the directory is missing. Then inspect the session and retained inbox and retry; recruit a new session after a terminal stop.') WHERE NOT " ++ admitted ++ ";"
 ++ "SELECT json_object('session'," ++ C.q(session) ++ ",'endpoint',json(" ++ C.q(endpoint) ++ "),'workspace',(SELECT workspace FROM sessions WHERE id=" ++ C.q(session) ++ ")) WHERE " ++ admitted ++ ";") : String}
 
 def receiver_update_changes_only_an_admitted_endpoint(session,endpoint,cwd,admitted):
@@ -419,7 +419,7 @@ def inadmissible_detached_turn_refuses_launch():
 
 law detached_turn_stdin_refuses_before_launch:
   for path: String
-  {Control.task_path(path,True{}) == IO.die(String,2,"A detached turn requires a task file; save the task and pass its path.") : IO(String)}
+  {Control.task_path(path,True{}) == IO.die(String,2,"Legacy detached-file input requires an existing UTF-8 path. Use dispatch TEXT or dispatch --stdin to store complete task input in the database.") : IO(String)}
 
 def detached_turn_stdin_refuses_before_launch(path):
   {==}

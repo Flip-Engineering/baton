@@ -31,6 +31,11 @@ class TrialStartTests(unittest.TestCase):
         scripts = self.source / 'bend2/scripts'
         scripts.mkdir(parents=True)
         shutil.copy2(ROOT / 'bend2/scripts/check-unittest.sh', scripts / 'check-unittest.sh')
+        shutil.copy2(ROOT / 'bend2/scripts/codex-inbox-wake.mjs', scripts / 'codex-inbox-wake.mjs')
+        harness = self.source / 'bend2/harness'
+        harness.mkdir(parents=True)
+        for name in ('task-start.mjs', 'project-settings.mjs', 'git-series.mjs', 'native-history.mjs'):
+            shutil.copy2(ROOT / 'bend2/harness' / name, harness / name)
         self.check = scripts / 'check-unittest.sh'
         shutil.copytree(ROOT / 'bend2/trial', self.source / 'bend2/trial')
         # The suite already built EXE. Reuse it while exercising the launcher's
@@ -139,7 +144,19 @@ class TrialStartTests(unittest.TestCase):
         self.assertEqual(associate, legacy_lead)
         self.assertTrue(principal.endswith('/principal-conductor-instructions.md'))
         self.assertTrue(associate.endswith('/associate-conductor-instructions.md'))
-        self.assertIn('Assigned issue', (self.state / 'first-task.md').read_text())
+        self.assertFalse((self.state / 'first-task.md').exists())
+        self.assertFalse((self.state / 'task-template.md').exists())
+        self.assertTrue((self.state / 'baton2').is_symlink())
+        self.assertEqual((self.state / 'baton2').resolve(), self.state / 'bin/baton2')
+        helpers = self.state / 'libexec/baton2'
+        for name in ('task-start.mjs', 'project-settings.mjs', 'git-series.mjs', 'native-history.mjs'):
+            self.assertEqual((helpers / name).read_bytes(), (ROOT / 'bend2/harness' / name).read_bytes())
+        self.assertEqual((helpers / 'codex-inbox-wake.mjs').read_bytes(),
+                         (ROOT / 'bend2/scripts/codex-inbox-wake.mjs').read_bytes())
+        help_result = self.trial_command('sh', '-c', 'exec "$B2" "$DB" dispatch --help')
+        self.assertEqual(help_result.returncode, 0, help_result.stdout + help_result.stderr)
+        self.assertIn('dispatch', help_result.stdout)
+        self.assertIn('--stdin', help_result.stdout)
         target = subprocess.check_output(['git', '-C', str(self.repo), 'rev-parse',
                                           'bend2-trial'], text=True).strip()
         head = subprocess.check_output(['git', '-C', str(self.repo), 'rev-parse',
@@ -162,9 +179,13 @@ class TrialStartTests(unittest.TestCase):
         first = self.state / 'first-task.md'
         task = b'Operator assignment with retained edits.\n'
         first.write_bytes(task)
+        template = self.state / 'task-template.md'
+        template_bytes = b'Caller-authored reference text.\n'
+        template.write_bytes(template_bytes)
         (self.state / 'root-instructions.md').write_text('old instructions\n')
         self.assert_attached(self.launch(), 'existing-native-session')
         self.assertEqual(first.read_bytes(), task)
+        self.assertEqual(template.read_bytes(), template_bytes)
         self.assertIn('principal-conductor-instructions.md',
                       (self.state / 'root-instructions.md').read_text())
 

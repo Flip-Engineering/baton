@@ -11,6 +11,14 @@ import ../host/control.bend as Host
 import ../git/process.bend as Process
 import ../git/types.bend as G
 import ../git/text.bend as Tx
+import ../json/canonical.bend as J
+
+type HandlingScope is Data:
+  Handling{attempt: String, native: String, identity: String, current: String}
+  NoHandling{}
+
+def handling_invalid(condition: String) -> IO(HandlingScope):
+  IO.die(HandlingScope,2,"{\"error\":\"handling-context\",\"condition\":" ++ J.string_literal(condition) ++ "}")
 
 # Administrative commands leave observations unchanged. The native launch binds
 # its database, actor and exact admitted directory in the inherited environment.
@@ -46,6 +54,63 @@ def context(+db: String, +session: String) -> IO(String):
     selected : String <- environment("BATON_SESSION")
     +selected_db : String <- environment("BATON_DATABASE")
     context_if(db,selected_db,Bool.and(String.eq(selected,session),Bool.not(String.is_empty(selected_db))))
+
+def handling_fields(fields: List<String>, +db: String, +session: String, +directory: String) -> IO(HandlingScope):
+  match fields:
+    case attempt_hex <> native_hex <> Nil{}: do IO<HandlingScope>:
+      +attempt : String <- field(attempt_hex)
+      +native : String <- field(native_hex)
+      +witness : String <- IO.try(String,Custody.Instance.input_witness(db,directory))
+      live : String <- IO.try(String,DB.Sql.read(db,"SELECT json_extract(" ++ C.q(witness) ++ ",'$.live');"))
+      identity : String <- IO.try(String,DB.Sql.read(db,"SELECT hex(json_extract(" ++ C.q(witness) ++ ",'$.identity'));"))
+      Bool.pick(IO(HandlingScope),String.eq(live,"1\n"),
+        (do IO<HandlingScope>:
+          bound : String <- field(identity)
+          IO.pure(HandlingScope,Handling{attempt,native,bound,"EXISTS(SELECT 1 FROM executions e WHERE e.session=" ++ C.q(session) ++ " AND e.id=" ++ C.q(attempt) ++ " AND e.directory=" ++ C.q(directory) ++ " AND e.phase='running')"})),
+        handling_invalid("Handling requires the current live native process birth."))
+    case other: handling_invalid("Handling requires the current active execution, native conversation and effective stop state.")
+
+def codex_handling_witness(+db: String, +session: String, +native: String, +witness: String) -> IO(HandlingScope):
+  do IO<HandlingScope>:
+    +bound : String <- IO.try(String,DB.Sql.read(db,"SELECT CASE WHEN json_valid(" ++ C.q(witness) ++ ") THEN CASE WHEN json_extract(" ++ C.q(witness) ++ ",'$.threadId')=" ++ C.q(native) ++ " AND json_extract(" ++ C.q(witness) ++ ",'$.active')=1 AND json_type(" ++ C.q(witness) ++ ",'$.turnId')='text' AND json_extract(" ++ C.q(witness) ++ ",'$.turnId')<>'' THEN hex(json_extract(" ++ C.q(witness) ++ ",'$.turnId')) ELSE '' END ELSE '' END;"))
+    Bool.pick(IO(HandlingScope),String.is_empty(Tx.trim_nl(bound)),
+      handling_invalid("Handling requires a matching active native turn witness."),
+      (do IO<HandlingScope>:
+        +turn : String <- field(bound)
+        encoded : String <- IO.try(String,DB.Sql.read(db,"SELECT hex(" ++ Status.codex_identity(native,turn) ++ ");"))
+        identity : String <- field(encoded)
+        IO.pure(HandlingScope,Handling{Status.codex_attempt(turn),native,identity,"NOT EXISTS(SELECT 1 FROM messages terminal WHERE terminal.id=" ++ C.q("codex-inbox-turn:" ++ session ++ ":" ++ native ++ ":" ++ turn) ++ " AND terminal.sender=" ++ C.q(session) ++ " AND terminal.kind='report')"})))
+
+def codex_handling_result(db: String, session: String, native: String, result: G.RunRes) -> IO(HandlingScope):
+  match result:
+    case G.RRun{G.SExit{+code},+witness}:
+      Bool.pick(IO(HandlingScope),U32.is_eq(code,0),codex_handling_witness(db,session,native,witness),IO.die(HandlingScope,code,"Native handling witness failed: " ++ witness))
+    case G.RRun{G.SSignal{signal},output}: IO.die(HandlingScope,2,"Native handling witness was interrupted: " ++ output)
+    case G.RSpawn{cause}: IO.die(HandlingScope,2,"Native handling witness could not start: " ++ cause)
+
+def codex_handling_if(+db: String, +session: String, +native: String, owned: Bool) -> IO(HandlingScope):
+  match owned:
+    case False{}: IO.pure(HandlingScope,NoHandling{})
+    case True{}: do IO<HandlingScope>:
+      executable : String <- IO.try(String,Lock.SessionLock.executable())
+      helper : String <- IO.try(String,Host.Control.agent_helper(executable))
+      witness : G.RunRes <- Process.runFull(["node",helper,"--input-witness",native],".")
+      codex_handling_result(db,session,native,witness)
+
+def codex_handling(+db: String, +session: String) -> IO(HandlingScope):
+  do IO<HandlingScope>:
+    +native : String <- environment("CODEX_THREAD_ID")
+    known : String <- Bool.pick(IO(String),String.is_empty(native),IO.pure(String,"0\n"),IO.try(String,DB.Sql.read(db,Status.codex_context_sql(session,native))))
+    codex_handling_if(db,session,native,String.eq(known,"1\n"))
+
+def handling_scope(+db: String, +session: String) -> IO(HandlingScope):
+  do IO<HandlingScope>:
+    +directory : String <- context(db,session)
+    Bool.pick(IO(HandlingScope),String.is_empty(directory),codex_handling(db,session),
+      (do IO<HandlingScope>:
+        ensured : Unit <- Store.ensure_before_begin(db)
+        fields : String <- IO.try(String,DB.Sql.read(db,Status.current_sql(session,directory)))
+        handling_fields(Tx.split_tabs(Tx.trim_nl(fields)),db,session,directory)))
 
 def present(+db: String) -> IO(Bool):
   do IO<Bool>:
@@ -144,12 +209,18 @@ def command_message_output(+db: String, +saved: String, detail: Bool) -> IO(Unit
     observed : String <- IO.try(String,DB.Sql.read(db,"SELECT json_array(json_object('status','found','delivery',json(" ++ message ++ ")));"))
     command_owned_output(db,recipient,saved,observed,True{})
 
+def command_pending_output(+db: String, +saved: String) -> IO(Unit):
+  do IO<Unit>:
+    session : String <- batch_session(db)
+    command_owned_output(db,session,saved,saved,False{})
+
 def command_output_value(+db: String, command: C.Command, +saved: String) -> IO(Unit):
   match command:
     case C.Pretty{inner}: command_output_value(db,inner,saved)
     case C.Delivery{id}: command_message_output(db,saved,False{})
     case C.InputDetail{id}: command_message_output(db,saved,True{})
     case C.Inbox{session}: command_owned_output(db,session,saved,saved,False{})
+    case C.Pending{}: command_pending_output(db,saved)
     case other: IO.try(Unit,Text.Text.control_output(saved))
 
 def command_output(+db: String, command: C.Command, +saved: String) -> IO(Unit):

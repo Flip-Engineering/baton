@@ -4,20 +4,21 @@
 import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { accessSync, constants, existsSync, mkdirSync, readFileSync, realpathSync,
-  statSync, writeFileSync } from 'node:fs';
+  statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { readSettingsFile, routeByName, resolveRouteProfile,
   settingsPathFor } from './project-settings.mjs';
 
-export const help = `usage: baton2 task TEXT [OPTIONS]
-       baton2 task --stdin [OPTIONS]
-       baton2 task --file UTF8_FILE [OPTIONS]
-       baton2 [DATABASE | --project PATH] task [INPUT] [OPTIONS]
+export const help = `usage: baton dispatch TEXT [OPTIONS]
+       baton dispatch --stdin [OPTIONS]
+       baton dispatch --file UTF8_FILE [OPTIONS]
+       baton [DATABASE | --project PATH] dispatch [INPUT] [OPTIONS]
 Options:
   --project PATH       Select the registered project (default: current directory).
-  --session ID         Select an existing conversation in this project.
-  --continue           Add input to that session's open assignment.
+  --to SESSION         Select an existing conversation in this project.
+  --session ID         Alias for --to.
+  --continue           Require an existing open assignment for this input.
   --new                Create a fresh session; an explicit session ID must be unused.
   --route NAME         Read a named route from the project's saved settings.
   --harness NAME       Override the selected route's harness.
@@ -26,15 +27,16 @@ Options:
   --effort EFFORT      Override the selected route's effort.
   --workspace PATH     Select a new session's working directory.
   --output-log PATH    Select its native transcript path.
-  --task-id ID         Retain an explicit task input identity.
+  --dispatch-id ID     Retain an explicit dispatched message identity.
   --text TEXT          Supply literal task text, including text beginning with --.
 New sessions use the named saved route and explicit overrides. An existing
 session supplies its recorded route; --route explicitly selects saved values
 for configuration. Explicit harness, model and effort override those values.
 An existing receiver remains selected until an explicit command changes it.
 New sessions resolve codex, omp, muse or claude through the current PATH.
-Task input, setup results, session identity and inspect commands are returned.
-Use --session ID --continue for an existing open assignment. Stops remain
+Full input and setup results are stored in the database and returned with inspect commands.
+An existing open assignment receives continuation input automatically. Baton
+resolves the sending agent from its recorded launch context. Stops remain
 effective; resume ID --lift-stop is the explicit stop-lifting operation.
 `;
 
@@ -51,10 +53,10 @@ function fail(reason, detail, next, code) {
 export function parseOptions(argv) {
   const options = {};
   const values = new Map([
-    ['--project', 'project'], ['--session', 'session'], ['--route', 'route'],
+    ['--project', 'project'], ['--to', 'session'], ['--session', 'session'], ['--route', 'route'],
     ['--harness', 'harness'], ['--command', 'command'], ['--model', 'model'],
     ['--effort', 'effort'], ['--workspace', 'workspace'], ['--output-log', 'log'],
-    ['--task-id', 'id'], ['--sender', 'sender'], ['--text', 'text'], ['--file', 'file'],
+    ['--dispatch-id', 'id'], ['--task-id', 'id'], ['--sender', 'sender'], ['--text', 'text'], ['--file', 'file'],
   ]);
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -90,7 +92,7 @@ export function parseOptions(argv) {
   }
   if (options.continue && !options.session) {
     fail('taskSessionMissing', 'Continuation requires a selected recorded session.',
-      'Use task --session ID --continue INPUT; project-sessions PATH lists session identities.');
+      'Use dispatch --session ID --continue INPUT; project-sessions PATH lists session identities.');
   }
   for (const [key, value] of Object.entries(options)) {
     if (typeof value === 'string' && (!value.isWellFormed() || value.includes('\0'))) {
@@ -146,13 +148,20 @@ function canonicalFile(path) {
 
 export function startTask(executable, database, argv) {
   const steps = [];
-  let retained = null;
+  const requestId = randomUUID();
+  let options = null;
+  let projectPath, resolution, key, registered;
+  let contextReady = false;
+  let recordAttempted = false;
+  let requestRecorded = false;
+  let actorAttempted = false;
+  let sender = null;
   let result = { status: 'refused', steps };
-  const call = (args, input) => {
+  const call = (args, input, recordStep = true) => {
     const run = spawnSync(executable, args, { encoding: 'utf8', input, maxBuffer: Infinity });
     const step = { argv: [executable, ...args], exitCode: run.status, signal: run.signal,
       stdout: run.stdout ?? '', stderr: run.stderr ?? '', error: run.error?.message ?? null };
-    steps.push(step);
+    if (recordStep) steps.push(step);
     if (run.error || run.signal || run.status !== 0) {
       fail('taskOperationFailed', JSON.stringify(step),
         'Inspect the retained setup result and recorded session before retrying this task.', 1);
@@ -161,10 +170,74 @@ export function startTask(executable, database, argv) {
     catch { fail('taskOperationOutputInvalid', step.stdout, 'Inspect the complete native command output.'); }
   };
   const native = (...args) => call([database, ...args]);
+  const selectContext = () => {
+    projectPath = realpathSync(resolve(options?.project ?? process.cwd()));
+    resolution = projectResolution(projectPath);
+    key = resolution.common ?? projectPath;
+    const pointer = join(key, 'baton2/database');
+    registered = null;
+    try { registered = utf8(readFileSync(pointer), pointer); }
+    catch (error) { if (error.code !== 'ENOENT') throw error; }
+    if (registered === '') fail('taskProjectPointerEmpty', `Project pointer ${pointer} is empty.`,
+      'Register the intended database with baton DATABASE project PATH.');
+    database = canonicalFile(database || registered || join(key, 'baton2/orchestra.db'));
+    if (registered && canonicalFile(registered) !== database) {
+      fail('taskProjectDatabaseConflict', 'The explicit database differs from the registered project database.',
+        'Use the registered project or select the intended project explicitly.');
+    }
+    const id = options?.id ?? `dispatch:${randomUUID()}`;
+    const sessionId = options?.session ?? `session:${randomUUID()}`;
+    result = { ...result, task: id, session: sessionId, requestId, database,
+      project: projectPath, projectKey: key, projectResolution: resolution,
+      inspect: { request: [executable, database, 'task-input-read', '--current'],
+        session: [executable, database, 'session', sessionId],
+        input: [executable, database, 'input', id], turns: [executable, database, 'turns', sessionId] } };
+    contextReady = true;
+  };
+  const resolveActor = () => {
+    actorAttempted = true;
+    if (process.env.BATON_SESSION || process.env.CODEX_THREAD_ID) {
+      result.actor = { id: null, source: 'agent-launch-context' };
+      const actor = native('agent-current-session');
+      if (typeof actor.id !== 'string' || !actor.id.length || !actor.id.isWellFormed() || actor.id.includes('\0')) {
+        fail('taskActorInvalid', JSON.stringify(actor), 'Inspect the recorded agent launch context.');
+      }
+      sender = actor.id;
+      result.actor.id = sender;
+      if (options?.sender !== undefined && options.sender !== sender) {
+        fail('taskSenderContextConflict', 'The supplied sender differs from the recorded agent launch context.',
+          'Dispatch through the recorded actor context.');
+      }
+    } else {
+      sender = options?.sender ?? 'operator';
+      result.actor = { id: sender, source: options?.sender !== undefined ? 'explicit' : 'operator' };
+    }
+  };
+  const recordInput = () => {
+    if (!contextReady) selectContext();
+    if (!actorAttempted) resolveActor();
+    const request = { id: requestId, messageId: result.task, session: result.session,
+      sender, actor: result.actor, input: result.input ?? { source: 'arguments', argv },
+      options, argv, project: { path: projectPath, key, resolution }, database };
+    recordAttempted = true;
+    try {
+      mkdirSync(dirname(database), { recursive: true });
+      const saved = call([database, 'task-input-record', '-'], JSON.stringify(request) + '\n');
+      if (saved.id !== requestId || saved.status !== 'recorded') {
+        fail('taskInputRecordInvalid', JSON.stringify(saved), 'Inspect the database request record.', 1);
+      }
+      requestRecorded = true;
+    } catch (error) {
+      result.inputRecordError = { reason: error.reason ?? error.code ?? 'taskInputRecordFailed',
+        detail: error.message };
+      throw error;
+    }
+  };
   try {
-    const options = parseOptions(argv);
+    options = parseOptions(argv);
     if (options.help) return { status: 'help', help };
     let body = options.text;
+    result.input = { source: options.text !== undefined ? 'text' : options.file ?? 'stdin' };
     if (body === undefined) {
       const bytes = readFileSync(options.file ?? 0);
       try { body = utf8(bytes, options.file ?? 'stdin'); }
@@ -173,35 +246,11 @@ export function startTask(executable, database, argv) {
         throw error;
       }
     }
-    if (!body.length) fail('taskInputEmpty', 'The supplied task is empty.', 'Supply task text with --text, --stdin or --file.');
     result.input = { source: options.text !== undefined ? 'text' : options.file ?? 'stdin', body };
-    const projectPath = realpathSync(resolve(options.project ?? process.cwd()));
-    const resolution = projectResolution(projectPath);
-    const key = resolution.common ?? projectPath;
-    const pointer = join(key, 'baton2/database');
-    let registered = null;
-    try { registered = utf8(readFileSync(pointer), pointer); }
-    catch (error) { if (error.code !== 'ENOENT') throw error; }
-    if (registered === '') fail('taskProjectPointerEmpty', `Project pointer ${pointer} is empty.`,
-      'Register the intended database with baton2 DATABASE project PATH.');
-    database = canonicalFile(database || registered || join(key, 'baton2/orchestra.db'));
-    if (registered && canonicalFile(registered) !== database) {
-      fail('taskProjectDatabaseConflict', 'The explicit database differs from the registered project database.',
-        'Use the registered project or select the intended project explicitly.');
-    }
-    const id = options.id ?? `task:${randomUUID()}`;
-    const sessionId = options.session ?? `session:${randomUUID()}`;
-    const directory = join(`${database}.tasks`, Buffer.from(id).toString('hex'), randomUUID());
-    mkdirSync(directory, { recursive: true, mode: 0o700 });
-    retained = directory;
-    const inputPath = join(directory, 'input.txt');
-    writeFileSync(inputPath, body, { flag: 'wx', mode: 0o600 });
-    writeFileSync(join(directory, 'request.json'), JSON.stringify({ options, id, session: sessionId,
-      project: projectPath, projectKey: key, database, inputPath }, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
-    result = { ...result, task: id, session: sessionId, database, project: projectPath,
-      projectKey: key, projectResolution: resolution, inputPath, resultPath: join(directory, 'result.json'),
-      inspect: { session: [executable, database, 'session', sessionId],
-        input: [executable, database, 'input', id], turns: [executable, database, 'turns', sessionId] } };
+    recordInput();
+    if (!body.length) fail('taskInputEmpty', 'The supplied task is empty.', 'Supply dispatch text with --text, --stdin or --file.');
+    const id = result.task;
+    const sessionId = result.session;
     const sessions = existsSync(database) ? native('project-sessions', projectPath).sessions : [];
     let selected = sessions.find((session) => session.id === sessionId);
     if (options.session && !selected) {
@@ -229,10 +278,9 @@ export function startTask(executable, database, argv) {
       fail('taskAssignmentClosed', `Session ${sessionId} has no open assignment.`,
         'Start a new task in the selected conversation by omitting --continue.');
     }
-    if (selected?.taskCompletion?.open && !options.continue) {
-      fail('taskAssignmentOpen', `Session ${sessionId} has an open assignment.`,
-        'Use --session ID --continue to preserve it, or --new without --session for a fresh task.');
-    }
+    const continuation = Boolean(options.continue || selected?.taskCompletion?.open || operatorAssignment);
+    const kind = continuation ? 'task-continuation' : 'task';
+    result.kind = kind;
     const settingsPath = settingsPathFor(key);
     let saved = null;
     if (options.route !== undefined) {
@@ -273,7 +321,8 @@ export function startTask(executable, database, argv) {
     const command = options.command ?? receiver?.command ?? (!selected ? executableInPath(route.harness) : undefined);
     result.command = { executable: command ?? null,
       source: options.command !== undefined ? 'explicit' : receiver ? 'recorded-receiver' : selected ? 'recorded-endpoint' : 'PATH' };
-    const log = resolve(options.log ?? receiver?.log ?? join(directory, 'native.jsonl'));
+    const log = resolve(options.log ?? receiver?.log ??
+      join(`${database}.transcripts`, Buffer.from(sessionId).toString('hex'), requestId, 'native.jsonl'));
     result.outputLog = selected && !options.command && options.log === undefined ? receiver?.log ?? null : log;
     let profile = null;
     if (named?.profile) {
@@ -282,16 +331,15 @@ export function startTask(executable, database, argv) {
         `Correct the named route or its subscriptions in ${settingsPath}.`);
       profile = { label: named.profile, store };
     }
-    const sender = options.sender ?? 'operator';
     if (selected && options.log !== undefined && options.command === undefined) fail('taskLogRequiresCommand',
       'An output log override requires the receiver command.', 'Pass --command with --output-log.');
     if (selected && route.harness !== selected.harness && !options.command) fail('taskHarnessChangeRequiresCommand',
       'A changed harness requires its native executable.', 'Pass --command for the selected harness.');
     if (!registered) {
-      mkdirSync(dirname(database), { recursive: true });
       native('project', projectPath);
     }
     if (!selected) {
+      mkdirSync(dirname(log), { recursive: true, mode: 0o700 });
       if (sender === 'operator') {
         native('start-setup', sessionId, route.harness, command, route.model, route.effort, workspace, log);
       } else {
@@ -301,16 +349,19 @@ export function startTask(executable, database, argv) {
     } else {
       const changed = ['harness', 'model', 'effort'].some((field) => route[field] !== selected[field]);
       if (changed) {
+        if (command) mkdirSync(dirname(log), { recursive: true, mode: 0o700 });
         native('configure', sessionId, route.harness, route.model, route.effort,
           command ?? '', log, selected.harness, selected.model, selected.effort);
       }
-      if (options.command !== undefined) native('receiver', sessionId, options.command, log);
+      if (options.command !== undefined) {
+        mkdirSync(dirname(log), { recursive: true, mode: 0o700 });
+        native('receiver', sessionId, options.command, log);
+      }
     }
     if (profile) native('profile-bind', sessionId, route.harness, profile.label, profile.store);
-    const messagePath = join(directory, 'message.json');
-    writeFileSync(messagePath, JSON.stringify([{ id, recipient: sessionId,
-      kind: options.continue ? 'task-continuation' : 'task', body }]), { flag: 'wx', mode: 0o600 });
-    const admission = native('message-batch-file', sender, messagePath)[0];
+    const admission = call([database, 'message-batch-file', sender, '-'],
+      JSON.stringify([{ id, recipient: sessionId,
+        kind, body }]) + '\n')[0];
     result.admission = admission;
     result.currentSession = native('session', sessionId);
     if (admission.admission?.status !== 'admitted') fail('taskAdmissionRefused',
@@ -323,14 +374,24 @@ export function startTask(executable, database, argv) {
       error: { reason: error.reason ?? error.code ?? 'taskSetupFailed', detail: error.message,
         next: error.next ?? 'Inspect the retained input and setup result before retrying.' },
       exitCode: error instanceof TaskFailure ? error.code : 1 };
+    if (!recordAttempted) {
+      try { recordInput(); }
+      catch (recordError) {
+        result.inputRecordError = { reason: recordError.reason ?? recordError.code ?? 'taskInputRecordFailed',
+          detail: recordError.message };
+      }
+    }
     if (result.session && existsSync(database)) {
       try { result.currentSession = native('session', result.session); }
       catch (inspectionError) { result.sessionInspectionError = inspectionError.message; }
     }
   }
-  if (retained) {
-    try { writeFileSync(join(retained, 'result.json'), JSON.stringify(result, null, 2) + '\n', { flag: 'wx', mode: 0o600 }); }
-    catch (error) { result.resultWriteError = { code: error.code, detail: error.message }; result.exitCode = 1; }
+  if (requestRecorded) {
+    try { call([database, 'task-input-result', requestId, '-'], JSON.stringify(result) + '\n', false); }
+    catch (error) {
+      result.resultRecordError = { reason: error.reason ?? error.code ?? 'taskInputResultFailed', detail: error.message };
+      result.exitCode = 1;
+    }
   }
   return result;
 }

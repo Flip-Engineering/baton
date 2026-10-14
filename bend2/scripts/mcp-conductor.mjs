@@ -13,7 +13,7 @@
 // coordinator executable for mutations. No npm dependencies; node stdlib only.
 
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { createServer, createConnection } from 'node:net';
 import { fileURLToPath } from 'node:url';
@@ -73,6 +73,8 @@ const commandSurface = coordinatorSurface();
 const batchMessaging = ['outbox', 'delivery-batch', 'message-batch'].every((name) => commandSurface.includes(name));
 const inputDetail = commandSurface.includes('input MESSAGE_ID');
 const contextualActions = /baton2? as SESSION ACTION/.test(commandSurface);
+const dispatchInput = commandSurface.includes('dispatch --stdin');
+const taskInput = dispatchInput || commandSurface.includes('task --stdin');
 const batchMessageTools = new Set([
   'baton2_delivery_batch',
   'baton2_outbox',
@@ -81,13 +83,14 @@ const batchMessageTools = new Set([
 const unavailableTools = new Set([
   ...(!batchMessaging ? batchMessageTools : []),
   ...(!inputDetail ? ['baton2_input'] : []),
-  ...(!commandSurface.includes('task --stdin') ? ['baton2_task'] : []),
+  ...(!dispatchInput ? ['baton2_dispatch'] : []),
+  ...(!taskInput ? ['baton2_task'] : []),
   ...(!contextualActions ? ['baton2_action'] : []),
 ]);
 
 function messageInstructions() {
   if (contextualActions) {
-    return 'Use baton2_action for the contextual native actions: inbox, read, send, completion-request, completion-confirmed, guide, acknowledge and domain help. The attached session supplies actor identity. Pass action and its named argument tokens; use action:help with the domain name for usage. Complete text bodies are retained as UTF-8 files before native admission. Multi-message reads, independent sends and explicit acknowledgements return each item outcome. Successful recipient turns record handling of complete inputs; failed turns retain unfinished handling. Task completion and coordinator decisions remain separate recorded actions.';
+    return `Use ${dispatchInput ? 'baton2_dispatch' : 'baton2_task'} for complete task text or a UTF-8 file, with to or session selecting an existing conversation. Baton preserves its current assignment automatically. Dispatch input and setup outcomes are stored in the database. Use baton2_action for the contextual native actions: inbox, read, send, completion-request, completion-confirmed, guide, acknowledge and domain help. The attached session supplies actor identity. Pass action and its named argument tokens; use action:help with the domain name for usage. Complete action argument strings travel directly through JSON standard input to native admission. Multi-message reads, independent sends and explicit acknowledgements return each item outcome. Successful recipient turns record handling of complete inputs; failed turns retain unfinished handling. Baton generates mutation identities and selects current owned input, receipts and completion requests. Use acknowledge without identifiers after handling input, and completion-confirmed with an optional recipient. Task completion and coordinator decisions remain separate recorded actions.`;
   }
   const messaging = batchMessaging
     ? 'Use baton2_inbox or baton2_pending to see pending messages, and baton2_outbox to inspect authored messages and receipts. Their optional index:true argument returns metadata; baton2_delivery and baton2_delivery_batch read selected complete messages. Use baton2_ack to acknowledge your own fully read and handled input; retain unfinished work in your reports and project state. Use baton2_guide or baton2_message_batch to direct recipients. Each batch item keeps its own admission, wake, retained message and receipt facts.'
@@ -150,6 +153,7 @@ function coordInput(input, ...args) {
   try {
     return execFileSync(coordinatorExe, [dbPath, ...args], {
       encoding: 'utf8', input, maxBuffer: Infinity,
+      env: { ...process.env, BATON_SESSION: sessionId, BATON_DATABASE: dbPath },
     }).trim();
   } catch (error) {
     const status = Number.isInteger(error.status) ? `\nexit code: ${error.status}` : '';
@@ -169,98 +173,45 @@ const messageIndexProperties = {
 };
 
 function contextualAction(action, values) {
+  if (!contextualActions) throw new Error('The recorded executable must advertise contextual native actions to infer operation identity or handling state.');
   if (typeof action !== 'string' || !Array.isArray(values) || values.some(value => typeof value !== 'string')) {
     throw new Error('A contextual action requires its name and an array of argument strings.');
   }
   if ([action, ...values].some(value => !value.isWellFormed() || value.includes('\0'))) {
     throw new Error('Contextual action arguments must contain complete UTF-8 text without NUL bytes.');
   }
-  const args = [];
-  let directory;
-  let operation = action;
-  let subcommand = ['knowledge', 'project', 'context'].includes(action) ? action : null;
-  let nextOperation = false;
-  let recipient = action === 'send';
-  const switches = new Set(['--and', '--lift-stop', '--index', '--recursive', '--pretty', '--help']);
-  const bodyFields = new Map([
-    ['--text', '--file'], ['--claim', '--claim-file'], ['--evidence', '--evidence-file'],
-    ['--limits', '--limits-file'], ['--links', '--links-file'],
-    ['--query', '--query-file'], ['--reason', '--reason-file'],
-  ]);
-  const hasBody = (name) => name === '--text'
-    ? ['send', 'guide', 'completion-request', 'report', 'ask', 'native-reply', 'dispatch'].includes(operation)
-    : operation === 'knowledge-record' ? ['--claim', '--evidence', '--limits', '--links'].includes(name)
-      : operation === 'knowledge-search' ? name === '--query'
-        : operation === 'stop' && name === '--reason';
-  for (let i = 0; i < values.length; i++) {
-    const name = values[i];
-    if (recipient) {
-      args.push(name); recipient = false;
-      continue;
-    }
-    if (nextOperation) {
-      operation = name;
-      subcommand = ['knowledge', 'project', 'context'].includes(name) ? name : null;
-      nextOperation = false;
-      args.push(name);
-      continue;
-    }
-    if (subcommand) {
-      if (!name.startsWith('--') && name !== 'and') {
-        operation = subcommand + '-' + name;
-        subcommand = null;
-        args.push(name);
-        continue;
-      }
-      operation = subcommand + '-read';
-      subcommand = null;
-    }
-    if (name === 'and' || name === '--and') {
-      args.push(name);
-      if (action === 'send') recipient = true;
-      else nextOperation = true;
-      continue;
-    }
-    if (!name.startsWith('--') || switches.has(name) || i + 1 >= values.length) {
-      args.push(name);
-      continue;
-    }
-    const value = values[++i];
-    if (bodyFields.has(name) && hasBody(name)) {
-      if (!directory) {
-        mkdirSync(dbPath + '.actions', { recursive: true, mode: 0o700 });
-        directory = mkdtempSync(resolve(dbPath + '.actions', 'input-'));
-      }
-      const path = resolve(directory, 'body-' + i + '.txt');
-      writeFileSync(path, value, { flag: 'wx', mode: 0o600 });
-      args.push(bodyFields.get(name), path);
-    } else args.push(name, value);
-  }
-  if (directory) writeFileSync(resolve(directory, 'request.json'), JSON.stringify({
-    action, arguments: values, nativeArguments: args, session: sessionId, database: dbPath,
-  }) + '\n', { flag: 'wx', mode: 0o600 });
-  return coord('as', sessionId, action, ...args);
+  return coordInput(JSON.stringify([action, ...values]), 'agent-contextual-input', sessionId);
 }
+
+const dispatchInputSchema = { type: 'object', properties: {
+  text: { type: 'string' }, file: { type: 'string' }, project: { type: 'string' },
+  to: { type: 'string', description: 'Select an existing conversation' },
+  session: { type: 'string', description: 'Compatibility alias for to' },
+  continue: { type: 'boolean' }, new: { type: 'boolean' },
+  route: { type: 'string' }, harness: { type: 'string' }, command: { type: 'string' },
+  model: { type: 'string' }, effort: { type: 'string' }, workspace: { type: 'string' },
+  outputLog: { type: 'string' }, dispatchId: { type: 'string' },
+  taskId: { type: 'string', description: 'Compatibility alias for dispatchId' },
+}, oneOf: [{ required: ['text'] }, { required: ['file'] }], additionalProperties: false };
 
 // Tool definitions exposed to the attached Conductor.
 const TOOLS = [
   {
     name: 'baton2_action',
-    description: 'Run a contextual native action as the attached session. Use inbox, read, send, completion-request, completion-confirmed, guide, acknowledge or help with a command domain. Named arguments and independent batch clauses use the same native grammar as baton. Complete text bodies are retained through UTF-8 files. Each item retains its outcome and actual failure cause.',
+    description: 'Run a contextual native action as the attached session. Use inbox, read, send, completion-request, completion-confirmed, guide, acknowledge or help with a command domain. Named arguments and independent batch clauses use the same native grammar as baton. Complete argument strings travel through JSON standard input. Each item retains its outcome and actual failure cause.',
     inputSchema: { type: 'object', properties: {
       action: { type: 'string' }, arguments: { type: 'array', items: { type: 'string' } },
     }, required: ['action'], additionalProperties: false },
   },
   {
+    name: 'baton2_dispatch',
+    description: 'Dispatch complete task text or a UTF-8 file through the installed product operation. The attached session supplies the sender. Select to for an existing assignment; Baton chooses continuation automatically; new sessions use a named saved route or explicit provider settings. Complete requests, setup outcomes and failure causes are retained in the database.',
+    inputSchema: dispatchInputSchema,
+  },
+  {
     name: 'baton2_task',
-    description: 'Start task text or a UTF-8 file through the installed task operation. The attached session is the sender. New sessions use an explicit named saved route or explicit provider settings; select session and continue:true to preserve an open assignment. Complete input, setup errors and inspect identities are retained.',
-    inputSchema: { type: 'object', properties: {
-      text: { type: 'string' }, file: { type: 'string' }, project: { type: 'string' },
-      session: { type: 'string' }, continue: { type: 'boolean' }, new: { type: 'boolean' },
-      route: { type: 'string' }, harness: { type: 'string' }, command: { type: 'string' },
-      model: { type: 'string' }, effort: { type: 'string' }, workspace: { type: 'string' },
-      outputLog: { type: 'string' }, taskId: { type: 'string' },
-    }, oneOf: [{ required: ['text'] }, { required: ['file'] }], additionalProperties: false },
+    description: 'Compatibility alias for baton2_dispatch with the same complete input, route, continuation and retained database outcomes.',
+    inputSchema: dispatchInputSchema,
   },
   {
     name: 'baton2_project',
@@ -298,16 +249,16 @@ const TOOLS = [
   },
   {
     name: 'baton2_context_query_file',
-    description: 'Evaluate a native context query from a JSON request file as the attached session and retain its result in this database. Use a unique query ID and a file accessible to the coordinator.',
+    description: 'Evaluate a native context query from a JSON request file as the attached session and retain its result in this database. Baton generates the query identity when omitted; the file must be accessible to the coordinator.',
     inputSchema: { type: 'object', properties: {
       query: { type: 'string' }, path: { type: 'string', description: 'Path to the query request JSON file' },
-    }, required: ['query', 'path'], additionalProperties: false },
+    }, required: ['path'], additionalProperties: false },
   },
   {
     name: 'baton2_context_result',
-    description: 'Read the retained context result envelope for a query ID in this shared database.',
+    description: 'Read the latest context query owned by the attached session, or an explicitly selected query ID.',
     inputSchema: { type: 'object', properties: { query: { type: 'string' } },
-      required: ['query'], additionalProperties: false },
+      additionalProperties: false },
   },
   {
     name: 'baton2_knowledge',
@@ -364,9 +315,9 @@ const TOOLS = [
         type: 'object', properties: {
           id: { type: 'string' }, source: { type: 'string' },
           relation: { type: 'string' }, target: { type: 'string' },
-        }, required: ['id', 'source', 'relation', 'target'], additionalProperties: false,
+        }, required: ['source', 'relation', 'target'], additionalProperties: false,
       } },
-    }, required: ['id', 'claim', 'evidence', 'limits'], additionalProperties: false },
+    }, required: ['claim', 'evidence', 'limits'], additionalProperties: false },
   },
   {
     name: 'baton2_knowledge_relate',
@@ -376,7 +327,7 @@ const TOOLS = [
       source: { type: 'string', description: 'Reference such as finding:ID, message:ID or an external source' },
       relation: { type: 'string', description: 'Free-form relationship name, such as Supports, DerivedFrom or Supersedes' },
       target: { type: 'string', description: 'The related reference' },
-    }, required: ['id', 'source', 'relation', 'target'], additionalProperties: false },
+    }, required: ['source', 'relation', 'target'], additionalProperties: false },
   },
   {
     name: 'baton2_knowledge_promote',
@@ -386,7 +337,7 @@ const TOOLS = [
       destination: { type: 'string' }, finding: { type: 'string', description: 'Finding ID' },
       sourceKind: { type: 'string', enum: ['session', 'group'], description: 'Source endpoint kind (default: session)' },
       destinationKind: { type: 'string', enum: ['session', 'group'], description: 'Destination endpoint kind (default: session)' },
-    }, required: ['id', 'source', 'destination', 'finding'], additionalProperties: false },
+    }, required: ['destination', 'finding'], additionalProperties: false },
   },
   {
     name: 'baton2_player',
@@ -452,7 +403,7 @@ const TOOLS = [
       recipient: { type: 'string', description: 'Recipient session ID' },
       kind: { type: 'string', description: 'Message kind' },
       path: { type: 'string', description: 'Message body file path' },
-    }, required: ['id', 'recipient', 'kind', 'path'], additionalProperties: false },
+    }, required: ['recipient', 'kind', 'path'], additionalProperties: false },
   },
   {
     name: 'baton2_dispatch_turn',
@@ -463,7 +414,7 @@ const TOOLS = [
       command: { type: 'string', description: 'Native harness executable path or command name' },
       log: { type: 'string', description: 'Native output log path' },
       task: { type: 'string', description: 'Task file path' },
-    }, required: ['player', 'id', 'command', 'log', 'task'], additionalProperties: false },
+    }, required: ['player', 'command', 'log', 'task'], additionalProperties: false },
   },
   {
     name: 'baton2_role',
@@ -567,22 +518,23 @@ const TOOLS = [
         id: { type: 'string', description: 'Message ID to acknowledge' },
         receipt: { type: 'string', description: 'Input disposition' },
       },
-      required: ['id', 'receipt'],
       additionalProperties: false,
     },
   },
   {
     name: 'baton2_guide',
-    description: 'Send an authored message to a player through the coordinator. The default kind is guidance; completion-request asks the immediate parent to confirm the task and completion-confirmed carries that request ID.',
+    description: 'Send an authored message to a player through the coordinator. The default kind is guidance. Baton generates the message identity. Completion-confirmed selects the current request for that recipient when its body and request are omitted.',
     inputSchema: {
       type: 'object',
       properties: {
-        id: { type: 'string', description: 'Message ID (unique)' },
+        id: { type: 'string', description: 'Optional explicit message ID; Baton generates it when omitted' },
         player: { type: 'string', description: 'Player session ID' },
-        body: { type: 'string', description: 'Complete message body' },
+        body: { type: 'string', description: 'Complete message body; current completion confirmation can omit it' },
+        request: { type: 'string', description: 'Optional explicit completion request selector' },
         kind: { type: 'string', description: 'Authored message kind; default guidance' },
       },
-      required: ['id', 'player', 'body'],
+      required: ['player'],
+      anyOf: [{ required: ['body'] }, { properties: { kind: { const: 'completion-confirmed' } }, required: ['kind'] }],
       additionalProperties: false,
     },
   },
@@ -595,12 +547,14 @@ const TOOLS = [
         messages: { type: 'array', items: {
           type: 'object',
           properties: {
-            id: { type: 'string', description: 'Message ID (unique)' },
+            id: { type: 'string', description: 'Optional explicit message ID; Baton generates it when omitted' },
             player: { type: 'string', description: 'Recipient Player session ID' },
-            body: { type: 'string', description: 'Complete message body' },
+            body: { type: 'string', description: 'Complete body; current completion confirmation may omit it' },
+            request: { type: 'string', description: 'Optional explicit completion request selector' },
             kind: { type: 'string', description: 'Authored message kind; default guidance' },
           },
-          required: ['id', 'player', 'body'],
+          required: ['player'],
+          anyOf: [{ required: ['body'] }, { properties: { kind: { const: 'completion-confirmed' } }, required: ['kind'] }],
           additionalProperties: false,
         } },
       },
@@ -796,8 +750,8 @@ function handleMessage(msg) {
         tools: {},
         experimental: { 'claude/channel': {} },
       },
-      serverInfo: { name: 'baton-conductor', version: '0.1.0' },
-      instructions: `Baton2 ${hasParent(selectedSession()) ? 'Associate' : 'Principal'} Conductor attachment for session ${sessionId}. Use baton2_join for shared-checkout work and baton2_recruit when a separate worktree is needed. Name the target branch, remote and integration Conductor in the assignment. Commit completed changes. The integration Conductor lands or reconciles contributions and pushes the integrated target with baton2_push. After publication and turn completion, relocate the same Player with baton2_receiver to the shared checkout and retire clean unused merged task worktrees and branches through ordinary Git. Preserve active or unfinished work, explicit stops and receiver/toolchain dependencies. Use baton2_receiver to register a Player's Codex, OMP, Muse or Claude Code receive endpoint, then baton2_dispatch_file to send task or guidance files. Use baton2_dispatch_turn to launch a registered Player's task file with its recorded route. Use baton2_configure to save future effort on the same harness and model during active or stopped sessions, keeping the receiver, current turn and stop. Change harness or model after the current attempt ends and any stop is lifted. Configuration keeps the Player's identity, work, native conversation and pending input. Use baton2_context_engines to discover installed context modules; scope:"session" includes the attached project settings. Use baton2_context_install to acquire a module from a supplied built module directory or extracted distribution. Use baton2_context_query_file for request files and baton2_context_result for retained query results. Use baton2_knowledge_search to find a topic in selected holdings and baton2_knowledge_traverse to follow authored links and citations. Follow returned detailRead commands for complete findings and deliveryRead commands for cited messages. Finding references outside selected holdings carry an explicit all-scope detail read; reading preserves their holdings. Use baton2_knowledge for exact findings or metadata and baton2_knowledge_relations for directed links, including links between retained messages or external references. ${messageInstructions()} The optional kind supports authored completion-request and completion-confirmed messages. Workers ask their immediate parent to confirm task completion and continue useful work until its reply. The parent sends completion-confirmed with the request ID as its body when the task is complete, or sends guidance for further work. Native turn settlement and inbox receipts do not finish the task. The coordinator CLI ask and ask-file send questions as your recorded session to its parent; a parentless Principal Conductor reaches the registered operator. Use baton2_player and baton2_players to inspect Players and both Conductor tiers. Use baton2_role, baton2_ensemble, baton2_ensemble_member, baton2_section and baton2_section_member to configure responsibilities and membership. Use baton2_orchestra to inspect the system. Use baton2_turns for turn history and baton2_land or baton2_land_checked to land a Player's changes. Supply commit to select a reviewed ancestor while later work remains on the recorded branch.`,
+      serverInfo: { name: 'baton-conductor', version: '2.0.0' },
+      instructions: `Baton ${hasParent(selectedSession()) ? 'Associate' : 'Principal'} Conductor attachment for session ${sessionId}. Use baton2_join for shared-checkout work and baton2_recruit when a separate worktree is needed. Name the target branch, remote and integration Conductor in the assignment. Commit completed changes. The integration Conductor lands or reconciles contributions and pushes the integrated target with baton2_push. After publication and turn completion, relocate the same Player with baton2_receiver to the shared checkout and retire clean unused merged task worktrees and branches through ordinary Git. Preserve active or unfinished work, explicit stops and receiver/toolchain dependencies. Use the advertised task dispatch tool for complete task text or an existing UTF-8 file. Baton retains task input and setup outcomes in its database, resolves the recorded route and preserves an existing assignment. Scratchpads contain deliberately authored working notes. Baton does not generate task-source files. Use baton2_receiver to configure an ordinary receive endpoint where needed. Use baton2_configure to save future effort on the same harness and model during active or stopped sessions, keeping the receiver, current turn and stop. Change harness or model after the current attempt ends and any stop is lifted. Configuration keeps the Player's identity, work, native conversation and pending input. Use baton2_context_engines to discover installed context modules; scope:"session" includes the attached project settings. Use baton2_context_install to acquire a module from a supplied built module directory or extracted distribution. Use baton2_context_query_file for request files and baton2_context_result for retained query results. Use baton2_knowledge_search to find a topic in selected holdings and baton2_knowledge_traverse to follow authored links and citations. Follow returned detailRead commands for complete findings and deliveryRead commands for cited messages. Finding references outside selected holdings carry an explicit all-scope detail read; reading preserves their holdings. Use baton2_knowledge for exact findings or metadata and baton2_knowledge_relations for directed links, including links between retained messages or external references. ${messageInstructions()} The optional kind supports authored completion-request and completion-confirmed messages. Workers ask their immediate parent to confirm task completion and continue useful work until its reply. The parent uses completion-confirmed with the recipient when the task is complete; Baton selects that recipient's current request. Guidance carries further work. Baton generates mutation IDs and records recipient handling from actual native evidence. Agents can inspect current state without copying control IDs or receipts. Native turn settlement and inbox receipts do not finish the task. The coordinator CLI ask and ask-file send questions as your recorded session to its parent; a parentless Principal Conductor reaches the registered operator. Use baton2_player and baton2_players to inspect Players and both Conductor tiers. Use baton2_role, baton2_ensemble, baton2_ensemble_member, baton2_section and baton2_section_member to configure responsibilities and membership. Use baton2_orchestra to inspect the system. Use baton2_turns for turn history and baton2_land or baton2_land_checked to land a Player's changes. Supply commit to select a reviewed ancestor while later work remains on the recorded branch.`,
     });
     return;
   }
@@ -860,7 +814,8 @@ function messageReadOptions(args, pending = false) {
 }
 
 function handleToolCall(msg) {
-  const { name, arguments: args } = msg.params;
+  const { name } = msg.params;
+  const args = msg.params.arguments ?? {};
   const player = args?.player ?? args?.worker;
   if (unavailableTools.has(name)) {
     sendError(msg.id, -32601, `The recorded coordinator executable does not advertise ${name}. Use baton2_delivery or baton2_guide until that executable is updated.`);
@@ -872,15 +827,16 @@ function handleToolCall(msg) {
       case 'baton2_action':
         result = contextualAction(args.action, args.arguments ?? []);
         break;
+      case 'baton2_dispatch':
       case 'baton2_task': {
         const flags = ['--sender', sessionId];
         const project = args.project ?? selectedSession()?.workspace;
         if (!project) throw new Error('Task project context is absent. Pass project with the recorded checkout path.');
         flags.push('--project', project);
-        for (const [field, flag] of [['session', '--session'], ['route', '--route'],
+        for (const [field, flag] of [['to', '--to'], ['session', '--session'], ['route', '--route'],
           ['harness', '--harness'], ['command', '--command'], ['model', '--model'],
           ['effort', '--effort'], ['workspace', '--workspace'], ['outputLog', '--output-log'],
-          ['taskId', '--task-id']]) {
+          ['dispatchId', '--dispatch-id'], ['taskId', '--task-id']]) {
           if (args[field] !== undefined) flags.push(flag, args[field]);
         }
         if (args.continue === true) flags.push('--continue');
@@ -888,8 +844,9 @@ function handleToolCall(msg) {
         if ((args.text === undefined) === (args.file === undefined)) {
           throw new Error('Task input requires exactly one text or UTF-8 file value.');
         }
-        result = args.text !== undefined ? coordInput(args.text, 'task', '--stdin', ...flags)
-          : coord('task', '--file', args.file, ...flags);
+        const verb = dispatchInput ? 'dispatch' : 'task';
+        result = args.text !== undefined ? coordInput(args.text, verb, '--stdin', ...flags)
+          : coord(verb, '--file', args.file, ...flags);
         break;
       }
       case 'baton2_project':
@@ -908,10 +865,12 @@ function handleToolCall(msg) {
         result = coord('context-install', args.module, args.path);
         break;
       case 'baton2_context_query_file':
-        result = coord('context-query-file', sessionId, args.query, args.path);
+        result = args.query !== undefined ? coord('context-query-file', sessionId, args.query, args.path)
+          : contextualAction('context', ['query', '--file', args.path]);
         break;
       case 'baton2_context_result':
-        result = coord('context-result', args.query);
+        result = args.query !== undefined ? coord('context-result', args.query)
+          : contextualAction('context', ['result']);
         break;
       case 'baton2_knowledge': {
         const options = args;
@@ -949,6 +908,13 @@ function handleToolCall(msg) {
         break;
       }
       case 'baton2_knowledge_record':
+        if (args.id === undefined || args.links?.some(link => link.id === undefined)) {
+          result = contextualAction('knowledge', ['record', '--kind', args.kind ?? 'finding',
+            '--claim', args.claim, '--evidence', args.evidence, '--limits', args.limits,
+            ...(args.id === undefined ? [] : ['--id', args.id]),
+            ...(args.links === undefined ? [] : ['--links', JSON.stringify(args.links)])]);
+          break;
+        }
         result = args.links !== undefined
           ? coord('record-linked', args.id, sessionId, args.kind ?? 'finding',
               args.claim, args.evidence, args.limits, JSON.stringify(args.links))
@@ -957,9 +923,18 @@ function handleToolCall(msg) {
           : coord('record-typed', args.id, sessionId, args.kind, args.claim, args.evidence, args.limits);
         break;
       case 'baton2_knowledge_relate':
-        result = coord('relate', args.id, sessionId, args.source, args.relation, args.target);
+        result = args.id !== undefined ? coord('relate', args.id, sessionId, args.source, args.relation, args.target)
+          : contextualAction('knowledge', ['relate', '--source', args.source, '--relation', args.relation, '--target', args.target]);
         break;
       case 'baton2_knowledge_promote':
+        if (args.id === undefined || args.source === undefined) {
+          result = contextualAction('knowledge', ['promote', '--to', args.destination, '--finding', args.finding,
+            ...(args.id === undefined ? [] : ['--id', args.id]),
+            ...(args.source === undefined ? [] : ['--from', args.source]),
+            ...(args.sourceKind === undefined ? [] : ['--source-kind', args.sourceKind]),
+            ...(args.destinationKind === undefined ? [] : ['--destination-kind', args.destinationKind])]);
+          break;
+        }
         result = args.sourceKind === undefined && args.destinationKind === undefined
           ? coord('promote', args.id, sessionId, args.source, args.destination, args.finding)
           : coord('promote-scoped', args.id, sessionId, args.sourceKind ?? 'session', args.source,
@@ -985,11 +960,16 @@ function handleToolCall(msg) {
           args.command, args.log, args.expectedHarness, args.expectedModel, args.expectedEffort);
         break;
       case 'baton2_dispatch_file':
-        result = coord('dispatch-file', args.id, args.sender ?? sessionId,
-          args.recipient, args.kind, args.path);
+        if (args.id === undefined && args.sender !== undefined && args.sender !== sessionId) {
+          throw new Error('Automatic dispatch identity uses the attached actor; sender must match that actor.');
+        }
+        result = args.id !== undefined ? coord('dispatch-file', args.id, args.sender ?? sessionId,
+          args.recipient, args.kind, args.path)
+          : contextualAction('dispatch', ['--to', args.recipient, '--kind', args.kind, '--file', args.path]);
         break;
       case 'baton2_dispatch_turn':
-        result = coord('dispatch-turn', player, args.id, args.command, args.log, args.task);
+        result = args.id !== undefined ? coord('dispatch-turn', player, args.id, args.command, args.log, args.task)
+          : contextualAction('turn', ['--session', player, '--command', args.command, '--output-log', args.log, '--file', args.task]);
         break;
       case 'baton2_role':
         result = coord('role', args.session, ...(args.role === undefined ? [] : [args.role]));
@@ -1035,19 +1015,47 @@ function handleToolCall(msg) {
         result = coord('outbox', args?.sender ?? sessionId);
         break;
       case 'baton2_ack':
-        result = coord('ack', args.id, sessionId, args.receipt);
+        result = args?.id !== undefined && args?.receipt !== undefined ? coord('ack', args.id, sessionId, args.receipt)
+          : contextualAction('acknowledge', [...(args?.id === undefined ? [] : [args.id]),
+            ...(args?.receipt === undefined ? [] : ['--receipt', args.receipt])]);
         break;
       case 'baton2_guide':
-        result = coord('message', args.id, sessionId, player, args.kind ?? 'guidance', args.body);
+        if (args.kind === 'completion-confirmed' && (args.body === undefined || args.request !== undefined)) {
+          result = contextualAction('completion-confirmed', ['--to', player,
+            ...(args.request === undefined ? [] : ['--request', args.request]),
+            ...(args.id === undefined ? [] : ['--id', args.id])]);
+        } else {
+          result = args.id !== undefined ? coord('message', args.id, sessionId, player, args.kind ?? 'guidance', args.body)
+            : contextualAction('send', [player, '--kind', args.kind ?? 'guidance', '--text', args.body]);
+        }
         break;
-      case 'baton2_message_batch':
-        result = coord('message-batch', sessionId, JSON.stringify(args.messages.map((message) => ({
-          id: message.id,
-          recipient: message.player,
-          kind: message.kind ?? 'guidance',
-          body: message.body,
-        }))));
+      case 'baton2_message_batch': {
+        const inferredCompletion = args.messages.some(message => message.kind === 'completion-confirmed'
+          && (message.body === undefined || message.request !== undefined));
+        if (inferredCompletion) {
+          const values = args.messages.flatMap((message, index) => {
+            const prefix = index === 0 ? [] : ['--and'];
+            if (message.kind === 'completion-confirmed') {
+              const request = message.request ?? message.body;
+              return [...prefix, 'completion-confirmed', '--to', message.player,
+                ...(request === undefined ? [] : ['--request', request]),
+                ...(message.id === undefined ? [] : ['--id', message.id])];
+            }
+            return [...prefix, 'dispatch', '--to', message.player, '--kind', message.kind ?? 'guidance',
+              '--text', message.body, ...(message.id === undefined ? [] : ['--id', message.id])];
+          });
+          result = contextualAction(values[0], values.slice(1));
+        } else if (args.messages.some(message => message.id === undefined)) {
+          result = contextualAction('send', args.messages.flatMap((message, index) => [
+            ...(index === 0 ? [] : ['--and']), message.player, '--kind', message.kind ?? 'guidance',
+            '--text', message.body, ...(message.id === undefined ? [] : ['--id', message.id])]));
+        } else {
+          result = coord('message-batch', sessionId, JSON.stringify(args.messages.map(message => ({
+            id: message.id, recipient: message.player, kind: message.kind ?? 'guidance', body: message.body,
+          }))));
+        }
         break;
+      }
       case 'baton2_player_status':
       case 'baton2_worker_status':
         result = coord('worktree', player);

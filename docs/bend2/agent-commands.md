@@ -7,19 +7,21 @@ database and native conversation ID.
 ```sh
 baton inbox
 baton read message-one message-two
-baton acknowledge message-one message-two --receipt 'Read and handled.'
+baton acknowledge
 ```
 
 `read` returns complete stored deliveries in argument order, including messages
-that already have receipts. Each ID has its own result. `acknowledge` updates each
-owned message separately and returns its retained receipt. The first receipt
+that already have receipts. Each ID has its own result. `acknowledge` selects the
+current actor's completely read inputs and derives receipts from native handling
+evidence. Optional message selectors and `--receipt` retain explicit compatibility.
+Each owned message returns its retained receipt. The first receipt
 remains stored. Reading preserves pending receipts.
 
 Send several independent messages with `and` or `--and` between complete clauses:
 
 ```sh
-baton send parent --kind report --text 'Result.' --id report-one \
-  and parent --kind report --file result.txt --id report-two
+baton send parent --kind report --text 'Result.' \
+  and parent --kind report --file result.txt
 ```
 
 Each clause has a recipient, kind and text or file body. `--id` applies to that
@@ -31,8 +33,9 @@ the results of other items. A malformed command returns before message admission
 
 Complete UTF-8 input preserves a valid leading BOM and trailing whitespace.
 Invalid UTF-8 and embedded NUL produce a refusal with the byte offset. Standard
-input is read once per invocation and retained as an input artifact. Every
-explicit stdin reference in that invocation reads those same complete bytes.
+input is read once per invocation and captured in memory. Every explicit stdin
+reference in that invocation reads those same complete bytes. A native context
+query import retains its context request artifact.
 
 Select another registered project or an explicit actor when needed:
 
@@ -59,22 +62,23 @@ such as `session --session worker` or `assignment --id worker`, use the named
 action result array described below.
 
 Workers send a completion request with a complete report body. A coordinator
-confirms a request by sending its exact message ID as the confirmation body:
+confirms the selected worker's current owned request:
 
 ```sh
 baton completion-request --text 'The assigned work is complete.'
-baton completion-confirmed --request completion-request-id
+baton completion-confirmed --to worker
 baton guide --to worker --text 'Continue the assigned work and report the result.'
 ```
 
 The completion request uses the current session's recorded parent. A parentless
 session receives a structured refusal. The coordinator can use `guide` to send
 further work. Each decision action uses the ordinary message admission result,
-wake result and retained delivery. A confirmation names the request ID consumed
-by the existing task-completion projection. Use `--file PATH` for a complete
-text body and `--id ID` to choose a message ID. `completion-confirmed` resolves
-the target from the retained request. An optional `--to PLAYER` must match its
-author; the request must be addressed to the current session.
+wake result and retained delivery. Baton selects the current request addressed
+to the coordinator and constructs its confirmation. Use `--to PLAYER` when
+selecting a worker; an explicit `--request ID` must name a retained completion request
+from that worker addressed to the current coordinator. An omitted recipient selects the current eligible owned request scope.
+Use `--file PATH` for a complete report body. Mutation IDs are generated internally;
+explicit `--id ID` retains exact retry and conflict compatibility.
 
 ## Named action batches
 
@@ -89,13 +93,13 @@ later clause returns before any operation starts.
 baton session --and player --session worker --and assignment --id worker
 baton players --and attempt --and outbox
 baton completion-request --file result.txt --and assignment
-baton completion-confirmed --request request-id --and player --session worker
+baton completion-confirmed --to worker --and player --session worker
 baton guide --to worker --file next-task.txt --and pending --and orchestra
 baton attempt --and attempts --and outbox
 ```
 
 Inspections, completion decisions, guidance and the native operations below
-can share one batch. Session, Player and assignment clauses use `--session` or
+can share one batch, including bare `acknowledge`. Session, Player and assignment clauses use `--session` or
 `--id` to select a recorded target; omission selects the current actor. Each
 item retains complete `stdout`, `stderr`, actual `waitStatus` and command
 arguments. Its process status reports `completed`, `failed` or `refused`.
@@ -107,7 +111,8 @@ Completion and guidance items invoke the same contextual handlers used by their
 single forms. They resolve the recorded parent or retained request author and
 enforce the current coordinator and explicit recipient checks. Complete bodies
 travel to the child command through UTF-8 JSON standard input. Multiple explicit
-stdin file references share the invocation's retained input artifact.
+stdin file references share the invocation's complete captured text. MCP contextual
+arguments travel directly as a complete JSON array over standard input.
 
 ## Native operations
 
@@ -115,8 +120,8 @@ stdin file references share the invocation's retained input artifact.
 baton receiver --command /path/to/harness --output-log /path/to/turn.jsonl
 baton configure --session worker --effort high
 baton resume --session worker
-baton stop --session worker --id operator-stop --reason-file stop.txt
-baton continue-task --session worker --id next-turn
+baton stop --session worker --reason-file stop.txt
+baton continue-task --session worker
 ```
 
 `attempt` reads the selected session's execution and assignment state.
@@ -139,15 +144,18 @@ native receiver. Explicit fields take precedence. The native configuration
 operation enforces the expected route, current attempt and explicit stop rules.
 
 `resume --lift-stop` explicitly lifts an existing stop and resumes its recorded
-conversation. `force-stop --id STOP_ID` names the existing stop operation.
+conversation. `force-stop` selects the session's existing stop operation.
+`stop` generates an identity for a new stop and reuses a recorded stop when
+present; the native operation checks its complete reason. Explicit `--id` remains
+available for exact compatibility.
 `recover-observer --observer PID` uses the existing observer recovery path.
 `continue-task` sends an explicit continuation through the existing assignment
 operation. Each action accepts `--session SESSION`.
 
 ```sh
-baton turn --id direct-turn --command /path/to/harness \
+baton turn --command /path/to/harness \
   --file task.txt --output-log turn.jsonl
-baton receive --session worker --message pending-input-id
+baton receive --session worker
 baton profile-bind --profile work --store /path/to/profile
 baton connect --endpoint '["/path/to/receiver"]'
 baton bind --harness codex --model model-key --effort high
@@ -158,20 +166,38 @@ for omitted fields. `receive` uses its recorded receiver and native defaults.
 `profile-bind` binds an existing named account through the native profile
 operation; an omitted harness selects the recorded harness. `connect` and
 `bind` preserve the native identity when `--native` is omitted. An explicit
-empty endpoint disconnects it. `task TEXT`, `task --stdin` and `task --file PATH`
-use the product task interface described by `baton task --help`.
+empty endpoint disconnects it.
+
+`baton dispatch "task text"`, `baton dispatch --stdin` and
+`baton dispatch --file PATH` own complete task input and routine native setup.
+Use `--to SESSION` for an existing assignment; Baton selects continuation
+automatically. Use `--route NAME` for a
+named saved route, and explicit provider fields to override it. The result names
+the complete input request and setup outcome retained in the database.
+`task-input-read --current` selects the actor's latest request without copying
+its identity. Native
+transcripts are runtime files; scratchpads are deliberately authored working
+notes. Automatic task-source file creation is prohibited. `baton dispatch --help`
+describes the options, and `task` remains a compatibility alias.
 
 ```sh
-baton report --id report-one --file result.txt
-baton ask --id question-one --text 'Review this result.'
-baton native-reply --request native-request-id --file response.json
-baton dispatch --id task-one --to worker --file task.txt
+baton report --file result.txt
+baton ask --text 'Review this result.'
+baton native-reply --to worker --file response.json
+baton as parent dispatch --to worker --text 'Review the source.'
 ```
 
 `report` and `ask` address the current actor's recorded coordinator.
-`native-reply` answers the retained request as the current coordinator.
-`dispatch` admits complete input from the current actor and wakes the recipient
-through the ordinary message operation. Its omitted kind is `task`.
+`native-reply` selects the unique pending unanswered native request addressed
+to the actor. `--to WORKER` selects a worker when several requests are pending;
+absent or ambiguous requests produce a refusal. An explicit `--request ID`
+remains available.
+The named contextual `dispatch --to WORKER` action admits complete input
+from the current actor and wakes the recipient through the ordinary message
+operation. Its omitted kind is `task`. Explicit `as SESSION` selects that actor;
+Baton generates the action identity. Optional `--id` retains an explicit identity
+for this contextual action; the product dispatch frontend uses `--dispatch-id`
+for an explicit message identity.
 
 ## Workspaces and publication
 
@@ -195,12 +221,12 @@ remote publication and selected checks retain their native requirements.
 ## Knowledge and project reads
 
 ```sh
-baton knowledge record --id observation-one --kind observation \
+baton knowledge record --kind observation \
   --claim-file claim.txt --evidence message:report-one --limits-file limits.txt
-baton knowledge read --id observation-one
-baton knowledge relate --id support-one --source message:report-one \
+baton knowledge read
+baton knowledge relate --source message:report-one \
   --relation Supports --target finding:observation-one
-baton knowledge promote --id promotion-one --from worker --to parent \
+baton knowledge promote --from worker --to parent \
   --finding observation-one
 baton knowledge search --scope all --query-file query.txt
 baton knowledge traverse --scope all --reference finding:observation-one \
@@ -212,7 +238,11 @@ baton project sessions --path /path/to/project
 
 Knowledge record fields accept complete literal text or their corresponding
 `--claim-file`, `--evidence-file`, `--limits-file` and `--links-file` arguments.
-Links use the existing authored JSON relation array. `knowledge read` accepts
+Baton generates record, relation and promotion operation identities when omitted.
+Links use the existing authored JSON relation array; omitted link identities
+derive from the finding identity and link position. Explicit identities remain
+available. Relationship sources, targets and finding references select semantic
+objects and remain explicit when needed. `knowledge read` accepts
 `--id ID` or `--index`, and scoped reads use `--scope` and `--subject`.
 An omitted scope is `worker` and an omitted subject is the current actor.
 Search accepts `--query` or `--query-file`. Promotion preserves the existing
@@ -253,7 +283,9 @@ the original bytes as `bytesHex`. Inspection preserves the saved settings.
 ## Context and logs
 
 Context operations use `context engines`, `context install --module ID --path
-PATH`, `context query --id ID --file PATH` and `context result --id ID`.
+PATH`, `context query --file PATH` and `context result`. Baton generates query
+identities and selects the latest query owned by the current actor for its result.
+An explicit `--id ID` selects a retained query.
 `models`, `observed-usage` and `logs` select the current session, with an optional
 `--session SESSION`; `logs --level LEVEL` uses the native log configuration.
 
@@ -261,7 +293,10 @@ PATH`, `context query --id ID --file PATH` and `context result --id ID`.
 
 Named action batches return a JSON array with one result per item. `argv` records the
 actual child dispatch and `nativeArgv` records its complete expanded
-native arguments. Complete arguments travel as a JSON string array over stdin.
+native arguments. Complete arguments travel as a JSON string array over stdin. Native operation
+identities are generated or selected in the canonical database. Agents select
+semantic targets and supply authored content; Baton resolves inferable control
+state.
 The item preserves full stdout, stderr, its retained stderr path and the actual
 exit or signal status. Physical input, process and output failures retain their
 causes. A failed item permits the remaining independently parsed items to run.

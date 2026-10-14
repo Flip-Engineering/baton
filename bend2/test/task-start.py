@@ -1,10 +1,11 @@
-"""Ordinary task input through native CLI and the packaged MCP operation."""
+"""Complete dispatch input and outcomes through native CLI and packaged MCP."""
 import hashlib
 import importlib.util
 import json
 import pathlib
 import shutil
 import subprocess
+import sys
 import unittest
 
 
@@ -34,6 +35,8 @@ class TaskStart(unittest.TestCase):
 
     def setUp(self):
         identity.ControlIdentity.setUp(self)
+        self.environment.pop('BATON_SESSION', None)
+        self.environment.pop('CODEX_THREAD_ID', None)
         for directory, name in (('harness', 'task-start.mjs'),
                                 ('harness', 'project-settings.mjs'),
                                 ('scripts', 'mcp-conductor.mjs')):
@@ -43,7 +46,7 @@ class TaskStart(unittest.TestCase):
             digest = hashlib.sha256(source.read_bytes()).hexdigest()
             self.assertEqual(hashlib.sha256(copy.read_bytes()).hexdigest(), digest)
             self.pins.append({'source': str(source), 'copy': str(copy), 'sha256': digest})
-        (self.directory / 'task-package-copies.json').write_text(json.dumps(self.pins, indent=2) + '\n')
+        (self.directory / 'dispatch-package-copies.json').write_text(json.dumps(self.pins, indent=2) + '\n')
         fixture = self.fixture.read_text()
         fixture = fixture.replace("'apiKeyVariablesPresent':",
                                   "'codexHome':os.environ.get('CODEX_HOME'),'apiKeyVariablesPresent':", 1)
@@ -58,10 +61,10 @@ class TaskStart(unittest.TestCase):
         config['sessions'][model] = session
         path.write_text(json.dumps(config))
 
-    def task_call(self, *args, stdin=None, ok=True, project=None, database=False):
-        argv = [str(self.binary)] + ([str(self.db)] if database else []) + ['task', *map(str, args)]
+    def task_call(self, *args, stdin=None, ok=True, project=None, database=False, prefix=(), environment=None):
+        argv = [str(self.binary)] + ([str(self.db)] if database else list(map(str, prefix))) + ['dispatch', *map(str, args)]
         result = subprocess.run(argv, input=stdin, cwd=project or self.repo,
-                                env=self.environment, capture_output=True)
+                                env={**self.environment, **(environment or {})}, capture_output=True)
         stdout, stderr = result.stdout.decode(), result.stderr.decode()
         with (self.directory / 'commands.jsonl').open('a') as output:
             output.write(json.dumps({'argv': argv, 'code': result.returncode,
@@ -69,9 +72,26 @@ class TaskStart(unittest.TestCase):
                                      'direct_wait_completed': True}) + '\n')
         self.assertEqual(result.returncode == 0, ok, stdout + stderr)
         value = json.loads(stdout)
-        if value.get('resultPath'):
-            self.assertEqual(json.loads(pathlib.Path(value['resultPath']).read_text()), value)
+        if value.get('requestId') and not value.get('inputRecordError') and not value.get('resultRecordError'):
+            saved = self.call('task-input-read', value['requestId'])
+            self.assertEqual(saved['id'], value['requestId'])
+            self.assertEqual(saved['result'], value)
+        self.assertNotIn('inputPath', value)
+        self.assertNotIn('resultPath', value)
+        self.assertFalse(pathlib.Path(str(value.get('database', self.db)) + '.tasks').exists())
         return value
+
+    def native_input(self, *args, body, ok=True, database=None, environment=None):
+        data = body if isinstance(body, bytes) else body.encode()
+        argv = [str(self.binary), str(self.db if database is None else database), *map(str, args)]
+        child = subprocess.run(argv, input=data, env={**self.environment, **(environment or {})}, capture_output=True)
+        record = {'argv': argv, 'stdinHex': data.hex(), 'code': child.returncode,
+                  'stdout': child.stdout.decode(), 'stderr': child.stderr.decode(),
+                  'direct_wait_completed': True}
+        with (self.directory / 'commands.jsonl').open('a') as output:
+            output.write(json.dumps(record) + '\n')
+        self.assertEqual(child.returncode == 0, ok, record['stdout'] + record['stderr'])
+        return json.loads(record['stdout']) if ok else record
 
     def settings(self, routes, subscriptions=None):
         value = {'schema': 'baton2-project-settings-v1', 'routes': routes,
@@ -82,11 +102,19 @@ class TaskStart(unittest.TestCase):
 
     def assert_retained_input(self, result, body):
         self.assertEqual(result['input']['body'], body)
-        self.assertEqual(pathlib.Path(result['inputPath']).read_bytes(), body.encode())
+        request = self.call('task-input-read', result['requestId'])
+        self.assertEqual(request['request']['input']['body'], body)
+        self.assertEqual(request['request']['messageId'], result['task'])
+        self.assertEqual(request['request']['session'], result['session'])
+        self.assertEqual(request['result'], result)
         saved = self.call('delivery', result['task'])
         self.assertEqual(saved['body'], body)
         self.assertEqual(saved['recipient'], result['session'])
         self.assertEqual(result['inspect']['input'], [str(self.binary.resolve()), str(self.db), 'input', result['task']])
+        self.assertEqual(result['inspect']['request'],
+                         [str(self.binary.resolve()), str(self.db), 'task-input-read', '--current'])
+        admission = next(step for step in result['steps'] if step['argv'][2] == 'message-batch-file')
+        self.assertEqual(admission['argv'][-1], '-')
 
     def failed_turn(self, session, stream, report):
         self.finish(stream, report, fail=True)
@@ -111,7 +139,7 @@ class TaskStart(unittest.TestCase):
                     flags += ['--stdin']
                     stdin = body.encode()
                 else:
-                    file = self.directory / 'complete UTF8 input.txt'
+                    file = self.directory / 'supplied UTF8 input.txt'
                     file.write_bytes(body.encode())
                     flags += ['--file', file]
                 result = self.task_call(*flags, stdin=stdin)
@@ -154,7 +182,8 @@ class TaskStart(unittest.TestCase):
                                 '--command', self.fixture, ok=False)
         self.assertEqual(result['error']['reason'], 'taskRouteIncomplete')
         self.assertIn('--route NAME', result['error']['next'])
-        self.assertEqual(pathlib.Path(result['inputPath']).read_text(), result['input']['body'])
+        self.assertEqual(self.call('task-input-read', result['requestId'])['request']['input']['body'],
+                         result['input']['body'])
         self.assertIsNone(result.get('admission'))
         self.assertEqual(self.rows('SELECT * FROM sessions WHERE id=?', (result['session'],)), [])
 
@@ -181,11 +210,248 @@ class TaskStart(unittest.TestCase):
         result = self.task_call('--file', malformed, ok=False)
         self.assertEqual(result['error']['reason'], 'taskInputInvalidUtf8')
         self.assertEqual(result['input']['bytesHex'], malformed.read_bytes().hex())
+        self.assertEqual(self.call('task-input-read', result['requestId'])['request']['input']['bytesHex'],
+                         malformed.read_bytes().hex())
         result = self.task_call('--stdin', stdin=b'Invalid stdin \xff', ok=False)
         self.assertEqual(result['error']['reason'], 'taskInputInvalidUtf8')
         self.assertEqual(result['input']['bytesHex'], b'Invalid stdin \xff'.hex())
+        self.assertEqual(self.call('task-input-read', result['requestId'])['request']['input']['bytesHex'],
+                         b'Invalid stdin \xff'.hex())
         result = self.task_call('--text', 'one', '--stdin', stdin=b'two', ok=False)
         self.assertEqual(result['error']['reason'], 'taskInputAmbiguous')
+        self.assertEqual(self.call('task-input-read', result['requestId'])['request']['argv'],
+                         ['--text', 'one', '--stdin'])
+        self.assertEqual(self.rows('SELECT * FROM messages ORDER BY seq'), before)
+
+    def test_refused_retries_retain_distinct_database_requests_and_complete_outcomes(self):
+        bodies = ['First complete unadmitted input.\nλ🙂', 'Changed input with the same message ID.\nλ🙂']
+        requests = []
+        for body in bodies:
+            result = self.task_call('--dispatch-id', 'repeat-dispatch', '--text', body, ok=False)
+            self.assertEqual(result['error']['reason'], 'taskRouteIncomplete')
+            requests.append(result['requestId'])
+        self.assertNotEqual(requests[0], requests[1])
+        for request_id, body in zip(requests, bodies):
+            saved = self.call('task-input-read', request_id)
+            self.assertEqual(saved['request']['input']['body'], body)
+            self.assertEqual(saved['request']['messageId'], 'repeat-dispatch')
+            self.assertEqual(saved['result']['error']['reason'], 'taskRouteIncomplete')
+        self.assertEqual(self.rows('SELECT * FROM messages WHERE id=?', ('repeat-dispatch',)), [])
+
+    def test_native_request_and_first_outcome_are_immutable_and_do_not_dispatch(self):
+        request_id = "request ' λ🙂"
+        request = {'id': request_id, 'input': {'body': 'Full input λ🙂\n'},
+                   'options': {'session': 'owned-agent'}, 'setup': ['Preserve all setup values.']}
+        text = json.dumps(request, ensure_ascii=False) + '\n'
+        before = self.rows('SELECT * FROM messages ORDER BY seq')
+        expected = {'id': request_id, 'status': 'recorded'}
+        for _ in range(2):
+            self.assertEqual(self.native_input('task-input-record', '-', body=text), expected)
+        self.assertEqual(self.call('task-input-read', request_id),
+                         {'id': request_id, 'request': request, 'result': None})
+        conflict = self.native_input('task-input-record', '-', body=json.dumps({
+            **request, 'input': {'body': 'Changed input.'}}), ok=False)
+        self.assertEqual(json.loads(conflict['stderr']),
+                         {'id': request_id, 'status': 'requestConflict'})
+        outcome = {'status': 'refused', 'input': request['input'],
+                   'steps': [{'argv': ['Preserved executable λ', 'literal argument'],
+                              'exitCode': 1, 'stdout': 'Full output\n', 'stderr': 'Full error λ🙂\n'}],
+                   'error': {'reason': 'Original setup failure', 'detail': 'Complete retained detail.'}}
+        result_text = json.dumps(outcome, ensure_ascii=False) + '\n'
+        for _ in range(2):
+            self.assertEqual(self.native_input('task-input-result', request_id, '-', body=result_text), expected)
+        changed = self.native_input('task-input-result', request_id, '-',
+                                    body=json.dumps({'status': 'admitted'}), ok=False)
+        self.assertEqual(json.loads(changed['stderr']),
+                         {'id': request_id, 'status': 'resultConflict'})
+        absent = self.native_input('task-input-result', 'absent-request', '-',
+                                   body=result_text, ok=False)
+        self.assertEqual(json.loads(absent['stderr']),
+                         {'id': 'absent-request', 'status': 'requestAbsent'})
+        self.assertEqual(self.call('task-input-read', request_id),
+                         {'id': request_id, 'request': request, 'result': outcome})
+        self.assertEqual(self.rows('SELECT * FROM messages ORDER BY seq'), before)
+
+    def test_native_request_installs_schema_on_a_fresh_owned_database(self):
+        database = self.directory / 'fresh-request.db'
+        self.assertFalse(database.exists())
+
+        def shutdown():
+            result = subprocess.run([str(self.binary), '--instance-shutdown', str(database)],
+                                    env=self.environment, capture_output=True, text=True)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+        self.addCleanup(shutdown)
+        request = {'id': 'fresh-request', 'input': {'body': 'Complete fresh input λ🙂\n'}}
+        self.assertEqual(self.native_input('task-input-record', '-', database=database,
+                                          body=json.dumps(request, ensure_ascii=False)),
+                         {'id': request['id'], 'status': 'recorded'})
+        self.assertEqual(self.native_input('task-input-read', request['id'],
+                                          database=database, body=b''),
+                         {'id': request['id'], 'request': request, 'result': None})
+
+    def test_native_request_refuses_invalid_json_ids_and_utf8_without_storage(self):
+        before = self.rows('SELECT * FROM task_input_requests ORDER BY id')
+        for body in (b'{"id":"\\ud800"}', b'{"id":""}', b'{"id":4}',
+                     b'{"id":"bad\\u0000id"}', b'{"id":"first","id":"second"}',
+                     b'[]', b'{"id":"bad-utf8","input":"\xff"}'):
+            with self.subTest(input=body):
+                failed = self.native_input('task-input-record', '-', body=body, ok=False)
+                self.assertTrue(json.loads(failed['stderr'])['condition'])
+                self.assertEqual(self.rows('SELECT * FROM task_input_requests ORDER BY id'), before)
+
+    def test_primary_dispatch_routes_consume_literal_flag_text_and_select_named_agents(self):
+        routes = [('bare', ()), ('project', ('--project', self.repo)), ('database', (self.db,))]
+        for label, prefix in routes:
+            for body in ('--id', '--kind'):
+                with self.subTest(route=label, body=body):
+                    session = 'dispatch-' + label + body
+                    self.route(session)
+                    mode = ['--new'] if (label, body) == ('bare', '--id') else []
+                    result = self.task_call(*mode, '--to', session, '--harness', 'codex',
+                                            '--model', 'gpt-6-astra', '--effort', 'low',
+                                            '--command', self.fixture, '--text', body, prefix=prefix)
+                    self.assertEqual(result['session'], session)
+                    self.assert_retained_input(result, body)
+                    stream, native = self.accept(session)
+                    self.assertIn(body, native['prompt'])
+                    self.failed_turn(session, stream, 'Complete ' + label + ' literal ' + body + ' fixture result.')
+
+    def test_existing_as_dispatch_keeps_contextual_message_authority_and_full_body(self):
+        session = 'contextual-dispatch-agent'
+        self.call('join', session, 'root', 'codex', 'gpt-6-astra', 'low', self.repo)
+        body = 'Complete contextual dispatch λ🙂\n'
+        before = self.rows('SELECT * FROM task_input_requests ORDER BY id')
+        rows = self.call('as', 'root', 'dispatch', '--id', 'contextual-dispatch',
+                         '--to', session, '--kind', 'task', '--text', body)
+        self.assertEqual(rows[0]['status'], 'completed')
+        saved = self.call('delivery', 'contextual-dispatch')
+        self.assertEqual((saved['sender'], saved['recipient'], saved['kind'], saved['body']),
+                         ('root', session, 'task', body))
+        self.assertEqual(self.rows('SELECT * FROM task_input_requests ORDER BY id'), before)
+
+    def test_recorded_actor_context_dispatches_and_continues_without_sender_or_control_ids(self):
+        native = self.call('session', 'root')['native']
+        for label, environment in (('session', {'BATON_SESSION': 'root'}),
+                                   ('native', {'CODEX_THREAD_ID': native})):
+            with self.subTest(context=label):
+                recipient = 'actor-child-' + label
+                self.call('join', recipient, 'root', 'codex', 'gpt-6-astra', 'low', self.repo)
+                endpoint = json.dumps([sys.executable, '-c', 'import sys;print(sys.argv[-1])'])
+                self.call('connect', recipient, '', endpoint)
+                first = self.task_call('--to', recipient, '--text', 'Original context task λ🙂',
+                                       environment=environment)
+                second = self.task_call('--to', recipient, '--text', 'Continue through recorded state λ🙂',
+                                        environment=environment)
+                self.assertEqual(second['actor'], {'id': 'root', 'source': 'agent-launch-context'})
+                self.assertTrue(any(step['argv'][2] == 'agent-current-session' for step in second['steps']))
+                self.assertEqual(self.call('delivery', first['task'])['sender'], 'root')
+                self.assertEqual(self.call('delivery', second['task'])['sender'], 'root')
+                self.assertEqual(self.call('delivery', second['task'])['kind'], 'task-continuation')
+                self.assertEqual(second['currentSession']['endpointArgv'], json.loads(endpoint))
+                self.assertIsNone(self.call('delivery', first['task'])['receipt'])
+                self.assertIsNone(self.call('delivery', second['task'])['receipt'])
+                self.assertEqual(second['currentSession']['taskCompletion']['assignmentId'], first['task'])
+                request = self.call('task-input-read', second['requestId'])
+                self.assertEqual(request['request']['sender'], 'root')
+                self.assertEqual(second['inspect']['request'],
+                                 [str(self.binary.resolve()), str(self.db), 'task-input-read', '--current'])
+                self.assertEqual(self.native_input('task-input-read', '--current', body=b'',
+                                                  environment=environment), request)
+
+    def test_unresolved_agent_context_refuses_dispatch_and_preserves_input_without_operator_fallback(self):
+        native = self.call('session', 'root')['native']
+        before = self.rows('SELECT * FROM sessions ORDER BY id'), self.rows('SELECT * FROM messages ORDER BY seq')
+        for environment in ({'BATON_SESSION': 'absent-actor', 'CODEX_THREAD_ID': native},
+                            {'CODEX_THREAD_ID': 'unbound-native-thread'}):
+            with self.subTest(context=environment):
+                body = 'Preserve the entire unresolved-context input λ🙂\n'
+                result = self.task_call('--to', 'root', '--text', body,
+                                        environment=environment, ok=False)
+                self.assertEqual(result['actor'], {'id': None, 'source': 'agent-launch-context'})
+                self.assertEqual(result['error']['reason'], 'taskOperationFailed')
+                failed = next(step for step in result['steps'] if step['argv'][2] == 'agent-current-session')
+                self.assertNotEqual(failed['exitCode'], 0)
+                saved = self.call('task-input-read', result['requestId'])
+                self.assertIsNone(saved['request']['sender'])
+                self.assertEqual(saved['request']['input']['body'], body)
+                self.assertEqual(saved['result'], result)
+                self.assertFalse(any(step['argv'][2] in ('start-setup', 'join', 'receiver', 'message-batch-file')
+                                     for step in result['steps']))
+                self.assertEqual((self.rows('SELECT * FROM sessions ORDER BY id'),
+                                  self.rows('SELECT * FROM messages ORDER BY seq')), before)
+
+    def test_scoped_request_inspection_preserves_other_authors_and_all_original_requests(self):
+        requests = [
+            {'id': 'owned-earlier', 'sender': 'root', 'session': 'first-recipient', 'input': {'body': 'Earlier owned λ'}},
+            {'id': 'owned-current', 'sender': 'root', 'session': 'second-recipient', 'input': {'body': 'Current owned λ🙂'}},
+            {'id': 'foreign-later', 'sender': 'other-author', 'session': 'second-recipient', 'input': {'body': 'Foreign complete input'}},
+            {'id': 'operator-latest', 'sender': 'operator', 'session': 'second-recipient', 'input': {'body': 'Operator input'}},
+        ]
+        self.call('attach', 'other-author', 'codex', 'other-native', '')
+        for request in requests:
+            self.native_input('task-input-record', '-', body=json.dumps(request, ensure_ascii=False))
+        before = self.rows('SELECT * FROM task_input_requests ORDER BY id')
+        current = self.native_input('task-input-read', '--current', body=b'',
+                                    environment={'BATON_SESSION': 'root'})
+        self.assertEqual(current['request'], requests[1])
+        selected = self.native_input('task-input-read', '--session', 'first-recipient', body=b'',
+                                     environment={'BATON_SESSION': 'root'})
+        self.assertEqual(selected['request'], requests[0])
+        foreign = self.native_input('task-input-read', '--current', body=b'',
+                                    environment={'BATON_SESSION': 'other-author'})
+        self.assertEqual(foreign['request'], requests[2])
+        operator = self.native_input('task-input-read', '--current', body=b'')
+        self.assertEqual(operator['request'], requests[3])
+        self.native_input('task-input-read', '--session', 'absent-recipient', body=b'',
+                          environment={'BATON_SESSION': 'root'}, ok=False)
+        self.native_input('task-input-read', '--current', body=b'',
+                          environment={'CODEX_THREAD_ID': 'unbound-native-thread'}, ok=False)
+        self.assertEqual(self.rows('SELECT * FROM task_input_requests ORDER BY id'), before)
+        for request in requests:
+            self.assertEqual(self.call('task-input-read', request['id'])['request'], request)
+
+    def test_explicit_continue_requires_an_existing_open_assignment(self):
+        result = self.task_call('--to', 'root', '--continue', '--text', 'Require recorded open work.', ok=False)
+        self.assertEqual(result['error']['reason'], 'taskAssignmentClosed')
+        self.assertIsNone(result.get('admission'))
+
+    def test_database_record_failure_returns_full_input_and_native_error_without_dispatch(self):
+        project = self.directory / 'record-failure-project'
+        project.mkdir()
+        subprocess.run(['git', '-C', str(project), 'init', '-q'],
+                       env=self.environment, check=True, capture_output=True)
+        database = project / '.git/baton2/orchestra.db'
+        database.parent.mkdir()
+        original = b'Original non-SQLite database bytes.\n'
+        database.write_bytes(original)
+        body = 'Preserve the complete refused dispatch.\nλ🙂'
+        before = self.rows('SELECT * FROM messages ORDER BY seq')
+        result = self.task_call('--to', 'uncreated-agent', '--text', body, project=project, ok=False)
+        self.assertEqual(result['status'], 'refused')
+        self.assertEqual(result['input']['body'], body)
+        self.assertEqual(result['database'], str(database))
+        self.assertEqual(result['inputRecordError']['reason'], 'taskOperationFailed')
+        failed = next(step for step in result['steps'] if step['argv'][2] == 'task-input-record')
+        self.assertNotEqual(failed['exitCode'], 0)
+        self.assertTrue(failed['stderr'])
+        self.assertEqual(json.loads(result['inputRecordError']['detail']), failed)
+        self.assertEqual(failed['argv'][-1], '-')
+        self.assertEqual(sum(step['argv'][2] == 'task-input-record' for step in result['steps']), 1)
+        self.assertFalse(any(step['argv'][2] in ('project', 'start-setup', 'join', 'configure',
+                                                'receiver', 'message-batch-file', 'task-input-result')
+                             for step in result['steps']))
+        self.assertIsNone(result.get('admission'))
+        self.assertEqual(database.read_bytes(), original)
+        self.assertFalse(pathlib.Path(str(database) + '.transcripts').exists())
+        self.assertEqual(self.rows('SELECT * FROM messages ORDER BY seq'), before)
+
+    def test_to_and_session_aliases_reject_duplicate_selection_without_dispatch(self):
+        before = self.rows('SELECT * FROM messages ORDER BY seq')
+        args = ['--to', 'root', '--session', 'different-agent', '--text', 'Full input λ🙂']
+        result = self.task_call(*args, ok=False)
+        self.assertEqual(result['error']['reason'], 'taskOptionInvalid')
+        self.assertEqual(self.call('task-input-read', result['requestId'])['request']['argv'], args)
         self.assertEqual(self.rows('SELECT * FROM messages ORDER BY seq'), before)
 
     def test_existing_continuation_preserves_assignment_native_parent_workspace_and_pending_input(self):
@@ -204,7 +470,7 @@ class TaskStart(unittest.TestCase):
                                  'Operator authority remains scoped to its Principal.', ok=False)
         self.assertEqual(refused['error']['reason'], 'taskAdmissionRefused')
         self.assertEqual(self.rows('SELECT * FROM messages WHERE id=?', (refused['task'],)), [])
-        result = self.task_call('--sender', 'root', '--session', session, '--continue',
+        result = self.task_call('--sender', 'root', '--to', session,
                                 '--effort', 'high', '--text', body)
         self.assert_retained_input(result, body)
         self.assertEqual(self.call('delivery', result['task'])['kind'], 'task-continuation')
@@ -226,11 +492,11 @@ class TaskStart(unittest.TestCase):
         self.assertTrue(completion['confirmed'])
         self.assertFalse(completion['open'])
 
-    def test_stopped_session_and_implicit_new_assignment_leave_owned_state_unchanged(self):
+    def test_stopped_session_and_explicit_new_assignment_leave_owned_state_unchanged(self):
         self.call('join', 'stopped', 'root', 'codex', 'gpt-6-astra', 'low', self.repo)
         self.call('message', 'owed-original', 'root', 'stopped', 'task', 'Retain the stopped task.')
-        open_result = self.task_call('--session', 'stopped', '--text', 'New task is ambiguous.', ok=False)
-        self.assertEqual(open_result['error']['reason'], 'taskAssignmentOpen')
+        open_result = self.task_call('--session', 'stopped', '--new', '--text', 'A fresh session is required.', ok=False)
+        self.assertEqual(open_result['error']['reason'], 'taskSessionExists')
         self.call('stop', 'stopped', 'explicit-stop', 'The operator stopped this session.')
         before = self.rows('SELECT * FROM sessions ORDER BY id'), self.rows('SELECT * FROM messages ORDER BY seq')
         stopped = self.task_call('--session', 'stopped', '--continue', '--text', 'Retain this refusal.', ok=False)
@@ -248,7 +514,8 @@ class TaskStart(unittest.TestCase):
                   self.call('session', session)['endpoint'])
         self.call('message', 'operator-original', 'operator', session, 'task', 'Retain the operator task.')
         before = self.call('session', session)
-        result = self.task_call('--session', session, '--continue', '--text', 'Continue the operator task λ🙂.')
+        result = self.task_call('--session', session, '--text', 'Continue the operator task λ🙂.')
+        self.assertEqual(self.call('delivery', result['task'])['kind'], 'task-continuation')
         self.assertEqual(result['currentSession']['taskCompletion']['assignmentId'], 'operator-original')
         for field in ('native', 'parent', 'workspace', 'branch', 'base', 'endpointArgv'):
             self.assertEqual(result['currentSession'][field], before[field])
@@ -339,7 +606,7 @@ class TaskStart(unittest.TestCase):
         self.assertEqual((result['currentSession']['model'], result['currentSession']['effort']),
                          ('gpt-6-astra', 'high'))
         self.assertTrue(any(step['argv'][2] == 'profile-bind' and step['exitCode'] != 0 for step in result['steps']))
-        self.assertEqual(pathlib.Path(result['inputPath']).read_text(), body)
+        self.assertEqual(self.call('task-input-read', result['requestId'])['request']['input']['body'], body)
         self.assertEqual(self.rows('SELECT * FROM messages WHERE id=?', (result['task'],)), [])
 
     def test_receiver_setup_failure_retains_input_and_native_error_without_admission(self):
@@ -348,7 +615,7 @@ class TaskStart(unittest.TestCase):
                                 '--command', self.directory / 'missing-native-executable',
                                 '--text', body, ok=False)
         self.assertEqual(result['error']['reason'], 'taskOperationFailed')
-        self.assertEqual(pathlib.Path(result['inputPath']).read_text(), body)
+        self.assertEqual(self.call('task-input-read', result['requestId'])['request']['input']['body'], body)
         failure = next(step for step in result['steps'] if step['argv'][2] == 'start-setup')
         self.assertNotEqual(failure['exitCode'], 0)
         self.assertTrue(failure['stderr'])
@@ -357,22 +624,24 @@ class TaskStart(unittest.TestCase):
     def test_packaged_mcp_task_uses_same_operation_and_attached_parent_for_complete_input(self):
         script = self.prefix / 'libexec/baton2/mcp-conductor.mjs'
         body = 'MCP task λ🙂\nComplete multiline input owned by the attached Conductor.\n' * 2000
-        for source in ('text', 'file'):
-            with self.subTest(source=source):
-                self.mcp_task(script, body, source)
+        for tool in ('baton2_dispatch', 'baton2_task'):
+            for source in ('text', 'file'):
+                with self.subTest(tool=tool, source=source):
+                    self.mcp_task(script, body, source, tool)
 
-    def mcp_task(self, script, body, source):
-        session = 'mcp-child-' + source
+    def mcp_task(self, script, body, source, tool):
+        session = 'mcp-child-' + source + '-' + tool
         self.route(session)
         task_file = self.directory / 'MCP plain task.txt'
-        task_file.write_bytes(body.encode())
+        if source == 'file':
+            task_file.write_bytes(body.encode())
         arguments = {source: body if source == 'text' else str(task_file), 'project': str(self.repo),
                      'session': session, 'harness': 'codex', 'model': 'gpt-6-astra',
                      'effort': 'low', 'command': str(self.fixture)}
         requests = [{'jsonrpc': '2.0', 'id': 1, 'method': 'initialize', 'params': {}},
                     {'jsonrpc': '2.0', 'id': 2, 'method': 'tools/list', 'params': {}},
                     {'jsonrpc': '2.0', 'id': 3, 'method': 'tools/call', 'params': {
-                        'name': 'baton2_task', 'arguments': arguments}}]
+                        'name': tool, 'arguments': arguments}}]
         child = subprocess.run(['node', str(script), str(self.db), str(self.binary), '--session', 'root'],
                                input=''.join(json.dumps(row) + '\n' for row in requests),
                                env=self.environment, capture_output=True, text=True)
@@ -380,6 +649,7 @@ class TaskStart(unittest.TestCase):
         replies = [json.loads(line) for line in child.stdout.splitlines()]
         self.assertEqual([reply['id'] for reply in replies], [1, 2, 3])
         tools = {tool['name']: tool for tool in replies[1]['result']['tools']}
+        self.assertIn('baton2_dispatch', tools)
         self.assertIn('baton2_task', tools)
         result = json.loads(replies[2]['result']['content'][0]['text'])
         self.assert_retained_input(result, body)

@@ -239,8 +239,7 @@ class AgentActions(unittest.TestCase):
         causes = {
             'completion-request': 'completion-request accepts --text TEXT or --file PATH '
                                   'and optional --id ID; use help completion-request.',
-            'completion-confirmed': 'completion-confirmed accepts --request REQUEST_ID, '
-                                    'optional --to PLAYER, and optional --id ID.',
+            'completion-confirmed': None,
             'guide': 'guide expects --to SESSION and its documented named arguments; '
                      'use help guide.',
         }
@@ -255,7 +254,11 @@ class AgentActions(unittest.TestCase):
                                               success=False)
                         self.assertEqual(refused.returncode, 2)
                         self.assertEqual(refused.stdout, '')
-                        self.assertEqual(refused.stderr.splitlines()[0], cause)
+                        if cause is None:
+                            self.assertTrue(refused.stderr.splitlines()[0].startswith(
+                                'completion-confirmed '), refused.stderr)
+                        else:
+                            self.assertEqual(refused.stderr.splitlines()[0], cause)
                         self.assertFalse(absent_db.exists())
                         self.assertFalse(absent_project.exists())
                         self.assertEqual(self.stored_messages(), before)
@@ -370,6 +373,122 @@ class AgentActions(unittest.TestCase):
         self.assertTrue(task['confirmed'])
         self.assertFalse(task['open'])
 
+    def test_confirmation_infers_named_child_current_request_and_keeps_parent_authority(self):
+        self.legacy('message', 'inferred-task', 'root', 'worker-a',
+                    'task-assignment', 'Complete the assigned work.\nλ🙂')
+        older = self.action('worker-a', 'completion-request', '--text',
+                            'Earlier completion evidence.')[0]['id']
+        current = self.action('worker-a', 'completion-request', '--text',
+                              'Current complete evidence.\nλ🙂')[0]['id']
+        self.assertNotEqual(older, current)
+        self.assertEqual(self.legacy('session', 'worker-a')['taskCompletion']['requestId'],
+                         current)
+        before = self.stored_messages()
+        state = self.legacy('session', 'worker-a')['taskCompletion']
+        delivered = self.endpoint_output()
+        refusal = self.action('other-root', 'completion-confirmed', '--to', 'worker-a')[0]
+        self.assertEqual(refusal['status'], 'refused')
+        self.assertTrue(refusal['admission']['cause'])
+        self.assertEqual(self.stored_messages(), before)
+        self.assertEqual(self.legacy('session', 'worker-a')['taskCompletion'], state)
+        self.assertEqual(self.endpoint_output(), delivered)
+
+        confirmed = self.action('root', 'completion-confirmed', '--to', 'worker-a')[0]
+        self.assertEqual(confirmed['status'], 'admitted')
+        self.assertTrue(confirmed['id'])
+        self.assertEqual(confirmed['delivery']['recipient'], 'worker-a')
+        self.assertEqual(confirmed['delivery']['body'], current)
+        state = self.legacy('session', 'worker-a')['taskCompletion']
+        self.assertEqual(state['requestId'], current)
+        self.assertTrue(state['confirmed'])
+        self.assertFalse(state['open'])
+        self.assertEqual(self.legacy('delivery', older)['body'],
+                         'Earlier completion evidence.')
+        self.assertIsNone(self.legacy('delivery', 'inferred-task')['receipt'])
+
+    def test_bare_confirmation_requires_one_current_owned_child_request(self):
+        before = self.stored_messages()
+        absent = self.action('root', 'completion-confirmed')[0]
+        self.assertEqual(absent['status'], 'refused')
+        self.assertTrue(absent['admission']['cause'])
+        self.assertEqual(self.stored_messages(), before)
+        requests = {}
+        for worker in ('worker-a', 'worker-b'):
+            self.legacy('message', worker + '-inferred-task', 'root', worker,
+                        'task-assignment', 'Complete ' + worker + ' assigned work.')
+            requests[worker] = self.action(worker, 'completion-request', '--text',
+                                           worker + ' complete evidence.')[0]['id']
+        before = self.stored_messages()
+        states = {worker: self.legacy('session', worker)['taskCompletion']
+                  for worker in requests}
+        delivered = self.endpoint_output()
+        ambiguous = self.action('root', 'completion-confirmed')[0]
+        self.assertEqual(ambiguous['status'], 'refused')
+        self.assertTrue(ambiguous['admission']['cause'])
+        self.assertEqual(self.stored_messages(), before)
+        self.assertEqual(self.endpoint_output(), delivered)
+        for worker in requests:
+            self.assertEqual(self.legacy('session', worker)['taskCompletion'], states[worker])
+
+        selected = self.action('root', 'completion-confirmed', '--to', 'worker-a')[0]
+        self.assertEqual(selected['delivery']['body'], requests['worker-a'])
+        remaining = self.action('root', 'completion-confirmed')[0]
+        self.assertEqual(remaining['status'], 'admitted')
+        self.assertEqual(remaining['delivery']['recipient'], 'worker-b')
+        self.assertEqual(remaining['delivery']['body'], requests['worker-b'])
+        self.assertNotEqual(selected['id'], remaining['id'])
+        for worker in requests:
+            state = self.legacy('session', worker)['taskCompletion']
+            self.assertEqual(state['requestId'], requests[worker])
+            self.assertTrue(state['confirmed'])
+            self.assertFalse(state['open'])
+
+    def test_completion_inference_preserves_request_before_new_assignment(self):
+        self.legacy('message', 'older-assignment', 'root', 'worker-a',
+                    'task-assignment', 'Original bounded assignment.')
+        older = self.action('worker-a', 'completion-request', '--text',
+                            'Original bounded assignment handled.')[0]['id']
+        self.legacy('message', 'newer-assignment', 'root', 'worker-a',
+                    'task-assignment', 'New work remains open.\nλ🙂')
+        state = self.legacy('session', 'worker-a')['taskCompletion']
+        self.assertIsNone(state['requestId'])
+        self.assertTrue(state['open'])
+        before = self.stored_messages()
+        for arguments in ((), ('--to', 'worker-a')):
+            with self.subTest(arguments=arguments):
+                refused = self.action('root', 'completion-confirmed', *arguments)[0]
+                self.assertEqual(refused['status'], 'refused')
+                self.assertTrue(refused['admission']['cause'])
+                self.assertEqual(self.stored_messages(), before)
+                self.assertEqual(self.legacy('session', 'worker-a')['taskCompletion'], state)
+        current = self.action('worker-a', 'completion-request', '--text',
+                              'New bounded assignment handled.')[0]['id']
+        confirmed = self.action('root', 'completion-confirmed')[0]
+        self.assertEqual(confirmed['status'], 'admitted')
+        self.assertEqual(confirmed['delivery']['body'], current)
+        self.assertNotEqual(confirmed['delivery']['body'], older)
+        self.assertIsNone(self.legacy('delivery', 'newer-assignment')['receipt'])
+
+    def test_mixed_confirmation_infers_current_request_and_retains_exact_native_result(self):
+        self.legacy('message', 'mixed-inferred-task', 'root', 'worker-a',
+                    'task-assignment', 'Complete the bounded mixed assignment.\nλ🙂')
+        request = self.action('worker-a', 'completion-request', '--text',
+                              'The bounded assignment is complete.\nλ🙂')[0]['id']
+        rows = self.action('root', 'completion-confirmed', '--to', 'worker-a',
+                           '--and', 'assignment', '--session', 'worker-a')
+        self.assertEqual([row['status'] for row in rows], ['completed', 'completed'])
+        self.assertNotIn('--request', rows[0]['nativeArgv'])
+        admission = json.loads(rows[0]['stdout'])[0]
+        self.assertEqual(admission['status'], 'admitted')
+        self.assertTrue(admission['id'])
+        self.assertEqual((admission['delivery']['recipient'], admission['delivery']['body']),
+                         ('worker-a', request))
+        state = json.loads(rows[1]['stdout'])['taskCompletion']
+        self.assertEqual(state['requestId'], request)
+        self.assertTrue(state['confirmed'])
+        self.assertFalse(state['open'])
+        self.assertIsNone(self.legacy('delivery', 'mixed-inferred-task')['receipt'])
+
     def test_contextual_guidance_reads_complete_file_and_malformed_decisions_write_nothing(self):
         body = "Continue the assigned work.\nKeep this line and λ🙂.\n"
         path = self.directory / 'guidance.txt'
@@ -378,7 +497,7 @@ class AgentActions(unittest.TestCase):
         delivered = self.endpoint_output()
         for args in (
                 ('completion-request',),
-                ('completion-confirmed', '--to', 'worker-a'),
+                ('completion-confirmed', '--to'),
                 ('guide', '--to', 'worker-a', '--text', 'first',
                  '--text', 'duplicate')):
             with self.subTest(args=args):
@@ -584,6 +703,41 @@ class AgentActions(unittest.TestCase):
         self.assertEqual(self.legacy('delivery', 'ack-first')['receipt'],
                          'Read and handled.')
 
+    def test_acknowledge_generates_explicit_receipts_and_refuses_unscoped_default(self):
+        for ident in ('generated-ack-a', 'generated-ack-b'):
+            self.legacy('message', ident, 'worker-a', 'root', 'report',
+                        'Complete ' + ident + '.\nλ🙂')
+        self.legacy('message', 'generated-ack-foreign', 'root', 'worker-a',
+                    'guidance', 'The worker owns this complete input.')
+        self.action('root', 'read', 'generated-ack-a')
+        before = self.stored_messages()
+        delivered = self.endpoint_output()
+        refused = self.action('root', 'acknowledge', success=False)
+        self.assertEqual(refused.returncode, 2)
+        self.assertEqual(refused.stdout, '')
+        self.assertEqual(json.loads(refused.stderr.splitlines()[0])['error'],
+                         'handling-context')
+        self.assertEqual(self.stored_messages(), before)
+        self.assertEqual(self.endpoint_output(), delivered)
+        rows = self.action('root', 'acknowledge', 'generated-ack-a',
+                           'generated-ack-foreign', 'generated-ack-b')
+        self.assertEqual([row['id'] for row in rows],
+                         ['generated-ack-a', 'generated-ack-foreign', 'generated-ack-b'])
+        self.assertEqual([row['status'] for row in rows],
+                         ['acknowledged', 'absent', 'acknowledged'])
+        receipts = {row['id']: row['acknowledgement']['receipt']
+                    for row in rows if row['status'] == 'acknowledged'}
+        for ident, receipt in receipts.items():
+            self.assertIsInstance(receipt, str)
+            self.assertTrue(receipt)
+            self.assertEqual(self.legacy('delivery', ident)['receipt'], receipt)
+        repeated = self.action('root', 'acknowledge', '--message', 'generated-ack-a')[0]
+        self.assertEqual(repeated['acknowledgement']['receipt'], receipts['generated-ack-a'])
+        explicit = self.action('root', 'acknowledge', 'generated-ack-b',
+                               '--receipt', 'Later explicit handling.')[0]
+        self.assertEqual(explicit['acknowledgement']['receipt'], receipts['generated-ack-b'])
+        self.assertIsNone(self.legacy('delivery', 'generated-ack-foreign')['receipt'])
+
     def test_send_keeps_each_clause_identity_body_and_wake_result(self):
         file_body = 'File body with λ🙂.\nSecond line.\n'
         body_file = self.directory / 'report body.txt'
@@ -666,7 +820,7 @@ class AgentActions(unittest.TestCase):
             ('send', 'worker-a', '--kind', 'report', '--text', 'one', 'and',
              'worker-b', '--text', 'Missing kind in second clause.'),
             ('read',),
-            ('acknowledge', 'missing-receipt'),
+            ('acknowledge', 'message-id', '--receipt'),
         ]
         for args in cases:
             with self.subTest(args=args):
@@ -888,7 +1042,7 @@ class AgentActions(unittest.TestCase):
         output = self.endpoint_output()
         self.action('root', 'guide', '--to', 'worker-a', '--text', 'Valid earlier item.',
                     '--id', 'must-not-admit', '--and', 'completion-confirmed',
-                    '--to', 'worker-a', success=False)
+                    '--to', success=False)
         self.assertEqual(self.stored_messages(), before)
         self.assertEqual(self.endpoint_output(), output)
         for action in ('session', 'player', 'assignment'):
@@ -1120,8 +1274,15 @@ class AgentActions(unittest.TestCase):
         self.assertEqual([row['status'] for row in rows], ['completed', 'completed'])
         self.assertEqual(rows[0]['argv'], [str(EXE.resolve()), str(self.db.resolve()),
                                           'agent-native-input'])
-        retained_stdin = pathlib.Path(rows[0]['nativeArgv'][9])
-        self.assertEqual(retained_stdin.read_bytes(), body.encode('utf-8'))
+        self.assertEqual(rows[0]['nativeArgv'][2], 'turn-text')
+        self.assertEqual(rows[0]['nativeArgv'][9], body)
+        with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
+            retained_task, = database.execute(
+                'SELECT task FROM direct_turn_requests WHERE id=?',
+                ('named-direct-turn',)).fetchone()
+        self.assertEqual(retained_task, body)
+        self.assertEqual(list(self.directory.glob(self.db.name + '.agent-command-*.stdin')), [])
+        self.assertFalse(pathlib.Path(str(self.db) + '.actions').exists())
         self.assertTrue(prompt.read_text(encoding='utf-8').endswith(body))
         self.assertEqual(self.legacy('delivery', 'named-direct-turn:task-input')['body'], body)
         actor = self.legacy('session', 'worker-a')
@@ -1152,6 +1313,82 @@ class AgentActions(unittest.TestCase):
         self.assertEqual((delivered['sender'], delivered['recipient'], delivered['kind']),
                          ('root', 'worker-b', 'task'))
         self.assertEqual(delivered['body'], text)
+
+    def test_mixed_mutations_generate_ids_and_keep_explicit_retry_identity(self):
+        self.legacy('report', 'generated-id-evidence', 'worker-a',
+                    'Complete retained evidence.\nλ🙂')
+        body = '\ufeffComplete generated-ID report.\nλ🙂\nTrailing spaces  '
+        question = 'Which retained source should be used?\nλ🙂'
+        claim = 'The full retained input is available.\nλ🙂'
+        rows = self.action('worker-a', 'report', '--text', body, '--and',
+                           'ask', '--text', question, '--and', 'knowledge', 'record',
+                           '--kind', 'observation', '--claim', claim,
+                           '--evidence', 'message:generated-id-evidence')
+        self.assertEqual([row['status'] for row in rows], ['completed'] * 3)
+        report_id, question_id, finding_id = (row['nativeArgv'][3] for row in rows)
+        self.assertTrue(all(isinstance(ident, str) and ident
+                            for ident in (report_id, question_id, finding_id)))
+        self.assertEqual(len({report_id, question_id, finding_id}), 3)
+        for ident, kind, text, row in ((report_id, 'report', body, rows[0]),
+                                      (question_id, 'question', question, rows[1])):
+            delivered = self.legacy('delivery', ident)
+            self.assertEqual((delivered['sender'], delivered['recipient'],
+                              delivered['kind'], delivered['body']),
+                             ('worker-a', 'root', kind, text))
+            self.assertIn(ident, row['stdout'])
+        finding = next(row for row in self.legacy('knowledge', 'worker-a')
+                       if row['id'] == finding_id)
+        self.assertEqual(finding['claim'], claim)
+        self.assertEqual(finding['evidenceMessage']['body'],
+                         'Complete retained evidence.\nλ🙂')
+        before = self.stored_messages()
+        before_findings = self.legacy('knowledge', 'worker-a')
+        replay = self.action('worker-a', 'report', '--id', report_id, '--text', body,
+                             '--and', 'knowledge', 'record', '--id', finding_id,
+                             '--kind', 'observation', '--claim', claim,
+                             '--evidence', 'message:generated-id-evidence')
+        self.assertEqual([row['status'] for row in replay], ['completed', 'completed'])
+        self.assertIn(report_id, replay[0]['nativeArgv'])
+        self.assertIn(finding_id, replay[1]['nativeArgv'])
+        self.assertEqual(self.stored_messages(), before)
+        self.assertEqual(self.legacy('knowledge', 'worker-a'), before_findings)
+
+    def test_generated_continuation_and_stop_keep_original_work_and_retry_stop(self):
+        self.legacy('configure', 'worker-b', 'codex', 'model', 'low', sys.executable,
+                    str(self.directory / 'control-output.jsonl'), 'fixture', 'model', 'low')
+        self.legacy('connect', 'worker-b', 'retained-control-native', self.endpoint)
+        self.assertEqual(self.legacy('session', 'worker-b')['harness'], 'codex')
+        self.legacy('message', 'generated-control-task', 'root', 'worker-b',
+                    'task-assignment', 'Original unfinished work.\nλ🙂')
+        first_receipt = 'Complete original input handled; assignment remains open.'
+        self.legacy('ack', 'generated-control-task', 'worker-b', first_receipt)
+        reason = 'Operator stop after explicit continuation.\nλ🙂'
+        rows = self.action('root', 'continue-task', '--session', 'worker-b', '--and',
+                           'stop', '--session', 'worker-b', '--reason', reason)
+        self.assertEqual([row['status'] for row in rows], ['completed', 'completed'])
+        continuation_id = json.loads(rows[0]['stdout'])['continuationId']
+        self.assertTrue(continuation_id)
+        self.assertEqual(continuation_id, rows[0]['nativeArgv'][4] + ':task-continuation')
+        continuation = self.legacy('delivery', continuation_id)
+        self.assertEqual((continuation['sender'], continuation['recipient']),
+                         ('worker-b', 'worker-b'))
+        self.assertIn('generated-control-task', continuation['body'])
+        state = self.legacy('session', 'worker-b')
+        stop_id = state['stop']['id']
+        self.assertTrue(stop_id)
+        self.assertNotEqual(stop_id, continuation_id)
+        self.assertIn(stop_id, rows[1]['nativeArgv'])
+        self.assertEqual(json.loads(rows[1]['stdout'])['reason'], reason)
+        self.assertEqual(self.legacy('delivery', 'generated-control-task')['body'],
+                         'Original unfinished work.\nλ🙂')
+        self.assertEqual(self.legacy('delivery', 'generated-control-task')['receipt'], first_receipt)
+        before = self.stored_messages()
+        replay = self.action('root', 'stop', '--session', 'worker-b',
+                             '--id', stop_id, '--reason', reason)
+        self.assertEqual(replay[0]['status'], 'completed')
+        self.assertIn(stop_id, replay[0]['nativeArgv'])
+        self.assertEqual(self.legacy('session', 'worker-b')['stop'], state['stop'])
+        self.assertEqual(self.stored_messages(), before)
 
     def test_malformed_later_named_clause_performs_no_earlier_operation(self):
         before = self.legacy('session', 'worker-a')

@@ -7,6 +7,9 @@ type Option is Data:
 type Operation is Data:
   Call{verb: String, options: List<Option>}
 
+type NameSet is Data:
+  Names{verb: String, flags: String}
+
 type Parsed is Type:
   Calls{items: List<Operation>}
   Error{cause: String}
@@ -27,68 +30,75 @@ def member(+value: String, values: List<String>) -> Bool:
     case +head <> rest: Bool.or(String.eq(value,head),member(value,rest))
 
 def known(verb: String) -> Bool:
-  member(verb,Tx.split_spaces("session player players assignment completion-request completion-confirmed guide status pending orchestra role ensemble ensemble-member section section-member attempt attempts outbox receiver configure resume stop force-stop recover-observer continue-task turn receive profile-bind connect bind report ask native-reply dispatch recruit join worktree land push remote-tip knowledge project context models observed-usage logs"))
+  member(verb,Tx.split_spaces("session player players assignment completion-request completion-confirmed guide acknowledge status pending orchestra role ensemble ensemble-member section section-member attempt attempts outbox receiver configure resume stop force-stop recover-observer continue-task turn receive profile-bind connect bind report ask native-reply dispatch recruit join worktree land push remote-tip knowledge project context models observed-usage logs"))
+
+def names_lookup(entries: List<NameSet>, +verb: String) -> List<String>:
+  match entries:
+    case Nil{}: Nil{}
+    case Names{key,+flags} <> rest:
+      Bool.pick(List(String),String.eq(verb,key),Tx.split_spaces(flags),names_lookup(rest,verb))
 
 def names(verb: String) -> List<String>:
-  match verb:
-    case "session": Tx.split_spaces("--session --id --pretty")
-    case "player": Tx.split_spaces("--session --id --pretty")
-    case "players": Tx.split_spaces("--pretty")
-    case "assignment": Tx.split_spaces("--session --id --pretty")
-    case "completion-request": Tx.split_spaces("--id --text --file")
-    case "completion-confirmed": Tx.split_spaces("--id --request --to")
-    case "guide": Tx.split_spaces("--id --to --text --file")
-    case "status": Tx.split_spaces("--pretty")
-    case "pending": Tx.split_spaces("--index --pretty --sender --recipient --kind --state --after-seq --through-seq")
-    case "orchestra": Tx.split_spaces("--pretty")
-    case "role": Tx.split_spaces("--session --role")
-    case "ensemble": Tx.split_spaces("--id --owner --coupling")
-    case "ensemble-member": Tx.split_spaces("--id --owner --player --action")
-    case "section": Tx.split_spaces("--ensemble --id --owner --capability")
-    case "section-member": Tx.split_spaces("--ensemble --id --owner --player --action")
-    case "attempt": Tx.split_spaces("--session --id")
-    case "attempts": Tx.split_spaces("--session")
-    case "outbox": Tx.split_spaces("--session")
-    case "receiver": Tx.split_spaces("--session --command --output-log --cwd")
-    case "configure": Tx.split_spaces("--session --harness --model --effort --command --output-log --expected-harness --expected-model --expected-effort")
-    case "resume": Tx.split_spaces("--session --lift-stop")
-    case "stop": Tx.split_spaces("--session --id --reason --reason-file")
-    case "force-stop": Tx.split_spaces("--session --id")
-    case "recover-observer": Tx.split_spaces("--session --observer")
-    case "continue-task": Tx.split_spaces("--session --id")
-    case "turn": Tx.split_spaces("--session --id --command --model --effort --cwd --file --output-log --native")
-    case "receive": Tx.split_spaces("--session --command --model --effort --cwd --output-log --message")
-    case "profile-bind": Tx.split_spaces("--session --harness --profile --store")
-    case "connect": Tx.split_spaces("--session --native --endpoint")
-    case "bind": Tx.split_spaces("--session --native --harness --model --effort")
-    case "report": Tx.split_spaces("--id --text --file")
-    case "ask": Tx.split_spaces("--id --text --file")
-    case "native-reply": Tx.split_spaces("--request --text --file")
-    case "dispatch": Tx.split_spaces("--id --to --kind --text --file")
-    case "recruit": Tx.split_spaces("--session --parent --harness --model --effort --repo --branch --path --base")
-    case "join": Tx.split_spaces("--session --parent --harness --model --effort --path")
-    case "worktree": Tx.split_spaces("--session")
-    case "land": Tx.split_spaces("--session --repo --target --commit --check --files")
-    case "push": Tx.split_spaces("--repo --branch --remote")
-    case "remote-tip": Tx.split_spaces("--repo --branch --remote")
-    case "knowledge-read": Tx.split_spaces("--id --index --scope --subject")
-    case "knowledge-record": Tx.split_spaces("--id --kind --claim --claim-file --evidence --evidence-file --limits --limits-file --links --links-file")
-    case "knowledge-relate": Tx.split_spaces("--id --source --relation --target")
-    case "knowledge-promote": Tx.split_spaces("--id --from --to --finding --source-kind --destination-kind")
-    case "knowledge-search": Tx.split_spaces("--scope --subject --query --query-file")
-    case "knowledge-traverse": Tx.split_spaces("--scope --subject --reference --direction --relation --recursive")
-    case "knowledge-relations": Tx.split_spaces("--scope --subject")
-    case "project-register": Tx.split_spaces("--path")
-    case "project-sessions": Tx.split_spaces("--path")
-    case "project-settings": Tx.split_spaces("--path")
-    case "context-engines": Tx.split_spaces("--session")
-    case "context-install": Tx.split_spaces("--module --path")
-    case "context-query": Tx.split_spaces("--owner --id --file")
-    case "context-result": Tx.split_spaces("--id")
-    case "models": Tx.split_spaces("--session")
-    case "observed-usage": Tx.split_spaces("--session")
-    case "logs": Tx.split_spaces("--session --level")
-    case other: Nil{}
+  names_lookup([
+    Names{"session","--session --id --pretty"},
+    Names{"player","--session --id --pretty"},
+    Names{"players","--pretty"},
+    Names{"assignment","--session --id --pretty"},
+    Names{"completion-request","--id --text --file"},
+    Names{"completion-confirmed","--id --request --to"},
+    Names{"guide","--id --to --text --file"},
+    Names{"acknowledge","--message --receipt"},
+    Names{"status","--pretty"},
+    Names{"pending","--index --pretty --sender --recipient --kind --state --after-seq --through-seq"},
+    Names{"orchestra","--pretty"},
+    Names{"role","--session --role"},
+    Names{"ensemble","--id --owner --coupling"},
+    Names{"ensemble-member","--id --owner --player --action"},
+    Names{"section","--ensemble --id --owner --capability"},
+    Names{"section-member","--ensemble --id --owner --player --action"},
+    Names{"attempt","--session --id"},
+    Names{"attempts","--session"},
+    Names{"outbox","--session"},
+    Names{"receiver","--session --command --output-log --cwd"},
+    Names{"configure","--session --harness --model --effort --command --output-log --expected-harness --expected-model --expected-effort"},
+    Names{"resume","--session --lift-stop"},
+    Names{"stop","--session --id --reason --reason-file"},
+    Names{"force-stop","--session --id"},
+    Names{"recover-observer","--session --observer"},
+    Names{"continue-task","--session --id"},
+    Names{"turn","--session --id --command --model --effort --cwd --file --output-log --native"},
+    Names{"receive","--session --command --model --effort --cwd --output-log --message"},
+    Names{"profile-bind","--session --harness --profile --store"},
+    Names{"connect","--session --native --endpoint"},
+    Names{"bind","--session --native --harness --model --effort"},
+    Names{"report","--id --text --file"},
+    Names{"ask","--id --text --file"},
+    Names{"native-reply","--request --to --text --file"},
+    Names{"dispatch","--id --to --kind --text --file"},
+    Names{"recruit","--session --parent --harness --model --effort --repo --branch --path --base"},
+    Names{"join","--session --parent --harness --model --effort --path"},
+    Names{"worktree","--session"},
+    Names{"land","--session --repo --target --commit --check --files"},
+    Names{"push","--repo --branch --remote"},
+    Names{"remote-tip","--repo --branch --remote"},
+    Names{"knowledge-read","--id --index --scope --subject"},
+    Names{"knowledge-record","--id --kind --claim --claim-file --evidence --evidence-file --limits --limits-file --links --links-file"},
+    Names{"knowledge-relate","--id --source --relation --target"},
+    Names{"knowledge-promote","--id --from --to --finding --source-kind --destination-kind"},
+    Names{"knowledge-search","--scope --subject --query --query-file"},
+    Names{"knowledge-traverse","--scope --subject --reference --direction --relation --recursive"},
+    Names{"knowledge-relations","--scope --subject"},
+    Names{"project-register","--path"},
+    Names{"project-sessions","--path"},
+    Names{"project-settings","--path"},
+    Names{"context-engines","--session"},
+    Names{"context-install","--module --path"},
+    Names{"context-query","--owner --id --file"},
+    Names{"context-result","--id"},
+    Names{"models","--session"},
+    Names{"observed-usage","--session"},
+    Names{"logs","--session --level"}
+  ],verb)
 
 def value(options: List<Option>, +name: String, +fallback: String) -> String:
   match options:
@@ -103,37 +113,29 @@ def present(options: List<Option>, +name: String) -> Bool:
 
 def required(verb: String) -> List<String>:
   match verb:
-    case "completion-confirmed": Tx.split_spaces("--request")
     case "guide": Tx.split_spaces("--to")
     case "ensemble": Tx.split_spaces("--id")
     case "ensemble-member": Tx.split_spaces("--id --player --action")
     case "section": Tx.split_spaces("--ensemble --id")
     case "section-member": Tx.split_spaces("--ensemble --id --player --action")
     case "receiver": Tx.split_spaces("--command --output-log")
-    case "stop": Tx.split_spaces("--id")
-    case "force-stop": Tx.split_spaces("--id")
     case "recover-observer": Tx.split_spaces("--observer")
-    case "continue-task": Tx.split_spaces("--id")
-    case "turn": Tx.split_spaces("--id --file --command --output-log")
+    case "turn": Tx.split_spaces("--file --command --output-log")
     case "profile-bind": Tx.split_spaces("--profile --store")
     case "bind": Tx.split_spaces("--harness --model --effort")
-    case "report": Tx.split_spaces("--id")
-    case "ask": Tx.split_spaces("--id")
-    case "native-reply": Tx.split_spaces("--request")
-    case "dispatch": Tx.split_spaces("--id --to")
+    case "dispatch": Tx.split_spaces("--to")
     case "recruit": Tx.split_spaces("--session --harness --model --effort --repo --branch --path --base")
     case "join": Tx.split_spaces("--session --harness --model --effort --path")
     case "land": Tx.split_spaces("--repo --target")
     case "push": Tx.split_spaces("--repo --branch --remote")
     case "remote-tip": Tx.split_spaces("--repo --branch --remote")
-    case "knowledge-record": Tx.split_spaces("--id --kind")
-    case "knowledge-relate": Tx.split_spaces("--id --source --relation --target")
-    case "knowledge-promote": Tx.split_spaces("--id --to --finding")
+    case "knowledge-record": Tx.split_spaces("--kind")
+    case "knowledge-relate": Tx.split_spaces("--source --relation --target")
+    case "knowledge-promote": Tx.split_spaces("--to --finding")
     case "knowledge-traverse": Tx.split_spaces("--reference --direction")
     case "project-register": Tx.split_spaces("--path")
     case "context-install": Tx.split_spaces("--module --path")
-    case "context-query": Tx.split_spaces("--id --file")
-    case "context-result": Tx.split_spaces("--id")
+    case "context-query": Tx.split_spaces("--file")
     case other: Nil{}
 
 def missing(+options: List<Option>, fields: List<String>) -> String:
@@ -247,7 +249,8 @@ def help(action: String) -> String:
     case "players": "players [--pretty]\nRead the current Players projection as an independent action in a mixed batch.\n"
     case "assignment": "assignment [--session SESSION | --id SESSION] [--pretty]\nRead the selected session and its retained assignment and task-completion state in a mixed batch. Omitted target selects the current actor.\n"
     case "completion-request": "completion-request (--text TEXT | --file PATH) [--id ID]\nSend the complete request to the current actor's recorded parent through the existing contextual completion handler. Supports mixed and or --and batches.\n"
-    case "completion-confirmed": "completion-confirmed --request REQUEST_ID [--to PLAYER] [--id ID]\nConfirm through the existing retained-request handler. The current actor must own the request; an explicit recipient must match its author. Supports mixed batches.\n"
+    case "completion-confirmed": "completion-confirmed [--to PLAYER] [--request REQUEST_ID] [--id ID]\nConfirm the selected Player's current request through the retained-request handler. Baton selects the owned request when omitted; an explicit request must belong to its author and current recipient. Supports mixed batches.\n"
+    case "acknowledge": "acknowledge [--message ID] [--receipt TEXT]\nAcknowledge the current actor's complete inputs through native read and handling evidence. Baton selects the owned input and receipt when omitted.\n"
     case "guide": "guide --to PLAYER (--text TEXT | --file PATH) [--id ID]\nAdmit complete guidance as the current actor through the existing contextual handler. Supports mixed batches.\n"
     case "status": "status [--pretty]\nRead the existing database status projection.\n"
     case "pending": "pending [--index] [--pretty] [--sender SESSION] [--recipient SESSION] [--kind KIND] [--state pending|acknowledged|all] [--after-seq INTEGER] [--through-seq INTEGER]\nRead complete pending input; --index enables the native metadata filters.\n"
@@ -263,28 +266,28 @@ def help(action: String) -> String:
     case "receiver": "receiver --command EXECUTABLE --output-log PATH [--session SESSION] [--cwd PATH]\nRegister the ordinary receiver. Omitted session selects the current actor; omitted cwd preserves the recorded workspace.\n"
     case "configure": "configure [--session SESSION] [--harness NAME] [--model MODEL] [--effort EFFORT] [--command EXECUTABLE] [--output-log PATH] [--expected-harness NAME] [--expected-model MODEL] [--expected-effort EFFORT]\nOmitted route and expected fields use the selected recorded session. Recorded receiver command and log supply omitted executable arguments. Native configure preserves its expected-route and current-attempt rules.\n"
     case "resume": "resume [--session SESSION] [--lift-stop]\nResume the same recorded conversation. --lift-stop explicitly lifts its current stop.\n"
-    case "stop": "stop --id STOP_ID (--reason TEXT | --reason-file PATH) [--session SESSION]\nRetain an explicit stop and its complete reason through the native stop operation.\n"
-    case "force-stop": "force-stop --id STOP_ID [--session SESSION]\nForce the exact existing stop ID through the native operation.\n"
+    case "stop": "stop [--id STOP_ID] (--reason TEXT | --reason-file PATH) [--session SESSION]\nRetain an explicit stop and complete reason. Baton generates its identity or selects the existing stop for the session; native reason validation applies.\n"
+    case "force-stop": "force-stop [--id STOP_ID] [--session SESSION]\nBaton selects the session's existing stop when --id is omitted and invokes the native force operation.\n"
     case "recover-observer": "recover-observer --observer PID [--session SESSION]\nUse the existing attempt recovery and observer ownership operation.\n"
-    case "continue-task": "continue-task --id TURN_ID [--session SESSION]\nExplicitly request continuation of the selected open assignment.\n"
-    case "turn": "turn --id TURN_ID --command EXECUTABLE --file TASK_PATH --output-log PATH [--session SESSION] [--model MODEL] [--effort EFFORT] [--cwd PATH] [--native ID]\nStart the existing managed direct turn. Omitted route, workspace and native identity use the selected session. PATH - reads stdin.\n"
+    case "continue-task": "continue-task [--id TURN_ID] [--session SESSION]\nExplicitly request continuation of the selected open assignment. Baton generates the continuation identity when omitted.\n"
+    case "turn": "turn [--id TURN_ID] --command EXECUTABLE --file TASK_PATH --output-log PATH [--session SESSION] [--model MODEL] [--effort EFFORT] [--cwd PATH] [--native ID]\nStart the existing managed direct turn. Omitted route, workspace and native identity use the selected session. PATH - reads stdin.\n"
     case "receive": "receive [--session SESSION] [--command EXECUTABLE] [--output-log PATH] [--model MODEL] [--effort EFFORT] [--cwd PATH] [--message ID]\nUse the recorded receiver and native retained receive operation.\n"
     case "profile-bind": "profile-bind --profile LABEL --store PATH [--session SESSION] [--harness NAME]\nBind the named existing account through the native profile operation. Omitted harness uses the selected session.\n"
     case "connect": "connect --endpoint JSON_ARGV [--session SESSION] [--native ID]\nRecord the ordinary endpoint through the existing operation. Omitted native ID preserves the selected session's identity. An empty endpoint explicitly disconnects it.\n"
     case "bind": "bind --harness NAME --model MODEL --effort EFFORT [--session SESSION] [--native ID]\nRecord the native route through the existing binding operation. Omitted native ID preserves the selected session's identity.\n"
-    case "report": "report --id ID (--text TEXT | --file PATH)\nSend a complete report to the current actor's recorded coordinator through the native report operation.\n"
-    case "ask": "ask --id ID (--text TEXT | --file PATH)\nSend a complete question to the current actor's recorded coordinator through the native ask operation.\n"
-    case "native-reply": "native-reply --request ID (--text JSON | --file PATH)\nAnswer the retained native request as the current coordinator through the native reply operation.\n"
-    case "dispatch": "dispatch --id ID --to SESSION (--text TEXT | --file PATH) [--kind KIND]\nAdmit the complete input as the current actor and wake its recorded recipient. Omitted kind is task.\n"
+    case "report": "report [--id ID] (--text TEXT | --file PATH)\nSend a complete report to the current actor's recorded coordinator. Baton generates the operation identity when omitted.\n"
+    case "ask": "ask [--id ID] (--text TEXT | --file PATH)\nSend a complete question to the current actor's recorded coordinator through the native ask operation.\n"
+    case "native-reply": "native-reply (--text JSON | --file PATH) [--to WORKER] [--request ID]\nAnswer the unique pending native request addressed to the current coordinator. --to selects a worker when several requests exist. Baton refuses absent or ambiguous requests.\n"
+    case "dispatch": "dispatch [--id ID] --to SESSION (--text TEXT | --file PATH) [--kind KIND]\nAdmit the complete input as the current actor and wake its recorded recipient. Omitted kind is task.\n"
     case "recruit": "recruit --session PLAYER --harness NAME --model MODEL --effort EFFORT --repo PATH --branch BRANCH --path PATH --base COMMIT [--parent SESSION]\nCreate the recorded Player worktree. Omitted parent selects the current actor.\n"
     case "join": "join --session PLAYER --harness NAME --model MODEL --effort EFFORT --path PATH [--parent SESSION]\nJoin the existing workspace under the selected parent, which defaults to the current actor.\n"
     case "worktree": "worktree [--session SESSION]\nInspect the recorded workspace through the existing native worktree operation.\n"
     case "land": "land --repo PATH --target BRANCH [--session SESSION] [--commit COMMIT] [--check EXECUTABLE --files FILES]\nUse native landing, including its owned workspace and selected-check requirements.\n"
     case "push": "push --repo PATH --branch BRANCH --remote REMOTE\nPublish the named branch through the native Git operation.\n"
     case "remote-tip": "remote-tip --repo PATH --branch BRANCH --remote REMOTE\nRead the actual remote branch advertisement.\n"
-    case "knowledge-record": "knowledge record --id ID --kind KIND (--claim TEXT | --claim-file PATH) [--evidence TEXT | --evidence-file PATH] [--limits TEXT | --limits-file PATH] [--links JSON | --links-file PATH]\nRecord complete authored fields as the current actor using native typed or linked knowledge.\n"
-    case "knowledge-relate": "knowledge relate --id ID --source ID --relation RELATION --target ID\nRecord an authored native knowledge relation.\n"
-    case "knowledge-promote": "knowledge promote --id ID --to DESTINATION --finding ID [--from SOURCE] [--source-kind session|group] [--destination-kind session|group]\nPromote the existing holding as the current actor; native ownership and notice delivery apply.\n"
+    case "knowledge-record": "knowledge record [--id ID] --kind KIND (--claim TEXT | --claim-file PATH) [--evidence TEXT | --evidence-file PATH] [--limits TEXT | --limits-file PATH] [--links JSON | --links-file PATH]\nRecord complete authored fields as the current actor using native typed or linked knowledge.\n"
+    case "knowledge-relate": "knowledge relate [--id ID] --source ID --relation RELATION --target ID\nRecord an authored native knowledge relation.\n"
+    case "knowledge-promote": "knowledge promote [--id ID] --to DESTINATION --finding ID [--from SOURCE] [--source-kind session|group] [--destination-kind session|group]\nPromote the existing holding as the current actor; native ownership and notice delivery apply.\n"
     case "knowledge-search": "knowledge search (--query TEXT | --query-file PATH) [--scope universal|worker|group|all] [--subject ID]\nSearch complete scoped knowledge and retained evidence through the native operation.\n"
     case "knowledge-traverse": "knowledge traverse --reference ID --direction in|out|both [--relation RELATION] [--recursive] [--scope universal|worker|group|all] [--subject ID]\nTraverse the native graph under the current reader's scope.\n"
     case "knowledge-relations": "knowledge relations [--scope universal|worker|group|all] [--subject ID]\nRead the scoped native relation graph.\n"
@@ -296,8 +299,8 @@ def help(action: String) -> String:
     case "project": "project register|sessions|settings [--path PATH]\nUse help project-register, help project-sessions or help project-settings.\n"
     case "context-engines": "context engines [--session SESSION]\nInspect selected native context modules and readiness.\n"
     case "context-install": "context install --module ID --path PATH\nInstall an existing built module through the native operation.\n"
-    case "context-query": "context query --id QUERY --file PATH [--owner SESSION]\nSubmit the complete request file to the existing native context operation.\n"
-    case "context-result": "context result --id QUERY\nRead the existing native context result.\n"
+    case "context-query": "context query --file PATH [--id QUERY] [--owner SESSION]\nSubmit the complete request file to the existing native context operation.\n"
+    case "context-result": "context result [--id QUERY]\nRead the latest query owned by the current actor when its ID is omitted, or the explicitly selected retained query.\n"
     case "context": "context engines|install|query|result NAMED_ARGS\nUse help with the corresponding context action name.\n"
     case "models": "models [--session SESSION]\nRead observed model capability information for the selected session.\n"
     case "observed-usage": "observed-usage [--session SESSION]\nRead the selected session's actual usage observations.\n"

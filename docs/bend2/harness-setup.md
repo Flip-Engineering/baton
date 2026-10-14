@@ -154,19 +154,23 @@ describes the separate API charges.
 ## Native controls
 
 Follow [installation](installation.md) for the coordinator and host dependencies.
-The following commands require current development source. Save the assigned
-task in a file and start its Principal:
+The following commands require current development source. Dispatch the complete
+assignment text under the selected project:
 
 ```sh
-baton2 /absolute/path/orchestra.db start principal codex /absolute/path/codex \
-  gpt-6-astra high /absolute/path/repository /absolute/path/principal-native.jsonl \
-  principal-task-1 /absolute/path/principal-task.md
+baton dispatch 'Review the assigned source and report the result.' \
+  --project /absolute/path/repository \
+  --harness codex --command /absolute/path/codex --model gpt-6-astra --effort high
 ```
 
-`start` registers the Principal and operator, configures the native receiver and
-dispatches the task file. A compatible existing Principal keeps its native
-conversation, pending input and repository assignment. The result records a
-launched delivery PID. Inspect turns and reports to establish completion.
+`dispatch` resolves the registered database and configured route. It retains the
+complete task input and setup outcome in the database and preserves the selected
+conversation's current assignment. `--to SESSION` selects an existing actor.
+`--stdin` accepts complete text; `--file PATH` imports an existing UTF-8 file.
+Scratchpads contain deliberately authored working notes. Baton does not generate
+task-source files. Use the actor context and `task-input-read --current` to read
+its latest dispatch input and outcome. Inspect turns and reports to establish
+completion.
 
 Use `recruit` for subordinate sessions and retain the returned workspace and
 base. Configure a Codex, OMP, Muse or Claude Code session with
@@ -174,12 +178,11 @@ base. Configure a Codex, OMP, Muse or Claude Code session with
 receiver endpoint using its recorded model, effort and workspace, preserves
 its native identity and records the `CWD` argument as the directory its turns
 run in. A session that records no model or working directory is refused, since
-that endpoint could start no turn. Send its task with
-`dispatch-file ID SENDER RECIPIENT task TASK_FILE`.
+that endpoint could start no turn. Send complete task text with
+`baton dispatch 'Handle the assigned change.' --to SESSION`.
 
-`dispatch-turn PLAYER TURN_ID HARNESS_COMMAND OUTPUT_LOG TASK_FILE` launches a
-recruited Muse or Claude Player using its recorded assignment and saved native
-identity. Independent dispatches run concurrently; turns within one session
+`dispatch` also launches a recruited Muse or Claude Player through its recorded
+route, assignment and saved native identity. Independent dispatches run concurrently; turns within one session
 are serialized.
 
 An existing registry at `~/.config/baton/github-apps/series.json`, or the path

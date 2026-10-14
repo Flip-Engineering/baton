@@ -19,7 +19,7 @@ The procedure uses an unused prefix and retains the downloaded evidence:
 
 ```sh
 set -eu
-BATON2_VERSION=1.2.0
+BATON2_VERSION=2.0.0
 BATON2_DOWNLOAD="$(mktemp -d "${TMPDIR:-/tmp}/baton2-release-download.XXXXXX")"
 gh release download "baton2-v$BATON2_VERSION" --repo Flip-Engineering/baton \
   --pattern '*.tar.gz' --pattern manifest.json --pattern SHA256SUMS \
@@ -254,32 +254,36 @@ native adapter and removes API-key variables. The public 1.0 archive requires th
 version-specific subscription wrapper in [harness setup](harness-setup.md).
 Kimi K3 runs through OMP's `kimi-code` provider on this host.
 
-## Start a Principal from current development source
+## Dispatch a task
 
-The commands below require the development build; the immutable 1.0 archive
-retains its original control interface. Save the task in a file and run:
+The complete installed package accepts task text, standard input or an existing
+UTF-8 file. Select a named saved route or supply harness, model and effort:
 
 ```sh
-baton2 /absolute/path/state.db start principal codex /absolute/path/to/codex \
-  gpt-6-sol high /absolute/path/repository /absolute/path/principal.jsonl \
-  initial-task /absolute/path/task.md
-baton2 /absolute/path/state.db status --pretty
-baton2 /absolute/path/state.db inbox operator --pretty
+baton dispatch 'Review the assigned source and report the result.' \
+  --project /absolute/path/repository --harness codex --model MODEL --effort high
+baton --project /absolute/path/repository as operator inbox
+baton dispatch --stdin --project /absolute/path/repository --route review
+baton dispatch --file /absolute/path/existing-task.txt \
+  --project /absolute/path/repository --route review
 ```
 
-`start` assigns the Principal Conductor role and creates the parentless `operator`
-identity when absent. A compatible existing Principal keeps its native conversation,
-pending input and repository assignment. A conflicting assignment is refused.
-The launch result names the detached delivery PID; inspect messages, turns and
-logs for acceptance and completion.
-The native terminal result is recorded in `turns PRINCIPAL --pretty` and sent
-to the operator inbox. Acknowledge each reviewed report with `ack`.
+`dispatch` owns routine session, receiver and native transcript setup. Complete
+input requests and setup outcomes are retained in the database, and the result
+returns literal commands for the request, message, session and turns. For an
+existing open assignment, use `--to SESSION`; Baton selects continuation
+automatically. In the actor context, `task-input-read --current` reads its latest
+complete dispatch input and setup outcome. Its native conversation,
+parent, workspace, pending input, receipts and explicit stops remain recorded.
+Create a scratchpad deliberately when working notes need a file. Dispatch source
+is retained as database text. Native transcripts remain separate runtime files.
+The [dispatch interface](task-start-716.md) describes defaults, authority and
+partial failures. `task` remains a compatibility alias.
 
-Recruit subordinate Players with `recruit`. Configure Codex, OMP, Muse and Claude Code receivers
-with `receiver SESSION HARNESS_COMMAND OUTPUT_LOG [CWD]`, then use
-`dispatch-file ID SENDER RECIPIENT task TASK_FILE` for independent work.
-`dispatch-turn PLAYER TURN_ID HARNESS_COMMAND OUTPUT_LOG TASK_FILE` starts a
-Claude Player using its recorded model, effort, workspace and native ID.
+An attached coordinator uses `baton2_dispatch` with text or an existing file to
+assign independent work through its recorded identity. Existing native controls
+including `start`, `receiver`, `dispatch-file` and `dispatch-turn` remain
+available for explicit session setup and file-based operations.
 
 An existing model Git registry at `~/.config/baton/github-apps/series.json` is
 applied to native receiver and detached turn launches. `BATON2_GIT_REGISTRY`

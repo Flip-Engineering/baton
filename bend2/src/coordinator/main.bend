@@ -24,6 +24,7 @@ import ./agent-command.bend as AgentCommand
 import ./agent-route.bend as AgentRoute
 import ./agent-input.bend as AgentInput
 import ./agent-native.bend as AgentNative
+import ./task-input.bend as TaskInput
 import ../host/text.bend as T
 import ../host/process.bend as P
 import ../host/instance.bend as Custody
@@ -50,13 +51,13 @@ def read_command(+db: String, +command: C.Command) -> IO(Unit):
     AgentInput.command_output(db,command,result)
 
 def task_usage() -> String:
-  "task TEXT [OPTIONS]\ntask --stdin [OPTIONS]\ntask --file UTF8_FILE [OPTIONS]\ntask --help shows project, named route, explicit overrides and continuation options.\nstart-setup SESSION HARNESS HARNESS_CMD MODEL EFFORT CWD OUTPUT_LOG\nprofile-bind SESSION HARNESS LABEL STORE\n"
+  "dispatch TEXT [OPTIONS]\ndispatch --stdin [OPTIONS]\ndispatch --help shows project, saved routes, overrides and continuation options.\ntask-input-read --current returns the current actor's latest complete request and setup result.\ntask-input-read --session PLAYER selects that actor's latest dispatch to the Player.\n"
 
 def usage() -> String:
   task_usage() ++ usage_existing()
 
 def usage_existing() -> String:
-  "usage: baton2 DATABASE COMMAND ARGS\n       baton2 --project PATH COMMAND ARGS\ncontext-engines [SESSION]\ncontext-install MODULE SOURCE\ncontext-query-file OWNER QUERY REQUEST_PATH\ncontext-result QUERY\nstart SESSION HARNESS HARNESS_CMD MODEL EFFORT CWD OUTPUT_LOG TASK_ID TASK_FILE\nreceiver SESSION HARNESS_CMD OUTPUT_LOG [CWD]\ndispatch-file ID SENDER RECIPIENT KIND PATH\ndispatch-turn PLAYER TURN_ID HARNESS_CMD OUTPUT_LOG TASK_FILE\nui-subscribe AFTER GENERATION\nserve\nowner-status\nstatus --pretty\nplayers --pretty\norchestra --pretty\npending --pretty\nplayer ID --pretty\nsession ID --pretty\ninbox ID --pretty\noutbox ID --pretty\ndelivery ID --pretty\ninput MESSAGE_ID --pretty\nturns PLAYER_ID --pretty\nknowledge READER --pretty\nworktree ID --pretty\nattach ID HARNESS NATIVE ENDPOINT\njoin ID PARENT HARNESS MODEL EFFORT WORKSPACE\nrecruit ID PARENT HARNESS MODEL EFFORT REPO BRANCH PATH BASE\nworktree ID\nconnect ID NATIVE ENDPOINT\nbind ID NATIVE HARNESS MODEL EFFORT\nconfigure ID HARNESS MODEL EFFORT HARNESS_CMD OUTPUT_LOG EXPECTED_HARNESS EXPECTED_MODEL EXPECTED_EFFORT\nrole SESSION [player|principal-conductor|associate-conductor|operator]\nensemble ID [OWNER [loose|tight]]\nensemble-member ID OWNER PLAYER add|remove\nsection ENSEMBLE SECTION [OWNER CAPABILITY]\nsection-member ENSEMBLE SECTION OWNER PLAYER add|remove\norchestra\nmessage ID SENDER RECIPIENT KIND BODY\nmessage-file ID SENDER RECIPIENT KIND PATH\nmessage-batch SENDER MESSAGES_JSON\nmessage-batch-file SENDER PATH\ncontinue-task SESSION TURN_ID\nobserve-file ID PLAYER PATH\nreport ID PLAYER BODY\nreport-file ID PLAYER PATH\nask ID PLAYER BODY\nask-file ID PLAYER PATH\nnative-reply PARENT REQUEST RESPONSE_JSON\nnative-reply-file PARENT REQUEST PATH\nsession ID\ndelivery ID\ninput MESSAGE_ID\ndelivery-batch IDS_JSON\ndelivery-batch-file PATH\npending [--index [FILTERS]] [--pretty]\ninbox RECIPIENT [--index [FILTERS]] [--pretty]\noutbox SENDER [--pretty]\nack ID RECIPIENT NATIVE_RECEIPT\nstatus\nplayers\nplayer ID\nturns PLAYER_ID\nproject PATH\nproject-sessions PATH\nresume SESSION [--lift-stop]\nland PLAYER_ID REPO TARGET_BRANCH [--commit COMMIT]\nland-checked PLAYER_ID REPO TARGET_BRANCH CHECK FILES [--commit COMMIT]\npush REPO BRANCH REMOTE\nremote-tip REPO BRANCH REMOTE\nobserved-usage SESSION\nmodels SESSION\nlogs SESSION [LEVEL]\nlogs-storage\nlogs-clean SESSION\nview SUBJECT [READER [PORT]]\nturn PLAYER TURN_ID HARNESS_CMD MODEL EFFORT CWD TASK_FILE OUTPUT_LOG RESUME_SESSION\nstop SESSION STOP_ID REASON\nforce-stop SESSION STOP_ID\nrecover-observer SESSION OBSERVER_PID\nreceive SESSION HARNESS_CMD MODEL EFFORT CWD OUTPUT_LOG MESSAGE_ID\nrecord FINDING_ID AUTHOR CLAIM EVIDENCE LIMITS\nrecord-typed FINDING_ID AUTHOR KIND CLAIM EVIDENCE LIMITS\nrelate RELATION_ID AUTHOR SOURCE RELATION TARGET\nknowledge READER [--index | --id FINDING_ID] [--pretty]\nknowledge-scope READER universal|worker|group|all SUBJECT [--index | --id FINDING_ID] [--pretty]\nknowledge-relations READER [universal|worker|group|all SUBJECT] [--pretty]\npromote PROMOTION_ID PROMOTER SOURCE DESTINATION FINDING\npromote-scoped PROMOTION_ID PROMOTER SOURCE_KIND SOURCE DESTINATION_KIND DESTINATION FINDING\nview starts the optional Orchestra live view: a loopback server for the subject's recorded state under the reader's scope (default the subject itself), with explicit session resumption through the public coordinator, opened in a browser when one answers; it serves until the command exits.\nWorkers send completion-request to their immediate parent when the task is ready. The parent replies with completion-confirmed whose body is the request ID, or sends further guidance. Native settlement delivers the turn report to the recorded coordinator, which decides whether further work is needed. continue-task SESSION TURN_ID explicitly queues continuation input for an open assignment that has no current completion request and wakes its recorded receiver. resume SESSION retries delivery of queued input through the same receiver. Message receipts record handled input.\nEmpty receive MODEL/EFFORT/CWD use recorded values; empty MESSAGE_ID reads the pending inbox.\nPATH - reads stdin; empty RESUME_SESSION starts a new native session\nconfigure saves one registered Player's route for future turns and keeps its identity, parentage, workspace, branch, base, native conversation and pending input. Saving effort on the same harness and model works during active or stopped sessions and keeps the receiver, current turn and stop. Changing harness or model requires the current attempt to end and any stop to be lifted, then rebuilds the receiver endpoint. The expected harness, model and effort must match the recorded route.\ninbox RECIPIENT --index and pending --index return sequence, message ID, sender, recipient, kind, receipt and stopped-input disposition. The ordinary forms include complete bodies. outbox SENDER returns every complete authored message with its current receipt. Index filters are --sender SESSION, --recipient SESSION, --kind KIND, --state pending|acknowledged|all, --after-seq INTEGER and --through-seq INTEGER. Bounds select sequences greater than after and at most through; omitted bounds are open. Rows remain in sequence order.\nmessage-batch accepts an array of objects with id, recipient, kind and body. Each item reports its admission, wake outcome, retained message and current receipt. delivery-batch accepts an array of message IDs and returns each complete stored delivery in request order. The file forms read UTF-8 JSON from PATH or stdin when PATH is -.\nknowledge --index returns finding metadata with literal detailRead argv. Evidence metadata includes literal deliveryRead argv for a retained message. --id returns the complete selected finding under the same scope.\nComplete stored input: delivery MESSAGE_ID returns the full body and receipt of any message. input MESSAGE_ID relates that record to current recipient, wake, execution and task-completion state, and labels unavailable historical wake and attempt linkage as unrecorded. turns PLAYER_ID lists turn history with report bodies; players reports latestReport and latestReportId. Acknowledged messages leave default inbox and pending reads and remain readable by ID.\nDATABASE project PATH registers that database at the project's canonical Git common-dir/baton2/database; a directory outside Git uses PATH/baton2/database. --project PATH COMMAND reads that pointer and runs the command against the same database. project-sessions lists recorded sessions for the project with pending input, reports and native conversation identities.\nresume SESSION delivers the oldest owed input through the recorded receiver. When the inbox is empty after a failed native turn, it sends a recovery message to continue unfinished work in the same conversation. It reports the message receipt and latest retained report. Add --lift-stop to explicitly clear the current stop; original task receipts, stop reports and turn history remain stored."
+  "Administration: baton DATABASE COMMAND ARGS\nserve\nowner-status\nproject PATH\nproject-sessions PATH\ntask-input-read --current | --session PLAYER\ndelivery MESSAGE_ID\ndelivery-batch IDS_JSON\nmessage-batch SENDER MESSAGES_JSON\ninput MESSAGE_ID\nturns PLAYER\nui-subscribe AFTER GENERATION\nview SUBJECT [READER [PORT]]\nlogs-storage\nlogs-clean SESSION\nproject PATH registers this database in the project Git common directory. --project PATH selects the registered database.\ndelivery and input inspect an intentionally selected historical message. Native command forms remain available for existing integrations.\n"
 
 # A refused log command names its rule on stderr with status 2, as the stored
 # commands do.
@@ -244,23 +245,101 @@ def keeper(directory: String, lock: Maybe<&2,U32>) -> IO(Unit):
     case None{}: IO.die(Unit,2,"Invalid inherited process lock.")
     case Some{handle}: IO.try(Unit,P.ProcessChild.keeper(directory,handle))
 
-def normal_cli(args: List<String>) -> IO(Unit):
+type NormalCliKind is Data:
+  NativeInput{}
+  ContextualInput{}
+  SettleInput{}
+  TaskRecordInput{}
+  TaskResultInput{}
+  TaskReadInput{}
+  AgentCurrentInput{}
+  OrdinaryInput{}
+
+def normal_cli_kind(+head: String) -> NormalCliKind:
+  Bool.pick(NormalCliKind,String.eq(head,"agent-native-input"),NativeInput{},
+    Bool.pick(NormalCliKind,String.eq(head,"agent-contextual-input"),ContextualInput{},
+      Bool.pick(NormalCliKind,String.eq(head,"settle-agent-input"),SettleInput{},
+        Bool.pick(NormalCliKind,String.eq(head,"task-input-record"),TaskRecordInput{},
+          Bool.pick(NormalCliKind,String.eq(head,"task-input-result"),TaskResultInput{},
+            Bool.pick(NormalCliKind,String.eq(head,"task-input-read"),TaskReadInput{},
+              Bool.pick(NormalCliKind,String.eq(head,"agent-current-session"),AgentCurrentInput{},OrdinaryInput{})))))))
+
+def normal_cli_fallback(+db: String, +head: String, +tail: List<String>) -> IO(Unit):
+  Bool.pick(IO(Unit),String.eq(db,"--project"),
+    (do IO<Unit>:
+      selected : String <- Project.database(head)
+      execute(selected,C.parse(tail))),
+    execute(db,C.parse(Con{head,tail})))
+
+def normal_native_args(+db: String, args: List<String>) -> IO(Unit):
   match args:
-    case db <> "agent-native-input" <> Nil{}: do IO<Unit>:
+    case "turn-text" <> player <> id <> cmd <> model <> effort <> cwd <> body <> log <> session <> Nil{}:
+      Turn.run_text(db,player,id,cmd,model,effort,cwd,body,log,session)
+    case other: execute(db,C.parse(other))
+
+def normal_cli_native(args: List<String>, +db: String, head: String) -> IO(Unit):
+  match args:
+    case Nil{}: do IO<Unit>:
       native_args : List<String> <- AgentNative.input(db)
-      execute(db,C.parse(native_args))
-    case db <> "agent-contextual-input" <> session <> Nil{}: do IO<Unit>:
+      normal_native_args(db,native_args)
+    case other: normal_cli_fallback(db,head,other)
+
+def normal_cli_contextual(args: List<String>, +db: String, head: String) -> IO(Unit):
+  match args:
+    case session <> Nil{}: do IO<Unit>:
       native_args : List<String> <- AgentNative.input(db)
       AgentCommand.route(AgentRoute.Explicit{db,session,native_args})
-    case db <> "settle-agent-input" <> session <> native <> turn <> status <> Nil{}:
+    case other: normal_cli_fallback(db,head,other)
+
+def normal_cli_settle(args: List<String>, db: String, head: String) -> IO(Unit):
+  match args:
+    case session <> native <> turn <> status <> Nil{}:
       AgentInput.settle_codex(db,session,native,turn,status)
-    case "--project" <> path <> rest: do IO<Unit>:
-      db : String <- Project.database(path)
-      execute(db,C.parse(rest))
-    case +verb <> Nil{}:
-      Bool.pick(IO(Unit),Bool.or(String.eq(verb,"help"),Bool.or(String.eq(verb,"-h"),String.eq(verb,"--help"))),execute("",C.Help{}),execute(verb,C.Invalid{}))
-    case db <> rest: execute(db,C.parse(rest))
+    case other: normal_cli_fallback(db,head,other)
+
+def normal_cli_task_record(args: List<String>, db: String, head: String) -> IO(Unit):
+  match args:
+    case path <> Nil{}: TaskInput.record(db,path)
+    case other: normal_cli_fallback(db,head,other)
+
+def normal_cli_task_result(args: List<String>, db: String, head: String) -> IO(Unit):
+  match args:
+    case id <> path <> Nil{}: TaskInput.result(db,id,path)
+    case other: normal_cli_fallback(db,head,other)
+
+def normal_cli_task_read(args: List<String>, +db: String, head: String) -> IO(Unit):
+  match args:
+    case id <> Nil{}: TaskInput.read_selector(db,id)
+    case +flag <> +session <> Nil{}:
+      Bool.pick(IO(Unit),String.eq(flag,"--session"),TaskInput.scoped_read(db,session),normal_cli_fallback(db,head,[flag,session]))
+    case other: normal_cli_fallback(db,head,other)
+
+def normal_cli_agent_current(args: List<String>, db: String, head: String) -> IO(Unit):
+  match args:
+    case Nil{}: AgentCommand.current_session(db)
+    case other: normal_cli_fallback(db,head,other)
+
+def normal_cli_selected(kind: NormalCliKind, db: String, head: String, args: List<String>) -> IO(Unit):
+  match kind:
+    case NativeInput{}: normal_cli_native(args,db,head)
+    case ContextualInput{}: normal_cli_contextual(args,db,head)
+    case SettleInput{}: normal_cli_settle(args,db,head)
+    case TaskRecordInput{}: normal_cli_task_record(args,db,head)
+    case TaskResultInput{}: normal_cli_task_result(args,db,head)
+    case TaskReadInput{}: normal_cli_task_read(args,db,head)
+    case AgentCurrentInput{}: normal_cli_agent_current(args,db,head)
+    case OrdinaryInput{}: normal_cli_fallback(db,head,args)
+
+def normal_cli_tail(args: List<String>, +db: String) -> IO(Unit):
+  match args:
+    case Nil{}:
+      Bool.pick(IO(Unit),Bool.or(String.eq(db,"help"),Bool.or(String.eq(db,"-h"),String.eq(db,"--help"))),execute("",C.Help{}),execute(db,C.Invalid{}))
+    case +head <> tail: normal_cli_selected(normal_cli_kind(head),db,head,tail)
+
+def normal_cli(args: List<String>) -> IO(Unit):
+  match args:
     case Nil{}: execute("",C.Invalid{})
+    case db <> rest: normal_cli_tail(rest,db)
 
 def keeper_cli(directory: String, lock: String, args: List<String>, internal: Bool) -> IO(Unit):
   match internal:

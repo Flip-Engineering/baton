@@ -19,6 +19,8 @@ values = json.loads(Path(__file__).with_suffix('.json').read_text())
 if len(sys.argv) > 2 and sys.argv[2] == 'help':
     if values.get('batch', True):
         sys.stdout.write('outbox\\ndelivery-batch\\nmessage-batch\\ninput MESSAGE_ID\\ntask --stdin\\nusage: baton2 as SESSION ACTION ARGS\\n')
+        if values.get('dispatch', True):
+            sys.stdout.write('dispatch --stdin\\n')
     else:
         sys.stdout.write('delivery\\nmessage\\n')
     sys.exit(0)
@@ -30,12 +32,8 @@ sys.stderr.flush()
 Path(values['completed']).write_text(json.dumps({
     'exit_code': values['code'], 'argv': sys.argv[1:], 'pid': os.getpid(),
     'stdin': sys.stdin.read(),
-    'file_bodies': [Path(sys.argv[index + 1]).read_bytes().decode('utf-8')
-                    for index, value in enumerate(sys.argv[:-1])
-                    if value in ('--file', '--claim-file', '--evidence-file', '--limits-file',
-                                 '--links-file', '--query-file', '--reason-file')],
-    'requests': [json.loads(path.read_text()) for path in
-                 Path(values['completed']).parent.glob('state.db.actions/input-*/request.json')],
+    'session': os.environ.get('BATON_SESSION'),
+    'database': os.environ.get('BATON_DATABASE'),
 }))
 sys.exit(values['code'])
 '''
@@ -44,7 +42,7 @@ sys.exit(values['code'])
 class McpCommand(unittest.TestCase):
     def command(self, stdout='', stderr='', code=0, delay=0, *,
                 tool='baton2_status', arguments=None, session=None, expected_args=None,
-                expected_stdin='', expected_files=()):
+                expected_stdin='', expected_context=None, dispatch=True):
         with tempfile.TemporaryDirectory() as home:
             home = pathlib.Path(home)
             executable = home / 'fixture-coordinator'
@@ -54,12 +52,14 @@ class McpCommand(unittest.TestCase):
             executable.with_suffix('.json').write_text(json.dumps({
                 'stdout': stdout, 'stderr': stderr, 'code': code,
                 'delay': delay, 'completed': str(completed), 'batch': True,
+                'dispatch': dispatch,
             }))
             requests = [
                 {'jsonrpc': '2.0', 'id': 1, 'method': 'initialize', 'params': {}},
                 {'jsonrpc': '2.0', 'id': 2, 'method': 'tools/list', 'params': {}},
                 {'jsonrpc': '2.0', 'id': 3, 'method': 'tools/call',
-                 'params': {'name': tool, 'arguments': arguments or {}}},
+                 'params': {'name': tool, **({} if arguments is None else
+                                             {'arguments': arguments})}},
             ]
             result = subprocess.run(
                 ['node', str(MCP_SCRIPT), str(home / 'state.db'), str(executable)]
@@ -77,10 +77,19 @@ class McpCommand(unittest.TestCase):
             child = json.loads(completed.read_text())
             self.assertEqual(child['exit_code'], code)
             self.assertGreater(child['pid'], 0)
-            expected = expected_args(child) if callable(expected_args) else expected_args or ['status']
+            actor = 'root' if session is None else session
+            self.assertEqual(child['session'], actor)
+            self.assertEqual(child['database'], str(home / 'state.db'))
+            if expected_context is not None:
+                expected = ['agent-contextual-input', actor]
+            else:
+                expected = expected_args or ['status']
             self.assertEqual(child['argv'], [str(home / 'state.db')] + expected)
-            self.assertEqual(child['stdin'], expected_stdin)
-            self.assertEqual(child['file_bodies'], list(expected_files))
+            if expected_context is not None:
+                self.assertEqual(json.loads(child['stdin']), expected_context)
+            else:
+                self.assertEqual(child['stdin'], expected_stdin)
+            self.assertFalse((home / 'state.db.actions').exists())
             return replies[2]['result']
 
     def test_task_forwards_full_input_through_stdin_and_keeps_attached_authorship(self):
@@ -90,7 +99,7 @@ class McpCommand(unittest.TestCase):
         result = self.command(stdout='{"status":"admitted"}\n', tool='baton2_task',
             arguments={'text': body, 'project': '/explicit project', 'session': 'selected',
                        'route': 'named', 'effort': 'high', 'continue': True}, session='attached-λ',
-            expected_args=['task', '--stdin', *flags], expected_stdin=body)
+            expected_args=['dispatch', '--stdin', *flags], expected_stdin=body)
         self.assertFalse(result.get('isError', False))
         schema = self.tools['baton2_task']['inputSchema']
         self.assertEqual(schema['oneOf'], [{'required': ['text']}, {'required': ['file']}])
@@ -101,14 +110,33 @@ class McpCommand(unittest.TestCase):
         path = "/task files/plain task's λ.txt"
         self.command(tool='baton2_task', arguments={'file': path, 'project': '/selected project',
                      'new': True, 'harness': 'omp', 'model': 'kimi-code/k3', 'effort': 'low'},
-                     session='attached-λ', expected_args=['task', '--file', path, '--sender',
+                     session='attached-λ', expected_args=['dispatch', '--file', path, '--sender',
                          'attached-λ', '--project', '/selected project', '--harness', 'omp',
                          '--model', 'kimi-code/k3', '--effort', 'low', '--new'])
+
+    def test_dispatch_and_task_alias_select_advertised_input_operation(self):
+        body = '\ufeffComplete dispatch input.\nλ🙂\nTrailing spaces  '
+        for tool in ('baton2_dispatch', 'baton2_task'):
+            with self.subTest(tool=tool):
+                self.command(tool=tool, arguments={'text': body, 'project': '/selected project',
+                             'to': 'existing conversation', 'continue': True}, session='attached-λ',
+                             expected_args=['dispatch', '--stdin', '--sender', 'attached-λ',
+                                            '--project', '/selected project', '--to',
+                                            'existing conversation', '--continue'], expected_stdin=body)
+                schema = self.tools[tool]['inputSchema']
+                self.assertNotIn('dispatchId', schema.get('required', []))
+                self.assertEqual(schema['properties']['dispatchId']['type'], 'string')
+                self.assertEqual(schema['properties']['to']['type'], 'string')
+        self.command(tool='baton2_task', arguments={'text': body, 'project': '/legacy project'},
+                     session='attached-λ', dispatch=False,
+                     expected_args=['task', '--stdin', '--sender', 'attached-λ',
+                                    '--project', '/legacy project'], expected_stdin=body)
+        self.assertNotIn('baton2_dispatch', self.tools)
 
     def test_contextual_action_retains_attached_identity_and_batch_argument_order(self):
         result = self.command(stdout='[{"status":"found"}]\n', tool='baton2_action',
             arguments={'action': 'read', 'arguments': ['first-λ', 'second-🙂']}, session='attached-λ',
-            expected_args=['as', 'attached-λ', 'read', 'first-λ', 'second-🙂'])
+            expected_context=['read', 'first-λ', 'second-🙂'])
         self.assertFalse(result.get('isError', False))
         self.assertNotIn('session', self.tools['baton2_action']['inputSchema']['properties'])
 
@@ -117,42 +145,21 @@ class McpCommand(unittest.TestCase):
         second = 'Second body Ω\n'
         values = ['first', '--kind', 'report', '--text', first,
                   '--and', 'second', '--kind', 'report', '--text', second]
-        def expected(child):
-            argv = child['argv']
-            paths = [argv[index + 1] for index, value in enumerate(argv[:-1]) if value == '--file']
-            self.assertEqual(len(paths), 2)
-            self.assertNotEqual(paths[0], paths[1])
-            self.assertEqual(child['requests'][0]['arguments'], values)
-            return ['as', 'attached-λ', 'send', 'first', '--kind', 'report', '--file', paths[0],
-                    '--and', 'second', '--kind', 'report', '--file', paths[1]]
         result = self.command(stdout='[{"status":"sent"},{"status":"sent"}]\n',
             tool='baton2_action', arguments={'action': 'send', 'arguments': values}, session='attached-λ',
-            expected_args=expected, expected_files=(first, second))
+            expected_context=['send', *values])
         self.assertFalse(result.get('isError', False))
 
-    def test_contextual_native_body_fields_use_complete_files_in_one_batch(self):
+    def test_contextual_native_body_fields_keep_complete_json_input_in_one_batch(self):
         bodies = tuple(('\ufeff' + name + ' λ🙂\nLast line  \n') * 10000
                        for name in ('claim', 'evidence', 'limits', 'links', 'query', 'reason'))
         values = ['record', '--id', 'finding-one', '--kind', 'finding',
                   '--claim', bodies[0], '--evidence', bodies[1], '--limits', bodies[2],
                   '--links', bodies[3], '--and', 'knowledge', 'search', '--query', bodies[4],
                   'and', 'stop', '--session', 'worker', '--id', 'stop-one', '--reason', bodies[5]]
-        def expected(child):
-            argv = child['argv']
-            fields = ('--claim-file', '--evidence-file', '--limits-file', '--links-file',
-                      '--query-file', '--reason-file')
-            paths = [argv[argv.index(field) + 1] for field in fields]
-            self.assertEqual(len(set(paths)), len(bodies))
-            self.assertEqual(child['requests'][0]['arguments'], values)
-            self.assertEqual(child['requests'][0]['session'], 'attached-λ')
-            return ['as', 'attached-λ', 'knowledge', 'record', '--id', 'finding-one',
-                    '--kind', 'finding', '--claim-file', paths[0], '--evidence-file', paths[1],
-                    '--limits-file', paths[2], '--links-file', paths[3], '--and',
-                    'knowledge', 'search', '--query-file', paths[4], 'and', 'stop',
-                    '--session', 'worker', '--id', 'stop-one', '--reason-file', paths[5]]
         result = self.command(stdout='[{"status":"completed"}]\n', tool='baton2_action',
             arguments={'action': 'knowledge', 'arguments': values}, session='attached-λ',
-            expected_args=expected, expected_files=bodies)
+            expected_context=['knowledge', *values])
         self.assertFalse(result.get('isError', False))
 
     def test_contextual_named_values_preserve_body_flag_literals(self):
@@ -160,21 +167,15 @@ class McpCommand(unittest.TestCase):
                   '--effort', 'high', '--and', 'knowledge', 'read', '--id', '--query']
         result = self.command(stdout='[{"status":"completed"}]\n', tool='baton2_action',
             arguments={'action': 'configure', 'arguments': values}, session='attached-λ',
-            expected_args=['as', 'attached-λ', 'configure', *values])
+            expected_context=['configure', *values])
         self.assertFalse(result.get('isError', False))
 
     def test_pretty_inspection_preserves_large_guidance_body_in_mixed_batch(self):
         body = '\ufeffComplete guidance after inspection λ🙂\nLast line  \n' * 10000
         values = ['--pretty', '--and', 'guide', '--to', 'worker', '--text', body]
-        def expected(child):
-            argv = child['argv']
-            path = argv[argv.index('--file') + 1]
-            self.assertEqual(child['requests'][0]['arguments'], values)
-            return ['as', 'attached-λ', 'session', '--pretty', '--and', 'guide',
-                    '--to', 'worker', '--file', path]
         result = self.command(stdout='[{"status":"completed"},{"status":"completed"}]\n',
             tool='baton2_action', arguments={'action': 'session', 'arguments': values},
-            session='attached-λ', expected_args=expected, expected_files=(body,))
+            session='attached-λ', expected_context=['session', *values])
         self.assertFalse(result.get('isError', False))
 
     def native_controls(self):
@@ -220,6 +221,97 @@ class McpCommand(unittest.TestCase):
                              expected_args=['message','message-λ','attached-λ',recipient,
                                             kind or 'guidance',body])
 
+    def test_inferred_mutation_schemas_keep_explicit_compatibility_fields(self):
+        self.command()
+        selectors = {
+            'baton2_ack': ('id', 'receipt'),
+            'baton2_guide': ('id', 'request'),
+            'baton2_context_query_file': ('query',),
+            'baton2_context_result': ('query',),
+            'baton2_knowledge_record': ('id',),
+            'baton2_knowledge_relate': ('id',),
+            'baton2_knowledge_promote': ('id', 'source'),
+            'baton2_dispatch_file': ('id',),
+            'baton2_dispatch_turn': ('id',),
+        }
+        for tool, fields in selectors.items():
+            with self.subTest(tool=tool):
+                schema = self.tools[tool]['inputSchema']
+                for field in fields:
+                    self.assertNotIn(field, schema.get('required', []))
+                    self.assertEqual(schema['properties'][field]['type'], 'string')
+        self.assertEqual(self.tools['baton2_ack']['inputSchema'].get('required', []), [])
+        self.assertEqual(self.tools['baton2_guide']['inputSchema']['required'], ['player'])
+        link = self.tools['baton2_knowledge_record']['inputSchema']['properties']['links']['items']
+        self.assertNotIn('id', link['required'])
+        self.assertEqual(link['properties']['id']['type'], 'string')
+
+    def test_inferred_actions_delegate_current_authority_to_attached_native_context(self):
+        body = '\ufeffComplete authored input.\nλ🙂\nTrailing spaces  '
+        cases = (
+            ('baton2_ack', None, ['acknowledge']),
+            ('baton2_ack', {'id': 'selected input'}, ['acknowledge', 'selected input']),
+            ('baton2_guide', {'player': 'worker', 'body': body},
+             ['send', 'worker', '--kind', 'guidance', '--text', body]),
+            ('baton2_guide', {'player': 'worker', 'kind': 'completion-confirmed'},
+             ['completion-confirmed', '--to', 'worker']),
+            ('baton2_guide', {'player': 'worker', 'kind': 'completion-confirmed',
+                              'request': 'exact request', 'id': 'exact confirmation'},
+             ['completion-confirmed', '--to', 'worker', '--request', 'exact request',
+              '--id', 'exact confirmation']),
+            ('baton2_context_query_file', {'path': "/queries/query's λ.json"},
+             ['context', 'query', '--file', "/queries/query's λ.json"]),
+            ('baton2_context_result', None, ['context', 'result']),
+            ('baton2_knowledge_record', {'claim': body, 'evidence': 'message:input',
+                                         'limits': 'Observed handling only.'},
+             ['knowledge', 'record', '--kind', 'finding', '--claim', body,
+              '--evidence', 'message:input', '--limits', 'Observed handling only.']),
+            ('baton2_knowledge_relate', {'source': 'finding:current', 'relation': 'Supports',
+                                         'target': 'message:input'},
+             ['knowledge', 'relate', '--source', 'finding:current', '--relation', 'Supports',
+              '--target', 'message:input']),
+            ('baton2_knowledge_promote', {'destination': 'review', 'finding': 'current'},
+             ['knowledge', 'promote', '--to', 'review', '--finding', 'current']),
+            ('baton2_dispatch_file', {'recipient': 'worker', 'kind': 'task',
+                                       'path': "/tasks/task's λ.txt"},
+             ['dispatch', '--to', 'worker', '--kind', 'task', '--file', "/tasks/task's λ.txt"]),
+            ('baton2_dispatch_turn', {'player': 'worker', 'command': '/native command',
+                                       'log': '/retained output', 'task': "/tasks/task's λ.txt"},
+             ['turn', '--session', 'worker', '--command', '/native command',
+              '--output-log', '/retained output', '--file', "/tasks/task's λ.txt"]),
+        )
+        for tool, arguments, contextual in cases:
+            with self.subTest(tool=tool, arguments=arguments):
+                result = self.command(stdout='{"retained":"native decision λ"}\n',
+                                      tool=tool, arguments=arguments, session='attached-λ',
+                                      expected_context=contextual)
+                self.assertEqual(result['content'],
+                                 [{'type': 'text', 'text': '{"retained":"native decision λ"}'}])
+                self.assertNotIn('isError', result)
+        self.command(tool='baton2_ack', arguments={'id': 'selected input',
+                     'receipt': 'First complete handling.'}, session='attached-λ',
+                     expected_args=['ack', 'selected input', 'attached-λ', 'First complete handling.'])
+
+    def test_inferred_handling_keeps_native_refusal_and_complete_diagnostic(self):
+        diagnostic = json.dumps({'error': 'handling-context',
+                                 'condition': 'No live owned input context.\nλ🙂'}) + '\n'
+        self.failure('', diagnostic, code=2, tool='baton2_ack', session='attached-λ',
+                     expected_context=['acknowledge'])
+
+    def test_generated_linked_knowledge_keeps_explicit_record_and_full_relationship(self):
+        links = [{'source': 'message:retained-input', 'relation': 'Supports',
+                  'target': 'finding:explicit-record'}]
+        body = '\ufeffComplete linked claim.\nλ🙂\nTrailing spaces  '
+        arguments = {'id': 'explicit-record', 'kind': 'observation', 'claim': body,
+                     'evidence': 'message:retained-input', 'limits': 'This retained result.',
+                     'links': links}
+        self.command(tool='baton2_knowledge_record', arguments=arguments, session='attached-λ',
+                     expected_context=['knowledge', 'record', '--kind', 'observation',
+                                       '--claim', body, '--evidence', 'message:retained-input',
+                                       '--limits', 'This retained result.', '--id', 'explicit-record',
+                                       '--links', json.dumps(links, ensure_ascii=False,
+                                                           separators=(',', ':'))])
+
     def test_batch_message_tools_forward_structured_arrays_with_attached_authorship(self):
         ids = ['message-one', "message two's λ"]
         self.command(tool='baton2_input', arguments={'id': ids[0]},
@@ -250,8 +342,47 @@ class McpCommand(unittest.TestCase):
         self.assertFalse(input_schema['additionalProperties'])
         send_schema = self.tools['baton2_message_batch']['inputSchema']
         item = send_schema['properties']['messages']['items']
-        self.assertEqual(set(item['required']), {'id', 'player', 'body'})
+        self.assertEqual(set(item['required']), {'player'})
+        self.assertEqual(item['properties']['id']['type'], 'string')
+        self.assertEqual(item['properties']['request']['type'], 'string')
         self.assertFalse(item['additionalProperties'])
+
+    def test_generated_message_batch_delegates_exact_bodies_and_optional_ids(self):
+        first = '\ufeffComplete first guidance.\nλ🙂\nTrailing spaces  '
+        second = 'Full report with literal body flags --id --kind.\nλ🙂'
+        messages = [{'player': 'leaf-a', 'body': first},
+                    {'id': 'explicit-report', 'player': 'leaf-b', 'kind': 'report',
+                     'body': second}]
+        self.command(tool='baton2_message_batch', arguments={'messages': messages},
+                     session='attached-λ', expected_context=['send', 'leaf-a', '--kind',
+                         'guidance', '--text', first, '--and', 'leaf-b', '--kind', 'report',
+                         '--text', second, '--id', 'explicit-report'])
+
+    def test_completion_batch_keeps_inferred_and_explicit_parent_decisions_in_native_order(self):
+        body = '\ufeffComplete further work guidance.\nλ🙂\nTrailing spaces  '
+        messages = [
+            {'player': 'ready-worker', 'kind': 'completion-confirmed'},
+            {'id': 'explicit-guidance', 'player': 'held-worker', 'body': body},
+            {'id': 'explicit-confirmation', 'player': 'selected-worker',
+             'kind': 'completion-confirmed', 'request': 'exact-current-request'},
+            {'player': 'legacy-worker', 'kind': 'completion-confirmed',
+             'body': 'exact-legacy-request'},
+        ]
+        native = [
+            'completion-confirmed', '--to', 'ready-worker', '--and', 'dispatch',
+            '--to', 'held-worker', '--kind', 'guidance', '--text', body,
+            '--id', 'explicit-guidance', '--and', 'completion-confirmed',
+            '--to', 'selected-worker', '--request', 'exact-current-request',
+            '--id', 'explicit-confirmation', '--and', 'completion-confirmed',
+            '--to', 'legacy-worker', '--request', 'exact-legacy-request',
+        ]
+        output = json.dumps([{'status': 'completed', 'stdout': '[{"status":"refused"}]'},
+                             {'status': 'completed', 'stdout': '[{"status":"admitted"}]'}])
+        result = self.command(stdout=output + '\n', tool='baton2_message_batch',
+                              arguments={'messages': messages}, session='attached-λ',
+                              expected_context=native)
+        self.assertEqual(result['content'], [{'type': 'text', 'text': output}])
+        self.assertNotIn('isError', result)
 
     def test_batch_message_tools_require_recorded_executable_support(self):
         with tempfile.TemporaryDirectory() as home:
@@ -292,8 +423,8 @@ class McpCommand(unittest.TestCase):
             'baton2_receiver': ({'player', 'command', 'log'}, {'cwd'}),
             'baton2_configure': ({'player', 'harness', 'model', 'effort', 'command', 'log',
                 'expectedHarness', 'expectedModel', 'expectedEffort'}, set()),
-            'baton2_dispatch_file': ({'id', 'recipient', 'kind', 'path'}, {'sender'}),
-            'baton2_dispatch_turn': ({'player', 'id', 'command', 'log', 'task'}, set()),
+            'baton2_dispatch_file': ({'recipient', 'kind', 'path'}, {'sender', 'id'}),
+            'baton2_dispatch_turn': ({'player', 'command', 'log', 'task'}, {'id'}),
         }
         for name, (required, optional) in contracts.items():
             with self.subTest(tool=name):
@@ -435,7 +566,13 @@ class McpCommand(unittest.TestCase):
                 self.assertEqual(result['content'], [{'type': 'text', 'text': '{"retained":"object λ"}'}])
                 self.assertNotIn('isError', result)
                 schema = self.tools[tool]['inputSchema']
-                self.assertEqual(set(schema.get('required', [])), set(arguments))
+                required = {'baton2_context_query_file': {'path'},
+                            'baton2_context_result': set(),
+                            'baton2_knowledge_record': {'claim', 'evidence', 'limits'},
+                            'baton2_knowledge_relate': {'source', 'relation', 'target'},
+                            'baton2_knowledge_promote': {'destination', 'finding'}}.get(
+                                tool, set(arguments))
+                self.assertEqual(set(schema.get('required', [])), required)
                 optional = {'baton2_resume': {'liftStop'},
                             'baton2_knowledge': {'scope', 'subject', 'index', 'id', 'pretty'},
                             'baton2_knowledge_relations': {'scope', 'subject', 'pretty'},

@@ -1,4 +1,4 @@
-# Baton 2.0
+# Baton
 
 Baton is a command-line tool for coordinating coding agents on one host. A
 coordinating agent assigns tasks, receives reports, reviews changes, and integrates
@@ -47,14 +47,22 @@ from its complete text, standard input or a UTF-8 file. With the published
 release installed, replace `MODEL` and the absolute paths below:
 
 ```sh
-baton task --file /absolute/path/task.md --project /absolute/path/repository \
+baton dispatch 'Review the assigned source and report the result.' \
+  --project /absolute/path/repository \
   --harness codex --model MODEL --effort high
 baton --project /absolute/path/repository as operator inbox
 ```
 
-`task` records the complete input, selects project defaults and explicit
-settings, configures the agent's receiver, and dispatches the task to a native
-session. Its result names the recorded session and task. Reports route to the
+`dispatch` stores the complete input and setup outcomes in the project database,
+selects a named project route and explicit settings, configures the agent's
+receiver, and sends the task to a native session. Its result names the recorded
+session, message and input request, with commands to inspect them. Use
+`--stdin` for piped input or `--file PATH` for an existing UTF-8 file.
+`--to SESSION` adds input to the same recorded assignment automatically.
+In the selected actor context, `task-input-read --current` reads its latest
+complete dispatch input and setup outcome.
+Scratchpads are deliberate working notes kept separately from dispatched input.
+Reports route to the
 coordinating agent or operator inbox. Use the
 [command guide](bend2/README.md) to inspect turns and receipts, send further
 instructions, and manage contributions.

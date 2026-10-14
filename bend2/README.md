@@ -478,26 +478,25 @@ describes scoped retrieval and explicit all-data discovery.
 
 These controls require current development source; the
 [historical 1.0 installation](../docs/bend2/installation.md#install-the-historical-10-archive)
-retains its version-specific interface. Set the installed coordinator, native
-Codex executable, repository and mutable state paths, and save the Principal's
-task in `TASK_FILE`:
+retains its version-specific interface. Dispatch complete task text with the
+installed coordinator and project path:
 
 ```sh
-B2=/absolute/path/to/baton2
-CODEX_NATIVE=/absolute/path/to/codex
-REPO=/absolute/path/to/repository
-STATE=/absolute/path/to/mutable-state
-TASK_FILE=/absolute/path/to/principal-task.md
-mkdir -p "$STATE"
-DB="$STATE/state.db"
-"$B2" "$DB" start root codex "$CODEX_NATIVE" gpt-6-astra high \
-  "$REPO" "$STATE/root-native.jsonl" initial-task "$TASK_FILE"
-"$B2" "$DB" status --pretty
-"$B2" "$DB" inbox operator --pretty
+baton dispatch 'Review the assigned source and report the result.' \
+  --project /absolute/path/to/repository \
+  --harness codex --model gpt-6-astra --effort high
+baton --project /absolute/path/to/repository as operator inbox --pretty
 ```
 
-`start` configures a native receiver and dispatches the task. It preserves a
-compatible existing Principal's saved conversation and pending input.
+`dispatch` stores the complete input and setup outcome in the database. It resolves
+the configured route and preserves an existing selected assignment and conversation.
+`--stdin` reads complete text from stdin; `--file PATH` imports an existing UTF-8
+file. Use `--to SESSION` to select a registered conversation. The internal operation
+identities and current handling state are resolved by Baton. In an actor context,
+`task-input-read --current` inspects the actor's latest dispatch input and outcome.
+Scratchpads contain deliberately authored working notes. Baton does not generate
+task-source files.
+
 `receiver SESSION HARNESS_COMMAND OUTPUT_LOG [CWD]` generates the endpoint for an
 existing Codex, OMP, Muse or Claude Code session and preserves its saved native ID. It resolves
 executable and log paths and selects the recorded model, effort and workspace; the
@@ -703,7 +702,7 @@ resume its native session. Each finished Associate Conductor turn submits its re
 the coordinator, which delivers the report to the Associate Conductor's parent. A failed native
 turn also reports its failure and leaves unacknowledged input available.
 
-Send the Associate Conductor's task with `dispatch-file ID root lead task TASK_FILE`. The Associate Conductor
+Send complete task text with `baton dispatch 'Review the source.' --to lead`. The Associate Conductor
 joins children by passing `lead` as their parent, coordinates their edits and
 reviews their completed changes in the shared checkout. It integrates separate
 worktree contributions into the intended target and publishes completed work.
@@ -714,26 +713,24 @@ child's endpoint once and send its initial task:
 ```sh
 baton2 /repo/state.db join worker1 lead omp deepseek/deepseek-flash low SHARED_CHECKOUT
 baton2 /repo/state.db receiver worker1 /path/to/omp /repo/worker1-native.jsonl
-baton2 /repo/state.db dispatch-file worker1-task-1 lead worker1 task /repo/worker1-task.md
+baton /repo/state.db dispatch 'Review the assigned source.' --to worker1
 ```
 
-For a correction, send another `dispatch-file` with a fresh message ID and task
-file to the same Player. Receive resumes its stored native conversation, uses
+For a correction, dispatch complete text to the same Player with `--to SESSION`. Receive resumes its stored native conversation, uses
 its recorded route and workspace, and appends to its native log. A receiver that
 finds an active turn returns `queued`; newly pending work starts after native exit.
-The Player acknowledges accepted messages with `ack` and its final response
-reports to the Associate Conductor automatically.
+The native recipient turn records complete input handling and reports its result
+to the Associate Conductor. `acknowledge` resolves owned inputs from native evidence.
 
-`dispatch-file` starts detached delivery and returns its launched PID. End the
+`dispatch` returns the stored input and its setup or delivery outcome. End the
 parent turn so incoming reports can resume it. The
 [Associate Conductor instructions](trial/associate-conductor-instructions.md) give
 the launch examples. The coordinator serializes native turns for each session.
-Muse children use `dispatch-turn`, which selects their recorded assignment and
-native identity for continuation:
+Muse children use the same dispatch surface, which resolves their recorded
+assignment and native identity:
 
 ```sh
-baton2 /repo/state.db dispatch-turn muse-player muse-turn-1 /path/to/muse \
-  /repo/muse-native.jsonl /repo/muse-task.md
+baton /repo/state.db dispatch 'Implement the assigned change.' --to muse-player
 ```
 
 Retained receive supports OMP and Codex within its documented
