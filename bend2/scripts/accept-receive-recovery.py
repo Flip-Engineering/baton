@@ -17,6 +17,7 @@ any processes that still belong to the run.
 """
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -187,14 +188,17 @@ def main():
         parser.error('Codex must report a ChatGPT subscription login; login output was not retained')
     out = args.output.resolve()
     out.mkdir(parents=True, exist_ok=False)
-    binary = out / 'baton2'
-    shutil.copy2(supplied, binary)
-    shutil.copy2(build_log, out / 'build.log')
     seed = out / 'seed'
     command(['git', 'clone', '--shared', '--no-checkout', source, seed])
     command(['git', '-C', seed, 'checkout', '--detach', base])
     assert command(['git', '-C', seed, 'rev-parse', 'HEAD']) == base
     assert not command(['git', '-C', seed, 'branch', '--show-current'])
+    helper_path = seed / 'bend2/scripts/accept-native-receive.py'
+    spec = importlib.util.spec_from_file_location('recovery_native_acceptance', helper_path)
+    native_acceptance = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(native_acceptance)
+    binary, coordinator_provenance = native_acceptance.prepare_coordinator(source, seed, out, supplied)
+    shutil.copy2(build_log, out / 'build.log')
     repo = out / 'repo'
     branch = 'accept-receive-recovery'
     manifest = {str(path.relative_to(source)): digest(path)
@@ -214,6 +218,7 @@ def main():
         'runtime_source_manifest_sha256': digest(out / 'runtime-source-manifest.json'),
         'runtime_source_files': manifest,
         'coordinator_sha256': digest(binary), 'coordinator_supplied': str(supplied),
+        'coordinator_provenance': coordinator_provenance,
         'build_log_sha256': digest(out / 'build.log'), 'build_log_supplied': str(build_log),
         'source_linkage': 'Supplied binary; runtime manifest and build log retained for independent verification.',
         'driver_sha256': digest(Path(__file__)), 'codex_executable': str(codex),

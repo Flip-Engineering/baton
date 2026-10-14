@@ -2,6 +2,8 @@
 """Run the Bend2 Principal Conductor's working day against configured, logged-in native routes."""
 import argparse
 import errno
+import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -184,11 +186,20 @@ class Acceptance:
         self.env.update(CODEX_CONDUCTOR_MODEL=self.routes['codex']['model'],
                         OMP_CONDUCTOR_MODEL=self.routes['omp']['model'],
                         OMP_CONDUCTOR_THINKING=self.routes['omp']['effort'])
-        self.coordinator = args.coordinator.resolve() if args.coordinator else self.output / 'baton2'
+        helper_path = ROOT / 'bend2/scripts/accept-native-receive.py'
+        spec = importlib.util.spec_from_file_location('root_day_native_acceptance', helper_path)
+        helper = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(helper)
         if not args.coordinator:
             print('Building native coordinator', flush=True)
-            run(['sh', ROOT / 'bend2/scripts/build-native.sh',
-                 'bend2/src/coordinator/main.bend', self.coordinator], cwd=ROOT)
+        self.coordinator, coordinator_provenance = helper.prepare_coordinator(
+            ROOT, ROOT, self.output, args.coordinator)
+        save(self.output / 'run.json', {
+            'source': run(['git', 'rev-parse', 'HEAD'], cwd=ROOT).strip(),
+            'coordinator_sha256': hashlib.sha256(self.coordinator.read_bytes()).hexdigest(),
+            'coordinator_provenance': coordinator_provenance,
+            'driver_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+        })
         self.cases = []
 
     def case(self, name):
