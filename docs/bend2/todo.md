@@ -4,6 +4,17 @@ The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3
 retain findings, ownership and acceptance requirements. This page links current
 Baton follow-up work for contributors. Every open issue has a link on this page.
 
+- [#728: Repair native C generation after compiler exits with status 132](https://github.com/Flip-Engineering/baton/issues/728).
+  Candidate `3b37ad3f` completes term checking and exits during C generation
+  in workflow `38649718256`. Preserve its complete output, pinned compiler,
+  source and host evidence. Diagnose the demonstrated compiler failure while
+  preserving all command and task behavior. C output, candidate tests, package
+  verification and installed adoption remain incomplete for
+  [#717](https://github.com/Flip-Engineering/baton/issues/717). Coordinate with
+  [#722](https://github.com/Flip-Engineering/baton/issues/722),
+  [#723](https://github.com/Flip-Engineering/baton/issues/723) and
+  [#727](https://github.com/Flip-Engineering/baton/issues/727).
+
 - [#727: Use database task input and contextual actions in native validation](https://github.com/Flip-Engineering/baton/issues/727).
   The real-agent drivers `accept-kimi-hierarchy.py`, `accept-native-receive.py`,
   `accept-hierarchy.py`, `accept-root-day.py`, `accept-git.py`,
@@ -15,6 +26,9 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   steering, correction and checked-landing contracts. Retain explicit caller-file
   import fixtures. Remote real-route acceptance remains open
   for [#717](https://github.com/Flip-Engineering/baton/issues/717).
+  [#728](https://github.com/Flip-Engineering/baton/issues/728) records the
+  current candidate C-generation failure; driver implementation is paused
+  during its diagnosis.
 
 - [#726: Read the registered generation in the legacy keeper recovery fixture](https://github.com/Flip-Engineering/baton/issues/726).
   The legacy attachment marker is complete in the registered attempt generation.
@@ -68,6 +82,8 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   [#716](https://github.com/Flip-Engineering/baton/issues/716),
   [#718](https://github.com/Flip-Engineering/baton/issues/718) and
   [#720](https://github.com/Flip-Engineering/baton/issues/720).
+  Candidate qualification is also blocked by the C-generation failure in
+  [#728](https://github.com/Flip-Engineering/baton/issues/728).
 
 - [#722: Repair composed coordinator parsing](https://github.com/Flip-Engineering/baton/issues/722).
   The pinned native compiler ended with SIGTRAP on `57e67d1d` and `ef735693`.
@@ -76,6 +92,8 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   remains unverified. Preserve the complete grammar and output while repairing
   source representation. Exact compiler, target/candidate and package acceptance
   block the [#717](https://github.com/Flip-Engineering/baton/issues/717) release.
+  [#728](https://github.com/Flip-Engineering/baton/issues/728) records the later
+  failure after complete term checking during C generation.
 
 - [#721: Add Antigravity CLI agent harness support](https://github.com/Flip-Engineering/baton/issues/721).
   Verify the supported CLI protocol and add dispatch, resumption, complete
@@ -109,6 +127,8 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   prefixes and explicit stops during receiver migration. Unfinished feature
   acceptance remains recorded in its original issues. [#727](https://github.com/Flip-Engineering/baton/issues/727)
   owns real-agent validation input, instruction updates and acceptance.
+  [#728](https://github.com/Flip-Engineering/baton/issues/728) blocks candidate
+  C generation and its downstream qualification.
 
 - [#716: Dispatch task text and retain it in the database](https://github.com/Flip-Engineering/baton/issues/716).
   The [dispatch interface](task-start-716.md) uses `baton dispatch "task text"`
