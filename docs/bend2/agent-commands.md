@@ -153,8 +153,8 @@ available for exact compatibility.
 operation. Each action accepts `--session SESSION`.
 
 ```sh
-baton turn --command /path/to/harness \
-  --file task.txt --output-log turn.jsonl
+printf '%s\n' 'Review the assigned source and report the result.' |
+  baton turn --command /path/to/harness --file - --output-log turn.jsonl
 baton receive --session worker
 baton profile-bind --profile work --store /path/to/profile
 baton connect --endpoint '["/path/to/receiver"]'

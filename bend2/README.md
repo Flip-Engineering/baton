@@ -413,14 +413,21 @@ file records a different or absent native identity.
 
 ## Native turns
 
-After registering the Player, run:
+After registering the Player, send a foreground task through stdin:
 
 ```sh
-.scratch/bend2/baton2 state.db turn worker1 turn1 HARNESS_COMMAND MODEL EFFORT WORKTREE TASK_FILE OUTPUT_LOG ""
+printf '%s\n' 'Review the assigned source and report the result.' |
+  baton state.db as root turn --session worker1 \
+    --command /absolute/path/to/harness --model MODEL --effort high \
+    --cwd /absolute/path/to/worktree --file - \
+    --output-log /absolute/path/to/turn.jsonl
 ```
 
-The last argument is the native session to resume; an empty string starts a new
-session. The Player's recorded harness selects the adapter. Claude uses stream JSON.
+The command generates a turn identity and stores the complete task in the
+database. Omitted model, effort, workspace and native identity use the selected
+Player's recorded values. `--native ''` explicitly starts a new conversation.
+`--file PATH` imports an existing caller-authored UTF-8 file. The Player's
+recorded harness selects the adapter. Claude uses stream JSON.
 OMP uses `--mode rpc`, retains sessions beside the database and keeps stdin open
 for guidance until its terminal event. Its `get_state` response supplies the
 native session ID and observed model.
@@ -436,7 +443,7 @@ Codex events do not name the observed model; that field stays empty.
 Muse uses `exec --json --prompt-file` and resumes with `--session-id`.
 Its session envelopes record the native session and observed model, and its
 terminal envelope supplies the parent report. `players` includes the native
-session ID and last completed turn for selecting a session to resume.
+session ID and last completed turn for inspection.
 The harness uses its existing login. A launch wrapper can set the harness's documented home
 or config environment before executing its binary. This command runs one foreground
 native process, sends the task and drains output while writing input. Claude,
@@ -444,7 +451,8 @@ Codex and Muse input closes after the task; OMP input closes at turn completion.
 A later turn resumes the recorded
 native session. The logical Player and its workspace remain available.
 
-The supervisor retains stdout at `OUTPUT_LOG` and stderr at `OUTPUT_LOG.stderr`.
+The supervisor retains native frames in the attempt generation registered for
+the requested output log, with stderr in a separate per-run file.
 The public log keeps the frames that carry a session, actor, turn, message, tool,
 error, exit, delivery or validation identifier. At the default level it drops
 the cumulative `message_update` and `tool_execution_update` snapshots the
@@ -460,14 +468,17 @@ New supervisors use
 the selected coordinator executable. Keep existing logs at their recorded paths
 when changing the installed coordinator between lanes.
 Native result events create pending parent reports. Process-start failures and
-exits without a result also create reports. Repeating a completed turn ID returns
-its retained report. To retry after a failure report, use a new turn ID. Read
-`session PLAYER` for its native session ID and pass that ID as the last `turn`
-argument to continue the same conversation. For example:
+exits without a result also create reports. Deliberately repeating a completed
+`--id` returns its retained report. A later `turn` generates a new identity and
+resumes the recorded native conversation. Inspect the Player and send the next
+complete task through stdin:
 
 ```sh
-.scratch/bend2/baton2 state.db session worker1
-.scratch/bend2/baton2 state.db turn worker1 turn2 HARNESS_COMMAND MODEL EFFORT WORKTREE NEXT_TASK_FILE NEXT_OUTPUT_LOG NATIVE_SESSION
+baton state.db as root session --session worker1
+printf '%s\n' 'Review the retained result and complete the remaining change.' |
+  baton state.db as root turn --session worker1 \
+    --command /absolute/path/to/harness --file - \
+    --output-log /absolute/path/to/next-turn.jsonl
 ```
 
 `pending` shows reports awaiting native acceptance. Native receivers read
@@ -545,11 +556,14 @@ Each of these commands resolves the session's recorded model through the helper'
 does not map that model key refuses with exit status 2 and leaves the stored
 endpoint and pending input unchanged.
 
-`dispatch-file ID SENDER RECIPIENT KIND PATH` commits an authorized message and
-launches its delivery with regular output files. Independent dispatches can run
-concurrently. Its result names a launched PID; inspect inbox, turns and logs for
-completion. `dispatch-turn PLAYER TURN_ID HARNESS_COMMAND OUTPUT_LOG TASK_FILE`
-launches a recruited Muse or Claude Player with its recorded assignment.
+Independent `dispatch` calls can run concurrently. Inspect inbox, turns and logs
+for completion. The explicit `dispatch-file ID SENDER RECIPIENT KIND PATH` and
+`dispatch-turn PLAYER TURN_ID HARNESS_COMMAND OUTPUT_LOG PATH` forms remain
+available to integrations that supply existing UTF-8 files. `dispatch-file`
+commits an authorized message and launches delivery with regular output files;
+its result names the launched PID. `dispatch-turn` launches a recruited Muse or
+Claude Player with its recorded assignment. Use named `turn --file -` for a
+foreground direct task supplied through stdin.
 
 The command is `receive SESSION HARNESS_COMMAND MODEL EFFORT CWD OUTPUT_LOG
 MESSAGE_ID`. Empty model, effort and working-directory arguments use the
