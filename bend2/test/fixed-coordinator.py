@@ -209,11 +209,13 @@ class FixedCoordinator(unittest.TestCase):
                               'status': fields[2], 'command': fields[3]})
         return found
 
-    def eventually(self, observation, description):
+    def eventually(self, observation, description, contradiction=None):
         while True:
             result = observation()
             if result:
                 return result
+            if contradiction is not None:
+                self.assertFalse(contradiction(), description)
             time.sleep(.05)
 
     def coord(self, *args, ok=True):
@@ -272,7 +274,7 @@ class FixedCoordinator(unittest.TestCase):
     def inbox(self, recipient):
         return self.coord('inbox', recipient)
 
-    def await_inbox(self, recipient, predicate, description):
+    def await_inbox(self, recipient, predicate, description, contradiction=None):
         # Reports land through the keeper observe pipeline after the native
         # exits; read until the requested durable row is present.
         while True:
@@ -282,7 +284,31 @@ class FixedCoordinator(unittest.TestCase):
             found = predicate(self.inbox(recipient))
             if found:
                 return found
+            if contradiction is not None:
+                self.assertFalse(contradiction(), description)
             time.sleep(.5)
+
+    def app_settlement_contradiction(self, turn_id, start_count, status='completed'):
+        events = ([json.loads(line)
+                   for line in self.app_follow_events.read_text().splitlines(keepends=True)
+                   if line.endswith('\n')] if self.app_follow_events.exists() else [])
+        for event in events:
+            if event['type'] == 'codexInboxTaskContinuation' and event['turnId'] == turn_id:
+                return event
+            if event['type'] == 'codex-inbox-continuation-failed':
+                return event
+            if (event['type'] == 'codexInboxTurnRetained'
+                    and event['turn']['id'] == turn_id and event['turn']['status'] != status):
+                return event
+        calls = ([json.loads(line)
+                  for line in self.codex_calls.read_text().splitlines(keepends=True)
+                  if line.endswith('\n')] if self.codex_calls.exists() else [])
+        starts = [call for call in calls if call['method'] == 'turn/start'
+                  and call.get('params', {}).get('threadId') == 'native-w1']
+        if len(starts) > start_count:
+            return {'type': 'unexpectedTurnStart', 'settledTurn': turn_id,
+                    'expectedCount': start_count, 'calls': starts}
+        return None
 
     def start_owner(self):
         self.coord('owner-status')
@@ -889,7 +915,8 @@ finally:
                         'the ordinary commit did not resume the held follower read')
         self.await_inbox('root', lambda messages: next((message for message in messages
             if 'codex-inbox-turn-settled' in message['body'] and 'app-initial' in message['body']), None),
-            'the actual App terminal did not reach its coordinator')
+            'the actual App terminal did not reach its coordinator',
+            contradiction=lambda: self.app_settlement_contradiction('app-initial', 0))
         self.assertEqual(app_calls('turn/start'), [], 'unchanged owed input started another native turn')
         self.assertEqual(len(follow_events('codexInboxSubscribed')), 1,
                          'writer contention replaced the existing App follower')
@@ -906,7 +933,8 @@ finally:
         self.release('w1-app', settle=True)
         self.await_inbox('root', lambda messages: next((message for message in messages
             if 'codex-inbox-turn-settled' in message['body'] and 'app-turn-1' in message['body']), None),
-            'the later native terminal did not reach its parent')
+            'the later native terminal did not reach its parent',
+            contradiction=lambda: self.app_settlement_contradiction('app-turn-1', 1))
         self.assertEqual(len(app_calls('turn/start')), 1, 'unchanged guidance automatically restarted the App turn')
         self.assertEqual(len(self.connections('w1-app')), 1, 'settlement duplicated the App watcher')
         self.assertEqual(self.query("SELECT receipt FROM messages WHERE id IN ('g3','g4') ORDER BY id"),
@@ -924,7 +952,8 @@ finally:
         retained_failure = self.await_inbox('root', lambda messages: next((message for message in messages
             if 'codex-inbox-turn-settled' in message['body']
             and 'responseStreamDisconnected' in message['body']), None),
-            'the actual App failure cause was not retained')
+            'the actual App failure cause was not retained',
+            contradiction=lambda: self.app_settlement_contradiction('app-turn-2', 2, status='failed'))
         body = json.loads(retained_failure['body'])
         self.assertEqual(body['threadId'], 'native-w1')
         self.assertEqual(body['turn']['error'], error)
@@ -992,7 +1021,8 @@ finally:
                   'text': 'The retained result is ready.\nSource qualification remains open. λ🙂.'}]
         self.release('w1-app', settle=True, completed_items=items, idle_first=True)
         self.eventually(lambda: events('codexInboxReleased'),
-                        'The settled App watcher did not release its completed observation.')
+                        'The settled App watcher did not release its completed observation.',
+                        contradiction=lambda: self.app_settlement_contradiction('app-initial', 0))
         self.eventually(lambda: not any('--follow' in process['command']
                                        for process in self.owned_processes()),
                         'The settled App follower remained active after releasing its observation.')
@@ -1045,7 +1075,8 @@ finally:
         self.release('w1-app', 1, settle=True, items=[{'type': 'agentMessage', 'id': 'app-reviewed',
                                                     'text': 'The coordinator reviewed the retained result.'}])
         self.eventually(lambda: len(events('codexInboxReleased')) == 2,
-                        'The confirmed App worker did not settle.')
+                        'The confirmed App worker did not settle.',
+                        contradiction=lambda: self.app_settlement_contradiction('app-turn-1', 1))
         self.assertEqual(len(starts()), 1)
         self.assertFalse(self.coord('session', 'w1')['taskCompletion']['open'])
         self.assertEqual(self.inbox('w1'), [])
@@ -1198,7 +1229,8 @@ finally:
         self.release('w1-app', settle=True)
         self.await_inbox('root', lambda messages: next((message for message in messages
             if 'codex-inbox-turn-settled' in message['body'] and 'app-initial' in message['body']), None),
-            'the endpointless App terminal did not reach its coordinator')
+            'the endpointless App terminal did not reach its coordinator',
+            contradiction=lambda: self.app_settlement_contradiction('app-initial', 0))
         self.assertEqual(app_calls('turn/start'), [], 'unchanged input automatically restarted the native turn')
         self.dispatch('endpointless-guidance', 'w1', 'Handle this guidance with the original task.',
                       kind='guidance')
@@ -1207,7 +1239,8 @@ finally:
         self.release('w1-app', settle=True)
         self.await_inbox('root', lambda messages: next((message for message in messages
             if 'codex-inbox-turn-settled' in message['body'] and 'app-turn-1' in message['body']), None),
-            'the actual guidance terminal did not reach its coordinator')
+            'the actual guidance terminal did not reach its coordinator',
+            contradiction=lambda: self.app_settlement_contradiction('app-turn-1', 1))
         self.assertEqual(len(app_calls('turn/start')), 1, 'the follower retried unchanged guidance')
         pointer = app_calls('turn/start')[-1]['params']['input'][0]['text']
         self.assertIn('"pendingCount":2', pointer)

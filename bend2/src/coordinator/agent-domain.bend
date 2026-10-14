@@ -11,6 +11,12 @@ type Parsed is Type:
   Calls{items: List<Operation>}
   Error{cause: String}
 
+type Phase is Data:
+  ActionHead{}
+  CompoundHead{head: String}
+  OptionHead{}
+  OptionValue{name: String}
+
 def member(+value: String, values: List<String>) -> Bool:
   match values:
     case Nil{}: False{}
@@ -151,45 +157,50 @@ def subverb(+head: String, +sub: String) -> String:
       Bool.pick(String,member(sub,Tx.split_spaces("register sessions settings")),"project-" ++ sub,""),
       Bool.pick(String,Bool.and(String.eq(head,"context"),member(sub,Tx.split_spaces("engines install query result"))),"context-" ++ sub,"")))
 
-# Every recursive branch consumes argv. Option values remain complete literal
-# strings, including a value equal to the clause separator.
-def parse_loop(args: List<String>, +verb: String, +options: List<Option>, +items: List<Operation>) -> Parsed:
+def finish_values(+verb: String, +options: List<Option>, items: List<Operation>) -> Parsed:
+  +cause = option_cause(verb,options)
+  Bool.pick(Parsed,String.is_empty(cause),Calls{reverse(Con{Call{verb,options},items},Nil{})},Error{cause ++ " Use help " ++ verb ++ "."})
+
+def finish(phase: Phase, verb: String, options: List<Option>, +items: List<Operation>) -> Parsed:
+  match phase:
+    case ActionHead{}: Error{"An action is required after and."}
+    case CompoundHead{+head}:
+      Bool.pick(Parsed,String.eq(head,"knowledge"),finish_values("knowledge-read",Nil{},items),Error{"Choose a project or context action; use help " ++ head ++ "."})
+    case OptionHead{}: finish_values(verb,options,items)
+    case OptionValue{name}: Error{"Missing value for " ++ name ++ ". Use help " ++ verb ++ "."}
+
+# Every recursive branch consumes one argv token. The value phase preserves
+# complete literal strings, including a value equal to the clause separator.
+def parse_loop(args: List<String>, phase: Phase, +verb: String, +options: List<Option>, +items: List<Operation>) -> Parsed:
   match args:
-    case Nil{}:
-      +cause = option_cause(verb,options)
-      Bool.pick(Parsed,String.is_empty(verb),Error{"An action is required after and."},
-        Bool.pick(Parsed,String.is_empty(cause),Calls{reverse(Con{Call{verb,options},items},Nil{})},Error{cause ++ " Use help " ++ verb ++ "."}))
-    case "and" <> rest:
-      +cause = option_cause(verb,options)
-      Bool.pick(Parsed,Bool.or(String.is_empty(verb),Bool.not(String.is_empty(cause))),
-        Error{first(cause,"An action is required before and.")},
-        parse_loop(rest,"",Nil{},Con{Call{verb,options},items}))
-    case "--and" <> rest:
-      +cause = option_cause(verb,options)
-      Bool.pick(Parsed,Bool.or(String.is_empty(verb),Bool.not(String.is_empty(cause))),
-        Error{first(cause,"An action is required before --and.")},
-        parse_loop(rest,"",Nil{},Con{Call{verb,options},items}))
+    case Nil{}: finish(phase,verb,options,items)
     case +head <> +rest:
-      Bool.pick(Parsed,String.is_empty(verb),
-        Bool.pick(Parsed,Bool.or(String.eq(head,"knowledge"),Bool.or(String.eq(head,"project"),String.eq(head,"context"))),
-          (match rest:
-            case Nil{}: Bool.pick(Parsed,String.eq(head,"knowledge"),parse_loop(Nil{},"knowledge-read",Nil{},items),Error{"Choose a project or context action; use help " ++ head ++ "."})
-            case +sub <> tail:
-              +selected = subverb(head,sub)
-              Bool.pick(Parsed,Bool.and(String.eq(head,"knowledge"),Bool.or(member(sub,names("knowledge-read")),Bool.or(String.eq(sub,"and"),String.eq(sub,"--and")))),
-                parse_loop(rest,"knowledge-read",Nil{},items),
-                Bool.pick(Parsed,String.is_empty(selected),Error{"Unknown " ++ head ++ " action. Use help " ++ head ++ "."},parse_loop(tail,selected,Nil{},items)))),
-          Bool.pick(Parsed,known(head),parse_loop(rest,head,Nil{},items),Error{"Unknown action " ++ head ++ ". Use help."})),
-        Bool.pick(Parsed,Bool.and(member(head,names(verb)),Bool.not(present(options,head))),
-          Bool.pick(Parsed,member(head,Tx.split_spaces("--lift-stop --index --recursive")),
-            parse_loop(rest,verb,Con{Field{head,"true"},options},items),
-            (match rest:
-              case saved <> tail: parse_loop(tail,verb,Con{Field{head,saved},options},items)
-              case Nil{}: Error{"Missing value for " ++ head ++ ". Use help " ++ verb ++ "."})),
-          Error{"Unknown or repeated argument " ++ head ++ ". Use help " ++ verb ++ "."}))
+      match phase:
+        case ActionHead{}:
+          Bool.pick(Parsed,Bool.or(String.eq(head,"and"),String.eq(head,"--and")),Error{"An action is required before " ++ head ++ "."},
+            Bool.pick(Parsed,member(head,["knowledge","project","context"]),parse_loop(rest,CompoundHead{head},"",Nil{},items),
+              Bool.pick(Parsed,known(head),parse_loop(rest,OptionHead{},head,Nil{},items),Error{"Unknown action " ++ head ++ ". Use help."})))
+        case CompoundHead{+compound}:
+          +selected = subverb(compound,head)
+          Bool.pick(Parsed,Bool.and(String.eq(compound,"knowledge"),Bool.or(member(head,names("knowledge-read")),Bool.or(String.eq(head,"and"),String.eq(head,"--and")))),
+            Bool.pick(Parsed,Bool.or(String.eq(head,"and"),String.eq(head,"--and")),
+              parse_loop(rest,ActionHead{},"",Nil{},Con{Call{"knowledge-read",Nil{}},items}),
+              Bool.pick(Parsed,String.eq(head,"--index"),parse_loop(rest,OptionHead{},"knowledge-read",[Field{head,"true"}],items),
+                parse_loop(rest,OptionValue{head},"knowledge-read",Nil{},items))),
+            Bool.pick(Parsed,String.is_empty(selected),Error{"Unknown " ++ compound ++ " action. Use help " ++ compound ++ "."},parse_loop(rest,OptionHead{},selected,Nil{},items)))
+        case OptionHead{}:
+          +cause = option_cause(verb,options)
+          Bool.pick(Parsed,Bool.or(String.eq(head,"and"),String.eq(head,"--and")),
+            Bool.pick(Parsed,String.is_empty(cause),parse_loop(rest,ActionHead{},"",Nil{},Con{Call{verb,options},items}),Error{cause}),
+            Bool.pick(Parsed,Bool.and(member(head,names(verb)),Bool.not(present(options,head))),
+              Bool.pick(Parsed,member(head,Tx.split_spaces("--lift-stop --index --recursive")),
+                parse_loop(rest,OptionHead{},verb,Con{Field{head,"true"},options},items),
+                parse_loop(rest,OptionValue{head},verb,options,items)),
+              Error{"Unknown or repeated argument " ++ head ++ ". Use help " ++ verb ++ "."}))
+        case OptionValue{name}: parse_loop(rest,OptionHead{},verb,Con{Field{name,head},options},items)
 
 def parse(args: List<String>) -> Parsed:
-  parse_loop(args,"",Nil{},Nil{})
+  parse_loop(args,ActionHead{},"",Nil{},Nil{})
 
 def help(action: String) -> String:
   match action:
