@@ -36,7 +36,7 @@ def names_lookup(entries: List<NameSet>, +verb: String) -> List<String>:
   match entries:
     case Nil{}: Nil{}
     case Names{key,+flags} <> rest:
-      Bool.pick(List(String),String.eq(verb,key),Tx.split_spaces(flags),names_lookup(rest,verb))
+      Bool.pick(List<String>,String.eq(verb,key),Tx.split_spaces(flags),names_lookup(rest,verb))
 
 def names(verb: String) -> List<String>:
   names_lookup([
