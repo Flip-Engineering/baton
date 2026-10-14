@@ -46,6 +46,12 @@ name: bend2-native-development
         description: 'Exact target commit for the affected behavior comparison'
         required: true
         type: string
+      linux_runner:
+        description: 'Linux qualification host'
+        required: true
+        default: homelab
+        type: choice
+        options: [homelab, hosted]
 
 permissions:
   contents: read
@@ -55,7 +61,7 @@ env:
 
 jobs:
   linux-candidate:
-    runs-on: ubuntu-24.04
+    runs-on: ${{ fromJSON(inputs.linux_runner == 'homelab' && '["self-hosted", "Linux", "X64", "baton2-native-linux-x64"]' || '["ubuntu-24.04"]') }}
     env:
       BEND_NO_TELEMETRY: '1'
       BUN_JSC_maxPerThreadStackUsage: '67108864'
@@ -163,7 +169,7 @@ jobs:
           if-no-files-found: error
 
   linux-target:
-    runs-on: ubuntu-24.04
+    runs-on: ${{ fromJSON(inputs.linux_runner == 'homelab' && '["self-hosted", "Linux", "X64", "baton2-native-linux-x64"]' || '["ubuntu-24.04"]') }}
     env:
       BEND_NO_TELEMETRY: '1'
       BUN_JSC_maxPerThreadStackUsage: '67108864'

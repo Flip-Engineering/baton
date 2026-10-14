@@ -241,13 +241,16 @@ def endpointless(+db: String, +id: String, +condition: String, +saved: String) -
       codex_queue_mode(db,id,condition,saved,False{}),
       IO.pure(Result<&1,&1,U32 & String,String>,Done{saved}))
 
-def inbox_endpoint_selected(+db: String, +id: String, +saved: String, argv: String, +recipient: String, +token: String, coalesced: Bool) -> IO(Result<&1,&1,U32 & String,String>):
+def inbox_endpoint_launch(+db: String, id: String, saved: String, argv: String, recipient: String, +token: String) -> IO(Result<&1,&1,U32 & String,String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
+    run : Result<&1,&1,U32 & String,String> <- Process.Process.run(argv ++ Tx.enc_argv(Con{id,Con{token,Nil{}}}),".")
+    delivered : Result<&1,&1,U32 & String,String> <- completed(db,saved,run)
+    queue_recorded(db,recipient,token,delivered)
+
+def inbox_endpoint_selected(+db: String, +id: String, +saved: String, argv: String, +recipient: String, token: String, coalesced: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   match coalesced:
-    case True{}: queue_existing(db,id,saved,recipient,next_token => inbox_endpoint_selected(db,id,saved,argv,recipient,next_token,False{}))
-    case False{}: do IO<Result<&1,&1,U32 & String,String>>:
-      run : Result<&1,&1,U32 & String,String> <- Process.Process.run(argv ++ Tx.enc_argv(Con{id,Con{token,Nil{}}}),".")
-      delivered : Result<&1,&1,U32 & String,String> <- completed(db,saved,run)
-      queue_recorded(db,recipient,token,delivered)
+    case True{}: queue_existing(db,id,saved,recipient,next_token => inbox_endpoint_launch(db,id,saved,argv,recipient,next_token))
+    case False{}: inbox_endpoint_launch(db,id,saved,argv,recipient,token)
 
 def inbox_endpoint(+db: String, +id: String, +condition: String, saved: String, argv: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
