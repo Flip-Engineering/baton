@@ -53,11 +53,11 @@ def read_command(+db: String, +command: C.Command) -> IO(Unit):
 def task_usage() -> String:
   "dispatch TEXT [OPTIONS]\ndispatch --stdin [OPTIONS]\ndispatch --help shows project, saved routes, overrides and continuation options.\ntask-input-read --current returns the current actor's latest complete request and setup result.\ntask-input-read --session PLAYER selects that actor's latest dispatch to the Player.\n"
 
-def usage() -> String:
-  task_usage() ++ usage_existing()
-
 def usage_existing() -> String:
   "Administration: baton DATABASE COMMAND ARGS\nserve\nowner-status\nproject PATH\nproject-sessions PATH\ntask-input-read --current | --session PLAYER\ndelivery MESSAGE_ID\ndelivery-batch IDS_JSON\nmessage-batch SENDER MESSAGES_JSON\ninput MESSAGE_ID\nturns PLAYER\nui-subscribe AFTER GENERATION\nview SUBJECT [READER [PORT]]\nlogs-storage\nlogs-clean SESSION\nproject PATH registers this database in the project Git common directory. --project PATH selects the registered database.\ndelivery and input inspect an intentionally selected historical message. Native command forms remain available for existing integrations.\n"
+
+def usage() -> String:
+  task_usage() ++ usage_existing()
 
 # A refused log command names its rule on stderr with status 2, as the stored
 # commands do.
