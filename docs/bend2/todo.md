@@ -4,6 +4,15 @@ The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3
 retain findings, ownership and acceptance requirements. This page links current
 Baton follow-up work for contributors. Every open issue has a link on this page.
 
+- [#732: Infer handling receipts for connected Claude MCP sessions](https://github.com/Flip-Engineering/baton/issues/732).
+  The native Claude PTY channel reads its complete inbox through MCP, then bare
+  acknowledge lacks a retained-attempt or Codex witness. Derive handling from
+  the registered native connection and complete recipient-owned reads. Preserve
+  actor, database, native identity, body and receipt authority, and qualify the
+  real Claude channel for [#723](https://github.com/Flip-Engineering/baton/issues/723),
+  [#727](https://github.com/Flip-Engineering/baton/issues/727) and
+  [#717](https://github.com/Flip-Engineering/baton/issues/717).
+
 - [#731: Prepend a generated ideation seed to agent initialization guidance](https://github.com/Flip-Engineering/baton/issues/731).
   Begin each agent's initialization guidance with a long application-generated
   random seed and an instruction to use its abstract qualities when interpreting
