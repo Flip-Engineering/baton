@@ -336,8 +336,11 @@ def prepare_parsed(parsed: ParsedRequest) -> IO(PreparedRequest):
 def prepare_request(request: Route.Context) -> IO(PreparedRequest):
   prepare_parsed(parsed_request(request))
 
+def route_prepared(prepared: PreparedRequest) -> IO(Unit):
+  match prepared:
+    case Prepared{db,session,action}: execute(db,session,action)
+
 def route(request: Route.Context) -> IO(Unit):
   do IO<Unit>:
     prepared : PreparedRequest <- prepare_request(request)
-    match prepared:
-      case Prepared{db,session,action}: execute(db,session,action)
+    route_prepared(prepared)
