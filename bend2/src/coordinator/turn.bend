@@ -157,25 +157,11 @@ def prepare_parent(db: String, player: String, id: String, log: String, stderr: 
         case False{}: IO.pure(Unit,Unit{})
         case True{}: prepare_player(db,player,id,log,stderr,error,status,event,Bool.or(String.eq(status,"start failed"),String.eq(status,"input failed")))
 
-# Successful turn settlement keeps an unconfirmed assignment in the ordinary
-# inbox. Other owed input already provides its continuation.
-def continue_task_if(db: String, player: String, id: String, success: Bool) -> IO(Unit):
-  match success:
-    case False{}: IO.pure(Unit,Unit{})
-    case True{}: do IO<Unit>:
-      saved : String <- IO.try(String,DB.Sql.query(db,C.task_continuation_sql(player,id)))
-      IO.pure(Unit,Unit{})
-
 def settlement_success(db: String, outcome: Outcome) -> IO(Bool):
   match outcome:
     case Ended{status,+event,error,incomplete}: do IO<Bool>:
       semantic_error : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN coalesce(json_extract(" ++ C.q(event) ++ ",'$.is_error'),0)=1 OR " ++ C.omp_terminal_error_sql(event) ++ " OR (coalesce(json_extract(" ++ C.q(event) ++ ",'$.payload.kind'),'')='run_terminal' AND coalesce(json_extract(" ++ C.q(event) ++ ",'$.payload.terminal'),'')<>'completed') ELSE 1 END;"))
       IO.pure(Bool,Bool.and(Bool.not(incomplete),Bool.and(Bool.not(failed(status,event,error)),String.eq(semantic_error,"0\n"))))
-
-def continue_task(+db: String, player: String, id: String, outcome: Outcome) -> IO(Unit):
-  do IO<Unit>:
-    success : Bool <- settlement_success(db,outcome)
-    continue_task_if(db,player,id,success)
 
 # A failed Direct turn retains its original input for supported recovery.
 # Later input still reaches the current receiver through the ordinary wake.
@@ -186,7 +172,7 @@ def direct_wake(+db: String, +player: String, id: String, outcome: Outcome) -> I
     Delivery.wake_pending(db,player,Bool.pick(String,success,"0",Tx.trim_nl(cursor)))
 
 def task_instructions() -> String:
-  "A native turn ending does not finish your task. Continue your assignment and read your inbox until your immediate coordinator confirms completion. When your work is ready, use the ordinary message command to send kind completion-request from your session to its recorded parent, with your result and remaining work. Send one request and continue useful work while the coordinator reviews it. The coordinator replies with kind completion-confirmed and the request ID alone as its body when the task is complete, or sends guidance for further work. Acknowledge handled input separately. A new task or guidance begins further work. Explicit operator stops remain effective. A parentless Principal Conductor follows the operator's task.\n"
+  "Carry out the coordinator-authorized assignment. Keep unfinished work and outstanding qualification in your reports and project state. Direct operator instructions and explicit stops remain effective.\n"
 
 def knowledge_instructions() -> String:
   "Record authored evidence, finding, hypothesis, experiment, decision and principle items. Link Supports, Contradicts, Produced, Informed, DerivedFrom, TestedBy and Supersedes as appropriate to actual evidence. Keep uncertainty and complete retained evidence. record-linked ID AUTHOR KIND CLAIM EVIDENCE LIMITS LINKS_JSON records the item with an authored array of {id,source,relation,target} links. knowledge-search READER SCOPE SUBJECT QUERY matches all query terms across records and retained evidence messages and returns typed neighbors with detail reads. knowledge-traverse READER SCOPE SUBJECT REFERENCE in|out|both RELATION neighbors|recursive follows scoped holdings and cycles; an empty RELATION includes all links. MCP baton2_knowledge_record accepts links; baton2_knowledge_search and baton2_knowledge_traverse expose the same operations.\n"
@@ -196,18 +182,18 @@ def direct_task_prompt(+db: String, +player: String, +id: String, prompt: String
     executable : String <- IO.try(String,Lock.SessionLock.executable())
     parent : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce(parent,'') FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
     header : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(id ++ ":task-input") ++ " AND recipient=" ++ C.q(player) ++ " AND kind='task-assignment') THEN 'Message (task-assignment) from ' || " ++ C.q(player) ++ " || ' [id: ' || " ++ C.q(id ++ ":task-input") ++ " || ']:' ELSE '' END;"))
-    IO.pure(String,task_instructions() ++ knowledge_instructions() ++ "Coordinator executable, database and session argv: " ++ P.argv([executable,db,player]) ++ ". Recorded parent: " ++ Tx.trim_nl(parent) ++ ".\nRead your inbox with inbox SESSION. delivery MESSAGE_ID reads one complete stored message and its receipt. Use message REQUEST_ID SESSION PARENT completion-request SUMMARY and acknowledge each handled input with ack MESSAGE_ID SESSION RECEIPT.\n" ++ Tx.trim_nl(header) ++ "\n" ++ prompt)
+    IO.pure(String,task_instructions() ++ knowledge_instructions() ++ "Coordinator executable, database and session argv: " ++ P.argv([executable,db,player]) ++ ". Recorded parent: " ++ Tx.trim_nl(parent) ++ ".\nRead your inbox with inbox SESSION. Use inbox SESSION --index to discover message IDs and delivery-batch-file PATH to read their complete stored bodies in one batch. delivery MESSAGE_ID reads one complete stored message and its receipt.\n" ++ Tx.trim_nl(header) ++ "\n" ++ prompt)
 
 def generation_log(+log: String, +id: String) -> String:
   Logs.attempt_log(log,id)
 
 # Failure reports are committed while this invocation still owns the session.
+# finish delivers the settled turn to its recorded coordinator.
 def prepare(+db: String, +player: String, +id: String, log: String, stderr: String, +outcome: Outcome) -> IO(Unit):
   do IO<Unit>:
     +generation : String <- IO.pure(String,generation_log(log,id))
     recipient : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ C.report_recipient(C.q(player)) ++ " IS NOT NULL;"))
-    reported : Unit <- prepare_parent(db,player,id,generation,stderr,outcome,String.eq(recipient,"1\n"))
-    continue_task(db,player,id,outcome)
+    prepare_parent(db,player,id,generation,stderr,outcome,String.eq(recipient,"1\n"))
 
 def record_exit(db: String, player: String, +id: String, log: String, outcome: Outcome) -> IO(Unit):
   match outcome:

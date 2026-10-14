@@ -251,9 +251,8 @@ class NativeFailureOutput(unittest.TestCase):
         started, request = fixture.accept_child(original, 'parent')
         task_body = task.read_text()
         prompt = request['prompt']
-        self.assertIn('A native turn ending does not finish your task.', prompt)
-        self.assertIn('completion-request', prompt)
-        self.assertIn('completion-confirmed', prompt)
+        self.assertIn(str(fixture.db), prompt)
+        self.assertIn('Recorded parent: root.', prompt)
         self.assertIn('knowledge-search READER', prompt)
         self.assertIn('Message (task-assignment) from parent [id: completed-direct:task-input]:',
                       prompt)

@@ -4,7 +4,7 @@
 
 ## Build and package
 
-Build dependencies are Python 3, Git, clang, SQLite development files, and Bend 2.0.25. Install Bend with the versioned [toolchain installer](reference/toolchain/install-2.0.25.sh). The installer verifies the official compiler archive.
+Build dependencies are Python 3, Git, clang, SQLite development files, and Bend 2.0.25. Install Bend with the versioned [toolchain installer](reference/toolchain/install-2.0.25.sh). The installer verifies the official compiler archive. Compilation and checks execute on remote validation hosts.
 
 On Darwin arm64, run:
 
@@ -53,7 +53,7 @@ python3 "$BATON2_RUN/source-retained/bend2/scripts/smoke-native-artifact.py" \
 mv "$BATON2_RUN/source-retained" "$BATON2_SOURCE"
 ~~~
 
-The archive root is `baton2-development-darwin-arm64` by default. Baton 2.0 uses `--release-version 2.0.0`, which selects `baton2-2.0.0-darwin-arm64` and records `2.0.0` in the manifest. Release versions start with a letter or digit and contain letters, digits, dots, underscores, plus signs or hyphens. Release packaging requires the project root LICENSE.
+The archive root is `baton2-development-darwin-arm64` by default. `--release-version 1.2.0` selects `baton2-1.2.0-darwin-arm64` and records `1.2.0` in the manifest. Release versions start with a letter or digit and contain letters, digits, dots, underscores, plus signs or hyphens. Release packaging requires the project root LICENSE.
 
 ## Package contents and distribution terms
 
@@ -63,12 +63,31 @@ Packaging copies the project LICENSE and NOTICE when present, and retains the pi
 
 ## Continuous integration
 
-[.github/workflows/bend2-native.yml](../../.github/workflows/bend2-native.yml) builds and packages the Darwin arm64 artifact on `macos-15`, runs the extracted-artifact smoke, and retains the package, build output and smoke output.
+[.github/workflows/bend2-native.yml](../../.github/workflows/bend2-native.yml) runs the complete native checks on the exact candidate source using hosted Ubuntu and the pinned Linux Bend compiler. It records the affected Python test outcomes during that complete suite. A parallel job builds the exact target and runs the candidate test contracts against the target production executable and helpers. The comparison names each file, test and failure type; skipped, missing or incomplete results refuse qualification. Pull requests select their actual head commit.
 
-Pushes and pull requests produce development artifacts. To request a release-version archive from `main`, dispatch the same workflow with a version identifier:
+The Darwin job verifies the generated C checksum, producer source tree and every tracked source file against its package checkout. It compiles that C with Darwin clang, includes TypeScript 5.9.3, and packages the complete producer results and target comparison under `share/baton2/generated-c-provenance`. The extracted-artifact smoke runs on `macos-15` with the owned build path unavailable. Each job retains complete command streams and actual results.
+
+Pushes and pull requests produce development artifacts. To qualify an immutable candidate for Baton 1.2.0, supply its branch and the exact target commit:
 
 ~~~sh
-gh workflow run bend2-native.yml --ref main -f release_version=2.0.0
+gh workflow run bend2-native.yml --ref '<candidate-branch>' \
+  -f release_version=1.2.0 -f target_commit='<40-character-target-commit>'
 ~~~
 
-Leaving `release_version` blank produces a development archive. The workflow passes a nonempty version to `package-native.py`, reads the archive filename and checksum from `SHA256SUMS`, and runs the extracted-artifact smoke against the package manifest. The uploaded artifact name includes the selected version, source commit and run attempt. Inspect the run's actual source commit, package, toolchain, build and smoke records, and complete package and smoke command streams. A completed workflow produces an archive candidate; real-provider execution, installation, signing and release publication require separate delivery records.
+Leaving `release_version` blank produces a development archive. The uploaded Darwin artifact name includes the selected version, source commit and run attempt. Inspect the full native result, selected comparison, generated-C provenance, package and smoke before publishing. Real-provider execution, installed use and release publication retain their own results.
+
+## Publish a qualified release
+
+Fast-forward `main` to the accepted candidate and verify the actual remote advertisement. Publish the same commit as the source tag and upload the qualified archive with its matching sidecars:
+
+~~~sh
+BATON2_SOURCE='<qualified-commit>'
+BATON2_PACKAGE=/absolute/path/to/qualified/package
+gh release create baton2-v1.2.0 --repo Flip-Engineering/baton \
+  --target "$BATON2_SOURCE" --latest --title 'Baton 1.2.0' \
+  --notes-file /absolute/path/to/release-notes.md \
+  "$BATON2_PACKAGE/baton2-1.2.0-darwin-arm64-$BATON2_SOURCE.tar.gz" \
+  "$BATON2_PACKAGE/manifest.json" "$BATON2_PACKAGE/SHA256SUMS"
+~~~
+
+Read back the tag, public latest release and downloaded assets. Verify the downloaded archive checksum and manifest source against the accepted commit. The [installation procedure](installation.md) selects the complete payload while retaining existing process custody and recorded state.

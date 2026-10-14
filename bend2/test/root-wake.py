@@ -228,10 +228,15 @@ class RootWake(unittest.TestCase):
     def public_proxy(self):
         queued = self.directory / 'queue-arguments.json'
         refused = self.directory / 'queue-refused'
+        self.public_app_state = self.directory / 'public-app-state.json'
+        self.admission_barrier = self.directory / 'public-read-held'
+        self.admission_release = self.directory / 'public-read-released'
+        self.public_app_state.write_text(json.dumps({'status': 'active', 'turn': 'fixture-turn', 'number': 0}))
         command = self.directory / 'codex'
         command.write_text('#!' + sys.executable + '\n' + '''
-import base64,hashlib,json,pathlib,struct,sys
+import base64,hashlib,json,pathlib,struct,sys,time
 assert sys.argv[1:]==['app-server','proxy'], sys.argv
+state=pathlib.Path(__STATE__)
 def exact(n):
     data=b''
     while len(data)<n:
@@ -264,18 +269,37 @@ while True:
     method=request['method']
     if 'id' not in request:continue
     if method=='initialize':result={}
-    elif method=='thread/read':result={'thread':{'id':'native-app-root','status':{'type':'active'}}}
-    elif method=='thread/turns/list':result={'data':[{'id':'fixture-turn','status':'inProgress'}],'nextCursor':None}
-    elif method=='turn/steer':
+    elif method in ('thread/read','thread/resume'):
+        current=json.loads(state.read_text())
+        if method=='thread/read' and current.get('holdRead'):
+            pathlib.Path(__BARRIER__).write_text('Native metadata read is in flight.')
+            while not pathlib.Path(__RELEASE__).exists():time.sleep(0.01)
+            current=json.loads(state.read_text())
+        result={'thread':{'id':'native-app-root','status':{'type':current['status']}}}
+    elif method=='thread/turns/list':
+        assert request['params']['itemsView']=='notLoaded', request
+        current=json.loads(state.read_text())
+        result={'data':[{'id':current['turn'],'status':'inProgress' if current['status']=='active' else 'failed'}],'nextCursor':None}
+    elif method in ('turn/steer','turn/start'):
         with pathlib.Path(__QUEUED__).open('a') as calls:
             calls.write(json.dumps(request)+chr(10))
         if pathlib.Path(__REFUSED__).exists():
             reply({'id':request['id'],'error':{'code':-32600,'message':'Queue is full (100 queued messages): café Ω 🙂'}})
             continue
-        result={'turnId':'fixture-turn'}
+        current=json.loads(state.read_text())
+        if method=='turn/start':
+            assert current['status']=='idle', current
+            current={**current,'status':'active','number':current['number']+1}
+            current['turn']='fixture-turn-'+str(current['number'])
+            state.write_text(json.dumps(current))
+            result={'turn':{'id':current['turn'],'status':'inProgress','items':[]}}
+        else:result={'turnId':current['turn']}
     else:raise AssertionError(request)
     reply({'id':request['id'],'result':result})
-'''.replace('__QUEUED__', repr(str(queued))).replace('__REFUSED__', repr(str(refused))))
+'''.replace('__QUEUED__', repr(str(queued))).replace('__REFUSED__', repr(str(refused)))
+   .replace('__STATE__', repr(str(self.public_app_state)))
+   .replace('__BARRIER__', repr(str(self.admission_barrier)))
+   .replace('__RELEASE__', repr(str(self.admission_release))))
         command.chmod(0o700)
         self.environment['PATH'] = str(self.directory) + os.pathsep + self.environment.get('PATH', '')
         return queued, refused
@@ -321,6 +345,9 @@ while True:
         self.assertEqual(pointer, {'database': str(self.db), 'message': 'app-root-report',
                                    'recipient': 'root', 'pendingCount': 4})
         self.assertIn('Read all owed input with baton2 DATABASE inbox RECIPIENT', text)
+        self.assertIn('delivery-batch-file PATH', text)
+        self.assertNotIn('completion-request', text)
+        self.assertNotIn('ack MESSAGE', text)
         inbox = {message['id']: message for message in json.loads(self.coord('inbox', 'root'))}
         self.assertEqual(set(inbox), set(owed))
         for ident, body in owed.items():
@@ -362,6 +389,13 @@ while True:
         self.assertTrue(any(cause in path.read_text()
                             for path in self.directory.glob('state.db.queue-*.stderr')))
 
+        for _ in range(3):
+            replay = self.coord_raw('report', 'refused-app-input', 'child', 'This report remains owed.')
+            self.assertNotEqual(replay.returncode, 0)
+            self.assertIn(cause, replay.stderr)
+        self.assertEqual(len(queued.read_text().splitlines()), 1,
+                         'unchanged failed input was retried')
+
         for index in range(3):
             ident = 'refused-app-more-' + str(index)
             additional = self.coord_raw('report', ident, 'child', 'Further work remains owed.')
@@ -369,31 +403,211 @@ while True:
             self.assertIn(cause, additional.stderr)
             self.assertIsNone(json.loads(self.coord('delivery', ident))['receipt'])
         calls = [json.loads(line) for line in queued.read_text().splitlines()]
-        self.assertEqual(len(calls), 1, calls)
+        self.assertEqual(len(calls), 4, calls)
         self.assertIsNone(json.loads(self.coord('delivery', 'refused-app-input'))['receipt'])
 
         refused_queue.unlink()
         self.coord('resume', 'root')
         calls = [json.loads(line) for line in queued.read_text().splitlines()]
-        self.assertEqual(len(calls), 2, calls)
-        self.assertEqual(calls[1]['method'], 'turn/steer')
-        self.assertEqual(calls[1]['params']['threadId'], 'native-app-root')
-        self.assertEqual(json.loads(calls[1]['params']['input'][0]['text'].splitlines()[1])['message'],
+        self.assertEqual(len(calls), 5, calls)
+        self.assertEqual(calls[4]['method'], 'turn/steer')
+        self.assertEqual(calls[4]['params']['threadId'], 'native-app-root')
+        self.assertEqual(json.loads(calls[4]['params']['input'][0]['text'].splitlines()[1])['message'],
                          'refused-app-input')
-        self.assertEqual(json.loads(calls[1]['params']['input'][0]['text'].splitlines()[1])['pendingCount'], 4)
+        self.assertEqual(json.loads(calls[4]['params']['input'][0]['text'].splitlines()[1])['pendingCount'], 4)
         owed = ['refused-app-input'] + ['refused-app-more-' + str(index) for index in range(3)]
         for ident in owed:
             self.assertIsNone(json.loads(self.coord('delivery', ident))['receipt'])
         self.coord('resume', 'root')
-        self.assertEqual(len(queued.read_text().splitlines()), 2)
+        self.assertEqual(len(queued.read_text().splitlines()), 5)
 
         self.coord('ack', 'refused-app-input', 'root', 'root reviewed the retained report')
         self.coord('report', 'retry-after-root-progress', 'child', 'Read the remaining inbox.')
         calls = [json.loads(line) for line in queued.read_text().splitlines()]
-        self.assertEqual(len(calls), 3, calls)
-        self.assertEqual(json.loads(calls[2]['params']['input'][0]['text'].splitlines()[1])['pendingCount'], 4)
+        self.assertEqual(len(calls), 6, calls)
+        self.assertEqual(json.loads(calls[5]['params']['input'][0]['text'].splitlines()[1])['pendingCount'], 4)
         for ident in ['refused-app-more-' + str(index) for index in range(3)] + ['retry-after-root-progress']:
             self.assertIsNone(json.loads(self.coord('delivery', ident))['receipt'])
+
+    def test_recorded_codex_endpoint_coalesces_bursts_and_admits_new_idle_input(self):
+        queued, _ = self.public_proxy()
+        self.coord('attach', 'root', 'codex', 'native-app-root', '')
+        self.recruit('child', 'root', 'omp')
+        recorded = self.directory / 'recorded-helper'
+        recorded.mkdir()
+        helper = recorded / 'codex-inbox-wake.mjs'
+        invocations = recorded / 'invocations.jsonl'
+        helper.write_text("import {appendFileSync} from 'node:fs';\nimport {spawn} from 'node:child_process';\n"
+                          + 'appendFileSync(' + json.dumps(str(invocations))
+                          + ",JSON.stringify(process.argv.slice(2))+'\\n');\n"
+                          + 'const child=spawn(process.execPath,[' + json.dumps(str(ROOT / 'bend2/scripts/codex-inbox-wake.mjs'))
+                          + ",...process.argv.slice(2)],{stdio:'inherit'});\n"
+                          + "child.on('error',error=>{throw error});\nchild.on('exit',(code,signal)=>{process.exitCode=code??1});\n")
+        self.coord('connect', 'root', 'native-app-root', json.dumps([
+            'node', str(helper), '--session',
+            str(EXE), str(self.db), 'root', 'native-app-root']))
+        owed = {'managed-first': 'Complete first report. café Ω 🙂\nRetain both lines.'}
+        self.coord('report', 'managed-first', 'child', owed['managed-first'])
+        for index in range(16):
+            ident = 'managed-burst-' + str(index)
+            owed[ident] = 'Another complete report ' + str(index)
+            self.coord('report', ident, 'child', owed[ident])
+        self.assertEqual(len(queued.read_text().splitlines()), 1,
+                         'active report bursts repeatedly steered the native agent')
+        self.coord('report', 'managed-first', 'child', owed['managed-first'])
+        self.assertEqual(len(queued.read_text().splitlines()), 1)
+        self.coord('message', 'managed-question', 'child', 'root', 'question', 'Review this decision now.')
+        self.assertEqual(len(queued.read_text().splitlines()), 2,
+                         'a new question was hidden behind the active report claim')
+        self.coord('message', 'managed-question', 'child', 'root', 'question', 'Review this decision now.')
+        self.assertEqual(len(queued.read_text().splitlines()), 2,
+                         'the same control input was admitted twice')
+        owed['managed-question'] = 'Review this decision now.'
+
+        current = json.loads(self.public_app_state.read_text())
+        self.public_app_state.write_text(json.dumps({**current, 'status': 'idle'}))
+        owed['managed-idle-report'] = 'New result after the native turn ended.'
+        self.coord('report', 'managed-idle-report', 'child', owed['managed-idle-report'])
+        calls = [json.loads(line) for line in queued.read_text().splitlines()]
+        self.assertEqual([call['method'] for call in calls], ['turn/steer', 'turn/steer', 'turn/start'])
+        self.assertEqual(calls[-1]['params']['threadId'], 'native-app-root')
+        recorded_calls = [json.loads(line) for line in invocations.read_text().splitlines()]
+        self.assertEqual(recorded_calls[-1][:6],
+                         ['--session', str(EXE), str(self.db), 'root', 'native-app-root', 'managed-idle-report'],
+                         'the idle recheck bypassed the recorded endpoint arguments')
+        self.coord('report', 'managed-idle-report', 'child', owed['managed-idle-report'])
+        self.assertEqual(len(queued.read_text().splitlines()), 3)
+        inbox = {message['id']: message for message in json.loads(self.coord('inbox', 'root'))}
+        self.assertEqual(set(inbox), set(owed))
+        for ident, body in owed.items():
+            self.assertEqual(inbox[ident]['body'], body)
+            self.assertIsNone(json.loads(self.coord('delivery', ident))['receipt'])
+
+        direct = 'Stop the current work.\nPreserve the operator text: café Ω 🙂'
+        delivered = subprocess.run(['node', str(ROOT / 'bend2/scripts/codex-inbox-wake.mjs'),
+                                    'native-app-root', direct], env=self.environment,
+                                   text=True, capture_output=True)
+        self.assertEqual(delivered.returncode, 0, delivered.stderr)
+        self.assertEqual(json.loads(queued.read_text().splitlines()[-1])['params']['input'][0]['text'], direct)
+
+        self.coord('stop', 'root', 'operator-stop', 'Retain the inbox.')
+        stopped = subprocess.run(['node', str(ROOT / 'bend2/scripts/codex-inbox-wake.mjs'),
+                                  '--session', str(EXE), str(self.db), 'root', 'native-app-root',
+                                  'managed-idle-report'], env=self.environment,
+                                 text=True, capture_output=True)
+        self.assertEqual(stopped.returncode, 0, stopped.stderr)
+        self.assertEqual(len(queued.read_text().splitlines()), 4,
+                         'an explicit stop admitted more generated native input')
+
+    def test_legacy_failure_claim_retains_complete_cause_on_unchanged_delivery(self):
+        queued, refused_queue = self.public_proxy()
+        refused_queue.write_text('The native queue refused this input.\n')
+        self.coord('attach', 'root', 'codex', 'native-app-root', '')
+        self.recruit('child', 'root', 'omp')
+        self.assertNotEqual(self.coord_raw('report', 'legacy-pending', 'child', 'Preserve this body.').returncode, 0)
+        with sqlite3.connect(str(self.db)) as database:
+            stored = json.loads(database.execute("SELECT cause FROM codex_inbox_wakes WHERE session='root'").fetchone()[0])
+            database.execute("UPDATE codex_inbox_wakes SET cause=? WHERE session='root'", (stored['cause'],))
+        replay = self.coord_raw('report', 'legacy-pending', 'child', 'Preserve this body.')
+        self.assertNotEqual(replay.returncode, 0)
+        self.assertIn(stored['cause'], replay.stderr)
+        self.assertEqual(len(queued.read_text().splitlines()), 1)
+        refused_queue.unlink()
+        self.coord('resume', 'root')
+        self.assertEqual(len(queued.read_text().splitlines()), 2)
+        self.assertIsNone(json.loads(self.coord('delivery', 'legacy-pending'))['receipt'])
+
+    def test_direct_follower_restart_retains_emitted_input_and_accepts_fresh_report(self):
+        queued, _ = self.public_proxy()
+        current = json.loads(self.public_app_state.read_text())
+        self.public_app_state.write_text(json.dumps({**current, 'status': 'idle'}))
+        self.coord('attach', 'root', 'codex', '', '')
+        self.coord('role', 'root', 'principal-conductor')
+        self.coord('attach', 'operator', 'terminal', '', '')
+        self.coord('role', 'operator', 'operator')
+        self.recruit('child', 'root', 'omp')
+        self.assertNotEqual(self.coord_raw('report', 'initial-follow-input', 'child',
+                                          'Full initial report: café Ω 🙂').returncode, 0)
+        self.coord('connect', 'root', 'native-app-root', '')
+
+        def follower(name):
+            output = self.directory / (name + '.jsonl')
+            diagnostic = self.directory / (name + '.stderr')
+            with output.open('w') as stdout, diagnostic.open('w') as stderr:
+                child = subprocess.Popen(['node', str(ROOT / 'bend2/scripts/codex-inbox-wake.mjs'),
+                                          '--follow', str(EXE), str(self.db), 'root', 'native-app-root'],
+                                         env=self.environment, stdout=stdout, stderr=stderr)
+            self.children.append(child)
+            return child, output, diagnostic
+
+        first, first_output, first_error = follower('first-follow')
+        self.eventually(lambda: queued.exists() and 'codexInboxAdmission' in first_output.read_text(),
+                        'the direct follower did not admit its new owed report')
+        self.assertEqual(len(queued.read_text().splitlines()), 1)
+        claim = self.eventually(lambda: next((value for row in self.rows(
+            "SELECT cause FROM codex_inbox_wakes WHERE session='root'")
+            if (value := json.loads(row['cause'])).get('turnId') == 'fixture-turn-1'), None),
+            'the direct follower did not retain its actual admitted native turn')
+        self.assertEqual(claim['inputSeq'], self.rows("SELECT max(seq) AS seq FROM messages WHERE recipient='root'")[0]['seq'])
+        self.assertEqual(claim['turnId'], 'fixture-turn-1')
+        current = json.loads(self.public_app_state.read_text())
+        self.public_app_state.write_text(json.dumps({**current, 'status': 'idle'}))
+        first.terminate()
+        first.wait()
+        self.assertNotEqual(first.returncode, 0, first_error.read_text())
+        self.assertIsNone(json.loads(self.coord('delivery', 'initial-follow-input'))['receipt'])
+
+        second, second_output, second_error = follower('second-follow')
+        self.eventually(lambda: 'codexInboxTurnRetained' in second_output.read_text(),
+                        'the restarted follower did not retain its already-notified pending input')
+        self.assertEqual(len(queued.read_text().splitlines()), 1,
+                         'restart retried the unchanged failed input snapshot')
+        self.coord('report', 'fresh-after-follower-exit', 'child', 'A genuine newer report after connection recovery.')
+        self.eventually(lambda: 'fixture-turn-2' in self.public_app_state.read_text(),
+                        'fresh input remained behind the failed admission claim')
+        self.assertEqual(len(queued.read_text().splitlines()), 2)
+        for ident in ('initial-follow-input', 'fresh-after-follower-exit'):
+            self.assertIsNone(json.loads(self.coord('delivery', ident))['receipt'])
+        self.coord('stop', 'root', 'follow-stop', 'Keep the remaining input.')
+        second.wait()
+        self.assertEqual(second.returncode, 0, second_error.read_text())
+
+    def test_stop_or_receipt_during_native_metadata_read_prevents_admission(self):
+        for disposition in ('stop', 'receipt'):
+            with self.subTest(disposition=disposition):
+                queued, _ = self.public_proxy()
+                self.admission_barrier.unlink(missing_ok=True)
+                self.admission_release.unlink(missing_ok=True)
+                self.coord('attach', disposition, 'codex', '', '')
+                self.recruit(disposition + '-child', disposition, 'omp')
+                ident = disposition + '-in-flight'
+                body = 'Complete owed input: café Ω 🙂\nSecond line.'
+                self.assertNotEqual(self.coord_raw('report', ident, disposition + '-child', body).returncode, 0)
+                self.coord('connect', disposition, 'native-app-root', '')
+                current = json.loads(self.public_app_state.read_text())
+                self.public_app_state.write_text(json.dumps({**current, 'holdRead': True}))
+                delivery = subprocess.Popen(['node', str(ROOT / 'bend2/scripts/codex-inbox-wake.mjs'),
+                                             '--session', str(EXE), str(self.db), disposition,
+                                             'native-app-root', ident], env=self.environment,
+                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                self.children.append(delivery)
+                self.eventually(self.admission_barrier.exists,
+                                'the actual native metadata read was not held in flight')
+                if disposition == 'stop':
+                    self.coord('stop', disposition, 'in-flight-stop', 'Keep the original input.')
+                else:
+                    self.coord('ack', ident, disposition, 'Recipient handled this complete input.')
+                self.admission_release.write_text('Release the native response.\n')
+                output, diagnostic = delivery.communicate()
+                self.assertEqual(delivery.returncode, 0, diagnostic)
+                self.assertFalse(queued.exists(), 'the obsolete snapshot reached native input admission')
+                events = [json.loads(line) for line in output.splitlines()]
+                retained = next(event for event in events if event['type'] == 'codexInboxCoalesced')
+                self.assertEqual(retained['stopped'], disposition == 'stop')
+                saved = json.loads(self.coord('delivery', ident))
+                self.assertEqual(saved['body'], body)
+                self.assertEqual(saved['receipt'], None if disposition == 'stop'
+                                 else 'Recipient handled this complete input.')
 
     def test_codex_root_endpoint_wakes_the_root_and_routes_to_the_operator(self):
         self.release('root', 1)
@@ -510,33 +724,15 @@ while True:
         self.release('root', 3)
         self.completed('root', 3)
 
-        lead_continuation = self.eventually(
-            lambda: self.calls('lead')[2:3], 'the open lead assignment did not continue.')
-        child_continuation = self.eventually(
-            lambda: self.calls('child')[1:2], 'the open child assignment did not continue.')
-        self.eventually(lambda: len(self.calls('root')) == 3, 'the root started a fourth turn.')
-        self.assertEqual([len(self.calls(session)) for session in ('root', 'lead', 'child')], [3, 3, 2])
+        self.assertEqual([len(self.calls(session)) for session in ('root', 'lead', 'child')], [3, 2, 1])
         self.assertEqual([len(json.loads(self.coord('turns', session)))
                           for session in ('root', 'lead', 'child')], [3, 2, 1])
-        # Each turn after the first resumed the identity its own session recorded.
         self.assertEqual([call['resume'] for call in self.calls('root')[1:]], ['native-root'] * 2)
         self.assertEqual(self.calls('lead')[1]['resume'], 'native-lead')
-        for session, parent, assignment, call in (
-                ('lead', 'root', 'late-lead', lead_continuation[0]),
-                ('child', 'lead', 'child-task', child_continuation[0])):
-            self.assertEqual(call['resume'], f'native-{session}')
-            self.assertIn(f'Continue assignment {assignment}.', call['prompt'])
-            self.assertIn('Your immediate coordinator has not confirmed task completion.',
-                          call['prompt'])
-            self.assertIn('send one completion-request to your recorded parent', call['prompt'])
-            self.assertIn('completion-confirmed reply names that request', call['prompt'])
-            continuation_ids = self.prompt_ids(call)
-            self.assertEqual(len(continuation_ids), 1)
-            self.assertTrue(continuation_ids[0].endswith(':task-continuation'))
-            self.assertEqual(self.accepted(continuation_ids[0]), 'fixture reviewed')
-            continuation = json.loads(self.coord('delivery', continuation_ids[0]))
-            self.assertEqual((continuation['sender'], continuation['recipient'], continuation['kind']),
-                             (session, session, 'task-continuation'))
+        for session, parent, assignment in (
+                ('lead', 'root', 'late-lead'), ('child', 'lead', 'child-task')):
+            self.assertEqual(self.rows("SELECT id FROM messages WHERE recipient='" + session +
+                                      "' AND kind='task-continuation'"), [])
             state = json.loads(self.coord('session', session))['taskCompletion']
             self.assertEqual((state['assignmentId'], state['coordinator'], state['requestId']),
                              (assignment, parent, None))
@@ -549,7 +745,7 @@ while True:
         self.assertEqual(self.accepted('late-lead'), 'fixture reviewed')
         self.assertEqual(self.accepted('late-root'), 'fixture reviewed')
         self.assertEqual({row['recipient'] for row in self.rows("SELECT recipient FROM messages WHERE sender='lead'")},
-                         {'root', 'child', 'lead'})
+                         {'root', 'child'})
         inbox = json.loads(self.coord('inbox', 'operator'))
         self.assertEqual({row['sender'] for row in inbox}, {'root'})
         self.assertEqual(len(inbox), 3)
@@ -625,18 +821,8 @@ while True:
         self.assertEqual(self.accepted('leaf-followup'), 'fixture reviewed')
         self.release('leaf', 2)
         self.completed('leaf', 2)
-        continuation_call = self.eventually(
-            lambda: self.calls('leaf')[2:3], 'the open Claude assignment did not continue.')[0]
-        self.assertEqual([len(self.calls('leaf')), len(json.loads(self.coord('turns', 'leaf')))], [3, 2])
-        self.assertEqual(continuation_call['resume'], 'native-leaf')
-        self.assertIn('Continue assignment leaf-followup.', continuation_call['prompt'])
-        continuation_ids = self.prompt_ids(continuation_call)
-        self.assertEqual(len(continuation_ids), 1)
-        self.assertTrue(continuation_ids[0].endswith(':task-continuation'))
-        self.assertEqual(self.accepted(continuation_ids[0]), 'fixture reviewed')
-        continuation = json.loads(self.coord('delivery', continuation_ids[0]))
-        self.assertEqual((continuation['sender'], continuation['recipient'], continuation['kind']),
-                         ('leaf', 'leaf', 'task-continuation'))
+        self.assertEqual([len(self.calls('leaf')), len(json.loads(self.coord('turns', 'leaf')))], [2, 2])
+        self.assertEqual(self.rows("SELECT id FROM messages WHERE recipient='leaf' AND kind='task-continuation'"), [])
         state = json.loads(self.coord('session', 'leaf'))['taskCompletion']
         self.assertEqual((state['assignmentId'], state['coordinator'], state['requestId']),
                          ('leaf-followup', 'root', None))
@@ -644,7 +830,7 @@ while True:
         self.assertFalse(state['confirmed'])
         self.assertEqual(json.loads(self.coord('player', 'leaf'))['native'], 'native-leaf')
         self.assertEqual({row['recipient'] for row in self.rows("SELECT recipient FROM messages WHERE sender='leaf'")},
-                         {'root', 'leaf'})
+                         {'root'})
         self.assertEqual(self.accepted('leaf-task'), 'fixture reviewed')
         self.assert_consumed_once_and_by_its_recipient(['leaf'])
 

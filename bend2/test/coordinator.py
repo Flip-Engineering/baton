@@ -409,6 +409,49 @@ class Coordinator(unittest.TestCase):
         self.assertFalse(principal['open'])
         self.assertIsNone(self.call('continue-task', 'root', 'principal-native')['continuationId'])
 
+    def test_ready_request_wakes_coordinator_and_preserves_open_assignment_without_self_input(self):
+        self.call('message', 'ready-task', 'root', 'worker', 'task', 'Complete the assigned work.')
+        self.call('ack', 'ready-task', 'worker', 'Read and completed the assigned work.')
+        self.call('message', 'ready-request', 'worker', 'root', 'completion-request',
+                  'The complete result is ready for review.')
+        pending = self.call('inbox', 'root')
+        self.assertEqual([row['id'] for row in pending], ['ready-request'])
+        state = self.call('session', 'worker')['taskCompletion']
+        self.assertEqual(state['requestId'], 'ready-request')
+        self.assertTrue(state['open'])
+        self.assertFalse(state['confirmed'])
+
+        for turn in ('ready-native-one', 'ready-native-two'):
+            continued = self.call('continue-task', 'worker', turn)
+            self.assertIsNone(continued['continuationId'])
+            self.assertEqual(self.call('inbox', 'worker'), [])
+            self.assertEqual(self.call('inbox', 'root'), pending)
+            self.assertEqual(continued['taskCompletion'], state)
+
+        self.call('ack', 'ready-request', 'root', 'Reviewed the complete result.')
+        continued = self.call('continue-task', 'worker', 'ready-reviewed')
+        self.assertIsNone(continued['continuationId'])
+        self.assertEqual(continued['taskCompletion'], state)
+        self.assertEqual(self.call('delivery', 'ready-request')['receipt'],
+                         'Reviewed the complete result.')
+
+        self.call('message', 'ready-next', 'root', 'worker', 'guidance', 'Complete the new work.')
+        self.call('ack', 'ready-next', 'worker', 'Read the new assignment.')
+        self.call('message', 'ready-old-confirmation', 'root', 'worker',
+                  'completion-confirmed', 'ready-request')
+        self.call('ack', 'ready-old-confirmation', 'worker', 'Retained the earlier confirmation.')
+        current = self.call('session', 'worker')['taskCompletion']
+        self.assertEqual(current['assignmentId'], 'ready-next')
+        self.assertIsNone(current['requestId'])
+        self.assertTrue(current['open'])
+        self.assertFalse(current['confirmed'])
+        resumed = self.call('continue-task', 'worker', 'ready-next-native')
+        self.assertEqual(resumed['continuationId'], 'ready-next-native:task-continuation')
+        self.assertEqual([row['id'] for row in self.call('inbox', 'worker')],
+                         ['ready-next-native:task-continuation'])
+        self.assertEqual(self.call('delivery', 'ready-request')['receipt'],
+                         'Reviewed the complete result.')
+
     def operator(self, role=True):
         self.call('attach', 'operator', 'operator', '', '')
         if role:

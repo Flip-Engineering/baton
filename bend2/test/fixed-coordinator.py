@@ -373,10 +373,16 @@ def completion_events(stream):
         action=json.loads(line)
         if action.get('settle'):
             current=read_state()
-            terminal={'id':current['turn'],'status':action.get('status','completed'),'error':action.get('error')}
+            for item in action.get('completed_items',[]):
+                reply({'method':'item/completed','params':{'threadId':'native-w1',
+                       'turnId':current['turn'],'item':item}})
+            terminal={'id':current['turn'],'status':action.get('status','completed'),
+                      'error':action.get('error'),'items':action.get('items',[])}
             save_state({**current,'status':'idle','terminal':terminal})
+            idle={'method':'thread/status/changed','params':{'threadId':'native-w1','status':{'type':'idle'}}}
+            if action.get('idle_first'):reply(idle)
             reply({'method':'turn/completed','params':{'threadId':'native-w1','turn':terminal}})
-            reply({'method':'thread/status/changed','params':{'threadId':'native-w1','status':{'type':'idle'}}})
+            if not action.get('idle_first'):reply(idle)
             stream.write((json.dumps({'settled':current['turn']})+'\n').encode())
 header=b''
 while not header.endswith(b'\r\n\r\n'):header+=exact(1)
@@ -878,43 +884,59 @@ finally:
             writer.close()
         self.coord('report', 'app-writer-released', 'w1',
                    'The fixture writer released after the App settled with input still owed.')
-        phase('waiting for managed continuation after the writer committed')
+        phase('retaining the actual terminal after the writer committed')
         self.eventually(lambda: follow_events('codexInboxDatabaseReady'),
                         'the ordinary commit did not resume the held follower read')
-        self.eventually(lambda: app_calls('turn/start'), 'App completion did not prompt its remaining inbox')
+        self.await_inbox('root', lambda messages: next((message for message in messages
+            if 'codex-inbox-turn-settled' in message['body'] and 'app-initial' in message['body']), None),
+            'the actual App terminal did not reach its coordinator')
+        self.assertEqual(app_calls('turn/start'), [], 'unchanged owed input started another native turn')
         self.assertEqual(len(follow_events('codexInboxSubscribed')), 1,
                          'writer contention replaced the existing App follower')
-        self.assertIn('"recipient":"w1"', app_calls('turn/start')[0]['params']['input'][0]['text'])
         self.assertEqual(self.query("SELECT receipt FROM messages WHERE id='t3'"), [(None,)],
                          'the lifecycle watcher acknowledged input')
-        self.dispatch('g3', 'w1', 'New input while the same App watcher remains active.', kind='guidance')
+        self.dispatch('g3', 'w1', 'New coordinator work after the actual terminal.', kind='guidance')
+        self.eventually(lambda: len(app_calls('turn/start')) == 1,
+                        'the coordinator guidance did not start the next native turn')
+        self.assertIn('"recipient":"w1"', app_calls('turn/start')[0]['params']['input'][0]['text'])
         self.coord('ack', 't3', 'w1', 'w1-app-handled-t3')
         self.dispatch('g4', 'w1', 'Later guidance after the recipient handled its earlier input.', kind='guidance')
         self.assertEqual(len(self.connections('w1-app')), 1, 'own ACK or new input duplicated the App watcher')
         phase('settling the App turn with later guidance')
         self.release('w1-app', settle=True)
-        self.eventually(lambda: len(app_calls('turn/start')) >= 2,
-                        'the next actual App completion did not prompt still-owed guidance')
-        self.assertEqual(len(app_calls('turn/start')), 2, 'one actual continuation follows each observed settlement')
+        self.await_inbox('root', lambda messages: next((message for message in messages
+            if 'codex-inbox-turn-settled' in message['body'] and 'app-turn-1' in message['body']), None),
+            'the later native terminal did not reach its parent')
+        self.assertEqual(len(app_calls('turn/start')), 1, 'unchanged guidance automatically restarted the App turn')
         self.assertEqual(len(self.connections('w1-app')), 1, 'settlement duplicated the App watcher')
         self.assertEqual(self.query("SELECT receipt FROM messages WHERE id IN ('g3','g4') ORDER BY id"),
                          [(None,), (None,)], 'App input admission changed recipient receipts')
         self.assertEqual(len(self.connections('w1')), 2,
                          'the previous native receiver ran while later App guidance was pending')
-        phase('settling a recoverable App stream failure with guidance still owed')
+        self.dispatch('g5', 'w1', 'The coordinator requests this next bounded native turn.', kind='guidance')
+        self.eventually(lambda: len(app_calls('turn/start')) == 2, 'fresh guidance was not admitted')
+        phase('retaining a recoverable App stream failure with guidance still owed')
         error = {'message': 'The response stream disconnected before completion.',
                  'codexErrorInfo': {'responseStreamDisconnected': {'httpStatusCode': None}}}
-        self.release('w1-app', settle=True, status='failed', error=error)
-        self.eventually(lambda: len(app_calls('turn/start')) >= 3,
-                        'a recoverable App failure did not continue its owed input')
-        self.assertEqual(len(app_calls('turn/start')), 3)
+        partial = {'id': 'failed-partial', 'type': 'agentMessage', 'phase': 'partial_answer',
+                   'text': 'Partial authored result.\nRetain café Ω 🙂 and its limits.'}
+        self.release('w1-app', settle=True, status='failed', error=error, completed_items=[partial])
         retained_failure = self.await_inbox('root', lambda messages: next((message for message in messages
-            if 'codex-inbox-continuation-failed' in message['body']
+            if 'codex-inbox-turn-settled' in message['body']
             and 'responseStreamDisconnected' in message['body']), None),
-            'the recoverable App failure cause was not retained')
-        self.assertEqual(json.loads(retained_failure['body'])['threadId'], 'native-w1')
-        self.assertEqual(self.query("SELECT receipt FROM messages WHERE id IN ('g3','g4') ORDER BY id"),
-                         [(None,), (None,)])
+            'the actual App failure cause was not retained')
+        body = json.loads(retained_failure['body'])
+        self.assertEqual(body['threadId'], 'native-w1')
+        self.assertEqual(body['turn']['error'], error)
+        self.assertEqual(body['completedItems'], [partial])
+        self.assertEqual(len(app_calls('turn/start')), 2, 'the provider failure retried unchanged input')
+        self.coord('report', 'app-failure-observed', 'w1', 'The coordinator has the actual failure evidence.')
+        self.assertEqual(len(app_calls('turn/start')), 2, 'an unrelated commit retried the same failure')
+        self.dispatch('fresh-app-report', 'w1', 'A genuinely newer coordinator result after recovery.', kind='report')
+        self.eventually(lambda: len(app_calls('turn/start')) == 3,
+                        'a fresh report remained behind the failed admission claim')
+        self.assertEqual(self.query("SELECT receipt FROM messages WHERE id IN ('g3','g4','g5','fresh-app-report') ORDER BY id"),
+                         [(None,), (None,), (None,), (None,)])
         phase('interrupting the continued App turn with guidance still owed')
         self.release('w1-app', settle=True, status='interrupted')
         self.eventually(lambda: any(event['turn']['status'] == 'interrupted'
@@ -929,20 +951,23 @@ finally:
         self.eventually(lambda: not any('--follow' in process['command'] and str(self.db) in process['command']
                                        for process in self.owned_processes()),
                         'the managed watcher remained live after the explicit stop')
-        self.assertEqual([message['id'] for message in self.inbox('w1')], ['g3', 'g4'])
+        self.assertEqual([message['id'] for message in self.inbox('w1')], ['g3', 'g4', 'g5', 'fresh-app-report'])
         self.assertEqual(self.query("SELECT id,reason FROM session_stops WHERE session='w1'"),
                          [('app-operator-stop', 'Retain the remaining App guidance.')])
         phase('shutting down the completed fixture')
         self.shutdown()
 
-    def test_managed_worker_keeps_its_open_assignment_after_own_inbox_ack(self):
+    def test_managed_settlement_reports_to_parent_and_preserves_open_assignment(self):
         self.recruit('w1', 'codex')
+        self.coord('connect', 'root', 'root-review',
+                   json.dumps([str(self.fixture), 'parent_endpoint']))
         self.managed_app_proxy()
         self.queue('w1-app', {'controlReady': True})
         self.coord('connect', 'w1', 'native-w1', json.dumps([
             'node', str(ROOT / 'bend2/scripts/codex-inbox-wake.mjs'), '--session',
             str(EXE), str(self.db), 'w1', 'native-w1']))
-        self.dispatch('managed-task', 'w1', 'Continue this task until the coordinator confirms completion.')
+        task = 'Complete this assigned work and retain its source qualification.'
+        self.dispatch('managed-task', 'w1', task)
         self.start_owner()
         self.start_serve()
         self.stream_for('w1-app')
@@ -957,29 +982,75 @@ finally:
             return [call for line in self.codex_calls.read_text().splitlines(keepends=True)
                     if line.endswith('\n') and (call := json.loads(line))['method'] == 'turn/start']
 
+        self.eventually(lambda: events('codexInboxSubscribed'),
+                        'The managed watcher did not observe the active native turn.')
         self.coord('ack', 'managed-task', 'w1', 'The worker handled its original task input.')
-        self.eventually(lambda: events('codexInboxTaskAwaitingConfirmation'),
-                        'Own inbox ACK ended observation of an unconfirmed task.')
         self.assertEqual(self.inbox('w1'), [])
         self.assertTrue(self.coord('session', 'w1')['taskCompletion']['open'])
         self.assertTrue(any('--follow' in process['command'] for process in self.owned_processes()))
-        self.release('w1-app', settle=True)
-        self.eventually(starts, 'Successful App settlement did not continue its open assignment.')
-        self.assertEqual(len(starts()), 1)
-        self.assertEqual(len(self.connections('w1-app')), 1)
-        continuation = self.inbox('w1')
-        self.assertEqual([message['kind'] for message in continuation], ['task-continuation'])
-        self.assertIsNone(continuation[0]['receipt'])
+        items = [{'type': 'agentMessage', 'id': 'app-result',
+                  'text': 'The retained result is ready.\nSource qualification remains open. λ🙂.'}]
+        self.release('w1-app', settle=True, completed_items=items, idle_first=True)
+        self.eventually(lambda: events('codexInboxReleased'),
+                        'The settled App watcher did not release its completed observation.')
+        self.eventually(lambda: not any('--follow' in process['command']
+                                       for process in self.owned_processes()),
+                        'The settled App follower remained active after releasing its observation.')
+        report_id = 'codex-inbox-turn:w1:native-w1:app-initial'
+        self.eventually(lambda: self.query('SELECT receipt FROM messages WHERE id=' + repr(report_id))
+                        == [('parent-received',)],
+                        'The recorded coordinator did not receive the App terminal result.')
+        report = self.coord('delivery', report_id)
+        self.assertEqual((report['sender'], report['recipient'], report['kind']),
+                         ('w1', 'root', 'report'))
+        self.assertEqual(json.loads(report['body']), {
+            'type': 'codex-inbox-turn-settled', 'session': 'w1', 'threadId': 'native-w1',
+            'turn': {'id': 'app-initial', 'status': 'completed', 'error': None, 'items': []},
+            'completedItems': items})
+        self.assertEqual(starts(), [])
+        self.assertEqual(self.inbox('w1'), [])
+        state = self.coord('session', 'w1')['taskCompletion']
+        self.assertEqual(state['assignmentId'], 'managed-task')
+        self.assertIsNone(state['requestId'])
+        self.assertTrue(state['open'])
+        self.assertFalse(state['confirmed'])
+        self.assertEqual(self.coord('delivery', 'managed-task')['body'], task)
+        self.assertEqual(self.coord('delivery', 'managed-task')['receipt'],
+                         'The worker handled its original task input.')
+
+        self.queue('w1-app', {'controlReady': True})
+        guidance = 'Review the changed source evidence.\nRetain the original qualification and λ🙂.'
+        self.dispatch('managed-next', 'w1', guidance, kind='guidance')
+        self.stream_for('w1-app', 1)
+        self.eventually(lambda: len(starts()) == 1, 'The coordinator nudge did not reach the native thread.')
+        pointer = starts()[0]['params']['input'][0]['text']
+        self.assertIn('"recipient":"w1"', pointer)
+        self.assertIn('"message":"managed-next"', pointer)
+        self.assertEqual(starts()[0]['params']['threadId'], 'native-w1')
+        self.assertEqual(self.coord('delivery', 'managed-next')['body'], guidance)
+        self.assertIsNone(self.coord('delivery', 'managed-next')['receipt'])
+        self.coord('ack', 'managed-next', 'w1', 'The worker handled the changed source evidence.')
 
         self.coord('message', 'managed-ready', 'w1', 'root', 'completion-request',
                    'The managed worker task result is ready.')
-        self.coord('ack', 'managed-ready', 'root', 'The immediate coordinator reviewed the result.')
+        self.assertEqual(self.coord('delivery', 'managed-ready')['receipt'], 'parent-received')
+        ready = self.coord('session', 'w1')['taskCompletion']
+        self.assertEqual(ready['assignmentId'], 'managed-next')
+        self.assertEqual(ready['requestId'], 'managed-ready')
+        self.assertTrue(ready['open'])
+        self.assertFalse(ready['confirmed'])
         self.coord('message', 'managed-confirmed', 'root', 'w1', 'completion-confirmed', 'managed-ready')
-        self.coord('ack', continuation[0]['id'], 'w1', 'The worker handled its continuation input.')
+        self.assertEqual(self.coord('delivery', 'managed-confirmed')['body'], 'managed-ready')
         self.coord('ack', 'managed-confirmed', 'w1', 'The worker handled coordinator confirmation.')
-        self.eventually(lambda: events('codexInboxReleased'), 'The confirmed App worker did not settle.')
+        self.release('w1-app', 1, settle=True, items=[{'type': 'agentMessage', 'id': 'app-reviewed',
+                                                    'text': 'The coordinator reviewed the retained result.'}])
+        self.eventually(lambda: len(events('codexInboxReleased')) == 2,
+                        'The confirmed App worker did not settle.')
+        self.assertEqual(len(starts()), 1)
         self.assertFalse(self.coord('session', 'w1')['taskCompletion']['open'])
         self.assertEqual(self.inbox('w1'), [])
+        self.assertEqual(self.coord('delivery', report_id), report)
+        self.assertEqual(self.coord('player', 'w1')['native'], 'native-w1')
         self.shutdown()
 
     def test_11_owner_drain_leaves_no_duplicate_serve_admission(self):
@@ -1104,7 +1175,7 @@ finally:
         self.shutdown(expect_serve=1)
         print('failed-session continuation: fixture owner shut down', flush=True)
 
-    def test_13_endpointless_codex_continues_owed_input_after_settlement(self):
+    def test_13_endpointless_codex_reports_settlement_and_admits_new_guidance(self):
         self.recruit('w1', 'codex')
         self.managed_app_proxy()
         self.queue('w1-app', {'controlReady': True})
@@ -1125,15 +1196,19 @@ finally:
                          [(None,)])
         self.assertTrue(app_calls('turn/steer'), 'the public sender did not admit the original input')
         self.release('w1-app', settle=True)
-        self.eventually(lambda: app_calls('turn/start'),
-                        'the endpointless App session did not continue its original owed input')
-        self.assertEqual(len(app_calls('turn/start')), 1)
+        self.await_inbox('root', lambda messages: next((message for message in messages
+            if 'codex-inbox-turn-settled' in message['body'] and 'app-initial' in message['body']), None),
+            'the endpointless App terminal did not reach its coordinator')
+        self.assertEqual(app_calls('turn/start'), [], 'unchanged input automatically restarted the native turn')
         self.dispatch('endpointless-guidance', 'w1', 'Handle this guidance with the original task.',
                       kind='guidance')
+        self.eventually(lambda: len(app_calls('turn/start')) == 1,
+                        'fresh coordinator guidance was not admitted')
         self.release('w1-app', settle=True)
-        self.eventually(lambda: len(app_calls('turn/start')) >= 2,
-                        'the endpointless App session lost later owed guidance')
-        self.assertEqual(len(app_calls('turn/start')), 2)
+        self.await_inbox('root', lambda messages: next((message for message in messages
+            if 'codex-inbox-turn-settled' in message['body'] and 'app-turn-1' in message['body']), None),
+            'the actual guidance terminal did not reach its coordinator')
+        self.assertEqual(len(app_calls('turn/start')), 1, 'the follower retried unchanged guidance')
         pointer = app_calls('turn/start')[-1]['params']['input'][0]['text']
         self.assertIn('"pendingCount":2', pointer)
         self.assertEqual(self.query("SELECT receipt FROM messages WHERE recipient='w1' ORDER BY seq"),
@@ -1216,17 +1291,13 @@ finally:
         self.eventually(lambda: [event for event in wake_events
                                  if event['type'] == 'codexInboxDatabaseReady'],
                         'the released writer did not resume the one-shot committed read')
-        self.eventually(lambda: len(app_calls('turn/steer')) == 2,
-                        'the released writer did not lead to a fresh committed admission')
-        steers = app_calls('turn/steer')
-        self.assertEqual(len(steers), 2, 'the one-shot delivery admitted its input more than once')
-        self.assertIn('"recipient":"w1"', steers[1]['params']['input'][0]['text'])
-        self.assertIn('"message":"busy-task"', steers[1]['params']['input'][0]['text'])
-        self.assertEqual(self.query("SELECT receipt FROM messages WHERE id='busy-task'"),
-                         [(None,)], 'the one-shot admission acknowledged the input')
         self.eventually(lambda: wake.poll() is not None,
-                        'the one-shot delivery did not settle after its admission')
+                        'the one-shot delivery did not settle after its committed read')
         self.assertEqual(wake.returncode, 0, ''.join(wake.stderr.readlines()))
+        self.assertTrue(any(event['type'] == 'codexInboxCoalesced' for event in wake_events))
+        self.assertEqual(len(app_calls('turn/steer')), 1, 'the one-shot wake repeated unchanged admitted input')
+        self.assertEqual(self.query("SELECT receipt FROM messages WHERE id='busy-task'"),
+                         [(None,)], 'the one-shot wake acknowledged the input')
 
         phase('changing the recorded native conversation before another one-shot read')
         self.coord('connect', 'w1', 'native-w2', json.dumps([
@@ -1250,7 +1321,7 @@ finally:
         self.assertEqual([event['type'] for event in retained_events], ['codexInboxRetained'],
                          'the stopped session produced an unexpected one-shot record')
         self.assertTrue(retained_events[0]['stopped'])
-        self.assertEqual(len(app_calls('turn/steer')), 2, 'the stopped session was admitted again')
+        self.assertEqual(len(app_calls('turn/steer')), 1, 'the stopped session was admitted again')
         self.shutdown()
 
 

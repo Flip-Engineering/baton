@@ -46,7 +46,7 @@ The measured Bend2 revision admitted an invalid endpoint filename through
 binding, preserves pending input and the previous native identity, and returns
 an actionable refusal. Eight imported laws constrain admission and refusal;
 four native tests exercise the actual stored state and endpoint process.
-Exact-tree build, negative controls and native checks govern publication.
+The exact-tree build and native behavior checks govern publication.
 
 The [repair for #650](recruit-conflict-2026-10-02.md) reports a conflicting worker
 assignment with its existing and requested fields. Exact retries preserve the
@@ -110,8 +110,9 @@ Before publishing Baton 2.0:
 4. Document the supported host, installation, command entry point, harness setup
    and retained-state recovery procedure for that candidate. The
    [harness setup guide](harness-setup.md) records the measured native routes.
-5. Run the native build, complete law negative controls and native checks on the
-   exact release tree, then verify the advertised source and release artifacts.
+5. Run the native build and native checks on the exact release tree. Compare
+   affected behavior checks on the target and candidate, and retain complete
+   process results. Verify the advertised source and release artifacts.
 6. Qualify the canonical Principal Conductor, Associate Conductor, Ensemble,
    Section, Player and Orchestra controls on the release tree. Verify retained
    session identity, pending input and receipts using a populated database.

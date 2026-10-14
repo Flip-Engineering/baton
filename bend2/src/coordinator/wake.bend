@@ -14,6 +14,7 @@ def admitted_message_id(command: C.Command) -> String:
     case C.Report{id,sender,body}: id
     case C.Ask{id,player,body}: id
     case C.Observe{id,player,event,sealed}: id
+    case C.TaskContinue{session,id}: id ++ ":task-continuation"
     case other: ""
 
 # The recipient owed by one admitted message. Empty when the message is

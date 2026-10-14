@@ -1,8 +1,33 @@
-# Baton2 todo
+# Baton todo
 
 The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3Aissue%20is%3Aopen)
 retain findings, ownership and acceptance requirements. This page links current
 Baton2 follow-up work for contributors.
+
+- [#718: Coalesce pending-input notices during failed Codex turns](https://github.com/Flip-Engineering/baton/issues/718).
+  Repeated provider failures appended the same pending-input notice to the
+  recorded conversation. Deliver committed input once for the current admission,
+  retain failed-turn causes, and wake the coordinator for its next-work decision.
+  Qualify recovery, new input, operator stops and recipient acknowledgements on
+  the affected target and candidate. Verify the packaged and active helper.
+
+- [#720: Stop unchanged completion-request continuations](https://github.com/Flip-Engineering/baton/issues/720).
+  Workers awaiting a coordinator's completion confirmation repeatedly generated
+  self-addressed continuations and reports. Derive continuation from the current
+  assignment and completion request. Preserve terminal evidence, new guidance,
+  recipient receipts and the coordinator's exact completion confirmation.
+
+- [#717: Publish and activate the current Baton release](https://github.com/Flip-Engineering/baton/issues/717).
+  Qualify the composed source on remote runners, publish its exact tag and
+  platform artifacts, and install the complete package through the ordinary
+  command path. Retain active conversations, managed work, prior installation
+  prefixes and explicit stops during receiver migration. Unfinished feature
+  acceptance remains recorded in its original issues.
+
+- [#716: Start ordinary work from task text](https://github.com/Flip-Engineering/baton/issues/716).
+  Accept task text, stdin and UTF-8 files through the CLI and MCP. Resolve the
+  project, session and configured defaults, retain setup and transcripts, and
+  verify the installed command paths. This acceptance remains part of #717.
 
 - [#715: Simplify agent commands with a contextual action grammar](https://github.com/Flip-Engineering/baton/issues/715).
   Extend the implicit project and session context introduced in
@@ -21,8 +46,8 @@ Baton2 follow-up work for contributors.
     validate batch outcomes and installed commands on the remote runner.
 
 - [#713: Route unchanged native-turn reports through the coordinator](https://github.com/Flip-Engineering/baton/issues/713).
-  Successful turn settlement can create a self-addressed task continuation
-  while the assignment is open and the worker inbox is empty. Wonder Full and
+  Successful turn settlement created a self-addressed task continuation
+  while the assignment was open and the worker inbox was empty. Wonder Full and
   Synthesis repeated unchanged held-work reports; later Muse turns returned
   quota errors. Deliver the turn report to the recorded coordinator for its
   next-work decision. Keep the worker assignment, original input, provider

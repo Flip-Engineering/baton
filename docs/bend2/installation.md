@@ -1,6 +1,6 @@
 # Native installation
 
-Baton 2.0 is developed on `main`. The Darwin arm64 archive contains the native
+Baton is developed on `main`. The Darwin arm64 archive contains the native
 executable, packaged Conductor adapters, Git identity helper, selected context
 providers, notices and source/build manifest. Build logs are retained in the
 package output directory. Hosted CI also retains the smoke logs.
@@ -11,6 +11,63 @@ for other hosts and architectures. The original npm package and its smoke checks
 are retained with the original implementation in Git history.
 [Native development artifacts](native-artifacts.md) describe archive packaging,
 the extracted smoke procedure and hosted CI.
+
+## Install or update a published release
+
+Select the published version and download its complete Darwin arm64 payload.
+The procedure uses an unused prefix and retains the downloaded evidence:
+
+```sh
+set -eu
+BATON2_VERSION=1.2.0
+BATON2_DOWNLOAD="$(mktemp -d "${TMPDIR:-/tmp}/baton2-release-download.XXXXXX")"
+gh release download "baton2-v$BATON2_VERSION" --repo Flip-Engineering/baton \
+  --pattern '*.tar.gz' --pattern manifest.json --pattern SHA256SUMS \
+  --dir "$BATON2_DOWNLOAD"
+BATON2_SOURCE="$(python3 - "$BATON2_DOWNLOAD/manifest.json" "$BATON2_VERSION" <<'PY'
+import json, re, sys
+manifest = json.load(open(sys.argv[1]))
+assert manifest['kind'] == 'release' and manifest['version'] == sys.argv[2]
+assert manifest['platform']['artifact'] == 'darwin-arm64'
+assert re.fullmatch(r'[0-9a-f]{40}', manifest['source']['commit'])
+print(manifest['source']['commit'])
+PY
+)"
+BATON2_ARCHIVE_NAME="baton2-$BATON2_VERSION-darwin-arm64-$BATON2_SOURCE.tar.gz"
+(
+  cd "$BATON2_DOWNLOAD"
+  shasum -a 256 -c SHA256SUMS
+)
+BATON2_PREFIX="$HOME/.local/share/baton2/releases/$BATON2_VERSION-$BATON2_SOURCE"
+BATON2_COMMAND="$HOME/.local/bin/baton2"
+mkdir -p "$HOME/.local/share/baton2/releases" "$HOME/.local/bin"
+mkdir "$BATON2_PREFIX"
+tar -xzpf "$BATON2_DOWNLOAD/$BATON2_ARCHIVE_NAME" -C "$BATON2_PREFIX" --strip-components=1
+chmod 755 "$BATON2_PREFIX"
+cmp "$BATON2_PREFIX/manifest.json" "$BATON2_DOWNLOAD/manifest.json"
+python3 - "$BATON2_PREFIX" <<'PY'
+import hashlib, json, pathlib, sys
+prefix = pathlib.Path(sys.argv[1])
+manifest = json.loads((prefix / 'manifest.json').read_text())
+assert hashlib.sha256((prefix / 'bin/baton2').read_bytes()).hexdigest() == manifest['binary']['sha256']
+PY
+ln -s "$BATON2_PREFIX/bin/baton2" "$BATON2_COMMAND.next"
+mv -f "$BATON2_COMMAND.next" "$BATON2_COMMAND"
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+The selected tag and manifest identify the release source. Verify that source
+against the published tag and retained qualification. Keep the complete prefix,
+including selected modules and generated-C provenance, and retain earlier
+prefixes used by running receivers. Subsequent CLI commands use the selected
+executable. Existing owners, observers and recorded receivers keep their
+admitted executable paths and state.
+
+Verify ordinary read commands against the existing database. After each actor's
+owned turn completes, refresh its receiver using the procedure below. Preserve
+the recorded native identity, parent, workspace, pending input, receipts and
+explicit stops. Record any process that continues to use an earlier prefix;
+selecting the command symlink does not reload that process.
 
 ## Install the historical 1.0 archive
 

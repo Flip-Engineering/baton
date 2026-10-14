@@ -195,15 +195,19 @@ A worker's assignment remains open across successful native turns. When its
 work is ready, it sends a `completion-request` message to its immediate parent.
 The parent reviews the result and replies with `completion-confirmed`, using
 the request ID alone as the body, or sends guidance for remaining work. The
-worker continues useful work until confirmation and acknowledges each handled
-message separately. New tasks and guidance begin further work. Explicit
-operator stops remain effective. Parentless Principal Conductors follow their
-operator input.
+worker's current request remains available while the parent reviews it. New
+tasks and guidance begin further work. Message receipts record the worker's
+handling of retained input. Explicit operator stops remain effective.
+Parentless Principal Conductors follow their operator input.
 
-Codex, OMP, Muse and Claude native receivers preserve the same conversation
-across this continuation. The managed Codex App watcher observes public turn
-settlement and uses `continue-task SESSION TURN_ID` to queue continuation input,
-then delivers it through the public turn interface.
+Codex, OMP, Muse and Claude native receivers preserve the recorded conversation
+when further input arrives. Native settlement delivers the turn report to the
+recorded coordinator, which decides whether further work is needed. The
+managed Codex App watcher observes public turn settlement and delivers owed
+input through the public turn interface. `continue-task SESSION TURN_ID`
+explicitly queues continuation input for an open assignment that has no current
+completion request and wakes its recorded receiver. `resume SESSION` retries
+delivery of queued input through the same receiver.
 `session SESSION` exposes the current assignment, request, coordinator and
 confirmation in `taskCompletion`.
 

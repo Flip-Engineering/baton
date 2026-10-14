@@ -92,7 +92,7 @@ print(json.dumps({"type":"result","result":"Task recorded.","session_id":"native
         self.assertEqual([m['body'] for m in inbox],['Task recorded.'])
         delivered=(self.cwd/'received.txt').read_text()
         self.assertTrue(delivered.endswith(self.task.read_text()))
-        self.assertIn('completion-request',delivered)
+        self.assertIn('Message (task-assignment) from worker [id: turn-1:task-input]:',delivered)
         original=json.loads(self.call('delivery','turn-1:task-input'))
         self.assertEqual(original['body'],self.task.read_text())
         self.assertIsNotNone(original['receipt'])
