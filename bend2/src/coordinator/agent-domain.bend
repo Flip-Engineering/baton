@@ -5,13 +5,13 @@ type Option is Data:
   Field{name: String, value: String}
 
 type Operation is Data:
-  Call{verb: String, options: List<Option>}
+  Call{verb: String, options: List<&2,Option>}
 
 type NameSet is Data:
   Names{verb: String, flags: String}
 
 type Parsed is Type:
-  Calls{items: List<Operation>}
+  Calls{items: List<&2,Operation>}
   Error{cause: String}
 
 type Phase is Data:
@@ -21,7 +21,7 @@ type Phase is Data:
   OptionValue{name: String}
 
 type ParseState is Data:
-  Active{phase: Phase, verb: String, options: List<Option>, items: List<Operation>}
+  Active{phase: Phase, verb: String, options: List<&2,Option>, items: List<&2,Operation>}
   Failed{cause: String}
 
 def member(+value: String, values: List<String>) -> Bool:
@@ -100,13 +100,13 @@ def names(verb: String) -> List<String>:
     Names{"logs","--session --level"}
   ],verb)
 
-def value(options: List<Option>, +name: String, +fallback: String) -> String:
+def value(options: List<&2,Option>, +name: String, +fallback: String) -> String:
   match options:
     case Nil{}: fallback
     case Field{key,+saved} <> rest:
       Bool.pick(String,String.eq(key,name),saved,value(rest,name,fallback))
 
-def present(options: List<Option>, +name: String) -> Bool:
+def present(options: List<&2,Option>, +name: String) -> Bool:
   match options:
     case Nil{}: False{}
     case Field{key,saved} <> rest: Bool.or(String.eq(key,name),present(rest,name))
@@ -138,13 +138,13 @@ def required(verb: String) -> List<String>:
     case "context-query": Tx.split_spaces("--file")
     case other: Nil{}
 
-def missing(+options: List<Option>, fields: List<String>) -> String:
+def missing(+options: List<&2,Option>, fields: List<String>) -> String:
   match fields:
     case Nil{}: ""
     case +name <> rest:
       Bool.pick(String,String.is_empty(value(options,name,"")),name,missing(options,rest))
 
-def pair_cause(+options: List<Option>, +name: String, +file: String, required: Bool) -> String:
+def pair_cause(+options: List<&2,Option>, +name: String, +file: String, required: Bool) -> String:
   +text = present(options,name)
   +path = present(options,file)
   Bool.pick(String,Bool.and(text,path),"Supply one of " ++ name ++ " or " ++ file ++ ".",
@@ -154,7 +154,7 @@ def pair_cause(+options: List<Option>, +name: String, +file: String, required: B
 def first(+cause: String, other: String) -> String:
   Bool.pick(String,String.is_empty(cause),other,cause)
 
-def option_cause(+verb: String, +options: List<Option>) -> String:
+def option_cause(+verb: String, +options: List<&2,Option>) -> String:
   +absent = missing(options,required(verb))
   +pairs = first(pair_cause(options,"--claim","--claim-file",String.eq(verb,"knowledge-record")),
     first(pair_cause(options,"--evidence","--evidence-file",False{}),
@@ -175,7 +175,7 @@ def option_cause(+verb: String, +options: List<Option>) -> String:
   +endpoint = Bool.pick(String,Bool.and(String.eq(verb,"connect"),Bool.not(present(options,"--endpoint"))),"Supply --endpoint JSON_ARGV; an empty string disconnects it.","")
   first(Bool.pick(String,String.is_empty(absent),"","Missing " ++ absent ++ "."),first(pairs,first(body,first(endpoint,first(land,first(read,first(inspection,section)))))))
 
-def reverse(items: List<Operation>, tail: List<Operation>) -> List<Operation>:
+def reverse(items: List<&2,Operation>, tail: List<&2,Operation>) -> List<&2,Operation>:
   match items:
     case Nil{}: tail
     case item <> rest: reverse(rest,Con{item,tail})
@@ -187,11 +187,11 @@ def subverb(+head: String, +sub: String) -> String:
       Bool.pick(String,member(sub,Tx.split_spaces("register sessions settings")),"project-" ++ sub,""),
       Bool.pick(String,Bool.and(String.eq(head,"context"),member(sub,Tx.split_spaces("engines install query result"))),"context-" ++ sub,"")))
 
-def finish_values(+verb: String, +options: List<Option>, items: List<Operation>) -> Parsed:
+def finish_values(+verb: String, +options: List<&2,Option>, items: List<&2,Operation>) -> Parsed:
   +cause = option_cause(verb,options)
   Bool.pick(Parsed,String.is_empty(cause),Calls{reverse(Con{Call{verb,options},items},Nil{})},Error{cause ++ " Use help " ++ verb ++ "."})
 
-def finish(phase: Phase, verb: String, options: List<Option>, +items: List<Operation>) -> Parsed:
+def finish(phase: Phase, verb: String, options: List<&2,Option>, +items: List<&2,Operation>) -> Parsed:
   match phase:
     case ActionHead{}: Error{"An action is required after and."}
     case CompoundHead{+head}:
@@ -201,7 +201,7 @@ def finish(phase: Phase, verb: String, options: List<Option>, +items: List<Opera
 
 # The transition preserves complete literal values, including clause separators.
 # The parser advances once per argv token and retains the first refusal.
-def transition(phase: Phase, +head: String, +verb: String, +options: List<Option>, +items: List<Operation>) -> ParseState:
+def transition(phase: Phase, +head: String, +verb: String, +options: List<&2,Option>, +items: List<&2,Operation>) -> ParseState:
   match phase:
     case ActionHead{}:
       Bool.pick(ParseState,Bool.or(String.eq(head,"and"),String.eq(head,"--and")),Failed{"An action is required before " ++ head ++ "."},

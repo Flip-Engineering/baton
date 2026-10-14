@@ -22,7 +22,7 @@ type Action is Type:
   Player{id: String}
   Players{}
   Assignment{id: String}
-  Native{items: List<Domain.Operation>}
+  Native{items: List<&2,Domain.Operation>}
   Help{action: String}
   Invalid{cause: String}
 

@@ -46,12 +46,12 @@ def file_name(name: String) -> String:
 def stdin_option(+name: String, value: String) -> Bool:
   Bool.and(String.eq(value,"-"),Bool.or(String.eq(name,"--file"),Bool.not(String.is_empty(file_name(name)))))
 
-def stdin_options(options: List<D.Option>) -> Bool:
+def stdin_options(options: List<&2,D.Option>) -> Bool:
   match options:
     case Nil{}: False{}
     case D.Field{name,value} <> rest: Bool.or(stdin_option(name,value),stdin_options(rest))
 
-def stdin_operations(items: List<D.Operation>) -> Bool:
+def stdin_operations(items: List<&2,D.Operation>) -> Bool:
   match items:
     case Nil{}: False{}
     case D.Call{verb,options} <> rest: Bool.or(stdin_options(options),stdin_operations(rest))
@@ -71,74 +71,74 @@ def capture(wanted: Bool) -> IO(Stdin):
 def capture_shared(db: String, wanted: Bool) -> IO(Stdin):
   capture(wanted)
 
-def replaced_options(options: List<D.Option>, +body: String) -> List<D.Option>:
+def replaced_options(options: List<&2,D.Option>, +body: String) -> List<&2,D.Option>:
   match options:
     case Nil{}: Nil{}
     case D.Field{+name,+value} <> rest:
       Con{Bool.pick(D.Option,stdin_option(name,value),
         D.Field{Bool.pick(String,String.eq(name,"--file"),"--text",file_name(name)),body},D.Field{name,value}),replaced_options(rest,body)}
 
-def path_options(options: List<D.Option>, +path: String) -> List<D.Option>:
+def path_options(options: List<&2,D.Option>, +path: String) -> List<&2,D.Option>:
   match options:
     case Nil{}: Nil{}
     case D.Field{+name,+value} <> rest:
       Con{D.Field{name,Bool.pick(String,stdin_option(name,value),path,value)},path_options(rest,path)}
 
-def stdin_replaced_value(stdin: Stdin, options: List<D.Option>) -> Result<&1,&1,U32 & String,List<D.Option>>:
+def stdin_replaced_value(stdin: Stdin, options: List<&2,D.Option>) -> Result<&1,&1,U32 & String,List<&2,D.Option>>:
   match stdin:
     case Captured{value}: Done{replaced_options(options,value)}
     case CaptureFailed{code,cause}: Fail{(code,"stdin: " ++ cause)}
     case Unused{}: Fail{(2,"The invocation did not capture its requested stdin input.")}
 
-def stdin_replaced(options: List<D.Option>, stdin: Stdin, wanted: Bool) -> Result<&1,&1,U32 & String,List<D.Option>>:
+def stdin_replaced(options: List<&2,D.Option>, stdin: Stdin, wanted: Bool) -> Result<&1,&1,U32 & String,List<&2,D.Option>>:
   match wanted:
     case False{}: Done{options}
     case True{}: stdin_replaced_value(stdin,options)
 
 # Context JSON import retains its own request artifact for the native context API.
-def context_written(result: Result<&1,&1,U32 & String,String>, options: List<D.Option>, path: String) -> Result<&1,&1,U32 & String,List<D.Option>>:
+def context_written(result: Result<&1,&1,U32 & String,String>, options: List<&2,D.Option>, path: String) -> Result<&1,&1,U32 & String,List<&2,D.Option>>:
   match result:
     case Fail{error}: Fail{error}
     case Done{position}: Done{path_options(options,path)}
 
-def context_stdin(stdin: Stdin, +path: String, options: List<D.Option>) -> IO(Result<&1,&1,U32 & String,List<D.Option>>):
+def context_stdin(stdin: Stdin, +path: String, options: List<&2,D.Option>) -> IO(Result<&1,&1,U32 & String,List<&2,D.Option>>):
   match stdin:
-    case Captured{value}: do IO<Result<&1,&1,U32 & String,List<D.Option>>>:
+    case Captured{value}: do IO<Result<&1,&1,U32 & String,List<&2,D.Option>>>:
       written : Result<&1,&1,U32 & String,String> <- Text.Text.write_at(path,"0",value,1)
-      IO.pure(Result<&1,&1,U32 & String,List<D.Option>>,context_written(written,options,path))
-    case other: IO.pure(Result<&1,&1,U32 & String,List<D.Option>>,stdin_replaced_value(other,options))
+      IO.pure(Result<&1,&1,U32 & String,List<&2,D.Option>>,context_written(written,options,path))
+    case other: IO.pure(Result<&1,&1,U32 & String,List<&2,D.Option>>,stdin_replaced_value(other,options))
 
-def replace_input(+verb: String, +options: List<D.Option>, +stdin: Stdin, path: String) -> IO(Result<&1,&1,U32 & String,List<D.Option>>):
-  Bool.pick(IO(Result<&1,&1,U32 & String,List<D.Option>>),Bool.and(String.eq(verb,"context-query"),stdin_options(options)),
-    context_stdin(stdin,path,options),IO.pure(Result<&1,&1,U32 & String,List<D.Option>>,stdin_replaced(options,stdin,stdin_options(options))))
+def replace_input(+verb: String, +options: List<&2,D.Option>, +stdin: Stdin, path: String) -> IO(Result<&1,&1,U32 & String,List<&2,D.Option>>):
+  Bool.pick(IO(Result<&1,&1,U32 & String,List<&2,D.Option>>),Bool.and(String.eq(verb,"context-query"),stdin_options(options)),
+    context_stdin(stdin,path,options),IO.pure(Result<&1,&1,U32 & String,List<&2,D.Option>>,stdin_replaced(options,stdin,stdin_options(options))))
 
-def add_option_tail(tail: Result<&1,&1,U32 & String,List<D.Option>>,
-                    name: String, value: String) -> Result<&1,&1,U32 & String,List<D.Option>>:
+def add_option_tail(tail: Result<&1,&1,U32 & String,List<&2,D.Option>>,
+                    name: String, value: String) -> Result<&1,&1,U32 & String,List<&2,D.Option>>:
   match tail:
     case Fail{error}: Fail{error}
     case Done{options}: Done{Con{D.Field{name,value},options}}
 
 def add_option(+name: String, result: Result<&1,&1,U32 & String,String>,
-               tail: Result<&1,&1,U32 & String,List<D.Option>>) -> Result<&1,&1,U32 & String,List<D.Option>>:
+               tail: Result<&1,&1,U32 & String,List<&2,D.Option>>) -> Result<&1,&1,U32 & String,List<&2,D.Option>>:
   match result:
     case Fail{(code,cause)}: Fail{(code,name ++ ": " ++ cause)}
     case Done{value}: add_option_tail(tail,name,value)
 
-def load_options(+verb: String, options: List<D.Option>) -> IO(Result<&1,&1,U32 & String,List<D.Option>>):
+def load_options(+verb: String, options: List<&2,D.Option>) -> IO(Result<&1,&1,U32 & String,List<&2,D.Option>>):
   match options:
-    case Nil{}: IO.pure(Result<&1,&1,U32 & String,List<D.Option>>,Done{Nil{}})
-    case D.Field{+name,+value} <> rest: do IO<Result<&1,&1,U32 & String,List<D.Option>>>:
+    case Nil{}: IO.pure(Result<&1,&1,U32 & String,List<&2,D.Option>>,Done{Nil{}})
+    case D.Field{+name,+value} <> rest: do IO<Result<&1,&1,U32 & String,List<&2,D.Option>>>:
       +body_name : String = Bool.pick(String,Bool.and(String.eq(name,"--file"),D.member(verb,["report","ask","native-reply","dispatch","completion-request","guide"])),"--text",file_name(name))
       result : Result<&1,&1,U32 & String,String> <- Bool.pick(IO(Result<&1,&1,U32 & String,String>),
         String.is_empty(body_name),IO.pure(Result<&1,&1,U32 & String,String>,Done{value}),text_value(value))
-      tail : Result<&1,&1,U32 & String,List<D.Option>> <- load_options(verb,rest)
+      tail : Result<&1,&1,U32 & String,List<&2,D.Option>> <- load_options(verb,rest)
       add : String = Bool.pick(String,String.is_empty(body_name),name,body_name)
-      IO.pure(Result<&1,&1,U32 & String,List<D.Option>>,add_option(add,result,tail))
+      IO.pure(Result<&1,&1,U32 & String,List<&2,D.Option>>,add_option(add,result,tail))
 
 def decoded(encoded: String) -> String:
   Req.scalar_value(Req.decode_scalar_utf8(Tx.hex_decode(encoded)))
 
-def defaults_fields(fields: List<String>) -> Result<&1,&1,U32 & String,List<D.Option>>:
+def defaults_fields(fields: List<String>) -> Result<&1,&1,U32 & String,List<&2,D.Option>>:
   match fields:
     case harness <> model <> effort <> cwd <> native <> cmd <> log <> "end" <> Nil{}:
       Done{[D.Field{"--harness",decoded(harness)},D.Field{"--model",decoded(model)},
@@ -147,7 +147,7 @@ def defaults_fields(fields: List<String>) -> Result<&1,&1,U32 & String,List<D.Op
         D.Field{"--output-log",decoded(log)}]}
     case other: Fail{(2,"No recorded session supplies these defaults. Select --session SESSION or provide an existing actor context.")}
 
-def defaults_result(result: Result<&1,&1,U32 & String,String>) -> Result<&1,&1,U32 & String,List<D.Option>>:
+def defaults_result(result: Result<&1,&1,U32 & String,String>) -> Result<&1,&1,U32 & String,List<&2,D.Option>>:
   match result:
     case Fail{error}: Fail{error}
     case Done{value}: defaults_fields(Tx.split_tabs(Tx.trim_nl(value)))
@@ -158,30 +158,30 @@ def endpoint_field(+target: String, offset: String) -> String:
 def defaults_sql(+target: String) -> String:
   "SELECT hex(harness)||char(9)||hex(model)||char(9)||hex(effort)||char(9)||hex(workspace)||char(9)||hex(native)||char(9)||hex(" ++ endpoint_field(target,"5") ++ ")||char(9)||hex(" ++ endpoint_field(target,"1") ++ ")||char(9)||'end' FROM sessions WHERE id=" ++ C.q(target) ++ ";"
 
-def defaults(+db: String, +session: String, +verb: String, +options: List<D.Option>) -> IO(Result<&1,&1,U32 & String,List<D.Option>>):
-  Bool.pick(IO(Result<&1,&1,U32 & String,List<D.Option>>),
+def defaults(+db: String, +session: String, +verb: String, +options: List<&2,D.Option>) -> IO(Result<&1,&1,U32 & String,List<&2,D.Option>>):
+  Bool.pick(IO(Result<&1,&1,U32 & String,List<&2,D.Option>>),
     D.member(verb,Tx.split_spaces("configure turn receive profile-bind connect bind project-sessions project-settings")),
-    (do IO<Result<&1,&1,U32 & String,List<D.Option>>>:
+    (do IO<Result<&1,&1,U32 & String,List<&2,D.Option>>>:
       result : Result<&1,&1,U32 & String,String> <- DB.Sql.read(db,defaults_sql(D.value(options,"--session",session)))
-      IO.pure(Result<&1,&1,U32 & String,List<D.Option>>,defaults_result(result))),
-    IO.pure(Result<&1,&1,U32 & String,List<D.Option>>,Done{Nil{}}))
+      IO.pure(Result<&1,&1,U32 & String,List<&2,D.Option>>,defaults_result(result))),
+    IO.pure(Result<&1,&1,U32 & String,List<&2,D.Option>>,Done{Nil{}}))
 
 # Native identities are selected in the canonical database before legacy admission.
-def inferred_fields(fields: List<String>, +name: String, options: List<D.Option>, cause: String) -> Result<&1,&1,U32 & String,List<D.Option>>:
+def inferred_fields(fields: List<String>, +name: String, options: List<&2,D.Option>, cause: String) -> Result<&1,&1,U32 & String,List<&2,D.Option>>:
   match fields:
     case count <> encoded <> "end" <> Nil{}:
-      Bool.pick(Result<&1,&1,U32 & String,List<D.Option>>,String.eq(count,"1"),Done{Con{D.Field{name,decoded(encoded)},options}},Fail{(2,cause)})
+      Bool.pick(Result<&1,&1,U32 & String,List<&2,D.Option>>,String.eq(count,"1"),Done{Con{D.Field{name,decoded(encoded)},options}},Fail{(2,cause)})
     case other: Fail{(2,"The native identity query returned an incomplete result.")}
 
-def inferred_result(result: Result<&1,&1,U32 & String,String>, name: String, options: List<D.Option>, cause: String) -> Result<&1,&1,U32 & String,List<D.Option>>:
+def inferred_result(result: Result<&1,&1,U32 & String,String>, name: String, options: List<&2,D.Option>, cause: String) -> Result<&1,&1,U32 & String,List<&2,D.Option>>:
   match result:
     case Fail{error}: Fail{error}
     case Done{value}: inferred_fields(Tx.split_tabs(Tx.trim_nl(value)),name,options,cause)
 
-def select_identity(db: String, sql: String, name: String, options: List<D.Option>, cause: String) -> IO(Result<&1,&1,U32 & String,List<D.Option>>):
-  do IO<Result<&1,&1,U32 & String,List<D.Option>>>:
+def select_identity(db: String, sql: String, name: String, options: List<&2,D.Option>, cause: String) -> IO(Result<&1,&1,U32 & String,List<&2,D.Option>>):
+  do IO<Result<&1,&1,U32 & String,List<&2,D.Option>>>:
     result : Result<&1,&1,U32 & String,String> <- DB.Sql.read(db,sql)
-    IO.pure(Result<&1,&1,U32 & String,List<D.Option>>,inferred_result(result,name,options,cause))
+    IO.pure(Result<&1,&1,U32 & String,List<&2,D.Option>>,inferred_result(result,name,options,cause))
 
 def new_identity_sql(verb: String) -> String:
   "SELECT '1'||char(9)||hex(" ++ C.q(verb ++ ":") ++ "||lower(hex(randomblob(16))))||char(9)||'end';"
@@ -191,38 +191,38 @@ def stop_identity_sql(+target: String, force: Bool) -> String:
     case True{}: "SELECT count(*)||char(9)||hex(min(id))||char(9)||'end' FROM session_stops WHERE session=" ++ C.q(target) ++ ";"
     case False{}: "SELECT '1'||char(9)||hex(coalesce((SELECT id FROM session_stops WHERE session=" ++ C.q(target) ++ "),'stop:'||lower(hex(randomblob(16)))))||char(9)||'end';"
 
-def reply_identity_sql(+session: String, +options: List<D.Option>) -> String:
+def reply_identity_sql(+session: String, +options: List<&2,D.Option>) -> String:
   "SELECT count(*)||char(9)||hex(min(id))||char(9)||'end' FROM native_requests WHERE parent=" ++ C.q(session) ++ " AND reply IS NULL AND closed IS NULL" ++ Bool.pick(String,D.present(options,"--to")," AND worker=" ++ C.q(D.value(options,"--to","")),"") ++ ";"
 
 def query_identity_sql(session: String) -> String:
   "SELECT count(*)||char(9)||hex(min(id))||char(9)||'end' FROM (SELECT id FROM semantic_queries WHERE owner=" ++ C.q(session) ++ " ORDER BY rowid DESC LIMIT 1);"
 
-def prepare_identity(+db: String, +session: String, +verb: String, +options: List<D.Option>) -> IO(Result<&1,&1,U32 & String,List<D.Option>>):
-  Bool.pick(IO(Result<&1,&1,U32 & String,List<D.Option>>),Bool.and(String.eq(verb,"native-reply"),Bool.not(D.present(options,"--request"))),
+def prepare_identity(+db: String, +session: String, +verb: String, +options: List<&2,D.Option>) -> IO(Result<&1,&1,U32 & String,List<&2,D.Option>>):
+  Bool.pick(IO(Result<&1,&1,U32 & String,List<&2,D.Option>>),Bool.and(String.eq(verb,"native-reply"),Bool.not(D.present(options,"--request"))),
     select_identity(db,reply_identity_sql(session,options),"--request",options,"Select --to WORKER for exactly one pending unanswered native request addressed to this actor."),
-    Bool.pick(IO(Result<&1,&1,U32 & String,List<D.Option>>),Bool.and(String.eq(verb,"context-result"),Bool.not(D.present(options,"--id"))),
+    Bool.pick(IO(Result<&1,&1,U32 & String,List<&2,D.Option>>),Bool.and(String.eq(verb,"context-result"),Bool.not(D.present(options,"--id"))),
       select_identity(db,query_identity_sql(session),"--id",options,"This actor has no retained context query."),
-      Bool.pick(IO(Result<&1,&1,U32 & String,List<D.Option>>),Bool.and(D.member(verb,["stop","force-stop"]),Bool.not(D.present(options,"--id"))),
+      Bool.pick(IO(Result<&1,&1,U32 & String,List<&2,D.Option>>),Bool.and(D.member(verb,["stop","force-stop"]),Bool.not(D.present(options,"--id"))),
         select_identity(db,stop_identity_sql(D.value(options,"--session",session),String.eq(verb,"force-stop")),"--id",options,"The selected session has no existing stop to force."),
-        Bool.pick(IO(Result<&1,&1,U32 & String,List<D.Option>>),Bool.and(D.member(verb,Tx.split_spaces("continue-task turn report ask dispatch knowledge-record knowledge-relate knowledge-promote context-query")),Bool.not(D.present(options,"--id"))),
+        Bool.pick(IO(Result<&1,&1,U32 & String,List<&2,D.Option>>),Bool.and(D.member(verb,Tx.split_spaces("continue-task turn report ask dispatch knowledge-record knowledge-relate knowledge-promote context-query")),Bool.not(D.present(options,"--id"))),
           select_identity(db,new_identity_sql(verb),"--id",options,"The native operation identity could not be generated."),
-          IO.pure(Result<&1,&1,U32 & String,List<D.Option>>,Done{options})))))
+          IO.pure(Result<&1,&1,U32 & String,List<&2,D.Option>>,Done{options})))))
 
 # Omitted relation identities follow the retained finding identity and link position.
-def linked_identity_sql(+options: List<D.Option>) -> String:
+def linked_identity_sql(+options: List<&2,D.Option>) -> String:
   +links = D.value(options,"--links","")
   +record = D.value(options,"--id","")
   "SELECT '1'||char(9)||hex(CASE WHEN json_valid(" ++ C.q(links) ++ ") THEN CASE WHEN json_type(" ++ C.q(links) ++ ")='array' AND NOT EXISTS(SELECT 1 FROM json_each(" ++ C.q(links) ++ ") WHERE type<>'object') THEN (SELECT json_group_array(json(CASE WHEN json_type(value,'$.id') IS NULL THEN json_set(value,'$.id','knowledge-link:'||lower(hex(" ++ C.q(record) ++ "))||':'||key) ELSE value END)) FROM json_each(" ++ C.q(links) ++ ")) ELSE " ++ C.q(links) ++ " END ELSE " ++ C.q(links) ++ " END)||char(9)||'end';"
 
-def prepare_links(result: Result<&1,&1,U32 & String,List<D.Option>>, +db: String, +verb: String) -> IO(Result<&1,&1,U32 & String,List<D.Option>>):
+def prepare_links(result: Result<&1,&1,U32 & String,List<&2,D.Option>>, +db: String, +verb: String) -> IO(Result<&1,&1,U32 & String,List<&2,D.Option>>):
   match result:
-    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,List<D.Option>>,Fail{error})
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,List<&2,D.Option>>,Fail{error})
     case Done{+options}:
-      Bool.pick(IO(Result<&1,&1,U32 & String,List<D.Option>>),Bool.and(String.eq(verb,"knowledge-record"),D.present(options,"--links")),
+      Bool.pick(IO(Result<&1,&1,U32 & String,List<&2,D.Option>>),Bool.and(String.eq(verb,"knowledge-record"),D.present(options,"--links")),
         select_identity(db,linked_identity_sql(options),"--links",options,"Knowledge links could not retain their native identities."),
-        IO.pure(Result<&1,&1,U32 & String,List<D.Option>>,Done{options}))
+        IO.pure(Result<&1,&1,U32 & String,List<&2,D.Option>>,Done{options}))
 
-def actual(+options: List<D.Option>, saved: List<D.Option>, +name: String) -> String:
+def actual(+options: List<&2,D.Option>, saved: List<&2,D.Option>, +name: String) -> String:
   D.value(options,name,D.value(saved,name,""))
 
 def optional_arg(args: List<String>, option: String, value: String, present: Bool) -> List<String>:
@@ -230,7 +230,7 @@ def optional_arg(args: List<String>, option: String, value: String, present: Boo
     case True{}: J.cat_list(args,[option,value])
     case False{}: args
 
-def knowledge_args(+session: String, +options: List<D.Option>) -> List<String>:
+def knowledge_args(+session: String, +options: List<&2,D.Option>) -> List<String>:
   +scope = D.value(options,"--scope","worker")
   +subject = D.value(options,"--subject",session)
   +prefix = Bool.pick(List<String>,Bool.or(D.present(options,"--scope"),D.present(options,"--subject")),
@@ -238,14 +238,14 @@ def knowledge_args(+session: String, +options: List<D.Option>) -> List<String>:
   Bool.pick(List<String>,D.present(options,"--index"),J.cat_list(prefix,["--index"]),
     optional_arg(prefix,"--id",D.value(options,"--id",""),D.present(options,"--id")))
 
-def native_flags(fields: List<String>, +options: List<D.Option>, +args: List<String>) -> List<String>:
+def native_flags(fields: List<String>, +options: List<&2,D.Option>, +args: List<String>) -> List<String>:
   match fields:
     case Nil{}: args
     case +name <> rest:
       native_flags(rest,options,Bool.pick(List<String>,D.present(options,name),
         Bool.pick(List<String>,D.member(name,["--index","--pretty"]),J.cat_list(args,[name]),J.cat_list(args,[name,D.value(options,name,"")])),args))
 
-def contextual_args(+session: String, verb: String, +options: List<D.Option>) -> List<String>:
+def contextual_args(+session: String, verb: String, +options: List<&2,D.Option>) -> List<String>:
   match verb:
     case "completion-request":
       optional_arg(["agent-contextual-input",session,"completion-request","--text",D.value(options,"--text","")],"--id",D.value(options,"--id",""),D.present(options,"--id"))
@@ -260,7 +260,7 @@ def contextual_args(+session: String, verb: String, +options: List<D.Option>) ->
       optional_arg(["agent-contextual-input",session,"guide","--to",D.value(options,"--to",""),"--text",D.value(options,"--text","")],"--id",D.value(options,"--id",""),D.present(options,"--id"))
     case other: Nil{}
 
-def legacy_args_selected(+session: String, verb: String, +options: List<D.Option>, +saved: List<D.Option>, +target: String) -> List<String>:
+def legacy_args_selected(+session: String, verb: String, +options: List<&2,D.Option>, +saved: List<&2,D.Option>, +target: String) -> List<String>:
   match verb:
     case "session": native_flags(["--pretty"],options,["session",D.value(options,"--id",target)])
     case "player": native_flags(["--pretty"],options,["player",D.value(options,"--id",target)])
@@ -334,7 +334,7 @@ def legacy_args_selected(+session: String, verb: String, +options: List<D.Option
     case "logs": Bool.pick(List<String>,D.present(options,"--level"),["logs",target,D.value(options,"--level","")],["logs",target])
     case other: Nil{}
 
-def legacy_args(+session: String, verb: String, +options: List<D.Option>, saved: List<D.Option>) -> List<String>:
+def legacy_args(+session: String, verb: String, +options: List<&2,D.Option>, saved: List<&2,D.Option>) -> List<String>:
   legacy_args_selected(session,verb,options,saved,D.value(options,"--session",session))
 
 def args_tail(args: List<String>) -> String:
@@ -481,7 +481,7 @@ def run_input(+db: String, +index: U32, +verb: String, +args: List<String>, +pat
     result : Result<&1,&1,U32 & String,Outcome> <- run(index,verb,args,path)
     IO.pure(String,outcome_json(index,verb,args,path,result))
 
-def with_identity(result: Result<&1,&1,U32 & String,List<D.Option>>, +db: String, session: String, exe: String, nonce: String, +index: U32, +verb: String, +saved: List<D.Option>) -> IO(String):
+def with_identity(result: Result<&1,&1,U32 & String,List<&2,D.Option>>, +db: String, session: String, exe: String, nonce: String, +index: U32, +verb: String, +saved: List<&2,D.Option>) -> IO(String):
   match result:
     case Fail{(code,cause)}: IO.pure(String,refused(index,verb,Nil{},code,cause))
     case Done{+options}:
@@ -490,37 +490,37 @@ def with_identity(result: Result<&1,&1,U32 & String,List<D.Option>>, +db: String
       run_input(db,index,verb,args,path)
 
 def with_defaults(+db: String, +session: String, +exe: String, +nonce: String,
-                  +index: U32, +verb: String, +options: List<D.Option>,
-                  result: Result<&1,&1,U32 & String,List<D.Option>>) -> IO(String):
+                  +index: U32, +verb: String, +options: List<&2,D.Option>,
+                  result: Result<&1,&1,U32 & String,List<&2,D.Option>>) -> IO(String):
   match result:
     case Fail{(code,cause)}: IO.pure(String,refused(index,verb,Nil{},code,cause))
     case Done{saved}: do IO<String>:
-      selected : Result<&1,&1,U32 & String,List<D.Option>> <- prepare_identity(db,session,verb,options)
-      linked : Result<&1,&1,U32 & String,List<D.Option>> <- prepare_links(selected,db,verb)
+      selected : Result<&1,&1,U32 & String,List<&2,D.Option>> <- prepare_identity(db,session,verb,options)
+      linked : Result<&1,&1,U32 & String,List<&2,D.Option>> <- prepare_links(selected,db,verb)
       with_identity(linked,db,session,exe,nonce,index,verb,saved)
 
 def loaded(+db: String, +session: String, exe: String, nonce: String,
-           index: U32, +verb: String, result: Result<&1,&1,U32 & String,List<D.Option>>) -> IO(String):
+           index: U32, +verb: String, result: Result<&1,&1,U32 & String,List<&2,D.Option>>) -> IO(String):
   match result:
     case Fail{(code,cause)}: IO.pure(String,refused(index,verb,Nil{},code,cause))
     case Done{+options}: do IO<String>:
-      saved : Result<&1,&1,U32 & String,List<D.Option>> <- defaults(db,session,verb,options)
+      saved : Result<&1,&1,U32 & String,List<&2,D.Option>> <- defaults(db,session,verb,options)
       with_defaults(db,session,exe,nonce,index,verb,options,saved)
 
-def load_replaced(verb: String, result: Result<&1,&1,U32 & String,List<D.Option>>) -> IO(Result<&1,&1,U32 & String,List<D.Option>>):
+def load_replaced(verb: String, result: Result<&1,&1,U32 & String,List<&2,D.Option>>) -> IO(Result<&1,&1,U32 & String,List<&2,D.Option>>):
   match result:
-    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,List<D.Option>>,Fail{error})
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,List<&2,D.Option>>,Fail{error})
     case Done{options}: load_options(verb,options)
 
 def item(+db: String, +session: String, exe: String, +nonce: String, +index: U32, stdin: Stdin, operation: D.Operation) -> IO(String):
   match operation:
     case D.Call{+verb,+options}: do IO<String>:
-      replaced : Result<&1,&1,U32 & String,List<D.Option>> <- replace_input(verb,options,stdin,db ++ ".context-query-input-" ++ nonce ++ "-" ++ U32.show(index) ++ ".json")
-      result : Result<&1,&1,U32 & String,List<D.Option>> <- load_replaced(verb,replaced)
+      replaced : Result<&1,&1,U32 & String,List<&2,D.Option>> <- replace_input(verb,options,stdin,db ++ ".context-query-input-" ++ nonce ++ "-" ++ U32.show(index) ++ ".json")
+      result : Result<&1,&1,U32 & String,List<&2,D.Option>> <- load_replaced(verb,replaced)
       loaded(db,session,exe,nonce,index,verb,result)
 
 def tail(+db: String, +session: String, +exe: String, +nonce: String,
-         operations: List<D.Operation>, +index: U32, +stdin: Stdin) -> IO(String):
+         operations: List<&2,D.Operation>, +index: U32, +stdin: Stdin) -> IO(String):
   match operations:
     case Nil{}: IO.pure(String,"]")
     case operation <> rest: do IO<String>:
@@ -528,7 +528,7 @@ def tail(+db: String, +session: String, +exe: String, +nonce: String,
       remaining : String <- tail(db,session,exe,nonce,rest,U32.add(index,1),stdin)
       IO.pure(String,"," ++ value ++ remaining)
 
-def operations(+db: String, +session: String, operations: List<D.Operation>) -> IO(String):
+def operations(+db: String, +session: String, operations: List<&2,D.Operation>) -> IO(String):
   match operations:
     case Nil{}: IO.pure(String,"[]")
     case +operation <> +rest: do IO<String>:
