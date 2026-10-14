@@ -1,5 +1,5 @@
 import Base
-import ./message-status.bend as MessageStatus
+import ../coordinator/message-status.bend as MessageStatus
 import ./log-schema.bend as LogSchema
 
 type Command is Data:

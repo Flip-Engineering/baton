@@ -1,6 +1,6 @@
 import Base
-import ./commands.bend as C
-import ./message-status.bend as Status
+import ../coordinator/commands.bend as C
+import ../coordinator/message-status.bend as Status
 import ./store.bend as Store
 import ../context/request.bend as Req
 import ../host/sqlite.bend as DB

@@ -3,7 +3,7 @@ import ../host/sqlite.bend as DB
 import ../host/instance.bend as Custody
 import ../coordinator/commands.bend as C
 import ../git/text.bend as Tx
-import ./message-status.bend as MessageStatus
+import ../coordinator/message-status.bend as MessageStatus
 
 def accepted(saved: String, stopped: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   match stopped:

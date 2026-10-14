@@ -1,6 +1,6 @@
 import Base
 import ./agent-domain.bend as D
-import ./commands.bend as C
+import ../coordinator/commands.bend as C
 import ../host/process.bend as P
 import ../host/session-lock.bend as Lock
 import ../host/sqlite.bend as DB
