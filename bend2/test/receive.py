@@ -1703,12 +1703,26 @@ class Receive(unittest.TestCase):
         self.children.append(observer)
         self.action(native, progress='legacy observer attached')
         self.assertEqual(json.loads(native.readline()), {'progress_written': 'legacy observer attached'})
+        def legacy_marker_written(marker):
+            with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
+                registered = database.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='log_generations'").fetchone()
+                if registered is None:
+                    return False
+                row = database.execute(
+                    'SELECT session,attempt,base,log FROM log_generations WHERE session=? AND attempt=?',
+                    ('parent', identity)).fetchone()
+            if row is None:
+                return False
+            self.assertEqual(row[:3], ('parent', identity, str(log)))
+            generation = pathlib.Path(row[3])
+            return generation.exists() and marker in generation.read_text()
         def attached():
             if observer.poll() is not None:
                 self.fail('Legacy receive recovery exited: ' + ''.join(self.child_communication(observer)))
             if keeper.poll() is not None:
                 self.fail('Legacy keeper exited: ' + ''.join(self.child_communication(keeper)))
-            return log.exists() and 'legacy observer attached' in log.read_text()
+            return legacy_marker_written('legacy observer attached')
         self.eventually(attached, 'Current recovery did not attach to the legacy keeper.')
         self.assertFalse(self.session_guard_available('parent'))
         duplicate = subprocess.run(recovery, capture_output=True, text=True)
@@ -1720,7 +1734,7 @@ class Receive(unittest.TestCase):
         marker = 'original native output after legacy observer loss'
         self.action(native, progress=marker)
         self.assertEqual(json.loads(native.readline()), {'progress_written': marker})
-        self.eventually(lambda: marker in log.read_text(), 'Keeper recovery did not resume the legacy stream.')
+        self.eventually(lambda: legacy_marker_written(marker), 'Keeper recovery did not resume the legacy stream.')
         launches = [json.loads(line) for line in (attempt / 'legacy-recoveries.jsonl').read_text().splitlines()]
         self.assertEqual([launch['argv'] for launch in launches], [recovery])
         self.assertIsNotNone(self.selected_process(started['pid']))
