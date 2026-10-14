@@ -17,6 +17,10 @@ type Phase is Data:
   OptionHead{}
   OptionValue{name: String}
 
+type ParseState is Data:
+  Active{phase: Phase, verb: String, options: List<Option>, items: List<Operation>}
+  Failed{cause: String}
+
 def member(+value: String, values: List<String>) -> Bool:
   match values:
     case Nil{}: False{}
@@ -193,38 +197,48 @@ def finish(phase: Phase, verb: String, options: List<Option>, +items: List<Opera
     case OptionHead{}: finish_values(verb,options,items)
     case OptionValue{name}: Error{"Missing value for " ++ name ++ ". Use help " ++ verb ++ "."}
 
-# Every recursive branch consumes one argv token. The value phase preserves
-# complete literal strings, including a value equal to the clause separator.
-def parse_loop(args: List<String>, phase: Phase, +verb: String, +options: List<Option>, +items: List<Operation>) -> Parsed:
+# The transition preserves complete literal values, including clause separators.
+# The parser advances once per argv token and retains the first refusal.
+def transition(phase: Phase, +head: String, +verb: String, +options: List<Option>, +items: List<Operation>) -> ParseState:
+  match phase:
+    case ActionHead{}:
+      Bool.pick(ParseState,Bool.or(String.eq(head,"and"),String.eq(head,"--and")),Failed{"An action is required before " ++ head ++ "."},
+        Bool.pick(ParseState,member(head,["knowledge","project","context"]),Active{CompoundHead{head},"",Nil{},items},
+          Bool.pick(ParseState,known(head),Active{OptionHead{},head,Nil{},items},Failed{"Unknown action " ++ head ++ ". Use help."})))
+    case CompoundHead{+compound}:
+      +selected = subverb(compound,head)
+      Bool.pick(ParseState,Bool.and(String.eq(compound,"knowledge"),Bool.or(member(head,names("knowledge-read")),Bool.or(String.eq(head,"and"),String.eq(head,"--and")))),
+        Bool.pick(ParseState,Bool.or(String.eq(head,"and"),String.eq(head,"--and")),
+          Active{ActionHead{},"",Nil{},Con{Call{"knowledge-read",Nil{}},items}},
+          Bool.pick(ParseState,String.eq(head,"--index"),Active{OptionHead{},"knowledge-read",[Field{head,"true"}],items},
+            Active{OptionValue{head},"knowledge-read",Nil{},items})),
+        Bool.pick(ParseState,String.is_empty(selected),Failed{"Unknown " ++ compound ++ " action. Use help " ++ compound ++ "."},Active{OptionHead{},selected,Nil{},items}))
+    case OptionHead{}:
+      +cause = option_cause(verb,options)
+      Bool.pick(ParseState,Bool.or(String.eq(head,"and"),String.eq(head,"--and")),
+        Bool.pick(ParseState,String.is_empty(cause),Active{ActionHead{},"",Nil{},Con{Call{verb,options},items}},Failed{cause}),
+        Bool.pick(ParseState,Bool.and(member(head,names(verb)),Bool.not(present(options,head))),
+          Bool.pick(ParseState,member(head,Tx.split_spaces("--lift-stop --index --recursive --pretty")),
+            Active{OptionHead{},verb,Con{Field{head,"true"},options},items},
+            Active{OptionValue{head},verb,options,items}),
+          Failed{"Unknown or repeated argument " ++ head ++ ". Use help " ++ verb ++ "."}))
+    case OptionValue{name}: Active{OptionHead{},verb,Con{Field{name,head},options},items}
+
+def finish_state(state: ParseState) -> Parsed:
+  match state:
+    case Active{phase,verb,options,items}: finish(phase,verb,options,items)
+    case Failed{cause}: Error{cause}
+
+def parse_loop(args: List<String>, state: ParseState) -> Parsed:
   match args:
-    case Nil{}: finish(phase,verb,options,items)
-    case +head <> +rest:
-      match phase:
-        case ActionHead{}:
-          Bool.pick(Parsed,Bool.or(String.eq(head,"and"),String.eq(head,"--and")),Error{"An action is required before " ++ head ++ "."},
-            Bool.pick(Parsed,member(head,["knowledge","project","context"]),parse_loop(rest,CompoundHead{head},"",Nil{},items),
-              Bool.pick(Parsed,known(head),parse_loop(rest,OptionHead{},head,Nil{},items),Error{"Unknown action " ++ head ++ ". Use help."})))
-        case CompoundHead{+compound}:
-          +selected = subverb(compound,head)
-          Bool.pick(Parsed,Bool.and(String.eq(compound,"knowledge"),Bool.or(member(head,names("knowledge-read")),Bool.or(String.eq(head,"and"),String.eq(head,"--and")))),
-            Bool.pick(Parsed,Bool.or(String.eq(head,"and"),String.eq(head,"--and")),
-              parse_loop(rest,ActionHead{},"",Nil{},Con{Call{"knowledge-read",Nil{}},items}),
-              Bool.pick(Parsed,String.eq(head,"--index"),parse_loop(rest,OptionHead{},"knowledge-read",[Field{head,"true"}],items),
-                parse_loop(rest,OptionValue{head},"knowledge-read",Nil{},items))),
-            Bool.pick(Parsed,String.is_empty(selected),Error{"Unknown " ++ compound ++ " action. Use help " ++ compound ++ "."},parse_loop(rest,OptionHead{},selected,Nil{},items)))
-        case OptionHead{}:
-          +cause = option_cause(verb,options)
-          Bool.pick(Parsed,Bool.or(String.eq(head,"and"),String.eq(head,"--and")),
-            Bool.pick(Parsed,String.is_empty(cause),parse_loop(rest,ActionHead{},"",Nil{},Con{Call{verb,options},items}),Error{cause}),
-            Bool.pick(Parsed,Bool.and(member(head,names(verb)),Bool.not(present(options,head))),
-              Bool.pick(Parsed,member(head,Tx.split_spaces("--lift-stop --index --recursive --pretty")),
-                parse_loop(rest,OptionHead{},verb,Con{Field{head,"true"},options},items),
-                parse_loop(rest,OptionValue{head},verb,options,items)),
-              Error{"Unknown or repeated argument " ++ head ++ ". Use help " ++ verb ++ "."}))
-        case OptionValue{name}: parse_loop(rest,OptionHead{},verb,Con{Field{name,head},options},items)
+    case Nil{}: finish_state(state)
+    case head <> rest:
+      match state:
+        case Active{phase,verb,options,items}: parse_loop(rest,transition(phase,head,verb,options,items))
+        case Failed{cause}: Error{cause}
 
 def parse(args: List<String>) -> Parsed:
-  parse_loop(args,ActionHead{},"",Nil{},Nil{})
+  parse_loop(args,Active{ActionHead{},"",Nil{},Nil{}})
 
 def help(action: String) -> String:
   match action:
