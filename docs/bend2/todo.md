@@ -4,6 +4,29 @@ The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3
 retain findings, ownership and acceptance requirements. This page links current
 Baton follow-up work for contributors. Every open issue has a link on this page.
 
+- [#730: Infer contextual knowledge evidence from retained reports](https://github.com/Flip-Engineering/baton/issues/730).
+  The real-agent knowledge driver requires a copied report identity as evidence.
+  Provide semantic selection of a retained report or current input with complete
+  provenance and precise ambiguity handling. Preserve explicit evidence references,
+  claim, limits and promotion assertions. Carry the command through native CLI,
+  MCP and the driver for [#723](https://github.com/Flip-Engineering/baton/issues/723),
+  [#727](https://github.com/Flip-Engineering/baton/issues/727) and
+  [#717](https://github.com/Flip-Engineering/baton/issues/717).
+
+- [#729: Resume stored native replies when the observer reconnects](https://github.com/Flip-Engineering/baton/issues/729).
+  The target in workflow `38649718256` retains a complete pending native reply
+  while its restored observer cursor equals the complete spool. The observer,
+  native input and selected fixture form a closed wait cycle. Derive pending
+  replies from the recorded attempt during reattachment and retain transport,
+  authority, complete bodies, stops and native identity. Give the fixture a
+  causal recovery boundary that produces a complete target verdict. Preserve
+  the original run before a controlled stop. Coordinate with
+  [#717](https://github.com/Flip-Engineering/baton/issues/717),
+  [#723](https://github.com/Flip-Engineering/baton/issues/723),
+  [#725](https://github.com/Flip-Engineering/baton/issues/725),
+  [#726](https://github.com/Flip-Engineering/baton/issues/726) and
+  [#728](https://github.com/Flip-Engineering/baton/issues/728).
+
 - [#728: Repair native C generation after compiler exits with status 132](https://github.com/Flip-Engineering/baton/issues/728).
   Candidate `3b37ad3f` completes term checking and exits during C generation
   in workflow `38649718256`. Preserve its complete output, pinned compiler,
@@ -27,8 +50,8 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   import fixtures. Remote real-route acceptance remains open
   for [#717](https://github.com/Flip-Engineering/baton/issues/717).
   [#728](https://github.com/Flip-Engineering/baton/issues/728) records the
-  current candidate C-generation failure; driver implementation is paused
-  during its diagnosis.
+  current candidate C-generation failure; driver implementation proceeds
+  while its diagnosis retains separate source and runtime evidence.
 
 - [#726: Read the registered generation in the legacy keeper recovery fixture](https://github.com/Flip-Engineering/baton/issues/726).
   The legacy attachment marker is complete in the registered attempt generation.
