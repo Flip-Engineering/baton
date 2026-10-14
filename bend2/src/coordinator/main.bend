@@ -249,6 +249,9 @@ def normal_cli(args: List<String>) -> IO(Unit):
     case db <> "agent-native-input" <> Nil{}: do IO<Unit>:
       native_args : List<String> <- AgentNative.input(db)
       execute(db,C.parse(native_args))
+    case db <> "agent-contextual-input" <> session <> Nil{}: do IO<Unit>:
+      native_args : List<String> <- AgentNative.input(db)
+      AgentCommand.route(AgentRoute.Explicit{db,session,native_args})
     case db <> "settle-agent-input" <> session <> native <> turn <> status <> Nil{}:
       AgentInput.settle_codex(db,session,native,turn,status)
     case "--project" <> path <> rest: do IO<Unit>:
@@ -324,10 +327,13 @@ def legacy_cli(args: List<String>) -> IO(Unit):
       recover_cli(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,True{})
     case other: normal_cli(other)
 
-def cli(args: List<String>) -> IO(Unit):
-  match AgentRoute.parse(args):
+def cli_route(route: AgentRoute.Route) -> IO(Unit):
+  match route:
     case AgentRoute.Action{context}: AgentCommand.route(context)
     case AgentRoute.Legacy{args}: legacy_cli(args)
+
+def cli(args: List<String>) -> IO(Unit):
+  cli_route(AgentRoute.parse(args))
 
 def main() -> IO(Unit):
   do IO<Unit>:

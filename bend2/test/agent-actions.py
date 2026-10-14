@@ -212,13 +212,13 @@ class AgentActions(unittest.TestCase):
 
     def test_new_inspection_words_accept_ids_named_after_old_actions(self):
         self.legacy('project', self.repo)
-        for name in ('read', 'inbox', 'send'):
+        for name in ('read', 'inbox', 'send', 'and', '--and'):
             self.legacy('attach', name, 'fixture', '', self.endpoint)
         before = self.stored_messages()
         delivered = self.endpoint_output()
         env = {'BATON_DATABASE': str(self.db), 'BATON_SESSION': 'root'}
         for prefix in ((), ('--project', self.repo), ('as', 'root')):
-            for name in ('read', 'inbox', 'send'):
+            for name in ('read', 'inbox', 'send', 'and', '--and'):
                 for action, legacy_action in (('session', 'session'),
                                               ('player', 'player'),
                                               ('assignment', 'session')):
@@ -704,7 +704,10 @@ class AgentActions(unittest.TestCase):
                  ('resume', '--help'), ('receiver', '--help'), ('stop', '--help'),
                  ('worktree', '--help'), ('knowledge', 'record', '--help'),
                  ('knowledge', 'read', '-h'), ('project', 'settings', '--help'),
-                 ('context', 'query', '--help')]
+                 ('context', 'query', '--help'), ('status', '--help'),
+                 ('pending', '--help'), ('orchestra', '--help'), ('role', '--help'),
+                 ('ensemble', '--help'), ('ensemble-member', '--help'),
+                 ('section', '--help'), ('section-member', '--help')]
         for args in cases:
             with self.subTest(args=args):
                 result = subprocess.run([str(EXE), *args], cwd=self.directory,
@@ -730,6 +733,174 @@ class AgentActions(unittest.TestCase):
                          'held-task')
         self.assertEqual(self.legacy('session', 'worker-a'), before)
         self.assertIsNone(self.legacy('delivery', 'held-task')['receipt'])
+
+    def test_mixed_named_inspections_retain_views_assignment_and_single_shapes(self):
+        self.legacy('message', 'mixed-held-task', 'root', 'worker-a',
+                    'task-assignment', 'Complete the current assignment.')
+        before = self.legacy('session', 'worker-a')
+        rows = self.action('worker-a', 'session', '--and', 'player', '--session',
+                           'worker-b', '--and', 'players', '--and', 'assignment',
+                           '--id', 'worker-a', '--and', 'attempt', '--and', 'outbox')
+        self.assertEqual([row['action'] for row in rows],
+                         ['session', 'player', 'players', 'assignment', 'attempt', 'outbox'])
+        self.assertEqual([row['status'] for row in rows], ['completed'] * 6)
+        self.assertEqual(json.loads(rows[0]['stdout'])['id'], 'worker-a')
+        self.assertEqual(json.loads(rows[1]['stdout'])['id'], 'worker-b')
+        self.assertEqual(json.loads(rows[2]['stdout']), self.legacy('players'))
+        self.assertEqual(json.loads(rows[3]['stdout'])['taskCompletion']['assignmentId'],
+                         'mixed-held-task')
+        self.assertEqual(json.loads(rows[4]['stdout'])['taskCompletion']['assignmentId'],
+                         'mixed-held-task')
+        self.assertEqual(json.loads(rows[5]['stdout']), self.legacy('outbox', 'worker-a'))
+        for action in ('session', 'player', 'assignment'):
+            named = self.action('root', action, '--session', 'worker-a')
+            self.assertEqual(len(named), 1)
+            self.assertEqual(json.loads(named[0]['stdout']), before)
+            self.assertEqual(self.action('root', action, 'worker-a'), before)
+        self.assertEqual(self.legacy('session', 'worker-a'), before)
+        self.assertIsNone(self.legacy('delivery', 'mixed-held-task')['receipt'])
+
+    def test_mixed_decisions_share_complete_stdin_and_preserve_parent_confirmation(self):
+        self.legacy('message', 'mixed-completion-task', 'root', 'worker-a',
+                    'task-assignment', 'Implement the assigned change.')
+        body = '\ufeff' + ('Complete λ🙂 evidence and\n' * 8000) + 'Trailing spaces  '
+        result = subprocess.run([str(EXE), str(self.db), 'as', 'worker-a',
+                                 'completion-request', '--id', 'mixed-request',
+                                 '--file', '-', '--and', 'guide', '--to', 'root',
+                                 '--id', 'mixed-guide-up', '--file', '-', '--and',
+                                 'assignment'], input=body.encode('utf-8'), capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        rows = json.loads(result.stdout)
+        self.assertEqual([row['status'] for row in rows], ['completed'] * 3)
+        for row, message_id, kind in zip(rows[:2], ('mixed-request', 'mixed-guide-up'),
+                                         ('completion-request', 'guidance')):
+            self.assertEqual(row['argv'][2:], ['agent-contextual-input', 'worker-a'])
+            item = json.loads(row['stdout'])[0]
+            self.assertEqual(item['status'], 'admitted')
+            self.assertEqual(item['delivery']['id'], message_id)
+            self.assertEqual(item['delivery']['sender'], 'worker-a')
+            self.assertEqual(item['delivery']['recipient'], 'root')
+            self.assertEqual(item['delivery']['kind'], kind)
+            self.assertEqual(item['delivery']['body'], body)
+        state = json.loads(rows[2]['stdout'])['taskCompletion']
+        self.assertEqual(state['requestId'], 'mixed-request')
+        self.assertFalse(state['confirmed'])
+        self.assertTrue(state['open'])
+        confirmed = self.action('root', 'completion-confirmed', '--request', 'mixed-request',
+                                '--to', 'worker-a', '--id', 'mixed-confirmation',
+                                '--and', 'assignment', '--session', 'worker-a',
+                                '--and', 'outbox')
+        admission = json.loads(confirmed[0]['stdout'])[0]
+        self.assertEqual(admission['status'], 'admitted')
+        self.assertEqual(admission['delivery']['id'], 'mixed-confirmation')
+        self.assertEqual(admission['delivery']['recipient'], 'worker-a')
+        self.assertEqual(admission['delivery']['body'], 'mixed-request')
+        state = json.loads(confirmed[1]['stdout'])['taskCompletion']
+        self.assertEqual(state['requestId'], 'mixed-request')
+        self.assertTrue(state['confirmed'])
+        self.assertFalse(state['open'])
+        self.assertIsNone(self.legacy('delivery', 'mixed-completion-task')['receipt'])
+
+    def test_mixed_authority_and_file_refusals_keep_later_reads_and_decisions(self):
+        self.legacy('message', 'mixed-authority-task', 'root', 'worker-a',
+                    'task-assignment', 'Retain the owned task.')
+        request = self.action('worker-a', 'completion-request', '--id', 'mixed-authority-request',
+                              '--text', 'Done declaration.')
+        before = self.legacy('session', 'worker-a')['taskCompletion']
+        for actor, args, cause in (
+                ('other-root', (), 'addressed to another coordinator'),
+                ('root', ('--to', 'worker-b'), 'does not match the author')):
+            rows = self.action(actor, 'completion-confirmed', '--request', request[0]['id'],
+                               *args, '--and', 'assignment', '--session', 'worker-a')
+            refusal = json.loads(rows[0]['stdout'])[0]
+            self.assertEqual(refusal['status'], 'refused')
+            self.assertIn(cause, refusal['admission']['cause'])
+            self.assertEqual(rows[1]['status'], 'completed')
+            self.assertEqual(json.loads(rows[1]['stdout'])['taskCompletion'], before)
+        rows = self.action('root', 'completion-request', '--text', 'Parentless declaration.',
+                           '--and', 'guide', '--to', 'worker-a', '--id', 'mixed-good-guide',
+                           '--text', '--and', '--and', 'completion-request', '--file',
+                           self.directory / 'missing-report', '--and', 'player',
+                           '--id', 'worker-a')
+        parentless = json.loads(rows[0]['stdout'])[0]
+        self.assertEqual(parentless['status'], 'refused')
+        self.assertIn('no recorded immediate parent', parentless['admission']['cause'])
+        guidance = json.loads(rows[1]['stdout'])[0]
+        self.assertEqual(guidance['status'], 'admitted')
+        self.assertEqual(guidance['delivery']['body'], '--and')
+        self.assertEqual(rows[2]['status'], 'refused')
+        self.assertIn('--text', rows[2]['cause'])
+        self.assertEqual(rows[3]['status'], 'completed')
+        self.assertEqual(json.loads(rows[3]['stdout'])['id'], 'worker-a')
+        self.assertIsNone(self.legacy('delivery', 'mixed-authority-task')['receipt'])
+
+    def test_named_role_groups_status_and_pending_keep_native_ownership(self):
+        self.legacy('message', 'group-held-input', 'root', 'worker-a',
+                    'task-assignment', 'Retain this complete group input.\n')
+        rows = self.action('root', 'ensemble', '--id', 'named-team', '--coupling', 'tight',
+                           '--and', 'ensemble-member', '--id', 'named-team', '--player',
+                           'worker-a', '--action', 'add', '--and', 'section', '--ensemble',
+                           'named-team', '--id', 'review', '--capability', 'Full λ review',
+                           '--and', 'section-member', '--ensemble', 'named-team', '--id',
+                           'review', '--player', 'worker-a', '--action', 'add', '--and',
+                           'section', '--ensemble', 'named-team', '--id', 'review',
+                           '--and', 'role', '--and', 'pending', '--index', '--recipient',
+                           'worker-a', '--kind', 'task-assignment', '--and', 'status',
+                           '--and', 'orchestra')
+        self.assertEqual([row['status'] for row in rows], ['completed'] * 9)
+        self.assertEqual(json.loads(rows[0]['stdout'])['owner'], 'root')
+        section = json.loads(rows[4]['stdout'])
+        self.assertEqual(section['capability'], 'Full λ review')
+        self.assertEqual(section['members'], ['worker-a'])
+        self.assertEqual(json.loads(rows[5]['stdout']), self.legacy('role', 'root'))
+        pending = json.loads(rows[6]['stdout'])
+        self.assertEqual([row['id'] for row in pending], ['group-held-input'])
+        self.assertEqual(json.loads(rows[7]['stdout']), self.legacy('status'))
+        self.assertEqual(json.loads(rows[8]['stdout']), self.legacy('orchestra'))
+        refused = self.action('other-root', 'ensemble', '--id', 'named-team',
+                              '--owner', 'other-root', '--coupling', 'loose', '--and',
+                              'section-member', '--ensemble', 'named-team', '--id', 'review',
+                              '--player', 'worker-a', '--action', 'remove', '--and',
+                              'ensemble', '--id', 'named-team')
+        self.assertEqual([row['status'] for row in refused], ['failed', 'failed', 'completed'])
+        self.assertIn('ensemble-owner-conflict', refused[0]['stderr'])
+        self.assertIn('section-refused', refused[1]['stderr'])
+        retained = json.loads(refused[2]['stdout'])
+        self.assertEqual(retained['owner'], 'root')
+        self.assertEqual(retained['coupling'], 'tight')
+        self.assertEqual(retained['sections'][0]['members'], ['worker-a'])
+        self.assertIsNone(self.legacy('delivery', 'group-held-input')['receipt'])
+        roles = self.action('root', 'role', '--session', 'worker-b', '--role',
+                            'associate-conductor', '--and', 'role', '--session',
+                            'worker-b', '--and', 'role', '--session', 'worker-b',
+                            '--role', 'principal-conductor', '--and', 'player',
+                            '--session', 'worker-b')
+        self.assertEqual([row['status'] for row in roles],
+                         ['completed', 'completed', 'failed', 'completed'])
+        self.assertEqual(json.loads(roles[1]['stdout'])['role'], 'associate-conductor')
+        self.assertIn('invalid-role', roles[2]['stderr'])
+        player = json.loads(roles[3]['stdout'])
+        self.assertEqual(player['parent'], 'root')
+        self.assertEqual(player['role'], 'associate-conductor')
+
+    def test_malformed_mixed_later_decision_prevents_earlier_admission(self):
+        before = self.stored_messages()
+        output = self.endpoint_output()
+        self.action('root', 'guide', '--to', 'worker-a', '--text', 'Valid earlier item.',
+                    '--id', 'must-not-admit', '--and', 'completion-confirmed',
+                    '--to', 'worker-a', success=False)
+        self.assertEqual(self.stored_messages(), before)
+        self.assertEqual(self.endpoint_output(), output)
+        for action in ('session', 'player', 'assignment'):
+            for option in ('--session', '--id'):
+                with self.subTest(action=action, option=option):
+                    missing = self.action('root', action, option, success=False)
+                    self.assertIn('Missing value for ' + option, missing.stderr)
+            conflict = self.action('root', action, '--session', 'worker-a',
+                                   '--id', 'worker-b', success=False)
+            self.assertIn('Choose --session or --id.', conflict.stderr)
+        self.assertEqual(self.stored_messages(), before)
+        self.assertEqual(self.endpoint_output(), output)
 
     def test_named_batch_keeps_real_errors_and_later_complete_output(self):
         bad_repo = self.directory / 'missing-git-directory'

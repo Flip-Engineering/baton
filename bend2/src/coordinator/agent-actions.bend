@@ -250,8 +250,37 @@ def domain_action(parsed: Domain.Parsed) -> Action:
     case Domain.Calls{items}: Native{items}
     case Domain.Error{cause}: Invalid{cause}
 
+def batch_tokens(args: List<String>, value: Bool) -> Bool:
+  match args:
+    case Nil{}: False{}
+    case +head <> rest:
+      match value:
+        case True{}: batch_tokens(rest,False{})
+        case False{}:
+          Bool.or(Domain.member(head,["and","--and"]),
+            batch_tokens(rest,Bool.and(Tx.starts_with(head,"--"),
+              Bool.not(Domain.member(head,["--lift-stop","--index","--recursive","--pretty"])))))
+
+def named_inspection(args: List<String>) -> Bool:
+  match args:
+    case head <> rest: Domain.member(head,["--session","--id","--pretty"])
+    case Nil{}: False{}
+
+def inspection_single(args: List<String>) -> Bool:
+  match args:
+    case Nil{}: True{}
+    case id <> Nil{}: True{}
+    case other: False{}
+
+def original_form(+verb: String, +args: List<String>) -> Bool:
+  Bool.and(Domain.member(verb,["session","player","players","assignment","completion-request","completion-confirmed","guide"]),
+    Bool.or(Bool.and(Domain.member(verb,["session","player","assignment"]),
+      Bool.and(inspection_single(args),Bool.not(named_inspection(args)))),
+      Bool.and(Bool.not(batch_tokens(args,False{})),
+        Bool.not(Bool.and(Domain.member(verb,["session","player","players","assignment"]),named_inspection(args))))))
+
 def parse_verb(+verb: String, +args: List<String>) -> Action:
-  Bool.pick(Action,Domain.known(verb),domain_action(Domain.parse(Con{verb,args})),
+  Bool.pick(Action,Bool.and(Domain.known(verb),Bool.not(original_form(verb,args))),domain_action(Domain.parse(Con{verb,args})),
     parse_action(classify_verb(verb),args))
 
 def parse_one(+verb: String) -> Action:
@@ -287,15 +316,15 @@ def help(action: String) -> String:
   match action:
     case "inbox": "inbox\nRead every pending message for the current agent with complete bodies. Reading preserves pending receipts.\n"
     case "read": "read ID...\nRead complete stored messages in argument order. Acknowledged messages remain readable. Each ID has its own result.\n"
-    case "session": "session [SESSION]\nRead the complete registered session record. Omitted SESSION selects the current agent.\n"
-    case "player": "player SESSION\nRead the complete registered Player record.\n"
-    case "players": "players\nRead the current Players projection.\n"
-    case "assignment": "assignment [SESSION]\nRead the registered session record, including its assignment and task-completion state. Omitted SESSION selects the current agent.\n"
-    case "completion-request": "completion-request (--text TEXT | --file PATH) [--id ID]\nSend the request to the current session's recorded immediate parent. The message body carries the completion report. A parentless session receives a structured refusal.\n"
-    case "completion-confirmed": "completion-confirmed --request REQUEST_ID [--to PLAYER] [--id ID]\nResolve the Player from the retained request. An explicit --to PLAYER must match its author. The request must be a completion-request addressed to the current session. The confirmation body is the exact request ID.\n"
-    case "guide": "guide --to PLAYER (--text TEXT | --file PATH) [--id ID]\nSend guidance to a Player through the ordinary message admission path.\n"
+    case "session": "session [SESSION]\nRead the complete registered session record. Omitted SESSION selects the current agent.\n" ++ Domain.help("session")
+    case "player": "player SESSION\nRead the complete registered Player record.\n" ++ Domain.help("player")
+    case "players": "players\nRead the current Players projection.\n" ++ Domain.help("players")
+    case "assignment": "assignment [SESSION]\nRead the registered session record, including its assignment and task-completion state. Omitted SESSION selects the current agent.\n" ++ Domain.help("assignment")
+    case "completion-request": "completion-request (--text TEXT | --file PATH) [--id ID]\nSend the request to the current session's recorded immediate parent. The message body carries the completion report. A parentless session receives a structured refusal. Each mixed --and item retains its actual process result and complete admission result in stdout.\n"
+    case "completion-confirmed": "completion-confirmed --request REQUEST_ID [--to PLAYER] [--id ID]\nResolve the Player from the retained request. An explicit --to PLAYER must match its author. The request must be a completion-request addressed to the current session. The confirmation body is the exact request ID. Supports mixed and or --and batches.\n"
+    case "guide": "guide --to PLAYER (--text TEXT | --file PATH) [--id ID]\nSend guidance to a Player through the ordinary message admission path. Supports mixed and or --and batches.\n"
     case "send": "send RECIPIENT --kind KIND (--text TEXT | --file PATH) [--id ID] [and RECIPIENT ...]\nEach clause supplies its own recipient, kind, body and optional ID. Omitted IDs are generated and returned. Explicit IDs retain existing exact-retry behavior. Each message reports admission, wake and receipt. PATH - reads stdin.\n"
     case "acknowledge": "acknowledge ID... --receipt TEXT\nRecord handling separately for each message owned by the current agent. Return each stored receipt; the first receipt remains retained.\n"
     case +other:
       +domain = Domain.help(other)
-      Bool.pick(String,String.is_empty(domain),"usage: baton2 ACTION ARGS\n       baton2 --project PATH ACTION ARGS\n       baton2 as SESSION ACTION ARGS\n       baton2 DATABASE as SESSION ACTION ARGS\nActions: inbox, read, session, player, players, assignment, send, completion-request, completion-confirmed, guide, acknowledge, attempt, attempts, outbox, receiver, configure, resume, stop, force-stop, recover-observer, continue-task, turn, receive, profile-bind, connect, bind, report, ask, native-reply, dispatch, recruit, join, worktree, land, push, remote-tip, knowledge, project, context, models, observed-usage, logs.\nBaton reads its registered project database and recorded session from the launch context. --project PATH selects a registered project; as SESSION selects an explicit actor. Use help ACTION for named arguments. Multiple message reads, sends and acknowledgements retain individual outcomes. Named domain actions can be separated by and or --and; context resolves once, each operation retains full stdout, stderr and its actual wait result, and failed items preserve other outcomes. Completion and stop decisions retain their native authority and history.\n",domain)
+      Bool.pick(String,String.is_empty(domain),"usage: baton2 ACTION ARGS\n       baton2 --project PATH ACTION ARGS\n       baton2 as SESSION ACTION ARGS\n       baton2 DATABASE as SESSION ACTION ARGS\nActions: inbox, read, session, player, players, assignment, send, completion-request, completion-confirmed, guide, acknowledge, status, pending, orchestra, role, ensemble, ensemble-member, section, section-member, attempt, attempts, outbox, receiver, configure, resume, stop, force-stop, recover-observer, continue-task, turn, receive, profile-bind, connect, bind, report, ask, native-reply, dispatch, recruit, join, worktree, land, push, remote-tip, knowledge, project, context, models, observed-usage, logs.\nBaton reads its registered project database and recorded session from the launch context. --project PATH selects a registered project; as SESSION selects an explicit actor. Use help ACTION for named arguments. Multiple message reads, sends and acknowledgements retain individual outcomes. Named inspections, coordinator decisions and domain actions can be separated by and or --and; context resolves once, each operation retains full stdout, stderr and its actual wait result, and failed items preserve other outcomes. Completion and stop decisions retain their native authority and history.\n",domain)

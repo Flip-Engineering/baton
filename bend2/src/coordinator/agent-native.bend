@@ -116,7 +116,7 @@ def load_options(+verb: String, options: List<D.Option>) -> IO(Result<&1,&1,U32 
   match options:
     case Nil{}: IO.pure(Result<&1,&1,U32 & String,List<D.Option>>,Done{Nil{}})
     case D.Field{+name,+value} <> rest: do IO<Result<&1,&1,U32 & String,List<D.Option>>>:
-      +body_name : String = Bool.pick(String,Bool.and(String.eq(name,"--file"),D.member(verb,["report","ask","native-reply","dispatch"])),"--text",file_name(name))
+      +body_name : String = Bool.pick(String,Bool.and(String.eq(name,"--file"),D.member(verb,["report","ask","native-reply","dispatch","completion-request","guide"])),"--text",file_name(name))
       result : Result<&1,&1,U32 & String,String> <- Bool.pick(IO(Result<&1,&1,U32 & String,String>),
         String.is_empty(body_name),IO.pure(Result<&1,&1,U32 & String,String>,Done{value}),text_value(value))
       tail : Result<&1,&1,U32 & String,List<D.Option>> <- load_options(verb,rest)
@@ -170,8 +170,43 @@ def knowledge_args(+session: String, +options: List<D.Option>) -> List<String>:
   Bool.pick(List<String>,D.present(options,"--index"),J.cat_list(prefix,["--index"]),
     optional_arg(prefix,"--id",D.value(options,"--id",""),D.present(options,"--id")))
 
+def native_flags(fields: List<String>, +options: List<D.Option>, +args: List<String>) -> List<String>:
+  match fields:
+    case Nil{}: args
+    case +name <> rest:
+      native_flags(rest,options,Bool.pick(List<String>,D.present(options,name),
+        Bool.pick(List<String>,D.member(name,["--index","--pretty"]),J.cat_list(args,[name]),J.cat_list(args,[name,D.value(options,name,"")])),args))
+
+def contextual_args(+session: String, verb: String, +options: List<D.Option>) -> List<String>:
+  match verb:
+    case "completion-request":
+      optional_arg(["agent-contextual-input",session,"completion-request","--text",D.value(options,"--text","")],"--id",D.value(options,"--id",""),D.present(options,"--id"))
+    case "completion-confirmed":
+      +args = optional_arg(["agent-contextual-input",session,"completion-confirmed","--request",D.value(options,"--request","")],"--to",D.value(options,"--to",""),D.present(options,"--to"))
+      optional_arg(args,"--id",D.value(options,"--id",""),D.present(options,"--id"))
+    case "guide":
+      optional_arg(["agent-contextual-input",session,"guide","--to",D.value(options,"--to",""),"--text",D.value(options,"--text","")],"--id",D.value(options,"--id",""),D.present(options,"--id"))
+    case other: Nil{}
+
 def legacy_args_selected(+session: String, verb: String, +options: List<D.Option>, +saved: List<D.Option>, +target: String) -> List<String>:
   match verb:
+    case "session": native_flags(["--pretty"],options,["session",D.value(options,"--id",target)])
+    case "player": native_flags(["--pretty"],options,["player",D.value(options,"--id",target)])
+    case "players": native_flags(["--pretty"],options,["players"])
+    case "assignment": native_flags(["--pretty"],options,["session",D.value(options,"--id",target)])
+    case "completion-request": contextual_args(session,"completion-request",options)
+    case "completion-confirmed": contextual_args(session,"completion-confirmed",options)
+    case "guide": contextual_args(session,"guide",options)
+    case "status": native_flags(["--pretty"],options,["status"])
+    case "pending": native_flags(Tx.split_spaces("--index --sender --recipient --kind --state --after-seq --through-seq --pretty"),options,["pending"])
+    case "orchestra": native_flags(["--pretty"],options,["orchestra"])
+    case "role": Bool.pick(List<String>,D.present(options,"--role"),["role",target,D.value(options,"--role","")],["role",target])
+    case "ensemble":
+      Bool.pick(List<String>,D.present(options,"--coupling"),["ensemble",D.value(options,"--id",""),D.value(options,"--owner",session),D.value(options,"--coupling","")],
+        Bool.pick(List<String>,D.present(options,"--owner"),["ensemble",D.value(options,"--id",""),D.value(options,"--owner",session)],["ensemble",D.value(options,"--id","")]))
+    case "ensemble-member": ["ensemble-member",D.value(options,"--id",""),D.value(options,"--owner",session),D.value(options,"--player",""),D.value(options,"--action","")]
+    case "section": Bool.pick(List<String>,D.present(options,"--capability"),["section",D.value(options,"--ensemble",""),D.value(options,"--id",""),D.value(options,"--owner",session),D.value(options,"--capability","")],["section",D.value(options,"--ensemble",""),D.value(options,"--id","")])
+    case "section-member": ["section-member",D.value(options,"--ensemble",""),D.value(options,"--id",""),D.value(options,"--owner",session),D.value(options,"--player",""),D.value(options,"--action","")]
     case "attempt": Bool.pick(List<String>,D.present(options,"--id"),["input",D.value(options,"--id","")],["session",target])
     case "attempts": ["turns",target]
     case "outbox": ["outbox",target]
@@ -261,6 +296,7 @@ def input(+db: String) -> IO(List<String>):
 def dispatch_args(args: List<String>) -> List<String>:
   match args:
     case exe <> db <> "--project-settings" <> path <> Nil{}: [exe,"--project-settings",path]
+    case exe <> db <> "agent-contextual-input" <> session <> rest: [exe,db,"agent-contextual-input",session]
     case exe <> db <> rest: [exe,db,"agent-native-input"]
     case other: Nil{}
 
@@ -295,19 +331,26 @@ def read_output(+handle: U32, stdout: String, result: Result<&1,&1,U32 & String,
           next : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_text_line(handle)
           read_output(handle,stdout ++ value,next)
 
+def completed_output(output: String & String, waited: Result<&1,&1,U32 & String,String>,
+                     errors: Result<&1,&1,U32 & String,String>,
+                     wrote: Result<&1,&1,U32 & String,Unit>,
+                     closed: Result<&1,&1,U32 & String,Unit>) -> Outcome:
+  match output:
+    case (stdout,read_cause):
+      (wait,wait_cause) = string_pair(waited)
+      (stderr,error_cause) = string_pair(errors)
+      Finished{stdout,stderr,wait,
+        append_cause(unit_cause(wrote),append_cause(unit_cause(closed),append_cause(read_cause,append_cause(wait_cause,error_cause))))}
+
 def wait_child(+handle: U32, +path: String, input: String) -> IO(Outcome):
   do IO<Outcome>:
     wrote : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.write(handle,input)
     closed : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.close_stdin(handle)
     first : Result<&1,&1,U32 & String,Maybe<String>> <- P.ProcessChild.read_text_line(handle)
     output : String & String <- read_output(handle,"",first)
-    (stdout,read_cause) = output
     waited : Result<&1,&1,U32 & String,String> <- P.ProcessChild.wait(handle)
     errors : Result<&1,&1,U32 & String,String> <- Text.Text.read(path)
-    (wait,wait_cause) = string_pair(waited)
-    (stderr,error_cause) = string_pair(errors)
-    IO.pure(Outcome,Finished{stdout,stderr,wait,
-      append_cause(unit_cause(wrote),append_cause(unit_cause(closed),append_cause(read_cause,append_cause(wait_cause,error_cause))))})
+    IO.pure(Outcome,completed_output(output,waited,errors,wrote,closed))
 
 def run_spawn(+index: U32, +verb: String, +args: List<String>, +path: String, input: String,
               result: Result<&1,&1,U32 & String,U32>) -> IO(Result<&1,&1,U32 & String,Outcome>):
@@ -322,6 +365,9 @@ def run(+index: U32, +verb: String, +args: List<String>, +path: String) -> IO(Re
     case exe <> db <> "--project-settings" <> project <> Nil{}: do IO<Result<&1,&1,U32 & String,Outcome>>:
       spawned : Result<&1,&1,U32 & String,U32> <- P.ProcessChild.spawn(P.argv([exe,"--project-settings",project]),"",path)
       run_spawn(index,verb,args,path,"",spawned)
+    case exe <> db <> "agent-contextual-input" <> session <> action: do IO<Result<&1,&1,U32 & String,Outcome>>:
+      spawned : Result<&1,&1,U32 & String,U32> <- P.ProcessChild.spawn(P.argv([exe,db,"agent-contextual-input",session]),"",path)
+      run_spawn(index,verb,args,path,args_json(action),spawned)
     case exe <> db <> legacy: do IO<Result<&1,&1,U32 & String,Outcome>>:
       spawned : Result<&1,&1,U32 & String,U32> <- P.ProcessChild.spawn(P.argv([exe,db,"agent-native-input"]),"",path)
       run_spawn(index,verb,args,path,args_json(legacy),spawned)

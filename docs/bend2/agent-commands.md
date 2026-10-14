@@ -54,6 +54,9 @@ baton assignment
 `session` and `assignment` accept an optional session ID. Their output uses the
 existing session projection, including `taskCompletion`. `player` reads one
 registered Player and `players` reads the current Players projection.
+The positional forms retain these JSON shapes. Explicit named inspection forms,
+such as `session --session worker` or `assignment --id worker`, use the named
+action result array described below.
 
 Workers send a completion request with a complete report body. A coordinator
 confirms a request by sending its exact message ID as the confirmation body:
@@ -73,7 +76,7 @@ text body and `--id ID` to choose a message ID. `completion-confirmed` resolves
 the target from the retained request. An optional `--to PLAYER` must match its
 author; the request must be addressed to the current session.
 
-## Native operations
+## Named action batches
 
 Named operations use the same project and actor context. `--session SESSION`
 selects another recorded session for an operation that addresses a session.
@@ -83,7 +86,32 @@ argument order, and each item returns its actual process result. A malformed
 later clause returns before any operation starts.
 
 ```sh
+baton session --and player --session worker --and assignment --id worker
+baton players --and attempt --and outbox
+baton completion-request --file result.txt --and assignment
+baton completion-confirmed --request request-id --and player --session worker
+baton guide --to worker --file next-task.txt --and pending --and orchestra
 baton attempt --and attempts --and outbox
+```
+
+Inspections, completion decisions, guidance and the native operations below
+can share one batch. Session, Player and assignment clauses use `--session` or
+`--id` to select a recorded target; omission selects the current actor. Each
+item retains complete `stdout`, `stderr`, actual `waitStatus` and command
+arguments. Its process status reports `completed`, `failed` or `refused`.
+Decision stdout contains the ordinary per-message admission result, including
+a structured authority refusal when the child process completed that refusal.
+File and process failures preserve the results of later items.
+
+Completion and guidance items invoke the same contextual handlers used by their
+single forms. They resolve the recorded parent or retained request author and
+enforce the current coordinator and explicit recipient checks. Complete bodies
+travel to the child command through UTF-8 JSON standard input. Multiple explicit
+stdin file references share the invocation's retained input artifact.
+
+## Native operations
+
+```sh
 baton receiver --command /path/to/harness --output-log /path/to/turn.jsonl
 baton configure --session worker --effort high
 baton resume --session worker
@@ -95,6 +123,13 @@ baton continue-task --session worker --id next-turn
 `attempt --id INPUT_ID` reads the stored input and its related attempt. `attempts`
 reads complete turn history, and `outbox` reads authored messages and their
 recipient receipts. These reads retain the existing task and receipt state.
+
+`status` and `orchestra` read their existing database projections. `pending`
+reads complete pending input. `pending --index` enables native metadata filters:
+`--sender`, `--recipient`, `--kind`, `--state`, `--after-seq` and `--through-seq`.
+Native sequence bounds and stopped-input disposition apply to these reads.
+`--pretty` selects the existing formatted projection for named session, Player,
+Players, assignment, status, pending and Orchestra reads.
 
 `receiver` records an executable and output log for ordinary receive. Its
 optional `--cwd PATH` sets the workspace; omission preserves the recorded
@@ -184,12 +219,38 @@ Search accepts `--query` or `--query-file`. Promotion preserves the existing
 source holding, destination owner and notice delivery rules. Bare `knowledge`
 reads the actor's visible findings.
 
+## Roles and groups
+
+```sh
+baton role --session worker
+baton role --session worker --role associate-conductor
+baton ensemble --id review-team --coupling tight
+baton ensemble-member --id review-team --player worker --action add
+baton section --ensemble review-team --id review --capability 'Source review'
+baton section-member --ensemble review-team --id review --player worker --action add
+baton ensemble --id review-team --and orchestra
+```
+
+`role` reads the selected session role; `--role` invokes native role assignment.
+`ensemble --id ID` reads a group. `--owner SESSION` ensures it for the named
+owner, and `--coupling loose|tight` creates or configures its coupling. An omitted
+configuration owner selects the current actor. `section` reads the named Section;
+`--capability TEXT` creates or configures it for `--owner`, which also defaults
+to the current actor. Membership actions require `--player` and `--action add|remove`.
+Native recorded-owner, role, Ensemble membership and Section membership checks
+apply to every item. An ownership refusal retains the group and later batch
+results.
+
+## Project settings
+
 Project settings and session reads default to the actor's recorded workspace.
 `--path PATH` selects a project explicitly. `project settings` returns the
 complete saved `baton2/settings.json` body, its canonical path and JSON syntax
 and schema validation through the shipped strict settings reader. Malformed
 settings retain their complete body and refusal cause. Invalid UTF-8 retains
 the original bytes as `bytesHex`. Inspection preserves the saved settings.
+
+## Context and logs
 
 Context operations use `context engines`, `context install --module ID --path
 PATH`, `context query --id ID --file PATH` and `context result --id ID`.
@@ -198,7 +259,7 @@ PATH`, `context query --id ID --file PATH` and `context result --id ID`.
 
 ## Results and compatibility
 
-Named native operations return one JSON result per item. `argv` records the
+Named action batches return a JSON array with one result per item. `argv` records the
 actual child dispatch and `nativeArgv` records its complete expanded
 native arguments. Complete arguments travel as a JSON string array over stdin.
 The item preserves full stdout, stderr, its retained stderr path and the actual

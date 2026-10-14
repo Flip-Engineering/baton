@@ -23,10 +23,25 @@ def member(+value: String, values: List<String>) -> Bool:
     case +head <> rest: Bool.or(String.eq(value,head),member(value,rest))
 
 def known(verb: String) -> Bool:
-  member(verb,Tx.split_spaces("attempt attempts outbox receiver configure resume stop force-stop recover-observer continue-task turn receive profile-bind connect bind report ask native-reply dispatch recruit join worktree land push remote-tip knowledge project context models observed-usage logs"))
+  member(verb,Tx.split_spaces("session player players assignment completion-request completion-confirmed guide status pending orchestra role ensemble ensemble-member section section-member attempt attempts outbox receiver configure resume stop force-stop recover-observer continue-task turn receive profile-bind connect bind report ask native-reply dispatch recruit join worktree land push remote-tip knowledge project context models observed-usage logs"))
 
 def names(verb: String) -> List<String>:
   match verb:
+    case "session": Tx.split_spaces("--session --id --pretty")
+    case "player": Tx.split_spaces("--session --id --pretty")
+    case "players": Tx.split_spaces("--pretty")
+    case "assignment": Tx.split_spaces("--session --id --pretty")
+    case "completion-request": Tx.split_spaces("--id --text --file")
+    case "completion-confirmed": Tx.split_spaces("--id --request --to")
+    case "guide": Tx.split_spaces("--id --to --text --file")
+    case "status": Tx.split_spaces("--pretty")
+    case "pending": Tx.split_spaces("--index --pretty --sender --recipient --kind --state --after-seq --through-seq")
+    case "orchestra": Tx.split_spaces("--pretty")
+    case "role": Tx.split_spaces("--session --role")
+    case "ensemble": Tx.split_spaces("--id --owner --coupling")
+    case "ensemble-member": Tx.split_spaces("--id --owner --player --action")
+    case "section": Tx.split_spaces("--ensemble --id --owner --capability")
+    case "section-member": Tx.split_spaces("--ensemble --id --owner --player --action")
     case "attempt": Tx.split_spaces("--session --id")
     case "attempts": Tx.split_spaces("--session")
     case "outbox": Tx.split_spaces("--session")
@@ -84,6 +99,12 @@ def present(options: List<Option>, +name: String) -> Bool:
 
 def required(verb: String) -> List<String>:
   match verb:
+    case "completion-confirmed": Tx.split_spaces("--request")
+    case "guide": Tx.split_spaces("--to")
+    case "ensemble": Tx.split_spaces("--id")
+    case "ensemble-member": Tx.split_spaces("--id --player --action")
+    case "section": Tx.split_spaces("--ensemble --id")
+    case "section-member": Tx.split_spaces("--ensemble --id --player --action")
     case "receiver": Tx.split_spaces("--command --output-log")
     case "stop": Tx.split_spaces("--id")
     case "force-stop": Tx.split_spaces("--id")
@@ -141,9 +162,12 @@ def option_cause(+verb: String, +options: List<Option>) -> String:
     "A checked landing requires both --check and --files.","")
   +read = Bool.pick(String,Bool.and(String.eq(verb,"knowledge-read"),
     Bool.and(present(options,"--id"),present(options,"--index"))),"Choose --id or --index.","")
-  +body = pair_cause(options,"--text","--file",member(verb,["report","ask","native-reply","dispatch"]))
+  +body = pair_cause(options,"--text","--file",member(verb,["report","ask","native-reply","dispatch","completion-request","guide"]))
+  +inspection = Bool.pick(String,Bool.and(member(verb,["session","player","assignment"]),
+    Bool.and(present(options,"--session"),present(options,"--id"))),"Choose --session or --id.","")
+  +section = Bool.pick(String,Bool.and(String.eq(verb,"section"),Bool.and(present(options,"--owner"),Bool.not(present(options,"--capability")))),"Supply --capability when selecting a Section owner.","")
   +endpoint = Bool.pick(String,Bool.and(String.eq(verb,"connect"),Bool.not(present(options,"--endpoint"))),"Supply --endpoint JSON_ARGV; an empty string disconnects it.","")
-  first(Bool.pick(String,String.is_empty(absent),"","Missing " ++ absent ++ "."),first(pairs,first(body,first(endpoint,first(land,read)))))
+  first(Bool.pick(String,String.is_empty(absent),"","Missing " ++ absent ++ "."),first(pairs,first(body,first(endpoint,first(land,first(read,first(inspection,section)))))))
 
 def reverse(items: List<Operation>, tail: List<Operation>) -> List<Operation>:
   match items:
@@ -193,7 +217,7 @@ def parse_loop(args: List<String>, phase: Phase, +verb: String, +options: List<O
           Bool.pick(Parsed,Bool.or(String.eq(head,"and"),String.eq(head,"--and")),
             Bool.pick(Parsed,String.is_empty(cause),parse_loop(rest,ActionHead{},"",Nil{},Con{Call{verb,options},items}),Error{cause}),
             Bool.pick(Parsed,Bool.and(member(head,names(verb)),Bool.not(present(options,head))),
-              Bool.pick(Parsed,member(head,Tx.split_spaces("--lift-stop --index --recursive")),
+              Bool.pick(Parsed,member(head,Tx.split_spaces("--lift-stop --index --recursive --pretty")),
                 parse_loop(rest,OptionHead{},verb,Con{Field{head,"true"},options},items),
                 parse_loop(rest,OptionValue{head},verb,options,items)),
               Error{"Unknown or repeated argument " ++ head ++ ". Use help " ++ verb ++ "."}))
@@ -204,6 +228,21 @@ def parse(args: List<String>) -> Parsed:
 
 def help(action: String) -> String:
   match action:
+    case "session": "session [--session SESSION | --id SESSION] [--pretty]\nRead the selected complete session in a named action batch. Omitted target selects the current actor. The single positional form session [SESSION] retains its existing JSON output.\n"
+    case "player": "player [--session SESSION | --id SESSION] [--pretty]\nRead the selected complete Player in a named action batch. Omitted target selects the current actor. The single positional form player SESSION retains its existing JSON output.\n"
+    case "players": "players [--pretty]\nRead the current Players projection as an independent action in a mixed batch.\n"
+    case "assignment": "assignment [--session SESSION | --id SESSION] [--pretty]\nRead the selected session and its retained assignment and task-completion state in a mixed batch. Omitted target selects the current actor.\n"
+    case "completion-request": "completion-request (--text TEXT | --file PATH) [--id ID]\nSend the complete request to the current actor's recorded parent through the existing contextual completion handler. Supports mixed and or --and batches.\n"
+    case "completion-confirmed": "completion-confirmed --request REQUEST_ID [--to PLAYER] [--id ID]\nConfirm through the existing retained-request handler. The current actor must own the request; an explicit recipient must match its author. Supports mixed batches.\n"
+    case "guide": "guide --to PLAYER (--text TEXT | --file PATH) [--id ID]\nAdmit complete guidance as the current actor through the existing contextual handler. Supports mixed batches.\n"
+    case "status": "status [--pretty]\nRead the existing database status projection.\n"
+    case "pending": "pending [--index] [--pretty] [--sender SESSION] [--recipient SESSION] [--kind KIND] [--state pending|acknowledged|all] [--after-seq INTEGER] [--through-seq INTEGER]\nRead complete pending input; --index enables the native metadata filters.\n"
+    case "orchestra": "orchestra [--pretty]\nRead the existing Orchestra projection, including Players, operators, Ensembles and Sections.\n"
+    case "role": "role [--session SESSION] [--role player|principal-conductor|associate-conductor|operator]\nRead the selected role. --role invokes the existing role assignment operation. Omitted session selects the current actor.\n"
+    case "ensemble": "ensemble --id ID [--owner SESSION] [--coupling loose|tight]\nRead the Ensemble. --owner ensures it for that owner; --coupling creates or configures it through the existing ownership operation. Omitted owner for configuration selects the current actor.\n"
+    case "ensemble-member": "ensemble-member --id ID --player SESSION --action add|remove [--owner SESSION]\nChange membership through the native recorded-owner operation. Omitted owner selects the current actor.\n"
+    case "section": "section --ensemble ID --id SECTION [--capability TEXT] [--owner SESSION]\nRead the Section. --capability creates or configures it through the native ownership operation; omitted owner selects the current actor.\n"
+    case "section-member": "section-member --ensemble ID --id SECTION --player SESSION --action add|remove [--owner SESSION]\nChange Section membership through the native Ensemble owner and membership rules. Omitted owner selects the current actor.\n"
     case "attempt": "attempt [--session SESSION] [--id INPUT_ID]\nRead the current session execution, or relate one complete stored input to its attempt and task state.\n"
     case "attempts": "attempts [--session SESSION]\nRead full native turn history for the selected session.\n"
     case "outbox": "outbox [--session SESSION]\nRead complete authored messages and their current recipient receipts.\n"

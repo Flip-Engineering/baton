@@ -181,7 +181,7 @@ function contextualAction(action, values) {
   let subcommand = ['knowledge', 'project', 'context'].includes(action) ? action : null;
   let nextOperation = false;
   let recipient = action === 'send';
-  const switches = new Set(['--and', '--lift-stop', '--index', '--recursive', '--help']);
+  const switches = new Set(['--and', '--lift-stop', '--index', '--recursive', '--pretty', '--help']);
   const bodyFields = new Map([
     ['--text', '--file'], ['--claim', '--claim-file'], ['--evidence', '--evidence-file'],
     ['--limits', '--limits-file'], ['--links', '--links-file'],

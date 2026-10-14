@@ -163,6 +163,20 @@ class McpCommand(unittest.TestCase):
             expected_args=['as', 'attached-λ', 'configure', *values])
         self.assertFalse(result.get('isError', False))
 
+    def test_pretty_inspection_preserves_large_guidance_body_in_mixed_batch(self):
+        body = '\ufeffComplete guidance after inspection λ🙂\nLast line  \n' * 10000
+        values = ['--pretty', '--and', 'guide', '--to', 'worker', '--text', body]
+        def expected(child):
+            argv = child['argv']
+            path = argv[argv.index('--file') + 1]
+            self.assertEqual(child['requests'][0]['arguments'], values)
+            return ['as', 'attached-λ', 'session', '--pretty', '--and', 'guide',
+                    '--to', 'worker', '--file', path]
+        result = self.command(stdout='[{"status":"completed"},{"status":"completed"}]\n',
+            tool='baton2_action', arguments={'action': 'session', 'arguments': values},
+            session='attached-λ', expected_args=expected, expected_files=(body,))
+        self.assertFalse(result.get('isError', False))
+
     def native_controls(self):
         player = "Player's review λ"
         command = "/native tools/provider's executable"
