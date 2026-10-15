@@ -49,6 +49,7 @@ import json
 import os
 import pathlib
 import signal
+import sqlite3
 import subprocess
 import sys
 import time
@@ -141,6 +142,43 @@ def coord_json(binary, db, *args, env=None):
     return json.loads(out)
 
 
+def wait_native(db, player, turn=None, after=None):
+    """Wait for the admitted native attempt and its retained terminal custody."""
+    while True:
+        with sqlite3.connect(db.as_uri() + '?mode=ro', uri=True) as connection:
+            connection.row_factory = sqlite3.Row
+            execution = connection.execute('SELECT * FROM executions WHERE session=?', (player,)).fetchone()
+            request = connection.execute('SELECT * FROM direct_turn_requests WHERE id=? AND session=?',
+                                         (turn, player)).fetchone() if turn else None
+            ident = turn or (execution['id'] if execution else None)
+            report = connection.execute('SELECT * FROM messages WHERE id=?', (ident,)).fetchone()
+            native_turn = connection.execute('SELECT worker FROM turns WHERE id=? AND worker=?',
+                                             (ident, player)).fetchone()
+        directory = (pathlib.Path(request['directory']) if request else
+                     pathlib.Path(execution['directory']) if execution and execution['id'] == ident else None)
+        if directory and (directory / 'native-start-error').exists():
+            raise Failed(f"native start failed for {player}/{ident}: "
+                         + (directory / 'native-start-error').read_text())
+        if directory and (directory / 'acknowledged').exists():
+            status = (directory / 'status').read_text().strip()
+            if status != '0':
+                raise Failed(f'native attempt {player}/{ident} exited with status {status}')
+            if not (directory / 'released').exists() or not native_turn or not report:
+                raise Failed(f'native attempt {player}/{ident} has incomplete terminal custody')
+            if after is None or report['seq'] > after:
+                return dict(report)
+        time.sleep(0.05)
+
+
+def wait_handled(binary, db, ident):
+    """Wait for the recipient's handling receipt for the complete stored input."""
+    while True:
+        delivery = coord_json(binary, db, 'delivery', ident)
+        if delivery.get('receipt'):
+            return delivery
+        time.sleep(0.05)
+
+
 def expect_json(answer, fragment, what):
     if fragment not in answer:
         raise Failed(f"{what}: expected {fragment}, got {answer}")
@@ -169,38 +207,29 @@ def write_checks(run_dir):
 
 
 def turn_player(binary, db, repo, run_dir, route_omp, player, branch, base,
-                path, line, turn, guided=False, session=""):
+                path, line, turn):
     """One real turn for WORKER, committing in its own recruited worktree."""
     coord(binary, db, "recruit", player, "root", "omp", route_omp["model"],
           route_omp["effort"], repo, branch, f"wt-{player}", base)
     worktree = repo / f"wt-{player}"
-    if guided:
-        task = (
-            f"You are Player {player}. Your working directory is {worktree}.\n"
-            "The Principal Conductor left you guidance. Read it by running:\n"
-            f"  {binary} {db} inbox\n"
-            "Then do exactly this and nothing else:\n"
-            "1. Run: git rebase main\n"
-            f"2. The rebase stops on {path}. Write that file so it contains the single line: {line}\n"
-            f"3. Run: git add {path}\n"
-            "4. Run: GIT_EDITOR=true git rebase --continue\n"
-            f"5. Reply with one line: done {player}\n")
-    else:
-        task = (
-            f"You are Player {player}. Your working directory is {worktree}.\n"
-            "Do exactly this and nothing else:\n"
-            f"1. Write the file {path} so it contains the single line: {line}\n"
-            f"2. Run: git add {path}\n"
-            f"3. Run: git commit -m '{player} writes {line}'\n"
-            f"4. Reply with one line: done {player}\n")
+    task = (
+        f"You are Player {player}. Your working directory is {worktree}.\n"
+        "Do exactly this and nothing else:\n"
+        f"1. Write the file {path} so it contains the single line: {line}\n"
+        f"2. Run: git add {path}\n"
+        f"3. Run: git commit -m '{player} writes {line}'\n"
+        f"4. Reply with one line: done {player}\n")
     native_args = ['turn-text', player, turn, route_omp['executable'], route_omp['model'],
                    route_omp['effort'], str(worktree), task,
-                   str(run_dir / f'turn-{player}-{turn}.jsonl'), session]
+                   str(run_dir / f'turn-{player}-{turn}.jsonl'), '']
     out, code, err = coord(binary, db, 'agent-native-input',
                            input=json.dumps(native_args, ensure_ascii=False), check=False)
     (run_dir / f"turn-{player}-{turn}.report").write_text(out + err)
     if code != 0:
         raise Failed(f"the turn of {player} failed: {err.strip() or out.strip()}")
+    report = wait_native(db, player, turn=turn)
+    if report['sender'] != player or report['recipient'] != 'root' or report['kind'] != 'report':
+        raise Failed(f'the turn of {player} has invalid report lineage: {report}')
     committed = git(worktree, "log", "-1", "--format=%h")
     content = git(worktree, "show", f"HEAD:{path}")
     if content != line:
@@ -261,9 +290,7 @@ def scenario_landing_publishing(config, out, binary):
     subprocess.run(["git", "init", "-q", "--bare", str(remote)], check=True)
     git(repo, "remote", "add", "acceptance-remote", str(remote))
     turn_player(binary, db, repo, run_dir, route_omp, "w1", "wa", base, "data/a.txt", "alpha", "t1")
-    delivery = coord_json(binary, db, "delivery", "t1")
-    if not delivery.get("receipt"):
-        raise Failed("the root did not acknowledge the Player's report")
+    delivery = wait_handled(binary, db, 't1')
     say(f"report t1 acknowledged with receipt {delivery['receipt']}")
     say(f"the root's session: {coord(binary, db, 'player', 'root')[0]}")
     if git(repo, "rev-parse", "main") != base:
@@ -433,9 +460,13 @@ def scenario_conflict_recovery(config, out, binary):
     session = json.loads(coord(binary, db, "player", "w4")[0]).get("native")
     if not session:
         raise Failed("the Player has no recorded native session")
-    say(f"  resuming native session {session}")
-    turn_player(binary, db, repo, run_dir, route_omp, "w4", "wd", base, "data/shared.txt",
-                "three and four", "t3", guided=True, session=session)
+    say(f"  awaiting guided native session {session}")
+    with sqlite3.connect(db.as_uri() + '?mode=ro', uri=True) as connection:
+        guidance_seq = connection.execute('SELECT seq FROM messages WHERE id=?', (guidance['id'],)).fetchone()[0]
+    wait_handled(binary, db, 'g1')
+    report = wait_native(db, 'w4', after=guidance_seq)
+    if report['sender'] != 'w4' or report['recipient'] != 'root' or report['kind'] != 'report':
+        raise Failed(f'the guided turn has invalid report lineage: {report}')
     if coord_json(binary, db, "player", "w4")["native"] != session:
         raise Failed("the resolving Player changed native sessions")
     if git(repo, "rev-parse", "wd^") != target:

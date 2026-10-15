@@ -50,6 +50,9 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   while its first handling receipt was plain text. Check the registered native
   response separately from the immutable handling receipt. Preserve the original
   failed runs and their task-storage qualification.
+  Git acceptance must await the native review receipt before landing. Guidance
+  already resumes the conflicted worker through its registered receiver; await
+  that same native turn and its resolved branch before checked landing.
   Preserve complete bodies, native lineage, first receipts, reports, original
   failure evidence and every semantic assertion. Validate the corrected callers
   remotely without duplicate tasks. Coordinate with
