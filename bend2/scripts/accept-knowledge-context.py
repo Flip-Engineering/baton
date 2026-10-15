@@ -288,7 +288,28 @@ def visible_finding(out, reader):
     return rows
 
 
+def wait_native_processes(out, phase):
+    owner = f'{(out / "bin/baton2").resolve()} --instance-owner {(out / "state.db").resolve()}'
+    while True:
+        active = [row for row in owned_processes(out) if row['command'] != owner]
+        if not active:
+            return
+        for process in active:
+            watch = ExitWatch(process['pid'])
+            observation = {'phase': phase, 'process': process, 'backend': watch.backend,
+                           'registered_unix': watch.registered_unix,
+                           'registered': watch.handle is not None}
+            append(out / 'owner-lifecycle.jsonl', {'native_wait_started': observation})
+            try:
+                watch.wait()
+                observation['exit_observed_unix'] = time.time()
+                append(out / 'owner-lifecycle.jsonl', {'native_wait_finished': observation})
+            finally:
+                watch.close()
+
+
 def verify_phase(out, phase, run, before):
+    wait_native_processes(out, phase)
     owner_lifecycle = quiet(out, phase + '-after')
     session = 'producer' if phase == 'produce' else 'consumer'
     current = call(out, 'player', session)
