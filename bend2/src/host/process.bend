@@ -43,8 +43,12 @@ def ProcessChild.attach(directory: String) -> IO(Result<&1,&1,U32 & String,U32>)
 def ProcessChild.attach_owned(directory: String, lock: U32) -> IO(Result<&1,&1,U32 & String,U32>):
   import "./process-spawn.c"
 
-# An unacknowledged launched attempt returns its original recovery invocation.
+# An unreleased launched attempt returns its original recovery invocation.
 def ProcessChild.recovery_argv(directory: String) -> IO(Result<&1,&1,U32 & String,Maybe<String>>):
+  import "./process-spawn.c"
+
+# Selected observer recovery also reads released custody awaiting acknowledgement.
+def ProcessChild.observer_recovery_argv(directory: String) -> IO(Result<&1,&1,U32 & String,Maybe<String>>):
   import "./process-spawn.c"
 
 # These commands address the retained attempt without replacing its observer.

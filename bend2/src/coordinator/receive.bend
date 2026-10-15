@@ -859,7 +859,7 @@ def recover_observer_pid(+db: String, +session: String, observer: Maybe<&2,U32>)
     case Some{pid}: do IO<Result<&1,&1,U32 & String,Unit>>:
       found : String <- IO.try(String,DB.Sql.read(db,"SELECT coalesce((SELECT directory FROM executions WHERE session=" ++ C.q(session) ++ " AND mode='retained'),'');"))
       +directory : String <- IO.pure(String,Tx.trim_nl(found))
-      recovery : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.recovery_argv(directory))
+      recovery : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.observer_recovery_argv(directory))
       result : Result<&1,&1,U32 & String,Unit> <- recover_observer_recorded(db,session,directory,pid,recovery)
       settled : Unit <- claim_left(db,session)
       IO.pure(Result<&1,&1,U32 & String,Unit>,result)

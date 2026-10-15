@@ -233,8 +233,15 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   Qualify the composed source on remote runners, publish its exact tag and
   platform artifacts, and install the complete package through the ordinary
   command path. Retain active conversations, managed work, prior installation
-  prefixes and explicit stops during receiver migration. Unfinished feature
-  acceptance remains recorded in its original issues. [#727](https://github.com/Flip-Engineering/baton/issues/727)
+  prefixes and explicit stops during receiver migration. Active adoption
+  includes the original owner with 78 released, unacknowledged
+  attempts. Reconcile its current retained execution through selected observer
+  recovery, preserve complete historical streams before physical acknowledgement,
+  and verify the old owner's actual exit before claiming complete adoption.
+  [#696](https://github.com/Flip-Engineering/baton/issues/696) and
+  [#705](https://github.com/Flip-Engineering/baton/issues/705) cover this recovery.
+  Unfinished feature acceptance remains recorded in its original issues.
+  [#727](https://github.com/Flip-Engineering/baton/issues/727)
   owns real-agent validation input, instruction updates and acceptance.
   [#728](https://github.com/Flip-Engineering/baton/issues/728) blocks candidate
   C generation and its downstream qualification.
@@ -357,5 +364,19 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
 - [#530: Hardcoded numeric ceilings gate real work throughout the goal/plan policy and beyond — remove the control-flow pattern, not just retune the numbers](https://github.com/Flip-Engineering/baton/issues/530).
 - [#714: Simplify agent inbox commands with a contextual action grammar](https://github.com/Flip-Engineering/baton/issues/714).
 - [#705: Reconcile a completed retained attempt before admitting its next turn](https://github.com/Flip-Engineering/baton/issues/705).
+  Public selected-observer recovery now reads the current released custody
+  awaiting acknowledgement. Ordinary receive admission and direct-turn checks
+  retain their existing unreleased selection so a completing observer can deliver
+  its report while owed work continues. Qualify the released observer handoff,
+  complete report replay, original native continuation, stops and final custody
+  acknowledgement with [#717](https://github.com/Flip-Engineering/baton/issues/717).
 - [#696: Baton2: recover lost retained custody and checkpoint stream observation](https://github.com/Flip-Engineering/baton/issues/696).
+  Active adoption found 78 released attempts retained by the original owner.
+  The current semantic observer PID 8117 was sampled waiting in SQLite; a later
+  kernel lock query identified historical observer PID 8681 holding the rollback
+  database's pending and reserved writer bytes. These are separate observations
+  and require current process identities before recovery. Preserve full streams,
+  immutable manifests, checkpoints and actual owner/recovery-child lifetimes.
+  The scoped public accessor shares manifest and native-birth validation with
+  ordinary recovery and preserves acknowledged and unstarted exclusions.
 - [#676: Baton2: share one native instance across connected agents](https://github.com/Flip-Engineering/baton/issues/676).

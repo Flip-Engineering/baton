@@ -239,6 +239,11 @@ if args[:1]==['legacy_keeper']:
 if args[:1] in (['parent_endpoint'],['answering_parent']):
     messages=json.loads(subprocess.check_output([config['exe'],config['db'],'inbox','root'],text=True))
     if args[0]=='answering_parent': messages=[message for message in messages if message['id']==args[1]]
+    if args[0]=='parent_endpoint' and config.get('hold_parent_delivery'):
+        with socket.create_connection(('127.0.0.1',config['port'])) as client:
+            with client.makefile('rwb',buffering=0) as control:
+                control.write((json.dumps({'session':'parent-delivery','pid':os.getpid(),'messages':messages})+'\n').encode())
+                assert json.loads(control.readline())=={'continue_delivery':True}
     for message in messages:
         if args[0]=='answering_parent' and message['kind']=='question':
             request=json.loads(message['body'])
@@ -769,7 +774,7 @@ class Receive(unittest.TestCase):
         child.wait()
         return tuple(bytes(output).decode(errors='replace') for output in captured)
 
-    def finish_observer_during_recovery(self, observer, recovery):
+    def finish_observer_during_recovery(self, observer, recovery, drain=True):
         streams = {child.stdout: child for child in (observer, recovery)}
         streams.update({child.stderr: child for child in (observer, recovery)})
         exited, notification = socket.socketpair()
@@ -797,7 +802,8 @@ class Receive(unittest.TestCase):
                         exited.recv(2)
                     elif not self.capture_child_output(streams[stream], stream):
                         del streams[stream]
-            return self.finish(observer, ok=False)
+            if drain:
+                return self.finish(observer, ok=False)
         finally:
             exited.close()
             notification.close()
@@ -1990,14 +1996,16 @@ class Receive(unittest.TestCase):
                 finally:
                     fixture.doCleanups()
 
-    def exercise_completed_observer(self, stopped, keeper_loss=True, device_renumbered=False):
+    def exercise_completed_observer(self, stopped, keeper_loss=True, device_renumbered=False,
+                                    released=False):
         print(f'Completed observer recovery: stopped={stopped}, keeper_loss={keeper_loss}, '
-              f'device_renumbered={device_renumbered}', flush=True)
+              f'device_renumbered={device_renumbered}, released={released}', flush=True)
         self.coord('connect', 'root', 'native-root', json.dumps([str(self.fixture), 'parent_endpoint']))
         self.player(harness='omp')
         config_path = self.directory / 'fixture.json'
         config = json.loads(config_path.read_text())
         config['record_launches'] = True
+        config['hold_parent_delivery'] = released
         config_path.write_text(json.dumps(config))
         self.prepare_input('first', 'parent', 'Complete the original input.', kind='task')
         print('WAIT: original native connection', flush=True)
@@ -2011,21 +2019,48 @@ class Receive(unittest.TestCase):
             ).fetchone()[0])
         self.eventually(lambda: (attempt / 'checkpoint').exists(),
                         'The original observer did not record its checkpoint.')
-        self.coord('message', 'second', 'root', 'parent', 'task', 'Retain this queued input.')
+        if not released:
+            self.coord('message', 'second', 'root', 'parent', 'task', 'Retain this queued input.')
         owner_command = f'{EXE.resolve()} --instance-owner {self.db.resolve()}'
         owner = [process for process in self.owned_processes()
                  if process['command'] == owner_command]
         self.assertEqual(len(owner), 1)
         selected_observer = self.selected_process(observer.pid)
         selected_owner = self.selected_process(owner[0]['pid'])
-        self.signal_selected(selected_observer, signal.SIGSTOP)
-        body = 'Original result after native exit.'
+        if not released:
+            self.signal_selected(selected_observer, signal.SIGSTOP)
+        body = ('Original result after native exit.\nComplete Unicode result caféλ🙂.'
+                if released else 'Original result after native exit.')
         self.action(original, body=body, exit_after_terminal=True)
         print('WAIT: original native exit and retained status', flush=True)
         self.assertEqual(original.readline(), b'')
         self.eventually(lambda: (attempt / 'status').exists(),
                         'The keeper did not record actual native exit.')
         self.assertEqual((attempt / 'status').read_text(), '0\n')
+        held_delivery = None
+        original_report = None
+        if released:
+            held_delivery, delivery = self.accept_child(observer, 'parent-delivery')
+            self.assertTrue(any(message['sender'] == 'parent' and message['recipient'] == 'root'
+                                and message['kind'] == 'report' and message['body'] == body
+                                for message in delivery['messages']), delivery)
+            self.eventually(lambda: (attempt / 'released').exists(),
+                            'The completed receive did not release its native custody.')
+            self.assertFalse((attempt / 'acknowledged').exists())
+            terminal_frames = [json.loads(line) for line in (attempt / 'stdout').read_text().splitlines()]
+            self.assertEqual([content['text'] for frame in terminal_frames
+                              if frame.get('type') == 'agent_end'
+                              for message in frame['messages'] for content in message['content']],
+                             [body])
+            self.signal_selected(selected_observer, signal.SIGSTOP)
+            with sqlite3.connect(self.db) as database:
+                self.assertEqual(database.execute(
+                    "SELECT directory FROM executions WHERE session='parent' AND mode='retained'"
+                ).fetchone(), (str(attempt),))
+            original_report = self.coord('turns', 'parent')[0]
+            self.coord('message', 'second', 'root', 'parent', 'task', 'Retain this queued input.')
+            config['hold_parent_delivery'] = False
+            config_path.write_text(json.dumps(config))
         if device_renumbered:
             # The retained logging attempt kept its path and inodes after its
             # device number changed. Its device-qualified guard was recreated.
@@ -2055,17 +2090,22 @@ class Receive(unittest.TestCase):
             self.eventually(lambda: (self.selected_process(selected_owner['pid']) or {}).get('state', 'Z').startswith('Z'),
                             'The selected keeper did not exit.')
         retained = {name: (attempt / name).read_bytes() for name in ('manifest', 'native.birth', 'status')}
-        self.assertFalse(self.session_guard_available('parent'))
+        self.assertEqual(self.session_guard_available('parent'), released)
         # Recovery must retire the suspended observer while a database writer
         # remains open. Replaying its retained output can write after retirement.
         with sqlite3.connect(self.db) as writer:
             writer.execute('BEGIN IMMEDIATE')
-            if not stopped:
+            if not stopped and not released:
                 self.assertEqual(self.coord(*self.receive_args('parent'))['status'], 'queued')
             print('WAIT: recovering the completed attempt and retiring the selected observer', flush=True)
             recovery = self.spawn('recover-observer', 'parent', observer.pid)
-            self.finish_observer_during_recovery(observer, recovery)
+            self.finish_observer_during_recovery(observer, recovery, drain=not released)
             self.assertEqual(observer.returncode, -signal.SIGTERM)
+            if held_delivery is not None:
+                self.action(held_delivery, continue_delivery=True)
+        if held_delivery is not None:
+            self.assertEqual(held_delivery.readline(), b'')
+            self.finish(observer, ok=False)
         print('Selected observer exited; awaiting recovery completion', flush=True)
         if stopped:
             self.finish(recovery)
@@ -2095,12 +2135,24 @@ class Receive(unittest.TestCase):
             self.assertEqual(self.coord('inbox', 'parent'), [])
         turns = self.coord('turns', 'parent')
         self.assertEqual(sum(row['reportBody'] == body for row in turns), 1)
+        if original_report is not None:
+            self.assertEqual([(row['id'], row['reportBody']) for row in turns
+                              if row['id'] == original_report['id']],
+                             [(original_report['id'], body)])
         self.assertTrue(all(row['receipt'] == 'parent-received' for row in turns))
         self.assertEqual(self.coord('player', 'parent')['native'], native_id)
         for name, content in retained.items():
             self.assertEqual((attempt / name).read_bytes(), content)
         self.assertTrue((attempt / 'released').exists())
         self.assertTrue((attempt / 'acknowledged').exists())
+        if released:
+            launches = (self.directory / 'native-launches.jsonl').read_bytes()
+            self.assertEqual(len(launches.splitlines()), 2)
+            refused = self.coord('recover-observer', 'parent', observer.pid, ok=False)
+            self.assertEqual(refused.returncode, 2, refused.stdout + refused.stderr)
+            self.assertIn('no unfinished retained receive attempt', refused.stderr)
+            self.assertEqual((self.directory / 'native-launches.jsonl').read_bytes(), launches)
+            self.assertEqual(self.coord('turns', 'parent'), turns)
         if device_renumbered:
             self.assertFalse((attempt / 'admission-error').exists())
             self.assertFalse((attempt / 'checkpoint-error').exists(),
@@ -2116,6 +2168,9 @@ class Receive(unittest.TestCase):
 
     def test_completed_live_keeper_observer_handoff_recovers_original_and_pending_input(self):
         self.exercise_completed_observer(stopped=False, keeper_loss=False)
+
+    def test_released_unacknowledged_observer_recovers_original_and_pending_input(self):
+        self.exercise_completed_observer(stopped=False, keeper_loss=False, released=True)
 
     def test_completed_omp_attempt_replay_leaves_guidance_for_current_native(self):
         self.coord('attach', 'root', 'codex', 'native-root', self.endpoint('root'))

@@ -56,7 +56,8 @@ enum { BP_SPAWN, BP_WRITE, BP_CLOSE, BP_READ, BP_READ_AWAKE, BP_WAIT, BP_SIGNAL,
        BP_INSTANCE_PUBLISH, BP_INSTANCE_STATE, BP_INSTANCE_PREPARE,
        BP_INSTANCE_PREPARE_WITH_FILE, BP_INSTANCE_START, BP_INSTANCE_CANCEL,
        BP_INSTANCE_OWNER_WITNESS, BP_INSTANCE_ENSURE_OWNER_WITNESS,
-       BP_INSTANCE_RECOVER, BP_INSTANCE_INPUT_WITNESS, BP_INSTANCE_INPUT_PROMPT };
+       BP_INSTANCE_RECOVER, BP_INSTANCE_INPUT_WITNESS, BP_INSTANCE_INPUT_PROMPT,
+       BP_OBSERVER_RECOVERY };
 
 static int baton_pipe(int fds[2]) {
   if (pipe(fds)) return errno;
@@ -3986,11 +3987,11 @@ static int br_instance_retire(BatonProcessCall *call) {
   baton_child_retire_slot(call);
   return 0;
 }
-static int br_recovery(BatonProcessCall *call) {
+static int br_recovery(BatonProcessCall *call,int include_released) {
   call->eof=1;
   char *directory=realpath(call->directory,NULL);
   if(!directory)return errno==ENOENT?0:errno;
-  if(br_exists(directory,"acknowledged") || br_exists(directory,"released") || br_exists(directory,"native-start-error") || !br_exists(directory,"launch")) {
+  if(br_exists(directory,"acknowledged") || (!include_released && br_exists(directory,"released")) || br_exists(directory,"native-start-error") || !br_exists(directory,"launch")) {
     free(directory);return 0;
   }
   BrManifest manifest={0};int error=br_manifest_read(directory,&manifest);BrBirth birth;
@@ -4398,7 +4399,8 @@ static void br_instance_state_call(BatonProcessCall *call) {
   call->length=(size_t)written;
 }
 static void baton_retained_begin_call(BatonProcessCall *call) {
-  if(call->kind==BP_RECOVERY)call->error=br_recovery(call);
+  if(call->kind==BP_RECOVERY || call->kind==BP_OBSERVER_RECOVERY)
+    call->error=br_recovery(call,call->kind==BP_OBSERVER_RECOVERY);
   else if(call->kind==BP_KEEPER) call->error=br_keeper(call->directory,(int)call->lock);
   else if(call->kind==BP_RETAIN) call->error=br_retain(call);
   else if(call->kind==BP_RETAIN_WITH_FILE) call->error=br_retain(call);
@@ -4482,7 +4484,7 @@ static void baton_process_call(IoWork *w) {
   if(call->kind==BP_INSTANCE_NOTICE) { br_instance_notice_call(call);return; }
   if(call->kind==BP_INSTANCE_UNSUBSCRIBE) { br_instance_unsubscribe_call(call);return; }
   if(call->kind==BP_INSTANCE_PUBLISH) { br_instance_publish_call(call);return; }
-  if(call->kind==BP_RETAIN || call->kind==BP_ATTACH || call->kind==BP_ATTACH_OWNED || call->kind==BP_RECOVERY || call->kind==BP_KEEPER || call->kind==BP_CONTROL_WRITE || call->kind==BP_CONTROL_SIGNAL ||
+  if(call->kind==BP_RETAIN || call->kind==BP_ATTACH || call->kind==BP_ATTACH_OWNED || call->kind==BP_RECOVERY || call->kind==BP_OBSERVER_RECOVERY || call->kind==BP_KEEPER || call->kind==BP_CONTROL_WRITE || call->kind==BP_CONTROL_SIGNAL ||
      call->kind==BP_INSTANCE_OWNER || call->kind==BP_INSTANCE_ADMIT || call->kind==BP_INSTANCE_ATTACH || call->kind==BP_INSTANCE_ATTACH_OWNED ||
      call->kind==BP_INSTANCE_PREPARE || call->kind==BP_INSTANCE_PREPARE_WITH_FILE ||
      call->kind==BP_INSTANCE_SHUTDOWN || call->kind==BP_INSTANCE_RETIRE ||
@@ -4560,7 +4562,7 @@ static Term baton_process_pack(Env e, IoWork *w) {
         io_str(e,call->identity?call->identity:"",call->identity_length),
         io_str(e,call->text?call->text:"",call->length)));
 #ifdef CID_SOME
-    else if(call->kind==BP_READ || call->kind==BP_RECOVERY) value=call->eof ? term_pak(CID_NONE,0)
+    else if(call->kind==BP_READ || call->kind==BP_RECOVERY || call->kind==BP_OBSERVER_RECOVERY) value=call->eof ? term_pak(CID_NONE,0)
       : io_box(e,CID_SOME,io_str(e,call->text,call->length));
 #endif
 #ifdef CID_PROCESSCHILD_READ_AWAKE
@@ -4681,7 +4683,7 @@ static Term baton_process_begin_mode(Env e, Term *f, IoWork *w, int kind, int pr
   if(kind==BP_RETAIN || kind==BP_INSTANCE_ADMIT || kind==BP_INSTANCE_PREPARE) {
     u64 length=0;call->directory=io_cstr(e,f[kind==BP_RETAIN?0:1],&length);
     if(strlen(call->directory)!=length)call->error=EINVAL;
-  } else if(kind==BP_ATTACH || kind==BP_ATTACH_OWNED || kind==BP_RECOVERY || kind==BP_KEEPER ||
+  } else if(kind==BP_ATTACH || kind==BP_ATTACH_OWNED || kind==BP_RECOVERY || kind==BP_OBSERVER_RECOVERY || kind==BP_KEEPER ||
             kind==BP_CONTROL_WRITE || kind==BP_CONTROL_SIGNAL) {
     u64 length=0;call->directory=io_cstr(e,f[0],&length);
     if(strlen(call->directory)!=length)call->error=EINVAL;
@@ -4815,6 +4817,9 @@ BP_EFFECT(baton_process_attach_owned,CID_PROCESSCHILD_ATTACH_OWNED,BP_ATTACH_OWN
 #endif
 #ifdef CID_PROCESSCHILD_RECOVERY_ARGV
 BP_EFFECT(baton_process_recovery_argv,CID_PROCESSCHILD_RECOVERY_ARGV,BP_RECOVERY)
+#endif
+#ifdef CID_PROCESSCHILD_OBSERVER_RECOVERY_ARGV
+BP_EFFECT(baton_process_observer_recovery_argv,CID_PROCESSCHILD_OBSERVER_RECOVERY_ARGV,BP_OBSERVER_RECOVERY)
 #endif
 
 #ifdef CID_INSTANCE_OWNER
