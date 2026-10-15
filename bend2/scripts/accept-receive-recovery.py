@@ -382,8 +382,16 @@ both your previous commit hash and the new one. Do not repeat the checkpoint too
                                  'commit': base, 'dirty': False}, workspace
             save(out / 'recruitment.json', {'seed': str(seed), 'session': player,
                                            'worktree': workspace})
-            call('agent-native-input', input=json.dumps(
-                ['message', INITIAL, 'root', 'worker', 'task', initial_task], ensure_ascii=False))
+            initial_admission = json.loads(call('message-batch-file', 'root', '-', input=json.dumps([
+                {'id': INITIAL, 'recipient': 'worker', 'kind': 'task', 'body': initial_task}],
+                ensure_ascii=False)))
+            record('initial-task-admitted', result=initial_admission, state=snapshot(db))
+            assert len(initial_admission) == 1, initial_admission
+            assert initial_admission[0]['admission']['status'] == 'admitted', initial_admission
+            admitted = next(row for row in snapshot(db)['messages'] if row['id'] == INITIAL)
+            assert (admitted['sender'], admitted['recipient'], admitted['kind'], admitted['body'],
+                    admitted['receipt']) == ('root', 'worker', 'task', initial_task, None), admitted
+            assert not json.loads(call('session', 'worker'))['native']
             call('connect', 'worker', '', json.dumps([str(binary), str(db), *receive]))
             with (out / 'observer.log').open('w') as log:
                 observer = subprocess.Popen([str(binary), str(db), *receive, INITIAL], cwd=repo,

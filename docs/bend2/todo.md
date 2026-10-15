@@ -4,6 +4,21 @@ The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3
 retain findings, ownership and acceptance requirements. This page links current
 Baton follow-up work for contributors. Every open issue has a link on this page.
 
+- [#747: Wait for actual native settlement in real acceptance drivers](https://github.com/Flip-Engineering/baton/issues/747).
+  Actual native-receive admission completed before its successful background
+  bootstrap; knowledge phase checks ran before the producer capture began.
+  Root-day started a second direct turn while the original native remained
+  active, and recovery's initial live-message command refused the recipient's
+  missing native identity. Await actual selected execution and process
+  settlement, admit recovery's first task through the existing canonical batch
+  transport, and retain an explicit verification path for already-admitted work.
+  Preserve complete bodies, native lineage, first receipts, reports, original
+  failure evidence and every semantic assertion. Validate the corrected callers
+  remotely without duplicate tasks. Coordinate with
+  [#727](https://github.com/Flip-Engineering/baton/issues/727),
+  [#730](https://github.com/Flip-Engineering/baton/issues/730) and
+  [#746](https://github.com/Flip-Engineering/baton/issues/746).
+
 - [#746: Read promoted root holdings in the knowledge consumer acceptance](https://github.com/Flip-Engineering/baton/issues/746).
   Source review found that the consumer task and verifier use the knowledge
   audit view while requiring the producer's local control finding to be absent.

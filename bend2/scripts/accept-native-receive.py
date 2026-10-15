@@ -8,6 +8,7 @@ By default the coordinator builds from that clone; BEND selects an installed
 compiler. --coordinator uses a supplied executable with unverified source linkage.
 --tasks accepts review-native and review-validation objects with initial text and
 optional followup text for both Players. Follow-ups verify Player session reuse.
+--resume continues a retained bootstrap-only run after its original admission.
 """
 import argparse
 import hashlib
@@ -15,6 +16,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import select
 import shlex
 import shutil
 import sqlite3
@@ -41,7 +43,73 @@ def snapshot(db):
     with sqlite3.connect(f'{db.as_uri()}?mode=ro', uri=True) as connection:
         connection.row_factory = sqlite3.Row
         return {table: [dict(row) for row in connection.execute(f'SELECT * FROM {table}')]
-                for table in ['sessions', 'messages', 'turns']}
+                for table in ['sessions', 'messages', 'turns', 'executions']}
+
+
+def process_rows():
+    rows = []
+    for line in command(['ps', '-axo', 'pid=,ppid=,stat=,lstart=,command=']).splitlines():
+        fields = line.strip().split(None, 8)
+        if len(fields) == 9:
+            rows.append({'pid': int(fields[0]), 'ppid': int(fields[1]),
+                         'status': fields[2], 'started': ' '.join(fields[3:8]),
+                         'command': fields[8]})
+    return rows
+
+
+def wait_for_work(out, binary, db, label):
+    """Observe owned native work through its actual process lifetimes."""
+    owner_command = f'{binary.resolve()} --instance-owner {db.resolve()}'
+    observations = []
+    evidence = out / f'{label}.lifecycle.json'
+    while True:
+        rows = process_rows()
+        by_pid = {row['pid']: row for row in rows}
+        ancestors = {os.getpid()}
+        parent = os.getppid()
+        while parent in by_pid and parent not in ancestors:
+            ancestors.add(parent)
+            parent = by_pid[parent]['ppid']
+        work = [row for row in rows if row['pid'] not in ancestors
+                and str(out) in row['command'] and row['command'] != owner_command
+                and not row['status'].startswith('Z')]
+        if not work:
+            observations.append({'observed_unix': time.time(), 'remaining': []})
+            save(evidence, observations)
+            return
+        for row in work:
+            handle = None
+            backend = 'pidfd' if hasattr(os, 'pidfd_open') else 'kqueue'
+            observation = {'process': row, 'backend': backend, 'registered_unix': time.time()}
+            observations.append(observation)
+            try:
+                if backend == 'pidfd':
+                    handle = os.pidfd_open(row['pid'])
+                else:
+                    handle = select.kqueue()
+                    event = select.kevent(row['pid'], filter=select.KQ_FILTER_PROC,
+                                          flags=select.KQ_EV_ADD | select.KQ_EV_ONESHOT,
+                                          fflags=select.KQ_NOTE_EXIT)
+                    handle.control([event], 0, 0)
+                current = next((item for item in process_rows() if item['pid'] == row['pid']), None)
+                observation['after_registration'] = current
+                save(evidence, observations)
+                if current is not None and all(current[key] == row[key]
+                                               for key in ['command', 'started']):
+                    if backend == 'pidfd':
+                        select.select([handle], [], [])
+                    else:
+                        handle.control(None, 1, None)
+                    observation['exit_observed_unix'] = time.time()
+            except ProcessLookupError:
+                observation['gone_before_registration_unix'] = time.time()
+            finally:
+                if handle is not None:
+                    if backend == 'pidfd':
+                        os.close(handle)
+                    else:
+                        handle.close()
+                save(evidence, observations)
 
 
 def public_logs(db, session):
@@ -158,7 +226,11 @@ def main():
     parser.add_argument('--revision', default='HEAD')
     parser.add_argument('--review-base', default='9e008263')
     parser.add_argument('--tasks', type=Path, help='JSON with initial and optional followup Player tasks')
+    parser.add_argument('--resume', action='store_true',
+                        help='Continue an existing bootstrap-only run without delivering bootstrap again')
     args = parser.parse_args()
+    if not (hasattr(os, 'pidfd_open') or hasattr(select, 'kqueue')):
+        parser.error('Process-exit observation requires Linux pidfds or macOS/BSD kqueue')
     custom_tasks = json.loads(args.tasks.read_text()) if args.tasks else None
     if custom_tasks is not None:
         player_names = {'review-native', 'review-validation'}
@@ -185,19 +257,45 @@ def main():
     if command(['git', '-C', source, 'ls-files', '--others', '--exclude-standard', '--', 'bend2/src']):
         parser.error('Commit new runtime source files before selecting the acceptance revision')
     out = args.output.resolve()
-    out.mkdir(parents=True, exist_ok=False)
     db = out / 'state.db'
     repo = out / 'repo'
-    command(['git', 'clone', '--shared', '--no-checkout', source, repo])
-    command(['git', '-C', repo, 'checkout', '--detach', base])
-    binary, build = prepare_coordinator(source, repo, out, args.coordinator)
-    pin = {'source': base, 'review_base': review_base, 'source_directory': str(source),
-           'coordinator_sha256': hashlib.sha256(binary.read_bytes()).hexdigest(),
-           'coordinator_build': build,
-           'driver_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
-           'routes': routes, 'custom_tasks': custom_tasks, 'started_unix': time.time()}
-    save(out / 'run.json', pin)
-    processes = []
+    resumed_label = f'resume-{time.time_ns()}' if args.resume else None
+    if args.resume:
+        pin = json.loads((out / 'run.json').read_text())
+        binary = out / 'baton2'
+        for key, expected in {'source': base, 'review_base': review_base, 'routes': routes,
+                              'custom_tasks': custom_tasks}.items():
+            assert pin[key] == expected, (key, pin[key], expected)
+        assert hashlib.sha256(binary.read_bytes()).hexdigest() == pin['coordinator_sha256']
+        assert command(['git', '-C', repo, 'rev-parse', 'HEAD']) == base
+        assert not command(['git', '-C', repo, 'status', '--porcelain'])
+        initial = snapshot(db)
+        assert [(row['id'], row['sender'], row['recipient'], row['kind'])
+                for row in initial['messages'] if row['kind'] != 'report'] == [
+                    ('root-bootstrap', 'operator', 'root', 'task')], initial
+        processes = [(None, row) for row in json.loads((out / 'processes.json').read_text())]
+        assert len(processes) == 1 and processes[0][1]['message'] == 'root-bootstrap'
+        assert processes[0][1]['exit_code'] == 0, processes
+        save(out / f'{resumed_label}.json', {
+            'started_unix': time.time(), 'original_run': pin, 'original_state': initial,
+            'original_failure_sha256': hashlib.sha256((out / 'failure-state.json').read_bytes()).hexdigest(),
+            'driver_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+            'original_processes': [row for _, row in processes]})
+    else:
+        out.mkdir(parents=True, exist_ok=False)
+        command(['git', 'clone', '--shared', '--no-checkout', source, repo])
+        command(['git', '-C', repo, 'checkout', '--detach', base])
+        binary, build = prepare_coordinator(source, repo, out, args.coordinator)
+        pin = {'source': base, 'review_base': review_base, 'source_directory': str(source),
+               'coordinator_sha256': hashlib.sha256(binary.read_bytes()).hexdigest(),
+               'coordinator_build': build,
+               'driver_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+               'routes': routes, 'custom_tasks': custom_tasks, 'started_unix': time.time()}
+        save(out / 'run.json', pin)
+        processes = []
+
+    def save_state(name, state):
+        save(out / (f'{resumed_label}.{name}' if resumed_label else name), state)
 
     def call(*argv):
         return json.loads(command([binary, db, *argv], cwd=repo))
@@ -229,6 +327,13 @@ def main():
         failed = [row['message'] for child, row in processes if child in selected and row['exit_code']]
         if failed:
             raise RuntimeError(f'Native delivery failed for {failed}; inspect retained command logs')
+        label = '-'.join(next(row['message'] for child, row in processes if child is process)
+                         for process in selected)
+        wait_for_work(out, binary, db, label)
+        state = snapshot(db)
+        save_state(f'{label}.settled-state.json', state)
+        for row in state['executions']:
+            assert row['phase'] == 'exited' and row['status'] == 'exit 0', row
 
     coordinator_cli = ' '.join(shlex.quote(str(value)) for value in [binary, db])
     common = f"""Review source revision {base}, compared with {review_base}.
@@ -274,12 +379,16 @@ The reviewers may receive a second task in their existing native sessions.
 Do not edit code, run tests or delegate further work. On root-followup, check all
 retained reports and receipts, summarize the findings and acknowledge the follow-up.
 """
-    call('attach', 'operator', 'terminal', '', '')
-    call('role', 'operator', 'operator')
     endpoint = [str(binary), str(db), 'receive', 'root', routes['codex']['executable'],
                 routes['codex']['model'], routes['codex']['effort'], str(repo), str(out / 'root.jsonl')]
-    call('attach', 'root', 'codex', '', json.dumps(endpoint))
-    call('role', 'root', 'principal-conductor')
+    if not args.resume:
+        call('attach', 'operator', 'terminal', '', '')
+        call('role', 'operator', 'operator')
+        call('attach', 'root', 'codex', '', json.dumps(endpoint))
+        call('role', 'root', 'principal-conductor')
+    else:
+        bootstrap = next(row for row in initial['messages'] if row['id'] == 'root-bootstrap')
+        assert bootstrap['body'] == root_task, bootstrap
     tasks = {}
 
     def player_task(marker, focus):
@@ -291,25 +400,40 @@ retained reports and receipts, summarize the findings and acknowledge the follow
 
     for player, marker, focus in players:
         workspace = out / player
-        call('recruit', player, 'root', 'omp', routes['omp']['model'], routes['omp']['effort'],
-             str(repo), player, str(workspace), base)
+        if not args.resume:
+            call('recruit', player, 'root', 'omp', routes['omp']['model'], routes['omp']['effort'],
+                 str(repo), player, str(workspace), base)
         # Empty route and workspace arguments exercise the registered Player binding.
         endpoint = [str(binary), str(db), 'receive', player, routes['omp']['executable'],
                     '', '', '', str(out / f'{player}.jsonl')]
-        call('connect', player, '', json.dumps(endpoint))
+        if not args.resume:
+            call('connect', player, '', json.dumps(endpoint))
+        else:
+            session = next(row for row in initial['sessions'] if row['id'] == player)
+            for key, expected in {'parent': 'root', 'harness': 'omp', 'model': routes['omp']['model'],
+                                  'effort': routes['omp']['effort'], 'workspace': str(workspace)}.items():
+                assert session[key] == expected, (key, session)
+            assert not session['native'], session
+            assert command(['git', '-C', workspace, 'rev-parse', 'HEAD']) == base
+            assert not command(['git', '-C', workspace, 'status', '--porcelain'])
         tasks[player] = player_task(marker, focus)
     try:
         print(f'Native receive acceptance: {out}', flush=True)
-        finish_all([start_message('root-bootstrap', 'root', root_task)])
+        if args.resume:
+            wait_for_work(out, binary, db, resumed_label + '-bootstrap')
+            assert all(row['phase'] == 'exited' and row['status'] == 'exit 0'
+                       for row in snapshot(db)['executions']), snapshot(db)
+        else:
+            finish_all([start_message('root-bootstrap', 'root', root_task)])
         initial = snapshot(db)
-        save(out / 'bootstrap-state.json', initial)
+        save_state('bootstrap-state.json', initial)
         root_native = next(row['native'] for row in initial['sessions'] if row['id'] == 'root')
         assert root_native
         assert next(row for row in initial['messages'] if row['id'] == 'root-bootstrap')['receipt']
         children = [start_message(f'task-{player}', player, tasks[player]) for player, _, _ in players]
         finish_all(children)
         reviewed = snapshot(db)
-        save(out / 'review-state.json', reviewed)
+        save_state('review-state.json', reviewed)
         assert next(row['native'] for row in reviewed['sessions'] if row['id'] == 'root') == root_native
         player_natives = {player: next(row['native'] for row in reviewed['sessions'] if row['id'] == player)
                           for player, _, _ in players}
@@ -341,7 +465,7 @@ retained reports and receipts, summarize the findings and acknowledge the follow
                          for player, marker, _ in players]
             finish_all(followups)
             resumed = snapshot(db)
-            save(out / 'worker-followup-state.json', resumed)
+            save_state('worker-followup-state.json', resumed)
             check_reports(resumed, 2)
         followup = (common + '\nRead all retained reviewer reports and their handling state. '
                     'Summarize what should be addressed next. Use the acknowledge action '
@@ -374,6 +498,7 @@ retained reports and receipts, summarize the findings and acknowledge the follow
         save(out / 'evidence.json', {
             **pin, 'ended_unix': time.time(), 'state': final,
             'processes': [row for _, row in processes], 'root_native_threads': native_threads,
+            'resumption': resumed_label,
             'public_log_generations': {session: public_logs(db, session)
                                        for session in ['root', *(p for p, _, _ in players)]},
             'player_native_sessions': player_natives, 'player_followups_verified': has_followups,
@@ -391,7 +516,7 @@ retained reports and receipts, summarize the findings and acknowledge the follow
         })
         print(f'Native receive verified: {out / "evidence.json"}', flush=True)
     except BaseException:
-        save(out / 'failure-state.json', snapshot(db))
+        save_state('failure-state.json', snapshot(db))
         raise
 
 
