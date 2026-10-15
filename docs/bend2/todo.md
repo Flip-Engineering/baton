@@ -83,6 +83,18 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   global help, and its command, contract and root suites pass. Controlled
   native fixtures must establish their recorded conversation before owned
   reads and complete handling before their terminal frame.
+  The remaining native checks exposed stale fixture contracts: compile the
+  native entry with its GNU C dialect, supply the current receive attempt
+  argument, and inject the stop process group into the current session header.
+  Receiver switching retains a failed App terminal as the command result while
+  durably admitting newer input. Assert both that complete failure and the
+  subsequent native turn. Preserve every later interruption and stop assertion.
+  Preserve trailing spaces when comparing a fixture owner's process command,
+  and create the unrelated project as a valid Git checkout before testing its
+  recorded session boundary. The three affected dispatch checks pass remotely.
+  The receive output check compares the complete committed delivery row and
+  separately asserts the public read's derived input status. Compile its waiter
+  fixture with the production optimization setting.
   Installed context acceptance also reached a fresh runtime launch whose declared
   `program` field was omitted by the shared source accessor. Read `program` for
   runtime launch requests. Focused package run `38377` on the completed `2994dd9d8`
@@ -172,6 +184,14 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   waited after a busy admission claim. The competing internal writer released
   without a committed-change notification. Retry the claim through the ordinary
   session command and retain the terminal notification in the existing queue.
+  The empty-writer regression and affected follower check pass with the claim
+  correction in `908baa928`. Complete workflow qualification remains open.
+  A later follower failed in an external claim-state read during contention.
+  Retry its three external reads through the same session command. The receiver
+  switch and four writer/claim checks pass with this correction. An attached
+  Claude MCP input witness also failed while reading session state during a
+  database write; qualify its ordinary session-read retry through the complete
+  dispatch suite.
   Complete current-source qualification and
   installed acceptance. Coordinate with
   [#747](https://github.com/Flip-Engineering/baton/issues/747).

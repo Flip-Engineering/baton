@@ -124,8 +124,19 @@ async function connectedInputWitness(encoded) {
   const { DatabaseSync } = await import('node:sqlite');
   const connection = new DatabaseSync(database, { readOnly: true });
   try {
-    const selected = connection.prepare('SELECT native,harness,endpoint FROM sessions WHERE id=?').get(sessionId);
-    const stopped = connection.prepare('SELECT 1 FROM session_stops WHERE session=?').get(sessionId);
+    let selected, stopped;
+    for (;;) {
+      try {
+        selected = connection.prepare('SELECT native,harness,endpoint FROM sessions WHERE id=?').get(sessionId);
+        stopped = connection.prepare('SELECT 1 FROM session_stops WHERE session=?').get(sessionId);
+        break;
+      } catch (error) {
+        if (!Number.isInteger(error?.errcode) || (error.errcode & 255) !== 5) throw error;
+        process.stderr.write(JSON.stringify({ type: 'mcpInputWitnessDatabaseBusy', session: sessionId,
+          errcode: error.errcode, cause: error.message }) + '\n');
+        execFileSync(coordinatorExe, [dbPath, 'session', sessionId], { encoding: 'utf8', maxBuffer: Infinity });
+      }
+    }
     if (!selected || selected.harness !== 'claude-code' || selected.native !== context.native
         || selected.endpoint !== context.endpoint || stopped) {
       throw new Error('The connected input context is no longer the active recipient endpoint and native conversation.');

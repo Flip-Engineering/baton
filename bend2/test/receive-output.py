@@ -84,7 +84,13 @@ class ReceiveOutput(unittest.TestCase):
                     ('queued', 'root', 'parent', 'task', 'Queued work.'))
             coord('connect', 'root', 'native-root',
                   json.dumps([sys.executable, str(directory / 'gate.py'), 'delivery']))
-            expected = coord('delivery', 'completed')
+            expected_delivery = json.loads(coord('delivery', 'completed'))
+            self.assertEqual(expected_delivery.pop('nativeInputStatus'), {
+                'delivered': 'unrecorded', 'read': 'unrecorded',
+                'handled': 'unrecorded', 'attempts': [],
+            })
+            expected = json.dumps(expected_delivery, ensure_ascii=False,
+                                  separators=(',', ':')) + '\n'
             done_read, done_write = socket.socketpair()
             gates = {}
             child = None

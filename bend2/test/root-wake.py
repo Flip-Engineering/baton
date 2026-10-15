@@ -818,6 +818,7 @@ while True:
             self.admission_release.write_text('go\n')
             self.eventually(claim_waits_for_writer,
                             'the follower did not observe the held SQLite writer')
+            self.admission_release.unlink()
             stop = subprocess.Popen(
                 [str(EXE), str(self.db), 'stop', 'root', 'claim-busy-stop',
                  'Keep the complete input.'], env=self.environment,
@@ -827,6 +828,7 @@ while True:
         stdout, stderr = stop.communicate()
         self.assertEqual(stop.returncode, 0, stderr)
         self.assertEqual(json.loads(stdout)['stopId'], 'claim-busy-stop')
+        self.admission_release.write_text('go\n')
         follower.wait()
         self.assertEqual(follower.returncode, 0, diagnostic.read_text())
         self.assertTrue(any(event.get('type') == 'codexInboxReleased' and event.get('stopped')

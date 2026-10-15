@@ -158,7 +158,7 @@ int baton2_runtime_main(int argc, char **argv) {
 }
 ''')
         binary = self.directory / 'native entry'
-        compiled = subprocess.run([os.environ.get('CC', 'clang'), '-std=c11',
+        compiled = subprocess.run([os.environ.get('CC', 'clang'), '-std=gnu11',
                                    '-Wall', '-Wextra', '-Werror',
                                    str(ROOT / 'bend2/src/host/native-entry.c'),
                                    str(runtime), '-o', str(binary)], capture_output=True, text=True)

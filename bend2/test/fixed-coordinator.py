@@ -998,7 +998,12 @@ finally:
         self.assertEqual(len(app_calls('turn/start')), 2, 'the provider failure retried unchanged input')
         self.coord('report', 'app-failure-observed', 'w1', 'The coordinator has the actual failure evidence.')
         self.assertEqual(len(app_calls('turn/start')), 2, 'an unrelated commit retried the same failure')
-        self.dispatch('fresh-app-report', 'w1', 'A genuinely newer coordinator result after recovery.', kind='report')
+        fresh_body = 'A genuinely newer coordinator result after recovery.'
+        fresh = self.coord('message', 'fresh-app-report', 'root', 'w1', 'report', fresh_body, ok=False)
+        self.assertEqual(fresh.returncode, 1, fresh.stderr)
+        self.assertEqual(json.loads(fresh.stderr), body['turn'])
+        self.assertEqual(self.query("SELECT sender,recipient,kind,body,receipt FROM messages WHERE id='fresh-app-report'"),
+                         [('root', 'w1', 'report', fresh_body, None)])
         self.eventually(lambda: len(app_calls('turn/start')) == 3,
                         'a fresh report remained behind the failed admission claim')
         self.assertEqual(self.query("SELECT receipt FROM messages WHERE id IN ('g3','g4','g5','fresh-app-report') ORDER BY id"),

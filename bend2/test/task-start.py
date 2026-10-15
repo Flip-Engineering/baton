@@ -683,7 +683,8 @@ class TaskStart(unittest.TestCase):
 
     def test_project_selection_rejects_an_unrelated_recorded_session(self):
         unrelated = self.directory / 'unrelated-project'
-        unrelated.mkdir()
+        subprocess.run(['git', 'clone', '--quiet', '--shared', str(self.repo), str(unrelated)],
+                       env=self.environment, check=True, capture_output=True)
         self.call('join', 'foreign', 'root', 'codex', 'gpt-6-astra', 'low', unrelated)
         self.pending_input('foreign-task', 'root', 'foreign', 'task', 'Retain the other project task.')
         before = self.rows('SELECT * FROM sessions ORDER BY id'), self.rows('SELECT * FROM messages ORDER BY seq')

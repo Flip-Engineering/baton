@@ -23,8 +23,8 @@ if args[:1]==['tool_fixture']:
     stream.write((json.dumps({'role':'tool','pid':os.getpid(),'ppid':os.getppid(),'pgid':os.getpgrp()})+'\\n').encode())
     stream.readline()
     sys.exit(0)''', 1)
-FIXTURE = FIXTURE.replace("'pid':os.getpid(),'ppid':os.getppid(),'session':model",
-                          "'pid':os.getpid(),'ppid':os.getppid(),'pgid':os.getpgrp(),'session':model", 1)
+FIXTURE = FIXTURE.replace("'pid':os.getpid(),'ppid':os.getppid(),'session':session",
+                          "'pid':os.getpid(),'ppid':os.getppid(),'pgid':os.getpgrp(),'session':session", 1)
 FIXTURE = FIXTURE.replace("    if action.get('progress'):", """    if action.get('resist_term'):
         signal.signal(signal.SIGTERM, lambda signum, frame: reply({'signal': signum}))
         reply({'resists_term': True})

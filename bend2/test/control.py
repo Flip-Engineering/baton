@@ -419,7 +419,7 @@ class Control(unittest.TestCase):
         self.server.close()
         configured = json.loads((self.directory / 'fixture.json').read_text())['exe']
         owner = f'{pathlib.Path(configured).resolve()} --instance-owner {self.db.resolve()}'
-        self.eventually(lambda: [row.strip().split(None, 3)[3] for row in self.process_rows()]
+        self.eventually(lambda: [row.split(None, 3)[3] for row in self.process_rows()]
                         in ([], [owner]))
         shutdown_fixture_owner(self)
         self.eventually(lambda: not self.process_rows())

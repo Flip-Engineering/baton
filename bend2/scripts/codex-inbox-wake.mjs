@@ -521,6 +521,17 @@ async function follow(proxy, executable, database, session, threadId, inbox) {
     try { await reportFailure(executable, database, session, threadId, error); }
     catch (error) { notificationFailure = error; throw error; }
   };
+  const claimed = async row => {
+    for (;;) {
+      try { return inbox.claimed(row); }
+      catch (error) {
+        if (!databaseBusy(error)) throw error;
+        record({ type: 'codexInboxDatabaseBusy', session, threadId, operation: 'claimed',
+          errcode: error.errcode, cause: error.message });
+        await coordinatorCommand(executable, database, ['session', session]);
+      }
+    }
+  };
   proxy.onNotification = message => {
     if (message.error) events.push(message);
     else if (message.params?.threadId === threadId && message.method === 'item/completed') {
@@ -590,14 +601,14 @@ async function follow(proxy, executable, database, session, threadId, inbox) {
       let freshThread = false;
       if (event.initial && thread.status.type === 'idle' && row.pendingCount) {
         const turns = await proxy.rpc('thread/turns/list', { threadId, sortDirection: 'desc', itemsView: 'notLoaded' });
-        freshThread = !inbox.claimed(row);
+        freshThread = !await claimed(row);
         if (!freshThread) record({ type: 'codexInboxTurnRetained', session, threadId, turn: turns.data[0] });
       }
       const admit = row.pendingCount && (freshThread || recipientProgress || coordinatorInput ||
-        (thread.status.type === 'idle' && !inbox.claimed(row)));
+        (thread.status.type === 'idle' && !await claimed(row)));
       if (admit) {
         row = await readCommittedInbox(inbox, events, session, threadId);
-        if (!row.stopped && row.pendingCount && !inbox.claimed(row)) {
+        if (!row.stopped && row.pendingCount && !await claimed(row)) {
           let admission;
           try {
             for (;;) {

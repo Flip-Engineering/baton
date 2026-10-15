@@ -419,7 +419,7 @@ int main(void) {
   return 0;
 }
 ''')
-        compiled = subprocess.run([os.environ.get('CC', 'clang'), '-O0', '-pthread', str(source),
+        compiled = subprocess.run([os.environ.get('CC', 'clang'), '-O1', '-pthread', str(source),
                                    '-lsqlite3', '-lm', '-o', str(probe)],
                                   capture_output=True, text=True)
         self.assertEqual(compiled.returncode, 0, compiled.stderr)
