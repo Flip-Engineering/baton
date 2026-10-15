@@ -588,9 +588,14 @@ async function follow(proxy, executable, database, session, threadId, inbox) {
           try {
             for (;;) {
               try { admission = inbox.claim(); break; }
-              catch (error) { if (!databaseBusy(error)) throw error; await events.committed(); }
+              catch (error) {
+                if (!databaseBusy(error)) throw error;
+                record({ type: 'codexInboxDatabaseBusy', session, threadId, operation: 'claim',
+                  errcode: error.errcode, cause: error.message });
+                await events.committed();
+              }
             }
-            if (!admission) { event = await events.next(); continue; }
+            if (!admission) { event = {}; continue; }
             const result = await deliver(proxy, threadId, inbox.pointer(admission.row), async status => {
               for (;;) {
                 try {

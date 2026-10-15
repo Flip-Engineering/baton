@@ -590,6 +590,55 @@ while True:
         second.wait()
         self.assertEqual(second.returncode, 0, second_error.read_text())
 
+    def test_stop_while_follower_claim_is_busy_releases_retained_input(self):
+        queued, _ = self.public_proxy()
+        current = json.loads(self.public_app_state.read_text())
+        self.public_app_state.write_text(json.dumps({**current, 'status': 'idle', 'holdRead': True}))
+        self.coord('attach', 'root', 'codex', '', '')
+        self.coord('role', 'root', 'principal-conductor')
+        self.coord('attach', 'operator', 'terminal', '', '')
+        self.coord('role', 'operator', 'operator')
+        self.recruit('child', 'root', 'omp')
+        body = 'Full retained input during claim contention: café Ω 🙂\nSecond line.'
+        self.assertNotEqual(self.coord_raw('report', 'claim-busy-input', 'child', body).returncode, 0)
+        self.coord('connect', 'root', 'native-app-root', '')
+
+        output = self.directory / 'busy-follow.jsonl'
+        diagnostic = self.directory / 'busy-follow.stderr'
+        with output.open('w') as stdout, diagnostic.open('w') as stderr:
+            follower = subprocess.Popen(
+                ['node', str(ROOT / 'bend2/scripts/codex-inbox-wake.mjs'), '--follow',
+                 str(EXE), str(self.db), 'root', 'native-app-root'],
+                env=self.environment, stdout=stdout, stderr=stderr)
+        self.children.append(follower)
+        self.eventually(self.admission_barrier.exists, 'the native metadata read was not held')
+        with sqlite3.connect(self.db) as writer:
+            writer.execute('BEGIN IMMEDIATE')
+            self.admission_release.write_text('go\n')
+            self.eventually(lambda: any(event.get('type') == 'codexInboxDatabaseBusy'
+                                       and event.get('operation') == 'claim'
+                                       for line in output.read_text().splitlines()
+                                       if (event := json.loads(line))),
+                            'the follower did not observe the held SQLite writer')
+            stop = subprocess.Popen(
+                [str(EXE), str(self.db), 'stop', 'root', 'claim-busy-stop',
+                 'Keep the complete input.'], env=self.environment,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            self.children.append(stop)
+            writer.commit()
+        stdout, stderr = stop.communicate()
+        self.assertEqual(stop.returncode, 0, stderr)
+        self.assertEqual(json.loads(stdout)['stopId'], 'claim-busy-stop')
+        follower.wait()
+        self.assertEqual(follower.returncode, 0, diagnostic.read_text())
+        self.assertTrue(any(event.get('type') == 'codexInboxReleased' and event.get('stopped')
+                            for line in output.read_text().splitlines()
+                            if (event := json.loads(line))), output.read_text())
+        self.assertFalse(queued.exists(), queued.read_text() if queued.exists() else '')
+        retained = json.loads(self.coord('delivery', 'claim-busy-input'))
+        self.assertEqual(retained['body'], body)
+        self.assertIsNone(retained['receipt'])
+
     def test_stop_or_receipt_during_native_metadata_read_prevents_admission(self):
         for disposition in ('stop', 'receipt'):
             with self.subTest(disposition=disposition):
