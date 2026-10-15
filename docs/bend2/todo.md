@@ -110,6 +110,10 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   Target project resume exited before connecting to its controlled native.
   Observe that child while accepting the connection and retain its complete
   command output, native-start log and original resume assertions.
+  Candidate run `38750337394` completed the nested receive suite with exit zero,
+  then failed its empty stdout assertion because fixture progress used stdout.
+  Send those diagnostics to stderr and preserve native protocol output and all
+  assertions. Complete source qualification remains pending.
   Browser acceptance reached the final actor through End while its cursor was
   outside the viewport. Scroll the keyboard-selected actor into view. The complete
   browser acceptance now passes with the current actor cards and knowledge view.

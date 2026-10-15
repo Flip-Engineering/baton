@@ -2132,7 +2132,7 @@ class Receive(unittest.TestCase):
     def exercise_completed_observer(self, stopped, keeper_loss=True, device_renumbered=False,
                                     released=False):
         print(f'Completed observer recovery: stopped={stopped}, keeper_loss={keeper_loss}, '
-              f'device_renumbered={device_renumbered}, released={released}', flush=True)
+              f'device_renumbered={device_renumbered}, released={released}', file=sys.stderr, flush=True)
         self.coord('connect', 'root', 'native-root', json.dumps([str(self.fixture), 'parent_endpoint']))
         self.player(harness='omp')
         config_path = self.directory / 'fixture.json'
@@ -2141,7 +2141,7 @@ class Receive(unittest.TestCase):
         config['hold_parent_delivery'] = released
         config_path.write_text(json.dumps(config))
         self.prepare_input('first', 'parent', 'Complete the original input.', kind='task')
-        print('WAIT: original native connection', flush=True)
+        print('WAIT: original native connection', file=sys.stderr, flush=True)
         observer = self.spawn(*self.receive_args('parent'))
         original, started = self.accept_child(observer, 'parent')
         native_id = self.eventually(lambda: self.coord('player', 'parent')['native'],
@@ -2165,7 +2165,7 @@ class Receive(unittest.TestCase):
         body = ('Original result after native exit.\nComplete Unicode result caféλ🙂.'
                 if released else 'Original result after native exit.')
         self.action(original, body=body, exit_after_terminal=True)
-        print('WAIT: original native exit and retained status', flush=True)
+        print('WAIT: original native exit and retained status', file=sys.stderr, flush=True)
         self.assertEqual(original.readline(), b'')
         self.eventually(lambda: (attempt / 'status').exists(),
                         'The keeper did not record actual native exit.')
@@ -2230,7 +2230,7 @@ class Receive(unittest.TestCase):
             writer.execute('BEGIN IMMEDIATE')
             if not stopped and not released:
                 self.assertEqual(self.coord(*self.receive_args('parent'))['status'], 'queued')
-            print('WAIT: recovering the completed attempt and retiring the selected observer', flush=True)
+            print('WAIT: recovering the completed attempt and retiring the selected observer', file=sys.stderr, flush=True)
             recovery = self.spawn('recover-observer', 'parent', observer.pid)
             self.finish_observer_during_recovery(observer, recovery, drain=not released)
             self.assertEqual(observer.returncode, -signal.SIGTERM)
@@ -2239,7 +2239,7 @@ class Receive(unittest.TestCase):
         if held_delivery is not None:
             self.assertEqual(held_delivery.readline(), b'')
             self.finish(observer, ok=False)
-        print('Selected observer exited; awaiting recovery completion', flush=True)
+        print('Selected observer exited; awaiting recovery completion', file=sys.stderr, flush=True)
         if stopped:
             self.finish(recovery)
             self.assertEqual([row['id'] for row in self.coord('inbox', 'parent')], ['second'])
@@ -2250,7 +2250,7 @@ class Receive(unittest.TestCase):
                 ).fetchone(), ('operator-stop', 'Preserve the operator stop.'))
             self.assert_no_start()
         else:
-            print('WAIT: pending input in the original native conversation', flush=True)
+            print('WAIT: pending input in the original native conversation', file=sys.stderr, flush=True)
             continuation, resumed = self.accept_child(recovery, 'parent')
             if not keeper_loss:
                 current_owner = self.selected_process(selected_owner['pid'])
@@ -2263,7 +2263,7 @@ class Receive(unittest.TestCase):
             self.assertNotIn('[id: first]', resumed['prompt'])
             self.action(continuation, body='Pending input completed in the original conversation.')
             self.assertEqual(continuation.readline(), b'')
-            print('WAIT: recovery reports and acknowledgment after native continuation', flush=True)
+            print('WAIT: recovery reports and acknowledgment after native continuation', file=sys.stderr, flush=True)
             self.finish(recovery)
             self.assertEqual(self.coord('inbox', 'parent'), [])
         turns = self.coord('turns', 'parent')
