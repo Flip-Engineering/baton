@@ -336,11 +336,22 @@ async function openInbox(executable, database, session, threadId) {
         return { token, row: current };
       } catch (error) { db.exec('ROLLBACK'); throw error; }
     },
-    admitted(token, result) {
+    async admitted(token, result) {
       const turnId = result?.turnId ?? result?.turn?.id;
-      if (token && turnId) db.prepare(`UPDATE codex_inbox_wakes SET cause=json_set(cause,'$.turnId',?)
-        WHERE session=? AND native=? AND token=? AND json_valid(cause)`)
-        .run(turnId, session, threadId, token);
+      if (!token || !turnId) return;
+      for (;;) {
+        try {
+          db.prepare(`UPDATE codex_inbox_wakes SET cause=json_set(cause,'$.turnId',?)
+            WHERE session=? AND native=? AND token=? AND json_valid(cause)`)
+            .run(turnId, session, threadId, token);
+          return;
+        } catch (error) {
+          if (!databaseBusy(error)) throw error;
+          record({ type: 'codexInboxDatabaseBusy', session, threadId,
+            operation: 'admitted', errcode: error.errcode, cause: error.message });
+          await coordinatorCommand(executable, database, ['session', session]);
+        }
+      }
     },
     refresh(token, status) {
       db.exec('BEGIN IMMEDIATE');
@@ -607,7 +618,7 @@ async function follow(proxy, executable, database, session, threadId, inbox) {
                 } catch (error) { if (!databaseBusy(error)) throw error; await events.committed(); }
               }
             });
-            inbox.admitted(admission.token, result);
+            await inbox.admitted(admission.token, result);
             const turnId = result?.turnId ?? result?.turn?.id;
             if (turnId && !reportedTurns.has(turnId)) observedTurns.add(turnId);
           } catch (error) {
@@ -698,7 +709,7 @@ if (!threadId || (managed ? !executable || !database || !session || (mode === '-
               }
             }
           });
-          inbox.admitted(token, result);
+          await inbox.admitted(token, result);
         }
       }
     } else {
@@ -736,7 +747,7 @@ if (!threadId || (managed ? !executable || !database || !session || (mode === '-
             }
           }
         } : undefined);
-        if (inbox) inbox.admitted(token, result);
+        if (inbox) await inbox.admitted(token, result);
       }
     }
   } catch (error) {

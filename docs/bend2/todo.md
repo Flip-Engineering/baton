@@ -117,7 +117,13 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   Four affected checks pass. A real held-writer regression preserves the full
   pointer, message body, native identity and unhandled receipt, and fails
   naturally with both the previous and target helpers. The original incident's
-  writer lifetime was not measured. Complete current-source qualification and
+  writer lifetime was not measured. The later candidate reached a successful
+  native RPC, then failed while recording its admitted turn ID. Retry that
+  fenced metadata update through contention. The post-RPC held-writer regression
+  fails with the previous helper and passes with the correction, preserving one
+  RPC, the complete pointer and body, the turn ID and the unhandled receipt.
+  The affected OMP socket-closure continuation also passes remotely.
+  Complete current-source qualification and
   installed acceptance. Coordinate with
   [#747](https://github.com/Flip-Engineering/baton/issues/747).
 

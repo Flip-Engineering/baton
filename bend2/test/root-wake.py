@@ -231,12 +231,15 @@ class RootWake(unittest.TestCase):
         self.public_app_state = self.directory / 'public-app-state.json'
         self.admission_barrier = self.directory / 'public-read-held'
         self.admission_release = self.directory / 'public-read-released'
+        self.admitted_barrier = self.directory / 'public-admitted-held'
+        self.admitted_release = self.directory / 'public-admitted-released'
         self.public_app_state.write_text(json.dumps({'status': 'active', 'turn': 'fixture-turn', 'number': 0}))
         command = self.directory / 'codex'
         command.write_text('#!' + sys.executable + '\n' + '''
-import base64,hashlib,json,pathlib,struct,sys,time
+import base64,hashlib,json,pathlib,sqlite3,struct,sys,time
 assert sys.argv[1:]==['app-server','proxy'], sys.argv
 state=pathlib.Path(__STATE__)
+if json.loads(state.read_text()).get('exitBeforeRpc'):raise SystemExit(9)
 def exact(n):
     data=b''
     while len(data)<n:
@@ -294,12 +297,23 @@ while True:
             state.write_text(json.dumps(current))
             result={'turn':{'id':current['turn'],'status':'inProgress','items':[]}}
         else:result={'turnId':current['turn']}
+        if current.get('holdAdmitted'):
+            with sqlite3.connect(__DB__) as writer:
+                writer.execute('BEGIN EXCLUSIVE')
+                pathlib.Path(__ADMITTED_BARRIER__).write_text('Successful native response holds the SQLite writer.')
+                reply({'id':request['id'],'result':result})
+                while not pathlib.Path(__ADMITTED_RELEASE__).exists():time.sleep(0.01)
+                writer.rollback()
+            continue
     else:raise AssertionError(request)
     reply({'id':request['id'],'result':result})
 '''.replace('__QUEUED__', repr(str(queued))).replace('__REFUSED__', repr(str(refused)))
    .replace('__STATE__', repr(str(self.public_app_state)))
    .replace('__BARRIER__', repr(str(self.admission_barrier)))
-   .replace('__RELEASE__', repr(str(self.admission_release))))
+   .replace('__RELEASE__', repr(str(self.admission_release)))
+   .replace('__DB__', repr(str(self.db)))
+   .replace('__ADMITTED_BARRIER__', repr(str(self.admitted_barrier)))
+   .replace('__ADMITTED_RELEASE__', repr(str(self.admitted_release))))
         command.chmod(0o700)
         self.environment['PATH'] = str(self.directory) + os.pathsep + self.environment.get('PATH', '')
         return queued, refused
@@ -649,6 +663,73 @@ while True:
         self.assertIsNone(retained['receipt'])
         self.assertEqual(self.rows("SELECT native,endpoint FROM sessions WHERE id='root'"),
                          [{'native': 'native-app-root', 'endpoint': ''}])
+
+    def test_legacy_admitted_metadata_waits_out_a_held_database_writer(self):
+        queued, _ = self.public_proxy()
+        current = json.loads(self.public_app_state.read_text())
+        self.public_app_state.write_text(json.dumps({**current, 'exitBeforeRpc': True}))
+        self.coord('attach', 'root', 'codex', 'native-app-root', '')
+        self.recruit('child', 'root', 'omp')
+        body = 'Complete report during admitted metadata contention: café Ω 🙂\nSecond line.'
+        initial = self.coord_raw('report', 'admitted-busy-input', 'child', body)
+        self.assertNotEqual(initial.returncode, 0)
+        self.write('admitted-before-rpc.stdout', initial.stdout)
+        self.write('admitted-before-rpc.stderr', initial.stderr)
+        self.assertFalse(queued.exists(), 'The initial proxy failure admitted an RPC')
+        claim = self.rows("SELECT native,token,cause FROM codex_inbox_wakes WHERE session='root'")[0]
+        self.assertEqual(claim['native'], 'native-app-root')
+        self.assertTrue(claim['token'])
+        input_seq = json.loads(claim['cause'])['inputSeq']
+        self.public_app_state.write_text(json.dumps({**current, 'holdAdmitted': True}))
+        notice = {'database': str(self.db), 'recipient': 'root', 'message': 'admitted-busy-input',
+                  'pendingCount': 1, 'claimToken': claim['token']}
+        suffix = '\nComplete pointer instructions: café Ω 🙂\nKeep this second line.'
+        pointer = 'Baton input is pending.\n' + json.dumps(notice) + suffix
+        output = self.directory / 'admitted-busy.jsonl'
+        diagnostic = self.directory / 'admitted-busy.stderr'
+        with output.open('w') as stdout, diagnostic.open('w') as stderr:
+            wake = subprocess.Popen(
+                ['node', str(ROOT / 'bend2/scripts/codex-inbox-wake.mjs'), 'native-app-root', pointer],
+                env=self.environment, stdout=stdout, stderr=stderr)
+        self.children.append(wake)
+
+        def admitted_busy():
+            error = diagnostic.read_text()
+            self.assertNotIn('Error:', error, output.read_text() + error)
+            self.assertIsNone(wake.poll(), output.read_text() + error)
+            events = [event for line in output.read_text().splitlines()
+                      if (event := json.loads(line)).get('type') == 'codexInboxDatabaseBusy'
+                      and event.get('operation') == 'admitted']
+            return events[0] if events else None
+
+        try:
+            busy = self.eventually(admitted_busy, 'The admitted metadata update did not observe the SQLite writer')
+            self.assertTrue(self.admitted_barrier.exists())
+            self.assertEqual(busy['errcode'] & 255, sqlite3.SQLITE_BUSY)
+            self.assertEqual((busy['session'], busy['threadId']), ('root', 'native-app-root'))
+            self.assertEqual(len(queued.read_text().splitlines()), 1)
+        finally:
+            self.admitted_release.write_text('go\n')
+            wake.wait()
+        self.assertEqual(wake.returncode, 0, output.read_text() + diagnostic.read_text())
+        calls = [json.loads(line) for line in queued.read_text().splitlines()]
+        self.assertEqual(len(calls), 1, calls)
+        self.assertEqual(calls[0]['method'], 'turn/steer')
+        self.assertEqual(calls[0]['params']['threadId'], 'native-app-root')
+        self.assertEqual(calls[0]['params']['expectedTurnId'], 'fixture-turn')
+        text = calls[0]['params']['input'][0]['text']
+        self.assertEqual(json.loads(text.split('\n')[1]),
+                         {key: value for key, value in notice.items() if key != 'claimToken'})
+        self.assertEqual(text[text.index('\n', text.index('\n') + 1):], suffix)
+        retained_claim = self.rows("SELECT native,token,cause FROM codex_inbox_wakes WHERE session='root'")[0]
+        self.assertEqual((retained_claim['native'], retained_claim['token']),
+                         ('native-app-root', claim['token']))
+        self.assertEqual(json.loads(retained_claim['cause']),
+                         {'inputSeq': input_seq, 'turnId': 'fixture-turn'})
+        retained = json.loads(self.coord('delivery', 'admitted-busy-input'))
+        self.assertEqual(retained['body'], body)
+        self.assertIsNone(retained['receipt'])
+        self.assertEqual(json.loads(self.coord('turns', 'root')), [])
 
     def test_stop_while_follower_claim_is_busy_releases_retained_input(self):
         queued, _ = self.public_proxy()
