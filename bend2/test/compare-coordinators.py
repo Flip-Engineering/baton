@@ -68,9 +68,28 @@ class NativeStatus(unittest.TestCase):
         cls.call('report', 'alpha-report-1', 'alpha', 'Full Unicode λ report\n')
         cls.call('report', 'alpha-report-2', 'alpha', 'Second root report')
         cls.call('report', 'beta-report', 'beta', 'Report to the immediate parent')
-        cls.call('message', 'alpha-guide', 'root', 'alpha', 'guidance', 'Review the task')
-        cls.call('message', 'beta-guide-1', 'alpha', 'beta', 'guidance', 'Continue')
-        cls.call('message', 'beta-guide-2', 'alpha', 'beta', 'guidance', 'Check the result')
+        for sender, messages in (
+                ('root', [('alpha-guide', 'alpha', 'Review the task')]),
+                ('alpha', [('beta-guide-1', 'beta', 'Continue'),
+                           ('beta-guide-2', 'beta', 'Check the result')])):
+            result = subprocess.run([str(EXE), str(cls.db), 'message-batch-file', sender, '-'],
+                                    input=json.dumps([{'id': ident, 'recipient': recipient,
+                                                       'kind': 'guidance', 'body': body}
+                                                      for ident, recipient, body in messages]),
+                                    capture_output=True, text=True)
+            if result.returncode:
+                raise AssertionError(result.stdout + result.stderr)
+            admitted = json.loads(result.stdout)
+            if len(admitted) != len(messages):
+                raise AssertionError(admitted)
+            for admission, (ident, recipient, body) in zip(admitted, messages):
+                if admission['admission']['status'] != 'admitted':
+                    raise AssertionError(admission)
+                stored = cls.call('delivery', ident)
+                expected = (ident, sender, recipient, 'guidance', body, None)
+                actual = tuple(stored[key] for key in ('id', 'sender', 'recipient', 'kind', 'body', 'receipt'))
+                if actual != expected:
+                    raise AssertionError((actual, expected))
         cls.before_ack = cls.call('status')
         cls.call('ack', 'alpha-report-1', 'root', 'Reviewed first report')
         cls.call('ack', 'alpha-guide', 'alpha', 'Accepted guidance')

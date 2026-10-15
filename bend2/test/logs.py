@@ -90,6 +90,15 @@ class Logs(unittest.TestCase):
         """Review the scripted successful result through the recorded parent."""
         parent = json.loads(self.call('session', player))['parent']
         parent_state = json.loads(self.call('session', parent))
+        player_state = json.loads(self.call('session', player))
+        native = player_state['native'] or 'logs-' + player
+        for line in frames:
+            frame = json.loads(line)
+            if frame.get('type') == 'response' and frame.get('command') == 'get_state':
+                native = frame.get('data', {}).get('sessionId') or native
+                break
+        self.call('connect', player, native, player_state['endpoint'])
+        self.active_native = native
         request = turn + ':completion-request'
         body = '\n'.join(frames) + '\n'
         prefix = [str(EXE), str(self.db)]
@@ -173,7 +182,8 @@ sys.exit(%d)
 ''' % exit_code))
         self.active_turn = turn
         result = self.call('turn', player, turn, str(self.player), 'model', 'low',
-                           str(self.cwd), str(self.task), str(self.base_log), '')
+                           str(self.cwd), str(self.task), str(self.base_log),
+                           json.loads(self.call('session', player))['native'])
         self.log = self.generation(self.base_log, turn)
         if parent_state is not None:
             self.completion_finished(player, turn, parent_state)
@@ -523,7 +533,7 @@ assert sys.stdin.read()==''
 ''' % self.terminal('Concurrent answer')))
         self.log = self.generation(self.base_log, 'turn-1')
         turn = subprocess.Popen([str(EXE), str(self.db), 'turn', 'omp-worker', 'turn-1', str(self.player),
-                                 'model', 'low', str(self.cwd), str(self.task), str(self.base_log), ''],
+                                 'model', 'low', str(self.cwd), str(self.task), str(self.base_log), self.active_native],
                                 text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         try:
             while not self.log.exists() or self.log.stat().st_size == 0:
@@ -593,7 +603,7 @@ while not pathlib.Path('resume-native').exists(): time.sleep(.01)
         self.log = self.generation(self.base_log, 'abrupt-turn')
         turn = subprocess.Popen([str(EXE), str(self.db), 'turn', 'omp-worker', 'abrupt-turn',
                                  str(self.player), 'model', 'low', str(self.cwd), str(self.task),
-                                 str(self.base_log), ''], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                 str(self.base_log), self.active_native], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                 text=True)
         pending = pathlib.Path(str(self.log) + '.pending')
         raw = None
@@ -668,7 +678,7 @@ while not pathlib.Path('resume-native').exists(): time.sleep(.01)
             print('checkpoint retry: replaying the settled original turn', flush=True)
             replay = json.loads(self.call('turn', 'omp-worker', 'abrupt-turn', str(self.player),
                                           'model', 'low', str(self.cwd), str(self.task),
-                                          str(self.base_log), ''))
+                                          str(self.base_log), self.active_native))
             self.assertEqual(replay['body'], 'Resumed from checkpoint')
             self.completion_finished('omp-worker', 'abrupt-turn', parent_state)
             with sqlite3.connect(self.db) as connection:

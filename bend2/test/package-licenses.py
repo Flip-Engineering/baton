@@ -54,9 +54,11 @@ class PackageLicenses(unittest.TestCase):
         binary.parent.mkdir()
         binary.write_bytes(b'File-only fixture; this executable is never run.\n')
         binary.chmod(0o755)
+        shutil.copyfile(binary, self.payload / 'bin/baton')
+        (self.payload / 'bin/baton').chmod(0o755)
         manifest = {'schema': 'baton2-native-artifact-v1', **identity,
                     'source': {'directory': str(self.source)},
-                    'binary': {'path': 'bin/baton2'},
+                    'binary': {'path': 'bin/baton2', 'alias': 'bin/baton'},
                     'terms': terms}
         provenance = self.home / 'manifest.json'
         provenance.write_text(json.dumps(manifest) + '\n')
@@ -127,12 +129,14 @@ class PackageLicenses(unittest.TestCase):
         names = [harness + '-' + suffix + '.mjs'
                  for harness in ('codex', 'omp', 'mcp') for suffix in ('conductor', 'root')]
         names.extend(('context-provider.mjs', 'context-project-policy.mjs',
-                      'context-query-artifact.mjs', 'context-worktree-capture.mjs'))
+                      'context-query-artifact.mjs', 'context-worktree-capture.mjs',
+                      'codex-inbox-wake.mjs'))
         for name in names:
             shutil.copyfile(ROOT / 'bend2/scripts' / name, scripts / name)
-        helper = self.source / 'bend2/harness/git-series.mjs'
-        helper.parent.mkdir(parents=True)
-        shutil.copyfile(ROOT / 'bend2/harness/git-series.mjs', helper)
+        harness = self.source / 'bend2/harness'
+        harness.mkdir(parents=True)
+        for name in ('git-series.mjs', 'native-history.mjs', 'project-settings.mjs', 'task-start.mjs'):
+            shutil.copyfile(ROOT / 'bend2/harness' / name, harness / name)
         shutil.copytree(ROOT / 'bend2/ui/orchestra', self.source / 'bend2/ui/orchestra')
         PACKAGE.stage_adapters(self.payload)
         return names

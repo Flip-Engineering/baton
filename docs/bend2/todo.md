@@ -76,6 +76,13 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   absent inherited database despite having no admitted attempt directory. Read
   the attempt context first and retain canonical database equality for native
   calls with a nonempty inherited attempt directory.
+  Owner witness reads can reach a new listener before its incarnation record
+  is published. Retry the existing stale-incarnation response while retaining
+  the original spawn and protocol checks. The complete shared-owner suite
+  passes with the corrected host function. MCP capability discovery reads
+  global help, and its command, contract and root suites pass. Controlled
+  native fixtures must establish their recorded conversation before owned
+  reads and complete handling before their terminal frame.
   Preserve complete bodies, native lineage, first receipts, reports, original
   failure evidence and every semantic assertion. Validate the corrected callers
   remotely without duplicate tasks. Coordinate with

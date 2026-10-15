@@ -38,52 +38,59 @@ class NativeCli(unittest.TestCase):
         self.call('attach', 'principal', 'fixture', '', '', db=db)
         self.call('role', 'principal', 'principal-conductor', db=db)
 
-    def assert_help(self, result):
+    def assert_help(self, result, global_help=False):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(result.stderr, '')
-        self.assertTrue(result.stdout.startswith('usage: baton2 DATABASE COMMAND ARGS\n'))
-        for operation in ['start SESSION', 'recruit ID PARENT', 'receiver SESSION',
-                          'dispatch-file ID', 'land-checked PLAYER_ID']:
+        self.assertTrue(result.stdout.startswith('usage: baton ACTION ARGS\n'))
+        for operation in ['baton --project PATH ACTION ARGS', 'baton as SESSION ACTION ARGS',
+                          'baton DATABASE as SESSION ACTION ARGS', 'Use help ACTION']:
             self.assertIn(operation, result.stdout)
+        if global_help:
+            for operation in ['dispatch TEXT [OPTIONS]', 'Administration:',
+                              'native-attachment-input', 'knowledge']:
+                self.assertIn(operation, result.stdout)
         self.assertNotIn('worker threads, 1 to 128', result.stdout)
         return result.stdout
 
     def test_bare_help_forms_succeed_without_creating_state(self):
-        expected = None
         for verb in ['help', '--help']:
             with self.subTest(verb=verb):
-                text = self.assert_help(self.invoke(verb))
-                if expected is None:
-                    expected = text
-                self.assertEqual(text, expected)
+                self.assert_help(self.invoke(verb), global_help=verb == '--help')
                 self.assertEqual(list(self.directory.iterdir()), [])
 
     def test_database_help_forms_leave_missing_database_untouched(self):
-        expected = self.assert_help(self.invoke('--help'))
+        expected = self.assert_help(self.invoke('help'))
         for verb in ['help', '--help']:
             with self.subTest(verb=verb):
                 self.assertEqual(self.assert_help(self.invoke(self.db, verb)), expected)
                 self.assertEqual(list(self.directory.iterdir()), [])
 
     def test_invalid_commands_keep_usage_and_failure_status(self):
-        expected = self.assert_help(self.invoke('help'))
         for args in [[], ['unknown'], [self.db, 'message']]:
             with self.subTest(args=args):
                 result = self.invoke(*args)
                 self.assertEqual(result.returncode, 2)
                 self.assertEqual(result.stdout, '')
-                self.assertEqual(result.stderr.rstrip('\n'), expected.rstrip('\n'))
+                self.assertTrue(result.stderr.startswith('dispatch TEXT [OPTIONS]\n'))
+                for operation in ['Administration:', 'native-attachment-input', 'knowledge']:
+                    self.assertIn(operation, result.stderr)
                 self.assertEqual(list(self.directory.iterdir()), [])
 
     def test_help_names_every_supported_pretty_read_and_full_report_reader(self):
-        text = self.assert_help(self.invoke('--help'))
-        for form in ['status --pretty', 'players --pretty', 'orchestra --pretty', 'pending --pretty',
-                     'player ID --pretty', 'session ID --pretty', 'inbox ID --pretty',
-                     'delivery ID --pretty', 'turns PLAYER_ID --pretty', 'knowledge READER --pretty',
-                     'worktree ID --pretty']:
-            self.assertIn(form, text)
-        for reader in ['delivery MESSAGE_ID', 'turns PLAYER_ID', 'latestReport']:
-            self.assertIn(reader, text)
+        self.assert_help(self.invoke('--help'), global_help=True)
+        forms = {'status': 'status [--pretty]', 'players': 'players [--pretty]',
+                 'orchestra': 'orchestra [--pretty]', 'pending': 'pending [--index] [--pretty]',
+                 'player': 'player [--session SESSION | --id SESSION] [--pretty]',
+                 'session': 'session [--session SESSION | --id SESSION] [--pretty]',
+                 'worktree': 'worktree [--session SESSION]',
+                 'read': 'read ID...', 'attempts': 'attempts [--session SESSION]',
+                 'knowledge-read': 'knowledge read [--id ID | --index]'}
+        for action, form in forms.items():
+            with self.subTest(action=action):
+                result = self.invoke('help', action)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertEqual(result.stderr, '')
+                self.assertIn(form, result.stdout)
 
     def test_every_pretty_read_runs_and_stays_machine_readable(self):
         self.actors()
@@ -121,12 +128,17 @@ class NativeCli(unittest.TestCase):
     def test_runtime_option_tokens_are_preserved_in_database_and_session_fields(self):
         for database_name in ['--help', '--threads', '--gpu', '--gpu-build', '--']:
             with self.subTest(database=database_name):
-                self.actors(db=database_name)
+                database_path = './' + database_name
+                self.actors(db=database_path)
                 for ident in ['--help', '--threads', '--gpu', '--gpu-build', '--', 'λ🙂']:
-                    result = self.call('attach', ident, '--threads', '--gpu', '', db=database_name)
+                    result = self.call('attach', ident, '--threads', '--gpu', '', db=database_path)
                     self.assertEqual((result['id'], result['harness'], result['native']),
                                      (ident, '--threads', '--gpu'))
-                    saved = self.call('session', ident, db=database_name)
+                    inspected = self.call('as', 'operator', 'session', '--session', ident,
+                                          db=database_path)
+                    self.assertEqual(inspected[0]['status'], 'completed')
+                    self.assertEqual(inspected[0]['stderr'], '')
+                    saved = json.loads(inspected[0]['stdout'])
                     self.assertEqual((saved['id'], saved['harness'], saved['native']),
                                      (ident, '--threads', '--gpu'))
                 self.assertTrue((self.directory / database_name).is_file())

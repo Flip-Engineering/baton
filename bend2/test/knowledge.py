@@ -500,12 +500,11 @@ class Knowledge(unittest.TestCase):
 
     def test_the_usage_names_knowledge_commands(self):
         p = self.call('nonsense-verb', success=False)
-        for verb in ('record FINDING_ID AUTHOR CLAIM EVIDENCE LIMITS', 'knowledge READER',
-                     'record-typed FINDING_ID AUTHOR KIND CLAIM EVIDENCE LIMITS',
-                     'relate RELATION_ID AUTHOR SOURCE RELATION TARGET',
-                     'knowledge-scope READER universal|worker|group|all SUBJECT',
-                     'promote PROMOTION_ID PROMOTER SOURCE DESTINATION FINDING',
-                     'promote-scoped PROMOTION_ID PROMOTER SOURCE_KIND SOURCE DESTINATION_KIND DESTINATION FINDING'):
+        for verb in ('knowledge record --kind KIND --claim TEXT',
+                     'knowledge search --query TEXT',
+                     'knowledge traverse --reference REFERENCE --direction in|out|both',
+                     'Baton resolves the author and generates finding and relation identities.',
+                     'Use help knowledge for the available actions.'):
             self.assertIn(verb, p.stderr)
 
     def test_a_refused_record_retry_leaves_parent_endpoint_delivery_unchanged(self):
