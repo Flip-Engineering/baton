@@ -397,6 +397,12 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
 - [#679: Baton2 native checks fail before replay assertions on a large report argument](https://github.com/Flip-Engineering/baton/issues/679).
 - [#678: Baton2: existing Players cannot change their configured provider through native controls](https://github.com/Flip-Engineering/baton/issues/678).
 - [#677: Baton2: prevent duplicate heavy validation and qualify remote execution placement](https://github.com/Flip-Engineering/baton/issues/677).
+  Homelab runners 725 and 24006 are online in the existing restricted Baton
+  runner group. Runner 24006 has a separate account, service, mount namespace,
+  storage, work directory, home, temporary directory and tool cache.
+  [Provisioning and permission evidence](https://github.com/Flip-Engineering/baton/issues/677#issuecomment-6184549467)
+  records its readiness for independent jobs. Full release qualification remains
+  tracked in [#717](https://github.com/Flip-Engineering/baton/issues/717).
 - [#675: Baton2: qualify hosted parallel Bend2 validation](https://github.com/Flip-Engineering/baton/issues/675).
 - [#674: Native landing advances a checked-out branch without updating its worktree](https://github.com/Flip-Engineering/baton/issues/674).
 - [#673: Native landing cannot select a reviewed commit while a Player continues](https://github.com/Flip-Engineering/baton/issues/673).
