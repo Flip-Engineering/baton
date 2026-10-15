@@ -4,6 +4,20 @@ The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3
 retain findings, ownership and acceptance requirements. This page links current
 Baton follow-up work for contributors. Every open issue has a link on this page.
 
+- [#751: Add branching Ensemble variant after Baton 2.0](https://github.com/Flip-Engineering/baton/issues/751).
+  Implement after the [#717](https://github.com/Flip-Engineering/baton/issues/717)
+  release and active adoption. Use the
+  [Fork-and-Flush paper](https://arxiv.org/html/2610.07447v1) to design parallel
+  branches from a recorded workspace with fresh native conversations. Let the
+  owning Conductor configure evaluation and select the continuing branch.
+  Retain every branch's artifacts, ancestry, seeds, reports and selection
+  evidence in the database. Preserve pending work, explicit stops and recovery.
+  Qualify isolated branching, context initialization, evaluated selection,
+  continuation and restart behavior on remote native clients. Coordinate with
+  [#713](https://github.com/Flip-Engineering/baton/issues/713),
+  [#723](https://github.com/Flip-Engineering/baton/issues/723) and
+  [#731](https://github.com/Flip-Engineering/baton/issues/731).
+
 - [#749: Dispatch through an explicit database when the project pointer path contains an executable](https://github.com/Flip-Engineering/baton/issues/749).
   Actual hierarchy dispatch on `60a3741c` tried to read `baton2/database` under
   its state directory, where `baton2` is the staged executable. Honor the supplied
