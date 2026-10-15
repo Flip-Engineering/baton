@@ -4,6 +4,17 @@ The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3
 retain findings, ownership and acceptance requirements. This page links current
 Baton follow-up work for contributors. Every open issue has a link on this page.
 
+- [#756: Resolve TypeScript database-access scope at the selected symbol](https://github.com/Flip-Engineering/baton/issues/756).
+  Installed package run `38785813982` resolved `answer` at line 1 but selected
+  the bodyless declaration at offset zero for SQL analysis. Reuse the existing
+  symbol resolver, report an unresolved symbol limit and preserve function and
+  whole-file scope. Qualify top-level, named-function and absent-symbol cases
+  through the source and installed modules, then complete package and whole
+  acceptance for [#717](https://github.com/Flip-Engineering/baton/issues/717)
+  and [#727](https://github.com/Flip-Engineering/baton/issues/727). Coordinate
+  with [#747](https://github.com/Flip-Engineering/baton/issues/747) and
+  [#755](https://github.com/Flip-Engineering/baton/issues/755).
+
 - [#755: Fix native fixture isolation and generated C staging in parallel checks](https://github.com/Flip-Engineering/baton/issues/755).
   Run `38785813982` recorded an AgentInput receive child exiting from SIGKILL
   during a concurrent nested Receive suite; the signal sender is unproven.
@@ -89,6 +100,8 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   [#717](https://github.com/Flip-Engineering/baton/issues/717).
 
 - [#747: Wait for actual native settlement in real acceptance drivers](https://github.com/Flip-Engineering/baton/issues/747).
+  TypeScript symbol-scope correction is tracked in
+  [#756](https://github.com/Flip-Engineering/baton/issues/756).
   Parallel fixture signal scope and required generated C staging are tracked in
   [#755](https://github.com/Flip-Engineering/baton/issues/755).
   Actual native-receive admission completed before its successful background

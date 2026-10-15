@@ -24,7 +24,7 @@ import {
   resolvedResolution,
   modelUseRecord,
 } from './records.mjs';
-import { nodeAtPosition, point, spanRange, symbolOf } from './bindings.mjs';
+import { nodeAtPosition, point, spanRange, symbolOffset, symbolOf } from './bindings.mjs';
 
 function evidenceFor(capture, node, role) {
   const sourceFile = node.getSourceFile();
@@ -171,8 +171,13 @@ export function produceDatabaseAccesses(context) {
   const path = service.subjectPath;
   const sha256 = capture.digest(path) ?? '';
   const offset = request.subject.kind === 'symbol'
-    ? 0
+    ? symbolOffset(request, sourceFile)
     : sourceFile.getPositionOfLineAndCharacter(request.subject.line ?? 0, request.subject.column ?? 0);
+  if (offset < 0) {
+    return { facts: [], refs: [], limits: [
+      limit('databaseAccesses', 'symbolNotResolved', 'no matching declaration name in the subject file'),
+    ] };
+  }
   const { scope, kind: scopeKind } = scopeOf(ts, sourceFile, offset);
 
   const facts = [];

@@ -107,4 +107,60 @@ for (const [mode, moduleRoot] of modules) {
       rmSync(cwd, { recursive: true, force: true });
     }
   });
+
+  test(`${mode} TypeScript database accesses use the selected symbol scope`, async () => {
+    const { captureInputs, executeInvocation } = await import(pathToFileURL(join(moduleRoot, 'native-provider.mjs')).href);
+    const cwd = mkdtempSync(join(tmpdir(), 'baton-ts-symbol-scope-'));
+    try {
+      const subject = join(cwd, 'analysis.ts');
+      const binding = moduleBinding(moduleRoot);
+      const options = { packageRoot: moduleRoot, cwd };
+      if (mode === 'source' && process.env.BATON2_CONTEXT_TYPESCRIPT) {
+        options.compilerPath = join(resolve(process.env.BATON2_CONTEXT_TYPESCRIPT), 'lib/typescript.js');
+      }
+      const cases = [
+        { name: 'answer', source: [
+          'declare function query(sql: string): number;',
+          'export const answer: number = query("SELECT value FROM records");',
+        ].join('\n') + '\n', sql: 'SELECT value FROM records', fileScope: true },
+        { name: 'handler', source: [
+          'declare function query(sql: string): number;',
+          'function other() { return query("SELECT ignored FROM records"); }',
+          'export function handler() { return query("SELECT selected FROM records"); }',
+        ].join('\n') + '\n', sql: 'SELECT selected FROM records', fileScope: false },
+        { name: 'absent', source: [
+          'declare function query(sql: string): number;',
+          'export const answer: number = query("SELECT value FROM records");',
+        ].join('\n') + '\n', sql: null, fileScope: false },
+      ];
+      for (const entry of cases) {
+        writeFileSync(subject, entry.source);
+        const invocation = { version: 2, query: `symbol-scope-${entry.name}`, owner: 'symbol-scope-owner',
+          role: 'analysis', incarnation: '0', moduleBinding: binding,
+          operationPlan: [{ binding, common: 'sourceAnalysis', dependencies: [] }],
+          request: { version: 1, cwd, subject: { kind: 'symbol', path: subject, name: entry.name },
+            select: ['definition', 'type', 'databaseAccesses'],
+            options: { client: { path: subject, line: 0, column: 17 } } } };
+        const captured = await captureInputs(invocation, options);
+        assert.equal(captured.status, 'captured', JSON.stringify(captured));
+        const result = await executeInvocation({ ...invocation, inputIdentities: captured.captures }, options);
+        assert.equal(result.payload.status, 'completed', JSON.stringify(result));
+        const calls = result.payload.facts.filter((fact) => fact.kind === 'sqlCall');
+        assert.deepEqual(calls.map((fact) => fact.value.record.sql.text), entry.sql === null ? [] : [entry.sql]);
+        assert.equal(result.payload.limits.some((limit) => limit.projection === 'databaseAccesses'
+          && limit.code === 'fileScope'), entry.fileScope);
+        if (entry.sql === null) {
+          assert.ok(result.payload.limits.some((limit) => limit.projection === 'databaseAccesses'
+            && limit.code === 'symbolNotResolved'));
+          assert.deepEqual(result.payload.refs.filter((ref) => ref.projections?.includes('databaseAccesses')), []);
+        } else {
+          assert.equal(calls[0].value.clientMatch, 'matched');
+          assert.equal(calls[0].value.record.callee.status, 'resolved');
+          assert.ok(result.payload.refs.some((ref) => ref.id === calls[0].value.callSiteRef));
+        }
+      }
+    } finally {
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
 }
