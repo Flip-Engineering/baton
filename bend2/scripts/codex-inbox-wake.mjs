@@ -3,6 +3,9 @@
 import { spawn } from 'node:child_process';
 import { randomBytes, createHash } from 'node:crypto';
 import { createInterface } from 'node:readline';
+import { existsSync } from 'node:fs';
+import { resolve, dirname } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 function record(value) {
   const stream = process.argv[2] === '--input-witness' ? process.stderr : process.stdout;
@@ -699,24 +702,42 @@ if (!threadId || (managed ? !executable || !database || !session || (mode === '-
         }
       }
     } else {
-      let pending;
+      let pending, coordinator, row;
       if (pointer.startsWith('Baton input is pending.\n')) {
         pending = JSON.parse(pointer.split('\n')[1]);
-        inbox = await openInbox(undefined, pending.database, pending.recipient, threadId);
+        const root = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
+        const installed = resolve(root, 'bin/baton2');
+        coordinator = existsSync(installed) ? installed : resolve(root, '.scratch/bend2/baton2');
+        inbox = await openInbox(coordinator, pending.database, pending.recipient, threadId);
+        row = await readOneShotInbox(inbox, coordinator, pending.database, pending.recipient, threadId);
       }
-      proxy = new PublicProxy();
-      await proxy.connect();
-      let token;
-      const result = await deliver(proxy, threadId, pointer, inbox ? async status => {
-        const current = inbox.refresh(pending.claimToken, status);
-        if (!current) return null;
-        token = current.token;
-        const newline = pointer.indexOf('\n', pointer.indexOf('\n') + 1);
-        const { claimToken: custodyToken, ...notice } = pending;
-        return 'Baton input is pending.\n' + JSON.stringify({ ...notice, pendingCount: current.row.pendingCount }) +
-          (newline < 0 ? '' : pointer.slice(newline));
-      } : undefined);
-      if (inbox) inbox.admitted(token, result);
+      if (row && (row.stopped || !row.pendingCount)) {
+        record({ type: 'codexInboxRetained', session: pending.recipient, threadId,
+          stopped: Boolean(row.stopped), pendingCount: row.pendingCount });
+      } else {
+        proxy = new PublicProxy();
+        await proxy.connect();
+        let token;
+        const result = await deliver(proxy, threadId, pointer, inbox ? async status => {
+          for (;;) {
+            try {
+              const current = inbox.refresh(pending.claimToken, status);
+              if (!current) return null;
+              token = current.token;
+              const newline = pointer.indexOf('\n', pointer.indexOf('\n') + 1);
+              const { claimToken: custodyToken, ...notice } = pending;
+              return 'Baton input is pending.\n' + JSON.stringify({ ...notice, pendingCount: current.row.pendingCount }) +
+                (newline < 0 ? '' : pointer.slice(newline));
+            } catch (error) {
+              if (!databaseBusy(error)) throw error;
+              record({ type: 'codexInboxDatabaseBusy', session: pending.recipient, threadId,
+                operation: 'refresh', errcode: error.errcode, cause: error.message });
+              await coordinatorCommand(coordinator, pending.database, ['session', pending.recipient]);
+            }
+          }
+        } : undefined);
+        if (inbox) inbox.admitted(token, result);
+      }
     }
   } catch (error) {
     process.stderr.write(String(error.stack || error) + '\n');

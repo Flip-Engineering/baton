@@ -89,8 +89,11 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   Browser acceptance reached the final actor through End while its cursor was
   outside the viewport. Scroll the keyboard-selected actor into view. The complete
   browser acceptance now passes with the current actor cards and knowledge view.
-  Root wake acceptance retains a live follower after an explicit stop. Preserve
-  its notice and native RPC evidence and qualify the follower's natural exit.
+  Root wake acceptance retained a live follower after an explicit stop arrived
+  during SQLite admission contention. Recheck stop state after the claim returns
+  without admission. All 13 root wake checks pass with the correction, including
+  the real writer and public stop regression. Preserve the original notice,
+  native RPC and interrupted process evidence.
   Preserve complete bodies, native lineage, first receipts, reports, original
   failure evidence and every semantic assertion. Validate the corrected callers
   remotely without duplicate tasks. Coordinate with
@@ -101,8 +104,13 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
 - [#750: Preserve Codex inbox admission during SQLite writer contention](https://github.com/Flip-Engineering/baton/issues/750).
   A focused receive fixture retained both native results, then its parent report
   delivery failed at `codex-inbox-wake.mjs`'s `BEGIN IMMEDIATE` with
-  `database is locked`. Investigate writer lifetime and qualify the selected
-  correction against the observed contention. Coordinate with
+  `database is locked`. The positional Codex inbox route now resolves its
+  coordinator and waits through contention using the ordinary session read.
+  Four affected checks pass. A real held-writer regression preserves the full
+  pointer, message body, native identity and unhandled receipt, and fails
+  naturally with both the previous and target helpers. The original incident's
+  writer lifetime was not measured. Complete current-source qualification and
+  installed acceptance. Coordinate with
   [#747](https://github.com/Flip-Engineering/baton/issues/747).
 
 - [#746: Read promoted root holdings in the knowledge consumer acceptance](https://github.com/Flip-Engineering/baton/issues/746).

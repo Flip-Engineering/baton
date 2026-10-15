@@ -279,7 +279,7 @@ while True:
     elif method=='thread/turns/list':
         assert request['params']['itemsView']=='notLoaded', request
         current=json.loads(state.read_text())
-        result={'data':[{'id':current['turn'],'status':'inProgress' if current['status']=='active' else 'failed'}],'nextCursor':None}
+        result={'data':[{'id':current['turn'],'status':current.get('turnStatus','inProgress' if current['status']=='active' else 'failed')}],'nextCursor':None}
     elif method in ('turn/steer','turn/start'):
         with pathlib.Path(__QUEUED__).open('a') as calls:
             calls.write(json.dumps(request)+chr(10))
@@ -590,10 +590,71 @@ while True:
         second.wait()
         self.assertEqual(second.returncode, 0, second_error.read_text())
 
+    def test_legacy_pointer_refresh_waits_out_a_held_database_writer(self):
+        queued, _ = self.public_proxy()
+        current = json.loads(self.public_app_state.read_text())
+        self.public_app_state.write_text(json.dumps({**current, 'holdRead': True}))
+        self.coord('attach', 'root', 'codex', '', '')
+        self.coord('role', 'root', 'principal-conductor')
+        self.coord('attach', 'operator', 'terminal', '', '')
+        self.coord('role', 'operator', 'operator')
+        self.recruit('child', 'root', 'omp')
+        body = 'Complete report during legacy refresh contention: café Ω 🙂\nSecond line.'
+        self.assertNotEqual(self.coord_raw('report', 'legacy-busy-input', 'child', body).returncode, 0)
+        self.coord('connect', 'root', 'native-app-root', '')
+        notice = {'database': str(self.db), 'recipient': 'root', 'message': 'legacy-busy-input',
+                  'pendingCount': 1}
+        suffix = '\nComplete pointer instructions: café Ω 🙂\nKeep this second line.'
+        pointer = 'Baton input is pending.\n' + json.dumps(notice) + suffix
+        output = self.directory / 'legacy-busy.jsonl'
+        diagnostic = self.directory / 'legacy-busy.stderr'
+        with output.open('w') as stdout, diagnostic.open('w') as stderr:
+            wake = subprocess.Popen(
+                ['node', str(ROOT / 'bend2/scripts/codex-inbox-wake.mjs'), 'native-app-root', pointer],
+                env=self.environment, stdout=stdout, stderr=stderr)
+        self.children.append(wake)
+
+        def metadata_held():
+            self.assertIsNone(wake.poll(), output.read_text() + diagnostic.read_text())
+            return self.admission_barrier.exists()
+
+        self.eventually(metadata_held, 'the native metadata read was not held')
+        with sqlite3.connect(self.db) as writer:
+            writer.execute('BEGIN IMMEDIATE')
+            self.admission_release.write_text('go\n')
+
+            def refresh_busy():
+                self.assertIsNone(wake.poll(), output.read_text() + diagnostic.read_text())
+                self.assertFalse(queued.exists(), queued.read_text() if queued.exists() else '')
+                events = [event for line in output.read_text().splitlines()
+                          if (event := json.loads(line)).get('type') == 'codexInboxDatabaseBusy'
+                          and event.get('operation') == 'refresh']
+                return events[0] if events else None
+
+            busy = self.eventually(refresh_busy, 'the legacy refresh did not observe the held SQLite writer')
+            self.assertEqual(busy['errcode'] & 255, sqlite3.SQLITE_BUSY)
+            self.assertFalse(queued.exists(), queued.read_text() if queued.exists() else '')
+            writer.commit()
+        wake.wait()
+        self.assertEqual(wake.returncode, 0, output.read_text() + diagnostic.read_text())
+        admitted = [json.loads(line) for line in queued.read_text().splitlines()]
+        self.assertEqual(len(admitted), 1, admitted)
+        self.assertEqual(admitted[0]['method'], 'turn/steer')
+        self.assertEqual(admitted[0]['params']['threadId'], 'native-app-root')
+        text = admitted[0]['params']['input'][0]['text']
+        self.assertEqual(json.loads(text.split('\n')[1]), notice)
+        self.assertEqual(text[text.index('\n', text.index('\n') + 1):], suffix)
+        retained = json.loads(self.coord('delivery', 'legacy-busy-input'))
+        self.assertEqual(retained['body'], body)
+        self.assertIsNone(retained['receipt'])
+        self.assertEqual(self.rows("SELECT native,endpoint FROM sessions WHERE id='root'"),
+                         [{'native': 'native-app-root', 'endpoint': ''}])
+
     def test_stop_while_follower_claim_is_busy_releases_retained_input(self):
         queued, _ = self.public_proxy()
         current = json.loads(self.public_app_state.read_text())
-        self.public_app_state.write_text(json.dumps({**current, 'status': 'idle', 'holdRead': True}))
+        self.public_app_state.write_text(json.dumps({**current, 'status': 'idle', 'turnStatus': 'completed',
+                                                      'holdRead': True}))
         self.coord('attach', 'root', 'codex', '', '')
         self.coord('role', 'root', 'principal-conductor')
         self.coord('attach', 'operator', 'terminal', '', '')
@@ -612,13 +673,18 @@ while True:
                 env=self.environment, stdout=stdout, stderr=stderr)
         self.children.append(follower)
         self.eventually(self.admission_barrier.exists, 'the native metadata read was not held')
+
+        def claim_waits_for_writer():
+            self.assertIsNone(follower.poll(), diagnostic.read_text() + output.read_text())
+            admitted = queued.read_text() if queued.exists() else ''
+            self.assertFalse(admitted, 'Native input was admitted while the SQLite writer was held:\n' + admitted)
+            return any(event.get('type') == 'codexInboxDatabaseBusy' and event.get('operation') == 'claim'
+                       for line in output.read_text().splitlines() if (event := json.loads(line)))
+
         with sqlite3.connect(self.db) as writer:
             writer.execute('BEGIN IMMEDIATE')
             self.admission_release.write_text('go\n')
-            self.eventually(lambda: any(event.get('type') == 'codexInboxDatabaseBusy'
-                                       and event.get('operation') == 'claim'
-                                       for line in output.read_text().splitlines()
-                                       if (event := json.loads(line))),
+            self.eventually(claim_waits_for_writer,
                             'the follower did not observe the held SQLite writer')
             stop = subprocess.Popen(
                 [str(EXE), str(self.db), 'stop', 'root', 'claim-busy-stop',
