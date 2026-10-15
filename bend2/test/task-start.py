@@ -354,6 +354,67 @@ class TaskStart(unittest.TestCase):
                     self.assertIn(body, native['prompt'])
                     self.failed_turn(session, stream, 'Complete ' + label + ' literal ' + body + ' fixture result.')
 
+    def test_explicit_database_dispatch_preserves_executable_at_non_git_project_pointer(self):
+        collision = self.directory / 'baton2'
+        shutil.copy2(self.binary, collision)
+        digest = hashlib.sha256(collision.read_bytes()).hexdigest()
+        mode = collision.stat().st_mode
+        environment = {'BATON_SESSION': 'root',
+                       'GIT_CEILING_DIRECTORIES': str(self.directory.parent)}
+        session = 'explicit-database-child'
+        self.call('join', session, 'root', 'codex', 'gpt-6-astra', 'low', self.repo)
+        self.route(session)
+        before = self.call('session', session)
+        body = '\ufeffComplete database dispatch λ🙂\nPreserve every input line.\n' * 2000
+        result = self.task_call('--to', session, '--stdin', '--command', self.fixture,
+                                stdin=body.encode(), database=True, project=self.directory,
+                                environment=environment)
+        self.assertEqual(result['status'], 'admitted')
+        self.assertEqual(result['database'], str(self.db.resolve()))
+        self.assertEqual(result['projectKey'], str(self.directory.resolve()))
+        self.assertEqual(result['projectResolution']['rule'], 'path-prefix')
+        self.assertEqual(result['actor'], {'id': 'root', 'source': 'agent-launch-context'})
+        for field in ('id', 'parent', 'workspace', 'harness', 'model', 'effort'):
+            self.assertEqual(result['currentSession'][field], before[field])
+        self.assertFalse(any(step['argv'][2] == 'project' for step in result['steps']))
+        self.assert_retained_input(result, body)
+        stream, native = self.accept(session)
+        self.assertEqual(native['cwd'], str(self.repo.resolve()))
+        self.assertEqual(self.call('session', session)['native'], native['native'])
+        self.assert_initial_prompt(result, body, native)
+        report = 'Retain the explicit database native result.'
+        self.finish(stream, report, fail=True)
+        execution = self.exited(session)
+        turns = self.call('turns', session)
+        self.assertEqual(len(turns), 1)
+        self.assertEqual(turns[0]['id'], execution['id'])
+        self.assertEqual(json.loads(turns[0]['reportBody']), {'type': 'result', 'is_error': 1,
+            'nativeEvent': {'type': 'turn.failed', 'error': {'message': report}}, 'result': report})
+        retained = self.call('delivery', execution['id'])
+        self.assertEqual((retained['sender'], retained['recipient'], retained['kind'], retained['body']),
+                         (session, 'root', 'report', turns[0]['reportBody']))
+        self.assertEqual(self.rows('SELECT event FROM turns WHERE id=? AND worker=?',
+                                  (execution['id'], session))[0]['event'], retained['body'])
+        self.eventually(lambda: self.call('session', session)['blockedCause'] == 'provider-failure')
+        self.assertEqual(self.call('delivery', result['task'])['receipt'], 'fixture-native-reviewed')
+        refused = self.task_call('--stdin', stdin=body.encode(), project=self.directory,
+                                 environment=environment, ok=False)
+        self.assertEqual(refused['error']['reason'], 'ENOTDIR')
+        self.assertEqual(refused['input']['body'], body)
+        self.assertEqual(hashlib.sha256(collision.read_bytes()).hexdigest(), digest)
+        self.assertEqual(collision.stat().st_mode, mode)
+
+    def test_explicit_database_dispatch_preserves_readable_project_pointer_conflict(self):
+        pointer = self.repo / '.git/baton2/database'
+        before = pointer.read_bytes()
+        other = self.directory / 'other-state.db'
+        body = 'Keep the registered database selection λ🙂.'
+        refused = self.task_call('--text', body, prefix=(other,), ok=False)
+        self.assertEqual(refused['error']['reason'], 'taskProjectDatabaseConflict')
+        self.assertEqual(refused['input']['body'], body)
+        self.assertEqual(pointer.read_bytes(), before)
+        self.assertFalse(other.exists())
+
     def test_existing_as_dispatch_keeps_contextual_message_authority_and_full_body(self):
         session = 'contextual-dispatch-agent'
         self.call('join', session, 'root', 'codex', 'gpt-6-astra', 'low', self.repo)

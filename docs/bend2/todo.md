@@ -4,6 +4,21 @@ The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3
 retain findings, ownership and acceptance requirements. This page links current
 Baton follow-up work for contributors. Every open issue has a link on this page.
 
+- [#749: Dispatch through an explicit database when the project pointer path contains an executable](https://github.com/Flip-Engineering/baton/issues/749).
+  Actual hierarchy dispatch on `60a3741c` tried to read `baton2/database` under
+  its state directory, where `baton2` is the staged executable. Honor the supplied
+  database through this context, preserve the executable and retain complete
+  input and setup outcomes. Preserve ordinary project registration, readable
+  pointer conflicts, workspace membership, native identity and stops. Two focused
+  homelab fixtures passed on the completed `486fc3b0` runtime with the corrected
+  installed helper: full stdin, seeded native input, report lineage, first
+  receipt, executable preservation and readable-pointer conflict. Complete
+  successor package and installed qualification remain open. Coordinate with
+  [#716](https://github.com/Flip-Engineering/baton/issues/716),
+  [#703](https://github.com/Flip-Engineering/baton/issues/703),
+  [#727](https://github.com/Flip-Engineering/baton/issues/727) and
+  [#717](https://github.com/Flip-Engineering/baton/issues/717).
+
 - [#748: Route database-prefixed named report, knowledge and recruitment actions](https://github.com/Flip-Engineering/baton/issues/748).
   Actual source `60a3741c` native tasks received usage errors for database-prefixed
   named report, knowledge record, recruit and recruitment help commands. Select

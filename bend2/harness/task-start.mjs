@@ -149,8 +149,10 @@ function canonicalFile(path) {
 export function startTask(executable, database, argv) {
   const steps = [];
   const requestId = randomUUID();
+  const explicitDatabase = Boolean(database);
   let options = null;
   let projectPath, resolution, key, registered;
+  let registerProject = true;
   let contextReady = false;
   let recordAttempted = false;
   let requestRecorded = false;
@@ -177,7 +179,10 @@ export function startTask(executable, database, argv) {
     const pointer = join(key, 'baton2/database');
     registered = null;
     try { registered = utf8(readFileSync(pointer), pointer); }
-    catch (error) { if (error.code !== 'ENOENT') throw error; }
+    catch (error) {
+      if (error.code === 'ENOTDIR' && explicitDatabase) registerProject = false;
+      else if (error.code !== 'ENOENT') throw error;
+    }
     if (registered === '') fail('taskProjectPointerEmpty', `Project pointer ${pointer} is empty.`,
       'Register the intended database with baton DATABASE project PATH.');
     database = canonicalFile(database || registered || join(key, 'baton2/orchestra.db'));
@@ -335,7 +340,7 @@ export function startTask(executable, database, argv) {
       'An output log override requires the receiver command.', 'Pass --command with --output-log.');
     if (selected && route.harness !== selected.harness && !options.command) fail('taskHarnessChangeRequiresCommand',
       'A changed harness requires its native executable.', 'Pass --command for the selected harness.');
-    if (!registered) {
+    if (!registered && registerProject) {
       native('project', projectPath);
     }
     if (!selected) {
