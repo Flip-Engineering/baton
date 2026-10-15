@@ -64,9 +64,15 @@ class AgentInput(unittest.TestCase):
         self.assertEqual(result['arguments'], list(arguments))
         return result
 
-    def end(self, child, stream, *, failed=False, complete_task=False):
+    def end(self, child, stream, *, failed=False, complete_task=False, successor_body=None):
         self.fx.action(stream, body='Controlled native result.', ack=False,
                        complete_task=complete_task, fail=failed)
+        if successor_body is not None:
+            self.assertEqual(stream.readline(), b'')
+            successor, started = self.fx.accept_child(child, 'parent')
+            self.assertIn(successor_body, started['prompt'])
+            self.fx.action(successor, body='Controlled pending input failure.', ack=False,
+                           complete_task=False, fail=True)
         return self.fx.finish(child, ok=not failed)
 
     def test_success_handles_exact_owned_full_read_and_retains_first_receipt(self):
@@ -107,8 +113,8 @@ class AgentInput(unittest.TestCase):
         self.fx.shutdown_idle_database_owner('successful input observer did not settle')
 
     def test_full_inbox_records_its_owned_items(self):
-        self.fx.coord('message', 'second-owned-input', 'root', 'parent', 'guidance',
-                      'Second complete input.\n')
+        self.fx.prepare_input('second-owned-input', 'parent', 'Second complete input.\n',
+                              kind='guidance')
         child, stream, _ = self.start()
         result = self.action(stream, 'inbox')
         self.assertEqual(result['code'], 0, result)
@@ -162,7 +168,8 @@ class AgentInput(unittest.TestCase):
         self.assertEqual(self.fx.coord('delivery', 'owned-input')['receipt'], receipt)
         self.assertEqual(self.fx.coord('delivery', 'ack-first-receipt')['receipt'],
                          'Earliest explicit handling.')
-        self.end(child, stream, failed=True)
+        self.end(child, stream, failed=True,
+                 successor_body='This late input has not been read.')
         self.assertEqual(self.fx.coord('delivery', 'owned-input')['receipt'], receipt)
         self.assertIsNone(self.fx.coord('delivery', 'ack-unread-owned')['receipt'])
 
@@ -254,9 +261,15 @@ class AgentInput(unittest.TestCase):
         before = self.reads()
         self.assertEqual(before[0]['native'], started['native'])
         self.fx.coord('connect', 'parent', 'replacement-native', '')
-        self.end(child, stream)
+        self.fx.action(stream, body='Controlled native result.', ack=False,
+                       complete_task=False)
+        successor, resumed = self.fx.accept_child(child, 'parent')
+        self.assertEqual(resumed['native'], 'replacement-native')
+        self.fx.action(successor, body='Controlled replacement native failure.',
+                       ack=False, complete_task=False, fail=True)
+        self.fx.finish(child, ok=False)
         self.assertEqual(self.fx.coord('session', 'parent')['native'], 'replacement-native')
-        self.assertEqual(self.reads(), before)
+        self.assertEqual([row for row in self.reads() if row['attempt'] == before[0]['attempt']], before)
         self.assertIsNone(self.fx.coord('delivery', 'owned-input')['receipt'])
 
     def test_unavailable_status_preserves_successful_exposure_without_handling(self):
@@ -299,14 +312,21 @@ class AgentInput(unittest.TestCase):
     @unittest.skipUnless(pathlib.Path('/dev/full').exists(), 'requires /dev/full')
     def test_failed_action_output_records_no_read(self):
         child, stream, _ = self.start()
+        original = next(row['attempt'] for row in self.reads() if row['message'] == 'owned-input')
         self.fx.coord('message', 'late-owned-input', 'root', 'parent', 'guidance',
                       'Input admitted after the original prompt.\nλ🙂')
         result = self.action(stream, 'read', 'late-owned-input', output_file='/dev/full')
         self.assertNotEqual(result['code'], 0, result)
         self.assertTrue(result['stderr'], result)
         self.assertEqual({row['message'] for row in self.reads()}, {'owned-input'})
-        self.end(child, stream, failed=True)
-        self.assertNotIn('late-owned-input', {row['message'] for row in self.reads()})
+        self.fx.action(stream, body='Controlled native result.', ack=False,
+                       complete_task=False, fail=True)
+        self.assertEqual(stream.readline(), b'')
+        successor, started = self.fx.accept_child(child, 'parent')
+        self.assertIn('Input admitted after the original prompt.\nλ🙂', started['prompt'])
+        self.assertNotIn('late-owned-input',
+                         {row['message'] for row in self.reads() if row['attempt'] == original})
+        self.end(child, successor, failed=True)
         self.assertIsNone(self.fx.coord('delivery', 'late-owned-input')['receipt'])
 
     def test_administrative_and_foreign_reads_preserve_observations(self):
@@ -597,7 +617,12 @@ class AgentInput(unittest.TestCase):
         result = self.action(stream, 'delivery-batch', '["late-legacy-input","foreign-input"]', legacy=True)
         self.assertEqual(result['code'], 0, result)
         self.assertEqual({row['message'] for row in self.reads()}, {'owned-input', 'late-legacy-input'})
-        self.end(child, stream, failed=True)
+        self.fx.action(stream, body='Controlled native result.', ack=False,
+                       complete_task=False, fail=True)
+        self.assertEqual(stream.readline(), b'')
+        successor, started = self.fx.accept_child(child, 'parent')
+        self.assertIn(body, started['prompt'])
+        self.end(child, successor, failed=True)
         self.assertTrue(all(row['handled'] is None for row in self.reads()))
 
     def test_old_schema_read_is_observational_and_reports_unrecorded(self):
