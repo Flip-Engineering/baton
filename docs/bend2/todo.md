@@ -133,6 +133,9 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   waited for another notice. Remove that fixture subscription and observe the
   binding predicate directly; retain both failed synchronization attempts. The scoped
   held-task check passes with the current and target binaries.
+  The installed Configure fixture then retained its sole idle owner during cleanup:
+  its global executable had already been restored by another cleanup. Match the
+  executable recorded in the fixture configuration, as owner shutdown does.
   Browser acceptance reached the final actor through End while its cursor was
   outside the viewport. Scroll the keyboard-selected actor into view. The complete
   browser acceptance now passes with the current actor cards and knowledge view.
