@@ -14,6 +14,7 @@ driver records their hashes and the runtime source manifest, but cannot establis
 that the supplied executable was built from that source. It never automatically
 stops the native agents after a failed assertion. Retained failure evidence names
 any processes that still belong to the run.
+--resume continues an initial pending task before any native launch occurred.
 """
 import argparse
 import hashlib
@@ -72,7 +73,7 @@ def snapshot(db):
     with sqlite3.connect(f'{db.as_uri()}?mode=ro', uri=True) as connection:
         connection.row_factory = sqlite3.Row
         return {table: [dict(row) for row in connection.execute(f'SELECT * FROM {table}')]
-                for table in ['sessions', 'messages', 'turns']}
+                for table in ['sessions', 'messages', 'turns', 'executions']}
 
 
 def json_lines(path):
@@ -197,6 +198,8 @@ def main():
     parser.add_argument('--model', required=True,
                         help='A model advertised by the local subscription Codex runtime')
     parser.add_argument('--effort', default='medium')
+    parser.add_argument('--resume', action='store_true',
+                        help='Continue the existing sole pending initial task without admitting it again')
     args = parser.parse_args()
     if not (hasattr(os, 'pidfd_open') or hasattr(select, 'kqueue')):
         parser.error('Process-exit observation requires Linux pidfds or macOS/BSD kqueue')
@@ -217,30 +220,45 @@ def main():
     if login.returncode or login_text != 'Logged in using ChatGPT':
         parser.error('Codex must report a ChatGPT subscription login; login output was not retained')
     out = args.output.resolve()
-    out.mkdir(parents=True, exist_ok=False)
+    resumed_label = f'resume-{time.time_ns()}' if args.resume else None
+    original_pin = json.loads((out / 'run.json').read_text()) if args.resume else None
+    if not args.resume:
+        out.mkdir(parents=True, exist_ok=False)
     seed = out / 'seed'
-    command(['git', 'clone', '--shared', '--no-checkout', source, seed])
-    command(['git', '-C', seed, 'checkout', '--detach', base])
+    if not args.resume:
+        command(['git', 'clone', '--shared', '--no-checkout', source, seed])
+        command(['git', '-C', seed, 'checkout', '--detach', base])
     assert command(['git', '-C', seed, 'rev-parse', 'HEAD']) == base
     assert not command(['git', '-C', seed, 'branch', '--show-current'])
     helper_path = seed / 'bend2/scripts/accept-native-receive.py'
     spec = importlib.util.spec_from_file_location('recovery_native_acceptance', helper_path)
     native_acceptance = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(native_acceptance)
-    binary, coordinator_provenance = native_acceptance.prepare_coordinator(source, seed, out, supplied)
-    shutil.copy2(build_log, out / 'build.log')
+    if args.resume:
+        binary = out / 'baton2'
+        coordinator_provenance = original_pin['coordinator_provenance']
+    else:
+        binary, coordinator_provenance = native_acceptance.prepare_coordinator(source, seed, out, supplied)
+        shutil.copy2(build_log, out / 'build.log')
     repo = out / 'repo'
     branch = 'accept-receive-recovery'
     manifest = {str(path.relative_to(source)): digest(path)
                 for path in sorted((source / 'bend2/src').rglob('*')) if path.is_file()}
-    save(out / 'runtime-source-manifest.json', manifest)
+    if args.resume:
+        assert json.loads((out / 'runtime-source-manifest.json').read_text()) == manifest
+    else:
+        save(out / 'runtime-source-manifest.json', manifest)
     db = out / 'state.db'
     native_log = out / 'native.jsonl'
     helper = out / 'control.py'
-    helper.write_text(HELPER)
     wrapper = out / 'subscription-codex'
-    wrapper.write_text('#!/bin/sh\nexec ' + shlex.join([sys.executable, str(helper), 'launch']) + ' "$@"\n')
-    wrapper.chmod(0o700)
+    wrapper_text = '#!/bin/sh\nexec ' + shlex.join([sys.executable, str(helper), 'launch']) + ' "$@"\n'
+    if args.resume:
+        assert helper.read_text() == HELPER and wrapper.read_text() == wrapper_text
+    else:
+        helper.write_text(HELPER)
+        wrapper.write_text(wrapper_text)
+        wrapper.chmod(0o700)
     pin = {
         'source': base, 'source_directory': str(source), 'started_unix': time.time(),
         'seed_repository': str(seed), 'seed_revision': base, 'seed_detached': True,
@@ -257,7 +275,23 @@ def main():
         'subscription_login': login_text, 'login_command': login_argv,
         'process_exit_observation': 'pidfd' if hasattr(os, 'pidfd_open') else 'kqueue',
     }
-    save(out / 'run.json', pin)
+    if args.resume:
+        for key in ['source', 'seed_revision', 'player_workspace', 'player_branch',
+                    'runtime_source_manifest_sha256', 'runtime_source_files',
+                    'coordinator_sha256', 'build_log_sha256', 'codex_executable',
+                    'codex_sha256', 'model', 'effort', 'subscription_wrapper_sha256',
+                    'control_helper_sha256']:
+            assert original_pin[key] == pin[key], (key, original_pin[key], pin[key])
+        assert digest(supplied) == original_pin['coordinator_sha256']
+        assert digest(build_log) == original_pin['build_log_sha256']
+        save(out / f'{resumed_label}.json', {
+            'started_unix': time.time(), 'original_run': original_pin,
+            'original_failure_sha256': digest(out / 'failure.json'),
+            'original_control': json.loads((out / 'control.json').read_text()),
+            'driver_sha256': pin['driver_sha256']})
+        pin = original_pin
+    else:
+        save(out / 'run.json', pin)
     timeline = []
     receipts = []
     observer = None
@@ -265,7 +299,7 @@ def main():
     def record(kind, **data):
         row = {'kind': kind, 'unix': time.time(), **data}
         timeline.append(row)
-        save(out / 'timeline.json', timeline)
+        save(out / (f'{resumed_label}.timeline.json' if resumed_label else 'timeline.json'), timeline)
         print(kind, flush=True)
         return row
 
@@ -324,6 +358,25 @@ both your previous commit hash and the new one. Do not repeat the checkpoint too
     first_native = None
     loss = None
     try:
+        if args.resume:
+            assert not json_lines(out / 'launches.jsonl')
+            assert not json_lines(out / 'tool-checkpoints.jsonl')
+            assert not json_lines(out / 'parent-receipts.jsonl')
+            assert not native_log.exists() or native_log.stat().st_size == 0
+            state = snapshot(db)
+            assert not state['executions'] and not state['turns'], state
+            assert len(state['messages']) == 1, state
+            admitted = state['messages'][0]
+            assert (admitted['id'], admitted['sender'], admitted['recipient'], admitted['kind'],
+                    admitted['body'], admitted['receipt']) == (
+                        INITIAL, 'root', 'worker', 'task', initial_task, None), admitted
+            worker = next(row for row in state['sessions'] if row['id'] == 'worker')
+            assert not worker['native'], worker
+            assert command(['git', '-C', repo, 'rev-parse', 'HEAD']) == base
+            assert command(['git', '-C', repo, 'branch', '--show-current']) == branch
+            assert not command(['git', '-C', repo, 'status', '--porcelain'])
+            assert not [row for row in owned() if '--instance-owner' not in row['command']], owned()
+            record('initial-task-resumed', state=state, resumption=resumed_label)
         with socket.socket() as server:
             server.bind(('127.0.0.1', 0))
             server.listen()
@@ -369,10 +422,13 @@ both your previous commit hash and the new one. Do not repeat the checkpoint too
                             except BrokenPipeError:
                                 pass
             parent = [sys.executable, str(helper), 'parent']
-            call('attach', 'root', 'terminal', '', json.dumps(parent))
-            call('role', 'root', 'principal-conductor')
-            player = json.loads(call('recruit', 'worker', 'root', 'codex', args.model,
-                                     args.effort, str(seed), branch, str(repo), base))
+            if args.resume:
+                player = json.loads(call('session', 'worker'))
+            else:
+                call('attach', 'root', 'terminal', '', json.dumps(parent))
+                call('role', 'root', 'principal-conductor')
+                player = json.loads(call('recruit', 'worker', 'root', 'codex', args.model,
+                                         args.effort, str(seed), branch, str(repo), base))
             for field, value in {'id': 'worker', 'parent': 'root', 'harness': 'codex',
                                  'model': args.model, 'effort': args.effort,
                                  'workspace': str(repo), 'branch': branch, 'base': base}.items():
@@ -380,14 +436,15 @@ both your previous commit hash and the new one. Do not repeat the checkpoint too
             workspace = json.loads(call('worktree', 'worker'))
             assert workspace == {'id': 'worker', 'workspace': str(repo), 'branch': branch,
                                  'commit': base, 'dirty': False}, workspace
-            save(out / 'recruitment.json', {'seed': str(seed), 'session': player,
-                                           'worktree': workspace})
-            initial_admission = json.loads(call('message-batch-file', 'root', '-', input=json.dumps([
-                {'id': INITIAL, 'recipient': 'worker', 'kind': 'task', 'body': initial_task}],
-                ensure_ascii=False)))
-            record('initial-task-admitted', result=initial_admission, state=snapshot(db))
-            assert len(initial_admission) == 1, initial_admission
-            assert initial_admission[0]['admission']['status'] == 'admitted', initial_admission
+            if not args.resume:
+                save(out / 'recruitment.json', {'seed': str(seed), 'session': player,
+                                               'worktree': workspace})
+                initial_admission = json.loads(call('message-batch-file', 'root', '-', input=json.dumps([
+                    {'id': INITIAL, 'recipient': 'worker', 'kind': 'task', 'body': initial_task}],
+                    ensure_ascii=False)))
+                record('initial-task-admitted', result=initial_admission, state=snapshot(db))
+                assert len(initial_admission) == 1, initial_admission
+                assert initial_admission[0]['admission']['status'] == 'admitted', initial_admission
             admitted = next(row for row in snapshot(db)['messages'] if row['id'] == INITIAL)
             assert (admitted['sender'], admitted['recipient'], admitted['kind'], admitted['body'],
                     admitted['receipt']) == ('root', 'worker', 'task', initial_task, None), admitted
@@ -549,6 +606,7 @@ both your previous commit hash and the new one. Do not repeat the checkpoint too
                 'owner_shutdown': shutdown, 'owner_exit_observations': owner_exits,
                 'process_exit_observations': ended_processes,
                 'remaining_processes': owned(),
+                'resumption': resumed_label,
                 'assertions': [
                     'The actual initial Bend receive observer exited from SIGKILL.',
                     'The original Codex process remained alive and normal retry returned queued.',
@@ -566,7 +624,8 @@ both your previous commit hash and the new one. Do not repeat the checkpoint too
             })
             print(f'Native receive recovery verified: {out / "evidence.json"}', flush=True)
     except BaseException as error:
-        save(out / 'failure.json', {**pin, 'error': repr(error), 'timeline': timeline,
+        save(out / (f'{resumed_label}.failure.json' if resumed_label else 'failure.json'),
+             {**pin, 'error': repr(error), 'timeline': timeline,
                                     'remaining_processes': owned(),
                                     'state': snapshot(db) if db.exists() else None})
         raise
