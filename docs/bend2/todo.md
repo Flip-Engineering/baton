@@ -85,7 +85,11 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   reads and complete handling before their terminal frame.
   Installed context acceptance also reached a fresh runtime launch whose declared
   `program` field was omitted by the shared source accessor. Read `program` for
-  runtime launch requests and qualify the complete installed context handoff.
+  runtime launch requests. Focused package run `38377` on the completed `2994dd9d8`
+  runtime passed native handoff, resume and stop checks, then failed with `ENOENT`
+  because the runtime attempt parent directory was absent. Fix `3358ceec7` creates
+  that parent through the existing directory API. Complete installed context
+  acceptance and final source qualification remain pending.
   Browser acceptance reached the final actor through End while its cursor was
   outside the viewport. Scroll the keyboard-selected actor into view. The complete
   browser acceptance now passes with the current actor cards and knowledge view.
