@@ -1,5 +1,7 @@
 """Complete dispatch input and outcomes through native CLI and packaged MCP."""
 import hashlib
+import fcntl
+from contextlib import contextmanager
 import importlib.util
 import json
 import pathlib
@@ -18,6 +20,7 @@ def fixture_module(name, file):
 
 identity = fixture_module('task_identity_fixture', 'control-identity.py')
 controls = identity.controls
+fixed = fixture_module('task_fixed_fixture', 'fixed-coordinator.py')
 
 
 class TaskStart(unittest.TestCase):
@@ -32,6 +35,7 @@ class TaskStart(unittest.TestCase):
     process_rows = identity.ControlIdentity.process_rows
     exited = identity.ControlIdentity.exited
     close_fixtures = identity.ControlIdentity.close_fixtures
+    output_log = controls.Control.output_log
 
     def setUp(self):
         identity.ControlIdentity.setUp(self)
@@ -100,6 +104,21 @@ class TaskStart(unittest.TestCase):
         self.settings_path.write_text(json.dumps(value))
         return self.settings_path.read_bytes()
 
+    @contextmanager
+    def held_session(self, session):
+        path = fixed.FixedCoordinator.session_lock_path(self, session)
+        with path.open('a') as guard:
+            fcntl.flock(guard, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            yield
+
+    def pending_input(self, ident, sender, recipient, kind, body):
+        self.native_input('message-batch-file', sender, '-', body=json.dumps([
+            {'id': ident, 'recipient': recipient, 'kind': kind, 'body': body}]))
+        row, = self.rows('SELECT id,sender,recipient,kind,body,receipt FROM messages WHERE id=?',
+                         (ident,))
+        self.assertEqual(row, {'id': ident, 'sender': sender, 'recipient': recipient,
+                               'kind': kind, 'body': body, 'receipt': None})
+
     def assert_retained_input(self, result, body):
         self.assertEqual(result['input']['body'], body)
         request = self.call('task-input-read', result['requestId'])
@@ -136,9 +155,38 @@ class TaskStart(unittest.TestCase):
 
     def failed_turn(self, session, stream, report):
         self.finish(stream, report, fail=True)
-        self.exited(session)
+        execution = self.exited(session)
         turn = self.eventually(lambda: next((row for row in self.call('turns', session)
-                                            if row['reportBody'] == report), None))
+                                            if row['id'] == execution['id']), None))
+        state = self.call('session', session)
+        if state['harness'] == 'codex':
+            event = {'type': 'result', 'is_error': 1,
+                     'nativeEvent': {'type': 'turn.failed', 'error': {'message': report}},
+                     'result': report}
+        elif state['harness'] == 'omp':
+            event = {'type': 'agent_end', 'isTerminal': True, 'messages': [
+                {'role': 'assistant', 'stopReason': 'error', 'errorStatus': 503,
+                 'errorMessage': report, 'content': [{'type': 'text', 'text': report}]}]}
+        elif state['harness'] == 'muse':
+            event = {'stream': {'kind': 'session', 'id': state['native']},
+                     'payload_type': 'run.terminal.failed',
+                     'payload': {'kind': 'run_terminal', 'terminal': 'failed',
+                                 'command_id': 'fixture-primary', 'text': report}}
+        else:
+            self.assertEqual(state['harness'], 'claude-code')
+            event = {'type': 'result', 'session_id': state['native'],
+                     'result': report, 'is_error': True}
+        stored_event = self.rows('SELECT event FROM turns WHERE id=? AND worker=?',
+                                 (execution['id'], session))[0]['event']
+        self.assertEqual(json.loads(stored_event), event)
+        if state['harness'] == 'omp':
+            self.assertEqual(turn['reportBody'],
+                             'OMP provider failure: stopReason=error, errorStatus=503; ' + report)
+        else:
+            self.assertEqual(json.loads(turn['reportBody']), event)
+        delivered = self.call('delivery', execution['id'])
+        self.assertEqual((delivered['sender'], delivered['recipient'], delivered['kind'], delivered['body']),
+                         (session, state['parent'] or 'operator', 'report', turn['reportBody']))
         self.eventually(lambda: self.call('session', session)['blockedCause'] == 'provider-failure')
         return turn
 
@@ -174,7 +222,7 @@ class TaskStart(unittest.TestCase):
                 seeds.add(seed)
                 self.assertEqual(native['cwd'], str(self.repo.resolve()))
                 self.failed_turn(session, stream, 'Retained provider error λ🙂\n' + source)
-                self.assertTrue(pathlib.Path(result['outputLog']).is_file())
+                self.assertTrue(self.output_log(session).is_file())
                 self.assertEqual(self.call('delivery', result['task'])['receipt'], 'fixture-native-reviewed')
 
     def test_muse_file_and_claude_stdin_receive_complete_seeded_initial_input(self):
@@ -418,6 +466,8 @@ class TaskStart(unittest.TestCase):
     def test_existing_as_dispatch_keeps_contextual_message_authority_and_full_body(self):
         session = 'contextual-dispatch-agent'
         self.call('join', session, 'root', 'codex', 'gpt-6-astra', 'low', self.repo)
+        endpoint = json.dumps([sys.executable, '-c', 'import sys;print(sys.argv[-1])'])
+        self.call('connect', session, '', endpoint)
         body = 'Complete contextual dispatch λ🙂\n'
         before = self.rows('SELECT * FROM task_input_requests ORDER BY id')
         rows = self.call('as', 'root', 'dispatch', '--id', 'contextual-dispatch',
@@ -510,7 +560,8 @@ class TaskStart(unittest.TestCase):
             self.assertEqual(self.call('task-input-read', request['id'])['request'], request)
 
     def test_explicit_continue_requires_an_existing_open_assignment(self):
-        result = self.task_call('--to', 'root', '--continue', '--text', 'Require recorded open work.', ok=False)
+        self.call('join', 'idle', 'root', 'codex', 'gpt-6-astra', 'low', self.repo)
+        result = self.task_call('--to', 'idle', '--continue', '--text', 'Require recorded open work.', ok=False)
         self.assertEqual(result['error']['reason'], 'taskAssignmentClosed')
         self.assertIsNone(result.get('admission'))
 
@@ -560,24 +611,26 @@ class TaskStart(unittest.TestCase):
         self.call('connect', session, 'recorded-native-continuation', '')
         log = self.directory / 'existing.jsonl'
         self.call('receiver', session, self.fixture, log)
-        self.call('message', 'original-assignment', 'root', session, 'task', 'Original owed task λ.')
-        self.call('message', 'prior-pending', 'root', session, 'custom-note', 'Preserve this pending note.')
-        before = self.call('session', session)
-        body = 'Continue the same task.\nComplete supplemental input λ🙂.'
-        refused = self.task_call('--session', session, '--continue', '--text',
-                                 'Operator authority remains scoped to its Principal.', ok=False)
-        self.assertEqual(refused['error']['reason'], 'taskAdmissionRefused')
-        self.assertEqual(self.rows('SELECT * FROM messages WHERE id=?', (refused['task'],)), [])
-        result = self.task_call('--sender', 'root', '--to', session,
-                                '--effort', 'high', '--text', body)
-        self.assert_retained_input(result, body)
-        self.assertEqual(self.call('delivery', result['task'])['kind'], 'task-continuation')
-        current = result['currentSession']
-        for field in ('native', 'parent', 'workspace', 'branch', 'base', 'endpointArgv'):
-            self.assertEqual(current[field], before[field])
-        self.assertEqual(current['taskCompletion']['assignmentId'], 'original-assignment')
-        self.assertEqual(current['effort'], 'high')
-        self.assertEqual(current['workspace'], assignment['workspace'])
+        with self.held_session(session):
+            self.pending_input('original-assignment', 'root', session, 'task', 'Original owed task λ.')
+            self.pending_input('prior-pending', 'root', session, 'custom-note', 'Preserve this pending note.')
+            before = self.call('session', session)
+            body = 'Continue the same task.\nComplete supplemental input λ🙂.'
+            refused = self.task_call('--session', session, '--continue', '--text',
+                                     'Operator authority remains scoped to its Principal.', ok=False)
+            self.assertEqual(refused['error']['reason'], 'taskAdmissionRefused')
+            self.assertEqual(self.rows('SELECT * FROM messages WHERE id=?', (refused['task'],)), [])
+            result = self.task_call('--sender', 'root', '--to', session,
+                                    '--effort', 'high', '--text', body)
+            self.assert_retained_input(result, body)
+            self.assertEqual(self.call('delivery', result['task'])['kind'], 'task-continuation')
+            current = result['currentSession']
+            for field in ('native', 'parent', 'workspace', 'branch', 'base', 'endpointArgv'):
+                self.assertEqual(current[field], before[field])
+            self.assertEqual(current['taskCompletion']['assignmentId'], 'original-assignment')
+            self.assertEqual(current['effort'], 'high')
+            self.assertEqual(current['workspace'], assignment['workspace'])
+        self.call('receiver', session, self.fixture, log)
         stream, native = self.accept(session)
         self.assertEqual(native['native'], 'recorded-native-continuation')
         self.assertIn('model_reasoning_effort="high"', native['args'])
@@ -592,7 +645,7 @@ class TaskStart(unittest.TestCase):
 
     def test_stopped_session_and_explicit_new_assignment_leave_owned_state_unchanged(self):
         self.call('join', 'stopped', 'root', 'codex', 'gpt-6-astra', 'low', self.repo)
-        self.call('message', 'owed-original', 'root', 'stopped', 'task', 'Retain the stopped task.')
+        self.pending_input('owed-original', 'root', 'stopped', 'task', 'Retain the stopped task.')
         open_result = self.task_call('--session', 'stopped', '--new', '--text', 'A fresh session is required.', ok=False)
         self.assertEqual(open_result['error']['reason'], 'taskSessionExists')
         self.call('stop', 'stopped', 'explicit-stop', 'The operator stopped this session.')
@@ -610,13 +663,15 @@ class TaskStart(unittest.TestCase):
                   self.repo, self.directory / 'principal-continuing.jsonl')
         self.call('connect', session, 'recorded-principal-native',
                   self.call('session', session)['endpoint'])
-        self.call('message', 'operator-original', 'operator', session, 'task', 'Retain the operator task.')
-        before = self.call('session', session)
-        result = self.task_call('--session', session, '--text', 'Continue the operator task λ🙂.')
-        self.assertEqual(self.call('delivery', result['task'])['kind'], 'task-continuation')
-        self.assertEqual(result['currentSession']['taskCompletion']['assignmentId'], 'operator-original')
-        for field in ('native', 'parent', 'workspace', 'branch', 'base', 'endpointArgv'):
-            self.assertEqual(result['currentSession'][field], before[field])
+        with self.held_session(session):
+            self.pending_input('operator-original', 'operator', session, 'task', 'Retain the operator task.')
+            before = self.call('session', session)
+            result = self.task_call('--session', session, '--text', 'Continue the operator task λ🙂.')
+            self.assertEqual(self.call('delivery', result['task'])['kind'], 'task-continuation')
+            self.assertEqual(result['currentSession']['taskCompletion']['assignmentId'], 'operator-original')
+            for field in ('native', 'parent', 'workspace', 'branch', 'base', 'endpointArgv'):
+                self.assertEqual(result['currentSession'][field], before[field])
+        self.call('receiver', session, self.fixture, self.directory / 'principal-continuing.jsonl')
         stream, native = self.accept(session)
         self.assertEqual(native['native'], 'recorded-principal-native')
         self.assertIn('Retain the operator task.', native['prompt'])
@@ -627,7 +682,7 @@ class TaskStart(unittest.TestCase):
         unrelated = self.directory / 'unrelated-project'
         unrelated.mkdir()
         self.call('join', 'foreign', 'root', 'codex', 'gpt-6-astra', 'low', unrelated)
-        self.call('message', 'foreign-task', 'root', 'foreign', 'task', 'Retain the other project task.')
+        self.pending_input('foreign-task', 'root', 'foreign', 'task', 'Retain the other project task.')
         before = self.rows('SELECT * FROM sessions ORDER BY id'), self.rows('SELECT * FROM messages ORDER BY seq')
         result = self.task_call('--session', 'foreign', '--continue', '--text', 'No cross-project selection.', ok=False)
         self.assertEqual(result['error']['reason'], 'taskProjectSessionConflict')
@@ -662,21 +717,24 @@ class TaskStart(unittest.TestCase):
         self.failed_turn('literal-paths', stream, 'Retain the literal-path provider result.')
 
     def test_non_git_nested_workspace_uses_native_prefix_membership_and_rejects_adjacent_path(self):
+        self.environment['GIT_CEILING_DIRECTORIES'] = str(self.directory)
         project = self.directory / 'plain-project'
         workspace = project / 'nested'
         workspace.mkdir(parents=True)
         adjacent = self.directory / 'plain-project-other'
         adjacent.mkdir()
         self.call('project', project)
-        self.call('join', 'plain', 'root', 'codex', 'gpt-6-astra', 'low', workspace)
-        self.call('receiver', 'plain', self.fixture, self.directory / 'plain.jsonl')
-        self.call('message', 'plain-assignment', 'root', 'plain', 'task', 'Original plain project task.')
-        self.route('plain')
-        result = self.task_call('--sender', 'root', '--project', project, '--session', 'plain', '--continue',
-                                '--text', 'Continue the nested non-Git workspace.', project=project)
-        self.assertEqual(result['projectResolution']['rule'], 'path-prefix')
-        self.assertEqual(result['currentSession']['workspace'], str(workspace.resolve()))
-        self.assertEqual(result['currentSession']['taskCompletion']['assignmentId'], 'plain-assignment')
+        self.call('join', 'plain', 'root', 'codex', 'gpt-6-astra', 'low', self.repo)
+        self.call('receiver', 'plain', self.fixture, self.directory / 'plain.jsonl', workspace)
+        with self.held_session('plain'):
+            self.pending_input('plain-assignment', 'root', 'plain', 'task', 'Original plain project task.')
+            self.route('plain')
+            result = self.task_call('--sender', 'root', '--project', project, '--session', 'plain', '--continue',
+                                    '--text', 'Continue the nested non-Git workspace.', project=project)
+            self.assertEqual(result['projectResolution']['rule'], 'path-prefix')
+            self.assertEqual(result['currentSession']['workspace'], str(workspace.resolve()))
+            self.assertEqual(result['currentSession']['taskCompletion']['assignmentId'], 'plain-assignment')
+        self.call('receiver', 'plain', self.fixture, self.directory / 'plain.jsonl', workspace)
         stream, native = self.accept('plain')
         self.assertEqual(native['cwd'], str(workspace.resolve()))
         self.finish(stream)
@@ -730,6 +788,7 @@ class TaskStart(unittest.TestCase):
     def mcp_task(self, script, body, source, tool):
         session = 'mcp-child-' + source + '-' + tool
         self.route(session)
+        self.call('attach', 'root', 'claude-code', 'saved-root', '')
         task_file = self.directory / 'MCP plain task.txt'
         if source == 'file':
             task_file.write_bytes(body.encode())
@@ -763,6 +822,7 @@ class TaskStart(unittest.TestCase):
                     answer = read()
                     if 'method' not in answer:
                         self.assertEqual(answer['id'], ident, answer)
+                        self.assertIn('result', answer, answer)
                         return answer['result']
 
             def invoke(name, value):
