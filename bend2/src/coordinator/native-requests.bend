@@ -61,25 +61,24 @@ def send(+db: String, +id: String) -> IO(Result<&1,&1,U32 & String,String>):
 def pending_reply_sql(+player: String, +turn: String, +attempt: String) -> String:
   "SELECT coalesce((SELECT hex(r.id) FROM native_requests r JOIN sessions s ON s.id=r.worker AND s.parent=r.parent JOIN executions e ON e.session=r.worker AND e.id=" ++ C.q(turn) ++ " AND e.directory=r.attempt WHERE r.worker=" ++ C.q(player) ++ " AND r.attempt=" ++ C.q(attempt) ++ " AND e.phase<>'exited' AND r.reply IS NOT NULL AND r.written=0 AND r.closed IS NULL AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=r.worker) ORDER BY r.rowid LIMIT 1),'');"
 
-@unsafe
-def resume_decoded(scalar: Req.Scalar, +db: String, +player: String, +turn: String, +attempt: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+def resume_decoded(scalar: Req.Scalar, db: String, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   match scalar:
     case Req.ScalarText{selected}: do IO<Result<&1,&1,U32 & String,Unit>>:
       sent : String <- IO.try(String,send(db,selected))
-      resume_pending(db,player,turn,attempt)
+      again(Unit{})
     case other: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(22,"Stored native request identity could not be decoded: " ++ Req.scalar_reason(other))})
 
-@unsafe
-def resume_available(empty: Bool, db: String, player: String, turn: String, attempt: String, encoded: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+def resume_available(empty: Bool, db: String, encoded: String, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   match empty:
     case True{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
-    case False{}: resume_decoded(Req.decode_scalar_utf8(Tx.hex_decode(Tx.trim_nl(encoded))),db,player,turn,attempt)
+    case False{}: resume_decoded(Req.decode_scalar_utf8(Tx.hex_decode(Tx.trim_nl(encoded))),db,again)
 
 @unsafe
 def resume_pending(+db: String, +player: String, +turn: String, +attempt: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     +encoded : String <- IO.try(String,DB.Sql.query(db,pending_reply_sql(player,turn,attempt)))
-    resume_available(String.is_empty(Tx.trim_nl(encoded)),db,player,turn,attempt,encoded)
+    resume_available(String.is_empty(Tx.trim_nl(encoded)),db,encoded,
+      unit => resume_pending(db,player,turn,attempt))
 
 def resume(+db: String, player: String, turn: String, attempt: String, enabled: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match enabled:
