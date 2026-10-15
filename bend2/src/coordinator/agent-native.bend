@@ -508,13 +508,13 @@ def run_spawn(+index: U32, +verb: String, args: List<&2,String>, +path: String, 
 def run(+index: U32, +verb: String, +args: List<&2,String>, +path: String) -> IO(Result<&1,&1,U32 & String,Outcome>):
   match args:
     case exe <> db <> "--project-settings" <> project <> Nil{}: do IO<Result<&1,&1,U32 & String,Outcome>>:
-      spawned : Result<&1,&1,U32 & String,U32> <- P.ProcessChild.spawn(P.argv([exe,"--project-settings",project]),"",path)
+      spawned : Result<&1,&1,U32 & String,U32> <- P.ProcessChild.spawn(P.argv([exe,"--project-settings",project]),".",path)
       run_spawn(index,verb,args,path,"",spawned)
     case exe <> db <> "agent-contextual-input" <> session <> action: do IO<Result<&1,&1,U32 & String,Outcome>>:
-      spawned : Result<&1,&1,U32 & String,U32> <- P.ProcessChild.spawn(P.argv([exe,db,"agent-contextual-input",session]),"",path)
+      spawned : Result<&1,&1,U32 & String,U32> <- P.ProcessChild.spawn(P.argv([exe,db,"agent-contextual-input",session]),".",path)
       run_spawn(index,verb,args,path,args_json(action),spawned)
     case exe <> db <> legacy: do IO<Result<&1,&1,U32 & String,Outcome>>:
-      spawned : Result<&1,&1,U32 & String,U32> <- P.ProcessChild.spawn(P.argv([exe,db,"agent-native-input"]),"",path)
+      spawned : Result<&1,&1,U32 & String,U32> <- P.ProcessChild.spawn(P.argv([exe,db,"agent-native-input"]),".",path)
       run_spawn(index,verb,args,path,args_json(legacy),spawned)
     case other: IO.pure(Result<&1,&1,U32 & String,Outcome>,Fail{(2,"Missing native executable or database context.")})
 

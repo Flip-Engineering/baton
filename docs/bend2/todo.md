@@ -4,6 +4,17 @@ The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3
 retain findings, ownership and acceptance requirements. This page links current
 Baton follow-up work for contributors. Every open issue has a link on this page.
 
+- [#742: Start contextual command subprocesses in the current directory](https://github.com/Flip-Engineering/baton/issues/742).
+  Actual Muse and GLM review resumptions on `064def1e` returned an empty-directory
+  subprocess failure before native startup. Use the current directory for
+  contextual native actions, message actions and project settings. Validate the
+  public commands, preserve existing review tasks, and complete current-source
+  release qualification. Coordinate with
+  [#715](https://github.com/Flip-Engineering/baton/issues/715),
+  [#717](https://github.com/Flip-Engineering/baton/issues/717),
+  [#723](https://github.com/Flip-Engineering/baton/issues/723) and
+  [#741](https://github.com/Flip-Engineering/baton/issues/741).
+
 - [#741: Reduce serial Bend C generation time](https://github.com/Flip-Engineering/baton/issues/741).
   The current compiler uses one main thread for coordinator C generation on
   the 64-CPU homelab. Identify parallel compiler work and measure available
