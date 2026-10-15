@@ -253,7 +253,7 @@ class NativeFailureOutput(unittest.TestCase):
         prompt = request['prompt']
         self.assertIn(str(fixture.db), prompt)
         self.assertIn('Recorded parent: root.', prompt)
-        self.assertIn('knowledge-search READER', prompt)
+        self.assertIn('knowledge search --query TEXT', prompt)
         self.assertIn('Message (task-assignment) from parent [id: completed-direct:task-input]:',
                       prompt)
         self.assertTrue(prompt.endswith(task_body))

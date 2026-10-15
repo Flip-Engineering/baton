@@ -176,14 +176,18 @@ writeFileSync(workerCmd, `#!${process.execPath}\n` +
 chmodSync(workerCmd, 0o755);
 writeFileSync(join(WORK, 'worker-task.txt'), 'Task for worker');
 {
-  const turn = spawnSync(EXE, [DB, 'turn', 'worker', 'worker-finished', workerCmd, 'configured-model', 'low',
-    join(WORK, 'worker'), join(WORK, 'worker-task.txt'), join(WORK, 'worker.jsonl'), ''], { encoding: 'utf8' });
+  const argv = [DB, 'turn', 'worker', 'worker-finished', workerCmd, 'configured-model', 'low',
+    join(WORK, 'worker'), join(WORK, 'worker-task.txt'), join(WORK, 'worker.jsonl'), ''];
+  const turn = spawnSync(EXE, argv, { encoding: 'utf8' });
+  fixtureCommands.push({sequence: fixtureCommands.length + 1, executable: EXE, argv,
+    status: turn.status, signal: turn.signal, stdout: turn.stdout, stderr: turn.stderr,
+    error: turn.error ? errorRecord(turn.error) : null});
   if (turn.status !== 0) throw new Error('fixture turn: ' + turn.stdout + turn.stderr);
 }
 {
   const worker = JSON.parse(baton('session', 'worker'));
   check('the worker assignment has coordinator confirmation',
-    worker.taskCompletion.confirmed && !worker.taskCompletion.open);
+    worker.taskCompletion.confirmed && !worker.taskCompletion.open, JSON.stringify(worker));
   // Later display probes retain input for the same recorded native session.
   baton('connect', 'worker', worker.native, '');
   baton('connect', parentState.id, parentState.native, parentState.endpoint);
@@ -205,6 +209,7 @@ baton('record', 'qa-msg-finding', 'worker', 'Worker message finding.',
   'message:qa-task-1', 'Worker message limits.');
 {
   const db = new DatabaseSync(DB);
+  db.exec('PRAGMA busy_timeout = 250');
   db.exec('CREATE TABLE IF NOT EXISTS knowledge_relations (id TEXT UNIQUE NOT NULL, author TEXT NOT NULL, source TEXT NOT NULL, relation TEXT NOT NULL, target TEXT NOT NULL)');
   db.prepare(`INSERT INTO knowledge_relations(id,author,source,relation,target) VALUES
     ('qa-rel-msg','worker','finding:qa-msg-finding','evidenced by','message:qa-task-1'),
@@ -219,8 +224,8 @@ baton('record', 'qa-msg-finding', 'worker', 'Worker message finding.',
 const initialFindings = [...fixtureFindings.values()];
 const initialWorkerRecords = initialFindings.filter((finding) => finding.author === 'worker').length;
 const initialScopeText = {
-  worker: `worker · ${initialWorkerRecords} records`,
-  all: `All held records · ${initialFindings.length} records`,
+  worker: `Individual: worker · ${initialWorkerRecords} records`,
+  all: `All tiers · ${initialFindings.length} records`,
 };
 
 async function fileIdentity(path) {
@@ -666,20 +671,20 @@ await until('the live stage keeps its quiet recorded Principal as reporting cont
       && principal.querySelector('.att-seat-state').textContent.includes('quiet')
       && [...stage.querySelectorAll('.att-parent-link')].some((edge) =>
         edge.getAttribute('data-att-parent-from') === id)
-      && ![...document.querySelectorAll('#roster .doc-row')].some((row) =>
-        row.getAttribute('data-doc-id') === id);
+      && principal.querySelector('.att-seat-role').textContent === 'Principal conductor';
   })()`);
 const initialShot = await send(pageWs, 'Page.captureScreenshot', { format: 'png' });
 writeFileSync(join(OUT, 'initial.png'), Buffer.from(initialShot.result.data, 'base64'));
 await captureSurfaceEvidence('initial-stage.png', '#staves');
-await captureSurfaceEvidence('initial-memberships.png', '#attention-band .att-ensembles');
+await captureSurfaceEvidence('initial-memberships.png', '#attention-band .att-stage');
 check('the default scope shows live work and puts the rest behind the control', await evalJs(
   `document.getElementById('doc-ended').getAttribute('aria-pressed') === 'false'
-    && document.querySelectorAll('#roster .doc-row.state-quiet').length === 0
+    && !document.querySelector('#attention-band .att-seat[data-att-id="worker"]')
     && /^Show /.test((document.getElementById('doc-ended').textContent || '').trim())`));
 await evalJs(`document.getElementById('doc-ended').click()`);
-await until('roster renders the fixture actors in margin bands',
-  `document.querySelectorAll('#roster .doc-row').length >= 4 && (document.getElementById('roster').textContent || '').includes('qa-ensemble')`);
+await until('the recorded stage renders all fixture actors and their ensemble',
+  `document.querySelectorAll('#attention-band .att-seat').length === 4
+    && !!document.querySelector('#attention-band .att-peer-group[data-att-ensemble="qa-ensemble"]')`);
 check('plate carries its heading and one plain state word', await evalJs(`(() => {
   const h1 = document.querySelector('h1.plate-title');
   const mark = document.getElementById('plate-mark');
@@ -689,7 +694,7 @@ check('plate carries its heading and one plain state word', await evalJs(`(() =>
 })()`));
 check('the plate moves through the regions in their redesigned order', await evalJs(`(() => {
   const links = [...document.querySelectorAll('.plate-nav a')];
-  const want = [['#pit', 'Activity'], ['#staves', 'Agents'], ['#map', 'Knowledge'],
+  const want = [['#staves', 'Orchestra'], ['#map', 'Knowledge'],
     ['#record', 'Selected actor'], ['#project', 'Project']];
   return links.length === want.length
     && want.every(([href, name], i) => links[i].getAttribute('href') === href
@@ -708,15 +713,19 @@ check('pit and paper grounds paint their materials', await evalJs(`(() => {
 })()`));
 check('rail stays hidden while no exited seat owes', await evalJs(
   `document.getElementById('rail').hidden === true`));
-check('Agents give every row a staff and bands a rehearsal letter', await evalJs(`(() => {
-  const rows = [...document.querySelectorAll('#roster .doc-row')];
-  const heads = [...document.querySelectorAll('#roster .doc-band-head .doc-bracket')];
-  return rows.length > 0 && rows.every((row) => row.querySelector('.doc-staff'))
-    && heads.length > 0 && heads.every((h) => /^[A-Z]+$/.test((h.textContent || '').trim()))
-    && !!document.querySelector('#roster .doc-row .staff-note');
+check('each actor has a caption, role, state and recorded activity staff', await evalJs(`(() => {
+  const seats = [...document.querySelectorAll('#attention-band .att-seat')];
+  const tiers = [...document.querySelectorAll('#attention-band .att-section-label')];
+  return seats.length === 4 && seats.every((seat) =>
+    seat.querySelector('.att-seat-label').textContent === seat.dataset.attId
+    && seat.querySelector('.att-seat-role').textContent
+    && seat.querySelector('.att-seat-state').textContent
+    && seat.querySelectorAll('.att-staff-line').length === 5)
+    && tiers.length > 1 && tiers.every((tier) => tier.textContent.trim())
+    && !!document.querySelector('#attention-band .att-activity-note');
 })()`));
 await until('map opens on the universal view',
-  `document.querySelector('#map-scope').textContent === 'Universal knowledge · 0 records'`);
+  `document.querySelector('#map-scope').textContent === 'Orchestra: root · 0 records'`);
 check('universal view holds no fixture records', await evalJs(
   `document.querySelectorAll('#knowledge-whole .knode').length === 0 && document.querySelectorAll('#knowledge-whole .kw-anchor').length === 0`));
 check('the exemplar is absent where nothing draws', await evalJs(
@@ -726,6 +735,7 @@ check('empty knowledge has no actor stand-ins', await evalJs(
     && !!document.querySelector('#knowledge-whole .kg-empty')`));
 {
   const db = new DatabaseSync(DB);
+  db.exec('PRAGMA busy_timeout = 250');
   db.prepare("INSERT INTO knowledge_relations(id,author,source,relation,target) VALUES ('qa-rel-only','root','message:qa-root-message','references','external:qa-root-log')").run();
   db.close();
 }
@@ -736,35 +746,45 @@ await until('relation-only holdings draw both citations and their relationship',
     && !document.querySelector('#knowledge-whole [data-knowledge-kind="session"]')`);
 {
   const db = new DatabaseSync(DB);
+  db.exec('PRAGMA busy_timeout = 250');
   db.prepare("DELETE FROM knowledge_relations WHERE id='qa-rel-only'").run(); db.close();
 }
 await evalJs(`document.getElementById('reconnect').click()`);
 await until('removing the only relation restores empty knowledge',
   `document.querySelectorAll('#knowledge-whole .kg-node,.kg-edge').length === 0
     && !!document.querySelector('#knowledge-whole .kg-empty')`);
-check('roster rows read the name, the work, then the staff', await evalJs(
-  `[...document.querySelectorAll('#roster .doc-row')].every((row) => { const btn = row.querySelector('.doc-open'); if (!btn) return false; const kids = [...btn.children]; const name = btn.querySelector('.doc-name'); const lead = btn.querySelector('.doc-lead'); const staff = btn.querySelector('.doc-staff'); return !!name && !!lead && !!staff && kids.indexOf(name) < kids.indexOf(lead) && kids.indexOf(lead) < kids.indexOf(staff); })`));
-await evalJs(`document.querySelector('#roster .doc-row[data-doc-id="worker"] .doc-open').click()`);
-await until('the selected actor opens for the chosen row',
-  `document.querySelector('#selection h2') && document.querySelector('#selection h2').textContent === 'worker'`);
+check('actor captions and state fit inside their recorded cards', await evalJs(`(() => {
+  const seats = [...document.querySelectorAll('#attention-band .att-seat')];
+  return seats.length === 4 && seats.every((seat) => {
+    const card = seat.querySelector('.att-seat-card').getBoundingClientRect();
+    return ['.att-seat-label', '.att-seat-role', '.att-seat-state'].every((selector) => {
+      const box = seat.querySelector(selector).getBoundingClientRect();
+      return box.width > 0 && box.left >= card.left && box.right <= card.right
+        && box.top >= card.top && box.bottom <= card.bottom;
+    });
+  });
+})()`));
+await evalJs(`document.querySelector('#attention-band .att-seat[data-att-id="worker"]').dispatchEvent(new MouseEvent('click',{bubbles:true}))`);
+await until('the selected actor opens for the chosen seat',
+  `document.querySelector('#selection h2')?.textContent === 'worker'`);
 const selectedActorHash = await evalJs(`location.hash`);
 await evalJs(`document.querySelector('#selection .sel-index a').click()`);
 check('selected actor navigation preserves its address', await evalJs(
   `location.hash === ${JSON.stringify(selectedActorHash)} && document.querySelector('#selection h2')?.textContent === 'worker'`));
-await until('row selection lights its own arcs',
-  `!!document.querySelector('#roster .kw-arc-hot[data-from="worker"]')`);
-await until('the map draws on the page without a disclosure',
+await until('the selected seat retains its selection mark',
+  `!!document.querySelector('#attention-band .att-seat.att-selected[data-att-id="worker"]')`);
+await evalJs(`document.querySelector('button[data-knowledge-tier="worker"]').click()`);
+await until('the map draws complete individual holdings on the page',
   `document.querySelector('#knowledge-whole .kg-canvas') && document.querySelectorAll('#knowledge-whole .kg-node').length > 1`);
-await until('selecting a worker loads that scope holdings',
-  `(document.querySelector('#map-scope').textContent || '').endsWith(${JSON.stringify(`· ${initialWorkerRecords} records`)})`);
-check('promotion arcs join the rendered rows in the margin', await evalJs(
-  `!!document.querySelector('#roster > svg.kw-arcs') && !!document.querySelector('#roster .kw-arc[data-from="worker"][data-to="aide"]')`));
-check('sharing seats carry a holding halo in the row gutter', await evalJs(
-  `!!document.querySelector('#roster .kw-row-halo[data-row="worker"]')`));
-check('row knowledge reads as one compact line', await evalJs(`(() => {
-  const line = document.querySelector('#roster .doc-row[data-doc-id="worker"] .kw-compact');
-  return !!line && (line.textContent || '').includes('Worker retained finding');
-})()`));
+await until('the Individual tier names the selected holder and complete record count',
+  `document.querySelector('#map-scope').textContent === ${JSON.stringify(`Individual: worker · ${initialWorkerRecords} records`)}`);
+check('the actor record lists its authored finding', await evalJs(
+  `document.querySelector('#selection [data-selkey="sel:auth:qa-worker-finding"]')?.textContent.includes('Worker retained finding.')`));
+await evalJs(`document.querySelector('.kg-node[data-knowledge-node="qa-worker-finding"]').dispatchEvent(new MouseEvent('click',{bubbles:true}))`);
+await until('the finding detail retains both recorded sharing destinations',
+  `document.querySelector('.kw-science-detail')?.textContent.includes('qa-worker-share')
+    && document.querySelector('.kw-science-detail')?.textContent.includes('qa-lead-share')`);
+await evalJs(`document.querySelector('[data-science-focus="overview"]').click()`);
 // The payload contract, read once from the live overview endpoint. The nodes and
 // edges the contract adds are checked here; the drawing checks stay in the page.
 const overviewPayload = await evalJs(`(async () => {
@@ -813,19 +833,15 @@ check('authored edges match the relations the payload preserves', (() => {
     && relations.every((relation) => authored.some((edge) =>
       edge.source === relation.sourceReference && edge.target === relation.targetReference));
 })());
-check('a roster row and its knowledge band each hold one row', await evalJs(`(() => {
-  const rows = [...document.querySelectorAll('#roster .doc-row')].filter((row) => row.offsetHeight > 0);
-  if (rows.length < 2) return false;
-  const ROW = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--row'));
-  if (!ROW) return false;
-  return rows.every((row) => {
-    const band = row.querySelector('.doc-row-knowledge');
-    const own = row.getBoundingClientRect().height - (band ? band.getBoundingClientRect().height : 0);
-    if (Math.abs(own - ROW) > 2) return false;
-    return !band || Math.abs(band.getBoundingClientRect().height - ROW) <= 2;
-  });
+check('actor cards and their activity staffs remain separated', await evalJs(`(() => {
+  const seats = [...document.querySelectorAll('#attention-band .att-seat')];
+  const cards = seats.map((seat) => seat.querySelector('.att-seat-card').getBoundingClientRect());
+  return cards.length === 4 && cards.every((card, index) => cards.every((other, otherIndex) =>
+    index === otherIndex || card.right <= other.left || card.left >= other.right
+      || card.bottom <= other.top || card.top >= other.bottom))
+    && seats.every((seat) => seat.querySelectorAll('.att-staff-line').length === 5);
 })()`));
-// Capture the compact row knowledge for review.
+// Capture the selected actor and complete individual holdings.
 const knowledgeShot = await send(pageWs, 'Page.captureScreenshot', { format: 'png' });
 writeFileSync(join(OUT, 'knowledge.png'), Buffer.from(knowledgeShot.result.data, 'base64'));
 if (CAPTURE_ONLY) {
@@ -840,8 +856,9 @@ await until('all-records scope retains its complete holdings',
   `document.querySelector('#map-scope').textContent === ${JSON.stringify(initialScopeText.all)}`);
 await evalJs(`document.getElementById('map-scope-all').click()`);
 await until('scope returns to universal knowledge',
-  `document.querySelector('#map-scope').textContent === 'Universal knowledge · 0 records'`);
-await evalJs(`document.querySelector('#roster .doc-row[data-doc-id="worker"] .doc-open').click()`);
+  `document.querySelector('#map-scope').textContent === 'Orchestra: root · 0 records'`);
+await evalJs(`document.querySelector('#attention-band .att-seat[data-att-id="worker"]').dispatchEvent(new MouseEvent('click',{bubbles:true}))`);
+await evalJs(`document.querySelector('button[data-knowledge-tier="worker"]').click()`);
 await until('worker scope restores its knowledge records',
   `!!document.querySelector('.kg-node[data-knowledge-node="qa-worker-finding"]')`);
 await evalJs(`document.querySelector('.kg-node[data-knowledge-node="qa-worker-finding"]').dispatchEvent(new MouseEvent('click',{bubbles:true}))`);
@@ -859,13 +876,15 @@ check('native redraw retains knowledge selection and camera', await evalJs(
     && document.querySelector('.kg-world').getAttribute('transform') === ${JSON.stringify(graphBeforeLive)}`));
 await evalJs(`document.querySelector('[data-science-focus="overview"]').click()`);
 baton('record', 'qa-worker-live-finding', 'worker', 'Worker live finding.', 'Live evidence.', 'Live limits.');
-await until('native SSE adds the new finding to the graph and roster',
+await until('native SSE adds the finding to both the graph and actor record',
   `!!document.querySelector('.kg-node[data-knowledge-node="qa-worker-live-finding"]')
-    && document.querySelector('#roster .doc-row[data-doc-id="worker"] .kw-compact').textContent.includes('3 findings')`);
+    && !!document.querySelector('#selection [data-selkey="sel:auth:qa-worker-live-finding"]')`);
 check('native redraw retains dismissed knowledge selection', await evalJs(`!document.querySelector('.kg-node.is-selected,.kg-edge.is-selected,.kw-science-detail')`));
 baton('promote', 'qa-worker-live-share', 'aide', 'worker', 'aide', 'qa-worker-live-finding');
-await until('native SSE updates sharing on the author row',
-  `document.querySelector('#roster .doc-row[data-doc-id="worker"] .kw-compact').textContent.includes('2 shared')`);
+await evalJs(`document.querySelector('.kg-node[data-knowledge-node="qa-worker-live-finding"]').dispatchEvent(new MouseEvent('click',{bubbles:true}))`);
+await until('native SSE retains the new finding sharing record',
+  `document.querySelector('.kw-science-detail')?.textContent.includes('qa-worker-live-share')`);
+await evalJs(`document.querySelector('[data-science-focus="overview"]').click()`);
 await evalJs(`window.__qaMark = 41`);
 const ribbonMaxBeforeNativeCommit = await evalJs(`document.querySelector('#ribbon .ribbon-slider').getAttribute('aria-valuemax')`);
 baton('message', 'qa-guidance-native', 'root', 'worker', 'guidance', 'Committed through the native owner.');
@@ -876,7 +895,7 @@ await until('ribbon full list opens with recorded rows',
   `document.querySelector('#ribbon .ribbon-list') && document.querySelectorAll('#ribbon .ribbon-row').length > 0 && (document.querySelector('#ribbon .ribbon-list').textContent || '').includes('worker')`);
 
 // Activity is the page spine: the axis draws its buckets, the needle moves by
-// keyboard and by pointer, and a chip in the spine opens its seat.
+// keyboard and by pointer, and the full list selects a recorded entry.
 await until('the axis draws the staff and its needle in Activity',
   `document.querySelectorAll('#ribbon .ribbon-staffline').length === 5
     && document.querySelectorAll('#ribbon .ribbon-note').length > 1
@@ -944,12 +963,18 @@ await evalJs(`(() => {
 })()`);
 await until('the needle moves under the pointer across the redraw',
   `document.querySelector('#ribbon .ribbon-slider').getAttribute('aria-valuenow') !== ${JSON.stringify(needleBeforeDrag)}`);
-const chipSeat = await evalJs(`(() => { const chip = document.querySelector('#ribbon .ribbon-chip'); return chip ? chip.dataset.seat || '' : ''; })()`);
-await evalJs(`(() => { const chip = document.querySelector('#ribbon .ribbon-chip'); if (chip) chip.click(); return true; })()`);
-await until('a chip in the spine opens its seat record',
-  `document.querySelector('#selection h2') && document.querySelector('#selection h2').textContent === ${JSON.stringify(chipSeat)}`);
-check('the spine marks the seat it holds', await evalJs(
-  `!!document.querySelector('#ribbon .ribbon-chip[aria-current="true"]')`));
+const historyFocus = await evalJs(`(() => {
+  const row = document.querySelector('#ribbon .ribbon-row:not([aria-current="true"])');
+  const key = row.dataset.focus;
+  row.click();
+  return key;
+})()`);
+await until('selecting a recorded activity entry moves its history position',
+  `document.querySelector('#ribbon .ribbon-row[aria-current="true"]')?.dataset.focus === ${JSON.stringify(historyFocus)}`);
+check('the activity axis retains the selected entry', await evalJs(
+  `Number(document.querySelector('#ribbon .ribbon-slider').getAttribute('aria-valuenow'))
+    === Number(document.querySelector('#ribbon .ribbon-slider').getAttribute('aria-valuemax'))
+      - Number(${JSON.stringify(historyFocus)}.split(':')[1])`));
 
 // Capture each surface using page coordinates without moving the page.
 async function captureSurfaceEvidence(name, selector) {
@@ -1032,7 +1057,7 @@ check('recorded parent links avoid actor cards and tier captions at 390px', awai
   });
 })()`));
 await captureSurfaceEvidence('agents-narrow-390.png', '#staves');
-await captureSurfaceEvidence('agent-memberships-narrow-390.png', '#attention-band .att-ensembles');
+await captureSurfaceEvidence('agent-memberships-narrow-390.png', '#attention-band .att-stage');
 const narrow = await send(pageWs, 'Page.captureScreenshot', { format: 'png' });
 writeFileSync(join(OUT, 'narrow-390.png'), Buffer.from(narrow.result.data, 'base64'));
 await send(pageWs, 'Emulation.setDeviceMetricsOverride', { width: 1280, height: 900, deviceScaleFactor: 1, mobile: false });
@@ -1074,17 +1099,20 @@ try {
 await until('phase B snapshot reports its actor line',
   `document.getElementById('snapshot-line') && !document.getElementById('snapshot-line').textContent.includes('No snapshot loaded')`);
 await evalJs(`document.getElementById('doc-ended').click()`);
-await until('phase B roster renders', `document.querySelectorAll('#roster .doc-row').length >= 3`);
+await until('phase B stage renders all recorded actors', `document.querySelectorAll('#attention-band .att-seat').length === 4`);
 await until('phase B attention settles on the snapshot actors',
   `(document.getElementById('attention-band').textContent || '').length > 0`);
 await evalJs(`window.__qaMark = 42`);
 await evalJs(`document.querySelector('#ribbon [data-focus="ribbon-list"]').click()`);
 await until('phase B ribbon list opens', `document.querySelectorAll('#ribbon .ribbon-row').length > 0`);
-await evalJs(`document.querySelector('#roster .doc-row[data-doc-id="aide"] .doc-open').click()`);
+await evalJs(`document.querySelector('#attention-band .att-seat[data-att-id="aide"]').dispatchEvent(new MouseEvent('click',{bubbles:true}))`);
+await evalJs(`document.querySelector('button[data-knowledge-tier="worker"]').click()`);
 await until('phase B knowledge scope settles on the aide holdings',
   `(document.querySelector('#map-scope').textContent || '').endsWith('· 3 records')`);
-check('phase B rows carry compact knowledge lines', await evalJs(
-  `!!document.querySelector('#roster .doc-row[data-doc-id="worker"] .kw-compact') && !!document.querySelector('#roster .doc-row[data-doc-id="aide"] .kw-compact')`));
+check('the aide individual holdings include its authored and received findings', await evalJs(
+  `!!document.querySelector('.kg-node[data-knowledge-node="qa-aide-finding"]')
+    && !!document.querySelector('.kg-node[data-knowledge-node="qa-worker-finding"]')
+    && !!document.querySelector('.kg-node[data-knowledge-node="qa-worker-live-finding"]')`));
 
 // Hold one real actor response until another actor's detail has rendered.
 await evalJs(`(() => {
@@ -1109,10 +1137,10 @@ await evalJs(`(() => {
     }
     return response;
   };
-  document.querySelector('#roster .doc-row[data-doc-id="worker"] .doc-open').click();
+  document.querySelector('#attention-band .att-seat[data-att-id="worker"]').dispatchEvent(new MouseEvent('click',{bubbles:true}));
 })()`);
 await evalJs('window.__qaKnowledgeHeld');
-await evalJs(`document.querySelector('#roster .doc-row[data-doc-id="aide"] .doc-open').click()`);
+await evalJs(`document.querySelector('#attention-band .att-seat[data-att-id="aide"]').dispatchEvent(new MouseEvent('click',{bubbles:true}))`);
 await until('second row selects while the first work response is held',
   `document.querySelector('#selection h2') && document.querySelector('#selection h2').textContent === 'aide'`);
 check('selected record shows its ledged facts', await evalJs(
@@ -1135,26 +1163,28 @@ await evalJs(`(() => {
   find.value = 'aide';
   find.dispatchEvent(new Event('input', { bubbles: true }));
 })()`);
-check('find dims non-matches in place with one cursor', await evalJs(`(() => {
-  const rows = [...document.querySelectorAll('#roster .doc-row')];
-  const aide = rows.filter((row) => row.dataset.docId === 'aide');
-  const rest = rows.filter((row) => row.dataset.docId !== 'aide');
-  return aide.length > 0 && rest.length > 0 && rest.every((row) => row.classList.contains('doc-dim'))
-    && document.querySelectorAll('#roster .doc-cursor').length === 1;
+check('find retains the matching actor and its recorded reporting context', await evalJs(`(() => {
+  const seats = [...document.querySelectorAll('#attention-band .att-seat')];
+  const aide = seats.filter((seat) => seat.dataset.attId === 'aide');
+  const context = seats.filter((seat) => seat.dataset.attId !== 'aide');
+  return aide.length === 1 && context.length === 2
+    && context.every((seat) => seat.dataset.attContext === 'recorded-ancestor')
+    && !document.querySelector('#attention-band .att-seat[data-att-id="worker"]')
+    && document.querySelectorAll('#attention-band .att-cursor').length === 1;
 })()`));
 await evalJs(`(() => {
   const find = document.getElementById('doc-find');
   find.value = '';
   find.dispatchEvent(new Event('input', { bubbles: true }));
 })()`);
-check('clearing find restores undimmed rows', await evalJs(
-  `document.querySelectorAll('#roster .doc-dim').length === 0`));
+check('clearing find restores all recorded actors', await evalJs(
+  `document.querySelectorAll('#attention-band .att-seat').length === 4`));
 const pendingBody = '  Inspect the stalled work.\n\nRetain this complete evidence.  ';
 baton('message', 'qa-aide-receipt', 'root', 'aide', 'guidance', pendingBody);
 committed();
 await until('ribbon rows name the recorded far side',
   `[...document.querySelectorAll('#ribbon .ribbon-row')].some((row) => (row.textContent || '').includes('aide'))`);
-await evalJs(`document.querySelector('#roster .doc-row[data-doc-id="aide"] .doc-open').click()`);
+await evalJs(`document.querySelector('#attention-band .att-seat[data-att-id="aide"]').dispatchEvent(new MouseEvent('click',{bubbles:true}))`);
 await until('pending message has a read control',
   `document.querySelector('#selection [data-selkey="sel:msg:qa-aide-receipt"]') !== null`);
 await evalJs(`(() => {
@@ -1229,22 +1259,26 @@ baton('message', 'qa-guidance-2', 'root', 'worker', 'guidance', 'Live update pro
 committed();
 await until('committed message arrives live without reload',
   `window.__qaMark === 42 && Number(document.querySelector('#ribbon .ribbon-slider').getAttribute('aria-valuemax')) > ${ribbonMaxBefore}`);
-check('pending badge updates live on the worker row', await evalJs(
-  `document.querySelector('#roster .doc-row[data-doc-id="worker"] .doc-pending') !== null`));
-check('arrival dot marks the worker row on new owed work', await evalJs(
-  `!!document.querySelector('#roster .kw-row-arrival[data-row="worker"]')`));
+check('the worker seat states its newly queued input', await evalJs(
+  `!!document.querySelector('#attention-band .att-seat[data-att-id="worker"][data-att-state="queued"] .att-owed')`));
+check('the worker seat retains the complete owed count in its state', await evalJs(
+  `/\\d+ owed/.test(document.querySelector('#attention-band .att-seat[data-att-id="worker"] .att-seat-state').textContent)`));
 // A report is owed work without queued input: the pending set excludes it,
-// the unacknowledged count records it. The aide row must mark it.
+// the unacknowledged count records it. The aide seat retains every owed item.
+let aideOwed;
 {
   const db = new DatabaseSync(DB);
+  db.exec('PRAGMA busy_timeout = 250');
+  aideOwed = Number(db.prepare("SELECT count(*) AS count FROM messages WHERE recipient='aide' AND receipt IS NULL").get().count) + 1;
   db.prepare("INSERT INTO messages(id,sender,recipient,kind,body) VALUES ('qa-report-owed','worker','aide','report','Owed report probe.')").run();
   db.close();
 }
 committed();
-await until('owed report marks the aide row',
-  `(() => { const row = document.querySelector('#roster .doc-row[data-doc-id="aide"]');
-    const mark = row && row.querySelector('.doc-owed');
-    return mark !== null && mark.textContent === '1'; })()`);
+await until('the aide seat states its owed report',
+  `(() => { const seat = document.querySelector('#attention-band .att-seat[data-att-id="aide"]');
+    return seat?.dataset.attState === 'owesWork'
+      && seat.querySelector('.att-seat-state').textContent.includes('${aideOwed} owed')
+      && seat.querySelectorAll('.att-owed').length === Math.min(${aideOwed}, 6); })()`);
 // The stage is one tab stop: focus announces the cursor seat, arrows walk,
 // Enter opens.
 await send(pageWs, 'Page.bringToFront');
@@ -1309,14 +1343,14 @@ check('the flash takes the seat own ink and no other', await evalJs(`(() => {
   return getComputedStyle(core).stroke === ink;
 })()`));
 check('the stage text and the pit sentence share one face', await evalJs(`(() => {
-  const chip = document.querySelector('#attention-band .lane-chip');
+  const chip = document.querySelector('#attention-band .att-seat-label');
   const summary = document.querySelector('#ribbon .ribbon-summary');
   if (!chip || !summary) return false;
   const a = getComputedStyle(chip).fontFamily, b = getComputedStyle(summary).fontFamily;
   return !!a && a === b;
 })()`));
 const stageOther = stageFirst === 'aide' ? 'worker' : 'aide';
-await evalJs(`document.querySelector('#roster .doc-row[data-doc-id="${stageOther}"] .doc-open').click()`);
+await evalJs(`document.querySelector('#attention-band .att-seat[data-att-id="${stageOther}"]').dispatchEvent(new MouseEvent('click',{bubbles:true}))`);
 await until('the selected actor changes before the stage jump',
   `document.querySelector('#selection h2') && document.querySelector('#selection h2').textContent === '${stageOther}'`);
 await evalJs(`document.querySelector('#attention-band svg.att-stage').focus()`);
@@ -1346,8 +1380,9 @@ check('stage End reaches its last drawn seat where the reader can see it',
   stageEnd.id === stageEnd.last && stageEnd.visible, JSON.stringify(stageEnd));
 await evalJs(`(() => {
   window.__qaOldStage = document.querySelector('#attention-band svg.att-stage');
-  const row = document.querySelector('#roster .doc-row[data-doc-id="${stageEnd.id}"] .doc-open');
-  row.focus(); row.click();
+  const row = document.querySelector('#attention-band .att-seat[data-att-id="${stageEnd.id}"]');
+  document.getElementById('doc-find').focus();
+  row.dispatchEvent(new MouseEvent('click',{bubbles:true}));
 })()`);
 await until('record selection redraws the unfocused stage',
   `document.querySelector('#attention-band svg.att-stage') !== window.__qaOldStage`);
@@ -1376,6 +1411,7 @@ await evalJs(`(() => {
 let workerExecution;
 {
   const db = new DatabaseSync(DB);
+  db.exec('PRAGMA busy_timeout = 250');
   workerExecution = db.prepare('SELECT id, phase, status FROM executions WHERE session = ?').get('worker');
   db.prepare('UPDATE executions SET phase = ?, status = ? WHERE session = ? AND id = ?')
     .run('running', '', 'worker', workerExecution.id);
@@ -1383,36 +1419,37 @@ let workerExecution;
 }
 committed();
 await until('recorded running execution reaches the attention strip',
-  `document.querySelector('#attention-band [data-att-key="chip:worker"]') !== null`);
+  `document.querySelector('#attention-band .att-seat[data-att-id="worker"][data-att-state="running"]') !== null`);
 await evalJs(`document.querySelector('#snapshot-line [aria-label="Focus the first running seat"]').click()`);
 check('running count focuses the running actor while it owes input', await evalJs(
-  `document.activeElement === document.querySelector('#roster .doc-row[data-doc-id="worker"] .doc-open')`));
+  `document.activeElement === document.querySelector('#attention-band .att-seat[data-att-id="worker"]')`));
 // Capture the document with running work.
 const nowShot = await send(pageWs, 'Page.captureScreenshot', { format: 'png' });
 writeFileSync(join(OUT, 'now.png'), Buffer.from(nowShot.result.data, 'base64'));
-await evalJs(`document.querySelector('#attention-band [data-att-key="chip:worker"]').click()`);
+await evalJs(`document.querySelector('#attention-band [data-att-key="seat:worker"]').dispatchEvent(new MouseEvent('click',{bubbles:true}))`);
 await until('attention selection opens the actor record',
   `document.querySelector('#selection h2') && document.querySelector('#selection h2').textContent === 'worker'`);
 const runningDotColor = await evalJs(
   `getComputedStyle(document.querySelector('#selection .sel-dot')).backgroundColor`);
-await evalJs(`document.querySelector('#attention-band [data-att-key="chip:worker"]').focus()`);
+await evalJs(`document.querySelector('#attention-band [data-att-key="seat:worker"]').focus()`);
 const ribbonBeforeFocusedGuidance = await evalJs(`document.querySelector('#ribbon .ribbon-slider').getAttribute('aria-valuemax')`);
 baton('message', 'qa-guidance-lane-focus', 'root', 'worker', 'guidance', 'Attention focus retained on live input.');
 committed();
 await until('focused guidance reaches the live view',
   `document.querySelector('#ribbon .ribbon-slider').getAttribute('aria-valuemax') !== ${JSON.stringify(ribbonBeforeFocusedGuidance)}`);
 check('live attention redraw preserves focus on the same chip', await evalJs(
-  `window.__qaMark === 42 && document.activeElement && document.activeElement.getAttribute('data-att-key') === 'chip:worker'`));
+  `window.__qaMark === 42 && document.activeElement && document.activeElement.getAttribute('data-att-key') === 'seat:worker'`));
 // Ordinary owed input stays with the actor after its process exits.
 {
   const db = new DatabaseSync(DB);
+  db.exec('PRAGMA busy_timeout = 250');
   db.prepare('UPDATE executions SET phase = ?, status = ? WHERE session = ? AND id = ?')
     .run('exited', 'exit 0', 'worker', workerExecution.id);
   db.close();
 }
 committed();
 await until('exited seat retains its own owed work',
-  `document.querySelector('#roster .doc-row[data-doc-id="worker"].state-queued') !== null`);
+  `document.querySelector('#attention-band .att-seat[data-att-id="worker"][data-att-state="queued"]') !== null`);
 check('ordinary owed work leaves the rail hidden', await evalJs(
   `document.getElementById('rail').hidden === true`));
 const queuedDotColor = await evalJs(
@@ -1437,24 +1474,28 @@ await until('cleared seats fold the rail away',
   `document.getElementById('rail').hidden === true`);
 {
   const db = new DatabaseSync(DB);
+  db.exec('PRAGMA busy_timeout = 250');
   db.prepare('UPDATE executions SET phase = ?, status = ? WHERE session = ? AND id = ?')
     .run(workerExecution.phase, workerExecution.status, 'worker', workerExecution.id);
   db.close();
 }
 committed();
-await until('recorded completion removes the worker chip while its findings persist in the band',
-  `!document.querySelector('#attention-band [data-att-key="chip:worker"]') && !!document.querySelector('#roster .doc-row[data-doc-id="worker"] .kw-compact')`);
+await until('recorded completion leaves a quiet worker and retains its authored findings',
+  `!!document.querySelector('#attention-band .att-seat[data-att-id="worker"][data-att-state="quiet"]')
+    && !!document.querySelector('#selection [data-selkey="sel:auth:qa-worker-live-finding"]')`);
 // Exit-zero provider failure reads failed, not completed: stage the
 // recorded terminal, prove the row and the record, then restore.
 let workerEvent;
 {
   const db = new DatabaseSync(DB);
+  db.exec('PRAGMA busy_timeout = 250');
   workerEvent = db.prepare('SELECT event FROM turns WHERE worker = ? AND id = ?').get('worker', workerExecution.id);
   db.close();
 }
 check('failure staging join row exists', !!workerEvent);
 {
   const db = new DatabaseSync(DB);
+  db.exec('PRAGMA busy_timeout = 250');
   db.prepare('UPDATE turns SET event = ? WHERE worker = ? AND id = ?')
     .run('{"is_error":1,"type":"agent_error","exitCode":403,"result":"provider quota refused the attempt."}', 'worker', workerExecution.id);
   db.prepare('UPDATE executions SET phase = ?, status = ? WHERE session = ? AND id = ?')
@@ -1463,18 +1504,18 @@ check('failure staging join row exists', !!workerEvent);
 }
 committed();
 await until('recorded failure marks the worker row failed',
-  `document.querySelector('#roster .doc-row[data-doc-id="worker"].state-failed') !== null`);
+  `document.querySelector('#attention-band .att-seat[data-att-id="worker"][data-att-state="failed"]') !== null`);
 // A provider failure is a state the record holds: the row states failed and the
 // rail lists the seat with that state as a fact, with the cause on the row's record.
 await until('a provider failure lists the seat in the rail as failed',
   `document.getElementById('rail').hidden === false
     && (document.querySelector('#rail [data-rail-id="worker"]') || {}).textContent === 'worker · failed'`);
 check('failed row reads its rule and word', await evalJs(`(() => {
-  const row = document.querySelector('#roster .doc-row[data-doc-id="worker"]');
-  const word = row && row.querySelector('.doc-work.failed');
+  const row = document.querySelector('#attention-band .att-seat[data-att-id="worker"]');
+  const word = row && row.querySelector('.att-seat-state');
   return !!row && !!word && word.textContent === 'failed';
 })()`));
-await evalJs(`document.querySelector('#roster .doc-row[data-doc-id="worker"] .doc-open').click()`);
+await evalJs(`document.querySelector('#attention-band .att-seat[data-att-id="worker"]').dispatchEvent(new MouseEvent('click',{bubbles:true}))`);
 await until('failed record opens for the worker row',
   `document.querySelector('#selection h2') && document.querySelector('#selection h2').textContent === 'worker'`);
 check('record states the provider cause', await evalJs(
@@ -1484,6 +1525,7 @@ const failedDotColor = await evalJs(
 check('failed and queued record states look different', failedDotColor !== queuedDotColor);
 {
   const db = new DatabaseSync(DB);
+  db.exec('PRAGMA busy_timeout = 250');
   db.prepare('UPDATE turns SET event = ? WHERE worker = ? AND id = ?').run(workerEvent.event, 'worker', workerExecution.id);
   db.prepare('UPDATE executions SET phase = ?, status = ? WHERE session = ? AND id = ?')
     .run(workerExecution.phase, workerExecution.status, 'worker', workerExecution.id);
@@ -1491,7 +1533,7 @@ check('failed and queued record states look different', failedDotColor !== queue
 }
 committed();
 await until('restored execution clears the failed row',
-  `document.querySelector('#roster .doc-row[data-doc-id="worker"].state-failed') === null`);
+  `document.querySelector('#attention-band .att-seat[data-att-id="worker"][data-att-state="failed"]') === null`);
 
 // reconnect: drop the server, restart on the same port, no duplicated transitions
 server.close(); server.closeAllConnections?.();
@@ -1515,6 +1557,7 @@ check('no duplicated ribbon rows after reconnect', await evalJs(
 baton('message', 'qa-guidance-pruned', 'root', 'worker', 'guidance', 'Committed without a notice.');
 {
   const db = new DatabaseSync(DB);
+  db.exec('PRAGMA busy_timeout = 250');
   db.exec('DELETE FROM native_changes WHERE change_id <= (SELECT max(change_id) FROM native_changes)');
   db.close();
 }
@@ -1533,28 +1576,33 @@ committed();
 await until('native SSE preserves every added knowledge record',
   `[...Array(11).keys()].every(i=>document.querySelector('.kg-node[data-knowledge-node="qa-cluster-'+i+'"]'))`);
 
-await evalJs(`document.querySelector('#roster .doc-row[data-doc-id="aide"] .doc-open').click()`);
+await evalJs(`document.querySelector('#attention-band .att-seat[data-att-id="aide"]').dispatchEvent(new MouseEvent('click',{bubbles:true}))`);
 await until('the aide record retains its owed report',
   `document.querySelector('#selection [data-selkey="sel:msg:qa-report-owed"]') !== null`);
 baton('stop', 'aide', 'qa-aide-stop', 'Recorded explicit stop with retained report.');
 committed();
 await until('the recorded view shows the explicit stop',
-  `document.querySelector('#roster .doc-row[data-doc-id="aide"][data-doc-state="stopped"]') !== null`);
+  `document.querySelector('#attention-band .att-seat[data-att-id="aide"][data-att-state="stopped"]') !== null`);
 await evalJs(`document.getElementById('doc-ended').click()`);
-await until('the active view excludes the stopped actor with owed input',
-  `document.getElementById('doc-ended').getAttribute('aria-pressed') === 'false'
-    && !document.querySelector('#attention-band .att-seat[data-att-id="aide"]')
-    && !document.querySelector('#roster .doc-row[data-doc-id="aide"]')`);
+await until('the active view retains the stopped actor and its unfinished work',
+  `(() => {
+    const seat = document.querySelector('#attention-band .att-seat[data-att-id="aide"][data-att-state="stopped"]');
+    return document.getElementById('doc-ended').getAttribute('aria-pressed') === 'false'
+      && seat?.querySelector('.att-seat-state').textContent.includes('${aideOwed} owed')
+      && seat.querySelectorAll('.att-owed').length === Math.min(${aideOwed}, 6)
+      && !!document.querySelector('#attention-band .att-seat[data-att-id="worker"][data-att-state="queued"]');
+  })()`);
 check('the stopped actor record and owed report remain selected', await evalJs(
   `document.querySelector('#selection h2')?.textContent === 'aide'
     && !!document.querySelector('#selection [data-selkey="sel:msg:qa-report-owed"]')`));
 await evalJs(`document.getElementById('doc-ended').click()`);
 await until('the recorded view restores the stopped actor and owed count',
   `(() => {
-    const row = document.querySelector('#roster .doc-row[data-doc-id="aide"][data-doc-state="stopped"]');
+    const row = document.querySelector('#attention-band .att-seat[data-att-id="aide"][data-att-state="stopped"]');
     return document.getElementById('doc-ended').getAttribute('aria-pressed') === 'true'
       && !!document.querySelector('#attention-band .att-seat[data-att-id="aide"]')
-      && row?.querySelector('.doc-owed')?.textContent === '1';
+      && row?.querySelector('.att-seat-state')?.textContent.includes('${aideOwed} owed')
+      && row.querySelectorAll('.att-owed').length === Math.min(${aideOwed}, 6);
   })()`);
 
 // Check the same graph layer with complete scientific and orchestra fixtures.

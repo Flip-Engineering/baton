@@ -848,9 +848,14 @@ void handler(const char *dynamic) {
         self.assertIsNone(checked('delivery', message)['receipt'])
         checked('connect', consumer, original['native'], json.dumps(original['endpointArgv']))
         resumed = subprocess.run([str(installed), '--project', str(consumer_workspace),
-                                  'resume', consumer], capture_output=True, text=True)
+                                  'as', 'validation-root', 'resume', '--session', consumer],
+                                 capture_output=True, text=True)
         self.assertEqual(resumed.returncode, 0, resumed.stdout + resumed.stderr)
-        answer = json.loads(resumed.stdout)
+        actions = json.loads(resumed.stdout)
+        self.assertEqual(len(actions), 1)
+        self.assertEqual(actions[0]['status'], 'completed')
+        self.assertEqual(actions[0]['stderr'], '')
+        answer = json.loads(actions[0]['stdout'])
         continued = json.loads(answer['latestReport'])
         self.assertEqual((answer['session'], answer['message']), (consumer, message))
         self.assertEqual(answer['delivery']['receipt'], 'native-consumed-' + handoff_query)
@@ -877,9 +882,19 @@ void handler(const char *dynamic) {
                 'Retain this input under the native consumer stop.')
         checked('stop', consumer, 'native-handoff-stop', 'Native consumer work is complete.')
         refused = subprocess.run([str(installed), '--project', str(consumer_workspace),
-                                  'resume', consumer], capture_output=True, text=True)
-        self.assertNotEqual(refused.returncode, 0, refused.stdout)
-        self.assertIn('terminally stopped', refused.stderr)
+                                  'as', 'validation-root', 'resume', '--session', consumer],
+                                 capture_output=True, text=True)
+        self.assertEqual(refused.returncode, 0, refused.stdout + refused.stderr)
+        stopped_actions = json.loads(refused.stdout)
+        self.assertEqual(len(stopped_actions), 1, stopped_actions)
+        stopped = stopped_actions[0]
+        self.assertIn(stopped['status'], ('refused', 'failed'), stopped)
+        if stopped['status'] == 'refused':
+            self.assertEqual(stopped['code'], 2, stopped)
+            self.assertIsNone(stopped['waitStatus'], stopped)
+        else:
+            self.assertEqual(stopped['waitStatus'], 'exit 2', stopped)
+        self.assertIn('terminally stopped', stopped['cause'] + stopped['stderr'])
         self.assertIsNone(checked('delivery', stopped_input)['receipt'])
         self.assertEqual(checked('session', consumer)['native'], original['native'])
         self.assertEqual(checked('context-result', handoff_query, cwd=consumer_workspace), shared)
@@ -890,7 +905,7 @@ void handler(const char *dynamic) {
             'producer': handoff_reports[producer], 'consumer': handoff_reports[consumer],
             'resumed': answer, 'projectSessions': json.loads(discovered.stdout),
             'stoppedResume': {'code': refused.returncode, 'stdout': refused.stdout,
-                              'stderr': refused.stderr}, 'retained': shared,
+                              'stderr': refused.stderr, 'outcome': stopped}, 'retained': shared,
         }, ensure_ascii=False) + '\n')
 
         compiler = os.environ.get('BATON2_CONTEXT_TYPESCRIPT')
