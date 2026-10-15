@@ -56,7 +56,7 @@ def main():
     if args.ccache:
         require(args.runner == 'homelab', 'The private native object cache requires the homelab runner.')
         wrapper = pathlib.Path(os.path.expandvars(os.path.expanduser(args.ccache))).resolve()
-        require(digest(wrapper) == '5098dd7f2d1bf315830bf5b3740daea140cf861c21f5bdb3db0aa95dc7b4eeab',
+        require(digest(wrapper) == '1b1833c4032d92fad2515dd8194e0106cd1e4a45cbe2f30a16d73035bacfd035',
                 'The native object cache wrapper differs from its measured version.')
         cache = {'wrapper': verifier['fact'](wrapper),
                  'directory': str(pathlib.Path.home() / '.cache/baton-native-objects'),
