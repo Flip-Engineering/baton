@@ -243,7 +243,7 @@ Do not edit or commit tracked files in this producer task.
 '''
     target = '.scratch/knowledge-fresh.json' if phase == 'fresh-consumer' else '.scratch/knowledge-read.json'
     retrieval = f'''
-Retrieve current visible findings with `{cli} knowledge read` and retain
+Retrieve current visible findings with `{cli} knowledge read --scope universal --subject root` and retain
 the complete JSON answer in {target}. The finding ID to use is {FINDING};
 {LOCAL_FINDING} is a local control and must be absent from your scoped answer.
 Read the finding and its evidenceMessage through that answer. Verify its author,
@@ -270,7 +270,8 @@ retrieval after earlier message receipts; it is not a crash-resume test.
 
 
 def visible_finding(out, reader):
-    rows = call(out, 'knowledge', reader)
+    rows = (call(out, 'knowledge-scope', reader, 'universal', 'root')
+            if reader == 'consumer' else call(out, 'knowledge', reader))
     chosen = next((row for row in rows if row['id'] == FINDING), None)
     if chosen is None:
         raise RuntimeError(f'{reader} cannot retrieve the finding')

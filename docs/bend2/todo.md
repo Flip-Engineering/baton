@@ -4,6 +4,18 @@ The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3
 retain findings, ownership and acceptance requirements. This page links current
 Baton follow-up work for contributors. Every open issue has a link on this page.
 
+- [#746: Read promoted root holdings in the knowledge consumer acceptance](https://github.com/Flip-Engineering/baton/issues/746).
+  Source review found that the consumer task and verifier use the knowledge
+  audit view while requiring the producer's local control finding to be absent.
+  Read the existing universal scope with subject `root` for both consumer native
+  conversations and the consumer verifier. Preserve producer and root audit
+  reads, the exact producer-to-root promotion, full evidence and provenance,
+  and the reviewed document landing. Validate the corrected driver through its
+  actual remote native route. Coordinate with
+  [#724](https://github.com/Flip-Engineering/baton/issues/724),
+  [#727](https://github.com/Flip-Engineering/baton/issues/727) and
+  [#730](https://github.com/Flip-Engineering/baton/issues/730).
+
 - [#745: Expect the recorded workspace in the project settings fixture](https://github.com/Flip-Engineering/baton/issues/745).
   Focused acceptance on `1229a43c` decoded the complete saved settings, then
   failed an argv assertion that expected the repository path. An omitted
