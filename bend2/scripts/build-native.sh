@@ -1,17 +1,29 @@
 #!/bin/sh
 set -eu
-root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd -P)
 cd "$root"
 entry=${1:-bend2/src/coordinator/main.bend}
 output=${2:-.scratch/bend2/baton2}
 mkdir -p "$(dirname -- "$output")"
-if [ -n "${BEND_GENERATED_C:-}" ]; then
-  cp "$BEND_GENERATED_C" "$output.c"
+entry_path=$(CDPATH= cd -- "$(dirname -- "$entry")" && pwd -P)/$(basename -- "$entry")
+compiler=${BEND:-"$root/.bend/bin/bend"}
+if [ ! -x "$compiler" ]; then
+  compiler="$root/node_modules/.bend/bin/bend"
+fi
+generated=${BEND_GENERATED_C:-}
+if [ -z "$generated" ] && [ -n "${BATON2_MAIN_GENERATED_C:-}" ] &&
+   [ "$entry_path" = "$root/bend2/src/coordinator/main.bend" ]; then
+  generated=$(python3 "${BATON2_MAIN_C_VERIFIER:?}" select \
+    --source "$root" --compiler "$compiler" \
+    --proof "${BATON2_MAIN_GENERATED_C_PROOF:?}" \
+    --proof-sha256 "${BATON2_MAIN_GENERATED_C_PROOF_SHA256:?}" \
+    --bound-root "${BATON2_MAIN_GENERATED_C_ROOT:?}" \
+    --generated-c "$BATON2_MAIN_GENERATED_C" \
+    --output "$output.main-c-reuse.json")
+fi
+if [ -n "$generated" ]; then
+  cp "$generated" "$output.c"
 else
-  compiler=${BEND:-"$root/.bend/bin/bend"}
-  if [ ! -x "$compiler" ]; then
-    compiler="$root/node_modules/.bend/bin/bend"
-  fi
   if [ ! -x "$compiler" ]; then
     echo 'Bend is unavailable. Set BEND to an installed Bend 2.0.25 executable.' >&2
     exit 1
@@ -23,7 +35,6 @@ else
   fi
   "$compiler" "$entry" -o "$output.c"
 fi
-entry_path=$(CDPATH= cd -- "$(dirname -- "$entry")" && pwd)/$(basename -- "$entry")
 if [ "$entry_path" = "$root/bend2/src/coordinator/main.bend" ]; then
   "${CC:-clang}" -O1 -pthread -Dmain=baton2_runtime_main -c "$output.c" -o "$output.o"
   "${CC:-clang}" -O1 -pthread bend2/src/host/native-entry.c "$output.o" -lsqlite3 -lm -o "$output"

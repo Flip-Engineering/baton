@@ -7,6 +7,7 @@ name: bend2-native-development
       - '.github/workflows/bend2-native.yml'
       - '.github/scripts/record-native-checks.py'
       - '.github/scripts/reuse-native-target.py'
+      - '.github/scripts/reuse-native-main.py'
       - 'LICENSE'
       - 'NOTICE'
       - 'bend2/src/**'
@@ -25,6 +26,7 @@ name: bend2-native-development
       - '.github/workflows/bend2-native.yml'
       - '.github/scripts/record-native-checks.py'
       - '.github/scripts/reuse-native-target.py'
+      - '.github/scripts/reuse-native-main.py'
       - 'LICENSE'
       - 'NOTICE'
       - 'bend2/src/**'
@@ -50,6 +52,16 @@ name: bend2-native-development
         type: string
       target_build_run:
         description: 'Completed workflow run containing the exact target build evidence; leave blank to build target'
+        required: false
+        default: ''
+        type: string
+      retained_main_handoff:
+        description: 'Homelab completed Main handoff path or single-match glob; $HOME uses the selected runner home'
+        required: false
+        default: ''
+        type: string
+      retained_main_handoff_sha256:
+        description: 'Exact SHA256 of the completed Main handoff'
         required: false
         default: ''
         type: string
@@ -103,6 +115,28 @@ jobs:
           npm install --prefix "$run/typescript-runtime" --ignore-scripts --no-audit --no-fund \
             typescript@5.9.3 > "$run/evidence/typescript-install.stdout" 2> "$run/evidence/typescript-install.stderr"
           printf 'BATON2_CONTEXT_TYPESCRIPT=%s\n' "$run/typescript-runtime/node_modules/typescript" >> "$GITHUB_ENV"
+      - name: Verify optional retained Main compilation
+        shell: bash
+        env:
+          BATON2_RETAINED_MAIN_HANDOFF: ${{ inputs.retained_main_handoff }}
+          BATON2_RETAINED_MAIN_SHA256: ${{ inputs.retained_main_handoff_sha256 }}
+          BATON2_LINUX_RUNNER: ${{ inputs.linux_runner }}
+        run: |
+          set -euo pipefail
+          printf 'BATON2_MAIN_GENERATED_C=\nBATON2_MAIN_GENERATED_C_ROOT=\nBATON2_MAIN_GENERATED_C_PROOF=\nBATON2_MAIN_GENERATED_C_PROOF_SHA256=\nBATON2_MAIN_C_VERIFIER=\n' >> "$GITHUB_ENV"
+          if [[ -n "$BATON2_RETAINED_MAIN_HANDOFF" && "$BATON2_LINUX_RUNNER" != homelab ]]; then
+            printf '%s\n' 'Retained Main compilation requires the homelab runner.' >&2
+            exit 1
+          fi
+          python3 .github/scripts/reuse-native-main.py prepare \
+            --source "$GITHUB_WORKSPACE" --run "$BATON2_LINUX_RUN" \
+            --handoff "$BATON2_RETAINED_MAIN_HANDOFF" \
+            --handoff-sha256 "$BATON2_RETAINED_MAIN_SHA256" \
+            --compiler "$BEND" \
+            --compiler-archive "$BATON2_LINUX_RUN/bend-2.0.25-linux-x64.tar.gz" \
+            --github-env "$GITHUB_ENV" \
+            > "$BATON2_LINUX_RUN/evidence/main-c-reuse.stdout" \
+            2> "$BATON2_LINUX_RUN/evidence/main-c-reuse.stderr"
       - name: Run complete native checks and affected candidate tests
         shell: bash
         run: |
@@ -149,6 +183,11 @@ jobs:
           c = root / '.scratch/bend2/baton2.c'
           binary = root / '.scratch/bend2/baton2'
           (run / 'generated/baton2.c').write_bytes(c.read_bytes())
+          main_c_reuse = json.loads((run / 'generated/main-c-reuse.json').read_text())
+          subprocess.run([sys.executable, str(root / '.github/scripts/reuse-native-main.py'), 'verify-transfer',
+                          '--source', str(root), '--generated', str(run / 'generated')], check=True,
+                         stdout=(evidence / 'main-c-reuse-verification.stdout').open('wb'),
+                         stderr=(evidence / 'main-c-reuse-verification.stderr').open('wb'))
           handoff = {'schema': 'baton2-generated-c-handoff-v1', 'source_commit': commit,
                      'source_tree': git('rev-parse', 'HEAD^{tree}'), 'platform': platform.platform(),
                      'workflow_run_id': os.environ['GITHUB_RUN_ID'], 'workflow_run_attempt': os.environ['GITHUB_RUN_ATTEMPT'],
@@ -157,7 +196,7 @@ jobs:
                      'generated_c_sha256': hashlib.sha256(c.read_bytes()).hexdigest(), 'generated_c_size': c.stat().st_size,
                      'linux_binary_sha256': hashlib.sha256(binary.read_bytes()).hexdigest(),
                      'source_manifest_sha256': hashlib.sha256((run / 'generated/source-manifest.json').read_bytes()).hexdigest(),
-                     'checks': records, 'selected_results': selected_results}
+                     'checks': records, 'selected_results': selected_results, 'main_c_reuse': main_c_reuse}
           (run / 'generated/handoff-manifest.json').write_text(json.dumps(handoff, indent=2) + '\n')
           PY
       - name: Retain complete candidate evidence
@@ -166,6 +205,16 @@ jobs:
         with:
           name: baton2-linux-candidate-${{ env.BATON2_SOURCE_SHA }}-${{ github.run_attempt }}
           path: ${{ env.BATON2_LINUX_RUN }}/evidence/
+          if-no-files-found: error
+      - name: Retain requested Main compilation origin
+        if: always() && inputs.retained_main_handoff != ''
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: baton2-main-c-origin-${{ env.BATON2_SOURCE_SHA }}-${{ github.run_attempt }}
+          path: |
+            ${{ env.BATON2_LINUX_RUN }}/generated/main-c-reuse.json
+            ${{ env.BATON2_LINUX_RUN }}/generated/main-c-origin/
+            ${{ env.BATON2_LINUX_RUN }}/generated/main-c-builds/
           if-no-files-found: error
       - name: Retain generated C and producer results
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -367,6 +416,10 @@ jobs:
           c = generated / 'baton2.c'
           assert c.stat().st_size == handoff['generated_c_size']
           assert hashlib.sha256(c.read_bytes()).hexdigest() == handoff['generated_c_sha256']
+          main_c_reuse = json.loads((generated / 'main-c-reuse.json').read_text())
+          assert main_c_reuse == handoff['main_c_reuse']
+          subprocess.run(['python3', str(root / '.github/scripts/reuse-native-main.py'), 'verify-transfer',
+                          '--source', str(root), '--generated', str(generated)], check=True)
           assert {row['label'] for row in handoff['checks']} == {'complete-native'}
           assert all(row['exit_code'] == 0 for row in handoff['checks'])
           recorder = root / '.github/scripts/record-native-checks.py'

@@ -4,6 +4,41 @@ The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3
 retain findings, ownership and acceptance requirements. This page links current
 Baton follow-up work for contributors. Every open issue has a link on this page.
 
+- [#741: Reduce serial Bend C generation time](https://github.com/Flip-Engineering/baton/issues/741).
+  The current compiler uses one main thread for coordinator C generation on
+  the 64-CPU homelab. Identify parallel compiler work and measure available
+  remote machines with faster individual CPU cores against the actual source
+  and native checks. Preserve the current release invocation. Coordinate with
+  [#677](https://github.com/Flip-Engineering/baton/issues/677),
+  [#728](https://github.com/Flip-Engineering/baton/issues/728) and
+  [#740](https://github.com/Flip-Engineering/baton/issues/740).
+
+- [#740: Reuse completed coordinator C when compilation inputs match](https://github.com/Flip-Engineering/baton/issues/740).
+  The control fixture correction in [#739](https://github.com/Flip-Engineering/baton/issues/739)
+  changes a Python contract while the existing coordinator compilation continues.
+  Verify retained Main completion, complete compiler distribution, production
+  source bytes and modes, entry arguments and generated C before reuse. Bind
+  reuse to the coordinator Main entry and verified source inputs. Copied
+  fixtures and checked landing trees must compare their complete production
+  inputs before reusing Main C. Retain each build's actual match or miss.
+  Compile and link current native entry code, build other entries normally, and
+  run the complete current suite and selected comparisons. Package the original
+  C-generation identity and input-match proof with current qualification.
+  Coordinate with [#677](https://github.com/Flip-Engineering/baton/issues/677)
+  and [#717](https://github.com/Flip-Engineering/baton/issues/717).
+
+- [#739: Judge native control recovery with recorded OMP session paths](https://github.com/Flip-Engineering/baton/issues/739).
+  Target workflow `38683470364` resumes the recorded OMP conversation through
+  its JSONL session path. The fixture compares that path to a native identity,
+  fails before sending its finish action and leaves the following subtest
+  waiting for the earlier process. Verify the exact session path and native
+  identity, retain the existing recovery assertions, and release the accepted
+  fixture through its normal terminal protocol after an assertion failure.
+  Retain complete target and candidate verdicts, controller output and runtime
+  custody. Coordinate with [#717](https://github.com/Flip-Engineering/baton/issues/717),
+  [#727](https://github.com/Flip-Engineering/baton/issues/727) and
+  [#738](https://github.com/Flip-Engineering/baton/issues/738).
+
 - [#738: Judge initial-input handling fixtures when the baseline admits a successor](https://github.com/Flip-Engineering/baton/issues/738).
   Target workflow `38679395337` retains the first complete native result while
   its receive child admits the still-unhandled task again. The initial-input

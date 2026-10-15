@@ -2,6 +2,7 @@
 import json
 import os
 import pathlib
+import select
 import signal
 import socket
 import sqlite3
@@ -10,8 +11,10 @@ import subprocess
 import sys
 import tempfile
 import time
+import traceback
 import unittest
 
+import receive as receive_fixture
 from receive import install_public_queue_codex
 
 
@@ -299,6 +302,44 @@ class Control(unittest.TestCase):
     def finish(self, stream, body='Fixture native task completed.', fail=False):
         self.assertEqual(self.action(stream, finish=body, fail=fail), {'terminal_written': True})
         self.assertEqual(stream.readline(), b'')
+
+    def finish_project_resume(self, child, session, evidence, evidence_path):
+        outputs = [child.stdout, child.stderr]
+        evidence['unexpected_successors'] = []
+        while True:
+            if select.select([self.server], [], [], 0)[0]:
+                connection, _ = self.server.accept()
+                stream = connection.makefile('rwb', buffering=0)
+                self.controls.append((stream, connection))
+                start = json.loads(stream.readline())
+                processes = self.process_rows()
+                pids = [row.strip().split(None, 1)[0] for row in processes]
+                births = subprocess.run(['ps', '-p', ','.join(pids),
+                                         '-o', 'pid=,ppid=,lstart=,stat=,command='],
+                                        capture_output=True, text=True)
+                captured = getattr(child, 'fixture_output', [bytearray(), bytearray()])
+                evidence['failure'] = 'The settled project resume admitted an unexpected native successor.'
+                evidence['unexpected_successors'].append({'start': start,
+                    'state': {table: self.rows('SELECT * FROM ' + table)
+                        for table in ('sessions', 'messages', 'turns', 'executions', 'session_stops')},
+                    'processes': processes, 'process_births': {
+                        'argv': births.args, 'code': births.returncode,
+                        'stdout': births.stdout, 'stderr': births.stderr},
+                    'controller_output_before_cleanup': [bytes(value).decode(errors='replace')
+                                                         for value in captured]})
+                evidence_path.write_text(json.dumps(evidence, ensure_ascii=False, indent=2) + '\n')
+                connection.sendall(b'{"exit_fixture":true}\n')
+                evidence['failed_fixture_stop'] = self.call('stop', session,
+                    session + '-unexpected-successor-stop',
+                    'The completed project-resume fixture admitted an unexpected successor.', raw=True)
+            if child.poll() is not None:
+                return receive_fixture.Receive.child_communication(self, child)
+            ready, _, _ = select.select([self.server, *outputs], [], [], .01)
+            for output in ready:
+                if output is not self.server and not receive_fixture.Receive.capture_child_output(self, child, output):
+                    outputs.remove(output)
+
+    capture_child_output = receive_fixture.Receive.capture_child_output
 
     def rows(self, sql, parameters=()):
         with sqlite3.connect(self.db) as database:
@@ -602,28 +643,56 @@ class Control(unittest.TestCase):
                                             'resume', session, *resume_args], env=self.environment,
                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                 continued, start = self.accept(session)
-                self.assertEqual((start['native'], start['resume']), (first['native'], first['native']))
-                self.assertEqual(start['cwd'], assignment['workspace'])
-                self.assertIn(failed['id'], start['prompt'])
-                self.assertIn('Continue unfinished work', start['prompt'])
-                self.assertIn('The latest accepted task is ' + task_id + '.', start['prompt'])
-                self.assertEqual(self.call('delivery', task_id)['receipt'], receipt)
-                self.assertEqual(self.call('turns', session), original_turns)
-                self.finish(continued, 'The interrupted project task continued.')
-                stdout, stderr = resumed.communicate()
-                self.assertEqual(resumed.returncode, 0, stdout + stderr)
-                answer = json.loads(stdout)
-                self.assertEqual(answer['delivery']['kind'], 'recovery')
-                self.assertEqual(answer['delivery']['receipt'], 'fixture-native-reviewed')
-                self.exited(session)
-                self.assertEqual(self.call('turns', session)[0], original_turns[0])
-                self.assertEqual(self.call('session', session)['native'], first['native'])
-                self.assertEqual(self.call('delivery', task_id)['receipt'], receipt)
-                self.assertEqual(unfinished.read_text(), 'Source retained before a provider error.\n')
-                self.assertEqual(self.call('inbox', session), [])
-                self.assertEqual(self.rows('SELECT * FROM session_stops WHERE session=?', (session,)), [])
-                shutdown_fixture_owner(self)
-                self.eventually(lambda: not self.process_rows())
+                evidence = {'argv': resumed.args, 'pid': resumed.pid,
+                            'first_native': first, 'resumed_native': start}
+                evidence_path = self.directory / (session + '-resume.json')
+                try:
+                    try:
+                        self.assertEqual(start['native'], first['native'])
+                        if harness == 'omp':
+                            storage = pathlib.Path(first['args'][first['args'].index('--session-dir') + 1])
+                            recorded = storage / ('fixture_' + first['native'] + '.jsonl')
+                            self.assertEqual(start['resume'], str(recorded))
+                            header = json.loads(recorded.read_text().splitlines()[0])
+                            self.assertEqual((header['type'], header['id']), ('session', first['native']))
+                        else:
+                            self.assertEqual(start['resume'], first['native'])
+                        self.assertEqual(start['cwd'], assignment['workspace'])
+                        self.assertIn(failed['id'], start['prompt'])
+                        self.assertIn('Continue unfinished work', start['prompt'])
+                        self.assertIn('The latest accepted task is ' + task_id + '.', start['prompt'])
+                        self.assertEqual(self.call('delivery', task_id)['receipt'], receipt)
+                        self.assertEqual(self.call('turns', session), original_turns)
+                    finally:
+                        evidence['assertion_failure'] = traceback.format_exc() if sys.exc_info()[0] else None
+                        evidence['before_finish'] = {table: self.rows('SELECT * FROM ' + table)
+                            for table in ('sessions', 'messages', 'turns', 'executions', 'session_stops')}
+                        evidence['processes_before_finish'] = self.process_rows()
+                        evidence_path.write_text(json.dumps(evidence, ensure_ascii=False, indent=2) + '\n')
+                        self.finish(continued, 'The interrupted project task continued.')
+                        stdout, stderr = self.finish_project_resume(resumed, session, evidence, evidence_path)
+                        evidence.update(code=resumed.returncode, stdout=stdout, stderr=stderr,
+                                        direct_wait_completed=True)
+                        evidence_path.write_text(json.dumps(evidence, ensure_ascii=False, indent=2) + '\n')
+                    self.assertEqual(resumed.returncode, 0, stdout + stderr)
+                    self.assertEqual(evidence['unexpected_successors'], [], evidence)
+                    answer = json.loads(stdout)
+                    self.assertEqual(answer['delivery']['kind'], 'recovery')
+                    self.assertEqual(answer['delivery']['receipt'], 'fixture-native-reviewed')
+                    self.exited(session)
+                    self.assertEqual(self.call('turns', session)[0], original_turns[0])
+                    self.assertEqual(self.call('session', session)['native'], first['native'])
+                    self.assertEqual(self.call('delivery', task_id)['receipt'], receipt)
+                    self.assertEqual(unfinished.read_text(), 'Source retained before a provider error.\n')
+                    self.assertEqual(self.call('inbox', session), [])
+                    self.assertEqual(self.rows('SELECT * FROM session_stops WHERE session=?', (session,)), [])
+                finally:
+                    shutdown_fixture_owner(self)
+                    self.eventually(lambda: not self.process_rows())
+                    evidence['after_finish'] = {table: self.rows('SELECT * FROM ' + table)
+                        for table in ('sessions', 'messages', 'turns', 'executions', 'session_stops')}
+                    evidence['remaining_processes'] = self.process_rows()
+                    evidence_path.write_text(json.dumps(evidence, ensure_ascii=False, indent=2) + '\n')
 
     def test_project_resume_keeps_queued_delivery_separate_from_history_and_preserves_stops(self):
         self.root()
