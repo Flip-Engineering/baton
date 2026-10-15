@@ -736,10 +736,6 @@ finally:
         self.start_serve()
         first_w1, _ = self.stream_for('w1')
         self.assertEqual(json.loads(first_w1.readline()), {'terminal_written': True})
-        self.stream_for('w2')
-        self.dispatch('c1', 'w3', 'Late task, older pending one.')
-        self.dispatch('c2', 'w3', 'Late task, older pending two.')
-        self.stream_for('w3')
         def w2_failure():
             failures = []
             for ident, directory, status in self.query(
@@ -751,6 +747,10 @@ finally:
                     failures.append({'execution': ident, 'status': status,
                                      'stderr': error.read_text() if error.exists() else None})
             return failures
+        self.stream_for('w2', contradiction=w2_failure)
+        self.dispatch('c1', 'w3', 'Late task, older pending one.')
+        self.dispatch('c2', 'w3', 'Late task, older pending two.')
+        self.stream_for('w3')
         self.await_inbox('root', lambda messages: (
             [m['body'] for m in messages]
             if any('w2 quick turn' in m['body'] for m in messages)

@@ -123,9 +123,16 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   and task-start assertions while completing that fixture dependency.
   Candidate run `38755427825` reached an OMP owned read before its emitted
   conversation identity was recorded. Await the matching running native binding
-  through committed owner notices before scripted commands. Preserve all public
+  through read-only metadata observations before scripted commands. Preserve all public
   owned reads, and report a recorded nonzero native exit while awaiting its
-  successful report in the held-task fixture.
+  successful report or initial control connection in the held-task fixture.
+  The target native launch omits the inherited attempt directory; retain its
+  matching running session binding while checking the exact directory when supplied.
+  The first target check failed with `KeyError` for the absent inherited variable. A complete current
+  fixture run then retained a matching committed binding while the new subscription
+  waited for another notice. Remove that fixture subscription and observe the
+  binding predicate directly; retain both failed synchronization attempts. The scoped
+  held-task check passes with the current and target binaries.
   Browser acceptance reached the final actor through End while its cursor was
   outside the viewport. Scroll the keyboard-selected actor into view. The complete
   browser acceptance now passes with the current actor cards and knowledge view.

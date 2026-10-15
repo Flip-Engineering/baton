@@ -377,27 +377,16 @@ client=socket.create_connection(('127.0.0.1',config['port']))
 stream=client.makefile('rwb',buffering=0)
 def reply(value): stream.write((json.dumps(value)+'\n').encode())
 ''' + COMPLETION_EXCHANGE + r'''if omp:
-    changes=subprocess.Popen([config['exe'],config['db'],'ui-subscribe','0','0'],
-                             stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
-    try:
-        readiness=changes.stdout.readline()
-        assert readiness,changes.stderr.read()
-        json.loads(readiness)
-        while True:
-            with sqlite3.connect(pathlib.Path(config['db']).as_uri()+'?mode=ro',uri=True) as database:
-                binding=database.execute(
-                    "SELECT 1 FROM sessions s JOIN executions e ON e.session=s.id "
-                    "WHERE s.id=? AND s.native=? AND e.directory=? AND e.phase='running' "
-                    "AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=s.id)",
-                    (session,native,os.environ['BATON_ATTEMPT_DIRECTORY'])).fetchone()
-            if binding: break
-            notice=changes.stdout.readline()
-            assert notice,changes.stderr.read()
-            json.loads(notice)
-    finally:
-        changes.terminate()
-        _,error=changes.communicate()
-        assert changes.returncode in (0,-15),(changes.returncode,error)
+    while True:
+        with sqlite3.connect(pathlib.Path(config['db']).as_uri()+'?mode=ro',uri=True) as database:
+            binding=database.execute(
+                "SELECT 1 FROM sessions s JOIN executions e ON e.session=s.id "
+                "WHERE s.id=? AND s.native=? AND (? IS NULL OR e.directory=?) AND e.phase='running' "
+                "AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=s.id)",
+                (session,native,os.environ.get('BATON_ATTEMPT_DIRECTORY'),
+                 os.environ.get('BATON_ATTEMPT_DIRECTORY'))).fetchone()
+        if binding: break
+        time.sleep(.01)
 def progress(action):
     print(json.dumps({'type':'fixture_progress','marker':action['progress'],'native_pid':os.getpid()}),flush=True)
     reply({'progress_written':action['progress']})
