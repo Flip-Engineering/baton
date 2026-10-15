@@ -96,6 +96,11 @@ def confirm_finished_fixture_task(body):
     state=coordinator('session',model)
     completion=state['taskCompletion']
     if not completion['open']: return
+    with sqlite3.connect(pathlib.Path(config['db']).as_uri()+'?mode=ro',uri=True) as database:
+        assignment_receipt=database.execute('SELECT receipt FROM messages WHERE id=? AND recipient=?',
+                                            (completion['assignmentId'],model)).fetchone()
+    assert assignment_receipt is not None,completion
+    if assignment_receipt[0] is None: return
     assignment=coordinator('delivery',completion['assignmentId'])
     if assignment['receipt'] is None: return
     parent=completion['coordinator']
@@ -908,9 +913,9 @@ class Receive(unittest.TestCase):
                 "SELECT directory FROM executions WHERE session='parent' AND mode='retained'"
             ).fetchone()[0])
         self.coord('message', 'second', 'root', 'parent', 'task', 'The exact queued input.')
-        self.action(original, body='Original result complete.')
+        self.action(original, body='Original result complete.', complete_task=False)
         self.assertEqual(original.readline(), b'')
-        continuation, resumed = self.accept('parent')
+        continuation, resumed = self.accept_child(observer, 'parent')
         self.assertIn('[id: second]', resumed['prompt'])
         self.assertNotIn('[id: first]', resumed['prompt'])
         # The completed attempt settles independently of the live continuation.
@@ -1108,6 +1113,8 @@ class Receive(unittest.TestCase):
 
     def test_ack_failure_still_joins_queued_continuation(self):
         self.player()
+        self.coord('connect', 'root', 'native-root',
+                   json.dumps([str(self.fixture), 'parent_endpoint']))
         self.prepare_input('first', 'parent', 'Complete the original input.', kind='task')
         self.connect('parent')
         observer = self.spawn(*self.receive_args('parent'))
@@ -1120,9 +1127,9 @@ class Receive(unittest.TestCase):
         # filesystem layer while the wrapper stays the production path.
         (attempt / 'acknowledged').mkdir()
         self.coord('message', 'second', 'root', 'parent', 'task', 'The exact queued input.')
-        self.action(original, body='Original result complete.')
+        self.action(original, body='Original result complete.', complete_task=False)
         self.assertEqual(original.readline(), b'')
-        continuation, resumed = self.accept('parent')
+        continuation, resumed = self.accept_child(observer, 'parent')
         self.assertIn('[id: second]', resumed['prompt'])
         # Keep the continuation live while checking the observer remains
         # available to join it after the first attempt's ACK failure.
@@ -3091,6 +3098,8 @@ class Receive(unittest.TestCase):
         self.assertIn(notice['body'], started['prompt'])
         self.action(second)
         self.finish(first)
+        self.shutdown_idle_database_owner('Self-promotion continuation did not settle.',
+                                          reject_start=True)
         self.assertEqual(self.coord('inbox', 'parent'), [])
         self.assertEqual(self.coord('delivery', 'self-share:promotion-notice')['receipt'],
                          'native-reviewed')

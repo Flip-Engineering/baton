@@ -56,12 +56,28 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   The controlled Git fixture must supply its guided worker, handling receipt
   and subsequent report at those waits. Run its real rebase and landing checks
   with the controlled native boundary.
+  The nested receive continuation fixture read the queued assignment through
+  its completion helper during the first turn. Successful settlement handled
+  that complete read, leaving no continuation to accept. Keep the original
+  completion exchange disabled in both continuation cases and inspect assignment
+  receipt metadata before the shared completion helper reads a complete body.
+  Observe actual receive-child exit while awaiting the next native. Use the
+  scripted parent endpoint to isolate the host ACK failure. Await the actual
+  self-promotion continuation after message admission. Preserve the host ACK
+  failure, live continuation, report and receipt assertions.
   Preserve complete bodies, native lineage, first receipts, reports, original
   failure evidence and every semantic assertion. Validate the corrected callers
   remotely without duplicate tasks. Coordinate with
   [#727](https://github.com/Flip-Engineering/baton/issues/727),
   [#730](https://github.com/Flip-Engineering/baton/issues/730) and
   [#746](https://github.com/Flip-Engineering/baton/issues/746).
+
+- [#750: Preserve Codex inbox admission during SQLite writer contention](https://github.com/Flip-Engineering/baton/issues/750).
+  A focused receive fixture retained both native results, then its parent report
+  delivery failed at `codex-inbox-wake.mjs`'s `BEGIN IMMEDIATE` with
+  `database is locked`. Investigate writer lifetime and qualify the selected
+  correction against the observed contention. Coordinate with
+  [#747](https://github.com/Flip-Engineering/baton/issues/747).
 
 - [#746: Read promoted root holdings in the knowledge consumer acceptance](https://github.com/Flip-Engineering/baton/issues/746).
   Source review found that the consumer task and verifier use the knowledge
