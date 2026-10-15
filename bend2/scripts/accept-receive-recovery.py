@@ -90,6 +90,24 @@ def json_lines(path):
     return result
 
 
+def native_logs(db, base):
+    with sqlite3.connect(f'{db.as_uri()}?mode=ro', uri=True) as connection:
+        if not connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='log_generations'").fetchone():
+            return []
+        rows = connection.execute(
+            'SELECT session, attempt, base, log FROM log_generations '
+            'WHERE session=? AND base=? ORDER BY rowid', ('worker', str(base))).fetchall()
+    return [{'session': session, 'attempt': attempt, 'base': original, 'path': path,
+             'size_bytes': Path(path).stat().st_size if Path(path).exists() else 0,
+             'sha256': digest(Path(path)) if Path(path).exists() else None}
+            for session, attempt, original, path in rows]
+
+
+def native_frames(logs):
+    return [frame for log in logs for frame in json_lines(Path(log['path']))]
+
+
 class ExitWatch:
     def __init__(self, pid):
         self.pid = pid
@@ -362,7 +380,7 @@ both your previous commit hash and the new one. Do not repeat the checkpoint too
             assert not json_lines(out / 'launches.jsonl')
             assert not json_lines(out / 'tool-checkpoints.jsonl')
             assert not json_lines(out / 'parent-receipts.jsonl')
-            assert not native_log.exists() or native_log.stat().st_size == 0
+            assert not any(log['size_bytes'] for log in native_logs(db, native_log))
             state = snapshot(db)
             assert not state['executions'] and not state['turns'], state
             assert len(state['messages']) == 1, state
@@ -490,7 +508,8 @@ both your previous commit hash and the new one. Do not repeat the checkpoint too
                             original = alive(first_pid)
                             assert original and str(codex) in original['command'], original
                             original['started'] = command(['ps', '-p', str(first_pid), '-o', 'lstart='])
-                            before_frames = json_lines(native_log)
+                            before_logs = native_logs(db, native_log)
+                            before_frames = native_frames(before_logs)
                             assert not any(frame.get('type') in ['turn.completed', 'turn.failed']
                                            for frame in before_frames), before_frames
                             record('checkpoint-ready', event=event, native_id=first_native,
@@ -509,7 +528,8 @@ both your previous commit hash and the new one. Do not repeat the checkpoint too
                                           observer_exit=code, original_native_pid=first_pid,
                                           native_id=first_native, retry=retry,
                                           followup_result=followup, processes=owned(),
-                                          native_log_bytes_before=native_log.stat().st_size)
+                                          native_logs_before=before_logs,
+                                          native_log_bytes_before=sum(log['size_bytes'] for log in before_logs))
                         elif kind == 'parent-report':
                             assert loss is not None, event
                             receipts.append(event)
@@ -564,7 +584,9 @@ both your previous commit hash and the new one. Do not repeat the checkpoint too
                                                   process_after=alive(process['pid'])))
             final = snapshot(db)
             launches = json_lines(out / 'launches.jsonl')
-            events = json_lines(native_log)
+            logs = native_logs(db, native_log)
+            assert logs and all(log['sha256'] is not None for log in logs), logs
+            events = native_frames(logs)
             reports = sorted((row for row in final['messages'] if row['kind'] == 'report'),
                              key=lambda row: row['seq'])
             terminal = [row for row in events if row.get('type') in ['turn.completed', 'turn.failed']]
@@ -595,12 +617,12 @@ both your previous commit hash and the new one. Do not repeat the checkpoint too
             assert command(['git', '-C', repo, 'diff', '--name-only', base, 'HEAD']) == DOCUMENT
             for commit, report in zip(commits, reports):
                 assert commit in report['body'] or commit[:7] in report['body'], (commit, report)
-            assert native_log.stat().st_size > loss['native_log_bytes_before']
+            assert sum(log['size_bytes'] for log in logs) > loss['native_log_bytes_before']
             save(out / 'evidence.json', {
                 **pin, 'ended_unix': time.time(), 'elapsed_seconds': time.time() - pin['started_unix'],
                 'observer_exit': observer.returncode, 'original_native_pid': first_pid,
                 'native_session': first_native, 'launches': launches, 'native_thread_ids': native_ids,
-                'native_terminal_frames': terminal, 'native_log_sha256': digest(native_log),
+                'native_terminal_frames': terminal, 'native_logs': logs,
                 'state': final, 'parent_receipts': receipts, 'timeline': timeline,
                 'repository_commits': commits, 'document_sha256': digest(repo / DOCUMENT),
                 'owner_shutdown': shutdown, 'owner_exit_observations': owner_exits,

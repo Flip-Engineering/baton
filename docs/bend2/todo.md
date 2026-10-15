@@ -38,6 +38,10 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   missing native identity. Await actual selected execution and process
   settlement, admit recovery's first task through the existing canonical batch
   transport, and retain an explicit verification path for already-admitted work.
+  The retained recovery run completed its observer-loss checkpoint, then failed
+  while reading an absent canonical transcript. Read the registered attempt
+  generations, record zero output before their first write, and retain every
+  complete transcript hash and original report assertion.
   Preserve complete bodies, native lineage, first receipts, reports, original
   failure evidence and every semantic assertion. Validate the corrected callers
   remotely without duplicate tasks. Coordinate with
