@@ -1,4 +1,5 @@
 """Integration checks with a controlled native-process protocol fixture."""
+import errno
 import importlib.util
 import json
 import os
@@ -16,6 +17,57 @@ EXE = ROOT / '.scratch/bend2/baton2'
 SPEC = importlib.util.spec_from_file_location('receive_fixture', pathlib.Path(__file__).with_name('receive.py'))
 RECEIVE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(RECEIVE)
+
+COMPLETION_PROTOCOL = r'''
+def finish_owned_input():
+    for message in coordinator('inbox',model):
+        if message['kind']=='task-assignment':
+            reviewed=coordinator('delivery',message['id'])
+            assert reviewed['body']==expected_task,reviewed
+            coordinator('ack',message['id'],model,'Fixture worker handled its Direct task.')
+    confirm_finished_fixture_task('Completed the controlled native protocol task.')
+class NativeOutput:
+    def __init__(self,output):
+        self.output=output
+        self.pending=''
+        self.native=''
+        self.completed=False
+    def write(self,text):
+        self.pending+=text
+        while '\n' in self.pending:
+            line,self.pending=self.pending.split('\n',1)
+            try: frame=json.loads(line)
+            except (ValueError,TypeError): frame={}
+            if isinstance(frame,dict):
+                if frame.get('type')=='system' and frame.get('subtype')=='init':
+                    self.native=frame.get('session_id','')
+                if frame.get('type')=='thread.started':
+                    self.native=frame.get('thread_id','')
+                if frame.get('type')=='response' and frame.get('command')=='get_state' and frame.get('success'):
+                    self.native=frame.get('data',{}).get('sessionId','')
+                if isinstance(frame.get('stream'),dict) and frame['stream'].get('kind')=='session':
+                    self.native=frame['stream'].get('id','')
+                terminal=frame.get('type') in ('result','turn.completed','turn.failed') or (
+                    frame.get('type')=='agent_end' and frame.get('isTerminal',True)) or (
+                    isinstance(frame.get('payload'),dict) and frame['payload'].get('kind')=='run_terminal')
+                if terminal and self.native and not self.completed:
+                    while coordinator('session',model)['native']!=self.native:
+                        time.sleep(.01)
+                    finish_owned_input()
+                    self.completed=True
+            self.output.write(line+'\n')
+            self.output.flush()
+        return len(text)
+    def flush(self): self.output.flush()
+    def finish(self):
+        if self.pending:
+            self.output.write(self.pending)
+            self.pending=''
+        self.output.flush()
+    def __getattr__(self,name): return getattr(self.output,name)
+original_stdout=sys.stdout
+sys.stdout=NativeOutput(original_stdout)
+'''
 
 class Turn(unittest.TestCase):
     def setUp(self):
@@ -64,16 +116,13 @@ print(json.dumps({"type":"result","result":"Task recorded.","session_id":"native
             session,turn=args[1:3]
             completed=self.cwd/'completed-native-fixture'
             if self.player.exists():
-                completed.write_text('#!'+sys.executable+'\nimport json,os,runpy,subprocess,sys\n'
+                completed.write_text('#!'+sys.executable+'\nimport json,os,runpy,subprocess,sys,time\n'
                     + 'config='+repr({'exe':str(EXE),'db':str(self.db)})+'\nmodel='+repr(session)+'\n'
+                    + 'expected_task='+repr(self.task.read_text())+'\n'
                     + RECEIVE.COMPLETION_EXCHANGE
+                    + COMPLETION_PROTOCOL
                     + 'runpy.run_path('+repr(str(self.player))+',run_name="__main__")\n'
-                    + 'for message in coordinator("inbox",model):\n'
-                    + '    if message["kind"]=="task-assignment":\n'
-                    + '        reviewed=coordinator("delivery",message["id"])\n'
-                    + '        assert reviewed["body"]=='+repr(self.task.read_text())+'\n'
-                    + '        coordinator("ack",message["id"],model,"Fixture worker handled its Direct task.")\n'
-                    + 'confirm_finished_fixture_task("Completed the controlled native protocol task.")\n')
+                    + 'sys.stdout.finish()\nsys.stdout=original_stdout\n')
                 completed.chmod(0o700)
             args=(*args[:3],str(completed),*args[4:])
         p=subprocess.run([str(EXE),str(self.db),*args],text=True,capture_output=True)
@@ -145,10 +194,17 @@ print(json.dumps({"type":"result","result":"Task recorded.","session_id":"native
         self.assertEqual(json.loads(self.call('inbox','root'))[0]['body'],str(len(delivered.read_text())))
 
     def test_start_failure_reports_to_parent(self):
-        self.run_turn(self.cwd/'missing-program')
+        missing=self.cwd/'missing-program'
+        self.run_turn(missing)
         inbox=json.loads(self.call('inbox','root'))
-        self.assertIn('could not start',inbox[0]['body'])
+        self.assertIn('without a native result (exit 127)',inbox[0]['body'])
         self.assertEqual(inbox[0]['recipient'],'root')
+        with sqlite3.connect(self.db) as connection:
+            directory=connection.execute('SELECT directory FROM direct_turn_requests WHERE id=?',
+                                         ('turn-1',)).fetchone()[0]
+        diagnostic=(pathlib.Path(directory)/'native.stderr').read_text()
+        self.assertIn(str(missing),diagnostic)
+        self.assertIn(os.strerror(errno.ENOENT),diagnostic)
 
     def test_exit_without_result_reports_failure_and_keeps_logs(self):
         self.player.write_text('#!'+sys.executable+'\nimport sys;sys.stdin.read();print("unframed startup failure");sys.stderr.write("diagnosis");raise SystemExit(7)\n')
@@ -232,16 +288,21 @@ assert sys.stdin.read()==''
         terminal = json.dumps({'type':'agent_end','isTerminal':True,'messages':[
             {'role':'assistant','content':[{'type':'text','text':final_text}]}]})
         (self.cwd/'events.jsonl').write_text('\n'.join(retained+prefixes+[terminal])+'\n')
-        self.player.write_text('#!'+sys.executable+'\n'+'''import pathlib,sys
+        self.player.write_text('#!'+sys.executable+'\n'+'''import json,pathlib,sys
 sys.stdin.readline()
+state=json.loads(sys.stdin.readline())
 sys.stdin.readline()
-sys.stdin.readline()
+print(json.dumps({'type':'response','id':state['id'],'command':'get_state',
+                  'success':True,'data':{'sessionId':'omp-retained-native'}}),flush=True)
 print(pathlib.Path('events.jsonl').read_text(),end='',flush=True)
 assert sys.stdin.read()==''
 ''')
         self.call('turn','omp-worker','retained-turn',str(self.player),'model','low',str(self.cwd),str(self.task),str(self.log),'')
         note='{"type":"baton_event_filter","requested":"array+delta","active":false,"outcome":"unacknowledged"}'
         lines=self.generation('retained-turn').read_text().splitlines()
+        header=json.loads(lines.pop(0))
+        self.assertEqual((header['type'],header['command'],header['success'],header['data']),
+                         ('response','get_state',True,{'sessionId':'omp-retained-native'}))
         self.assertEqual(lines[:len(retained+prefixes)], retained+prefixes)
         compact=json.loads(lines[len(retained+prefixes)])
         self.assertEqual(compact['type'],'agent_end')
@@ -274,10 +335,12 @@ assert sys.stdin.read()==''
         received = self.cwd / 'root-reports.jsonl'
         endpoint = json.dumps([sys.executable, str(receiver), str(self.db), str(received)])
         self.call('attach','root','native-fixture','root-session',endpoint)
-        self.player.write_text('#!'+sys.executable+'\n'+'''import pathlib,sys
+        self.player.write_text('#!'+sys.executable+'\n'+'''import json,pathlib,sys
 sys.stdin.readline()
+state=json.loads(sys.stdin.readline())
 sys.stdin.readline()
-sys.stdin.readline()
+print(json.dumps({'type':'response','id':state['id'],'command':'get_state',
+                  'success':True,'data':{'sessionId':'omp-trial-native'}}),flush=True)
 print(pathlib.Path('events.jsonl').read_text(),end='',flush=True)
 assert sys.stdin.read()==''
 ''')

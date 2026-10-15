@@ -9,6 +9,8 @@ import sys
 import tempfile
 import unittest
 
+import receive as receive_fixture
+
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 EXE = ROOT / '.scratch/bend2/baton2'
@@ -755,6 +757,7 @@ class AgentActions(unittest.TestCase):
                          'Handled by inferred root.')
 
     def test_implicit_codex_native_requires_one_exact_session(self):
+        receive_fixture.install_public_queue_codex(self, self.directory)
         native = 'fixture-codex-thread-714'
         self.legacy('attach', 'root', 'codex', native, self.endpoint)
         self.legacy('message', 'context-report', 'worker-a', 'root',
@@ -1239,14 +1242,15 @@ class AgentActions(unittest.TestCase):
 
     def test_named_batch_keeps_real_errors_and_later_complete_output(self):
         bad_repo = self.directory / 'missing-git-directory'
-        rows = self.action('root', 'remote-tip', '--repo', bad_repo,
-                           '--branch', 'main', '--remote', 'origin', 'and',
+        rows = self.action('root', 'project', 'register', '--path', bad_repo, 'and',
                            'knowledge', 'record', '--id', 'missing-file-record',
                            '--kind', 'observation', '--claim-file',
                            self.directory / 'absent-claim', '--and', 'outbox')
         self.assertEqual(rows[0]['status'], 'failed')
         self.assertNotEqual(rows[0]['waitStatus'], 'exit 0')
-        self.assertIn('missing-git-directory', rows[0]['stderr'])
+        self.assertIn(str(bad_repo), rows[0]['nativeArgv'])
+        self.assertEqual(rows[0]['stderr'],
+                         'Native control setup failed; inspect the registered session and retained input.\n')
         self.assertEqual(pathlib.Path(rows[0]['stderrPath']).read_text(), rows[0]['stderr'])
         self.assertEqual(rows[1]['status'], 'refused')
         self.assertIn('--claim', rows[1]['cause'])
@@ -1326,6 +1330,9 @@ class AgentActions(unittest.TestCase):
         command.write_text('#!/bin/sh\nexit 0\n')
         command.chmod(0o755)
         log = self.directory / 'receiver log λ.jsonl'
+        configured = self.action('root', 'configure', '--session', 'worker-a',
+                                 '--harness', 'codex', '--command', command, '--output-log', log)
+        self.assertEqual(configured[0]['status'], 'completed')
         self.legacy('bind', 'worker-a', 'saved-worker-native-λ', 'codex', 'model', 'low')
         original = self.legacy('session', 'worker-a')
         registered = self.action('root', 'receiver', '--session', 'worker-a',
@@ -1398,6 +1405,11 @@ class AgentActions(unittest.TestCase):
         reason = self.directory / 'reason.txt'
         body = '\ufeffOperator stop.\nKeep original assignment and evidence.  '
         reason.write_text(body, encoding='utf-8')
+        configured = self.action('root', 'configure', '--session', 'worker-b',
+                                 '--harness', 'codex', '--command', sys.executable,
+                                 '--output-log', self.directory / 'unused-log')
+        self.assertEqual(configured[0]['status'], 'completed')
+        self.legacy('connect', 'worker-b', '', self.endpoint)
         self.legacy('bind', 'worker-b', 'saved-stopped-native', 'codex', 'model', 'low')
         self.legacy('message', 'stop-task', 'root', 'worker-b', 'task-assignment', 'Original work.')
         rows = self.action('root', 'stop', '--session', 'worker-b', '--id', 'named-stop',
@@ -1442,11 +1454,14 @@ class AgentActions(unittest.TestCase):
                            'print(json.dumps({"type":"result","result":"Named task completed.",'
                            '"session_id":"named-native","is_error":False}),flush=True)\n')
         fixture.chmod(0o755)
+        log = self.directory / 'named-direct.jsonl'
+        configured = self.action('root', 'configure', '--session', 'worker-a',
+                                 '--harness', 'claude-code', '--command', fixture, '--output-log', log)
+        self.assertEqual(configured[0]['status'], 'completed')
         bound = self.action('root', 'bind', '--session', 'worker-a', '--harness',
                             'claude-code', '--model', 'model', '--effort', 'low', '--native', '')
         self.assertEqual(bound[0]['status'], 'completed')
         body = '\ufeffImplement the complete task.\nUnicode λ🙂 and trailing spaces  '
-        log = self.directory / 'named-direct.jsonl'
         result = subprocess.run([str(EXE), str(self.db), 'as', 'worker-a', 'turn',
                                  '--id', 'named-direct-turn', '--command', str(fixture),
                                  '--file', '-', '--output-log', str(log), '--and', 'attempt'],
@@ -1540,6 +1555,9 @@ class AgentActions(unittest.TestCase):
         self.legacy('message', 'evidence-task', 'root', 'worker-a',
                     'task-assignment', 'Investigate the current source.')
         self.legacy('report', 'other-author-report', 'worker-b', 'Another actor evidence.')
+        self.legacy('ensemble', 'evidence-peers', 'root', 'tight')
+        for member in ('worker-a', 'other-root'):
+            self.legacy('ensemble-member', 'evidence-peers', 'root', member, 'add')
         self.legacy('message', 'other-recipient-report', 'worker-a', 'other-root',
                     'report', 'Another recipient evidence.')
         body = '\ufeffComplete observed source and command evidence.\nλ🙂\nTrailing spaces  '
