@@ -4,6 +4,18 @@ The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3
 retain findings, ownership and acceptance requirements. This page links current
 Baton follow-up work for contributors. Every open issue has a link on this page.
 
+- [#754: Reselect the current receiver before retained serve admission](https://github.com/Flip-Engineering/baton/issues/754).
+  Retained current and target runs started a third old-command native attempt
+  after the managed endpoint was committed. The initial serve path captures its
+  receiver before waiting for the physical session guard; its attribution to
+  those historical launches remains an inference. Recover any recorded attempt
+  first, then read the current receiver under the guard before new admission.
+  Release the guard before managed delivery and preserve direct explicit receive
+  commands, native arguments and stops. Qualify the observed receiver switch for
+  [#717](https://github.com/Flip-Engineering/baton/issues/717) and
+  [#718](https://github.com/Flip-Engineering/baton/issues/718); coordinate with
+  [#747](https://github.com/Flip-Engineering/baton/issues/747).
+
 - [#753: Bind the owner cursor to the database incarnation](https://github.com/Flip-Engineering/baton/issues/753).
   Actual candidate run `38771989568` reused a database inode whose retained owner
   cursor was 22. The new database had change maximum 11, so the owner suppressed
