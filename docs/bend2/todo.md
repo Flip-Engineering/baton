@@ -4,6 +4,19 @@ The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3
 retain findings, ownership and acceptance requirements. This page links current
 Baton follow-up work for contributors. Every open issue has a link on this page.
 
+- [#744: Route database-prefixed completion and guidance actions](https://github.com/Flip-Engineering/baton/issues/744).
+  An actual GLM contributor's database-prefixed completion request exited with
+  general usage and admitted nothing. Its contextual command delivered the
+  complete report. Route completion-request, completion-confirmed and guide
+  through the existing decision parser with inferred actor and coordinator
+  authority. Preserve valid positional database commands and qualify the
+  resulting source remotely. The issue also retains the review's minor source
+  observations for behavior judgment. Coordinate with
+  [#715](https://github.com/Flip-Engineering/baton/issues/715),
+  [#723](https://github.com/Flip-Engineering/baton/issues/723),
+  [#742](https://github.com/Flip-Engineering/baton/issues/742) and
+  [#717](https://github.com/Flip-Engineering/baton/issues/717).
+
 - [#743: Judge configure receiver registration with an actual route change](https://github.com/Flip-Engineering/baton/issues/743).
   Target workflow `38687547257` completed a same-route configuration with an
   empty receiver, then waited for a native connection that had no producer.
