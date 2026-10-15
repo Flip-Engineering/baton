@@ -417,6 +417,9 @@ class Control(unittest.TestCase):
                 pass
             connection.close()
         self.server.close()
+        owner = f'{EXE.resolve()} --instance-owner {self.db.resolve()}'
+        self.eventually(lambda: [row.strip().split(None, 3)[3] for row in self.process_rows()]
+                        in ([], [owner]))
         shutdown_fixture_owner(self)
         self.eventually(lambda: not self.process_rows())
 

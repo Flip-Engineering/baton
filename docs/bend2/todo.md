@@ -121,6 +121,11 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   Shared native control consumers must also bind the acceptance helper used by
   their borrowed `accept` method. Preserve all configuration, installed identity
   and task-start assertions while completing that fixture dependency.
+  Candidate run `38755427825` reached an OMP owned read before its emitted
+  conversation identity was recorded. Await the matching running native binding
+  through committed owner notices before scripted commands. Preserve all public
+  owned reads, and report a recorded nonzero native exit while awaiting its
+  successful report in the held-task fixture.
   Browser acceptance reached the final actor through End while its cursor was
   outside the viewport. Scroll the keyboard-selected actor into view. The complete
   browser acceptance now passes with the current actor cards and knowledge view.

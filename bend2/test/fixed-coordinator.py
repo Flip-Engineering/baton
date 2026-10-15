@@ -740,11 +740,22 @@ finally:
         self.dispatch('c1', 'w3', 'Late task, older pending one.')
         self.dispatch('c2', 'w3', 'Late task, older pending two.')
         self.stream_for('w3')
+        def w2_failure():
+            failures = []
+            for ident, directory, status in self.query(
+                    "SELECT id,directory,status FROM executions WHERE session='w2' AND phase='exited'"):
+                fields = status.split()
+                if (len(fields) == 2 and fields[0] in ('exit', 'signal')
+                        and fields[1].isdecimal() and int(fields[1]) != 0):
+                    error = pathlib.Path(directory) / 'native.stderr'
+                    failures.append({'execution': ident, 'status': status,
+                                     'stderr': error.read_text() if error.exists() else None})
+            return failures
         self.await_inbox('root', lambda messages: (
             [m['body'] for m in messages]
             if any('w2 quick turn' in m['body'] for m in messages)
             and any('w3 late turn' in m['body'] for m in messages) else None),
-            'late work never finished while the first task was held')
+            'late work never finished while the first task was held', contradiction=w2_failure)
         bodies = [m['body'] for m in self.inbox('root')]
         self.assertFalse(any('w1 held turn' in body for body in bodies),
                          'the held task reported before its release')
