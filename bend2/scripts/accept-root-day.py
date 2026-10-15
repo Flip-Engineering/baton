@@ -163,7 +163,38 @@ class Case:
         code = process.wait()
         if code:
             raise RuntimeError(f'{self.path.name}/{ident} exited {code}; read its .out file')
-        return self.coord('delivery', ident)
+        return self.completed_attempt(ident)
+
+    def completed_attempt(self, ident, player='w1'):
+        while True:
+            with sqlite3.connect(self.db) as db:
+                db.row_factory = sqlite3.Row
+                def row(table, key, value):
+                    found = db.execute(f'SELECT * FROM {table} WHERE {key}=?', (value,)).fetchone()
+                    return dict(found) if found else None
+                state = {'execution': row('executions', 'session', player),
+                         'session': row('sessions', 'id', player),
+                         'report': row('messages', 'id', ident), 'turn': row('turns', 'id', ident)}
+            execution = state['execution']
+            if execution and execution['id'] != ident:
+                save(self.path / (ident + '.completion.json'), state)
+                raise RuntimeError(f'{self.path.name}/{ident} current execution changed: {state}')
+            directory = Path(execution['directory']) if execution and execution['directory'] else None
+            if directory and (directory / 'acknowledged').exists():
+                state['acknowledged'] = (directory / 'acknowledged').read_text()
+                save(self.path / (ident + '.completion.json'), state)
+                assert execution['mode'] == 'direct' and execution['phase'] == 'exited', state
+                assert execution['status'] == 'exit 0', state
+                assert state['turn'] and state['turn']['worker'] == player, state
+                report, session = state['report'], state['session']
+                assert report and report['sender'] == player and report['recipient'] == session['parent'], state
+                assert report['kind'] == 'report' and session['native'], state
+                return self.coord('delivery', ident)
+            if directory and (directory / 'native-start-error').exists():
+                state['native_start_error'] = (directory / 'native-start-error').read_text()
+                save(self.path / (ident + '.completion.json'), state)
+                raise RuntimeError(f'{self.path.name}/{ident} native start failed: {state}')
+            time.sleep(0.05)
 
     def evidence(self, value):
         save(self.path / 'evidence.json', value)
@@ -221,6 +252,8 @@ class Acceptance:
                     and c.row('sessions', 'w1')['native'], 'Player tool start and session binding')
             before = c.coord('player', 'w1')
             kill_tree(p, c.path / 'crash.json')
+            recovered = c.completed_attempt('interrupted')
+            assert c.coord('player', 'w1')['native'] == before['native'], before
             p = c.turn(kind, 'Continue the interrupted review. Begin your final report with the '
                        'exact review label from the earlier task, using your native conversation. '
                        'Explain one concrete recovery step. Do not search for the label, edit files, '
@@ -229,7 +262,7 @@ class Acceptance:
             after = c.coord('player', 'w1')
             assert after['native'] == before['native'], (before, after)
             assert label in report['body'], report
-            c.evidence({'before': before, 'after': after, 'report': report})
+            c.evidence({'before': before, 'after': after, 'recovered': recovered, 'report': report})
 
     def guidance(self):
         c = self.case('guidance')
