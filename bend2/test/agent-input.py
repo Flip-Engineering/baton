@@ -345,6 +345,17 @@ class AgentInput(unittest.TestCase):
                     self.assertIn('[id: ' + ident + ']:\n' + text, started['prompt'])
                     self.fx.action(stream, body='Initial input completed.', ack=False,
                                    complete_task=False)
+                    successor = self.fx.accept_or_child_exit(
+                        child, 'Initial input turn did not settle.', allow_exit=True)
+                    if successor is not None:
+                        next_stream, next_started = successor
+                        self.fx.action(next_stream, exit_fixture=True)
+                        self.fail('Initial input admitted another native before the receive '
+                                  'child exited: ' + json.dumps({
+                                      'native': next_started,
+                                      'input': self.fx.coord('delivery', ident),
+                                      'turns': self.fx.coord('turns', name),
+                                  }, ensure_ascii=False))
                     self.fx.finish(child)
                     self.fx.shutdown_idle_database_owner('Initial input turn did not settle.')
                     rows = [row for row in self.reads() if row['message'] == ident]

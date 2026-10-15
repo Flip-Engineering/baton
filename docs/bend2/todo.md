@@ -4,6 +4,16 @@ The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3
 retain findings, ownership and acceptance requirements. This page links current
 Baton follow-up work for contributors. Every open issue has a link on this page.
 
+- [#738: Judge initial-input handling fixtures when the baseline admits a successor](https://github.com/Flip-Engineering/baton/issues/738).
+  Target workflow `38679395337` retains the first complete native result while
+  its receive child admits the still-unhandled task again. The initial-input
+  fixture observes either child exit or that actual successor and reports the
+  full prompt, original delivery and retained turns on a contradictory start.
+  Preserve its implicit handling receipt and open assignment assertions.
+  Qualify the same contract on target and candidate with
+  [#717](https://github.com/Flip-Engineering/baton/issues/717) and
+  [#723](https://github.com/Flip-Engineering/baton/issues/723).
+
 - [#736: Preserve full branch history messages in native landing qualification](https://github.com/Flip-Engineering/baton/issues/736).
   Exact candidate `57b471e9` completed its builds and failed `land-test` twice
   with `land K: candidate message differs from the branch history` in run
