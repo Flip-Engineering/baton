@@ -50,9 +50,18 @@ class AgentActions(unittest.TestCase):
         database = self.db if database is None else database
         if not database.exists():
             return
+        owner = f'{EXE.resolve()} --instance-owner '
+        receive_fixture.Receive.eventually(self, lambda: all(
+            process['command'].startswith(owner)
+            for process in receive_fixture.Receive.owned_processes(self)),
+            'Asynchronous fixture work did not finish before owner shutdown.')
         result = subprocess.run([str(EXE), '--instance-shutdown', str(database)],
                                 capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        receive_fixture.Receive.eventually(self, lambda: not any(
+            process['command'] == owner + str(database.resolve())
+            for process in receive_fixture.Receive.owned_processes(self)),
+            'The fixture database owner did not exit after shutdown.')
 
     def invoke(self, *args, cwd=None, success=True, environment=None):
         env = os.environ.copy()

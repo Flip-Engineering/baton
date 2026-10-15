@@ -95,6 +95,11 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   The receive output check compares the complete committed delivery row and
   separately asserts the public read's derived input status. Compile its waiter
   fixture with the production optimization setting.
+  The contextual action suite completed its assertions, then failed while an
+  asynchronous delivery wrote into its temporary directory during cleanup.
+  Await owned fixture subprocesses and the selected database owner's exit before
+  removing that directory. Preserve the original complete run and its failure.
+  The corrected full contextual action suite passes all 56 tests remotely.
   Installed context acceptance also reached a fresh runtime launch whose declared
   `program` field was omitted by the shared source accessor. Read `program` for
   runtime launch requests. Focused package run `38377` on the completed `2994dd9d8`
