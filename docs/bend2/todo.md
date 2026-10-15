@@ -118,6 +118,9 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   direct command whose automatic continuation awaited fixture input. Complete
   that initial assignment through the public completion exchange before replaying
   the retained report. Preserve the queued-input and report assertions.
+  Shared native control consumers must also bind the acceptance helper used by
+  their borrowed `accept` method. Preserve all configuration, installed identity
+  and task-start assertions while completing that fixture dependency.
   Browser acceptance reached the final actor through End while its cursor was
   outside the viewport. Scroll the keyboard-selected actor into view. The complete
   browser acceptance now passes with the current actor cards and knowledge view.

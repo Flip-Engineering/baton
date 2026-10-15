@@ -19,6 +19,9 @@ class ControlIdentity(unittest.TestCase):
     root = controls.Control.root
     dispatch = controls.Control.dispatch
     accept = controls.Control.accept
+    accept_any = controls.Control.accept_any
+    capture_child_output = controls.Control.capture_child_output
+    child_communication = controls.Control.child_communication
     action = controls.Control.action
     finish = controls.Control.finish
     rows = controls.Control.rows

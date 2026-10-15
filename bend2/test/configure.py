@@ -27,6 +27,9 @@ class Configure(unittest.TestCase):
     root = identity.ControlIdentity.root
     dispatch = identity.ControlIdentity.dispatch
     accept = identity.ControlIdentity.accept
+    accept_any = identity.ControlIdentity.accept_any
+    capture_child_output = identity.ControlIdentity.capture_child_output
+    child_communication = identity.ControlIdentity.child_communication
     action = identity.ControlIdentity.action
     finish = identity.ControlIdentity.finish
     rows = identity.ControlIdentity.rows

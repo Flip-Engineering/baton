@@ -28,6 +28,9 @@ class TaskStart(unittest.TestCase):
     call = identity.ControlIdentity.call
     root = identity.ControlIdentity.root
     accept = identity.ControlIdentity.accept
+    accept_any = identity.ControlIdentity.accept_any
+    capture_child_output = identity.ControlIdentity.capture_child_output
+    child_communication = identity.ControlIdentity.child_communication
     action = identity.ControlIdentity.action
     finish = identity.ControlIdentity.finish
     rows = identity.ControlIdentity.rows
