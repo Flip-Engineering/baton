@@ -4,6 +4,17 @@ The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3
 retain findings, ownership and acceptance requirements. This page links current
 Baton follow-up work for contributors. Every open issue has a link on this page.
 
+- [#763: Await native execution identity in the Orchestra projection fixture](https://github.com/Flip-Engineering/baton/issues/763).
+  Run `38794594877` retained a failed worker with an open assignment and no
+  completion request. Its Python native performs owned reads immediately after
+  emitting its identity; the exact child error was deleted by fixture cleanup.
+  Await the matching running execution and native identity, retain failed work
+  after supported cleanup and preserve all projection and completion assertions.
+  Qualify the full fixture and whole workflow with
+  [#759](https://github.com/Flip-Engineering/baton/issues/759),
+  [#747](https://github.com/Flip-Engineering/baton/issues/747) and
+  [#717](https://github.com/Flip-Engineering/baton/issues/717).
+
 - [#762: Keep delayed native-question delivery from resending stored replies](https://github.com/Flip-Engineering/baton/issues/762).
   Run `38794594877` consumed the same editor-cancel response twice in the
   native-question cancellation fixture. The delayed question task can select a

@@ -64,7 +64,12 @@ class OrchestraProjection(unittest.TestCase):
         except Exception:
             self.temp._finalizer.detach()
             raise
-        self.temp.cleanup()
+        result = self._outcome.result
+        if any(test is self and error for test, error in result.errors + result.failures):
+            self.temp._finalizer.detach()
+            print('Retained failed Orchestra projection fixture: ' + self.temp.name, file=sys.stderr)
+        else:
+            self.temp.cleanup()
 
     def call(self, *args, success=True):
         result = subprocess.run([str(EXE), str(self.db), *args], text=True,
@@ -115,6 +120,16 @@ if message['kind']=='completion-request':
                       json.dumps([sys.executable, str(reviewer)]))
         failed = 'sys.exit(1)' if terminal == 'failed' else ''
         review = '' if terminal == 'failed' else (
+            "readiness=sqlite3.connect(" + repr(self.db.as_uri() + '?mode=ro') + ",uri=True)\n"
+            "try:\n"
+            "    while True:\n"
+            "        current=readiness.execute('SELECT e.phase,s.native FROM executions e JOIN sessions s ON s.id=e.session "
+            "WHERE e.session=? AND e.directory=?',(" + repr(player) + ",os.environ['BATON_ATTEMPT_DIRECTORY'])).fetchone()\n"
+            "        if current and current[0]=='running' and current[1]==native: break\n"
+            "        if current is None or current[0]=='exited': raise AssertionError(('Native fixture execution ended before its owned reads.',current))\n"
+            "        time.sleep(.01)\n"
+            "finally:\n"
+            "    readiness.close()\n"
             "prompt=pathlib.Path(sys.argv[sys.argv.index('--prompt-file')+1]).read_text()\n"
             "inputs=re.findall(r'^Message \\([^\\n]*\\) from [^\\n]* \\[id: (.*?)\\]:$',prompt,re.M)\n"
             "if " + repr(input_id) + ": inputs.insert(0," + repr(input_id) + ")\n"
@@ -151,7 +166,7 @@ if message['kind']=='completion-request':
             "settled=coordinator('session',worker)['taskCompletion']\n"
             "assert settled['assignmentId']==completion['assignmentId'] and settled['requestId']==request "
             "and settled['confirmed'] and not settled['open'],settled\n")
-        command.write_text('#!' + sys.executable + '\n' + '''import json,pathlib,re,subprocess,sys
+        command.write_text('#!' + sys.executable + '\n' + '''import json,os,pathlib,re,sqlite3,subprocess,sys,time
 native = 'native-''' + player + ''''
 print(json.dumps({'stream':{'kind':'session','id':native},'payload_type':'run.model.configured',
   'payload':{'kind':'run_model_configured','model_id':'observed-fixture-model'}}), flush=True)
