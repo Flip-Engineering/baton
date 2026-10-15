@@ -3,6 +3,7 @@ import json
 import os
 import pathlib
 import shlex
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -494,149 +495,153 @@ class OmpRootAdapter(unittest.TestCase):
         self.assertEqual(p.returncode, 0)
         self.assertIn('no pending messages', p.stderr)
 
+    def once_client(self, text='Acknowledged', failed=False):
+        native = pathlib.Path(self.temp.name) / 'once-omp.py'
+        observed = pathlib.Path(self.temp.name) / 'once-observed.json'
+        native.write_text('#!' + sys.executable + '\nimport json,os,pathlib,sys\n'
+            + 'native_id="mock-session"\n' + RPC_INPUT
+            + f'pathlib.Path({str(observed)!r}).write_text(json.dumps({{"argv":sys.argv[1:],"cwd":os.getcwd(),"prompt":prompt}}))\n'
+            + f'message={{"role":"assistant","content":[{{"type":"text","text":{text!r}}}]}}\n'
+            + ('message.update(stopReason="error",errorMessage="Fixture provider failure.")\n' if failed else '')
+            + 'print(json.dumps({"type":"message_end","message":message}),flush=True)\n'
+            + 'print(json.dumps({"type":"turn_end","message":message}),flush=True)\n'
+            + 'print(json.dumps({"type":"agent_end"}),flush=True)\n'
+            + ('sys.exit(9)\n' if failed else ''))
+        native.chmod(0o700)
+        return native, observed
+
+    def once(self, native):
+        return subprocess.run(
+            ['node', str(OMP_CONDUCTOR_SCRIPT), str(self.db), str(EXE), str(native), '--once'],
+            text=True, capture_output=True)
+
+    def assert_seeded_input(self, observed):
+        with sqlite3.connect(self.db) as connection:
+            row = connection.execute(
+                'SELECT n.seed,n.instruction,n.guidance,e.directory,e.id,e.phase '
+                'FROM native_initial_inputs n JOIN executions e '
+                'ON e.session=n.session AND e.id=n.turn AND e.directory=n.attempt '
+                'WHERE n.session=?', ('root',)).fetchone()
+        self.assertIsNotNone(row)
+        seed, instruction, guidance, directory, turn, phase = row
+        self.assertRegex(seed, r'^[0-9a-f]{128}$')
+        self.assertEqual(observed['prompt'], seed + '\n\n' + instruction + '\n\n' + guidance)
+        self.assertIn('Ideate briefly', instruction)
+        self.assertEqual(phase, 'exited')
+        self.assertEqual((pathlib.Path(directory) / 'prompt.txt').read_text(), observed['prompt'])
+        self.assertEqual(json.loads(self.coord('player', 'root'))['endpoint'], 'root-endpoint')
+        return guidance
+
     def test_adapter_formats_pending_report(self):
-        """The adapter detects pending messages and formats them for OMP."""
         self.coord('attach', 'root', 'omp', 'root-session', 'root-endpoint')
         self.register('w1', 'root', 'omp', 'model', 'high', '/wt', 'br', 'base')
-        self.coord('report', 'turn-1', 'w1', 'Task completed successfully.')
-
-        # Run the adapter in --once mode with a fake OMP that just prints the prompt.
-        # We use a shell script that echoes its arguments as JSON events.
-        mock_omp = pathlib.Path(self.temp.name) / 'mock-omp.sh'
-        mock_omp.write_text(
-            '#!/bin/sh\n'
-            '# Mock OMP: emit a session event and echo the last argument (the prompt)\n'
-            'echo \'{"type":"session","id":"mock-session"}\'\n'
-            'echo \'{"type":"agent_start"}\'\n'
-            'echo \'{"type":"turn_start"}\'\n'
-            'prompt="$(/usr/bin/python3 -c "import sys; print(sys.argv[-1])" "$@")"\n'
-            'echo "{\\\"type\\\":\\\"message_end\\\",\\\"message\\\":{\\\"role\\\":\\\"assistant\\\","'
-            '"\\\"content\\\":[{\\\"type\\\":\\\"text\\\",\\\"text\\\":\\\"Acknowledged\\\"}]}}"\n'
-            'echo \'{"type":"turn_end","message":{"role":"assistant","content":[{"type":"text","text":"Acknowledged"}]}}\'\n'
-            'echo \'{"type":"agent_end"}\'\n'
-            '# Write the prompt to a file so the test can read it\n'
-            f'echo "$prompt" > {self.temp.name}/received-prompt.txt\n'
-        )
-        mock_omp.chmod(0o755)
-
-        p = subprocess.run(
-            ['node', str(OMP_CONDUCTOR_SCRIPT), str(self.db), str(EXE), str(mock_omp), '--once'],
-            text=True, capture_output=True,
-        )
-
-        self.assertEqual(p.returncode, 0, f'stderr: {p.stderr}')
+        body = 'Task completed successfully. café λ🙂\nComplete report.\n'
+        self.coord('report', 'turn-1', 'w1', body)
+        native, observed_path = self.once_client()
+        p = self.once(native)
+        self.assertEqual(p.returncode, 0, p.stderr)
         self.assertIn('1 pending message(s)', p.stderr)
+        observed = json.loads(observed_path.read_text())
+        self.assertIn(body, self.assert_seeded_input(observed))
+        self.assertIn('turn-1', observed['prompt'])
+        self.assertIn('w1', observed['prompt'])
+        self.assertEqual(p.stdout, 'Acknowledged\n')
 
-        # Verify the prompt was passed to OMP containing the worker report.
-        received = (pathlib.Path(self.temp.name) / 'received-prompt.txt').read_text()
-        self.assertIn('Task completed successfully', received)
-        self.assertIn('turn-1', received)
-        self.assertIn('w1', received)
+    def test_once_selected_associate_reports_through_retained_turn(self):
+        self.coord('attach', 'root', 'omp', 'parent-native', '')
+        self.coord('role', 'root', 'principal-conductor')
+        self.register('lead', 'root', 'omp', 'stored-model', 'low')
+        self.coord('connect', 'lead', 'mock-session', '')
+        self.register('child', 'lead', 'fixture', 'model', 'low')
+        self.coord('report', 'child-report', 'child', 'Complete child evidence. café λ🙂')
+        native, observed_path = self.once_client('Full Associate result. λ🙂')
+        p = subprocess.run(['node', str(OMP_CONDUCTOR_SCRIPT), str(self.db), str(EXE),
+                            str(native), '--session', 'lead', '--once'],
+                           capture_output=True, text=True)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(p.stdout, 'Full Associate result. λ🙂\n')
+        observed = json.loads(observed_path.read_text())
+        self.assertEqual(observed['cwd'], str(self.checkouts / 'lead'))
+        argv = observed['argv']
+        self.assertEqual(argv[argv.index('--model') + 1], 'stored-model')
+        self.assertEqual(argv[argv.index('--thinking') + 1], 'low')
+        self.assertEqual(argv[argv.index('--resume') + 1], 'mock-session')
+        reports = json.loads(self.coord('inbox', 'root'))
+        self.assertEqual([(row['sender'], row['body']) for row in reports],
+                         [('lead', 'Full Associate result. λ🙂')])
+        with sqlite3.connect(self.db) as connection:
+            report_id, worker = connection.execute(
+                'SELECT t.id,t.worker FROM turns t WHERE t.id=?', (reports[0]['id'],)).fetchone()
+            attempt, phase = connection.execute(
+                'SELECT id,phase FROM executions WHERE session=?', ('lead',)).fetchone()
+        self.assertEqual((report_id, worker, phase), (attempt, 'lead', 'exited'))
+        lead = json.loads(self.coord('player', 'lead'))
+        self.assertEqual((lead['native'], lead['endpoint']), ('mock-session', ''))
+
+    def test_once_retains_provider_failure_and_pending_input(self):
+        self.coord('attach', 'root', 'omp', 'root-session', 'root-endpoint')
+        self.register('w1', 'root', 'omp', 'model', 'high')
+        self.coord('report', 'r1', 'w1', 'Keep this complete input pending on failure.')
+        native, _ = self.once_client('Fixture provider failure. λ🙂', failed=True)
+        p = self.once(native)
+        self.assertNotEqual(p.returncode, 0)
+        self.assertIn('Fixture provider failure. λ🙂', p.stdout)
+        self.assertIsNone(json.loads(self.coord('delivery', 'r1'))['receipt'])
+        with sqlite3.connect(self.db) as connection:
+            status, directory = connection.execute(
+                'SELECT status,directory FROM executions WHERE session=?', ('root',)).fetchone()
+        self.assertIn('9', status)
+        self.assertIn('Fixture provider failure.', (pathlib.Path(directory) / 'stdout').read_text())
 
     def test_adapter_detects_multiple_messages(self):
-        """The adapter formats multiple pending messages in one prompt."""
         self.coord('attach', 'root', 'omp', 'root-session', 'root-endpoint')
-        self.register('w1', 'root', 'omp', 'model', 'high', '/wt', 'br', 'base')
-        self.register('w2', 'root', 'omp', 'model', 'high', '/wt2', 'br2', 'base')
-        self.coord('report', 'r1', 'w1', 'First report.')
-        self.coord('report', 'r2', 'w2', 'Second report.')
-
-        mock_omp = pathlib.Path(self.temp.name) / 'mock-omp.sh'
-        prompt_file = self.temp.name + '/prompt.txt'
-        mock_omp.write_text(
-            '#!/bin/sh\n'
-            'echo \'{"type":"session","id":"mock"}\'\n'
-            'echo \'{"type":"turn_end","message":{"role":"assistant","content":[{"type":"text","text":"ok"}]}}\'\n'
-            '# Write the last argument (the prompt) to a file\n'
-            'for arg in "$@"; do last="$arg"; done\n'
-            f'printf "%s" "$last" > {prompt_file}\n'
-        )
-        mock_omp.chmod(0o755)
-
-        p = subprocess.run(
-            ['node', str(OMP_CONDUCTOR_SCRIPT), str(self.db), str(EXE), str(mock_omp), '--once'],
-            text=True, capture_output=True,
-        )
-        self.assertEqual(p.returncode, 0, f'stderr: {p.stderr}')
+        for player, ident, body in [('w1', 'r1', 'First report.'), ('w2', 'r2', 'Second report.')]:
+            self.register(player, 'root', 'omp', 'model', 'high')
+            self.coord('report', ident, player, body)
+        native, observed_path = self.once_client()
+        p = self.once(native)
+        self.assertEqual(p.returncode, 0, p.stderr)
         self.assertIn('2 pending message(s)', p.stderr)
-
-        prompt = (pathlib.Path(self.temp.name) / 'prompt.txt').read_text()
-        self.assertIn('First report', prompt)
-        self.assertIn('Second report', prompt)
+        prompt = json.loads(observed_path.read_text())['prompt']
+        self.assertIn('First report.', prompt)
+        self.assertIn('Second report.', prompt)
 
     def test_system_prompt_contains_coordinator_commands(self):
-        """The system prompt passed to OMP includes the coordinator CLI."""
         self.coord('attach', 'root', 'omp', 'root-session', 'root-endpoint')
-        self.register('w1', 'root', 'omp', 'model', 'high', '/wt', 'br', 'base')
+        self.register('w1', 'root', 'omp', 'model', 'high')
         self.coord('report', 'r1', 'w1', 'done')
+        native, observed_path = self.once_client()
+        p = self.once(native)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        observed = json.loads(observed_path.read_text())
+        for action in ['acknowledge', 'completion-request --text', 'dispatch --to',
+                       'knowledge record --kind', 'players', 'land --session']:
+            self.assertIn(action, observed['prompt'])
+        self.assertNotIn('ack ID', observed['prompt'])
+        self.assertNotIn('--system-prompt', observed['argv'])
 
-        mock_omp = pathlib.Path(self.temp.name) / 'mock-omp.sh'
-        mock_omp.write_text(
-            '#!/bin/sh\n'
-            f'echo "$@" > {self.temp.name}/args.txt\n'
-            'echo \'{"type":"session","id":"mock"}\'\n'
-            'echo \'{"type":"turn_end","message":{"role":"assistant","content":[{"type":"text","text":"ok"}]}}\'\n'
-        )
-        mock_omp.chmod(0o755)
-
-        p = subprocess.run(
-            ['node', str(OMP_CONDUCTOR_SCRIPT), str(self.db), str(EXE), str(mock_omp), '--once'],
-            text=True, capture_output=True,
-        )
-        self.assertEqual(p.returncode, 0, f'stderr: {p.stderr}')
-
-        args_text = (pathlib.Path(self.temp.name) / 'args.txt').read_text()
-        self.assertIn('--system-prompt', args_text)
-        self.assertIn('baton2', args_text)
-        self.assertIn('status', args_text)
-        self.assertIn('players', args_text)
-        self.assertIn('land', args_text)
-
-    def test_adapter_passes_print_and_json_mode(self):
-        """OMP is started with --print --mode json flags."""
+    def test_adapter_passes_rpc_mode(self):
         self.coord('attach', 'root', 'omp', 'root-session', 'root-endpoint')
-        self.register('w1', 'root', 'omp', 'model', 'high', '/wt', 'br', 'base')
+        self.register('w1', 'root', 'omp', 'model', 'high')
         self.coord('report', 'r1', 'w1', 'done')
-
-        mock_omp = pathlib.Path(self.temp.name) / 'mock-omp.sh'
-        mock_omp.write_text(
-            '#!/bin/sh\n'
-            f'echo "$@" > {self.temp.name}/args.txt\n'
-            'echo \'{"type":"session","id":"mock"}\'\n'
-            'echo \'{"type":"turn_end","message":{"role":"assistant","content":[{"type":"text","text":"ok"}]}}\'\n'
-        )
-        mock_omp.chmod(0o755)
-
-        subprocess.run(
-            ['node', str(OMP_CONDUCTOR_SCRIPT), str(self.db), str(EXE), str(mock_omp), '--once'],
-            text=True, capture_output=True,
-        )
-
-        args_text = (pathlib.Path(self.temp.name) / 'args.txt').read_text()
-        self.assertIn('--print', args_text)
-        self.assertIn('--mode json', args_text)
-        self.assertIn('--approval-mode yolo', args_text)
+        native, observed_path = self.once_client()
+        p = self.once(native)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        argv = json.loads(observed_path.read_text())['argv']
+        self.assertEqual(argv[argv.index('--mode') + 1], 'rpc')
+        self.assertEqual(argv[argv.index('--approval-mode') + 1], 'yolo')
+        self.assertEqual(argv[argv.index('--resume') + 1], 'root-session')
+        self.assertEqual(argv[argv.index('--session-dir') + 1], str(self.db) + '.root-sessions')
 
     def test_adapter_extracts_result_text(self):
-        """The adapter extracts text from the OMP turn_end event."""
         self.coord('attach', 'root', 'omp', 'root-session', 'root-endpoint')
-        self.register('w1', 'root', 'omp', 'model', 'high', '/wt', 'br', 'base')
+        self.register('w1', 'root', 'omp', 'model', 'high')
         self.coord('report', 'r1', 'w1', 'done')
-
-        mock_omp = pathlib.Path(self.temp.name) / 'mock-omp.sh'
-        mock_omp.write_text(
-            '#!/bin/sh\n'
-            'echo \'{"type":"session","id":"mock"}\'\n'
-            'echo \'{"type":"turn_end","message":{"role":"assistant","content":[{"type":"text","text":"I have acknowledged the report."}]}}\'\n'
-        )
-        mock_omp.chmod(0o755)
-
-        p = subprocess.run(
-            ['node', str(OMP_CONDUCTOR_SCRIPT), str(self.db), str(EXE), str(mock_omp), '--once'],
-            text=True, capture_output=True,
-        )
-        self.assertEqual(p.returncode, 0, f'stderr: {p.stderr}')
-        self.assertIn('I have acknowledged the report', p.stdout)
+        text = 'I have acknowledged the report. café λ🙂\nFull result.\n'
+        native, _ = self.once_client(text)
+        p = self.once(native)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(p.stdout, text + '\n')
 
 
 class OmpRootEndToEnd(unittest.TestCase):
@@ -705,6 +710,9 @@ class OmpRootEndToEnd(unittest.TestCase):
         mock_omp = self.directory / 'mock-omp-land.sh'
         mock_omp.write_text(
             '#!/bin/sh\n'
+            'IFS= read -r filter_request\n'
+            'IFS= read -r state_request\n'
+            'IFS= read -r prompt_request\n'
             '# Simulate OMP root: ack the report and land the worker\n'
             'echo \'{"type":"session","id":"mock"}\'\n'
             'echo \'{"type":"turn_start"}\'\n'
@@ -712,6 +720,7 @@ class OmpRootEndToEnd(unittest.TestCase):
             f'{EXE} {self.db} ack turn-1 root omp-root-ack\n'
             f'{EXE} {self.db} land w1 {self.repo} main\n'
             'echo \'{"type":"turn_end","message":{"role":"assistant","content":[{"type":"text","text":"Acknowledged and landed."}]}}\'\n'
+            'echo \'{"type":"agent_end","messages":[{"role":"assistant","content":[{"type":"text","text":"Acknowledged and landed."}]}]}\'\n'
         )
         mock_omp.chmod(0o755)
 

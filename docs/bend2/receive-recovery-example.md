@@ -6,28 +6,25 @@ the native controls below. First follow
 [Codex subscription login](harness-setup.md#codex-subscription-login) to verify
 the existing ChatGPT login. Its native Codex adapter removes `OPENAI_API_KEY`
 and `CODEX_API_KEY` and forces ChatGPT login for new and resumed turns. Replace
-the path placeholders with absolute paths to the coordinator, database, native
-Codex executable, output log and task file. Set the task's sender and ID to
-their retained values when retrying pending input.
+the path placeholders with absolute paths to the coordinator, database and native
+Codex executable. The recorded parent supplies the complete task text:
 
 ```sh
 BATON=/path/to/baton2
 DATABASE=/path/to/state.db
 CODEX_NATIVE=/absolute/path/to/codex
-OUTPUT_LOG=/path/to/worker-output.jsonl
 PARENT=lead
-TASK_ID=worker-task-1
-TASK_FILE=/path/to/worker-task.md
 
-"$BATON" "$DATABASE" receiver worker "$CODEX_NATIVE" "$OUTPUT_LOG"
-"$BATON" "$DATABASE" inbox worker --pretty
-"$BATON" "$DATABASE" dispatch-file "$TASK_ID" "$PARENT" worker task "$TASK_FILE"
+BATON_SESSION="$PARENT" "$BATON" "$DATABASE" dispatch --to worker \
+  --command "$CODEX_NATIVE" --text 'Review the assigned source and report the result.'
 ```
 
-`receiver` generates the endpoint with the recorded model, effort, workspace
-and saved native identity. An existing model Git registry selects the installed
-Node identity helper automatically. `dispatch-file` commits the task and starts
-detached delivery through that endpoint. It returns the launched delivery PID.
+`dispatch` uses the recorded model, effort, workspace and saved native identity.
+Its command option registers the receiver and selects a native output log.
+An existing model Git registry selects the installed Node identity helper
+automatically. The complete task text, setup outcome and message are stored in
+the database. `dispatch --stdin` accepts complete standard input. The returned
+inspection commands read the stored request and recipient state.
 Receive supplies pending messages to the native turn and forwards its final
 assistant text to the parent.
 
@@ -37,17 +34,17 @@ as `HARNESS_CMD` for the lower-level
 `receive SESSION HARNESS_CMD MODEL EFFORT CWD OUTPUT_LOG MESSAGE_ID` command.
 Its interface and qualification retain that version's source scope.
 
-Within the Player turn, inspect pending messages and acknowledge each message
-after accepting it. Replace `MESSAGE_ID` with the ID from the inbox and use a
-receipt describing acceptance:
+Within the Player turn, read complete pending messages and acknowledge the
+handled inputs through the recorded launch context:
 
 ```sh
-"$BATON" "$DATABASE" inbox worker --pretty
-"$BATON" "$DATABASE" ack MESSAGE_ID worker 'accepted for this turn'
+"$BATON" "$DATABASE" inbox
+"$BATON" "$DATABASE" acknowledge
 ```
 
-`inbox` returns unacknowledged messages in sequence order. `ack` accepts
-`ID RECIPIENT NATIVE_RECEIPT` and preserves the first recorded receipt.
+`inbox` returns unacknowledged messages in sequence order. `acknowledge` selects
+the current actor's complete owned reads and derives their native handling
+receipts. Each message preserves its first recorded receipt.
 
 If the receive observer exits, the retained process keeper invokes recovery
 with the original attempt and inbox cutoff. Recovery attaches to that attempt

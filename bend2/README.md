@@ -682,7 +682,8 @@ endpoints. Native `receive` supplies the session ownership and
 queued delivery described here.
 `--attach` registers the native receiver and continues pending input in the
 selected conversation. Stored `--message` callbacks register the same receiver.
-`--once` runs one turn.
+`--once` invokes the same retained receiver with the recorded route and pending
+input. It preserves the registered endpoint and returns the final assistant text.
 
 ### Contributor receive validation
 

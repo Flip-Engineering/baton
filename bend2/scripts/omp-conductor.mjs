@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // Bend2 OMP Conductor adapter.
 //
-// Bridges the Bend2 coordinator to a Principal or Associate Conductor. OMP runs
-// in --print --mode json for --once and calls the coordinator CLI through bash.
-// --attach and stored message callbacks use the shared native RPC receiver.
+// Bridges the Bend2 coordinator to a Principal or Associate Conductor.
+// One-shot and attached turns use the shared native RPC receiver.
+// --attach and stored message callbacks also register its receive endpoint.
 //
 // Usage: node bend2/scripts/omp-conductor.mjs <database-path> [coordinator-executable] [omp-executable]
 //
@@ -15,21 +15,16 @@
 //
 // No npm dependencies; node stdlib only.
 
-import { spawn, spawnSync, execFileSync } from 'node:child_process';
+import { spawnSync, execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createInterface } from 'node:readline';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '../..');
 
 function hasParent(session) {
   return session?.parent !== null && session?.parent !== undefined;
-}
-
-function shellQuote(value) {
-  return "'" + String(value).replaceAll("'", "'\"'\"'") + "'";
 }
 
 const positional = [];
@@ -71,81 +66,6 @@ if (!dbPath) {
 
 const COORD = resolve(coordinatorExe);
 const DB = resolve(dbPath);
-
-function supportsBatchMessaging() {
-  const help = spawnSync(COORD, [DB, 'help'], { encoding: 'utf8', maxBuffer: Infinity });
-  const surface = String(help.stdout ?? '') + String(help.stderr ?? '');
-  return ['outbox', 'delivery-batch', 'message-batch'].every((name) => surface.includes(name));
-}
-
-const batchMessaging = supportsBatchMessaging();
-
-function batchMessagingCommands(command, recipient) {
-  if (!batchMessaging) return [];
-  return [
-    `  ${command} outbox ${recipient} — show your authored messages and current receipts`,
-    `  ${command} delivery-batch IDS_JSON — read selected complete messages in request order`,
-    `  ${command} message-batch ${recipient} MESSAGES_JSON — send structured messages to multiple recipients`,
-  ];
-}
-
-function systemPrompt(session) {
-  const command = shellQuote(COORD) + ' ' + shellQuote(DB);
-  const recipient = shellQuote(sessionId);
-  return [
-    `You are session ${sessionId}, the ${hasParent(session) ? 'Associate' : 'Principal'} Conductor of a Baton Orchestra.`,
-    'The Principal Conductor is the main orchestrator. An Associate Conductor is a sub-orchestrator. An Ensemble is a coordinated team of agents. A Section is a capability-specific subgroup. A Player is an individual agent. The Orchestra is the whole coordinated system.',
-    'The players command lists Players and both Conductor tiers. PLAYER denotes a player session ID in the CLI examples.',
-    'Public messages follow assigned roles, parent links and explicit tight Ensemble membership. Conductors can message descendants. Report, ask and ask-file reach the recorded parent; a parentless Principal Conductor reaches the registered operator. Peer messages require a shared tight Ensemble.',
-    'Start player turns in the background so you can finish your turn and receive their reports.',
-    'Keep one foreground native turn per session. Finish review before starting the next player turn.',
-    '',
-    'Coordinator CLI — run these with bash:',
-    `  ${command} status          — show all sessions`,
-    `  ${command} players         — list players with latest report`,
-    `  ${command} player PLAYER — inspect a Player or Conductor`,
-    `  ${command} join PLAYER ${recipient} HARNESS MODEL EFFORT WORKSPACE — register a Player in the shared checkout`,
-    `  ${command} recruit PLAYER ${recipient} HARNESS MODEL EFFORT REPO BRANCH PATH BASE — create a separate task worktree`,
-    `  ${command} receiver PLAYER HARNESS_CMD OUTPUT_LOG [CWD] — register or relocate a Player's receive endpoint`,
-    `  ${command} turns PLAYER    — show a player's turn history`,
-    `  ${command} inbox ${recipient}      — show your pending messages`,
-    `  ${command} delivery MESSAGE — read one complete stored message and its receipt`,
-    ...batchMessagingCommands(command, recipient),
-    `  ${command} pending         — list all undelivered messages`,
-    `  ${command} ack ID ${recipient} RECEIPT — acknowledge a message`,
-    `  ${command} message ID ${recipient} PLAYER guidance BODY — send guidance to a player`,
-    `  ${command} ask ID ${recipient} BODY — send a question to your recorded parent or, for a parentless Principal, the registered operator`,
-    `  ${command} ask-file ID ${recipient} PATH — send a complete question from a file or stdin with PATH -`,
-    `  ${command} role SESSION [player|principal-conductor|associate-conductor|operator] — read or assign responsibility`,
-    `  ${command} ensemble ENSEMBLE [OWNER [loose|tight]] — inspect or configure coupling`,
-    `  ${command} ensemble-member ENSEMBLE OWNER SESSION add|remove — configure explicit members`,
-    `  ${command} section ENSEMBLE SECTION [OWNER CAPABILITY] — inspect or declare a capability subgroup`,
-    `  ${command} section-member ENSEMBLE SECTION OWNER PLAYER add|remove — configure Section members`,
-    `  ${command} orchestra — inspect the coordinated system`,
-    `  ${command} land PLAYER REPO TARGET [--commit COMMIT] — fast-forward land a player's branch`,
-    `  ${command} land-checked PLAYER REPO TARGET CHECK FILES [--commit COMMIT] — gated landing`,
-    `  ${command} push REPO BRANCH REMOTE — push a branch to a remote after landing`,
-    `  ${command} worktree PLAYER — show a player's Git state`,
-    `  ${command} record FINDING_ID ${recipient} CLAIM EVIDENCE LIMITS — record your finding`,
-    `  ${command} record-typed FINDING_ID ${recipient} KIND CLAIM EVIDENCE LIMITS — record typed knowledge`,
-    `  ${command} relate RELATION_ID ${recipient} SOURCE RELATION TARGET — connect finding:ID or message:ID references`,
-    `  ${command} knowledge-search ${recipient} SCOPE SUBJECT QUERY — find a topic and its typed neighbors`,
-    `  ${command} knowledge-traverse ${recipient} SCOPE SUBJECT REFERENCE in|out|both RELATION neighbors|recursive — follow authored links and citations`,
-    `  ${command} knowledge-scope ${recipient} universal|worker|group|all SUBJECT [--index | --id FINDING_ID] [--pretty] — read selected holdings`,
-    `  ${command} knowledge ${recipient} [--index | --id FINDING_ID] [--pretty] — discover metadata or read complete findings visible to you`,
-    `  ${command} promote PROMOTION_ID ${recipient} SOURCE ${recipient} FINDING_ID — promote from SOURCE into your scope`,
-    '',
-    'Landing defaults to the recorded branch tip; --commit selects a reviewed ancestor while later work remains on the branch.',
-    'Use join for shared-checkout work and recruit when a separate worktree is needed. Name the target branch, remote and integration Conductor in the assignment.',
-    'Author findings from reviewed evidence. Cite the source of the finding and state the claim\'s limits. A message:MESSAGE_ID reference includes the retained message body.',
-    'Review a finding before explicitly promoting it from its recorded source scope. Its original author remains recorded.',
-    'A promotion notice names a finding shared into your scope. Use knowledge --index to discover metadata, follow its literal detailRead argv for the complete finding, and follow evidenceMessage.deliveryRead for the retained message.',
-    'Select worker, group, universal or all holdings for topic search and traversal. Follow returned detailRead commands for complete findings and deliveryRead commands for cited messages. Finding references outside selected holdings carry an explicit all-scope detail read; reading preserves their holdings.',
-    'When you receive a player report, review it and acknowledge it.',
-    'Commit completed changes. The integration Conductor lands or reconciles contributions and pushes the integrated target.',
-    'After publication and turn completion, relocate the same Player with receiver to the shared checkout and retire clean unused merged task worktrees and branches through ordinary Git. Preserve active or unfinished work and receiver/toolchain dependencies.',
-  ].join('\n');
-}
 
 // Database access (node:sqlite, Node 22+).
 let db = null;
@@ -192,146 +112,48 @@ function pendingConductorMessages() {
   }
 }
 
-function formatMessages(messages) {
-  return messages.map((m) => {
-    const prefix = m.kind === 'report' ? 'Player report' : `Message (${m.kind})`;
-    return `${prefix} from ${m.sender} [id: ${m.id}]:\n${m.body}`;
-  }).join('\n\n---\n\n');
+function resultText(value) {
+  if (value?.sender === sessionId && value?.kind === 'report') return value.body;
+  if (value?.session !== sessionId || !value.event) return null;
+  if (typeof value.event.result === 'string') return value.event.result;
+  const message = Array.isArray(value.event.messages)
+    ? value.event.messages.findLast(item => item?.role === 'assistant') : value.event.message;
+  const content = message?.content;
+  return Array.isArray(content)
+    ? content.filter(item => item.type === 'text').map(item => item.text).join('\n') : null;
 }
 
-// Run one OMP turn in --print --mode json. Returns a promise that resolves
-// with the JSON events array when the process exits.
-function runOmpTurn(prompt, sessionDir, session) {
-  return new Promise((resolve, reject) => {
-    const args = [
-      '--print',
-      '--mode', 'json',
-      '--model', ompModel,
-      '--thinking', ompThinking,
-      '--approval-mode', 'yolo',
-      '--system-prompt', systemPrompt(session),
-    ];
-
-    args.push('--session-dir', sessionDir);
-    if (session?.native) args.push('--resume', session.native);
-
-    args.push(prompt);
-
-    const child = spawn(ompExe, args, {
-      cwd: session?.workspace || ROOT,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: { ...process.env },
-    });
-
-    const events = [];
-    const rl = createInterface({ input: child.stdout });
-
-    rl.on('line', (line) => {
-      let event;
-      try {
-        event = JSON.parse(line);
-      } catch {
-        process.stderr.write(`omp-conductor: unparsed: ${line}\n`);
-        return;
-      }
-      events.push(event);
-      process.stderr.write(`omp-conductor: ${event.type}\n`);
-      const native = event.type === 'session' ? event.id : null;
-      if (native) {
-        execFileSync(COORD, [DB, 'bind', sessionId, native, 'omp', '', ''], { maxBuffer: Infinity });
-      }
-    });
-
-    let stderr = '';
-    child.stderr.on('data', (chunk) => {
-      stderr += chunk.toString();
-    });
-
-    child.on('close', (code) => {
-      if (code !== 0 && events.length === 0) {
-        reject(Object.assign(new Error(`OMP exited ${code}: ${stderr}`), { exitCode: code ?? 1 }));
-      } else {
-        resolve({ events, code, sessionId: extractSessionId(events) });
-      }
-    });
-
-    child.on('error', reject);
-  });
-}
-
-function extractSessionId(events) {
-  for (const e of events) {
-    if (e.type === 'session' && e.id) return e.id;
-  }
-  return null;
-}
-
-function extractResult(events) {
-  for (let i = events.length - 1; i >= 0; i--) {
-    const e = events[i];
-    if (e.type === 'turn_end' && e.message?.content) {
-      const textParts = e.message.content
-        .filter((c) => c.type === 'text')
-        .map((c) => c.text);
-      if (textParts.length > 0) return textParts.join('\n');
-    }
-    if (e.type === 'message_end' && e.message?.role === 'assistant') {
-      const textParts = (e.message.content || [])
-        .filter((c) => c.type === 'text')
-        .map((c) => c.text);
-      if (textParts.length > 0) return textParts.join('\n');
-    }
-  }
-  return null;
-}
-
-// Single-shot: process all pending messages in one OMP turn, then exit.
+// One invocation uses the shared receiver without changing the registered endpoint.
 async function runOnce() {
   await openDb();
-
   const messages = pendingConductorMessages();
   if (messages.length === 0) {
     process.stderr.write('omp-conductor: no pending messages\n');
     closeDb();
-    process.exit(0);
+    return;
   }
-
-  const prompt = formatMessages(messages);
-  process.stderr.write(`omp-conductor: ${messages.length} pending message(s), starting OMP turn\n`);
-
   const session = selectedSession();
   selectRoute(session);
-  let text;
-  let model;
-  let code;
-  try {
-    const storage = sessionId === 'root' ? DB + '.root-sessions'
-      : DB + '.session-' + Buffer.from(sessionId).toString('hex');
-    const result = await runOmpTurn(prompt, storage, session);
-    text = extractResult(result.events);
-    const observed = result.events.findLast(e => e.message?.provider && e.message?.model)?.message;
-    model = observed ? `${observed.provider}/${observed.model}` : undefined;
-    code = result.code ?? 1;
-    if (text) process.stdout.write(text + '\n');
-    process.stderr.write(`omp-conductor: turn completed (exit ${code})\n`);
-  } catch (e) {
-    text = `OMP turn failed: ${e.message}`;
-    code = e.exitCode ?? 1;
-    process.stderr.write(`omp-conductor: ${text}\n`);
-  }
-
-  // A recruited parent has its own parent. Submit the native outcome through
-  // the coordinator's existing observation and delivery path after OMP exits.
-  if (hasParent(session)) {
-    const event = { type: 'result', is_error: code !== 0, exitCode: code, model,
-      result: text || `OMP process ended without assistant text (exit ${code})` };
-    execFileSync(COORD, [DB, 'observe-file',
-      `omp:${sessionId}:${messages.at(-1).seq}`, sessionId, '-'],
-      { input: JSON.stringify(event), stdio: ['pipe', 'inherit', 'inherit'] });
-  }
-  process.exitCode = code;
-
+  const log = DB + '.conductor-' + Buffer.from(sessionId).toString('hex') + '.jsonl';
+  const args = [DB, 'receive', sessionId, ompExe, ompModel,
+    ompThinking, session?.workspace || ROOT, log, ''];
   closeDb();
+  process.stderr.write(`omp-conductor: ${messages.length} pending message(s), starting OMP turn\n`);
+  const result = spawnSync(COORD, args, { encoding: 'utf8', maxBuffer: Infinity });
+  if (result.stdout) process.stderr.write(result.stdout);
+  if (result.stderr) process.stderr.write(result.stderr);
+  if (result.error) process.stderr.write(`omp-conductor: ${result.error.message}\n`);
+  if (result.signal) process.stderr.write(`omp-conductor: receiver ended by ${result.signal}\n`);
+  let text = null;
+  for (const line of (result.stdout || '').split('\n')) {
+    let value;
+    try { value = JSON.parse(line); } catch { continue; }
+    const body = resultText(value);
+    if (typeof body === 'string') text = body;
+  }
+  if (text !== null) process.stdout.write(text + '\n');
+  process.exitCode = result.status ?? 1;
+  process.stderr.write(`omp-conductor: turn completed (exit ${process.exitCode})\n`);
 }
 
 async function runAttached() {

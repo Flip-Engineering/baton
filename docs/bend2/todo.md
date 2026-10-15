@@ -206,6 +206,13 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   the [#717](https://github.com/Flip-Engineering/baton/issues/717)
   release. [#727](https://github.com/Flip-Engineering/baton/issues/727) qualifies
   contextual actions and inferred receipts in the real-agent validation drivers.
+  One-shot Codex and OMP Conductors now delegate to the shared retained
+  receiver, including semantic action instructions and database initialization
+  evidence from [#731](https://github.com/Flip-Engineering/baton/issues/731).
+  Current receive and assignment recovery tutorials use database task input
+  and inferred native receipts. Explicit stored-message replay and
+  caller-authored file imports retain their compatibility role. Remote native
+  qualification of this source correction remains open.
   Coordinate with [#714](https://github.com/Flip-Engineering/baton/issues/714),
   [#715](https://github.com/Flip-Engineering/baton/issues/715),
   [#716](https://github.com/Flip-Engineering/baton/issues/716),

@@ -3,6 +3,7 @@ import json
 import os
 import pathlib
 import shlex
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -582,6 +583,81 @@ class CodexRootAdapter(unittest.TestCase):
         self.assertIn('Task completed successfully', received)
         self.assertIn('turn-1', received)
         self.assertIn('w1', received)
+        with sqlite3.connect(self.db) as connection:
+            row = connection.execute(
+                'SELECT n.seed,n.instruction,n.guidance,e.directory,e.phase '
+                'FROM native_initial_inputs n JOIN executions e '
+                'ON e.session=n.session AND e.id=n.turn AND e.directory=n.attempt '
+                'WHERE n.session=?', ('root',)).fetchone()
+        self.assertIsNotNone(row)
+        seed, instruction, guidance, directory, phase = row
+        self.assertRegex(seed, r'^[0-9a-f]{128}$')
+        self.assertEqual(received, seed + '\n\n' + instruction + '\n\n' + guidance)
+        self.assertIn('Ideate briefly', instruction)
+        self.assertEqual(phase, 'exited')
+        self.assertEqual((pathlib.Path(directory) / 'prompt.txt').read_text(), received)
+        self.assertEqual(json.loads(self.coord('player', 'root'))['endpoint'], 'root-endpoint')
+
+
+    def test_once_selected_associate_reports_through_retained_turn(self):
+        self.coord('attach', 'root', 'codex', 'parent-native', '')
+        self.coord('role', 'root', 'principal-conductor')
+        self.register('lead', 'root', 'codex', 'stored-model', 'low')
+        self.coord('connect', 'lead', 'mock-thread', '')
+        self.register('child', 'lead', 'fixture', 'model', 'low')
+        self.coord('report', 'child-report', 'child', 'Complete child evidence. café λ🙂')
+        observed_path = pathlib.Path(self.temp.name) / 'once-associate.json'
+        native = pathlib.Path(self.temp.name) / 'once-codex.py'
+        native.write_text('#!' + sys.executable + '\nimport json,os,pathlib,sys\n'
+            + f'pathlib.Path({str(observed_path)!r}).write_text(json.dumps({{"argv":sys.argv[1:],"cwd":os.getcwd(),"prompt":sys.stdin.read()}}))\n'
+            + 'print(json.dumps({"type":"thread.started","thread_id":"mock-thread"}),flush=True)\n'
+            + 'print(json.dumps({"type":"item.completed","item":{"type":"agent_message","text":"Full Associate result. λ🙂"}}),flush=True)\n'
+            + 'print(json.dumps({"type":"turn.completed"}),flush=True)\n')
+        native.chmod(0o700)
+        p = subprocess.run(['node', str(CODEX_CONDUCTOR_SCRIPT), str(self.db), str(EXE),
+                            str(native), '--session', 'lead', '--once'],
+                           capture_output=True, text=True)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(p.stdout, 'Full Associate result. λ🙂\n')
+        observed = json.loads(observed_path.read_text())
+        self.assertEqual(observed['cwd'], str(self.checkouts / 'lead'))
+        argv = observed['argv']
+        self.assertEqual(argv[argv.index('--model') + 1], 'stored-model')
+        self.assertIn('model_reasoning_effort="low"', argv)
+        self.assertEqual(argv[argv.index('resume') + 1], 'mock-thread')
+        reports = json.loads(self.coord('inbox', 'root'))
+        self.assertEqual([(row['sender'], row['body']) for row in reports],
+                         [('lead', 'Full Associate result. λ🙂')])
+        with sqlite3.connect(self.db) as connection:
+            report_id, worker = connection.execute(
+                'SELECT t.id,t.worker FROM turns t WHERE t.id=?', (reports[0]['id'],)).fetchone()
+            attempt, phase = connection.execute(
+                'SELECT id,phase FROM executions WHERE session=?', ('lead',)).fetchone()
+        self.assertEqual((report_id, worker, phase), (attempt, 'lead', 'exited'))
+        lead = json.loads(self.coord('player', 'lead'))
+        self.assertEqual((lead['native'], lead['endpoint']), ('mock-thread', ''))
+
+    def test_once_retains_provider_failure_and_pending_input(self):
+        self.coord('attach', 'root', 'codex', 'root-session', 'root-endpoint')
+        self.register('w1', 'root', 'codex', 'model', 'high')
+        self.coord('report', 'r1', 'w1', 'Keep this complete input pending on failure.')
+        native = pathlib.Path(self.temp.name) / 'failed-codex.py'
+        native.write_text('#!' + sys.executable + '\nimport json,sys\n'
+            + 'sys.stdin.read()\n'
+            + 'print(json.dumps({"type":"thread.started","thread_id":"root-session"}),flush=True)\n'
+            + 'print(json.dumps({"type":"turn.failed","error":{"message":"Fixture provider failure. λ🙂"}}),flush=True)\n'
+            + 'sys.exit(9)\n')
+        native.chmod(0o700)
+        p = subprocess.run(['node', str(CODEX_CONDUCTOR_SCRIPT), str(self.db), str(EXE),
+                            str(native), '--once'], capture_output=True, text=True)
+        self.assertNotEqual(p.returncode, 0)
+        self.assertIn('Fixture provider failure. λ🙂', p.stdout)
+        self.assertIsNone(json.loads(self.coord('delivery', 'r1'))['receipt'])
+        with sqlite3.connect(self.db) as connection:
+            status, directory = connection.execute(
+                'SELECT status,directory FROM executions WHERE session=?', ('root',)).fetchone()
+        self.assertIn('9', status)
+        self.assertIn('Fixture provider failure.', (pathlib.Path(directory) / 'stdout').read_text())
 
     def test_adapter_detects_multiple_messages(self):
         """The adapter formats multiple pending messages in one prompt."""
@@ -641,6 +717,10 @@ class CodexRootAdapter(unittest.TestCase):
         self.assertIn('status', stdin_content)
         self.assertIn('players', stdin_content)
         self.assertIn('land', stdin_content)
+        self.assertIn('acknowledge', stdin_content)
+        self.assertIn('dispatch --to', stdin_content)
+        self.assertIn('knowledge record --kind', stdin_content)
+        self.assertNotIn('ack ID', stdin_content)
 
     def test_adapter_passes_json_and_exec_flags(self):
         """Codex is started with exec --json flags."""

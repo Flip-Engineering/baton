@@ -11,7 +11,7 @@ The recruitment and endpoint behavior below is specified in
 [connect-admission-2026-10-02.md](../connect-admission-2026-10-02.md). The Associate Conductor
 recruitment pattern is specified in
 [associate-conductor-instructions.md](../../../bend2/trial/associate-conductor-instructions.md).
-The native `receiver`, `dispatch-file` and `--pretty` examples require current
+The native `receiver`, contextual actions and `--pretty` examples require current
 development source; the immutable 1.0 archive retains its version-specific interface.
 
 ## Declared assignment
@@ -133,42 +133,52 @@ are [connect.py](../../../bend2/test/connect.py).
 
 `connect` is the lower-level endpoint registration command. The native
 `receiver` command supplies the correctly encoded argv for Codex and OMP.
-After configuring a valid receiver, retry the retained task with its original
-message fields and task file:
+After configuring a valid receiver, read the retained input and continue ordinary
+delivery through that endpoint. From the parent context, a new instruction uses
+complete database task input:
 
 ```sh
-"$B2" "$DB" dispatch-file retained-task "$PARENT_ID" lead-1 task "$TASK_FILE"
+BATON_SESSION="$PARENT_ID" "$B2" "$DB" dispatch --to lead-1 \
+  --text 'Continue the recorded assignment and report the result.'
 ```
+
+### Explicit stored-message replay
+
+For an integration that intentionally retries a selected immutable message,
+read its stored sender, recipient, kind and complete body. Pass those exact
+fields to `message-batch-file SENDER -` as a JSON array on standard input.
+The array item contains `id`, `recipient`, `kind` and `body`. This compatibility
+operation uses the retained message identity and body already in the database.
 
 A repeated message ID with identical sender, recipient, kind, and body preserves
 the original message fields and returns the stored message with its current
 receipt. `Commands.matching_message_result` in
 [commands.bend](../../../bend2/src/coordinator/commands.bend) selects the
 stored row with its current receipt, so the same message reads with receipt
-null before acknowledgment and with receipt `accepted` after it. A repeated ID
-with different input fails the transaction. An accepted retry causes no second
+null before acknowledgment and with its retained handling receipt afterward.
+A repeated ID with different input fails the transaction. An accepted retry causes no second
 endpoint invocation: the endpoint log still holds one delivery line.
 
 ## Acknowledgment and accepted retry
 
-The retained task is addressed to `lead-1`. The Associate Conductor acknowledges the
-accepted input as the message recipient:
+Within the Associate Conductor's native turn, read complete input and acknowledge
+it after handling:
 
 ```sh
-"$B2" "$DB" ack retained-task lead-1 accepted
+"$B2" "$DB" inbox
+"$B2" "$DB" acknowledge
 ```
 
-`ack` records the receipt for the message ID and recipient pair and keeps the
-first receipt. The acknowledgment establishes that the recipient accepted the
-input. The accepted retry establishes that the original message was delivered
-through the preserved endpoint: the endpoint log holds one delivery line, the
-delivery row carries the `accepted` receipt, and the recipient inbox no longer
-lists the message.
+`acknowledge` selects complete owned reads from the current native turn and
+derives each handling receipt. It preserves the first receipt. In an intentional
+accepted-message replay, the endpoint log keeps its original delivery line,
+the delivery row retains that receipt, and the recipient inbox omits the message.
 
 An empty endpoint disconnects delivery. A well-formed endpoint can still name
 an unavailable executable; delivery then fails and the input stays pending.
 The caller inspects `session ID --pretty` and `inbox ID --pretty`, configures a
-valid receiver, and retries the retained message ID.
+valid receiver, and lets ordinary delivery resume the pending input. Exact
+selected-message retries retain the compatibility rules above.
 
 The local CLI records the endpoint, message, and receipt rows. Native process
 custody follows the receiver and observer rules in

@@ -77,9 +77,10 @@ A matching retry of a message ID, sender, recipient, kind and body returns its
 retained result and receipt.
 Conflicting reuse of an ID fails. A repeated completed turn ID returns its
 existing report. Retrying failed work uses a new turn ID and may resume the
-same native session. `ack ID RECIPIENT RECEIPT` records the recipient's native
-acceptance. It does not state that a branch was reviewed or landed; the receipt
-body and Git result establish those separate facts.
+same native session. `acknowledge` derives recipient-owned handling receipts
+from the current native turn's complete reads. Each receipt preserves its first
+stored value. Branch review and landing have their own report and Git evidence.
+The explicit `ack ID RECIPIENT RECEIPT` form remains available for integrations.
 
 The native session ID refers to the harness's retained conversation. The logical
 Player ID routes messages and associates a workspace with that conversation.
@@ -122,10 +123,12 @@ a commit, then records the Player. A matching repeat returns the existing Player
 connection while retaining parentage and requested
 route.
 
-A separate `turn` command takes the Player, unique turn ID, native executable,
-model, effort, working directory, task file, output log and optional native
-session ID. `turn` and `receive` acquire the same OS file lock for each logical
-session. Its key uses the canonical database path and UTF-8 session identity.
+A contextual `turn --file -` reads complete task text from standard input,
+generates its turn identity and uses the selected session's native defaults.
+The full task is stored in `direct_turn_requests`. An existing caller-authored
+file can be imported with `--file PATH`; explicit positional fields retain
+compatibility for integrations. `turn` and `receive` acquire the same OS file
+lock for each logical session. Its key uses the canonical database path and UTF-8 session identity.
 Different sessions use different locks and can run concurrently. The supervisor
 retains ownership until the native process exits and releases it before parent
 delivery. An overlapping direct `turn` returns an active-session error; queued
@@ -195,12 +198,13 @@ invokes the receiver again. Reading after release covers messages committed
 while the previous turn was ending. Pending messages remain in the existing
 SQLite inbox. A failed turn retains unacknowledged input for later delivery.
 
-Muse reads its task from the file named by `--prompt-file`. Receive writes the
-composed input at `ATTEMPT.prompt.txt` beside the attempt directory and passes
-that path to `exec --json --prompt-file`, adding `--session-id` for the
-session's recorded conversation. The attempt closes the child's input
-immediately, and the adapter reads the child's stream. The host creates the
-attempt directory itself, so the task file takes the sibling name.
+Native initialization stores its seed, instruction and complete unprefixed
+guidance in `native_initial_inputs`. The retained attempt seals the rendered
+native input as `ATTEMPT/prompt.txt` for input custody and recovery. Muse's
+`exec --json --prompt-file` reads that native input artifact and uses
+`--session-id` for the recorded conversation. The attempt closes the child's
+input immediately, and the adapter reads the child's stream. Task dispatches
+retain their complete text and setup outcomes in the database.
 
 A Claude Code attempt reads one user frame from its input: receive writes the
 composed input as that frame, adds `--resume NATIVE` for the session's recorded
@@ -230,10 +234,8 @@ Native initialization binds the session ID in the existing row. Later turns
 resume it. Codex retains conversations in its configured storage. Native OMP
 receive uses `DATABASE.root-sessions` for parentless sessions and
 `DATABASE.session-HEX_ID` for sessions with a parent. The Node OMP adapter's
-`--once` uses
-`DATABASE.root-sessions` for logical ID `root` and `DATABASE.session-HEX_ID` for
-other IDs. Each directory stores conversations by their native identity; its
-path does not assign a Conductor role.
+`--once` uses the same receiver and storage selection. Each directory stores
+conversations by their native identity; its path does not assign a Conductor role.
 The trial launcher preserves the
 Conductor ID, registers its native endpoint and replays pending input. A launch
 wrapper supplies harness-specific configuration or login settings.
@@ -245,7 +247,9 @@ channel transport remains the runtime component that requires Node.
 The Node adapters' `--attach` and stored `--message` callbacks register ordinary
 native `receive` endpoints. The shared receiver continues input committed during
 an active turn after that turn settles, using the selected native identity,
-workspace, model and effort. Explicit `--once` runs one turn.
+workspace, model and effort. Explicit `--once` invokes the same retained receiver
+without changing the registered endpoint. Its native input includes the stored
+initialization seed and semantic action guidance.
 OMP saved-conversation lookup also reads the legacy per-session directory when
 an attached parentless session has a custom logical ID.
 

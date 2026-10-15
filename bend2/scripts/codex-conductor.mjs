@@ -2,9 +2,8 @@
 // Bend2 Codex Conductor adapter.
 //
 // Bridges the Bend2 coordinator to a Principal or Associate Conductor. Codex
-// runs in `exec --json` mode (non-interactive, JSONL on stdout) and calls the
-// coordinator CLI through its built-in shell tool. --once runs one turn.
-// --attach and stored message callbacks use the shared native receiver.
+// uses the shared native receiver for one-shot and attached turns.
+// --attach and stored message callbacks also register its receive endpoint.
 //
 // Usage: node bend2/scripts/codex-conductor.mjs <database-path> [coordinator-executable] [codex-executable] [--session ID]
 //
@@ -15,21 +14,16 @@
 //
 // No npm dependencies; node stdlib only.
 
-import { spawn, spawnSync, execFileSync } from 'node:child_process';
+import { spawnSync, execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createInterface } from 'node:readline';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '../..');
 
 function hasParent(session) {
   return session?.parent !== null && session?.parent !== undefined;
-}
-
-function shellQuote(value) {
-  return "'" + String(value).replaceAll("'", "'\"'\"'") + "'";
 }
 
 const positional = [];
@@ -69,79 +63,6 @@ if (!dbPath) {
 
 const COORD = resolve(coordinatorExe);
 const DB = resolve(dbPath);
-
-function supportsBatchMessaging() {
-  const help = spawnSync(COORD, [DB, 'help'], { encoding: 'utf8', maxBuffer: Infinity });
-  const surface = String(help.stdout ?? '') + String(help.stderr ?? '');
-  return ['outbox', 'delivery-batch', 'message-batch'].every((name) => surface.includes(name));
-}
-
-const batchMessaging = supportsBatchMessaging();
-
-function batchMessagingCommands(command, recipient) {
-  if (!batchMessaging) return [];
-  return [
-    `  ${command} outbox ${recipient} — show your authored messages and current receipts`,
-    `  ${command} delivery-batch IDS_JSON — read selected complete messages in request order`,
-    `  ${command} message-batch ${recipient} MESSAGES_JSON — send structured messages to multiple recipients`,
-  ];
-}
-
-function systemInstructions(session) {
-  const command = shellQuote(COORD) + ' ' + shellQuote(DB);
-  const recipient = shellQuote(sessionId);
-  return [
-    `You are session ${sessionId}, the ${hasParent(session) ? 'Associate' : 'Principal'} Conductor of a Baton Orchestra. Players report to you and you direct their work.`,
-    'The Principal Conductor is the main orchestrator. An Associate Conductor is a sub-orchestrator. An Ensemble is a coordinated team of agents. A Section is a capability-specific subgroup. A Player is an individual agent. The Orchestra is the whole coordinated system.',
-    'The players command lists Players and both Conductor tiers. PLAYER denotes a player session ID in the CLI examples.',
-    'Public messages follow assigned roles, parent links and explicit tight Ensemble membership. Conductors can message descendants. Report, ask and ask-file reach the recorded parent; a parentless Principal Conductor reaches the registered operator. Peer messages require a shared tight Ensemble.',
-    '',
-    'Coordinator CLI — run these commands in your shell:',
-    `  ${command} status          — show all sessions`,
-    `  ${command} players         — list players with latest report`,
-    `  ${command} turns PLAYER    — show a player's turn history`,
-    `  ${command} player PLAYER — inspect a Player or Conductor`,
-    `  ${command} join PLAYER ${recipient} HARNESS MODEL EFFORT WORKSPACE — register a Player in the shared checkout`,
-    `  ${command} recruit PLAYER ${recipient} HARNESS MODEL EFFORT REPO BRANCH PATH BASE — create a separate task worktree`,
-    `  ${command} receiver PLAYER HARNESS_CMD OUTPUT_LOG [CWD] — register or relocate a Player's receive endpoint`,
-    `  ${command} inbox ${recipient} — show your pending messages`,
-    `  ${command} delivery MESSAGE — read one complete stored message and its receipt`,
-    ...batchMessagingCommands(command, recipient),
-    `  ${command} pending         — list all undelivered messages`,
-    `  ${command} ack ID ${recipient} RECEIPT — acknowledge a message`,
-    `  ${command} message ID ${recipient} PLAYER guidance BODY — send guidance to a player`,
-    `  ${command} ask ID ${recipient} BODY — send a question to your recorded parent or, for a parentless Principal, the registered operator`,
-    `  ${command} ask-file ID ${recipient} PATH — send a complete question from a file or stdin with PATH -`,
-    `  ${command} role SESSION [player|principal-conductor|associate-conductor|operator] — read or assign responsibility`,
-    `  ${command} ensemble ENSEMBLE [OWNER [loose|tight]] — inspect or configure coupling`,
-    `  ${command} ensemble-member ENSEMBLE OWNER SESSION add|remove — configure explicit members`,
-    `  ${command} section ENSEMBLE SECTION [OWNER CAPABILITY] — inspect or declare a capability subgroup`,
-    `  ${command} section-member ENSEMBLE SECTION OWNER PLAYER add|remove — configure Section members`,
-    `  ${command} orchestra — inspect the coordinated system`,
-    `  ${command} land PLAYER REPO TARGET [--commit COMMIT] — fast-forward land a player's branch`,
-    `  ${command} land-checked PLAYER REPO TARGET CHECK FILES [--commit COMMIT] — gated landing`,
-    `  ${command} push REPO BRANCH REMOTE — push a branch to a remote after landing`,
-    `  ${command} worktree PLAYER — show a player's Git state`,
-    `  ${command} record FINDING_ID ${recipient} CLAIM EVIDENCE LIMITS — record your finding`,
-    `  ${command} record-typed FINDING_ID ${recipient} KIND CLAIM EVIDENCE LIMITS — record typed knowledge`,
-    `  ${command} relate RELATION_ID ${recipient} SOURCE RELATION TARGET — connect finding:ID or message:ID references`,
-    `  ${command} knowledge-search ${recipient} SCOPE SUBJECT QUERY — find a topic and its typed neighbors`,
-    `  ${command} knowledge-traverse ${recipient} SCOPE SUBJECT REFERENCE in|out|both RELATION neighbors|recursive — follow authored links and citations`,
-    `  ${command} knowledge-scope ${recipient} universal|worker|group|all SUBJECT [--index | --id FINDING_ID] [--pretty] — read selected holdings`,
-    `  ${command} knowledge ${recipient} [--index | --id FINDING_ID] [--pretty] — discover metadata or read complete findings visible to you`,
-    `  ${command} promote PROMOTION_ID ${recipient} SOURCE ${recipient} FINDING_ID — promote from SOURCE into your scope`,
-    '',
-    'Landing defaults to the recorded branch tip; --commit selects a reviewed ancestor while later work remains on the branch.',
-    'Use join for shared-checkout work and recruit when a separate worktree is needed. Name the target branch, remote and integration Conductor in the assignment.',
-    'Author findings from reviewed evidence. Cite the source of the finding and state the claim\'s limits. A message:MESSAGE_ID reference includes the retained message body.',
-    'Review a finding before explicitly promoting it from its recorded source scope. Its original author remains recorded.',
-    'A promotion notice names a finding shared into your scope. Use knowledge --index to discover metadata, follow its literal detailRead argv for the complete finding, and follow evidenceMessage.deliveryRead for the retained message.',
-    'Select worker, group, universal or all holdings for topic search and traversal. Follow returned detailRead commands for complete findings and deliveryRead commands for cited messages. Finding references outside selected holdings carry an explicit all-scope detail read; reading preserves their holdings.',
-    'When you receive a player report, review it and acknowledge it.',
-    'Commit completed changes. The integration Conductor lands or reconciles contributions and pushes the integrated target.',
-    'After publication and turn completion, relocate the same Player with receiver to the shared checkout and retire clean unused merged task worktrees and branches through ordinary Git. Preserve active or unfinished work and receiver/toolchain dependencies.',
-  ].join('\n');
-}
 
 // Database access (node:sqlite, Node 22+).
 let db = null;
@@ -183,137 +104,48 @@ function pendingConductorMessages() {
   }
 }
 
-function formatMessages(messages) {
-  return messages.map((m) => {
-    const prefix = m.kind === 'report' ? 'Player report' : `Message (${m.kind})`;
-    return `${prefix} from ${m.sender} [id: ${m.id}]:\n${m.body}`;
-  }).join('\n\n---\n\n');
+function resultText(value) {
+  if (value?.sender === sessionId && value?.kind === 'report') return value.body;
+  if (value?.session !== sessionId || !value.event) return null;
+  if (typeof value.event.result === 'string') return value.event.result;
+  const message = Array.isArray(value.event.messages)
+    ? value.event.messages.findLast(item => item?.role === 'assistant') : value.event.message;
+  const content = message?.content;
+  return Array.isArray(content)
+    ? content.filter(item => item.type === 'text').map(item => item.text).join('\n') : null;
 }
 
-// Run one Codex turn in exec --json mode. Returns a promise that resolves
-// with the JSON events array when the process exits.
-function runCodexTurn(prompt, session) {
-  return new Promise((resolve, reject) => {
-    const subcommand = ['exec'];
-
-    if (session?.native) {
-      subcommand.push('resume', session.native);
-    }
-
-    const args = [
-      ...subcommand,
-      '--json',
-      '--model', codexModel,
-      '-c', 'forced_login_method="chatgpt"',
-      ...(session?.effort ? ['-c', `model_reasoning_effort=${JSON.stringify(session.effort)}`] : []),
-      '--dangerously-bypass-approvals-and-sandbox',
-    ];
-
-    const stdinContent = systemInstructions(session) + '\n\n' + prompt;
-
-    const child = spawn(codexExe, args, {
-      cwd: session?.workspace || ROOT,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env: Object.fromEntries(Object.entries(process.env)
-        .filter(([name]) => name !== 'OPENAI_API_KEY' && name !== 'CODEX_API_KEY')),
-    });
-
-    child.stdin.write(stdinContent);
-    child.stdin.end();
-
-    const events = [];
-    const rl = createInterface({ input: child.stdout });
-
-    rl.on('line', (line) => {
-      let event;
-      try {
-        event = JSON.parse(line);
-      } catch {
-        process.stderr.write(`codex-conductor: unparsed: ${line}\n`);
-        return;
-      }
-      events.push(event);
-      process.stderr.write(`codex-conductor: ${event.type}\n`);
-      const native = event.type === 'thread.started' ? event.thread_id : null;
-      if (native) {
-        execFileSync(COORD, [DB, 'bind', sessionId, native, 'codex', '', ''], { maxBuffer: Infinity });
-      }
-    });
-
-    let stderr = '';
-    child.stderr.on('data', (chunk) => {
-      stderr += chunk.toString();
-    });
-
-    child.on('close', (code) => {
-      if (code !== 0 && events.length === 0) {
-        reject(Object.assign(new Error(`Codex exited ${code}: ${stderr}`), { exitCode: code ?? 1 }));
-      } else {
-        resolve({ events, code, threadId: extractThreadId(events) });
-      }
-    });
-
-    child.on('error', reject);
-  });
-}
-
-function extractThreadId(events) {
-  for (const e of events) {
-    if (e.type === 'thread.started' && e.thread_id) return e.thread_id;
-  }
-  return null;
-}
-
-function extractResult(events) {
-  for (let i = events.length - 1; i >= 0; i--) {
-    const e = events[i];
-    if (e.type === 'item.completed' && e.item?.type === 'agent_message') {
-      return e.item.text;
-    }
-  }
-  return null;
-}
-
-// Single-shot: process all pending messages in one Codex turn, then exit.
+// One invocation uses the shared receiver without changing the registered endpoint.
 async function runOnce() {
   await openDb();
-
   const messages = pendingConductorMessages();
   if (messages.length === 0) {
     process.stderr.write('codex-conductor: no pending messages\n');
     closeDb();
-    process.exit(0);
+    return;
   }
-
-  const prompt = formatMessages(messages);
-  process.stderr.write(`codex-conductor: ${messages.length} pending message(s), starting Codex turn\n`);
-
   const session = selectedSession();
   codexModel ||= session?.model || 'o4-mini';
-  let text;
-  let code;
-  try {
-    const result = await runCodexTurn(prompt, session);
-    text = extractResult(result.events);
-    if (text) {
-      process.stdout.write(text + '\n');
-    }
-    process.stderr.write(`codex-conductor: turn completed (exit ${result.code})\n`);
-    code = result.code ?? 1;
-  } catch (e) {
-    text = `Codex turn failed: ${e.message}`;
-    process.stderr.write(`codex-conductor: ${text}\n`);
-    code = e.exitCode ?? 1;
-  }
-  if (hasParent(session)) {
-    const event = { type: 'result', is_error: code !== 0, exitCode: code,
-      result: text || `Codex process ended without assistant text (exit ${code})` };
-    execFileSync(COORD, [DB, 'observe-file', `codex:${sessionId}:${messages.at(-1).seq}`, sessionId, '-'],
-      { input: JSON.stringify(event), stdio: ['pipe', 'inherit', 'inherit'] });
-  }
-  process.exitCode = code;
-
+  const log = DB + '.conductor-' + Buffer.from(sessionId).toString('hex') + '.jsonl';
+  const args = [DB, 'receive', sessionId, codexExe, codexModel,
+    session?.effort || 'medium', session?.workspace || ROOT, log, ''];
   closeDb();
+  process.stderr.write(`codex-conductor: ${messages.length} pending message(s), starting Codex turn\n`);
+  const result = spawnSync(COORD, args, { encoding: 'utf8', maxBuffer: Infinity });
+  if (result.stdout) process.stderr.write(result.stdout);
+  if (result.stderr) process.stderr.write(result.stderr);
+  if (result.error) process.stderr.write(`codex-conductor: ${result.error.message}\n`);
+  if (result.signal) process.stderr.write(`codex-conductor: receiver ended by ${result.signal}\n`);
+  let text = null;
+  for (const line of (result.stdout || '').split('\n')) {
+    let value;
+    try { value = JSON.parse(line); } catch { continue; }
+    const body = resultText(value);
+    if (typeof body === 'string') text = body;
+  }
+  if (text !== null) process.stdout.write(text + '\n');
+  process.exitCode = result.status ?? 1;
+  process.stderr.write(`codex-conductor: turn completed (exit ${process.exitCode})\n`);
 }
 
 async function runAttached() {
