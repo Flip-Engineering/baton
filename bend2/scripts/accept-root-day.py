@@ -42,25 +42,30 @@ def events(path):
 
 def tool_started(event):
     return (event.get('type') == 'tool_execution_start'
-            or (event.get('type') == 'item.started'
+            or (event.get('type') in ('item.started', 'item.completed')
                 and event.get('item', {}).get('type') == 'command_execution')
             or event.get('payload_type') == 'tool.result'
             or any(c.get('type') == 'tool_use'
                    for c in event.get('message', {}).get('content', []) if isinstance(c, dict)))
 
 
-def observe(process, predicate, description):
+def observe(process, predicate, description, *, require_live=False):
     """Wait for run evidence, failing if its producer exits before producing it."""
     while True:
         value = predicate()
-        if value:
+        code = process.poll()
+        if value and (not require_live or code is None):
             return value
-        if process.poll() is not None:
-            raise RuntimeError(f'{description}: producer exited {process.returncode}')
+        if code is not None:
+            raise RuntimeError(f'{description}: producer exited {code}')
         time.sleep(0.05)  # Sample test evidence; this does not drive root delivery.
 
 
 def kill_tree(process, path):
+    if process.poll() is not None:
+        save(path, {'owner': process.pid, 'exitCode': process.returncode,
+                    'injection_performed': False})
+        raise RuntimeError(f'Observer {process.pid} exited before intentional loss')
     rows = []
     for line in run(['ps', '-axo', 'pid=,ppid=']).splitlines():
         pid, parent = map(int, line.split())
@@ -173,18 +178,27 @@ class Case:
                     found = db.execute(f'SELECT * FROM {table} WHERE {key}=?', (value,)).fetchone()
                     return dict(found) if found else None
                 state = {'execution': row('executions', 'session', player),
+                         'request': row('direct_turn_requests', 'id', ident),
                          'session': row('sessions', 'id', player),
                          'report': row('messages', 'id', ident), 'turn': row('turns', 'id', ident)}
             execution = state['execution']
-            if execution and execution['id'] != ident:
+            request = state['request']
+            if not request or request['session'] != player:
                 save(self.path / (ident + '.completion.json'), state)
-                raise RuntimeError(f'{self.path.name}/{ident} current execution changed: {state}')
-            directory = Path(execution['directory']) if execution and execution['directory'] else None
+                raise RuntimeError(f'{self.path.name}/{ident} retained direct request missing: {state}')
+            current = execution and execution['id'] == ident
+            directory = Path(execution['directory'] if current else request['directory'])
+            state['selected_directory'] = str(directory)
             if directory and (directory / 'acknowledged').exists():
                 state['acknowledged'] = (directory / 'acknowledged').read_text()
+                state['retained_status'] = (directory / 'status').read_text()
+                state['released'] = (directory / 'released').read_text()
                 save(self.path / (ident + '.completion.json'), state)
-                assert execution['mode'] == 'direct' and execution['phase'] == 'exited', state
-                assert execution['status'] == 'exit 0', state
+                assert state['acknowledged'] == 'acknowledged\n', state
+                assert state['released'] == 'released\n' and int(state['retained_status']) == 0, state
+                if current:
+                    assert execution['mode'] == 'direct' and execution['phase'] == 'exited', state
+                    assert execution['status'] == 'exit 0', state
                 assert state['turn'] and state['turn']['worker'] == player, state
                 report, session = state['report'], state['session']
                 assert report and report['sender'] == player and report['recipient'] == session['parent'], state
@@ -249,7 +263,8 @@ class Acceptance:
                        'Explain native-session recovery with source references. Read the files '
                        'before reporting. Do not edit files, launch agents, or access the network.', 'interrupted')
             observe(p, lambda: any(tool_started(e) for e in c.turn_events('interrupted'))
-                    and c.row('sessions', 'w1')['native'], 'Player tool start and session binding')
+                    and c.row('sessions', 'w1')['native'], 'Player tool start and session binding',
+                    require_live=True)
             before = c.coord('player', 'w1')
             kill_tree(p, c.path / 'crash.json')
             recovered = c.completed_attempt('interrupted')
@@ -343,7 +358,7 @@ sys.exit(p.wait())
             p = c.start(c.command('agent-native-input'), 'root-interrupted', input=json.dumps(
                 ['message', 'root-interrupted', 'operator', 'root', 'guidance', task], ensure_ascii=False))
             observe(p, lambda: any(tool_started(e) for e in events(c.path / 'native.jsonl')),
-                    'root tool start')
+                    'root tool start', require_live=True)
             kill_tree(p, c.path / 'crash.json')
             pending = c.coord('delivery', 'root-interrupted')
             assert pending['receipt'] is None, pending

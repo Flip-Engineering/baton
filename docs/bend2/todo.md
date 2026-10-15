@@ -42,6 +42,14 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   while reading an absent canonical transcript. Read the registered attempt
   generations, record zero output before their first write, and retain every
   complete transcript hash and original report assertion.
+  Later root-day completion checks rejected an original successful direct turn
+  after a parent response advanced the current execution. Select its retained
+  direct request and terminal custody. Codex emitted completed command events
+  without start events; observe those events and require the owned observer to
+  remain live before the intentional loss. Hierarchy's native steer succeeded,
+  while its first handling receipt was plain text. Check the registered native
+  response separately from the immutable handling receipt. Preserve the original
+  failed runs and their task-storage qualification.
   Preserve complete bodies, native lineage, first receipts, reports, original
   failure evidence and every semantic assertion. Validate the corrected callers
   remotely without duplicate tasks. Coordinate with

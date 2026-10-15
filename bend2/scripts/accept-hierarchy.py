@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Exercise a native Codex Principal Conductor, an OMP Associate Conductor, and two OMP Players in a clone."""
 import argparse
+import hashlib
 import importlib.util
 import json
 import os
@@ -141,8 +142,10 @@ Read the complete pending input and use `B2 DB as lead acknowledge` after handli
    This is mid-task guidance; verify the command returns and end your turn with a
    progress report. Child reports invoke this same native lead session.
 
-On the child-a report: inspect its actual diff and tests, read the guidance delivery's receipt
-to confirm native steer acceptance, acknowledge the report, and land child-a onto
+On the child-a report: inspect its actual diff and tests. Verify the guidance's
+native response in child-a's registered log: the matching response has command
+steer and success true. Read its handling receipt separately. Acknowledge the
+report and land child-a onto
 hierarchy-lead with land-checked and CHECK, selecting only
 bend2/examples/text-summary/test_words.py. Both selected trees must be judged:
 the target lacks this newly added test, so use the check adapter described below.
@@ -218,6 +221,9 @@ End your turn. No push, no changes outside the scratch directory.
         sessions = [dict(r) for r in connection.execute('SELECT * FROM sessions')]
         messages = [dict(r) for r in connection.execute('SELECT * FROM messages ORDER BY seq')]
         turns = [dict(r) for r in connection.execute('SELECT * FROM turns')]
+        child_logs = [dict(r) for r in connection.execute(
+            'SELECT * FROM log_generations WHERE session=? AND base=?',
+            ('child-a', str(out / 'child-a.jsonl')))]
     assert all(r['exitCode'] == 0 for r in records), records
     by_id = {s['id']: s for s in sessions}
     assert by_id['lead']['parent'] == 'root'
@@ -226,7 +232,27 @@ End your turn. No push, no changes outside the scratch directory.
                      'token: blue-green counts as one. Add an explicit blue-green regression test.')
     guidance = next(m for m in messages if m['sender'] == 'lead' and m['recipient'] == 'child-a'
                     and m['kind'] == 'guidance' and m['body'] == guidance_body)
-    assert json.loads(guidance['receipt'])['success'] is True
+    assert guidance['receipt'], guidance
+    child_turns = {turn['id'] for turn in turns if turn['worker'] == 'child-a'}
+    native_steer = []
+    generation_facts = []
+    for generation in child_logs:
+        assert generation['attempt'] in child_turns, generation
+        path = Path(generation['log'])
+        digest = hashlib.sha256()
+        with path.open('rb') as stream:
+            for line in stream:
+                digest.update(line)
+                try:
+                    event = json.loads(line)
+                except ValueError:
+                    continue
+                if (event.get('id') == guidance['id'] and event.get('type') == 'response'
+                        and event.get('command') == 'steer' and event.get('success') is True):
+                    native_steer.append({'generation': generation, 'response': event})
+        generation_facts.append({**generation, 'size_bytes': path.stat().st_size,
+                                 'sha256': digest.hexdigest()})
+    assert native_steer, {'guidance': guidance, 'generations': generation_facts}
     for child in ['child-a', 'child-b']:
         report = next(m for m in messages if m['sender'] == child and m['kind'] == 'report'
                       and any(turn['id'] == m['id'] and turn['worker'] == child for turn in turns))
@@ -239,7 +265,8 @@ End your turn. No push, no changes outside the scratch directory.
         'git', '-C', repo, 'rev-parse', lead + '^{tree}')
     evidence = {'source': base, 'coordinator': coordinator_provenance,
                 'sessions': sessions, 'messages': messages, 'turns': turns,
-                'processes': records, 'target': target, 'lead': lead}
+                'processes': records, 'target': target, 'lead': lead,
+                'native_steer': native_steer, 'guidance_generations': generation_facts}
     (out / 'evidence.json').write_text(json.dumps(evidence, indent=2) + '\n')
     print(f'Hierarchy verified: {out / "evidence.json"}', flush=True)
 
