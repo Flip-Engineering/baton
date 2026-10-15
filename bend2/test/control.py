@@ -34,7 +34,7 @@ def shutdown_fixture_owner(case):
     case.assertEqual(result.returncode, 0, result.stderr)
 
 
-FIXTURE = r'''import json,os,pathlib,re,socket,subprocess,sys
+FIXTURE = r'''import json,os,pathlib,re,socket,sqlite3,subprocess,sys
 home=pathlib.Path(__file__).resolve().parent
 config=json.loads((home/'fixture.json').read_text())
 args=sys.argv[1:]
@@ -84,13 +84,24 @@ client=socket.create_connection(('127.0.0.1',config['port']))
 stream=client.makefile('rwb',buffering=0)
 def reply(value): stream.write((json.dumps(value)+'\n').encode())
 def command(*value):
-    result=subprocess.run([config['exe'],config['db'],*value],capture_output=True,text=True)
+    if value[:1]==('message',):
+        _,ident,sender,recipient,kind,body=value
+        result=subprocess.run([config['exe'],config['db'],'message-batch-file',sender,'-'],
+                              input=json.dumps([{'id':ident,'recipient':recipient,'kind':kind,'body':body}]),
+                              capture_output=True,text=True)
+    else:
+        result=subprocess.run([config['exe'],config['db'],*value],capture_output=True,text=True)
     return {'code':result.returncode,'stdout':result.stdout,'stderr':result.stderr}
 def fixture_completion(body):
     state=command('session',session)
     assert state['code']==0,state
     completion=json.loads(state['stdout'])['taskCompletion']
     if not completion['open']: return
+    with sqlite3.connect(pathlib.Path(config['db']).as_uri()+'?mode=ro',uri=True) as database:
+        receipt=database.execute('SELECT receipt FROM messages WHERE id=? AND recipient=?',
+                                 (completion['assignmentId'],session)).fetchone()
+    assert receipt is not None,completion
+    if receipt[0] is None: return
     assignment=command('delivery',completion['assignmentId'])
     assert assignment['code']==0,assignment
     if json.loads(assignment['stdout'])['receipt'] is None: return
@@ -244,6 +255,8 @@ class Control(unittest.TestCase):
         self.call('role', 'operator', 'operator')
 
     def project_call(self, path, *args, ok=True):
+        if args[0] == 'resume':
+            args = ('as', 'root', 'resume', '--session', args[1], *args[2:])
         argv = ['--project', str(path), *map(str, args)]
         result = subprocess.run([str(EXE), *argv], env=self.environment,
                                 capture_output=True, text=True)
@@ -251,11 +264,28 @@ class Control(unittest.TestCase):
                   'stdout': result.stdout, 'stderr': result.stderr}
         with (self.directory / 'commands.jsonl').open('a') as output:
             output.write(json.dumps(record) + '\n')
+        if args[:3] == ('as', 'root', 'resume'):
+            outcomes = json.loads(result.stdout)
+            self.assertEqual(len(outcomes), 1, record)
+            outcome = outcomes[0]
+            if not ok:
+                self.assertNotEqual(outcome['status'], 'completed', record)
+                return {**record, 'nativeOutcome': outcome,
+                        'stderr': outcome.get('stderr') or outcome['cause']}
+            self.assertEqual(result.returncode, 0, result.stderr)
+            return self.project_resume_result(result.stdout)
         if not ok:
             self.assertNotEqual(result.returncode, 0, result.stdout)
             return record
         self.assertEqual(result.returncode, 0, result.stderr)
         return json.loads(result.stdout)
+
+    def project_resume_result(self, stdout):
+        outcomes = json.loads(stdout)
+        self.assertEqual(len(outcomes), 1, outcomes)
+        self.assertEqual(outcomes[0]['status'], 'completed', outcomes)
+        self.assertEqual(outcomes[0]['waitStatus'], 'exit 0', outcomes)
+        return json.loads(outcomes[0]['stdout'])
 
     def recruit(self, session, harness='omp', parent='root'):
         return self.call('recruit', session, parent, harness, session, 'low',
@@ -550,10 +580,15 @@ class Control(unittest.TestCase):
         self.assertEqual(sessions['project-linked']['pendingCount'], 1)
         self.assertEqual(self.project_call(subdirectory, 'inbox', 'project-linked')[0]['id'],
                          'project-owed')
-        self.assertEqual(self.project_call(linked_subdirectory, 'knowledge', 'project-shared'),
-                         self.call('knowledge', 'project-shared'))
-        self.assertEqual(self.project_call(subdirectory, 'knowledge', 'project-shared')[0]['claim'],
-                         'The retained project finding remains available.')
+        for directory in (linked_subdirectory, subdirectory):
+            outcomes = self.project_call(directory, 'as', 'project-shared', 'knowledge', 'read')
+            self.assertEqual(len(outcomes), 1, outcomes)
+            self.assertEqual((outcomes[0]['status'], outcomes[0]['waitStatus']),
+                             ('completed', 'exit 0'), outcomes)
+            findings = json.loads(outcomes[0]['stdout'])
+            self.assertEqual(findings, self.call('knowledge', 'project-shared'))
+            self.assertEqual(findings[0]['claim'],
+                             'The retained project finding remains available.')
 
     def test_project_resume_continues_same_native_and_preserves_tab_message_id(self):
         self.root()
@@ -579,7 +614,7 @@ class Control(unittest.TestCase):
         self.call('connect', session, first['native'], json.dumps(endpoint))
 
         resumed = subprocess.Popen([str(EXE), '--project', assignment['workspace'],
-                                    'resume', session], env=self.environment,
+                                    'as', 'root', 'resume', '--session', session], env=self.environment,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         continued, start = self.accept(session)
         self.assertEqual(start['native'], first['native'])
@@ -590,7 +625,7 @@ class Control(unittest.TestCase):
         self.finish(continued, 'Resumed project work completed.')
         stdout, stderr = resumed.communicate()
         self.assertEqual(resumed.returncode, 0, stderr)
-        answer = json.loads(stdout)
+        answer = self.project_resume_result(stdout)
         self.assertEqual((answer['session'], answer['message']), (session, ident))
         self.assertEqual(answer['delivery']['id'], ident)
         self.assertEqual(answer['delivery']['receipt'], 'fixture-native-reviewed')
@@ -640,7 +675,7 @@ class Control(unittest.TestCase):
                     resume_args = ['--lift-stop']
 
                 resumed = subprocess.Popen([str(EXE), '--project', assignment['workspace'],
-                                            'resume', session, *resume_args], env=self.environment,
+                                            'as', 'root', 'resume', '--session', session, *resume_args], env=self.environment,
                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                 continued, start = self.accept(session)
                 evidence = {'argv': resumed.args, 'pid': resumed.pid,
@@ -676,7 +711,7 @@ class Control(unittest.TestCase):
                         evidence_path.write_text(json.dumps(evidence, ensure_ascii=False, indent=2) + '\n')
                     self.assertEqual(resumed.returncode, 0, stdout + stderr)
                     self.assertEqual(evidence['unexpected_successors'], [], evidence)
-                    answer = json.loads(stdout)
+                    answer = self.project_resume_result(stdout)
                     self.assertEqual(answer['delivery']['kind'], 'recovery')
                     self.assertEqual(answer['delivery']['receipt'], 'fixture-native-reviewed')
                     self.exited(session)
@@ -772,7 +807,7 @@ class Control(unittest.TestCase):
         self.assertIsNone(self.call('delivery', 'project-stopped-task')['receipt'])
         self.assertEqual(self.call('session', stopped)['native'], stopped_native['native'])
         lifted = subprocess.Popen([str(EXE), '--project', stopped_assignment['workspace'],
-                                   'resume', stopped, '--lift-stop'], env=self.environment,
+                                   'as', 'root', 'resume', '--session', stopped, '--lift-stop'], env=self.environment,
                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
         continued, lifted_native = self.accept(stopped)
         self.assertEqual(lifted_native['native'], stopped_native['native'])
@@ -782,7 +817,7 @@ class Control(unittest.TestCase):
         self.finish(continued, 'Explicitly resumed stopped project work.')
         stdout, stderr = lifted.communicate()
         self.assertEqual(lifted.returncode, 0, stdout + stderr)
-        self.assertEqual(json.loads(stdout)['delivery']['receipt'], 'fixture-native-reviewed')
+        self.assertEqual(self.project_resume_result(stdout)['delivery']['receipt'], 'fixture-native-reviewed')
         self.assertEqual(self.rows('SELECT * FROM session_stops WHERE session=?', (stopped,)), [])
         self.assertEqual(self.call('delivery', report_id)['body'], stop_report['body'])
         self.assertEqual(self.call('session', stopped)['native'], stopped_native['native'])
@@ -1009,7 +1044,7 @@ class Control(unittest.TestCase):
         completion_code = FIXTURE[FIXTURE.index('def command(*value):'):
                                   FIXTURE.index('def acknowledge():')]
         executable.write_text('#!' + sys.executable + '\n' + r'''
-import json,os,pathlib,subprocess,sys
+import json,os,pathlib,sqlite3,subprocess,sys,time
 home=pathlib.Path(__file__).resolve().parent
 config=json.loads((home/'fixture.json').read_text())
 args=sys.argv[1:]
@@ -1025,7 +1060,10 @@ if '--prompt-file' in args:
                       'payload':{'kind':'turn_input_user','command_id':'fixture-primary'}}),flush=True)
 else:
     prompt=json.loads(sys.stdin.readline())['message']['content']
+    print(json.dumps({'type':'system','subtype':'init','session_id':'instant-native','model':model}),flush=True)
 ''' + completion_code + r'''
+while json.loads(command('session',session)['stdout'])['native']!='instant-native':
+    time.sleep(.01)
 state=command('session',session)
 assert state['code']==0,state
 completion=json.loads(state['stdout'])['taskCompletion']
@@ -1117,17 +1155,20 @@ else:
                     self.assertIn('Native control setup failed', failed['stderr'])
                     execution = self.rows('SELECT * FROM executions WHERE session=?', (session,))[0]
                     self.assertEqual((execution['id'], execution['phase'], execution['status']),
-                                     (ident, 'exited', 'setup failed'))
+                                     (ident, 'starting', ''))
+                    self.assertEqual(failed['stderr'],
+                                     'Native control setup failed; inspect the registered session and retained input.\n')
+                    initialized = self.rows("SELECT name FROM sqlite_master WHERE type='table' AND name='native_initial_inputs'")
+                    if initialized:
+                        self.assertEqual(self.rows('SELECT * FROM native_initial_inputs WHERE attempt=?',
+                                                   (execution['directory'],)), [])
                     request = self.rows('SELECT * FROM direct_turn_requests WHERE id=?', (ident,))[0]
                     self.assertEqual(request['task'], original)
                     self.assertEqual(request['native'], native)
                     self.assertFalse(pathlib.Path(execution['directory']).exists())
                     self.assertEqual(self.rows('SELECT id FROM turns WHERE id=?', (ident,)), [])
                     self.assertEqual(self.rows('SELECT id FROM messages WHERE id=?', (ident,)), [])
-                    diagnostics = self.rows("SELECT * FROM messages WHERE sender=? AND kind='report'",
-                                            (session,))
-                    self.assertTrue(any('Direct turn setup failed:' in row['body'] and
-                                        ident in row['body'] for row in diagnostics))
+                    self.assertEqual(self.rows("SELECT * FROM turns WHERE worker=?", (session,)), [])
                     if interrupted:
                         # Restore the durable admission left when the caller exits
                         # before retry setup has returned. The recorded conversation
@@ -1150,6 +1191,10 @@ else:
                     self.assertEqual(resumed['attempt'], ident)
                     self.assertEqual(resumed['launch']['state'], 'launched')
                     stream, started = self.accept(session)
+                    initialization = self.rows('SELECT * FROM native_initial_inputs WHERE session=? AND turn=?',
+                                               (session, ident))
+                    self.assertEqual(len(initialization), 1, initialization)
+                    self.assertTrue(started['prompt'].startswith(initialization[0]['seed'] + '\n\n'))
                     retained_input = self.call('delivery', ident + ':task-input')
                     self.assertEqual((retained_input['id'], retained_input['sender'],
                                       retained_input['recipient'], retained_input['kind'],
