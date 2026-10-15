@@ -83,6 +83,9 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   global help, and its command, contract and root suites pass. Controlled
   native fixtures must establish their recorded conversation before owned
   reads and complete handling before their terminal frame.
+  Installed context acceptance also reached a fresh runtime launch whose declared
+  `program` field was omitted by the shared source accessor. Read `program` for
+  runtime launch requests and qualify the complete installed context handoff.
   Preserve complete bodies, native lineage, first receipts, reports, original
   failure evidence and every semantic assertion. Validate the corrected callers
   remotely without duplicate tasks. Coordinate with
