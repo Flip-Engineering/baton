@@ -904,8 +904,9 @@ finally:
             self.assertEqual(len(self.connections('w1')), 2,
                              'the previous native receiver ran after the managed route was recorded')
             return self.connections('w1-app')
-        self.eventually(managed_connected, 'the current managed receiver did not connect')
-        self.stream_for('w1-app')
+        self.eventually(managed_connected, 'the current managed receiver did not connect',
+                        contradiction=self.completed_managed_failure)
+        self.stream_for('w1-app', contradiction=self.completed_managed_failure)
         self.assertTrue(app_calls('turn/steer'), 'the short sender admitted input to the active App turn')
         self.assertEqual(self.query("SELECT receipt FROM messages WHERE id='t3'"), [(None,)])
 
@@ -1021,7 +1022,7 @@ finally:
         self.dispatch('managed-task', 'w1', task)
         self.start_owner()
         self.start_serve()
-        self.stream_for('w1-app')
+        self.stream_for('w1-app', contradiction=self.completed_managed_failure)
 
         def events(kind):
             if not self.app_follow_events.exists(): return []
@@ -1073,7 +1074,7 @@ finally:
         self.queue('w1-app', {'controlReady': True})
         guidance = 'Review the changed source evidence.\nRetain the original qualification and λ🙂.'
         self.dispatch('managed-next', 'w1', guidance, kind='guidance')
-        self.stream_for('w1-app', 1)
+        self.stream_for('w1-app', 1, contradiction=self.completed_managed_failure)
         self.eventually(lambda: len(starts()) == 1, 'The coordinator nudge did not reach the native thread.')
         pointer = starts()[0]['params']['input'][0]['text']
         self.assertIn('"recipient":"w1"', pointer)

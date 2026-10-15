@@ -12,7 +12,11 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   The endpointless and recorded-endpoint fixtures observe that terminal failure
   during their first connection waits and return complete verdicts. Workflow
   `38662128510` reached the recorded-endpoint setup failure after judging the
-  endpointless case. Preserve full source, database, output and process
+  endpointless case. Workflow `38675555092` judged both cases and reached the
+  same producer failure in the managed-settlement fixture. All managed App
+  attachment waits, including the route-change prewait and second attachment,
+  now observe the completed failure through the shared callback. Preserve
+  full source, database, output and process
   evidence and all admission, settlement, guidance, receipt and stop assertions.
   Qualify target and candidate with
   [#717](https://github.com/Flip-Engineering/baton/issues/717),
