@@ -226,19 +226,6 @@ class Events {
     if (this.values.length) return Promise.resolve(this.values.shift());
     return new Promise(resolve => { this.waiter = resolve; });
   }
-  async committed() {
-    const deferred = [];
-    try {
-      for (;;) {
-        const event = await this.next();
-        if (event.error) throw event.error;
-        if (event.change) return;
-        deferred.push(event);
-      }
-    } finally {
-      this.values = deferred.concat(this.values);
-    }
-  }
 }
 
 async function reportFailure(executable, database, session, threadId, error) {
@@ -306,6 +293,7 @@ async function openInbox(executable, database, session, threadId) {
       return row;
     },
     close() { db.close(); },
+    waitForDatabase() { return coordinatorCommand(executable, database, ['session', session]); },
     claimed(row) {
       if (!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='codex_inbox_wakes'").get()) return false;
       const claim = db.prepare('SELECT native,cause FROM codex_inbox_wakes WHERE session=?').get(session);
@@ -407,29 +395,12 @@ function databaseBusy(error) {
   return Number.isInteger(error?.errcode) && (error.errcode & 255) === 5;
 }
 
-async function readCommittedInbox(inbox, events, session, threadId) {
-  let waiting = false;
-  for (;;) {
-    try {
-      const row = inbox.read();
-      if (waiting) record({ type: 'codexInboxDatabaseReady', session, threadId });
-      return row;
-    } catch (error) {
-      if (!databaseBusy(error)) throw error;
-      if (!waiting) record({ type: 'codexInboxDatabaseBusy', session, threadId,
-        errcode: error.errcode, cause: error.message });
-      waiting = true;
-      await events.committed();
-    }
-  }
-}
-
-async function retainFailure(inbox, events, row, cause, turnId) {
+async function retainFailure(inbox, row, cause, turnId) {
   for (;;) {
     try { inbox.failed(row, cause, turnId); return; }
     catch (error) {
       if (!databaseBusy(error)) throw error;
-      await events.committed();
+      await inbox.waitForDatabase();
     }
   }
 }
@@ -470,7 +441,7 @@ function committedChanges(executable, database, events) {
   return { readiness, close };
 }
 
-// The one-shot read waits out database contention through the coordinator's
+// Inbox reads wait out database contention through the coordinator's
 // ordinary session read: main.bend dispatches it through read_command to
 // host SQLite opened read-only with the existing busy handler, which waits
 // through lock contention without an attempt or time cap and performs no
@@ -478,7 +449,7 @@ function committedChanges(executable, database, events) {
 // committing an empty transaction - releases before that read returns; the
 // Node inbox read then rereads the current native, stop and pending state.
 // A missing session or a genuine command error remains an error.
-async function readOneShotInbox(inbox, executable, database, session, threadId) {
+async function readInbox(inbox, session, threadId) {
   let waiting = false;
   for (;;) {
     try {
@@ -490,7 +461,7 @@ async function readOneShotInbox(inbox, executable, database, session, threadId) 
       if (!waiting) record({ type: 'codexInboxDatabaseBusy', session, threadId,
         errcode: error.errcode, cause: error.message });
       waiting = true;
-      await coordinatorCommand(executable, database, ['session', session]);
+      await inbox.waitForDatabase();
     }
   }
 }
@@ -557,7 +528,7 @@ async function follow(proxy, executable, database, session, threadId, inbox) {
   try {
     await subscription.readiness;
     await proxy.connect();
-    let row = await readCommittedInbox(inbox, events, session, threadId);
+    let row = await readInbox(inbox, session, threadId);
     if (row.stopped) {
       record({ type: 'codexInboxReleased', session, threadId, stopped: true, pendingCount: row.pendingCount });
       return;
@@ -568,11 +539,11 @@ async function follow(proxy, executable, database, session, threadId, inbox) {
     let event = { initial: true };
     for (;;) {
       if (event.error) throw event.error;
-      row = await readCommittedInbox(inbox, events, session, threadId);
+      row = await readInbox(inbox, session, threadId);
       if (event.method === 'turn/completed') {
         const turn = event.params.turn;
         record({ type: 'codexInboxTurnSettled', session, threadId, turnId: turn.id, status: turn.status, turn });
-        if (turn.status !== 'completed') await retainFailure(inbox, events, row, JSON.stringify(turn), turn.id);
+        if (turn.status !== 'completed') await retainFailure(inbox, row, JSON.stringify(turn), turn.id);
         if (!reportedTurns.has(turn.id)) {
           const items = [...(completedItems.get(turn.id)?.values() ?? [])];
           await reportTurn(executable, database, session, threadId, turn, items);
@@ -583,7 +554,7 @@ async function follow(proxy, executable, database, session, threadId, inbox) {
         }
         observedTurns.delete(turn.id);
         if (turn.status !== 'completed') record({ type: 'codexInboxTurnRetained', session, threadId, turn });
-        row = await readCommittedInbox(inbox, events, session, threadId);
+        row = await readInbox(inbox, session, threadId);
       }
       if (row.stopped) {
         record({ type: 'codexInboxReleased', session, threadId, stopped: true, pendingCount: row.pendingCount });
@@ -607,7 +578,7 @@ async function follow(proxy, executable, database, session, threadId, inbox) {
       const admit = row.pendingCount && (freshThread || recipientProgress || coordinatorInput ||
         (thread.status.type === 'idle' && !await claimed(row)));
       if (admit) {
-        row = await readCommittedInbox(inbox, events, session, threadId);
+        row = await readInbox(inbox, session, threadId);
         if (!row.stopped && row.pendingCount && !await claimed(row)) {
           let admission;
           try {
@@ -626,7 +597,7 @@ async function follow(proxy, executable, database, session, threadId, inbox) {
                 try {
                   const current = inbox.refresh(admission.token, status);
                   return current ? inbox.pointer(current.row) : null;
-                } catch (error) { if (!databaseBusy(error)) throw error; await events.committed(); }
+                } catch (error) { if (!databaseBusy(error)) throw error; await inbox.waitForDatabase(); }
               }
             });
             await inbox.admitted(admission.token, result);
@@ -634,7 +605,7 @@ async function follow(proxy, executable, database, session, threadId, inbox) {
             if (turnId && !reportedTurns.has(turnId)) observedTurns.add(turnId);
           } catch (error) {
             if (proxy.readerError) throw error;
-            await retainFailure(inbox, events, row, String(error.stack || error));
+            await retainFailure(inbox, row, String(error.stack || error));
             await notifyFailure(error);
           }
         }
@@ -646,8 +617,8 @@ async function follow(proxy, executable, database, session, threadId, inbox) {
   } catch (error) {
     failure = error;
     try {
-      const row = await readCommittedInbox(inbox, events, session, threadId);
-      await retainFailure(inbox, events, row, String(error.stack || error));
+      const row = await readInbox(inbox, session, threadId);
+      await retainFailure(inbox, row, String(error.stack || error));
     } catch (retentionError) {
       failure = new Error(String(error.stack || error) + '\nAdmission failure custody could not be updated: ' +
         String(retentionError.stack || retentionError), { cause: error });
@@ -700,7 +671,7 @@ if (!threadId || (managed ? !executable || !database || !session || (mode === '-
         // still unblocks the delivery, which then admits the exact committed
         // input. Explicit stops, an empty inbox, a changed native conversation
         // and command failures keep their recorded outcomes.
-        const row = await readOneShotInbox(inbox, executable, database, session, threadId);
+        const row = await readInbox(inbox, session, threadId);
         if (row.stopped || !row.pendingCount) {
           record({ type: 'codexInboxRetained', session, threadId, stopped: Boolean(row.stopped), pendingCount: row.pendingCount });
         } else {
@@ -731,7 +702,7 @@ if (!threadId || (managed ? !executable || !database || !session || (mode === '-
         const installed = resolve(root, 'bin/baton2');
         coordinator = existsSync(installed) ? installed : resolve(root, '.scratch/bend2/baton2');
         inbox = await openInbox(coordinator, pending.database, pending.recipient, threadId);
-        row = await readOneShotInbox(inbox, coordinator, pending.database, pending.recipient, threadId);
+        row = await readInbox(inbox, pending.recipient, threadId);
       }
       if (row && (row.stopped || !row.pendingCount)) {
         record({ type: 'codexInboxRetained', session: pending.recipient, threadId,

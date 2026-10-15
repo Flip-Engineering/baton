@@ -233,6 +233,8 @@ class RootWake(unittest.TestCase):
         self.admission_release = self.directory / 'public-read-released'
         self.admitted_barrier = self.directory / 'public-admitted-held'
         self.admitted_release = self.directory / 'public-admitted-released'
+        self.terminal_barrier = self.directory / 'public-terminal-held'
+        self.terminal_release = self.directory / 'public-terminal-released'
         self.public_app_state.write_text(json.dumps({'status': 'active', 'turn': 'fixture-turn', 'number': 0}))
         command = self.directory / 'codex'
         command.write_text('#!' + sys.executable + '\n' + '''
@@ -307,13 +309,31 @@ while True:
             continue
     else:raise AssertionError(request)
     reply({'id':request['id'],'result':result})
+    if method in ('turn/steer','turn/start') and current.get('holdTerminalWriter'):
+        turn=result.get('turnId') or result['turn']['id']
+        while True:
+            with sqlite3.connect(__DB__) as recorded:
+                claim=recorded.execute("SELECT json_extract(cause,'$.turnId') FROM codex_inbox_wakes WHERE session=? AND native=?",
+                                       (current['session'],'native-app-root')).fetchone()
+            if claim and claim[0]==turn:break
+            time.sleep(0.01)
+        with sqlite3.connect(__DB__) as writer:
+            writer.execute('BEGIN EXCLUSIVE')
+            terminal={'id':turn,'status':'completed','items':[],'error':None}
+            state.write_text(json.dumps({**current,'status':'idle','terminal':terminal}))
+            reply({'method':'turn/completed','params':{'threadId':'native-app-root','turn':terminal}})
+            pathlib.Path(__TERMINAL_BARRIER__).write_text('Native terminal emitted while the SQLite writer is held.')
+            while not pathlib.Path(__TERMINAL_RELEASE__).exists():time.sleep(0.01)
+            writer.rollback()
 '''.replace('__QUEUED__', repr(str(queued))).replace('__REFUSED__', repr(str(refused)))
    .replace('__STATE__', repr(str(self.public_app_state)))
    .replace('__BARRIER__', repr(str(self.admission_barrier)))
    .replace('__RELEASE__', repr(str(self.admission_release)))
    .replace('__DB__', repr(str(self.db)))
    .replace('__ADMITTED_BARRIER__', repr(str(self.admitted_barrier)))
-   .replace('__ADMITTED_RELEASE__', repr(str(self.admitted_release))))
+   .replace('__ADMITTED_RELEASE__', repr(str(self.admitted_release)))
+   .replace('__TERMINAL_BARRIER__', repr(str(self.terminal_barrier)))
+   .replace('__TERMINAL_RELEASE__', repr(str(self.terminal_release))))
         command.chmod(0o700)
         self.environment['PATH'] = str(self.directory) + os.pathsep + self.environment.get('PATH', '')
         return queued, refused
@@ -779,6 +799,63 @@ while True:
         self.assertEqual(retained['body'], body)
         self.assertIsNone(retained['receipt'])
         self.coord('stop', 'root', 'empty-writer-stop', 'Keep the complete input.')
+        follower.wait()
+        self.assertEqual(follower.returncode, 0, diagnostic.read_text())
+
+    def test_follower_reports_a_terminal_after_a_silent_writer_release(self):
+        queued, _ = self.public_proxy()
+        current = json.loads(self.public_app_state.read_text())
+        self.public_app_state.write_text(json.dumps({**current, 'status': 'idle',
+            'turnStatus': 'completed', 'holdTerminalWriter': True, 'session': 'worker'}))
+        self.coord('attach', 'root', 'terminal', '', '')
+        self.coord('role', 'root', 'principal-conductor')
+        self.recruit('worker', 'root', 'codex')
+        body = 'Retain the complete input across terminal contention: café Ω 🙂\nSecond line.'
+        self.assertNotEqual(self.coord_raw(
+            'message', 'terminal-writer-input', 'root', 'worker', 'task', body).returncode, 0)
+        self.coord('connect', 'worker', 'native-app-root', '')
+        output = self.directory / 'terminal-writer-follow.jsonl'
+        diagnostic = self.directory / 'terminal-writer-follow.stderr'
+        with output.open('w') as stdout, diagnostic.open('w') as stderr:
+            follower = subprocess.Popen(
+                ['node', str(ROOT / 'bend2/scripts/codex-inbox-wake.mjs'), '--follow',
+                 str(EXE), str(self.db), 'worker', 'native-app-root'],
+                env=self.environment, stdout=stdout, stderr=stderr)
+        self.children.append(follower)
+
+        def events():
+            self.assertIsNone(follower.poll(), diagnostic.read_text() + output.read_text())
+            return [json.loads(line) for line in output.read_text().splitlines(keepends=True)
+                    if line.endswith('\n')]
+
+        def terminal_is_held():
+            events()
+            return self.terminal_barrier.exists()
+
+        self.eventually(terminal_is_held, 'The native terminal did not reach the held writer.')
+        try:
+            self.eventually(lambda: any(event.get('type') == 'codexInboxDatabaseBusy'
+                                           and not event.get('operation') for event in events()),
+                            'The terminal did not reach the contended inbox read.')
+            calls = [json.loads(line) for line in queued.read_text().splitlines()]
+            self.assertEqual(len(calls), 1, calls)
+            self.assertEqual(calls[0]['method'], 'turn/start')
+        finally:
+            self.terminal_release.write_text('Release the empty writer transaction.\n')
+        self.eventually(lambda: any(event.get('type') == 'codexInboxTurnReport'
+                                    and event.get('code') == 0 for event in events()),
+                        'The released writer left the native terminal unreported.')
+        self.assertTrue(any(event.get('type') == 'codexInboxDatabaseReady' for event in events()))
+        reports = self.rows("SELECT body FROM messages WHERE sender='worker' AND recipient='root' AND kind='report'")
+        self.assertEqual(len(reports), 1, reports)
+        terminal = json.loads(reports[0]['body'])
+        self.assertEqual(terminal['turn'],
+                         {'id': 'fixture-turn-1', 'status': 'completed', 'items': [], 'error': None})
+        retained = json.loads(self.coord('delivery', 'terminal-writer-input'))
+        self.assertEqual(retained['body'], body)
+        self.assertIsNone(retained['receipt'])
+        self.assertEqual(len(queued.read_text().splitlines()), 1)
+        self.coord('stop', 'worker', 'terminal-writer-stop', 'Keep the complete input.')
         follower.wait()
         self.assertEqual(follower.returncode, 0, diagnostic.read_text())
 

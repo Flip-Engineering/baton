@@ -4,6 +4,18 @@ The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3
 retain findings, ownership and acceptance requirements. This page links current
 Baton follow-up work for contributors. Every open issue has a link on this page.
 
+- [#760: Resume managed Codex SQL retries after silent writer release](https://github.com/Flip-Engineering/baton/issues/760).
+  Run `38792126033` retained the second endpointless App terminal while its
+  follower awaited a database-change notice after SQLite BUSY. Raw wake metadata
+  writers can release their locks without publishing that notice. Use the existing
+  read-only session command for the inbox-read, failure-retention and refresh
+  retry paths. Preserve terminal, stop, receipt and native identity checks.
+  The real silent-writer terminal regression and all 15 FixedCoordinator cases
+  passed on the genuine completed Main. Complete whole-workflow qualification for
+  [#750](https://github.com/Flip-Engineering/baton/issues/750),
+  [#747](https://github.com/Flip-Engineering/baton/issues/747) and
+  [#717](https://github.com/Flip-Engineering/baton/issues/717).
+
 - [#759: Bind the browser fixture worker native identity before its completion exchange](https://github.com/Flip-Engineering/baton/issues/759).
   Run `38788773937` failed the browser worker completion check with a missing
   request, an open assignment and a provider failure. The controlled worker
