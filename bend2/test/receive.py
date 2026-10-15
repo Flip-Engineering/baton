@@ -1,4 +1,5 @@
 """Native inbox delivery with controlled harness processes and real coordinator state."""
+import errno
 import fcntl
 import json
 import os
@@ -89,16 +90,17 @@ def _session_lock_path(db, session):
     key = 'owner-%x-%x' % (info.st_dev, info.st_ino)
     return os.path.join(os.environ['XDG_RUNTIME_DIR'], 'baton2', key + '.lock-' + session.encode().hex())
 
-COMPLETION_EXCHANGE = r'''import sqlite3
+COMPLETION_EXCHANGE = r'''import pathlib,sqlite3
+session=os.environ.get('BATON_SESSION',model)
 def coordinator(*arguments):
     return json.loads(subprocess.check_output([config['exe'],config['db'],*arguments],text=True))
 def confirm_finished_fixture_task(body):
-    state=coordinator('session',model)
+    state=coordinator('session',session)
     completion=state['taskCompletion']
     if not completion['open']: return
     with sqlite3.connect(pathlib.Path(config['db']).as_uri()+'?mode=ro',uri=True) as database:
         assignment_receipt=database.execute('SELECT receipt FROM messages WHERE id=? AND recipient=?',
-                                            (completion['assignmentId'],model)).fetchone()
+                                            (completion['assignmentId'],session)).fetchone()
     assert assignment_receipt is not None,completion
     if assignment_receipt[0] is None: return
     assignment=coordinator('delivery',completion['assignmentId'])
@@ -110,20 +112,20 @@ def confirm_finished_fixture_task(body):
         # lifecycle cases below exercise public request delivery and wake.
         with sqlite3.connect(config['db']) as database:
             database.execute('INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)',
-                             (request,model,parent,'completion-request',body))
+                             (request,session,parent,'completion-request',body))
             reviewed=database.execute('SELECT sender,recipient,kind,body FROM messages WHERE id=?',
                                       (request,)).fetchone()
-            assert reviewed==(model,parent,'completion-request',body),reviewed
+            assert reviewed==(session,parent,'completion-request',body),reviewed
             database.execute('UPDATE messages SET receipt=? WHERE id=? AND recipient=?',
                              ('Fixture coordinator reviewed the requested result.',request,parent))
     reviewed=coordinator('delivery',request)
-    assert reviewed['sender']==model and reviewed['recipient']==parent,reviewed
+    assert reviewed['sender']==session and reviewed['recipient']==parent,reviewed
     coordinator('ack',request,parent,'Fixture coordinator reviewed the requested result.')
     confirmation=request+':confirmed'
-    coordinator('message',confirmation,parent,model,'completion-confirmed',request)
+    coordinator('message',confirmation,parent,session,'completion-confirmed',request)
     reviewed=coordinator('delivery',confirmation)
     assert reviewed['body']==request,reviewed
-    coordinator('ack',confirmation,model,'Fixture worker handled coordinator confirmation.')
+    coordinator('ack',confirmation,session,'Fixture worker handled coordinator confirmation.')
 '''
 
 FIXTURE = r'''import json,os,pathlib,re,socket,subprocess,sys,time
@@ -302,6 +304,7 @@ omp='--mode' in args
 claude='--input-format' in args
 muse='--prompt-file' in args
 model=args[args.index('--model')+1]
+session=os.environ.get('BATON_SESSION',model)
 native_args=args[:]
 while native_args[:1]==['-c'] and len(native_args)>1: native_args=native_args[2:]
 resume=(args[args.index('--session-id')+1] if '--session-id' in args else
@@ -382,13 +385,13 @@ def session_lock_path(db,session):
     return os.environ['XDG_RUNTIME_DIR']+'/baton2/'+key+'.lock-'+session.encode().hex()
 guard_descriptors=None
 if config.get('inspect_session_guard'):
-    guard=os.stat(session_lock_path(config['db'],model))
+    guard=os.stat(session_lock_path(config['db'],session))
     guard_descriptors=[]
     for descriptor in os.listdir('/dev/fd'):
         try: info=os.fstat(int(descriptor))
         except (ValueError,OSError): continue
         if (info.st_dev,info.st_ino)==(guard.st_dev,guard.st_ino): guard_descriptors.append(int(descriptor))
-reply({'pid':os.getpid(),'ppid':os.getppid(),'session':model,'native':native,'resume':resume,'args':args,'prompt':prompt,
+reply({'pid':os.getpid(),'ppid':os.getppid(),'session':session,'native':native,'resume':resume,'args':args,'prompt':prompt,
        'cwd':os.getcwd(),'codexHome':os.environ.get('CODEX_HOME',''),'apiKeyVariablesPresent':[key for key in ('OPENAI_API_KEY','CODEX_API_KEY') if key in os.environ],
        'claudeAuthVariablesPresent':[key for key in ('ANTHROPIC_API_KEY','ANTHROPIC_AUTH_TOKEN','CLAUDE_CODE_OAUTH_TOKEN') if key in os.environ],
        'sessionGuardDescriptors':guard_descriptors})
@@ -443,19 +446,19 @@ while True:
     if action.get('turn'):
         task=home/'self-turn-task'
         task.write_text('Synchronous task for the active session.')
-        command=[config['exe'],config['db'],'turn',model,action['turn'],sys.argv[0],model,'low',str(home),str(task),str(home/'self-turn.jsonl'),'']
+        command=[config['exe'],config['db'],'turn',session,action['turn'],sys.argv[0],model,'low',str(home),str(task),str(home/'self-turn.jsonl'),'']
         result=subprocess.run(command,capture_output=True,text=True)
         reply({'code':result.returncode,'stdout':result.stdout,'stderr':result.stderr})
         continue
     if action.get('message'):
         ident,recipient,body=action['message']
-        result=subprocess.run([config['exe'],config['db'],'message',ident,model,recipient,'guidance',body],capture_output=True,text=True)
+        result=subprocess.run([config['exe'],config['db'],'message',ident,session,recipient,'guidance',body],capture_output=True,text=True)
         reply({'code':result.returncode,'stdout':result.stdout,'stderr':result.stderr})
         continue
     if action.get('completion_request'):
         ident,body=action['completion_request']
-        parent=coordinator('session',model)['parent']
-        reply(coordinator('message',ident,model,parent,'completion-request',body))
+        parent=coordinator('session',session)['parent']
+        reply(coordinator('message',ident,session,parent,'completion-request',body))
         continue
     if action.get('promote'):
         result=subprocess.run([config['exe'],config['db'],'promote',*action['promote']],capture_output=True,text=True)
@@ -464,9 +467,9 @@ while True:
     if action.get('ack',True):
         handled_inputs=re.findall(r'^Message \([^\n]*\) from [^\n]* \[id: (.*?)\]:$',prompt,re.M)+steered_inputs
         if action.get('ack_inbox'):
-            handled_inputs += [message['id'] for message in coordinator('inbox',model)]
+            handled_inputs += [message['id'] for message in coordinator('inbox',session)]
         for ident in dict.fromkeys(handled_inputs):
-            subprocess.run([config['exe'],config['db'],'ack',ident,model,'native-reviewed'],check=True,stdout=subprocess.DEVNULL)
+            subprocess.run([config['exe'],config['db'],'ack',ident,session,'native-reviewed'],check=True,stdout=subprocess.DEVNULL)
     failure=action.get('fail',False)
     body=action.get('body','native review complete')
     if not failure and 'fail_status' not in action and action.get('complete_task',True):
@@ -737,6 +740,19 @@ class Receive(unittest.TestCase):
         stream, started = self.accept_or_child_exit(child, description, failure_stream)
         self.assertEqual(started['session'], session)
         return stream, started
+
+    def accept_delivery(self, admission, session):
+        stdout, stderr = self.finish(admission)
+        owner = f'{EXE.resolve()} --instance-owner {self.db.resolve()}'
+        while True:
+            if select.select([self.server], [], [], 0)[0]:
+                return self.accept(session)
+            producers = [process for process in self.owned_processes()
+                         if process['command'] != owner]
+            if not producers:
+                self.fail(f'{session} native did not connect after admission; '
+                          f'execution={self.execution(session)!r}; {stdout}{stderr}')
+            time.sleep(.01)
 
     def accept_or_child_exit(self, child, description, failure_stream=None, allow_exit=False):
         stream = failure_stream if failure_stream is not None else child.stdout
@@ -1026,7 +1042,7 @@ class Receive(unittest.TestCase):
                     self.assertIsNone(self.coord('continue-task', name, name + '-ready-review')['continuationId'])
                     confirmation = self.spawn('message', name + '-confirmed', 'root', name,
                                               'completion-confirmed', request)
-                    confirmed, delivered = self.accept_child(confirmation, name)
+                    confirmed, delivered = self.accept_delivery(confirmation, name)
                     self.assertIn('[id: ' + name + '-confirmed]', delivered['prompt'])
                     self.assertEqual(delivered['native'], started['native'])
                     self.action(confirmed, body='The coordinator confirmed this task.',
@@ -1065,13 +1081,14 @@ class Receive(unittest.TestCase):
 
         receipt = 'The coordinator retained an independent review receipt.\nThe source result remains unchanged.'
         delivery = self.spawn('message', 'ready-input-review', 'root', 'parent', 'report', receipt)
-        reviewed, incoming = self.accept_child(delivery, 'parent')
+        reviewed, incoming = self.accept_delivery(delivery, 'parent')
         self.assertIn('[id: ready-input-review]', incoming['prompt'])
         self.assertIn(receipt, incoming['prompt'])
         self.assertEqual(incoming['native'], started['native'])
         self.action(reviewed, body=text, complete_task=False)
         self.assertEqual(reviewed.readline(), b'')
         self.finish_without_start(delivery)
+        self.shutdown_idle_database_owner('The independent review did not settle.', reject_start=True)
         turns = self.coord('turns', 'parent')
         self.assertEqual([turn['reportBody'] for turn in turns], [text, text])
         self.assertNotEqual(turns[0]['id'], turns[1]['id'])
@@ -1087,12 +1104,15 @@ class Receive(unittest.TestCase):
 
         failure = self.spawn('message', 'ready-input-diagnostic', 'root', 'parent', 'report',
                              'Inspect the new provider outcome.')
-        failed, incoming = self.accept_child(failure, 'parent')
+        failed, incoming = self.accept_delivery(failure, 'parent')
         self.assertIn('[id: ready-input-diagnostic]', incoming['prompt'])
         cause = 'A distinct fixture provider failure while reading the new input.'
         self.action(failed, fail=True, fail_message=cause, complete_task=False)
         self.assertEqual(failed.readline(), b'')
-        self.finish_without_start(failure, ok=False)
+        self.finish_without_start(failure)
+        self.shutdown_idle_database_owner(
+            'Ready worker did not settle after its physical failure.', reject_start=True)
+        self.assertEqual(self.execution('parent')[:2], ('exited', 'exit 0'))
         turns = self.coord('turns', 'parent')
         self.assertEqual([turn['reportBody'] for turn in turns[:2]], [text, text])
         self.assertEqual(len(turns), 3)
@@ -1108,8 +1128,6 @@ class Receive(unittest.TestCase):
                          'Read the complete retained result.')
         self.assertEqual(self.coord('session', 'parent')['taskCompletion'], state)
         self.assertEqual(self.coord('inbox', 'parent'), [])
-        self.shutdown_idle_database_owner(
-            'Ready worker did not settle after its physical failure.', reject_start=True)
 
     def test_ack_failure_still_joins_queued_continuation(self):
         self.player()
@@ -1283,10 +1301,13 @@ class Receive(unittest.TestCase):
         request = self.native_question(stream, event)
         self.eventually(lambda: self.coord('delivery', request['id'])['receipt'], 'parent did not receive request')
         manifest = (pathlib.Path(request['attempt']) / 'manifest').read_bytes()
-        header = struct.Struct('=8s6Q2I')
+        self.assertIn(manifest[:8], (b'BATONRP1', b'BATONRP2'))
+        count = 8 if manifest[:8] == b'BATONRP2' else 6
+        header = struct.Struct(f'=8s{count}Q2I')
         magic, *fields = header.unpack_from(manifest)
-        self.assertEqual(magic, b'BATONRP1')
-        lengths = fields[:6]
+        self.assertEqual(magic, manifest[:8])
+        lengths = fields[:count]
+        self.assertEqual(len(manifest), header.size + sum(lengths))
         offset = header.size + sum(lengths[:5])
         address = pathlib.Path(os.fsdecode(manifest[offset:offset + lengths[5]]))
         unavailable = address.with_name('controlled-unavailable-socket')
@@ -1862,7 +1883,7 @@ class Receive(unittest.TestCase):
         self.assertFalse(self.session_guard_available('parent'))
         duplicate = subprocess.run(recovery, capture_output=True, text=True)
         self.assertEqual(duplicate.returncode, 16, duplicate.stderr)
-        self.assertIn('Resource busy', duplicate.stderr)
+        self.assertIn(os.strerror(errno.EBUSY), duplicate.stderr)
         observer.kill()
         observer.wait()
         self.coord('message', 'legacy-second', 'root', 'parent', 'report', 'Queued after legacy observer loss.')
@@ -1906,7 +1927,10 @@ class Receive(unittest.TestCase):
         wire = [json.loads(line) for line in (attempt / 'legacy-wire.jsonl').read_text().splitlines()]
         self.assertEqual([item['serial'] for item in wire if item['operation'] == 14], [0, 0])
         completion = [item for item in wire if item['operation'] in (6, 8, 9)]
-        self.assertEqual([item['operation'] for item in completion], [6, 8, 9])
+        operations = [item['operation'] for item in completion]
+        self.assertEqual(operations[-2:], [8, 9])
+        self.assertTrue(operations[:-2])
+        self.assertTrue(all(operation == 6 for operation in operations[:-2]))
         self.assertTrue(all(item['serial'] > 0 for item in completion))
         self.assertEqual(self.coord('inbox', 'parent'), [])
         self.shutdown_idle_database_owner('Legacy recovery and current continuation did not settle.')
@@ -2296,7 +2320,7 @@ class Receive(unittest.TestCase):
         self.action(current, progress=marker)
         self.assertEqual(json.loads(current.readline()), {'progress_written': marker})
         log = self.output_log('parent')
-        self.eventually(lambda: marker in log.read_text(), 'current native state was not observed')
+        self.eventually(lambda: log.exists() and marker in log.read_text(), 'current native state was not observed')
         original_report = self.coord('turns', 'parent')[0]
         self.coord('message', 'later-guidance', 'root', 'parent', 'guidance',
                    'Guidance belongs to the current native process.')
@@ -2652,7 +2676,17 @@ class Receive(unittest.TestCase):
                   'stream disconnected before completion: Incomplete response returned']
         for index, cause in enumerate(causes):
             ident = 'kept-' + str(index)
-            self.prepare_input(ident, 'root', 'Cause probe.\n', kind='task')
+            body = 'Cause probe.\n'
+            admitted = subprocess.run([str(EXE), str(self.db), 'message-batch-file', 'operator', '-'],
+                                      input=json.dumps([{'id': ident, 'recipient': 'root',
+                                                         'kind': 'task', 'body': body}]),
+                                      capture_output=True, text=True)
+            self.assertEqual(admitted.returncode, 0, admitted.stderr)
+            self.assertEqual(json.loads(admitted.stdout)[0]['admission']['status'], 'admitted')
+            delivery = self.coord('delivery', ident)
+            self.assertEqual((delivery['id'], delivery['sender'], delivery['recipient'],
+                              delivery['kind'], delivery['body'], delivery['receipt']),
+                             (ident, 'operator', 'root', 'task', body, None))
             observer = self.spawn(*self.receive_args('root'))
             control, started = self.accept_child(observer, 'root')
             self.action(control, fail=True, ack=False, fail_message=cause)
@@ -3074,6 +3108,8 @@ class Receive(unittest.TestCase):
         self.assert_no_start()
         self.action(control)
         self.finish(first)
+        self.shutdown_idle_database_owner('The active native did not settle after its refused self-message.',
+                                          reject_start=True)
         self.assertEqual(self.coord('inbox', 'parent'), [])
 
     def test_a_native_self_promotion_returns_and_continues_with_its_notice(self):
@@ -3130,9 +3166,10 @@ class Receive(unittest.TestCase):
         self.coord('attach', 'root', 'codex', 'native-root',
                    json.dumps([str(self.directory / 'missing receiver')]))
         self.player()
+        self.prepare_input('first', 'parent', 'first input')
         self.connect('parent')
-        first = self.spawn('message', 'first', 'root', 'parent', 'guidance', 'first input')
-        control, _ = self.accept('parent')
+        first = self.spawn(*self.receive_args('parent'))
+        control, _ = self.accept_child(first, 'parent')
         self.message('second', 'parent')
         self.action(control)
         second, started = self.accept('parent')
@@ -3145,9 +3182,10 @@ class Receive(unittest.TestCase):
     def test_queued_failure_joins_concurrent_ancestor_delivery(self):
         self.coord('attach', 'root', 'codex', 'native-root', self.endpoint('root'))
         self.player()
+        self.prepare_input('first', 'parent', 'first input')
         self.connect('parent')
-        first = self.spawn('message', 'first', 'root', 'parent', 'guidance', 'first input')
-        control, _ = self.accept('parent')
+        first = self.spawn(*self.receive_args('parent'))
+        control, _ = self.accept_child(first, 'parent')
         self.message('second', 'parent')
         self.action(control)
         started = {}
@@ -3223,8 +3261,13 @@ class Receive(unittest.TestCase):
         self.message('first', 'root')
         first = self.spawn(*self.receive_args('root'))
         control, started = self.accept('root')
-        inbox_command = next(line.strip() for line in started['prompt'].splitlines() if ' inbox ' in line)
-        self.assertEqual(shlex.split(inbox_command), [str(EXE.resolve()), str(self.db.resolve()), 'inbox', 'root'])
+        argv_prefix = 'Coordinator executable/database argv: '
+        coordinator_argv = next(line.removeprefix(argv_prefix)
+                                for line in started['prompt'].splitlines()
+                                if line.startswith(argv_prefix))
+        self.assertEqual(json.loads(coordinator_argv), [str(EXE.resolve()), str(self.db.resolve())])
+        self.assertIn('Read complete owed input with inbox.', started['prompt'])
+        self.assertIn('You are session root in a Baton Orchestra.', started['prompt'])
         self.action(control)
         self.finish(first)
         self.message('second', 'root')
@@ -3469,17 +3512,27 @@ class Receive(unittest.TestCase):
         turns. Every assertion reads coordinator state, native starts, or message
         bodies; no source SQL text is asserted."""
         self.coord('attach', 'routed', 'omp', 'saved-routed', '')
+        self.coord('role', 'routed', 'principal-conductor')
+        self.coord('start-setup', 'routed', 'omp', self.fixture, 'routed', 'low',
+                   self.directory, self.directory / 'routed.jsonl')
+        self.coord('connect', 'routed', 'saved-routed', '')
         self.assertIsNone(self.coord('player', 'routed')['parent'])
-        self.message('follow', 'routed', 'Follow-up work after the route change.')
+        self.coord('message', 'follow', 'operator', 'routed', 'guidance',
+                   'Follow-up work after the route change.')
         self.connect('routed')
+        sessions = pathlib.Path(str(self.db) + '.sessions')
+        sessions.mkdir()
+        saved_session = sessions / '2026-09-28_saved-routed.jsonl'
+        saved_session.write_text(json.dumps({'type': 'session', 'id': 'saved-routed'}) + '\n')
         (self.directory / 'state.db.routes').write_text(
             'muse muse-main ' + str(self.fixture) + '\n')
         task = self.directory / 'direct task'
         task.write_text('Direct retained work. caféλ🙂\n')
         child = self.spawn('turn', 'routed', 'routed-turn', self.fixture, 'routed', 'low',
                            self.directory, task, self.directory / 'routed.jsonl', 'saved-routed')
-        control, started = self.accept('routed')
-        self.assertEqual(started['resume'], 'saved-routed')
+        control, started = self.accept_child(child, 'routed')
+        self.assertEqual(started['resume'], str(saved_session))
+        self.assertEqual(started['native'], 'saved-routed')
         cause = ('429 Usage limit reached for 5 hour. Your limit will reset at 2026-10-06 07:12:52\n'
                  'Usage limit reached for 5 hour. Your limit will reset at 2026-10-06 07:12:52 (type=1308)')
         self.action(control, fail_status=429, fail_message=cause)
@@ -3531,7 +3584,7 @@ class Receive(unittest.TestCase):
         lineage = self.directory / ('state.db.route-' + 'routed'.encode().hex())
         refused = lineage.read_text().splitlines()[-1].split()
         self.assertTrue(refused[0].isdigit() and refused[1].isdigit())
-        self.assertEqual(refused[2:], ['omp'])
+        self.assertEqual(refused[2:], ['omp', 'routed'])
 
     def test_turn_and_receive_share_ownership_and_omp_session_file(self):
         self.player(harness='omp')
@@ -3583,7 +3636,14 @@ class Receive(unittest.TestCase):
         report.write_text('retained report\n' * 30000)
         recorded_parent = self.coord('player', 'parent')['parent']
         self.assertEqual(recorded_parent, 'root')
-        self.coord('message-file', 'saved-turn', 'parent', recorded_parent, 'report', report)
+        task = self.directory / 'saved task'
+        task.write_text('Complete the retained direct work.')
+        log = self.directory / 'saved log'
+        initial = self.spawn('turn', 'parent', 'saved-turn', self.fixture, 'parent', 'low',
+                             self.directory, task, log, '')
+        control, _ = self.accept_child(initial, 'parent')
+        self.action(control, body=report.read_text(), complete_task=False)
+        self.finish(initial)
         retained = self.coord('delivery', 'saved-turn')
         self.assertEqual(retained['id'], 'saved-turn')
         self.assertEqual(retained['sender'], 'parent')
@@ -3591,10 +3651,14 @@ class Receive(unittest.TestCase):
         self.assertEqual(retained['kind'], 'report')
         self.assertEqual(retained['body'], report.read_text())
         self.assertIsNone(retained['receipt'])
+        with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
+            request = database.execute(
+                "SELECT task,output FROM direct_turn_requests WHERE id='saved-turn' AND session='parent'"
+            ).fetchone()
+        self.assertEqual(request, (task.read_text(), str(log)))
         self.connect('parent')
         child = self.spawn('turn', 'parent', 'saved-turn', self.fixture, 'parent', 'low',
-                           self.directory, self.directory / 'unused task',
-                           self.directory / 'unused log', '')
+                           self.directory, task, log, '')
         # A retained report fills stdout while the replay still owns the session.
         self.assertEqual(child.stdout.read(1), '{')
         self.message('queued-during-replay', 'parent')
@@ -4147,6 +4211,7 @@ class Receive(unittest.TestCase):
         self.assertIn('[id: idle-input]', started['prompt'])
         self.action(control)
         self.finish(delivery)
+        self.shutdown_idle_database_owner('Idle input did not settle in its native turn.', reject_start=True)
         self.assert_no_start()
         self.assertEqual(len(self.coord('turns', 'parent')), 1)
 
@@ -4194,9 +4259,9 @@ class Receive(unittest.TestCase):
         self.assertEqual(len((self.directory / 'native-launches.jsonl').read_text().splitlines()), 1)
         self.assert_no_start()
 
-    def test_successful_turn_continues_original_unacknowledged_input(self):
-        """A successful turn continues its unacknowledged initial input in the
-        same native conversation. The recipient accepts it in the next turn.
+    def test_successful_turn_handles_complete_initial_input_without_explicit_ack(self):
+        """A successful native result settles the complete initial input read
+        by that turn and preserves its native conversation and custody.
         """
         for harness in ('codex', 'omp', 'muse', 'claude-code'):
             with self.subTest(harness=harness):
@@ -4207,37 +4272,45 @@ class Receive(unittest.TestCase):
                 first = self.spawn(*self.receive_args(session))
                 control, original = self.accept(session)
                 self.assertIn('[id: ' + ident + ']', original['prompt'])
+                self.assertIn('Review this input.', original['prompt'])
+                with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
+                    attempt, = database.execute('SELECT id FROM executions WHERE session=?',
+                                                (session,)).fetchone()
                 directory = pathlib.Path(self.execution(session)[2])
-                self.action(control, ack=False)
-                continued, resumed = self.accept_or_child_exit(
-                    first, 'successful turn closed with original input still pending')
-                self.assertEqual(resumed['session'], session)
-                self.assertEqual(resumed['native'], original['native'])
-                self.assertTrue(resumed['resume'])
-                self.assertIn('[id: ' + ident + ']', resumed['prompt'])
-                self.assertIsNone(self.coord('delivery', ident)['receipt'])
-                self.action(continued)
-                self.finish(first)
+                self.action(control, ack=False, complete_task=False)
+                self.finish_without_start(first)
                 self.assertEqual(self.coord('inbox', session), [])
-                self.assertEqual(self.coord('delivery', ident)['receipt'], 'native-reviewed')
-                self.assertEqual(len(self.coord('turns', session)), 2)
+                self.assertEqual(self.coord('delivery', ident)['receipt'], 'native-turn:' + attempt)
+                with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
+                    read = database.execute(
+                        'SELECT attempt,native,handled FROM message_reads WHERE message=? AND recipient=?',
+                        (ident, session)).fetchall()
+                self.assertEqual(read, [(attempt, original['native'], 'native-turn:' + attempt)])
+                turns = self.coord('turns', session)
+                self.assertEqual(len(turns), 1)
+                self.assertEqual(turns[0]['reportBody'], 'native review complete')
                 self.assertEqual(self.coord('player', session)['native'], original['native'])
                 self.assertTrue((directory / 'acknowledged').exists())
                 self.assert_no_start()
 
-    def test_failed_continuation_retains_original_input_for_retry(self):
+    def test_failed_continuation_retains_queued_guidance_for_retry(self):
         """Accepted steering remains owed through a provider failure, and the
         same actor handles it during an explicit retry.
         """
         self.player(harness='omp')
-        self.prepare_input('owed', 'parent')
+        self.prepare_input('original', 'parent')
         first = self.spawn(*self.receive_args('parent'))
         control, original = self.accept('parent')
-        self.action(control, ack=False)
+        self.assertIn('[id: original]', original['prompt'])
+        self.message('owed', 'parent', 'Guidance queued after the original prompt.')
+        self.assertNotIn('[id: owed]', original['prompt'])
+        self.action(control, ack=False, complete_task=False)
         continued, resumed = self.accept_or_child_exit(
-            first, 'successful turn did not continue original input')
+            first, 'successful turn did not continue the newly queued input')
         self.assertEqual(resumed['native'], original['native'])
         self.assertIn('[id: owed]', resumed['prompt'])
+        self.assertNotIn('[id: original]', resumed['prompt'])
+        self.assertIsNotNone(self.coord('delivery', 'original')['receipt'])
         self.action(continued, read_steer=True, check_steer_receipt=True)
         accepted = json.loads(continued.readline())['steer_received']
         self.assertEqual(accepted['id'], 'owed')
@@ -4306,6 +4379,7 @@ class Receive(unittest.TestCase):
         self.assertIn('[id: late]', next_turn['prompt'])
         self.action(control2)
         self.finish(delivery)
+        self.shutdown_idle_database_owner('The input behind the live owner did not settle.', reject_start=True)
         self.assert_no_start()
         self.assertEqual(len(self.coord('turns', 'parent')), 2)
         self.assertEqual(self.coord('inbox', 'parent'), [])
