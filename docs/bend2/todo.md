@@ -88,8 +88,11 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   runtime launch requests. Focused package run `38377` on the completed `2994dd9d8`
   runtime passed native handoff, resume and stop checks, then failed with `ENOENT`
   because the runtime attempt parent directory was absent. Fix `3358ceec7` creates
-  that parent through the existing directory API. Complete installed context
-  acceptance and final source qualification remain pending.
+  that parent through the existing directory API. Run `22720` on `3358ceec7`
+  then failed with `EINVAL`: the nested role directories did not meet the
+  physical owner's database-parent identity check. Fix `b3b17fe28` places both
+  role directories directly beside the database. Installed context acceptance
+  and final source qualification remain pending.
   The complete native run also suspended an observer while it retained a SQLite
   read lock, blocking the fixture's native handling write. Suspend the observer
   while holding a reader-free database boundary, then release that boundary
