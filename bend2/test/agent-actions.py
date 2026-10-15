@@ -205,10 +205,85 @@ class AgentActions(unittest.TestCase):
     def test_database_first_inspection_keeps_legacy_actor_and_database(self):
         env = {'BATON_DATABASE': str(self.directory / 'absent.db'),
                'BATON_SESSION': 'worker-b'}
-        for args in (('session', 'root'), ('player', 'worker-a'), ('players',)):
+        for args in (('session', 'root'), ('player', 'worker-a'), ('players',),
+                     ('status',)):
             with self.subTest(args=args):
                 self.assertEqual(self.invoke(self.db, *args, cwd=self.directory,
                                              environment=env), self.legacy(*args))
+
+        body = 'Complete positional dispatch body.\nKeep λ🙂 and --id literally.\n'
+        path = self.directory / 'positional dispatch.txt'
+        path.write_text(body)
+        self.invoke(self.db, 'dispatch-file', 'positional-dispatch', 'root', 'worker-a',
+                    'guidance', path, cwd=self.directory, environment=env)
+        delivered = self.legacy('delivery', 'positional-dispatch')
+        self.assertEqual((delivered['sender'], delivered['recipient'], delivered['kind'],
+                          delivered['body']), ('root', 'worker-a', 'guidance', body))
+
+    def test_database_prefixed_decisions_infer_actor_and_preserve_full_report(self):
+        worker_env = {'BATON_DATABASE': str(self.directory / 'absent.db'),
+                      'BATON_SESSION': 'worker-a'}
+        root_env = {**worker_env, 'BATON_SESSION': 'root'}
+        self.legacy('message', 'database-decision-task', 'root', 'worker-a',
+                    'task-assignment', 'Complete this bounded assignment.\nλ🙂')
+        first_receipt = 'The complete assignment was read and handled.'
+        self.legacy('ack', 'database-decision-task', 'worker-a', first_receipt)
+        report = 'Full completion report.\nPreserve λ🙂, --and, and the final newline.\n'
+        report_path = self.directory / 'complete report λ.txt'
+        report_path.write_text(report)
+        request = self.invoke(self.db, 'completion-request', '--file', report_path,
+                              cwd=self.directory, environment=worker_env)[0]
+        self.assertEqual(request['status'], 'admitted')
+        self.assertEqual((request['delivery']['sender'], request['delivery']['recipient'],
+                          request['delivery']['kind'], request['delivery']['body']),
+                         ('worker-a', 'root', 'completion-request', report))
+        self.legacy('ack', request['id'], 'root', 'First complete report review.')
+        repeated = self.invoke(self.db, 'completion-request', '--id', request['id'],
+                               '--file', report_path, cwd=self.directory,
+                               environment=worker_env)[0]
+        self.assertEqual(repeated['id'], request['id'])
+        self.assertEqual(self.legacy('delivery', request['id'])['receipt'],
+                         'First complete report review.')
+
+        before = self.stored_messages()
+        state = self.legacy('session', 'worker-a')['taskCompletion']
+        delivered = self.endpoint_output()
+        for actor, action, arguments in (
+                ('other-root', 'completion-confirmed', ('--to', 'worker-a')),
+                ('root', 'completion-request', ('--file', report_path))):
+            with self.subTest(actor=actor, action=action):
+                refused = self.invoke(self.db, action, *arguments, cwd=self.directory,
+                                      environment={**worker_env, 'BATON_SESSION': actor})[0]
+                self.assertEqual(refused['status'], 'refused')
+                self.assertTrue(refused['admission']['cause'])
+                self.assertEqual(self.stored_messages(), before)
+                self.assertEqual(self.endpoint_output(), delivered)
+                self.assertEqual(self.legacy('session', 'worker-a')['taskCompletion'], state)
+
+        confirmed = self.invoke(self.db, 'completion-confirmed', '--to', 'worker-a',
+                                cwd=self.directory, environment=root_env)[0]
+        self.assertEqual(confirmed['status'], 'admitted')
+        self.assertEqual((confirmed['delivery']['sender'], confirmed['delivery']['recipient'],
+                          confirmed['delivery']['kind'], confirmed['delivery']['body']),
+                         ('root', 'worker-a', 'completion-confirmed', request['id']))
+        completion = self.legacy('session', 'worker-a')['taskCompletion']
+        self.assertEqual(completion['requestId'], request['id'])
+        self.assertTrue(completion['confirmed'])
+        self.assertFalse(completion['open'])
+        self.assertEqual(self.legacy('delivery', 'database-decision-task')['receipt'],
+                         first_receipt)
+        self.assertEqual(self.legacy('delivery', request['id'])['receipt'],
+                         'First complete report review.')
+
+        guidance = 'Continue with the next bounded task.\nFull guidance λ🙂.\n'
+        guidance_path = self.directory / 'complete guidance.txt'
+        guidance_path.write_text(guidance)
+        guided = self.invoke(self.db, 'guide', '--to', 'worker-a', '--file', guidance_path,
+                             cwd=self.directory, environment=root_env)[0]
+        self.assertEqual(guided['status'], 'admitted')
+        self.assertEqual((guided['delivery']['sender'], guided['delivery']['recipient'],
+                          guided['delivery']['kind'], guided['delivery']['body']),
+                         ('root', 'worker-a', 'guidance', guidance))
 
     def test_new_inspection_words_accept_ids_named_after_old_actions(self):
         self.legacy('project', self.repo)
