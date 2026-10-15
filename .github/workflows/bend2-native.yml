@@ -207,6 +207,9 @@ jobs:
           (run / 'generated/source-manifest.json').write_text(json.dumps(source, indent=2) + '\n')
           c = root / '.scratch/bend2/baton2.c'
           binary = root / '.scratch/bend2/baton2'
+          linux_binary = run / 'generated/baton2-linux-x64'
+          linux_binary.write_bytes(binary.read_bytes())
+          linux_binary.chmod(0o755)
           (run / 'generated/baton2.c').write_bytes(c.read_bytes())
           main_c_reuse = json.loads((run / 'generated/main-c-reuse.json').read_text())
           subprocess.run([sys.executable, str(root / '.github/scripts/reuse-native-main.py'), 'verify-transfer',
@@ -221,6 +224,7 @@ jobs:
                      'compiler_selection_sha256': hashlib.sha256((run / 'generated/compiler-selection.json').read_bytes()).hexdigest(),
                      'generated_c_sha256': hashlib.sha256(c.read_bytes()).hexdigest(), 'generated_c_size': c.stat().st_size,
                      'linux_binary_sha256': hashlib.sha256(binary.read_bytes()).hexdigest(),
+                     'linux_binary_path': 'baton2-linux-x64', 'linux_binary_size': linux_binary.stat().st_size,
                      'source_manifest_sha256': hashlib.sha256((run / 'generated/source-manifest.json').read_bytes()).hexdigest(),
                      'checks': records, 'selected_results': selected_results, 'main_c_reuse': main_c_reuse}
           (run / 'generated/handoff-manifest.json').write_text(json.dumps(handoff, indent=2) + '\n')
@@ -464,6 +468,11 @@ jobs:
           c = generated / 'baton2.c'
           assert c.stat().st_size == handoff['generated_c_size']
           assert hashlib.sha256(c.read_bytes()).hexdigest() == handoff['generated_c_sha256']
+          assert handoff['linux_binary_path'] == 'baton2-linux-x64'
+          linux_binary = generated / handoff['linux_binary_path']
+          assert linux_binary.is_file() and not linux_binary.is_symlink()
+          assert linux_binary.stat().st_size == handoff['linux_binary_size']
+          assert hashlib.sha256(linux_binary.read_bytes()).hexdigest() == handoff['linux_binary_sha256']
           main_c_reuse = json.loads((generated / 'main-c-reuse.json').read_text())
           assert main_c_reuse == handoff['main_c_reuse']
           subprocess.run(['python3', str(root / '.github/scripts/reuse-native-main.py'), 'verify-transfer',

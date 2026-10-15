@@ -4,6 +4,18 @@ The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3
 retain findings, ownership and acceptance requirements. This page links current
 Baton follow-up work for contributors. Every open issue has a link on this page.
 
+- [#764: Keep legacy keeper notifications behind observer readiness](https://github.com/Flip-Engineering/baton/issues/764).
+  Run `38800866491` failed legacy adoption before `admitted` with a retain
+  protocol error. Its preserved attempt contains the native identity and stdout.
+  The legacy keeper enables asynchronous spool notifications before its ready
+  acknowledgement; the exact failed wire frame was not retained. Reset observer
+  readiness before `BR_HELLO`, preserve native startup and custody, and qualify
+  reply ordering plus the complete SharedInstance and release workflow for
+  [#717](https://github.com/Flip-Engineering/baton/issues/717),
+  [#747](https://github.com/Flip-Engineering/baton/issues/747),
+  [#762](https://github.com/Flip-Engineering/baton/issues/762) and
+  [#759](https://github.com/Flip-Engineering/baton/issues/759).
+
 - [#763: Await native execution identity in the Orchestra projection fixture](https://github.com/Flip-Engineering/baton/issues/763).
   Run `38794594877` retained a failed worker with an open assignment and no
   completion request. Its Python native performs owned reads immediately after

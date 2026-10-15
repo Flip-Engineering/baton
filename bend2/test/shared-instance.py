@@ -851,6 +851,25 @@ class SharedInstance(unittest.TestCase):
         print('evidence subscription ready', ready, 'resuming', resuming,
               'delayed publication', unchanged, 'replaced', replaced)
 
+    def test_legacy_keeper_replies_ready_before_initial_output_and_exit(self):
+        probe = self.home / 'legacy-ready'
+        compiled = subprocess.run([
+            os.environ.get('CC', 'clang'), '-O1', '-pthread',
+            '-DBATON2_PROCESS_SOURCE=' + json.dumps(str(ROOT / '.scratch/bend2/process-test.c')),
+            str(ROOT / 'bend2/test/legacy-ready.c'),
+            '-lsqlite3', '-lm', '-o', str(probe),
+        ], capture_output=True, text=True)
+        self.assertEqual(compiled.returncode, 0, compiled.stderr)
+        attempt = self.home / 'legacy-ready-attempt'
+        result = subprocess.run([str(probe), str(attempt)], capture_output=True, text=True)
+        print('evidence legacy-ready', result.stdout.strip())
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        observed = json.loads(result.stdout)
+        self.assertEqual((observed['firstFrame'], observed['firstSerial']), (4, 1))
+        self.assertEqual((observed['nativeExit'], observed['keeperExit']), (0, 0))
+        self.assertTrue(observed['released'])
+        self.assertTrue(observed['acknowledged'])
+
     def test_owned_adoption_controls_the_surviving_legacy_keeper(self):
         directory = pathlib.Path(f'{self.db}.attempt-legacy')
         original = self.spawn('legacy-hold', self.db, directory, self.home,

@@ -27,8 +27,12 @@ COMPILER_ARCHIVES = {
 }
 ENTRY = 'bend2/src/coordinator/main.bend'
 HOST_SOURCE = 'bend2/src/host/process-spawn.c'
-HOST_ORIGINAL_SHA256 = '92f8b1731faed7a08e94158a4dffd4cdeee53d380444ae963c8875378660619c'
-HOST_CURRENT_SHA256 = 'c64fd0bc908fc5818653ac61883532b0c77cfd02e391ecd12fac8bc1287adf88'
+HOST_SUBSTITUTIONS = {
+    ('92f8b1731faed7a08e94158a4dffd4cdeee53d380444ae963c8875378660619c',
+     'c64fd0bc908fc5818653ac61883532b0c77cfd02e391ecd12fac8bc1287adf88'),
+    ('467d693493be3e3700598700fa3789f3650b1f7e624331c5ad555c8be7323d99',
+     'e6bb44937a9828c04e4b3c9683119e058c4b9d1984783bc742f5392d5199642b'),
+}
 
 
 def require(condition, message):
@@ -135,22 +139,21 @@ def canonical_host_change(original, current):
     changed = [name for name in old if old[name] != new[name]]
     return (changed == [HOST_SOURCE]
             and old[HOST_SOURCE]['mode'] == new[HOST_SOURCE]['mode'] == '100644'
-            and old[HOST_SOURCE]['sha256'] == HOST_ORIGINAL_SHA256
-            and new[HOST_SOURCE]['sha256'] == HOST_CURRENT_SHA256)
+            and (old[HOST_SOURCE]['sha256'], new[HOST_SOURCE]['sha256']) in HOST_SUBSTITUTIONS)
 
 
 def substitute_host(original_c, original_host, current_host):
-    require(hashlib.sha256(original_host).hexdigest() == HOST_ORIGINAL_SHA256,
-            'Original foreign source differs from the canonical publication fix.')
-    require(hashlib.sha256(current_host).hexdigest() == HOST_CURRENT_SHA256,
-            'Current foreign source differs from the canonical publication fix.')
+    original_sha = hashlib.sha256(original_host).hexdigest()
+    current_sha = hashlib.sha256(current_host).hexdigest()
+    require((original_sha, current_sha) in HOST_SUBSTITUTIONS,
+            'Foreign source hashes require an approved substitution pair.')
     require(original_c.count(original_host) == 1, 'Main C must contain the complete original foreign source once.')
     prefix, suffix = original_c.split(original_host)
     derived = prefix + current_host + suffix
     require(derived.count(current_host) == 1, 'Derived Main C must contain the complete current foreign source once.')
     return derived, {
         'schema': 'baton2-canonical-foreign-substitution-v1', 'path': HOST_SOURCE,
-        'original_host_sha256': HOST_ORIGINAL_SHA256, 'current_host_sha256': HOST_CURRENT_SHA256,
+        'original_host_sha256': original_sha, 'current_host_sha256': current_sha,
         'offset': len(prefix),
         'prefix_size_bytes': len(prefix), 'prefix_sha256': hashlib.sha256(prefix).hexdigest(),
         'suffix_size_bytes': len(suffix), 'suffix_sha256': hashlib.sha256(suffix).hexdigest(),
@@ -180,9 +183,9 @@ def verify_production_transition(origin, proof, current):
             'Original Main C differs from its completed build artifact.')
     require((origin / 'baton2.c').read_bytes() == derived, 'Derived Main C differs from the canonical substitution.')
     source = json.loads((origin / 'source-files.json').read_text())
-    require(next(row for row in source if row['path'] == HOST_SOURCE)['sha256'] == HOST_ORIGINAL_SHA256,
+    require(next(row for row in source if row['path'] == HOST_SOURCE)['sha256'] == actual['original_host_sha256'],
             'Original source does not bind the canonical foreign input.')
-    require(next(row for row in recorded if row['path'] == HOST_SOURCE)['sha256'] == HOST_CURRENT_SHA256,
+    require(next(row for row in recorded if row['path'] == HOST_SOURCE)['sha256'] == actual['current_host_sha256'],
             'Selected source does not bind the current foreign input.')
 
 

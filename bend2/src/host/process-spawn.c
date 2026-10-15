@@ -2498,6 +2498,7 @@ static int br_keeper(const char *directory,int lock) {
   fcntl(keeper.client,F_SETFD,FD_CLOEXEC);
   if((error=br_nonblock(keeper.client)))goto done;
   if((error=br_keeper_start(&keeper,directory,lock)))goto done;
+  keeper.ready=0;
   state=(BrState){keeper.native_pid,0,0,0,keeper.input_closed};
   if((error=br_send(&keeper,(BrFrame){.op=BR_HELLO,.length=sizeof(state),.value=2},&state)))goto done;
   owner.attempts=&keeper;
