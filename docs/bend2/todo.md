@@ -4,6 +4,17 @@ The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3
 retain findings, ownership and acceptance requirements. This page links current
 Baton follow-up work for contributors. Every open issue has a link on this page.
 
+- [#734: Give the failed-session fixture ownership of its serve task](https://github.com/Flip-Engineering/baton/issues/734).
+  Target workflow `38658463280` retains the actual provider failure through a
+  detached dispatcher. The fixture then waits for the serve to emit that completed
+  failure. Preserve complete source, database, spool and process evidence and
+  configure the fixture so the serve owns the failure it asserts. Retain all
+  provider, concurrent native, late subscription and terminal checks. Qualify the
+  same contracts on target and candidate with
+  [#717](https://github.com/Flip-Engineering/baton/issues/717),
+  [#727](https://github.com/Flip-Engineering/baton/issues/727) and
+  [#675](https://github.com/Flip-Engineering/baton/issues/675).
+
 - [#733: Use authorized native credentials without interactive access dialogs](https://github.com/Flip-Engineering/baton/issues/733).
   Configure supported native credential stores for unattended Baton dispatch,
   resumption and contributor reports. The homelab Muse credential setup completed

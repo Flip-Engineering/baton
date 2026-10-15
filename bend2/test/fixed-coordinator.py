@@ -9,6 +9,7 @@ These legs gate that contract through ordinary CLI verbs against the elected
 owner; they do not depend on Store publication. A failed leg retains its
 fixture database, serve and owner outputs, and source pins under /tmp.
 """
+import fcntl
 import hashlib
 import json
 import os
@@ -247,6 +248,26 @@ class FixedCoordinator(unittest.TestCase):
 
     def dispatch(self, ident, recipient, body, kind='task', sender='root'):
         return self.coord('message', ident, sender, recipient, kind, body)
+
+    def session_lock_path(self, session):
+        info = os.stat(self.db)
+        key = f'owner-{info.st_dev:x}-{info.st_ino:x}'
+        runtime = os.environ.get('XDG_RUNTIME_DIR')
+        home = os.environ.get('HOME')
+        for candidate in [pathlib.Path(runtime) / 'baton2' if runtime else None,
+                          pathlib.Path(f'/tmp/baton2-{os.geteuid()}'),
+                          pathlib.Path(home) / '.local/state/baton2' if home else None]:
+            if candidate is None:
+                continue
+            try:
+                candidate.mkdir(parents=True, exist_ok=True)
+                if (candidate.is_dir() and not candidate.is_symlink()
+                        and candidate.stat().st_uid == os.geteuid()):
+                    candidate.chmod(0o700)
+                    return candidate / (key + '.lock-' + session.encode().hex())
+            except OSError:
+                continue
+        self.fail('no per-user IPC directory for the physical session guard')
 
     def queue(self, session, *actions):
         with self._lock:
@@ -1149,10 +1170,26 @@ finally:
         self.queue('held', {'body': 'Held work completed after another session failed',
                             'hold_exit': True})
         self.queue('late', {'body': 'Later work completed through the existing subscription'})
-        self.dispatch('failed-task', 'bad', 'Accepted work whose provider fails.')
-        self.dispatch('held-task', 'held', 'Keep this native work active.')
         for session in ('bad', 'held', 'late'):
             self.receiver(session)
+        # Admission under the physical session guards leaves both tasks for
+        # the serve's initial snapshot and its TaskDone result channel.
+        with self.session_lock_path('bad').open('a') as bad_guard, \
+                self.session_lock_path('held').open('a') as held_guard:
+            for guard in (bad_guard, held_guard):
+                fcntl.flock(guard, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self.dispatch('failed-task', 'bad', 'Accepted work whose provider fails.')
+            self.dispatch('held-task', 'held', 'Keep this native work active.')
+            self.assertEqual(self.query(
+                "SELECT id,receipt FROM messages WHERE id IN ('failed-task','held-task') ORDER BY id"),
+                [('failed-task', None), ('held-task', None)])
+            self.assertEqual(self.query(
+                "SELECT count(*) FROM executions WHERE session IN ('bad','held')"), [(0,)])
+            for session, ident in (('bad', 'failed-task'), ('held', 'held-task')):
+                self.assertEqual(self.connections(session), [])
+                self.assertFalse(pathlib.Path(
+                    str(self.db) + '.dispatch-' + ident.encode().hex() + '.stdout').exists(),
+                    'guarded admission launched a detached dispatcher')
         print('failed-session continuation: starting the owner', flush=True)
         self.start_owner()
         print('failed-session continuation: waiting for serve readiness', flush=True)
