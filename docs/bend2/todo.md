@@ -4,6 +4,19 @@ The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3
 retain findings, ownership and acceptance requirements. This page links current
 Baton follow-up work for contributors. Every open issue has a link on this page.
 
+- [#743: Judge configure receiver registration with an actual route change](https://github.com/Flip-Engineering/baton/issues/743).
+  Target workflow `38687547257` completed a same-route configuration with an
+  empty receiver, then waited for a native connection that had no producer.
+  Change the fixture model when registering through configure, and inspect the
+  completed receiver result before accepting its connection. Preserve the
+  existing pending text, native identity, workspace, receipt and turn assertions.
+  Run the corrected focused contract remotely against the target binary and
+  complete target and candidate qualification. Coordinate with
+  [#717](https://github.com/Flip-Engineering/baton/issues/717),
+  [#727](https://github.com/Flip-Engineering/baton/issues/727),
+  [#739](https://github.com/Flip-Engineering/baton/issues/739) and
+  [#740](https://github.com/Flip-Engineering/baton/issues/740).
+
 - [#742: Start contextual command subprocesses in the current directory](https://github.com/Flip-Engineering/baton/issues/742).
   Actual Muse and GLM review resumptions on `064def1e` returned an empty-directory
   subprocess failure before native startup. Use the current directory for

@@ -1326,8 +1326,16 @@ else:
                 if registration == 'receiver':
                     self.receiver(session)
                 else:
-                    self.call('configure', session, 'muse', session, 'low', self.fixture, log,
-                              'muse', session, 'low')
+                    model = session + '-configured'
+                    configuration = self.directory / 'fixture.json'
+                    configured = json.loads(configuration.read_text())
+                    configured.setdefault('sessions', {})[model] = session
+                    configuration.write_text(json.dumps(configured))
+                    saved = self.call('configure', session, 'muse', model, 'low', self.fixture, log,
+                                      'muse', session, 'low')
+                    self.assertEqual(saved['model'], model)
+                registered = self.call('session', session)
+                self.assertTrue(registered['endpointArgv'], json.dumps(registered))
                 stream, start = self.accept(session)
                 self.assertEqual(start['resume'], native)
                 self.assertEqual(start['native'], native)
