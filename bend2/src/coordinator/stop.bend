@@ -147,7 +147,7 @@ def reconcile_request(+db: String, +session: String) -> IO(Unit):
     reconcile(db,session,Tx.trim_nl(attempt),Tx.trim_nl(directory))
 
 def request(+db: String, +session: String, +id: String, +reason: String, force: Bool) -> IO(Result<&1,&1,U32 & String,String>):
-  DB.Sql.query(db,Bool.pick(String,force,force_sql(session,id),request_sql(session,id,reason)))
+  Store.transact_sql(db,Bool.pick(String,force,force_sql(session,id),request_sql(session,id,reason)))
 
 def run(+db: String, +session: String, +id: String, +reason: String, force: Bool) -> IO(Unit):
   do IO<Unit>:
