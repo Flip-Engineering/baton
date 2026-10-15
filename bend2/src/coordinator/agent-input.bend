@@ -41,19 +41,20 @@ def environment(name: String) -> IO(String):
     value : Result<&1,&1,U32 & String,String> <- IO.get_env(name)
     environment_result(value)
 
-def context_if(+db: String, selected_db: String, same: Bool) -> IO(String):
+def context_if(+db: String, selected_db: String, directory: String, same: Bool) -> IO(String):
   match same:
     case False{}: IO.pure(String,"")
     case True{}: do IO<String>:
       absolute_db : String <- IO.try(String,Lock.SessionLock.canonical(db))
       absolute_selected : String <- IO.try(String,Lock.SessionLock.canonical(selected_db))
-      Bool.pick(IO(String),String.eq(absolute_db,absolute_selected),environment("BATON_ATTEMPT_DIRECTORY"),IO.pure(String,""))
+      IO.pure(String,Bool.pick(String,String.eq(absolute_db,absolute_selected),directory,""))
 
 def context(+db: String, +session: String) -> IO(String):
   do IO<String>:
+    +directory : String <- environment("BATON_ATTEMPT_DIRECTORY")
     selected : String <- environment("BATON_SESSION")
     +selected_db : String <- environment("BATON_DATABASE")
-    context_if(db,selected_db,Bool.and(String.eq(selected,session),Bool.not(String.is_empty(selected_db))))
+    context_if(db,selected_db,directory,Bool.and(Bool.not(String.is_empty(directory)),Bool.and(String.eq(selected,session),Bool.not(String.is_empty(selected_db)))))
 
 def handling_fields(fields: List<String>, +db: String, +session: String, +directory: String) -> IO(HandlingScope):
   match fields:

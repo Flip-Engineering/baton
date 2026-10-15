@@ -72,6 +72,10 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   Root wake diagnostics recorded integral `inputSeq` values as JSON real numbers.
   Recognize those stored cursors so coalescing and provider failure replay retain
   their original input and complete cause.
+  An administrative explicit database override failed while canonicalizing an
+  absent inherited database despite having no admitted attempt directory. Read
+  the attempt context first and retain canonical database equality for native
+  calls with a nonempty inherited attempt directory.
   Preserve complete bodies, native lineage, first receipts, reports, original
   failure evidence and every semantic assertion. Validate the corrected callers
   remotely without duplicate tasks. Coordinate with
