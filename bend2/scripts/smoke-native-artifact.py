@@ -297,7 +297,7 @@ def main():
         native.write_text('#!/bin/sh\nexec ' + shlex.join([sys.executable, str(helper), '--fixture-native', str(config_path)]) + ' "$@"\n')
         native.chmod(0o755)
         endpoint = json.dumps([sys.executable, str(helper), '--fixture-parent', str(config_path)])
-        cli('attach', 'attach', 'root', 'fixture', 'artifact-root', endpoint)
+        cli('attach', 'attach', 'root', 'claude-code', 'artifact-root', endpoint)
         cli('role', 'role', 'root', 'principal-conductor')
         player = cli('recruit', 'recruit', 'worker', 'root', 'omp', 'fixture/artifact', 'low', repo,
                      'artifact-worker', 'worker tree', base)
@@ -338,7 +338,7 @@ def main():
         require(controls['agent-inbox'] == [], 'The new attached root has unexpected input')
         require(len(controls['agent-read']) == 1
                 and controls['agent-read'][0]['id'] == 'absent-artifact-message'
-                and controls['agent-read'][0]['status'] == 'missing',
+                and controls['agent-read'][0]['status'] == 'absent',
                 'Packaged contextual read did not retain the missing item outcome')
         require(controls['player']['role'] == 'player' and controls['player']['kind'] == 'player',
                 'The staged Player inspection lost its runtime responsibility')

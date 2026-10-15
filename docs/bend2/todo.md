@@ -4,6 +4,19 @@ The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3
 retain findings, ownership and acceptance requirements. This page links current
 Baton follow-up work for contributors. Every open issue has a link on this page.
 
+- [#767: Align extracted archive smoke setup with native attachment and read contracts](https://github.com/Flip-Engineering/baton/issues/767).
+  Run `38810208455` passed all 55 candidate suites and all 15 target comparisons.
+  Its Darwin archive built, then smoke MCP initialization refused the generic
+  fixture harness. Register the controlled parent through public attach with
+  `claude-code` and its existing fixture conversation. Expect the current `absent`
+  read status for the exact missing message. Preserve native attachment authority,
+  complete inputs, tool responses, completion review, receipts, landing, process
+  closure and public view checks. Run the full smoke remotely and qualify the
+  successor whole workflow for [#717](https://github.com/Flip-Engineering/baton/issues/717)
+  and [#747](https://github.com/Flip-Engineering/baton/issues/747), retaining
+  [#715](https://github.com/Flip-Engineering/baton/issues/715) and
+  [#723](https://github.com/Flip-Engineering/baton/issues/723) scope.
+
 - [#766: Apply the browser fixture busy policy to native readiness reads](https://github.com/Flip-Engineering/baton/issues/766).
   Run `38808301621` failed when the worker-native readonly readiness query
   raised SQLite error 5 before its first owned input delivery; the other 54
