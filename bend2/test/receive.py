@@ -3757,7 +3757,7 @@ class Receive(unittest.TestCase):
 
     def execution(self, session):
         """The session's recorded attempt row: phase, status and directory."""
-        with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
+        with sqlite3.connect(f'{self.db.as_uri()}?mode=rw', uri=True) as database:
             row = database.execute('SELECT phase, status, directory FROM executions'
                                    ' WHERE session=?', (session,)).fetchone()
         return row

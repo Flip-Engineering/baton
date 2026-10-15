@@ -4,6 +4,19 @@ The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3
 retain findings, ownership and acceptance requirements. This page links current
 Baton follow-up work for contributors. Every open issue has a link on this page.
 
+- [#765: Allow Receive fixture execution reads to recover interrupted SQLite writes](https://github.com/Flip-Engineering/baton/issues/765).
+  Run `38804561830` passed 54 suites and failed the racing-wake Receive method
+  when a SELECT through `mode=ro` reported a readonly database after intentional
+  observer kills. Open the existing fixture database with `mode=rw` so SQLite
+  can perform required recovery. The failure records do not establish the exact
+  interrupted journal. Preserve the query, native liveness, single-launch,
+  wake-claim and complete-input assertions. Qualify the affected post-kill
+  methods and the existing whole workflow for
+  [#717](https://github.com/Flip-Engineering/baton/issues/717) and
+  [#747](https://github.com/Flip-Engineering/baton/issues/747); preserve the
+  separate [#755](https://github.com/Flip-Engineering/baton/issues/755) and
+  [#764](https://github.com/Flip-Engineering/baton/issues/764) evidence.
+
 - [#764: Keep legacy keeper notifications behind observer readiness](https://github.com/Flip-Engineering/baton/issues/764).
   Run `38800866491` failed legacy adoption before `admitted` with a retain
   protocol error. Its preserved attempt contains the native identity and stdout.
