@@ -4,13 +4,15 @@ The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3
 retain findings, ownership and acceptance requirements. This page links current
 Baton follow-up work for contributors. Every open issue has a link on this page.
 
-- [#735: Judge the endpointless fixture when its follower producer exits](https://github.com/Flip-Engineering/baton/issues/735).
+- [#735: Judge managed attachment fixtures when their follower producer exits](https://github.com/Flip-Engineering/baton/issues/735).
   Target workflow `38660325053` records the endpointless short admission and
   a following Baton producer exit with signal 11 before its App follower connects.
   The managed follower passed NUL-separated arguments to a host operation that
   expects length-prefixed arguments. Use the existing length-prefixed encoder.
-  The fixture's first connection wait observes that terminal failure and
-  returns a complete verdict. Preserve full source, database, output and process
+  The endpointless and recorded-endpoint fixtures observe that terminal failure
+  during their first connection waits and return complete verdicts. Workflow
+  `38662128510` reached the recorded-endpoint setup failure after judging the
+  endpointless case. Preserve full source, database, output and process
   evidence and all admission, settlement, guidance, receipt and stop assertions.
   Qualify target and candidate with
   [#717](https://github.com/Flip-Engineering/baton/issues/717),
