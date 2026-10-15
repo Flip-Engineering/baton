@@ -1672,6 +1672,30 @@ class Receive(unittest.TestCase):
                 finally:
                     fixture.doCleanups()
 
+    def test_fourteen_argument_inbox_inspection_preserves_filters_and_receipt(self):
+        self.player()
+        self.prepare_input('filtered-earlier', 'parent', 'Earlier guidance.')
+        self.prepare_input('filtered-other-kind', 'parent', 'A separate report.', kind='report')
+        body = '\ufeffComplete selected guidance.\nλ🙂\nFinal spaces  \n'
+        self.prepare_input('filtered-selected', 'parent', body)
+        self.prepare_input('filtered-later', 'parent', 'Later guidance.')
+        receipt = 'Fixture selected guidance already handled.'
+        self.coord('ack', 'filtered-selected', 'parent', receipt)
+        with sqlite3.connect(self.db) as database:
+            earlier = database.execute("SELECT seq FROM messages WHERE id='filtered-earlier'").fetchone()[0]
+            selected = database.execute("SELECT seq FROM messages WHERE id='filtered-selected'").fetchone()[0]
+        result = self.coord('inbox', 'parent', '--index', '--sender', 'root', '--kind', 'guidance',
+                            '--state', 'all', '--after-seq', earlier, '--through-seq', selected)
+        self.assertEqual([{field: row[field] for field in
+                           ('seq', 'id', 'sender', 'recipient', 'kind', 'receipt')} for row in result],
+                         [{'seq': selected, 'id': 'filtered-selected', 'sender': 'root',
+                           'recipient': 'parent', 'kind': 'guidance', 'receipt': receipt}])
+        self.assertNotIn('body', result[0])
+        delivery = self.coord('delivery', 'filtered-selected')
+        self.assertEqual((delivery['body'], delivery['receipt']), (body, receipt))
+        self.assertEqual(self.coord('turns', 'parent'), [])
+        self.assert_no_start()
+
     def test_legacy_keeper_recovers_fourteen_arguments_and_closes_terminal_input(self):
         self.coord('connect', 'root', 'native-root', json.dumps([str(self.fixture), 'parent_endpoint']))
         self.player(harness='omp')

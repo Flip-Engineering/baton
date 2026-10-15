@@ -53,7 +53,11 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   Candidate `3b37ad3f` completes term checking and exits during C generation
   in workflow `38649718256`. Preserve its complete output, pinned compiler,
   source and host evidence. Diagnose the demonstrated compiler failure while
-  preserving all command and task behavior. C output, candidate tests, package
+  preserving all command and task behavior. The diagnostic completed two C
+  emission passes and retained repeated CLI emission costs. A source candidate
+  moves the fourteen-argument recovery flag comparison into a Boolean helper
+  and preserves its complete ordinary-command fallback. Its compiler cost and
+  allocator failure effect require remote qualification. C output, candidate tests, package
   verification and installed adoption remain incomplete for
   [#717](https://github.com/Flip-Engineering/baton/issues/717). Coordinate with
   [#722](https://github.com/Flip-Engineering/baton/issues/722),
@@ -69,7 +73,8 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   recovery, context, native route, report, steering, correction and checked-landing
   assertions remain in scope. Explicit caller-file import fixtures remain.
   The standalone root-day and recovery drivers stage the complete executable
-  and helper prefix and retain its provenance.
+  and helper prefix and retain its provenance. The Kimi driver also accepts a
+  supplied coordinator through the shared staging operation.
   [#732](https://github.com/Flip-Engineering/baton/issues/732) records the connected
   Claude handling prerequisite. Remote real-route acceptance remains open
   for [#717](https://github.com/Flip-Engineering/baton/issues/717).

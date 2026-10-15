@@ -8,6 +8,8 @@ adds an underlying executable pin when executable is a launcher script.
 optional file_checks with path, contains and absent lists. Selected checks run
 through bend2/scripts/check-unittest.sh in each checked tree. This command starts
 real native sessions.
+--coordinator selects an existing executable; the default builds the selected
+source. Both modes stage the selected source's complete native helper assets.
 Final Player and target changes must stay within the run's assigned files.
 Player assigned files must match their latest landing and the final target.
 """
@@ -785,6 +787,8 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--source', type=Path, default=SOURCE)
     parser.add_argument('--revision', default='HEAD')
+    parser.add_argument('--coordinator', type=Path,
+                        help='existing native executable; default builds the selected source')
     args = parser.parse_args()
     tasks = json.loads(args.tasks.read_text())
     assert isinstance(tasks['guidance'], str) and tasks['guidance'].strip()
@@ -827,7 +831,7 @@ def main():
     spec = importlib.util.spec_from_file_location('native_acceptance', helper_path)
     helpers = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(helpers)
-    binary, build = helpers.prepare_coordinator(source, repo, out, None)
+    binary, build = helpers.prepare_coordinator(source, repo, out, args.coordinator)
     shutil.copy2(__file__, out / 'acceptance.py')
     run = {'source': base, 'source_directory': str(source), 'started_unix': time.time(),
            'routes': routes, 'tasks': tasks, 'coordinator_build': build,

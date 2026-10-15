@@ -383,6 +383,16 @@ def recover_direct_cli(+flag: String, +db: String, +player: String, +id: String,
     Turn.recover(db, player, id, cmd, model, effort, cwd, log, harness, directory, native),
     normal_cli([flag, db, player, id, cmd, model, effort, cwd, log, harness, directory, native]))
 
+def recover_receive_input_cli(internal: Bool, flag: String, db: String, session: String,
+                             id: String, cursor: String, cmd: String, model: String,
+                             effort: String, cwd: String, log: String, harness: String,
+                             directory: String, native: String, input_messages: String) -> IO(Unit):
+  match internal:
+    case True{}:
+      recover_cli(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,True{})
+    case False{}:
+      normal_cli([flag,db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,input_messages])
+
 def observe_context_runtime_cli(+flag: String, +db: String, +owner: String,
                                 +launch_query: String, +target_dir: String,
                                 +adapter_dir: String) -> IO(Unit):
@@ -405,8 +415,8 @@ def legacy_cli(args: List<String>) -> IO(Unit):
       recover_direct_cli(flag, db, player, id, cmd, model, effort, cwd, log, harness, directory, native)
     case flag <> db <> session <> id <> cursor <> cmd <> model <> effort <> cwd <> log <> harness <> directory <> native <> Nil{}:
       recover_cli(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,String.eq(flag,"--recover-receive"))
-    case "--recover-receive" <> db <> session <> id <> cursor <> cmd <> model <> effort <> cwd <> log <> harness <> directory <> native <> input_messages <> Nil{}:
-      recover_cli(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,True{})
+    case +flag <> db <> session <> id <> cursor <> cmd <> model <> effort <> cwd <> log <> harness <> directory <> native <> input_messages <> Nil{}:
+      recover_receive_input_cli(String.eq(flag,"--recover-receive"),flag,db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,input_messages)
     case other: normal_cli(other)
 
 def cli_route(route: AgentRoute.Route) -> IO(Unit):
