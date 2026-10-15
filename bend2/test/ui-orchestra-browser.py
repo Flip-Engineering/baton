@@ -57,7 +57,12 @@ class OrchestraBrowser(unittest.TestCase):
         except Exception:
             self.temp._finalizer.detach()
             raise
-        self.temp.cleanup()
+        result = self._outcome.result
+        if any(test is self and error for test, error in result.errors + result.failures):
+            self.temp._finalizer.detach()
+            print('Retained failed browser fixture: ' + self.temp.name, file=sys.stderr)
+        else:
+            self.temp.cleanup()
 
     def test_live_view_browser_qualification(self):
         chromium = find_chromium()

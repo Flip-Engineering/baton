@@ -4,6 +4,16 @@ The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3
 retain findings, ownership and acceptance requirements. This page links current
 Baton follow-up work for contributors. Every open issue has a link on this page.
 
+- [#759: Bind the browser fixture worker native identity before its completion exchange](https://github.com/Flip-Engineering/baton/issues/759).
+  Run `38788773937` failed the browser worker completion check with a missing
+  request, an open assignment and a provider failure. The controlled worker
+  emits `native-worker`; await its matching recorded execution in phase
+  `running` and native identity before the first owned read. Qualify the unchanged
+  child, owned-read, acknowledgement,
+  completion, native-terminal and browser assertions. Preserve the failed run
+  under [#747](https://github.com/Flip-Engineering/baton/issues/747) and retain
+  whole-workflow qualification for [#717](https://github.com/Flip-Engineering/baton/issues/717).
+
 - [#757: Exercise Git App key special-bit refusal under runner restrictions](https://github.com/Flip-Engineering/baton/issues/757).
   Run `38785813982` failed while setting a synthetic key to `04600` because the
   runner restricts set-user-ID and set-group-ID modes. Use `01600` for the real
@@ -108,6 +118,8 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   [#717](https://github.com/Flip-Engineering/baton/issues/717).
 
 - [#747: Wait for actual native settlement in real acceptance drivers](https://github.com/Flip-Engineering/baton/issues/747).
+  Browser fixture native identity and worker completion are tracked in
+  [#759](https://github.com/Flip-Engineering/baton/issues/759).
   Git App key special-bit fixture portability is tracked in
   [#757](https://github.com/Flip-Engineering/baton/issues/757).
   TypeScript symbol-scope correction is tracked in

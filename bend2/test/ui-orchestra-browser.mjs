@@ -142,6 +142,18 @@ const workerCmd = join(WORK, 'worker-native');
 writeFileSync(workerCmd, `#!${process.execPath}\n` +
   `const {readFileSync} = require('node:fs'); const {spawnSync} = require('node:child_process');\n` +
   `console.log(JSON.stringify({stream:{kind:'session',id:'native-worker'},payload_type:'turn.input.user',payload:{kind:'turn_input_user',command_id:'worker-primary'}}));\n` +
+  `const {DatabaseSync} = require('node:sqlite');\n` +
+  `const readinessDb = new DatabaseSync(${JSON.stringify(DB)}, {readOnly:true});\n` +
+  `const readiness = readinessDb.prepare('SELECT e.phase,s.native FROM executions e JOIN sessions s ON s.id=e.session WHERE e.session=? AND e.directory=?');\n` +
+  `const readinessPause = new Int32Array(new SharedArrayBuffer(4));\n` +
+  `try {\n` +
+  `  while (true) {\n` +
+  `    const current = readiness.get('worker', process.env.BATON_ATTEMPT_DIRECTORY);\n` +
+  `    if (current?.phase === 'running' && current.native === 'native-worker') break;\n` +
+  `    if (!current || current.phase === 'exited') throw new Error('Fixture worker execution is unavailable: ' + JSON.stringify(current));\n` +
+  `    Atomics.wait(readinessPause, 0, 0, 10);\n` +
+  `  }\n` +
+  `} finally { readinessDb.close(); }\n` +
   `const prompt = readFileSync(process.argv[process.argv.indexOf('--prompt-file')+1], 'utf8');\n` +
   `const inputs = ['qa-task-1', ...[...prompt.matchAll(/^Message \\([^\\n]*\\) from [^\\n]* \\[id: (.*?)\\]:$/gm)].map((match) => match[1])];\n` +
   `for (const id of new Set(inputs)) {\n` +
