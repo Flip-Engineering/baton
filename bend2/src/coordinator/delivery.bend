@@ -94,7 +94,7 @@ def endpointless_recipient_sql(id: String, condition: String) -> String:
 # The claim retains admission custody for the whole inbox. Recipient progress
 # and newer coordinator control input permit another notification.
 def queue_metadata_sql(+value: String) -> String:
-  "CASE WHEN json_valid(" ++ value ++ ") THEN json_type(" ++ value ++ ")='object' AND json_type(" ++ value ++ ",'$.inputSeq')='integer' ELSE 0 END"
+  "CASE WHEN json_valid(" ++ value ++ ") THEN json_type(" ++ value ++ ")='object' AND json_type(" ++ value ++ ",'$.inputSeq') IN ('integer','real') AND json_extract(" ++ value ++ ",'$.inputSeq')=CAST(json_extract(" ++ value ++ ",'$.inputSeq') AS INTEGER) ELSE 0 END"
 
 def queue_retry_sql(recipient: String, retry: Bool) -> String:
   match retry:

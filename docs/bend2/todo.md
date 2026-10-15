@@ -69,6 +69,9 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   then selected an empty history path during account handoff. Resolve the
   recorded conversation after observing that attempt, as direct turns do, and
   retain the original native, transcript and provider-cause assertions.
+  Root wake diagnostics recorded integral `inputSeq` values as JSON real numbers.
+  Recognize those stored cursors so coalescing and provider failure replay retain
+  their original input and complete cause.
   Preserve complete bodies, native lineage, first receipts, reports, original
   failure evidence and every semantic assertion. Validate the corrected callers
   remotely without duplicate tasks. Coordinate with
