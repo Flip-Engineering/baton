@@ -220,6 +220,112 @@ class AgentActions(unittest.TestCase):
         self.assertEqual((delivered['sender'], delivered['recipient'], delivered['kind'],
                           delivered['body']), ('root', 'worker-a', 'guidance', body))
 
+    def test_database_named_report_and_knowledge_keep_actor_body_and_receipt(self):
+        env = {'BATON_DATABASE': str(self.directory / 'absent.db'),
+               'BATON_SESSION': 'worker-a'}
+        self.legacy('message', 'database-named-task', 'root', 'worker-a',
+                    'task-assignment', 'Preserve this complete assignment.\nλ🙂')
+        before = self.legacy('session', 'worker-a')
+        body = 'Complete database report.\nKeep --and, --id and λ🙂 literally.\n'
+        reported = self.invoke(self.db, 'report', '--text', body,
+                               environment=env)[0]
+        self.assertEqual(reported['status'], 'completed')
+        report_id = reported['nativeArgv'][3]
+        report = self.legacy('delivery', report_id)
+        self.assertEqual((report['sender'], report['recipient'], report['kind'], report['body']),
+                         ('worker-a', 'root', 'report', body))
+        first_receipt = 'Root read the complete report.'
+        self.legacy('ack', report_id, 'root', first_receipt)
+        repeated = self.invoke(self.db, 'report', '--id', report_id, '--text', body,
+                               environment=env)[0]
+        self.assertEqual(repeated['status'], 'completed')
+        self.assertEqual(self.legacy('delivery', report_id)['receipt'], first_receipt)
+
+        claim = 'The complete report supports this finding.\nKeep λ🙂 and the final newline.\n'
+        recorded = self.invoke(self.db, 'knowledge', 'record', '--kind', 'observation',
+                               '--claim', claim, '--evidence', 'report', '--limits', '--kind',
+                               '--and', 'ask', '--text', '--id', environment=env)
+        self.assertEqual([row['status'] for row in recorded], ['completed', 'completed'])
+        finding = next(row for row in self.legacy('knowledge', 'worker-a')
+                       if row['claim'] == claim)
+        self.assertEqual(finding['author'], 'worker-a')
+        self.assertEqual(finding['limits'], '--kind')
+        self.assertEqual(finding['evidenceMessage']['id'], report_id)
+        self.assertEqual(finding['evidenceMessage']['body'], body)
+        read = self.invoke(self.db, 'knowledge', 'read', environment=env)[0]
+        self.assertEqual(read['status'], 'completed')
+        selected = next(row for row in json.loads(read['stdout']) if row['id'] == finding['id'])
+        self.assertEqual((selected['author'], selected['claim'], selected['evidenceMessage']['body']),
+                         ('worker-a', claim, body))
+        for args in (('knowledge',), ('knowledge', '--scope', 'worker', '--subject', 'worker-a')):
+            with self.subTest(args=args):
+                equivalent = self.invoke(self.db, *args, environment=env)[0]
+                self.assertEqual(equivalent['status'], 'completed')
+                self.assertEqual(json.loads(equivalent['stdout']), json.loads(read['stdout']))
+        batch_body = 'Report after the complete default knowledge read.\nλ🙂'
+        batch = self.invoke(self.db, 'knowledge', '--and', 'report', '--text', batch_body,
+                            environment=env)
+        self.assertEqual([row['status'] for row in batch], ['completed', 'completed'])
+        self.assertEqual(json.loads(batch[0]['stdout']), json.loads(read['stdout']))
+        self.assertEqual(self.legacy('delivery', batch[1]['nativeArgv'][3])['body'], batch_body)
+        question = self.legacy('delivery', recorded[1]['nativeArgv'][3])
+        self.assertEqual((question['sender'], question['recipient'], question['body']),
+                         ('worker-a', 'root', '--id'))
+        self.assertEqual(self.legacy('session', 'worker-a')['taskCompletion'],
+                         before['taskCompletion'])
+        self.assertIsNone(self.legacy('delivery', 'database-named-task')['receipt'])
+        self.assertFalse((self.directory / 'absent.db').exists())
+
+    def test_database_named_recruit_and_role_infer_parent_and_keep_worktree(self):
+        env = {'BATON_DATABASE': str(self.directory / 'absent.db'), 'BATON_SESSION': 'root'}
+        workspace = self.directory / 'named lead λ'
+        result = self.invoke(self.db, 'recruit', '--session', 'named-lead',
+                             '--harness', 'fixture', '--model', 'model', '--effort', 'high',
+                             '--repo', self.repo, '--branch', 'named-lead-branch',
+                             '--path', workspace, '--base', 'HEAD', environment=env)[0]
+        self.assertEqual(result['status'], 'completed')
+        lead = self.legacy('session', 'named-lead')
+        self.assertEqual((lead['parent'], lead['harness'], lead['model'], lead['effort'],
+                          lead['workspace'], lead['branch']),
+                         ('root', 'fixture', 'model', 'high', str(workspace), 'named-lead-branch'))
+        self.assertTrue((workspace / '.git').exists())
+        assigned = self.invoke(self.db, 'role', '--session', 'named-lead',
+                               '--role', 'associate-conductor', environment=env)[0]
+        self.assertEqual(assigned['status'], 'completed')
+        self.assertEqual(self.legacy('role', 'named-lead')['role'], 'associate-conductor')
+        self.assertFalse((self.directory / 'absent.db').exists())
+
+    def test_database_named_help_resolves_before_database_and_actor(self):
+        missing = self.directory / 'help-only.db'
+        env = os.environ.copy()
+        for key in ('BATON_DATABASE', 'BATON_SESSION', 'CODEX_THREAD_ID'):
+            env.pop(key, None)
+        for args, expected in ((('help', 'recruit'), 'recruit --session'),
+                               (('recruit', '--help'), 'recruit --session'),
+                               (('knowledge', 'record', '--help'), 'knowledge record'),
+                               (('report', '--help'), 'report')):
+            with self.subTest(args=args):
+                result = subprocess.run([str(EXE), str(missing), *args], cwd=self.directory,
+                                        env=env, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn(expected, result.stdout)
+                self.assertFalse(missing.exists())
+
+    def test_database_named_routing_preserves_positional_knowledge_and_report(self):
+        finding = self.legacy('record', 'legacy-finding', 'worker-a',
+                              'Complete positional finding.', '', '')
+        self.assertEqual(finding['id'], 'legacy-finding')
+        rows = self.legacy('knowledge', 'worker-a')
+        self.assertEqual(rows[0]['claim'], 'Complete positional finding.')
+        report = self.legacy('report', 'legacy-report', 'worker-a', '--text')
+        self.assertEqual((report['id'], report['sender'], report['body']),
+                         ('legacy-report', 'worker-a', '--text'))
+        for action in ('status', 'players', 'orchestra', 'pending'):
+            with self.subTest(action=action):
+                plain = self.legacy(action)
+                pretty = self.legacy(action, '--pretty')
+                self.assertEqual(pretty, plain)
+
     def test_database_prefixed_decisions_infer_actor_and_preserve_full_report(self):
         worker_env = {'BATON_DATABASE': str(self.directory / 'absent.db'),
                       'BATON_SESSION': 'worker-a'}

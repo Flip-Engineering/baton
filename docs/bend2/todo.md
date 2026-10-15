@@ -4,6 +4,17 @@ The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3
 retain findings, ownership and acceptance requirements. This page links current
 Baton follow-up work for contributors. Every open issue has a link on this page.
 
+- [#748: Route database-prefixed named report, knowledge and recruitment actions](https://github.com/Flip-Engineering/baton/issues/748).
+  Actual source `60a3741c` native tasks received usage errors for database-prefixed
+  named report, knowledge record, recruit and recruitment help commands. Select
+  the existing contextual parser for named and compound argument forms, preserve
+  valid positional commands and complete literal values, and qualify actor
+  inference and native authority through public remote fixtures. Coordinate
+  with [#744](https://github.com/Flip-Engineering/baton/issues/744),
+  [#715](https://github.com/Flip-Engineering/baton/issues/715),
+  [#723](https://github.com/Flip-Engineering/baton/issues/723) and
+  [#717](https://github.com/Flip-Engineering/baton/issues/717).
+
 - [#747: Wait for actual native settlement in real acceptance drivers](https://github.com/Flip-Engineering/baton/issues/747).
   Actual native-receive admission completed before its successful background
   bootstrap; knowledge phase checks ran before the producer capture began.

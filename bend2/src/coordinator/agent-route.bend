@@ -62,12 +62,39 @@ def database_inbox(db: String, args: List<String>) -> Route:
     case Nil{}: Action{InDatabase{db,A.Inbox{}}}
     case other: Legacy{Con{db,Con{"inbox",other}}}
 
+def help_flag(+value: String) -> Bool:
+  Bool.or(String.eq(value,"--help"),String.eq(value,"-h"))
+
+def named_start(+verb: String, args: List<&2,String>) -> Bool:
+  match args:
+    case Nil{}: False{}
+    case +head <> rest:
+      Bool.or(help_flag(head),
+        Bool.or(Domain.member(head,Domain.names(Bool.pick(String,String.eq(verb,"knowledge"),"knowledge-read",verb))),
+          Bool.and(String.eq(verb,"knowledge"),Domain.member(head,["and","--and"]))))
+
+def database_named(+verb: String, +args: List<&2,String>) -> Bool:
+  match args:
+    case Nil{}: String.eq(verb,"knowledge")
+    case +head <> rest:
+      +compound = Domain.subverb(verb,head)
+      Bool.and(Domain.known(verb),
+        Bool.pick(Bool,String.is_empty(compound),
+          Bool.pick(Bool,Domain.member(verb,["status","players","orchestra","pending"]),
+            Bool.or(help_flag(head),A.batch_tokens(args,False{})),named_start(verb,args)),
+          True{}))
+
+def database_other(+db: String, +verb: String, +args: List<&2,String>) -> Route:
+  Bool.pick(Route,Bool.or(Domain.member(verb,["help","--help","-h"]),database_named(verb,args)),
+    Action{InDatabase{db,A.parse(Con{verb,Domain.affine_strings(args)})}},
+    Legacy{Con{db,Con{verb,Domain.affine_strings(args)}}})
+
 def database_verb(kind: TailVerb, db: String, verb: String, args: List<String>) -> Route:
   match kind:
     case AsVerb{}: database_as(db,args)
     case InboxVerb{}: database_inbox(db,args)
     case ActionVerb{}: Action{InDatabase{db,A.parse(Con{verb,args})}}
-    case OtherVerb{}: Legacy{Con{db,Con{verb,args}}}
+    case OtherVerb{}: database_other(db,verb,Domain.shared_strings(args))
 
 def database_args(db: String, args: List<String>) -> Route:
   match args:
