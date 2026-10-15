@@ -2,7 +2,6 @@
 import json
 import os
 import pathlib
-import shlex
 import sqlite3
 import subprocess
 import sys
@@ -291,10 +290,12 @@ class CodexRootAdapter(unittest.TestCase):
         request, confirmation = 'finished-completion-request', 'finished-completion-confirmed'
         native = temp / 'root.py'
         native.write_text('#!' + sys.executable + '\n' +
-            'import sys,pathlib,subprocess,json\n' +
+            'import sys,pathlib,subprocess,json,time\n' +
             'body=sys.stdin.read()\n' +
             f'exe,db={str(EXE)!r},{str(self.db)!r}\n' +
             'def cli(*args):return json.loads(subprocess.check_output([exe,db,*args],text=True))\n' +
+            'print(json.dumps({"type":"thread.started","thread_id":"native-root"}),flush=True)\n' +
+            'while cli("session","root")["native"]!="native-root":time.sleep(0.01)\n' +
             f'if "[id: {request}]" in body:\n' +
             f' value=cli("delivery",{request!r})\n' +
             ' state=cli("session","w1")["taskCompletion"]\n' +
@@ -332,6 +333,8 @@ class CodexRootAdapter(unittest.TestCase):
             '   continue\n' +
             '  assert value.returncode==0,(value.returncode,value.stdout,value.stderr)\n' +
             '  return json.loads(value.stdout)\n' +
+            'print(json.dumps({"type":"system","subtype":"init","session_id":"native-worker"}),flush=True)\n' +
+            'while cli("session","w1")["native"]!="native-worker":time.sleep(0.01)\n' +
             'cli("ack","finished:task-input","w1","native-work-accepted")\n' +
             f'cli("message",{request!r},"w1","root","completion-request","Completed live task.")\n' +
             'while True:\n' +
@@ -508,10 +511,13 @@ class CodexRootAdapter(unittest.TestCase):
                          ['model_reasoning_effort="low"'])
         self.assertEqual(observed['api_keys'], [])
         self.assertEqual(observed['cwd'], str(self.checkouts / associate))
-        self.assertIn('Associate Conductor', observed['prompt'])
-        inbox = next(line.strip() for line in observed['prompt'].splitlines()
-                     if ' inbox ' in line and shlex.split(line)[-2:] == ['inbox', associate])
-        self.assertEqual(shlex.split(inbox), [str(EXE), str(self.db), 'inbox', associate])
+        self.assertIn('You are session ' + associate + ' in a Baton Orchestra.', observed['prompt'])
+        prefix = 'Coordinator executable/database argv: '
+        coordinator = next(line[len(prefix):] for line in observed['prompt'].splitlines()
+                           if line.startswith(prefix))
+        self.assertEqual(json.loads(coordinator), [str(EXE), str(self.db)])
+        self.assertIn('Read complete owed input with inbox.', observed['prompt'])
+        self.assertIn('Use acknowledge after handling', observed['prompt'])
         self.assertEqual(json.loads(self.coord('role', associate))['role'], 'associate-conductor')
         reports = json.loads(self.coord('inbox', ''))
         self.assertEqual([(r['sender'], r['recipient'], r['body']) for r in reports],
