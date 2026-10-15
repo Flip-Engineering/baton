@@ -4,6 +4,17 @@ The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3
 retain findings, ownership and acceptance requirements. This page links current
 Baton follow-up work for contributors. Every open issue has a link on this page.
 
+- [#762: Keep delayed native-question delivery from resending stored replies](https://github.com/Flip-Engineering/baton/issues/762).
+  Run `38794594877` consumed the same editor-cancel response twice in the
+  native-question cancellation fixture. The delayed question task can select a
+  reply already written by public `native-reply`. Limit that task to unanswered,
+  open, unwritten questions. Preserve live reply transport and observer reconnect
+  of stored answers, native identity, stops and transport errors. Qualify the
+  existing public Receive and recovery cases and whole workflow for
+  [#717](https://github.com/Flip-Engineering/baton/issues/717),
+  [#718](https://github.com/Flip-Engineering/baton/issues/718) and
+  [#747](https://github.com/Flip-Engineering/baton/issues/747).
+
 - [#760: Resume managed Codex SQL retries after silent writer release](https://github.com/Flip-Engineering/baton/issues/760).
   Run `38792126033` retained the second endpointless App terminal while its
   follower awaited a database-change notice after SQLite BUSY. Raw wake metadata

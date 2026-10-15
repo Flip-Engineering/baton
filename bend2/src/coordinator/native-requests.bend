@@ -90,13 +90,12 @@ def resume(+db: String, player: String, turn: String, attempt: String, enabled: 
 
 def deliver_pending(db: String, id: String, state: String) -> IO(Result<&1,&1,U32 & String,String>):
   match state:
-    case "reply\n": send(db,id)
     case "question\n": Delivery.deliver(db,id,"1","")
     case other: IO.pure(Result<&1,&1,U32 & String,String>,Done{""})
 
 def deliver(+db: String, +id: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
-    state : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN closed IS NOT NULL OR written=1 THEN '' WHEN reply IS NOT NULL THEN 'reply' ELSE 'question' END FROM native_requests WHERE id=" ++ C.q(id) ++ ";"))
+    state : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN reply IS NULL AND closed IS NULL AND written=0 THEN 'question' ELSE '' END FROM native_requests WHERE id=" ++ C.q(id) ++ ";"))
     deliver_pending(db,id,state)
 
 def fork_saved(db: String, id: String, tasks: List<Chan(Result<&1,&1,U32 & String,String>)>, empty: Bool) -> IO(List<Chan(Result<&1,&1,U32 & String,String>)>):
