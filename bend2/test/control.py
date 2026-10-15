@@ -314,11 +314,19 @@ class Control(unittest.TestCase):
         self.dispatches.append(result['deliveryPid'])
         return result
 
-    def accept(self, session):
+    def accept_any(self):
         connection, _ = self.server.accept()
         stream = connection.makefile('rwb', buffering=0)
         self.controls.append((stream, connection))
         start = json.loads(stream.readline())
+        return stream, start
+
+    def accept(self, session, child=None):
+        if child is None:
+            stream, start = self.accept_any()
+        else:
+            stream, start = receive_fixture.Receive.accept_or_child_exit(
+                self, child, f'{session} project resume did not start its native fixture')
         self.assertEqual(start['session'], session)
         with (self.directory / 'native-starts.jsonl').open('a') as output:
             output.write(json.dumps(start) + '\n')
@@ -370,6 +378,7 @@ class Control(unittest.TestCase):
                     outputs.remove(output)
 
     capture_child_output = receive_fixture.Receive.capture_child_output
+    child_communication = receive_fixture.Receive.child_communication
 
     def rows(self, sql, parameters=()):
         with sqlite3.connect(self.db) as database:
@@ -616,14 +625,14 @@ class Control(unittest.TestCase):
         resumed = subprocess.Popen([str(EXE), '--project', assignment['workspace'],
                                     'as', 'root', 'resume', '--session', session], env=self.environment,
                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        continued, start = self.accept(session)
+        continued, start = self.accept(session, resumed)
         self.assertEqual(start['native'], first['native'])
         self.assertEqual(start['resume'], first['native'])
         self.assertEqual(start['cwd'], assignment['workspace'])
         self.assertIn('[id: ' + ident + ']', start['prompt'])
         self.assertIn('Resume the original project task.', start['prompt'])
         self.finish(continued, 'Resumed project work completed.')
-        stdout, stderr = resumed.communicate()
+        stdout, stderr = self.child_communication(resumed)
         self.assertEqual(resumed.returncode, 0, stderr)
         answer = self.project_resume_result(stdout)
         self.assertEqual((answer['session'], answer['message']), (session, ident))
@@ -677,7 +686,7 @@ class Control(unittest.TestCase):
                 resumed = subprocess.Popen([str(EXE), '--project', assignment['workspace'],
                                             'as', 'root', 'resume', '--session', session, *resume_args], env=self.environment,
                                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-                continued, start = self.accept(session)
+                continued, start = self.accept(session, resumed)
                 evidence = {'argv': resumed.args, 'pid': resumed.pid,
                             'first_native': first, 'resumed_native': start}
                 evidence_path = self.directory / (session + '-resume.json')

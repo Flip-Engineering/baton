@@ -94,6 +94,9 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   read lock, blocking the fixture's native handling write. Suspend the observer
   while holding a reader-free database boundary, then release that boundary
   before the native completes its handling and terminal output.
+  Target project resume exited before connecting to its controlled native.
+  Observe that child while accepting the connection and retain its complete
+  command output, native-start log and original resume assertions.
   Browser acceptance reached the final actor through End while its cursor was
   outside the viewport. Scroll the keyboard-selected actor into view. The complete
   browser acceptance now passes with the current actor cards and knowledge view.
