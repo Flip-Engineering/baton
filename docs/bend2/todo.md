@@ -14,6 +14,10 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   [#750](https://github.com/Flip-Engineering/baton/issues/750) and
   [#760](https://github.com/Flip-Engineering/baton/issues/760). This work follows
   the 2.0 release; coordinate with [#747](https://github.com/Flip-Engineering/baton/issues/747).
+  Preserve the recorded Codex environment when another provider sends a report.
+  The installed Muse review inherited its private `HOME` during parent wake;
+  explicit receiver environment configuration restored delivery. Retain the
+  [observed socket failure](https://github.com/Flip-Engineering/baton/issues/761#issuecomment-6203830573).
 
 - [#758: Wait for fixture owner publication before cleanup shutdown](https://github.com/Flip-Engineering/baton/issues/758).
   The target Control cleanup in run `38785813982` recorded shutdown success
@@ -645,4 +649,9 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   immutable manifests, checkpoints and actual owner/recovery-child lifetimes.
   The scoped public accessor shares manifest and native-birth validation with
   ordinary recovery and preserves acknowledged and unstarted exclusions.
+  Postrelease 2.0.0 `serve` refused the historical Muse implementer attempt
+  recorded as `exited` / `start failed`: its valid manifest and `launch` remain,
+  while `native.birth` and `native-start-error` are absent. Track this failed-start
+  recovery boundary with [#712](https://github.com/Flip-Engineering/baton/issues/712);
+  the new owner was elected and retained zero attempts and observers.
 - [#676: Baton2: share one native instance across connected agents](https://github.com/Flip-Engineering/baton/issues/676).
