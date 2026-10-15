@@ -3428,18 +3428,28 @@ static int br_instance_request(const char *database,BrInstanceFrame frame,const 
   return br_instance_request_witness(database,frame,payload,rights,reply,0,0);
 }
 static void br_instance_owner_witness(BatonProcessCall *call,int spawn) {
-  BrOwnerRecord record={0};BrInstanceFrame reply={0};int socket_fd=-1;
-  call->error=br_instance_connect(call->database,spawn,&record,&socket_fd);
-  if(!call->error) {
-    call->error=br_instance_exchange(socket_fd,
-      (BrInstanceFrame){.op=BI_ENSURE,.owner=record.token,.epoch=record.epoch},
-      NULL,-1,&reply);
-    if(!call->error && (reply.op!=BI_HELLO || reply.length!=sizeof(BrOwnerState)))
-      call->error=EPROTO;
-    if(!call->error && (reply.owner!=record.token || reply.epoch!=record.epoch))
-      call->error=ESTALE;
+  BrInstanceFrame reply={0};
+  for(;;) {
+    BrOwnerRecord record={0};int socket_fd=-1;
+    call->error=br_instance_connect(call->database,spawn,&record,&socket_fd);
+    spawn=0;
+    if(!call->error) {
+      reply=(BrInstanceFrame){0};
+      call->error=br_instance_exchange(socket_fd,
+        (BrInstanceFrame){.op=BI_ENSURE,.owner=record.token,.epoch=record.epoch},
+        NULL,-1,&reply);
+      if(!call->error && reply.error==ESTALE)call->error=ESTALE;
+      if(!call->error && (reply.op!=BI_HELLO || reply.length!=sizeof(BrOwnerState)))
+        call->error=EPROTO;
+      if(!call->error && (reply.owner!=record.token || reply.epoch!=record.epoch))
+        call->error=ESTALE;
+    }
+    if(socket_fd>=0)close(socket_fd);
+    if(call->error!=ESTALE)break;
+    /* The listener can answer before its incarnation record is published. */
+    struct timespec pause={0,20000000};
+    nanosleep(&pause,NULL);
   }
-  if(socket_fd>=0)close(socket_fd);
   if(call->error)return;
   char text[64];
   int length=snprintf(text,sizeof(text),"%llu:%llu",
