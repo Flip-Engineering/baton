@@ -359,6 +359,7 @@ class FixedCoordinator(unittest.TestCase):
         if self.serve_proc is not None:
             stdout, stderr = self.serve_proc.communicate()
             self.assertEqual(self.serve_proc.returncode, expect_serve, stderr)
+            return stderr
 
     def managed_app_proxy(self):
         real_node = shutil.which('node')
@@ -1476,7 +1477,9 @@ finally:
                          'the stopped session produced an unexpected one-shot record')
         self.assertTrue(retained_events[0]['stopped'])
         self.assertEqual(len(app_calls('turn/steer')), 1, 'the stopped session was admitted again')
-        self.shutdown()
+        stderr = self.shutdown(expect_serve=1)
+        self.assertIn('Baton session now records another native conversation:', stderr)
+        self.assertIn('"native":"native-w2"', stderr)
 
 
 if __name__ == '__main__':

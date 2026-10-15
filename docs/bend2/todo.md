@@ -198,6 +198,11 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   settled native custody leave no managed producer, connection or recorded wake.
   Preserve failed fixture files and process facts, then close owned children
   before collecting inherited server pipes.
+  Candidate run `38771989568` changed the recorded native conversation during
+  the one-shot contention check. The original managed follower enforced that
+  identity change, and serve retained its failed task. Require the exact
+  `native-w2` fence cause and failed serve result after the complete one-shot,
+  native identity and stopped-input assertions.
   Browser acceptance reached the final actor through End while its cursor was
   outside the viewport. Scroll the keyboard-selected actor into view. The complete
   browser acceptance now passes with the current actor cards and knowledge view.
