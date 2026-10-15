@@ -1021,8 +1021,10 @@ finally:
         self.assertEqual(len(app_calls('turn/start')), 2, 'an unrelated commit retried the same failure')
         fresh_body = 'A genuinely newer coordinator result after recovery.'
         fresh = self.coord('message', 'fresh-app-report', 'root', 'w1', 'report', fresh_body, ok=False)
-        self.assertEqual(fresh.returncode, 1, fresh.stderr)
-        self.assertEqual(json.loads(fresh.stderr), body['turn'])
+        self.assertEqual(fresh.returncode, 0, fresh.stderr)
+        self.assertEqual(json.loads(fresh.stdout), {
+            'id': 'fresh-app-report', 'sender': 'root', 'recipient': 'w1',
+            'kind': 'report', 'body': fresh_body, 'receipt': None})
         self.assertEqual(self.query("SELECT sender,recipient,kind,body,receipt FROM messages WHERE id='fresh-app-report'"),
                          [('root', 'w1', 'report', fresh_body, None)])
         self.eventually(lambda: len(app_calls('turn/start')) == 3,
