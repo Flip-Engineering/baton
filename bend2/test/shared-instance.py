@@ -838,7 +838,7 @@ class SharedInstance(unittest.TestCase):
         # An unknown birth uses the replacement generation's snapshot gap.
         directory, key, _, _, _ = self.election_paths()
         retained = (directory / f'{key}.cursor').read_text().split()
-        qualified_birth = int(retained[1]) != 0
+        qualified_birth = len(retained) == 1 or int(retained[1]) != 0
         owners = self.owner_processes()
         self.assertEqual(len(owners), 1, owners)
         os.kill(int(owners[0].split()[0]), signal.SIGKILL)
