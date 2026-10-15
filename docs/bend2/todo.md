@@ -4,6 +4,18 @@ The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3
 retain findings, ownership and acceptance requirements. This page links current
 Baton follow-up work for contributors. Every open issue has a link on this page.
 
+- [#768: Read complete UTF-8 records from active Control fixture logs](https://github.com/Flip-Engineering/baton/issues/768).
+  Run `38813867097` failed the independent-player large-output Control method
+  when its active log snapshot ended inside a UTF-8 character. The 26-test suite
+  completed with one decoding error. Read bytes and decode complete newline
+  records, preserving strict complete-record decoding, exact report bodies,
+  player overlap, native identity, regular dispatch streams and process closure.
+  Qualify the successor whole workflow for
+  [#717](https://github.com/Flip-Engineering/baton/issues/717) and
+  [#747](https://github.com/Flip-Engineering/baton/issues/747), retaining
+  [#715](https://github.com/Flip-Engineering/baton/issues/715) and
+  [#723](https://github.com/Flip-Engineering/baton/issues/723) control scope.
+
 - [#767: Align extracted archive smoke setup with native attachment and read contracts](https://github.com/Flip-Engineering/baton/issues/767).
   Run `38810208455` passed all 55 candidate suites and all 15 target comparisons.
   Its Darwin archive built, then smoke MCP initialization refused the generic

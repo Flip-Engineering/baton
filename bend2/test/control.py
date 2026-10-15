@@ -987,8 +987,8 @@ class Control(unittest.TestCase):
         log = pathlib.Path(str(self.db) + '.root.log')
         if not log.exists():
             return False
-        for line in log.read_text().splitlines():
-            if not line.startswith('{'):
+        for line in log.read_bytes().split(b'\n')[:-1]:
+            if not line.startswith(b'{'):
                 continue
             try:
                 saved = json.loads(line)
