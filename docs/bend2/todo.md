@@ -4,6 +4,14 @@ The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3
 retain findings, ownership and acceptance requirements. This page links current
 Baton follow-up work for contributors. Every open issue has a link on this page.
 
+- [#757: Exercise Git App key special-bit refusal under runner restrictions](https://github.com/Flip-Engineering/baton/issues/757).
+  Run `38785813982` failed while setting a synthetic key to `04600` because the
+  runner restricts set-user-ID and set-group-ID modes. Use `01600` for the real
+  special-bit refusal case; preserve valid `0600`, unsafe `0644` and symlink
+  assertions. Qualify the complete parallel run with
+  [#747](https://github.com/Flip-Engineering/baton/issues/747) and
+  [#755](https://github.com/Flip-Engineering/baton/issues/755).
+
 - [#756: Resolve TypeScript database-access scope at the selected symbol](https://github.com/Flip-Engineering/baton/issues/756).
   Installed package run `38785813982` resolved `answer` at line 1 but selected
   the bodyless declaration at offset zero for SQL analysis. Reuse the existing
@@ -100,6 +108,8 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   [#717](https://github.com/Flip-Engineering/baton/issues/717).
 
 - [#747: Wait for actual native settlement in real acceptance drivers](https://github.com/Flip-Engineering/baton/issues/747).
+  Git App key special-bit fixture portability is tracked in
+  [#757](https://github.com/Flip-Engineering/baton/issues/757).
   TypeScript symbol-scope correction is tracked in
   [#756](https://github.com/Flip-Engineering/baton/issues/756).
   Parallel fixture signal scope and required generated C staging are tracked in

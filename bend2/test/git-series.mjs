@@ -332,7 +332,7 @@ test('RSA JWT signs fixture claims and refuses public permissions or symlink key
   assert.deepEqual(JSON.parse(Buffer.from(payload, 'base64url')), { iat: now - 60, exp: now + 600, iss: identities.gpt.clientId });
   assert.ok(verify('RSA-SHA256', Buffer.from(header + '.' + payload), publicKey, Buffer.from(signature, 'base64url')));
   chmodSync(key, 0o644); assert.throws(() => model.app_jwt(home, identities.gpt), model.Refusal);
-  chmodSync(key, 0o4600); assert.throws(() => model.app_jwt(home, identities.gpt), model.Refusal);
+  chmodSync(key, 0o1600); assert.throws(() => model.app_jwt(home, identities.gpt), model.Refusal);
   chmodSync(key, 0o600);
   const linked = join(directory, 'linked-signing'); mkdirSync(linked);
   symlinkSync(key, join(linked, 'private-key.pem'));
