@@ -351,7 +351,17 @@ sys.exit(p.wait())
                     '--dangerously-load-development-channels', 'server:baton-conductor',
                     '--debug-file', str(c.path / (phase + '.debug')), '--ax-screen-reader']
             if not resume:
-                args.append('Act as the Bend2 Principal Conductor. Handle the baton-conductor channel messages using its tools.')
+                guidance = 'Act as the Bend2 Principal Conductor. Handle the baton-conductor channel messages using its tools.'
+                initial = run(c.command('native-attachment-input', 'root', 'initial-task'),
+                              env=self.env, input=guidance)
+                args.append(initial)
+                with sqlite3.connect(c.db) as database:
+                    stored = database.execute(
+                        'SELECT seed,instruction,guidance FROM native_initial_inputs WHERE session=? AND guidance=?',
+                        ('root', guidance)).fetchone()
+                assert stored and initial == stored[0] + '\n\n' + stored[1] + '\n\n' + guidance, stored
+                save(c.path / 'initial-input.json', {'guidance': guidance, 'native_input': initial,
+                     'seed': stored[0], 'native': session})
             terminal = Terminal(args, c.path / (phase + '.terminal'), self.env)
             c.processes.append(terminal)
             return terminal

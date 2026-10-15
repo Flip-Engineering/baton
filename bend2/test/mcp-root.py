@@ -100,6 +100,12 @@ class McpRoot(unittest.TestCase):
         return p.stdout.strip()
 
     def start_mcp(self, session='root', script=MCP_SCRIPT):
+        selected = None
+        if self.db.exists():
+            with sqlite3.connect(self.db) as database:
+                selected = database.execute('SELECT id FROM sessions WHERE id=?', (session,)).fetchone()
+        if selected is None:
+            self.coord('attach', session, 'claude-code', 'fixture-native-' + session, '')
         env = dict(os.environ)
         for name in ('BATON_ATTEMPT_DIRECTORY', 'BATON_MCP_INPUT', 'CODEX_THREAD_ID'):
             env.pop(name, None)
@@ -387,7 +393,7 @@ class McpRoot(unittest.TestCase):
         self.assertEqual([row['id'] for row in parent_inbox], ['associate-finished'])
 
     def test_pending_report_triggers_channel_notification(self):
-        self.coord('attach', 'root', 'native-test', 'root-session', 'root-endpoint')
+        self.coord('attach', 'root', 'claude-code', 'root-session', 'root-endpoint')
         self.register('w1', 'root', 'omp', 'model', 'high', '/wt', 'br', 'base')
         self.coord('report', 'turn-1', 'w1', 'Worker completed the task.')
 
@@ -420,7 +426,7 @@ class McpRoot(unittest.TestCase):
         self.assertIn('After attachment.', note['params']['content'])
 
     def test_tool_status_returns_sessions(self):
-        self.coord('attach', 'root', 'native-test', 'root-session', 'root-endpoint')
+        self.coord('attach', 'root', 'claude-code', 'root-session', 'root-endpoint')
         proc = self.start_mcp()
         self.initialize(proc)
         self.activate(proc)
@@ -436,7 +442,7 @@ class McpRoot(unittest.TestCase):
         self.assertIn('root', resp['result']['content'][0]['text'])
 
     def test_tool_ack_clears_pending_message(self):
-        self.coord('attach', 'root', 'native-test', 'root-session', 'root-endpoint')
+        self.coord('attach', 'root', 'claude-code', 'root-session', 'root-endpoint')
         self.register('w1', 'root', 'omp', 'model', 'high', '/wt', 'br', 'base')
         self.coord('report', 'turn-1', 'w1', 'Done.')
 
@@ -473,7 +479,7 @@ class McpRoot(unittest.TestCase):
 
     def test_guide_sends_message_to_player_inbox(self):
         # Set up root and worker sessions
-        self.coord('attach', 'root', 'native-test', 'root-session', 'root-endpoint')
+        self.coord('attach', 'root', 'claude-code', 'root-session', 'root-endpoint')
         self.register('w1', 'root', 'omp', 'model', 'high', '/wt', 'br', 'base')
 
         # Start MCP and initialize
@@ -509,7 +515,7 @@ class McpRoot(unittest.TestCase):
         self.assertIn('login endpoint', messages[0]['body'])
 
     def test_restart_delivers_pending_report(self):
-        self.coord('attach', 'root', 'native-test', 'root-session', 'root-endpoint')
+        self.coord('attach', 'root', 'claude-code', 'root-session', 'root-endpoint')
         self.register('w1', 'root', 'omp', 'model', 'high', '/wt', 'br', 'base')
         self.coord('report', 'turn-1', 'w1', 'Pending across restart.')
 
@@ -542,7 +548,7 @@ class McpRoot(unittest.TestCase):
         self.assertIn('turn-1', notif2['params']['meta']['messageIds'])
 
     def test_players_and_turns_tools_return_coordinator_data(self):
-        self.coord('attach', 'root', 'native-test', 'root-session', 'root-endpoint')
+        self.coord('attach', 'root', 'claude-code', 'root-session', 'root-endpoint')
         self.register('w1', 'root', 'omp', 'model', 'high', '/wt', 'br', 'base')
         event = self.temp / 'event.json'
         event.write_text(json.dumps({'type': 'result', 'result': 'done'}))
@@ -580,7 +586,7 @@ class McpRoot(unittest.TestCase):
         self.assertEqual(pending[0]['id'], 'turn-1')
 
     def test_duplicate_notification_not_sent(self):
-        self.coord('attach', 'root', 'native-test', 'root-session', 'root-endpoint')
+        self.coord('attach', 'root', 'claude-code', 'root-session', 'root-endpoint')
         self.register('w1', 'root', 'omp', 'model', 'high', '/wt', 'br', 'base')
         self.coord('report', 'turn-1', 'w1', 'First report.')
 

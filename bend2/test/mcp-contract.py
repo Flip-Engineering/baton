@@ -25,6 +25,7 @@ behavior.
 import json
 import pathlib
 import subprocess
+import sqlite3
 import tempfile
 import time
 import unittest
@@ -78,9 +79,9 @@ class McpContract(unittest.TestCase):
         while owners & self.instance_owner_pids():
             time.sleep(.01)
 
-    def coord(self, *args, ok=True):
+    def coord(self, *args, ok=True, input=None):
         p = subprocess.run([str(EXE), str(self.db), *args],
-                           text=True, capture_output=True)
+                           text=True, capture_output=True, input=input)
         if ok:
             self.assertEqual(p.returncode, 0, p.stderr)
         return p
@@ -122,6 +123,30 @@ class McpContract(unittest.TestCase):
             with self.subTest(tool=tool['name']):
                 self.assertEqual(tool['inputSchema']['type'], 'object')
                 self.assertNotIn('outputSchema', tool)
+
+    def test_initialize_retains_complete_guidance_and_shares_the_native_seed(self):
+        request = {'jsonrpc': '2.0', 'id': 1, 'method': 'initialize', 'params': {}}
+        first = self.mcp(request)[0]['result']['instructions']
+        second = self.mcp(request)[0]['result']['instructions']
+        self.assertEqual(first, second)
+        with sqlite3.connect(self.db) as database:
+            rows = database.execute(
+                'SELECT seed,instruction,guidance FROM native_initial_inputs WHERE session=?',
+                ('root',)).fetchall()
+        self.assertEqual(len(rows), 1, rows)
+        seed, instruction, guidance = rows[0]
+        self.assertRegex(seed, r'^[0-9a-f]{128}$')
+        self.assertEqual(first, seed + '\n\n' + instruction + '\n\n' + guidance)
+        self.assertIn('Baton Principal Conductor attachment for session root.', guidance)
+        self.assertNotIn('\0', first)
+        task = '\ufeffComplete Claude task café λ🙂\nKeep the final newline.\n'
+        rendered = self.coord('native-attachment-input', 'root', 'initial-task', input=task).stdout
+        self.assertEqual(rendered, seed + '\n\n' + instruction + '\n\n' + task)
+        with sqlite3.connect(self.db) as database:
+            stored = database.execute(
+                'SELECT guidance FROM native_initial_inputs WHERE session=? AND guidance=?',
+                ('root', task)).fetchone()
+        self.assertEqual(stored, (task,))
 
     def test_player_read_returns_the_native_rows(self):
         native = self.coord('player', 'w1').stdout
