@@ -731,6 +731,57 @@ while True:
         self.assertIsNone(retained['receipt'])
         self.assertEqual(json.loads(self.coord('turns', 'root')), [])
 
+    def test_follower_claim_retries_after_a_writer_releases_without_a_change(self):
+        queued, _ = self.public_proxy()
+        current = json.loads(self.public_app_state.read_text())
+        self.public_app_state.write_text(json.dumps({**current, 'status': 'idle', 'turnStatus': 'completed',
+                                                      'holdRead': True}))
+        self.coord('attach', 'root', 'codex', '', '')
+        self.coord('role', 'root', 'principal-conductor')
+        self.coord('attach', 'operator', 'terminal', '', '')
+        self.coord('role', 'operator', 'operator')
+        self.recruit('child', 'root', 'omp')
+        body = 'Complete input after an empty writer transaction: café Ω 🙂\nSecond line.'
+        self.assertNotEqual(self.coord_raw('report', 'claim-empty-writer-input', 'child', body).returncode, 0)
+        self.coord('connect', 'root', 'native-app-root', '')
+        output = self.directory / 'empty-writer-follow.jsonl'
+        diagnostic = self.directory / 'empty-writer-follow.stderr'
+        with output.open('w') as stdout, diagnostic.open('w') as stderr:
+            follower = subprocess.Popen(
+                ['node', str(ROOT / 'bend2/scripts/codex-inbox-wake.mjs'), '--follow',
+                 str(EXE), str(self.db), 'root', 'native-app-root'],
+                env=self.environment, stdout=stdout, stderr=stderr)
+        self.children.append(follower)
+        self.eventually(self.admission_barrier.exists, 'the native metadata read was not held')
+
+        def claim_waits_for_writer():
+            self.assertIsNone(follower.poll(), diagnostic.read_text() + output.read_text())
+            admitted = queued.read_text() if queued.exists() else ''
+            self.assertFalse(admitted, 'Native input was admitted while the SQLite writer was held:\n' + admitted)
+            return any(event.get('type') == 'codexInboxDatabaseBusy' and event.get('operation') == 'claim'
+                       for line in output.read_text().splitlines() if (event := json.loads(line)))
+
+        with sqlite3.connect(self.db) as writer:
+            writer.execute('BEGIN IMMEDIATE')
+            self.admission_release.write_text('go\n')
+            self.eventually(claim_waits_for_writer, 'the follower did not observe the SQLite writer')
+            writer.commit()
+        self.eventually(lambda: queued.exists() and queued.read_text(),
+                        'the empty writer release did not resume native admission')
+        calls = [json.loads(line) for line in queued.read_text().splitlines()]
+        self.assertEqual(len(calls), 1, calls)
+        self.assertEqual(calls[0]['method'], 'turn/start')
+        self.assertEqual(calls[0]['params']['threadId'], 'native-app-root')
+        pointer = json.loads(calls[0]['params']['input'][0]['text'].split('\n')[1])
+        self.assertEqual((pointer['recipient'], pointer['message'], pointer['pendingCount']),
+                         ('root', 'claim-empty-writer-input', 1))
+        retained = json.loads(self.coord('delivery', 'claim-empty-writer-input'))
+        self.assertEqual(retained['body'], body)
+        self.assertIsNone(retained['receipt'])
+        self.coord('stop', 'root', 'empty-writer-stop', 'Keep the complete input.')
+        follower.wait()
+        self.assertEqual(follower.returncode, 0, diagnostic.read_text())
+
     def test_stop_while_follower_claim_is_busy_releases_retained_input(self):
         queued, _ = self.public_proxy()
         current = json.loads(self.public_app_state.read_text())

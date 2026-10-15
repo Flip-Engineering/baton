@@ -136,6 +136,9 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   The installed Configure fixture then retained its sole idle owner during cleanup:
   its global executable had already been restored by another cleanup. Match the
   executable recorded in the fixture configuration, as owner shutdown does.
+  Muse continuation checks preserve the first successful turn's handling receipt
+  and select later owed guidance. Receiver-switch checks observe `exit 0`, release
+  the old native attempt and await admission through the current receiver.
   Browser acceptance reached the final actor through End while its cursor was
   outside the viewport. Scroll the keyboard-selected actor into view. The complete
   browser acceptance now passes with the current actor cards and knowledge view.
@@ -165,6 +168,10 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   fails with the previous helper and passes with the correction, preserving one
   RPC, the complete pointer and body, the turn ID and the unhandled receipt.
   The affected OMP socket-closure continuation also passes remotely.
+  Candidate run `38762573981` retained a completed App turn while its follower
+  waited after a busy admission claim. The competing internal writer released
+  without a committed-change notification. Retry the claim through the ordinary
+  session command and retain the terminal notification in the existing queue.
   Complete current-source qualification and
   installed acceptance. Coordinate with
   [#747](https://github.com/Flip-Engineering/baton/issues/747).

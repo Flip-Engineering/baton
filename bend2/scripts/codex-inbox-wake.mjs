@@ -606,7 +606,7 @@ async function follow(proxy, executable, database, session, threadId, inbox) {
                 if (!databaseBusy(error)) throw error;
                 record({ type: 'codexInboxDatabaseBusy', session, threadId, operation: 'claim',
                   errcode: error.errcode, cause: error.message });
-                await events.committed();
+                await coordinatorCommand(executable, database, ['session', session]);
               }
             }
             if (!admission) { event = {}; continue; }

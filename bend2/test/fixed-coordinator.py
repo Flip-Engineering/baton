@@ -828,6 +828,7 @@ finally:
         self.assertEqual(json.loads(first.readline()), {'terminal_written': True})
         original = self.connections('m1')[0]
         self.assertIn('[id: tm1]', original['prompt'])
+        first_attempt = self.query("SELECT id FROM executions WHERE session='m1'")[0][0]
         self.assertEqual(self.query("SELECT receipt FROM messages WHERE id='tm1'"), [(None,)])
         self.dispatch('gm1', 'm1', 'Complete the owed task and this new guidance.', kind='guidance')
         self.assertEqual(len(self.connections('m1')), 1, 'guidance started a second live Muse process')
@@ -836,14 +837,14 @@ finally:
         resumed = self.connections('m1')[1]
         self.assertEqual(resumed['native'], original['native'])
         self.assertEqual(resumed['resume'], original['native'])
-        self.assertIn('[id: tm1]', resumed['prompt'])
+        self.assertNotIn('[id: tm1]', resumed['prompt'])
         self.assertIn('[id: gm1]', resumed['prompt'])
         self.await_inbox('root', lambda messages: (
             messages if any('Muse resumed handled input' in message['body'] for message in messages)
             else None), 'the resumed Muse report never reached its conductor')
         self.assertEqual(self.inbox('m1'), [])
         self.assertEqual(self.query("SELECT receipt FROM messages WHERE id IN ('tm1','gm1') ORDER BY id"),
-                         [('native-reviewed',), ('native-reviewed',)])
+                         [('native-reviewed',), ('native-turn:' + first_attempt,)])
         self.assertEqual(len(self.connections('m1')), 2, 'Muse input was executed more than once')
         self.shutdown()
 
@@ -855,7 +856,7 @@ finally:
             rows = self.query("SELECT directory,phase,status FROM executions WHERE session='w1'")
             if len(rows) != 1 or rows[0][1] != 'exited':
                 return False
-            self.assertEqual(rows[0][2], '0', rows)
+            self.assertEqual(rows[0][2], 'exit 0', rows)
             attempt = pathlib.Path(rows[0][0])
             return all((attempt / marker).exists() for marker in ('released', 'acknowledged'))
 
@@ -901,9 +902,11 @@ finally:
                     and row.get('params', {}).get('threadId') == 'native-w1']
 
         self.dispatch('t3', 'w1', 'Handle the remaining input when this App turn settles.')
-        self.assertTrue(app_calls('turn/steer'), 'the short sender admitted input to the active App turn')
         phase('releasing the old native task after the receiver changed')
         self.release('w1', 1)
+        self.eventually(lambda: app_calls('turn/steer'),
+                        'the short sender did not admit input to the active App turn',
+                        contradiction=self.completed_managed_failure)
         self.await_inbox('root', lambda messages: (
             [m['body'] for m in messages]
             if any('w1 second turn complete' in m['body'] for m in messages) else None),
