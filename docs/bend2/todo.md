@@ -53,6 +53,9 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   Git acceptance must await the native review receipt before landing. Guidance
   already resumes the conflicted worker through its registered receiver; await
   that same native turn and its resolved branch before checked landing.
+  The controlled Git fixture must supply its guided worker, handling receipt
+  and subsequent report at those waits. Run its real rebase and landing checks
+  with the controlled native boundary.
   Preserve complete bodies, native lineage, first receipts, reports, original
   failure evidence and every semantic assertion. Validate the corrected callers
   remotely without duplicate tasks. Coordinate with

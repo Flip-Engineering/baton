@@ -5,6 +5,7 @@ import io
 import json
 import os
 from pathlib import Path
+import sqlite3
 import subprocess
 import tempfile
 import unittest
@@ -25,6 +26,7 @@ class GitAcceptance(unittest.TestCase):
         self.addCleanup(self.temporary.cleanup)
         self.out = Path(self.temporary.name)
         self.resumed = []
+        self.players = {}
         env_patch = mock.patch.dict(os.environ, {
             'GIT_AUTHOR_NAME': 'Git acceptance fixture',
             'GIT_AUTHOR_EMAIL': 'fixture@example.invalid',
@@ -37,10 +39,46 @@ class GitAcceptance(unittest.TestCase):
         player_patch = mock.patch.object(DRIVER, 'turn_player', self.controlled_player)
         player_patch.start()
         self.addCleanup(player_patch.stop)
+        self.real_wait_handled = DRIVER.wait_handled
+        handling_patch = mock.patch.object(DRIVER, 'wait_handled', self.controlled_guidance)
+        handling_patch.start()
+        self.addCleanup(handling_patch.stop)
+        completion_patch = mock.patch.object(DRIVER, 'wait_native', self.controlled_completion)
+        completion_patch.start()
+        self.addCleanup(completion_patch.stop)
         self.config = {'omp': {'executable': 'controlled-worker', 'model': 'fixture', 'effort': 'low'}}
+
+    def controlled_guidance(self, binary, db, ident):
+        delivery = DRIVER.coord_json(binary, db, 'delivery', ident)
+        self.assertEqual(ident, 'g1')
+        self.assertEqual(delivery['sender'], 'root')
+        self.assertEqual(delivery['kind'], 'guidance')
+        player = delivery['recipient']
+        native = DRIVER.coord_json(binary, db, 'player', player)['native']
+        self.controlled_player(**self.players[player], line='three and four', turn='t3',
+                               guided=True, session=native)
+        return self.real_wait_handled(binary, db, ident)
+
+    def controlled_completion(self, db, player, turn=None, after=None):
+        self.assertIsNone(turn)
+        self.assertIsInstance(after, int)
+        with sqlite3.connect(db.as_uri() + '?mode=ro', uri=True) as connection:
+            connection.row_factory = sqlite3.Row
+            reports = connection.execute(
+                'SELECT * FROM messages WHERE sender=? AND recipient=? AND kind=? AND seq>?',
+                (player, 'root', 'report', after)).fetchall()
+        self.assertEqual(len(reports), 1)
+        self.assertEqual(reports[0]['id'], 't3')
+        self.assertEqual(DRIVER.coord_json(EXE, db, 'player', player)['native'],
+                         'controlled-' + player)
+        return dict(reports[0])
 
     def controlled_player(self, binary, db, repo, run_dir, route, player, branch, base,
                           path, line, turn, guided=False, session=''):
+        if not guided:
+            self.players[player] = dict(binary=binary, db=db, repo=repo, run_dir=run_dir,
+                                        route=route, player=player, branch=branch, base=base,
+                                        path=path)
         DRIVER.coord(binary, db, 'recruit', player, 'root', 'omp', route['model'],
                      route['effort'], repo, branch, f'wt-{player}', base)
         worktree = repo / f'wt-{player}'
