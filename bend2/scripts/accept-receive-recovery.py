@@ -93,6 +93,16 @@ def wait_exit(pid):
     """Wait for an observed local process exit without stopping that process."""
     if not alive(pid):
         return
+    if hasattr(os, 'pidfd_open'):
+        try:
+            descriptor = os.pidfd_open(pid)
+        except ProcessLookupError:
+            return
+        try:
+            select.select([descriptor], [], [])
+        finally:
+            os.close(descriptor)
+        return
     queue = select.kqueue()
     try:
         event = select.kevent(pid, filter=select.KQ_FILTER_PROC,
@@ -168,8 +178,8 @@ def main():
                         help='A model advertised by the local subscription Codex runtime')
     parser.add_argument('--effort', default='medium')
     args = parser.parse_args()
-    if not hasattr(select, 'kqueue'):
-        parser.error('This process-exit measurement requires macOS/BSD kqueue')
+    if not (hasattr(os, 'pidfd_open') or hasattr(select, 'kqueue')):
+        parser.error('Process-exit observation requires Linux pidfds or macOS/BSD kqueue')
     source = args.source.resolve()
     codex = Path(shutil.which(args.codex) or args.codex).resolve()
     supplied = args.coordinator.resolve()
@@ -225,6 +235,7 @@ def main():
         'codex_sha256': digest(codex), 'model': args.model, 'effort': args.effort,
         'subscription_wrapper_sha256': digest(wrapper), 'control_helper_sha256': digest(helper),
         'subscription_login': login_text, 'login_command': login_argv,
+        'process_exit_observation': 'pidfd' if hasattr(os, 'pidfd_open') else 'kqueue',
     }
     save(out / 'run.json', pin)
     timeline = []

@@ -77,8 +77,8 @@ class ReceiveAcceptance(unittest.TestCase):
     def test_public_recruit_and_complete_observer_loss_workflow(self):
         if not EXE.exists():
             self.skipTest(f'Coordinator not built at {EXE}')
-        if not hasattr(select, 'kqueue'):
-            self.skipTest('Receive acceptance requires macOS/BSD kqueue')
+        if not (hasattr(os, 'pidfd_open') or hasattr(select, 'kqueue')):
+            self.skipTest('Process-exit observation requires Linux pidfds or macOS/BSD kqueue')
         directory = Path(tempfile.mkdtemp(prefix='accept-receive-', dir=EXE.parent))
         out = directory / 'run'
         codex = directory / 'controlled-codex'

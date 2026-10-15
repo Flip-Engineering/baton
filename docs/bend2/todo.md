@@ -75,6 +75,10 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   The standalone root-day and recovery drivers stage the complete executable
   and helper prefix and retain its provenance. The Kimi driver also accepts a
   supplied coordinator through the shared staging operation.
+  Install and configure the required native clients on the homelab runner.
+  Recovery observes process exit through Linux pidfds or macOS/BSD kqueue;
+  its controlled protocol fixture also runs on Linux. Retain the complete
+  observer-loss, queued retry, conversation, report, receipt and process evidence.
   [#732](https://github.com/Flip-Engineering/baton/issues/732) records the connected
   Claude handling prerequisite. Remote real-route acceptance remains open
   for [#717](https://github.com/Flip-Engineering/baton/issues/717).
@@ -126,8 +130,8 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   actions and native handling inference; explicit control selectors remain
   documented for administrative compatibility. Qualify these instructions in
   the [#717](https://github.com/Flip-Engineering/baton/issues/717)
-  release. [#727](https://github.com/Flip-Engineering/baton/issues/727) retains
-  manual action and receipt instructions in the real-agent validation drivers.
+  release. [#727](https://github.com/Flip-Engineering/baton/issues/727) qualifies
+  contextual actions and inferred receipts in the real-agent validation drivers.
   Coordinate with [#714](https://github.com/Flip-Engineering/baton/issues/714),
   [#715](https://github.com/Flip-Engineering/baton/issues/715),
   [#716](https://github.com/Flip-Engineering/baton/issues/716),
@@ -193,9 +197,8 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   strict named-route reader from corrected #703 source `25f29f0d` and preserves
   the original #703 ownership. Remote target/candidate, full package and
   installed task-entry qualification remain part of the current #717 release.
-  [#727](https://github.com/Flip-Engineering/baton/issues/727) retains generated
-  task-source removal and database input acceptance in the real-agent
-  validation drivers.
+  [#727](https://github.com/Flip-Engineering/baton/issues/727) qualifies complete
+  database task input in the real-agent validation drivers.
 
 - [#715: Simplify agent commands with a contextual action grammar](https://github.com/Flip-Engineering/baton/issues/715).
   The integrated [agent commands](agent-commands.md) extend the project and
