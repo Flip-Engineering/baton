@@ -114,6 +114,10 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   then failed its empty stdout assertion because fixture progress used stdout.
   Send those diagnostics to stderr and preserve native protocol output and all
   assertions. Complete source qualification remains pending.
+  The target replay fixture left its initial assignment open and waited for a
+  direct command whose automatic continuation awaited fixture input. Complete
+  that initial assignment through the public completion exchange before replaying
+  the retained report. Preserve the queued-input and report assertions.
   Browser acceptance reached the final actor through End while its cursor was
   outside the viewport. Scroll the keyboard-selected actor into view. The complete
   browser acceptance now passes with the current actor cards and knowledge view.

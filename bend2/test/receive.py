@@ -3679,7 +3679,7 @@ class Receive(unittest.TestCase):
         initial = self.spawn('turn', 'parent', 'saved-turn', self.fixture, 'parent', 'low',
                              self.directory, task, log, '')
         control, _ = self.accept_child(initial, 'parent')
-        self.action(control, body=report.read_text(), complete_task=False)
+        self.action(control, body=report.read_text())
         self.finish(initial)
         retained = self.coord('delivery', 'saved-turn')
         self.assertEqual(retained['id'], 'saved-turn')
