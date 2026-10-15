@@ -6,6 +6,7 @@ directory. These tests exercise concurrent attempts, alias election, observer
 loss, the bound observation checkpoint, admission identity and owner shutdown.
 """
 import concurrent.futures
+import errno
 import fcntl
 import hashlib
 import json
@@ -754,13 +755,56 @@ class SharedInstance(unittest.TestCase):
         self.assertTrue(value.startswith(prefix), value)
         return json.loads(value[len(prefix):])
 
+    def test_committed_change_cursor_rejects_a_previous_database_incarnation(self):
+        first = self.spawn('subscribe', self.db, '0', '0')
+        original = self.subscription_line(first, 'ready:')
+        self.command('publish', self.db, '22')
+        self.assertEqual(self.subscription_line(first, 'notice:')['cursor'], 22)
+        directory, key, _, _, _ = self.election_paths()
+        retained = (directory / f'{key}.cursor').read_bytes()
+        stopped = self.command('shutdown', self.db)
+        self.assertIn('shutdown-ok', stopped.stdout, stopped.stderr)
+        first.wait()
+        self.assertEqual(first.returncode, errno.EPIPE, ''.join(first.output))
+
+        # Retain both database files so their inodes cannot alias. Moving the
+        # earlier cursor record under the new key reproduces the retained state
+        # that an allocator's inode reuse leaves behind.
+        self.db = self.home / 'replacement.db'
+        self.db.touch()
+        directory, key, _, _, _ = self.election_paths()
+        (directory / f'{key}.cursor').write_bytes(retained)
+        second = self.spawn('subscribe', self.db, '0', '0')
+        replacement = self.subscription_line(second, 'ready:')
+        self.assertTrue(replacement['gap'], replacement)
+        self.assertEqual(replacement['cursor'], 0, replacement)
+        self.command('publish', self.db, '1')
+        self.assertEqual(self.subscription_line(second, 'notice:')['cursor'], 1)
+        print('evidence database-incarnation cursor', original, replacement)
+
+    def test_committed_change_cursor_recovers_from_unqualified_records(self):
+        for retained in ('22\n', 'BATONCUR1 0 22\n'):
+            with self.subTest(retained=retained):
+                directory, key, _, _, _ = self.election_paths()
+                (directory / f'{key}.cursor').write_text(retained)
+                child = self.spawn('subscribe', self.db, '0', '0')
+                ready = self.subscription_line(child, 'ready:')
+                self.assertTrue(ready['gap'], ready)
+                self.assertEqual(ready['cursor'], 0, ready)
+                self.command('publish', self.db, '1')
+                self.assertEqual(self.subscription_line(child, 'notice:')['cursor'], 1)
+                stopped = self.command('shutdown', self.db)
+                self.assertIn('shutdown-ok', stopped.stdout, stopped.stderr)
+                child.wait()
+                self.assertEqual(child.returncode, errno.EPIPE, ''.join(child.output))
+                print('evidence unqualified cursor recovery', retained.strip(), ready)
+
     def test_committed_change_subscription_fans_out_and_survives_owner_loss(self):
         first = self.spawn('subscribe', self.db, '0', '0')
         ready = self.subscription_line(first, 'ready:')
         # An unknown incarnation cannot be served continuously, so the first
-        # subscription takes a snapshot at the cursor the owner recorded. Publish
-        # values are derived from that cursor: the owner record is keyed by the
-        # physical database, and a temporary file can reuse an earlier file's key.
+        # subscription takes a snapshot at the cursor the owner recorded. The
+        # Instance protocol accepts application-supplied committed cursors.
         self.assertTrue(ready['gap'], ready)
         baseline = ready['cursor']
         self.command('publish', self.db, str(baseline + 1))
@@ -790,15 +834,18 @@ class SharedInstance(unittest.TestCase):
         for subscriber in (first, second, current):
             notice = self.subscription_line(subscriber, 'notice:')
             self.assertEqual((notice['kind'], notice['cursor']), ('commit', baseline + 4), notice)
-        # The cursor is durable across the owner incarnation, and a replaced
-        # incarnation reports the gap that forces a snapshot.
+        # A qualified database birth preserves the cursor across owner loss.
+        # An unknown birth uses the replacement generation's snapshot gap.
+        directory, key, _, _, _ = self.election_paths()
+        retained = (directory / f'{key}.cursor').read_text().split()
+        qualified_birth = int(retained[1]) != 0
         owners = self.owner_processes()
         self.assertEqual(len(owners), 1, owners)
         os.kill(int(owners[0].split()[0]), signal.SIGKILL)
         third = self.spawn('subscribe', self.db, str(baseline + 4), str(ready['generation']))
         replaced = self.subscription_line(third, 'ready:')
         self.assertTrue(replaced['gap'], replaced)
-        self.assertEqual(replaced['cursor'], baseline + 4, replaced)
+        self.assertEqual(replaced['cursor'], baseline + 4 if qualified_birth else 0, replaced)
         self.command('publish', self.db, str(baseline + 5))
         self.assertEqual(self.subscription_line(third, 'notice:')['cursor'], baseline + 5)
         print('evidence subscription ready', ready, 'resuming', resuming,

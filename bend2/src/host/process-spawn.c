@@ -186,6 +186,8 @@ pipes:
 #else
 #include <sys/inotify.h>
 #include <sys/syscall.h>
+#include <linux/stat.h>
+#include <sys/sysmacros.h>
 #endif
 
 enum { BR_HELLO=1, BR_CHANGE, BR_EXIT, BR_REPLY, BR_WRITE, BR_CLOSE,
@@ -360,7 +362,7 @@ static int br_lifecycle_prepare_check(const char *directory);
 static int br_manifest_store(const char *directory,const char *manifest_path,BrManifestHeader *header,char **fields,size_t *lengths,int count);
 typedef struct {
   int listener,lock,finishing,single,database_fd,bound;
-  uint64_t token,epoch,device,inode,parent_device,parent_inode;
+  uint64_t token,epoch,device,inode,birth,parent_device,parent_inode;
   uint64_t cursor;
   char *database,*ipc,*key,*socket_path,*record_path,*generation_path,*cursor_path;
   BrKeeper *attempts;
@@ -2027,20 +2029,47 @@ static void br_owner_state(BrOwner *owner,BrKeeper *keeper,BrOwnerState *state) 
   }
   free(status);
 }
-/* The committed-change cursor is durable across owner incarnations, so a
-   replacement owner never reports a high-water below the one its predecessor
-   published. */
+/* Uses the same immutable database incarnation discriminator as the SQLite
+   binding. Ordinary database writes preserve it; an unknown birth cannot qualify
+   a cursor retained by an earlier owner. */
+static uint64_t br_database_birth(const char *path,const struct stat *info) {
+#ifdef __APPLE__
+  (void)path;
+  if(info->st_birthtimespec.tv_sec<=0)return 0;
+  return (uint64_t)info->st_birthtimespec.tv_sec*1000000000ull+
+    (uint64_t)info->st_birthtimespec.tv_nsec;
+#elif defined(__linux__) && defined(SYS_statx)
+  struct statx observed;
+  memset(&observed,0,sizeof(observed));
+  if(syscall(SYS_statx,AT_FDCWD,path,0,STATX_BTIME|STATX_INO|STATX_TYPE,&observed))return 0;
+  if((observed.stx_mask&(STATX_BTIME|STATX_INO|STATX_TYPE))!=
+     (STATX_BTIME|STATX_INO|STATX_TYPE))return 0;
+  if(!S_ISREG(observed.stx_mode) || observed.stx_ino!=(uint64_t)info->st_ino ||
+     makedev(observed.stx_dev_major,observed.stx_dev_minor)!=info->st_dev)return 0;
+  if(observed.stx_btime.tv_sec<=0 || observed.stx_btime.tv_nsec>=1000000000u)return 0;
+  uint64_t seconds=(uint64_t)observed.stx_btime.tv_sec;
+  if(seconds>(UINT64_MAX-observed.stx_btime.tv_nsec)/1000000000ull)return 0;
+  return seconds*1000000000ull+observed.stx_btime.tv_nsec;
+#else
+  (void)path;(void)info;
+  return 0;
+#endif
+}
+/* The cursor survives owner replacement only for the same database birth.
+   Legacy records and unknown identities use the new owner's snapshot gap. */
 static void br_owner_cursor_load(BrOwner *owner) {
   FILE *file=owner->cursor_path?fopen(owner->cursor_path,"r"):NULL;
   if(!file)return;
-  unsigned long long value=0;
-  if(fscanf(file,"%llu",&value)==1)owner->cursor=(uint64_t)value;
+  unsigned long long birth=0,value=0;
+  if(fscanf(file,"BATONCUR1 %llu %llu",&birth,&value)==2 &&
+     owner->birth && birth==owner->birth)owner->cursor=(uint64_t)value;
   fclose(file);
 }
 static void br_owner_cursor_store(BrOwner *owner) {
   if(!owner->cursor_path)return;
-  char text[32];
-  int length=snprintf(text,sizeof(text),"%llu\n",(unsigned long long)owner->cursor);
+  char text[80];
+  int length=snprintf(text,sizeof(text),"BATONCUR1 %llu %llu\n",
+    (unsigned long long)owner->birth,(unsigned long long)owner->cursor);
   int fd=open(owner->cursor_path,O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC,0600);
   if(fd<0)return;
   if(!br_write_all(fd,text,(size_t)length))fsync(fd);
@@ -2379,6 +2408,7 @@ static int br_owner_bind(BrOwner *owner,const char *database) {
   owner->device=(uint64_t)info.st_dev;owner->inode=(uint64_t)info.st_ino;
   if(stat(owner->database,&info))return errno;
   if((uint64_t)info.st_dev!=owner->device || (uint64_t)info.st_ino!=owner->inode)return ESTALE;
+  owner->birth=br_database_birth(owner->database,&info);
   char *parent=strdup(owner->database);
   if(!parent)return ENOMEM;
   char *slash=strrchr(parent,'/');
@@ -2436,8 +2466,7 @@ static int br_owner_bind(BrOwner *owner,const char *database) {
 static int br_owner_serve(const char *database) {
   BrOwner owner={.listener=-1,.lock=-1,.database_fd=-1};
   int error=br_owner_bind(&owner,database);
-  /* The elected owner resumes the committed-change high-water its predecessor
-     published, so the cursor it reports never regresses. */
+  /* The elected owner resumes publications retained for this database birth. */
   if(!error)br_owner_cursor_load(&owner);
   if(!error)error=br_owner_loop(&owner);
   if(owner.listener>=0)close(owner.listener);

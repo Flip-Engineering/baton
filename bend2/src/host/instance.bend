@@ -143,8 +143,10 @@ def Instance.unsubscribe(handle: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
   import "./process-spawn.c"
 
 # Publishes one committed change after the caller's transaction committed: the
-# cursor is the durable native_changes high-water. The owner records it and
-# notifies every subscriber, and a cursor that does not advance changes nothing.
+# cursor is the durable native_changes high-water. The owner records it with
+# the database birth identity and notifies subscribers when it advances. A
+# replacement owner preserves the cursor for the same qualified birth; legacy
+# records and unknown births use generation-gap snapshot recovery.
 # A rolled-back transaction publishes nothing because it never calls here.
 def Instance.publish_commit(database: String, cursor: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   import "./process-spawn.c"

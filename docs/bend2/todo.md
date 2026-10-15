@@ -4,6 +4,18 @@ The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3
 retain findings, ownership and acceptance requirements. This page links current
 Baton follow-up work for contributors. Every open issue has a link on this page.
 
+- [#753: Bind the owner cursor to the database incarnation](https://github.com/Flip-Engineering/baton/issues/753).
+  Actual candidate run `38771989568` reused a database inode whose retained owner
+  cursor was 22. The new database had change maximum 11, so the owner suppressed
+  its committed stop and the Codex follower stayed subscribed. Bind the existing
+  cursor record to the immutable database birth identity. Preserve generic
+  Instance publication, alias election and same-database owner restart laws;
+  use generation and snapshot recovery for legacy or unqualified identity.
+  Retain the original fixture, consistent database and subscription evidence.
+  Qualify the incarnation regression and current complete native checks for
+  [#717](https://github.com/Flip-Engineering/baton/issues/717); coordinate with
+  [#747](https://github.com/Flip-Engineering/baton/issues/747).
+
 - [#752: Render canonical JSON array elements once](https://github.com/Flip-Engineering/baton/issues/752).
   The installed TypeScript context check spent over 45 CPU minutes before query
   admission. Its provider captured 63 library files. Genuine generated C renders
