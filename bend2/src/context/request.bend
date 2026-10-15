@@ -688,9 +688,17 @@ def effects_rest(+rest: J.Json) -> Bool:
     case J.Jobj{+members}: True{}
 
 
+def effects_array(+head: J.Json, +tail: J.Json) -> Bool:
+  match head:
+    case J.Jnil{}:
+      match tail:
+        case J.Jnil{}: True{}
+        case other: False{}
+    case other: effects_rest(J.Jarr{other, tail})
+
 def effects_ok(effects: J.Json) -> Bool:
   match effects:
-    case J.Jarr{+head, +tail}: effects_rest(J.Jarr{head, tail})
+    case J.Jarr{+head, +tail}: effects_array(head, tail)
     case J.Jpair{key, value, rest}: True{}
     case J.Jnil{}: True{}
     case J.Jnull{}: False{}
@@ -772,6 +780,27 @@ def request_validate(req: J.Json) -> Verdict:
     case J.Jarr{+head, +tail}: VRefused{"requestNotObject"}
     case J.Jpair{key, value, rest}: VRefused{"requestNotObject"}
     case J.Jnil{}: VRefused{"requestNotObject"}
+
+law request_law_runtime_observe_accepts_explicit_empty_effects:
+  {request_validate(J.Jobj{J.Jpair{"version", J.Jint{1},
+    J.Jpair{"subject", J.Jobj{J.Jpair{"kind", J.Jstr{"runtime"}, J.Jpair{"intent", J.Jstr{"observe"}, J.Jpair{"session", J.Jstr{"runtime-1"}, J.Jnil{}}}}},
+    J.Jpair{"select", J.Jarr{J.Jstr{"state"}, J.Jnil{}},
+    J.Jpair{"effects", J.Jarr{J.Jnil{}, J.Jnil{}}, J.Jnil{}}}}}}) == VAccepted{} : Verdict}
+
+def request_law_runtime_observe_accepts_explicit_empty_effects():
+  {==}
+
+law request_law_an_effect_cannot_be_an_empty_array:
+  {effects_ok(J.Jarr{J.Jarr{J.Jnil{}, J.Jnil{}}, J.Jnil{}}) == False{} : Bool}
+
+def request_law_an_effect_cannot_be_an_empty_array():
+  {==}
+
+law request_law_an_effect_cannot_be_null:
+  {effects_ok(J.Jarr{J.Jnull{}, J.Jnil{}}) == False{} : Bool}
+
+def request_law_an_effect_cannot_be_null():
+  {==}
 
 law sql_quote_preserves_an_empty_string:
   {sql_quote("") == "\u{27}\u{27}" : String}

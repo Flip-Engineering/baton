@@ -98,8 +98,11 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   roles without a guard descriptor also failed cleanup with `EBADF`; close the
   descriptor when present and retain close errors for actual descriptors.
   Reuse the completed Main C through the existing complete foreign-source
-  substitution proof and recompile the corrected host code. Installed context
-  acceptance and final source qualification remain pending.
+  substitution proof and recompile the corrected host code. Run `55894` then
+  passed runtime launch, release and cleanup, but refused the observe request's
+  explicit empty effect array before admission. Accept the canonical empty-array
+  value while preserving nonempty effect validation. Installed context acceptance
+  and final source qualification remain pending.
   The complete native run also suspended an observer while it retained a SQLite
   read lock, blocking the fixture's native handling write. Suspend the observer
   while holding a reader-free database boundary, then release that boundary
