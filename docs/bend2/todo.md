@@ -90,6 +90,10 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   because the runtime attempt parent directory was absent. Fix `3358ceec7` creates
   that parent through the existing directory API. Complete installed context
   acceptance and final source qualification remain pending.
+  The complete native run also suspended an observer while it retained a SQLite
+  read lock, blocking the fixture's native handling write. Suspend the observer
+  while holding a reader-free database boundary, then release that boundary
+  before the native completes its handling and terminal output.
   Browser acceptance reached the final actor through End while its cursor was
   outside the viewport. Scroll the keyboard-selected actor into view. The complete
   browser acceptance now passes with the current actor cards and knowledge view.
@@ -185,7 +189,10 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   source, build recipe, compiler archive identity and complete measurements.
   Select that explicit compiler on the homelab and qualify the complete Main
   source and native behavior. Use the measured native object cache for repeated
-  Clang invocations with matching inputs. Coordinate with
+  Clang invocations with matching inputs. Workflow `38727774829` repeated the
+  object compilation because origin and CI locale settings produced different
+  cache keys. Both homelab runners now normalize the four locale fields through
+  the retained wrapper; `ac18235c2` pins its actual digest in CI. Coordinate with
   [#677](https://github.com/Flip-Engineering/baton/issues/677),
   [#728](https://github.com/Flip-Engineering/baton/issues/728) and
   [#740](https://github.com/Flip-Engineering/baton/issues/740).

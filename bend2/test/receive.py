@@ -1973,6 +1973,13 @@ class Receive(unittest.TestCase):
             except BlockingIOError:
                 return False
 
+    def suspend_observer_without_database_reader(self, selected):
+        with sqlite3.connect(self.db) as writer:
+            writer.execute('BEGIN EXCLUSIVE')
+            self.signal_selected(selected, signal.SIGSTOP)
+            self.eventually(lambda: (self.selected_process(selected['pid']) or {}).get('state', '').startswith('T'),
+                            'The selected observer did not suspend before native completion.')
+
     def exercise_keeper_loss(self, harness, observer_loss):
         self.coord('connect', 'root', 'native-root', json.dumps([str(self.fixture), 'parent_endpoint']))
         self.player(harness=harness)
@@ -2154,7 +2161,7 @@ class Receive(unittest.TestCase):
         selected_observer = self.selected_process(observer.pid)
         selected_owner = self.selected_process(owner[0]['pid'])
         if not released:
-            self.signal_selected(selected_observer, signal.SIGSTOP)
+            self.suspend_observer_without_database_reader(selected_observer)
         body = ('Original result after native exit.\nComplete Unicode result caféλ🙂.'
                 if released else 'Original result after native exit.')
         self.action(original, body=body, exit_after_terminal=True)
@@ -2178,7 +2185,7 @@ class Receive(unittest.TestCase):
                               if frame.get('type') == 'agent_end'
                               for message in frame['messages'] for content in message['content']],
                              [body])
-            self.signal_selected(selected_observer, signal.SIGSTOP)
+            self.suspend_observer_without_database_reader(selected_observer)
             with sqlite3.connect(self.db) as database:
                 self.assertEqual(database.execute(
                     "SELECT directory FROM executions WHERE session='parent' AND mode='retained'"
@@ -4114,7 +4121,7 @@ class Receive(unittest.TestCase):
         before = self.claim_rows('parent')
         self.assertEqual(len(before), 1)
         directory = self.execution('parent')[2]
-        os.kill(first.pid, signal.SIGSTOP)
+        self.suspend_observer_without_database_reader(self.selected_process(first.pid))
         self.action(control, body='Adopted result complete.', hold_exit=True)
         self.assertEqual(json.loads(control.readline()), {'terminal_written': True})
         self.eventually(lambda: 'Adopted result complete.' in
