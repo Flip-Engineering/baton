@@ -4,6 +4,18 @@ The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3
 retain findings, ownership and acceptance requirements. This page links current
 Baton follow-up work for contributors. Every open issue has a link on this page.
 
+- [#766: Apply the browser fixture busy policy to native readiness reads](https://github.com/Flip-Engineering/baton/issues/766).
+  Run `38808301621` failed when the worker-native readonly readiness query
+  raised SQLite error 5 before its first owned input delivery; the other 54
+  candidate suites passed. Apply the fixture's existing `busy_timeout = 250`
+  policy to this connection, preserving the running execution, attempt directory,
+  native identity and owned-input assertions. The exact competing writer was not
+  identified. Qualify the existing whole workflow for
+  [#717](https://github.com/Flip-Engineering/baton/issues/717) and
+  [#747](https://github.com/Flip-Engineering/baton/issues/747), retaining the
+  readiness evidence in [#759](https://github.com/Flip-Engineering/baton/issues/759)
+  and [#763](https://github.com/Flip-Engineering/baton/issues/763).
+
 - [#765: Allow Receive fixture execution reads to recover interrupted SQLite writes](https://github.com/Flip-Engineering/baton/issues/765).
   Run `38804561830` passed 54 suites and failed the racing-wake Receive method
   when a SELECT through `mode=ro` reported a readonly database after intentional

@@ -144,6 +144,7 @@ writeFileSync(workerCmd, `#!${process.execPath}\n` +
   `console.log(JSON.stringify({stream:{kind:'session',id:'native-worker'},payload_type:'turn.input.user',payload:{kind:'turn_input_user',command_id:'worker-primary'}}));\n` +
   `const {DatabaseSync} = require('node:sqlite');\n` +
   `const readinessDb = new DatabaseSync(${JSON.stringify(DB)}, {readOnly:true});\n` +
+  `readinessDb.exec('PRAGMA busy_timeout = 250');\n` +
   `const readiness = readinessDb.prepare('SELECT e.phase,s.native FROM executions e JOIN sessions s ON s.id=e.session WHERE e.session=? AND e.directory=?');\n` +
   `const readinessPause = new Int32Array(new SharedArrayBuffer(4));\n` +
   `try {\n` +
