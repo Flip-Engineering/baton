@@ -423,6 +423,11 @@ while True:
         continue
     if action.get('read_steer'):
         if action.get('signal_steer_wait'): reply({'waiting_for_steer':True})
+        if action.get('require_ready'):
+            import select
+            if not select.select([sys.stdin],[],[],0)[0]:
+                reply({'steer_missing':True})
+                continue
         frame=json.loads(sys.stdin.readline())
         assert frame['type']=='steer',frame
         if action.get('check_steer_receipt'):
@@ -2332,8 +2337,33 @@ class Receive(unittest.TestCase):
                         'completed OMP attempt was not acknowledged while guidance was pending')
         self.assertTrue(any(p['pid'] == second['pid'] for p in self.owned_processes()))
         self.assertIn('later-guidance', [m['id'] for m in self.coord('inbox', 'parent')])
-        self.action(current, read_steer=True)
-        accepted = json.loads(current.readline())['steer_received']
+        marker = 'recovery processed the current native response'
+        barrier = {'type': 'response', 'command': 'fixture_barrier', 'success': True,
+                   'id': marker}
+        self.action(current, native_request=barrier)
+        self.assertEqual(json.loads(current.readline()), {'request_written': barrier})
+        current_attempt = pathlib.Path(self.execution('parent')[2])
+        def recovered_barrier():
+            output = log.read_bytes()
+            position = output.find(marker.encode())
+            if position < 0:
+                return False
+            end = output.find(b'\n', position)
+            checkpoint = current_attempt / 'checkpoint'
+            if end < 0 or not checkpoint.exists():
+                return False
+            record = checkpoint.read_bytes()
+            state_at = record.find(b'{"schema":1,')
+            if state_at < 0:
+                return False
+            state = json.loads(record[state_at:])
+            return int(state['output']) >= end + 1
+        self.eventually(recovered_barrier, 'recovery did not commit the native response')
+        self.action(current, read_steer=True, require_ready=True)
+        steered = json.loads(current.readline())
+        self.assertIn('steer_received', steered,
+                      'recovery processed the native response without forwarding pending guidance')
+        accepted = steered['steer_received']
         self.assertEqual(accepted['id'], 'later-guidance')
         self.assertEqual(accepted['message'], 'Guidance belongs to the current native process.')
         marker = 'guidance accepted before recipient handling'
