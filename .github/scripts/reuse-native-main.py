@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Verify a retained Main compilation against the current compilation inputs."""
 import argparse
+import difflib
 import glob
 import hashlib
 import json
@@ -25,6 +26,9 @@ COMPILER_ARCHIVES = {
     },
 }
 ENTRY = 'bend2/src/coordinator/main.bend'
+HOST_SOURCE = 'bend2/src/host/process-spawn.c'
+HOST_ORIGINAL_SHA256 = '87106fc98bdde8107f1be365e9c70c8ba66332b20044153148b11c0c8d799ec3'
+HOST_CURRENT_SHA256 = '92f8b1731faed7a08e94158a4dffd4cdeee53d380444ae963c8875378660619c'
 
 
 def require(condition, message):
@@ -123,6 +127,65 @@ def production_inputs(root, rows):
     return selected, None
 
 
+def canonical_host_change(original, current):
+    old = {row['path']: row for row in original}
+    new = {row['path']: row for row in current}
+    if old.keys() != new.keys():
+        return False
+    changed = [name for name in old if old[name] != new[name]]
+    return (changed == [HOST_SOURCE]
+            and old[HOST_SOURCE]['mode'] == new[HOST_SOURCE]['mode'] == '100644'
+            and old[HOST_SOURCE]['sha256'] == HOST_ORIGINAL_SHA256
+            and new[HOST_SOURCE]['sha256'] == HOST_CURRENT_SHA256)
+
+
+def substitute_host(original_c, original_host, current_host):
+    require(hashlib.sha256(original_host).hexdigest() == HOST_ORIGINAL_SHA256,
+            'Original foreign source differs from the canonical publication fix.')
+    require(hashlib.sha256(current_host).hexdigest() == HOST_CURRENT_SHA256,
+            'Current foreign source differs from the canonical publication fix.')
+    require(original_c.count(original_host) == 1, 'Main C must contain the complete original foreign source once.')
+    prefix, suffix = original_c.split(original_host)
+    derived = prefix + current_host + suffix
+    require(derived.count(current_host) == 1, 'Derived Main C must contain the complete current foreign source once.')
+    return derived, {
+        'schema': 'baton2-canonical-foreign-substitution-v1', 'path': HOST_SOURCE,
+        'original_host_sha256': HOST_ORIGINAL_SHA256, 'current_host_sha256': HOST_CURRENT_SHA256,
+        'offset': len(prefix),
+        'prefix_size_bytes': len(prefix), 'prefix_sha256': hashlib.sha256(prefix).hexdigest(),
+        'suffix_size_bytes': len(suffix), 'suffix_sha256': hashlib.sha256(suffix).hexdigest(),
+        'original_c_size_bytes': len(original_c), 'original_c_sha256': hashlib.sha256(original_c).hexdigest(),
+        'derived_c_size_bytes': len(derived), 'derived_c_sha256': hashlib.sha256(derived).hexdigest(),
+    }
+
+
+def verify_production_transition(origin, proof, current):
+    original = json.loads((origin / 'production-inputs.json').read_text())
+    recorded = json.loads((origin / 'current-production-inputs.json').read_text())
+    require(current == recorded, 'Current production input membership, bytes or modes differ.')
+    substitution = proof.get('foreign_source_substitution')
+    if substitution is None:
+        require(original == current, 'Main production inputs differ.')
+        return
+    require(canonical_host_change(original, current), 'Foreign substitution changes other production inputs.')
+    old_host = (origin / 'foreign-source-original.c').read_bytes()
+    new_host = (origin / 'foreign-source-current.c').read_bytes()
+    original_c = (origin / 'baton2.original.c').read_bytes()
+    derived, actual = substitute_host(original_c, old_host, new_host)
+    require(actual == substitution, 'Canonical foreign substitution proof differs.')
+    artifacts = json.loads((origin / 'build-artifacts.json').read_text())
+    c_rows = [row['copy'] for row in artifacts if pathlib.Path(row['copy']['path']).name == 'baton2.c']
+    require(len(c_rows) == 1 and c_rows[0]['sha256'] == actual['original_c_sha256']
+            and c_rows[0]['size_bytes'] == actual['original_c_size_bytes'],
+            'Original Main C differs from its completed build artifact.')
+    require((origin / 'baton2.c').read_bytes() == derived, 'Derived Main C differs from the canonical substitution.')
+    source = json.loads((origin / 'source-files.json').read_text())
+    require(next(row for row in source if row['path'] == HOST_SOURCE)['sha256'] == HOST_ORIGINAL_SHA256,
+            'Original source does not bind the canonical foreign input.')
+    require(next(row for row in recorded if row['path'] == HOST_SOURCE)['sha256'] == HOST_CURRENT_SHA256,
+            'Selected source does not bind the current foreign input.')
+
+
 def distribution(archive, home):
     require(digest(archive) in COMPILER_ARCHIVES, 'Compiler archive differs from the pinned distributions.')
     expected = {}
@@ -183,12 +246,13 @@ def select(args, result):
     require(proof['schema'] == 'baton2-main-c-reuse-v1' and proof['status'] == 'reused'
             and proof['root'] == args.bound_root, 'Main C reuse proof does not bind the selected checkout.')
     origin = args.proof.parent / 'main-c-origin'
-    for name in ('production-inputs.json', 'toolchain-files.json'):
-        row = next(row for row in proof['origin_assets'] if row['path'] == 'main-c-origin/' + name)
-        verify_file({**row, 'path': str(origin / name)})
+    for row in proof['origin_assets']:
+        path = args.proof.parent / row['path']
+        require(path.resolve().is_relative_to(origin), 'Origin asset leaves Main compilation evidence.')
+        verify_file({**row, 'path': str(path)})
     require(digest(args.generated_c) == proof['generated_c_sha256']
             and args.generated_c.stat().st_size == proof['generated_c_size'], 'Verified Main C bytes changed.')
-    expected = json.loads((origin / 'production-inputs.json').read_text())
+    expected = json.loads((origin / 'current-production-inputs.json').read_text())
     rows = []
     for path in sorted((root / 'bend2/src').rglob('*')):
         if path.is_symlink():
@@ -205,6 +269,7 @@ def select(args, result):
     if rows != expected:
         result['reason'] = 'Actual Main production input membership, bytes or modes differ.'
         return
+    verify_production_transition(origin, proof, rows)
     compiler = args.compiler.resolve()
     require(compiler.name == 'bend' and compiler.parent.name == 'bin', 'Unexpected selected compiler layout.')
     actual, matches = directory_files(compiler.parent.parent, json.loads((origin / 'toolchain-files.json').read_text()))
@@ -215,6 +280,8 @@ def select(args, result):
     result.update(status='reused', generated_c_sha256=proof['generated_c_sha256'],
                   proof_sha256=args.proof_sha256, origin_source_commit=proof['origin_source_commit'],
                   scope='original-checkout' if str(root) == args.bound_root else 'matching-production-inputs')
+    if proof.get('foreign_source_substitution') is not None:
+        result['foreign_source_substitution'] = proof['foreign_source_substitution']
 
 
 def artifact_identity(handoff):
@@ -339,21 +406,38 @@ def prepare(args, result):
         'entry': ENTRY, 'argv': [str(args.compiler.resolve()), ENTRY, '-o', '.scratch/bend2/baton2.c'],
         'cwd': str(root), 'BEND_NO_TELEMETRY': os.environ.get('BEND_NO_TELEMETRY'),
         'BUN_JSC_maxPerThreadStackUsage': os.environ.get('BUN_JSC_maxPerThreadStackUsage')}})
-    if old_issue or new_issue or old_inputs != new_inputs or old_distribution != new_distribution:
+    host_change = canonical_host_change(old_inputs, new_inputs)
+    if (old_issue or new_issue or (old_inputs != new_inputs and not host_change)
+            or old_distribution != new_distribution):
         result['reason'] = old_issue or new_issue or 'Production inputs or compiler distribution differ.'
         result['origin_source_commit'] = handoff['source_commit']
         return
-    copy_record(c_record, origin / 'baton2.c')
+    if host_change:
+        copy_record(c_record, origin / 'baton2.original.c')
+        shutil.copyfile(original / HOST_SOURCE, origin / 'foreign-source-original.c')
+        shutil.copyfile(root / HOST_SOURCE, origin / 'foreign-source-current.c')
+        derived, substitution = substitute_host((origin / 'baton2.original.c').read_bytes(),
+                                                (origin / 'foreign-source-original.c').read_bytes(),
+                                                (origin / 'foreign-source-current.c').read_bytes())
+        (origin / 'baton2.c').write_bytes(derived)
+        (origin / 'foreign-source.patch').write_text(''.join(difflib.unified_diff(
+            (origin / 'foreign-source-original.c').read_text().splitlines(keepends=True),
+            (origin / 'foreign-source-current.c').read_text().splitlines(keepends=True),
+            fromfile='original/' + HOST_SOURCE, tofile='current/' + HOST_SOURCE)))
+        result['foreign_source_substitution'] = substitution
+    else:
+        copy_record(c_record, origin / 'baton2.c')
     archive = origin / 'source.tar.gz'
     with (origin / 'source-archive.stdout').open('wb') as stdout, (origin / 'source-archive.stderr').open('wb') as stderr:
         subprocess.run(['git', '-c', 'safe.directory=' + str(original), 'archive', '--format=tar.gz',
                         '--output=' + str(archive), handoff['source_commit']], cwd=original,
                        stdout=stdout, stderr=stderr, check=True)
     result.update(status='reused', origin_source_commit=handoff['source_commit'], origin_source_tree=handoff['source_tree'],
-                  origin_handoff_sha256=binding['selected_sha256'], generated_c_sha256=c_record['sha256'],
-                  generated_c_size=c_record['size_bytes'], root=str(root),
+                  origin_handoff_sha256=binding['selected_sha256'], generated_c_sha256=digest(origin / 'baton2.c'),
+                  generated_c_size=(origin / 'baton2.c').stat().st_size, root=str(root),
                   origin_assets=[{**fact(path), 'path': str(path.relative_to(generated))}
                                  for path in sorted(origin.rglob('*')) if path.is_file()])
+    verify_production_transition(origin, result, new_inputs)
     proof = generated / 'main-c-reuse.json'
     save(proof, result)
     with args.github_env.open('a') as output:
@@ -383,8 +467,8 @@ def verify_transfer(args):
     rows = source_files(args.source.resolve(), result['current_source_commit'], result['current_source_tree'])
     require(rows == json.loads((origin / 'current-source-files.json').read_text()), 'Current full source differs from reuse proof.')
     current, issue = production_inputs(args.source.resolve(), rows)
-    require(issue is None and current == json.loads((origin / 'production-inputs.json').read_text())
-            == json.loads((origin / 'current-production-inputs.json').read_text()), 'Main production inputs differ.')
+    require(issue is None, 'Main production import scope differs.')
+    verify_production_transition(origin, result, current)
     require(json.loads((origin / 'toolchain-files.json').read_text())
             == json.loads((origin / 'current-toolchain-files.json').read_text()), 'Main toolchain distributions differ.')
     expected = {row['path']: row for row in json.loads((origin / 'source-files.json').read_text())}
