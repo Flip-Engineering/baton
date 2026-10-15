@@ -169,7 +169,15 @@ class FixedCoordinator(unittest.TestCase):
             keep = (pathlib.Path(tempfile.gettempdir())
                     / f'fixed676-{self._testMethodName}-{int(time.time())}')
             keep.mkdir(parents=True)
-            shutil.copytree(self.directory, keep / 'fixture')
+            retained = keep / 'fixture'
+            retained.mkdir()
+            with sqlite3.connect(self.db.as_uri() + '?mode=ro', uri=True) as source, \
+                    sqlite3.connect(retained / 'state.db') as target:
+                source.backup(target)
+            sidecars = {'state.db', 'state.db-journal', 'state.db-wal', 'state.db-shm'}
+            shutil.copytree(self.directory, retained, dirs_exist_ok=True,
+                            ignore=lambda directory, names: sidecars.intersection(names)
+                            if pathlib.Path(directory) == self.directory else set())
             try:
                 owned = subprocess.run(['ps', '-axo', 'pid=,ppid=,stat=,command='],
                                        capture_output=True, text=True).stdout
@@ -1020,11 +1028,15 @@ finally:
         self.coord('report', 'app-failure-observed', 'w1', 'The coordinator has the actual failure evidence.')
         self.assertEqual(len(app_calls('turn/start')), 2, 'an unrelated commit retried the same failure')
         fresh_body = 'A genuinely newer coordinator result after recovery.'
-        fresh = self.coord('message', 'fresh-app-report', 'root', 'w1', 'report', fresh_body, ok=False)
+        fresh = subprocess.run([str(EXE), str(self.db), 'message-batch-file', 'root', '-'],
+                               input=json.dumps([{'id': 'fresh-app-report', 'recipient': 'w1',
+                                                  'kind': 'report', 'body': fresh_body}]),
+                               capture_output=True, text=True)
         self.assertEqual(fresh.returncode, 0, fresh.stderr)
-        self.assertEqual(json.loads(fresh.stdout), {
+        admitted, = json.loads(fresh.stdout)
+        self.assertEqual(admitted['admission'], {'status': 'admitted', 'message': {
             'id': 'fresh-app-report', 'sender': 'root', 'recipient': 'w1',
-            'kind': 'report', 'body': fresh_body, 'receipt': None})
+            'kind': 'report', 'body': fresh_body, 'receipt': None}})
         self.assertEqual(self.query("SELECT sender,recipient,kind,body,receipt FROM messages WHERE id='fresh-app-report'"),
                          [('root', 'w1', 'report', fresh_body, None)])
         self.eventually(lambda: len(app_calls('turn/start')) == 3,

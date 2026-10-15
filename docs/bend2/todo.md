@@ -210,9 +210,11 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   settled native custody leave no managed producer, connection or recorded wake.
   Preserve failed fixture files and process facts, then close owned children
   before collecting inherited server pipes.
-  A newer report clears the retained failed admission claim and can start its
-  next App turn. Require its successful complete message result while retaining
-  the prior failure body, partial result, owed receipts and exact next turn.
+  A newer report can start the next App turn while its public wake returns the
+  older owed input's retained failure. Assert its complete admitted message through
+  the batch result, preserving the prior failure, partial result, owed receipts
+  and exact next turn. Retain a consistent SQLite backup and omit transient
+  database sidecars from failed-fixture copies.
   Candidate run `38771989568` changed the recorded native conversation during
   the one-shot contention check. The original managed follower enforced that
   identity change, and serve retained its failed task. Require the exact
