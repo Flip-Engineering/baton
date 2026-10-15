@@ -4,6 +4,18 @@ The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3
 retain findings, ownership and acceptance requirements. This page links current
 Baton follow-up work for contributors. Every open issue has a link on this page.
 
+- [#736: Preserve full branch history messages in native landing qualification](https://github.com/Flip-Engineering/baton/issues/736).
+  Exact candidate `57b471e9` completed its builds and failed `land-test` twice
+  with `land K: candidate message differs from the branch history` in run
+  `38679395337`. The isolated exact-source remote reproduction retained full
+  commit messages, Git objects and toolchain custody. Both stored landing bodies
+  match the required messages; the test's Git log format adds a record newline.
+  Read the body with `--format=format:%B` before removing its final newline.
+  The corrected isolated native test passes; full source qualification remains
+  open. This blocks
+  [#717](https://github.com/Flip-Engineering/baton/issues/717); selected-commit
+  behavior remains tracked by [#673](https://github.com/Flip-Engineering/baton/issues/673).
+
 - [#735: Judge managed attachment fixtures when their follower producer exits](https://github.com/Flip-Engineering/baton/issues/735).
   Target workflow `38660325053` records the endpointless short admission and
   a following Baton producer exit with signal 11 before its App follower connects.

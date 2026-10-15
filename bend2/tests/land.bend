@@ -211,7 +211,7 @@ def msg_of(r: String, commit: String) -> IO(String):
   +r2 = r
   +c2 = commit
   do IO<String>:
-    g : T.GitOut <- Git.runGit(r2, ["log", "-1", "--format=%B", c2])
+    g : T.GitOut <- Git.runGit(r2, ["log", "-1", "--format=format:%B", c2])
     IO.pure(String, Tx.trim_nl(out_of(g)))
 
 def drop_line() -> String:
