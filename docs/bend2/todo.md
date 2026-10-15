@@ -4,6 +4,15 @@ The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3
 retain findings, ownership and acceptance requirements. This page links current
 Baton follow-up work for contributors. Every open issue has a link on this page.
 
+- [#755: Fix native fixture isolation and generated C staging in parallel checks](https://github.com/Flip-Engineering/baton/issues/755).
+  Run `38785813982` recorded an AgentInput receive child exiting from SIGKILL
+  during a concurrent nested Receive suite; the signal sender is unproven.
+  Scope `Receive.kill_fixture` to its own directory. The same run's two
+  RetainedControl probes lacked `process-test.c`; copy that exact generated
+  source into the worker seed. Preserve the failed streams and qualify the
+  complete parallel run with [#747](https://github.com/Flip-Engineering/baton/issues/747)
+  and [#741](https://github.com/Flip-Engineering/baton/issues/741).
+
 - [#754: Reselect the current receiver before retained serve admission](https://github.com/Flip-Engineering/baton/issues/754).
   Retained current and target runs started a third old-command native attempt
   after the managed endpoint was committed. The initial serve path captures its
@@ -80,6 +89,8 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   [#717](https://github.com/Flip-Engineering/baton/issues/717).
 
 - [#747: Wait for actual native settlement in real acceptance drivers](https://github.com/Flip-Engineering/baton/issues/747).
+  Parallel fixture signal scope and required generated C staging are tracked in
+  [#755](https://github.com/Flip-Engineering/baton/issues/755).
   Actual native-receive admission completed before its successful background
   bootstrap; knowledge phase checks ran before the producer capture began.
   Root-day started a second direct turn while the original native remained

@@ -3987,7 +3987,8 @@ class Receive(unittest.TestCase):
                                 text=True, check=True)
         for line in result.stdout.splitlines():
             fields = line.strip().split(None, 1)
-            if len(fields) == 2 and 'native fixture' in fields[1]:
+            if (len(fields) == 2 and str(self.directory) in fields[1]
+                    and 'native fixture' in fields[1]):
                 try:
                     os.kill(int(fields[0]), signal.SIGKILL)
                 except ProcessLookupError:
