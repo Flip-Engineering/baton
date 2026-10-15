@@ -66,7 +66,10 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   before the completed controlled stop. Candidate `5d36d95a` failed normal term
   checking because an earlier helper referenced the later `resume_pending`
   definition. The correction passes the drain continuation into those helpers;
-  the send, error and reply-selection behavior stays unchanged. Remote
+  the send, error and reply-selection behavior stays unchanged. Candidate
+  `7b5e7e1a` then reached the retained-output caller and identified its reused
+  affine `attempt` argument. The caller now declares that shared String explicitly.
+  Remote
   qualification remains open with
   [#717](https://github.com/Flip-Engineering/baton/issues/717),
   [#723](https://github.com/Flip-Engineering/baton/issues/723),
