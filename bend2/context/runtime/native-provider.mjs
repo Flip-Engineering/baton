@@ -237,6 +237,7 @@ export function createRuntimeProvider({ setup, write }) {
           params: { state: subject.stopOnException }, effects });
       }
       await session.control({ query: invocation.query, method: 'Runtime.runIfWaitingForDebugger', effects });
+      await session.waitFor('Debugger.paused', { signal: ended.signal });
       result = { ...result, state: session.snapshot().state };
       endpointWatch?.stop();
     } else if (subject.intent === 'observe') {
@@ -256,7 +257,7 @@ export function createRuntimeProvider({ setup, write }) {
         releasing = false;
         publishExit();
       }
-      result = { ...result, exit };
+      result = { ...result, state: session.snapshot().state, exit };
     } else {
       const params = { query: invocation.query, effects, action: subject.action,
         expression: subject.expression };

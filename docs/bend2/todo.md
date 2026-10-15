@@ -91,8 +91,15 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   that parent through the existing directory API. Run `22720` on `3358ceec7`
   then failed with `EINVAL`: the nested role directories did not meet the
   physical owner's database-parent identity check. Fix `b3b17fe28` places both
-  role directories directly beside the database. Installed context acceptance
-  and final source qualification remain pending.
+  role directories directly beside the database. The next focused package run
+  reached runtime commands, then rejected pause because launch had published
+  running before Node's initial pause. Await that pause before publishing launch.
+  Publish the current release state after the keeper confirms exit. Runtime
+  roles without a guard descriptor also failed cleanup with `EBADF`; close the
+  descriptor when present and retain close errors for actual descriptors.
+  Reuse the completed Main C through the existing complete foreign-source
+  substitution proof and recompile the corrected host code. Installed context
+  acceptance and final source qualification remain pending.
   The complete native run also suspended an observer while it retained a SQLite
   read lock, blocking the fixture's native handling write. Suspend the observer
   while holding a reader-free database boundary, then release that boundary

@@ -1092,7 +1092,7 @@ static int br_command(BrKeeper *keeper,BrFrame frame,const char *payload) {
   else if(frame.op==BR_RELEASE) {
     if(!keeper->exited) error=EBUSY;
     else if(!keeper->released) {
-      if(close(keeper->lock)) error=errno;
+      if(keeper->lock>=0 && close(keeper->lock)) error=errno;
       else {keeper->lock=-1;keeper->released=1;error=br_file(keeper->directory,"released","released\n",9,1);}
     }
   } else if(frame.op==BR_ACK) {
