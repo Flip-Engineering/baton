@@ -79,11 +79,10 @@ def request_intent(+req: J.Json) -> String:
   subject_field(req, "intent")
 
 def source_path(+req: J.Json) -> String:
-  match request_subject_kind(req):
-    case "runtime":
-      Bool.pick(String, String.eq(request_intent(req), "launch"),
-        subject_field(req, "program"), subject_field(req, "path"))
-    case other: subject_field(req, "path")
+  Bool.pick(String,
+    Bool.and(String.eq(request_subject_kind(req), "runtime"),
+      String.eq(request_intent(req), "launch")),
+    subject_field(req, "program"), subject_field(req, "path"))
 
 def database_engine(m: Maybe<&2, J.Json>) -> String:
   match m:
