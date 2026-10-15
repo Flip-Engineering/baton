@@ -15,6 +15,8 @@ def main():
     parser.add_argument('--archive', default='')
     parser.add_argument('--archive-sha256', default='')
     parser.add_argument('--runner', required=True)
+    parser.add_argument('--ccache', default='')
+    parser.add_argument('--github-env', type=pathlib.Path)
     args = parser.parse_args()
     verifier = runpy.run_path(str(pathlib.Path(__file__).with_name('reuse-native-main.py')))
     require, digest = verifier['require'], verifier['digest']
@@ -50,6 +52,23 @@ def main():
                  'selection': 'retained' if selected else 'downloaded',
                  'compiler_archive_sha256': archive_sha, 'compiler_binary_sha256': binary_sha,
                  'distribution': files}
+    cache = None
+    if args.ccache:
+        require(args.runner == 'homelab', 'The private native object cache requires the homelab runner.')
+        wrapper = pathlib.Path(os.path.expandvars(os.path.expanduser(args.ccache))).resolve()
+        require(digest(wrapper) == '5098dd7f2d1bf315830bf5b3740daea140cf861c21f5bdb3db0aa95dc7b4eeab',
+                'The native object cache wrapper differs from its measured version.')
+        cache = {'wrapper': verifier['fact'](wrapper),
+                 'directory': str(pathlib.Path.home() / '.cache/baton-native-objects'),
+                 'log': str(evidence / 'native-object-cache.log')}
+        pathlib.Path(cache['directory']).mkdir(parents=True, exist_ok=True)
+    (evidence / 'native-object-cache.json').write_text(json.dumps(cache, indent=2) + '\n')
+    if args.github_env:
+        with args.github_env.open('a') as output:
+            output.write('BATON2_CCACHE=' + (str(wrapper) if cache else '') + '\n')
+            if cache:
+                output.write('CCACHE_DIR=' + cache['directory'] + '\n')
+                output.write('CCACHE_LOGFILE=' + cache['log'] + '\n')
     path = run / 'generated/compiler-selection.json'
     path.write_text(json.dumps(selection, indent=2) + '\n')
     print(json.dumps({key: value for key, value in selection.items() if key != 'distribution'}))

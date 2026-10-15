@@ -77,6 +77,11 @@ name: bend2-native-development
         required: false
         default: ''
         type: string
+      retained_ccache:
+        description: 'Measured private ccache wrapper on the homelab; leave blank for direct native compilation'
+        required: false
+        default: ''
+        type: string
       linux_runner:
         description: 'Linux qualification host'
         required: true
@@ -112,6 +117,7 @@ jobs:
         env:
           BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive }}
           BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 }}
+          BATON2_RETAINED_CCACHE: ${{ inputs.retained_ccache }}
           BATON2_LINUX_RUNNER: ${{ inputs.linux_runner }}
         run: |
           set -euo pipefail
@@ -122,6 +128,7 @@ jobs:
           python3 .github/scripts/prepare-native-compiler.py --run "$run" \
             --archive "$BATON2_RETAINED_COMPILER_ARCHIVE" \
             --archive-sha256 "$BATON2_RETAINED_COMPILER_SHA256" \
+            --ccache "$BATON2_RETAINED_CCACHE" --github-env "$GITHUB_ENV" \
             --runner "$BATON2_LINUX_RUNNER" \
             > "$run/evidence/compiler-selection.stdout" 2> "$run/evidence/compiler-selection.stderr"
           printf 'BEND=%s\n' "$run/toolchain-home/bin/bend" >> "$GITHUB_ENV"
@@ -214,6 +221,13 @@ jobs:
                      'checks': records, 'selected_results': selected_results, 'main_c_reuse': main_c_reuse}
           (run / 'generated/handoff-manifest.json').write_text(json.dumps(handoff, indent=2) + '\n')
           PY
+      - name: Retain native object cache statistics
+        if: always() && env.BATON2_CCACHE != ''
+        shell: bash
+        run: |
+          "$BATON2_CCACHE" --show-stats \
+            > "$BATON2_LINUX_RUN/evidence/native-object-cache-stats.stdout" \
+            2> "$BATON2_LINUX_RUN/evidence/native-object-cache-stats.stderr"
       - name: Retain complete candidate evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
