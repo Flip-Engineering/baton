@@ -170,6 +170,13 @@ class FixedCoordinator(unittest.TestCase):
                     / f'fixed676-{self._testMethodName}-{int(time.time())}')
             keep.mkdir(parents=True)
             shutil.copytree(self.directory, keep / 'fixture')
+            try:
+                owned = subprocess.run(['ps', '-axo', 'pid=,ppid=,stat=,command='],
+                                       capture_output=True, text=True).stdout
+            except Exception as exc:
+                owned = f'ps-failed: {exc}'
+            (keep / 'processes.txt').write_text(owned)
+            self.close_children()
             for name, process in (('serve', self.serve_proc),):
                 if process is None:
                     continue
@@ -181,12 +188,6 @@ class FixedCoordinator(unittest.TestCase):
                     out, err = '', f'collect-failed: {exc}'
                 (keep / f'{name}.stdout').write_text(out or '')
                 (keep / f'{name}.stderr').write_text(err or '')
-            try:
-                owned = subprocess.run(['ps', '-axo', 'pid=,ppid=,stat=,command='],
-                                       capture_output=True, text=True).stdout
-            except Exception as exc:
-                owned = f'ps-failed: {exc}'
-            (keep / 'processes.txt').write_text(owned)
             digest = hashlib.sha256(EXE.read_bytes()).hexdigest()
             try:
                 bend_version = subprocess.run(
@@ -904,7 +905,13 @@ finally:
         self.dispatch('t3', 'w1', 'Handle the remaining input when this App turn settles.')
         phase('releasing the old native task after the receiver changed')
         self.release('w1', 1)
-        self.eventually(lambda: app_calls('turn/steer'),
+        def app_admitted():
+            self.assertEqual(self.query("SELECT receipt FROM messages WHERE id='t3'"), [(None,)],
+                             'the old native continuation acknowledged managed input')
+            self.assertEqual(len(self.connections('w1')), 2,
+                             'the previous native receiver ran after the managed route was recorded')
+            return app_calls('turn/steer')
+        self.eventually(app_admitted,
                         'the short sender did not admit input to the active App turn',
                         contradiction=self.completed_managed_failure)
         self.await_inbox('root', lambda messages: (
@@ -919,7 +926,7 @@ finally:
                              'the previous native receiver ran after the managed route was recorded')
             return self.connections('w1-app')
         self.eventually(managed_connected, 'the current managed receiver did not connect',
-                        contradiction=self.completed_managed_failure)
+                        contradiction=lambda: self.completed_managed_failure(require_follower=True))
         self.stream_for('w1-app', contradiction=self.completed_managed_failure)
         self.assertTrue(app_calls('turn/steer'), 'the short sender admitted input to the active App turn')
         self.assertEqual(self.query("SELECT receipt FROM messages WHERE id='t3'"), [(None,)])
@@ -965,6 +972,19 @@ finally:
         self.assertIn('"recipient":"w1"', app_calls('turn/start')[0]['params']['input'][0]['text'])
         self.coord('ack', 't3', 'w1', 'w1-app-handled-t3')
         self.dispatch('g4', 'w1', 'Later guidance after the recipient handled its earlier input.', kind='guidance')
+        guidance_seq = self.query("SELECT seq FROM messages WHERE id='g4'")[0][0]
+
+        def guidance_admitted():
+            if self.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='codex_inbox_wakes'"):
+                rows = self.query("SELECT cause FROM codex_inbox_wakes WHERE session='w1' AND native='native-w1'")
+                if not rows or json.loads(rows[0][0]) != {'inputSeq': guidance_seq, 'turnId': 'app-turn-1'}:
+                    return False
+            return any(call['params'].get('expectedTurnId') == 'app-turn-1'
+                       and json.loads(call['params']['input'][0]['text'].splitlines()[1])['pendingCount'] == 2
+                       for call in app_calls('turn/steer'))
+
+        self.eventually(guidance_admitted, 'the later guidance did not enter the active App turn',
+                        contradiction=self.completed_managed_failure)
         self.assertEqual(len(self.connections('w1-app')), 1, 'own ACK or new input duplicated the App watcher')
         phase('settling the App turn with later guidance')
         self.release('w1-app', settle=True)
@@ -1264,7 +1284,7 @@ finally:
         self.shutdown(expect_serve=1)
         print('failed-session continuation: fixture owner shut down', flush=True)
 
-    def completed_managed_failure(self):
+    def completed_managed_failure(self, require_follower=False):
         log = pathlib.Path(str(self.db) + '.root.log')
         if not log.exists():
             return None
@@ -1281,6 +1301,30 @@ finally:
             return {'type': 'managedChildFailedBeforeAttachment',
                     'database': str(self.db), 'session': 'w1', 'native': 'native-w1',
                     'results': failures, 'delivery_log': str(log), 'output': output}
+        if require_follower:
+            records = [json.loads(line) for line in output.splitlines(keepends=True)
+                       if line.endswith('\n') and line.startswith('{')]
+            admissions = [row for row in records if row.get('type') == 'codexInboxAdmission'
+                          and row.get('threadId') == 'native-w1']
+            exits = [row for row in records if row.get('type') == 'codexProxyExit']
+            attempts = self.query("SELECT directory,phase,status FROM executions WHERE session='w1'")
+            settled = attempts and all(phase == 'exited' and status == 'exit 0'
+                and all((pathlib.Path(directory) / marker).exists()
+                        for marker in ('released', 'acknowledged'))
+                for directory, phase, status in attempts)
+            producers = [row for row in self.owned_processes()
+                         if not self.is_owner(row) and not self.is_serve(row)]
+            wake_table = self.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name='codex_inbox_wakes'")
+            wakes = self.query("SELECT 1 FROM codex_inbox_wakes WHERE session='w1'") if wake_table else []
+            if (admissions and len(exits) == len(admissions)
+                    and all(row.get('code') == 0 and row.get('signal') is None for row in exits)
+                    and settled and not producers and not self.connections('w1-app')
+                    and not self.app_follow_events.exists()
+                    and not wakes):
+                return {'type': 'managedFollowerMissingAfterAdmission',
+                        'database': str(self.db), 'session': 'w1', 'native': 'native-w1',
+                        'admissions': admissions, 'proxy_exits': exits, 'attempts': attempts,
+                        'delivery_log': str(log), 'output': output}
         return None
 
     def test_13_endpointless_codex_reports_settlement_and_admits_new_guidance(self):

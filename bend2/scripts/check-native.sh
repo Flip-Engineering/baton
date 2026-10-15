@@ -14,13 +14,4 @@ sh bend2/scripts/build-native.sh bend2/tests/git.bend .scratch/bend2/git-test
 .scratch/bend2/git-test
 sh bend2/scripts/build-native.sh bend2/tests/land.bend .scratch/bend2/land-test
 .scratch/bend2/land-test
-for test in bend2/test/*.py; do
-  printf '%s\n' "$test"
-  "$PYTHON3" "$test"
-done
-node --test bend2/test/git-series.mjs
-node --test bend2/test/provider-availability.mjs
-node --test bend2/test/context-provider.test.mjs \
-  bend2/test/context-project-policy.test.mjs \
-  bend2/test/ui-orchestra-server.test.mjs \
-  bend2/tests/context-models/*.test.mjs bend2/tests/runtime/*.test.mjs
+"$PYTHON3" bend2/scripts/check-native-parallel.py "$PYTHON3"

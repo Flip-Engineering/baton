@@ -193,6 +193,11 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   Muse continuation checks preserve the first successful turn's handling receipt
   and select later owed guidance. Receiver-switch checks observe `exit 0`, release
   the old native attempt and await admission through the current receiver.
+  Await the exact later guidance admission before settling its active App turn.
+  Preserve a missing-follower failure after successful short admissions and
+  settled native custody leave no managed producer, connection or recorded wake.
+  Preserve failed fixture files and process facts, then close owned children
+  before collecting inherited server pipes.
   Browser acceptance reached the final actor through End while its cursor was
   outside the viewport. Scroll the keyboard-selected actor into view. The complete
   browser acceptance now passes with the current actor cards and knowledge view.
@@ -309,7 +314,12 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   Clang invocations with matching inputs. Workflow `38727774829` repeated the
   object compilation because origin and CI locale settings produced different
   cache keys. Both homelab runners now normalize the four locale fields through
-  the retained wrapper; `ac18235c2` pins its actual digest in CI. Coordinate with
+  the retained wrapper; `ac18235c2` pins its actual digest in CI. Run every Python
+  native suite and the three Node groups in four isolated workers after the
+  existing Main and small native fixture checks. Preserve private source,
+  scratch and runtime directories, complete streams, natural exit judgments
+  and the selected-test recorder contracts. Qualify the complete parallel run
+  under [#747](https://github.com/Flip-Engineering/baton/issues/747). Coordinate with
   [#677](https://github.com/Flip-Engineering/baton/issues/677),
   [#728](https://github.com/Flip-Engineering/baton/issues/728) and
   [#740](https://github.com/Flip-Engineering/baton/issues/740).
