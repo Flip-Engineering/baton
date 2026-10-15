@@ -24,6 +24,7 @@ import ../coordinator/commands.bend as ContextCommands
 import ./store.bend as ContextStore
 import ../host/sqlite.bend as DB
 import ../host/process.bend as Process
+import ../host/files.bend as Files
 import ../host/instance.bend as Custody
 import ../host/session-lock.bend as Host
 import ../host/text.bend as HostText
@@ -1730,6 +1731,7 @@ def launch_runtime_created(+db: String, +binding: String, +owner: String,
         ContextIdentity.guard_identity(binding, ContextIdentity.SubjectRuntime{query},
           ContextIdentity.RoleAdapter{}, "0"),
         recovery, recovery, binding)))
+    directory_ready : Unit <- IO.try(Unit, Files.Files.mkdir(keeper_path))
     +bridge : NativeRuntime.RuntimeBridge <- NativeRuntime.runtime_retained_open(db,
       target_dir, target_argv, target_stderr, doc, recovery,
       adapter_dir, adapter_argv, adapter_stderr, setup, recovery, cwd)
