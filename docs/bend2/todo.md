@@ -101,11 +101,16 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   preserving all command and task behavior. The diagnostic completed three C
   emission passes and exited with SIGILL during its fourth pass. Its complete
   phase stream ends during `legacy_cli` emission and retains repeated CLI costs.
-  A source candidate
-  moves the fourteen-argument recovery flag comparison into a Boolean helper
-  and preserves its complete ordinary-command fallback. Its compiler cost and
-  allocator failure effect require remote qualification. C output, candidate tests, package
-  verification and installed adoption remain incomplete for
+  Moving the fourteen-argument recovery flag comparison into a Boolean helper
+  passed term checking on `6c1e0a5a`; workflow `38675555092` then exited with a
+  trace/breakpoint trap after 1234.820655 seconds and produced no C output.
+  The earlier diagnostic records millions of intermediate operations in the
+  legacy argument matcher. The compiler expands its leading `--project` String
+  pattern through character and bit constructors and copies the long fallback
+  argument patterns into those branches. The source correction compares that
+  head with `String.eq` before entering the unchanged argument-count patterns.
+  Preserve project precedence, complete arguments and all recovery fallbacks.
+  C output, candidate tests, package verification and installed adoption remain incomplete for
   [#717](https://github.com/Flip-Engineering/baton/issues/717). Coordinate with
   [#722](https://github.com/Flip-Engineering/baton/issues/722),
   [#723](https://github.com/Flip-Engineering/baton/issues/723) and
