@@ -4,174 +4,26 @@ The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3
 retain findings, ownership and acceptance requirements. This page links current
 Baton follow-up work for contributors. Every open issue has a link on this page.
 
-- [#768: Read complete UTF-8 records from active Control fixture logs](https://github.com/Flip-Engineering/baton/issues/768).
-  Run `38813867097` failed the independent-player large-output Control method
-  when its active log snapshot ended inside a UTF-8 character. The 26-test suite
-  completed with one decoding error. Read bytes and decode complete newline
-  records, preserving strict complete-record decoding, exact report bodies,
-  player overlap, native identity, regular dispatch streams and process closure.
-  Qualify the successor whole workflow for
-  [#717](https://github.com/Flip-Engineering/baton/issues/717) and
-  [#747](https://github.com/Flip-Engineering/baton/issues/747), retaining
-  [#715](https://github.com/Flip-Engineering/baton/issues/715) and
-  [#723](https://github.com/Flip-Engineering/baton/issues/723) control scope.
+- [#761: Move Codex inbox coordination decisions into Bend](https://github.com/Flip-Engineering/baton/issues/761).
+  Move database claims, native and stop checks, input selection, failure
+  retention, admission and continuation from `codex-inbox-wake.mjs` into Bend.
+  Preserve complete input, first receipts, terminal reporting and restart
+  recovery. Follow the [#539 operator correction](https://github.com/Flip-Engineering/baton/issues/539#issuecomment-5766719155)
+  and [#592](https://github.com/Flip-Engineering/baton/issues/592); carry the
+  real writer-contention regressions from
+  [#750](https://github.com/Flip-Engineering/baton/issues/750) and
+  [#760](https://github.com/Flip-Engineering/baton/issues/760). This work follows
+  the 2.0 release; coordinate with [#747](https://github.com/Flip-Engineering/baton/issues/747).
 
-- [#767: Align extracted archive smoke setup with native attachment and read contracts](https://github.com/Flip-Engineering/baton/issues/767).
-  Run `38810208455` passed all 55 candidate suites and all 15 target comparisons.
-  Its Darwin archive built, then smoke MCP initialization refused the generic
-  fixture harness. Register the controlled parent through public attach with
-  `claude-code` and its existing fixture conversation. Expect the current `absent`
-  read status for the exact missing message. Preserve native attachment authority,
-  complete inputs, tool responses, completion review, receipts, landing, process
-  closure and public view checks. Run the full smoke remotely and qualify the
-  successor whole workflow for [#717](https://github.com/Flip-Engineering/baton/issues/717)
-  and [#747](https://github.com/Flip-Engineering/baton/issues/747), retaining
-  [#715](https://github.com/Flip-Engineering/baton/issues/715) and
-  [#723](https://github.com/Flip-Engineering/baton/issues/723) scope.
-
-- [#766: Apply the browser fixture busy policy to native readiness reads](https://github.com/Flip-Engineering/baton/issues/766).
-  Run `38808301621` failed when the worker-native readonly readiness query
-  raised SQLite error 5 before its first owned input delivery; the other 54
-  candidate suites passed. Apply the fixture's existing `busy_timeout = 250`
-  policy to this connection, preserving the running execution, attempt directory,
-  native identity and owned-input assertions. The exact competing writer was not
-  identified. Qualify the existing whole workflow for
-  [#717](https://github.com/Flip-Engineering/baton/issues/717) and
-  [#747](https://github.com/Flip-Engineering/baton/issues/747), retaining the
-  readiness evidence in [#759](https://github.com/Flip-Engineering/baton/issues/759)
-  and [#763](https://github.com/Flip-Engineering/baton/issues/763).
-
-- [#765: Allow Receive fixture execution reads to recover interrupted SQLite writes](https://github.com/Flip-Engineering/baton/issues/765).
-  Run `38804561830` passed 54 suites and failed the racing-wake Receive method
-  when a SELECT through `mode=ro` reported a readonly database after intentional
-  observer kills. Open the existing fixture database with `mode=rw` so SQLite
-  can perform required recovery. The failure records do not establish the exact
-  interrupted journal. Preserve the query, native liveness, single-launch,
-  wake-claim and complete-input assertions. Qualify the affected post-kill
-  methods and the existing whole workflow for
-  [#717](https://github.com/Flip-Engineering/baton/issues/717) and
-  [#747](https://github.com/Flip-Engineering/baton/issues/747); preserve the
-  separate [#755](https://github.com/Flip-Engineering/baton/issues/755) and
-  [#764](https://github.com/Flip-Engineering/baton/issues/764) evidence.
-
-- [#764: Keep legacy keeper notifications behind observer readiness](https://github.com/Flip-Engineering/baton/issues/764).
-  Run `38800866491` failed legacy adoption before `admitted` with a retain
-  protocol error. Its preserved attempt contains the native identity and stdout.
-  The legacy keeper enables asynchronous spool notifications before its ready
-  acknowledgement; the exact failed wire frame was not retained. Reset observer
-  readiness before `BR_HELLO`, preserve native startup and custody, and qualify
-  reply ordering plus the complete SharedInstance and release workflow for
-  [#717](https://github.com/Flip-Engineering/baton/issues/717),
-  [#747](https://github.com/Flip-Engineering/baton/issues/747),
-  [#762](https://github.com/Flip-Engineering/baton/issues/762) and
-  [#759](https://github.com/Flip-Engineering/baton/issues/759).
-
-- [#763: Await native execution identity in the Orchestra projection fixture](https://github.com/Flip-Engineering/baton/issues/763).
-  Run `38794594877` retained a failed worker with an open assignment and no
-  completion request. Its Python native performs owned reads immediately after
-  emitting its identity; the exact child error was deleted by fixture cleanup.
-  Await the matching running execution and native identity, retain failed work
-  after supported cleanup and preserve all projection and completion assertions.
-  Qualify the full fixture and whole workflow with
-  [#759](https://github.com/Flip-Engineering/baton/issues/759),
-  [#747](https://github.com/Flip-Engineering/baton/issues/747) and
-  [#717](https://github.com/Flip-Engineering/baton/issues/717).
-
-- [#762: Keep delayed native-question delivery from resending stored replies](https://github.com/Flip-Engineering/baton/issues/762).
-  Run `38794594877` consumed the same editor-cancel response twice in the
-  native-question cancellation fixture. The delayed question task can select a
-  reply already written by public `native-reply`. Limit that task to unanswered,
-  open, unwritten questions. Preserve live reply transport and observer reconnect
-  of stored answers, native identity, stops and transport errors. Qualify the
-  existing public Receive and recovery cases and whole workflow for
-  [#717](https://github.com/Flip-Engineering/baton/issues/717),
-  [#718](https://github.com/Flip-Engineering/baton/issues/718) and
-  [#747](https://github.com/Flip-Engineering/baton/issues/747).
-
-- [#760: Resume managed Codex SQL retries after silent writer release](https://github.com/Flip-Engineering/baton/issues/760).
-  Run `38792126033` retained the second endpointless App terminal while its
-  follower awaited a database-change notice after SQLite BUSY. Raw wake metadata
-  writers can release their locks without publishing that notice. Use the existing
-  read-only session command for the inbox-read, failure-retention and refresh
-  retry paths. Preserve terminal, stop, receipt and native identity checks.
-  The real silent-writer terminal regression and all 15 FixedCoordinator cases
-  passed on the genuine completed Main. Complete whole-workflow qualification for
-  [#750](https://github.com/Flip-Engineering/baton/issues/750),
-  [#747](https://github.com/Flip-Engineering/baton/issues/747) and
-  [#717](https://github.com/Flip-Engineering/baton/issues/717).
-
-- [#759: Bind the browser fixture worker native identity before its completion exchange](https://github.com/Flip-Engineering/baton/issues/759).
-  Run `38788773937` failed the browser worker completion check with a missing
-  request, an open assignment and a provider failure. The controlled worker
-  emits `native-worker`; await its matching recorded execution in phase
-  `running` and native identity before the first owned read. Qualify the unchanged
-  child, owned-read, acknowledgement,
-  completion, native-terminal and browser assertions. Preserve the failed run
-  under [#747](https://github.com/Flip-Engineering/baton/issues/747) and retain
-  whole-workflow qualification for [#717](https://github.com/Flip-Engineering/baton/issues/717).
-
-- [#757: Exercise Git App key special-bit refusal under runner restrictions](https://github.com/Flip-Engineering/baton/issues/757).
-  Run `38785813982` failed while setting a synthetic key to `04600` because the
-  runner restricts set-user-ID and set-group-ID modes. Use `01600` for the real
-  special-bit refusal case; preserve valid `0600`, unsafe `0644` and symlink
-  assertions. Qualify the complete parallel run with
-  [#747](https://github.com/Flip-Engineering/baton/issues/747) and
-  [#755](https://github.com/Flip-Engineering/baton/issues/755).
-
-- [#756: Resolve TypeScript database-access scope at the selected symbol](https://github.com/Flip-Engineering/baton/issues/756).
-  Installed package run `38785813982` resolved `answer` at line 1 but selected
-  the bodyless declaration at offset zero for SQL analysis. Reuse the existing
-  symbol resolver, report an unresolved symbol limit and preserve function and
-  whole-file scope. Qualify top-level, named-function and absent-symbol cases
-  through the source and installed modules, then complete package and whole
-  acceptance for [#717](https://github.com/Flip-Engineering/baton/issues/717)
-  and [#727](https://github.com/Flip-Engineering/baton/issues/727). Coordinate
-  with [#747](https://github.com/Flip-Engineering/baton/issues/747) and
-  [#755](https://github.com/Flip-Engineering/baton/issues/755).
-
-- [#755: Fix native fixture isolation and generated C staging in parallel checks](https://github.com/Flip-Engineering/baton/issues/755).
-  Run `38785813982` recorded an AgentInput receive child exiting from SIGKILL
-  during a concurrent nested Receive suite; the signal sender is unproven.
-  Scope `Receive.kill_fixture` to its own directory. The same run's two
-  RetainedControl probes lacked `process-test.c`; copy that exact generated
-  source into the worker seed. Preserve the failed streams and qualify the
-  complete parallel run with [#747](https://github.com/Flip-Engineering/baton/issues/747)
-  and [#741](https://github.com/Flip-Engineering/baton/issues/741).
-
-- [#754: Reselect the current receiver before retained serve admission](https://github.com/Flip-Engineering/baton/issues/754).
-  Retained current and target runs started a third old-command native attempt
-  after the managed endpoint was committed. The initial serve path captures its
-  receiver before waiting for the physical session guard; its attribution to
-  those historical launches remains an inference. Recover any recorded attempt
-  first, then read the current receiver under the guard before new admission.
-  Release the guard before managed delivery and preserve direct explicit receive
-  commands, native arguments and stops. Qualify the observed receiver switch for
-  [#717](https://github.com/Flip-Engineering/baton/issues/717) and
-  [#718](https://github.com/Flip-Engineering/baton/issues/718); coordinate with
-  [#747](https://github.com/Flip-Engineering/baton/issues/747).
-
-- [#753: Bind the owner cursor to the database incarnation](https://github.com/Flip-Engineering/baton/issues/753).
-  Actual candidate run `38771989568` reused a database inode whose retained owner
-  cursor was 22. The new database had change maximum 11, so the owner suppressed
-  its committed stop and the Codex follower stayed subscribed. Bind the existing
-  cursor record to the immutable database birth identity. Preserve generic
-  Instance publication, alias election and same-database owner restart laws;
-  use generation and snapshot recovery for legacy or unqualified identity.
-  Retain the original fixture, consistent database and subscription evidence.
-  Qualify the incarnation regression and current complete native checks for
-  [#717](https://github.com/Flip-Engineering/baton/issues/717); coordinate with
-  [#747](https://github.com/Flip-Engineering/baton/issues/747).
-
-- [#752: Render canonical JSON array elements once](https://github.com/Flip-Engineering/baton/issues/752).
-  The installed TypeScript context check spent over 45 CPU minutes before query
-  admission. Its provider captured 63 library files. Genuine generated C renders
-  both array-formatting branches before selecting the mode, recursively rendering
-  each tail twice. Render the head and tail once and select only the delimiters.
-  Preserve canonical bytes, member ordering, escaping and every render mode.
-  Qualify a long capture-like array against independently derived exact output,
-  rebuild Main on the homelab and complete package acceptance. This blocks
-  [#717](https://github.com/Flip-Engineering/baton/issues/717); coordinate with
-  [#727](https://github.com/Flip-Engineering/baton/issues/727).
+- [#758: Wait for fixture owner publication before cleanup shutdown](https://github.com/Flip-Engineering/baton/issues/758).
+  The target Control cleanup in run `38785813982` recorded shutdown success
+  before the remaining owner's generation-3 record was published. The idle
+  owner had zero physical slots and every retained attempt was acknowledged.
+  A supported shutdown settled it and preserved all baseline errors. Establish
+  public owner readiness at the exact sole-owner boundary before shutdown;
+  preserve the empty-process path and zero-process assertion. This post-release
+  fixture follow-up coordinates with [#747](https://github.com/Flip-Engineering/baton/issues/747)
+  and [#755](https://github.com/Flip-Engineering/baton/issues/755).
 
 - [#751: Add branching Ensemble variant after Baton 2.0](https://github.com/Flip-Engineering/baton/issues/751).
   Implement after the [#717](https://github.com/Flip-Engineering/baton/issues/717)
@@ -186,32 +38,6 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   [#713](https://github.com/Flip-Engineering/baton/issues/713),
   [#723](https://github.com/Flip-Engineering/baton/issues/723) and
   [#731](https://github.com/Flip-Engineering/baton/issues/731).
-
-- [#749: Dispatch through an explicit database when the project pointer path contains an executable](https://github.com/Flip-Engineering/baton/issues/749).
-  Actual hierarchy dispatch on `60a3741c` tried to read `baton2/database` under
-  its state directory, where `baton2` is the staged executable. Honor the supplied
-  database through this context, preserve the executable and retain complete
-  input and setup outcomes. Preserve ordinary project registration, readable
-  pointer conflicts, workspace membership, native identity and stops. Two focused
-  homelab fixtures passed on the completed `486fc3b0` runtime with the corrected
-  installed helper: full stdin, seeded native input, report lineage, first
-  receipt, executable preservation and readable-pointer conflict. Complete
-  successor package and installed qualification remain open. Coordinate with
-  [#716](https://github.com/Flip-Engineering/baton/issues/716),
-  [#703](https://github.com/Flip-Engineering/baton/issues/703),
-  [#727](https://github.com/Flip-Engineering/baton/issues/727) and
-  [#717](https://github.com/Flip-Engineering/baton/issues/717).
-
-- [#748: Route database-prefixed named report, knowledge and recruitment actions](https://github.com/Flip-Engineering/baton/issues/748).
-  Actual source `60a3741c` native tasks received usage errors for database-prefixed
-  named report, knowledge record, recruit and recruitment help commands. Select
-  the existing contextual parser for named and compound argument forms, preserve
-  valid positional commands and complete literal values, and qualify actor
-  inference and native authority through public remote fixtures. Coordinate
-  with [#744](https://github.com/Flip-Engineering/baton/issues/744),
-  [#715](https://github.com/Flip-Engineering/baton/issues/715),
-  [#723](https://github.com/Flip-Engineering/baton/issues/723) and
-  [#717](https://github.com/Flip-Engineering/baton/issues/717).
 
 - [#747: Wait for actual native settlement in real acceptance drivers](https://github.com/Flip-Engineering/baton/issues/747).
   Browser fixture native identity and worker completion are tracked in
@@ -377,36 +203,6 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   [#730](https://github.com/Flip-Engineering/baton/issues/730) and
   [#746](https://github.com/Flip-Engineering/baton/issues/746).
 
-- [#750: Preserve Codex inbox admission during SQLite writer contention](https://github.com/Flip-Engineering/baton/issues/750).
-  A focused receive fixture retained both native results, then its parent report
-  delivery failed at `codex-inbox-wake.mjs`'s `BEGIN IMMEDIATE` with
-  `database is locked`. The positional Codex inbox route now resolves its
-  coordinator and waits through contention using the ordinary session read.
-  Four affected checks pass. A real held-writer regression preserves the full
-  pointer, message body, native identity and unhandled receipt, and fails
-  naturally with both the previous and target helpers. The original incident's
-  writer lifetime was not measured. The later candidate reached a successful
-  native RPC, then failed while recording its admitted turn ID. Retry that
-  fenced metadata update through contention. The post-RPC held-writer regression
-  fails with the previous helper and passes with the correction, preserving one
-  RPC, the complete pointer and body, the turn ID and the unhandled receipt.
-  The affected OMP socket-closure continuation also passes remotely.
-  Candidate run `38762573981` retained a completed App turn while its follower
-  waited after a busy admission claim. The competing internal writer released
-  without a committed-change notification. Retry the claim through the ordinary
-  session command and retain the terminal notification in the existing queue.
-  The empty-writer regression and affected follower check pass with the claim
-  correction in `908baa928`. Complete workflow qualification remains open.
-  A later follower failed in an external claim-state read during contention.
-  Retry its three external reads through the same session command. The receiver
-  switch and four writer/claim checks pass with this correction. An attached
-  Claude MCP input witness also failed while reading session state during a
-  database write; qualify its ordinary session-read retry through the complete
-  dispatch suite.
-  Complete current-source qualification and
-  installed acceptance. Coordinate with
-  [#747](https://github.com/Flip-Engineering/baton/issues/747).
-
 - [#746: Read promoted root holdings in the knowledge consumer acceptance](https://github.com/Flip-Engineering/baton/issues/746).
   Source review found that the consumer task and verifier use the knowledge
   audit view while requiring the producer's local control finding to be absent.
@@ -418,89 +214,6 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   [#724](https://github.com/Flip-Engineering/baton/issues/724),
   [#727](https://github.com/Flip-Engineering/baton/issues/727) and
   [#730](https://github.com/Flip-Engineering/baton/issues/730).
-
-- [#745: Expect the recorded workspace in the project settings fixture](https://github.com/Flip-Engineering/baton/issues/745).
-  Focused acceptance on `1229a43c` decoded the complete saved settings, then
-  failed an argv assertion that expected the repository path. An omitted
-  operation path uses the actor's recorded worktree. Read that workspace through
-  the public session interface and preserve the canonical settings path, full
-  body, explicit database selection and strict validation assertions. Validate
-  the corrected fixture with the completed runtime and full release selection.
-  Coordinate with [#703](https://github.com/Flip-Engineering/baton/issues/703),
-  [#742](https://github.com/Flip-Engineering/baton/issues/742) and
-  [#744](https://github.com/Flip-Engineering/baton/issues/744).
-
-- [#744: Route database-prefixed completion and guidance actions](https://github.com/Flip-Engineering/baton/issues/744).
-  An actual GLM contributor's database-prefixed completion request exited with
-  general usage and admitted nothing. Its contextual command delivered the
-  complete report. Route completion-request, completion-confirmed and guide
-  through the existing decision parser with inferred actor and coordinator
-  authority. Preserve valid positional database commands and qualify the
-  resulting source remotely. The issue also retains the review's minor source
-  observations for behavior judgment. Coordinate with
-  [#715](https://github.com/Flip-Engineering/baton/issues/715),
-  [#723](https://github.com/Flip-Engineering/baton/issues/723),
-  [#742](https://github.com/Flip-Engineering/baton/issues/742) and
-  [#717](https://github.com/Flip-Engineering/baton/issues/717).
-
-- [#743: Judge configure receiver registration with an actual route change](https://github.com/Flip-Engineering/baton/issues/743).
-  Target workflow `38687547257` completed a same-route configuration with an
-  empty receiver, then waited for a native connection that had no producer.
-  Change the fixture model when registering through configure, and inspect the
-  completed receiver result before accepting its connection. Preserve the
-  existing pending text, native identity, workspace, receipt and turn assertions.
-  Run the corrected focused contract remotely against the target binary and
-  complete target and candidate qualification. Coordinate with
-  [#717](https://github.com/Flip-Engineering/baton/issues/717),
-  [#727](https://github.com/Flip-Engineering/baton/issues/727),
-  [#739](https://github.com/Flip-Engineering/baton/issues/739) and
-  [#740](https://github.com/Flip-Engineering/baton/issues/740).
-
-- [#742: Start contextual command subprocesses in the current directory](https://github.com/Flip-Engineering/baton/issues/742).
-  Actual Muse and GLM review resumptions on `064def1e` returned an empty-directory
-  subprocess failure before native startup. Use the current directory for
-  contextual native actions, message actions and project settings. Validate the
-  public commands, preserve existing review tasks, and complete current-source
-  release qualification. Coordinate with
-  [#715](https://github.com/Flip-Engineering/baton/issues/715),
-  [#717](https://github.com/Flip-Engineering/baton/issues/717),
-  [#723](https://github.com/Flip-Engineering/baton/issues/723) and
-  [#741](https://github.com/Flip-Engineering/baton/issues/741).
-
-- [#741: Reduce serial Bend C generation time](https://github.com/Flip-Engineering/baton/issues/741).
-  The compiler repeats pure literal expansion and positive constant discovery
-  across definitions. A weak cache patch produced identical C for the process
-  and landing entries. The larger remote sample fell from 22.568 to 7.403
-  seconds and from 3,822,940 to 963,364 KiB peak memory. Retain the patched
-  source, build recipe, compiler archive identity and complete measurements.
-  Select that explicit compiler on the homelab and qualify the complete Main
-  source and native behavior. Use the measured native object cache for repeated
-  Clang invocations with matching inputs. Workflow `38727774829` repeated the
-  object compilation because origin and CI locale settings produced different
-  cache keys. Both homelab runners now normalize the four locale fields through
-  the retained wrapper; `ac18235c2` pins its actual digest in CI. Run every Python
-  native suite and the three Node groups in four isolated workers after the
-  existing Main and small native fixture checks. Preserve private source,
-  scratch and runtime directories, complete streams, natural exit judgments
-  and the selected-test recorder contracts. Qualify the complete parallel run
-  under [#747](https://github.com/Flip-Engineering/baton/issues/747). Coordinate with
-  [#677](https://github.com/Flip-Engineering/baton/issues/677),
-  [#728](https://github.com/Flip-Engineering/baton/issues/728) and
-  [#740](https://github.com/Flip-Engineering/baton/issues/740).
-
-- [#740: Reuse completed coordinator C when compilation inputs match](https://github.com/Flip-Engineering/baton/issues/740).
-  The control fixture correction in [#739](https://github.com/Flip-Engineering/baton/issues/739)
-  changes a Python contract while the existing coordinator compilation continues.
-  Verify retained Main completion, complete compiler distribution, production
-  source bytes and modes, entry arguments and generated C before reuse. Bind
-  reuse to the coordinator Main entry and verified source inputs. Copied
-  fixtures and checked landing trees must compare their complete production
-  inputs before reusing Main C. Retain each build's actual match or miss.
-  Compile and link current native entry code, build other entries normally, and
-  run the complete current suite and selected comparisons. Package the original
-  C-generation identity and input-match proof with current qualification.
-  Coordinate with [#677](https://github.com/Flip-Engineering/baton/issues/677)
-  and [#717](https://github.com/Flip-Engineering/baton/issues/717).
 
 - [#739: Judge native control recovery with recorded OMP session paths](https://github.com/Flip-Engineering/baton/issues/739).
   Target workflow `38683470364` resumes the recorded OMP conversation through
@@ -792,38 +505,6 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   [#703](https://github.com/Flip-Engineering/baton/issues/703),
   [#713](https://github.com/Flip-Engineering/baton/issues/713) and
   [#715](https://github.com/Flip-Engineering/baton/issues/715).
-
-- [#718: Coalesce pending-input notices during failed Codex turns](https://github.com/Flip-Engineering/baton/issues/718).
-  Repeated provider failures appended the same pending-input notice to the
-  recorded conversation. Deliver committed input once for the current admission,
-  retain failed-turn causes, and wake the coordinator for its next-work decision.
-  Qualify recovery, new input, operator stops and recipient acknowledgements on
-  the affected target and candidate. Verify the packaged and active helper.
-
-- [#720: Stop unchanged completion-request continuations](https://github.com/Flip-Engineering/baton/issues/720).
-  Workers awaiting a coordinator's completion confirmation repeatedly generated
-  self-addressed continuations and reports. Derive continuation from the current
-  assignment and completion request. Preserve terminal evidence, new guidance,
-  recipient receipts and the coordinator's exact completion confirmation.
-
-- [#717: Publish and activate the current Baton release](https://github.com/Flip-Engineering/baton/issues/717).
-  Version 2.0.0 includes all qualified command, grammar and syntax improvements
-  from #714, #715 and #716 with #713, #718 and #720. The README name is `Baton`.
-  Qualify the composed source on remote runners, publish its exact tag and
-  platform artifacts, and install the complete package through the ordinary
-  command path. Retain active conversations, managed work, prior installation
-  prefixes and explicit stops during receiver migration. Active adoption
-  includes the original owner with 78 released, unacknowledged
-  attempts. Reconcile its current retained execution through selected observer
-  recovery, preserve complete historical streams before physical acknowledgement,
-  and verify the old owner's actual exit before claiming complete adoption.
-  [#696](https://github.com/Flip-Engineering/baton/issues/696) and
-  [#705](https://github.com/Flip-Engineering/baton/issues/705) cover this recovery.
-  Unfinished feature acceptance remains recorded in its original issues.
-  [#727](https://github.com/Flip-Engineering/baton/issues/727)
-  owns real-agent validation input, instruction updates and acceptance.
-  [#728](https://github.com/Flip-Engineering/baton/issues/728) blocks candidate
-  C generation and its downstream qualification.
 
 - [#716: Dispatch task text and retain it in the database](https://github.com/Flip-Engineering/baton/issues/716).
   The [dispatch interface](task-start-716.md) uses `baton dispatch "task text"`
