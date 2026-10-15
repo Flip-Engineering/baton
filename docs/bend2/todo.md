@@ -4,6 +4,17 @@ The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3
 retain findings, ownership and acceptance requirements. This page links current
 Baton follow-up work for contributors. Every open issue has a link on this page.
 
+- [#752: Render canonical JSON array elements once](https://github.com/Flip-Engineering/baton/issues/752).
+  The installed TypeScript context check spent over 45 CPU minutes before query
+  admission. Its provider captured 63 library files. Genuine generated C renders
+  both array-formatting branches before selecting the mode, recursively rendering
+  each tail twice. Render the head and tail once and select only the delimiters.
+  Preserve canonical bytes, member ordering, escaping and every render mode.
+  Qualify a long capture-like array against independently derived exact output,
+  rebuild Main on the homelab and complete package acceptance. This blocks
+  [#717](https://github.com/Flip-Engineering/baton/issues/717); coordinate with
+  [#727](https://github.com/Flip-Engineering/baton/issues/727).
+
 - [#751: Add branching Ensemble variant after Baton 2.0](https://github.com/Flip-Engineering/baton/issues/751).
   Implement after the [#717](https://github.com/Flip-Engineering/baton/issues/717)
   release and active adoption. Use the

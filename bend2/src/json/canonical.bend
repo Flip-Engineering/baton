@@ -272,9 +272,10 @@ def emit(+j: Json, +mode: Mode, first: Bool) -> List<String>:
     case Jnum{+token}: [token]
     case Jstr{+value}: [string_literal(value)]
     case Jarr{+head, +tail}:
-      pick_list(mode_is_value(mode),
-        cat_list([one(ch(91))], cat_list(emit(head, MValue{}, True{}), cat_list(emit(tail, MArray{}, False{}), [one(ch(93))]))),
-        cat_list(separator(first), cat_list(emit(head, MValue{}, True{}), emit(tail, MArray{}, False{}))))
+      cat_list(pick_list(mode_is_value(mode), [one(ch(91))], separator(first)),
+        cat_list(emit(head, MValue{}, True{}),
+          cat_list(emit(tail, MArray{}, False{}),
+            pick_list(mode_is_value(mode), [one(ch(93))], Nil{}))))
     case Jobj{+members}:
       pick_list(mode_is_value(mode),
         cat_list([one(ch(123))], cat_list(emit(members, MObject{}, True{}), [one(ch(125))])),
