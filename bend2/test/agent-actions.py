@@ -1252,6 +1252,7 @@ class AgentActions(unittest.TestCase):
                            'context': {'disabled': [], 'preferred': ['saved λ context']},
                            'subscriptions': []}, ensure_ascii=False, indent=2) + '\n  '
         settings.write_text(body, encoding='utf-8')
+        worker = self.legacy('session', 'worker-a')
         rows = self.invoke('--project', self.repo, 'as', 'worker-a', 'project',
                            'settings', 'and', 'project', 'sessions',
                            cwd=self.directory, environment={'BATON_DATABASE': str(self.directory / 'wrong.db')})
@@ -1260,7 +1261,7 @@ class AgentActions(unittest.TestCase):
         self.assertEqual(inspected['status'], 'decoded')
         self.assertEqual(inspected['body'], body)
         self.assertEqual(inspected['path'], str(settings))
-        self.assertEqual(rows[0]['argv'], [str(EXE.resolve()), '--project-settings', str(self.repo)])
+        self.assertEqual(rows[0]['argv'], [str(EXE.resolve()), '--project-settings', worker['workspace']])
         self.assertEqual(rows[0]['waitStatus'], 'exit 0')
         self.assertEqual(json.loads(rows[1]['stdout'])['project']['database'], str(self.db))
         self.assertEqual(settings.read_text(), body)

@@ -4,6 +4,17 @@ The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3
 retain findings, ownership and acceptance requirements. This page links current
 Baton follow-up work for contributors. Every open issue has a link on this page.
 
+- [#745: Expect the recorded workspace in the project settings fixture](https://github.com/Flip-Engineering/baton/issues/745).
+  Focused acceptance on `1229a43c` decoded the complete saved settings, then
+  failed an argv assertion that expected the repository path. An omitted
+  operation path uses the actor's recorded worktree. Read that workspace through
+  the public session interface and preserve the canonical settings path, full
+  body, explicit database selection and strict validation assertions. Validate
+  the corrected fixture with the completed runtime and full release selection.
+  Coordinate with [#703](https://github.com/Flip-Engineering/baton/issues/703),
+  [#742](https://github.com/Flip-Engineering/baton/issues/742) and
+  [#744](https://github.com/Flip-Engineering/baton/issues/744).
+
 - [#744: Route database-prefixed completion and guidance actions](https://github.com/Flip-Engineering/baton/issues/744).
   An actual GLM contributor's database-prefixed completion request exited with
   general usage and admitted nothing. Its contextual command delivered the
