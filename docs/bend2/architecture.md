@@ -166,8 +166,10 @@ A denied route stores no message and invokes no recipient endpoint. Accepted
 pending input remains deliverable after role or membership changes.
 During an OMP turn
 the supervisor sends pending guidance as native `steer` frames on response, message
-completion and tool events. A successful native steer response records its
-receipt. Guidance during a silent tool operation waits for the next relevant
+completion and tool events. Forwarding advances the attempt's guidance cursor.
+The observed stream retains the native steer response. Complete recipient-owned
+reads supply the inputs handled by successful turn settlement or `acknowledge`.
+Guidance during a silent tool operation waits for the next relevant
 native event. Other Player harnesses currently receive further instructions
 through their next explicitly started native turn; their inbox remains readable.
 

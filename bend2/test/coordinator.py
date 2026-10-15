@@ -4,6 +4,7 @@ import json
 import pathlib
 import sqlite3
 import subprocess
+import sys
 import tempfile
 import unittest
 
@@ -358,8 +359,15 @@ class Coordinator(unittest.TestCase):
         raw = json.dumps({'type': 'result', 'is_error': True, 'errors': ['provider unavailable']})
         self.observe('failed-turn', 'worker', raw)
         self.assertEqual(self.call('inbox', 'root')[0]['body'], raw)
-        self.observe('bad-input', 'worker', '{"type":"result"', success=False)
-        self.assertEqual(len(self.call('inbox', 'root')), 1)
+        session = self.call('session', 'worker')
+        inbox = self.call('inbox', 'root')
+        turns = self.call('turns', 'worker')
+        skipped = self.observe('bad-input', 'worker', '{"type":"result"')
+        self.assertIsNone(skipped['eventType'])
+        self.assertIsNone(skipped['reportId'])
+        self.assertEqual(self.call('session', 'worker'), session)
+        self.assertEqual(self.call('inbox', 'root'), inbox)
+        self.assertEqual(self.call('turns', 'worker'), turns)
 
     def test_worker_completion_requires_its_immediate_coordinator_and_current_assignment(self):
         self.player('leaf', parent='worker', harness='omp')
@@ -453,6 +461,10 @@ class Coordinator(unittest.TestCase):
                          'Reviewed the complete result.')
 
     def test_parented_assignment_authority_uses_parent_and_keeps_peer_messages_pending(self):
+        self.call('configure', 'worker', 'omp', 'requested-model', 'high', sys.executable,
+                  str(pathlib.Path(self.temp.name) / 'worker.jsonl'),
+                  'requested-harness', 'requested-model', 'high')
+        self.call('connect', 'worker', '', '')
         self.player('peer', parent='root')
         self.call('ensemble', 'completion-peers', 'root', 'tight')
         for member in ('worker', 'peer'):

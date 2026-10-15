@@ -45,6 +45,20 @@ def message_rows(fixture):
         return [dict(row) for row in database.execute(
             'SELECT seq,id,sender,recipient,kind,body,receipt FROM messages ORDER BY seq')]
 
+
+def admit_pending(fixture, ident, recipient, body):
+    result = subprocess.run(
+        [str(receive.EXE), str(fixture.db), 'message-batch-file', 'root', '-'],
+        input=json.dumps([{'id': ident, 'recipient': recipient, 'kind': 'guidance', 'body': body}]),
+        capture_output=True, text=True)
+    fixture.assertEqual(result.returncode, 0, result.stderr)
+    fixture.assertEqual(json.loads(result.stdout)[0]['admission']['status'], 'admitted')
+    stored = fixture.coord('delivery', ident)
+    fixture.assertEqual((stored['id'], stored['sender'], stored['recipient'], stored['kind'],
+                         stored['body'], stored['receipt']),
+                        (ident, 'root', recipient, 'guidance', body, None))
+
+
 def report_pid(fixture):
     """The fixture reports its own PID so the probe can kill each harness child.
 
@@ -147,7 +161,7 @@ def main():
         # Input that must survive: one message per session, queued before any
         # endpoint is connected, so posting does not start a native turn.
         for name in NAMES:
-            fixture.message('pending-' + name, name, 'work after process loss')
+            admit_pending(fixture, 'pending-' + name, name, 'work after process loss')
         for name in NAMES:
             fixture.coord('connect', name, 'native-' + name, fixture.endpoint(name))
 
@@ -247,6 +261,15 @@ def main():
             if name in controls:
                 fixture.action(controls[name])
         while owned_processes(directory):
+            processes = owned_processes(directory)
+            owner = f'{receive.EXE.resolve()} --instance-owner {fixture.db.resolve()}'
+            if (not select.select([fixture.server], [], [], 0)[0]
+                    and all(child.poll() is not None for child in fixture.children)
+                    and [row['command'] for row in processes] == [owner]):
+                evidence['ownerBeforeShutdown'] = processes
+                fixture.shutdown_idle_database_owner('Recovered probe owner did not exit.',
+                                                       reject_start=True)
+                continue
             got = accept_any(fixture)
             if got is None:
                 continue

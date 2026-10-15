@@ -16,7 +16,7 @@ import sys
 import time
 
 values = json.loads(Path(__file__).with_suffix('.json').read_text())
-if len(sys.argv) > 2 and sys.argv[2] == 'help':
+if sys.argv[1:] == ['--help'] or (len(sys.argv) > 2 and sys.argv[2] == 'help'):
     if values.get('batch', True):
         sys.stdout.write('outbox\\ndelivery-batch\\nmessage-batch\\ninput MESSAGE_ID\\ntask --stdin\\nusage: baton2 as SESSION ACTION ARGS\\n')
         if values.get('dispatch', True):

@@ -252,7 +252,7 @@ with socket.create_connection(('127.0.0.1',int(sys.argv[1]))) as stream:
         self.addCleanup(fixture.doCleanups)
         host.report_pid(fixture)
         fixture.player('controlled')
-        fixture.message('pending', 'controlled', TEXT)
+        host.admit_pending(fixture, 'pending', 'controlled', TEXT)
         observer = fixture.spawn(*fixture.receive_args('controlled'))
         _, started = host.accept_any(fixture, observer)
         observer.kill()
@@ -268,11 +268,11 @@ with socket.create_connection(('127.0.0.1',int(sys.argv[1]))) as stream:
 
     @unittest.skipUnless(EXE.exists(), 'Native coordinator is required')
     def test_host_recovery_retains_complete_prompts(self):
-        original = host.receive.Receive.message
-        def message(fixture, ident, recipient, body='Review this input.'):
+        original = host.admit_pending
+        def message(fixture, ident, recipient, body):
             return original(fixture, ident, recipient, body + '\n' + TEXT)
         stdout, stderr = io.StringIO(), io.StringIO()
-        with patch.object(host.receive.Receive, 'message', message), contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+        with patch.object(host, 'admit_pending', message), contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
             status = host.main()
         self.assertEqual(status, 0, stderr.getvalue())
         report = json.loads(stdout.getvalue())

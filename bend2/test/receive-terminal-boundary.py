@@ -9,6 +9,7 @@ import importlib.util
 import json
 import pathlib
 import select
+import sys
 import unittest
 
 SPEC = importlib.util.spec_from_file_location(
@@ -26,6 +27,7 @@ class ReceiveTerminalBoundary(RECEIVE.Receive):
     def sealed_attempt(self, task, body, guidance=None):
         """Run the first terminal of an attempt and return its sealed report ID."""
         self.player(harness='omp')
+        self.coord('connect', 'root', 'native-root', json.dumps([sys.executable, '-c', 'pass']))
         self.coord('message', task, 'root', 'parent', 'task', 'Task before the settled terminal.')
         observer = self.spawn(*self.receive_args('parent'))
         stream, started = self.accept_child(observer, 'parent',

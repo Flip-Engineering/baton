@@ -321,7 +321,7 @@ class Messaging(unittest.TestCase):
 
     def test_input_detail_keeps_message_settlement_and_current_recipient_state_distinct(self):
         body = "Input detail body λ🙂.\nSecond line.\n"
-        self.send('input-detail', 'root', 'leaf-a', body=body)
+        self.send('input-detail', 'lead-a', 'leaf-a', body=body)
         with closing(sqlite3.connect(self.db)) as db:
             db.execute("INSERT INTO executions(session,id,mode,directory,phase,status) "
                        "VALUES(?,?,?,?,?,?)",

@@ -2,7 +2,6 @@
 import json
 import os
 import pathlib
-import shlex
 import sqlite3
 import subprocess
 import sys
@@ -316,8 +315,9 @@ class OmpRootAdapter(unittest.TestCase):
         self.assertEqual(len(native_calls), 2)
         self.assertEqual(native_calls[0]['cwd'], str(self.checkouts / 'lead'))
         prompt = native_calls[0]['prompt']
-        self.assertIn("inbox 'lead'", prompt)
-        self.assertIn("ack MESSAGE_ID 'lead'", prompt)
+        self.assertIn('You are session lead in a Baton Orchestra.', prompt)
+        self.assertIn('Read complete owed input with inbox.', prompt)
+        self.assertIn('Use acknowledge after handling', prompt)
         self.assertEqual(native_calls[1]['args'][native_calls[1]['args'].index('--resume') + 1], 'native-lead')
         reports = [json.loads(line) for line in root_calls.read_text().splitlines()]
         self.assertEqual([r['body'] for r in reports], ['Reviewed and landed first', 'Reviewed and landed second'])
@@ -362,10 +362,13 @@ class OmpRootAdapter(unittest.TestCase):
         self.assertEqual(argv[argv.index('--resume') + 1], 'saved-omp')
         self.assertEqual(argv[argv.index('--model') + 1], 'legacy-model')
         prompt = observed['prompt']
-        self.assertIn('Associate Conductor', prompt)
-        inbox = next(line.strip() for line in prompt.splitlines()
-                     if ' inbox ' in line and shlex.split(line)[-2:] == ['inbox', associate])
-        self.assertEqual(shlex.split(inbox), [str(EXE), str(self.db), 'inbox', associate])
+        self.assertIn('You are session ' + associate + ' in a Baton Orchestra.', prompt)
+        prefix = 'Coordinator executable/database argv: '
+        coordinator = next(line[len(prefix):] for line in prompt.splitlines()
+                           if line.startswith(prefix))
+        self.assertEqual(json.loads(coordinator), [str(EXE), str(self.db)])
+        self.assertIn('Read complete owed input with inbox.', prompt)
+        self.assertIn('Use acknowledge after handling', prompt)
         selected = json.loads(self.coord('player', associate))
         self.assertEqual(selected['role'], 'associate-conductor')
         self.assertEqual(json.loads(selected['endpoint'])[2:4], ['receive', associate])

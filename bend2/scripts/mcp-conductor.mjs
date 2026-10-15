@@ -168,7 +168,7 @@ if (delivery) {
 }
 
 function coordinatorSurface() {
-  const help = spawnSync(coordinatorExe, [dbPath, 'help'], { encoding: 'utf8', maxBuffer: Infinity });
+  const help = spawnSync(coordinatorExe, ['--help'], { encoding: 'utf8', maxBuffer: Infinity });
   return String(help.stdout ?? '') + String(help.stderr ?? '');
 }
 

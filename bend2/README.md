@@ -269,9 +269,9 @@ baton guide --to worker1 --text 'Focus the review on recovery.'
 
 The supervisor listens for newly committed guidance throughout an active OMP
 turn and forwards it through OMP's `steer` command. The native response remains
-in the observed stream. Successful native settlement records handling of the
-guidance consumed by that turn. `acknowledge` records explicit handling from
-complete owned reads. Unhandled guidance remains pending.
+in the observed stream. Forwarding advances the attempt's guidance cursor. The
+recipient reads guidance with `inbox`. A successful turn or `acknowledge` records
+handling for those complete owned reads. Unhandled guidance remains pending.
 
 `join ID PARENT HARNESS MODEL EFFORT WORKSPACE` registers a Player in an
 existing checkout. The recorded workspace is absolute; branch and base come
