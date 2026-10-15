@@ -65,6 +65,10 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   scripted parent endpoint to isolate the host ACK failure. Await the actual
   self-promotion continuation after message admission. Preserve the host ACK
   failure, live continuation, report and receipt assertions.
+  Focused receive profile tests reached a native identity on the first attempt,
+  then selected an empty history path during account handoff. Resolve the
+  recorded conversation after observing that attempt, as direct turns do, and
+  retain the original native, transcript and provider-cause assertions.
   Preserve complete bodies, native lineage, first receipts, reports, original
   failure evidence and every semantic assertion. Validate the corrected callers
   remotely without duplicate tasks. Coordinate with

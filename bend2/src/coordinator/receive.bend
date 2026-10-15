@@ -642,9 +642,10 @@ def completed_routed(+db: String, +session: String, +id: String, +log: String, c
 def completed_observation(+db: String, +session: String, +id: String, log: String, cursor: String, +native: String, +cwd: String, +attempt: String, handle: U32, lock: Maybe<U32>, observation: Turn.Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), adopted: Bool, cmd: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   (+outcome,deliveries)=observation
   do IO<Result<&1,&1,U32 & String,Unit>>:
-    +superseded : Bool <- Subs.profile_handoff(db,session,id,terminal_event(outcome),native,cmd,cwd)
+    +conversation : String <- Turn.direct_conversation(db,session,native)
+    +superseded : Bool <- Subs.profile_handoff(db,session,id,terminal_event(outcome),conversation,cmd,cwd)
     routed : Bool <- route_decided(db,session,id,outcome,superseded)
-    completed_routed(db,session,id,log,cursor,native,cwd,attempt,handle,lock,outcome,deliveries,again,adopted,superseded,routed)
+    completed_routed(db,session,id,log,cursor,conversation,cwd,attempt,handle,lock,outcome,deliveries,again,adopted,superseded,routed)
 
 def started(+db: String, +session: String, +id: String, +log: String, cursor: String, native: String, cwd: String, +attempt: String, harness: String, level: String, lock: U32, start: P.RetainedStart, again: String -> IO(Result<&1,&1,U32 & String,Unit>), cmd: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   match start:
