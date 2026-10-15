@@ -362,8 +362,9 @@ else:
             subagent.write_text(json.dumps({'type':'assistant','sessionId':native,'message':{'role':'assistant','content':[{'type':'text','text':'Retained subagent work for '+prompt}]}})+'\n')
         else:
             rollout.write_text(json.dumps({'type':'session','id':native})+'\n'+json.dumps({'type':'message','role':'user','content':prompt})+'\n')
-    print(json.dumps({'type':'system','subtype':'init','session_id':native} if claude else
-                     {'type':'thread.started','thread_id':native}),flush=True)
+    if not (claude and config.get('hold_claude_init')):
+        print(json.dumps({'type':'system','subtype':'init','session_id':native} if claude else
+                         {'type':'thread.started','thread_id':native}),flush=True)
 client=socket.create_connection(('127.0.0.1',config['port']))
 stream=client.makefile('rwb',buffering=0)
 def reply(value): stream.write((json.dumps(value)+'\n').encode())
@@ -391,6 +392,11 @@ while True:
     line=stream.readline()
     if not line: break
     action=json.loads(line)
+    if action.get('emit_claude_init'):
+        assert claude
+        print(json.dumps({'type':'system','subtype':'init','session_id':native}),flush=True)
+        reply({'initialized':native})
+        continue
     if action.get('exit_fixture'):
         if action.get('complete_task',False):
             confirm_finished_fixture_task('Completed the controlled native observation task.')
@@ -1353,6 +1359,74 @@ class Receive(unittest.TestCase):
         self.shutdown_idle_database_owner('native question keeper did not exit naturally')
         self.assertEqual(self.coord('inbox', 'root'), [])
 
+    def initial_inputs(self, session):
+        with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
+            database.row_factory = sqlite3.Row
+            return [dict(row) for row in database.execute(
+                'SELECT * FROM native_initial_inputs WHERE session=? ORDER BY rowid', (session,))]
+
+    def assert_retry_initialization(self, session, prompts):
+        rows = self.initial_inputs(session)
+        self.assertEqual(len(rows), len(prompts), rows)
+        seed = rows[0]['seed']
+        self.assertRegex(seed, r'^[0-9a-f]{128}$')
+        for row, prompt in zip(rows, prompts):
+            self.assertEqual(row['seed'], seed, rows)
+            self.assertNotIn('\0', row['guidance'])
+            self.assertNotIn('\0', prompt)
+            self.assertEqual(prompt, seed + '\n\n' + row['instruction'] + '\n\n' + row['guidance'])
+            self.assertEqual(pathlib.Path(row['attempt'], 'prompt.txt').read_text(), prompt)
+        return rows
+
+    def test_claude_attachment_initializes_before_native_identity_frame(self):
+        self.player('parent', harness='claude-code')
+        config_path = self.directory / 'fixture.json'
+        config = json.loads(config_path.read_text())
+        config['hold_claude_init'] = True
+        config_path.write_text(json.dumps(config))
+        task = 'Review complete task text caféλ🙂\nPreserve both lines.\n'
+        self.prepare_input('initial-task', 'parent', task, kind='task')
+        observer = self.spawn(*self.receive_args('parent'))
+        stream, started = self.accept_child(observer, 'parent')
+        self.assertEqual(self.coord('player', 'parent')['native'], '')
+        initialization = self.initial_inputs('parent')
+        self.assertEqual(len(initialization), 1)
+        original = initialization[0]
+        self.assertIn(task, original['guidance'])
+        self.assertNotIn('\0', started['prompt'])
+        header = next(line for line in original['guidance'].splitlines()
+                      if line.startswith('Coordinator executable/database argv: '))
+        self.assertEqual(json.loads(header.split(': ', 1)[1]), [str(EXE), str(self.db)])
+        self.assertEqual(self.coord('delivery', 'initial-task')['body'], task)
+        guidance = '\ufeffUse semantic actions and retain all evidence. caféλ🙂\n'
+        argv = [str(EXE), str(self.db), 'native-attachment-input', 'parent', 'mcp-instructions']
+        attached = subprocess.run(argv, input=guidance, capture_output=True, text=True)
+        self.assertEqual(attached.returncode, 0, attached.stdout + attached.stderr)
+        self.assertEqual(attached.stdout, original['seed'] + '\n\n' + original['instruction'] + '\n\n' + guidance)
+        repeated = subprocess.run(argv, input=guidance, capture_output=True, text=True)
+        self.assertEqual((repeated.returncode, repeated.stdout), (0, attached.stdout), repeated.stderr)
+        records = self.initial_inputs('parent')
+        self.assertEqual(len(records), 2)
+        self.assertEqual(records[1]['guidance'], guidance)
+        self.assertEqual(records[1]['turn'], original['turn'])
+        self.assertEqual(records[1]['seed'], original['seed'])
+        self.assertTrue(records[1]['attempt'].startswith('attachment:'))
+        with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
+            self.assertEqual(database.execute('SELECT count(*) FROM executions').fetchone()[0], 1)
+        refused = subprocess.run(argv, input=guidance + 'Changed.', capture_output=True, text=True)
+        self.assertEqual(refused.returncode, 2, refused.stdout + refused.stderr)
+        self.assertIn('unchanged component guidance', refused.stderr)
+        self.assertEqual(self.initial_inputs('parent'), records)
+        self.assertEqual(self.coord('player', 'parent')['native'], '')
+        self.action(stream, emit_claude_init=True)
+        self.assertEqual(json.loads(stream.readline()), {'initialized': started['native']})
+        self.eventually(lambda: self.coord('player', 'parent')['native'] == started['native'],
+                        'actual Claude initialization frame did not bind its native conversation')
+        self.action(stream)
+        self.finish(observer)
+        self.assertEqual(self.coord('delivery', 'initial-task')['body'], task)
+        self.assertEqual(self.coord('delivery', 'initial-task')['receipt'], 'native-reviewed')
+
     def exercise_missing_omp_fallback(self, observer_losses):
         self.player(harness='omp')
         workspace = self.checkouts / 'parent'
@@ -1367,7 +1441,7 @@ class Receive(unittest.TestCase):
         self.coord('connect', 'parent', missing, '')
         self.coord('attach', 'root', 'codex', 'native-root',
                    json.dumps([str(self.fixture), 'parent_endpoint']))
-        task = 'Keep seed.txt and append the final step after reading the existing work.'
+        task = 'Keep seed.txt and append the final step after reading the existing work. caféλ🙂\n'
         self.prepare_input('original-task', 'parent', task, kind='task')
         receive = self.receive_args('parent')
         receive[5] = str(workspace)
@@ -1384,6 +1458,20 @@ class Receive(unittest.TestCase):
         launches_path = self.directory / 'native-launches.jsonl'
         launches = [json.loads(line) for line in launches_path.read_text().splitlines()]
         self.assertEqual([row['resume'] for row in launches], [missing, ''])
+        initialization = self.initial_inputs('parent')
+        self.assertEqual(len(initialization), 2)
+        self.assertEqual(initialization[0]['seed'], initialization[1]['seed'])
+        self.assertRegex(initialization[0]['seed'], r'^[0-9a-f]{128}$')
+        self.assertIn(task, initialization[0]['guidance'])
+        self.assertIn(task, initialization[1]['guidance'])
+        self.assertNotEqual(initialization[0]['guidance'], initialization[1]['guidance'])
+        self.assertEqual(started['prompt'], initialization[1]['seed'] + '\n\n'
+                         + initialization[1]['instruction'] + '\n\n' + initialization[1]['guidance'])
+        for row in initialization:
+            self.assertNotIn('\0', row['guidance'])
+            self.assertEqual(pathlib.Path(row['attempt'], 'prompt.txt').read_text(),
+                             row['seed'] + '\n\n' + row['instruction'] + '\n\n' + row['guidance'])
+        self.assertEqual(self.coord('delivery', 'original-task')['body'], task)
         self.assertFalse(any(p['pid'] == launches[0]['pid'] for p in self.owned_processes()))
         self.eventually(lambda: self.coord('player', 'parent')['native'] == started['native'],
                         'fresh conversation identity was not recorded')
@@ -1421,6 +1509,7 @@ class Receive(unittest.TestCase):
             actual = [json.loads(line) for line in launches_path.read_text().splitlines()]
             self.assertEqual([row['pid'] for row in actual], [row['pid'] for row in launches],
                              'observer recovery launched another native process')
+            self.assertEqual(self.initial_inputs('parent'), initialization)
 
         completed = 'Final step completed in the fresh conversation.\n'
         self.action(fresh, append_file=['seed.txt', completed])
@@ -1447,6 +1536,7 @@ class Receive(unittest.TestCase):
         self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
         actual = [json.loads(line) for line in launches_path.read_text().splitlines()]
         self.assertEqual([row['pid'] for row in actual], [row['pid'] for row in launches])
+        self.assertEqual(self.initial_inputs('parent'), initialization)
 
     def test_missing_omp_conversation_restarts_pending_receive_with_workspace_state(self):
         self.exercise_missing_omp_fallback(observer_losses=0)
@@ -2386,6 +2476,9 @@ class Receive(unittest.TestCase):
         self.assertEqual(launches[0]['resume'], '')
         self.assertEqual(launches[1]['resume'], started['native'])
         self.assertEqual(resumed['codexHome'], str(store_b))
+        initialization = self.assert_retry_initialization('root', [started['prompt'], resumed['prompt']])
+        self.assertNotEqual(initialization[0]['turn'], initialization[1]['turn'])
+        self.assertEqual(self.coord('delivery', 'fallback')['body'], body)
         # Profile B names its own history root in its own configuration, and the preserved
         # home is profile A's configured root: the continuation resolves A's history through
         # the recorded override, so a contrary configuration in B does not win.
@@ -2458,6 +2551,21 @@ class Receive(unittest.TestCase):
                          {'type': 'result', 'is_error': 1,
                           'nativeEvent': {'type': 'turn.failed', 'error': {'message': cause}},
                           'result': cause})
+        self.coord('ack', handoff[0]['id'], 'operator', 'operator-reviewed-profile-handoff')
+        independent = 'Review a new independent task caféλ🙂\n'
+        self.prepare_input('independent-task', 'root', independent, kind='task')
+        next_observer = self.spawn(*self.receive_args('root'))
+        third, next_started = self.accept_child(next_observer, 'root')
+        next_initialization = self.initial_inputs('root')
+        self.assertEqual(len(next_initialization), 3)
+        self.assertNotEqual(next_initialization[-1]['seed'], initialization[0]['seed'])
+        self.assertIn(independent, next_initialization[-1]['guidance'])
+        self.assertEqual(next_started['prompt'], next_initialization[-1]['seed'] + '\n\n'
+                         + next_initialization[-1]['instruction'] + '\n\n' + next_initialization[-1]['guidance'])
+        self.action(third)
+        self.finish(next_observer)
+        self.assertEqual(self.coord('delivery', 'independent-task')['body'], independent)
+        self.assertEqual(self.coord('delivery', 'independent-task')['receipt'], 'native-reviewed')
 
     def test_claude_receive_preserves_transcript_and_subagent_history_on_profile_handoff(self):
         self.coord('attach', 'root', 'claude-code', '', '')
@@ -3216,6 +3324,8 @@ class Receive(unittest.TestCase):
             failed, 'recoverable provider failure closed with unfinished input')
         self.assertEqual(resumed['session'], original['session'])
         self.assertEqual(resumed['native'], original['native'])
+        initialization = self.assert_retry_initialization('parent', [original['prompt'], resumed['prompt']])
+        self.assertNotEqual(initialization[0]['turn'], initialization[1]['turn'])
         if ack_before_failure:
             self.assertIn('transient provider error', resumed['prompt'])
             self.assertEqual(self.coord('delivery', 'input')['receipt'], 'native-reviewed')
@@ -3304,6 +3414,8 @@ class Receive(unittest.TestCase):
         self.assertNotEqual(resumed['native'], original['native'])
         rerouted = self.coord('player', 'parent')
         self.assertEqual((rerouted['harness'], rerouted['model']), ('muse', 'muse-main'))
+        initialization = self.assert_retry_initialization('parent', [original['prompt'], resumed['prompt']])
+        self.assertNotEqual(initialization[0]['turn'], initialization[1]['turn'])
         account_reports = [message for message in self.coord('inbox', 'root')
                            if message['id'].endswith(':profile-exhausted')]
         self.assertEqual(len(account_reports), 1)
@@ -3354,7 +3466,7 @@ class Receive(unittest.TestCase):
         (self.directory / 'state.db.routes').write_text(
             'muse muse-main ' + str(self.fixture) + '\n')
         task = self.directory / 'direct task'
-        task.write_text('Direct retained work.\n')
+        task.write_text('Direct retained work. caféλ🙂\n')
         child = self.spawn('turn', 'routed', 'routed-turn', self.fixture, 'routed', 'low',
                            self.directory, task, self.directory / 'routed.jsonl', 'saved-routed')
         control, started = self.accept('routed')
@@ -3365,6 +3477,17 @@ class Receive(unittest.TestCase):
         self.action(control, exit_fixture=True)
         second, resumed = self.accept_or_child_exit(child, 'route continuation did not relaunch')
         self.assertEqual(resumed['session'], 'routed')
+        initialization = self.assert_retry_initialization('routed', [started['prompt'], resumed['prompt']])
+        self.assertEqual(initialization[0]['turn'], 'routed-turn')
+        self.assertNotEqual(initialization[0]['turn'], initialization[1]['turn'])
+        header = next(line for line in initialization[0]['guidance'].splitlines()
+                      if line.startswith('Coordinator executable, database and session argv: '))
+        encoded = header.split(': ', 1)[1].split('. Recorded parent: ', 1)[0]
+        self.assertEqual(json.loads(encoded), [str(EXE), str(self.db), 'routed'])
+        with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
+            self.assertEqual(database.execute(
+                "SELECT task FROM direct_turn_requests WHERE session='routed' AND id='routed-turn'").fetchone()[0],
+                task.read_text())
         self.assertIn('[id: follow]', resumed['prompt'])
         self.assertIn('Direct retained work.', resumed['prompt'])
         self.assertIn('previous native conversation lineage is saved-routed', resumed['prompt'])

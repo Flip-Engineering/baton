@@ -26,6 +26,7 @@ import ../harness/codex-player.bend as Codex
 import ../git/process.bend as GitProc
 import ../git/types.bend as G
 import ../context/request.bend as Req
+import ../json/canonical.bend as J
 
 type Outcome is Data:
   Ended{status: String, event: String, error: String, incomplete: Bool}
@@ -184,7 +185,7 @@ def direct_task_prompt(+db: String, +player: String, +id: String, prompt: String
     executable : String <- IO.try(String,Lock.SessionLock.executable())
     parent : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce(parent,'') FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
     header : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(id ++ ":task-input") ++ " AND recipient=" ++ C.q(player) ++ " AND kind='task-assignment') THEN 'Message (task-assignment) from ' || " ++ C.q(player) ++ " || ' [id: ' || " ++ C.q(id ++ ":task-input") ++ " || ']:' ELSE '' END;"))
-    IO.pure(String,task_instructions() ++ knowledge_instructions() ++ "Coordinator executable, database and session argv: " ++ P.argv([executable,db,player]) ++ ". Recorded parent: " ++ Tx.trim_nl(parent) ++ ".\nUse baton inbox to read complete owed input. Baton resolves your session and database from the launch context. Use baton acknowledge to record handling of the current native turn's complete owned reads. Use baton completion-request --text SUMMARY when the assignment is ready; your recorded parent resolves and confirms the current request.\n" ++ Tx.trim_nl(header) ++ "\n" ++ prompt)
+    IO.pure(String,task_instructions() ++ knowledge_instructions() ++ "Coordinator executable, database and session argv: [" ++ J.string_literal(executable) ++ "," ++ J.string_literal(db) ++ "," ++ J.string_literal(player) ++ "]. Recorded parent: " ++ Tx.trim_nl(parent) ++ ".\nUse baton inbox to read complete owed input. Baton resolves your session and database from the launch context. Use baton acknowledge to record handling of the current native turn's complete owned reads. Use baton completion-request --text SUMMARY when the assignment is ready; your recorded parent resolves and confirms the current request.\n" ++ Tx.trim_nl(header) ++ "\n" ++ prompt)
 
 def generation_log(+log: String, +id: String) -> String:
   Logs.attempt_log(log,id)
@@ -928,9 +929,9 @@ def retained_native(+db: String, +player: String, +sessions: String, +session: S
     legacy : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ C.q(db ++ ".session-") ++ " || lower(hex(id)) FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
     Omp.resume_file(Tx.trim_nl(legacy),sessions,selected,Bool.and(enabled,String.eq(selected,session)))
 
-def retained_prepare(+db: String, +player: String, +directory: String, +cmd: String, +model: String, +effort: String, +session: String, +harness: String, +sessions: String, +prompt: String, +level: String, seal_prompt: Bool) -> IO(Result<&1,&1,U32 & String,RetainedLaunch>):
+def retained_prepare(+db: String, +player: String, +directory: String, +cmd: String, +model: String, +effort: String, +session: String, +harness: String, +sessions: String, +prompt: String, +level: String, seal_prompt: Bool, predecessor: String) -> IO(Result<&1,&1,U32 & String,RetainedLaunch>):
   do IO<Result<&1,&1,U32 & String,RetainedLaunch>>:
-    +initial : String <- IO.try(String,NativeInitialInput.prepare(db,player,directory,prompt))
+    +initial : String <- IO.try(String,NativeInitialInput.prepare(db,player,directory,prompt,predecessor))
     +native : String <- retained_native(db,player,sessions,session,harness)
     +prompt_file : String <- IO.pure(String,directory ++ "/prompt.txt")
     +executable : String <- IO.try(String,Lock.SessionLock.executable())
@@ -951,13 +952,13 @@ def retained_admit(+db: String, +directory: String, +cwd: String, +prompt: Strin
     case Prepared{+arguments,+input,+initial,+keep_stdin,file_input}:
       Bool.pick(IO(Result<&1,&1,U32 & String,P.RetainedStart>),file_input,Custody.Instance.admit_with_file(db,directory,arguments,cwd,directory ++ "/native.stderr","prompt.txt",initial,input,keep_stdin,Some{lock},recovery),Custody.Instance.admit(db,directory,arguments,cwd,directory ++ "/native.stderr",input,keep_stdin,Some{lock},recovery))
 
-def retained_mode(+db: String, player: String, +directory: String, cmd: String, model: String, effort: String, cwd: String, session: String, harness: String, sessions: String, +prompt: String, lock: U32, recovery: String, level: String, seal_prompt: Bool) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
+def retained_mode(+db: String, player: String, +directory: String, cmd: String, model: String, effort: String, cwd: String, session: String, harness: String, sessions: String, +prompt: String, lock: U32, recovery: String, level: String, seal_prompt: Bool, predecessor: String) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
   do IO<Result<&1,&1,U32 & String,P.RetainedStart>>:
-    launch : RetainedLaunch <- IO.try(RetainedLaunch,retained_prepare(db,player,directory,cmd,model,effort,session,harness,sessions,prompt,level,seal_prompt))
+    launch : RetainedLaunch <- IO.try(RetainedLaunch,retained_prepare(db,player,directory,cmd,model,effort,session,harness,sessions,prompt,level,seal_prompt,predecessor))
     retained_admit(db,directory,cwd,prompt,lock,recovery,launch)
 
-def retained(+db: String, +player: String, +directory: String, +cmd: String, +model: String, +effort: String, +cwd: String, +session: String, +harness: String, +sessions: String, +prompt: String, +lock: U32, +recovery: String, +level: String) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
-  retained_mode(db,player,directory,cmd,model,effort,cwd,session,harness,sessions,prompt,lock,recovery,level,True{})
+def retained(+db: String, +player: String, +directory: String, +cmd: String, +model: String, +effort: String, +cwd: String, +session: String, +harness: String, +sessions: String, +prompt: String, +lock: U32, +recovery: String, +level: String, predecessor: String) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
+  retained_mode(db,player,directory,cmd,model,effort,cwd,session,harness,sessions,prompt,lock,recovery,level,True{},predecessor)
 
 def direct_setup_note(+db: String, +player: String, +id: String, log: String, +cause: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
@@ -985,7 +986,7 @@ def direct_retained_prepared(+db: String, +player: String, +directory: String, +
 
 def direct_retained(+db: String, +player: String, +directory: String, +cmd: String, +model: String, +effort: String, +cwd: String, +session: String, +harness: String, +sessions: String, +prompt: String, +lock: U32, +recovery: String, +level: String) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
   do IO<Result<&1,&1,U32 & String,P.RetainedStart>>:
-    prepared : Result<&1,&1,U32 & String,RetainedLaunch> <- retained_prepare(db,player,directory,cmd,model,effort,session,harness,sessions,prompt,level,True{})
+    prepared : Result<&1,&1,U32 & String,RetainedLaunch> <- retained_prepare(db,player,directory,cmd,model,effort,session,harness,sessions,prompt,level,True{},"")
     direct_retained_prepared(db,player,directory,cwd,prompt,lock,recovery,prepared)
 
 def claude_launch(cmd: String, model: String, effort: String, cwd: String, stderr: String, session: String, fresh: Bool) -> IO(Result<&1,&1,U32 & String,U32>):
@@ -1462,7 +1463,7 @@ def direct_setup(+db: String, +player: String, +id: String, +cmd: String, +model
     recovery : String <- IO.pure(String,direct_recovery_argv(executable,db,player,id,cmd,model,effort,cwd,log,harness,directory,session))
     policy : Logs.Policy <- Logs.policy(db,player)
     +level : String <- IO.pure(String,policy_level(policy))
-    launch : RetainedLaunch <- IO.try(RetainedLaunch,retained_prepare(db,player,directory,cmd,model,effort,session,harness,db ++ ".sessions",prompt,level,True{}))
+    launch : RetainedLaunch <- IO.try(RetainedLaunch,retained_prepare(db,player,directory,cmd,model,effort,session,harness,db ++ ".sessions",prompt,level,True{},""))
     IO.pure(Result<&1,&1,U32 & String,DirectSetup>,Done{Ready{launch,recovery,level}})
 
 def direct_setup_result(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, task: String, +log: String, session: String, +harness: String, +directory: String, +prompt: String, +lock: U32, setup: Result<&1,&1,U32 & String,DirectSetup>) -> IO(Unit):

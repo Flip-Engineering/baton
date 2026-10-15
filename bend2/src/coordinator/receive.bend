@@ -7,6 +7,8 @@ import ./store.bend as Store
 import ./stop.bend as Stop
 import ./subscription-fallback.bend as Subs
 import ./turn.bend as Turn
+import ./native-initial-input.bend as NativeInitialInput
+import ../json/canonical.bend as J
 import ./native-requests.bend as NativeRequests
 import ./delivery.bend as Delivery
 import ../host/sqlite.bend as DB
@@ -49,7 +51,7 @@ def orientation_text(db: String, session: String) -> IO(String):
     IO.pure(String,Tx.trim_nl(saved))
 
 def instructions(executable: String, database: String, +session: String, orientation: String) -> String:
-  "You are session " ++ session ++ " in a Baton Orchestra.\nRecorded orientation: " ++ orientation ++ "\nCoordinator executable/database argv: " ++ P.argv([executable,database]) ++ "\n"
+  "You are session " ++ session ++ " in a Baton Orchestra.\nRecorded orientation: " ++ orientation ++ "\nCoordinator executable/database argv: [" ++ J.string_literal(executable) ++ "," ++ J.string_literal(database) ++ "]\n"
   ++ "Read complete owed input with inbox. Baton resolves the database, current actor, assignment and coordinator from the launch context. Use acknowledge after handling the current native turn's complete owned reads. Baton generates action identities and handling receipts. Read your inbox again as work continues. Explicit stops and direct operator instructions remain effective.\nUse report --text TEXT and ask --text TEXT to reach your recorded coordinator. Use completion-request --text SUMMARY when your assignment is ready. A parentless session follows its operator task. A coordinator uses completion-confirmed --to PLAYER to confirm that Player's current request. Use guide --to PLAYER --text TEXT for further instructions and native-reply --to PLAYER --text JSON for a pending native question.\nUse dispatch --to PLAYER --text TEXT to deliver a task to a recorded Player. An open assignment receives continuation input. Dispatch stores the complete text, request and setup outcome in the database. Use dispatch --stdin for standard input and dispatch --help for route selection. Independent Players can run concurrently. Their retained reports reach the recorded coordinator when their native turns end.\nUse join --session PLAYER --harness HARNESS --model MODEL --effort EFFORT --path WORKSPACE for a shared checkout. Use recruit --session PLAYER --harness HARNESS --model MODEL --effort EFFORT --repo REPO --branch BRANCH --path PATH --base COMMIT for a separate worktree. Baton records the current actor as parent. Register a receiver with receiver --session PLAYER --command EXECUTABLE --output-log PATH.\nFor source work, name the checkout, target branch and remote in the assignment. Commit completed contributions and report remaining work. The coordinating Conductor integrates and publishes contributions. Use land --session PLAYER --repo REPO --target BRANCH for a fast-forward contribution, or reconcile divergent contributions with ordinary Git operations. After the Player's owned turn finishes, receiver --session PLAYER --command EXECUTABLE --output-log PATH --cwd SHARED_CWD preserves its conversation and moves its recorded workspace. Remove a clean inactive temporary worktree and fully integrated branch with ordinary Git commands. Preserve active checkouts, unfinished changes, later unintegrated commits and explicit stops.\nUse players, orchestra, assignment, attempts and status to inspect recorded work. Use knowledge read for complete scoped findings and knowledge promote --to DESTINATION --finding FINDING to share reviewed evidence. Existing finding and message references select evidence; Baton generates identities for new records and relations. Use help ACTION for named arguments and as SESSION for an explicit actor override.\n"
   ++ Turn.task_instructions()
   ++ Turn.knowledge_instructions()
@@ -92,10 +94,10 @@ def result_ok(result: Result<&1,&1,U32 & String,Unit>) -> Bool:
     case Fail{error}: False{}
     case Done{unit}: True{}
 
-def continue_if(again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), present: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+def continue_if(again: String -> IO(Result<&1,&1,U32 & String,Unit>), present: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match present:
     case False{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
-    case True{}: again(Unit{})
+    case True{}: again("")
 
 # How much input is still owed after the cursor. Busy writers have committed
 # before trying the lock, so the owner reads this again after releasing it.
@@ -113,7 +115,7 @@ def wake_found(db: String, session: String, cursor: String) -> IO(String):
 # The continuation takes the session lock and re-reads the count while holding
 # it, so the in-invocation continuation and the wake driver cannot both proceed
 # for one session. The claim records the driver that took the obligation.
-def continue_owned(+db: String, +session: String, +cursor: String, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), lock: Maybe<U32>) -> IO(Result<&1,&1,U32 & String,Unit>):
+def continue_owned(+db: String, +session: String, +cursor: String, again: String -> IO(Result<&1,&1,U32 & String,Unit>), lock: Maybe<U32>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match lock:
     case None{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
     case Some{handle}: do IO<Result<&1,&1,U32 & String,Unit>>:
@@ -123,13 +125,13 @@ def continue_owned(+db: String, +session: String, +cursor: String, again: Unit -
       released : Unit <- IO.try(Unit,Lock.SessionLock.release(handle))
       continue_if(again,Bool.not(String.eq(pending,"0\n")))
 
-def continue_locked(+db: String, +session: String, +cursor: String, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), owed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+def continue_locked(+db: String, +session: String, +cursor: String, again: String -> IO(Result<&1,&1,U32 & String,Unit>), owed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match owed:
     case False{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
     case True{}: Lock.SessionLock.acquire_session(Result<&1,&1,U32 & String,Unit>,db,session,
       +canonical => lock => continue_owned(canonical,session,cursor,again,lock))
 
-def continue_pending(+db: String, +session: String, +cursor: String, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+def continue_pending(+db: String, +session: String, +cursor: String, again: String -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     pending : String <- IO.try(String,DB.Sql.query(db,pending_count_sql(session,cursor)))
     continue_locked(db,session,cursor,again,Bool.not(String.eq(pending,"0\n")))
@@ -377,18 +379,18 @@ def finish_pending_result(finished: Result<&1,&1,U32 & String,Unit>, questions: 
 # superseded, or a classified complete provider failure whose owed continuation succeeded;
 # every other Result below keeps its own combination, and an attempt whose
 # advance was recorded runs the advance's own continuation instead of the ordinary one.
-def finish_pending(+db: String, +session: String, id: String, log: String, +cursor: String, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), acknowledge: Unit -> IO(Result<&1,&1,U32 & String,Unit>), +superseded: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+def finish_pending(+db: String, +session: String, id: String, attempt: String, log: String, +cursor: String, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), acknowledge: Unit -> IO(Result<&1,&1,U32 & String,Unit>), +superseded: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     +failed : Bool <- outcome_failed(db,outcome)
     owed : Bool <- wake_owed(db,session,cursor)
+    +transient : Bool <- transient_provider_error(db,outcome)
     delivery_task : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,Turn.finish(db,session,id,log,outcome))
-    continued_task : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),superseded,IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),continue_pending(db,session,cursor,again)))
+    continued_task : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),superseded,IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),continue_pending(db,session,cursor,previous => again(Bool.pick(String,Bool.and(failed,transient),attempt,previous)))))
     finished : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,delivery_task)
     questions : Result<&1,&1,U32 & String,Unit> <- NativeRequests.settle(deliveries)
     stopped : Bool <- Stop.stopped(db,session)
     ack : Result<&1,&1,U32 & String,Unit> <- acknowledge_if_observed(Bool.and(native_observation_failed(outcome),Bool.not(stopped)),acknowledge)
     next : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,continued_task)
-    transient : Bool <- transient_provider_error(db,outcome)
     finish_pending_result(finished,questions,ack,failed,superseded,outcome,transient,owed,next)
 
 # Retirement follows acknowledgment on the same attempt handle: the shared
@@ -416,7 +418,7 @@ def wake_if_kept(db: String, session: String, cursor: String, superseded: Bool, 
 # Successful observations and complete recoverable provider errors resume all owed
 # input. Other failures retain the attempt cursor. A recorded profile advance runs
 # its own continuation, and completion operations preserve their results.
-def completed(+db: String, +session: String, +id: String, +log: String, stderr: String, +cursor: String, +handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), +superseded: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+def completed(+db: String, +session: String, +id: String, +log: String, attempt: String, stderr: String, +cursor: String, +handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), +superseded: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     failed : Bool <- outcome_failed(db,outcome)
     transient : Bool <- transient_provider_error(db,outcome)
@@ -424,7 +426,7 @@ def completed(+db: String, +session: String, +id: String, +log: String, stderr: 
     prepared : Unit <- Turn.prepare(db,session,id,log,stderr,outcome)
     observer_released : Unit <- release_observer(lock)
     native_released : Unit <- IO.try(Unit,P.ProcessChild.release(handle))
-    finished : Result<&1,&1,U32 & String,Unit> <- finish_pending(db,session,id,log,pending_cursor,outcome,deliveries,again,u => ack_then_retire(handle),superseded)
+    finished : Result<&1,&1,U32 & String,Unit> <- finish_pending(db,session,id,attempt,log,pending_cursor,outcome,deliveries,again,u => ack_then_retire(handle),superseded)
     wake_if_kept(db,session,pending_cursor,superseded,finished)
 
 # The recovery input records the workspace state and makes clearing the refused
@@ -444,14 +446,14 @@ def record_recovery(db: String, session: String, id: String, native: String, cwd
       note : String <- Turn.refused_note(cwd,"")
       recovery_input(db,session,id,native,note)
 
-def restart_pending(+db: String, +session: String, +id: String, +cursor: String, native: String, cwd: String, +handle: U32, lock: Maybe<U32>, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+def restart_pending(+db: String, +session: String, +id: String, attempt: String, +cursor: String, native: String, cwd: String, +handle: U32, lock: Maybe<U32>, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: String -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     recorded : String <- IO.try(String,DB.Sql.query(db,"SELECT EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(id ++ ":recovery-input") ++ ");"))
     saved : Unit <- record_recovery(db,session,id,native,cwd,String.eq(recorded,"1\n"))
     observer_released : Unit <- release_observer(lock)
     native_released : Unit <- IO.try(Unit,P.ProcessChild.release(handle))
     delivery_task : Chan(Result<&1,&1,U32 & String,String>) <- IO.fork(Result<&1,&1,U32 & String,String>,Delivery.deliver(db,id ++ ":recovery","1",""))
-    next : Result<&1,&1,U32 & String,Unit> <- again(Unit{})
+    next : Result<&1,&1,U32 & String,Unit> <- again(attempt)
     woken : Result<&1,&1,U32 & String,Unit> <- wake_due(db,session,cursor,launch => wake_launch(db,launch))
     delivered : Result<&1,&1,U32 & String,String> <- IO.join(Result<&1,&1,U32 & String,String>,delivery_task)
     questions : Result<&1,&1,U32 & String,Unit> <- NativeRequests.settle(deliveries)
@@ -459,17 +461,17 @@ def restart_pending(+db: String, +session: String, +id: String, +cursor: String,
     retired : Unit <- IO.try(Unit,Custody.Instance.retire(handle))
     IO.pure(Result<&1,&1,U32 & String,Unit>,Turn.combine(Delivery.wake_result(delivered),Turn.combine(questions,Turn.combine(next,woken))))
 
-def complete_or_restart(db: String, session: String, id: String, log: String, stderr: String, cursor: String, native: String, cwd: String, handle: U32, lock: Maybe<U32>, outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), gone: Bool, superseded: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+def complete_or_restart(db: String, session: String, id: String, log: String, stderr: String, attempt: String, cursor: String, native: String, cwd: String, handle: U32, lock: Maybe<U32>, outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), gone: Bool, superseded: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match gone:
-    case False{}: completed(db,session,id,log,stderr,cursor,handle,lock,outcome,deliveries,again,superseded)
-    case True{}: restart_pending(db,session,id,cursor,native,cwd,handle,lock,deliveries,again)
+    case False{}: completed(db,session,id,log,attempt,stderr,cursor,handle,lock,outcome,deliveries,again,superseded)
+    case True{}: restart_pending(db,session,id,attempt,cursor,native,cwd,handle,lock,deliveries,again)
 
-def observed(+db: String, +session: String, +id: String, +log: String, cursor: String, +native: String, cwd: String, +attempt: String, handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), superseded: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+def observed(+db: String, +session: String, +id: String, +log: String, cursor: String, +native: String, cwd: String, +attempt: String, handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), superseded: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     exited : Unit <- Turn.record_exit(db,session,id,log,outcome)
     closed : Bool <- Stop.stopped(db,session)
     gone : Bool <- Turn.refusal(attempt ++ "/native.stderr",Bool.not(String.is_empty(native)),outcome)
-    complete_or_restart(db,session,id,log,attempt ++ "/native.stderr",cursor,native,cwd,handle,lock,outcome,deliveries,again,Bool.and(gone,Bool.not(closed)),superseded)
+    complete_or_restart(db,session,id,log,attempt ++ "/native.stderr",attempt,cursor,native,cwd,handle,lock,outcome,deliveries,again,Bool.and(gone,Bool.not(closed)),superseded)
 
 def reconciled_cursor(cursor: String, adopted: Bool, outcome: Turn.Outcome) -> String:
   match adopted:
@@ -478,7 +480,7 @@ def reconciled_cursor(cursor: String, adopted: Bool, outcome: Turn.Outcome) -> S
       case Turn.Ended{status,event,error,incomplete}:
         Bool.pick(String,Bool.and(String.eq(status,"unknown after keeper loss"),Bool.and(String.is_empty(event),String.is_empty(error))),"0",cursor)
 
-def observed_output(db: String, session: String, id: String, log: String, cursor: String, native: String, cwd: String, attempt: String, handle: U32, lock: Maybe<U32>, observation: Turn.Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), adopted: Bool, superseded: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+def observed_output(db: String, session: String, id: String, log: String, cursor: String, native: String, cwd: String, attempt: String, handle: U32, lock: Maybe<U32>, observation: Turn.Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), adopted: Bool, superseded: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   (outcome,deliveries)=observation
   +current=outcome
   observed(db,session,id,log,reconciled_cursor(cursor,adopted,current),native,cwd,attempt,handle,lock,current,deliveries,again,superseded)
@@ -499,11 +501,11 @@ def handoff_guidance(db: String, +session: String, id: String, attempt: String) 
 # session, which the zero cursor asks for: the attempt cursor excludes the input that attempt
 # already read, so a task the attempt never acknowledged would read as empty there and the
 # continuation would run without it. No receipt is reset and no operator task is repeated.
-def continue_after_advance(+db: String, +session: String, id: String, attempt: String, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+def continue_after_advance(+db: String, +session: String, id: String, +attempt: String, again: String -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     owed : Bool <- wake_owed(db,session,"0")
     noted : Unit <- Bool.pick(IO(Unit),owed,IO.pure(Unit,Unit{}),handoff_guidance(db,session,id,attempt))
-    again(Unit{})
+    again(attempt)
 
 # The guidance message is written only for this session when a transient
 # provider error interrupted its accepted task: the failed turn stays recorded with
@@ -518,16 +520,16 @@ def transient_guidance(db: String, +session: String, id: String, attempt: String
 # After a recorded transient failure with nothing owed, the same actor resumes
 # its retained attempt: the guidance above names the attempt, and the existing
 # wake driver fires it on the same binding.
-def resume_after_transient(+db: String, +session: String, id: String, attempt: String, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+def resume_after_transient(+db: String, +session: String, id: String, +attempt: String, again: String -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     noted : Unit <- transient_guidance(db,session,id,attempt)
-    again(Unit{})
+    again(attempt)
 
 # A selected transient continuation reuses the handoff completion distinction: only a
 # cleanly observed path resumes. Any delivery, settlement, finish, or acknowledgment
 # failure keeps its own result and launches nothing, while the failed turn row stays
 # recorded from the outcome itself.
-def transient_continue(db: String, session: String, id: String, attempt: String, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), observed: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
+def transient_continue(db: String, session: String, id: String, attempt: String, again: String -> IO(Result<&1,&1,U32 & String,Unit>), observed: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match observed:
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error})
     case Done{unit}: resume_after_transient(db,session,id,attempt,again)
@@ -538,7 +540,7 @@ def transient_continue(db: String, session: String, id: String, attempt: String,
 # observation returns Done and only then resumes. A task queued during completion is
 # never drained twice: the ordinary wake stands down for the suppressed run and the
 # explicit resume is the single continuation.
-def completed_transient(+db: String, +session: String, +id: String, log: String, cursor: String, native: String, cwd: String, +attempt: String, handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), adopted: Bool, proceed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+def completed_transient(+db: String, +session: String, +id: String, log: String, cursor: String, native: String, cwd: String, +attempt: String, handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), adopted: Bool, proceed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match proceed:
     case False{}: observed_output(db,session,id,log,cursor,native,cwd,attempt,handle,lock,(outcome,deliveries),again,adopted,False{})
     case True{}: do IO<Result<&1,&1,U32 & String,Unit>>:
@@ -564,12 +566,12 @@ def transient_precheck(+db: String, +session: String, +outcome: Turn.Outcome) ->
 # is suppressed. The advance's continuation runs exactly once and only after the observed
 # path completed cleanly, so a real delivery, settlement, acknowledgment or retirement
 # failure keeps its own result and launches nothing.
-def advanced_completed(db: String, session: String, id: String, attempt: String, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), observed: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
+def advanced_completed(db: String, session: String, id: String, attempt: String, again: String -> IO(Result<&1,&1,U32 & String,Unit>), observed: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match observed:
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error})
     case Done{unit}: continue_after_advance(db,session,id,attempt,again)
 
-def completed_profile(+db: String, +session: String, +id: String, log: String, cursor: String, native: String, cwd: String, +attempt: String, handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), adopted: Bool, superseded: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+def completed_profile(+db: String, +session: String, +id: String, log: String, cursor: String, native: String, cwd: String, +attempt: String, handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), adopted: Bool, superseded: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match superseded:
     case False{}: do IO<Result<&1,&1,U32 & String,Unit>>:
       proceed : Bool <- transient_precheck(db,session,outcome)
@@ -599,7 +601,7 @@ def route_guidance(db: String, +session: String, id: String, attempt: String, na
     noted : String <- IO.try(String,DB.Sql.query(db,"INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id ++ ":route-guidance") ++ ",id,id,'guidance'," ++ C.q("All subscription accounts refused with provider-reported usage exhaustion and the task continues on another operator-listed route: harness=" ++ harness ++ " model=" ++ model ++ ". Continue the original retained attempt " ++ attempt ++ " from the original assignment and context; the previous native conversation lineage is " ++ native ++ "; the task message that started it is already acknowledged and the failed turn stays recorded with the provider cause.") ++ " FROM sessions WHERE id=" ++ C.q(session) ++ " AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ ";"))
     IO.pure(Unit,Unit{})
 
-def route_applied(+db: String, +session: String, +id: String, attempt: String, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), native: String, log: String, +cause: String, +old_harness: String, old_model: String, +effort: String, chosen: Maybe<&2,Subs.Route>) -> IO(Result<&1,&1,U32 & String,Unit>):
+def route_applied(+db: String, +session: String, +id: String, +attempt: String, again: String -> IO(Result<&1,&1,U32 & String,Unit>), native: String, log: String, +cause: String, +old_harness: String, old_model: String, +effort: String, chosen: Maybe<&2,Subs.Route>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match chosen:
     case None{}: do IO<Result<&1,&1,U32 & String,Unit>>:
       noted : Unit <- Subs.report_route_unavailable(db,session,id,old_harness,cause)
@@ -609,10 +611,10 @@ def route_applied(+db: String, +session: String, +id: String, attempt: String, a
       configured : String <- Control.configure(db,session,Subs.route_harness(route),Subs.route_model(route),effort,Subs.route_cmd(route),log,old_harness,old_model,effort)
       cleared : Unit <- Subs.clear_incompatible_native(db,session,old_harness,Subs.route_harness(route))
       guided : Unit <- route_guidance(db,session,id,attempt,native,Subs.route_harness(route),Subs.route_model(route))
-      next : Result<&1,&1,U32 & String,Unit> <- again(Unit{})
+      next : Result<&1,&1,U32 & String,Unit> <- again(attempt)
       IO.pure(Result<&1,&1,U32 & String,Unit>,next)
 
-def route_continue(+db: String, +session: String, +id: String, +attempt: String, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), native: String, log: String, outcome: Turn.Outcome) -> IO(Result<&1,&1,U32 & String,Unit>):
+def route_continue(+db: String, +session: String, +id: String, +attempt: String, again: String -> IO(Result<&1,&1,U32 & String,Unit>), native: String, log: String, outcome: Turn.Outcome) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     +cause : String <- Subs.exhaustion_cause(db,terminal_event(outcome))
     +old_harness : String <- IO.try(String,DB.Sql.query(db,Subs.session_route_sql(db,session)))
@@ -625,26 +627,26 @@ def route_continue(+db: String, +session: String, +id: String, +attempt: String,
 # cleanly observed path continues. Any delivery, settlement, finish, or acknowledgment
 # failure keeps its own result and launches nothing, while the failed turn row stays
 # recorded from the outcome itself.
-def route_after_advance(+db: String, +session: String, +id: String, +attempt: String, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), native: String, log: String, outcome: Turn.Outcome, observed: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
+def route_after_advance(+db: String, +session: String, +id: String, +attempt: String, again: String -> IO(Result<&1,&1,U32 & String,Unit>), native: String, log: String, outcome: Turn.Outcome, observed: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match observed:
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error})
     case Done{unit}: route_continue(db,session,id,attempt,again,native,log,outcome)
 
-def completed_routed(+db: String, +session: String, +id: String, +log: String, cursor: String, +native: String, +cwd: String, +attempt: String, handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), adopted: Bool, superseded: Bool, routed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+def completed_routed(+db: String, +session: String, +id: String, +log: String, cursor: String, +native: String, +cwd: String, +attempt: String, handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), adopted: Bool, superseded: Bool, routed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match routed:
     case False{}: completed_profile(db,session,id,log,cursor,native,cwd,attempt,handle,lock,outcome,deliveries,again,adopted,superseded)
     case True{}: do IO<Result<&1,&1,U32 & String,Unit>>:
       observed : Result<&1,&1,U32 & String,Unit> <- observed_output(db,session,id,log,cursor,native,cwd,attempt,handle,lock,(outcome,deliveries),u => IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),adopted,True{})
       route_after_advance(db,session,id,attempt,again,native,log,outcome,observed)
 
-def completed_observation(+db: String, +session: String, +id: String, log: String, cursor: String, +native: String, +cwd: String, +attempt: String, handle: U32, lock: Maybe<U32>, observation: Turn.Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), adopted: Bool, cmd: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+def completed_observation(+db: String, +session: String, +id: String, log: String, cursor: String, +native: String, +cwd: String, +attempt: String, handle: U32, lock: Maybe<U32>, observation: Turn.Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), adopted: Bool, cmd: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   (+outcome,deliveries)=observation
   do IO<Result<&1,&1,U32 & String,Unit>>:
     +superseded : Bool <- Subs.profile_handoff(db,session,id,terminal_event(outcome),native,cmd,cwd)
     routed : Bool <- route_decided(db,session,id,outcome,superseded)
     completed_routed(db,session,id,log,cursor,native,cwd,attempt,handle,lock,outcome,deliveries,again,adopted,superseded,routed)
 
-def started(+db: String, +session: String, +id: String, +log: String, cursor: String, native: String, cwd: String, +attempt: String, harness: String, level: String, lock: U32, start: P.RetainedStart, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), cmd: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+def started(+db: String, +session: String, +id: String, +log: String, cursor: String, native: String, cwd: String, +attempt: String, harness: String, level: String, lock: U32, start: P.RetainedStart, again: String -> IO(Result<&1,&1,U32 & String,Unit>), cmd: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   match start:
     case P.Retained{+handle}: do IO<Result<&1,&1,U32 & String,Unit>>:
       reconciled : Unit <- Stop.started(db,session,id,attempt)
@@ -655,13 +657,13 @@ def started(+db: String, +session: String, +id: String, +log: String, cursor: St
       exited : Unit <- Turn.record_exit(db,session,id,log,outcome)
       prepared : Unit <- Turn.prepare(db,session,id,log,attempt ++ "/native.stderr",outcome)
       released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
-      finish_pending(db,session,id,log,cursor,outcome,Nil{},again,u => IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),False{})
+      finish_pending(db,session,id,attempt,log,cursor,outcome,Nil{},again,u => IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),False{})
 
 # An admitted start takes the obligation under the held session lock before the
 # native process exists: the claim names the head unacknowledged message as
 # owner and fences the generation past any stale row, so a driver that dies
 # before launch never suppresses the next wake.
-def start_admitted(+db: String, +session: String, +id: String, +cmd: String, route: String, thinking: String, +workspace: String, +log: String, +lock: U32, cursor: String, +native: String, +attempt: String, +harness: String, storage: String, prompt: String, recovery: String, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), allowed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+def start_admitted(+db: String, +session: String, +id: String, +cmd: String, route: String, thinking: String, +workspace: String, +log: String, +lock: U32, cursor: String, +native: String, +attempt: String, +harness: String, storage: String, prompt: String, recovery: String, predecessor: String, again: String -> IO(Result<&1,&1,U32 & String,Unit>), allowed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match allowed:
     case False{}: do IO<Result<&1,&1,U32 & String,Unit>>:
       released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
@@ -671,7 +673,7 @@ def start_admitted(+db: String, +session: String, +id: String, +cmd: String, rou
       owned : Unit <- Store.claim(db,session,head)
       +policy : Logs.Policy <- Logs.policy(db,session)
       +level : String <- IO.pure(String,Turn.policy_level(policy))
-      start : P.RetainedStart <- IO.try(P.RetainedStart,Turn.retained(db,session,attempt,cmd,route,thinking,workspace,native,harness,storage,prompt,lock,recovery,level))
+      start : P.RetainedStart <- IO.try(P.RetainedStart,Turn.retained(db,session,attempt,cmd,route,thinking,workspace,native,harness,storage,prompt,lock,recovery,level,predecessor))
       started(db,session,id,log,cursor,native,workspace,attempt,harness,level,lock,start,again,cmd)
 
 def input_text(decoded: Req.Scalar) -> IO(String):
@@ -679,7 +681,7 @@ def input_text(decoded: Req.Scalar) -> IO(String):
     case Req.ScalarText{value}: IO.pure(String,value ++ "\n")
     case other: IO.die(String,22,"Complete selected input could not be decoded: " ++ Req.scalar_reason(other))
 
-def selected(+db: String, +session: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, +lock: U32, +cursor: String, present: Bool, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+def selected(+db: String, +session: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, +lock: U32, +cursor: String, present: Bool, again: String -> IO(Result<&1,&1,U32 & String,Unit>), predecessor: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   match present:
     case False{}: do IO<Result<&1,&1,U32 & String,Unit>>:
       released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
@@ -699,20 +701,21 @@ def selected(+db: String, +session: String, +cmd: String, +model: String, +effor
       +selection : String <- IO.try(String,DB.Sql.query(db,"SELECT json_object('ids',json_group_array(id),'text',coalesce(group_concat(input,char(10)||char(10)),'')) FROM (SELECT id,'Message (' || kind || ') from ' || sender || ' [id: ' || id || ']:' || char(10) || body AS input FROM messages WHERE recipient=" ++ C.q(session) ++ " AND receipt IS NULL AND seq<=CAST(" ++ C.q(cursor) ++ " AS INTEGER) ORDER BY seq);"))
       body_hex : String <- IO.try(String,DB.Sql.read(db,"SELECT hex(json_extract(" ++ C.q(selection) ++ ",'$.text'));"))
       body : String <- input_text(Req.decode_scalar_utf8(Tx.hex_decode(Tx.trim_nl(body_hex))))
-      inputs : String <- IO.try(String,DB.Sql.read(db,"SELECT json_extract(" ++ C.q(selection) ++ ",'$.ids');"))
+      +inputs : String <- IO.try(String,DB.Sql.read(db,"SELECT json_extract(" ++ C.q(selection) ++ ",'$.ids');"))
       directory : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ C.q(db ++ ".attempt-") ++ " || lower(hex(" ++ C.q(id) ++ "));"))
       +attempt : String <- IO.pure(String,Tx.trim_nl(directory))
       recovery : String <- IO.pure(String,P.argv([executable,"--recover-receive",db,session,id,cursor,cmd,route,thinking,workspace,log,harness,attempt,native,Tx.trim_nl(inputs)]))
+      previous : String <- NativeInitialInput.predecessor(db,session,Tx.trim_nl(inputs),predecessor)
       allowed : Bool <- Stop.admit(db,session,id,"retained",attempt)
       orientation : String <- orientation_text(db,session)
-      start_admitted(db,session,id,cmd,route,thinking,workspace,log,lock,cursor,native,attempt,harness,Tx.trim_nl(storage),instructions(executable,db,session,orientation) ++ body,recovery,again,allowed)
+      start_admitted(db,session,id,cmd,route,thinking,workspace,log,lock,cursor,native,attempt,harness,Tx.trim_nl(storage),instructions(executable,db,session,orientation) ++ body,recovery,previous,again,allowed)
 
-def acquired_pending(+db: String, +session: String, cmd: String, model: String, effort: String, cwd: String, log: String, lock: U32, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+def acquired_pending(+db: String, +session: String, cmd: String, model: String, effort: String, cwd: String, log: String, lock: U32, again: String -> IO(Result<&1,&1,U32 & String,Unit>), predecessor: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     +cursor : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce(max(seq),0) FROM messages WHERE recipient=" ++ C.q(session) ++ " AND receipt IS NULL;"))
-    selected(db,session,cmd,model,effort,cwd,log,lock,cursor,Bool.not(String.eq(cursor,"0\n")),again)
+    selected(db,session,cmd,model,effort,cwd,log,lock,cursor,Bool.not(String.eq(cursor,"0\n")),again,predecessor)
 
-def observe_guarded(+db: String, +session: String, +id: String, cursor: String, cmd: String, model: String, effort: String, +cwd: String, +log: String, harness: String, +directory: String, native: String, +handle: U32, lock: Maybe<U32>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), adopted: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+def observe_guarded(+db: String, +session: String, +id: String, cursor: String, cmd: String, model: String, effort: String, +cwd: String, +log: String, harness: String, +directory: String, native: String, +handle: U32, lock: Maybe<U32>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), adopted: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     reconciled : Unit <- Stop.observing(db,session,id,directory)
     observation : Turn.Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- Turn.retained_output(db,session,id,log,harness,directory,handle,"unknown")
@@ -724,7 +727,7 @@ def recovery_arguments(args: List<&2,String>) -> List<&2,String>:
       [executable,flag,db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native]
     case other: other
 
-def recover_owned_arguments(+db: String, +session: String, +directory: String, +lock: U32, args: List<&2,String>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+def recover_owned_arguments(+db: String, +session: String, +directory: String, +lock: U32, args: List<&2,String>, again: String -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   match args:
     case executable <> flag <> saved_db <> saved_session <> id <> cursor <> cmd <> model <> effort <> cwd <> log <> harness <> saved_directory <> native <> Nil{}:
       do IO<Result<&1,&1,U32 & String,Unit>>:
@@ -733,39 +736,39 @@ def recover_owned_arguments(+db: String, +session: String, +directory: String, +
         observe_guarded(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,Some{lock},again,True{})
     case other: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(2,"Recorded native recovery arguments are invalid; retain the attempt and inspect its manifest.")})
 
-def recover_owned(db: String, session: String, directory: String, lock: U32, args: List<&2,String>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+def recover_owned(db: String, session: String, directory: String, lock: U32, args: List<&2,String>, again: String -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   recover_owned_arguments(db,session,directory,lock,recovery_arguments(args),again)
 
-def acquired_attempt(db: String, session: String, cmd: String, model: String, effort: String, cwd: String, log: String, lock: U32, directory: String, recovery: Maybe<String>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+def acquired_attempt(db: String, session: String, cmd: String, model: String, effort: String, cwd: String, log: String, lock: U32, directory: String, recovery: Maybe<String>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), predecessor: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   match recovery:
-    case None{}: acquired_pending(db,session,cmd,model,effort,cwd,log,lock,again)
+    case None{}: acquired_pending(db,session,cmd,model,effort,cwd,log,lock,again,predecessor)
     case Some{args}: recover_owned(db,session,directory,lock,String.split(args,Char.from_u32(0)),again)
 
 # The canonical guard owner resolves the current durable attempt before admission.
-def acquired_recorded(+db: String, +session: String, cmd: String, model: String, effort: String, cwd: String, log: String, +lock: U32, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+def acquired_recorded(+db: String, +session: String, cmd: String, model: String, effort: String, cwd: String, log: String, +lock: U32, again: String -> IO(Result<&1,&1,U32 & String,Unit>), predecessor: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     +directory : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce((SELECT directory FROM executions WHERE session=" ++ C.q(session) ++ " AND mode='retained'),'');"))
     +attempt : String <- IO.pure(String,Tx.trim_nl(directory))
     recovery : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.recovery_argv(attempt))
-    acquired_attempt(db,session,cmd,model,effort,cwd,log,lock,attempt,recovery,again)
+    acquired_attempt(db,session,cmd,model,effort,cwd,log,lock,attempt,recovery,again,predecessor)
 
-def acquired(+db: String, session: String, cmd: String, model: String, effort: String, cwd: String, log: String, result: Maybe<U32>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+def acquired(+db: String, session: String, cmd: String, model: String, effort: String, cwd: String, log: String, result: Maybe<U32>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), predecessor: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   match result:
     case None{}: receive_status(db,session,"queued")
     case Some{lock}: do IO<Result<&1,&1,U32 & String,Unit>>:
       ensured : Unit <- Store.ensure_before_begin(db)
-      acquired_recorded(db,session,cmd,model,effort,cwd,log,lock,again)
+      acquired_recorded(db,session,cmd,model,effort,cwd,log,lock,again,predecessor)
 
 def registered(exists: Bool) -> IO(Unit):
   match exists:
     case True{}: IO.pure(Unit,Unit{})
     case False{}: IO.die(Unit,2,"Session is not registered; attach a conductor or recruit a player before receiving messages.")
 
-def available(+db: String, +session: String, cmd: String, model: String, effort: String, cwd: String, log: String, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), closed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+def available(+db: String, +session: String, cmd: String, model: String, effort: String, cwd: String, log: String, again: String -> IO(Result<&1,&1,U32 & String,Unit>), closed: Bool, predecessor: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   match closed:
     case True{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(2,"Session is terminally stopped; queued input will not execute. Read its session and retained inbox.")})
     case False{}: Lock.SessionLock.acquire_session(Result<&1,&1,U32 & String,Unit>,db,session,
-      +database => lock => acquired(database,session,cmd,model,effort,cwd,log,lock,again))
+      +database => lock => acquired(database,session,cmd,model,effort,cwd,log,lock,again,predecessor))
 
 def continuation_sql(session: String) -> String:
   "SELECT CASE WHEN s.endpoint='' THEN 'explicit' WHEN " ++ Delivery.native_receiver_sql() ++ " THEN 'native' || char(9) || hex(json_extract(s.endpoint,'$[#-5]')) || char(9) || hex(json_extract(s.endpoint,'$[#-4]')) || char(9) || hex(json_extract(s.endpoint,'$[#-3]')) || char(9) || hex(json_extract(s.endpoint,'$[#-2]')) || char(9) || hex(json_extract(s.endpoint,'$[#-1]')) ELSE 'delivery' END FROM sessions s WHERE s.id=" ++ C.q(session) ++ ";"
@@ -800,24 +803,27 @@ def continue_selected(+db: String, +session: String, cmd: String, model: String,
 
 # MESSAGE_ID names the wake. The lock owner reads all pending inputs together.
 @unsafe
-def run(+db: String, +session: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, message: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+def run_from(+db: String, +session: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, predecessor: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     recorded : String <- IO.try(String,DB.Sql.read(db,"SELECT id FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
     exists : Unit <- registered(Bool.not(String.is_empty(recorded)))
     closed : Bool <- Stop.stopped(db,session)
-    result : Result<&1,&1,U32 & String,Unit> <- available(db,session,cmd,model,effort,cwd,log,u => continue_selected(db,session,cmd,model,effort,cwd,log,current_cmd => current_model => current_effort => current_cwd => current_log => run(db,session,current_cmd,current_model,current_effort,current_cwd,current_log,"")),closed)
+    result : Result<&1,&1,U32 & String,Unit> <- available(db,session,cmd,model,effort,cwd,log,previous => continue_selected(db,session,cmd,model,effort,cwd,log,current_cmd => current_model => current_effort => current_cwd => current_log => run_from(db,session,current_cmd,current_model,current_effort,current_cwd,current_log,previous)),closed,predecessor)
     settled : Unit <- claim_left(db,session)
     IO.pure(Result<&1,&1,U32 & String,Unit>,result)
 
-def continue_receiver(+db: String, +session: String, cmd: String, model: String, effort: String, cwd: String, log: String) -> IO(Result<&1,&1,U32 & String,Unit>):
-  continue_selected(db,session,cmd,model,effort,cwd,log,current_cmd => current_model => current_effort => current_cwd => current_log => run(db,session,current_cmd,current_model,current_effort,current_cwd,current_log,""))
+def run(db: String, session: String, cmd: String, model: String, effort: String, cwd: String, log: String, message: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  run_from(db,session,cmd,model,effort,cwd,log,"")
+
+def continue_receiver(+db: String, +session: String, cmd: String, model: String, effort: String, cwd: String, log: String, predecessor: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  continue_selected(db,session,cmd,model,effort,cwd,log,current_cmd => current_model => current_effort => current_cwd => current_log => run_from(db,session,current_cmd,current_model,current_effort,current_cwd,current_log,predecessor))
 
 def serve_acquired(+db: String, +session: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, lock: U32, closed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match closed:
     case True{}: do IO<Result<&1,&1,U32 & String,Unit>>:
       released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
       receive_status(db,session,"stopped")
-    case False{}: acquired_recorded(db,session,cmd,model,effort,cwd,log,lock,u => continue_receiver(db,session,cmd,model,effort,cwd,log))
+    case False{}: acquired_recorded(db,session,cmd,model,effort,cwd,log,lock,previous => continue_receiver(db,session,cmd,model,effort,cwd,log,previous),"")
 
 # The coordinator waits for physical ownership, then reads stops and pending input.
 @unsafe
@@ -834,7 +840,7 @@ def serve(+db: String, +session: String, +cmd: String, +model: String, +effort: 
 
 def recover_observer_acquired(+db: String, +session: String, id: String, cursor: String, +cmd: String, model: String, effort: String, cwd: String, +log: String, harness: String, directory: String, native: String, acquired: U32 & U32) -> IO(Result<&1,&1,U32 & String,Unit>):
   match acquired:
-    case (lock,handle): observe_guarded(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,Some{lock},u => continue_receiver(db,session,cmd,"","","",log),True{})
+    case (lock,handle): observe_guarded(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,Some{lock},previous => continue_receiver(db,session,cmd,"","","",log,previous),True{})
 
 def recover_observer_arguments_base(+db: String, +session: String, +directory: String, observer: U32, args: List<&2,String>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match args:
@@ -878,10 +884,10 @@ def attach_recorded(+db: String, directory: String, next: @+handle: U32 -> IO(Re
     handle : U32 <- IO.try(U32,Custody.Instance.attach(db,directory))
     next(handle)
 
-def observe_attached(+db: String, +session: String, id: String, cursor: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, harness: String, directory: String, native: String, +handle: U32, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+def observe_attached(+db: String, +session: String, id: String, cursor: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, harness: String, directory: String, native: String, +handle: U32, again: String -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   observe_guarded(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,None{},again,False{})
 
 # The keeper invokes this with the original attempt and inbox cutoff after the
 # observer exits. Attachment never launches a native process or sends its prompt.
 def recover(+db: String, +session: String, id: String, cursor: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, harness: String, +directory: String, native: String) -> IO(Result<&1,&1,U32 & String,Unit>):
-  attach_recorded(db,directory,handle => observe_attached(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,u => continue_receiver(db,session,cmd,model,effort,cwd,log)))
+  attach_recorded(db,directory,handle => observe_attached(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,previous => continue_receiver(db,session,cmd,model,effort,cwd,log,previous)))

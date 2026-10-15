@@ -4,6 +4,7 @@ import ./turn.bend as Turn
 import ./stop.bend as Stop
 import ./receive.bend as Receive
 import ./native-requests.bend as NativeRequests
+import ./native-initial-input.bend as NativeInitialInput
 import ./recruit.bend as Recruit
 import ./land.bend as Land
 import ./knowledge.bend as Knowledge
@@ -57,7 +58,7 @@ def usage_existing() -> String:
   "Administration: baton DATABASE COMMAND ARGS\nserve\nowner-status\nproject PATH\nproject-sessions PATH\ntask-input-read --current | --session PLAYER\ndelivery MESSAGE_ID\ndelivery-batch IDS_JSON\nmessage-batch SENDER MESSAGES_JSON\ninput MESSAGE_ID\nturns PLAYER\nui-subscribe AFTER GENERATION\nview SUBJECT [READER [PORT]]\nlogs-storage\nlogs-clean SESSION\nproject PATH registers this database in the project Git common directory. --project PATH selects the registered database.\ndelivery and input inspect an intentionally selected historical message. Native command forms remain available for existing integrations.\n"
 
 def usage() -> String:
-  task_usage() ++ usage_existing()
+  task_usage() ++ usage_existing() ++ "native-attachment-input SESSION COMPONENT initializes recorded external native guidance from complete stdin.\n"
 
 # A refused log command names its rule on stderr with status 2, as the stored
 # commands do.
@@ -253,6 +254,7 @@ type NormalCliKind is Data:
   TaskResultInput{}
   TaskReadInput{}
   AgentCurrentInput{}
+  NativeAttachmentInput{}
   OrdinaryInput{}
 
 def normal_cli_kind(+head: String) -> NormalCliKind:
@@ -262,7 +264,8 @@ def normal_cli_kind(+head: String) -> NormalCliKind:
         Bool.pick(NormalCliKind,String.eq(head,"task-input-record"),TaskRecordInput{},
           Bool.pick(NormalCliKind,String.eq(head,"task-input-result"),TaskResultInput{},
             Bool.pick(NormalCliKind,String.eq(head,"task-input-read"),TaskReadInput{},
-              Bool.pick(NormalCliKind,String.eq(head,"agent-current-session"),AgentCurrentInput{},OrdinaryInput{})))))))
+              Bool.pick(NormalCliKind,String.eq(head,"agent-current-session"),AgentCurrentInput{},
+                Bool.pick(NormalCliKind,String.eq(head,"native-attachment-input"),NativeAttachmentInput{},OrdinaryInput{}))))))))
 
 def normal_cli_fallback_if(project: Bool, db: String, head: String, tail: List<String>) -> IO(Unit):
   match project:
@@ -322,6 +325,11 @@ def normal_cli_agent_current(args: List<String>, db: String, head: String) -> IO
     case Nil{}: AgentCommand.current_session(db)
     case other: normal_cli_fallback(db,head,other)
 
+def normal_cli_native_attachment(args: List<String>, db: String, head: String) -> IO(Unit):
+  match args:
+    case session <> component <> Nil{}: NativeInitialInput.attachment(db,session,component)
+    case other: normal_cli_fallback(db,head,other)
+
 def normal_cli_selected(kind: NormalCliKind, db: String, head: String, args: List<String>) -> IO(Unit):
   match kind:
     case NativeInput{}: normal_cli_native(args,db,head)
@@ -331,6 +339,7 @@ def normal_cli_selected(kind: NormalCliKind, db: String, head: String, args: Lis
     case TaskResultInput{}: normal_cli_task_result(args,db,head)
     case TaskReadInput{}: normal_cli_task_read(args,db,head)
     case AgentCurrentInput{}: normal_cli_agent_current(args,db,head)
+    case NativeAttachmentInput{}: normal_cli_native_attachment(args,db,head)
     case OrdinaryInput{}: normal_cli_fallback(db,head,args)
 
 def normal_cli_tail(args: List<String>, +db: String) -> IO(Unit):

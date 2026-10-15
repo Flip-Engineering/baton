@@ -14,6 +14,18 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   [#717](https://github.com/Flip-Engineering/baton/issues/717) and
   [#723](https://github.com/Flip-Engineering/baton/issues/723).
 
+- [#737: Render native prompt command arguments as readable text](https://github.com/Flip-Engineering/baton/issues/737).
+  Actual Muse and GLM contributor dispatches on `57b471e9` retained their task
+  input and failed before native startup with SQLite's NUL refusal. Receive and
+  direct prompt headers embed the process argument encoding. Render those two
+  headers as readable JSON arrays. Source fixtures check exact decoded arguments,
+  NUL-free guidance and complete Unicode task custody. Remote native acceptance
+  remains open. Coordinate with [#731](https://github.com/Flip-Engineering/baton/issues/731),
+  [#716](https://github.com/Flip-Engineering/baton/issues/716),
+  [#723](https://github.com/Flip-Engineering/baton/issues/723),
+  [#727](https://github.com/Flip-Engineering/baton/issues/727) and
+  [#717](https://github.com/Flip-Engineering/baton/issues/717).
+
 - [#736: Preserve full branch history messages in native landing qualification](https://github.com/Flip-Engineering/baton/issues/736).
   Exact candidate `57b471e9` completed its builds and failed `land-test` twice
   with `land K: candidate message differs from the branch history` in run
@@ -84,6 +96,14 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   implementation retains complete prompting and original task text in the
   database, with stable retry and recovery input across supported harnesses. This is
   the operator-requested adaptation of [String Seed of Thought](https://arxiv.org/abs/2510.21150).
+  Receive retries carry their recorded predecessor initialization across fresh,
+  profile, transient and route continuations. Each actual attempt retains its
+  complete guidance. Packaged one-shot adapters use the shared receiver.
+  The internal `native-attachment-input` command retains separate MCP and initial
+  task components for an actual managed Claude attempt or recorded conversation
+  and shares its seed, including initialization before the native identity frame.
+  External MCP and root-day callsites are implemented and source reviewed.
+  Remote retry, attachment and installed acceptance remain open.
   Qualify native initial input and the installed route for
   [#716](https://github.com/Flip-Engineering/baton/issues/716),
   [#723](https://github.com/Flip-Engineering/baton/issues/723),
