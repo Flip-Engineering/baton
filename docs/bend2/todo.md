@@ -86,6 +86,11 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   Installed context acceptance also reached a fresh runtime launch whose declared
   `program` field was omitted by the shared source accessor. Read `program` for
   runtime launch requests and qualify the complete installed context handoff.
+  Browser acceptance reached the final actor through End while its cursor was
+  outside the viewport. Scroll the keyboard-selected actor into view. The complete
+  browser acceptance now passes with the current actor cards and knowledge view.
+  Root wake acceptance retains a live follower after an explicit stop. Preserve
+  its notice and native RPC evidence and qualify the follower's natural exit.
   Preserve complete bodies, native lineage, first receipts, reports, original
   failure evidence and every semantic assertion. Validate the corrected callers
   remotely without duplicate tasks. Coordinate with

@@ -779,7 +779,9 @@ while True:
         self.assertEqual(refused.returncode, 2)
         self.assertIn('receiver-refused', refused.stderr)
         self.assertIn('recorded model', refused.stderr)
-        self.assertIn('start SESSION HARNESS', refused.stderr)
+        self.assertIn('Record the model with configure', refused.stderr)
+        self.assertIn('working directory with receiver', refused.stderr)
+        self.assertIn('dispatch TEXT --to SESSION', refused.stderr)
         self.assertIsNone(json.loads(self.coord('session', 'root'))['endpointArgv'])
 
         # start records the model, effort, working directory and endpoint for the
