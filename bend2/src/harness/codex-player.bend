@@ -3,6 +3,7 @@ import ../host/process.bend as P
 import ../host/session-lock.bend as Lock
 import ../json/canonical.bend as J
 import ../git/process.bend as Process
+import ../git/text.bend as Tx
 
 def models_args(cmd: String) -> List<String>:
   [cmd,"debug","models"]
@@ -65,7 +66,7 @@ def inbox_admission(executable: Result<&1,&1,U32 & String,String>, thread: Strin
 def inbox_follow_source(executable: String, db: String, session: String, native: String, source: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String>):
   match source:
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
-    case Done{script}: Process.Process.run(P.argv(["node",script,"--follow",executable,db,session,native]),".")
+    case Done{script}: Process.Process.run(Tx.enc_argv(["node",script,"--follow",executable,db,session,native]),".")
 
 def inbox_follow(executable: Result<&1,&1,U32 & String,String>, db: String, session: String, native: String) -> IO(Result<&1,&1,U32 & String,String>):
   match executable:

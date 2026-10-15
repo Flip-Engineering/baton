@@ -277,12 +277,13 @@ class FixedCoordinator(unittest.TestCase):
         with self._lock:
             return [greeting for name, greeting in self._greetings if name == session]
 
-    def stream_for(self, session, index=0):
+    def stream_for(self, session, index=0, contradiction=None):
         def have():
             with self._lock:
                 streams = self._streams.get(session, [])
                 return streams[index] if len(streams) > index else None
-        return self.eventually(have, f'no fixture connection {index} for {session}')
+        return self.eventually(have, f'no fixture connection {index} for {session}',
+                               contradiction=contradiction)
 
     def release(self, session, index=0, **action):
         stream, _ = self.stream_for(session, index)
@@ -1244,13 +1245,32 @@ finally:
         print('failed-session continuation: fixture owner shut down', flush=True)
 
     def test_13_endpointless_codex_reports_settlement_and_admits_new_guidance(self):
+        def completed_managed_failure():
+            log = pathlib.Path(str(self.db) + '.root.log')
+            if not log.exists():
+                return None
+            output = log.read_text()
+            failures = []
+            for line in output.splitlines(keepends=True):
+                if not line.endswith('\n'):
+                    continue
+                fields = line[:-1].split(' ')
+                if (len(fields) == 2 and fields[0] in ('exit', 'signal')
+                        and fields[1].isdecimal() and int(fields[1]) != 0):
+                    failures.append({'kind': fields[0], 'status': int(fields[1])})
+            if failures:
+                return {'type': 'managedChildFailedBeforeAttachment',
+                        'database': str(self.db), 'session': 'w1', 'native': 'native-w1',
+                        'results': failures, 'delivery_log': str(log), 'output': output}
+            return None
+
         self.recruit('w1', 'codex')
         self.managed_app_proxy()
         self.queue('w1-app', {'controlReady': True})
         self.dispatch('endpointless-task', 'w1', 'Continue this original task after the App turn settles.')
         self.start_owner()
         self.start_serve()
-        self.stream_for('w1-app')
+        self.stream_for('w1-app', contradiction=completed_managed_failure)
 
         def app_calls(method):
             lines = self.codex_calls.read_text().splitlines(keepends=True)
