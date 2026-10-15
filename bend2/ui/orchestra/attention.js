@@ -1667,6 +1667,10 @@
 
     function redrawCursor() {
       renderAttention(container, dataByContainer.get(container), opts);
+      var current = container.querySelector(".att-seat.att-cursor");
+      if (current && typeof current.scrollIntoView === "function") {
+        current.scrollIntoView({ block: "nearest", inline: "nearest" });
+      }
     }
 
     function moveCursor(step) {
