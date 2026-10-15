@@ -8,6 +8,7 @@ name: bend2-native-development
       - '.github/scripts/record-native-checks.py'
       - '.github/scripts/reuse-native-target.py'
       - '.github/scripts/reuse-native-main.py'
+      - '.github/scripts/prepare-native-compiler.py'
       - 'LICENSE'
       - 'NOTICE'
       - 'bend2/src/**'
@@ -27,6 +28,7 @@ name: bend2-native-development
       - '.github/scripts/record-native-checks.py'
       - '.github/scripts/reuse-native-target.py'
       - '.github/scripts/reuse-native-main.py'
+      - '.github/scripts/prepare-native-compiler.py'
       - 'LICENSE'
       - 'NOTICE'
       - 'bend2/src/**'
@@ -65,6 +67,16 @@ name: bend2-native-development
         required: false
         default: ''
         type: string
+      retained_compiler_archive:
+        description: 'Pinned compiler archive on the homelab; $RUNNER_TEMP uses the selected runner namespace'
+        required: false
+        default: ''
+        type: string
+      retained_compiler_archive_sha256:
+        description: 'Exact SHA256 of the selected pinned compiler archive'
+        required: false
+        default: ''
+        type: string
       linux_runner:
         description: 'Linux qualification host'
         required: true
@@ -97,19 +109,21 @@ jobs:
           node-version: '22'
       - name: Prepare candidate toolchain and TypeScript runtime
         shell: bash
+        env:
+          BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive }}
+          BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 }}
+          BATON2_LINUX_RUNNER: ${{ inputs.linux_runner }}
         run: |
           set -euo pipefail
           run="$RUNNER_TEMP/baton2-candidate-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           test ! -e "$run"
           mkdir -p "$run/toolchain-home" "$run/evidence" "$run/generated"
           printf 'BATON2_LINUX_RUN=%s\n' "$run" >> "$GITHUB_ENV"
-          archive="$run/bend-2.0.25-linux-x64.tar.gz"
-          curl --proto '=https' --tlsv1.2 -fsSL \
-            https://github.com/bendlang/bend/releases/download/v2.0.25/bend-2.0.25-linux-x64.tar.gz \
-            -o "$archive" > "$run/evidence/compiler-download.stdout" 2> "$run/evidence/compiler-download.stderr"
-          printf '91c0e2640f8d2e3e73fd3dd62ed4d178ce9a6f7ce8f8980b4dc4abf7a6f9ccd4  %s\n' "$archive" | \
-            sha256sum -c - > "$run/evidence/compiler-archive-check.stdout"
-          tar -xzf "$archive" -C "$run/toolchain-home" --strip-components=1
+          python3 .github/scripts/prepare-native-compiler.py --run "$run" \
+            --archive "$BATON2_RETAINED_COMPILER_ARCHIVE" \
+            --archive-sha256 "$BATON2_RETAINED_COMPILER_SHA256" \
+            --runner "$BATON2_LINUX_RUNNER" \
+            > "$run/evidence/compiler-selection.stdout" 2> "$run/evidence/compiler-selection.stderr"
           printf 'BEND=%s\n' "$run/toolchain-home/bin/bend" >> "$GITHUB_ENV"
           sha256sum "$run/toolchain-home/bin/bend" > "$run/evidence/compiler.sha256"
           npm install --prefix "$run/typescript-runtime" --ignore-scripts --no-audit --no-fund \
@@ -193,6 +207,7 @@ jobs:
                      'workflow_run_id': os.environ['GITHUB_RUN_ID'], 'workflow_run_attempt': os.environ['GITHUB_RUN_ATTEMPT'],
                      'compiler_archive_sha256': hashlib.sha256((run / 'bend-2.0.25-linux-x64.tar.gz').read_bytes()).hexdigest(),
                      'compiler_binary_sha256': hashlib.sha256(pathlib.Path(os.environ['BEND']).read_bytes()).hexdigest(),
+                     'compiler_selection_sha256': hashlib.sha256((run / 'generated/compiler-selection.json').read_bytes()).hexdigest(),
                      'generated_c_sha256': hashlib.sha256(c.read_bytes()).hexdigest(), 'generated_c_size': c.stat().st_size,
                      'linux_binary_sha256': hashlib.sha256(binary.read_bytes()).hexdigest(),
                      'source_manifest_sha256': hashlib.sha256((run / 'generated/source-manifest.json').read_bytes()).hexdigest(),
@@ -405,7 +420,18 @@ jobs:
           assert handoff['source_tree'] == subprocess.check_output(['git', 'rev-parse', 'HEAD^{tree}'], cwd=root, text=True).strip()
           assert handoff['workflow_run_id'] == os.environ['GITHUB_RUN_ID']
           assert handoff['workflow_run_attempt'] == os.environ['GITHUB_RUN_ATTEMPT']
-          assert handoff['compiler_archive_sha256'] == '91c0e2640f8d2e3e73fd3dd62ed4d178ce9a6f7ce8f8980b4dc4abf7a6f9ccd4'
+          compilers = runpy.run_path(str(root / '.github/scripts/reuse-native-main.py'))['COMPILER_ARCHIVES']
+          assert handoff['compiler_archive_sha256'] in compilers
+          selection_path = generated / 'compiler-selection.json'
+          assert hashlib.sha256(selection_path.read_bytes()).hexdigest() == handoff['compiler_selection_sha256']
+          selection = json.loads(selection_path.read_text())
+          assert selection['schema'] == 'baton2-linux-compiler-selection-v1'
+          assert selection['compiler_archive_sha256'] == handoff['compiler_archive_sha256']
+          assert selection['compiler_binary_sha256'] == handoff['compiler_binary_sha256']
+          identity = compilers[handoff['compiler_archive_sha256']]
+          assert all(selection[key] == value for key, value in identity.items())
+          if 'binary_sha256' in identity:
+              assert handoff['compiler_binary_sha256'] == identity['binary_sha256']
           manifest_path = generated / 'source-manifest.json'
           assert hashlib.sha256(manifest_path.read_bytes()).hexdigest() == handoff['source_manifest_sha256']
           source = json.loads(manifest_path.read_text())

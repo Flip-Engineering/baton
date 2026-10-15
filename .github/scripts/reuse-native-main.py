@@ -16,6 +16,14 @@ import traceback
 
 
 ARCHIVE_SHA = '91c0e2640f8d2e3e73fd3dd62ed4d178ce9a6f7ce8f8980b4dc4abf7a6f9ccd4'
+COMPILER_ARCHIVES = {
+    ARCHIVE_SHA: {'name': 'Bend 2.0.25', 'official_release_artifact': True},
+    '38bb1813d52ddc7b816a8a01f971fe8503959fef54795ca22eb346b5cfc069a7': {
+        'name': 'Bend 2.0.25 with the Baton #741 pure memo patch',
+        'official_release_artifact': False,
+        'binary_sha256': 'b929035652cba78ba1b034b7214a14bbc2f64f0e6c27265c64c53895d24890c0',
+    },
+}
 ENTRY = 'bend2/src/coordinator/main.bend'
 
 
@@ -116,7 +124,7 @@ def production_inputs(root, rows):
 
 
 def distribution(archive, home):
-    require(digest(archive) == ARCHIVE_SHA, 'Compiler archive differs from the pinned distribution.')
+    require(digest(archive) in COMPILER_ARCHIVES, 'Compiler archive differs from the pinned distributions.')
     expected = {}
     with tarfile.open(archive, 'r:gz') as source:
         for member in source:

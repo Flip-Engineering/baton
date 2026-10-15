@@ -16,10 +16,14 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   [#741](https://github.com/Flip-Engineering/baton/issues/741).
 
 - [#741: Reduce serial Bend C generation time](https://github.com/Flip-Engineering/baton/issues/741).
-  The current compiler uses one main thread for coordinator C generation on
-  the 64-CPU homelab. Identify parallel compiler work and measure available
-  remote machines with faster individual CPU cores against the actual source
-  and native checks. Preserve the current release invocation. Coordinate with
+  The compiler repeats pure literal expansion and positive constant discovery
+  across definitions. A weak cache patch produced identical C for the process
+  and landing entries. The larger remote sample fell from 22.568 to 7.403
+  seconds and from 3,822,940 to 963,364 KiB peak memory. Retain the patched
+  source, build recipe, compiler archive identity and complete measurements.
+  Select that explicit compiler on the homelab and qualify the complete Main
+  source and native behavior. Use the measured native object cache for repeated
+  Clang invocations with matching inputs. Coordinate with
   [#677](https://github.com/Flip-Engineering/baton/issues/677),
   [#728](https://github.com/Flip-Engineering/baton/issues/728) and
   [#740](https://github.com/Flip-Engineering/baton/issues/740).
