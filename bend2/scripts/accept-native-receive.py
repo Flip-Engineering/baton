@@ -82,6 +82,19 @@ def omp_reports(path):
             latest = None
 
 
+def codex_reports(events):
+    latest = None
+    for frame in events:
+        if frame.get('type') == 'item.completed' and frame.get('item', {}).get('type') == 'agent_message':
+            latest = frame['item'].get('text')
+        elif frame.get('type') == 'turn.completed':
+            assert isinstance(latest, str) and latest.strip(), frame
+            yield latest
+            latest = None
+        elif frame.get('type') == 'turn.failed':
+            raise AssertionError({'native_root_failure': frame})
+
+
 def stage_native_assets(repo, out):
     packaging = repo / 'bend2/scripts/package-native.py'
     spec = importlib.util.spec_from_file_location('acceptance_package_native', packaging)
@@ -342,7 +355,19 @@ retained reports and receipts, summarize the findings and acknowledge the follow
                        for frame in frames(generation['path'])]
         native_threads = [row['thread_id'] for row in root_events if row.get('type') == 'thread.started']
         assert native_threads and set(native_threads) == {root_native}
-        assert all(row['receipt'] for row in final['messages'])
+        assert all(row['receipt'] for row in final['messages'] if row['recipient'] != 'operator')
+        operator_reports = sorted((row for row in final['messages'] if row['recipient'] == 'operator'),
+                                  key=lambda row: row['seq'])
+        root_native_reports = list(codex_reports(root_events))
+        assert operator_reports and len(operator_reports) == len(root_native_reports), operator_reports
+        turns = {row['id']: row for row in final['turns']}
+        for report, text in zip(operator_reports, root_native_reports):
+            assert report['sender'] == 'root' and report['kind'] == 'report', report
+            assert report['receipt'] is None and report['body'] == text, report
+            turn = turns[report['id']]
+            event = json.loads(turn['event'])
+            assert turn['worker'] == 'root' and event['type'] == 'result', turn
+            assert event['result'] == report['body'] and event['nativeEvent']['type'] == 'turn.completed', turn
         for workspace in [repo, *(out / player for player, _, _ in players)]:
             assert not command(['git', '-C', workspace, 'status', '--porcelain']), workspace
             assert command(['git', '-C', workspace, 'rev-parse', 'HEAD']) == base
@@ -352,12 +377,15 @@ retained reports and receipts, summarize the findings and acknowledge the follow
             'public_log_generations': {session: public_logs(db, session)
                                        for session in ['root', *(p for p, _, _ in players)]},
             'player_native_sessions': player_natives, 'player_followups_verified': has_followups,
+            'operator_reports_pending_review': operator_reports,
             'assertions': ['Reports match the complete native assistant text.',
-                           'Reports and task messages have native acceptance receipts.',
+                           'Player reports and participant task inputs have recipient-owned receipts.',
+                           'Native root reports retain their complete text and turn lineage for operator review.',
                            'The root retained its native session through reports and follow-up.',
                            'Player parent, requested route and source revision were retained.',
                            'All cloned source workspaces remain unchanged.'],
             'limitations': ['This run does not establish overlap between root deliveries.',
+                            'The operator must review the retained native root reports and record its own receipts.',
                             'Provider latency and review conclusions depend on the native sessions.',
                             'No landing, publication or host-restart recovery is exercised.'],
         })

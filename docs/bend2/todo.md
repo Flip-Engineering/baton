@@ -76,6 +76,11 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   open for [#723](https://github.com/Flip-Engineering/baton/issues/723),
   [#727](https://github.com/Flip-Engineering/baton/issues/727) and
   [#717](https://github.com/Flip-Engineering/baton/issues/717).
+  The native knowledge driver now requests graceful shutdown of its exact
+  persistent owner between phases after native capture exits and all other
+  owned work finishes. It retains the complete shutdown command result and
+  owner-exit observation bound before the shutdown request. Logical sessions, findings and report review
+  remain in the database. Real-route qualification remains open.
 
 - [#729: Resume stored native replies when the observer reconnects](https://github.com/Flip-Engineering/baton/issues/729).
   The target in workflow `38649718256` retains a complete pending native reply
@@ -142,6 +147,17 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   for [#717](https://github.com/Flip-Engineering/baton/issues/717).
   [#728](https://github.com/Flip-Engineering/baton/issues/728) records the
   current candidate C-generation failure and its diagnostic evidence.
+  Source review at `57b471e9` found that the native-receive driver's final
+  receipt assertion includes new root-to-operator reports whose terminal
+  recipient has no delivery endpoint. Preserve those complete reports for the
+  operator's review and verify their native lineage separately from handled
+  participant input. Audit all seven drivers for this recipient distinction
+  and waits whose producer has already completed before the real-route run.
+  The recovery driver now requests graceful owner shutdown after both real
+  parent reports, then retains its existing wait for all owned processes to
+  exit. Full shutdown output and actual owner-exit observations accompany
+  the original recovery and native-process completion assertions. The owner
+  lifetime observation is registered before the shutdown request.
 
 - [#726: Read the registered generation in the legacy keeper recovery fixture](https://github.com/Flip-Engineering/baton/issues/726).
   The legacy attachment marker is complete in the registered attempt generation.

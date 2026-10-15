@@ -89,32 +89,52 @@ def json_lines(path):
     return result
 
 
+class ExitWatch:
+    def __init__(self, pid):
+        self.pid = pid
+        self.handle = None
+        self.backend = 'pidfd' if hasattr(os, 'pidfd_open') else 'kqueue'
+        self.registered_unix = time.time()
+        try:
+            if self.backend == 'pidfd':
+                self.handle = os.pidfd_open(pid)
+            else:
+                self.handle = select.kqueue()
+                event = select.kevent(pid, filter=select.KQ_FILTER_PROC,
+                                      flags=select.KQ_EV_ADD | select.KQ_EV_ONESHOT,
+                                      fflags=select.KQ_NOTE_EXIT)
+                self.handle.control([event], 0, 0)
+        except ProcessLookupError:
+            self.close()
+        except BaseException:
+            self.close()
+            raise
+
+    def wait(self):
+        if self.handle is not None:
+            if self.backend == 'pidfd':
+                select.select([self.handle], [], [])
+            else:
+                self.handle.control(None, 1, None)
+
+    def close(self):
+        if self.handle is not None:
+            if self.backend == 'pidfd':
+                os.close(self.handle)
+            else:
+                self.handle.close()
+            self.handle = None
+
+
 def wait_exit(pid):
     """Wait for an observed local process exit without stopping that process."""
     if not alive(pid):
         return
-    if hasattr(os, 'pidfd_open'):
-        try:
-            descriptor = os.pidfd_open(pid)
-        except ProcessLookupError:
-            return
-        try:
-            select.select([descriptor], [], [])
-        finally:
-            os.close(descriptor)
-        return
-    queue = select.kqueue()
+    watch = ExitWatch(pid)
     try:
-        event = select.kevent(pid, filter=select.KQ_FILTER_PROC,
-                              flags=select.KQ_EV_ADD | select.KQ_EV_ONESHOT,
-                              fflags=select.KQ_NOTE_EXIT)
-        try:
-            queue.control([event], 0, 0)
-        except ProcessLookupError:
-            return
-        queue.control(None, 1, None)
+        watch.wait()
     finally:
-        queue.close()
+        watch.close()
 
 
 HELPER = r'''import json,os,pathlib,socket,sqlite3,subprocess,sys,time
@@ -436,14 +456,47 @@ both your previous commit hash and the new one. Do not repeat the checkpoint too
                             connection.sendall(b'{"continue":true}\n')
                         except BrokenPipeError:
                             pass
-            # Both reports have reached their parent; observe final keeper and
-            # recovery exits before taking the final database and process state.
+            # Both reports have reached their parent. Request the run's owner
+            # to finish after ordinary attempt settlement, then observe all exits.
+            owner_command = f'{binary.resolve()} --instance-owner {db.resolve()}'
+            owners = [row for row in owned() if row['command'] == owner_command]
+            assert len(owners) <= 1, owners
+            watches = []
+            owner_exits = []
+            try:
+                for owner in owners:
+                    watch = ExitWatch(owner['pid'])
+                    watches.append((owner, watch))
+                    current = alive(owner['pid'])
+                    assert current and current['command'] == owner_command and watch.handle is not None, current
+                    owner['started'] = command(['ps', '-p', owner['pid'], '-o', 'lstart='])
+                    owner['exit_watch'] = {'backend': watch.backend,
+                                           'registered_unix': watch.registered_unix}
+                shutdown_argv = [str(binary), '--instance-shutdown', str(db)]
+                shutdown = {'argv': shutdown_argv, 'started_unix': time.time(), 'owners': owners}
+                record('owner-shutdown-started', shutdown=shutdown, processes=owned())
+                result = subprocess.run(shutdown_argv, capture_output=True, text=True, cwd=repo)
+                shutdown.update(ended_unix=time.time(), exit=result.returncode,
+                                stdout=result.stdout, stderr=result.stderr)
+                record('owner-shutdown-result', shutdown=shutdown)
+                if result.returncode:
+                    raise RuntimeError(f'Owner shutdown failed: {shutdown}')
+                for owner, watch in watches:
+                    watch.wait()
+                    owner_exits.append(record('owner-exit-observed', owner=owner,
+                                              owner_after=alive(owner['pid'])))
+            finally:
+                for _, watch in watches:
+                    watch.close()
+            ended_processes = []
             while True:
                 remaining = owned()
                 if not remaining:
                     break
                 for process in remaining:
                     wait_exit(process['pid'])
+                    ended_processes.append(record('process-exit-observed', process=process,
+                                                  process_after=alive(process['pid'])))
             final = snapshot(db)
             launches = json_lines(out / 'launches.jsonl')
             events = json_lines(native_log)
@@ -485,6 +538,8 @@ both your previous commit hash and the new one. Do not repeat the checkpoint too
                 'native_terminal_frames': terminal, 'native_log_sha256': digest(native_log),
                 'state': final, 'parent_receipts': receipts, 'timeline': timeline,
                 'repository_commits': commits, 'document_sha256': digest(repo / DOCUMENT),
+                'owner_shutdown': shutdown, 'owner_exit_observations': owner_exits,
+                'process_exit_observations': ended_processes,
                 'remaining_processes': owned(),
                 'assertions': [
                     'The actual initial Bend receive observer exited from SIGKILL.',

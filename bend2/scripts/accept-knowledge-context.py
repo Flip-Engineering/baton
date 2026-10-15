@@ -13,6 +13,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import select
 import shlex
 import shutil
 import sqlite3
@@ -95,13 +96,88 @@ def owned_processes(out):
             and str(out) in row['command'] and not row['status'].startswith('Z')]
 
 
-def quiet(out):
-    remaining = owned_processes(out)
-    if remaining:
-        raise RuntimeError(f'Run still has owned processes: {remaining}')
+class ExitWatch:
+    def __init__(self, pid):
+        self.pid = pid
+        self.handle = None
+        self.backend = 'pidfd' if hasattr(os, 'pidfd_open') else 'kqueue'
+        self.registered_unix = time.time()
+        try:
+            if self.backend == 'pidfd':
+                self.handle = os.pidfd_open(pid)
+            else:
+                self.handle = select.kqueue()
+                event = select.kevent(pid, filter=select.KQ_FILTER_PROC,
+                                      flags=select.KQ_EV_ADD | select.KQ_EV_ONESHOT,
+                                      fflags=select.KQ_NOTE_EXIT)
+                self.handle.control([event], 0, 0)
+        except ProcessLookupError:
+            self.close()
+        except BaseException:
+            self.close()
+            raise
+
+    def wait(self):
+        if self.handle is not None:
+            if self.backend == 'pidfd':
+                select.select([self.handle], [], [])
+            else:
+                self.handle.control(None, 1, None)
+
+    def close(self):
+        if self.handle is not None:
+            if self.backend == 'pidfd':
+                os.close(self.handle)
+            else:
+                self.handle.close()
+            self.handle = None
+
+
+def quiet(out, boundary):
     unfinished = [row for row in records(out) if 'native_exit_code' not in row]
     if unfinished:
         raise RuntimeError(f'Native capture has no exit observation: {unfinished}')
+    remaining = owned_processes(out)
+    expected = f'{(out / "bin/baton2").resolve()} --instance-owner {(out / "state.db").resolve()}'
+    owners = [row for row in remaining if row['command'] == expected]
+    active = [row for row in remaining if row not in owners]
+    if active:
+        raise RuntimeError(f'Run still has owned processes: {remaining}')
+    assert len(owners) <= 1, owners
+    observation = {'boundary': boundary, 'observed_unix': time.time(),
+                   'owner_before': owners, 'native_captures': records(out)}
+    if owners:
+        owner = owners[0]
+        watch = ExitWatch(owner['pid'])
+        try:
+            observation['exit_watch'] = {'pid': owner['pid'], 'backend': watch.backend,
+                                         'registered_unix': watch.registered_unix,
+                                         'registered': watch.handle is not None}
+            current = [row for row in owned_processes(out) if row['pid'] == owner['pid']]
+            assert current and current[0]['command'] == expected and watch.handle is not None, current
+            owner['started'] = command(['ps', '-p', owner['pid'], '-o', 'lstart='])
+            argv = [str(out / 'bin/baton2'), '--instance-shutdown', str(out / 'state.db')]
+            shutdown = {'argv': argv, 'started_unix': time.time()}
+            observation['shutdown'] = shutdown
+            append(out / 'owner-lifecycle.jsonl', observation)
+            result = subprocess.run(argv, capture_output=True, text=True, cwd=out / 'repo')
+            shutdown.update(ended_unix=time.time(), exit=result.returncode,
+                            stdout=result.stdout, stderr=result.stderr)
+            append(out / 'owner-lifecycle.jsonl', observation)
+            if result.returncode:
+                raise RuntimeError(f'Owner shutdown failed: {shutdown}')
+            watch.wait()
+            observation['owner_exit_observed_unix'] = time.time()
+            observation['owner_after'] = [row for row in owned_processes(out)
+                                          if row['pid'] == owner['pid']]
+        finally:
+            watch.close()
+    remaining = owned_processes(out)
+    observation['processes_after'] = remaining
+    append(out / 'owner-lifecycle.jsonl', observation)
+    if remaining:
+        raise RuntimeError(f'Run still has owned processes: {remaining}')
+    return observation
 
 
 def read_run(out):
@@ -212,7 +288,7 @@ def visible_finding(out, reader):
 
 
 def verify_phase(out, phase, run, before):
-    quiet(out)
+    owner_lifecycle = quiet(out, phase + '-after')
     session = 'producer' if phase == 'produce' else 'consumer'
     current = call(out, 'player', session)
     assert current['native'] and current['observedModel'] == run['route']['model'], current
@@ -246,6 +322,7 @@ def verify_phase(out, phase, run, before):
         assert (out / session / DOCUMENT).read_text().strip()
     result = {'phase': phase, 'completed_unix': time.time(), 'session': current,
               'native_capture': new[0], 'visible_findings': seen, 'reports': reports,
+              'owner_lifecycle': owner_lifecycle,
               'workspace_head': command(['git', '-C', out / session, 'rev-parse', 'HEAD']),
               'state': state(out / 'state.db')}
     if phase == 'fresh-consumer':
@@ -264,7 +341,7 @@ def run_phase(out, phase):
     run = read_run(out)
     if (out / f'{phase}-command.json').exists():
         raise RuntimeError('This phase already has an invocation; inspect its retained evidence')
-    quiet(out)
+    quiet(out, phase + '-before')
     before = {row['wrapper_pid'] for row in records(out)}
     try:
         if phase == 'produce':
