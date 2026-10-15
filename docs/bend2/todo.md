@@ -4,6 +4,16 @@ The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3
 retain findings, ownership and acceptance requirements. This page links current
 Baton follow-up work for contributors. Every open issue has a link on this page.
 
+- [#733: Use authorized native credentials without interactive access dialogs](https://github.com/Flip-Engineering/baton/issues/733).
+  Configure supported native credential stores for unattended Baton dispatch,
+  resumption and contributor reports. The homelab Muse credential setup completed
+  through its supported stdin operation and retains private file permissions.
+  Verify actual native operations with credential-free evidence and preserve
+  existing accounts and keyring access controls. Qualify this route with
+  [#727](https://github.com/Flip-Engineering/baton/issues/727),
+  [#717](https://github.com/Flip-Engineering/baton/issues/717) and
+  [#702](https://github.com/Flip-Engineering/baton/issues/702).
+
 - [#732: Infer handling receipts for connected Claude MCP sessions](https://github.com/Flip-Engineering/baton/issues/732).
   Connected Claude MCP handling now derives receipts from complete owned reads,
   the registered endpoint and native conversation, and live process ancestry.
@@ -42,7 +52,11 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   derives pending replies from the recorded attempt during reattachment and
   retains transport, authority, complete bodies, stops and native identity. The
   fixture now checks a causal recovery boundary. Original evidence was preserved
-  before the completed controlled stop. Remote qualification remains open with
+  before the completed controlled stop. Candidate `5d36d95a` failed normal term
+  checking because an earlier helper referenced the later `resume_pending`
+  definition. The correction passes the drain continuation into those helpers;
+  the send, error and reply-selection behavior stays unchanged. Remote
+  qualification remains open with
   [#717](https://github.com/Flip-Engineering/baton/issues/717),
   [#723](https://github.com/Flip-Engineering/baton/issues/723),
   [#725](https://github.com/Flip-Engineering/baton/issues/725),
@@ -53,8 +67,10 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   Candidate `3b37ad3f` completes term checking and exits during C generation
   in workflow `38649718256`. Preserve its complete output, pinned compiler,
   source and host evidence. Diagnose the demonstrated compiler failure while
-  preserving all command and task behavior. The diagnostic completed two C
-  emission passes and retained repeated CLI emission costs. A source candidate
+  preserving all command and task behavior. The diagnostic completed three C
+  emission passes and exited with SIGILL during its fourth pass. Its complete
+  phase stream ends during `legacy_cli` emission and retains repeated CLI costs.
+  A source candidate
   moves the fourteen-argument recovery flag comparison into a Boolean helper
   and preserves its complete ordinary-command fallback. Its compiler cost and
   allocator failure effect require remote qualification. C output, candidate tests, package
@@ -74,7 +90,9 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   assertions remain in scope. Explicit caller-file import fixtures remain.
   The standalone root-day and recovery drivers stage the complete executable
   and helper prefix and retain its provenance. The Kimi driver also accepts a
-  supplied coordinator through the shared staging operation.
+  supplied coordinator through the shared staging operation. Its checked
+  landings use the explicit `BEND` compiler and retain that compiler's path,
+  version and hash separately from the supplied executable's build provenance.
   Install and configure the required native clients on the homelab runner.
   Recovery observes process exit through Linux pidfds or macOS/BSD kqueue;
   its controlled protocol fixture also runs on Linux. Retain the complete

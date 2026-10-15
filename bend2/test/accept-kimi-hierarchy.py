@@ -423,6 +423,60 @@ class GeneratedCheck(unittest.TestCase):
         return subprocess.run(['/bin/sh', str(script), selected],
                               cwd=self.fixture, text=True, capture_output=True)
 
+    def test_supplied_coordinator_keeps_binary_and_records_the_check_compiler(self):
+        helper_spec = importlib.util.spec_from_file_location(
+            'supplied_hierarchy_native_acceptance', ROOT / 'bend2/scripts/accept-native-receive.py')
+        helper = importlib.util.module_from_spec(helper_spec)
+        helper_spec.loader.exec_module(helper)
+        supplied = self.fixture / 'supplied-native'
+        supplied.write_bytes(b'qualified coordinator fixture\x00unchanged\n')
+        fake_compiler = self.fixture / 'check-compiler'
+        invocation = self.fixture / 'compiler-invocation.json'
+        fake_compiler.write_text('#!' + sys.executable + '\n' +
+            'import json,os,pathlib,sys\n'
+            'assert sys.argv[1:] == ["version"], sys.argv\n'
+            'assert os.environ["BEND_NO_TELEMETRY"] == "1"\n' +
+            f'pathlib.Path({str(invocation)!r}).write_text(json.dumps(sys.argv))\n' +
+            'print("Controlled Bend version λ")\n')
+        fake_compiler.chmod(0o700)
+        with patch.dict(os.environ, {'BEND': str(fake_compiler)}):
+            binary, provenance = helper.prepare_coordinator(ROOT, ROOT, self.fixture, supplied)
+            before = json.loads(json.dumps(provenance))
+            selected_compiler = DRIVER.checked_landing_compiler(provenance)
+        self.assertEqual(binary.read_bytes(), supplied.read_bytes())
+        self.assertEqual(provenance, before)
+        self.assertEqual(provenance['mode'], 'caller_supplied')
+        self.assertEqual(provenance['source_linkage'], 'Unverified by this driver.')
+        self.assertNotIn('compiler', provenance)
+        self.assertEqual(json.loads(invocation.read_text()), [str(fake_compiler), 'version'])
+        self.assertEqual(selected_compiler, {
+            'path': str(fake_compiler), 'role': 'checked_landings_only', 'origin': 'BEND',
+            'version': 'Controlled Bend version λ',
+            'executable_sha256': DRIVER.digest(fake_compiler)})
+        selected = self.select('selected/compiler-route.py', PASSING +
+            '\nassert __import__("os").environ["BEND"] == ' + repr(str(fake_compiler)) + '\n')
+        self.install_adapter()
+        script = self.fixture / 'supplied-check.sh'
+        script.write_text(DRIVER.hierarchy_check(selected_compiler['path']))
+        result = subprocess.run(['/bin/sh', str(script), selected],
+                                cwd=self.fixture, text=True, capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual((self.fixture / 'executed.marker').read_text(), 'ran')
+        self.assertEqual(binary.read_bytes(), supplied.read_bytes())
+
+    def test_supplied_coordinator_requires_an_explicit_existing_check_compiler(self):
+        with patch.dict(os.environ):
+            os.environ.pop('BEND', None)
+            with self.assertRaisesRegex(RuntimeError, 'Set BEND'):
+                DRIVER.checked_landing_compiler({'mode': 'caller_supplied'})
+            os.environ['BEND'] = str(self.fixture / 'absent-compiler')
+            with self.assertRaisesRegex(RuntimeError, 'BEND names no compiler file'):
+                DRIVER.checked_landing_compiler({'mode': 'caller_supplied'})
+        recorded = {'path': '/recorded/bend', 'version': 'recorded version',
+                    'executable_sha256': 'recorded digest'}
+        self.assertEqual(DRIVER.checked_landing_compiler({'compiler': recorded}), {
+            **recorded, 'role': 'checked_landings_only', 'origin': 'coordinator_build'})
+
     def test_generated_check_runs_the_selected_test_body(self):
         self.install_adapter()
         selected = self.select('selected/executed.py', PASSING)

@@ -10,6 +10,8 @@ through bend2/scripts/check-unittest.sh in each checked tree. This command start
 real native sessions.
 --coordinator selects an existing executable; the default builds the selected
 source. Both modes stage the selected source's complete native helper assets.
+Supplied-executable runs use BEND for checked landings and retain its compiler
+identity separately from the coordinator provenance.
 Final Player and target changes must stay within the run's assigned files.
 Player assigned files must match their latest landing and the final target.
 """
@@ -481,6 +483,24 @@ def git_entry(repo, revision, path):
     return command(['git', '-C', repo, 'ls-tree', revision, '--', path])
 
 
+def checked_landing_compiler(build):
+    recorded = build.get('compiler')
+    if recorded:
+        return {**recorded, 'role': 'checked_landings_only', 'origin': 'coordinator_build'}
+    if build.get('mode') != 'caller_supplied':
+        raise RuntimeError('The coordinator build recorded no compiler for checked landings')
+    selected = os.environ.get('BEND')
+    if not selected:
+        raise RuntimeError('Set BEND to an existing compiler for checked landings with a supplied coordinator')
+    compiler = Path(shutil.which(selected) or selected).resolve()
+    if not compiler.is_file():
+        raise RuntimeError(f'BEND names no compiler file: {compiler}')
+    return {'path': str(compiler), 'role': 'checked_landings_only', 'origin': 'BEND',
+            'version': command([compiler, 'version'],
+                               env={**os.environ, 'BEND_NO_TELEMETRY': '1'}),
+            'executable_sha256': digest(compiler)}
+
+
 def hierarchy_check(compiler):
     """The checked-landing CHECK the gate runs as `/bin/sh CHECK SELECTED_FILE`.
 
@@ -832,9 +852,11 @@ def main():
     helpers = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(helpers)
     binary, build = helpers.prepare_coordinator(source, repo, out, args.coordinator)
+    check_compiler = checked_landing_compiler(build)
     shutil.copy2(__file__, out / 'acceptance.py')
     run = {'source': base, 'source_directory': str(source), 'started_unix': time.time(),
            'routes': routes, 'tasks': tasks, 'coordinator_build': build,
+           'checked_landing_compiler': check_compiler,
            'coordinator_sha256': digest(binary), 'driver_sha256': digest(Path(__file__)),
            'helper_sha256': digest(helper_path), 'python': sys.executable,
            'codex_login': {'method': 'chatgpt', 'exit_code': login.returncode,
@@ -847,10 +869,8 @@ def main():
                            [sys.executable, out / 'acceptance.py', 'native', seat, out]) + ' "$@"\n')
         wrapper.chmod(0o700)
         wrappers[seat] = str(wrapper)
-    compiler = build.get('compiler', {}).get('path')
-    assert compiler, 'the coordinator build recorded no compiler for checked landings'
     check = out / 'check.sh'
-    check.write_text(hierarchy_check(compiler))
+    check.write_text(hierarchy_check(check_compiler['path']))
     settings = {'B2': str(binary), 'DB': str(db), 'REPO': str(repo), 'STATE': str(out),
                 'CHECK': str(check), 'PYTHON': sys.executable,
                 'ASSOCIATE_ID': 'lead', 'ASSOCIATE_BRANCH': 'hierarchy-lead',
