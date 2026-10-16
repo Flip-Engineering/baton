@@ -1,0 +1,1 @@
+Read tasks/COMMON.md and task-context.json before work. These instructions apply to every contributor. All build, test, benchmark, process-signal, shared-source, installed-toolchain, and release mutation restrictions in tasks/COMMON.md remain effective.

@@ -1,0 +1,41 @@
+{
+  "root": "/run/baton2-native-homelab/retained/baton-compiler-forkflush-20261016T195048Z",
+  "database": "/run/baton2-native-homelab/retained/baton-compiler-forkflush-20261016T195048Z/orchestra.db",
+  "baton": "/run/baton2-native-homelab/retained/baton2-compiler-741-20261015/postrelease-751-761-20261015-11/main-build-boundary/baton2",
+  "owner": "compiler-root",
+  "ensemble": "compiler-research",
+  "repo": "/run/baton2-native-homelab/retained/baton-compiler-forkflush-20261016T195048Z/repo",
+  "coordinators": [
+    "compiler-kimi",
+    "compiler-muse",
+    "compiler-deepseek"
+  ],
+  "readonly_baton_source": "/run/baton2-native-homelab/retained/baton2-main11-source9bdc-fork2df-20261016",
+  "readonly_measurements": "/run/baton2-native-homelab/retained/baton2-compiler-741-20261015",
+  "source_commit": "9bdc172e9d44bc6e85c6a1f1d7c15017cde31bdb",
+  "compiler_archive_sha256": "2df30208da307f7922fefc5517563ad1ee484bc60227f60d88994aad57e4779e",
+  "prior_optimization": {
+    "issue": 741,
+    "status": "closed",
+    "title": "Reduce first Bend C generation through pure result caching",
+    "measured_small_entries": {
+      "Process_elapsed_s": [
+        1.781,
+        1.157
+      ],
+      "Process_maxrss_KiB": [
+        398912,
+        236768
+      ],
+      "Landing_elapsed_s": [
+        22.568,
+        7.403
+      ],
+      "Landing_maxrss_KiB": [
+        3822940,
+        963364
+      ]
+    },
+    "limitation": "Prior issue data supplied by parent; exact full Main speedup is unproven. Do not claim every compiler optimization is unimplemented."
+  }
+}
