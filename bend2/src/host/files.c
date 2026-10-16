@@ -490,3 +490,71 @@ static Term baton_kind_run(Env e,Term *f,IoWork *w) {
 }
 static void __attribute__((constructor)) baton_kind_use(void) {io_eff(CID_FILES_KIND,baton_kind_run,0);}
 #endif
+
+
+typedef struct { char *path; char text[8]; int error; } BatonMode;
+
+static void baton_mode_call(IoWork *w) {
+  BatonMode *call=(BatonMode *)w->data;
+  struct stat info;
+  if(stat(call->path,&info)) {call->error=errno;return;}
+  snprintf(call->text,sizeof(call->text),"%o",(unsigned)(info.st_mode & 0777));
+}
+
+static Term baton_mode_pack(Env e,IoWork *w) {
+  BatonMode *call=(BatonMode *)w->data;
+  Term result=call->error ? io_fail(e,call->error,NULL)
+    : io_done(e,io_str(e,call->text,strlen(call->text)));
+  free(call->path);free(call);w->data=NULL;
+  return result;
+}
+
+#ifdef CID_FILES_MODE
+static Term baton_mode_run(Env e,Term *f,IoWork *w) {
+  BatonMode *call=calloc(1,sizeof(*call));
+  if(!call) return io_fail(e,ENOMEM,NULL);
+  u64 length=0;
+  call->path=io_cstr(e,f[0],&length);
+  if(!call->path || strlen(call->path)!=length) {
+    free(call->path);free(call);
+    return io_fail(e,EINVAL,"path contains NUL");
+  }
+  w->data=(char *)call;
+  return io_work(w,baton_mode_call,baton_mode_pack);
+}
+static void __attribute__((constructor)) baton_mode_use(void) {io_eff(CID_FILES_MODE,baton_mode_run,0);}
+#endif
+
+typedef struct { char *path; char answer[2]; int error; } BatonExecutable;
+
+static void baton_executable_call(IoWork *w) {
+  BatonExecutable *call=(BatonExecutable *)w->data;
+  if(!access(call->path,X_OK)) call->answer[0]='1';
+  else if(errno==EACCES) call->answer[0]='0';
+  else call->error=errno;
+  call->answer[1]=0;
+}
+
+static Term baton_executable_pack(Env e,IoWork *w) {
+  BatonExecutable *call=(BatonExecutable *)w->data;
+  Term result=call->error ? io_fail(e,call->error,NULL)
+    : io_done(e,io_str(e,call->answer,1));
+  free(call->path);free(call);w->data=NULL;
+  return result;
+}
+
+#ifdef CID_FILES_EXECUTABLE
+static Term baton_executable_run(Env e,Term *f,IoWork *w) {
+  BatonExecutable *call=calloc(1,sizeof(*call));
+  if(!call) return io_fail(e,ENOMEM,NULL);
+  u64 length=0;
+  call->path=io_cstr(e,f[0],&length);
+  if(!call->path || strlen(call->path)!=length) {
+    free(call->path);free(call);
+    return io_fail(e,EINVAL,"path contains NUL");
+  }
+  w->data=(char *)call;
+  return io_work(w,baton_executable_call,baton_executable_pack);
+}
+static void __attribute__((constructor)) baton_executable_use(void) {io_eff(CID_FILES_EXECUTABLE,baton_executable_run,0);}
+#endif

@@ -47,5 +47,18 @@ def Files.entries(directory: String) -> IO(Result<&1,&1,U32 & String,String>):
 
 # What the path names when opened: file, dir, or other for anything else.
 # The lookup follows symlinks, so a broken link keeps its ENOENT cause.
+
 def Files.kind(path: String) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./files.c"
+
+# The permission bits of what the path names when opened, as octal text
+# with no leading zero: 644, 755, 0. A path that cannot be stat'd keeps
+# its cause.
+def Files.mode(path: String) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./files.c"
+
+# Whether this user may execute the path: 1 or 0. A refusal to check is
+# not a no: a missing path keeps its ENOENT cause, so a consumer can
+# distinguish an absent tool from one it may not run.
+def Files.executable(path: String) -> IO(Result<&1,&1,U32 & String,String>):
   import "./files.c"
