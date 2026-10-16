@@ -49,8 +49,12 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   and toolchain inputs. Extend verified reuse, parallel independent compilation
   and tests, and exact cache verification. Preserve full selected comparison,
   native, package and installed acceptance, complete failures and provenance.
-  Main9 C generation completed with the packaged compiler after the retained
-  Main7 backend trap. Native compilation and release qualification continue.
+  Main9 compilation completed with the packaged compiler after the retained
+  Main7 backend trap. Optional object caching now covers native fixture builds.
+  Receive and Control baseline, cold-cache and warm-cache outputs were identical;
+  all six unchanged ReceiveOutput tests passed on the homelab. Main9 C generation
+  took 2,101 seconds and peaked at 136 GiB. Release qualification and compiler
+  memory work continue.
   Further optimization proceeds alongside release work. Coordinate with
   [#677](https://github.com/Flip-Engineering/baton/issues/677),
   [#741](https://github.com/Flip-Engineering/baton/issues/741),
