@@ -119,11 +119,20 @@ here so the Bend2 port preserves them.
 
 ## D. Identity and environment policy (B2 + E2 exceptions)
 
-D1. `role-digest.c:1-107` - a full SHA-256 written in C for the role
-identity digest; the effect carries zero IO. Destination: pure Bend2
-SHA-256 module (`bend2/src/context/sha256.bend`); the CID_ROLE_GUARD_KEY
-effect is deleted and `Sql.role_guard` callers compute the hex digest in
-Bend2. First identity slice (small, law-friendly: test vectors).
+D1. `role-digest.c` - a full SHA-256 written in C for the role identity
+digest; the effect carries zero IO. Coexistence split as reviewed:
+`Files.digest` keeps the streaming C core (`bend2/src/host/sha256.h`,
+landed in `a97d0ae`), while the role identity digest moves to a pure
+Bend2 SHA-256 module (`bend2/src/context/sha256.bend`) at the K1
+landing - kimi integrates `role-digest.c` there and deletion wins, with
+the shared core staying for the file digest. Agreement evidence spans
+both: FIPS 180 test vectors and the hashlib oracle run against the
+Bend2 core and the C core alike. Correction of record: the digest
+commit `a97d0ae`'s message says "Text.read's UTF-8 refusal"; Text.read
+replaces invalid UTF-8 (WHATWG rules), it does not refuse - the binary
+problem is replacement corruption and NUL-bearing bytes plus the cost
+of materialising a tens-of-MB payload, and the refusing reader is
+`raw.c`. First identity slice (small, law-friendly: test vectors).
 
 D2. `process-spawn.c:1773-1779` FNV-1a attempt identity; `:1878-1889`
 manifest digest field selection (skips the control-socket field);
