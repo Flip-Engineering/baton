@@ -79,17 +79,18 @@ def child_field(+db: String, +round: String, +ordinal: U32, column: String) -> I
 def prepare_candidates(db: String, +round: String, +root: String, +count: U32) -> IO(Unit):
   M.write(db,"WITH RECURSIVE numbered(n) AS (SELECT 0 WHERE " ++ U32.show(count) ++ ">0 UNION ALL SELECT n+1 FROM numbered WHERE n+1<" ++ U32.show(count) ++ ") INSERT OR IGNORE INTO branch_candidates(round,ordinal,session,workspace,branch) SELECT " ++ C.q(round) ++ ",n," ++ C.q(round) ++ "||'-'||n," ++ C.q(root) ++ "||'/'||n," ++ C.q("baton/" ++ round) ++ "||'-'||n FROM numbered;")
 
-def configure_child(+db: String, +round: String, +player: String, +path: String, ready: Bool) -> IO(Unit):
+def configure_child(+db: String, +round: String, +player: String, +path: String, ready: Bool) -> IO(Bool):
   match ready:
-    case False{}: IO.pure(Unit,Unit{})
-    case True{}: do IO<Unit>:
+    case False{}: IO.pure(Bool,False{})
+    case True{}: do IO<Bool>:
       +endpoint : String <- M.scalar(db,"SELECT endpoint FROM sessions WHERE id=" ++ C.q(player))
       stopped : String <- M.scalar(db,"EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ C.q(player) ++ ")")
-      configured : String <- Bool.pick(IO(String),Bool.or(Bool.not(String.is_empty(endpoint)),String.eq(stopped,"1")),IO.pure(String,""),
-        (do IO<String>:
+      Bool.pick(IO(Bool),String.eq(stopped,"1"),IO.pure(Bool,False{}),
+        Bool.pick(IO(Bool),Bool.not(String.is_empty(endpoint)),IO.pure(Bool,True{}),
+        (do IO<Bool>:
           command : String <- M.field(db,"branch_rounds",round,"command")
-          native_command(db,round,player,"receiver",["receiver",player,command,db ++ "." ++ player ++ ".native.log",path])))
-      IO.pure(Unit,Unit{})
+          configured : String <- native_command(db,round,player,"receiver",["receiver",player,command,db ++ "." ++ player ++ ".native.log",path])
+          successful(db,configured))))
 
 def launch_child(+db: String, +round: String, +player: String, +owner: String) -> IO(Unit):
   do IO<Unit>:
@@ -145,8 +146,8 @@ def setup_child(+db: String, +round: String, +ordinal: U32, +owner: String) -> I
     recruited : String <- register_child(db,round,player,owner,harness,model,effort,source,branch,path,snapshot)
     +ready : Bool <- successful(db,recruited)
     member : Unit <- Bool.pick(IO(Unit),ready,M.write(db,"INSERT OR IGNORE INTO ensemble_members(ensemble,session) SELECT ensemble," ++ C.q(player) ++ " FROM branch_rounds WHERE id=" ++ C.q(round) ++ ";"),IO.pure(Unit,Unit{}))
-    configured : Unit <- configure_child(db,round,player,path,ready)
-    launched : Unit <- Bool.pick(IO(Unit),ready,launch_child(db,round,player,owner),IO.pure(Unit,Unit{}))
+    configured : Bool <- configure_child(db,round,player,path,ready)
+    launched : Unit <- Bool.pick(IO(Unit),configured,launch_child(db,round,player,owner),IO.pure(Unit,Unit{}))
     IO.pure(Unit,Unit{})
 
 def number_read(value: Maybe<&2,U32>) -> U32:
@@ -166,7 +167,7 @@ def setup_children(+db: String, +round: String, +owner: String, rows: List<Strin
 
 def source_player(+db: String, +ensemble: String, +actor: String, +options: List<&2,D.Option>) -> IO(String):
   do IO<String>:
-    inherited : String <- M.scalar(db,"SELECT s.session FROM branch_selections s JOIN branch_rounds r ON r.id=s.round WHERE r.ensemble=" ++ C.q(ensemble) ++ " ORDER BY r.rowid DESC LIMIT 1")
+    +inherited : String <- M.scalar(db,"SELECT s.session FROM branch_selections s JOIN branch_rounds r ON r.id=s.round WHERE r.ensemble=" ++ C.q(ensemble) ++ " ORDER BY r.rowid DESC LIMIT 1")
     +source : String = D.value(options,"--from",Bool.pick(String,String.is_empty(inherited),actor,inherited))
     allowed : Unit <- M.check(db,"EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(source) ++ " AND (id=" ++ C.q(actor) ++ " OR parent=" ++ C.q(actor) ++ " OR EXISTS(SELECT 1 FROM ensemble_members WHERE ensemble=" ++ C.q(ensemble) ++ " AND session=sessions.id)) )","The branch source must be a Player in this Conductor's Ensemble or direct assignment.")
     IO.pure(String,source)

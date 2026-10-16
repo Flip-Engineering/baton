@@ -232,6 +232,31 @@ sys.exit(value.get('exit',0))
         self.settle(player, streams[player])
         self.assertEqual(self.branch('evaluate')['evaluations'][0]['result']['waitStatus'], 'exit 0')
 
+    def test_failed_receiver_setup_retains_task_for_recovery(self):
+        delayed = self.directory / 'late-native'
+        failed = self.branch('start', '--from', 'source', '--count', '1', '--text', self.task_body,
+                             '--evaluator', json.dumps([sys.executable, 'evaluate.py']),
+                             '--command', str(delayed))
+        player = failed['candidates'][0]['state']['player']
+        configuration = [row for row in failed['operations'] if row['operation'] == 'receiver']
+        self.assertEqual(len(configuration), 1, failed)
+        self.assertEqual(configuration[0]['result']['status'], 'failed')
+        self.assertTrue(configuration[0]['result']['stderr'], configuration)
+        self.assertEqual(failed['task'], self.task_body)
+        self.assertFalse(any(row['operation'] == 'dispatch' for row in failed['operations']))
+        self.assertFalse(self.rows('SELECT * FROM messages WHERE id=?', (player + ':branch-task',)))
+        delayed.write_bytes(self.fixture.read_bytes())
+        delayed.chmod(0o755)
+        recovered = self.branch('recover')
+        self.assertEqual(recovered['round'], failed['round'])
+        self.assertEqual(recovered['candidates'][0]['state']['player'], player)
+        self.assertEqual(len([row for row in recovered['operations'] if row['operation'] == 'recruit']), 1)
+        self.assertEqual([row for row in recovered['operations'] if row['operation'] == 'receiver'][-1]['result']['status'], 'completed')
+        stream, start = self.accept(player)
+        self.assertEqual(start['resume'], '')
+        self.assertIn(self.task_body, start['prompt'])
+        self.settle(player, stream)
+
     def test_scope_path_and_evaluator_refusals_preserve_source(self):
         for path in ('../outside', 'child/..', '.git/config', 'child/.git'):
             refused = self.branch('start', '--from', 'source', '--count', '1', '--text', 'Task',
