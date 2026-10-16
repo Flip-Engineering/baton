@@ -94,8 +94,12 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   The transport passed 13 remote fixtures. The Bend inbox module passed its
   remote compiler check. Terminal replay now reuses the existing committed report
   body before retrying wake and settlement; its regression preserves the original
-  complete items and first receipt across two follower processes. Composed Main,
-  full native tests and actual public Codex acceptance remain pending.
+  complete items and first receipt across two follower processes. The composed
+  executable exposed an invalid eager match on suspended IO during actual public
+  Codex acceptance. Qualify explicit Result propagation through ordinary IO and
+  proxy cleanup before the next release. Retain the original failure and compiler
+  crash evidence. Corrected root fixtures pass all 15 remote tests; full native
+  tests and actual public Codex acceptance remain pending on the repaired executable.
 
 - [#758: Wait for fixture owner publication before cleanup shutdown](https://github.com/Flip-Engineering/baton/issues/758).
   The target Control cleanup in run `38785813982` recorded shutdown success
@@ -126,7 +130,13 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   evaluator output and actual status, atomic selection, continuation and recovery.
   A failed receiver setup retains its operation and prevents task admission.
   The [command and behavior guide](branching-ensembles.md) describes this surface.
-  Composed Main, remote fixtures and actual native branch acceptance remain pending.
+  All six remote branching fixtures pass. Four actual Codex branches passed the
+  independent evaluator; the selected branch continued in the same conversation.
+  A separate recovery run passed restart, retained lineage and explicit-stop
+  preservation after the paired driver failed during its recovery snapshot.
+  Retain both outcomes. The paired scores show no demonstrated performance gain.
+  Final composed release qualification remains pending with
+  [#761](https://github.com/Flip-Engineering/baton/issues/761).
 
 - [#747: Wait for actual native settlement in real acceptance drivers](https://github.com/Flip-Engineering/baton/issues/747).
   Browser fixture native identity and worker completion are tracked in
