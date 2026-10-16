@@ -121,7 +121,7 @@ here so the Bend2 port preserves them.
 
 D1. `role-digest.c:1-107` - a full SHA-256 written in C for the role
 identity digest; the effect carries zero IO. Destination: pure Bend2
-SHA-256 module (`bend2/src/identity/sha256.bend`); the CID_ROLE_GUARD_KEY
+SHA-256 module (`bend2/src/context/sha256.bend`); the CID_ROLE_GUARD_KEY
 effect is deleted and `Sql.role_guard` callers compute the hex digest in
 Bend2. First identity slice (small, law-friendly: test vectors).
 
