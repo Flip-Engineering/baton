@@ -570,10 +570,7 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
 - [#711: Baton2: preserve authored numeric precision in scientific knowledge reads](https://github.com/Flip-Engineering/baton/issues/711).
 - [#710: Define structured causal and evidentiary Knowledge nodes and edges with provenance and uncertainty](https://github.com/Flip-Engineering/baton/issues/710).
 - [#709: Make Baton2 the main branch after current delivery settles](https://github.com/Flip-Engineering/baton/issues/709).
-- [#708: Large native frames keep receive observers busy after model exit](https://github.com/Flip-Engineering/baton/issues/708).
 - [#707: Baton2: expose useful shared object evaluation and agent handoff](https://github.com/Flip-Engineering/baton/issues/707).
-- [#706: Adopt an unreaped retained turn when new input arrives](https://github.com/Flip-Engineering/baton/issues/706).
-- [#704: Repair an absent receiver when replaying a completed direct turn](https://github.com/Flip-Engineering/baton/issues/704).
 - [#702: Baton2: multiple Claude and Codex subscriptions with usage-exhaustion fallback](https://github.com/Flip-Engineering/baton/issues/702).
 - [#694: Baton2: expose OpenCode Go usage limits and availability to orchestrators](https://github.com/Flip-Engineering/baton/issues/694).
 - [#686: Baton2: reduce log volume with practical verbosity and cleanup](https://github.com/Flip-Engineering/baton/issues/686).
@@ -582,7 +579,6 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
 - [#682: Baton2: optional live browser view of Orchestra structure and status](https://github.com/Flip-Engineering/baton/issues/682).
 - [#681: Baton2: preserve pending work when a provider quota failure requires model failover](https://github.com/Flip-Engineering/baton/issues/681).
 - [#680: Baton2: stale quota failures prevent current provider use](https://github.com/Flip-Engineering/baton/issues/680).
-- [#679: Baton2 native checks fail before replay assertions on a large report argument](https://github.com/Flip-Engineering/baton/issues/679).
 - [#678: Baton2: existing Players cannot change their configured provider through native controls](https://github.com/Flip-Engineering/baton/issues/678).
 - [#677: Baton2: prevent duplicate heavy validation and qualify remote execution placement](https://github.com/Flip-Engineering/baton/issues/677).
   Homelab runners 725 and 24006 are online in the existing restricted Baton
@@ -606,13 +602,6 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
 - [#539: Rewrite Baton in Bend2: language review, adversarial architecture review, laws file, and rewrite plan](https://github.com/Flip-Engineering/baton/issues/539).
 - [#530: Hardcoded numeric ceilings gate real work throughout the goal/plan policy and beyond — remove the control-flow pattern, not just retune the numbers](https://github.com/Flip-Engineering/baton/issues/530).
 - [#714: Simplify agent inbox commands with a contextual action grammar](https://github.com/Flip-Engineering/baton/issues/714).
-- [#705: Reconcile a completed retained attempt before admitting its next turn](https://github.com/Flip-Engineering/baton/issues/705).
-  Public selected-observer recovery now reads the current released custody
-  awaiting acknowledgement. Ordinary receive admission and direct-turn checks
-  retain their existing unreleased selection so a completing observer can deliver
-  its report while owed work continues. Qualify the released observer handoff,
-  complete report replay, original native continuation, stops and final custody
-  acknowledgement with [#717](https://github.com/Flip-Engineering/baton/issues/717).
 - [#696: Baton2: recover lost retained custody and checkpoint stream observation](https://github.com/Flip-Engineering/baton/issues/696).
   Active adoption found 78 released attempts retained by the original owner.
   The current semantic observer PID 8117 was sampled waiting in SQLite; a later
