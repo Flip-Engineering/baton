@@ -62,7 +62,7 @@ try:
  sdk_version,_=run('sdk-version',['xcrun','--sdk','macosx','--show-sdk-version'])
  save(out/'system-dependencies.json',{'compiler':{'path':str(clang),**fact(clang),'version':version},'sdk':{'path':str(sdk),'version':sdk_version.strip(),'sqlite_header':fact(sdk/'usr/include/sqlite3.h'),'sqlite_stub':fact(sdk/'usr/lib/libsqlite3.tbd')}})
  (work/'sqlite.c').write_text('#include <sqlite3.h>\n#include <stdio.h>\nint main(void){sqlite3 *db=0;if(sqlite3_open(":memory:",&db))return 1;puts(sqlite3_libversion());return sqlite3_close(db);}\n')
- run('sqlite-build',[clang,work/'sqlite.c','-lsqlite3','-o',work/'sqlite'])
+ run('sqlite-build',[clang,'-isysroot',sdk,work/'sqlite.c','-lsqlite3','-o',work/'sqlite'])
  sqlite_version,_=run('sqlite-run',[work/'sqlite'])
  (out/'staged').rename(out/'staged-unavailable')
  (out/'source-inputs').rename(out/'source-inputs-unavailable')
