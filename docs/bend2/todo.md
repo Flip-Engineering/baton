@@ -4,6 +4,17 @@ The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3
 retain findings, ownership and acceptance requirements. This page links current
 Baton follow-up work for contributors. Every open issue has a link on this page.
 
+- [#775: Validate direct-turn output paths with recorded receivers](https://github.com/Flip-Engineering/baton/issues/775).
+  Validate the requested output parent before native preparation for every direct
+  turn. A recorded managed Codex endpoint skips the default-receiver creation
+  path, which previously performed this check. The candidate Control regression
+  launched a live native fixture with a missing output parent. Preserve its full
+  failed-run evidence and qualify setup refusal, interrupted recovery, explicit
+  stops and resumed input across all four native harnesses. Coordinate with
+  [#761](https://github.com/Flip-Engineering/baton/issues/761),
+  [#747](https://github.com/Flip-Engineering/baton/issues/747) and
+  [#773](https://github.com/Flip-Engineering/baton/issues/773).
+
 - [#774: Consolidate completed PRs and contributor branches during delivery](https://github.com/Flip-Engineering/baton/issues/774).
   Agents merge authorized work after required checks pass and remove completed
   contributor references. Reconcile the retained branch and worktree backlog

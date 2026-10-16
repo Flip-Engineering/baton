@@ -1457,7 +1457,8 @@ def direct_first_started(+db: String, +player: String, +id: String, +cmd: String
 # the saved input available for an explicit resume of the same turn.
 def direct_setup(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, +session: String, +harness: String, +directory: String, prompt: String) -> IO(Result<&1,&1,U32 & String,DirectSetup>):
   do IO<Result<&1,&1,U32 & String,DirectSetup>>:
-    receiver : Unit <- Control.default_receiver(db,player,cmd,model,effort,cwd,log)
+    output : String <- IO.try(String,HostControl.Control.output(log))
+    receiver : Unit <- Control.default_receiver(db,player,cmd,model,effort,cwd,output)
     executable : String <- IO.try(String,Lock.SessionLock.executable())
     recovery : String <- IO.pure(String,direct_recovery_argv(executable,db,player,id,cmd,model,effort,cwd,log,harness,directory,session))
     policy : Logs.Policy <- Logs.policy(db,player)
