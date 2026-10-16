@@ -1,4 +1,5 @@
 import Base
+import ./agent-guidance.bend as Guidance
 import ../coordinator/commands.bend as C
 import ../host/sqlite.bend as DB
 import ../context/request.bend as Req
@@ -149,6 +150,4 @@ def failed(+db: String, +session: String, +thread: String, +input_seq: String, +
     IO.pure(Unit,Unit{})
 
 def pointer(+executable: String, +db: String, +session: String, +row: Snapshot) -> String:
-  "Baton input is pending.\n{\"database\":" ++ J.string_literal(db) ++ ",\"recipient\":" ++ J.string_literal(session) ++ ",\"message\":" ++ J.string_literal(message(row)) ++ ",\"pendingCount\":" ++ pending(row)
-  ++ "}\nUse baton inbox to read all complete owed input. Use baton read MESSAGE_ID... for selected complete bodies and baton send TARGET --kind KIND --text TEXT and TARGET --kind KIND --file PATH for independent messages. Use baton help ACTION for named arguments and context overrides. Successful recipient turns record handling of their complete inputs. Use baton acknowledge to record handling of the current turn's complete owned reads; Baton resolves the messages and creates the receipt. Use baton completion-request --text SUMMARY when the assignment is ready, and baton completion-confirmed --to PLAYER to confirm a child's current request. Select an explicit context with baton DATABASE as RECIPIENT ACTION. Coordinator executable/database argv: "
-  ++ "[" ++ J.string_literal(executable) ++ "," ++ J.string_literal(db) ++ "]. Carry out authorized work and read your inbox as work continues. Direct operator instructions and explicit stops remain effective."
+  Guidance.pending()

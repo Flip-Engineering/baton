@@ -1,4 +1,5 @@
 import Base
+import ./agent-guidance.bend as AgentGuidance
 import ./agent-input.bend as AgentInput
 import ../coordinator/commands.bend as C
 import ./store.bend as Store
@@ -178,14 +179,12 @@ def task_instructions() -> String:
   "Carry out the coordinator-authorized assignment. Keep unfinished work and outstanding qualification in your reports and project state. Direct operator instructions and explicit stops remain effective.\n"
 
 def knowledge_instructions() -> String:
-  "Record authored evidence, findings, hypotheses, experiments, decisions and principles with knowledge record --kind KIND --claim TEXT --evidence TEXT --limits TEXT. Baton generates the finding identity. Optional --links JSON records authored source, relation and target references. Use Supports, Contradicts, Produced, Informed, DerivedFrom, TestedBy and Supersedes for the corresponding evidence relationships. knowledge search --query TEXT reads scoped findings and retained evidence; knowledge traverse --reference REFERENCE --direction in|out|both follows their recorded relations. Use help knowledge for the available actions. Preserve uncertainty and complete evidence.\n"
+  "Use baton knowledge to record and read scoped findings and evidence. Preserve uncertainty and complete evidence; baton help knowledge describes the actions.\n"
 
 def direct_task_prompt(+db: String, +player: String, +id: String, prompt: String) -> IO(String):
   do IO<String>:
-    executable : String <- IO.try(String,Lock.SessionLock.executable())
-    parent : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce(parent,'') FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
     header : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(id ++ ":task-input") ++ " AND recipient=" ++ C.q(player) ++ " AND kind='task-assignment') THEN 'Message (task-assignment) from ' || " ++ C.q(player) ++ " || ' [id: ' || " ++ C.q(id ++ ":task-input") ++ " || ']:' ELSE '' END;"))
-    IO.pure(String,task_instructions() ++ knowledge_instructions() ++ "Coordinator executable, database and session argv: [" ++ J.string_literal(executable) ++ "," ++ J.string_literal(db) ++ "," ++ J.string_literal(player) ++ "]. Recorded parent: " ++ Tx.trim_nl(parent) ++ ".\nUse baton inbox to read complete owed input. Baton resolves your session and database from the launch context. Use baton acknowledge to record handling of the current native turn's complete owned reads. Use baton completion-request --text SUMMARY when the assignment is ready; your recorded parent resolves and confirms the current request.\n" ++ Tx.trim_nl(header) ++ "\n" ++ prompt)
+    IO.pure(String,task_instructions() ++ AgentGuidance.actions() ++ knowledge_instructions() ++ Tx.trim_nl(header) ++ "\n" ++ prompt)
 
 def generation_log(+log: String, +id: String) -> String:
   Logs.attempt_log(log,id)
