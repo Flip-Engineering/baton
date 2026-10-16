@@ -5,6 +5,7 @@ import ./store.bend as Store
 import ./wake.bend as Wake
 import ./agent-input.bend as Input
 import ./agent-guidance.bend as Guidance
+import ./native-initial-input.bend as InitialInput
 import ./codex-inbox-store.bend as Inbox
 import ./codex-inbox-proxy.bend as Proxy
 import ../host/codex-proxy.bend as Native
@@ -113,7 +114,8 @@ def refreshed_fields(fields: List<String>, +executable: String, +db: String, +se
   match fields:
     case token <> rest: do Outcome.Checked<String & String>:
       +row : Inbox.Snapshot <- Inbox.row_fields(rest)
-      Outcome.Checked.pure(String & String,(token,Inbox.pointer(executable,db,session,row)))
+      prompt : String <- InitialInput.managed(db,session,Inbox.native(row),Inbox.input_seq(row),Inbox.pointer(executable,db,session,row))
+      Outcome.Checked.pure(String & String,(token,prompt))
     case Nil{}: Outcome.Checked.pure(String & String,("",""))
 
 def refreshed_managed(+current: String, +executable: String, +db: String, +session: String, +empty: Bool) -> Outcome.Checked(String & String):
@@ -121,17 +123,18 @@ def refreshed_managed(+current: String, +executable: String, +db: String, +sessi
     case True{}: Outcome.Checked.pure(String & String,("",""))
     case False{}: refreshed_fields(Tx.split_tabs(current),executable,db,session)
 
-def refreshed_pointer(fields: List<String>, +notice: String, +suffix: String) -> Outcome.Checked(String & String):
+def refreshed_pointer(fields: List<String>, +db: String, +session: String, +notice: String, +suffix: String) -> Outcome.Checked(String & String):
   match fields:
     case token <> rest: do Outcome.Checked<String & String>:
       +row : Inbox.Snapshot <- Inbox.row_fields(rest)
-      Outcome.Checked.pure(String & String,(token,Guidance.pending() ++ suffix))
+      prompt : String <- InitialInput.managed(db,session,Inbox.native(row),Inbox.input_seq(row),Guidance.pending() ++ suffix)
+      Outcome.Checked.pure(String & String,(token,prompt))
     case Nil{}: Outcome.Checked.pure(String & String,("",""))
 
-def refreshed_pointer_present(+current: String, +notice: String, +suffix: String, +empty: Bool) -> Outcome.Checked(String & String):
+def refreshed_pointer_present(+current: String, +db: String, +session: String, +notice: String, +suffix: String, +empty: Bool) -> Outcome.Checked(String & String):
   match empty:
     case True{}: Outcome.Checked.pure(String & String,("",""))
-    case False{}: refreshed_pointer(Tx.split_tabs(current),notice,suffix)
+    case False{}: refreshed_pointer(Tx.split_tabs(current),db,session,notice,suffix)
 
 def refresh(+notice: Notice, +status: String) -> Outcome.Checked(String & String):
   match notice:
@@ -139,9 +142,9 @@ def refresh(+notice: Notice, +status: String) -> Outcome.Checked(String & String
     case Managed{executable,+db,+session,thread,token}: do Outcome.Checked<String & String>:
       +current : String <- Inbox.refresh(db,session,thread,token,status)
       refreshed_managed(current,executable,db,session,String.is_empty(current))
-    case Pointer{db,session,thread,token,notice,suffix}: do Outcome.Checked<String & String>:
+    case Pointer{+db,+session,thread,token,notice,suffix}: do Outcome.Checked<String & String>:
       +current : String <- Inbox.refresh(db,session,thread,token,status)
-      refreshed_pointer_present(current,notice,suffix,String.is_empty(current))
+      refreshed_pointer_present(current,db,session,notice,suffix,String.is_empty(current))
 
 def admission_stored(+notice: Notice, +token: String, +turn: String) -> Outcome.Checked(Unit):
   match notice:

@@ -379,6 +379,10 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   task components for an actual managed Claude attempt or recorded conversation
   and shares its seed, including initialization before the native identity frame.
   External MCP and root-day callsites are implemented and source reviewed.
+  Managed Codex App admission now uses the same stored seed and instruction,
+  retaining complete RPC guidance for each admission and sharing the recorded
+  native conversation's seed across retry. Tokenless legacy pointers retain
+  their complete changing guidance. Remote qualification remains pending.
   Remote retry, attachment and installed acceptance remain open.
   Qualify native initial input and the installed route for
   [#716](https://github.com/Flip-Engineering/baton/issues/716),

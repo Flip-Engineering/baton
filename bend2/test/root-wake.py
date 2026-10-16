@@ -341,7 +341,7 @@ while True:
             pathlib.Path(__BARRIER__).write_text('Native metadata read is in flight.')
             while not pathlib.Path(__RELEASE__).exists():time.sleep(0.01)
             current=json.loads(state.read_text())
-        result={'thread':{'id':'native-app-root','status':{'type':current['status']}}}
+        result={'thread':{'id':current.get('thread','native-app-root'),'status':{'type':current['status']}}}
     elif method=='thread/turns/list':
         assert request['params']['itemsView']=='notLoaded', request
         current=json.loads(state.read_text())
@@ -423,6 +423,41 @@ while True:
                 self.assertEqual(json.loads(result.stdout), {
                     'threadId': 'native-app-root', 'turnId': expected, 'active': status == 'active'})
                 self.assertFalse(queued.exists(), 'Reading a witness admitted a native input')
+
+    def test_managed_initial_prompt_survives_retry_and_changes_with_native_conversation(self):
+        queued, refused = self.public_proxy()
+        self.public_app_state.write_text(json.dumps({'status': 'idle', 'number': 0}))
+        refused.write_text('Retain the refused native input.\n')
+        self.coord('attach', 'root', 'codex', 'native-app-root', '')
+        self.recruit('child', 'root', 'omp')
+        body = 'Complete authored input: café Ω 🙂\nPreserve both lines.'
+        failed = self.coord_raw('report', 'seeded-app-input', 'child', body)
+        self.assertNotEqual(failed.returncode, 0, failed.stdout + failed.stderr)
+        first = json.loads(queued.read_text().splitlines()[0])
+        self.assertEqual(first['method'], 'turn/start')
+        first_prompt = first['params']['input'][0]['text']
+        self.assert_contextual_notice(first_prompt)
+        first_seed = first_prompt.split('\n\n', 1)[0]
+        refused.unlink()
+        self.coord('resume', 'root')
+        calls = [json.loads(line) for line in queued.read_text().splitlines()]
+        self.assertEqual(len(calls), 2, calls)
+        self.assertEqual(calls[-1]['params']['input'][0]['text'], first_prompt)
+        self.assertEqual(json.loads(self.coord('delivery', 'seeded-app-input'))['body'], body)
+        self.assertIsNone(json.loads(self.coord('delivery', 'seeded-app-input'))['receipt'])
+
+        self.coord('connect', 'root', 'native-app-next', '')
+        self.public_app_state.write_text(json.dumps({'status': 'idle', 'number': 0,
+                                                    'thread': 'native-app-next'}))
+        self.coord('resume', 'root')
+        calls = [json.loads(line) for line in queued.read_text().splitlines()]
+        self.assertEqual(len(calls), 3, calls)
+        self.assertEqual(calls[-1]['params']['threadId'], 'native-app-next')
+        next_prompt = calls[-1]['params']['input'][0]['text']
+        self.assert_contextual_notice(next_prompt)
+        self.assertNotEqual(next_prompt.split('\n\n', 1)[0], first_seed)
+        self.assertEqual(json.loads(self.coord('delivery', 'seeded-app-input'))['body'], body)
+        self.assertIsNone(json.loads(self.coord('delivery', 'seeded-app-input'))['receipt'])
 
     def test_endpointless_codex_root_coalesces_owed_input_until_recipient_progress(self):
         queued, _ = self.public_proxy()
@@ -716,6 +751,16 @@ while True:
         self.assertEqual(second.returncode, 0, second_error.read_text())
 
     def assert_contextual_notice(self, text):
+        parts = text.split('\n\n', 2)
+        self.assertEqual(len(parts), 3, text)
+        seed, instruction, guidance = parts
+        self.assertRegex(seed, r'^[0-9a-f]{128}$')
+        self.assertIn('abstract qualities of the random seed', instruction)
+        self.assertNotIn('\0', text)
+        self.assertTrue(any(row['seed'] == seed and row['instruction'] == instruction
+                            and row['guidance'] == guidance
+                            for row in self.rows('SELECT * FROM native_initial_inputs')),
+                        'The actual native prompt has no complete database initialization record')
         self.assertIn('baton inbox', text)
         self.assertIn('Baton records handling after a successful turn.', text)
         self.assertNotIn(str(self.db), text)
@@ -831,6 +876,18 @@ while True:
         self.assertEqual(retained['body'], body)
         self.assertIsNone(retained['receipt'])
         self.assert_managed_endpoint('root', 'native-app-root')
+
+        changed_suffix = '\nChanged pointer guidance: café Ω 🙂\nKeep the complete new component.'
+        changed_pointer = 'Baton input is pending.\n' + json.dumps(notice) + changed_suffix
+        changed = self.coord_raw('codex-inbox-deliver', 'native-app-root', changed_pointer)
+        self.assertEqual(changed.returncode, 0, changed.stdout + changed.stderr)
+        calls = [json.loads(line) for line in queued.read_text().splitlines()]
+        self.assertEqual(len(calls), 2, calls)
+        changed_text = calls[-1]['params']['input'][0]['text']
+        self.assert_contextual_notice(changed_text)
+        self.assertTrue(changed_text.endswith(changed_suffix), changed_text)
+        self.assertEqual(changed_text.split('\n\n', 1)[0], text.split('\n\n', 1)[0])
+        self.assertIsNone(json.loads(self.coord('delivery', 'legacy-busy-input'))['receipt'])
 
     def test_legacy_admitted_metadata_waits_out_a_held_database_writer(self):
         queued, _ = self.public_proxy()
