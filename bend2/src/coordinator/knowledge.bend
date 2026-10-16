@@ -74,12 +74,35 @@ def knowledge_item_with_types(+typed: Bool, groups: Bool) -> String:
 def knowledge_item() -> String:
   knowledge_item_with_types(True{},True{})
 
+def subject_error(subject: String) -> String:
+  Bool.pick(String,String.is_empty(subject),
+    "{\"error\":\"knowledge-subject-required\",\"condition\":\"worker and group scopes require a nonempty subject\"}","")
+
+def scope_error(scope: String, subject: String) -> String:
+  match scope:
+    case "worker": subject_error(subject)
+    case "group": subject_error(subject)
+    case "universal": ""
+    case "all": ""
+    case _: "{\"error\":\"knowledge-scope-invalid\",\"condition\":\"scope must be universal, worker, group or all\"}"
+
+def direction_error(direction: String) -> String:
+  match direction:
+    case "in": ""
+    case "out": ""
+    case "both": ""
+    case _: "{\"error\":\"knowledge-direction-invalid\",\"condition\":\"direction must be in, out or both\"}"
+
+def validate_read(+error: String) -> IO(Unit):
+  Bool.pick(IO(Unit),String.is_empty(error),IO.pure(Unit,Unit{}),IO.die(Unit,2,error))
+
 def scope_holders_sql(scope: String, +subject: String) -> String:
   match scope:
     case "worker": "SELECT id FROM sessions WHERE id=" ++ C.q(subject)
     case "group": "SELECT owner AS id FROM ensembles WHERE id=" ++ C.q(subject)
     case "universal": "SELECT s.id FROM sessions s JOIN session_roles r ON r.session=s.id WHERE s.parent IS NULL AND r.role IN('principal-conductor','conductor') AND (" ++ C.q(subject) ++ "='' OR s.id=" ++ C.q(subject) ++ ")"
-    case _: "SELECT id FROM sessions"
+    case "all": "SELECT id FROM sessions"
+    case _: "SELECT id FROM sessions WHERE 0"
 
 def scope_findings_sql(+scope: String, +subject: String, +groups: Bool) -> String:
   match scope:
@@ -116,8 +139,9 @@ def relations_when_present(+db: String, reader: String, scope: String, subject: 
         typed : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM pragma_table_info('knowledge') WHERE name='kind';"))
         IO.try(String,DB.Sql.read(db,relations_read_sql(reader,scope,subject,groups,String.eq(typed,"1\n"))))
 
-def relations_value(+db: String, reader: String, scope: String, subject: String) -> IO(String):
+def relations_value(+db: String, reader: String, +scope: String, +subject: String) -> IO(String):
   do IO<String>:
+    checked : Unit <- validate_read(scope_error(scope,subject))
     present : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM sqlite_master WHERE type='table' AND name='knowledge_relations';"))
     relations_when_present(db,reader,scope,subject,String.eq(present,"1\n"))
 
@@ -152,20 +176,23 @@ def scoped_detail_sql(+reader: String, +scope: String, +subject: String, +id: St
 
 def index_value(+db: String, +reader: String, +scope: String, +subject: String, +scoped: Bool) -> IO(String):
   do IO<String>:
+    checked : Unit <- validate_read(scope_error(scope,subject))
     typed : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM pragma_table_info('knowledge') WHERE name='kind';"))
     groups : Bool <- promotion_groups_value(db)
     IO.try(String,DB.Sql.read(db,scoped_index_sql(reader,scope,subject,scoped,String.eq(typed,"1\n"),groups)))
 
 def detail_value(+db: String, +reader: String, +scope: String, +subject: String, +id: String) -> IO(String):
   do IO<String>:
+    checked : Unit <- validate_read(scope_error(scope,subject))
     typed : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM pragma_table_info('knowledge') WHERE name='kind';"))
     groups : Bool <- promotion_groups_value(db)
     IO.try(String,DB.Sql.read(db,scoped_detail_sql(reader,scope,subject,id,String.eq(typed,"1\n"),groups)))
 
 # A read of an older database retains its existing findings before any writer
 # installs the new columns and relationship table.
-def read_scope_value(+db: String, reader: String, scope: String, subject: String) -> IO(String):
+def read_scope_value(+db: String, reader: String, +scope: String, +subject: String) -> IO(String):
   do IO<String>:
+    checked : Unit <- validate_read(scope_error(scope,subject))
     typed : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM pragma_table_info('knowledge') WHERE name='kind';"))
     groups : Bool <- promotion_groups_value(db)
     IO.try(String,DB.Sql.read(db,scoped_read_sql(reader,scope,subject,String.eq(typed,"1\n"),groups)))
@@ -213,7 +240,8 @@ def traversal_join(+direction: String) -> String:
   match direction:
     case "out": "e.source_ref=w.reference"
     case "in": "e.target_ref=w.reference"
-    case _: "(e.source_ref=w.reference OR e.target_ref=w.reference)"
+    case "both": "(e.source_ref=w.reference OR e.target_ref=w.reference)"
+    case _: "0"
 
 def traversal_relation(+relation: String) -> String:
   "(" ++ C.q(relation) ++ "='' OR lower(replace(replace(e.relation,'_',''),'-',''))=lower(replace(replace(" ++ C.q(relation) ++ ",'_',''),'-','')))"
@@ -233,12 +261,18 @@ def graph_read_sql(+reader: String, +scope: String, +subject: String, +query: St
   +edges = String.eq(present,"1\n")
   Bool.pick(String,search,search_sql(reader,scope,subject,query,types,groups,edges),traverse_sql(reader,scope,subject,query,direction,relation,recursive,types,groups,edges))
 
-def graph_read(+db: String, +reader: String, +scope: String, +subject: String, +query: String, search: Bool, direction: String, relation: String, recursive: Bool) -> IO(Unit):
-  do IO<Unit>:
+def graph_value(+db: String, +reader: String, +scope: String, +subject: String, +query: String, search: Bool, +direction: String, relation: String, recursive: Bool) -> IO(String):
+  do IO<String>:
+    scope_checked : Unit <- validate_read(scope_error(scope,subject))
+    direction_checked : Unit <- validate_read(Bool.pick(String,search,"",direction_error(direction)))
     typed : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM pragma_table_info('knowledge') WHERE name='kind';"))
     +groups : Bool <- promotion_groups_value(db)
     present : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM sqlite_master WHERE type='table' AND name='knowledge_relations';"))
-    saved : String <- IO.try(String,DB.Sql.read(db,graph_read_sql(reader,scope,subject,query,search,direction,relation,recursive,typed,groups,present)))
+    IO.try(String,DB.Sql.read(db,graph_read_sql(reader,scope,subject,query,search,direction,relation,recursive,typed,groups,present)))
+
+def graph_read(db: String, reader: String, scope: String, subject: String, query: String, search: Bool, direction: String, relation: String, recursive: Bool) -> IO(Unit):
+  do IO<Unit>:
+    saved : String <- graph_value(db,reader,scope,subject,query,search,direction,relation,recursive)
     IO.write(saved)
 
 # The stored finding, read back only when it is this invocation's own finding:
@@ -377,7 +411,7 @@ def record_linked(+db: String, +id: String, author: String, kind: String, claim:
       answered(delivery))
 
 def tool_help() -> String:
-  "\nknowledge record --kind KIND --claim TEXT [--evidence TEXT] [--limits TEXT] [--links JSON]\nknowledge search --query TEXT [--scope universal|worker|group|all] [--subject SUBJECT]\nknowledge traverse --reference REFERENCE --direction in|out|both [--relation RELATION] [--recursive] [--scope universal|worker|group|all]\nBaton resolves the author and generates finding and relation identities. Links contain source, relation and target evidence references. Kinds and relations are authored strings. Search matches all query terms across complete findings and retained evidence messages and returns typed neighbors with detail reads. Traversal follows scoped relations and terminates on cycles. Use help knowledge for the available actions.\n"
+  "\nknowledge record --kind KIND --claim TEXT [--evidence TEXT] [--limits TEXT] [--links JSON]\nknowledge search --query TEXT [--scope universal|worker|group|all] [--subject SUBJECT]\nknowledge traverse --reference REFERENCE --direction in|out|both [--relation RELATION] [--recursive] [--scope universal|worker|group|all]\nBaton resolves the author and generates finding and relation identities. Links contain source, relation and target evidence references. Kinds and relations are authored strings. Worker and group scopes require a nonempty subject; contextual commands default the subject to the current session. Search matches all query terms across complete findings and retained evidence messages and returns typed neighbors with detail reads. Traversal follows scoped relations and terminates on cycles. Use help knowledge for the available actions.\n"
 
 def relate(db: String, id: String, author: String, source: String, relation: String, target: String) -> IO(Unit):
   do IO<Unit>:
