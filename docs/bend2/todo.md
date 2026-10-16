@@ -50,7 +50,11 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   busy callback, complete input, NULL receipts and exactly one successful RPC.
   A restarted follower reuses the committed terminal report bytes, preserving
   complete items, the first parent receipt and unread input during replay.
-  Composed Main, full native tests and actual public Codex acceptance remain pending.
+  The transport passed 13 remote fixtures. The Bend inbox module passed its
+  remote compiler check. Terminal replay now reuses the existing committed report
+  body before retrying wake and settlement; its regression preserves the original
+  complete items and first receipt across two follower processes. Composed Main,
+  full native tests and actual public Codex acceptance remain pending.
 
 - [#758: Wait for fixture owner publication before cleanup shutdown](https://github.com/Flip-Engineering/baton/issues/758).
   The target Control cleanup in run `38785813982` recorded shutdown success
@@ -77,6 +81,11 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   [#713](https://github.com/Flip-Engineering/baton/issues/713),
   [#723](https://github.com/Flip-Engineering/baton/issues/723) and
   [#731](https://github.com/Flip-Engineering/baton/issues/731).
+  The implementation records workspace snapshots, fresh child configuration,
+  evaluator output and actual status, atomic selection, continuation and recovery.
+  A failed receiver setup retains its operation and prevents task admission.
+  The [command and behavior guide](branching-ensembles.md) describes this surface.
+  Composed Main, remote fixtures and actual native branch acceptance remain pending.
 
 - [#747: Wait for actual native settlement in real acceptance drivers](https://github.com/Flip-Engineering/baton/issues/747).
   Browser fixture native identity and worker completion are tracked in
