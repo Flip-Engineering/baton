@@ -41,6 +41,24 @@ def extend_frontend(source):
     source = replace_once(source, 'function cli_report(', 'export function cli_report(')
     source = replace_once(source, 'function cli_build(bin: string, file: string): void {',
                           'export function cli_build(bin: string, file: string, extraLibs: string[] = [], diagnosticsToStderr = false): void {')
+    source = replace_once(source,
+        '  const cpu = [...objc, "-std=c11", "-O3", file, "-lpthread", "-lm",',
+        '  const sdkFlags: string[] = [];\n'
+        '  if (mac) {\n'
+        '    const command = "/usr/bin/xcrun";\n'
+        '    const arguments_ = ["--sdk", "macosx", "--show-sdk-path"];\n'
+        '    const result = child.spawnSync(command, arguments_, { encoding: "utf8" });\n'
+        '    if (diagnosticsToStderr) process.stderr.write(JSON.stringify({ sdkStep: { command, arguments: arguments_, status: result.status, signal: result.signal, error: result.error?.message, stdout: result.stdout, stderr: result.stderr } }) + "\\n");\n'
+        '    if (result.status !== 0 || result.error || result.signal) {\n'
+        '      throw "Error: macOS SDK discovery failed. Install Apple Command Line Tools and select a macOS SDK. " + (result.error?.message || result.stderr || "");\n'
+        '    }\n'
+        '    const sdk = result.stdout.trim();\n'
+        '    if (!sdk || !fs.existsSync(sdk) || !fs.statSync(sdk).isDirectory()) {\n'
+        '      throw "Error: xcrun did not select an available macOS SDK directory. Install Apple Command Line Tools and select a macOS SDK.";\n'
+        '    }\n'
+        '    sdkFlags.push("-isysroot", sdk);\n'
+        '  }\n'
+        '  const cpu = [...objc, ...sdkFlags, "-std=c11", "-O3", file, "-lpthread", "-lm",')
     source = replace_once(source, '    ...libs, "-o", path.resolve(bin)];',
                           '    ...libs, ...extraLibs, "-o", path.resolve(bin)];')
     return replace_once(source,

@@ -48,7 +48,7 @@ Full source checks for trees `61e676b9322b47f8b63fe737949e3817dea65000`
 and `e8f33ba65261c8a394270cc173d3692904b9c57f` exited 1 naturally. Both
 reported that `repl-source.parent_reversed` consumed `rest` in both eager
 `Bool.pick` branches. The pattern now explicitly permits copying that string
-tail. The corrected full source check remains pending.
+tail. Later corrected checks are recorded below.
 
 The next full check, tree `bea2e9c2282d7f4499fb5a587346ab2b79478d69`,
 exited 1 naturally at 19:15:42 UTC because an earlier helper referenced the
@@ -76,12 +76,34 @@ Focused run `baton-repl-focused-v12-20261016T193041Z`, invocation
 The complete REPL module check exited 0 naturally at 19:32:40 UTC after
 109.482 seconds, with maximum RSS 13,270,828 KiB and empty stderr. This
 establishes the focused canonical frontend check for that Bend source closure.
-The full coordinator check and native build remain pending.
+Full coordinator run `baton-combined-check-v13-20261016T193342Z`, invocation
+`c84bbe374afc4442b4c6aaa28a481827`, checked tree
+`0d518d6099af97485315d177c94ac4dd75c05fc9`. Its original wait completed
+naturally with exit 0 at 19:37:26 UTC after 214.251 seconds, with maximum
+RSS 28,083,960 KiB and empty stderr. The complete retained evidence archive
+has SHA256 `0cc118de796aa59f570081aa442f789a0ab614b758b53a236eea52356bb1c233`.
+One native candidate build started at 19:40:05 UTC for that exact source tree;
+its C generation, object build and link results remain pending.
+
+The Darwin dependency preflight found that a resolved Clang path needs an
+explicit SDK path to locate SQLite headers. The staged compiler adapter now
+checks `/usr/bin/xcrun --sdk macosx --show-sdk-path`, retains its process
+diagnostics and supplies `-isysroot` to native builds. The locked upstream
+source files retain their original bytes.
+
+Linux regression run `baton-mandatory-package-v4-20261016T194440Z`, invocation
+`6cc151efbf364ab2b5aed448f9dff5a2`, checked packaging tree
+`9e12b5fb55a413f6931386e47df2549ab63f5927`. It completed naturally at
+19:45:01 UTC with 17 package tests, source staging, the installed prerequisite
+checker and 17 packaged frontend checks passing. Native Unicode IO and
+exit-status checks used the staged compiler after the source directory was
+moved. This run records `coordinator_runtime_qualified: false`; Darwin SDK
+execution remains pending.
 
 ## Remaining acceptance
 
-The full coordinator check and candidate C/object/link build must complete on
-the recorded production closure. Candidate validation must cover notebook
+The candidate C/object/link build must complete on the checked production
+closure. Candidate validation must cover notebook
 recovery, the controlled observer-loss case, ordinary delivery, managed resume,
 and the four output-generation recovery cases. Installed Darwin qualification
 must exercise the normal archive, prerequisite check, pure and native IO
