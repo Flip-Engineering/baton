@@ -678,8 +678,12 @@ while True:
             return child, output, diagnostic
 
         first, first_output, first_error = follower('first-follow')
-        self.eventually(lambda: any(event in first_output.read_text()
-                                    for event in ('codexInboxAdmission', 'codexInboxTurnRetained')),
+        def first_admitted():
+            self.assertIsNone(first.poll(), first_error.read_text() + first_output.read_text())
+            return any(event in first_output.read_text()
+                       for event in ('codexInboxAdmission', 'codexInboxTurnRetained'))
+
+        self.eventually(first_admitted,
                         'the direct follower did not record its admission decision')
         self.assertIn('codexInboxAdmission', first_output.read_text(), first_error.read_text())
         self.assertEqual(len(queued.read_text().splitlines()), 1)
