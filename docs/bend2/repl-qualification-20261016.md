@@ -50,6 +50,34 @@ reported that `repl-source.parent_reversed` consumed `rest` in both eager
 `Bool.pick` branches. The pattern now explicitly permits copying that string
 tail. The corrected full source check remains pending.
 
+The next full check, tree `bea2e9c2282d7f4499fb5a587346ab2b79478d69`,
+exited 1 naturally at 19:15:42 UTC because an earlier helper referenced the
+later `drain` declaration. A focused check reproduced that error. The drain
+and interactive loops now pass continuations into their earlier helpers.
+
+Subsequent focused checks retained these natural failures:
+
+| Source tree | Ended UTC | Compiler finding |
+| --- | --- | --- |
+| `f526663eceb323289ff7b53cc10dbc8a82d2ccd6` | 19:18:31 | Nested promoted tuple pattern could not infer the Sigma family. |
+| `8728a4915aab9243f542a1f88e213b4004b39a5b` | 19:24:16 | A completed Result was supplied to IO.try. |
+| `652e6dd57a823cabd16241e17090eedf6749e31b` | 19:26:44 | Option validation supplied a shared list to an affine-list parameter. |
+| `ac9b1130f267aec5c2b26567602bfd40f272e199` | 19:29:17 | The command parser tried to promote an affine argument-list tail. |
+
+The corrected source uses the existing typed wake-value destructuring form,
+`IO.pass` for completed results, and `D.affine_strings` at the membership call.
+Parser selection consumes its argument tail once through a Bool match.
+The original stdout, stderr, wait status, resource measurements and immutable
+source manifests remain retained for every check.
+
+Focused run `baton-repl-focused-v12-20261016T193041Z`, invocation
+`3fd3dec20efe42079112f09664d1329d`, checked tree
+`999b371abef36b5afaff054dccf869315db10997`. The source helper check passed.
+The complete REPL module check exited 0 naturally at 19:32:40 UTC after
+109.482 seconds, with maximum RSS 13,270,828 KiB and empty stderr. This
+establishes the focused canonical frontend check for that Bend source closure.
+The full coordinator check and native build remain pending.
+
 ## Remaining acceptance
 
 The full coordinator check and candidate C/object/link build must complete on

@@ -45,32 +45,32 @@ def stopped(+db: String, +actor: String, handle: U32, sent: Bool) -> IO(Bool):
           result : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.signal(handle,15)
           stop_result(result)),IO.pure(Bool,False{}))
 
-@unsafe
-def drain_line(+db: String, +actor: String, +handle: U32, +subscription: U32, sent: Bool, +notice: String, line: Maybe<String>) -> IO(Result<&1,&1,U32 & String,Unit>):
+def drain_line(again: Bool -> IO(Result<&1,&1,U32 & String,Unit>), sent: Bool, +notice: String, line: Maybe<String>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match line:
-    case Some{value}: drain(db,actor,handle,subscription,sent)
-    case None{}: Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),String.is_empty(notice),IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),drain(db,actor,handle,subscription,sent))
+    case Some{value}: again(sent)
+    case None{}: Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),String.is_empty(notice),IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),again(sent))
 
-@unsafe
-def drain_notice(+db: String, +actor: String, +handle: U32, +subscription: U32, +sent: Bool, +notice: String, line: Maybe<String>) -> IO(Result<&1,&1,U32 & String,Unit>):
+def drain_notice(+db: String, +actor: String, +handle: U32, +sent: Bool, +notice: String, line: Maybe<String>, again: Bool -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     next : Bool <- Bool.pick(IO(Bool),String.is_empty(notice),IO.pure(Bool,sent),stopped(db,actor,handle,sent))
-    drain_line(db,actor,handle,subscription,next,notice,line)
+    drain_line(again,next,notice,line)
 
-@unsafe
-def drain_result(+db: String, +actor: String, +handle: U32, +subscription: U32, sent: Bool, result: Result<&1,&1,U32 & String,Maybe<String> & (String & U32)>) -> IO(Result<&1,&1,U32 & String,Unit>):
+def drain_awake(db: String, actor: String, handle: U32, sent: Bool, again: Bool -> IO(Result<&1,&1,U32 & String,Unit>), awake: Maybe<String> & (String & U32)) -> IO(Result<&1,&1,U32 & String,Unit>):
+  (line,(notice,alive))=awake
+  Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),U32.is_eq(alive,0),
+    IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(5,"The REPL owner change subscription ended. The original attempt remains retained for repl recover.")}),
+    drain_notice(db,actor,handle,sent,notice,line,again))
+
+def drain_result(db: String, actor: String, handle: U32, sent: Bool, again: Bool -> IO(Result<&1,&1,U32 & String,Unit>), result: Result<&1,&1,U32 & String,Maybe<String> & (String & U32)>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match result:
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error})
-    case Done{(line,(+notice,+alive))}:
-      Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),U32.is_eq(alive,0),
-        IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(5,"The REPL owner change subscription ended. The original attempt remains retained for repl recover.")}),
-        drain_notice(db,actor,handle,subscription,sent,notice,line))
+    case Done{awake}: drain_awake(db,actor,handle,sent,again,awake)
 
 @unsafe
 def drain(+db: String, +actor: String, +handle: U32, +subscription: U32, sent: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     result : Result<&1,&1,U32 & String,Maybe<String> & (String & U32)> <- P.ProcessChild.read_awake(handle,subscription)
-    drain_result(db,actor,handle,subscription,sent,result)
+    drain_result(db,actor,handle,sent,next => drain(db,actor,handle,subscription,next),result)
 
 def raw_read(read: Raw.RawRead) -> String & String:
   match read:
@@ -91,7 +91,7 @@ def retire(handle: U32, acknowledged: Result<&1,&1,U32 & String,Unit>) -> IO(Res
 
 def completed_observation(+db: String, +cell: String, +stage: String, +directory: String, +handle: U32, drained: Result<&1,&1,U32 & String,Unit>, unsubscribed: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
   do IO<Unit>:
-    read : Unit <- IO.try(Unit,drained)
+    read : Unit <- IO.pass(Unit,drained)
     waited : Result<&1,&1,U32 & String,String> <- P.ProcessChild.wait(handle)
     output : Result<&1,&1,U32 & String,Raw.RawRead> <- Raw.Raw.read_text_utf8(directory ++ "/stdout")
     errors : Result<&1,&1,U32 & String,String> <- Text.Text.read(directory ++ "/stderr")
@@ -188,7 +188,7 @@ def execute_locked(+db: String, +actor: String, +notebook: String, +cell: String
     checked : Unit <- compiler_stage(db,notebook,cell,root,lock)
     evaluated : Unit <- after_compiler(db,actor,notebook,cell,root,lock)
     released : Result<&1,&1,U32 & String,Unit> <- Lock.SessionLock.release(lock)
-    IO.try(Unit,released)
+    IO.pass(Unit,released)
 
 def execute_acquired(db: String, actor: String, notebook: String, cell: String, acquired: Maybe<U32>) -> IO(Unit):
   match acquired:
