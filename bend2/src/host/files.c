@@ -459,13 +459,16 @@ static Term baton_entries_run(Env e,Term *f,IoWork *w) {
 static void __attribute__((constructor)) baton_entries_use(void) {io_eff(CID_FILES_ENTRIES,baton_entries_run,0);}
 #endif
 
-typedef struct { char *path; const char *kind; int error; } BatonKind;
+typedef struct { char *path; const char *kind; int error, follow; } BatonKind;
 
 static void baton_kind_call(IoWork *w) {
   BatonKind *call=(BatonKind *)w->data;
   struct stat info;
-  if(stat(call->path,&info)) {call->error=errno;return;}
-  call->kind=S_ISREG(info.st_mode)?"file":S_ISDIR(info.st_mode)?"dir":"other";
+  if(call->follow ? stat(call->path,&info) : lstat(call->path,&info)) {
+    call->error=errno;return;
+  }
+  call->kind=S_ISLNK(info.st_mode)?"link":S_ISREG(info.st_mode)?"file"
+    :S_ISDIR(info.st_mode)?"dir":"other";
 }
 
 static Term baton_kind_pack(Env e,IoWork *w) {
@@ -476,10 +479,10 @@ static Term baton_kind_pack(Env e,IoWork *w) {
   return result;
 }
 
-#ifdef CID_FILES_KIND
-static Term baton_kind_run(Env e,Term *f,IoWork *w) {
+static Term baton_kind_begin(Env e,Term *f,IoWork *w,int follow) {
   BatonKind *call=calloc(1,sizeof(*call));
   if(!call) return io_fail(e,ENOMEM,NULL);
+  call->follow=follow;
   u64 length=0;
   call->path=io_cstr(e,f[0],&length);
   if(!call->path || strlen(call->path)!=length) {
@@ -489,7 +492,13 @@ static Term baton_kind_run(Env e,Term *f,IoWork *w) {
   w->data=(char *)call;
   return io_work(w,baton_kind_call,baton_kind_pack);
 }
+#ifdef CID_FILES_KIND
+static Term baton_kind_run(Env e,Term *f,IoWork *w) {return baton_kind_begin(e,f,w,1);}
 static void __attribute__((constructor)) baton_kind_use(void) {io_eff(CID_FILES_KIND,baton_kind_run,0);}
+#endif
+#ifdef CID_FILES_KIND_LINK
+static Term baton_kind_link_run(Env e,Term *f,IoWork *w) {return baton_kind_begin(e,f,w,0);}
+static void __attribute__((constructor)) baton_kind_link_use(void) {io_eff(CID_FILES_KIND_LINK,baton_kind_link_run,0);}
 #endif
 
 

@@ -45,6 +45,8 @@ def main() -> int:
         dest_full.write_bytes(b"existing\n")
         dest_full.chmod(0o600)
         os.mkfifo(cases / "pipe")
+        os.symlink(cases / "dir", cases / "dirlink")
+        os.symlink(cases / "nowhere", cases / "brokenlink")
         runme = cases / "runme"
         runme.write_bytes(b"run\n")
         runme.chmod(0o755)
@@ -111,6 +113,14 @@ def main() -> int:
             failures.append("results-c16: source bytes did not survive")
         if not stat.S_ISFIFO(os.stat(root / "cases/pipe").st_mode):
             failures.append("results-c16: destination did not stay a FIFO")
+        # A directory symlink follows for kind and stays a link for
+        # kind_link; a broken link refuses for kind with its ENOENT
+        # cause and answers link for kind_link - the published Dirent
+        # semantics the module runner needs.
+        check("results-k1", "ok:dir\n")
+        check("results-k2", "ok:link\n")
+        check("results-k3", "fail:2\n")
+        check("results-k4", "ok:link\n")
         if failures:
             for failure in failures:
                 print("files-path.py: " + failure, file=sys.stderr)

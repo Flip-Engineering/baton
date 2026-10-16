@@ -56,6 +56,14 @@ def Files.entries(directory: String) -> IO(Result<&1,&1,U32 & String,String>):
 def Files.kind(path: String) -> IO(Result<&1,&1,U32 & String,String>):
   import "./files.c"
 
+# The path's own type without following symlinks: file, dir, link for a
+# symlink, or other for anything else. A broken link answers link rather
+# than an error, which is the point: a walk classifying entries needs
+# the link as a link. Matches the published Dirent semantics the module
+# runner was written against.
+def Files.kind_link(path: String) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./files.c"
+
 # The permission bits of what the path names when opened, as octal text
 # with no leading zero: 644, 755, 0. A path that cannot be stat'd keeps
 # its cause.
