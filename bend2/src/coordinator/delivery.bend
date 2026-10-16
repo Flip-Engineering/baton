@@ -232,12 +232,12 @@ def codex_queue_mode(+db: String, +id: String, +condition: String, saved: String
 def codex_queue(db: String, id: String, condition: String, saved: String) -> IO(Result<&1,&1,U32 & String,String>):
   codex_queue_mode(db,id,condition,saved,True{})
 
-def endpointless(+db: String, +id: String, +condition: String, +saved: String) -> IO(Result<&1,&1,U32 & String,String>):
+def endpointless(+db: String, +id: String, +condition: String, +saved: String, retry: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
     harness_row : String <- IO.try(String,DB.Sql.query(db,endpointless_harness_sql(id,condition)))
     +harness : String <- IO.pure(String,Tx.trim_nl(harness_row))
     Bool.pick(IO(Result<&1,&1,U32 & String,String>),String.eq(harness,"codex"),
-      codex_queue_mode(db,id,condition,saved,False{}),
+      codex_queue_mode(db,id,condition,saved,retry),
       IO.pure(Result<&1,&1,U32 & String,String>,Done{saved}))
 
 def inbox_endpoint_launch(+db: String, id: String, saved: String, argv: String, recipient: String, +token: String) -> IO(Result<&1,&1,U32 & String,String>):
@@ -251,40 +251,47 @@ def inbox_endpoint_selected(+db: String, +id: String, +saved: String, argv: Stri
     case True{}: queue_existing(db,id,saved,recipient,next_token => inbox_endpoint_launch(db,id,saved,argv,recipient,next_token))
     case False{}: inbox_endpoint_launch(db,id,saved,argv,recipient,token)
 
-def inbox_endpoint(+db: String, +id: String, +condition: String, saved: String, argv: String) -> IO(Result<&1,&1,U32 & String,String>):
+def inbox_endpoint(+db: String, +id: String, +condition: String, saved: String, argv: String, retry: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
     native_row : String <- IO.try(String,DB.Sql.query(db,endpointless_native_sql(id,condition)))
     +native : String <- IO.pure(String,Tx.trim_nl(native_row))
     recipient_row : String <- IO.try(String,DB.Sql.query(db,endpointless_recipient_sql(id,condition)))
     +recipient : String <- IO.pure(String,Tx.trim_nl(recipient_row))
-    row : String <- IO.try(String,DB.Sql.query(db,queue_claim_sql(id,condition,recipient,native,False{})))
+    row : String <- IO.try(String,DB.Sql.query(db,queue_claim_sql(id,condition,recipient,native,retry)))
     +token : String <- IO.pure(String,Tx.trim_nl(row))
     +executable : String <- IO.try(String,Lock.SessionLock.executable())
     args : List<String> <- CodexRoute.command(db,recipient,[executable,db,"codex-inbox-session",recipient,native])
     inbox_endpoint_selected(db,id,saved,Tx.enc_argv(args),recipient,token,String.is_empty(token))
 
-def endpoint_delivery(+db: String, +id: String, +condition: String, +saved: String, +argv: String) -> IO(Result<&1,&1,U32 & String,String>):
+def endpoint_delivery(+db: String, +id: String, +condition: String, +saved: String, +argv: String, retry: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
     managed : String <- IO.try(String,DB.Sql.query(db,codex_inbox_endpoint_sql(id,condition)))
-    Bool.pick(IO(Result<&1,&1,U32 & String,String>),String.eq(managed,"1\n"),inbox_endpoint(db,id,condition,saved,argv),launch(db,id,saved,argv))
+    Bool.pick(IO(Result<&1,&1,U32 & String,String>),String.eq(managed,"1\n"),inbox_endpoint(db,id,condition,saved,argv,retry),launch(db,id,saved,argv))
 
-def normal_delivery(+db: String, +id: String, +condition: String, +saved: String) -> IO(Result<&1,&1,U32 & String,String>):
+def normal_delivery(+db: String, +id: String, +condition: String, +saved: String, retry: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
     encoded : String <- IO.try(String,DB.Sql.query(db,endpoint_sql(id,condition)))
     +argv : String <- IO.pure(String,Tx.trim_nl(encoded))
     Bool.pick(IO(Result<&1,&1,U32 & String,String>),String.is_empty(argv),
-      endpointless(db,id,condition,saved),endpoint_delivery(db,id,condition,saved,argv))
+      endpointless(db,id,condition,saved,retry),endpoint_delivery(db,id,condition,saved,argv,retry))
 
-def routed(+db: String, +id: String, condition: String, +saved: String, +kind: String, ordinary: Bool) -> IO(Result<&1,&1,U32 & String,String>):
+def routed(+db: String, +id: String, condition: String, +saved: String, +kind: String, ordinary: Bool, retry: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   match ordinary:
-    case False{}: stopped_delivery(db,id,notification => normal_delivery(db,notification,"1",saved),Bool.or(String.eq(kind,"report"),String.eq(kind,"question")))
-    case True{}: normal_delivery(db,id,condition,saved)
+    case False{}: stopped_delivery(db,id,notification => normal_delivery(db,notification,"1",saved,False{}),Bool.or(String.eq(kind,"report"),String.eq(kind,"question")))
+    case True{}: normal_delivery(db,id,condition,saved,retry)
 
-def deliver(+db: String, +id: String, +condition: String, saved: String) -> IO(Result<&1,&1,U32 & String,String>):
+def deliver_mode(+db: String, +id: String, +condition: String, saved: String, retry: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
     value : String <- IO.try(String,DB.Sql.query(db,stopped_kind_sql(id,condition)))
     +kind : String <- IO.pure(String,Tx.trim_nl(value))
-    routed(db,id,condition,saved,kind,String.is_empty(kind))
+    routed(db,id,condition,saved,kind,String.is_empty(kind),retry)
+
+def deliver(db: String, id: String, condition: String, saved: String) -> IO(Result<&1,&1,U32 & String,String>):
+  deliver_mode(db,id,condition,saved,False{})
+
+# An explicit resume retries the retained failed admission through its current route.
+def redeliver(db: String, id: String, condition: String, saved: String) -> IO(Result<&1,&1,U32 & String,String>):
+  deliver_mode(db,id,condition,saved,True{})
 
 def wake_result(result: Result<&1,&1,U32 & String,String>) -> Result<&1,&1,U32 & String,Unit>:
   match result:

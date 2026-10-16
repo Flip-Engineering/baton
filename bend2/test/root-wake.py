@@ -576,15 +576,18 @@ while True:
         self.assertEqual(json.loads(self.coord('turns', 'root')), [])
         log = pathlib.Path(str(self.db) + '.root.log').read_text()
         self.assertIn('exit 1', log)
-        cause = '{"code":-32600,"message":"Queue is full (100 queued messages): café Ω 🙂"}'
-        self.assertIn(cause, log)
-        self.assertTrue(any(cause in path.read_text()
-                            for path in self.directory.glob('state.db.queue-*.stderr')))
+        cause = {'code': -32600, 'message': 'Queue is full (100 queued messages): café Ω 🙂'}
+        def assert_cause(text):
+            failures = [json.loads(line.split('refused input: ', 1)[1])['error']
+                        for line in text.splitlines() if 'refused input: ' in line]
+            self.assertIn(cause, failures, text)
+        assert_cause(log)
+        assert_cause(refused.stderr)
 
         for _ in range(3):
             replay = self.coord_raw('report', 'refused-app-input', 'child', 'This report remains owed.')
             self.assertNotEqual(replay.returncode, 0)
-            self.assertIn(cause, replay.stderr)
+            assert_cause(replay.stderr)
         self.assertEqual(len(queued.read_text().splitlines()), 1,
                          'unchanged failed input was retried')
 
@@ -592,30 +595,36 @@ while True:
             ident = 'refused-app-more-' + str(index)
             additional = self.coord_raw('report', ident, 'child', 'Further work remains owed.')
             self.assertNotEqual(additional.returncode, 0)
-            self.assertIn(cause, additional.stderr)
+            assert_cause(additional.stderr)
             self.assertIsNone(json.loads(self.coord('delivery', ident))['receipt'])
         calls = [json.loads(line) for line in queued.read_text().splitlines()]
         self.assertEqual(len(calls), 4, calls)
         self.assertIsNone(json.loads(self.coord('delivery', 'refused-app-input'))['receipt'])
 
+        retried = self.coord_raw('resume', 'root')
+        self.assertNotEqual(retried.returncode, 0, retried.stdout)
+        assert_cause(retried.stderr)
+        self.assertEqual(len(queued.read_text().splitlines()), 5)
+        self.assertIsNone(json.loads(self.coord('delivery', 'refused-app-input'))['receipt'])
+
         refused_queue.unlink()
         self.coord('resume', 'root')
         calls = [json.loads(line) for line in queued.read_text().splitlines()]
-        self.assertEqual(len(calls), 5, calls)
-        self.assertEqual(calls[4]['method'], 'turn/steer')
-        self.assertEqual(calls[4]['params']['threadId'], 'native-app-root')
-        self.assert_contextual_notice(calls[4]['params']['input'][0]['text'])
+        self.assertEqual(len(calls), 6, calls)
+        self.assertEqual(calls[-1]['method'], 'turn/steer')
+        self.assertEqual(calls[-1]['params']['threadId'], 'native-app-root')
+        self.assert_contextual_notice(calls[-1]['params']['input'][0]['text'])
         owed = ['refused-app-input'] + ['refused-app-more-' + str(index) for index in range(3)]
         for ident in owed:
             self.assertIsNone(json.loads(self.coord('delivery', ident))['receipt'])
         self.coord('resume', 'root')
-        self.assertEqual(len(queued.read_text().splitlines()), 5)
+        self.assertEqual(len(queued.read_text().splitlines()), 6)
 
         self.coord('ack', 'refused-app-input', 'root', 'root reviewed the retained report')
         self.coord('report', 'retry-after-root-progress', 'child', 'Read the remaining inbox.')
         calls = [json.loads(line) for line in queued.read_text().splitlines()]
-        self.assertEqual(len(calls), 6, calls)
-        self.assert_contextual_notice(calls[5]['params']['input'][0]['text'])
+        self.assertEqual(len(calls), 7, calls)
+        self.assert_contextual_notice(calls[-1]['params']['input'][0]['text'])
         for ident in ['refused-app-more-' + str(index) for index in range(3)] + ['retry-after-root-progress']:
             self.assertIsNone(json.loads(self.coord('delivery', ident))['receipt'])
 
