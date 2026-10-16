@@ -459,6 +459,32 @@ while True:
         self.assertEqual(json.loads(self.coord('delivery', 'seeded-app-input'))['body'], body)
         self.assertIsNone(json.loads(self.coord('delivery', 'seeded-app-input'))['receipt'])
 
+    def test_initial_prompt_storage_failure_keeps_input_and_closes_the_native_proxy(self):
+        queued, _ = self.public_proxy()
+        self.coord('attach', 'root', 'codex', 'native-app-root', '')
+        self.recruit('child', 'root', 'omp')
+        self.coord('report', 'seeded-before-storage-failure', 'child', 'Keep the first report.')
+        self.assertEqual(len(queued.read_text().splitlines()), 1)
+        cause = 'Native initialization storage refused: café Ω 🙂'
+        with sqlite3.connect(self.db) as database:
+            database.execute("CREATE TRIGGER refuse_initial_input BEFORE INSERT ON native_initial_inputs "
+                             "BEGIN SELECT RAISE(ABORT, '" + cause + "'); END")
+        body = 'Complete unread control input: café Ω 🙂\nPreserve this line.'
+        failed = self.coord_raw('message', 'seed-storage-failure', 'child', 'root', 'question', body)
+        self.assertNotEqual(failed.returncode, 0, failed.stdout + failed.stderr)
+        self.assertIn(cause, failed.stderr)
+        self.assertEqual(len(queued.read_text().splitlines()), 1,
+                         'Native input was admitted after initialization storage failed')
+        retained = json.loads(self.coord('delivery', 'seed-storage-failure'))
+        self.assertEqual(retained['body'], body)
+        self.assertIsNone(retained['receipt'])
+        log = pathlib.Path(str(self.db) + '.root.log').read_text()
+        events = [json.loads(line) for line in log.splitlines() if line.startswith('{')]
+        exits = [event for event in events if event.get('type') == 'codexProxyExit']
+        self.assertEqual(len(exits), 2, log)
+        self.assertTrue(all(event['status'] == 'exit 0' for event in exits), exits)
+
+
     def test_endpointless_codex_root_coalesces_owed_input_until_recipient_progress(self):
         queued, _ = self.public_proxy()
         self.coord('attach', 'root', 'codex', '', '')
