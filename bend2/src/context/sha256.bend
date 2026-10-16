@@ -31,10 +31,6 @@ import ../json/canonical.bend as J
 type ShaState is Data:
   ShaState{a: U32, b: U32, c: U32, d: U32, e: U32, f: U32, g: U32, h: U32}
 
-# Incremental hashing context: the compression state, the partial block
-# buffer in order (fewer than 64 bytes), and the total byte count.
-type ShaCtx is Data:
-  ShaCtx{st: ShaState, buf: List<U32>, total: U32}
 
 # Rotate right by hi bits: hi + lo = 32.
 def rotr(+x: U32, hi: Nat, lo: Nat) -> U32:
@@ -269,7 +265,7 @@ def final_pad(st: State) -> List<U32>:
 def final(st: State) -> List<U32>:
   match st:
     case State{+h, +bits_hi, +bits_lo, +block, +used}:
-      state_bytes(blocks_go(h, final_pad(st)))
+      state_bytes(drain_go(h, final_pad(st)))
 
 def hex(bytes: List<U32>) -> String:
   hex_go(bytes, SNil{})
@@ -279,7 +275,7 @@ def digest_bytes(bytes: List<U32>) -> String:
 
 # The one-shot String digest, kept for the role identity consumers.
 def digest(+s: String) -> String:
-  hex_go(state_bytes(blocks_go(h_initial(), pad(J.utf8(s)))), SNil{})
+  digest_bytes(J.utf8(s))
 
 # ---- ground vectors (hashlib oracle, fixed constants) ----
 
