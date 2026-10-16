@@ -43,10 +43,15 @@ def managed_sql(+session: String, +thread: String, input_seq: String, guidance: 
   ++ "INSERT INTO native_initial_inputs(attempt,session,turn,seed,instruction,guidance) SELECT " ++ attempt ++ "," ++ C.q(session) ++ "," ++ turn ++ ",coalesce((SELECT seed FROM native_initial_inputs WHERE session=" ++ C.q(session) ++ " AND turn=" ++ turn ++ " ORDER BY rowid LIMIT 1),lower(hex(randomblob(64))))," ++ C.q(instruction()) ++ "," ++ C.q(guidance) ++ ";"
   ++ "SELECT hex(seed||char(10,10)||instruction||char(10,10)||guidance) FROM native_initial_inputs WHERE rowid=last_insert_rowid();COMMIT;"
 
+def managed_recorded(result: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String>):
+  match result:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
+    case Done{encoded}: decoded(encoded)
+
 def managed(+db: String, session: String, thread: String, input_seq: String, guidance: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
-    encoded : String <- IO.try(String,Store.transact_sql(db,managed_sql(session,thread,input_seq,guidance)))
-    decoded(encoded)
+    result : Result<&1,&1,U32 & String,String> <- Store.transact_sql(db,managed_sql(session,thread,input_seq,guidance))
+    managed_recorded(result)
 
 # Claude attachments retain separate authored components on their active
 # managed attempt or recorded external native conversation and share its seed.
