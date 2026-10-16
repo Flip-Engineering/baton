@@ -4,6 +4,18 @@ The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3
 retain findings, ownership and acceptance requirements. This page links current
 Baton follow-up work for contributors. Every open issue has a link on this page.
 
+- [#777: Pass committed context snapshots between seats by citation](https://github.com/Flip-Engineering/baton/issues/777).
+  Commit immutable sender context snapshots under a declared schema and carry
+  versioned citations in briefs and reports. Resolve the cited values through
+  authorized recipient reads, preserving the cited version and resolution
+  failures. Review the issue's archived JavaScript REPL contracts against the
+  current Bend context APIs. Compare token use and receiving-seat prefix-cache
+  behavior on the same two-seat task with inline context and cited snapshots.
+  Coordinate with [#707](https://github.com/Flip-Engineering/baton/issues/707),
+  [#710](https://github.com/Flip-Engineering/baton/issues/710),
+  [#718](https://github.com/Flip-Engineering/baton/issues/718) and
+  [#720](https://github.com/Flip-Engineering/baton/issues/720).
+
 - [#776: Reduce Bend build time and peak memory with complete qualification](https://github.com/Flip-Engineering/baton/issues/776).
   Profile fixed-point backend passes, retained intermediate terms, generated C
   compilation and native test builds. Measure identical cold and warm source
