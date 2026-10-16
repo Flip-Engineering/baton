@@ -22,7 +22,7 @@ the session's client, model, workspace, and parent agent in a SQLite database.
 - **Shared knowledge:** record findings with evidence, control their visibility,
   and promote them to a coordinating agent or team.
 - **Inspection:** read sessions, messages, turns, and repository operations through
-  the CLI, MCP tools, and optional Orchestra browser view.
+  the CLI, MCP tools, and Orchestra browser view.
 
 ## Build from source
 
