@@ -48,7 +48,7 @@ Full source checks for trees `61e676b9322b47f8b63fe737949e3817dea65000`
 and `e8f33ba65261c8a394270cc173d3692904b9c57f` exited 1 naturally. Both
 reported that `repl-source.parent_reversed` consumed `rest` in both eager
 `Bool.pick` branches. The pattern now explicitly permits copying that string
-tail. The corrected full source check remains pending.
+tail. The full coordinator check below covers the corrected source.
 
 The next full check, tree `bea2e9c2282d7f4499fb5a587346ab2b79478d69`,
 exited 1 naturally at 19:15:42 UTC because an earlier helper referenced the
@@ -93,10 +93,13 @@ memory pressure averages, and no existing owned compiler or native model
 process. Its original wait and complete outputs remain retained.
 
 The final test overlay has tree
-`0925857fecea5fdb104d1661dea04ea4085aee49`. It changes only
+`8e772cc533f5eaada21066aa105b5065665eaf0f`. It changes only
 `receive.py` and `root-wake.py` from the checked tree. The tests now report
 controlled child exits while waiting for metadata admission or a recovered
-native connection. The earlier waits are retained as incomplete fixture runs,
+native connection. Recovered-connection waits check terminal custody before
+reporting a settled failure. New ordinary-delivery cases unwind their controlled
+fixture after the first failed admission assertion. The earlier waits are
+retained as incomplete fixture runs,
 with their databases, WAL files, output and process identities captured before
 scoped interruption of the controlled Python test drivers.
 
@@ -105,8 +108,8 @@ Remote Darwin dependency preflight run
 used source `2b4683454b813e5a338b64582b0a0774249394bc`. Required source and
 runtime staging completed. Its direct Clang SQLite probe failed because the
 sanitized environment did not select the SDK include path. The selected SDK
-contained the required header and library stub. Explicit SDK selection and
-the packaged compiler's native IO path require a corrected remote check.
+contained the required header and library stub. The corrected run below checks
+explicit SDK selection and the packaged compiler's native IO path.
 This preflight does not establish normal archive or installed CLI acceptance.
 
 The Darwin dependency preflight found that a resolved Clang path needs an
@@ -121,8 +124,27 @@ Linux regression run `baton-mandatory-package-v4-20261016T194440Z`, invocation
 19:45:01 UTC with 17 package tests, source staging, the installed prerequisite
 checker and 17 packaged frontend checks passing. Native Unicode IO and
 exit-status checks used the staged compiler after the source directory was
-moved. This run records `coordinator_runtime_qualified: false`; Darwin SDK
-execution remains pending.
+moved. This run records `coordinator_runtime_qualified: false`.
+
+Corrected remote Darwin dependency preflight
+[`38957558704`](https://github.com/Flip-Engineering/baton/actions/runs/38957558704)
+used producer source `ce7d42b8401dc179bc5fb46f2c9f5c202e44e222` and completed
+naturally at 19:48:26.059 UTC. All five recorded producer inputs match the
+integrated package source at `a06333b7587e1a22755c1e9c1aecb8c6118bf3cb`.
+The extracted dependency archive has SHA256
+`08f49744c333fded07475caa9609ddaabb66291409fb378ee3cc43f8a6cb8eb9`.
+Its 83 packaged files matched their recorded sizes and hashes.
+
+With the original checkout, staged payload and source inputs moved away,
+packaged pure Bend2 evaluation returned 42. Native Bend2 IO compiled, linked
+against SQLite and produced the complete expected two-line Unicode output.
+The run recorded Apple Clang 17.0.0, macOS SDK 15.5 and SQLite 3.43.2.
+Four invalid type or source inputs returned the expected compiler refusals.
+The result SHA256 is
+`f44ac8c972a10282781cc1fbf98780678f60331bfe1705ba74de2e7fba89666c`.
+This establishes the required Darwin compiler dependency and frontend check.
+Normal coordinator archive, installed CLI and live adoption acceptance remain
+pending.
 
 ## Remaining acceptance
 
