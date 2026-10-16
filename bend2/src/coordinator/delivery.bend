@@ -259,7 +259,9 @@ def inbox_endpoint(+db: String, +id: String, +condition: String, saved: String, 
     +recipient : String <- IO.pure(String,Tx.trim_nl(recipient_row))
     row : String <- IO.try(String,DB.Sql.query(db,queue_claim_sql(id,condition,recipient,native,False{})))
     +token : String <- IO.pure(String,Tx.trim_nl(row))
-    inbox_endpoint_selected(db,id,saved,argv,recipient,token,String.is_empty(token))
+    +executable : String <- IO.try(String,Lock.SessionLock.executable())
+    args : List<String> <- CodexRoute.command(db,recipient,[executable,db,"codex-inbox-session",recipient,native])
+    inbox_endpoint_selected(db,id,saved,Tx.enc_argv(args),recipient,token,String.is_empty(token))
 
 def endpoint_delivery(+db: String, +id: String, +condition: String, +saved: String, +argv: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
