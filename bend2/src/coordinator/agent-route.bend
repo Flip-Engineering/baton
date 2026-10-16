@@ -26,7 +26,7 @@ type TailVerb is Data:
   OtherVerb{}
 
 def contextual_verb(+verb: String) -> Bool:
-  Bool.or(Domain.member(verb,["branch","session","player","players","assignment",
+  Bool.or(Domain.member(verb,["branch","repl","session","player","players","assignment",
     "completion-request","completion-confirmed","finish","confirm","guide"]),Domain.known(verb))
 
 def action_verb(+verb: String, project: Bool) -> Bool:
@@ -76,7 +76,7 @@ def database_named(+verb: String, +args: List<&2,String>) -> Bool:
           True{}))
 
 def database_other(+db: String, +verb: String, +args: List<&2,String>) -> Route:
-  Bool.pick(Route,Bool.or(String.eq(verb,"branch"),Bool.or(Domain.member(verb,["help","--help","-h"]),database_named(verb,args))),
+  Bool.pick(Route,Bool.or(Domain.member(verb,["branch","repl"]),Bool.or(Domain.member(verb,["help","--help","-h"]),database_named(verb,args))),
     Action{InDatabase{db,A.parse(Con{verb,Domain.affine_strings(args)})}},
     Legacy{Con{db,Con{verb,Domain.affine_strings(args)}}})
 
