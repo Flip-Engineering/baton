@@ -6,6 +6,7 @@ import os
 import pathlib
 import select
 import shlex
+import shutil
 import signal
 import socket
 import sqlite3
@@ -1802,6 +1803,80 @@ class Receive(unittest.TestCase):
                 finally:
                     fixture.doCleanups()
 
+    def exercise_missing_output_generation(self, remove_parent, refuse_replay_write=False):
+        self.player(harness='omp')
+        configuration = self.directory / 'fixture.json'
+        configuration.write_text(json.dumps({**json.loads(configuration.read_text()), 'record_launches': True}))
+        self.coord('message', 'missing-output-task', 'root', 'parent', 'task', 'Retain this native result through output-file loss.')
+        output_directory = self.directory / 'removed output' / 'nested'
+        output_directory.mkdir(parents=True)
+        arguments = self.receive_args('parent')
+        arguments[6] = str(output_directory / 'parent.jsonl')
+        observer = self.spawn(*arguments)
+        original, started = self.accept_child(observer, 'parent')
+        marker = 'Complete output retained before projection loss: café Ω 🙂'
+        self.action(original, progress=marker)
+        self.assertEqual(json.loads(original.readline()), {'progress_written': marker})
+        generation = self.output_log('parent')
+        self.eventually(lambda: generation.exists() and marker in generation.read_text(), 'original output was not projected')
+        with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
+            ident, directory = database.execute("SELECT id,directory FROM executions WHERE session='parent'").fetchone()
+        attempt = pathlib.Path(directory)
+        if remove_parent:
+            shutil.rmtree(output_directory.parent)
+        else:
+            selected = self.selected_process(observer.pid)
+            self.signal_selected(selected, signal.SIGSTOP)
+            generation.unlink()
+            if refuse_replay_write:
+                output_directory.chmod(0o555)
+            self.signal_selected(selected, signal.SIGKILL)
+            observer.wait()
+        body = 'Original native result after projection loss: café Ω 🙂'
+        self.action(original, body=body, ack=False, complete_task=False)
+        self.assertEqual(original.readline(), b'')
+        self.finish(observer, ok=False)
+
+        if refuse_replay_write:
+            try:
+                failure_log = attempt / 'observer.log'
+                self.eventually(lambda: failure_log.exists() and 'Permission denied' in failure_log.read_text(),
+                                'the reconstruction write did not retain its filesystem refusal')
+                checkpoint = (attempt / 'checkpoint').read_bytes()
+                state_at = checkpoint.index(b'{"schema":1,')
+                reset = json.loads(checkpoint[state_at:])
+                self.assertEqual(reset['output'], '0')
+                self.assertFalse(reset['output_done'])
+            finally:
+                output_directory.chmod(0o755)
+
+        def recovered():
+            error = attempt / 'observer-error'
+            if not refuse_replay_write:
+                self.assertFalse(error.exists(), error.read_text() if error.exists() else '')
+            return (attempt / 'acknowledged').exists()
+
+        self.eventually(recovered, 'same retained attempt did not reconstruct its output')
+        self.shutdown_idle_database_owner('recovered output attempt did not retire')
+        output = generation.read_bytes()
+        self.assertNotIn(b'\0', output)
+        self.assertEqual(output.decode().count(marker), 1)
+        self.assertIn(body, output.decode())
+        self.assertEqual(self.coord('delivery', 'missing-output-task')['receipt'], 'native-turn:' + ident)
+        launches = [json.loads(line) for line in (self.directory / 'native-launches.jsonl').read_text().splitlines()]
+        self.assertEqual(len(launches), 1, launches)
+        self.assertEqual(self.coord('player', 'parent')['native'], started['native'])
+        self.assertEqual(len(self.codex_calls.read_text().splitlines()), 1)
+
+    def test_missing_output_directory_reconstructs_original_native_projection(self):
+        self.exercise_missing_output_generation(remove_parent=True)
+
+    def test_missing_output_file_reconstructs_original_native_projection(self):
+        self.exercise_missing_output_generation(remove_parent=False)
+
+    def test_missing_output_recovery_commits_reset_before_projection_failure(self):
+        self.exercise_missing_output_generation(remove_parent=False, refuse_replay_write=True)
+
     def test_observer_loss_after_terminal_keeps_lock_until_native_exit(self):
         for harness in ('codex', 'omp'):
             with self.subTest(harness=harness):
@@ -2141,7 +2216,7 @@ class Receive(unittest.TestCase):
                     fixture.doCleanups()
 
     def exercise_completed_observer(self, stopped, keeper_loss=True, device_renumbered=False,
-                                    released=False):
+                                    released=False, missing_output=False):
         print(f'Completed observer recovery: stopped={stopped}, keeper_loss={keeper_loss}, '
               f'device_renumbered={device_renumbered}, released={released}', file=sys.stderr, flush=True)
         self.coord('connect', 'root', 'native-root', json.dumps([str(self.fixture), 'parent_endpoint']))
@@ -2183,6 +2258,7 @@ class Receive(unittest.TestCase):
         self.assertEqual((attempt / 'status').read_text(), '0\n')
         held_delivery = None
         original_report = None
+        original_output = None
         if released:
             held_delivery, delivery = self.accept_child(observer, 'parent-delivery')
             self.assertTrue(any(message['sender'] == 'parent' and message['recipient'] == 'root'
@@ -2197,6 +2273,14 @@ class Receive(unittest.TestCase):
                               for message in frame['messages'] for content in message['content']],
                              [body])
             self.suspend_observer_without_database_reader(selected_observer)
+            if missing_output:
+                checkpoint = (attempt / 'checkpoint').read_bytes()
+                state_at = checkpoint.index(b'{"schema":1,')
+                self.assertTrue(json.loads(checkpoint[state_at:])['output_done'])
+                generation = self.output_log('parent')
+                original_output = generation.read_bytes()
+                self.assertIn(body.encode(), original_output)
+                generation.unlink()
             with sqlite3.connect(self.db) as database:
                 self.assertEqual(database.execute(
                     "SELECT directory FROM executions WHERE session='parent' AND mode='retained'"
@@ -2289,6 +2373,8 @@ class Receive(unittest.TestCase):
             self.assertEqual((attempt / name).read_bytes(), content)
         self.assertTrue((attempt / 'released').exists())
         self.assertTrue((attempt / 'acknowledged').exists())
+        if original_output is not None:
+            self.assertEqual(generation.read_bytes(), original_output)
         if released:
             launches = (self.directory / 'native-launches.jsonl').read_bytes()
             self.assertEqual(len(launches.splitlines()), 2)
@@ -2315,6 +2401,10 @@ class Receive(unittest.TestCase):
 
     def test_released_unacknowledged_observer_recovers_original_and_pending_input(self):
         self.exercise_completed_observer(stopped=False, keeper_loss=False, released=True)
+
+    def test_released_observer_reconstructs_completed_missing_output(self):
+        self.exercise_completed_observer(stopped=False, keeper_loss=False, released=True,
+                                        missing_output=True)
 
     def test_completed_omp_attempt_replay_leaves_guidance_for_current_native(self):
         self.coord('attach', 'root', 'codex', 'native-root', self.endpoint('root'))
