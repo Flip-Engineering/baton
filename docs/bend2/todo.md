@@ -4,6 +4,14 @@ The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3
 retain findings, ownership and acceptance requirements. This page links current
 Baton follow-up work for contributors. Every open issue has a link on this page.
 
+- [#781: Release blocked and queued subscription reads during unsubscribe](https://github.com/Flip-Engineering/baton/issues/781).
+  Give each queued notice its own socket descriptor, retire the subscription
+  handle on the IO loop, and shut down the socket before closing it. Qualify
+  blocked and queued read completion, natural follower exit, unchanged pending
+  input and actual proxy status. Coordinate with
+  [#761](https://github.com/Flip-Engineering/baton/issues/761) and
+  [#780](https://github.com/Flip-Engineering/baton/issues/780).
+
 - [#780: Keep Codex input witness stdout as one JSON document](https://github.com/Flip-Engineering/baton/issues/780).
   Route the actual proxy cleanup diagnostic to stderr for the witness command.
   Preserve its single complete JSON result, native-turn authority, cleanup wait

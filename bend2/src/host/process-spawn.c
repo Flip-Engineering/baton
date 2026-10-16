@@ -21,7 +21,7 @@ typedef struct {
   size_t length;
   u32 handle, signal, index;
   uint64_t owner_incarnation,owner_attempt;
-  int kind, error, eof, unstarted, fresh, preserve_line;
+  int kind, error, eof, unstarted, fresh, preserve_line, notice_socket;
   char *directory, *initial, *recovery, *detail, *database, *artifact_name, *artifact, *identity, *owner_witness;
   size_t initial_length, recovery_length, artifact_name_length, artifact_length, identity_length;
   u32 keep_stdin, lock;
@@ -4113,10 +4113,29 @@ static int br_instance_publish(const char *database,uint64_t cursor) {
 }
 static void br_subscription_free(BatonRetained *retained) {
   if(!retained)return;
-  if(retained->socket>=0)close(retained->socket);
+  if(retained->socket>=0) {
+    shutdown(retained->socket,SHUT_RDWR);
+    close(retained->socket);
+  }
   retained->socket=-1;
   free(retained->directory);free(retained->database);
   free(retained);
+}
+/* The IO loop selects a live handle before it queues a worker. Each notice
+   owns its socket until its read returns. Unsubscribe removes the registry
+   entry here, while later effect selections are serialized with this one. */
+static int br_subscription_prepare(BatonProcessCall *call) {
+  BatonRetained *retained=call->child?call->child->retained:NULL;
+  if(!retained || retained->socket<0)return EBADF;
+  if(call->kind==BP_INSTANCE_NOTICE) {
+    int socket_fd=fcntl(retained->socket,F_DUPFD_CLOEXEC,0);
+    if(socket_fd<0)return errno;
+    call->notice_socket=socket_fd;
+    call->child=NULL;
+  } else {
+    baton_children[call->index]=NULL;
+  }
+  return 0;
 }
 /* Woken-read design note: every wait round below blocks in poll with no
    timeout. The watcher thread only watches the spool condition and pokes a
@@ -4325,11 +4344,10 @@ static void br_instance_subscribe_call(BatonProcessCall *call) {
   call->length=(size_t)written;
 }
 static void br_instance_notice_call(BatonProcessCall *call) {
-  BatonRetained *retained=call->child?call->child->retained:NULL;
-  if(!retained || retained->socket<0) {call->error=EBADF;return;}
   BrInstanceNotice notice={0};
   uint64_t generation=0;
-  int error=br_instance_notice(retained->socket,&notice,&generation);
+  int error=br_instance_notice(call->notice_socket,&notice,&generation);
+  close(call->notice_socket);call->notice_socket=-1;
   if(error) {call->error=error;return;}
   const char *kind=notice.kind==BN_COMMIT?"commit":notice.kind==BN_GAP?"gap":"unknown";
   char text[192];
@@ -4347,7 +4365,6 @@ static void br_instance_unsubscribe_call(BatonProcessCall *call) {
   if(!call->child) {call->error=EBADF;return;}
   br_subscription_free(call->child->retained);
   call->child->retained=NULL;
-  baton_children[call->index]=NULL;
   free(call->child);
   call->child=NULL;
 }
@@ -4674,6 +4691,7 @@ static Term baton_process_begin_mode(Env e, Term *f, IoWork *w, int kind, int pr
               kind==BP_INSTANCE_SUBSCRIBE;
   call->kind=kind;
   call->preserve_line=preserve_line;
+  call->notice_socket=-1;
   if(acquire) {
     int error=baton_child_allocate(call);
     if(error) {free(call);return io_fail(e,(u32)error,NULL);}
@@ -4782,6 +4800,8 @@ static Term baton_process_begin_mode(Env e, Term *f, IoWork *w, int kind, int pr
     if(kind==BP_INSTANCE_RESTORE) call->signal=(u32)f[1];
     if(kind==BP_SIGNAL) call->signal=(u32)f[1];
     if(kind==BP_READ_AWAKE) call->signal=(u32)f[1];
+    if(kind==BP_INSTANCE_NOTICE || kind==BP_INSTANCE_UNSUBSCRIBE)
+      call->error=br_subscription_prepare(call);
   }
   w->data=(char *)call;
   if(call->error) return baton_process_pack(e,w);
