@@ -149,7 +149,7 @@ def setup_child(+db: String, +round: String, +ordinal: U32, +owner: String) -> I
     launched : Unit <- Bool.pick(IO(Unit),ready,launch_child(db,round,player,owner),IO.pure(Unit,Unit{}))
     IO.pure(Unit,Unit{})
 
-def number_read(value: Maybe<U32>) -> U32:
+def number_read(value: Maybe<&2,U32>) -> U32:
   match value:
     case None{}: 0
     case Some{n}: n
