@@ -418,8 +418,10 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   [#732](https://github.com/Flip-Engineering/baton/issues/732) records the connected
   Claude handling prerequisite. Remote real-route acceptance remains open
   for [#717](https://github.com/Flip-Engineering/baton/issues/717).
-  [#728](https://github.com/Flip-Engineering/baton/issues/728) records the
-  current candidate C-generation failure and its diagnostic evidence.
+  The compiler correction in
+  [#728](https://github.com/Flip-Engineering/baton/issues/728) qualified in 2.0.
+  Current compiled Codex follower acceptance remains in
+  [#761](https://github.com/Flip-Engineering/baton/issues/761).
   Source review at `57b471e9` found that the native-receive driver's final
   receipt assertion includes new root-to-operator reports whose terminal
   recipient has no delivery endpoint. Preserve those complete reports for the
@@ -470,8 +472,8 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   [#716](https://github.com/Flip-Engineering/baton/issues/716),
   [#718](https://github.com/Flip-Engineering/baton/issues/718) and
   [#720](https://github.com/Flip-Engineering/baton/issues/720).
-  Candidate qualification is also blocked by the C-generation failure in
-  [#728](https://github.com/Flip-Engineering/baton/issues/728).
+  Current compiled Codex follower acceptance remains in
+  [#761](https://github.com/Flip-Engineering/baton/issues/761).
 
 - [#721: Add Antigravity CLI agent harness support](https://github.com/Flip-Engineering/baton/issues/721).
   Verify the supported CLI protocol and add dispatch, resumption, complete
@@ -535,9 +537,10 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   assignment and explicit stops. Ordinary recovery and provider configuration
   must preserve that identity. The existing `native-instance-conductor` owns
   assignment of the repair. Related recovery and shared-custody work remains
-  in [#696](https://github.com/Flip-Engineering/baton/issues/696),
-  [#705](https://github.com/Flip-Engineering/baton/issues/705) and
-  [#676](https://github.com/Flip-Engineering/baton/issues/676).
+  in [#696](https://github.com/Flip-Engineering/baton/issues/696) and
+  [#676](https://github.com/Flip-Engineering/baton/issues/676). Completed
+  retained-attempt reconciliation is recorded in
+  [#705](https://github.com/Flip-Engineering/baton/issues/705).
 
 - [#671: Deliver pending guidance into live headless Muse conversations](https://github.com/Flip-Engineering/baton/issues/671).
   The retained `semantic-impl-code` attempt has six pending guidance inputs and
