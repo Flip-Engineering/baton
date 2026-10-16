@@ -114,6 +114,7 @@ def verify_dependency(prefix):
     manifest = directory / dependency['manifest']
     assert fact(manifest)['sha256'] == dependency['sha256']
     compiler = json.loads(manifest.read_text())
+    assert compiler['language'] == 'Bend2'
     assert compiler['files'] == dependency['files']
     expected = {row['path'] for row in compiler['files']} | {dependency['manifest']}
     assert {str(path.relative_to(directory)) for path in directory.rglob('*') if path.is_file()} == expected
