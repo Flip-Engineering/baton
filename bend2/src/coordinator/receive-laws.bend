@@ -28,25 +28,30 @@ import ../host/sqlite.bend as DB
 import ../git/text.bend as Tx
 import ../host/text.bend as Text
 import ./store.bend as Store
+import ./control.bend as Control
 
 law direct_replay_keeps_output_failure_for_completion:
   for +db: String
   for +player: String
   for +id: String
-  for cmd: String
-  for model: String
-  for effort: String
-  for cwd: String
+  for +cmd: String
+  for +model: String
+  for +effort: String
+  for +cwd: String
   for +task: String
   for log: String
   for session: String
   for harness: String
-  {Turn.choose(db,player,id,cmd,model,effort,cwd,task,log,session,harness,True{}) == (do IO<Result<&1,&1,U32 & String,Maybe<Turn.Outcome>>>:
+  for directory: String
+  for prompt: String
+  for lock: U32
+  {Turn.choose(db,player,id,cmd,model,effort,cwd,task,log,session,harness,directory,prompt,lock,True{}) == (do IO<Unit>:
+    receiver : Unit <- Control.default_receiver(db,player,cmd,model,effort,cwd,log)
     +saved : String <- IO.try(String,Store.commit(db,C.Delivery{id}))
     written : Result<&1,&1,U32 & String,Unit> <- Text.Text.control_output(saved)
-    IO.pure(Result<&1,&1,U32 & String,Maybe<Turn.Outcome>>,Turn.replay_result(written))) : IO(Result<&1,&1,U32 & String,Maybe<Turn.Outcome>>)}
+    Turn.direct_replay_finished(db,player,lock,written)) : IO(Unit)}
 
-def direct_replay_keeps_output_failure_for_completion(db,player,id,cmd,model,effort,cwd,task,log,session,harness):
+def direct_replay_keeps_output_failure_for_completion(db,player,id,cmd,model,effort,cwd,task,log,session,harness,directory,prompt,lock):
   {==}
 
 law failed_replay_releases_and_wakes_before_reporting_output_error:
@@ -109,7 +114,7 @@ law completion_without_parent_returns_output_failure:
   for +event: String
   for error: String
   {Turn.finish_parent(db,player,id,log,Turn.Ended{status,event,error,False{}},False{}) == (do IO<Result<&1,&1,U32 & String,Unit>>:
-    output : String <- IO.try(String,DB.Sql.query(db,"SELECT json_object('session'," ++ C.q(player) ++ ",'status'," ++ C.q(status) ++ ",'event',CASE WHEN " ++ C.q(event) ++ "='' THEN NULL ELSE json(" ++ C.q(event) ++ ") END,'error'," ++ C.q(error) ++ ");"))
+    output : String <- IO.try(String,DB.Sql.query(db,"WITH frame(value) AS (VALUES(" ++ C.q(event) ++ ")) SELECT json_object('session'," ++ C.q(player) ++ ",'status'," ++ C.q(status) ++ ",'event',CASE WHEN value='' THEN NULL ELSE json(value) END,'error'," ++ C.q(error) ++ ") FROM frame;"))
     Text.Text.control_output(output)) : IO(Result<&1,&1,U32 & String,Unit>)}
 
 def completion_without_parent_returns_output_failure(db,player,id,log,status,event,error):
