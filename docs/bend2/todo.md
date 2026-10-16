@@ -332,28 +332,6 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   [#727](https://github.com/Flip-Engineering/baton/issues/727) and
   [#730](https://github.com/Flip-Engineering/baton/issues/730).
 
-- [#739: Judge native control recovery with recorded OMP session paths](https://github.com/Flip-Engineering/baton/issues/739).
-  Target workflow `38683470364` resumes the recorded OMP conversation through
-  its JSONL session path. The fixture compares that path to a native identity,
-  fails before sending its finish action and leaves the following subtest
-  waiting for the earlier process. Verify the exact session path and native
-  identity, retain the existing recovery assertions, and release the accepted
-  fixture through its normal terminal protocol after an assertion failure.
-  Retain complete target and candidate verdicts, controller output and runtime
-  custody. Coordinate with [#717](https://github.com/Flip-Engineering/baton/issues/717),
-  [#727](https://github.com/Flip-Engineering/baton/issues/727) and
-  [#738](https://github.com/Flip-Engineering/baton/issues/738).
-
-- [#738: Judge initial-input handling fixtures when the baseline admits a successor](https://github.com/Flip-Engineering/baton/issues/738).
-  Target workflow `38679395337` retains the first complete native result while
-  its receive child admits the still-unhandled task again. The initial-input
-  fixture observes either child exit or that actual successor and reports the
-  full prompt, original delivery and retained turns on a contradictory start.
-  Preserve its implicit handling receipt and open assignment assertions.
-  Qualify the same contract on target and candidate with
-  [#717](https://github.com/Flip-Engineering/baton/issues/717) and
-  [#723](https://github.com/Flip-Engineering/baton/issues/723).
-
 - [#737: Render native prompt command arguments as readable text](https://github.com/Flip-Engineering/baton/issues/737).
   Actual Muse and GLM contributor dispatches on `57b471e9` retained their task
   input and failed before native startup with SQLite's NUL refusal. Receive and
@@ -365,50 +343,6 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   [#723](https://github.com/Flip-Engineering/baton/issues/723),
   [#727](https://github.com/Flip-Engineering/baton/issues/727) and
   [#717](https://github.com/Flip-Engineering/baton/issues/717).
-
-- [#736: Preserve full branch history messages in native landing qualification](https://github.com/Flip-Engineering/baton/issues/736).
-  Exact candidate `57b471e9` completed its builds and failed `land-test` twice
-  with `land K: candidate message differs from the branch history` in run
-  `38679395337`. The isolated exact-source remote reproduction retained full
-  commit messages, Git objects and toolchain custody. Both stored landing bodies
-  match the required messages; the test's Git log format adds a record newline.
-  Read the body with `--format=format:%B` before removing its final newline.
-  The corrected isolated native test passes; full source qualification remains
-  open. This blocks
-  [#717](https://github.com/Flip-Engineering/baton/issues/717); selected-commit
-  behavior remains tracked by [#673](https://github.com/Flip-Engineering/baton/issues/673).
-
-- [#735: Judge managed attachment fixtures when their follower producer exits](https://github.com/Flip-Engineering/baton/issues/735).
-  Target workflow `38660325053` records the endpointless short admission and
-  a following Baton producer exit with signal 11 before its App follower connects.
-  The managed follower passed NUL-separated arguments to a host operation that
-  expects length-prefixed arguments. Use the existing length-prefixed encoder.
-  The endpointless and recorded-endpoint fixtures observe that terminal failure
-  during their first connection waits and return complete verdicts. Workflow
-  `38662128510` reached the recorded-endpoint setup failure after judging the
-  endpointless case. Workflow `38675555092` judged both cases and reached the
-  same producer failure in the managed-settlement fixture. All managed App
-  attachment waits, including the route-change prewait and second attachment,
-  now observe the completed failure through the shared callback. Preserve
-  full source, database, output and process
-  evidence and all admission, settlement, guidance, receipt and stop assertions.
-  Qualify target and candidate with
-  [#717](https://github.com/Flip-Engineering/baton/issues/717),
-  [#727](https://github.com/Flip-Engineering/baton/issues/727),
-  [#718](https://github.com/Flip-Engineering/baton/issues/718),
-  [#720](https://github.com/Flip-Engineering/baton/issues/720) and
-  [#734](https://github.com/Flip-Engineering/baton/issues/734).
-
-- [#734: Give the failed-session fixture ownership of its serve task](https://github.com/Flip-Engineering/baton/issues/734).
-  Target workflow `38658463280` retains the actual provider failure through a
-  detached dispatcher. The fixture then waits for the serve to emit that completed
-  failure. Preserve complete source, database, spool and process evidence and
-  configure the fixture so the serve owns the failure it asserts. Retain all
-  provider, concurrent native, late subscription and terminal checks. Qualify the
-  same contracts on target and candidate with
-  [#717](https://github.com/Flip-Engineering/baton/issues/717),
-  [#727](https://github.com/Flip-Engineering/baton/issues/727) and
-  [#675](https://github.com/Flip-Engineering/baton/issues/675).
 
 - [#733: Use authorized native credentials without interactive access dialogs](https://github.com/Flip-Engineering/baton/issues/733).
   Configure supported native credential stores for unattended Baton dispatch,
@@ -463,27 +397,6 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   owned work finishes. It retains the complete shutdown command result and
   owner-exit observation bound before the shutdown request. Logical sessions, findings and report review
   remain in the database. Real-route qualification remains open.
-
-- [#729: Resume stored native replies when the observer reconnects](https://github.com/Flip-Engineering/baton/issues/729).
-  The target in workflow `38649718256` retains a complete pending native reply
-  while its restored observer cursor equals the complete spool. The observer,
-  native input and selected fixture form a closed wait cycle. The implementation
-  derives pending replies from the recorded attempt during reattachment and
-  retains transport, authority, complete bodies, stops and native identity. The
-  fixture now checks a causal recovery boundary. Original evidence was preserved
-  before the completed controlled stop. Candidate `5d36d95a` failed normal term
-  checking because an earlier helper referenced the later `resume_pending`
-  definition. The correction passes the drain continuation into those helpers;
-  the send, error and reply-selection behavior stays unchanged. Candidate
-  `7b5e7e1a` then reached the retained-output caller and identified its reused
-  affine `attempt` argument. The caller now declares that shared String explicitly.
-  Remote
-  qualification remains open with
-  [#717](https://github.com/Flip-Engineering/baton/issues/717),
-  [#723](https://github.com/Flip-Engineering/baton/issues/723),
-  [#725](https://github.com/Flip-Engineering/baton/issues/725),
-  [#726](https://github.com/Flip-Engineering/baton/issues/726) and
-  [#728](https://github.com/Flip-Engineering/baton/issues/728).
 
 - [#728: Repair native C generation after compiler exits with status 132](https://github.com/Flip-Engineering/baton/issues/728).
   Candidate `3b37ad3f` completes term checking and exits during C generation
@@ -540,27 +453,6 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   exit. Full shutdown output and actual owner-exit observations accompany
   the original recovery and native-process completion assertions. The owner
   lifetime observation is registered before the shutdown request.
-
-- [#726: Read the registered generation in the legacy keeper recovery fixture](https://github.com/Flip-Engineering/baton/issues/726).
-  The legacy attachment marker is complete in the registered attempt generation.
-  The fixture waits on its absent base path. Resolve the recorded generation and
-  preserve the legacy recovery, native identity, custody and terminal assertions.
-  Qualify the corrected contract on target and candidate for
-  [#717](https://github.com/Flip-Engineering/baton/issues/717), retaining the
-  original incomplete run and its full evidence. Coordinate with
-  [#725](https://github.com/Flip-Engineering/baton/issues/725) and
-  [#705](https://github.com/Flip-Engineering/baton/issues/705).
-
-- [#725: Settle recovered direct turns after an earlier immutable failure report](https://github.com/Flip-Engineering/baton/issues/725).
-  A completed profile retry records a successful native terminal, then recovery
-  exits with a report identity conflict and leaves the execution running. Preserve
-  the original failure report and full native output while settling the recovered
-  turn. The fixture must observe the actual recovery refusal and produce a complete
-  verdict. Qualify the repair in the [#717](https://github.com/Flip-Engineering/baton/issues/717)
-  release, with [#705](https://github.com/Flip-Engineering/baton/issues/705),
-  [#712](https://github.com/Flip-Engineering/baton/issues/712),
-  [#713](https://github.com/Flip-Engineering/baton/issues/713) and
-  [#720](https://github.com/Flip-Engineering/baton/issues/720).
 
 - [#724: Expose deliberate scratchpad operations through native CLI and MCP](https://github.com/Flip-Engineering/baton/issues/724).
   The current native command surface lacks the deliberate scratchpad operation
