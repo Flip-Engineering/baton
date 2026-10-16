@@ -12,7 +12,7 @@ the session's client, model, workspace, and parent agent in a SQLite database.
 ## Capabilities
 
 - **Task coordination:** send tasks, guidance, questions, and reports between
-  agents. Messages retain their complete bodies and recipient acknowledgments.
+  agents. Messages retain their complete bodies and handling status.
 - **Agent teams:** recruit agents into Git worktrees and organize teams with
   explicit membership and communication permissions.
 - **Git integration:** prepare a candidate, run selected checks on the target and
@@ -42,14 +42,14 @@ covers native client configuration.
 
 ## Start a task
 
-Choose a model available through your configured Codex client, then start a task
-from its complete text, standard input or a UTF-8 file. With the published
-release installed, replace `MODEL` and the absolute paths below:
+Choose an installed client (`claude-code`, `codex`, `muse` or `omp`), then select
+a model and effort setting it supports. With the published release installed,
+replace `HARNESS`, `MODEL`, `EFFORT` and the repository path below:
 
 ```sh
 baton dispatch 'Review the assigned source and report the result.' \
   --project /absolute/path/repository \
-  --harness codex --model MODEL --effort high
+  --harness HARNESS --model MODEL --effort EFFORT
 baton --project /absolute/path/repository as operator inbox
 ```
 
@@ -66,12 +66,12 @@ Reports route to the coordinating agent or operator inbox. Use the
 instructions, and manage contributions.
 
 Agents read complete owed input with `baton inbox` and carry out the assigned
-work. Successful native turns record handling of their consumed input;
-`baton acknowledge` records explicit handling. `baton report --text TEXT` sends a
+work. Successful native turns automatically record handling of their complete
+reads. `baton report --text TEXT` sends a
 result to the recorded coordinator. A worker uses `baton completion-request --text
 SUMMARY` to request review of its completed assignment. A coordinator uses `baton
 completion-confirmed --to PLAYER` or `baton guide --to PLAYER --text TEXT` for its
-decision. Baton resolves the current project, actor, request and handling receipt.
+decision. Baton resolves the current project, actor, request and handling state.
 Named arguments and independent batch clauses also cover receiver controls,
 worktrees, knowledge and project settings. The [agent command
 guide](docs/bend2/agent-commands.md) describes context selection, optional selected
@@ -80,7 +80,7 @@ message reads and each action.
 ## Documentation
 
 - [Command guide](bend2/README.md): CLI commands and examples.
-- [Messaging](docs/bend2/messaging.md): delivery, acknowledgments, and retries.
+- [Messaging](docs/bend2/messaging.md): delivery, handling, and retries.
 - [Shared knowledge](docs/bend2/knowledge-context-2026-10-01.md): findings, scopes,
   review, and promotion.
 - [Architecture](docs/bend2/architecture.md): coordinator and subsystem design.
