@@ -87,6 +87,16 @@ name: bend2-native-development
         required: false
         default: ''
         type: string
+      retained_target_compiler_archive:
+        description: 'Pinned target compiler archive on the homelab; omission uses the global compiler archive pair'
+        required: false
+        default: ''
+        type: string
+      retained_target_compiler_archive_sha256:
+        description: 'Exact SHA256 of the target compiler archive; supply both target archive inputs together'
+        required: false
+        default: ''
+        type: string
       retained_ccache:
         description: 'Measured private ccache wrapper on the homelab; leave blank for direct native compilation'
         required: false
@@ -312,6 +322,8 @@ jobs:
         env:
           BATON2_RETAINED_TARGET_MAIN_HANDOFF: ${{ inputs.retained_target_main_handoff }}
           BATON2_RETAINED_TARGET_MAIN_SHA256: ${{ inputs.retained_target_main_handoff_sha256 }}
+          BATON2_RETAINED_TARGET_COMPILER_ARCHIVE: ${{ inputs.retained_target_compiler_archive }}
+          BATON2_RETAINED_TARGET_COMPILER_SHA256: ${{ inputs.retained_target_compiler_archive_sha256 }}
           BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive }}
           BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 }}
           BATON2_RETAINED_CCACHE: ${{ inputs.retained_ccache }}
@@ -331,6 +343,10 @@ jobs:
             test -z "$BATON2_TARGET_BUILD_RUN"
             test "$BATON2_LINUX_RUNNER" = homelab
             mkdir -p "$run/generated"
+            if [[ -n "$BATON2_RETAINED_TARGET_COMPILER_ARCHIVE" || -n "$BATON2_RETAINED_TARGET_COMPILER_SHA256" ]]; then
+              BATON2_RETAINED_COMPILER_ARCHIVE="$BATON2_RETAINED_TARGET_COMPILER_ARCHIVE"
+              BATON2_RETAINED_COMPILER_SHA256="$BATON2_RETAINED_TARGET_COMPILER_SHA256"
+            fi
             python3 .github/scripts/prepare-native-compiler.py --run "$run" \
               --archive "$BATON2_RETAINED_COMPILER_ARCHIVE" \
               --archive-sha256 "$BATON2_RETAINED_COMPILER_SHA256" \
