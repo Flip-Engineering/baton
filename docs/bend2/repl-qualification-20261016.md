@@ -109,6 +109,21 @@ contained the required header and library stub. Explicit SDK selection and
 the packaged compiler's native IO path require a corrected remote check.
 This preflight does not establish normal archive or installed CLI acceptance.
 
+The Darwin dependency preflight found that a resolved Clang path needs an
+explicit SDK path to locate SQLite headers. The staged compiler adapter now
+checks `/usr/bin/xcrun --sdk macosx --show-sdk-path`, retains its process
+diagnostics and supplies `-isysroot` to native builds. The locked upstream
+source files retain their original bytes.
+
+Linux regression run `baton-mandatory-package-v4-20261016T194440Z`, invocation
+`6cc151efbf364ab2b5aed448f9dff5a2`, checked packaging tree
+`9e12b5fb55a413f6931386e47df2549ab63f5927`. It completed naturally at
+19:45:01 UTC with 17 package tests, source staging, the installed prerequisite
+checker and 17 packaged frontend checks passing. Native Unicode IO and
+exit-status checks used the staged compiler after the source directory was
+moved. This run records `coordinator_runtime_qualified: false`; Darwin SDK
+execution remains pending.
+
 ## Remaining acceptance
 
 The candidate C/object/link build must complete on the recorded production
