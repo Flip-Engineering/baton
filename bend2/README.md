@@ -705,15 +705,18 @@ under the output directory. The command starts real model sessions.
 ## Claude Code Conductor channel adapter
 
 A Claude Code Conductor uses an interactive session with a Channels MCP configuration.
-For example, save this as `conductor-mcp.json`, replacing `/repo` with absolute paths:
-
-```json
-{"mcpServers":{"baton-conductor":{"command":"node","args":["/repo/bend2/scripts/mcp-conductor.mjs","/repo/state.db","/repo/.scratch/bend2/baton2","--session","root"]}}}
-```
+Launch the native client through the adapter, replacing `/repo` with absolute paths:
 
 ```sh
-claude --mcp-config conductor-mcp.json --dangerously-load-development-channels server:baton-conductor
+node /repo/bend2/scripts/mcp-conductor.mjs /repo/state.db /repo/.scratch/bend2/baton2 --session root --claude /path/to/claude
 ```
+
+The launcher supplies the MCP configuration and session-scoped Claude lifecycle
+hooks. `PreToolUse` binds complete reads to Claude's native prompt identity;
+`Stop` records successful handling through the coordinator. Failed and interrupted
+prompts retain pending input. Claude Code must provide `prompt_id` in its hook
+payloads and the `StopFailure` event. Version 2.1.287 supplies those fields.
+Arguments after `--claude /path/to/claude --` pass to the native client.
 
 Accept the local development-channel prompt. To recover a Conductor, use the same
 command with `--resume NATIVE_SESSION` and the same database and harness

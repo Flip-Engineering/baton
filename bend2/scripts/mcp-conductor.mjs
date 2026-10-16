@@ -12,7 +12,7 @@
 // delivers them as notifications/claude/channel. Tool calls delegate to the
 // coordinator executable for mutations. No npm dependencies; node stdlib only.
 
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execFileSync, spawnSync, spawn } from 'node:child_process';
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { resolve, dirname } from 'node:path';
@@ -30,9 +30,20 @@ const positional = [];
 let sessionId = 'root';
 let delivery = null;
 let inputWitness = null;
+let nativeEvent = false;
+let claude = null;
+let claudeArgs = [];
 for (let i = 2; i < process.argv.length; i++) {
   const arg = process.argv[i];
-  if (arg === '--session') {
+  if (arg === '--claude') {
+    claude = process.argv[++i];
+    if (!claude) throw new Error('--claude requires the native Claude executable');
+    claudeArgs = process.argv.slice(i + 1);
+    if (claudeArgs[0] === '--') claudeArgs.shift();
+    break;
+  } else if (arg === '--native-event') {
+    nativeEvent = true;
+  } else if (arg === '--session') {
     sessionId = process.argv[++i];
     if (sessionId === undefined) throw new Error('--session requires a session ID');
   } else if (arg === '--deliver') {
@@ -147,9 +158,9 @@ async function connectedInputWitness(encoded) {
       throw new Error('The registered endpoint does not identify this exact connected MCP helper.');
     }
     process.stdout.write(JSON.stringify({ active: true, session: sessionId, native: selected.native,
-      endpoint: selected.endpoint, attempt: `claude-mcp:${context.connection}`,
+      endpoint: selected.endpoint, attempt: `claude-mcp:${context.connection}${context.prompt ? `:${context.prompt}` : ''}`,
       identity: JSON.stringify(['claude-mcp', selected.native, context.connection,
-        bridge.pid, bridge.birth, client.pid, client.birth]) }) + '\n');
+        bridge.pid, bridge.birth, client.pid, client.birth, ...(context.prompt ? [context.prompt] : [])]) }) + '\n');
   } finally { connection.close(); }
 }
 
@@ -159,6 +170,89 @@ if (inputWitness !== null) {
     process.stderr.write(JSON.stringify({ error: 'handling-context', condition: error.message }) + '\n');
     process.exitCode = 2;
   }
+  process.exit(process.exitCode ?? 0);
+}
+
+function quoteShell(value) {
+  return "'" + value.replaceAll("'", "'\\''") + "'";
+}
+
+function claudeSettings() {
+  const command = 'exec ' + [process.execPath, fileURLToPath(import.meta.url), dbPath,
+    coordinatorExe, '--session', sessionId, '--native-event'].map(quoteShell).join(' ');
+  const hook = { type: 'command', command };
+  return { hooks: {
+    PreToolUse: [{ matcher: 'mcp__baton-conductor__.*', hooks: [hook] }],
+    Stop: [{ hooks: [hook] }],
+    StopFailure: [{ hooks: [hook] }],
+  } };
+}
+
+function registeredSession() {
+  const output = execFileSync(coordinatorExe, [dbPath, 'session', sessionId],
+    { encoding: 'utf8', maxBuffer: Infinity });
+  return output.trim() ? JSON.parse(output) : null;
+}
+
+async function launchClaude() {
+  const selected = existsSync(dbPath) ? registeredSession() : null;
+  const args = [...claudeArgs];
+  if (nativeSelector({ argv: [claude, ...args] }) === null) {
+    args.unshift(selected?.native ? '--resume' : '--session-id', selected?.native || randomUUID());
+  }
+  const config = { mcpServers: { 'baton-conductor': { command: process.execPath,
+    args: [fileURLToPath(import.meta.url), dbPath, coordinatorExe, '--session', sessionId] } } };
+  args.unshift('--settings', JSON.stringify(claudeSettings()), '--mcp-config', JSON.stringify(config),
+    '--dangerously-load-development-channels', 'server:baton-conductor');
+  const child = spawn(claude, args, { stdio: 'inherit' });
+  const forward = signal => child.kill(signal);
+  const interrupt = () => forward('SIGINT');
+  const terminate = () => forward('SIGTERM');
+  process.on('SIGINT', interrupt);
+  process.on('SIGTERM', terminate);
+  const result = await new Promise((done, fail) => {
+    child.once('error', fail);
+    child.once('exit', (code, signal) => done({ code, signal }));
+  });
+  process.removeListener('SIGINT', interrupt);
+  process.removeListener('SIGTERM', terminate);
+  if (result.signal) process.kill(process.pid, result.signal);
+  else process.exitCode = result.code;
+}
+
+async function forwardNativeEvent() {
+  let input = '';
+  for await (const chunk of process.stdin) input += chunk;
+  const event = JSON.parse(input);
+  if (!['PreToolUse', 'Stop', 'StopFailure'].includes(event.hook_event_name)
+      || typeof event.prompt_id !== 'string' || !event.prompt_id
+      || typeof event.session_id !== 'string' || !event.session_id) {
+    throw new Error('The native Claude lifecycle event has no matching prompt and session identity.');
+  }
+  const selected = registeredSession();
+  const endpoint = JSON.parse(selected?.endpoint || 'null');
+  if (selected?.native !== event.session_id || !Array.isArray(endpoint)
+      || endpoint[0] !== process.execPath || endpoint[1] !== fileURLToPath(import.meta.url)
+      || endpoint[2] !== realpathSync(dbPath) || endpoint[3] !== realpathSync(coordinatorExe)
+      || endpoint[4] !== '--session' || endpoint[5] !== sessionId || endpoint[6] !== '--deliver'
+      || typeof endpoint[7] !== 'string') {
+    throw new Error('The native lifecycle event does not belong to the registered Claude MCP endpoint.');
+  }
+  process.chdir(dirname(realpathSync(dbPath)));
+  await new Promise((done, fail) => {
+    const socket = createConnection(endpoint[7]);
+    let answer = '';
+    socket.on('connect', () => socket.end(JSON.stringify({ nativeEvent: event,
+      caller: processIdentity(processFacts(process.pid)) }) + '\n'));
+    socket.on('data', chunk => { answer += chunk; });
+    socket.on('error', fail);
+    socket.on('end', () => answer === 'ok\n' ? done() : fail(new Error(answer)));
+  });
+}
+
+if (claude !== null || nativeEvent) {
+  try { await (claude !== null ? launchClaude() : forwardNativeEvent()); }
+  catch (error) { process.stderr.write(error.stack + '\n'); process.exitCode = 1; }
   process.exit(process.exitCode ?? 0);
 }
 
@@ -276,7 +370,7 @@ function coordInputRaw(input, ...args) {
       encoding: 'utf8', input, maxBuffer: Infinity,
       env: { ...process.env, BATON_SESSION: sessionId, BATON_DATABASE: dbPath,
         BATON_MCP_INPUT: channelReady && connectionCustody
-          ? JSON.stringify({ ...connectionCustody, ready: true }) : '' },
+          ? JSON.stringify({ ...connectionCustody, ...(nativePrompt ? { prompt: nativePrompt } : {}), ready: true }) : '' },
     });
   } catch (error) {
     const status = Number.isInteger(error.status) ? `\nexit code: ${error.status}` : '';
@@ -772,6 +866,7 @@ const AVAILABLE_TOOLS = TOOLS.filter((tool) => !unavailableTools.has(tool.name))
 let deliveryReady = null;
 let channelReady = false;
 let connectionCustody = null;
+let nativePrompt = null;
 let notifiedSeqs = new Set();
 let deliveryServer = null;
 let db = null;
@@ -822,6 +917,36 @@ function notifyPending(messageId = null) {
   });
 }
 
+function observeNativeEvent(event, caller) {
+  if (!connectionCustody || !channelReady || event.session_id !== connectionCustody.native
+      || typeof event.prompt_id !== 'string' || !event.prompt_id
+      || !['PreToolUse', 'Stop', 'StopFailure'].includes(event.hook_event_name)) {
+    throw new Error('The native lifecycle event does not match the live Claude connection.');
+  }
+  let actual = processFacts(caller.pid);
+  if (!sameProcess(actual, caller)) throw new Error('The native hook process birth changed.');
+  while (actual.pid !== connectionCustody.client.pid && actual.parent > 1) {
+    actual = processFacts(actual.parent);
+  }
+  if (!sameProcess(actual, connectionCustody.client)) {
+    throw new Error('The native hook belongs to a different Claude process.');
+  }
+  if (event.hook_event_name === 'PreToolUse') {
+    nativePrompt = event.prompt_id;
+    return;
+  }
+  process.stderr.write(JSON.stringify({ type: 'claudeNativeTurn', event }) + '\n');
+  const previous = nativePrompt;
+  nativePrompt = event.prompt_id;
+  try {
+    if (event.hook_event_name === 'Stop') {
+      coord('as', sessionId, 'acknowledge');
+    }
+  } finally {
+    nativePrompt = previous === event.prompt_id ? null : previous;
+  }
+}
+
 async function startDelivery() {
   const database = realpathSync(dbPath);
   const coordinator = realpathSync(coordinatorExe);
@@ -834,7 +959,10 @@ async function startDelivery() {
     client.on('data', (chunk) => { input += chunk; });
     client.on('end', () => {
       try {
-        notifyPending(JSON.parse(input));
+        const request = JSON.parse(input);
+        if (request && typeof request === 'object' && request.nativeEvent) {
+          observeNativeEvent(request.nativeEvent, request.caller);
+        } else notifyPending(request);
         client.end('ok\n');
       } catch (error) {
         client.end(error.message + '\n');
