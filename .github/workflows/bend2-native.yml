@@ -67,6 +67,16 @@ name: bend2-native-development
         required: false
         default: ''
         type: string
+      retained_target_main_handoff:
+        description: 'Completed Main handoff for building the exact target; leave target_build_run blank'
+        required: false
+        default: ''
+        type: string
+      retained_target_main_handoff_sha256:
+        description: 'Exact SHA256 of the completed target Main handoff'
+        required: false
+        default: ''
+        type: string
       retained_compiler_archive:
         description: 'Pinned compiler archive on the homelab; $RUNNER_TEMP uses the selected runner namespace'
         required: false
@@ -299,6 +309,13 @@ jobs:
           path: ${{ runner.temp }}/baton2-target-build-${{ github.run_id }}-${{ github.run_attempt }}
       - name: Build exact target and measure affected candidate tests
         shell: bash
+        env:
+          BATON2_RETAINED_TARGET_MAIN_HANDOFF: ${{ inputs.retained_target_main_handoff }}
+          BATON2_RETAINED_TARGET_MAIN_SHA256: ${{ inputs.retained_target_main_handoff_sha256 }}
+          BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive }}
+          BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 }}
+          BATON2_RETAINED_CCACHE: ${{ inputs.retained_ccache }}
+          BATON2_LINUX_RUNNER: ${{ inputs.linux_runner }}
         run: |
           set -euo pipefail
           run="$RUNNER_TEMP/baton2-target-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
@@ -310,12 +327,32 @@ jobs:
           git -C "$run/source" checkout --detach "$BATON2_TARGET_COMMIT" >> "$run/evidence/clone.stdout" 2>> "$run/evidence/clone.stderr"
           test "$(git -C "$run/source" rev-parse HEAD)" = "$BATON2_TARGET_COMMIT"
           archive="$run/bend-2.0.25-linux-x64.tar.gz"
-          curl --proto '=https' --tlsv1.2 -fsSL \
-            https://github.com/bendlang/bend/releases/download/v2.0.25/bend-2.0.25-linux-x64.tar.gz \
-            -o "$archive" > "$run/evidence/compiler-download.stdout" 2> "$run/evidence/compiler-download.stderr"
-          printf '91c0e2640f8d2e3e73fd3dd62ed4d178ce9a6f7ce8f8980b4dc4abf7a6f9ccd4  %s\n' "$archive" | \
-            sha256sum -c - > "$run/evidence/compiler-archive-check.stdout"
-          tar -xzf "$archive" -C "$run/toolchain-home" --strip-components=1
+          if [[ -n "$BATON2_RETAINED_TARGET_MAIN_HANDOFF" ]]; then
+            test -z "$BATON2_TARGET_BUILD_RUN"
+            test "$BATON2_LINUX_RUNNER" = homelab
+            mkdir -p "$run/generated"
+            python3 .github/scripts/prepare-native-compiler.py --run "$run" \
+              --archive "$BATON2_RETAINED_COMPILER_ARCHIVE" \
+              --archive-sha256 "$BATON2_RETAINED_COMPILER_SHA256" \
+              --ccache "$BATON2_RETAINED_CCACHE" --github-env "$run/evidence/target-build.env" \
+              --runner "$BATON2_LINUX_RUNNER" \
+              > "$run/evidence/compiler-selection.stdout" 2> "$run/evidence/compiler-selection.stderr"
+            python3 .github/scripts/reuse-native-main.py prepare \
+              --source "$run/source" --run "$run" \
+              --handoff "$BATON2_RETAINED_TARGET_MAIN_HANDOFF" \
+              --handoff-sha256 "$BATON2_RETAINED_TARGET_MAIN_SHA256" \
+              --compiler "$run/toolchain-home/bin/bend" --compiler-archive "$archive" \
+              --github-env "$run/evidence/target-build.env" \
+              > "$run/evidence/main-c-reuse.stdout" 2> "$run/evidence/main-c-reuse.stderr"
+          else
+            test -z "$BATON2_RETAINED_TARGET_MAIN_SHA256"
+            curl --proto '=https' --tlsv1.2 -fsSL \
+              https://github.com/bendlang/bend/releases/download/v2.0.25/bend-2.0.25-linux-x64.tar.gz \
+              -o "$archive" > "$run/evidence/compiler-download.stdout" 2> "$run/evidence/compiler-download.stderr"
+            printf '91c0e2640f8d2e3e73fd3dd62ed4d178ce9a6f7ce8f8980b4dc4abf7a6f9ccd4  %s\n' "$archive" | \
+              sha256sum -c - > "$run/evidence/compiler-archive-check.stdout"
+            tar -xzf "$archive" -C "$run/toolchain-home" --strip-components=1
+          fi
           export BEND="$run/toolchain-home/bin/bend"
           sha256sum "$BEND" > "$run/evidence/compiler.sha256"
           export BATON2_TARGET_RUN="$run"
@@ -336,6 +373,10 @@ jobs:
           selected = runpy.run_path(str(recorder))['SELECTED']
           subprocess.run([sys.executable, str(recorder), 'shim', str(run / 'python-shim'), str(evidence / 'selected')], check=True)
           check_environment = dict(os.environ, PATH=str(run / 'python-shim') + os.pathsep + os.environ['PATH'])
+          if os.environ.get('BATON2_RETAINED_TARGET_MAIN_HANDOFF'):
+              for line in (evidence / 'target-build.env').read_text().splitlines():
+                  key, value = line.split('=', 1)
+                  check_environment[key] = value
           records = []
           def record(label, argv):
               started = time.time()
@@ -354,6 +395,16 @@ jobs:
               status = record('target-build', ['sh', 'bend2/scripts/build-native.sh'])
           if status:
               raise SystemExit(status)
+          if os.environ.get('BATON2_RETAINED_TARGET_MAIN_HANDOFF'):
+              generated = run / 'generated'
+              shutil.copyfile(target / '.scratch/bend2/baton2.c', generated / 'baton2.c')
+              status = record('target-main-c-reuse-verification', [sys.executable,
+                  str(candidate / '.github/scripts/reuse-native-main.py'), 'verify-transfer',
+                  '--source', str(target), '--generated', str(generated)])
+              if status:
+                  raise SystemExit(status)
+              shutil.copyfile(target / '.scratch/bend2/baton2', generated / 'baton2-linux-x64')
+              shutil.copytree(generated, evidence / 'target-main-c-generated')
           contracts = {}
           for name in selected:
               relative = 'bend2/test/' + name
