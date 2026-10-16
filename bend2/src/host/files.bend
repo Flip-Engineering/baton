@@ -67,3 +67,18 @@ def Files.mode(path: String) -> IO(Result<&1,&1,U32 & String,String>):
 # distinguish an absent tool from one it may not run.
 def Files.executable(path: String) -> IO(Result<&1,&1,U32 & String,String>):
   import "./files.c"
+
+# Copies one regular file's bytes and permission bits. The source must
+# exist; a destination directory that cannot be opened for writing keeps
+# its cause.
+def Files.copy(from: String, to: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  import "./files.c"
+
+# The first PATH entry naming an executable regular file of this name,
+# answered as the joined directory path with no canonicalization. An
+# empty answer names the variable: no PATH entry carries the name at
+# all. A name that is present but not executable by this user is a
+# refusal EACCES, so an absent tool stays distinguishable from a broken
+# installation.
+def Files.which(name: String) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./files.c"

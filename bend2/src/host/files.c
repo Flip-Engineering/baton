@@ -558,3 +558,120 @@ static Term baton_executable_run(Env e,Term *f,IoWork *w) {
 }
 static void __attribute__((constructor)) baton_executable_use(void) {io_eff(CID_FILES_EXECUTABLE,baton_executable_run,0);}
 #endif
+
+typedef struct { char *from,*to; int error; } BatonCopy;
+
+static void baton_copy_call(IoWork *w) {
+  BatonCopy *call=(BatonCopy *)w->data;
+  int in=open(call->from,O_RDONLY|O_CLOEXEC);
+  if(in<0) {call->error=errno;return;}
+  struct stat info;
+  if(fstat(in,&info)) {call->error=errno;close(in);return;}
+  int out=open(call->to,O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC,0600);
+  if(out<0) {call->error=errno;close(in);return;}
+  char buffer[65536];
+  for(;;) {
+    ssize_t got=read(in,buffer,sizeof(buffer));
+    if(got<0) {if(errno==EINTR)continue;call->error=errno;break;}
+    if(!got) break;
+    size_t offset=0;
+    while((size_t)offset<(size_t)got) {
+      ssize_t put=write(out,buffer+offset,(size_t)got-offset);
+      if(put<0 && errno==EINTR) continue;
+      if(put<=0) {call->error=put<0?errno:EIO;break;}
+      offset+=(size_t)put;
+    }
+    if(call->error) break;
+  }
+  if(!call->error && fchmod(out,info.st_mode & 07777)) call->error=errno;
+  if(close(out) && !call->error) call->error=errno;
+  close(in);
+}
+
+static Term baton_copy_pack(Env e,IoWork *w) {
+  BatonCopy *call=(BatonCopy *)w->data;
+  Term result=call->error ? io_fail(e,call->error,NULL)
+    : io_done(e,term_pak(CID_UNIT,0));
+  free(call->from);free(call->to);free(call);w->data=NULL;
+  return result;
+}
+
+#ifdef CID_FILES_COPY
+static Term baton_copy_run(Env e,Term *f,IoWork *w) {
+  BatonCopy *call=calloc(1,sizeof(*call));
+  if(!call) return io_fail(e,ENOMEM,NULL);
+  u64 length=0;
+  call->from=io_cstr(e,f[0],&length);
+  if(!call->from || strlen(call->from)!=length) {
+    free(call->from);free(call);
+    return io_fail(e,EINVAL,"path contains NUL");
+  }
+  call->to=io_cstr(e,f[1],&length);
+  if(!call->to || strlen(call->to)!=length) {
+    free(call->from);free(call->to);free(call);
+    return io_fail(e,EINVAL,"path contains NUL");
+  }
+  w->data=(char *)call;
+  return io_work(w,baton_copy_call,baton_copy_pack);
+}
+static void __attribute__((constructor)) baton_copy_use(void) {io_eff(CID_FILES_COPY,baton_copy_run,0);}
+#endif
+
+typedef struct { char *name,*found; int error; } BatonWhich;
+
+static void baton_which_call(IoWork *w) {
+  BatonWhich *call=(BatonWhich *)w->data;
+  const char *search=getenv("PATH");
+  const char *path=search&&*search?search:"/usr/bin:/bin";
+  char *directories=strdup(path);
+  if(!directories) {call->error=ENOMEM;return;}
+  size_t name_length=strlen(call->name);
+  int present=0;
+  for(const char *cursor=directories;;) {
+    const char *colon=strchr(cursor,':');
+    size_t length=colon?(size_t)(colon-cursor):strlen(cursor);
+    size_t directory_length=length?length:1;
+    char *candidate=malloc(directory_length+1+name_length+1);
+    if(!candidate) {call->error=ENOMEM;break;}
+    if(length) memcpy(candidate,cursor,length);
+    else candidate[0]='.';
+    candidate[directory_length]='/';
+    memcpy(candidate+directory_length+1,call->name,name_length+1);
+    struct stat info;
+    if(!stat(candidate,&info) && S_ISREG(info.st_mode)) {
+      if(!access(candidate,X_OK)) {call->found=candidate;break;}
+      present=1;
+    }
+    free(candidate);
+    if(!colon) break;
+    cursor=colon+1;
+  }
+  free(directories);
+  if(!call->error && !call->found && present) call->error=EACCES;
+}
+
+static Term baton_which_pack(Env e,IoWork *w) {
+  BatonWhich *call=(BatonWhich *)w->data;
+  Term result;
+  if(call->error) result=io_fail(e,call->error,NULL);
+  else if(call->found) result=io_done(e,io_str(e,call->found,strlen(call->found)));
+  else result=io_done(e,io_str(e,"",0));
+  free(call->name);free(call->found);free(call);w->data=NULL;
+  return result;
+}
+
+#ifdef CID_FILES_WHICH
+static Term baton_which_run(Env e,Term *f,IoWork *w) {
+  BatonWhich *call=calloc(1,sizeof(*call));
+  if(!call) return io_fail(e,ENOMEM,NULL);
+  u64 length=0;
+  call->name=io_cstr(e,f[0],&length);
+  if(!call->name || strlen(call->name)!=length) {
+    free(call->name);free(call);
+    return io_fail(e,EINVAL,"name contains NUL");
+  }
+  w->data=(char *)call;
+  return io_work(w,baton_which_call,baton_which_pack);
+}
+static void __attribute__((constructor)) baton_which_use(void) {io_eff(CID_FILES_WHICH,baton_which_run,0);}
+#endif
