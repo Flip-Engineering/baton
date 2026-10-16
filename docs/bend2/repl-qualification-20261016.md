@@ -82,8 +82,29 @@ Full coordinator run `baton-combined-check-v13-20261016T193342Z`, invocation
 naturally with exit 0 at 19:37:26 UTC after 214.251 seconds, with maximum
 RSS 28,083,960 KiB and empty stderr. The complete retained evidence archive
 has SHA256 `0cc118de796aa59f570081aa442f789a0ab614b758b53a236eea52356bb1c233`.
-One native candidate build started at 19:40:05 UTC for that exact source tree;
-its C generation, object build and link results remain pending.
+Native candidate run `baton-combined-main-v13-20261016T193951Z`, invocation
+`37ab2cfc3c774e478b9a77e4dfccc572`, started at 19:40:05 UTC for that exact
+source tree. Its original C-generation wait completed at 20:31:17 UTC with
+return code -5 (SIGTRAP), raw wait status 133, elapsed time 3071.618 seconds
+and maximum RSS 139,774,760 KiB. The kernel recorded an `int3` trap in the
+pinned Bun executable for PID 110881 at 20:30:48 UTC. Observed cgroup OOM
+counters and the kernel `oom_kill` counter were zero. The cause remains
+unclassified. C output was absent; object generation, linking and installation
+did not start.
+
+The original C-generation result SHA256 is
+`2f5d9b5d3fbb0c5c8f7ba6d3f04c961fbb5462ba62e9b80caa80053d0b87ccef`.
+The 24,710,137-byte stderr has SHA256
+`cd260293c1f510bef4457c82b63f2a0dc62388f96e64c8be623a1ecd5a831b22`;
+it contains 52,620 compiler diagnostic records and the initial check summary.
+Its last record starts `agent-command.route_prepared`. The original stderr
+and source archive remain at the retained run. A local metadata archive with
+38 verified files has SHA256
+`bc92877863ced8aac9d73a674da42efda056ba840d5f6cbf46e5a384d993b209`.
+Apport recorded the signal, then failed to resolve the namespace-only Bun path.
+The service core limit was zero and no Bun core report was found. Read-only
+ELF inspection verified Bun build ID `a9a0d18db4f98a86ad4778800c5fa46943f81b2e`
+and the trap instruction; available symbols did not identify its caller.
 
 The Darwin dependency preflight found that a resolved Clang path needs an
 explicit SDK path to locate SQLite headers. The staged compiler adapter now
