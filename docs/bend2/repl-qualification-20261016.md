@@ -107,6 +107,15 @@ contains 24,710,137 bytes with SHA256
 Object compilation, native linking, the candidate handoff, installation and
 candidate runtime acceptance remain pending.
 
+The original result SHA256 is
+`2f5d9b5d3fbb0c5c8f7ba6d3f04c961fbb5462ba62e9b80caa80053d0b87ccef`.
+The kernel journal records an `int3` trap in `bun[110881]` at 20:30:48 UTC.
+Apport could not resolve the executable in its namespace and recorded a zero
+core limit; no saved Bun core was found. The 38-file failure metadata archive
+contains 314,564 bytes with SHA256
+`bc92877863ced8aac9d73a674da42efda056ba840d5f6cbf46e5a384d993b209`.
+The complete diagnostic stream and source archive remain retained remotely.
+
 The final test overlay has tree
 `dec7ea352fa1d7a77a5637229a209237d0c98ec9`. It changes
 `receive.py`, `root-wake.py` and `agent-input.py` from the checked tree. The tests report
