@@ -73,4 +73,3 @@ int sqlite3_busy_handler(sqlite3 *database, BusyCallback callback, void *argumen
   return observe_busy_handler(database, callback, argument);
 }
 #endif
-
