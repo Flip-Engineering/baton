@@ -514,6 +514,135 @@ class Knowledge(unittest.TestCase):
                                success=False)
         self.assertIn('No knowledge row was written', fabricated.stderr)
 
+    def test_missing_message_citation_resolves_when_the_message_is_retained(self):
+        message = "evidence λ ' pending"
+        reference = 'message:' + message
+        self.call('record-typed', 'pending-message', 'grand', 'observation',
+                  'Pending citation', reference, 'Before the report is stored')
+        missing = {'reference': reference, 'kind': 'message', 'resolution': 'missing'}
+        complete = self.call('knowledge', 'root', '--id', 'pending-message')[0]
+        index = self.call('knowledge', 'root', '--index')[0]
+        self.assertEqual(complete['evidenceReference'], missing)
+        self.assertIsNone(complete['evidenceMessage'])
+        self.assertEqual(index['evidenceReference'], missing)
+        graph = self.call('knowledge-traverse', 'root', 'all', '',
+                          'finding:pending-message', 'out', '', 'neighbors')
+        citation = next(edge for edge in graph['edges'] if edge['id'] == 'citation:pending-message')
+        self.assertEqual((citation['target'], citation['targetResolution']),
+                         (reference, 'missing'))
+        target = next(row for row in graph['references'] if row['reference'] == reference)
+        self.assertEqual(target['resolution'], 'missing')
+        self.assertEqual(target['deliveryRead'], ['delivery', message])
+        self.call('report', message, 'worker', 'Retained after the finding')
+        complete = self.call('knowledge', 'root', '--id', 'pending-message')[0]
+        self.assertEqual(complete['evidenceReference'], {**missing, 'resolution': 'retained'})
+        self.assertEqual(complete['evidenceMessage']['body'], 'Retained after the finding')
+        self.assertEqual(complete['evidence'], reference)
+        index = self.call('knowledge', 'root', '--index')[0]
+        self.assertEqual(index['evidenceReference'], complete['evidenceReference'])
+        graph = self.call('knowledge-traverse', 'root', 'all', '',
+                          'finding:pending-message', 'out', '', 'neighbors')
+        self.assertEqual(graph['edges'][0]['targetResolution'], 'retained')
+        self.assertEqual(graph['references'][0]['resolution'], 'retained')
+
+    def test_finding_citation_resolution_uses_the_retained_row_outside_the_scope(self):
+        self.call('record', 'citing', 'grand', 'Cites another finding',
+                  'finding:source', 'Before the source is stored')
+        self.call('promote', 'share-citing', 'root', 'grand', 'root', 'citing')
+        before = self.call('knowledge-search', 'root', 'universal', '', 'another finding')
+        target = next(row for row in before['references'] if row['reference'] == 'finding:source')
+        self.assertEqual(target['resolution'], 'missing')
+        self.call('record-typed', 'source', 'grand', 'measurement',
+                  'Retained source', 'run:source', 'One run')
+        after = self.call('knowledge-search', 'root', 'universal', '', 'another finding')
+        self.assertEqual(self.ids(after['nodes']), ['citing'])
+        target = next(row for row in after['references'] if row['reference'] == 'finding:source')
+        self.assertEqual((target['kind'], target['resolution']), ('measurement', 'retained'))
+        self.assertEqual(self.call(*target['detailRead'])[0]['id'], 'source')
+        self.assertEqual(after['nodes'][0]['evidenceReference'], {
+            'reference': 'finding:source', 'kind': 'measurement', 'resolution': 'retained'})
+
+    def test_legacy_citations_resolve_without_migrating_the_knowledge_table(self):
+        self.call('report', 'legacy-message', 'worker', 'Retained message body')
+        with sqlite3.connect(self.db) as db:
+            db.execute('DROP TABLE knowledge')
+            db.execute('DROP TABLE knowledge_relations')
+            db.execute('CREATE TABLE knowledge (id TEXT UNIQUE NOT NULL,author TEXT NOT NULL,'
+                       'claim TEXT NOT NULL,evidence TEXT NOT NULL,limits TEXT NOT NULL)')
+            db.executemany('INSERT INTO knowledge VALUES (?, ?, ?, ?, ?)', [
+                ('message-citation', 'root', 'Message citation', 'message:legacy-message', ''),
+                ('finding-citation', 'root', 'Finding citation', 'finding:message-citation', ''),
+                ('missing-citation', 'root', 'Missing citation', 'finding:absent', '')])
+        expected = {
+            'message-citation': {'reference': 'message:legacy-message', 'kind': 'message',
+                                 'resolution': 'retained'},
+            'finding-citation': {'reference': 'finding:message-citation', 'kind': 'finding',
+                                 'resolution': 'retained'},
+            'missing-citation': {'reference': 'finding:absent', 'kind': 'finding',
+                                 'resolution': 'missing'}}
+        complete = {row['id']: row for row in self.read('root')}
+        index = {row['id']: row for row in self.call('knowledge', 'root', '--index')}
+        for identity, reference in expected.items():
+            self.assertEqual(complete[identity]['evidenceReference'], reference)
+            self.assertEqual(index[identity]['evidenceReference'], reference)
+        graph = self.call('knowledge-search', 'root', 'all', '', 'citation')
+        self.assertEqual({edge['id']: edge['targetResolution'] for edge in graph['edges']},
+                         {'citation:' + identity: reference['resolution']
+                          for identity, reference in expected.items()})
+        with sqlite3.connect(self.db) as db:
+            self.assertNotIn('kind', {row[1] for row in db.execute('PRAGMA table_info(knowledge)')})
+            self.assertIsNone(db.execute(
+                "SELECT name FROM sqlite_master WHERE name='knowledge_relations'").fetchone())
+
+    def test_external_citation_prefixes_and_opaque_evidence_have_explicit_metadata(self):
+        external = ['file:source λ', 'http://example.invalid/source',
+                    'https://example.invalid/source', 'external:archive']
+        opaque = ['run:probe', 'git:' + self.base, 'the run said so', 'Message:absent', '']
+        for number, reference in enumerate(external + opaque):
+            with self.subTest(reference=reference):
+                identity = 'citation-' + str(number)
+                if reference in external:
+                    self.call('record-typed', reference, 'grand', 'measurement',
+                              'A finding with the same literal ID', 'run:collision', '')
+                self.call('record', identity, 'grand', identity, reference, 'Recorded text')
+                complete = self.call('knowledge', 'root', '--id', identity)[0]
+                index = next(row for row in self.call('knowledge', 'root', '--index')
+                             if row['id'] == identity)
+                graph = self.call('knowledge-traverse', 'root', 'all', '',
+                                  'finding:' + identity, 'out', '', 'neighbors')
+                if reference in external:
+                    expected = {'reference': reference, 'kind': 'external',
+                                'resolution': 'external'}
+                    self.assertEqual(complete['evidenceReference'], expected)
+                    self.assertEqual(index['evidenceReference'], expected)
+                    self.assertEqual(len(graph['edges']), 1)
+                    self.assertEqual(graph['edges'][0]['targetKind'], 'external')
+                    self.assertEqual(graph['edges'][0]['targetResolution'], 'external')
+                    target = next(row for row in graph['references'] if row['reference'] == reference)
+                    self.assertEqual((target['kind'], target['resolution']), ('external', 'external'))
+                else:
+                    self.assertIsNone(complete['evidenceReference'])
+                    self.assertIsNone(index['evidenceReference'])
+                    self.assertEqual(graph['edges'], [])
+                    self.assertEqual(graph['references'], [])
+                node = next(row for row in graph['nodes'] if row['id'] == identity)
+                self.assertEqual(node['evidenceReference'], complete['evidenceReference'])
+                search = self.call('knowledge-search', 'root', 'all', '', identity)
+                match = next(row for row in search['matches'] if row['id'] == identity)
+                self.assertEqual(match['evidenceReference'], complete['evidenceReference'])
+                self.assertEqual(complete['evidence'], reference)
+
+    def test_opaque_evidence_can_be_connected_by_an_authored_relation(self):
+        self.call('record', 'run-observation', 'grand', 'Observed a run', 'run:probe', '')
+        self.call('relate', 'run-link', 'grand', 'finding:run-observation', 'DerivedFrom',
+                  'run:probe')
+        graph = self.call('knowledge-traverse', 'root', 'all', '',
+                          'finding:run-observation', 'out', '', 'neighbors')
+        self.assertEqual([row['id'] for row in graph['edges']], ['run-link'])
+        self.assertEqual(graph['edges'][0]['provenance'], 'authored')
+        target = next(row for row in graph['references'] if row['reference'] == 'run:probe')
+        self.assertEqual((target['kind'], target['resolution']), ('external', 'external'))
+
     def test_findings_accept_source_references_and_include_message_content(self):
         shared = self.evidence('shared-report', 'sibling')
         references = ['the run said so', 'git:' + self.base,
