@@ -268,7 +268,7 @@ def completion_confirmed(+db: String, +session: String, +recipient: String, +req
 
 def execute(+db: String, +session: String, action: A.Action) -> IO(Unit):
   match action:
-    case A.Help{action}: IO.write(A.help(action))
+    case A.Help{+action}: IO.write(Bool.pick(String,String.eq(action,"branch"),Branching.help(),A.help(action)))
     case A.Invalid{cause}: IO.die(Unit,2,cause ++ "\n" ++ A.help(""))
     case A.Inbox{}: do IO<Unit>:
       saved : String <- IO.try(String,Store.read(db,C.Inbox{session}))
