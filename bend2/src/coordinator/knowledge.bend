@@ -261,7 +261,7 @@ def graph_read_sql(+reader: String, +scope: String, +subject: String, +query: St
   +edges = String.eq(present,"1\n")
   Bool.pick(String,search,search_sql(reader,scope,subject,query,types,groups,edges),traverse_sql(reader,scope,subject,query,direction,relation,recursive,types,groups,edges))
 
-def graph_value(+db: String, +reader: String, +scope: String, +subject: String, +query: String, search: Bool, +direction: String, relation: String, recursive: Bool) -> IO(String):
+def graph_value(+db: String, +reader: String, +scope: String, +subject: String, +query: String, +search: Bool, +direction: String, relation: String, recursive: Bool) -> IO(String):
   do IO<String>:
     scope_checked : Unit <- validate_read(scope_error(scope,subject))
     direction_checked : Unit <- validate_read(Bool.pick(String,search,"",direction_error(direction)))
