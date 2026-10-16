@@ -4,6 +4,17 @@ The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3
 retain findings, ownership and acceptance requirements. This page links current
 Baton follow-up work for contributors. Every open issue has a link on this page.
 
+- [#773: Use concise contextual agent actions and automatic handling receipts](https://github.com/Flip-Engineering/baton/issues/773).
+  Add `send PLAYER "text"`, `finish "summary"` and `confirm PLAYER` to the
+  contextual command surface. Shorten generated notices and task instructions;
+  Baton resolves project, session, routing and action identities. Successful
+  native settlement records handling of complete owned reads. Preserve unread
+  input, failed turns and existing explicit compatibility commands. Coordinate
+  with [#723](https://github.com/Flip-Engineering/baton/issues/723),
+  [#761](https://github.com/Flip-Engineering/baton/issues/761),
+  [#716](https://github.com/Flip-Engineering/baton/issues/716) and
+  [#598](https://github.com/Flip-Engineering/baton/issues/598).
+
 - [#771: Reuse completed Main evidence for the current qualification target](https://github.com/Flip-Engineering/baton/issues/771).
   The released candidate's target artifact embeds the earlier `ff5298d3` baseline.
   Current `main` is `b5b4c61a`; its production inputs match the released 2.0 source.

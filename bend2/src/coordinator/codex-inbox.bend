@@ -3,6 +3,7 @@ import ../coordinator/commands.bend as C
 import ./store.bend as Store
 import ./wake.bend as Wake
 import ./agent-input.bend as Input
+import ./agent-guidance.bend as Guidance
 import ./codex-inbox-store.bend as Inbox
 import ./codex-inbox-proxy.bend as Proxy
 import ../host/codex-proxy.bend as Native
@@ -131,8 +132,7 @@ def refreshed_pointer(fields: List<String>, +notice: String, +suffix: String) ->
   match fields:
     case token <> rest: do IO<String & String>:
       +row : Inbox.Snapshot <- IO.try(Inbox.Snapshot,Inbox.row_fields(rest))
-      +updated : String <- Proxy.json("SELECT json_remove(json_set(" ++ C.q(notice) ++ ",'$.pendingCount',CAST(" ++ C.q(Inbox.pending(row)) ++ " AS INTEGER)),'$.claimToken');")
-      IO.pure(String & String,(token,"Baton input is pending.\n" ++ updated ++ suffix))
+      IO.pure(String & String,(token,Guidance.pending() ++ suffix))
     case Nil{}: IO.pure(String & String,("",""))
 
 def refreshed_pointer_present(+current: String, +notice: String, +suffix: String, +empty: Bool) -> IO(String & String):
