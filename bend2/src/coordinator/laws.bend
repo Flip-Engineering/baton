@@ -14,6 +14,8 @@ import ./naming-laws.bend as NamingLaws
 import ./delivery.bend as Delivery
 import ./turn.bend as Turn
 import ./subscription-fallback.bend as Subs
+import ./agent-input.bend as AgentInput
+import ./message-status.bend as MessageStatus
 import ../coordinator/commands.bend as C
 import ./receive.bend as Receive
 import ./guidance.bend as Guidance
@@ -56,7 +58,7 @@ law m1_failed_delivery_is_not_an_acceptance:
   for +saved: String
   for +log: String
   for +out: String
-  {Delivery.result(saved, log, T.RRun{T.SExit{1}, out}) == Fail{(1,"Message committed; session delivery failed. Read " ++ log ++ " and retry delivery from the pending inbox.")} : Result<&1,&1,U32 & String,String>}
+  {Delivery.result(saved, log, T.RRun{T.SExit{1}, out}) == Fail{(1,"Message committed; session delivery failed (exit 1): " ++ out ++ "\nRead " ++ log ++ " and retry delivery from the pending inbox.")} : Result<&1,&1,U32 & String,String>}
 
 def m1_failed_delivery_is_not_an_acceptance(saved, log, out):
   {==}
@@ -65,7 +67,7 @@ law m1_unstarted_delivery_is_not_an_acceptance:
   for +saved: String
   for +log: String
   for +detail: String
-  {Delivery.result(saved, log, T.RSpawn{detail}) == Fail{(1,"Message committed; session delivery failed. Read " ++ log ++ " and retry delivery from the pending inbox.")} : Result<&1,&1,U32 & String,String>}
+  {Delivery.result(saved, log, T.RSpawn{detail}) == Fail{(1,"Message committed; session delivery failed: " ++ detail ++ ". Read " ++ log ++ " and retry delivery from the pending inbox.")} : Result<&1,&1,U32 & String,String>}
 
 def m1_unstarted_delivery_is_not_an_acceptance(saved, log, detail):
   {==}
@@ -105,9 +107,10 @@ law m17_missing_observation_reports_to_the_parent:
   for +player: String
   for +id: String
   for +text: String
-  {Turn.diagnostic(db, player, id, text, False{}) == Turn.report(db, player, id ++ ":observation", "Native output observation failed: " ++ text) : IO(Unit)}
+  for +event: String
+  {Turn.diagnostic(db, player, id, text, event, False{}) == Turn.report(db, player, id ++ ":observation", "Native output observation failed: " ++ text ++ Bool.pick(String,String.is_empty(event),"","\nNative event: " ++ event)) : IO(Unit)}
 
-def m17_missing_observation_reports_to_the_parent(db, player, id, text):
+def m17_missing_observation_reports_to_the_parent(db, player, id, text, event):
   {==}
 
 # ---------------------------------------------------------------------------
@@ -354,7 +357,7 @@ def m17_clean_receive_reports_completion():
 # M-12: with no input still owed the receiver answers at once and does not
 # re-enter delivery.
 law m12_nothing_owed_answers_at_once:
-  for again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
+  for again: String -> IO(Result<&1,&1,U32 & String,Unit>)
   {Receive.continue_if(again, False{}) == IO.pure(Result<&1,&1,U32 & String,Unit>, Done{Unit{}}) : IO(Result<&1,&1,U32 & String,Unit>)}
 
 def m12_nothing_owed_answers_at_once(again):
@@ -494,7 +497,7 @@ def m5_owed_input_is_counted_after_the_cursor(session, cursor):
 # session. The store's own schema declares that reference, so the database
 # refuses a message from an unknown sender.
 law m7_the_store_validates_the_sender_it_records:
-  {C.schema() == C.wake_claim_schema() ++ "CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY NOT NULL, parent TEXT REFERENCES sessions(id), harness TEXT NOT NULL, model TEXT NOT NULL DEFAULT '', effort TEXT NOT NULL DEFAULT '', native TEXT NOT NULL DEFAULT '', observed_harness TEXT NOT NULL DEFAULT '', observed_model TEXT NOT NULL DEFAULT '', observed_effort TEXT NOT NULL DEFAULT '', endpoint TEXT NOT NULL DEFAULT '', workspace TEXT NOT NULL DEFAULT '', branch TEXT NOT NULL DEFAULT '', base TEXT NOT NULL DEFAULT '');" ++ "CREATE TABLE IF NOT EXISTS messages (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, sender TEXT NOT NULL REFERENCES sessions(id), recipient TEXT NOT NULL REFERENCES sessions(id), kind TEXT NOT NULL, body TEXT NOT NULL, receipt TEXT);" ++ "CREATE INDEX IF NOT EXISTS messages_pending ON messages(recipient,seq) WHERE receipt IS NULL;" ++ "CREATE TABLE IF NOT EXISTS turns (id TEXT PRIMARY KEY NOT NULL REFERENCES messages(id), worker TEXT NOT NULL REFERENCES sessions(id), event TEXT NOT NULL);" ++ "CREATE TABLE IF NOT EXISTS executions (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), id TEXT NOT NULL, mode TEXT NOT NULL, directory TEXT NOT NULL, phase TEXT NOT NULL, status TEXT NOT NULL DEFAULT '');"
+  {C.schema() == C.wake_claim_schema() ++ C.task_input_schema() ++ C.usage_windows_schema() ++ "CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY NOT NULL, parent TEXT REFERENCES sessions(id), harness TEXT NOT NULL, model TEXT NOT NULL DEFAULT '', effort TEXT NOT NULL DEFAULT '', native TEXT NOT NULL DEFAULT '', observed_harness TEXT NOT NULL DEFAULT '', observed_model TEXT NOT NULL DEFAULT '', observed_effort TEXT NOT NULL DEFAULT '', endpoint TEXT NOT NULL DEFAULT '', workspace TEXT NOT NULL DEFAULT '', branch TEXT NOT NULL DEFAULT '', base TEXT NOT NULL DEFAULT '');" ++ "CREATE TABLE IF NOT EXISTS messages (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, sender TEXT NOT NULL REFERENCES sessions(id), recipient TEXT NOT NULL REFERENCES sessions(id), kind TEXT NOT NULL, body TEXT NOT NULL, receipt TEXT);" ++ "CREATE TABLE IF NOT EXISTS turns (id TEXT PRIMARY KEY NOT NULL REFERENCES messages(id), worker TEXT NOT NULL REFERENCES sessions(id), event TEXT NOT NULL);" ++ "CREATE TABLE IF NOT EXISTS executions (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), id TEXT NOT NULL, mode TEXT NOT NULL, directory TEXT NOT NULL, phase TEXT NOT NULL, status TEXT NOT NULL DEFAULT '');" ++ MessageStatus.schema()
   ++ "CREATE TABLE IF NOT EXISTS session_stops (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), id TEXT UNIQUE NOT NULL, reason TEXT NOT NULL, attempt TEXT NOT NULL DEFAULT '', directory TEXT NOT NULL DEFAULT '', signal INTEGER NOT NULL DEFAULT 15, applied_signal INTEGER NOT NULL DEFAULT 0, control_error TEXT NOT NULL DEFAULT '', outcome TEXT NOT NULL, native_status TEXT NOT NULL DEFAULT '', report_id TEXT NOT NULL DEFAULT '');" ++ C.messaging_schema() ++ C.log_schema() : String}
 
 def m7_the_store_validates_the_sender_it_records():
@@ -542,7 +545,7 @@ law m8_player_registration_is_bound_to_the_stored_row:
   for +branch: String
   for +base: String
   {C.sql(C.Player{id, parent, harness, model, effort, workspace, branch, base}) == "INSERT INTO sessions(id,parent,harness,model,effort,workspace,branch,base) VALUES(" ++ C.q(id) ++ "," ++ C.q(parent) ++ "," ++ C.q(harness) ++ "," ++ C.q(model) ++ "," ++ C.q(effort) ++ "," ++ C.q(workspace) ++ "," ++ C.q(branch) ++ "," ++ C.q(base) ++ ") ON CONFLICT(id) DO NOTHING;"
-  ++ "SELECT json_object('error','player-assignment-conflict','session',id,'existing',json_object('parent',parent,'harness',harness,'model',model,'effort',effort,'workspace',workspace,'branch',branch,'base',base),'requested',json_object('parent'," ++ C.q(parent) ++ ",'harness'," ++ C.q(harness) ++ ",'model'," ++ C.q(model) ++ ",'effort'," ++ C.q(effort) ++ ",'workspace'," ++ C.q(workspace) ++ ",'branch'," ++ C.q(branch) ++ ",'base'," ++ C.q(base) ++ "),'condition','The session ID is already registered with a different assignment.','next','Read session ID and worktree ID. Retry recruit with the recorded assignment, or recruit a new ID with a new branch and unused path; retain the original work.') FROM sessions WHERE id=" ++ C.q(id) ++ " AND NOT " ++ C.player_matches(parent,harness,model,effort,workspace,branch,base) ++ ";"
+  ++ "SELECT json_object('error','player-assignment-conflict','session',id,'existing',json_object('parent',parent,'harness',harness,'model',model,'effort',effort,'workspace',workspace,'branch',branch,'base',base),'requested',json_object('parent'," ++ C.q(parent) ++ ",'harness'," ++ C.q(harness) ++ ",'model'," ++ C.q(model) ++ ",'effort'," ++ C.q(effort) ++ ",'workspace'," ++ C.q(workspace) ++ ",'branch'," ++ C.q(branch) ++ ",'base'," ++ C.q(base) ++ "),'condition','The session ID is already registered with a different assignment.','next','Read session ID and worktree ID and retain the original work. Retry with the recorded assignment. Move a finished Player with receiver ID HARNESS_CMD OUTPUT_LOG CWD. Use join for an additional Player in an existing checkout, or recruit when a separate worktree is needed.') FROM sessions WHERE id=" ++ C.q(id) ++ " AND NOT " ++ C.player_matches(parent,harness,model,effort,workspace,branch,base) ++ ";"
   ++ C.session_result_where("id=" ++ C.q(id) ++ " AND " ++ C.player_matches(parent,harness,model,effort,workspace,branch,base)) : String}
 
 def m8_player_registration_is_bound_to_the_stored_row(id, parent, harness, model, effort, workspace, branch, base):
@@ -791,9 +794,11 @@ law m8_an_unregistered_player_is_refused_before_any_turn:
   for +log: String
   for +session: String
   for +harness: String
-  {Turn.player_checked(db, player, id, cmd, model, effort, cwd, task, log, session, harness, True{}) == IO.die(Result<&1,&1,U32 & String,Maybe<Turn.Outcome>>,2,"Player is not registered; register it before starting a turn.") : IO(Result<&1,&1,U32 & String,Maybe<Turn.Outcome>>)}
+  for lock: U32
+  for supplied: Maybe<String>
+  {Turn.player_checked(db, player, id, cmd, model, effort, cwd, task, log, session, harness, lock, True{}, supplied) == IO.die(Unit,2,"Player is not registered; register it before starting a turn.") : IO(Unit)}
 
-def m8_an_unregistered_player_is_refused_before_any_turn(db, player, id, cmd, model, effort, cwd, task, log, session, harness):
+def m8_an_unregistered_player_is_refused_before_any_turn(db, player, id, cmd, model, effort, cwd, task, log, session, harness, lock, supplied):
   {==}
 
 # ---------------------------------------------------------------------------
@@ -981,7 +986,7 @@ law m5_the_retained_muse_argv_resumes_the_recorded_conversation:
   for +effort: String
   for +prompt_file: String
   for +session: String
-  {Turn.muse_retained_arguments(cmd,model,effort,prompt_file,session) == List.append(&1,String,Muse.arguments(cmd,model,effort,prompt_file),Bool.pick(List<String>,String.is_empty(session),Nil{},["--session-id",session])) : List<String>}
+  {Turn.muse_retained_arguments(cmd,model,effort,prompt_file,session) == List.append(&1,String,Muse.arguments(cmd,model,effort,prompt_file),Bool.pick(List<String>,String.is_empty(session),Nil{},["--session-id",session,"--allow-workspace-switch"])) : List<String>}
 
 def m5_the_retained_muse_argv_resumes_the_recorded_conversation(cmd, model, effort, prompt_file, session):
   {==}
@@ -1093,21 +1098,39 @@ law a_recorded_deferred_note_is_not_written_again:
   for +db: String
   for +player: String
   for +id: String
-  {Turn.write_deferred(db,player,id,True{}) == IO.pure(Unit,Unit{}) : IO(Unit)}
+  for failure: String
+  for pending: String
+  {Turn.write_deferred(db,player,id,failure,pending,True{}) == IO.pure(Unit,Unit{}) : IO(Unit)}
 
-def a_recorded_deferred_note_is_not_written_again(db,player,id):
+def a_recorded_deferred_note_is_not_written_again(db,player,id,failure,pending):
   {==}
 
 law an_absent_deferred_note_names_the_outstanding_guidance:
   for +db: String
   for +player: String
   for +id: String
-  {Turn.write_deferred(db,player,id,False{}) == (do IO<Unit>:
-    +pending : String <- IO.try(String,DB.Sql.query(db,Turn.deferred_pending_sql(player)))
-    noted : Unit <- Turn.report(db,player,id ++ ":deferred",Turn.deferred_text(id,Tx.trim_nl(pending)))
+  for +failure: String
+  for +pending: String
+  {Turn.write_deferred(db,player,id,failure,pending,False{}) == (do IO<Unit>:
+    noted : Unit <- Turn.report(db,player,id ++ ":deferred",Bool.pick(String,String.is_empty(failure),Turn.deferred_text(id,pending),Turn.deferred_failure_text(id,failure,pending)))
     IO.pure(Unit,Unit{})) : IO(Unit)}
 
-def an_absent_deferred_note_names_the_outstanding_guidance(db,player,id):
+def an_absent_deferred_note_names_the_outstanding_guidance(db,player,id,failure,pending):
+  {==}
+
+law deferred_reporting_reads_presence_guidance_and_failure:
+  for +db: String
+  for +player: String
+  for +id: String
+  for +event: String
+  for report_id: String
+  {Turn.publish_deferred(db,player,id,event,report_id,False{}) == (do IO<Unit>:
+    presence : String <- IO.try(String,DB.Sql.query(db,Turn.deferred_recorded_sql(id)))
+    pending : String <- IO.try(String,DB.Sql.query(db,Turn.deferred_pending_sql(player)))
+    failure : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce(" ++ C.omp_terminal_error_text_sql(event) ++ ",'');"))
+    Turn.write_deferred(db,player,id,Tx.trim_nl(failure),Tx.trim_nl(pending),String.eq(presence,"1\n"))) : IO(Unit)}
+
+def deferred_reporting_reads_presence_guidance_and_failure(db,player,id,event,report_id):
   {==}
 
 law completion_preparation_checks_the_upstream_recipient:
@@ -1116,11 +1139,13 @@ law completion_preparation_checks_the_upstream_recipient:
   for +id: String
   for log: String
   for stderr: String
-  for outcome: Turn.Outcome
+  for +outcome: Turn.Outcome
   {Turn.prepare(db,player,id,log,stderr,outcome) == (do IO<Unit>:
     +generation : String <- IO.pure(String,Turn.generation_log(log,id))
     recipient : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ C.report_recipient(C.q(player)) ++ " IS NOT NULL;"))
-    Turn.prepare_parent(db,player,id,generation,stderr,outcome,String.eq(recipient,"1\n"))) : IO(Unit)}
+    reported : Unit <- Turn.prepare_parent(db,player,id,generation,stderr,outcome,String.eq(recipient,"1\n"))
+    success : Bool <- Turn.settlement_success(db,outcome)
+    AgentInput.settle_if(db,player,id,success)) : IO(Unit)}
 
 def completion_preparation_checks_the_upstream_recipient(db,player,id,log,stderr,outcome):
   {==}
