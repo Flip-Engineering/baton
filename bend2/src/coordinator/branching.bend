@@ -17,7 +17,7 @@ import ../git/text.bend as Tx
 
 
 def help() -> String:
-  "branch start --ensemble NAME [--from PLAYER] --count N [--text TASK | --file PATH] --evaluator '[\"executable\",\"argument\"]' [--direction max|min] [--include '[\"path\"]'] [--knowledge '[\"finding\"]']\nbranch evaluate|status|recover --ensemble NAME [--round ID]\nbranch select --ensemble NAME [--player PLAYER --reason TEXT] [--round ID]\nbranch continue --ensemble NAME [--text GUIDANCE | --file PATH] [--round ID]\nbranch stop --ensemble NAME --reason TEXT [--player PLAYER] [--round ID]\nThe current Conductor's sole owned branching Ensemble is the default. Start snapshots the selected workspace and task inputs, creates isolated worktrees, and launches fresh native conversations. The selected Player is the default source for the next explicit start. Evaluators run in retained snapshot worktrees and return one JSON object with boolean accepted and numeric score. Evaluate records settled branches; running or unknown branches remain visible. Automatic selection requires every branch's successful native settlement, accepted evaluation and a unique best score. Explicit selection requires a reason. Continue preserves the selected Player's conversation and workspace; omitted guidance uses the stored complete task. Recover retries recorded setup and owed input while preserving explicit stops. Stop records an explicit supported session stop. Other branches and artifacts remain retained.\n"
+  "branch start --ensemble NAME [--from PLAYER] --count N [--text TASK | --file PATH] --evaluator '[\"executable\",\"argument\"]' [--direction max|min] [--include '[\"path\"]'] [--knowledge '[\"finding\"]'] [--harness NAME] [--model MODEL] [--effort EFFORT] [--command EXECUTABLE]\nbranch evaluate|status|recover --ensemble NAME [--round ID]\nbranch select --ensemble NAME [--player PLAYER --reason TEXT] [--round ID]\nbranch continue --ensemble NAME [--text GUIDANCE | --file PATH] [--round ID]\nbranch stop --ensemble NAME --reason TEXT [--player PLAYER] [--round ID]\nThe current Conductor's sole owned branching Ensemble is the default. Start snapshots the selected workspace and task inputs, creates isolated worktrees, and launches fresh native conversations. The selected Player is the default source for the next explicit start. Evaluators run in retained snapshot worktrees and return one JSON object with boolean accepted and numeric score. Evaluate records settled branches; running or unknown branches remain visible. Automatic selection requires every branch's successful native settlement, accepted evaluation and a unique best score. Explicit selection requires a reason. Continue preserves the selected Player's conversation and workspace; omitted guidance uses the stored complete task. Recover retries recorded setup and owed input while preserving explicit stops. Stop records an explicit supported session stop. Other branches and artifacts remain retained.\n"
 
 def flags() -> List<String>:
   ["--ensemble","--round","--from","--count","--text","--file","--evaluator","--direction","--include","--knowledge","--player","--reason","--command","--harness","--model","--effort"]
@@ -287,19 +287,25 @@ def latest_evaluation(+round: String, +player: String) -> String:
 def valid_evaluation(+round: String) -> String:
   "e.id=" ++ latest_evaluation(round,"b.session") ++ " AND e.accepted=1 AND e.score IS NOT NULL AND e.native_status='exit 0' AND EXISTS(SELECT 1 FROM sessions s JOIN executions x ON x.session=s.id WHERE s.id=b.session AND s.native=e.native AND x.directory=e.attempt AND x.phase='exited' AND x.status=e.native_status) AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=b.session)"
 
+# The selected evaluation and its score are read in the same writer transaction
+# that records the decision, including when another evaluation completes.
+def automatic_selection(+round: String, order: String) -> String:
+  "WITH eligible AS (SELECT b.session,e.id AS evaluation,e.score FROM branch_candidates b JOIN branch_evaluations e ON e.session=b.session AND e.round=b.round WHERE b.round=" ++ C.q(round) ++ " AND " ++ valid_evaluation(round) ++ "),best AS (SELECT session,evaluation FROM eligible WHERE score=(SELECT " ++ order ++ "(score) FROM eligible)) SELECT session,evaluation FROM best WHERE (SELECT count(*) FROM eligible)=(SELECT count(*) FROM branch_candidates WHERE round=" ++ C.q(round) ++ ") AND (SELECT count(*) FROM best)=1"
+
 def select(+db: String, +actor: String, +round: String, +options: List<&2,D.Option>) -> IO(Unit):
   do IO<Unit>:
     +explicit : String = D.value(options,"--player","")
     +reason : String = D.value(options,"--reason","")
-    direction : String <- M.field(db,"branch_rounds",round,"direction")
-    +order : String = Bool.pick(String,String.eq(direction,"max"),"max","min")
-    +automatic : String <- M.scalar(db,"WITH eligible AS (SELECT b.session,e.score FROM branch_candidates b JOIN branch_evaluations e ON e.session=b.session AND e.round=b.round WHERE b.round=" ++ C.q(round) ++ " AND " ++ valid_evaluation(round) ++ "),best AS (SELECT session FROM eligible WHERE score=(SELECT " ++ order ++ "(score) FROM eligible)) SELECT CASE WHEN (SELECT count(*) FROM eligible)=(SELECT count(*) FROM branch_candidates WHERE round=" ++ C.q(round) ++ ") AND count(*)=1 THEN min(session) ELSE '' END FROM best")
-    +player : String = Bool.pick(String,String.is_empty(explicit),automatic,explicit)
-    selected : Unit <- M.require(Bool.not(String.is_empty(player)),"Selection needs a unique accepted best result from every successfully settled branch. For a tie, failed or partial evaluation, choose --player PLAYER with --reason TEXT.")
     reason_ok : Unit <- M.require(Bool.or(String.is_empty(explicit),Bool.not(String.is_empty(reason))),"Explicit selection requires --reason TEXT to retain the Conductor's decision.")
-    member : Unit <- M.check(db,"EXISTS(SELECT 1 FROM branch_candidates WHERE round=" ++ C.q(round) ++ " AND session=" ++ C.q(player) ++ ")","Select a Player from this round.")
-    unchanged : Unit <- M.check(db,"NOT EXISTS(SELECT 1 FROM branch_selections WHERE round=" ++ C.q(round) ++ " AND session<>" ++ C.q(player) ++ ")","This round already has a different retained selection. Start a new round from the intended Player.")
-    saved : Unit <- M.write(db,"INSERT INTO branch_selections(round,session,evaluation,reason,actor) VALUES(" ++ C.q(round) ++ "," ++ C.q(player) ++ "," ++ latest_evaluation(round,C.q(player)) ++ "," ++ C.q(Bool.pick(String,String.is_empty(explicit),"Unique accepted best evaluator score.",reason)) ++ "," ++ C.q(actor) ++ ") ON CONFLICT(round) DO NOTHING;")
+    member : Unit <- M.check(db,Bool.pick(String,String.is_empty(explicit),"1","EXISTS(SELECT 1 FROM branch_candidates WHERE round=" ++ C.q(round) ++ " AND session=" ++ C.q(explicit) ++ ")"),"Select a Player from this round.")
+    direction : String <- M.field(db,"branch_rounds",round,"direction")
+    order : String = Bool.pick(String,String.eq(direction,"max"),"max","min")
+    choice : String = Bool.pick(String,String.is_empty(explicit),
+      "SELECT " ++ C.q(round) ++ ",session,evaluation,'Unique accepted best evaluator score.'," ++ C.q(actor) ++ " FROM (" ++ automatic_selection(round,order) ++ ")",
+      "SELECT " ++ C.q(round) ++ "," ++ C.q(explicit) ++ "," ++ latest_evaluation(round,C.q(explicit)) ++ "," ++ C.q(reason) ++ "," ++ C.q(actor))
+    saved : Unit <- M.write(db,"INSERT INTO branch_selections(round,session,evaluation,reason,actor) " ++ choice ++ " WHERE 1 ON CONFLICT(round) DO NOTHING;")
+    selected : Unit <- M.check(db,"EXISTS(SELECT 1 FROM branch_selections WHERE round=" ++ C.q(round) ++ ")","Selection needs a unique accepted best result from every successfully settled branch. For a tie, failed or partial evaluation, choose --player PLAYER with --reason TEXT.")
+    unchanged : Unit <- M.check(db,Bool.pick(String,String.is_empty(explicit),"1","EXISTS(SELECT 1 FROM branch_selections WHERE round=" ++ C.q(round) ++ " AND session=" ++ C.q(explicit) ++ ")"),"This round already has a different retained selection. Start a new round from the intended Player.")
     M.status(db,round)
 
 def continue_selected(+db: String, +actor: String, +round: String, +options: List<&2,D.Option>) -> IO(Unit):
