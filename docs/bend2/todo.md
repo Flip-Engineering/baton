@@ -14,6 +14,10 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   [#761](https://github.com/Flip-Engineering/baton/issues/761),
   [#747](https://github.com/Flip-Engineering/baton/issues/747) and
   [#773](https://github.com/Flip-Engineering/baton/issues/773).
+  Scripted Control fixtures register their Codex TCP receiver explicitly and
+  retain its route across continuation. Their parent uses a notice endpoint;
+  reader tests verify the complete retained report and registered argv. Full
+  Control acceptance retains the missing-output-parent refusal regression.
 
 - [#774: Consolidate completed PRs and contributor branches during delivery](https://github.com/Flip-Engineering/baton/issues/774).
   Agents merge authorized work after required checks pass and remove completed
