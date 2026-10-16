@@ -773,6 +773,25 @@ class Receive(unittest.TestCase):
                           f'execution={self.execution(session)!r}; {diagnostic}')
             time.sleep(.01)
 
+    def accept_recovered_direct(self, session):
+        owner = f'{EXE.resolve()} --instance-owner {self.db.resolve()}'
+        while True:
+            if select.select([self.server], [], [], 0)[0]:
+                return self.accept(session)
+            execution = self.execution(session)
+            if execution and execution[0] == 'exited':
+                directory = pathlib.Path(execution[2])
+                terminal = all((directory / name).is_file()
+                               for name in ['acknowledged', 'released', 'status'])
+                producers = [process for process in self.owned_processes()
+                             if process['command'] != owner]
+                if terminal and not producers:
+                    self.fail('Recovered direct attempt settled before the next native connected; '
+                              f'execution={execution!r}; '
+                              f'wait_status={(directory / "status").read_text()!r}; '
+                              f'observer={(directory / "observer.log").read_text()!r}')
+            time.sleep(.01)
+
     def accept_or_child_exit(self, child, description, failure_stream=None, allow_exit=False):
         stream = failure_stream if failure_stream is not None else child.stdout
         streams = [stream, child.stderr] if child.stderr is not stream else [stream]
@@ -2945,8 +2964,7 @@ class Receive(unittest.TestCase):
         direct.wait()
         self.action(first, fail=True, ack=False, fail_message=cause)
         self.action(first, exit_fixture=True)
-        second, resumed = self.accept_detached(
-            'root', 'Recovered provider exited before the next native connected.')
+        second, resumed = self.accept_recovered_direct('root')
         launches = [json.loads(line) for line in
                     (self.directory / 'native-launches.jsonl').read_text().splitlines()]
         self.assertEqual(len(launches), 2)
