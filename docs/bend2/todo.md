@@ -638,6 +638,15 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
 
 ## Other open work
 
+- [#782: Update stale coordinator laws and include their evaluation in validation](https://github.com/Flip-Engineering/baton/issues/782).
+  The knowledge audit in [#779](https://github.com/Flip-Engineering/baton/issues/779)
+  tracks the retained compiler failures and source review.
+- [#783: Validate knowledge scope and traversal direction on each command surface](https://github.com/Flip-Engineering/baton/issues/783).
+  Track the CLI and MCP contract with the [#779 audit](https://github.com/Flip-Engineering/baton/issues/779).
+- [#784: Define and validate knowledge evidence references and citation lineage](https://github.com/Flip-Engineering/baton/issues/784).
+  Track missing references and supported evidence schemes with the [#779 audit](https://github.com/Flip-Engineering/baton/issues/779).
+- [#785: Preserve relation authorship when an explicit relation ID collides](https://github.com/Flip-Engineering/baton/issues/785).
+  Review author-owned repairs and cross-author conflicts with the [#779 audit](https://github.com/Flip-Engineering/baton/issues/779).
 - [#711: Baton2: preserve authored numeric precision in scientific knowledge reads](https://github.com/Flip-Engineering/baton/issues/711).
 - [#710: Define structured causal and evidentiary Knowledge nodes and edges with provenance and uncertainty](https://github.com/Flip-Engineering/baton/issues/710).
 - [#707: Baton2: expose useful shared object evaluation and agent handoff](https://github.com/Flip-Engineering/baton/issues/707).
