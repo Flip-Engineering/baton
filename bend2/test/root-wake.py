@@ -370,6 +370,15 @@ while True:
             continue
     else:raise AssertionError(request)
     reply({'id':request['id'],'result':result})
+    if method=='thread/resume' and current.get('replayTerminalOnResume'):
+        reply({'method':'turn/completed','params':{'threadId':'native-app-root','turn':current['terminal']}})
+    if method in ('turn/steer','turn/start') and current.get('terminalAfterAdmission'):
+        turn=result.get('turnId') or result['turn']['id']
+        item={'id':'retained-item','type':'agentMessage','text':'Complete first result: café Ω 🙂\\nSecond line.'}
+        terminal={'id':turn,'status':'completed','items':[],'error':None}
+        state.write_text(json.dumps({**current,'status':'idle','terminal':terminal}))
+        reply({'method':'item/completed','params':{'threadId':'native-app-root','turnId':turn,'item':item}})
+        reply({'method':'turn/completed','params':{'threadId':'native-app-root','turn':terminal}})
     if method in ('turn/steer','turn/start') and current.get('holdTerminalWriter'):
         turn=result.get('turnId') or result['turn']['id']
         while True:
@@ -708,6 +717,60 @@ while True:
         for ident in ('initial-follow-input', 'fresh-after-follower-exit'):
             self.assertIsNone(json.loads(self.coord('delivery', ident))['receipt'])
         self.coord('stop', 'root', 'follow-stop', 'Keep the remaining input.')
+        second.wait()
+        self.assertEqual(second.returncode, 0, second_error.read_text())
+
+    def test_restarted_follower_preserves_the_first_terminal_report_and_receipt(self):
+        queued, _ = self.public_proxy()
+        current = json.loads(self.public_app_state.read_text())
+        self.public_app_state.write_text(json.dumps({**current, 'status': 'idle',
+                                                    'terminalAfterAdmission': True}))
+        self.coord('attach', 'root', 'terminal', '', '')
+        self.coord('role', 'root', 'principal-conductor')
+        self.recruit('worker', 'root', 'codex')
+        body = 'Retain the complete unread task: café Ω 🙂\nSecond line.'
+        self.assertNotEqual(self.coord_raw(
+            'message', 'terminal-restart-input', 'root', 'worker', 'task', body).returncode, 0)
+        self.coord('connect', 'worker', 'native-app-root', '')
+
+        def follower(name):
+            output = self.directory / (name + '.jsonl')
+            diagnostic = self.directory / (name + '.stderr')
+            with output.open('w') as stdout, diagnostic.open('w') as stderr:
+                child = subprocess.Popen(
+                    [str(EXE), str(self.db), 'codex-inbox-follow', 'worker', 'native-app-root'],
+                    env=self.environment, stdout=stdout, stderr=stderr)
+            self.children.append(child)
+
+            def reported():
+                self.assertIsNone(child.poll(), diagnostic.read_text() + output.read_text())
+                return any(event.get('type') == 'codexInboxTurnReport' for event in
+                           (json.loads(line) for line in output.read_bytes().split(b'\n')[:-1]))
+
+            self.eventually(reported, 'The follower did not commit its native terminal report.')
+            return child, output, diagnostic
+
+        first, _, first_error = follower('terminal-restart-first')
+        ident = 'codex-inbox-turn:worker:native-app-root:fixture-turn-1'
+        self.coord('ack', ident, 'root', 'First parent receipt: café Ω 🙂')
+        original = self.rows('SELECT * FROM messages WHERE id=' + repr(ident))[0]
+        report = json.loads(original['body'])
+        self.assertEqual(report['completedItems'], [{'id': 'retained-item', 'type': 'agentMessage',
+            'text': 'Complete first result: café Ω 🙂\nSecond line.'}])
+        self.assertEqual(original['receipt'], 'First parent receipt: café Ω 🙂')
+        first.terminate()
+        first.wait()
+        self.assertNotEqual(first.returncode, 0, first_error.read_text())
+        current = json.loads(self.public_app_state.read_text())
+        self.public_app_state.write_text(json.dumps({**current, 'terminalAfterAdmission': False,
+                                                    'replayTerminalOnResume': True}))
+        second, _, second_error = follower('terminal-restart-second')
+        self.assertEqual(self.rows('SELECT * FROM messages WHERE id=' + repr(ident)), [original])
+        self.assertEqual(len(queued.read_text().splitlines()), 1)
+        retained = json.loads(self.coord('delivery', 'terminal-restart-input'))
+        self.assertEqual(retained['body'], body)
+        self.assertIsNone(retained['receipt'])
+        self.coord('stop', 'worker', 'terminal-restart-stop', 'Keep the complete unread task.')
         second.wait()
         self.assertEqual(second.returncode, 0, second_error.read_text())
 

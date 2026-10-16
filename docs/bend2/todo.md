@@ -25,6 +25,8 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   connect, configure and managed delivery translate recorded helper endpoints.
   The fixtures retain #750/#760 writer contention through the original SQLite
   busy callback, complete input, NULL receipts and exactly one successful RPC.
+  A restarted follower reuses the committed terminal report bytes, preserving
+  complete items, the first parent receipt and unread input during replay.
   Composed Main, full native tests and actual public Codex acceptance remain pending.
 
 - [#758: Wait for fixture owner publication before cleanup shutdown](https://github.com/Flip-Engineering/baton/issues/758).
