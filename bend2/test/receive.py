@@ -2279,7 +2279,11 @@ class Receive(unittest.TestCase):
                 self.assertTrue(json.loads(checkpoint[state_at:])['output_done'])
                 generation = self.output_log('parent')
                 original_output = generation.read_bytes()
-                self.assertIn(body.encode(), original_output)
+                projected_frames = [json.loads(line) for line in original_output.splitlines()]
+                self.assertEqual([content['text'] for frame in projected_frames
+                                  if frame.get('type') == 'agent_end'
+                                  for message in frame['messages'] for content in message['content']],
+                                 [body])
                 generation.unlink()
             with sqlite3.connect(self.db) as database:
                 self.assertEqual(database.execute(
