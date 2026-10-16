@@ -613,9 +613,14 @@ def pointer_lines(thread: String, parts: List<String>) -> IO(Notice):
     case prefix <> rest: pointer_document(thread,rest)
     case Nil{}: IO.die(Notice,2,"The Codex inbox pointer is empty.")
 
+def pointer_segments(parts: List<&2,String>) -> List<String>:
+  match parts:
+    case Nil{}: Nil{}
+    case head <> rest: Con{head,pointer_segments(rest)}
+
 def pointer_parts(thread: String, pointer: String, managed: Bool) -> IO(Notice):
   match managed:
-    case True{}: pointer_lines(thread,String.split(pointer,Char.from_u32(10)))
+    case True{}: pointer_lines(thread,pointer_segments(String.split(pointer,Char.from_u32(10))))
     case False{}: IO.pure(Notice,Literal{pointer})
 
 def pointer_notice(+thread: String, +pointer: String) -> IO(Notice):
