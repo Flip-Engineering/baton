@@ -268,7 +268,7 @@ def endpoint_delivery(+db: String, +id: String, +condition: String, +saved: Stri
     managed : String <- IO.try(String,DB.Sql.query(db,codex_inbox_endpoint_sql(id,condition)))
     Bool.pick(IO(Result<&1,&1,U32 & String,String>),String.eq(managed,"1\n"),inbox_endpoint(db,id,condition,saved,argv,retry),launch(db,id,saved,argv))
 
-def normal_delivery(+db: String, +id: String, +condition: String, +saved: String, retry: Bool) -> IO(Result<&1,&1,U32 & String,String>):
+def normal_delivery(+db: String, +id: String, +condition: String, +saved: String, +retry: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
     encoded : String <- IO.try(String,DB.Sql.query(db,endpoint_sql(id,condition)))
     +argv : String <- IO.pure(String,Tx.trim_nl(encoded))
