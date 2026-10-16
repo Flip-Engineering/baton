@@ -376,7 +376,7 @@ while True:
         turn=result.get('turnId') or result['turn']['id']
         item={'id':'retained-item','type':'agentMessage','text':'Complete first result: café Ω 🙂\\nSecond line.'}
         terminal={'id':turn,'status':'completed','items':[],'error':None}
-        state.write_text(json.dumps({**current,'status':'idle','terminal':terminal}))
+        state.write_text(json.dumps({**current,'status':'idle','turnStatus':'completed','terminal':terminal}))
         reply({'method':'item/completed','params':{'threadId':'native-app-root','turnId':turn,'item':item}})
         reply({'method':'turn/completed','params':{'threadId':'native-app-root','turn':terminal}})
     if method in ('turn/steer','turn/start') and current.get('holdTerminalWriter'):
