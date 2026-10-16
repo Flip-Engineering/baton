@@ -1,0 +1,76 @@
+{
+  "root": "/run/baton2-native-homelab/retained/baton-pure-bend2-rewrites-20261016T202353Z",
+  "database": "/run/baton2-native-homelab/retained/baton-pure-bend2-rewrites-20261016T202353Z/orchestra.db",
+  "baton": "/run/baton2-native-homelab/retained/baton2-compiler-741-20261015/postrelease-751-761-20261015-11/main-build-boundary/baton2",
+  "owner": "rewrite-root",
+  "ensemble": "pure-bend2-rewrites",
+  "repo": "/run/baton2-native-homelab/retained/baton-pure-bend2-rewrites-20261016T202353Z/repo",
+  "published_source_commit": "882769cf5b2e34275606bb5f57af08112aa0a937",
+  "published_source_tree": "31e924e46989425059a95c0a24224c4762747052",
+  "source_archive_sha256": "565f5d9e7a97ee3eed5d652343d46adc6b07c1fb8e5be12eca56aeab44ab8c7c",
+  "roles": [
+    {
+      "id": "rewrite-kimi",
+      "parent": "rewrite-root",
+      "role": "principal-conductor",
+      "harness": "omp",
+      "model": "kimi-code/k3",
+      "contributor_mode": false,
+      "scope": "Architecture, complete source inventory, rewrite dependency graph, specifications, integration and delivery. Delegate and drive implementations through review and remote qualification."
+    },
+    {
+      "id": "rewrite-muse",
+      "parent": "rewrite-kimi",
+      "role": "associate-conductor",
+      "harness": "muse",
+      "model": "muse-spark-1.3-contributor",
+      "contributor_mode": true,
+      "scope": "Adversarial review of semantic equivalence, canonical Bend2 behavior, authority and effect boundaries, and complete product contracts. Coordinate reviews and repair proposals with the other Conductors."
+    },
+    {
+      "id": "rewrite-deepseek",
+      "parent": "rewrite-kimi",
+      "role": "associate-conductor",
+      "harness": "omp",
+      "model": "deepseek/deepseek-flash",
+      "contributor_mode": false,
+      "scope": "Implementation planning, remote qualification architecture, build/test/packaging and automation rewrites. Select owned implementation slices and drive meaningful validation with capacity coordination."
+    },
+    {
+      "id": "rewrite-compiler",
+      "parent": "rewrite-kimi",
+      "role": "player",
+      "harness": "omp",
+      "model": "zai/glm-5.3-flash",
+      "contributor_mode": false,
+      "scope": "Audit compiler, REPL frontend/runtime and language bootstrap implementations. Design and implement source-supported pure Bend2 rewrites. Coordinate compiler backend changes with the separate active compiler optimization Ensemble."
+    },
+    {
+      "id": "rewrite-native",
+      "parent": "rewrite-muse",
+      "role": "player",
+      "harness": "omp",
+      "model": "zai/glm-5.3-flash",
+      "contributor_mode": false,
+      "scope": "Audit native harness adapters, process and SQLite host code, identity/message handling and coordinator policy in foreign languages. Design the smallest justified host ABI and move owned behavior into Bend2. Implement a reviewed slice."
+    },
+    {
+      "id": "rewrite-tooling",
+      "parent": "rewrite-deepseek",
+      "role": "player",
+      "harness": "omp",
+      "model": "deepseek/deepseek-flash",
+      "contributor_mode": false,
+      "scope": "Audit Python and shell packaging, installation, build/test support and repository automation. Specify and implement Bend2 replacements that retain the normal required product and delivery contracts."
+    },
+    {
+      "id": "rewrite-interface",
+      "parent": "rewrite-muse",
+      "role": "player",
+      "harness": "muse",
+      "model": "muse-spark-1.3-contributor",
+      "contributor_mode": true,
+      "scope": "Audit JavaScript/TypeScript CLI, MCP, native control and browser implementation. Identify product behavior and investigate compiling or generating the required targets from pure Bend2. Design and implement a reviewed slice with exact interface parity."
+    }
+  ]
+}
