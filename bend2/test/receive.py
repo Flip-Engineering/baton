@@ -1960,7 +1960,7 @@ class Receive(unittest.TestCase):
             self.assertIn(result.returncode, (0, 1))
             return None
         self.assertEqual(result.returncode, 0, result.stderr)
-        fields = result.stdout.strip().split(None, 8)
+        fields = result.stdout.rstrip('\n').split(None, 8)
         self.assertIn(len(fields), (8, 9), result.stdout)
         return {'pid': int(fields[0]), 'ppid': int(fields[1]), 'start': ' '.join(fields[2:7]),
                 'state': fields[7], 'command': fields[8] if len(fields) == 9 else ''}
@@ -2635,7 +2635,8 @@ class Receive(unittest.TestCase):
         self.prepare_input('independent-task', 'root', independent, kind='task')
         next_observer = self.spawn(*self.receive_args('root'))
         third, next_started = self.accept_child(next_observer, 'root')
-        next_initialization = self.initial_inputs('root')
+        next_initialization = [row for row in self.initial_inputs('root')
+                               if row['attempt'].startswith(str(self.db) + '.attempt-')]
         self.assertEqual(len(next_initialization), 3)
         self.assertNotEqual(next_initialization[-1]['seed'], initialization[0]['seed'])
         self.assertIn(independent, next_initialization[-1]['guidance'])
