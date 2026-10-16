@@ -268,4 +268,3 @@ static void __attribute__((constructor)) baton_control_use_command(void) {io_eff
 static Term baton_control_spawn(Env e,Term *f,IoWork *w) {return baton_control_begin(e,f,w,3);}
 static void __attribute__((constructor)) baton_control_use_launch(void) {io_eff(CID_CONTROL_LAUNCH,baton_control_spawn,0);}
 #endif
-
