@@ -91,20 +91,11 @@ class SharedInstance(unittest.TestCase):
     # -- harness ----------------------------------------------------------
 
     def ipc_directory(self):
-        runtime = os.environ.get('XDG_RUNTIME_DIR')
-        for candidate in [f'{runtime}/baton2' if runtime else None,
-                          f'/tmp/baton2-{os.geteuid()}',
-                          f"{os.environ.get('HOME')}/.local/state/baton2"]:
-            if not candidate:
-                continue
-            path = pathlib.Path(candidate)
-            try:
-                path.mkdir(parents=True, exist_ok=True)
-            except OSError:
-                continue
-            if path.is_dir() and not path.is_symlink() and path.stat().st_uid == os.geteuid():
-                return path
-        self.fail('no per-user IPC directory')
+        path = pathlib.Path(f'/tmp/baton2-{os.geteuid()}')
+        path.mkdir(mode=0o700, exist_ok=True)
+        self.assertTrue(path.is_dir() and not path.is_symlink())
+        self.assertEqual(path.stat().st_uid, os.geteuid())
+        return path
 
     def election_paths(self, database=None):
         info = os.stat(database or self.db)

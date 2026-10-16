@@ -1,0 +1,288 @@
+{
+  "schema": "baton-owner-election-qualification-v1",
+  "date": "2026-10-16",
+  "baseline_commit": "882769cf5b2e34275606bb5f57af08112aa0a937",
+  "checked_trees": {
+    "baseline": "31e924e46989425059a95c0a24224c4762747052",
+    "candidate": "cb881aaa5e6e7ccb8819e8916ae9660be62190c5"
+  },
+  "production_source": {
+    "bend2/src/host/process-spawn.c": {
+      "bytes": 251715,
+      "sha256": "ccde9cec6526d9149acf3e745205d4c663e6e51d68b5f9426a577a6a5f5d2954"
+    },
+    "bend2/test/owner-election.py": {
+      "bytes": 6221,
+      "sha256": "7301bca21e516f60f6e4d39d58cbce899c66bf74bd268ba34ea9f4b3ba8c13f8"
+    },
+    "bend2/test/shared-instance.py": {
+      "bytes": 60893,
+      "sha256": "73cbd21cc40fba0f0feb9c5eef9b53e93e306e3a31152458fcae025f3b070b3f"
+    }
+  },
+  "compiler_archive_sha256": "2df30208da307f7922fefc5517563ad1ee484bc60227f60d88994aad57e4779e",
+  "compiler_closure_sha256": "4e83b9fcdf200ad145955a03ed660d0d47af35c9ae68296053e166345a5aee14",
+  "retained_root": "/run/baton2-native-homelab/retained/baton-owner-ipc-pair-20261016T2129Z",
+  "original_unit_invocation": "35694702859c4ceda007ba48a403ed26",
+  "targeted_unit_invocation": "6fca1e923742436396c983b7236932f9",
+  "original_evidence_archive_sha256": "c8e636472441878b5834188b069fd81de6a6d9e2e97c505c3cd0647cade0318c",
+  "original_evidence_files_verified": 74,
+  "baseline_election": {
+    "tests": 4,
+    "failures": 4,
+    "errors": 0,
+    "split_owner_witnesses": 4,
+    "all_fixture_original_waits_zero": true
+  },
+  "candidate_election": {
+    "tests": 4,
+    "failures": 0,
+    "errors": 0,
+    "split_owner_witnesses": 0,
+    "all_fixture_original_waits_zero": true
+  },
+  "candidate_shared": {
+    "original_tests": 30,
+    "original_passes": 29,
+    "original_infrastructure_errors": 1,
+    "targeted_remaining_tests": 1,
+    "targeted_passes": 1,
+    "total_distinct_passing_methods": 30,
+    "original_result_preserved": true
+  },
+  "candidate_binary": {
+    "path": "/run/baton2-native-homelab/retained/baton-owner-ipc-pair-20261016T2129Z/candidate/source/.scratch/bend2/instance-test",
+    "bytes": 1725800,
+    "sha256": "509488ad2e2a8835b55611988fe26b60c30872d6287ab30686633028b6ef9629"
+  },
+  "candidate_generated_c": {
+    "path": "/run/baton2-native-homelab/retained/baton-owner-ipc-pair-20261016T2129Z/candidate/source/.scratch/bend2/instance-test.c",
+    "bytes": 1427768,
+    "sha256": "596d78a27fa0e53ae7fd340459966812ce3e057f59dafe8a40d6fbeabe390aa5"
+  },
+  "phases": [
+    {
+      "label": "baseline-c-generation",
+      "started": "2026-10-16T21:32:00.572136+00:00",
+      "ended": "2026-10-16T21:32:07.216971+00:00",
+      "returncode": 0,
+      "wait_status": 0,
+      "original_wait_completed": true,
+      "natural_exit": true,
+      "max_rss_kib": 1012780,
+      "stdout": {
+        "path": "/run/baton2-native-homelab/retained/baton-owner-ipc-pair-20261016T2129Z/baseline-c-generation/stdout",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "stderr": {
+        "path": "/run/baton2-native-homelab/retained/baton-owner-ipc-pair-20261016T2129Z/baseline-c-generation/stderr",
+        "bytes": 1398,
+        "sha256": "35fd923102dd14aea9d3e6364ba6cb12f7b6a8532712deb1bd93770f9ff985fe"
+      }
+    },
+    {
+      "label": "baseline-native-build",
+      "started": "2026-10-16T21:32:07.221543+00:00",
+      "ended": "2026-10-16T21:32:21.940818+00:00",
+      "returncode": 0,
+      "wait_status": 0,
+      "original_wait_completed": true,
+      "natural_exit": true,
+      "max_rss_kib": 301060,
+      "stdout": {
+        "path": "/run/baton2-native-homelab/retained/baton-owner-ipc-pair-20261016T2129Z/baseline-native-build/stdout",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "stderr": {
+        "path": "/run/baton2-native-homelab/retained/baton-owner-ipc-pair-20261016T2129Z/baseline-native-build/stderr",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    {
+      "label": "baseline-election",
+      "started": "2026-10-16T21:32:21.951405+00:00",
+      "ended": "2026-10-16T21:32:22.419670+00:00",
+      "returncode": 1,
+      "wait_status": 256,
+      "original_wait_completed": true,
+      "natural_exit": true,
+      "max_rss_kib": 32240,
+      "stdout": {
+        "path": "/run/baton2-native-homelab/retained/baton-owner-ipc-pair-20261016T2129Z/baseline-election/stdout",
+        "bytes": 2460,
+        "sha256": "4d89e796594f3d5203926c2f395b21d82b55e4472b5f341d77d3deb4a1bc97d0"
+      },
+      "stderr": {
+        "path": "/run/baton2-native-homelab/retained/baton-owner-ipc-pair-20261016T2129Z/baseline-election/stderr",
+        "bytes": 7161,
+        "sha256": "d66a3f8d3b9d7e173d9dcb9b24a0f3a56223b2221a66fc84687cec3ee93ccae2"
+      }
+    },
+    {
+      "label": "candidate-c-generation",
+      "started": "2026-10-16T21:32:22.865761+00:00",
+      "ended": "2026-10-16T21:32:29.352930+00:00",
+      "returncode": 0,
+      "wait_status": 0,
+      "original_wait_completed": true,
+      "natural_exit": true,
+      "max_rss_kib": 862144,
+      "stdout": {
+        "path": "/run/baton2-native-homelab/retained/baton-owner-ipc-pair-20261016T2129Z/candidate-c-generation/stdout",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "stderr": {
+        "path": "/run/baton2-native-homelab/retained/baton-owner-ipc-pair-20261016T2129Z/candidate-c-generation/stderr",
+        "bytes": 1398,
+        "sha256": "35fd923102dd14aea9d3e6364ba6cb12f7b6a8532712deb1bd93770f9ff985fe"
+      }
+    },
+    {
+      "label": "candidate-native-build",
+      "started": "2026-10-16T21:32:29.355420+00:00",
+      "ended": "2026-10-16T21:32:41.470726+00:00",
+      "returncode": 0,
+      "wait_status": 0,
+      "original_wait_completed": true,
+      "natural_exit": true,
+      "max_rss_kib": 302564,
+      "stdout": {
+        "path": "/run/baton2-native-homelab/retained/baton-owner-ipc-pair-20261016T2129Z/candidate-native-build/stdout",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      "stderr": {
+        "path": "/run/baton2-native-homelab/retained/baton-owner-ipc-pair-20261016T2129Z/candidate-native-build/stderr",
+        "bytes": 0,
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    },
+    {
+      "label": "candidate-election",
+      "started": "2026-10-16T21:32:41.481535+00:00",
+      "ended": "2026-10-16T21:32:41.933465+00:00",
+      "returncode": 0,
+      "wait_status": 0,
+      "original_wait_completed": true,
+      "natural_exit": true,
+      "max_rss_kib": 32560,
+      "stdout": {
+        "path": "/run/baton2-native-homelab/retained/baton-owner-ipc-pair-20261016T2129Z/candidate-election/stdout",
+        "bytes": 2936,
+        "sha256": "a48fabc44f3edf49cfb5bcf1e36233d0ed8cf06aaea9fb28d9d0f3f5b9a22c9a"
+      },
+      "stderr": {
+        "path": "/run/baton2-native-homelab/retained/baton-owner-ipc-pair-20261016T2129Z/candidate-election/stderr",
+        "bytes": 706,
+        "sha256": "be62663cea9f10ebdea48c3474bbbdd76e58fbd9080bcfd9471e6aefc1d0ad8a"
+      }
+    },
+    {
+      "label": "candidate-shared-instance",
+      "started": "2026-10-16T21:32:41.938351+00:00",
+      "ended": "2026-10-16T21:32:52.039948+00:00",
+      "returncode": 1,
+      "wait_status": 256,
+      "original_wait_completed": true,
+      "natural_exit": true,
+      "max_rss_kib": 32560,
+      "stdout": {
+        "path": "/run/baton2-native-homelab/retained/baton-owner-ipc-pair-20261016T2129Z/candidate-shared-instance/stdout",
+        "bytes": 6585,
+        "sha256": "10409ff35a65635dc803cc70611d0e6e35463a865b1998f2e13a246291d05070"
+      },
+      "stderr": {
+        "path": "/run/baton2-native-homelab/retained/baton-owner-ipc-pair-20261016T2129Z/candidate-shared-instance/stderr",
+        "bytes": 5774,
+        "sha256": "76825caa94930d66d4500be323e3dd27dd4f4871f68ca40f10d5f4d75d7322f4"
+      }
+    }
+  ],
+  "remaining_legacy_method": {
+    "started": "2026-10-16T21:34:36.579537+00:00",
+    "pid": 438668,
+    "birth": "979860",
+    "uid": 986,
+    "argv": [
+      "/usr/bin/python3",
+      "-I",
+      "/run/baton2-native-homelab/retained/baton-owner-ipc-pair-20261016T2129Z/candidate-shared-path-v2/driver.py",
+      "/run/baton2-native-homelab/retained/baton-owner-ipc-pair-20261016T2129Z/candidate/source/bend2/test/shared-instance.py",
+      "/run/baton2-native-homelab/retained/baton-owner-ipc-pair-20261016T2129Z/candidate/source/.scratch/bend2/instance-test",
+      "/run/baton2-native-homelab/retained/baton-owner-ipc-pair-20261016T2129Z/candidate-shared-path-v2/summary.json"
+    ],
+    "cwd": "/run/baton2-native-homelab/retained/baton-owner-ipc-pair-20261016T2129Z/candidate/source",
+    "PATH": "/usr/bin:/bin",
+    "CC": "/usr/lib/llvm-19/bin/clang",
+    "clang": {
+      "path": "/usr/lib/llvm-19/bin/clang",
+      "bytes": 136448,
+      "sha256": "f6d5286a52de10b1e3e8841457c9903a1ea28f222ac0f58cd616697d0dcd9db3"
+    },
+    "binary": {
+      "path": "/run/baton2-native-homelab/retained/baton-owner-ipc-pair-20261016T2129Z/candidate/source/.scratch/bend2/instance-test",
+      "bytes": 1725800,
+      "sha256": "509488ad2e2a8835b55611988fe26b60c30872d6287ab30686633028b6ef9629"
+    },
+    "generated_instance_c": {
+      "path": "/run/baton2-native-homelab/retained/baton-owner-ipc-pair-20261016T2129Z/candidate/source/.scratch/bend2/instance-test.c",
+      "bytes": 1427768,
+      "sha256": "596d78a27fa0e53ae7fd340459966812ce3e057f59dafe8a40d6fbeabe390aa5"
+    },
+    "fixture_generated_c": {
+      "path": "/run/baton2-native-homelab/retained/baton-owner-ipc-pair-20261016T2129Z/candidate/source/.scratch/bend2/process-test.c",
+      "bytes": 1427768,
+      "sha256": "596d78a27fa0e53ae7fd340459966812ce3e057f59dafe8a40d6fbeabe390aa5"
+    },
+    "runner": {
+      "path": "/run/baton2-native-homelab/retained/baton-owner-ipc-pair-20261016T2129Z/shared-rerun.py",
+      "bytes": 5773,
+      "sha256": "8a3bd30e7cb4772c77333196c2b84b0346aea96bcca783202b13208b13e81b44"
+    },
+    "fixture": {
+      "path": "/run/baton2-native-homelab/retained/baton-owner-ipc-pair-20261016T2129Z/candidate/source/bend2/test/shared-instance.py",
+      "bytes": 60893,
+      "sha256": "73cbd21cc40fba0f0feb9c5eef9b53e93e306e3a31152458fcae025f3b070b3f"
+    },
+    "prior_result": {
+      "path": "/run/baton2-native-homelab/retained/baton-owner-ipc-pair-20261016T2129Z/candidate-shared-instance/result.json",
+      "bytes": 2044,
+      "sha256": "be208edec0ffc1ee383407f70b218e60605d8d5ca17c10e39d25843289bc870f"
+    },
+    "ended": "2026-10-16T21:34:48.822397+00:00",
+    "returncode": 0,
+    "wait_status": 0,
+    "original_wait_completed": true,
+    "natural_exit": true,
+    "max_rss_kib": 302388,
+    "summary": {
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "successful": true
+    },
+    "passed": true,
+    "stdout": {
+      "path": "/run/baton2-native-homelab/retained/baton-owner-ipc-pair-20261016T2129Z/candidate-shared-path-v2/stdout",
+      "bytes": 133,
+      "sha256": "671cc53e5918e5209acdcd59850666531766123af7011d91a1ee9f0d708492b0"
+    },
+    "stderr": {
+      "path": "/run/baton2-native-homelab/retained/baton-owner-ipc-pair-20261016T2129Z/candidate-shared-path-v2/stderr",
+      "bytes": 267,
+      "sha256": "52832a7b552b7f044f6bdba1c852f2e73fcda8b1c06a08b64aef320d6b6ce433"
+    },
+    "environment_correction": "Explicit CC selects the verified native-build compiler. Fixture process-test.c is a byte-identical copy of verified candidate instance-test.c. Original29 passes and remaining legacy case have separate original waits; original30-case error result retained."
+  },
+  "qualified_scope": "Same-mount-namespace canonical per-user IPC election; existing legacy generations and distinct PrivateTmp namespaces remain separate.",
+  "main_compiled": false,
+  "coordinator_runtime_qualified": false,
+  "production_adopted": false,
+  "live_ensemble_mutated": false,
+  "normal_test_discovery": "check-native-parallel.py discovers every bend2/test/*.py file, including owner-election.py."
+}
