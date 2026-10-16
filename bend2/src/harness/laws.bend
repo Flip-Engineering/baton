@@ -37,7 +37,6 @@ law m2_omp_fresh_start_is_the_spawn_attempt:
   for +model: String
   for +effort: String
   for +cwd: String
-  for +log: String
   for +sessions: String
   for session: String
   for +stderr: String
@@ -113,7 +112,6 @@ law m5_omp_resume_carries_the_accepted_session:
   for +model: String
   for +effort: String
   for +cwd: String
-  for +log: String
   for +sessions: String
   for +session: String
   for +stderr: String
