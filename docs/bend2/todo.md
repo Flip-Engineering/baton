@@ -4,6 +4,20 @@ The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3
 retain findings, ownership and acceptance requirements. This page links current
 Baton follow-up work for contributors. Every open issue has a link on this page.
 
+- [#776: Reduce Bend build time and peak memory with complete qualification](https://github.com/Flip-Engineering/baton/issues/776).
+  Profile fixed-point backend passes, retained intermediate terms, generated C
+  compilation and native test builds. Measure identical cold and warm source
+  and toolchain inputs. Extend verified reuse, parallel independent compilation
+  and tests, and exact cache verification. Preserve full selected comparison,
+  native, package and installed acceptance, complete failures and provenance.
+  The Main7 backend trap remains a release blocker under diagnosis. Further
+  optimization proceeds alongside release work. Coordinate with
+  [#677](https://github.com/Flip-Engineering/baton/issues/677),
+  [#741](https://github.com/Flip-Engineering/baton/issues/741),
+  [#751](https://github.com/Flip-Engineering/baton/issues/751),
+  [#761](https://github.com/Flip-Engineering/baton/issues/761) and
+  [#771](https://github.com/Flip-Engineering/baton/issues/771).
+
 - [#775: Validate direct-turn output paths with recorded receivers](https://github.com/Flip-Engineering/baton/issues/775).
   Validate the requested output parent before native preparation for every direct
   turn. A recorded managed Codex endpoint skips the default-receiver creation
@@ -585,8 +599,6 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
 - [#685: Pending notifications must wake idle seats or require inbox review](https://github.com/Flip-Engineering/baton/issues/685).
 - [#682: Baton2: optional live browser view of Orchestra structure and status](https://github.com/Flip-Engineering/baton/issues/682).
 - [#681: Baton2: preserve pending work when a provider quota failure requires model failover](https://github.com/Flip-Engineering/baton/issues/681).
-- [#680: Baton2: stale quota failures prevent current provider use](https://github.com/Flip-Engineering/baton/issues/680).
-- [#678: Baton2: existing Players cannot change their configured provider through native controls](https://github.com/Flip-Engineering/baton/issues/678).
 - [#677: Baton2: prevent duplicate heavy validation and qualify remote execution placement](https://github.com/Flip-Engineering/baton/issues/677).
   Homelab runners 725 and 24006 are online in the existing restricted Baton
   runner group. Runner 24006 has a separate account, service, mount namespace,
