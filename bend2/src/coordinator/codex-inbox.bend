@@ -260,13 +260,19 @@ def terminal_marked(+state: State, +turn: String) -> IO(State):
 def turn_retained(+session: String, +thread: String, +turn: String) -> IO(Unit):
   Proxy.record("{\"type\":\"codexInboxTurnRetained\",\"session\":" ++ J.string_literal(session) ++ ",\"threadId\":" ++ J.string_literal(thread) ++ ",\"turn\":" ++ turn ++ "}")
 
+def terminal_body(+db: String, +session: String, +thread: String, +turn: String, +id: String, +body: String) -> IO(String):
+  do IO<String>:
+    +stored : String <- IO.try(String,DB.Sql.read(db,"SELECT hex(body) FROM messages WHERE id=" ++ C.q(id) ++ " AND sender=" ++ C.q(session) ++ " AND kind='report' AND CASE WHEN json_valid(body) THEN json_extract(body,'$.type')='codex-inbox-turn-settled' AND json_extract(body,'$.session')=" ++ C.q(session) ++ " AND json_extract(body,'$.threadId')=" ++ C.q(thread) ++ " AND json_extract(body,'$.turn.id')=" ++ C.q(turn) ++ " ELSE 0 END;"))
+    Bool.pick(IO(String),String.is_empty(stored),IO.pure(String,body),Inbox.text(Tx.trim_nl(stored)))
+
 def terminal_report(+db: String, +session: String, +thread: String, +state: State, +turn: String, +turn_id: String, +status: String, +already: Bool) -> IO(State):
   match already:
     case True{}: terminal_marked(state,turn_id)
     case False{}: do IO<State>:
       +completed : String <- Proxy.json("SELECT coalesce(json_group_array(json(json_extract(value,'$.item'))),'[]') FROM json_each(" ++ C.q(items(state)) ++ ") WHERE json_extract(value,'$.turnId')=" ++ C.q(turn_id) ++ ";")
       +id : String = "codex-inbox-turn:" ++ session ++ ":" ++ thread ++ ":" ++ turn_id
-      +body : String = "{\"type\":\"codex-inbox-turn-settled\",\"session\":" ++ J.string_literal(session) ++ ",\"threadId\":" ++ J.string_literal(thread) ++ ",\"turn\":" ++ turn ++ ",\"completedItems\":" ++ completed ++ "}"
+      +candidate : String = "{\"type\":\"codex-inbox-turn-settled\",\"session\":" ++ J.string_literal(session) ++ ",\"threadId\":" ++ J.string_literal(thread) ++ ",\"turn\":" ++ turn ++ ",\"completedItems\":" ++ completed ++ "}"
+      +body : String <- terminal_body(db,session,thread,turn_id,id,candidate)
       +saved : String <- report(db,session,id,body)
       logged : Unit <- Proxy.record("{\"type\":\"codexInboxTurnReport\",\"id\":" ++ J.string_literal(id) ++ ",\"session\":" ++ J.string_literal(session) ++ ",\"threadId\":" ++ J.string_literal(thread) ++ ",\"code\":0,\"signal\":null,\"output\":" ++ J.string_literal(saved) ++ "}")
       settled : Unit <- Input.settle_codex(db,session,thread,turn_id,status)
