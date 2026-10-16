@@ -358,21 +358,6 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   [#727](https://github.com/Flip-Engineering/baton/issues/727) and
   [#730](https://github.com/Flip-Engineering/baton/issues/730).
 
-- [#733: Verify unattended resumption of the original Muse conversation](https://github.com/Flip-Engineering/baton/issues/733).
-  Configured homelab and installed Darwin file-backend routes completed
-  contributor dispatch and same-conversation continuation without interactive
-  credential access. Finish the original-HOME conversation
-  `01a10fb3-cee8-7260-89ad-16da3f8ba81f` through the prepared
-  `baton-muse-original-home-file-733` shim. Its retained preparation records
-  `receiverInvoked=false` and `providerInferenceRun=false`. Verify the actual
-  provider terminal outcome and contributor report while preserving existing
-  native history, source account configuration and private store permissions.
-  Retain the earlier original-config auth-set failure and its unavailable
-  diagnostic. Coordinate with
-  [#727](https://github.com/Flip-Engineering/baton/issues/727),
-  [#717](https://github.com/Flip-Engineering/baton/issues/717) and
-  [#702](https://github.com/Flip-Engineering/baton/issues/702).
-
 - [#732: Infer handling receipts for connected Claude MCP sessions](https://github.com/Flip-Engineering/baton/issues/732).
   Connected Claude MCP handling now derives receipts from complete owned reads,
   the registered endpoint and native conversation, and live process ancestry.
