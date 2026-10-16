@@ -51,6 +51,11 @@ remote branch and integrate its changes before publishing. Publish `main` with
 a fast-forward push. Verify the actual remote advertisement and distinguish local
 checks, source publication, hosted CI, artifact installation and a release.
 
+Agents own normal pull request merging for authorized work. After required
+checks pass, merge into the target branch and remove the completed contributor
+branch. Preserve active worktrees, uncommitted files and retained execution
+evidence.
+
 Native workflow qualification uses the harnesses' existing logins.
 [Harness setup](docs/bend2/harness-setup.md) documents the subscription-only Codex
 native adapter and the measured OMP and Muse routes, with the immutable 1.0

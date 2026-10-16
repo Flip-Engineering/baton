@@ -4,6 +4,15 @@ The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3
 retain findings, ownership and acceptance requirements. This page links current
 Baton follow-up work for contributors. Every open issue has a link on this page.
 
+- [#774: Consolidate completed PRs and contributor branches during delivery](https://github.com/Flip-Engineering/baton/issues/774).
+  Agents merge authorized work after required checks pass and remove completed
+  contributor references. Reconcile the retained branch and worktree backlog
+  using advertised tips and ancestry or exact incorporation evidence. Preserve
+  active worktrees, uncommitted files and immutable build evidence. Coordinate
+  the active [#772](https://github.com/Flip-Engineering/baton/pull/772) landing
+  with [#717](https://github.com/Flip-Engineering/baton/issues/717) and
+  [#747](https://github.com/Flip-Engineering/baton/issues/747).
+
 - [#773: Use concise contextual agent actions and automatic handling receipts](https://github.com/Flip-Engineering/baton/issues/773).
   Add `send PLAYER "text"`, `finish "summary"` and `confirm PLAYER` to the
   contextual command surface. Shorten generated notices and task instructions;
