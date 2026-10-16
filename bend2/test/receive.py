@@ -1848,7 +1848,8 @@ class Receive(unittest.TestCase):
         if refuse_replay_write:
             try:
                 failure_log = attempt / 'observer.log'
-                self.eventually(lambda: failure_log.exists() and 'Permission denied' in failure_log.read_text(),
+                permission_cause = '13: Log ' + str(generation) + ': Could not write file at output position.'
+                self.eventually(lambda: failure_log.exists() and permission_cause in failure_log.read_text(),
                                 'the reconstruction write did not retain its filesystem refusal')
                 checkpoint = (attempt / 'checkpoint').read_bytes()
                 state_at = checkpoint.index(b'{"schema":1,')
@@ -1871,9 +1872,11 @@ class Receive(unittest.TestCase):
         frames = [json.loads(line) for line in output.splitlines()]
         self.assertEqual([frame['marker'] for frame in frames
                           if frame.get('type') == 'fixture_progress'], [marker])
-        self.assertEqual([content['text'] for frame in frames
+        self.assertEqual([text for frame in frames
                           if frame.get('type') == 'agent_end'
-                          for message in frame['messages'] for content in message['content']],
+                          for text in ([frame['text']] if frame.get('compacted') else
+                                       [content['text'] for message in frame['messages']
+                                        for content in message['content']])],
                          [body])
         self.assertEqual(self.coord('delivery', 'missing-output-task')['receipt'], 'native-turn:' + ident)
         launches = [json.loads(line) for line in (self.directory / 'native-launches.jsonl').read_text().splitlines()]
@@ -2293,9 +2296,11 @@ class Receive(unittest.TestCase):
                 generation = self.output_log('parent')
                 original_output = generation.read_bytes()
                 projected_frames = [json.loads(line) for line in original_output.splitlines()]
-                self.assertEqual([content['text'] for frame in projected_frames
+                self.assertEqual([text for frame in projected_frames
                                   if frame.get('type') == 'agent_end'
-                                  for message in frame['messages'] for content in message['content']],
+                                  for text in ([frame['text']] if frame.get('compacted') else
+                                               [content['text'] for message in frame['messages']
+                                                for content in message['content']])],
                                  [body])
                 generation.unlink()
             with sqlite3.connect(self.db) as database:
