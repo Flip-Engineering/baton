@@ -4,6 +4,26 @@ The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3
 retain findings, ownership and acceptance requirements. This page links current
 Baton follow-up work for contributors. Every open issue has a link on this page.
 
+- [#769: Preserve OMP output while handling event-filter compatibility](https://github.com/Flip-Engineering/baton/issues/769).
+  OMP 17.4 rejected `set_event_filter` without echoing its request ID. Its
+  cumulative message snapshots expanded a 112 KB thinking stream into a
+  953 MB retained stream and exhausted the filesystem during the transport
+  review. Preserve complete native output, handle the actual filter response
+  and derive display output from accepted message events. Coordinate with
+  [#686](https://github.com/Flip-Engineering/baton/issues/686),
+  [#761](https://github.com/Flip-Engineering/baton/issues/761) and
+  [#770](https://github.com/Flip-Engineering/baton/issues/770).
+
+- [#770: Retain actual native wait status after a filesystem write failure](https://github.com/Flip-Engineering/baton/issues/770).
+  The [#769](https://github.com/Flip-Engineering/baton/issues/769) review reaped
+  its native process while the status-file write failed with `ENOSPC`. The
+  keeper then released its in-memory status. Recovery sees an unfinished
+  attempt with an unknown native outcome. Preserve actual wait evidence
+  through the failed write and allow the retained attempt to settle through
+  its supported recovery path. Preserve the original stream, failed
+  checkpoint and incomplete handling. Coordinate with
+  [#761](https://github.com/Flip-Engineering/baton/issues/761).
+
 - [#761: Move Codex inbox coordination decisions into Bend](https://github.com/Flip-Engineering/baton/issues/761).
   Implementation is active after the 2.0 release and adoption. Bend owns inbox
   coordination; the native host supplies Codex protocol transport. Remove the

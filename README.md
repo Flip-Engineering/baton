@@ -15,6 +15,8 @@ the session's client, model, workspace, and parent agent in a SQLite database.
   agents. Messages retain their complete bodies and recipient acknowledgments.
 - **Agent teams:** recruit agents into Git worktrees and organize teams with
   explicit membership and communication permissions.
+- **Branching Ensembles:** start parallel agents from a workspace snapshot,
+  evaluate their results, and continue a selected agent's conversation.
 - **Git integration:** prepare a candidate, run selected checks on the target and
   candidate, update the target branch, and publish to a specified remote.
 - **Shared knowledge:** record findings with evidence, control their visibility,
@@ -81,6 +83,8 @@ message reads and each action.
 
 - [Command guide](bend2/README.md): CLI commands and examples.
 - [Messaging](docs/bend2/messaging.md): delivery, acknowledgments, and retries.
+- [Branching Ensembles](docs/bend2/branching-ensembles.md): workspace snapshots,
+  fresh conversations, evaluation, and selection.
 - [Shared knowledge](docs/bend2/knowledge-context-2026-10-01.md): findings, scopes,
   review, and promotion.
 - [Architecture](docs/bend2/architecture.md): coordinator and subsystem design.
