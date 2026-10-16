@@ -20,12 +20,13 @@ Three effects on one open description, so identity holds across chunks:
   answers a capability handle `slot | generation<<16` from a small fd
   registry in files.c, the BATCHILD pattern: a stale handle refuses
   ESTALE, a closed or unknown handle EBADF, registry exhaustion EMFILE.
-- `read_chunk` returns up to `max` bytes as `List<U8>`, one `Con` cell
-  per byte with the value 0..255 (the upstream `file_read_bytes` shape),
-  paired with an end-of-file flag 0 or 1. Exact byte values: NUL and
-  invalid UTF-8 pass as numbers; no UTF-8 admission exists on this
-  path. One internal read() syscall per call, EINTR resumed, errno kept
-  on failure.
+- `read_chunk` returns up to `max` bytes as `List<U32>`, one `Con`
+  cell per byte carrying its value 0..255 in the U32 - a grounded
+  element type with toolchain precedent (U8 has none anywhere in the
+  product sources) - paired with an end-of-file flag 0 or 1. Exact
+  byte values: NUL and invalid UTF-8 pass as numbers; no UTF-8
+  admission exists on this path. One internal read() syscall per
+  call, EINTR resumed, errno kept on failure.
 - `close` releases the registry slot and the descriptor; the errno of
   that close is the call's cause.
 - No duration cap, no size cap beyond the caller's `max` (internal read
@@ -37,20 +38,29 @@ Incremental, pure, byte-list input - the K1 core's String boundary is
 the reason it cannot serve files:
 
     type Sha256.State is Data:
-      State{s0,s1,s2,s3,s4,s5,s6,s7: U32, bitlen: U64, block: List<U8>, used: U32}
+      State{s0,s1,s2,s3,s4,s5,s6,s7: U32, bits_hi: U32, bits_lo: U32,
+            block: List<U32>, used: U32}
     def Sha256.init -> State
-    def Sha256.update(state: State, chunk: List<U8>) -> State
-    def Sha256.final(state: State) -> List<U8>   # 32 bytes, values 0..255
-    def Sha256.hex(bytes: List<U8>) -> String    # 64 lowercase hex digits
-    def Sha256.digest(bytes: List<U8>) -> String # one-shot convenience
+    def Sha256.update(state: State, chunk: List<U32>) -> State
+    def Sha256.final(state: State) -> List<U32>  # 32 bytes, values 0..255
+    def Sha256.hex(bytes: List<U32>) -> String   # 64 lowercase hex digits
+    def Sha256.digest(bytes: List<U32>) -> String # one-shot convenience
 
-All arithmetic in native U32/U64; rotations as shift/or; the 64 K
-constants as a pure `List<U32>`; padding and length as in FIPS 180
-(bit count total across chunks). Laws compile with the coordinator
-entry and carry the algorithm: FIPS 180 "abc" vector, the empty-input
-vector, and the 55/56/63/64/65 length-boundary vectors stated as
-compile-time equations - the algorithm is verified at every compile,
-which the C core could never offer.
+Grounded types per the review: the byte element is `U32` carrying
+0..255, masked on entry so the module stays total for any caller; the
+bit counter is a `U32` pair (bits_hi, bits_lo) - `U64` has no toolchain
+precedent, and the pair covers inputs to 2^64 bits with the carry
+detected by the lo word wrapping. `update` advances `bits_lo` by the
+chunk's bit count and increments `bits_hi` when the lo word wraps; a
+single chunk contributes at most 2^31 bits, so the carry is at most
+one per call. The FIPS 64-bit length field emits bits_hi as the high
+four bytes and bits_lo as the low four. The U32 operation set the
+round function needs (add, xor, and, not, shifts, rotations) is the
+exact set the K1 core already exercises in U32. Laws compile with the
+coordinator entry and carry the algorithm: FIPS 180 "abc" vector, the
+empty-input vector, and the 55/56/63/64/65 length-boundary vectors
+stated as compile-time equations - the algorithm is verified at every
+compile, which the C core could never offer.
 
 ## Composition and retirement sequencing
 
