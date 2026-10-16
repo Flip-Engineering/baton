@@ -216,7 +216,7 @@ class McpRoot(unittest.TestCase):
         self.tool(proc, 'baton2_inbox', {'index': True})
         self.tool(proc, 'baton2_delivery', {'id': 'connected-foreign'})
         self.assertEqual(self.native_reads(), [])
-        inbox = self.tool(proc, 'baton2_inbox')
+        inbox = self.tool(proc, 'baton2_action', {'action': 'inbox'})
         self.assertEqual(inbox[0]['body'], '\ufeffComplete connected input.\nλ🙂\nFinal spaces  \n')
         read = self.native_reads()[0]
         self.assertTrue(read['attempt'].endswith(':native-prompt-1'), read)
@@ -398,6 +398,8 @@ class McpRoot(unittest.TestCase):
         self.initialize(proc)
         send_mcp(proc, {'jsonrpc': '2.0', 'id': 'schemas', 'method': 'tools/list'})
         tools = {item['name']: item for item in read_mcp(proc)['result']['tools']}
+        for name in ['baton2_action', 'baton2_outbox', 'baton2_delivery_batch', 'baton2_message_batch']:
+            self.assertIn(name, tools)
         self.assertIn('baton2_players', tools)
         self.assertIn('baton2_player_status', tools)
         self.assertNotIn('baton2_workers', tools)

@@ -20,7 +20,10 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   native settlement records handling of complete owned reads. The interactive
   Claude MCP route needs native prompt-scoped reads and successful Stop handling;
   failed and interrupted prompts retain their pending input. Preserve unread
-  input, failed turns and existing explicit compatibility commands. Coordinate
+  input, failed turns and existing explicit compatibility commands. Match
+  MCP capability discovery to the concise help surface and retain contextual
+  inbox, authored-message and batch tools. Run the actual contextual inbox and
+  native successful-turn handling acceptance after the help change. Coordinate
   with [#723](https://github.com/Flip-Engineering/baton/issues/723),
   [#761](https://github.com/Flip-Engineering/baton/issues/761),
   [#716](https://github.com/Flip-Engineering/baton/issues/716) and
