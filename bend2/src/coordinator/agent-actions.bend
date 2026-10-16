@@ -57,7 +57,7 @@ def body_option(body: Body, value: Body) -> Body:
     case Bad{cause}: Bad{cause}
     case other: Bad{"send accepts exactly one --text TEXT or --file PATH per message."}
 
-def send_kind(kind: String) -> String:
+def send_kind(+kind: String) -> String:
   Bool.pick(String,String.is_empty(kind),"report",kind)
 
 def send_done(+recipient: String, id: String, +kind: String, body: Body,
@@ -227,7 +227,7 @@ def parse_action(action: Verb, args: List<String>) -> Action:
     case ReadVerb{}: read_ids(args,Nil{})
     case SendVerb{}:
       match args:
-        case recipient <> +text <> Nil{}:
+        case +recipient <> +text <> Nil{}:
           Bool.pick(Action,Tx.starts_with(text,"--"),
             send_options([text],recipient,"","",Missing{},Nil{}),
             send_done(recipient,"","",Text{text},Nil{}))
