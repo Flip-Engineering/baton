@@ -2,7 +2,7 @@ import Base
 import ./branching-model.bend as M
 import ./agent-native.bend as Native
 import ./agent-domain.bend as D
-import ./commands.bend as C
+import ../coordinator/commands.bend as C
 import ./recruit.bend as Recruit
 import ../git/process.bend as Git
 import ../git/types.bend as G
