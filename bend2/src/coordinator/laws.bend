@@ -14,7 +14,7 @@ import ./naming-laws.bend as NamingLaws
 import ./delivery.bend as Delivery
 import ./turn.bend as Turn
 import ./agent-input.bend as AgentInput
-import ./message-status.bend as MessageStatus
+import ../coordinator/message-status.bend as MessageStatus
 import ../coordinator/commands.bend as C
 import ./receive.bend as Receive
 import ./guidance.bend as Guidance
