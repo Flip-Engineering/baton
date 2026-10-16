@@ -507,12 +507,12 @@ def output_parent_path(+prefix: String, +part: String) -> String:
   Bool.pick(String,String.is_empty(prefix),Bool.pick(String,String.is_empty(part),"/",part),
     Bool.pick(String,String.eq(prefix,"/"),prefix ++ part,prefix ++ "/" ++ part))
 
-def prepare_output_parents(prefix: String, parts: List<&2,String>) -> IO(Unit):
+def prepare_output_parents(parts: List<&2,String>, prefix: String) -> IO(Unit):
   match parts:
     case part <> next <> rest: do IO<Unit>:
       +directory : String <- IO.pure(String,output_parent_path(prefix,part))
       made : Unit <- IO.try(Unit,F.Files.mkdir(directory))
-      prepare_output_parents(directory,Con{next,rest})
+      prepare_output_parents(Con{next,rest},directory)
     case other: IO.pure(Unit,Unit{})
 
 # A missing generation is reconstructed from the retained native spool. Its
@@ -521,7 +521,7 @@ def prepare_retained_output_named(+log: String) -> IO(Bool):
   do IO<Bool>:
     present : String <- IO.try(String,F.Files.exists(log))
     +exists : Bool <- IO.pure(Bool,String.eq(present,"1"))
-    prepared : Unit <- Bool.pick(IO(Unit),exists,IO.pure(Unit,Unit{}),prepare_output_parents("",String.split(log,Char.from_u32(47))))
+    prepared : Unit <- Bool.pick(IO(Unit),exists,IO.pure(Unit,Unit{}),prepare_output_parents(String.split(log,Char.from_u32(47)),""))
     IO.pure(Bool,exists)
 
 def prepare_retained_output(+log: String) -> IO(Bool):
