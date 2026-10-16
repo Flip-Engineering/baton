@@ -57,7 +57,7 @@ The archive root is `baton2-development-darwin-arm64` by default. `--release-ver
 
 ## Package contents and distribution terms
 
-The archive contains identical executable entries at `bin/baton` and `bin/baton2`, manifest.json, notices/, and libexec/baton2/. The task input, project settings and managed Codex inbox helpers are included in libexec/baton2/. The adapters select the archive's executable by default. The output directory also contains build logs, generated C when available, the manifest, archive, and archive checksum.
+The archive contains identical executable entries at `bin/baton` and `bin/baton2`, manifest.json, notices/, and libexec/baton2/. The Conductor adapters, task input and project settings helpers are included in `libexec/baton2`. Codex inbox coordination and proxy transport are compiled into the executable. The adapters select the archive's executable by default. The output directory also contains build logs, generated C when available, the manifest, archive, and archive checksum.
 
 Packaging copies the project LICENSE and NOTICE when present, and retains the pinned Bend compiler/runtime license, reference license, and license or notice files in the verified compiler archive. The manifest records the notice paths and their sources. A source snapshot without a root license is marked as unresolved for public distribution.
 

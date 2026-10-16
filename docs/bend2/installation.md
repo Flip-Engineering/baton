@@ -183,8 +183,9 @@ export PATH="$HOME/.local/bin:$PATH"
 ```
 
 Keep the complete extracted prefix, including `lib/context/modules` and
-`libexec/baton2`. The executable resolves its Codex inbox helper, Conductor
-adapters and selected context providers there. Keep the earlier prefix available
+`libexec/baton2`. The executable resolves its Conductor adapters and selected
+context providers there. The compiled coordinator manages Codex inbox delivery
+through the native proxy transport. Keep the earlier prefix available
 for receivers and recovery commands that still reference it.
 
 The command symlink selects the executable for subsequent CLI invocations.
