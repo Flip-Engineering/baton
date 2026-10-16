@@ -1438,9 +1438,9 @@ class Receive(unittest.TestCase):
         original = initialization[0]
         self.assertIn(task, original['guidance'])
         self.assertNotIn('\0', started['prompt'])
-        header = next(line for line in original['guidance'].splitlines()
-                      if line.startswith('Coordinator executable/database argv: '))
-        self.assertEqual(json.loads(header.split(': ', 1)[1]), [str(EXE), str(self.db)])
+        self.assertIn('Use baton inbox to read complete input', original['guidance'])
+        self.assertNotIn(str(self.db), original['guidance'])
+        self.assertNotIn('Use acknowledge', original['guidance'])
         self.assertEqual(self.coord('delivery', 'initial-task')['body'], task)
         guidance = '\ufeffUse semantic actions and retain all evidence. caféλ🙂\n'
         argv = [str(EXE), str(self.db), 'native-attachment-input', 'parent', 'mcp-instructions']
@@ -3309,13 +3309,10 @@ class Receive(unittest.TestCase):
         self.message('first', 'root')
         first = self.spawn(*self.receive_args('root'))
         control, started = self.accept('root')
-        argv_prefix = 'Coordinator executable/database argv: '
-        coordinator_argv = next(line.removeprefix(argv_prefix)
-                                for line in started['prompt'].splitlines()
-                                if line.startswith(argv_prefix))
-        self.assertEqual(json.loads(coordinator_argv), [str(EXE.resolve()), str(self.db.resolve())])
-        self.assertIn('Read complete owed input with inbox.', started['prompt'])
-        self.assertIn('You are session root in a Baton Orchestra.', started['prompt'])
+        self.assertIn('Use baton inbox to read complete input', started['prompt'])
+        self.assertIn('You are Baton Player root.', started['prompt'])
+        self.assertNotIn(str(self.db.resolve()), started['prompt'])
+        self.assertNotIn('Use acknowledge', started['prompt'])
         self.action(control)
         self.finish(first)
         self.message('second', 'root')
@@ -3590,10 +3587,9 @@ class Receive(unittest.TestCase):
         initialization = self.assert_retry_initialization('routed', [started['prompt'], resumed['prompt']])
         self.assertEqual(initialization[0]['turn'], 'routed-turn')
         self.assertNotEqual(initialization[0]['turn'], initialization[1]['turn'])
-        header = next(line for line in initialization[0]['guidance'].splitlines()
-                      if line.startswith('Coordinator executable, database and session argv: '))
-        encoded = header.split(': ', 1)[1].split('. Recorded parent: ', 1)[0]
-        self.assertEqual(json.loads(encoded), [str(EXE), str(self.db), 'routed'])
+        self.assertIn('Use baton inbox to read complete input', initialization[0]['guidance'])
+        self.assertNotIn(str(self.db), initialization[0]['guidance'])
+        self.assertNotIn('Use acknowledge', initialization[0]['guidance'])
         with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
             self.assertEqual(database.execute(
                 "SELECT task FROM direct_turn_requests WHERE session='routed' AND id='routed-turn'").fetchone()[0],

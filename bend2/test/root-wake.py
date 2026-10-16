@@ -461,14 +461,7 @@ while True:
         self.assertEqual(request['params']['threadId'], 'native-app-root')
         self.assertEqual(request['params']['expectedTurnId'], 'fixture-turn')
         text = request['params']['input'][0]['text']
-        pointer = json.loads(text.splitlines()[1])
-        self.assertEqual(pointer, {'database': str(self.db), 'message': 'app-root-report',
-                                   'recipient': 'root', 'pendingCount': 4})
-        self.assertIn('baton inbox', text)
-        self.assertIn('baton read MESSAGE_ID...', text)
-        self.assertIn('baton completion-request --text', text)
-        self.assertIn('baton acknowledge', text)
-        self.assertNotIn('ack MESSAGE', text)
+        self.assert_contextual_notice(text)
         inbox = {message['id']: message for message in json.loads(self.coord('inbox', 'root'))}
         self.assertEqual(set(inbox), set(owed))
         for ident, body in owed.items():
@@ -482,7 +475,7 @@ while True:
         self.coord('report', 'app-root-after-progress', 'child', 'Continue after root progress.')
         calls = [json.loads(line) for line in queued.read_text().splitlines()]
         self.assertEqual(len(calls), 2, calls)
-        self.assertEqual(json.loads(calls[1]['params']['input'][0]['text'].splitlines()[1])['pendingCount'], len(owed))
+        self.assert_contextual_notice(calls[1]['params']['input'][0]['text'])
         self.assertEqual(json.loads(self.coord('delivery', accepted))['receipt'],
                          'root reviewed this input')
         for ident in set(owed) - {accepted}:
@@ -532,9 +525,7 @@ while True:
         self.assertEqual(len(calls), 5, calls)
         self.assertEqual(calls[4]['method'], 'turn/steer')
         self.assertEqual(calls[4]['params']['threadId'], 'native-app-root')
-        self.assertEqual(json.loads(calls[4]['params']['input'][0]['text'].splitlines()[1])['message'],
-                         'refused-app-input')
-        self.assertEqual(json.loads(calls[4]['params']['input'][0]['text'].splitlines()[1])['pendingCount'], 4)
+        self.assert_contextual_notice(calls[4]['params']['input'][0]['text'])
         owed = ['refused-app-input'] + ['refused-app-more-' + str(index) for index in range(3)]
         for ident in owed:
             self.assertIsNone(json.loads(self.coord('delivery', ident))['receipt'])
@@ -545,7 +536,7 @@ while True:
         self.coord('report', 'retry-after-root-progress', 'child', 'Read the remaining inbox.')
         calls = [json.loads(line) for line in queued.read_text().splitlines()]
         self.assertEqual(len(calls), 6, calls)
-        self.assertEqual(json.loads(calls[5]['params']['input'][0]['text'].splitlines()[1])['pendingCount'], 4)
+        self.assert_contextual_notice(calls[5]['params']['input'][0]['text'])
         for ident in ['refused-app-more-' + str(index) for index in range(3)] + ['retry-after-root-progress']:
             self.assertIsNone(json.loads(self.coord('delivery', ident))['receipt'])
 
@@ -720,6 +711,14 @@ while True:
         second.wait()
         self.assertEqual(second.returncode, 0, second_error.read_text())
 
+    def assert_contextual_notice(self, text):
+        self.assertIn('baton inbox', text)
+        self.assertIn('Baton records handling after a successful turn.', text)
+        self.assertNotIn(str(self.db), text)
+        self.assertNotIn('"claimToken"', text)
+        self.assertNotIn('"recipient"', text)
+        self.assertNotIn('baton acknowledge', text)
+
     def test_restarted_follower_preserves_the_first_terminal_report_and_receipt(self):
         queued, _ = self.public_proxy()
         current = json.loads(self.public_app_state.read_text())
@@ -822,8 +821,8 @@ while True:
         self.assertEqual(admitted[0]['method'], 'turn/steer')
         self.assertEqual(admitted[0]['params']['threadId'], 'native-app-root')
         text = admitted[0]['params']['input'][0]['text']
-        self.assertEqual(json.loads(text.split('\n')[1]), notice)
-        self.assertEqual(text[text.index('\n', text.index('\n') + 1):], suffix)
+        self.assert_contextual_notice(text)
+        self.assertTrue(text.endswith(suffix), text)
         retained = json.loads(self.coord('delivery', 'legacy-busy-input'))
         self.assertEqual(retained['body'], body)
         self.assertIsNone(retained['receipt'])
@@ -880,9 +879,8 @@ while True:
         self.assertEqual(calls[0]['params']['threadId'], 'native-app-root')
         self.assertEqual(calls[0]['params']['expectedTurnId'], 'fixture-turn')
         text = calls[0]['params']['input'][0]['text']
-        self.assertEqual(json.loads(text.split('\n')[1]),
-                         {key: value for key, value in notice.items() if key != 'claimToken'})
-        self.assertEqual(text[text.index('\n', text.index('\n') + 1):], suffix)
+        self.assert_contextual_notice(text)
+        self.assertTrue(text.endswith(suffix), text)
         retained_claim = self.rows("SELECT native,token,cause FROM codex_inbox_wakes WHERE session='root'")[0]
         self.assertEqual((retained_claim['native'], retained_claim['token']),
                          ('native-app-root', claim['token']))
@@ -932,9 +930,7 @@ while True:
         self.assertEqual(len(calls), 1, calls)
         self.assertEqual(calls[0]['method'], 'turn/start')
         self.assertEqual(calls[0]['params']['threadId'], 'native-app-root')
-        pointer = json.loads(calls[0]['params']['input'][0]['text'].split('\n')[1])
-        self.assertEqual((pointer['recipient'], pointer['message'], pointer['pendingCount']),
-                         ('root', 'claim-empty-writer-input', 1))
+        self.assert_contextual_notice(calls[0]['params']['input'][0]['text'])
         retained = json.loads(self.coord('delivery', 'claim-empty-writer-input'))
         self.assertEqual(retained['body'], body)
         self.assertIsNone(retained['receipt'])
