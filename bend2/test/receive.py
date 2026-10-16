@@ -759,6 +759,9 @@ class Receive(unittest.TestCase):
 
     def accept_delivery(self, admission, session):
         stdout, stderr = self.finish(admission)
+        return self.accept_detached(session, stdout + stderr)
+
+    def accept_detached(self, session, diagnostic):
         owner = f'{EXE.resolve()} --instance-owner {self.db.resolve()}'
         while True:
             if select.select([self.server], [], [], 0)[0]:
@@ -767,7 +770,7 @@ class Receive(unittest.TestCase):
                          if process['command'] != owner]
             if not producers:
                 self.fail(f'{session} native did not connect after admission; '
-                          f'execution={self.execution(session)!r}; {stdout}{stderr}')
+                          f'execution={self.execution(session)!r}; {diagnostic}')
             time.sleep(.01)
 
     def accept_or_child_exit(self, child, description, failure_stream=None, allow_exit=False):
@@ -4429,6 +4432,241 @@ class Receive(unittest.TestCase):
         self.assertEqual(len(self.coord('turns', 'parent')), 2)
         self.assertEqual(self.coord('inbox', 'parent'), [])
         self.assertEqual(self.claims('parent'), [])
+
+
+    def explicit_native_endpoint(self, session='root'):
+        wrapper = self.directory / 'explicit receiver.py'
+        launches = self.directory / 'explicit-receiver-launches.jsonl'
+        wrapper.write_text('import json,os,pathlib,subprocess,sys\n'
+                           f'config=json.loads(pathlib.Path({str(self.directory / "fixture.json")!r}).read_text())\n'
+                           f'with pathlib.Path({str(launches)!r}).open("a") as output:\n'
+                           ' output.write(json.dumps({"message":sys.argv[-1],"pid":os.getpid(),'
+                           '"parent":subprocess.check_output(["ps","-p",str(os.getppid()),'
+                           '"-o","command="],text=True).strip()})+"\\n")\n'
+                           f'argv=[config["exe"],config["db"],*{self.receive_args(session)[:-1]!r},sys.argv[-1]]\n'
+                           'os.execv(argv[0],argv)\n')
+        self.coord('connect', session, self.coord('player', session)['native'],
+                   json.dumps([sys.executable, str(wrapper)]))
+        return launches
+
+    def explicit_running_attempt(self, native):
+        def running():
+            with sqlite3.connect(f'{self.db.as_uri()}?mode=rw', uri=True) as database:
+                return database.execute(
+                    "SELECT e.id,e.directory FROM executions e JOIN sessions s ON s.id=e.session "
+                    "WHERE e.session='root' AND e.phase='running' AND s.native=? "
+                    "AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=e.session)",
+                    (native,)).fetchone()
+        attempt, directory = self.eventually(running, 'The explicit receiver did not bind its native attempt.')
+        return attempt, pathlib.Path(directory)
+
+    def explicit_endpoint_launch(self, child, launches, ident):
+        def launched():
+            lines = launches.read_bytes().split(b'\n')[:-1] if launches.exists() else []
+            launch = next((row for row in map(json.loads, lines) if row['message'] == ident), None)
+            if launch:
+                return launch
+            owner = f'{EXE.resolve()} --instance-owner {self.db.resolve()}'
+            producers = [process for process in self.owned_processes() if process['command'] != owner]
+            if child.poll() is not None and not producers:
+                stdout, stderr = self.child_communication(child)
+                self.fail(f'Explicit endpoint exited before launch: {child.returncode}; {stdout}{stderr}')
+            return None
+        return self.eventually(launched, 'The explicit endpoint did not record its launch.')
+
+    def explicit_native_admission(self, child, launches, ident, body):
+        launch = self.explicit_endpoint_launch(child, launches, ident)
+        self.assertEqual(launch['parent'],
+                         f'{EXE.resolve()} --dispatch-message {self.db.resolve()} {ident}')
+        stdout, stderr = self.finish(child)
+        control, started = self.accept_detached('root', stdout + stderr)
+        self.assertIn('[id: ' + ident + ']', started['prompt'])
+        self.assertIn(body, started['prompt'])
+        self.assertEqual(started['native'], 'native-root')
+        self.assertEqual(self.coord('delivery', ident)['body'], body)
+        self.assertIsNone(self.coord('delivery', ident)['receipt'])
+        attempt, directory = self.explicit_running_attempt(started['native'])
+        self.assertFalse((directory / 'status').exists(), 'native completed before its controlled release')
+        self.eventually(lambda: self.complete_owned_read(ident, attempt, started['native']),
+                        'The native initial prompt was not recorded as a complete owned read.')
+        return control, started, attempt, directory, stdout
+
+    def complete_owned_read(self, ident, attempt, native):
+        with sqlite3.connect(f'{self.db.as_uri()}?mode=rw', uri=True) as database:
+            return database.execute(
+                'SELECT 1 FROM message_reads WHERE message=? AND recipient=? AND attempt=? '
+                'AND native=? AND handled IS NULL', (ident, 'root', attempt, native)).fetchone()
+
+    def settle_explicit_native(self, control, ident, attempt, directory, native):
+        self.action(control, ack=False, complete_task=False)
+        self.assertEqual(control.readline(), b'')
+        self.eventually(lambda: self.execution('root')[:2] == ('exited', 'exit 0')
+                        and (directory / 'acknowledged').exists(),
+                        'The detached delivery did not retain its completed native wait.')
+        receipt = 'native-turn:' + attempt
+        self.assertEqual(self.coord('delivery', ident)['receipt'], receipt)
+        with sqlite3.connect(f'{self.db.as_uri()}?mode=rw', uri=True) as database:
+            self.assertEqual(database.execute(
+                'SELECT attempt,native,handled FROM message_reads WHERE message=? AND recipient=?',
+                (ident, 'root')).fetchall(), [(attempt, native, receipt)])
+        self.assertEqual((directory / 'status').read_text(), '0\n')
+        self.assertTrue((directory / 'released').exists())
+        self.shutdown_idle_database_owner('Explicit endpoint delivery did not settle.', reject_start=True)
+
+    def test_ordinary_explicit_endpoint_accepts_cli_input_before_native_completion(self):
+        self.player(harness='claude-code')
+        self.coord('connect', 'parent', 'native-parent', json.dumps(['/usr/bin/true']))
+        launches = self.explicit_native_endpoint()
+        for verb in ('message', 'message-file', 'report', 'report-file', 'ask', 'ask-file'):
+            with self.subTest(verb=verb):
+                ident = 'held-' + verb
+                body = f'{verb}: full input λ🙂 with path /tmp/work tree/資料\nSecond line.\n'
+                argument = body
+                if verb.endswith('-file'):
+                    argument = self.directory / ('authored ' + verb + ' λ.txt')
+                    argument.write_text(body)
+                args = [verb, ident, 'parent']
+                if verb in ('message', 'message-file'):
+                    args += ['root', 'report']
+                child = self.spawn(*args, argument)
+                control, started, attempt, directory, stdout = self.explicit_native_admission(
+                    child, launches, ident, body)
+                admitted = json.loads(stdout)
+                self.assertEqual((admitted['id'], admitted['sender'], admitted['recipient'],
+                                  admitted['kind'], admitted['body'], admitted['receipt']),
+                                 (ident, 'parent', 'root', 'question' if verb.startswith('ask')
+                                  else 'report', body, None))
+                self.settle_explicit_native(control, ident, attempt, directory, started['native'])
+
+    def test_ordinary_explicit_endpoint_accepts_mcp_input_before_native_completion(self):
+        self.player(harness='claude-code')
+        self.coord('connect', 'parent', 'native-parent', json.dumps(['/usr/bin/true']))
+        launches = self.explicit_native_endpoint()
+        script = ROOT / 'bend2/scripts/mcp-conductor.mjs'
+        for action in ('send', 'report', 'ask'):
+            with self.subTest(action=action):
+                ident = 'held-mcp-' + action
+                body = f'{action}: complete MCP input λ🙂\nPath /tmp/work tree/資料\n'
+                arguments = ['--id', ident, '--text', body]
+                if action == 'send':
+                    arguments = ['root', '--kind', 'report', *arguments]
+                requests = [
+                    {'jsonrpc': '2.0', 'id': 1, 'method': 'initialize',
+                     'params': {'protocolVersion': '2024-11-05', 'capabilities': {},
+                                'clientInfo': {'name': 'ordinary-delivery-fixture', 'version': '0'}}},
+                    {'jsonrpc': '2.0', 'id': 2, 'method': 'tools/call',
+                     'params': {'name': 'baton2_action',
+                                'arguments': {'action': action, 'arguments': arguments}}},
+                ]
+                child = subprocess.Popen(['node', str(script), str(self.db), str(EXE),
+                                          '--session', 'parent'], stdin=subprocess.PIPE,
+                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                self.children.append(child)
+                child.stdin.write(''.join(json.dumps(request) + '\n' for request in requests))
+                child.stdin.close()
+                child.stdin = None
+                control, started, attempt, directory, stdout = self.explicit_native_admission(
+                    child, launches, ident, body)
+                replies = {reply['id']: reply for reply in map(json.loads, stdout.splitlines())
+                           if 'id' in reply}
+                self.assertNotIn('error', replies[1])
+                self.assertNotIn('error', replies[2])
+                result = replies[2]['result']
+                self.assertFalse(result.get('isError', False), result)
+                answer, = json.loads(result['content'][0]['text'])
+                if action == 'send':
+                    self.assertEqual(answer['admission']['status'], 'admitted')
+                    self.assertEqual(answer['wake']['status'], 'accepted')
+                    self.assertEqual(answer['receiptStatus'], 'pending')
+                    admitted = answer['delivery']
+                else:
+                    self.assertEqual(answer['status'], 'completed')
+                    self.assertEqual(answer['waitStatus'], 'exit 0')
+                    self.assertEqual(answer['cause'], '')
+                    admitted = json.loads(answer['stdout'])
+                self.assertEqual((admitted['id'], admitted['sender'], admitted['recipient'],
+                                  admitted['kind'], admitted['body'], admitted['receipt']),
+                                 (ident, 'parent', 'root', 'question' if action == 'ask'
+                                  else 'report', body, None))
+                self.settle_explicit_native(control, ident, attempt, directory, started['native'])
+
+    def test_explicit_endpoint_failure_retains_input_for_attached_public_resume(self):
+        self.player(harness='claude-code')
+        launches = self.explicit_native_endpoint()
+        self.coord('attach', 'other-root', 'fixture', '', json.dumps(['/usr/bin/true']))
+        self.coord('role', 'other-root', 'principal-conductor')
+        refused = self.coord('message', 'denied-held', 'parent', 'other-root', 'report',
+                             'A refused route must not launch an endpoint.', ok=False)
+        self.assertEqual(refused.returncode, 2, refused.stdout + refused.stderr)
+        self.assertIn('message-route-denied', refused.stderr)
+        self.assertFalse(launches.exists())
+        with sqlite3.connect(f'{self.db.as_uri()}?mode=rw', uri=True) as database:
+            self.assertIsNone(database.execute("SELECT 1 FROM messages WHERE id='denied-held'").fetchone())
+        self.coord('connect', 'root', 'native-root',
+                   json.dumps([str(self.directory / 'missing endpoint')]))
+        body = 'Retain complete work λ🙂\nRecover it through the recorded root receiver.\n'
+        accepted = self.coord('report', 'failed-explicit-launch', 'parent', body)
+        self.assertEqual((accepted['body'], accepted['receipt']), (body, None))
+        self.shutdown_idle_database_owner('Failed explicit endpoint did not finish its detached handoff.')
+        diagnostic = pathlib.Path(str(self.db) + '.dispatch-' +
+                                  'failed-explicit-launch'.encode().hex() + '.stderr')
+        self.assertIn('Message committed; session delivery failed', diagnostic.read_text())
+        self.assertIn('retry delivery from the pending inbox', diagnostic.read_text())
+        self.assertIn('delivery error', pathlib.Path(str(self.db) + '.root.log').read_text())
+        self.assertEqual(self.coord('delivery', 'failed-explicit-launch')['body'], body)
+        self.assertIsNone(self.coord('delivery', 'failed-explicit-launch')['receipt'])
+        self.assertFalse(launches.exists())
+        self.explicit_native_endpoint()
+        recovery = self.spawn('resume', 'root')
+        control, started = self.accept_child(recovery, 'root')
+        self.assertIsNone(recovery.poll(), 'explicit resume returned before its native completed')
+        self.assertIn(body, started['prompt'])
+        self.assertIn('[id: failed-explicit-launch]', started['prompt'])
+        self.assertIsNone(self.coord('delivery', 'failed-explicit-launch')['receipt'])
+        attempt, directory = self.explicit_running_attempt(started['native'])
+        self.eventually(lambda: self.complete_owned_read('failed-explicit-launch', attempt, started['native']),
+                        'The resumed receiver did not record its complete owned input.')
+        self.action(control, ack=False, complete_task=False)
+        self.assertEqual(control.readline(), b'')
+        output, _ = self.finish(recovery)
+        answer = json.loads(output)
+        self.assertEqual(answer['session'], 'root')
+        self.assertEqual(answer['message'], 'failed-explicit-launch')
+        self.assertEqual(answer['delivery']['receipt'], 'native-turn:' + attempt)
+        directory = pathlib.Path(directory)
+        self.assertEqual((directory / 'status').read_text(), '0\n')
+        self.assertTrue((directory / 'acknowledged').exists())
+        self.assertIn('session delivery failed', diagnostic.read_text())
+        self.shutdown_idle_database_owner('Public resume did not finish its attached native delivery.')
+
+    def test_stopped_report_handoff_accepts_before_parent_native_completion(self):
+        self.player(harness='claude-code')
+        launches = self.explicit_native_endpoint()
+        self.coord('stop', 'parent', 'held-parent-stop', 'Retain this stopped receiver.')
+        ident = 'report-to-stopped-parent'
+        body = 'Retained result for the stopped parent λ🙂\nComplete source material.\n'
+        sender = self.spawn('message', ident, 'root', 'parent', 'report', body)
+        forwarded = 'stopped-input:' + ident.encode().hex()
+        launch = self.explicit_endpoint_launch(sender, launches, forwarded)
+        self.assertEqual(launch['parent'],
+                         f'{EXE.resolve()} --dispatch-message {self.db.resolve()} {ident}')
+        stdout, stderr = self.finish(sender)
+        control, started = self.accept_detached('root', stdout + stderr)
+        forwarded_body = self.coord('delivery', forwarded)['body']
+        self.assertIn(forwarded_body, started['prompt'])
+        handoff = json.loads(forwarded_body)
+        self.assertEqual((handoff['originalMessage'], handoff['originalBody'], handoff['retainedWorkSession']),
+                         (ident, body, 'root'))
+        self.assertIsNone(self.coord('delivery', ident)['receipt'])
+        self.assertEqual(self.coord('session', 'parent')['stop']['id'], 'held-parent-stop')
+        attempt, directory = self.explicit_running_attempt(started['native'])
+        self.assertFalse((directory / 'status').exists())
+        self.eventually(lambda: self.complete_owned_read(forwarded, attempt, started['native']),
+                        'Forwarded report did not become a complete owned read.')
+        self.settle_explicit_native(control, forwarded, attempt, directory, started['native'])
+        with sqlite3.connect(f'{self.db.as_uri()}?mode=rw', uri=True) as database:
+            self.assertEqual(database.execute('SELECT body,receipt FROM messages WHERE id=?',
+                                              (ident,)).fetchone(), (body, None))
 
 
 if __name__ == '__main__':
