@@ -155,6 +155,18 @@ legacy evidence, changed files, incomplete waits and invalid path mappings.
 The validation executed no compiler. Its result SHA256 is
 `24ba9e3777966cc25bd8d733b13229b5c9c9c426733ab650054640e2001f5ac8`.
 
+The exact target evidence is retained at
+`/mnt/nvme4tb/ci-runners/baton2-target-main-evidence-20261016T2040Z`.
+Both CI users, UID 986 and UID 985, completed reuse preparation, generated-C
+staging and transfer verification naturally. Each verified target commit
+`e18f003bf07180994fff2c295c5c8e87a276400f` and generated C SHA256
+`ca552285e64a7cfad67bc657b7e81a32d6c0c3b80eb6a9628c4de512a369c202`.
+These checks executed no compiler. The shared handoff binds the unchanged
+original handoff and preserves the original files and permissions. The 37-file
+local evidence capture has archive SHA256
+`3576503d7fd4082f57e61480c5a91870889d4eda5d065ccc42dcd68f88f58c3b`.
+The candidate workflow remains pending a complete candidate Main handoff.
+
 Remote Darwin dependency preflight run
 [`38956455653`](https://github.com/Flip-Engineering/baton/actions/runs/38956455653)
 used source `2b4683454b813e5a338b64582b0a0774249394bc`. Required source and
