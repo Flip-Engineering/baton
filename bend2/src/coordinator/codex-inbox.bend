@@ -156,6 +156,11 @@ def admission_stored(+notice: Notice, +token: String, +turn: String) -> IO(Unit)
     case Managed{executable,db,session,thread,saved}: Inbox.admitted(db,session,thread,token,turn)
     case Pointer{db,session,thread,saved,document,suffix}: Inbox.admitted(db,session,thread,token,turn)
 
+def observed_add(+state: State, +turn: String) -> IO(State):
+  do IO<State>:
+    +next : String <- Proxy.json("SELECT json_group_array(value) FROM (SELECT value FROM json_each(" ++ C.q(observed(state)) ++ ") UNION SELECT " ++ C.q(turn) ++ ") WHERE value<>'' AND value NOT IN (SELECT value FROM json_each(" ++ C.q(reported(state)) ++ "));")
+    IO.pure(State,State{state_pending(state),items(state),reported(state),next})
+
 def admission_result(+notice: Notice, +token: String, +thread: String, +method: String, +state: State, +response: String) -> IO(Admission):
   do IO<Admission>:
     recorded : Unit <- Proxy.record("{\"type\":\"codexInboxAdmission\",\"threadId\":" ++ J.string_literal(thread) ++ ",\"method\":" ++ J.string_literal(method) ++ ",\"result\":" ++ response ++ "}")
@@ -191,24 +196,24 @@ def send_admission(+link: Proxy.Link, +state: State, +thread: String, +method: S
   match refreshed:
     case (token,+pointer): send_refreshed(link,state,thread,method,turn,notice,token,pointer,String.is_empty(pointer))
 
-def steer_page(+link: Proxy.Link, +thread: String, +notice: Notice, +state: State, +page: String, +cursor: String) -> IO(Admission):
-  do IO<Admission>:
-    +turn : String <- Proxy.json("SELECT coalesce((SELECT value FROM json_each(" ++ C.q(page) ++ ",'$.data') WHERE json_extract(value,'$.status')='inProgress' LIMIT 1),'null');")
-    +next : String <- Proxy.text(page,"$.nextCursor")
-    steer_selected(link,thread,notice,state,page,turn,next,Bool.not(String.eq(turn,"null")))
-
-def steer_selected(+link: Proxy.Link, +thread: String, +notice: Notice, +state: State, +page: String, +turn: String, +cursor: String, +found: Bool) -> IO(Admission):
+def steer_selected(+link: Proxy.Link, +thread: String, +notice: Notice, +state: State, +page: String, +turn: String, +cursor: String, +found: Bool, again: State -> String -> IO(Admission)) -> IO(Admission):
   match found:
     case True{}: do IO<Admission>:
       +id : String <- Proxy.text(turn,"$.id")
       refreshed : String & String <- refresh(notice,"active")
       send_admission(link,state,thread,"turn/steer",id,notice,refreshed)
     case False{}:
-      Bool.pick(IO(Admission),String.is_empty(cursor),IO.pure(Admission,Refused{state,1,"Public Codex active thread " ++ thread ++ " returned no in-progress turn identity after cursor exhaustion: " ++ page}),steer_current(link,thread,notice,state,cursor))
+      Bool.pick(IO(Admission),String.is_empty(cursor),IO.pure(Admission,Refused{state,1,"Public Codex active thread " ++ thread ++ " returned no in-progress turn identity after cursor exhaustion: " ++ page}),again(state,cursor))
+
+def steer_page(+link: Proxy.Link, +thread: String, +notice: Notice, +state: State, +page: String, again: State -> String -> IO(Admission)) -> IO(Admission):
+  do IO<Admission>:
+    +turn : String <- Proxy.json("SELECT coalesce((SELECT value FROM json_each(" ++ C.q(page) ++ ",'$.data') WHERE json_extract(value,'$.status')='inProgress' LIMIT 1),'null');")
+    +cursor : String <- Proxy.text(page,"$.nextCursor")
+    steer_selected(link,thread,notice,state,page,turn,cursor,Bool.not(String.eq(turn,"null")),again)
 
 @unsafe
 def steer_current(+link: Proxy.Link, +thread: String, +notice: Notice, +state: State, +cursor: String) -> IO(Admission):
-  admission_rpc(link,state,thread,"thread/turns/list",turn_params(thread,cursor),next => page => steer_page(link,thread,notice,next,page,cursor))
+  admission_rpc(link,state,thread,"thread/turns/list",turn_params(thread,cursor),next => page => steer_page(link,thread,notice,next,page,later => cursor => steer_current(link,thread,notice,later,cursor)))
 
 def deliver_status(+link: Proxy.Link, +state: State, +thread: String, +notice: Notice, +status: String, +active: Bool) -> IO(Admission):
   match active:
@@ -238,11 +243,6 @@ def deliver_notice(+link: Proxy.Link, +state: State, +thread: String, +notice: N
 def membership(+values: String, +value: String) -> IO(Bool):
   Proxy.truth(values,"EXISTS(SELECT 1 FROM json_each(item.value) j WHERE j.value=" ++ C.q(value) ++ ")")
 
-def observed_add(+state: State, +turn: String) -> IO(State):
-  do IO<State>:
-    +next : String <- Proxy.json("SELECT json_group_array(value) FROM (SELECT value FROM json_each(" ++ C.q(observed(state)) ++ ") UNION SELECT " ++ C.q(turn) ++ ") WHERE value<>'' AND value NOT IN (SELECT value FROM json_each(" ++ C.q(reported(state)) ++ "));")
-    IO.pure(State,State{state_pending(state),items(state),reported(state),next})
-
 def report(+db: String, +session: String, +id: String, +body: String) -> IO(String):
   do IO<String>:
     +command : C.Command = C.Report{id,session,body}
@@ -256,6 +256,9 @@ def terminal_marked(+state: State, +turn: String) -> IO(State):
     +remaining : String <- Proxy.json("SELECT coalesce(json_group_array(value),'[]') FROM json_each(" ++ C.q(observed(state)) ++ ") WHERE value<>" ++ C.q(turn) ++ ";")
     +completed : String <- Proxy.json("SELECT coalesce(json_group_array(json(value)),'[]') FROM json_each(" ++ C.q(items(state)) ++ ") WHERE json_extract(value,'$.turnId')<>" ++ C.q(turn) ++ ";")
     IO.pure(State,State{state_pending(state),completed,reports,remaining})
+
+def turn_retained(+session: String, +thread: String, +turn: String) -> IO(Unit):
+  Proxy.record("{\"type\":\"codexInboxTurnRetained\",\"session\":" ++ J.string_literal(session) ++ ",\"threadId\":" ++ J.string_literal(thread) ++ ",\"turn\":" ++ turn ++ "}")
 
 def terminal_report(+db: String, +session: String, +thread: String, +state: State, +turn: String, +turn_id: String, +status: String, +already: Bool) -> IO(State):
   match already:
@@ -382,9 +385,6 @@ def continue_admission(+link: Proxy.Link, +executable: String, +db: String, +ses
       IO.pure(Step,Waiting{next,row})
     case False{}:
       Bool.pick(IO(Step),Bool.or(String.eq(status,"systemError"),String.eq(status,"notLoaded")),IO.die(Step,1,"Managed Codex inbox continuation cannot run: " ++ status),IO.pure(Step,Waiting{state,row}))
-
-def turn_retained(+session: String, +thread: String, +turn: String) -> IO(Unit):
-  Proxy.record("{\"type\":\"codexInboxTurnRetained\",\"session\":" ++ J.string_literal(session) ++ ",\"threadId\":" ++ J.string_literal(thread) ++ ",\"turn\":" ++ turn ++ "}")
 
 def retained_turn_page(+session: String, +thread: String, result: State & String) -> IO(State):
   match result:
