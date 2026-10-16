@@ -5,6 +5,9 @@ retain findings, ownership and acceptance requirements. This page links current
 Baton follow-up work for contributors. Every open issue has a link on this page.
 
 - [#761: Move Codex inbox coordination decisions into Bend](https://github.com/Flip-Engineering/baton/issues/761).
+  Implementation is active after the 2.0 release and adoption. Bend owns inbox
+  coordination; the native host supplies Codex protocol transport. Remove the
+  Node inbox helper and qualify the installed path.
   Move database claims, native and stop checks, input selection, failure
   retention, admission and continuation from `codex-inbox-wake.mjs` into Bend.
   Preserve complete input, first receipts, terminal reporting and restart
@@ -30,8 +33,10 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   and [#755](https://github.com/Flip-Engineering/baton/issues/755).
 
 - [#751: Add branching Ensemble variant after Baton 2.0](https://github.com/Flip-Engineering/baton/issues/751).
-  Implement after the [#717](https://github.com/Flip-Engineering/baton/issues/717)
-  release and active adoption. Use the
+  Implementation is active after the [#717](https://github.com/Flip-Engineering/baton/issues/717)
+  release and active adoption. Use explicit Conductor intervention boundaries
+  and record observed resource use. Apply the runtime budget rules in
+  `AGENTS.md`. Use the
   [Fork-and-Flush paper](https://arxiv.org/html/2610.07447v1) to design parallel
   branches from a recorded workspace with fresh native conversations. Let the
   owning Conductor configure evaluation and select the continuing branch.
