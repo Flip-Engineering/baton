@@ -341,6 +341,10 @@ def read_snapshot(db: String, command: C.Command) -> IO(String):
     case C.KnowledgeDetail{reader,id}: Knowledge.detail_value(db,reader,"all","",id)
     case C.KnowledgeScopeIndex{reader,scope,subject}: Knowledge.index_value(db,reader,scope,subject,True{})
     case C.KnowledgeScopeDetail{reader,scope,subject,id}: Knowledge.detail_value(db,reader,scope,subject,id)
+    case C.KnowledgeSearch{reader,scope,subject,query}:
+      Knowledge.graph_value(db,reader,scope,subject,query,True{},"both","",False{})
+    case C.KnowledgeTraverse{reader,scope,subject,reference,direction,relation,recursive}:
+      Knowledge.graph_value(db,reader,scope,subject,reference,False{},direction,relation,recursive)
     case other: IO.try(String,Store.read(db,other))
 
 def pretty(+db: String, command: C.Command) -> IO(String):
