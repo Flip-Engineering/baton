@@ -249,7 +249,7 @@ class Control(unittest.TestCase):
         return record if raw or not ok else json.loads(stdout)
 
     def root(self):
-        self.call('attach', 'root', 'codex', 'saved-root', '')
+        self.call('attach', 'root', 'codex', 'saved-root', json.dumps(['/usr/bin/true']))
         self.call('role', 'root', 'principal-conductor')
         self.call('attach', 'operator', 'operator', '', '')
         self.call('role', 'operator', 'operator')
@@ -1300,6 +1300,7 @@ else:
 
     def test_direct_turn_delivers_pending_input_after_native_exit(self):
         self.root()
+        root_endpoint = self.call('session', 'root')['endpoint']
         for launch in ('dispatch-turn', 'turn'):
             for harness in ('muse', 'omp', 'claude-code', 'codex'):
                 with self.subTest(launch=launch, harness=harness):
@@ -1307,6 +1308,9 @@ else:
                     assignment = self.recruit(session, harness)
                     native = 'saved-' + session
                     self.call('connect', session, native, '')
+                    if harness == 'codex':
+                        self.receiver(session)
+                        configured_endpoint = self.call('session', session)['endpointArgv']
                     ident = session + '-initial'
                     log = self.directory / (ident + '.jsonl')
                     child = None
@@ -1321,9 +1325,12 @@ else:
                     stream, start = self.accept(session)
                     self.assertEqual(start['resume'], native)
                     endpoint = self.call('session', session)['endpointArgv']
-                    self.assertEqual(endpoint, [str(EXE.resolve()), str(self.db.resolve()),
-                                               'receive', session, str(self.fixture), session,
-                                               'low', assignment['workspace'], str(log.resolve())])
+                    if harness == 'codex':
+                        self.assertEqual(endpoint, configured_endpoint)
+                    else:
+                        self.assertEqual(endpoint, [str(EXE.resolve()), str(self.db.resolve()),
+                                                   'receive', session, str(self.fixture), session,
+                                                   'low', assignment['workspace'], str(log.resolve())])
                     messages = [(session + '-pending-first', 'Finish the first pending task λ.'),
                                 (session + '-pending-second', 'Finish the second pending task 🙂.')]
                     for message, body in messages:
@@ -1344,7 +1351,7 @@ else:
                                          'fixture-native-reviewed')
                     self.assertEqual(self.call('inbox', session), [])
                     self.assertEqual(self.call('session', session)['endpointArgv'], endpoint)
-                    self.assertEqual(self.call('session', 'root')['endpoint'], '')
+                    self.assertEqual(self.call('session', 'root')['endpoint'], root_endpoint)
                     if child is not None:
                         stdout, stderr = child.communicate()
                         self.assertEqual(child.returncode, 0, stderr)
@@ -1462,10 +1469,10 @@ else:
         event.write_text(json.dumps({'type': 'result', 'session_id': 'native-pretty',
                                      'result': body, 'is_error': False}))
         self.call('observe-file', 'review-report', 'leaf', event)
-        queued = [json.loads(line) for line in self.public_queue_calls.read_text().splitlines()]
-        self.assertTrue(any(request['method'] == 'turn/steer'
-                            and request['params']['threadId'] == 'saved-root'
-                            for request in queued))
+        retained = next(row for row in self.call('inbox', 'root') if row['id'] == 'review-report')
+        self.assertEqual((retained['sender'], retained['recipient'], retained['kind'], retained['body']),
+                         ('leaf', 'root', 'report', body))
+        self.assertEqual(self.call('session', 'root')['endpointArgv'], ['/usr/bin/true'])
         for args in (('status',), ('players',), ('orchestra',), ('pending',), ('player', 'leaf'),
                      ('session', 'leaf'), ('inbox', 'root'), ('delivery', 'review-report'), ('turns', 'leaf')):
             with self.subTest(args=args):
@@ -1495,10 +1502,10 @@ else:
         self.assertEqual(session['endpoint'], endpoint)
         self.assertEqual(session['endpointArgv'], ['/usr/bin/true', 'leaf', ''])
         self.assertEqual(self.call('player', 'leaf')['endpointArgv'], ['/usr/bin/true', 'leaf', ''])
-        self.assertIsNone(self.call('session', 'root')['endpointArgv'])
+        self.assertEqual(self.call('session', 'root')['endpointArgv'], ['/usr/bin/true'])
         rows = {row['id']: row for row in self.call('status')}
         self.assertEqual(rows['leaf']['endpointArgv'], ['/usr/bin/true', 'leaf', ''])
-        self.assertIsNone(rows['root']['endpointArgv'])
+        self.assertEqual(rows['root']['endpointArgv'], ['/usr/bin/true'])
         self.assertEqual(self.call('delivery', 'leaf-guide')['endpointArgv'], ['/usr/bin/true', 'leaf', ''])
         pending = {row['id']: row for row in self.call('pending')}
         self.assertEqual(pending['leaf-guide']['endpointArgv'], ['/usr/bin/true', 'leaf', ''])
