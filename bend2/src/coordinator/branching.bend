@@ -30,6 +30,19 @@ def options(args: List<String>, +found: List<&2,D.Option>) -> Result<&1,&1,U32 &
         options(rest,Con{D.Field{name,value},found}),Fail{(2,"Branch options must be known and supplied once. Use branch --help.")})
     case other: Fail{(2,"Each branch option requires its value. Use branch --help.")}
 
+def verb_flags(verb: String) -> List<String>:
+  match verb:
+    case "start": ["--ensemble","--from","--count","--text","--file","--evaluator","--direction","--include","--knowledge","--command","--harness","--model","--effort"]
+    case "select": ["--ensemble","--round","--player","--reason"]
+    case "continue": ["--ensemble","--round","--text","--file"]
+    case "stop": ["--ensemble","--round","--player","--reason"]
+    case other: ["--ensemble","--round"]
+
+def options_allowed(+verb: String, options: List<&2,D.Option>) -> Bool:
+  match options:
+    case Nil{}: True{}
+    case D.Field{name,value} <> rest: Bool.and(D.member(name,verb_flags(verb)),options_allowed(verb,rest))
+
 def task(+options: List<&2,D.Option>, fallback: String) -> IO(String):
   Bool.pick(IO(String),Bool.and(D.present(options,"--file"),D.present(options,"--text")),
     IO.die(String,2,"Supply one --text or --file task input."),
@@ -55,7 +68,7 @@ def knowledge_visible(+source: String, +ensemble: String) -> String:
   "(" ++ Knowledge.scope_findings_sql("worker",source,True{}) ++ " OR " ++ Knowledge.scope_findings_sql("group",ensemble,True{}) ++ ")"
 
 def knowledge_snapshot(+source: String, +ensemble: String, requested: String) -> String:
-  "(SELECT coalesce(json_group_array(json_object('id',k.id,'kind',k.kind,'claim',k.claim,'evidence',k.evidence,'limits',k.limits)),'[]') FROM knowledge k WHERE k.id IN(SELECT value FROM json_each(" ++ C.q(requested) ++ ")) AND " ++ knowledge_visible(source,ensemble) ++ ")"
+  "(SELECT coalesce(json_group_array(json(" ++ Knowledge.knowledge_item() ++ ")),'[]') FROM knowledge k WHERE k.id IN(SELECT value FROM json_each(" ++ C.q(requested) ++ ")) AND " ++ knowledge_visible(source,ensemble) ++ ")"
 
 def round_task(+task: String, +inputs: String, knowledge: String) -> String:
   task ++ "\n\nInherited task inputs recorded at the branch boundary:\n" ++ inputs ++ "\n\nSelected scratchpad knowledge:\n" ++ knowledge
@@ -170,6 +183,18 @@ def snapshot_locked(+db: String, +workspace: String, +id: String, +includes: Str
       released : Unit <- IO.try(Unit,Lock.SessionLock.release(handle))
       IO.pure(String,commit)
 
+# Managed endpoints identify their transport, coordinator and conversation. A
+# recorded native launch supplies its executable; absent launch input requires
+# an explicit command from the Conductor.
+def source_command(+db: String, +source: String) -> IO(String):
+  do IO<String>:
+    +endpoint : String <- M.scalar(db,"SELECT " ++ Native.endpoint_field(source,"5") ++ " FROM sessions WHERE id=" ++ C.q(source))
+    table : String <- M.scalar(db,"EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='direct_turn_requests')")
+    +direct : String <- Bool.pick(IO(String),String.eq(table,"1"),
+      M.scalar(db,"SELECT r.command FROM direct_turn_requests r JOIN sessions s ON s.id=r.session WHERE s.id=" ++ C.q(source) ++ " AND r.harness=s.harness AND r.model=s.model AND r.effort=s.effort AND r.workspace=s.workspace ORDER BY r.rowid DESC LIMIT 1"),IO.pure(String,""))
+    inherited : String <- M.scalar(db,"SELECT r.command FROM branch_rounds r JOIN branch_candidates b ON b.round=r.id JOIN sessions s ON s.id=b.session WHERE s.id=" ++ C.q(source) ++ " AND r.harness=s.harness AND r.model=s.model AND r.effort=s.effort ORDER BY r.rowid DESC LIMIT 1")
+    IO.pure(String,Bool.pick(String,String.is_empty(endpoint),Bool.pick(String,String.is_empty(direct),inherited,direct),endpoint))
+
 def start(+db: String, +actor: String, +ensemble: String, +options: List<&2,D.Option>) -> IO(Unit):
   do IO<Unit>:
     +source : String <- source_player(db,ensemble,actor,options)
@@ -192,8 +217,7 @@ def start(+db: String, +actor: String, +ensemble: String, +options: List<&2,D.Op
     +harness : String <- M.scalar(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(source))
     +model : String <- M.scalar(db,"SELECT model FROM sessions WHERE id=" ++ C.q(source))
     effort : String <- M.scalar(db,"SELECT effort FROM sessions WHERE id=" ++ C.q(source))
-    command : String <- M.scalar(db,"SELECT " ++ Native.endpoint_field(source,"5") ++ " FROM sessions WHERE id=" ++ C.q(source))
-    +selected_command : String = D.value(options,"--command",command)
+    +selected_command : String <- Bool.pick(IO(String),D.present(options,"--command"),IO.pure(String,D.value(options,"--command","")),source_command(db,source))
     config_ok : Unit <- M.require(Bool.and(D.member(D.value(options,"--harness",harness),["omp","codex","muse","claude-code"]),Bool.and(Bool.not(String.is_empty(D.value(options,"--model",model))),Bool.not(String.is_empty(selected_command)))),"The source requires a supported native harness, model and configured executable; explicit --harness, --model and --command may select them.")
     recorded : Unit <- M.write(db,"INSERT INTO branch_rounds(id,ensemble,owner,source,ancestor,workspace,branch_count,task,inputs,knowledge,includes,evaluator,direction,harness,model,effort,command) VALUES(" ++ C.q(round) ++ "," ++ C.q(ensemble) ++ "," ++ C.q(actor) ++ "," ++ C.q(source) ++ ",(SELECT b.round FROM branch_candidates b WHERE b.session=" ++ C.q(source) ++ ")," ++ C.q(workspace) ++ "," ++ U32.show(count) ++ "," ++ C.q(body) ++ "," ++ input_snapshot(source) ++ "," ++ knowledge_snapshot(source,ensemble,requested) ++ "," ++ C.q(includes) ++ "," ++ C.q(evaluator) ++ "," ++ C.q(direction) ++ "," ++ C.q(D.value(options,"--harness",harness)) ++ "," ++ C.q(D.value(options,"--model",model)) ++ "," ++ C.q(D.value(options,"--effort",effort)) ++ "," ++ C.q(selected_command) ++ ");")
     lock : Maybe<U32> <- IO.try(Maybe<U32>,Lock.SessionLock.try_acquire(db,source))
@@ -216,6 +240,7 @@ def evaluate_owned(+db: String, +round: String, +player: String, +path: String, 
   match lock:
     case None{}: M.operation(db,round,player,"evaluate","{\"status\":\"pending\",\"cause\":\"The Player still owns its native attempt.\"}")
     case Some{handle}: do IO<Unit>:
+      settled : Unit <- M.check(db,M.settled(C.q(player)),"The Player's native settlement changed before evaluation. Inspect branch status and evaluate after settlement is known.")
       +id : String <- M.identity(db,"evaluation-")
       includes : String <- M.field(db,"branch_rounds",round,"includes")
       +snapshot : String <- W.snapshot(db,path,id,includes)
@@ -319,38 +344,46 @@ def recover(+db: String, +actor: String, +round: String) -> IO(Unit):
     recovered : Unit <- setup_children(db,round,actor,Tx.split_lines(rows))
     M.status(db,round)
 
-def dispatch(+db: String, +actor: String, +verb: String, +options: List<&2,D.Option>) -> IO(Unit):
+def round_action(+db: String, +actor: String, +round: String, verb: String, +options: List<&2,D.Option>) -> IO(Unit):
+  match verb:
+    case "status": M.status(db,round)
+    case "evaluate": do IO<Unit>:
+      rows : String <- IO.try(String,DB.Sql.read(db,"SELECT hex(session) FROM branch_candidates WHERE round=" ++ C.q(round) ++ " ORDER BY ordinal;"))
+      evaluated : Unit <- evaluate_children(db,round,Tx.split_lines(rows))
+      M.status(db,round)
+    case "select": select(db,actor,round,options)
+    case "continue": continue_selected(db,actor,round,options)
+    case "recover": recover(db,actor,round)
+    case "stop": do IO<Unit>:
+      +reason : String = D.value(options,"--reason","")
+      supplied : Unit <- M.require(Bool.not(String.is_empty(reason)),"Stop requires the Conductor's explicit --reason TEXT.")
+      +player : String = D.value(options,"--player","")
+      member : Unit <- M.check(db,Bool.pick(String,String.is_empty(player),"1","EXISTS(SELECT 1 FROM branch_candidates WHERE round=" ++ C.q(round) ++ " AND session=" ++ C.q(player) ++ ")"),"Stop selects a Player from this round.")
+      rows : String <- IO.try(String,DB.Sql.read(db,"SELECT hex(session) FROM branch_candidates WHERE round=" ++ C.q(round) ++ Bool.pick(String,String.is_empty(player),""," AND session=" ++ C.q(player)) ++ " ORDER BY ordinal;"))
+      stopped : Unit <- stop_children(db,round,reason,Tx.split_lines(rows))
+      M.status(db,round)
+    case unknown: IO.die(Unit,2,"Choose branch start, evaluate, select, continue, status, recover or stop. Use branch --help.")
+
+def ensemble_action(+db: String, +actor: String, +ensemble: String, verb: String, +options: List<&2,D.Option>) -> IO(Unit):
+  match verb:
+    case "start": start(db,actor,ensemble,options)
+    case other: do IO<Unit>:
+      round : String <- M.round(db,ensemble,D.value(options,"--round",""))
+      round_action(db,actor,round,other,options)
+
+def dispatch(+db: String, +actor: String, verb: String, +options: List<&2,D.Option>) -> IO(Unit):
   do IO<Unit>:
-    +ensemble : String <- M.ensemble(db,actor,D.value(options,"--ensemble",""))
-    match verb:
-      case "start": start(db,actor,ensemble,options)
-      case other: do IO<Unit>:
-        +round : String <- M.round(db,ensemble,D.value(options,"--round",""))
-        match other:
-          case "status": M.status(db,round)
-          case "evaluate": do IO<Unit>:
-            rows : String <- IO.try(String,DB.Sql.read(db,"SELECT hex(session) FROM branch_candidates WHERE round=" ++ C.q(round) ++ " ORDER BY ordinal;"))
-            evaluated : Unit <- evaluate_children(db,round,Tx.split_lines(rows))
-            M.status(db,round)
-          case "select": select(db,actor,round,options)
-          case "continue": continue_selected(db,actor,round,options)
-          case "recover": recover(db,actor,round)
-          case "stop": do IO<Unit>:
-            +reason : String = D.value(options,"--reason","")
-            supplied : Unit <- M.require(Bool.not(String.is_empty(reason)),"Stop requires the Conductor's explicit --reason TEXT.")
-            +player : String = D.value(options,"--player","")
-            member : Unit <- M.check(db,Bool.pick(String,String.is_empty(player),"1","EXISTS(SELECT 1 FROM branch_candidates WHERE round=" ++ C.q(round) ++ " AND session=" ++ C.q(player) ++ ")"),"Stop selects a Player from this round.")
-            rows : String <- IO.try(String,DB.Sql.read(db,"SELECT hex(session) FROM branch_candidates WHERE round=" ++ C.q(round) ++ Bool.pick(String,String.is_empty(player),""," AND session=" ++ C.q(player)) ++ " ORDER BY ordinal;"))
-            stopped : Unit <- stop_children(db,round,reason,Tx.split_lines(rows))
-            M.status(db,round)
-          case unknown: IO.die(Unit,2,"Choose branch start, evaluate, select, continue, status, recover or stop. Use branch --help.")
+    ensemble : String <- M.ensemble(db,actor,D.value(options,"--ensemble",""))
+    ensemble_action(db,actor,ensemble,verb,options)
 
 def execute(+db: String, actor: String, args: List<String>) -> IO(Unit):
   match args:
     case "--help" <> Nil{}: IO.write(help())
     case "-h" <> Nil{}: IO.write(help())
     case Nil{}: IO.write(help())
-    case verb <> rest: do IO<Unit>:
-      parsed : List<&2,D.Option> <- IO.pass(List<&2,D.Option>,options(rest,Nil{}))
+    case +verb <> rest: do IO<Unit>:
+      +parsed : List<&2,D.Option> <- IO.pass(List<&2,D.Option>,options(rest,Nil{}))
+      known : Unit <- M.require(D.member(verb,["start","evaluate","select","continue","status","recover","stop"]),"Choose branch start, evaluate, select, continue, status, recover or stop.")
+      accepted : Unit <- M.require(options_allowed(verb,parsed),"This branch action does not accept one of its supplied options. Use branch --help.")
       schema : Unit <- M.ensure(db)
       dispatch(db,actor,verb,parsed)
