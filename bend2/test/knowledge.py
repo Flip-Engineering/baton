@@ -299,6 +299,155 @@ class Knowledge(unittest.TestCase):
         self.assertEqual(self.call('knowledge-relations', 'root', 'all', ''), [])
         self.assertEqual(self.call('inbox', 'worker'), [])
 
+    def relation_rows(self):
+        return self.call('knowledge-relations', 'root', 'all', '')
+
+    def test_identical_relation_retry_preserves_its_identity(self):
+        args = ('relate', 'relation-λ', 'grand', 'file:source λ', 'Supports',
+                'finding:target')
+        stored = self.call(*args)
+        self.assertEqual(self.call(*args), stored)
+        self.assertEqual(len(self.relation_rows()), 1)
+
+    def test_relation_identity_conflicts_preserve_every_stored_coordinate(self):
+        original = ('grand', 'file:source λ', 'Supports', 'finding:target')
+        stored = self.call('relate', 'fixed-relation', *original)
+        before = self.relation_rows()
+        for index, replacement in enumerate(('sibling', 'file:changed', 'Supersedes',
+                                             'finding:changed')):
+            changed = list(original)
+            changed[index] = replacement
+            with self.subTest(index=index):
+                refused = self.call('relate', 'fixed-relation', *changed, success=False)
+                self.assertEqual(refused.returncode, 2)
+                self.assertEqual(refused.stdout, '')
+                error = json.loads(refused.stderr)
+                self.assertEqual(error['error'], 'relation-id-conflict')
+                self.assertEqual(error['id'], 'fixed-relation')
+                self.assertEqual(error['stored'], {key: stored[key] for key in
+                                                   ('author', 'source', 'relation', 'target')})
+                self.assertEqual(self.relation_rows(), before)
+
+    def test_relation_author_must_be_registered(self):
+        refused = self.call('relate', 'unregistered-relation', 'absent',
+                            'file:source', 'Supports', 'finding:target', success=False)
+        self.assertEqual(refused.stdout, '')
+        self.assertEqual(self.relation_rows(), [])
+
+    def test_linked_relation_collision_preserves_record_links_and_notice_tables(self):
+        self.call('relate', 'occupied', 'worker', 'file:original', 'Supports',
+                  'finding:original')
+        before = self.relation_rows()
+        occupied = {'id': 'occupied', 'source': 'finding:new',
+                    'relation': 'Supersedes', 'target': 'finding:original'}
+        fresh = {'id': 'fresh', 'source': 'finding:new',
+                 'relation': 'Supports', 'target': 'file:other'}
+        for links in ([fresh, occupied], [occupied, fresh]):
+            with self.subTest(links=links):
+                refused = self.call('record-linked', 'new', 'grand', 'hypothesis',
+                                    'Proposed explanation', 'run:observation', '',
+                                    json.dumps(links), success=False)
+                self.assertEqual(refused.returncode, 2)
+                self.assertEqual(refused.stdout, '')
+                self.assertEqual(json.loads(refused.stderr)['error'], 'relation-id-conflict')
+                self.assertEqual(self.read('root'), [])
+                self.assertEqual(self.relation_rows(), before)
+                self.assertEqual(self.call('inbox', 'worker'), [])
+
+    def test_linked_collision_preserves_an_existing_records_kind_and_notice(self):
+        evidence = self.evidence('kind-evidence', 'grand')
+        self.call('record-typed', 'existing', 'grand', 'observation',
+                  'Existing claim', evidence, '')
+        self.call('relate', 'occupied', 'worker', 'file:original', 'Supports',
+                  'finding:original')
+        before = (self.read('root'), self.relation_rows(), self.call('inbox', 'worker'))
+        links = [{'id': 'occupied', 'source': 'finding:existing',
+                  'relation': 'Supersedes', 'target': 'finding:original'}]
+        refused = self.call('record-linked', 'existing', 'grand', 'decision',
+                            'Existing claim', evidence, '', json.dumps(links), success=False)
+        self.assertEqual(refused.returncode, 2)
+        self.assertEqual(refused.stdout, '')
+        self.assertEqual(json.loads(refused.stderr)['error'], 'relation-id-conflict')
+        self.assertEqual((self.read('root'), self.relation_rows(),
+                          self.call('inbox', 'worker')), before)
+
+    def test_conflicting_duplicate_link_ids_refuse_the_complete_record(self):
+        first = {'id': 'duplicate', 'source': 'finding:new',
+                 'relation': 'Supports', 'target': 'file:first'}
+        for coordinate, value in (('source', 'finding:other'),
+                                  ('relation', 'Supersedes'), ('target', 'file:second')):
+            with self.subTest(coordinate=coordinate):
+                second = {**first, coordinate: value}
+                refused = self.call('record-linked', 'new', 'grand', 'hypothesis',
+                                    'Proposed explanation', 'run:observation', '',
+                                    json.dumps([first, second]), success=False)
+                self.assertEqual(refused.returncode, 2)
+                self.assertEqual(refused.stdout, '')
+                self.assertEqual(json.loads(refused.stderr)['error'], 'relation-id-conflict')
+                self.assertEqual(self.read('root'), [])
+                self.assertEqual(self.relation_rows(), [])
+                self.assertEqual(self.call('inbox', 'worker'), [])
+
+    def test_identical_link_duplicates_and_record_retries_are_idempotent(self):
+        link = {'id': 'duplicate', 'source': 'finding:new',
+                'relation': 'Supports', 'target': 'file:source'}
+        args = ('record-linked', 'new', 'grand', 'hypothesis', 'Proposed explanation',
+                'run:observation', '', json.dumps([link, link]))
+        stored = self.call(*args)
+        before = (self.read('root'), self.relation_rows(), self.call('inbox', 'worker'))
+        self.assertEqual(self.call(*args), stored)
+        self.assertEqual((self.read('root'), self.relation_rows(),
+                          self.call('inbox', 'worker')), before)
+        self.assertEqual(len(before[1]), 1)
+        self.assertEqual([row['id'] for row in before[2]], ['new:notice'])
+
+    def test_link_id_text_affinity_detects_conflicting_payload_duplicates(self):
+        first = {'id': 1, 'source': 'finding:new',
+                 'relation': 'Supports', 'target': 'file:first'}
+        second = {**first, 'id': '1', 'target': 'file:second'}
+        for links in ([first, second], [second, first]):
+            with self.subTest(links=links):
+                refused = self.call('record-linked', 'new', 'grand', 'hypothesis',
+                                    'Proposed explanation', 'run:observation', '',
+                                    json.dumps(links), success=False)
+                self.assertEqual(refused.returncode, 2)
+                self.assertEqual(refused.stdout, '')
+                self.assertEqual(json.loads(refused.stderr)['error'], 'relation-id-conflict')
+                self.assertEqual(self.read('root'), [])
+                self.assertEqual(self.relation_rows(), [])
+                self.assertEqual(self.call('inbox', 'worker'), [])
+
+    def test_link_coordinates_use_the_stored_text_affinity_for_retries(self):
+        stored = self.call('relate', '1', 'grand', '2', '3', '4')
+        relations = self.relation_rows()
+        numeric = {'id': 1, 'source': 2, 'relation': 3, 'target': 4}
+        text = {key: str(value) for key, value in numeric.items()}
+        args = ('record-linked', 'new', 'grand', 'hypothesis', 'Proposed explanation',
+                'run:observation', '', json.dumps([numeric, text]))
+        record = self.call(*args)
+        before = (self.read('root'), self.relation_rows(), self.call('inbox', 'worker'))
+        self.assertEqual(self.call(*args), record)
+        self.assertEqual((self.read('root'), self.relation_rows(),
+                          self.call('inbox', 'worker')), before)
+        self.assertEqual(before[1], relations)
+        self.assertEqual({key: relations[0][key] for key in stored}, stored)
+        self.assertEqual([row['id'] for row in before[2]], ['new:notice'])
+
+    def test_numeric_link_id_conflict_preserves_a_stored_text_identity(self):
+        self.call('relate', '1', 'grand', 'file:original', 'Supports', 'file:target')
+        before = self.relation_rows()
+        changed = {'id': 1, 'source': 'file:original',
+                   'relation': 'Supports', 'target': 'file:changed'}
+        refused = self.call('record-linked', 'new', 'grand', 'hypothesis',
+                            'Proposed explanation', 'run:observation', '',
+                            json.dumps([changed]), success=False)
+        self.assertEqual(refused.returncode, 2)
+        self.assertEqual(refused.stdout, '')
+        self.assertEqual(json.loads(refused.stderr)['error'], 'relation-id-conflict')
+        self.assertEqual(self.read('root'), [])
+        self.assertEqual(self.relation_rows(), before)
+        self.assertEqual(self.call('inbox', 'worker'), [])
+
     def test_legacy_promotions_remain_session_holdings_before_and_after_migration(self):
         self.call('ensemble', 'review-group', 'worker')
         self.call('record', 'legacy-share', 'grand', 'Legacy finding', 'run:legacy', 'One run')
