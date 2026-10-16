@@ -403,3 +403,87 @@ static Term baton_segments_run(Env e,Term *f,IoWork *w) {
 }
 static void __attribute__((constructor)) baton_segments_use(void) {io_eff(CID_FILES_SEGMENTS,baton_segments_run,0);}
 #endif
+
+typedef struct { char *directory,*names; size_t length,capacity; int error; } BatonEntries;
+
+static void baton_entries_call(IoWork *w) {
+  BatonEntries *call=(BatonEntries *)w->data;
+  DIR *directory=opendir(call->directory);
+  if(!directory) {call->error=errno;return;}
+  struct dirent *entry;
+  errno=0;
+  while((entry=readdir(directory))) {
+    size_t length=strlen(entry->d_name);
+    if(call->length+length+2>call->capacity) {
+      size_t capacity=call->capacity?call->capacity:256;
+      while(call->length+length+2>capacity) {if(capacity>SIZE_MAX/2) {call->error=ENOMEM;break;} capacity*=2;}
+      if(call->error) break;
+      char *names=realloc(call->names,capacity);
+      if(!names) {call->error=ENOMEM;break;}
+      call->names=names;call->capacity=capacity;
+    }
+    memcpy(call->names+call->length,entry->d_name,length);
+    call->length+=length;
+    call->names[call->length++]='\n';
+  }
+  if(!entry && errno) call->error=errno;
+  else if(call->names) call->names[call->length]=0;
+  closedir(directory);
+}
+
+static Term baton_entries_pack(Env e,IoWork *w) {
+  BatonEntries *call=(BatonEntries *)w->data;
+  Term result=call->error ? io_fail(e,call->error,NULL)
+    : io_done(e,io_str(e,call->names?call->names:"",call->names?call->length:0));
+  free(call->directory);free(call->names);free(call);w->data=NULL;
+  return result;
+}
+
+#ifdef CID_FILES_ENTRIES
+static Term baton_entries_run(Env e,Term *f,IoWork *w) {
+  BatonEntries *call=calloc(1,sizeof(*call));
+  if(!call) return io_fail(e,ENOMEM,NULL);
+  u64 length=0;
+  call->directory=io_cstr(e,f[0],&length);
+  if(!call->directory || strlen(call->directory)!=length) {
+    free(call->directory);free(call);
+    return io_fail(e,EINVAL,"path contains NUL");
+  }
+  w->data=(char *)call;
+  return io_work(w,baton_entries_call,baton_entries_pack);
+}
+static void __attribute__((constructor)) baton_entries_use(void) {io_eff(CID_FILES_ENTRIES,baton_entries_run,0);}
+#endif
+
+typedef struct { char *path; const char *kind; int error; } BatonKind;
+
+static void baton_kind_call(IoWork *w) {
+  BatonKind *call=(BatonKind *)w->data;
+  struct stat info;
+  if(stat(call->path,&info)) {call->error=errno;return;}
+  call->kind=S_ISREG(info.st_mode)?"file":S_ISDIR(info.st_mode)?"dir":"other";
+}
+
+static Term baton_kind_pack(Env e,IoWork *w) {
+  BatonKind *call=(BatonKind *)w->data;
+  Term result=call->error ? io_fail(e,call->error,NULL)
+    : io_done(e,io_str(e,call->kind,strlen(call->kind)));
+  free(call->path);free(call);w->data=NULL;
+  return result;
+}
+
+#ifdef CID_FILES_KIND
+static Term baton_kind_run(Env e,Term *f,IoWork *w) {
+  BatonKind *call=calloc(1,sizeof(*call));
+  if(!call) return io_fail(e,ENOMEM,NULL);
+  u64 length=0;
+  call->path=io_cstr(e,f[0],&length);
+  if(!call->path || strlen(call->path)!=length) {
+    free(call->path);free(call);
+    return io_fail(e,EINVAL,"path contains NUL");
+  }
+  w->data=(char *)call;
+  return io_work(w,baton_kind_call,baton_kind_pack);
+}
+static void __attribute__((constructor)) baton_kind_use(void) {io_eff(CID_FILES_KIND,baton_kind_run,0);}
+#endif

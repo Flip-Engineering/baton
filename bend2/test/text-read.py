@@ -36,6 +36,7 @@ def main() -> int:
     try:
         cases = root / "cases"
         cases.mkdir()
+        (cases / "dir").mkdir()
         # 0x41 'A'; 0xC0 invalid lead; 0xAF orphan continuation;
         # 0xE2 0x82 truncated sequence: one U+FFFD each.
         (cases / "utf8").write_bytes(b"\x41\xc0\xaf\xe2\x82")

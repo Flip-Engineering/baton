@@ -35,3 +35,15 @@ def Files.regular(path: String) -> IO(Result<&1,&1,U32 & String,String>):
 # Reports whether a directory entry exists. Filesystem failures retain their cause.
 def Files.exists(path: String) -> IO(Result<&1,&1,U32 & String,String>):
   import "./files.c"
+
+# Every entry name in one directory, one per line, in readdir order with
+# no ordering promise: ordering is a Bend2 decision, not a host one.
+# A directory that cannot be opened keeps its cause, so an empty listing
+# stays distinguishable from a missing directory.
+def Files.entries(directory: String) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./files.c"
+
+# What the path names when opened: file, dir, or other for anything else.
+# The lookup follows symlinks, so a broken link keeps its ENOENT cause.
+def Files.kind(path: String) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./files.c"
