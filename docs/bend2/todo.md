@@ -4,6 +4,14 @@ The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3
 retain findings, ownership and acceptance requirements. This page links current
 Baton follow-up work for contributors. Every open issue has a link on this page.
 
+- [#780: Keep Codex input witness stdout as one JSON document](https://github.com/Flip-Engineering/baton/issues/780).
+  Route the actual proxy cleanup diagnostic to stderr for the witness command.
+  Preserve its single complete JSON result, native-turn authority, cleanup wait
+  and returned cleanup failures. Qualify complete owned inbox reads and automatic
+  handling through the installed public Codex client. Coordinate with
+  [#761](https://github.com/Flip-Engineering/baton/issues/761) and
+  [#773](https://github.com/Flip-Engineering/baton/issues/773).
+
 - [#779: Audit knowledge graph retrieval and traversal](https://github.com/Flip-Engineering/baton/issues/779).
   Use a Baton Ensemble to review the implemented algorithms and CLI/MCP tools,
   compare project-manager source and deployed behavior, and assess relevant

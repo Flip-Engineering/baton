@@ -487,10 +487,10 @@ def follow_run(+link: Proxy.Link, +executable: String, +db: String, +session: St
     +row : Inbox.Snapshot <- Inbox.read(db,session,thread)
     follow_loaded(link,executable,db,session,thread,initial(pending),row,Inbox.stopped(row))
 
-def cleanup_status(+status: String) -> Outcome.Checked(Unit):
+def cleanup_status(+status: String, stdout: Bool) -> Outcome.Checked(Unit):
   do Outcome.Checked<Unit>:
     +event : String <- Proxy.json("SELECT json_object('type','codexProxyExit','code',CASE WHEN " ++ C.q(status) ++ " LIKE 'exit %' THEN CAST(substr(" ++ C.q(status) ++ ",6) AS INTEGER) END,'signal',CASE WHEN " ++ C.q(status) ++ " LIKE 'signal %' THEN CAST(substr(" ++ C.q(status) ++ ",8) AS INTEGER) END,'status'," ++ C.q(status) ++ ");")
-    logged : Unit <- Proxy.record(event)
+    logged : Unit <- Bool.pick(Outcome.Checked(Unit),stdout,Proxy.record(event),Outcome.Checked.lift(Unit,IO.print_err(event)))
     Bool.pick(Outcome.Checked(Unit),String.eq(status,"exit 0"),Outcome.Checked.pure(Unit,Unit{}),Outcome.Checked.fail(Unit,1,"Public Codex proxy exit: " ++ status))
 
 def combined(result: Result<&1,&1,U32 & String,Unit>, cleaned: Result<&1,&1,U32 & String,Unit>) -> Result<&1,&1,U32 & String,Unit>:
@@ -501,25 +501,25 @@ def combined(result: Result<&1,&1,U32 & String,Unit>, cleaned: Result<&1,&1,U32 
         case Done{value}: Fail{(code,cause)}
         case Fail{(cleanup_code,detail)}: Fail{(code,cause ++ "\nCodex proxy cleanup: " ++ detail)}
 
-def cleanup_closed(result: Result<&1,&1,U32 & String,String>) -> Outcome.Checked(Unit):
+def cleanup_closed(result: Result<&1,&1,U32 & String,String>, stdout: Bool) -> Outcome.Checked(Unit):
   match result:
     case Fail{error}: Outcome.Checked.from_result(Unit,Fail{error})
-    case Done{status}: cleanup_status(status)
+    case Done{status}: cleanup_status(status,stdout)
 
 def unsubscribe(+subscription: U32) -> Outcome.Checked(Unit):
   Bool.pick(Outcome.Checked(Unit),U32.is_eq(subscription,0),Outcome.Checked.pure(Unit,Unit{}),Custody.Instance.unsubscribe(subscription))
 
-def cleanup(+link: Proxy.Link) -> Outcome.Checked(Unit):
+def cleanup(+link: Proxy.Link, stdout: Bool) -> Outcome.Checked(Unit):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     closed : Unit <- Chan.close(Proxy.CodexEvent,Proxy.events(link))
     removed : Result<&1,&1,U32 & String,Unit> <- unsubscribe(Proxy.subscription(link))
     status : Result<&1,&1,U32 & String,String> <- Native.CodexProxy.close(Proxy.proxy(link))
-    cleaned : Result<&1,&1,U32 & String,Unit> <- cleanup_closed(status)
+    cleaned : Result<&1,&1,U32 & String,Unit> <- cleanup_closed(status,stdout)
     IO.pure(Result<&1,&1,U32 & String,Unit>,combined(removed,cleaned))
 
-def finished(+link: Proxy.Link, result: Result<&1,&1,U32 & String,Unit>) -> Outcome.Checked(Unit):
+def finished(+link: Proxy.Link, stdout: Bool, result: Result<&1,&1,U32 & String,Unit>) -> Outcome.Checked(Unit):
   do IO<Result<&1,&1,U32 & String,Unit>>:
-    cleaned : Result<&1,&1,U32 & String,Unit> <- cleanup(link)
+    cleaned : Result<&1,&1,U32 & String,Unit> <- cleanup(link,stdout)
     IO.pure(Result<&1,&1,U32 & String,Unit>,combined(result,cleaned))
 
 def failure_retained(+db: String, +session: String, +thread: String, original: U32 & String, retained: Result<&1,&1,U32 & String,Unit>) -> Outcome.Checked(Unit):
@@ -542,12 +542,12 @@ def initialized_run(+link: Proxy.Link, action: Proxy.Pending -> Outcome.Checked(
     +pending : Proxy.Pending <- Proxy.initialize(link)
     action(pending)
 
-def opened(+link: Proxy.Link, action: Proxy.Pending -> Outcome.Checked(Unit)) -> Outcome.Checked(Unit):
+def opened(+link: Proxy.Link, stdout: Bool, action: Proxy.Pending -> Outcome.Checked(Unit)) -> Outcome.Checked(Unit):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     armed : Unit <- Proxy.arm_native(link)
     notices : Unit <- Proxy.arm_notice(link,Bool.not(U32.is_eq(Proxy.subscription(link),0)))
     result : Result<&1,&1,U32 & String,Unit> <- initialized_run(link,action)
-    finished(link,result)
+    finished(link,stdout,result)
 
 def opened_native(+subscription: U32, action: Proxy.Link -> Outcome.Checked(Unit), result: Result<&1,&1,U32 & String,U32>) -> Outcome.Checked(Unit):
   match result:
@@ -564,7 +564,7 @@ def open(+subscription: U32, action: Proxy.Link -> Outcome.Checked(Unit)) -> Out
     opened_native(subscription,action,result)
 
 def followed(+link: Proxy.Link, +executable: String, +db: String, +session: String, +thread: String) -> Outcome.Checked(Unit):
-  opened(link,pending => follow_run(link,executable,db,session,thread,pending))
+  opened(link,True{},pending => follow_run(link,executable,db,session,thread,pending))
 
 def follow_subscribed(+executable: String, +db: String, +session: String, +thread: String, subscribed: U32 & String) -> Outcome.Checked(Unit):
   match subscribed:
@@ -594,7 +594,7 @@ def retained(+session: String, +thread: String, +row: Inbox.Snapshot) -> Outcome
 def session_row(+executable: String, +db: String, +session: String, +thread: String, +message: String, +token: String, +row: Inbox.Snapshot, +waiting: Bool) -> Outcome.Checked(Unit):
   match waiting:
     case False{}: retained(session,thread,row)
-    case True{}: open(0,+link => opened(link,pending => delivery_run(link,thread,Managed{executable,db,session,thread,token},pending)))
+    case True{}: open(0,+link => opened(link,True{},pending => delivery_run(link,thread,Managed{executable,db,session,thread,token},pending)))
 
 def session(+db: String, +session: String, +thread: String, +message: String, +token: String) -> Outcome.Checked(Unit):
   do Outcome.Checked<Unit>:
@@ -637,7 +637,7 @@ def pointer_notice(+thread: String, +pointer: String) -> Outcome.Checked(Notice)
 def deliver(+db: String, +thread: String, +pointer: String) -> Outcome.Checked(Unit):
   do Outcome.Checked<Unit>:
     notice : Notice <- pointer_notice(thread,pointer)
-    open(0,+link => opened(link,pending => delivery_run(link,thread,notice,pending)))
+    open(0,+link => opened(link,True{},pending => delivery_run(link,thread,notice,pending)))
 
 def witnessed(+thread: String, +active: Bool, result: State & String) -> Outcome.Checked(Unit):
   match result:
@@ -658,4 +658,4 @@ def witness_run(+link: Proxy.Link, +thread: String, +pending: Proxy.Pending) -> 
     witness_read(link,thread,result)
 
 def witness(+db: String, +thread: String) -> Outcome.Checked(Unit):
-  open(0,+link => opened(link,pending => witness_run(link,thread,pending)))
+  open(0,+link => opened(link,False{},pending => witness_run(link,thread,pending)))

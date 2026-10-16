@@ -330,7 +330,7 @@ while True:
     mask=exact(4) if b&128 else None
     data=exact(n)
     if mask:data=bytes(v^mask[i%4] for i,v in enumerate(data))
-    if a&15==8:break
+    if a&15==8:raise SystemExit(json.loads(state.read_text()).get('closeExit',0))
     request=json.loads(data)
     method=request['method']
     if 'id' not in request:continue
@@ -422,7 +422,25 @@ while True:
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(json.loads(result.stdout), {
                     'threadId': 'native-app-root', 'turnId': expected, 'active': status == 'active'})
+                self.assertEqual(len(result.stdout.splitlines()), 1, result.stdout)
+                self.assertEqual(json.loads(result.stderr), {
+                    'type': 'codexProxyExit', 'code': 0, 'signal': None, 'status': 'exit 0'})
                 self.assertFalse(queued.exists(), 'Reading a witness admitted a native input')
+
+    def test_native_input_witness_preserves_failed_proxy_cleanup(self):
+        queued, _ = self.public_proxy()
+        self.public_app_state.write_text(json.dumps({
+            'status': 'active', 'turn': 'cleanup-turn-λ', 'number': 0, 'closeExit': 7}))
+        result = subprocess.run([str(EXE), str(self.db), 'codex-input-witness', 'native-app-root'],
+                                env=self.environment, text=True, capture_output=True)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(json.loads(result.stdout), {
+            'threadId': 'native-app-root', 'turnId': 'cleanup-turn-λ', 'active': True})
+        errors = result.stderr.splitlines()
+        self.assertEqual(json.loads(errors[0]), {
+            'type': 'codexProxyExit', 'code': 7, 'signal': None, 'status': 'exit 7'})
+        self.assertIn('Public Codex proxy exit: exit 7', result.stderr)
+        self.assertFalse(queued.exists(), 'Reading a witness admitted a native input')
 
     def test_managed_initial_prompt_survives_retry_and_changes_with_native_conversation(self):
         queued, refused = self.public_proxy()
