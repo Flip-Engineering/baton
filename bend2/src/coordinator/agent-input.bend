@@ -2,6 +2,7 @@ import Base
 import ../coordinator/commands.bend as C
 import ../coordinator/message-status.bend as Status
 import ./store.bend as Store
+import ./codex-route.bend as CodexRoute
 import ../context/request.bend as Req
 import ../host/sqlite.bend as DB
 import ../host/instance.bend as Custody
@@ -94,8 +95,8 @@ def codex_handling_if(+db: String, +session: String, +native: String, owned: Boo
     case False{}: IO.pure(HandlingScope,NoHandling{})
     case True{}: do IO<HandlingScope>:
       executable : String <- IO.try(String,Lock.SessionLock.executable())
-      helper : String <- IO.try(String,Host.Control.agent_helper(executable))
-      witness : G.RunRes <- Process.runFull(["node",helper,"--input-witness",native],".")
+      args : List<String> <- CodexRoute.command(db,session,[executable,db,"codex-input-witness",native])
+      witness : G.RunRes <- Process.runFull(args,".")
       codex_handling_result(db,session,native,witness)
 
 def codex_handling(+db: String, +session: String) -> IO(HandlingScope):
@@ -238,13 +239,13 @@ def codex_witness_result(db: String, session: String, native: String, saved: Str
     case G.RRun{G.SSignal{signal},output}: IO.die(Unit,2,"Native input witness was interrupted: " ++ output)
     case G.RSpawn{cause}: IO.die(Unit,2,"Native input witness could not start: " ++ cause)
 
-def codex_record_if(+db: String, session: String, +native: String, saved: String, read: Bool, owned: Bool) -> IO(Unit):
+def codex_record_if(+db: String, +session: String, +native: String, saved: String, read: Bool, owned: Bool) -> IO(Unit):
   match owned:
     case False{}: IO.pure(Unit,Unit{})
     case True{}: do IO<Unit>:
       executable : String <- IO.try(String,Lock.SessionLock.executable())
-      helper : String <- IO.try(String,Host.Control.agent_helper(executable))
-      witness : G.RunRes <- Process.runFull(["node",helper,"--input-witness",native],".")
+      args : List<String> <- CodexRoute.command(db,session,[executable,db,"codex-input-witness",native])
+      witness : G.RunRes <- Process.runFull(args,".")
       codex_witness_result(db,session,native,saved,read,witness)
 
 def codex_record(+db: String, +session: String, +saved: String, read: Bool) -> IO(Unit):

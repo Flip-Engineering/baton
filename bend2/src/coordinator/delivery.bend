@@ -7,7 +7,7 @@ import ../host/session-lock.bend as Lock
 import ../git/process.bend as Process
 import ../git/text.bend as Tx
 import ../git/types.bend as T
-import ../harness/codex-player.bend as Codex
+import ./codex-route.bend as CodexRoute
 import ../json/canonical.bend as J
 import ../context/request.bend as Req
 
@@ -20,7 +20,7 @@ def native_receiver_sql() -> String:
   "CASE WHEN json_valid(s.endpoint) THEN s.harness IN ('codex','omp','muse','claude-code') AND json_extract(s.endpoint,'$[#-7]')='receive' AND json_extract(s.endpoint,'$[#-6]')=s.id ELSE 0 END"
 
 def codex_inbox_endpoint_sql(id: String, condition: String) -> String:
-  "SELECT EXISTS(SELECT 1 FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.id=" ++ C.q(id) ++ " AND m.receipt IS NULL AND " ++ condition ++ " AND s.harness='codex' AND CASE WHEN json_valid(s.endpoint) THEN json_type(s.endpoint)='array' AND json_array_length(s.endpoint)=7 AND json_extract(s.endpoint,'$[1]') LIKE '%/codex-inbox-wake.mjs' AND json_extract(s.endpoint,'$[2]')='--session' AND json_extract(s.endpoint,'$[5]')=s.id AND json_extract(s.endpoint,'$[6]')=s.native ELSE 0 END);"
+  "SELECT EXISTS(SELECT 1 FROM messages m JOIN sessions s ON s.id=m.recipient WHERE m.id=" ++ C.q(id) ++ " AND m.receipt IS NULL AND " ++ condition ++ " AND s.harness='codex' AND " ++ CodexRoute.managed_sql("s.endpoint","s.id","s.native") ++ ");"
 
 def result(saved: String, log: String, run: T.RunRes) -> Result<&1,&1,U32 & String,String>:
   match run:
@@ -174,8 +174,7 @@ def queue_launch(+db: String, id: String, saved: String, native: String, +recipi
     pending : String <- IO.try(String,DB.Sql.query(db,"SELECT count(*) FROM messages WHERE recipient=" ++ C.q(recipient) ++ " AND receipt IS NULL;"))
     pointer : String <- IO.pure(String,queue_pointer(db,id,recipient,Tx.trim_nl(pending),token))
     +stderr : String <- IO.pure(String,db ++ ".queue-" ++ token ++ ".stderr")
-    executable : Result<&1,&1,U32 & String,String> <- Lock.SessionLock.executable()
-    spawned : Result<&1,&1,U32 & String,U32> <- Codex.inbox_admission(executable,native,pointer,stderr)
+    spawned : Result<&1,&1,U32 & String,U32> <- CodexRoute.admission(db,recipient,native,pointer,stderr)
     run : Result<&1,&1,U32 & String,String> <- queue_spawned(spawned)
     result : Result<&1,&1,U32 & String,String> <- queue_captured(db,saved,stderr,run)
     queue_recorded(db,recipient,token,result)
