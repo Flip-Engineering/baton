@@ -8,6 +8,7 @@ name: bend2-native-development
       - '.github/scripts/record-native-checks.py'
       - '.github/scripts/reuse-native-target.py'
       - '.github/scripts/reuse-native-main.py'
+      - '.github/scripts/test-reuse-native-main.py'
       - '.github/scripts/prepare-native-compiler.py'
       - '.github/scripts/repl-package.py'
       - 'LICENSE'
@@ -33,6 +34,7 @@ name: bend2-native-development
       - '.github/scripts/record-native-checks.py'
       - '.github/scripts/reuse-native-target.py'
       - '.github/scripts/reuse-native-main.py'
+      - '.github/scripts/test-reuse-native-main.py'
       - '.github/scripts/prepare-native-compiler.py'
       - '.github/scripts/repl-package.py'
       - 'LICENSE'
@@ -246,6 +248,9 @@ jobs:
         if: inputs.linux_runner == 'homelab'
         shell: bash
         run: printf '%s\n' "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - name: Verify retained Main evidence acceptance and refusals
+        shell: bash
+        run: python3 .github/scripts/test-reuse-native-main.py --helper .github/scripts/reuse-native-main.py
       - name: Prepare candidate toolchain and TypeScript runtime
         shell: bash
         env:

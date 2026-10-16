@@ -93,8 +93,8 @@ memory pressure averages, and no existing owned compiler or native model
 process. Its original wait and complete outputs remain retained.
 
 The final test overlay has tree
-`8e772cc533f5eaada21066aa105b5065665eaf0f`. It changes only
-`receive.py` and `root-wake.py` from the checked tree. The tests now report
+`dec7ea352fa1d7a77a5637229a209237d0c98ec9`. It changes
+`receive.py`, `root-wake.py` and `agent-input.py` from the checked tree. The tests report
 controlled child exits while waiting for metadata admission or a recovered
 native connection. Recovered-connection waits check terminal custody before
 reporting a settled failure. New ordinary-delivery cases unwind their controlled
@@ -102,6 +102,34 @@ fixture after the first failed admission assertion. The earlier waits are
 retained as incomplete fixture runs,
 with their databases, WAL files, output and process identities captured before
 scoped interruption of the controlled Python test drivers.
+
+The retained exact-target baseline completed 18 groups and 446 cases, with
+68 failed assertion items and five passing groups. The target was
+`e18f003bf07180994fff2c295c5c8e87a276400f`; its native binary SHA256 was
+`b27bf926e06beb94e5bb7bba03cecdf6f7d720f0a396e3016683f3a11a272c10`.
+All 18 selected test files match the final overlay. Each group records its actual
+shared fixture files and hashes. Earlier groups used shared fixture revisions
+that differ from the final closure. These runs establish an exploratory target
+baseline; the normal paired target and candidate workflow remains pending.
+
+Five earlier controlled Python fixture runs remain interrupted and incomplete.
+Their wrapper exit labels do not establish a natural fixture result. The final
+AgentInput rerun completed naturally at 20:03:01.669 UTC, judged all 22 cases and
+recorded one assertion failure in original native-conversation preservation.
+The final matrix SHA256 is
+`5a847f8d6dbbf49ee12b1475ef5206cfb9fd317ea989ef12aff4af29bc6e3351`.
+Independent review verified all 371 captured files and the group counts.
+
+The CI reuse verifier accepts the current combined Main handoff after checking
+the source snapshot, complete source manifest, full source check, three original
+natural process waits and stable C/object/binary artifacts. A separate CI
+reference binds unchanged original handoff bytes and explicit evidence path
+mappings. The compiler archive closure is verified during reuse; the original
+handoff records the compiler executable hash. Remote synthetic validation passed
+16 acceptance and refusal cases, including direct and mapped combined handoffs,
+legacy evidence, changed files, incomplete waits and invalid path mappings.
+The validation executed no compiler. Its result SHA256 is
+`24ba9e3777966cc25bd8d733b13229b5c9c9c426733ab650054640e2001f5ac8`.
 
 Remote Darwin dependency preflight run
 [`38956455653`](https://github.com/Flip-Engineering/baton/actions/runs/38956455653)
