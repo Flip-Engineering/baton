@@ -76,12 +76,43 @@ Focused run `baton-repl-focused-v12-20261016T193041Z`, invocation
 The complete REPL module check exited 0 naturally at 19:32:40 UTC after
 109.482 seconds, with maximum RSS 13,270,828 KiB and empty stderr. This
 establishes the focused canonical frontend check for that Bend source closure.
-The full coordinator check and native build remain pending.
+The focused check completed before the full coordinator check below.
+
+Full coordinator run `baton-combined-check-v13-20261016T193342Z`, invocation
+`c84bbe374afc4442b4c6aaa28a481827`, checked tree
+`0d518d6099af97485315d177c94ac4dd75c05fc9`. It exited 0 naturally at
+19:37:26.813 UTC after 214.251 seconds, with maximum RSS 28,083,960 KiB
+and empty stderr. Its result SHA256 is
+`7a8eb8fc4c23d26b853479b879867eebde50de8294baaef3fbcbd376e007f148`.
+
+The single admitted native build is
+`baton-combined-main-v13-20261016T193951Z`, invocation
+`37ab2cfc3c774e478b9a77e4dfccc572`. C generation began at 19:40:05.576 UTC
+on the same tree. Admission recorded 139,211,340 KiB available memory, zero
+memory pressure averages, and no existing owned compiler or native model
+process. Its original wait and complete outputs remain retained.
+
+The final test overlay has tree
+`0925857fecea5fdb104d1661dea04ea4085aee49`. It changes only
+`receive.py` and `root-wake.py` from the checked tree. The tests now report
+controlled child exits while waiting for metadata admission or a recovered
+native connection. The earlier waits are retained as incomplete fixture runs,
+with their databases, WAL files, output and process identities captured before
+scoped interruption of the controlled Python test drivers.
+
+Remote Darwin dependency preflight run
+[`38956455653`](https://github.com/Flip-Engineering/baton/actions/runs/38956455653)
+used source `2b4683454b813e5a338b64582b0a0774249394bc`. Required source and
+runtime staging completed. Its direct Clang SQLite probe failed because the
+sanitized environment did not select the SDK include path. The selected SDK
+contained the required header and library stub. Explicit SDK selection and
+the packaged compiler's native IO path require a corrected remote check.
+This preflight does not establish normal archive or installed CLI acceptance.
 
 ## Remaining acceptance
 
-The full coordinator check and candidate C/object/link build must complete on
-the recorded production closure. Candidate validation must cover notebook
+The candidate C/object/link build must complete on the recorded production
+closure. Candidate validation must cover notebook
 recovery, the controlled observer-loss case, ordinary delivery, managed resume,
 and the four output-generation recovery cases. Installed Darwin qualification
 must exercise the normal archive, prerequisite check, pure and native IO
