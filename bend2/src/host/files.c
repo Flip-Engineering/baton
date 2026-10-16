@@ -413,7 +413,10 @@ static void baton_entries_call(IoWork *w) {
   struct dirent *entry;
   errno=0;
   while((entry=readdir(directory))) {
-    size_t length=strlen(entry->d_name);
+    const char *name=entry->d_name;
+    if(name[0]=='.'
+       && (name[1]==0 || (name[1]=='.' && name[2]==0))) continue;
+    size_t length=strlen(name);
     if(call->length+length+2>call->capacity) {
       size_t capacity=call->capacity?call->capacity:256;
       while(call->length+length+2>capacity) {if(capacity>SIZE_MAX/2) {call->error=ENOMEM;break;} capacity*=2;}
@@ -422,9 +425,9 @@ static void baton_entries_call(IoWork *w) {
       if(!names) {call->error=ENOMEM;break;}
       call->names=names;call->capacity=capacity;
     }
-    memcpy(call->names+call->length,entry->d_name,length);
+    memcpy(call->names+call->length,name,length);
     call->length+=length;
-    call->names[call->length++]='\n';
+    call->names[call->length++]=0;
   }
   if(!entry && errno) call->error=errno;
   else if(call->names) call->names[call->length]=0;

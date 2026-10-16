@@ -36,9 +36,11 @@ def Files.regular(path: String) -> IO(Result<&1,&1,U32 & String,String>):
 def Files.exists(path: String) -> IO(Result<&1,&1,U32 & String,String>):
   import "./files.c"
 
-# Every entry name in one directory, one per line, in readdir order with
-# no ordering promise: ordering is a Bend2 decision, not a host one.
-# A directory that cannot be opened keeps its cause, so an empty listing
+# Every entry name in one directory, joined with one NUL each, in readdir
+# order with no ordering promise: consumers sort before comparing. The
+# entries named "." and ".." are excluded here; every other name passes,
+# including names containing newlines, which is why the join is NUL. A
+# directory that cannot be opened keeps its cause, so an empty listing
 # stays distinguishable from a missing directory.
 def Files.entries(directory: String) -> IO(Result<&1,&1,U32 & String,String>):
   import "./files.c"
