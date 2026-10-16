@@ -40,6 +40,13 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   diagnostics. Preserve Bend2 typing, effects and affine-value semantics, session
   recovery, scoped authority, immutable references and complete failures. Baton
   derives identity and scope and accepts source inline or through stdin. Qualify
+  the Bend2 notebook handler, canonical compiler boundary, required compiler/Bun
+  dependency closure, retained compiler/native attempts and interactive drafts
+  described in [the REPL design](repl.md). Check named definitions reconstructed
+  from pure results and import through complete recipient-owned message reads.
+  Keep the submitted source and complete process outcomes through original-attempt
+  recovery. Remote qualification and
+  installed acceptance remain pending. Qualify
   external-agent evaluation, composition, sharing and restart through the
   installed commands. Coordinate with
   [#777](https://github.com/Flip-Engineering/baton/issues/777),
