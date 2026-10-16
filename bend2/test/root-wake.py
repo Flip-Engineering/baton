@@ -973,6 +973,7 @@ while True:
         self.children.append(wake)
 
         def admitted_busy():
+            self.assertIsNone(wake.poll(), output.read_text() + diagnostic.read_text())
             error = diagnostic.read_text()
             self.assertNotIn('Error:', error, output.read_text() + error)
             admissions = [event for line in output.read_bytes().split(b'\n')[:-1]
@@ -1026,7 +1027,11 @@ while True:
                 [str(EXE), str(self.db), 'codex-inbox-follow', 'root', 'native-app-root'],
                 env=environment, stdout=stdout, stderr=stderr)
         self.children.append(follower)
-        self.eventually(self.admission_barrier.exists, 'the native metadata read was not held')
+        def metadata_held():
+            self.assertIsNone(follower.poll(), output.read_text() + diagnostic.read_text())
+            return self.admission_barrier.exists()
+
+        self.eventually(metadata_held, 'the native metadata read was not held')
 
         def claim_waits_for_writer():
             admitted = queued.read_text() if queued.exists() else ''
@@ -1128,7 +1133,11 @@ while True:
                 [str(EXE), str(self.db), 'codex-inbox-follow', 'root', 'native-app-root'],
                 env=environment, stdout=stdout, stderr=stderr)
         self.children.append(follower)
-        self.eventually(self.admission_barrier.exists, 'the native metadata read was not held')
+        def metadata_held():
+            self.assertIsNone(follower.poll(), output.read_text() + diagnostic.read_text())
+            return self.admission_barrier.exists()
+
+        self.eventually(metadata_held, 'the native metadata read was not held')
 
         def claim_waits_for_writer():
             admitted = queued.read_text() if queued.exists() else ''
@@ -1179,7 +1188,14 @@ while True:
                                              'native-app-root', ident], env=self.environment,
                                             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                 self.children.append(delivery)
-                self.eventually(self.admission_barrier.exists,
+                def metadata_held():
+                    if delivery.poll() is not None:
+                        output, diagnostic = delivery.communicate()
+                        self.fail('Native delivery exited before its metadata read: '
+                                  + output + diagnostic)
+                    return self.admission_barrier.exists()
+
+                self.eventually(metadata_held,
                                 'the actual native metadata read was not held in flight')
                 if disposition == 'stop':
                     self.coord('stop', disposition, 'in-flight-stop', 'Keep the original input.')
