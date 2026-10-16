@@ -3,6 +3,7 @@ import ./agent-actions.bend as A
 import ./agent-route.bend as Route
 import ./agent-native.bend as Native
 import ./agent-input.bend as AgentInput
+import ./branching.bend as Branching
 import ../coordinator/commands.bend as C
 import ./store.bend as Store
 import ./message-batch.bend as Batch
@@ -301,6 +302,7 @@ def execute(+db: String, +session: String, action: A.Action) -> IO(Unit):
     case A.Send{items}: do IO<Unit>:
       saved : String <- sends_json(db,session,items)
       IO.write(saved)
+    case A.Branch{args}: Branching.execute(db,session,args)
     case A.Native{items}: do IO<Unit>:
       saved : String <- Native.operations(db,session,items)
       IO.write(saved)
