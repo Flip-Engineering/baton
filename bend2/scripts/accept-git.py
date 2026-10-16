@@ -7,7 +7,7 @@ path it exercises answers as the design says.
 
   landing-publishing  one real Player commits; a real OMP Principal Conductor session reads
                       the Player's report, inspects its worktree and
-                      acknowledges it; the gated landing lands the change; the
+                      handles it; the gated landing lands the change; the
                       coordinator publishes the landed target and git ls-remote
                       reads the advertised ref back; a remote moved
                       independently makes the next push refuse.
@@ -281,9 +281,9 @@ def scenario_landing_publishing(config, out, binary):
     coord(binary, db, "message", "review-setup", "operator", "root", "guidance",
           "Remember this instruction for this acceptance run: when a Player report arrives, "
           "inspect its worktree, branch diff and committed file contents, describe your review "
-          "in your response, then use the acknowledge action. Do not land, push, edit, or launch Players. "
+          "in your response. Do not land, push, edit, or launch Players. "
           "The acceptance driver performs the Git acts after your review. "
-          "Use the acknowledge action for the complete handled input and end this turn. Do not poll or wait in a tool. "
+          "End this native turn after handling the complete input. Baton records handling automatically. Do not poll or wait in a tool. "
           "The adapter starts your next turn when a Player report is committed.")
     root_attach(binary, db, run_dir, route_omp)
     remote = run_dir / "remote.git"
