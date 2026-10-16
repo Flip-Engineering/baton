@@ -1,7 +1,6 @@
-# CLAIM: the operative laws whose real functions live in bend2/src/host, each stated over the
-# function that implements it and proved beside its claim. The coordinator laws module imports
-# this module, and the coordinator entry imports that, so every compile of the entry verifies
-# every law here.
+# Host laws state equations over the host functions and prove each claim beside
+# its declaration. The coordinator law module imports them, and check-native.sh
+# verifies that module through the compiler's --check-only command.
 #
 # Policies: docs/bend2/laws-proposed.md. Reference: docs/bend2/reference/README.md, bend 2.0.25.
 import Base
