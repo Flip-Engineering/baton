@@ -64,12 +64,11 @@ def child_field(+db: String, +round: String, +ordinal: U32, column: String) -> I
   M.scalar(db,"SELECT " ++ column ++ " FROM branch_candidates WHERE round=" ++ C.q(round) ++ " AND ordinal=" ++ U32.show(ordinal))
 
 def prepare_candidates(+db: String, +round: String, +root: String, +count: U32, +index: U32) -> IO(Unit):
-  match U32.is_eq(index,count):
-    case True{}: IO.pure(Unit,Unit{})
-    case False{}: do IO<Unit>:
+  Bool.pick(IO(Unit),U32.is_eq(index,count),IO.pure(Unit,Unit{}),
+    (do IO<Unit>:
       +player : String = round ++ "-" ++ U32.show(index)
       recorded : Unit <- M.write(db,"INSERT OR IGNORE INTO branch_candidates(round,ordinal,session,workspace,branch) VALUES(" ++ C.q(round) ++ "," ++ U32.show(index) ++ "," ++ C.q(player) ++ "," ++ C.q(root ++ "/" ++ U32.show(index)) ++ "," ++ C.q("baton/" ++ player) ++ ");")
-      prepare_candidates(db,round,root,count,U32.add(index,1))
+      prepare_candidates(db,round,root,count,U32.add(index,1))))
 
 def configure_child(+db: String, +round: String, +player: String, +path: String, ready: Bool) -> IO(Unit):
   match ready:
@@ -148,10 +147,13 @@ def setup_children(+db: String, +round: String, +owner: String, rows: List<Strin
       prepared : Unit <- setup_child(db,round,number(ordinal),owner)
       setup_children(db,round,owner,rest)
 
-def number(value: String) -> U32:
-  match U32.read(value):
+def number_read(value: Maybe<U32>) -> U32:
+  match value:
     case None{}: 0
     case Some{n}: n
+
+def number(value: String) -> U32:
+  number_read(U32.read(value))
 
 def source_player(+db: String, +ensemble: String, +actor: String, +options: List<&2,D.Option>) -> IO(String):
   do IO<String>:
