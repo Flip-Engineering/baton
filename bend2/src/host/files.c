@@ -6,6 +6,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include "sha256.h"
 
 typedef struct { char *directory,*suffix,*path; int error; } BatonFindFile;
 
@@ -674,4 +675,55 @@ static Term baton_which_run(Env e,Term *f,IoWork *w) {
   return io_work(w,baton_which_call,baton_which_pack);
 }
 static void __attribute__((constructor)) baton_which_use(void) {io_eff(CID_FILES_WHICH,baton_which_run,0);}
+#endif
+
+typedef struct { char *path; char hex[65]; int error; } BatonDigest;
+
+static void baton_digest_call(IoWork *w) {
+  BatonDigest *call=(BatonDigest *)w->data;
+  int fd=open(call->path,O_RDONLY|O_CLOEXEC);
+  if(fd<0) {call->error=errno;return;}
+  BatonSha256 s;
+  baton_sha256_init(&s);
+  unsigned char buffer[65536];
+  for(;;) {
+    ssize_t got=read(fd,buffer,sizeof(buffer));
+    if(got<0) {if(errno==EINTR)continue;call->error=errno;break;}
+    if(!got) break;
+    baton_sha256_update(&s,buffer,(size_t)got);
+  }
+  close(fd);
+  if(call->error) return;
+  unsigned char bytes[32];
+  baton_sha256_final(&s,bytes);
+  static const char hex[]="0123456789abcdef";
+  for(unsigned i=0;i<32;++i) {
+    call->hex[i*2]=hex[bytes[i]>>4];
+    call->hex[i*2+1]=hex[bytes[i]&15];
+  }
+  call->hex[64]=0;
+}
+
+static Term baton_digest_pack(Env e,IoWork *w) {
+  BatonDigest *call=(BatonDigest *)w->data;
+  Term result=call->error ? io_fail(e,call->error,NULL)
+    : io_done(e,io_str(e,call->hex,64));
+  free(call->path);free(call);w->data=NULL;
+  return result;
+}
+
+#ifdef CID_FILES_DIGEST
+static Term baton_digest_run(Env e,Term *f,IoWork *w) {
+  BatonDigest *call=calloc(1,sizeof(*call));
+  if(!call) return io_fail(e,ENOMEM,NULL);
+  u64 length=0;
+  call->path=io_cstr(e,f[0],&length);
+  if(!call->path || strlen(call->path)!=length) {
+    free(call->path);free(call);
+    return io_fail(e,EINVAL,"path contains NUL");
+  }
+  w->data=(char *)call;
+  return io_work(w,baton_digest_call,baton_digest_pack);
+}
+static void __attribute__((constructor)) baton_digest_use(void) {io_eff(CID_FILES_DIGEST,baton_digest_run,0);}
 #endif

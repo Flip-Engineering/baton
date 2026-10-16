@@ -82,3 +82,9 @@ def Files.copy(from: String, to: String) -> IO(Result<&1,&1,U32 & String,Unit>):
 # installation.
 def Files.which(name: String) -> IO(Result<&1,&1,U32 & String,String>):
   import "./files.c"
+
+# The SHA-256 of the file's bytes, streamed: 64 lowercase hex digits.
+# A path that cannot be opened or read keeps its cause. The compression
+# core is the role identity digest's, shared through host/sha256.h.
+def Files.digest(path: String) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./files.c"
