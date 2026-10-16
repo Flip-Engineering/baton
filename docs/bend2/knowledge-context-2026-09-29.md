@@ -17,7 +17,19 @@ baton2 DATABASE promote-scoped PROMOTION_ID PROMOTER SOURCE_KIND SOURCE DESTINAT
 
 `AUTHOR`, `READER` and `PROMOTER` are session IDs. `promote` uses session IDs for `SOURCE` and `DESTINATION`. `promote-scoped` identifies each endpoint as `session` or `group`; a group ID names a recorded Ensemble. `FINDING` names a stored finding. The finding ID identifies its author, claim, evidence reference, and limits. Repeating the same ID with those same values returns the stored finding; reusing it with different values fails.
 
-`EVIDENCE` is stored as supplied reference text. If it has the form `message:ID` and that message exists, a read includes the message ID, sender, recipient, and body in `evidenceMessage`. Otherwise `evidenceMessage` is null. The finding row also contains `id`, `author`, `kind`, `claim`, `evidence`, `limits`, `destinations`, `promotions`, and `relations`. Existing records have kind `finding`.
+`EVIDENCE` is stored as supplied text. A registered author can record a reference before its target is retained. If the text has the form `message:ID` and that message exists, a read includes the message ID, sender, recipient, and body in `evidenceMessage`. Otherwise `evidenceMessage` is null. The finding row also contains `id`, `author`, `kind`, `claim`, `evidence`, `evidenceReference`, `limits`, `destinations`, `promotions`, and `relations`. Existing records have kind `finding`.
+
+The prefixes `message:`, `finding:`, `file:`, `http://`, `https://`, and `external:` identify evidence citations. Prefix matching is case-sensitive. Complete reads, metadata indexes, search results, and traversal nodes expose each citation as `evidenceReference`, with its exact `reference`, node `kind`, and current `resolution`:
+
+| Reference | Resolution |
+|---|---|
+| `message:ID` or `finding:ID` whose row exists | `retained` |
+| `message:ID` or `finding:ID` whose row is absent | `missing` |
+| `file:`, `http://`, `https://`, or `external:` | `external` |
+
+Resolution describes the current database snapshot. A retained message's delivery state is reported separately by its delivery record. External references expose their authored location for consumer retrieval. Other evidence text, including `run:ID`, has `evidenceReference: null` and remains available in complete reads and search. An author can connect that text through `relate` when it should participate in the graph.
+
+Search and traversal derive a `Cited` edge for each evidence citation. Its `provenance` is `recorded-evidence`, and `targetResolution` reports the target's resolution. References outside the returned nodes include the same `resolution` and their literal retrieval arguments. A `missing` target retains its identity and can resolve on a later read after its row is stored.
 
 `KIND` and `RELATION` are descriptive strings chosen by the author. Examples include `observation`, `hypothesis`, `decision`, `correction`, `Supports`, `Causes`, `DerivedFrom`, and `Supersedes`. A relationship retains its ID, author, source, relationship name and target. References can name `finding:ID`, `message:ID`, a source file, a run or another external source. A correction can be recorded separately and linked to its earlier finding.
 
