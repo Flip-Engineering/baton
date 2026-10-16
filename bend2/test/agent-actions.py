@@ -91,13 +91,74 @@ class AgentActions(unittest.TestCase):
     def endpoint_output(self):
         return self.deliveries.read_bytes() if self.deliveries.exists() else b''
 
+    def test_compact_actions_resolve_context_and_retained_completion(self):
+        self.legacy('project', self.repo)
+        routes = [('bare', ()), ('project', ('--project', self.repo)),
+                  ('actor', ('as', 'worker-a')), ('database', (self.db, 'as', 'worker-a'))]
+        for label, prefix in routes:
+            with self.subTest(route=label):
+                environment = {'BATON_DATABASE': str(self.db), 'BATON_SESSION': 'worker-a'}
+                for action, kind in [('report', 'report'), ('ask', 'question')]:
+                    body = label + ' complete ' + action + ': λ / 漢字 / "quotes"\n'
+                    result = self.invoke(*prefix, action, body, cwd=self.repo,
+                                         environment=environment)
+                    self.assertEqual(len(result), 1)
+                    message = self.stored_messages()[-1]
+                    self.assertEqual(message[1:5], ('worker-a', 'root', kind, body))
+                sent = self.invoke(*prefix, 'send', 'root', 'and', cwd=self.repo,
+                                   environment=environment)[0]
+                self.assertEqual(sent['status'], 'admitted')
+                self.assertEqual(sent['delivery']['body'], 'and')
+                self.assertEqual(sent['delivery']['kind'], 'report')
+                self.legacy('message', label + '-assignment', 'root', 'worker-a',
+                            'task-assignment', 'Complete this assigned work.')
+                summary = label + ' complete summary: λ / 漢字\n'
+                request = self.invoke(*prefix, 'finish', summary, cwd=self.repo,
+                                      environment=environment)[0]
+                self.assertEqual(request['status'], 'admitted')
+                self.assertEqual(request['delivery']['body'], summary)
+                self.assertEqual(request['delivery']['kind'], 'completion-request')
+                state = self.legacy('session', 'worker-a')['taskCompletion']
+                self.assertEqual(state['requestId'], request['id'])
+                self.assertFalse(state['confirmed'])
+                confirmed = self.invoke('confirm', 'worker-a', cwd=self.repo,
+                                        environment={**environment, 'BATON_SESSION': 'root'})[0]
+                self.assertEqual(confirmed['status'], 'admitted')
+                self.assertEqual(confirmed['delivery']['body'], request['id'])
+                self.assertTrue(self.legacy('session', 'worker-a')['taskCompletion']['confirmed'])
+                guided = self.invoke('guide', 'worker-a', 'Continue the next assignment.',
+                                     cwd=self.repo,
+                                     environment={**environment, 'BATON_SESSION': 'root'})[0]
+                self.assertEqual(guided['delivery']['kind'], 'guidance')
+                self.assertEqual(guided['delivery']['body'], 'Continue the next assignment.')
+
+    def test_named_sends_default_each_kind_to_report(self):
+        result = self.action('root', 'send', 'worker-a', '--text', 'First complete report.',
+                             'and', 'worker-b', '--text', 'Second complete report.')
+        self.assertEqual([row['delivery']['kind'] for row in result], ['report', 'report'])
+        self.assertEqual([row['delivery']['body'] for row in result],
+                         ['First complete report.', 'Second complete report.'])
+
+    def test_positional_guidance_preserves_batch_words_as_text_and_recipient(self):
+        self.legacy('join', 'and', 'root', 'fixture', 'model', 'low', self.repo)
+        self.legacy('connect', 'and', '', self.endpoint)
+        for recipient, body in [('worker-a', 'and'), ('worker-a', '--and'),
+                                ('and', 'Continue the complete assignment.')]:
+            with self.subTest(recipient=recipient, body=body):
+                result = self.action('root', 'guide', recipient, body)[0]
+                self.assertEqual(result['status'], 'admitted')
+                self.assertEqual((result['delivery']['recipient'],
+                                  result['delivery']['kind'], result['delivery']['body']),
+                                 (recipient, 'guidance', body))
+
     def test_help_actions_need_no_project_pointer(self):
         for args in [('help',), ('inbox', '--help'), ('read', '--help'),
                      ('send', '--help'), ('acknowledge', '--help'),
                      ('session', '--help'), ('player', '--help'),
                      ('players', '--help'), ('assignment', '--help'),
                      ('completion-request', '--help'),
-                     ('completion-confirmed', '--help'), ('guide', '--help')]:
+                     ('completion-confirmed', '--help'), ('finish', '--help'),
+                     ('confirm', '--help'), ('guide', '--help')]:
             with self.subTest(args=args):
                 result = subprocess.run([str(EXE), 'as', 'root', *args],
                                         cwd=self.directory, capture_output=True, text=True)
@@ -1001,7 +1062,6 @@ class AgentActions(unittest.TestCase):
     def test_invalid_whole_grammar_preserves_existing_messages(self):
         cases = [
             ('send', 'worker-a', '--kind', 'report', '--id', 'missing-body'),
-            ('send', 'worker-a', '--text', 'Missing kind.'),
             ('send', 'worker-a', '--kind', 'report', '--text', 'one', '--file',
              self.directory / 'body.txt'),
             ('send', 'worker-a', '--kind', 'report', '--text', 'one', '--text', 'two'),
@@ -1010,8 +1070,6 @@ class AgentActions(unittest.TestCase):
              '--id', 'one', '--id', 'two'),
             ('send', 'worker-a', '--kind', 'report', '--text', 'one', '--unknown'),
             ('send', 'worker-a', '--kind', 'report', '--text', 'one', 'and'),
-            ('send', 'worker-a', '--kind', 'report', '--text', 'one', 'and',
-             'worker-b', '--text', 'Missing kind in second clause.'),
             ('read',),
             ('acknowledge', 'message-id', '--receipt'),
         ]

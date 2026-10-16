@@ -6,30 +6,33 @@ database and native conversation ID.
 
 ```sh
 baton inbox
-baton read message-one message-two
-baton acknowledge
+baton report 'The checks passed.'
+baton ask 'Which target should receive the change?'
+baton send reviewer 'The change is ready for review.'
+baton guide worker 'Check the remaining failure.'
+baton finish 'The assigned work is complete.'
+baton confirm worker
 ```
 
-`read` returns complete stored deliveries in argument order, including messages
-that already have receipts. Each ID has its own result. `acknowledge` selects the
-current actor's completely read inputs and derives receipts from native handling
-evidence. Optional message selectors and `--receipt` retain explicit compatibility.
-Each owned message returns its retained receipt. The first receipt
-remains stored. Reading preserves pending receipts.
+`inbox` returns complete pending bodies. Baton records each complete owned read
+against the current native turn. A successful completed turn records handling
+and creates the first receipt automatically. Failed turns and unread input remain
+pending. The first receipt remains stored.
 
-Send several independent messages with `and` or `--and` between complete clauses:
+`report` and `ask` address the recorded coordinator. `send PLAYER TEXT` sends a
+report; `guide PLAYER TEXT` sends guidance. Baton creates the action identities.
+The named forms retain explicit kinds and independent message clauses:
 
 ```sh
-baton send parent --kind report --text 'Result.' \
-  and parent --kind report --file result.txt
+baton send parent --text 'Result.' and reviewer --kind guidance --text 'Review this result.'
 ```
 
-Each clause has a recipient, kind and text or file body. `--id` applies to that
-clause; an omitted ID is generated and returned. Explicit IDs use Baton's existing
-exact retry and conflict rules. Each item reports admission, wake and receipt
-separately. File, admission and wake failures retain their individual causes and
-the results of other items. A malformed command returns before message admission.
-`--file -` reads standard input.
+Each message retains its own admission, wake and receipt outcome. A malformed
+command returns before admission. Existing `--id`, `--text` and `--file` forms
+remain available for explicit integrations; `--file -` reads standard input.
+`read ID...` selects complete stored messages in argument order, including
+messages that already have receipts. Administrative `acknowledge` and `ack`
+forms remain available for an explicitly selected historical message.
 
 Complete UTF-8 input preserves a valid leading BOM and trailing whitespace.
 Invalid UTF-8 and embedded NUL produce a refusal with the byte offset. Standard
@@ -65,20 +68,20 @@ Workers send a completion request with a complete report body. A coordinator
 confirms the selected worker's current owned request:
 
 ```sh
-baton completion-request --text 'The assigned work is complete.'
-baton completion-confirmed --to worker
-baton guide --to worker --text 'Continue the assigned work and report the result.'
+baton finish 'The assigned work is complete.'
+baton confirm worker
+baton guide worker 'Continue the assigned work and report the result.'
 ```
 
 The completion request uses the current session's recorded parent. A parentless
 session receives a structured refusal. The coordinator can use `guide` to send
 further work. Each decision action uses the ordinary message admission result,
 wake result and retained delivery. Baton selects the current request addressed
-to the coordinator and constructs its confirmation. Use `--to PLAYER` when
-selecting a worker; an explicit `--request ID` must name a retained completion request
-from that worker addressed to the current coordinator. An omitted recipient selects the current eligible owned request scope.
-Use `--file PATH` for a complete report body. Mutation IDs are generated internally;
-explicit `--id ID` retains exact retry and conflict compatibility.
+to the coordinator and constructs its confirmation. The compatibility command
+`completion-confirmed --request ID --to PLAYER` selects an exact retained request
+from that worker addressed to the current coordinator. `confirm` without a Player
+selects the sole current request.
+The named completion commands retain explicit body and identity options.
 
 ## Named action batches
 
@@ -99,7 +102,7 @@ baton attempt --and attempts --and outbox
 ```
 
 Inspections, completion decisions, guidance and the native operations below
-can share one batch, including bare `acknowledge`. Session, Player and assignment clauses use `--session` or
+can share one batch. Session, Player and assignment clauses use `--session` or
 `--id` to select a recorded target; omission selects the current actor. Each
 item retains complete `stdout`, `stderr`, actual `waitStatus` and command
 arguments. Its process status reports `completed`, `failed` or `refused`.
