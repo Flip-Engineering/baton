@@ -76,12 +76,8 @@ def round_task(+task: String, +inputs: String, knowledge: String) -> String:
 def child_field(+db: String, +round: String, +ordinal: U32, column: String) -> IO(String):
   M.scalar(db,"SELECT " ++ column ++ " FROM branch_candidates WHERE round=" ++ C.q(round) ++ " AND ordinal=" ++ U32.show(ordinal))
 
-def prepare_candidates(+db: String, +round: String, +root: String, +count: U32, +index: U32) -> IO(Unit):
-  Bool.pick(IO(Unit),U32.is_eq(index,count),IO.pure(Unit,Unit{}),
-    (do IO<Unit>:
-      +player : String = round ++ "-" ++ U32.show(index)
-      recorded : Unit <- M.write(db,"INSERT OR IGNORE INTO branch_candidates(round,ordinal,session,workspace,branch) VALUES(" ++ C.q(round) ++ "," ++ U32.show(index) ++ "," ++ C.q(player) ++ "," ++ C.q(root ++ "/" ++ U32.show(index)) ++ "," ++ C.q("baton/" ++ player) ++ ");")
-      prepare_candidates(db,round,root,count,U32.add(index,1))))
+def prepare_candidates(db: String, +round: String, +root: String, +count: U32) -> IO(Unit):
+  M.write(db,"WITH RECURSIVE numbered(n) AS (SELECT 0 WHERE " ++ U32.show(count) ++ ">0 UNION ALL SELECT n+1 FROM numbered WHERE n+1<" ++ U32.show(count) ++ ") INSERT OR IGNORE INTO branch_candidates(round,ordinal,session,workspace,branch) SELECT " ++ C.q(round) ++ ",n," ++ C.q(round) ++ "||'-'||n," ++ C.q(root) ++ "||'/'||n," ++ C.q("baton/" ++ round) ++ "||'-'||n FROM numbered;")
 
 def configure_child(+db: String, +round: String, +player: String, +path: String, ready: Bool) -> IO(Unit):
   match ready:
@@ -225,7 +221,7 @@ def start(+db: String, +actor: String, +ensemble: String, +options: List<&2,D.Op
     stored : Unit <- M.write(db,"UPDATE branch_rounds SET snapshot=" ++ C.q(snapshot) ++ " WHERE id=" ++ C.q(round) ++ ";")
     +root : String = workspace ++ "-" ++ round
     directory : Unit <- IO.try(Unit,F.Files.mkdir(root))
-    prepared : Unit <- prepare_candidates(db,round,root,count,0)
+    prepared : Unit <- prepare_candidates(db,round,root,count)
     rows : String <- IO.try(String,DB.Sql.read(db,"SELECT ordinal FROM branch_candidates WHERE round=" ++ C.q(round) ++ " ORDER BY ordinal;"))
     launched : Unit <- setup_children(db,round,actor,Tx.split_lines(rows))
     M.status(db,round)
@@ -345,7 +341,7 @@ def recover(+db: String, +actor: String, +round: String) -> IO(Unit):
     count : String <- M.field(db,"branch_rounds",round,"branch_count")
     +root : String = workspace ++ "-" ++ round
     directory : Unit <- IO.try(Unit,F.Files.mkdir(root))
-    prepared : Unit <- prepare_candidates(db,round,root,number(count),0)
+    prepared : Unit <- prepare_candidates(db,round,root,number(count))
     rows : String <- IO.try(String,DB.Sql.read(db,"SELECT ordinal FROM branch_candidates WHERE round=" ++ C.q(round) ++ " ORDER BY ordinal;"))
     recovered : Unit <- setup_children(db,round,actor,Tx.split_lines(rows))
     M.status(db,round)
