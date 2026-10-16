@@ -83,6 +83,24 @@ from that worker addressed to the current coordinator. `confirm` without a Playe
 selects the sole current request.
 The named completion commands retain explicit body and identity options.
 
+## Teams and branching
+
+A Principal Conductor coordinates the whole assignment; an Associate Conductor
+coordinates a delegated subtask. An Ensemble groups Players under one Conductor.
+Use loose coupling for coordination through the lead and parent-child routes.
+Use tight coupling when Players need peer communication under the role and
+hierarchy rules. A Section groups team members by capability.
+
+Use branching to compare alternative solutions: snapshot a settled Player's
+workspace, start fresh conversations in separate worktrees, evaluate the results,
+and continue the selected Player's existing conversation. Both coupling modes
+support branching. `--from PLAYER` selects the source; its default is the latest
+selected Player, or the current Conductor before any selection.
+
+Use `baton help role`, `baton help ensemble` and `baton branch --help` for the
+commands. The [branching guide](branching-ensembles.md) describes evaluation,
+selection, continuation and recovery.
+
 ## Named action batches
 
 Named operations use the same project and actor context. `--session SESSION`

@@ -6,6 +6,9 @@ Player, workspace snapshot, complete task inputs, selected scratchpad findings,
 native configuration and evaluator command. Baton generates round, Player and
 evaluation identities.
 
+Use branching to compare alternative solutions and continue the selected Player's
+existing conversation. The Ensemble can use loose or tight coupling.
+
 ## Commands
 
 The current Conductor can create an Ensemble and start branches from one of its
@@ -25,6 +28,8 @@ baton branch continue --ensemble experiments
 Commands infer the latest round within the selected Ensemble. The current actor's
 sole owned Ensemble is the default. `--round` selects recorded historical work.
 `branch --help` lists the complete command syntax.
+`--from PLAYER` selects the source. Its default is the latest selected Player,
+or the current Conductor before any selection.
 
 Start inherits the source's recorded task and native configuration. `--text` or
 `--file` supplies task text; Baton stores the complete text in the database.

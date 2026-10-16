@@ -420,7 +420,7 @@ const dispatchInputSchema = { type: 'object', properties: {
 const TOOLS = [
   {
     name: 'baton2_action',
-    description: 'Run a contextual native action as the attached session. Use inbox, read, send, report, ask, guide, finish, confirm or help. Positional text arguments, named arguments and independent batch clauses use the same grammar as baton. Complete argument strings travel through JSON standard input. Each item retains its outcome and actual failure cause.',
+    description: 'Run a native action as the attached session. Use inbox, read, send, report, ask, guide, finish and confirm for work; role, ensemble and section organize a team; branch compares parallel alternatives and continues the selected Player. Use action help with the command name in arguments, or action branch with ["--help"]. Complete argument strings use the CLI grammar and travel through JSON standard input. Each item retains its actual result and failure cause.',
     inputSchema: { type: 'object', properties: {
       action: { type: 'string' }, arguments: { type: 'array', items: { type: 'string' } },
     }, required: ['action'], additionalProperties: false },
@@ -640,7 +640,7 @@ const TOOLS = [
   },
   {
     name: 'baton2_role',
-    description: 'Read or assign a session responsibility.',
+    description: 'Read or assign a session responsibility. A Principal Conductor coordinates the whole assignment; an Associate Conductor coordinates a delegated subtask. Players perform assigned work; operators represent human control.',
     inputSchema: { type: 'object', properties: {
       session: { type: 'string' },
       role: { type: 'string', enum: ['player', 'principal-conductor', 'associate-conductor', 'operator'] },
@@ -648,10 +648,10 @@ const TOOLS = [
   },
   {
     name: 'baton2_ensemble',
-    description: 'Inspect an Ensemble or configure its owner and coupling.',
+    description: 'Organize Players as a team under one Conductor, or inspect its owner and coupling. Use branching to compare parallel alternatives, evaluate them and continue the selected Player with either coupling; discover it through baton2_action with action branch and arguments ["--help"].',
     inputSchema: { type: 'object', properties: {
       ensemble: { type: 'string' }, owner: { type: 'string' },
-      coupling: { type: 'string', enum: ['loose', 'tight'], description: 'Omitting coupling preserves an existing Ensemble; new Ensembles default to loose.' },
+      coupling: { type: 'string', enum: ['loose', 'tight'], description: 'Loose teams coordinate through their lead and parent-child routes. Tight teams also permit peer messages under the role and hierarchy rules. Omission preserves existing coupling; new teams default to loose.' },
     }, required: ['ensemble'], additionalProperties: false },
   },
   {

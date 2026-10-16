@@ -48,6 +48,15 @@ An Ensemble records its owner ID, loose or tight coupling and member Players.
 The recorded owner manages membership. New Ensembles use loose coupling.
 A Player can belong to several Ensembles. [Messaging](messaging.md) defines
 hierarchy routes and peer routes through explicit tight Ensemble membership.
+Use loose coupling for work coordinated through the lead and parent-child routes;
+use tight coupling when Players need peer communication under the role and
+hierarchy rules.
+
+[Branching](branching-ensembles.md) adds parallel alternatives to an Ensemble with
+either coupling. It snapshots a settled Player's workspace, starts fresh
+conversations in separate worktrees, evaluates results, and continues the selected
+Player's existing conversation. `--from PLAYER` selects the source; its default
+is the latest selected Player, or the current Conductor before any selection.
 
 A Section records a capability label and members within one Ensemble. Its
 owner is the Ensemble's recorded owner. Section members must already belong

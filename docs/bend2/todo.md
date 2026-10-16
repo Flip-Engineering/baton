@@ -40,8 +40,11 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   failed and interrupted prompts retain their pending input. Preserve unread
   input, failed turns and existing explicit compatibility commands. Match
   MCP capability discovery to the concise help surface and retain contextual
-  inbox, authored-message and batch tools. Run the actual contextual inbox and
-  native successful-turn handling acceptance after the help change. Coordinate
+  inbox, authored-message and batch tools. Explain Conductor roles, Ensemble
+  coupling and the branching workflow in CLI and MCP discovery; coordinate this
+  chooser with [#751](https://github.com/Flip-Engineering/baton/issues/751).
+  Run the actual contextual inbox and native successful-turn handling acceptance
+  after the help change. Coordinate
   with [#723](https://github.com/Flip-Engineering/baton/issues/723),
   [#761](https://github.com/Flip-Engineering/baton/issues/761),
   [#716](https://github.com/Flip-Engineering/baton/issues/716) and
@@ -152,6 +155,8 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   evaluator output and actual status, atomic selection, continuation and recovery.
   A failed receiver setup retains its operation and prevents task admission.
   The [command and behavior guide](branching-ensembles.md) describes this surface.
+  Keep the team and branching chooser concise across help, MCP and agent docs;
+  explain both coupling modes and the explicit or inferred source Player.
   All six remote branching fixtures pass. Four actual Codex branches passed the
   independent evaluator; the selected branch continued in the same conversation.
   A separate recovery run passed restart, retained lineage and explicit-stop
