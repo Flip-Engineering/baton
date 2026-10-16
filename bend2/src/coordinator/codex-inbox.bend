@@ -586,7 +586,7 @@ def session_row(+executable: String, +db: String, +session: String, +thread: Str
     case False{}: do IO<Result<&1,&1,U32 & String,Unit>>:
       logged : Unit <- retained(session,thread,row)
       IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
-    case True{}: open(0,link => opened(link,pending => delivery_run(link,thread,Managed{executable,db,session,thread,token},pending)))
+    case True{}: open(0,+link => opened(link,pending => delivery_run(link,thread,Managed{executable,db,session,thread,token},pending)))
 
 def session(+db: String, +session: String, +thread: String, +message: String, +token: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
@@ -624,7 +624,7 @@ def pointer_notice(+thread: String, +pointer: String) -> IO(Notice):
 def deliver(+db: String, +thread: String, +pointer: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     notice : Notice <- pointer_notice(thread,pointer)
-    open(0,link => opened(link,pending => delivery_run(link,thread,notice,pending)))
+    open(0,+link => opened(link,pending => delivery_run(link,thread,notice,pending)))
 
 def witnessed(+thread: String, +active: Bool, result: State & String) -> IO(Unit):
   match result:
@@ -645,4 +645,4 @@ def witness_run(+link: Proxy.Link, +thread: String, +pending: Proxy.Pending) -> 
     witness_read(link,thread,result)
 
 def witness(+db: String, +thread: String) -> IO(Result<&1,&1,U32 & String,Unit>):
-  open(0,link => opened(link,pending => witness_run(link,thread,pending)))
+  open(0,+link => opened(link,pending => witness_run(link,thread,pending)))
