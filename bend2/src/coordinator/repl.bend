@@ -34,6 +34,11 @@ def source_options(args: List<String>) -> Result<&1,&1,U32 & String,List<&2,D.Op
     case source <> rest: options(rest,[D.Field{"--source",source}])
     case Nil{}: Fail{(2,"Supply complete Bend2 source inline or through --stdin.")}
 
+def operation_options(selected: Bool, args: List<String>) -> Result<&1,&1,U32 & String,List<&2,D.Option>>:
+  match selected:
+    case True{}: source_options(args)
+    case False{}: options(args,Nil{})
+
 def allowed(+verb: String) -> List<String>:
   match verb:
     case "eval": ["--source","--type","--label","--notebook"]
@@ -48,7 +53,7 @@ def allowed(+verb: String) -> List<String>:
 def validate(options: List<&2,D.Option>, +names: List<&2,String>) -> Bool:
   match options:
     case Nil{}: True{}
-    case D.Field{flag,value} <> rest: Bool.and(D.member(flag,names),validate(rest,names))
+    case D.Field{flag,value} <> rest: Bool.and(D.member(flag,D.affine_strings(names)),validate(rest,names))
 
 def source(+options: List<&2,D.Option>) -> IO(String):
   +value = D.value(options,"--source","")
@@ -203,13 +208,12 @@ def interactive_trimmed(+db: String, +actor: String, +notebook: String, +line: S
 def interactive_command(+db: String, +actor: String, +notebook: String, +line: String) -> IO(Bool):
   interactive_trimmed(db,actor,notebook,line,Tx.trim_nl(line))
 
-@unsafe
-def interactive_line(+db: String, +actor: String, +notebook: String, next: Maybe<String>) -> IO(Unit):
+def interactive_line(+db: String, +actor: String, +notebook: String, again: Bool -> IO(Unit), next: Maybe<String>) -> IO(Unit):
   match next:
     case None{}: IO.pure(Unit,Unit{})
     case Some{line}: do IO<Unit>:
-      again : Bool <- interactive_command(db,actor,notebook,line)
-      interactive_loop(db,actor,notebook,again)
+      proceed : Bool <- interactive_command(db,actor,notebook,line)
+      again(proceed)
 
 @unsafe
 def interactive_loop(+db: String, +actor: String, +notebook: String, proceed: Bool) -> IO(Unit):
@@ -217,7 +221,7 @@ def interactive_loop(+db: String, +actor: String, +notebook: String, proceed: Bo
     case False{}: IO.pure(Unit,Unit{})
     case True{}: do IO<Unit>:
       next : Maybe<String> <- IO.try(Maybe<String>,Host.ReplHost.line())
-      interactive_line(db,actor,notebook,next)
+      interactive_line(db,actor,notebook,again => interactive_loop(db,actor,notebook,again),next)
 
 def interactive(+db: String, +actor: String, +notebook: String) -> IO(Unit):
   do IO<Unit>:
@@ -261,9 +265,9 @@ def execute_canonical(db: String, actor: String, args: List<String>) -> IO(Unit)
     case Nil{}: IO.write(help())
     case "--help" <> rest: IO.write(help())
     case "help" <> rest: IO.write(help())
-    case +verb <> +rest:
+    case +verb <> rest:
       Bool.pick(IO(Unit),D.member(verb,["define","eval","bind","read","recover","share","import","interactive"]),
-        parsed(db,actor,verb,Bool.pick(Result<&1,&1,U32 & String,List<&2,D.Option>>,D.member(verb,["define","eval","bind","import"]),source_options(rest),options(rest,Nil{}))),IO.die(Unit,2,help()))
+        parsed(db,actor,verb,operation_options(D.member(verb,["define","eval","bind","import"]),rest)),IO.die(Unit,2,help()))
 
 def execute(db: String, actor: String, args: List<String>) -> IO(Unit):
   do IO<Unit>:
