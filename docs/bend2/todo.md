@@ -8,7 +8,9 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   Add `send PLAYER "text"`, `finish "summary"` and `confirm PLAYER` to the
   contextual command surface. Shorten generated notices and task instructions;
   Baton resolves project, session, routing and action identities. Successful
-  native settlement records handling of complete owned reads. Preserve unread
+  native settlement records handling of complete owned reads. The interactive
+  Claude MCP route needs native prompt-scoped reads and successful Stop handling;
+  failed and interrupted prompts retain their pending input. Preserve unread
   input, failed turns and existing explicit compatibility commands. Coordinate
   with [#723](https://github.com/Flip-Engineering/baton/issues/723),
   [#761](https://github.com/Flip-Engineering/baton/issues/761),
