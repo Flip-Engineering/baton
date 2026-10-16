@@ -30,15 +30,16 @@ import ../host/sqlite.bend as DB
 import ../git/text.bend as Tx
 import ../host/text.bend as Text
 import ./store.bend as Store
+import ./control.bend as Control
 
 law direct_replay_keeps_output_failure_for_completion:
   for +db: String
   for +player: String
   for +id: String
-  for cmd: String
-  for model: String
-  for effort: String
-  for cwd: String
+  for +cmd: String
+  for +model: String
+  for +effort: String
+  for +cwd: String
   for +task: String
   for log: String
   for session: String

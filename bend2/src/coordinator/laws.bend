@@ -9,6 +9,7 @@ import ./observer-checkpoint-laws.bend as ObserverCheckpointLaws
 import ./instance-laws.bend as InstanceLaws
 import ./messaging-laws.bend as MessagingLaws
 import ./connect-laws.bend as ConnectLaws
+import ./control-laws.bend as ControlLaws
 import ./naming-laws.bend as NamingLaws
 import ./delivery.bend as Delivery
 import ./turn.bend as Turn
@@ -91,6 +92,7 @@ law m17_missing_native_result_reports_to_the_parent:
   for +db: String
   for +player: String
   for +id: String
+  for +log: String
   for +stderr: String
   for +status: String
   {Turn.result_missing(db, player, id, log, stderr, status, False{}) == Turn.report(db, player, id, "Player process ended without a native result (" ++ status ++ "). Output: " ++ log ++ ". Stderr: " ++ stderr) : IO(Unit)}
@@ -843,7 +845,6 @@ law m2_omp_launch_reaches_the_omp_adapter:
   for +model: String
   for +effort: String
   for +cwd: String
-  for +log: String
   for +stderr: String
   for +session: String
   for +task: String
