@@ -1,0 +1,37 @@
+{
+  "attempt": "2026-08-13T02:40:09.482Z",
+  "salt": "t120260813024009",
+  "role": "suite-144",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-d9c3c7191ea3e64b08331c09d46272eb"
+        ]
+      }
+    },
+    {
+      "step": "dead:suite-144",
+      "receipt": {
+        "phase": "failed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "suite-144": {
+      "pin": "1e8c06cd0cb4d436d7d159ae81c3cf35381890ce",
+      "paths": [
+        "impl/test/issue144-lsp-pool-red.test.mjs"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 435,
+  "verdict": "SUITE-144-FAILED"
+}

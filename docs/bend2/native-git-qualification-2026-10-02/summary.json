@@ -1,0 +1,326 @@
+{
+  "source": "08e6bf383ee9c59dc16b9291a2c3c5e05bfbf062",
+  "tree": "a0d769484413ee45bc4a9f47dfdcad49584df49d",
+  "coordinator_sha256": "e9374848831ccdb233839215c84ab6d1f1ee84a39a8fd2a601d2758f55987da8",
+  "freeze": {
+    "path": ".scratch/native-recovery-and-git-preparation-20261002/git/freeze.json",
+    "bytes": 4442,
+    "sha256": "a54a020db181cfbcc0363f66882154c83eaf075ea927bc1103686ca691d91fb6"
+  },
+  "outcome": "passed",
+  "observer_exit": 0,
+  "observer_seconds": 58.44709396362305,
+  "outcomes": {
+    "target-move": {
+      "first_status": "blocked",
+      "retry_status": "landed",
+      "preservation_receipt": {
+        "path": ".scratch/native-git-qualification-run-08e6bf38/target-move/land-w2-preserved.json",
+        "bytes": 1093,
+        "sha256": "2f3b3a499979c3266d5ef6910de7e131301290cb326f837bb123e183b2ba9677"
+      },
+      "final_target": "d8b807671337a60675606a3bd18f6ab7f41bc9a5",
+      "final_tree": "dd9bc0e0e7d87a465b39d1f568d221df5a401465",
+      "worker_tip": "bf6dacf9e1df9f0a8419f3dc30a36a91e27f752b"
+    },
+    "conflict-recovery": {
+      "first_status": "blocked",
+      "retry_status": "conflict",
+      "preservation_receipt": {
+        "path": ".scratch/native-git-qualification-run-08e6bf38/conflict-recovery/land-w4-preserved.json",
+        "bytes": 1111,
+        "sha256": "a86bd6ca87ba30568ccfce178a98d9b025492daae9f195b6d6b8df436efa0a54"
+      },
+      "final_target": "befae8636c1cae422762143b1d8c64e910fcbb1a",
+      "final_tree": "8ab736d1562c7136ef35592e5e1befcfc5aca6e5",
+      "worker_tip": "533ecec5bd4e4882fc59cc72d6b93b1626e8aa55",
+      "guidance": {
+        "sender": "root",
+        "recipient": "w4",
+        "authorship": "Acceptance driver acting as declared root",
+        "body_sha256": "a831a3670cd73256d2f9fc90696aeb39ea4af753061017a310476b555647c590",
+        "receipt_sha256": "d20279c177e0423b9cc204874b8b589931cabd19b3701ba264d5c59c791409f1",
+        "native_id_before_after": "01a0fd02-11a5-7000-b5ac-bca6c8111cab"
+      }
+    },
+    "landing-publishing": {
+      "target": "ef64051ab002d03d6e907a10f547048a4451198c",
+      "initial_advertisement": "ef64051ab002d03d6e907a10f547048a4451198c\trefs/heads/main",
+      "push_after_independent_move": "rejected",
+      "current_remote_advertisement": "f188838e5d8d228df4f889ba352f4c698abc5adf\trefs/heads/main",
+      "publication_boundary": "Owned local bare Git remote",
+      "native_root_report_review": {
+        "receipt_bytes": 338,
+        "receipt_sha256": "1e58a100cba29c98f6db6c3a92ece0eaa5ff885bcb9ce0274df0690dfce7928c"
+      }
+    }
+  },
+  "sessions": {
+    "conflict-recovery": [
+      {
+        "id": "root",
+        "harness": "external",
+        "model": "",
+        "effort": "",
+        "native": "",
+        "observed_model": ""
+      },
+      {
+        "id": "w3",
+        "harness": "omp",
+        "model": "deepseek/deepseek-flash",
+        "effort": "low",
+        "native": "01a0fd01-ff01-7000-a69d-c03c4f0ee20b",
+        "observed_model": "deepseek/deepseek-flash"
+      },
+      {
+        "id": "w4",
+        "harness": "omp",
+        "model": "deepseek/deepseek-flash",
+        "effort": "low",
+        "native": "01a0fd02-11a5-7000-b5ac-bca6c8111cab",
+        "observed_model": "deepseek/deepseek-flash"
+      }
+    ],
+    "landing-publishing": [
+      {
+        "id": "root",
+        "harness": "omp",
+        "model": "",
+        "effort": "",
+        "native": "01a0fd01-7b2b-7000-bdb1-53a04c99630e",
+        "observed_model": ""
+      },
+      {
+        "id": "operator",
+        "harness": "terminal",
+        "model": "",
+        "effort": "",
+        "native": "",
+        "observed_model": ""
+      },
+      {
+        "id": "w1",
+        "harness": "omp",
+        "model": "deepseek/deepseek-flash",
+        "effort": "low",
+        "native": "01a0fd01-8e12-7000-832f-6b70c4799dcd",
+        "observed_model": "deepseek/deepseek-flash"
+      }
+    ],
+    "target-move": [
+      {
+        "id": "root",
+        "harness": "external",
+        "model": "",
+        "effort": "",
+        "native": "",
+        "observed_model": ""
+      },
+      {
+        "id": "w1",
+        "harness": "omp",
+        "model": "deepseek/deepseek-flash",
+        "effort": "low",
+        "native": "01a0fd01-d25f-7000-9355-f3107e30fb02",
+        "observed_model": "deepseek/deepseek-flash"
+      },
+      {
+        "id": "w2",
+        "harness": "omp",
+        "model": "deepseek/deepseek-flash",
+        "effort": "low",
+        "native": "01a0fd01-e85d-7000-99b0-c5f2b25cf483",
+        "observed_model": "deepseek/deepseek-flash"
+      }
+    ]
+  },
+  "native_launches": [
+    {
+      "pid": 5813,
+      "parent_pid": 5810,
+      "started_unix": 1790951127.388236,
+      "scenario": "landing-publishing",
+      "role": "root",
+      "mode": "json",
+      "requested_model": "deepseek/deepseek-flash",
+      "requested_effort": "low",
+      "resume_native_id": null,
+      "ended_unix": null,
+      "native_exit_code": null
+    },
+    {
+      "pid": 5841,
+      "parent_pid": 5840,
+      "started_unix": 1790951132.3003762,
+      "scenario": "landing-publishing",
+      "role": "worker",
+      "mode": "rpc",
+      "requested_model": "deepseek/deepseek-flash",
+      "requested_effort": "low",
+      "resume_native_id": null,
+      "ended_unix": null,
+      "native_exit_code": null
+    },
+    {
+      "pid": 5848,
+      "parent_pid": 5847,
+      "started_unix": 1790951137.8959308,
+      "scenario": "landing-publishing",
+      "role": "root",
+      "mode": "json",
+      "requested_model": "deepseek/deepseek-flash",
+      "requested_effort": "low",
+      "resume_native_id": "01a0fd01-7b2b-7000-bdb1-53a04c99630e",
+      "ended_unix": null,
+      "native_exit_code": null
+    },
+    {
+      "pid": 6083,
+      "parent_pid": 6082,
+      "started_unix": 1790951149.781238,
+      "scenario": "target-move",
+      "role": "worker",
+      "mode": "rpc",
+      "requested_model": "deepseek/deepseek-flash",
+      "requested_effort": "low",
+      "resume_native_id": null,
+      "ended_unix": null,
+      "native_exit_code": null
+    },
+    {
+      "pid": 6199,
+      "parent_pid": 6198,
+      "started_unix": 1790951155.41424,
+      "scenario": "target-move",
+      "role": "worker",
+      "mode": "rpc",
+      "requested_model": "deepseek/deepseek-flash",
+      "requested_effort": "low",
+      "resume_native_id": null,
+      "ended_unix": null,
+      "native_exit_code": null
+    },
+    {
+      "pid": 6463,
+      "parent_pid": 6462,
+      "started_unix": 1790951161.210968,
+      "scenario": "conflict-recovery",
+      "role": "worker",
+      "mode": "rpc",
+      "requested_model": "deepseek/deepseek-flash",
+      "requested_effort": "low",
+      "resume_native_id": null,
+      "ended_unix": null,
+      "native_exit_code": null
+    },
+    {
+      "pid": 6491,
+      "parent_pid": 6490,
+      "started_unix": 1790951165.9809558,
+      "scenario": "conflict-recovery",
+      "role": "worker",
+      "mode": "rpc",
+      "requested_model": "deepseek/deepseek-flash",
+      "requested_effort": "low",
+      "resume_native_id": null,
+      "ended_unix": null,
+      "native_exit_code": null
+    },
+    {
+      "pid": 6701,
+      "parent_pid": 6700,
+      "started_unix": 1790951172.6545842,
+      "scenario": "conflict-recovery",
+      "role": "worker",
+      "mode": "rpc",
+      "requested_model": "deepseek/deepseek-flash",
+      "requested_effort": "low",
+      "resume_native_id": "01a0fd02-11a5-7000-b5ac-bca6c8111cab",
+      "ended_unix": null,
+      "native_exit_code": null
+    }
+  ],
+  "assistant_usage_total": {
+    "assistant_messages": 28,
+    "usage_present": 28,
+    "tokens": {
+      "input": {
+        "present": 28,
+        "missing": 0,
+        "sum_emitted": 30061
+      },
+      "output": {
+        "present": 28,
+        "missing": 0,
+        "sum_emitted": 3648
+      },
+      "cacheRead": {
+        "present": 28,
+        "missing": 0,
+        "sum_emitted": 676608
+      },
+      "cacheWrite": {
+        "present": 28,
+        "missing": 0,
+        "sum_emitted": 0
+      },
+      "totalTokens": {
+        "present": 28,
+        "missing": 0,
+        "sum_emitted": 710317
+      },
+      "reasoningTokens": {
+        "present": 12,
+        "missing": 16,
+        "sum_emitted": 491
+      }
+    },
+    "cost_total": {
+      "present": 28,
+      "missing": 0,
+      "sum_emitted_decimal": "0.01745554799999999986"
+    }
+  },
+  "limits": [
+    "Six worker invocation streams contribute each assistant message_end once. The root session file contributes each persisted assistant message once across its two invocations. Worker storage files validate equality and are not added again.",
+    "Native message usage is per assistant completion, including repeated prompt/cache input across calls. It is not unique conversation content. Absent counters remain null with presence counts; reasoningTokens is a separately reported subset and is not added to totalTokens.",
+    "cost.total is the native emitted estimate. Currency and actual billing are not independently established. Missing fields are not zero.",
+    "Launch-only records give start timestamps and recorded PIDs. Individual native exit statuses, end times, CPU, RSS and overlap are unrecorded. Observer exit0 and PID/path absence do not fill those missing fields.",
+    "Native OMP root review occurs in landing-publishing through the existing Node adapter. The driver performs Git acts and authors conflict guidance as declared root. This run does not qualify the retained native root hierarchy.",
+    "Publication is to an owned local bare remote; remote network publication, installation, recovery and universal latency/cost comparisons remain separate."
+  ],
+  "measurement_scope": "Eight real OMP launches across six saved native identities. Original OMP root adapter and driver-mediated Git scenarios; separate hierarchy and staging qualifications retain their own boundaries.",
+  "retained_observation_summary": {
+    "path": ".scratch/native-git-qualification-observation-08e6bf38/summary.json",
+    "bytes": 22679,
+    "sha256": "d994e8a75bb9f9b86ceaa9695833739f0db56b186c5026c7aa72c5b7c0aeeb51"
+  },
+  "process_closure": {
+    "observed_unix": 1790951302.6684859,
+    "source": "08e6bf383ee9c59dc16b9291a2c3c5e05bfbf062",
+    "observer_exit": 0,
+    "recorded_pids": [
+      5786,
+      5797,
+      5813,
+      5841,
+      5848,
+      6083,
+      6199,
+      6463,
+      6491,
+      6701
+    ],
+    "recorded_native_launches": 8,
+    "matching_recorded_pids": [],
+    "run_path_processes": [],
+    "observer_reaped": true,
+    "source_after": "08e6bf383ee9c59dc16b9291a2c3c5e05bfbf062",
+    "clean_after": true,
+    "scope": "Actual observer completion, recorded launcher/observer/OMP PID absence and independent run-associated command-path absence. The launch-only OMP wrapper does not supply per-native wait exit statuses."
+  },
+  "native_wait_statuses": "The launch-only wrapper does not capture individual native process exit statuses; they remain unknown.",
+  "usage_boundary": "Worker assistant message_end records plus root persisted assistant records once; equivalent worker session copies excluded. Optional reasoning counters are reported only where present. Emitted cost values have no billing receipt or established currency in this extraction.",
+  "artifact_manifest": "artifact-manifest.json"
+}

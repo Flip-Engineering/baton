@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "waveId": "wave:6d144b26d399a5e34388793af7a85c1c",
+  "idempotencyKey": "l2-workflow-surface-impl-2026-08-03",
+  "recipeDigest": "00bb8a8e08cf331d238d6f5e1307605c0a118e36114b6c2c8e862d496d5bf7c1",
+  "salt": "c750cb02-58ec-43dd-9e1d-1d96de59147d",
+  "renderedMembers": [
+    {
+      "role": "implementer",
+      "objective": "Implement the assigned contract rung. The task that follows is your sole work authority.\n\nImplement the assigned contract rung. The task that follows is your sole work authority. Implement the #87+#48 epic per docs/reference/evidence/facade-projection-2026-08-03/facade-projection-contract.md (READ IT FULLY first), the folded blue-team blockers in docs/reference/evidence/facade-projection-2026-08-03/contract-fold.md + suite-fold.md (READ IT second — it carries the sharpened oracles), and make impl/test/workflow-surface-red.test.mjs (READ IT FULLY third) green with ZERO weakening edits. The suite is red-first post-fold: every row fails at a named stage for a missing capability — your work is to make each named capability real, never to move a stage or relax an assertion. Some files contain NUL bytes (application.mjs, coordinator.mjs, coordination-store.mjs) — grep -an + sed -n only, never open them whole. Campaign law: controls are eval-able, constructive, or conversational — NEVER clocks or turn-limits; scanners stay shape-only (no content caps at the wire, #86/#89); localeCompare is BANNED (use (a < b ? -1 : a > b ? 1 : 0)); sorted-key closed-shape literals must be written in ACTUAL sorted order (the BD3-A0 lesson). workflow-surface rung (#87+#48, contract v2.2): facade direct ports (projection law: reach never semantics — lane behavior verbatim, refusals byte-identical, resolve-then-authorize constancy) via application.command: run.message.send/receipt (FP-04 identity row: deep-equal coordinator. messageReceipt at five transitions), run.attention.watch (scope-first byte-identical refusal, candidacy gating, storm coalescing), run.scratchpad.read (256 KiB page budget + {frame, digest} renderer doctrine — the v2.2-named fields) / run.scratchpad.elevate (the ceremony: steering registered via driverKind at run creation; wrapper retry → empty receipt; verbatim store receipt), run.board.post/read (binding law verbatim; adopted/bound adoption replay-safe leaseId:null; appendGate function spied re-reading run-open live; dual-fence view), run.knowledge.seed (content-addressed, temporal_incoherence/missing_evidence verbatim). Kernel addition: ONE accessor coordinator.messageRunId(messageId) → runId|null (read-only). MCP: six ordinary tools with closed schemas + registry-digest _meta + the Decision-10 precondition table (no board tools on default — they stay combined S-2; two-tier refusal law: forged fields → unknown_argument_field, declared malformed → per-tool invalid_*). CLI: nine spellings + registry rows + the 3-step conformance regeneration (FP-16-conformance must go green: render-surface-docs + the two mains). FP-17 caps naming BOTH numbers. follow→watch rename stays LAWFUL (banned-verb lint untouched). Anchors: impl/src/application.mjs command dispatch + validators (:1674-1883 region), application-semantics.mjs canonicalOperations, mcp-northbound.mjs tool tables + stateFailureCode, mcp-descriptor.mjs, application-cli.mjs verb parser, impl/scripts/render-surface-docs.mjs, coordinator.mjs sendMessage/messageReceipt/attentionFollow/scratchpadSnapshot/boardSnapshot lanes. Verify: node --test impl/test/workflow-surface-red.test.mjs from the repo root, then the suite's adjacents it names.\nWork red-first: write the failing test first, then implement until green.\nHARD CONSTRAINT (wire_frame_oversize, issue #28): never read a whole file over ~1500 lines; grep -an to locate, then read targeted ranges.\nDo NOT git commit — the orchestrator harvests your worktree.\nMatch existing code style; minimal diffs; no new application commands, registry entries, or MCP/CLI/web surfaces.\nSCRATCHPAD_WRITE is printed TEXT, never a tool; entries are EXACTLY note{text} | plan{objective,steps[{text,state}],supersedes} | doubt{question,context} | link{label,relation,target} (+ expectedFence:\"current\", unique idempotencyKey).\n[attempt: c750cb02-58ec-43dd-9e1d-1d96de59147d implementer]",
+      "exact": {
+        "harness": "deepseek",
+        "model": "deepseek-v4-flash",
+        "effort": "high"
+      },
+      "scope": [
+        "impl/**",
+        "docs/reference/evidence/frontier-sweep-2026-08-03/**"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,38 @@
+{
+  "attempt": "2026-08-07T00:30:00.869Z",
+  "salt": "f820260807003000",
+  "role": "fold-105",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-bd3218a9645726671084468180b4ffac"
+        ]
+      }
+    },
+    {
+      "step": "terminal:fold-105",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "fold-105": {
+      "pin": "c4fab83e10458958b780307a332b15c24db3aaf0",
+      "paths": [
+        "docs/reference/evidence/reply-chains-2026-08-06/reply-chains-contract.md",
+        "docs/reference/evidence/reply-chains-2026-08-06/contract-fold.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 343,
+  "verdict": "FOLD-105-OK"
+}

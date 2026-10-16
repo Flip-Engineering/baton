@@ -1,0 +1,148 @@
+{
+  "schemaVersion": 1,
+  "startedAt": "2026-08-03T01:04:37.430Z",
+  "members": [
+    "board-workerhalf-reviewer",
+    "orientation-reviewer",
+    "readiness-reviewer",
+    "browser-use-reviewer"
+  ],
+  "outcomes": [
+    {
+      "role": "board-workerhalf-reviewer",
+      "phase": "result_ready",
+      "terminal": false,
+      "narrative": "1 worker(s) active, 1 done.",
+      "resultSha": "7681ced0325295916dcb8e8d92e3630f5a02eb24"
+    },
+    {
+      "role": "orientation-reviewer",
+      "phase": "result_ready",
+      "terminal": false,
+      "narrative": "1 worker(s) active, 1 done.",
+      "resultSha": "a338100bce59e87f4ccac6621dca5dcfa1767d9a"
+    },
+    {
+      "role": "readiness-reviewer",
+      "phase": "result_ready",
+      "terminal": false,
+      "narrative": "1 worker(s) active, 1 done.",
+      "resultSha": "27180f756a76c2e7c13b24b01ff437508777d732"
+    },
+    {
+      "role": "browser-use-reviewer",
+      "phase": "result_ready",
+      "terminal": false,
+      "narrative": "1 worker(s) active, 1 done.",
+      "resultSha": "01fc610f2cdccc7f5c87293307e08d56c1e55c01"
+    }
+  ],
+  "steering": [],
+  "stops": [
+    {
+      "role": "board-workerhalf-reviewer",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    },
+    {
+      "role": "orientation-reviewer",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    },
+    {
+      "role": "readiness-reviewer",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    },
+    {
+      "role": "browser-use-reviewer",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    }
+  ],
+  "progress": [],
+  "pumpDrained": true,
+  "remainingCount": 0,
+  "residueUnknown": false,
+  "basis": "completed",
+  "nudges": [
+    {
+      "role": "orientation-reviewer",
+      "requestId": "pause:baton-0180a1487b0fb4e9e73de18c-work:102",
+      "at": "2026-08-03T01:13:16.102Z"
+    },
+    {
+      "role": "readiness-reviewer",
+      "requestId": "pause:baton-0a866b9e092e1cc9f8e14de4-work:128",
+      "at": "2026-08-03T01:13:48.974Z"
+    },
+    {
+      "role": "browser-use-reviewer",
+      "requestId": "pause:baton-c2a0d6e884b16d07f9ee5e01-work:230",
+      "at": "2026-08-03T01:14:42.789Z"
+    },
+    {
+      "role": "board-workerhalf-reviewer",
+      "requestId": "pause:baton-e058e35e5b44482187ce40e5-work:96",
+      "at": "2026-08-03T01:16:48.035Z"
+    }
+  ],
+  "claims": [
+    {
+      "role": "orientation-reviewer",
+      "requestId": "pause:baton-0180a1487b0fb4e9e73de18c-work:111",
+      "at": "2026-08-03T01:13:23.575Z",
+      "code": "claimed"
+    },
+    {
+      "role": "readiness-reviewer",
+      "requestId": "pause:baton-0a866b9e092e1cc9f8e14de4-work:152",
+      "at": "2026-08-03T01:14:46.469Z",
+      "code": "claimed"
+    },
+    {
+      "role": "browser-use-reviewer",
+      "requestId": "pause:baton-c2a0d6e884b16d07f9ee5e01-work:240",
+      "at": "2026-08-03T01:15:12.358Z",
+      "code": "claimed"
+    },
+    {
+      "role": "board-workerhalf-reviewer",
+      "requestId": "pause:baton-e058e35e5b44482187ce40e5-work:138",
+      "at": "2026-08-03T01:19:20.200Z",
+      "code": "claimed"
+    }
+  ],
+  "decisions": [],
+  "follows": [],
+  "salt": null,
+  "knowledge": {
+    "candidates": 3,
+    "admittedThisRun": 0,
+    "candidatesAwaitingAdmission": 0,
+    "settlementRunId": null
+  },
+  "settlement": {
+    "errors": []
+  }
+}

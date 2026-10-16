@@ -1,0 +1,38 @@
+{
+  "attempt": "2026-08-13T01:03:34.372Z",
+  "salt": "sh20260813010334",
+  "role": "suite-72",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-25226b888988cb18bae00ba6560b612b"
+        ]
+      }
+    },
+    {
+      "step": "terminal:suite-72",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "suite-72": {
+      "pin": "7bd2f5e87a97eb2736400c8aa830e6adb010f3cc",
+      "paths": [
+        "impl/test/prescriptive-doctor-red.test.mjs",
+        "docs/reference/evidence/prescriptive-doctor-2026-08-12/suite-draft-notes.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 418,
+  "verdict": "SUITE-72-OK"
+}

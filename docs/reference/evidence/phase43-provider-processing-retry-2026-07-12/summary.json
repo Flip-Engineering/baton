@@ -1,0 +1,29 @@
+{
+  "at": "2026-07-13T04:34:05.121Z",
+  "scenario": {
+    "authenticatedHint": true,
+    "officialOutages": 1,
+    "restart": true,
+    "exactPolicy": {
+      "intervalMs": 10,
+      "maxBatch": 4,
+      "maxAttempts": 3,
+      "initialBackoffMs": 50,
+      "maxBackoffMs": 100,
+      "maxStateRows": 64
+    }
+  },
+  "checks": {
+    "outageDeferredOnce": true,
+    "failureSanitized": true,
+    "notSpentEarly": true,
+    "firstWriterReleased": true,
+    "restartSucceeded": true,
+    "historyVisible": true,
+    "lifecycleSanitized": true,
+    "finalWriterReleased": true,
+    "noFleetOwnership": true
+  },
+  "fatal": null,
+  "pass": true
+}

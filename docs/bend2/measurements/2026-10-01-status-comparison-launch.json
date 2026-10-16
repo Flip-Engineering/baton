@@ -1,0 +1,32 @@
+{
+  "argv": [
+    "/opt/homebrew/opt/python@3.14/bin/python3.14",
+    "bend2/scripts/compare-coordinators.py",
+    "--old-repo",
+    "/Users/wahargis/Development/Experiments/baton",
+    "--old-ref",
+    "6ccb2a6daf396fb9ce050cc91476ac49791b64c9",
+    "--binary",
+    "/Users/wahargis/Development/Experiments/baton-bend2-status-comparison-646-20261001/.scratch/bend2/baton2",
+    "--workers",
+    "9",
+    "--reports",
+    "58",
+    "--body-bytes",
+    "4096",
+    "--warmups",
+    "3",
+    "--samples",
+    "25",
+    "--output-root",
+    "/Users/wahargis/Development/Experiments/baton-bend2-status-comparison-646-20261001/.scratch/status-comparison-20261001"
+  ],
+  "started_utc": "2026-10-02T00:01:04.602907+00:00",
+  "launcher_pid": 81080,
+  "python_executable": "/opt/homebrew/opt/python@3.14/bin/python3.14",
+  "launch_count": 1,
+  "driver_pid": 81212,
+  "exit_code": 0,
+  "elapsed_seconds": 3.23231770899838,
+  "finished_utc": "2026-10-02T00:01:07.835362+00:00"
+}

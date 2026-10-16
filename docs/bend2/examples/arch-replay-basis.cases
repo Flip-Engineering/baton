@@ -1,0 +1,14 @@
+# arch-replay-basis.cases — the case inputs both halves read, one CASE record per line.
+#
+# CASE|<case-id>|<policy-basis>|<row-integrity>|<row-seq>|<reader-cursor>
+#
+# The frozen trace is a parent task, its claim, and the run-orchestrator lease the deployment issued
+# under its run-lineage policy (three rows, the lease at seq 3). policy-basis names the basis the
+# replay supplies: `same` is the issuing policy, `changed` is a policy whose run-lineage field set
+# differs (so the policy digest the recorded row carries no longer matches), `missing` supplies none.
+# row-integrity is `intact` for the frozen rows and `invalid` for the same lease row carrying one
+# field its payload does not admit. reader-cursor is a consumer that has read through seq 2.
+CASE|lease-same-basis|same|intact|3|2
+CASE|lease-changed-basis|changed|intact|3|2
+CASE|lease-missing-basis|missing|intact|3|2
+CASE|lease-invalid-row|same|invalid|3|2

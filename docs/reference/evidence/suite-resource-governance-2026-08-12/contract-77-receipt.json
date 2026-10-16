@@ -1,0 +1,37 @@
+{
+  "attempt": "2026-08-12T01:31:31.117Z",
+  "salt": "cd20260812013131",
+  "role": "contract-77",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-b44ef901fa67a42074654363191916fd"
+        ]
+      }
+    },
+    {
+      "step": "terminal:contract-77",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "contract-77": {
+      "pin": "42222ad89533b61d8486b5e8bd495fd50e6db4a8",
+      "paths": [
+        "docs/reference/evidence/suite-resource-governance-2026-08-12/suite-resource-governance-contract.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 396,
+  "verdict": "CONTRACT-77-OK"
+}

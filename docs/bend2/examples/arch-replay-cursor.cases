@@ -1,0 +1,13 @@
+# arch-replay-cursor.cases — the case inputs both halves read, one CASE record per line.
+#
+# CASE|<case-id>|<restart>|<basis>|<rows>|<reader-cursor>
+#
+# The frozen trace is four task rows the implementation wrote. `restart` is `none` for a plain open
+# and `checkpoint` for an open that writes a projection checkpoint and then reopens the same root.
+# `basis` names the policy basis the reopening supplies: `same` is the issuing policy, `changed`
+# differs in one run-lineage field, `missing` supplies none. `rows` is how many frozen rows the root
+# holds. reader-cursor is a consumer that has read through seq 1.
+CASE|cursor-live|none|same|4|1
+CASE|cursor-after-restart-same-basis|checkpoint|same|4|1
+CASE|cursor-after-restart-changed-basis|checkpoint|changed|4|1
+CASE|cursor-after-restart-missing-basis|checkpoint|missing|4|1

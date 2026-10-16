@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "outcomes": [
+    {
+      "role": "31a-reviser",
+      "phase": "work_completed",
+      "terminal": false,
+      "narrative": "0 worker(s) active, 1 done.",
+      "resultSha": "a903d6c66ef26da300af7318cb1ebebe8111c470"
+    },
+    {
+      "role": "31b-reviser",
+      "phase": "work_completed",
+      "terminal": false,
+      "narrative": "0 worker(s) active, 1 done.",
+      "resultSha": "8fe5b5b2bb5315481df1f86399fece31a99fcc72"
+    }
+  ],
+  "stops": [
+    {
+      "role": "31a-reviser",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    },
+    {
+      "role": "31b-reviser",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    }
+  ],
+  "remainingCount": 0,
+  "residueUnknown": false
+}

@@ -1,0 +1,50 @@
+{
+  "schemaVersion": 1,
+  "startedAt": "2026-07-31T22:23:11.991Z",
+  "members": [
+    "composition-redteam-codex"
+  ],
+  "outcomes": [
+    {
+      "role": "composition-redteam-codex",
+      "phase": "result_ready",
+      "terminal": false,
+      "narrative": "1 worker(s) active, 1 done.",
+      "resultSha": "d58e892936f93eeba6efdf672851ded2b4e831eb"
+    }
+  ],
+  "steering": [],
+  "stops": [
+    {
+      "role": "composition-redteam-codex",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    }
+  ],
+  "progress": [],
+  "pumpDrained": true,
+  "remainingCount": 0,
+  "residueUnknown": false,
+  "basis": "completed",
+  "nudges": [
+    {
+      "role": "composition-redteam-codex",
+      "requestId": "pause:baton-57c681b900c3402b0e753c9a-work:136",
+      "at": "2026-07-31T22:30:52.655Z"
+    }
+  ],
+  "claims": [
+    {
+      "role": "composition-redteam-codex",
+      "requestId": "pause:baton-57c681b900c3402b0e753c9a-work:172",
+      "at": "2026-07-31T22:33:12.754Z",
+      "code": "claimed"
+    }
+  ],
+  "salt": null
+}

@@ -1,0 +1,45 @@
+wave phantom-root-2026-08-15-wave-e
+member coordinator
+  harness omp
+  model "deepseek/deepseek-v4-flash"
+  effort high
+  scope "docs/reference/evidence/phantom-root-2026-08-15/wave-e/**"
+  objectiveRef "docs/reference/evidence/phantom-root-2026-08-15/wave-e/coordinator-brief.md"
+  report "docs/reference/evidence/phantom-root-2026-08-15/wave-e/verify-notes.md"
+member row-task-namespace
+  harness omp
+  model "deepseek/deepseek-v4-flash"
+  effort high
+  scope "impl/src/wave.mjs"
+  scope "impl/src/workflow-interpreter.mjs"
+  scope "docs/reference/evidence/phantom-root-2026-08-15/wave-e/**"
+  objectiveRef "docs/reference/evidence/phantom-root-2026-08-15/wave-e/row-task-namespace-brief.md"
+  report "docs/reference/evidence/phantom-root-2026-08-15/wave-e/notes-row-task-namespace.md"
+member row-admission-align
+  harness omp
+  model "deepseek/deepseek-v4-flash"
+  effort high
+  scope "impl/src/workflow-interpreter.mjs"
+  scope "impl/src/limits.mjs"
+  scope "docs/reference/evidence/phantom-root-2026-08-15/wave-e/**"
+  objectiveRef "docs/reference/evidence/phantom-root-2026-08-15/wave-e/row-admission-align-brief.md"
+  report "docs/reference/evidence/phantom-root-2026-08-15/wave-e/notes-row-admission-align.md"
+member row-spawn-window
+  harness omp
+  model "deepseek/deepseek-v4-flash"
+  effort high
+  scope "impl/src/wave.mjs"
+  scope "impl/src/coordinator.mjs"
+  scope "docs/reference/evidence/phantom-root-2026-08-15/wave-e/**"
+  objectiveRef "docs/reference/evidence/phantom-root-2026-08-15/wave-e/row-spawn-window-brief.md"
+  report "docs/reference/evidence/phantom-root-2026-08-15/wave-e/notes-row-spawn-window.md"
+approveOnAdvertisedPlan
+claimOnStall
+nudgeOnCheckpoint "Continue — the suite is the contract; root-cause ONLY the named mechanisms, no new surfaces, receipts carry typed causes. Write deliverables incrementally."
+messageOnSpawn brief "Read your objectiveRef brief IN FULL first; it binds. gh may be unauthenticated in your worktree. Your [attempt:] line verbatim in your deliverable's first five lines. Judgment calls recorded; authority-class ambiguity → DECISION_REQUEST with options."
+elevateWhenNotes doubt,plan 20
+signalOnMembersDone row-task-namespace,row-admission-align,row-spawn-window result "The rows settled (you are the remaining member — pinned #175 semantics). Verify per your brief and write verify-notes.md."
+harvest "docs/reference/evidence/phantom-root-2026-08-15/wave-e/notes-row-task-namespace.md" mustContain "attempt:"
+harvest "docs/reference/evidence/phantom-root-2026-08-15/wave-e/notes-row-admission-align.md" mustContain "attempt:"
+harvest "docs/reference/evidence/phantom-root-2026-08-15/wave-e/notes-row-spawn-window.md" mustContain "attempt:"
+harvest "docs/reference/evidence/phantom-root-2026-08-15/wave-e/verify-notes.md" mustContain "PHANTOM-ROOT-VERIFY v1"

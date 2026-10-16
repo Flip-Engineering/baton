@@ -1,0 +1,505 @@
+{
+  "at": "2026-07-12T03:08:34.281Z",
+  "repoHead": "7810b2998c9e646738dfb177071f970734fb5866",
+  "grokVersion": "grok 0.1.216 (b139744655)",
+  "rows": [
+    {
+      "taskId": "grok-cpg-path-review-45",
+      "model": "grok-4.5",
+      "path": "reviews/dogfood/grok-cpg-path-review-45.md",
+      "workerId": "w-1",
+      "result": {
+        "ready": true,
+        "status": "completed",
+        "verdict": {
+          "reverified": true,
+          "observedExit": 0,
+          "hadClaim": false,
+          "matchesClaim": true,
+          "passed": true,
+          "locus": "fresh_sandbox",
+          "redGreen": null,
+          "baseExit": null,
+          "coverageOfChange": null,
+          "uncoveredChangedLines": [],
+          "mutationStrength": null,
+          "mutationPassed": null,
+          "survivedMutants": [],
+          "observedOutputTail": "",
+          "note": "PASS: observed exit 0 matches expected 0.",
+          "durationMs": 6
+        },
+        "artifacts": {
+          "commits": [],
+          "files": []
+        },
+        "vendor": "grok",
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "modelRequested": "grok-4.5",
+        "modelResolved": "grok-4.5",
+        "modelObserved": "grok-4.5",
+        "modelMismatch": null,
+        "effortRequested": null,
+        "effortResolved": null,
+        "effortObserved": null,
+        "effortMismatch": null,
+        "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-4.5\",\"default\",\"grok\",\"adversarial-design-review\"]",
+        "sessionRequest": {
+          "mode": "new"
+        },
+        "sessionRef": {
+          "vendor": "grok",
+          "kind": "session",
+          "id": "019f544a-7f3d-7592-8088-0c9d26d0b7bb",
+          "persistence": "native",
+          "source": "wire"
+        },
+        "sessionContext": {
+          "worktree": "/private/tmp/baton-cpg-review.Xr4LVU/.baton/wt/grok-cpg-path-review-45",
+          "repoRoot": "/private/tmp/baton-cpg-review.Xr4LVU",
+          "baseSha": "7810b2998c9e646738dfb177071f970734fb5866",
+          "branch": "baton/grok-cpg-path-review-45",
+          "ownerTaskId": "grok-cpg-path-review-45"
+        },
+        "lineage": null,
+        "review": null,
+        "integration": null,
+        "publication": null,
+        "retainedResultRef": null
+      },
+      "handle": {
+        "id": "w-1",
+        "vendor": "grok",
+        "modelRequested": "grok-4.5",
+        "modelResolved": "grok-4.5",
+        "modelObserved": "grok-4.5",
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "effortRequested": null,
+        "effortResolved": null,
+        "effortObserved": null,
+        "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-4.5\",\"default\",\"grok\",\"adversarial-design-review\"]",
+        "modelMismatch": null,
+        "effortMismatch": null,
+        "modelPolicy": {
+          "allow": [
+            "grok-4.5"
+          ],
+          "allowFamilies": [
+            "grok"
+          ]
+        },
+        "sessionRequest": {
+          "mode": "new"
+        },
+        "sessionRef": {
+          "vendor": "grok",
+          "kind": "session",
+          "id": "019f544a-7f3d-7592-8088-0c9d26d0b7bb",
+          "persistence": "native",
+          "source": "wire"
+        },
+        "sessionContext": {
+          "worktree": "/private/tmp/baton-cpg-review.Xr4LVU/.baton/wt/grok-cpg-path-review-45",
+          "repoRoot": "/private/tmp/baton-cpg-review.Xr4LVU",
+          "baseSha": "7810b2998c9e646738dfb177071f970734fb5866",
+          "branch": "baton/grok-cpg-path-review-45",
+          "ownerTaskId": "grok-cpg-path-review-45"
+        },
+        "lineage": null,
+        "runtimeScope": {
+          "root": "/private/tmp/baton-cpg-review.Xr4LVU/.baton/runtime/w-1",
+          "home": "/private/tmp/baton-cpg-review.Xr4LVU/.baton/runtime/w-1/home",
+          "tmp": "/private/tmp/baton-cpg-review.Xr4LVU/.baton/runtime/w-1/tmp",
+          "config": "/private/tmp/baton-cpg-review.Xr4LVU/.baton/runtime/w-1/home/.grok",
+          "family": "grok",
+          "strippedEnvKeys": [
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "CLAUDE_CODE_MAX_OUTPUT_TOKENS"
+          ],
+          "projectedEnvKeys": [],
+          "projectedFiles": [
+            "auth.json"
+          ],
+          "permissions": {
+            "directories": "0700",
+            "credentialFiles": "0600"
+          },
+          "sandboxPolicy": "native-workspace-profile",
+          "active": true
+        },
+        "review": null,
+        "taskId": "grok-cpg-path-review-45",
+        "worktree": "/private/tmp/baton-cpg-review.Xr4LVU/.baton/wt/grok-cpg-path-review-45",
+        "fence": 2,
+        "turnEpoch": 2,
+        "status": "idle",
+        "pendingApprovalId": null,
+        "pendingQuestionId": null,
+        "budgetUsed": {
+          "tokens": 65361,
+          "usd": 0
+        },
+        "createdAt": "2026-07-12T03:06:34.940Z"
+      },
+      "pid": 76532,
+      "verify": {
+        "worker": "w-1",
+        "harness": "grok@grok 0.1.216 (b139744655)",
+        "turnEpoch": 2,
+        "kind": "verify.reverified",
+        "actor": "policy",
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "modelRequested": "grok-4.5",
+        "modelResolved": "grok-4.5",
+        "modelObserved": "grok-4.5",
+        "effortRequested": null,
+        "effortResolved": null,
+        "effortObserved": null,
+        "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-4.5\",\"default\",\"grok\",\"adversarial-design-review\"]",
+        "payload": {
+          "verdict": {
+            "reverified": true,
+            "observedExit": 0,
+            "hadClaim": false,
+            "matchesClaim": true,
+            "passed": true,
+            "locus": "fresh_sandbox",
+            "redGreen": null,
+            "baseExit": null,
+            "coverageOfChange": null,
+            "uncoveredChangedLines": [],
+            "mutationStrength": null,
+            "mutationPassed": null,
+            "survivedMutants": [],
+            "observedOutputTail": "",
+            "note": "PASS: observed exit 0 matches expected 0.",
+            "durationMs": 6
+          },
+          "accept": true,
+          "acceptOpts": {
+            "requireRedGreen": false,
+            "requireCoverage": false,
+            "requireMutation": false
+          },
+          "capture": {
+            "sha": "dc17cb8facf77325dabe9d52cce4a6e5622da5e8",
+            "snapshotted": true,
+            "vendor": "grok",
+            "model": "grok-4.5",
+            "effort": null,
+            "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-4.5\",\"default\",\"grok\",\"adversarial-design-review\"]"
+          }
+        },
+        "seq": 513,
+        "ts": "2026-07-12T03:08:33.805Z"
+      },
+      "review": "# Grok CPG path-sensitive review — phases 18–20\n\n**Scope (read-only):** `spec/phase18/atlas-cpg-slice.md`, `spec/phase19/atlas-cpg-delta-impact.md`, `spec/phase20/atlas-cpg-taint.md`; `impl/src/atlas-cpg.mjs`, `atlas-cpg-delta.mjs`, `atlas-cpg-taint.mjs`; `impl/test/phase18-atlas-cpg.test.mjs`, `phase19-atlas-cpg-delta.test.mjs`, `phase20-atlas-cpg-taint.test.mjs`. No source/spec/test edits.\n\n**Method:** Spec/impl/test cross-walk plus local graph/taint probes on the shipped builders (confined fixtures only).\n\n## Verdict\n\nPhases 18–20 ship an **honest lexical, single-file CPG seed** with content-addressed artifacts, deployment bounds, parse-partial status, cancel/resume/tamper gates, and deterministic reverify. Specs and capability cards **explicitly deny** SSA, path-sensitive PDG, alias analysis, heap/object flow, implicit flow, exceptions, interprocedural returns, dynamic dispatch, and safety proofs (`atlas-cpg.mjs` `card()`, `atlas-cpg-taint.mjs` `card()`, CG1/CD5/CT5). Focused acceptance (CG/CD/CT) matches those contracts: containment + block-local CFG skeleton + lexical `REACHING_DEF` + name-resolved `CALLS` honesty; formatting-invariant semantic delta + bounded impact over `CONTAINS`/`REACHING_DEF`/reverse-`CALLS`; operator-named taint over only `ASSIGNED_FROM` | `REACHING_DEF` | `ARGUMENT_TO`.\n\n**Shipped defects (current gate — not new path scope):**\n\n1. **`if`/`else` CFG wiring is incomplete** despite CG3 claiming syntax-derived `CFG_TRUE`/`CFG_FALSE`. In `atlas-cpg.mjs` (~104–108), `CFG_TRUE` targets the first nested statement in the `if_statement` range; `CFG_FALSE` always targets the next sibling *after* the whole `if`. Empirically, `if (c) { let x=1 } else { let y=2 }; let z=3` yields `CFG_TRUE→then`, `CFG_FALSE→z`, and **no CFG entry into the else body**. Then→join is also missing (only sequential `CFG_NEXT` from the `if_statement` node to the follower). Loops/switch/try remain atomic (honest); broken else is not.\n\n2. **Identifier-to-identifier copy is absent from the value graph.** `ASSIGNED_FROM` is emitted only for call RHS (`atlas-cpg.mjs` ~86–91, 115). Probe: `let a=readInput(); let b=a; send(b)` → **0 taint paths**, while `let a=readInput(); send(a)` works (CT1). The phase-18 card phrase “value flow covers lexical assignment and call arguments” overstates pure assignment. Spec CT2 is narrower (only those three edge types) and is implemented as written—so this is a **seed gap / card honesty issue**, not a taint-query bug.\n\n**Not defects — named out-of-scope (CT5/CG1/CD5):** path feasibility; aliases; heap/members (`o.x=readInput(); send(o.x)` → 0 paths); implicit flow; exceptions (try is a statement node without handler edges); interprocedural returns (`send(wrap())` with `wrap` returning `readInput()` → 0 paths); dynamic/`CALLS` ambiguity (CG5 tests).\n\n**Smallest honest next R3 vertical:** repair structured `if` CFG, upgrade lexical last-def to **CFG may-reaching defs** (still not SSA), optionally prune **boolean-literal** branch edges, and let taint/impact inherit that graph. Do **not** fold aliases, heap, implicit flow, returns, exceptions, or dispatch into the same slice.\n\n## Unsoundness and false-positive matrix\n\n| Dimension | Shipped behavior (grounded) | False positive | False negative | Class |\n|---|---|---|---|---|\n| **Path feasibility** | Taint BFS ignores CFG; uses only flow edges (`atlas-cpg-taint.mjs` `FLOW_EDGES`). | `let a=readInput(); if (false) send(a)` → path found (probe). | — | **New path scope** (CT5) |\n| **Lexical last-def vs branches** | One latest same-name def per function (`atlas-cpg.mjs` ~111–112); not path-split. | `a=clean(); if (c) a=readInput(); send(a)` always RD from later tainted def. | `a=readInput(); if (c) a=safe(); send(a)` → 0 taint paths (probe; RD only from `safe`). | **New path scope** (CG4); may-RD is the fix |\n| **Else CFG** | `CFG_FALSE` → after-if, not else (~106–108). | Any consumer treating CFG as complete control. | Else-only uses look CFG-unreachable. | **Current-gate defect** |\n| **Pure copy / rename of values** | No `ASSIGNED_FROM`/copy edge for `b=a`. | — | `let b=a; send(b)` after source→`a` (probe). | **Current-gate seed gap** (card vs edges) |\n| **Nested call args** | `arguments` `findAll` links nested id/call nodes with `ARGUMENT_TO` into outer call (~81–84, 116). | `send(id(readInput()))` includes direct `readInput→send` (probe); sanitizer/`id` bypass. | — | Over-approx in **shipped** value edges; not path |\n| **Sanitizer policy** | Stop only when BFS visits a sanitizer **call** node (~37). | — | `sanitize(v); send(v)` still paths if `v` unbound through sanitizer (probe; CT3 uses rebinding `clean=sanitize(v)`). | Honest CT3; document FN mode |\n| **Aliases / heap** | Identifier LHS only; no member/object edges. | — | Property/store-load, pointer-like aliasing. | Out of scope |\n| **Implicit flow** | No control-dependence / PDG. | — | `if (tainted) sink(1)`. | Out of scope |\n| **Interprocedural returns** | `CALLS` for unique same-file names; no return→call-site value edge. Taint does not traverse `CALLS`. | — | Callee return taints caller use (probe). | Out of scope |\n| **Exceptions** | `throw`/`return` get `CFG_EXIT`; no catch edges. | — | Taint via `catch (e)`. | Out of scope |\n| **Dynamic dispatch** | Unresolved keep `resolved:null` + candidates; no fabricated `CALLS` (CG5). | — | Methods/`fn()` callees. | Out of scope (honest) |\n| **Delta impact** | Seeds from node/edge changes; lift `CONTAINS`, follow `REACHING_DEF`, reverse `CALLS` (`atlas-cpg-delta.mjs` ~70–90). No `ASSIGNED_FROM`/`ARGUMENT_TO`/CFG in impact. | Impact “caller” without runtime proof (CD5). | Value-only ripple without name/def-use/call edges. | In-contract; path not claimed |\n| **Absence of taint path** | Provenance `lexical_value_graph_reachability_not_safety_proof`. | Interpreting empty result as safe. | See copy/heap/returns/path kill. | Operator misuse vs seed |\n\n## Numbered contract proposal\n\n**Phase 21 — Path-sensitive R3 vertical (minimal)**  \nName: `AtlasCpgPathSlice` (or version bump on `AtlasCpgSlice` + inherited delta/taint). Single-file JS/TS only; same artifact/bounds/reverify discipline.\n\n1. **CP1 — Structured `if` CFG (gate fix, prerequisite).** For `if_statement` with optional `else`: `CFG_TRUE` → then-entry statement (or join if empty then); `CFG_FALSE` → else-entry or join if no else; each branch’s last statement → join (follower or `CFG_EXIT`). No claim for `switch`, loops, `try`/`catch`/`finally`, `&&`/`||` short-circuit, `?:` (remain atomic / unexpanded).\n\n2. **CP2 — CFG may-reaching definitions.** Replace single lexical latest def with: for each reference, emit `REACHING_DEF` from every same-function same-name definition that **may** reach it on some CFG path under CP1 edges (plus `CFG_ENTRY`/`CFG_NEXT`/`CFG_EXIT`). Bound: per-function work ≤ deployment `maxReachDefPairs` or O(|defs|·|refs|) with hard abort `reachdef_too_large`. Still **not** SSA, not must-def, not path-condition SAT.\n\n3. **CP3 — Optional literal branch prune.** If the `if` condition is boolean literal `true`/`false` (syntax only), omit the dead `CFG_TRUE`/`CFG_FALSE` edge. No constant folding of identifiers or expressions.\n\n4. **CP4 — Taint inherits graph; meaning string updated.** Keep CT1–CT4 policy, flow-edge set, sanitizer cut, depth/path ceilings. Provenance: `cfg_may_reach_value_graph_not_exploit_proof`. Empty result still ≠ safety.\n\n5. **CP5 — Explicit non-goals (card + spec).** No aliases; no heap/fields; no implicit/control taint; no exception edges; no interprocedural param/return value; no dynamic dispatch resolution; no full PDG; no multi-file.\n\n6. **CP6 — Copy-edge honesty (small optional gate fix, separable).** If claimed, add `ASSIGNED_FROM` (or `COPIED_FROM`) for identifier RHS → identifier LHS in declarators/assignments; otherwise **remove** “lexical assignment” from the card and document copy as future. Prefer one line of honesty over silent FN.\n\n7. **CP7 — Delta/impact.** Rebuild graphs under CP1–CP2; impact may follow the richer `REACHING_DEF`. No new impact reasons required. Formatting invariance and rename remove/add remain.\n\n8. **CP8 — Acceptance bounds.** Deterministic digests; same cancel/partial/resume/tamper/reverify pattern as CT7/CG7; constructor ceilings for depth/pairs/paths.\n\n## Red tests\n\nDeterministic fixtures under `impl/test/` (suggested names); all assert exact edge presence/absence or path counts; budgets fixed; no network.\n\n1. **`CP1: else is CFG-reachable`** — Source: `function run(c){ if (c) { let x=1 } else { let y=2 } let z=3 }`. Assert `CFG_FALSE` from `if_statement` to the else `lexical_declaration` (`y`), and a join edge from else last stmt (or then last) to `z`. Assert no sole `CFG_FALSE→z` when else exists.\n\n2. **`CP1: then joins to follower`** — `if (c) { sink_stmt } follower`. Assert CFG path then→follower without requiring false edge into then.\n\n3. **`CP2: branch kill does not drop alternate def`** — `function run(c){ let a=readInput(); if (c) { a=safe() } send(a) }` with sources/sinks as today. **Expect ≥1 taint path** under may-RD (today: 0). Optionally assert two `REACHING_DEF` into `send`’s `a` (from `readInput` assign and from `safe` assign) or equivalent multi-def witnesses.\n\n4. **`CP2: both-branch defs may reach join use`** — `let a; if (c) a=readInput(); else a=safe(); send(a)`. Expect taint path present (may).\n\n5. **`CP3: literal false prunes dead sink`** — `let a=readInput(); if (false) { send(a) }`. Expect **0** paths when CP3 enabled; document that `if (c)` with non-literal still may-reports (not a red fail).\n\n6. **`CP3: literal true keeps then`** — `if (true) send(readInput())` → exactly one path (`ARGUMENT_TO` or assign chain).\n\n7. **`CP5 non-goal: interprocedural return still absent`** — `function wrap(){ return readInput() }; send(wrap())` → 0 paths (regression guard).\n\n8. **`CP5 non-goal: member heap still absent`** — `o.x=readInput(); send(o.x)` → 0 paths.\n\n9. **`CP5 non-goal: unresolved call still no CALLS`** — keep CG5-style `fn()` / duplicate `same` unresolved.\n\n10. **`CP6 if implemented: pure copy`** — `let a=readInput(); let b=a; send(b)` → 1 path with copy + RD + `ARGUMENT_TO`; if CP6 deferred, this remains documented FN, not a phase-21 fail.\n\n11. **Regression pack** — Existing CT1 assign chain, CT2 nested `send(readInput())`, CT3 rebinding sanitizer cut, CD2 formatting-empty delta, CG5 ambiguity: all still green.\n\n12. **Bounds** — Synthetic function with many alternating defs under a deployment-tiny `maxReachDefPairs` throws typed `reachdef_too_large` (or chosen code); depth ceiling still `taint_depth_exceeded`.\n\n**Out of red-suite for this vertical:** alias pairs, exception handlers, virtual calls, SMT path conditions beyond boolean literals, multi-file."
+    },
+    {
+      "taskId": "grok-cpg-path-review-composer",
+      "model": "grok-composer-2.5-fast",
+      "path": "reviews/dogfood/grok-cpg-path-review-composer.md",
+      "workerId": "w-2",
+      "result": {
+        "ready": true,
+        "status": "completed",
+        "verdict": {
+          "reverified": true,
+          "observedExit": 0,
+          "hadClaim": false,
+          "matchesClaim": true,
+          "passed": true,
+          "locus": "fresh_sandbox",
+          "redGreen": null,
+          "baseExit": null,
+          "coverageOfChange": null,
+          "uncoveredChangedLines": [],
+          "mutationStrength": null,
+          "mutationPassed": null,
+          "survivedMutants": [],
+          "observedOutputTail": "",
+          "note": "PASS: observed exit 0 matches expected 0.",
+          "durationMs": 8
+        },
+        "artifacts": {
+          "commits": [],
+          "files": []
+        },
+        "vendor": "grok",
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "modelRequested": "grok-composer-2.5-fast",
+        "modelResolved": "grok-composer-2.5-fast",
+        "modelObserved": "grok-composer-2.5-fast",
+        "modelMismatch": null,
+        "effortRequested": null,
+        "effortResolved": null,
+        "effortObserved": null,
+        "effortMismatch": null,
+        "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-composer-2.5-fast\",\"default\",\"grok\",\"adversarial-design-review\"]",
+        "sessionRequest": {
+          "mode": "new"
+        },
+        "sessionRef": {
+          "vendor": "grok",
+          "kind": "session",
+          "id": "019f544a-7f3d-77c1-aa84-c34e546d78ef",
+          "persistence": "native",
+          "source": "wire"
+        },
+        "sessionContext": {
+          "worktree": "/private/tmp/baton-cpg-review.Xr4LVU/.baton/wt/grok-cpg-path-review-composer",
+          "repoRoot": "/private/tmp/baton-cpg-review.Xr4LVU",
+          "baseSha": "7810b2998c9e646738dfb177071f970734fb5866",
+          "branch": "baton/grok-cpg-path-review-composer",
+          "ownerTaskId": "grok-cpg-path-review-composer"
+        },
+        "lineage": null,
+        "review": null,
+        "integration": null,
+        "publication": null,
+        "retainedResultRef": null
+      },
+      "handle": {
+        "id": "w-2",
+        "vendor": "grok",
+        "modelRequested": "grok-composer-2.5-fast",
+        "modelResolved": "grok-composer-2.5-fast",
+        "modelObserved": "grok-composer-2.5-fast",
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "effortRequested": null,
+        "effortResolved": null,
+        "effortObserved": null,
+        "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-composer-2.5-fast\",\"default\",\"grok\",\"adversarial-design-review\"]",
+        "modelMismatch": null,
+        "effortMismatch": null,
+        "modelPolicy": {
+          "allow": [
+            "grok-composer-2.5-fast"
+          ],
+          "allowFamilies": [
+            "grok"
+          ]
+        },
+        "sessionRequest": {
+          "mode": "new"
+        },
+        "sessionRef": {
+          "vendor": "grok",
+          "kind": "session",
+          "id": "019f544a-7f3d-77c1-aa84-c34e546d78ef",
+          "persistence": "native",
+          "source": "wire"
+        },
+        "sessionContext": {
+          "worktree": "/private/tmp/baton-cpg-review.Xr4LVU/.baton/wt/grok-cpg-path-review-composer",
+          "repoRoot": "/private/tmp/baton-cpg-review.Xr4LVU",
+          "baseSha": "7810b2998c9e646738dfb177071f970734fb5866",
+          "branch": "baton/grok-cpg-path-review-composer",
+          "ownerTaskId": "grok-cpg-path-review-composer"
+        },
+        "lineage": null,
+        "runtimeScope": {
+          "root": "/private/tmp/baton-cpg-review.Xr4LVU/.baton/runtime/w-2",
+          "home": "/private/tmp/baton-cpg-review.Xr4LVU/.baton/runtime/w-2/home",
+          "tmp": "/private/tmp/baton-cpg-review.Xr4LVU/.baton/runtime/w-2/tmp",
+          "config": "/private/tmp/baton-cpg-review.Xr4LVU/.baton/runtime/w-2/home/.grok",
+          "family": "grok",
+          "strippedEnvKeys": [
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "CLAUDE_CODE_MAX_OUTPUT_TOKENS"
+          ],
+          "projectedEnvKeys": [],
+          "projectedFiles": [
+            "auth.json"
+          ],
+          "permissions": {
+            "directories": "0700",
+            "credentialFiles": "0600"
+          },
+          "sandboxPolicy": "native-workspace-profile",
+          "active": true
+        },
+        "review": null,
+        "taskId": "grok-cpg-path-review-composer",
+        "worktree": "/private/tmp/baton-cpg-review.Xr4LVU/.baton/wt/grok-cpg-path-review-composer",
+        "fence": 2,
+        "turnEpoch": 2,
+        "status": "idle",
+        "pendingApprovalId": null,
+        "pendingQuestionId": null,
+        "budgetUsed": {
+          "tokens": 44846,
+          "usd": 0
+        },
+        "createdAt": "2026-07-12T03:06:34.996Z"
+      },
+      "pid": 76547,
+      "verify": {
+        "worker": "w-2",
+        "harness": "grok@grok 0.1.216 (b139744655)",
+        "turnEpoch": 2,
+        "kind": "verify.reverified",
+        "actor": "policy",
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "modelRequested": "grok-composer-2.5-fast",
+        "modelResolved": "grok-composer-2.5-fast",
+        "modelObserved": "grok-composer-2.5-fast",
+        "effortRequested": null,
+        "effortResolved": null,
+        "effortObserved": null,
+        "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-composer-2.5-fast\",\"default\",\"grok\",\"adversarial-design-review\"]",
+        "payload": {
+          "verdict": {
+            "reverified": true,
+            "observedExit": 0,
+            "hadClaim": false,
+            "matchesClaim": true,
+            "passed": true,
+            "locus": "fresh_sandbox",
+            "redGreen": null,
+            "baseExit": null,
+            "coverageOfChange": null,
+            "uncoveredChangedLines": [],
+            "mutationStrength": null,
+            "mutationPassed": null,
+            "survivedMutants": [],
+            "observedOutputTail": "",
+            "note": "PASS: observed exit 0 matches expected 0.",
+            "durationMs": 8
+          },
+          "accept": true,
+          "acceptOpts": {
+            "requireRedGreen": false,
+            "requireCoverage": false,
+            "requireMutation": false
+          },
+          "capture": {
+            "sha": "79508114164e5b1362ebf06a73192e210eadd89e",
+            "snapshotted": true,
+            "vendor": "grok",
+            "model": "grok-composer-2.5-fast",
+            "effort": null,
+            "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-composer-2.5-fast\",\"default\",\"grok\",\"adversarial-design-review\"]"
+          }
+        },
+        "seq": 404,
+        "ts": "2026-07-12T03:07:27.003Z"
+      },
+      "review": "# Phase 18–20 CPG path review (grok-composer)\n\nIndependent review of `spec/phase18`–`phase20`, `impl/src/atlas-cpg*.mjs`, and focused tests. Grounded in shipped source only.\n\n## Verdict\n\nPhases 18–20 deliver an honest single-file R3 seed: deterministic graph identity (CG2), syntax containment and block-local CFG skeleton (CG3), lexical `REACHING_DEF` plus explicit `ASSIGNED_FROM`/`ARGUMENT_TO` value edges (CG4, extended in phase18 test CG4), honest local `CALLS` resolution (CG5), semantic delta with bounded impact (CD1–CD5), and operator-specified lexical taint (CT1–CT5). Cards and provenance explicitly deny SSA, path-sensitive PDG, aliases, interprocedural returns, dynamic dispatch, and safety proofs — matching implementation.\n\n**Shipped gate is sound for its declared lexical contract.** The dominant unsoundness is intentional: value flow ignores control-flow feasibility. Phase 20 taint (`FLOW_EDGES` in `atlas-cpg-taint.mjs:6`) never consults `CFG_*` edges built in `atlas-cpg.mjs:96–109`, so branch-guarded assignments produce false positives CT5 already warns about.\n\n**One current-gate defect (not new scope):** `CFG_FALSE` for `if_statement` targets the first statement *after* the whole `if` node (`atlas-cpg.mjs:107–108`), not the `else` branch entry. For `if (c) { A } else { B }`, both branches sit inside the `if_statement` range; `nested[0]` becomes the then-branch, while `CFG_FALSE` skips `B` and jumps to the merge successor. CG3 promises syntax-derived true/false branch edges; the else path is miswired. Phase 18 tests assert edge-type presence only (`phase18-atlas-cpg.test.mjs:30`), not else semantics.\n\n**Smallest honest path-sensitive R3 vertical:** Phase 21 — **CFG-gated lexical taint** in one confined file. Reuse Phase 18 CFG + Phase 20 policy/traversal; add statement anchoring via `CONTAINS` and require each value-flow hop to be CFG-feasible between anchored statements. Fix `CFG_FALSE`/else wiring in the same gate. Do not add aliases, heap fields, implicit flow, interprocedural summaries, exception edges, or dynamic resolution — those stay explicit out-of-scope denials.\n\n## Unsoundness and false-positive matrix\n\n| Dimension | Shipped behavior (source/tests) | False negative (missed flow) | False positive (spurious flow) | Defect vs documented limit |\n|---|---|---|---|---|\n| **Path feasibility** | CFG exists but taint ignores it (`atlas-cpg-taint.mjs:27–38`; CT5) | N/A for taint (over-approximates) | `if (flag) { v = readInput(); } send(v);` reports path when `flag` may be false | **Limit** for taint; **defect** for `if/else` CFG_FALSE wiring |\n| **Aliases / copy assignment** | `ASSIGNED_FROM` only when RHS is/nests `call_expression` (`atlas-cpg.mjs:86–91`); test CG4 | `let b = a; send(b)` after `a = readInput()` — no `ASSIGNED_FROM` | Lexical `REACHING_DEF` uses function-wide name key, not block (`atlas-cpg.mjs:111–112`) — shadowing can mis-wire | Documented (CG4, CT5) |\n| **Heap / property flow** | Identifier-target assignments only; no `obj.p` edges | `o.x = readInput(); send(o.x)` — property refs not in value graph | Same lexical merge across unrelated names if shadowing order wrong | Documented |\n| **Implicit flow** | No control-dependence edges | `if (secret) { leak = 1; }` — no taint on `leak` via condition | N/A | Documented (CT5) |\n| **Interprocedural returns** | `CALLS` when unique name (`atlas-cpg.mjs:117`); no return/actual-to-formal edges | `return readInput()` in `helper`; `send(helper())` — only `ARGUMENT_TO` to outer call (test CT2 direct-arg case passes) | Unresolved callee keeps `resolved: null` (test CG5) — no fabricated `CALLS` | Documented |\n| **Exceptions** | `throw_statement` gets `CFG_EXIT` (`atlas-cpg.mjs:103`); no `catch` CFG | Flow through `catch` unmodeled | Lexical path may ignore unreachable post-throw code | Documented (atomic unsupported control) |\n| **Dynamic dispatch** | Callee name from last identifier in callee text (`atlas-cpg.mjs:78`); ambiguous names keep `candidates` (test CG5) | `fn()` with `fn` parameter — `resolved: null` | Delta impact skips unresolved calls (test CD2/CD5 `dynamic`) | Documented |\n| **Delta impact** | Reverse `CALLS` + `REACHING_DEF` + `CONTAINS` only (`atlas-cpg-delta.mjs:73–77`) | No impact through value edges or CFG | Caller impact only when `CALLS` resolved (test CD3 vs CD5) | Documented (CD5) |\n\n**CFG else defect (current gate):** `CFG_FALSE` must enter the `else` block when present; today it conflates false-branch with fall-through. Any future path-sensitive query inherits this unsoundness until fixed.\n\n**Lexical taint over-approximation (documented, fix in Phase 21):** Shortest-path BFS on value edges (`atlas-cpg-taint.mjs:29–39`) is correct for the lexical graph but not branch-feasible. Sanitizer cut is policy-only (CT3; test CT3).\n\n## Numbered contract proposal\n\n**Phase 21 — Atlas CFG-gated lexical taint** (extends Phase 18 graph + Phase 20 query; no new graph authority.)\n\n**CP1 — Truthful scope.** Single confined JS/TS-family file. Path feasibility means **syntax-derived CFG reachability** between statements anchoring value-flow nodes. Still denies SSA, aliases, heap/properties, implicit flow, interprocedural summaries, exception/catch modeling, dynamic `CALLS` resolution, and safety proofs. Card limitations must list these verbatim.\n\n**CP2 — CFG repair (gate fix).** For `if_statement` with `else_clause`, `CFG_FALSE` enters the else block’s first statement; `CFG_TRUE` enters the then block’s first statement; merge successor remains the first statement after the `if` whose range starts after the `if` ends. Empty branches fall through to merge or `CFG_EXIT` as today. Deterministic edge IDs unchanged.\n\n**CP3 — Statement anchoring.** Map each value-flow node (identifier, call) to its innermost containing `statement` node via `CONTAINS` transitive walk. Unanchored nodes (entry/exit/function) are non-flow terminals.\n\n**CP4 — CFG-gated value traversal.** `AtlasCpgTaint` (or `cpg.taint_path` op) keeps Phase 20 policy (`sourceNames`, `sinkNames`, `sanitizerNames`) and `FLOW_EDGES`. A hop `u → v` over `ASSIGNED_FROM`/`REACHING_DEF`/`ARGUMENT_TO` is valid only if `cfgReachable(anchor(u), anchor(v))` within the same function, where `cfgReachable` is bounded forward reachability on `{CFG_ENTRY, CFG_NEXT, CFG_TRUE, CFG_FALSE, CFG_EXIT}` starting from the source call’s anchor statement. Source occurrence seeds at its anchor; sanitizer cut unchanged (CT3).\n\n**CP5 — Witness shape.** Returned paths retain typed `nodeIds`, `edgeTypes`, and add parallel `statementIds` per hop. Provenance `meaning` becomes `cfg_gated_lexical_value_reachability_not_safety_proof`. Shortest witness per source/sink occurrence; deterministic sort order preserved (`atlas-cpg-taint.mjs:41`).\n\n**CP6 — Bounds and health.** Reuse deployment `maxDepth`, `maxPaths`, artifact ceilings, cancellation, parse `partial`, resume/reverify pins (CT4, CT6, CT7). Add `maxCfgSteps` derived from constructor ceiling; exceed → typed `cfg_steps_exceeded`.\n\n**CP7 — Delta non-claim.** Phase 19 impact unchanged; no CFG-gated impact until separately specified.\n\n**CP8 — Acceptance.** Focused tests (below) plus deterministic reverify; full suite must not regress Phases 18–20 contracts.\n\n## Red tests\n\nDeterministic fixtures in `impl/test/phase21-atlas-cpg-path-taint.test.mjs` (names illustrative; implement later). Each uses bounded policy `depth ≤ 12`, `maxPaths = 32`, same harness as Phase 20.\n\n1. **CP2 else wiring:** Build graph for `function f(c){ if(c){A();}else{B();} }` with distinct statement markers. Assert `CFG_FALSE` from `if` targets `B`’s statement, not merge; `CFG_TRUE` targets `A`; both branches CFG-reach merge.\n\n2. **CP4 guarded sink blocked:** `function readInput(){} function send(v){} function run(flag){ let v; if(flag){ v=readInput(); } send(v); }` with policy `readInput`→`send`. Lexical taint (Phase 20 behavior) returns 1 path; **path-gated** query returns 0 paths. Status `ok`.\n\n3. **CP4 guarded sink allowed:** Same helpers; `function run(flag){ let v=readInput(); if(flag){ send(v); } }`. Path-gated returns 1 path; witness `statementIds` include the `send` call statement; `edgeTypes` ⊆ `['ASSIGNED_FROM','REACHING_DEF','ARGUMENT_TO']`.\n\n4. **CP4 sanitizer on feasible path:** `readInput`→`sanitize`→`send` inside `if(flag){...}` only. With `sanitizerNames:['sanitize']`, path-gated returns 0; without sanitizer, 1. Proves gating composes with CT3 cut.\n\n5. **CP4 direct arg unchanged:** `send(readInput())` — path-gated returns 1 path with `edgeTypes:['ARGUMENT_TO']` (regression of test CT2).\n\n6. **CP5 determinism:** Invoke twice on fixture (3); `provenance.resultDigest` equal; payload order stable.\n\n7. **CP6 depth ceiling:** Deep linear CFG chain of assignments feeding sink; `depth: 1` returns 0; typed `taint_depth_exceeded` for `depth > maxDepth`.\n\n8. **CP6 parse partial:** Broken source (mirror `phase20-atlas-cpg-taint.test.mjs:36`) — `status: 'partial'` even if a gated path exists.\n\n9. **Negative — alias still absent:** `let a=readInput(); let b=a; send(b);` — path-gated returns 0 (documents alias remains out of scope; no false positive from gating alone).\n\n10. **Negative — interprocedural still absent:** `function helper(){ return readInput(); } function run(){ send(helper()); }` — path-gated returns 0 (return flow still unmodeled).\n\n**Verification command (report only):** `test -s reviews/dogfood/grok-cpg-path-review-composer.md && grep -Fq '## Numbered contract proposal' reviews/dogfood/grok-cpg-path-review-composer.md && grep -Fq '## Red tests' reviews/dogfood/grok-cpg-path-review-composer.md`"
+    }
+  ],
+  "approvals": [
+    {
+      "workerId": "w-1",
+      "requestId": "w-1:apr:1",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "workerId": "w-1",
+      "requestId": "w-1:apr:2",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "workerId": "w-2",
+      "requestId": "w-2:apr:1",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "workerId": "w-1",
+      "requestId": "w-1:apr:3",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "workerId": "w-1",
+      "requestId": "w-1:apr:4",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "workerId": "w-1",
+      "requestId": "w-1:apr:5",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "workerId": "w-1",
+      "requestId": "w-1:apr:6",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "workerId": "w-1",
+      "requestId": "w-1:apr:7",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "workerId": "w-1",
+      "requestId": "w-1:apr:8",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    }
+  ],
+  "stopResults": [
+    {
+      "taskId": "grok-cpg-path-review-45",
+      "ack": {
+        "ok": true,
+        "result": "confirmed",
+        "emulated": false
+      }
+    },
+    {
+      "taskId": "grok-cpg-path-review-composer",
+      "ack": {
+        "ok": true,
+        "result": "confirmed",
+        "emulated": false
+      }
+    }
+  ],
+  "checks": {
+    "noHarnessError": true,
+    "twoReviews": true,
+    "distinctLivePids": true,
+    "concurrentTurns": true,
+    "exactModelsObserved": true,
+    "bothFreshVerified": true,
+    "reportsCaptured": true,
+    "bothKillsConfirmed": true,
+    "processesGone": true,
+    "worktreesGone": true,
+    "runtimeGone": true,
+    "branchesGone": true
+  },
+  "fatal": null,
+  "pass": true
+}

@@ -1,0 +1,144 @@
+{
+  "at": "2026-07-13T04:38:17.992Z",
+  "repoHead": "66b6eaff5b5b4a2ead35f32c88e4e1bf0211074c",
+  "runId": "phase43-adverse-harness-matrix",
+  "rows": [
+    {
+      "taskId": "phase43-adverse-claude-review",
+      "harness": "claude",
+      "model": "claude-opus-4-6",
+      "workerId": "w-1",
+      "pid": 73845,
+      "result": {
+        "status": "failed",
+        "ready": true
+      },
+      "route": {
+        "modelRequested": "claude-opus-4-6",
+        "modelResolved": "claude-opus-4-6",
+        "modelObserved": "claude-opus-4-6",
+        "effortRequested": "low",
+        "effortResolved": "low",
+        "effortObserved": null
+      },
+      "budgetUsed": {
+        "tokens": 0,
+        "usd": 0
+      },
+      "verifyAccept": false,
+      "reportCaptured": false,
+      "terminal": {
+        "status": "failed",
+        "summary": "Not logged in · Please run /login",
+        "artifacts": {
+          "commits": [],
+          "files": []
+        },
+        "verification": {
+          "command": null,
+          "claimedExit": null
+        },
+        "openQuestions": [],
+        "budgetUsed": {
+          "tokens": 0,
+          "usd": 0
+        }
+      }
+    },
+    {
+      "taskId": "phase43-adverse-codex-review",
+      "harness": "codex",
+      "model": "gpt-5.6-sol",
+      "workerId": "w-2",
+      "pid": 73850,
+      "result": {
+        "status": "cancelled",
+        "ready": true
+      },
+      "route": {
+        "modelRequested": "gpt-5.6-sol",
+        "modelResolved": "gpt-5.6-sol",
+        "modelObserved": "gpt-5.6-sol",
+        "effortRequested": "low",
+        "effortResolved": "low",
+        "effortObserved": null
+      },
+      "budgetUsed": {
+        "tokens": 25881,
+        "usd": 0
+      },
+      "verifyAccept": false,
+      "reportCaptured": false,
+      "terminal": null
+    },
+    {
+      "taskId": "phase43-adverse-grok-review",
+      "harness": "grok",
+      "model": "grok-4.5",
+      "workerId": "w-3",
+      "pid": null,
+      "result": {
+        "status": "failed",
+        "ready": true
+      },
+      "route": {
+        "modelRequested": "grok-4.5",
+        "modelResolved": "grok-4.5",
+        "modelObserved": null,
+        "effortRequested": "low",
+        "effortResolved": "low",
+        "effortObserved": null
+      },
+      "budgetUsed": {
+        "tokens": 0,
+        "usd": 0
+      },
+      "verifyAccept": false,
+      "reportCaptured": false,
+      "terminal": {
+        "error": "Authentication required",
+        "phase": "spawn"
+      }
+    }
+  ],
+  "responses": [],
+  "kills": [
+    {
+      "taskId": "phase43-adverse-claude-review",
+      "ack": {
+        "ok": true,
+        "result": "confirmed",
+        "emulated": false
+      }
+    },
+    {
+      "taskId": "phase43-adverse-codex-review",
+      "ack": {
+        "ok": true,
+        "result": "already_dead"
+      }
+    },
+    {
+      "taskId": "phase43-adverse-grok-review",
+      "ack": {
+        "ok": true,
+        "result": "already_dead"
+      }
+    }
+  ],
+  "checks": {
+    "runnerHealthy": true,
+    "allHarnessesAdmitted": true,
+    "allExactRoutesRequested": true,
+    "glmCredentialedNativePid": false,
+    "glmFreshVerified": false,
+    "allControlSafe": true,
+    "processesGone": true,
+    "worktreesGone": true,
+    "runtimesGone": true,
+    "branchesGone": true,
+    "writerAuthorityReleased": true
+  },
+  "fatal": null,
+  "pass": false
+}

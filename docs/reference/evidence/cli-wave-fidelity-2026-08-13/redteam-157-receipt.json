@@ -1,0 +1,37 @@
+{
+  "attempt": "2026-08-13T07:17:12.848Z",
+  "salt": "y320260813071712",
+  "role": "redteam-157",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-db5947f2505f35d989a914b2f906aa83"
+        ]
+      }
+    },
+    {
+      "step": "terminal:redteam-157",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "redteam-157": {
+      "pin": "3b8d1bf78c442b56a5494349c6a41a9776e99764",
+      "paths": [
+        "docs/reference/evidence/cli-wave-fidelity-2026-08-13/contract-redteam.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 465,
+  "verdict": "REDTEAM-157-OK"
+}

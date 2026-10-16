@@ -1,0 +1,63 @@
+{
+  "at": "2026-07-13T05:14:01.473Z",
+  "repoHead": "858cf50750075a0983be4a783ed46030364893b3",
+  "runId": "phase44-route-stats-review",
+  "taskId": "phase44-route-stats-glm-review",
+  "workerId": "w-1",
+  "pid": 85358,
+  "result": {
+    "status": "completed",
+    "ready": true
+  },
+  "route": {
+    "harnessRequested": "glm",
+    "harnessResolved": "glm-via-claude-session@claude-code-2.1.206+zai-anthropic",
+    "modelRequested": "glm-4.7",
+    "modelResolved": "glm-4.7",
+    "modelObserved": "glm-4.7",
+    "effortRequested": "low",
+    "effortResolved": "low",
+    "effortObserved": null
+  },
+  "budgetUsed": {
+    "tokens": 82208,
+    "usd": 0.62141
+  },
+  "verifyAccept": true,
+  "reportCaptured": true,
+  "routeObservation": {
+    "taskId": "phase44-route-stats-glm-review",
+    "routeKey": "[\"glm-via-claude-session\",\"claude-code-2.1.206+zai-anthropic\",\"glm-4.7\",\"low\",\"glm\",\"phase44-route-review\"]",
+    "modelFamily": "glm",
+    "verifiedWin": true,
+    "eventSeq": 11
+  },
+  "advice": {
+    "effectiveMode": "adaptive",
+    "selectedRouteKey": "[\"glm-via-claude-session\",\"claude-code-2.1.206+zai-anthropic\",\"glm-4.7\",\"low\",\"glm\",\"phase44-route-review\"]",
+    "evidenceCount": 1
+  },
+  "kill": {
+    "ok": true,
+    "result": "confirmed",
+    "emulated": false
+  },
+  "checks": {
+    "runnerHealthy": true,
+    "exactRoute": true,
+    "credentialedNativePid": true,
+    "freshVerified": true,
+    "durableObservation": true,
+    "restartHydratedOnce": true,
+    "cairnSelectedExactRoute": true,
+    "adviceReadOnly": true,
+    "killSafe": true,
+    "processGone": true,
+    "worktreeGone": true,
+    "runtimeGone": true,
+    "branchGone": true,
+    "writerAuthorityReleased": true
+  },
+  "fatal": null,
+  "pass": true
+}

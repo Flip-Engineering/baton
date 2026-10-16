@@ -1,0 +1,9 @@
+frames	bytes	category
+680	3031283	message
+382	168344	custom
+18	44103	custom_message
+1	256	title
+1	261	session
+1	161	model_change
+1	151	thinking_level_change
+TOTAL	3244559	(1084 frames)

@@ -1,0 +1,55 @@
+{
+  "at": "2026-07-12T03:43:13.175Z",
+  "actualPaths": {
+    "graph": "impl/src/atlas-cpg.mjs",
+    "taint": "impl/src/mcp-northbound.mjs"
+  },
+  "graph": {
+    "status": "ok",
+    "summary": "2129 nodes, 3055 edges",
+    "provenance": {
+      "sourceDigest": "0c69b1b050d7910fcb7a54468e3d0108f63298fa541e47ba7af9c88b4bfe2f8a",
+      "graphDigest": "6211f8b6353b6b634cac61e68114eef5b91c7e5b58730982e807904f9cef3510",
+      "parseErrors": 0,
+      "reachDefPairs": 388,
+      "deterministic": true,
+      "scope": "single_file_intraprocedural_cfg_may_reach_seed"
+    }
+  },
+  "actualWitness": {
+    "sourceName": "parse",
+    "sinkName": "handle",
+    "edgeTypes": [
+      "ASSIGNED_FROM",
+      "REACHING_DEF",
+      "ARGUMENT_TO"
+    ]
+  },
+  "fixturePaths": [
+    {
+      "sourceName": "readInput",
+      "sinkName": "send",
+      "edgeTypes": [
+        "ASSIGNED_FROM",
+        "REACHING_DEF",
+        "ASSIGNED_FROM",
+        "REACHING_DEF",
+        "ARGUMENT_TO"
+      ]
+    }
+  ],
+  "checks": {
+    "noError": true,
+    "actualGraphComplete": true,
+    "actualCfgAndMayDefs": true,
+    "actualIdentifierCopies": true,
+    "actualMcpTaintPreserved": true,
+    "fixtureMayPathPreserved": true,
+    "fixtureLiteralDeadAndSanitizerCut": true,
+    "meaningTruthful": true,
+    "reverified": true,
+    "auditBalanced": true
+  },
+  "fatal": null,
+  "pass": true
+}

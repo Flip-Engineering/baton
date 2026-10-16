@@ -1,0 +1,112 @@
+{
+  "at": "2026-07-12T08:25:21.357Z",
+  "repoHead": "364f6a89250152f5ea4bcebdd72f5f9a25770518",
+  "worktreeStatus": "M .gitignore\n M impl/src/index.mjs\n?? docs/reference/evidence/phase32-cartographer-quartermaster-local-2026-07-12/\n?? impl/src/cartographer-quartermaster.mjs\n?? impl/test/phase32-cartographer-quartermaster.test.mjs\n?? spec/phase32/",
+  "implementationDigest": "b943ce716b228813b000086939367f043ecbae1e20894cdb92b0f88201617fc6",
+  "atlasEpoch": "794856231f1ced8a49ecd07b83560a73bc41b9a0cb20c569dbc1ba86c4496566",
+  "checks": {
+    "exactAtlasEpoch": true,
+    "implementationOriented": true,
+    "internalReuseGrounded": true,
+    "missDoesNotInventSupply": true,
+    "boundedResume": true,
+    "exactReverify": true,
+    "soleCapabilityPlane": true,
+    "durableAudit": true,
+    "noWorkerSideEffects": true
+  },
+  "pass": true,
+  "claims": {
+    "brief": {
+      "status": "needs_resume",
+      "digest": "9a74fdb56c5b15e50128010bc6f84ac2f1f45cba824d1e2dd664563790877d26",
+      "paths": [
+        "impl/src/coordination-store.mjs",
+        "impl/src/cartographer-quartermaster.mjs",
+        "impl/src/atlas-index.mjs",
+        "impl/src/atlas-behavior-fingerprint.mjs",
+        "impl/test/phase19-atlas-cpg-delta.test.mjs",
+        "impl/src/atlas-representation-ceiling.mjs",
+        "impl/src/atlas-egraph-evaluation.mjs"
+      ]
+    },
+    "reuse": {
+      "status": "ok",
+      "digest": "0db09f3432066f4763960cf4ff8d498aa22ec3a952d294c5a28f2911d612044e",
+      "recommendation": "internal",
+      "paths": [
+        "impl/test/phase29-capability-invocation.test.mjs",
+        "impl/src/capability-registry.mjs",
+        "impl/test/phase12-web-northbound.test.mjs",
+        "impl/test/phase16-mcp-northbound.test.mjs",
+        "impl/src/coordinator.mjs",
+        "impl/src/web-northbound.mjs",
+        "docs/reference/evidence/phase32-cartographer-quartermaster-local-2026-07-12/run.mjs",
+        "impl/test/phase32-cartographer-quartermaster.test.mjs",
+        "impl/src/mcp-northbound.mjs",
+        "docs/reference/evidence/phase23-atlas-ir-scope-grok-review-2026-07-11/run.mjs",
+        "impl/test/phase31-cairn-scorecard.test.mjs",
+        "impl/src/adapter.mjs",
+        "impl/src/cartographer-quartermaster.mjs",
+        "impl/test/coordinator.test.mjs",
+        "impl/src/index.mjs",
+        "docs/reference/evidence/phase10.1-capstone-2026-07-10/run.mjs",
+        "docs/reference/evidence/phase31-cairn-grok-review-2026-07-12/run.mjs",
+        "impl/test/grok-acp.test.mjs",
+        "impl/test/phase10-completion.test.mjs",
+        "impl/test/phase13-atlas-index.test.mjs",
+        "impl/src/atlas-egraph-evaluation.mjs",
+        "impl/test/codex-appserver.test.mjs",
+        "impl/src/atlas-behavior-fingerprint.mjs",
+        "impl/test/phase27-atlas-egraph-evaluation.test.mjs",
+        "docs/reference/evidence/phase17-atlas-rewrite-2026-07-11/run.mjs",
+        "impl/src/atlas-cpg.mjs",
+        "impl/src/atlas-index.mjs",
+        "impl/src/atlas-rewrite.mjs",
+        "impl/src/atlas-structural.mjs",
+        "impl/src/atlas-cpg-delta.mjs",
+        "impl/src/atlas-cpg-taint.mjs",
+        "impl/src/atlas-representation-ceiling.mjs",
+        "impl/src/claude-session.mjs",
+        "impl/src/grok-acp.mjs",
+        "impl/test/fence.test.mjs",
+        "impl/test/phase11-persistent-sessions.test.mjs",
+        "impl/src/codex-appserver.mjs",
+        "prototype/src/types.ts",
+        "impl/test/glm-session.test.mjs",
+        "impl/test/phase12-web-session-lifecycle.test.mjs",
+        "docs/reference/evidence/phase12-web-session-lifecycle-codex-build-2026-07-11/run.mjs",
+        "docs/reference/evidence/phase12-web-stream-codex-build-2026-07-11/run.mjs",
+        "docs/reference/evidence/phase13-atlas-index-codex-review-2026-07-11/run.mjs",
+        "docs/reference/evidence/phase24-atlas-representation-ceiling-2026-07-11/run.mjs",
+        "docs/reference/evidence/phase25-atlas-behavior-fingerprint-2026-07-11/run.mjs",
+        "impl/test/phase13-atlas-structural.test.mjs",
+        "impl/test/phase17-atlas-structural-rewrite.test.mjs",
+        "docs/reference/evidence/phase19-atlas-cpg-delta-2026-07-11/run.mjs",
+        "docs/reference/evidence/phase20-atlas-cpg-taint-2026-07-11/run.mjs",
+        "docs/reference/evidence/phase22-atlas-cpg-path-sensitive-2026-07-11/run.mjs",
+        "impl/src/worktree.mjs",
+        "impl/test/claude-session.test.mjs",
+        "impl/src/cairn-run-scorecard.mjs",
+        "impl/src/web-auth.mjs",
+        "impl/test/fixtures/fake-grok-acp.mjs"
+      ]
+    },
+    "miss": {
+      "status": "ok",
+      "digest": "a005f1c0bb1089a2ea53920b07d1a7281b0292e10cdb117622fb53c0e9995d15",
+      "recommendation": "external_vet_required"
+    },
+    "bounded": {
+      "status": "needs_resume",
+      "digest": "812aede928bccaa13b0ba54c42954ff1fe4dae620a8b1935048731435ac913e3",
+      "cursor": "orientation:812aede928bccaa13b0ba54c42954ff1fe4dae620a8b1935048731435ac913e3:0",
+      "resumePages": 1,
+      "resumedStatus": "ok"
+    },
+    "reverified": {
+      "ok": true,
+      "observedDigest": "9a74fdb56c5b15e50128010bc6f84ac2f1f45cba824d1e2dd664563790877d26"
+    }
+  }
+}

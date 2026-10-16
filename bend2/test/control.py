@@ -1,0 +1,1658 @@
+"""Native control commands with retained fixture processes and real Git worktrees."""
+import errno
+import json
+import os
+import pathlib
+import select
+import signal
+import socket
+import sqlite3
+import stat
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import traceback
+import unittest
+
+import receive as receive_fixture
+from receive import install_public_queue_codex
+
+
+ROOT = pathlib.Path(__file__).resolve().parents[2]
+EXE = ROOT / '.scratch/bend2/baton2'
+
+
+def shutdown_fixture_owner(case):
+    config = json.loads((case.directory / 'fixture.json').read_text())
+    argv = [config['exe'], '--instance-shutdown', str(case.db)]
+    result = subprocess.run(argv, env=case.environment, capture_output=True,
+                            text=True)
+    with (case.directory / 'commands.jsonl').open('a') as output:
+        output.write(json.dumps({'argv': argv, 'code': result.returncode,
+                                 'stdout': result.stdout, 'stderr': result.stderr,
+                                 'direct_wait_completed': True}) + '\n')
+    case.assertEqual(result.returncode, 0, result.stderr)
+
+
+FIXTURE = r'''import json,os,pathlib,re,socket,sqlite3,subprocess,sys
+home=pathlib.Path(__file__).resolve().parent
+config=json.loads((home/'fixture.json').read_text())
+args=sys.argv[1:]
+model=args[args.index('--model')+1]
+session=config.get('sessions',{}).get(model,model)
+omp='--mode' in args
+muse='--prompt-file' in args
+claude='--input-format' in args
+native_args=args[2:] if args[:2]==['-c','forced_login_method="chatgpt"'] else args
+resume=args[args.index('--resume')+1] if '--resume' in args else (
+    args[args.index('--session-id')+1] if '--session-id' in args else (
+    native_args[2] if native_args[:2]==['exec','resume'] else ''))
+native=resume or ('native-'+session)
+if muse and resume:
+    original_workspace=config.get('muse_workspace_roots',{}).get(native)
+    if original_workspace and os.getcwd()!=original_workspace and '--allow-workspace-switch' not in args:
+        print('session '+native+' was created in workspace '+original_workspace+
+              '; refusing to resume in workspace '+os.getcwd()+
+              '; pass --workspace '+original_workspace+' or --allow-workspace-switch to continue in the new workspace',
+              file=sys.stderr,flush=True)
+        sys.exit(1)
+if omp:
+    json.loads(sys.stdin.readline())
+    state=json.loads(sys.stdin.readline())
+    prompt=json.loads(sys.stdin.readline())['message']
+    storage=pathlib.Path(args[args.index('--session-dir')+1])
+    storage.mkdir(parents=True,exist_ok=True)
+    if resume and pathlib.Path(resume).is_file():
+        native=json.loads(pathlib.Path(resume).read_text().splitlines()[0])['id']
+    else:
+        (storage/('fixture_'+native+'.jsonl')).write_text(json.dumps({'type':'session','id':native})+'\n')
+    print(json.dumps({'type':'response','command':'get_state','success':True,'id':state['id'],
+                     'data':{'sessionId':native,'model':{'provider':'fixture','id':model}}}),flush=True)
+elif muse:
+    prompt=pathlib.Path(args[args.index('--prompt-file')+1]).read_text()
+    print(json.dumps({'stream':{'kind':'session','id':native},'payload_type':'run.model.configured',
+                     'payload':{'kind':'run_model_configured','model_id':model}}),flush=True)
+    print(json.dumps({'stream':{'kind':'session','id':native},'payload_type':'turn.input.user',
+                     'payload':{'kind':'turn_input_user','command_id':'fixture-primary'}}),flush=True)
+elif claude:
+    prompt=json.loads(sys.stdin.readline())['message']['content']
+    print(json.dumps({'type':'system','subtype':'init','session_id':native,'model':model}),flush=True)
+else:
+    prompt=sys.stdin.read()
+    print(json.dumps({'type':'thread.started','thread_id':native}),flush=True)
+client=socket.create_connection(('127.0.0.1',config['port']))
+stream=client.makefile('rwb',buffering=0)
+def reply(value): stream.write((json.dumps(value)+'\n').encode())
+def command(*value):
+    if value[:1]==('message',):
+        _,ident,sender,recipient,kind,body=value
+        result=subprocess.run([config['exe'],config['db'],'message-batch-file',sender,'-'],
+                              input=json.dumps([{'id':ident,'recipient':recipient,'kind':kind,'body':body}]),
+                              capture_output=True,text=True)
+    else:
+        result=subprocess.run([config['exe'],config['db'],*value],capture_output=True,text=True)
+    return {'code':result.returncode,'stdout':result.stdout,'stderr':result.stderr}
+def fixture_completion(body):
+    state=command('session',session)
+    assert state['code']==0,state
+    completion=json.loads(state['stdout'])['taskCompletion']
+    if not completion['open']: return
+    with sqlite3.connect(pathlib.Path(config['db']).as_uri()+'?mode=ro',uri=True) as database:
+        receipt=database.execute('SELECT receipt FROM messages WHERE id=? AND recipient=?',
+                                 (completion['assignmentId'],session)).fetchone()
+    assert receipt is not None,completion
+    if receipt[0] is None: return
+    assignment=command('delivery',completion['assignmentId'])
+    assert assignment['code']==0,assignment
+    if json.loads(assignment['stdout'])['receipt'] is None: return
+    parent=completion['coordinator']
+    request=completion['requestId'] or ('fixture-completion-'+str(os.getpid()))
+    if not completion['requestId']:
+        sent=command('message',request,session,parent,'completion-request',body)
+        assert sent['code']==0,sent
+    read=command('delivery',request)
+    assert read['code']==0,read
+    reviewed=command('ack',request,parent,'Fixture coordinator reviewed the result.')
+    assert reviewed['code']==0,reviewed
+    confirmation=request+':confirmed'
+    sent=command('message',confirmation,parent,session,'completion-confirmed',request)
+    assert sent['code']==0,sent
+    read=command('delivery',confirmation)
+    assert read['code']==0,read
+    handled=command('ack',confirmation,session,'Fixture worker handled confirmation.')
+    assert handled['code']==0,handled
+def acknowledge():
+    for ident in re.findall(r'^Message \([^\n]*\) from [^\n]* \[id: (.*?)\]:$',prompt,re.M):
+        accepted=command('ack',ident,session,'fixture-native-reviewed')
+        assert accepted['code']==0,accepted
+reply({'pid':os.getpid(),'ppid':os.getppid(),'pgid':os.getpgrp(),'session':session,
+       'native':native,'resume':resume,'args':args,'prompt':prompt,'cwd':os.getcwd(),
+       'apiKeyVariablesPresent':[key for key in ('OPENAI_API_KEY','CODEX_API_KEY') if key in os.environ]})
+while True:
+    line=stream.readline()
+    if not line: break
+    action=json.loads(line)
+    if action.get('exit_fixture'): break
+    if action.get('ack'):
+        acknowledge()
+        reply({'acknowledged':True})
+        continue
+    if action.get('ack_message'):
+        ident=action['ack_message']
+        accepted=command('ack',ident,session,'fixture-native-reviewed')
+        assert accepted['code']==0,accepted
+        reply({'acknowledged':ident})
+        continue
+    if action.get('public_report'):
+        ident,body=action['public_report']
+        reply(command('message',ident,session,'operator','report',body))
+        continue
+    if action.get('read_steer'):
+        print(json.dumps({'type':'tool_execution_start','toolName':'fixture-guidance-boundary'}),flush=True)
+        frame=json.loads(sys.stdin.readline())
+        assert frame['type']=='steer',frame
+        print(json.dumps({'type':'response','command':'steer','success':True,'id':frame['id']}),flush=True)
+        reply({'steer':frame})
+        continue
+    if action.get('output'):
+        text=action['output']
+        print(json.dumps({'type':'fixture_output','text':text}),flush=True)
+        print('fixture diagnostic',file=sys.stderr,flush=True)
+        reply({'output_written':len(text)})
+        continue
+    acknowledge()
+    body=action['finish']
+    failure=action.get('fail',False)
+    if not failure and action.get('complete_task',True): fixture_completion(body)
+    if omp:
+        print(json.dumps({'type':'agent_end','isTerminal':True,
+                         'messages':[{'role':'assistant','stopReason':'error' if failure else 'stop',
+                                      'errorStatus':503 if failure else None,
+                                      'errorMessage':body if failure else None,
+                                      'content':[{'type':'text','text':body}]}]}),flush=True)
+        sys.stdin.read()
+    elif muse:
+        print(json.dumps({'stream':{'kind':'session','id':native},
+                         'payload_type':'run.terminal.failed' if failure else 'run.terminal.completed',
+                         'payload':{'kind':'run_terminal','terminal':'failed' if failure else 'completed',
+                                    'command_id':'fixture-primary','text':body}}),flush=True)
+    elif claude:
+        print(json.dumps({'type':'result','session_id':native,'result':body,'is_error':failure}),flush=True)
+    elif failure:
+        print(json.dumps({'type':'turn.failed','error':{'message':body}}),flush=True)
+    else:
+        print(json.dumps({'type':'item.completed','item':{'type':'agent_message','text':body}}),flush=True)
+        print(json.dumps({'type':'turn.completed'}),flush=True)
+    reply({'terminal_written':True})
+    break
+stream.close()
+client.close()
+'''
+
+
+class Control(unittest.TestCase):
+    def setUp(self):
+        self.assertTrue(EXE.is_file(), f'Coordinator must be built at {EXE}')
+        evidence = os.environ.get('FINAL_NATIVE_CONTEXT_EVIDENCE')
+        retained = (pathlib.Path(evidence) if evidence else ROOT / '.scratch/bend2') / 'control-fixtures'
+        retained.mkdir(parents=True, exist_ok=True)
+        self.directory = pathlib.Path(tempfile.mkdtemp(prefix="control ' λ ", dir=retained))
+        self.public_queue_calls = install_public_queue_codex(self, self.directory)
+        self.home = self.directory / 'isolated-home'
+        self.home.mkdir()
+        self.environment = dict(os.environ, HOME=str(self.home),
+                                OPENAI_API_KEY='fixture-unused', CODEX_API_KEY='fixture-unused')
+        self.environment.pop('BATON2_GIT_REGISTRY', None)
+        self.repo = self.directory / 'repository'
+        self.repo.mkdir()
+        self.checkouts = self.directory / 'checkouts'
+        self.checkouts.mkdir()
+        for args in (['init', '-q', '-b', 'main'], ['config', 'user.name', 'Control fixture'],
+                     ['config', 'user.email', 'fixture@example.invalid']):
+            self.git(*args)
+        (self.repo / 'seed.txt').write_text('seed\n')
+        self.git('add', 'seed.txt')
+        self.git('commit', '-q', '-m', 'Fixture seed')
+        self.base = self.git('rev-parse', 'HEAD').stdout.strip()
+        self.db = self.directory / 'state.db'
+        self.task = self.directory / 'task.txt'
+        self.task.write_text('Retain the assigned work.\nReview "quotes", λ and 🙂.\n')
+        self.fixture = self.directory / 'native fixture'
+        self.fixture.write_text('#!' + sys.executable + '\n' + FIXTURE)
+        self.fixture.chmod(0o755)
+        self.server = socket.socket()
+        self.server.bind(('127.0.0.1', 0))
+        self.server.listen()
+        (self.directory / 'fixture.json').write_text(json.dumps({
+            'port': self.server.getsockname()[1], 'exe': str(EXE), 'db': str(self.db)}))
+        self.controls = []
+        self.dispatches = []
+        self.addCleanup(self.close_fixtures)
+
+    def git(self, *args):
+        return subprocess.run(['git', '-C', str(self.repo), *args], env=self.environment,
+                              check=True, capture_output=True, text=True)
+
+    def call(self, *args, ok=True, raw=False):
+        child = subprocess.Popen([str(EXE), str(self.db), *map(str, args)],
+                                 env=self.environment, stdout=subprocess.PIPE,
+                                 stderr=subprocess.PIPE, text=True)
+        stdout, stderr = child.communicate()
+        record = {'argv': list(map(str, args)), 'pid': child.pid, 'code': child.returncode,
+                  'stdout': stdout, 'stderr': stderr, 'direct_wait_completed': True}
+        with (self.directory / 'commands.jsonl').open('a') as output:
+            output.write(json.dumps(record) + '\n')
+        if ok:
+            self.assertEqual(child.returncode, 0, stderr)
+        else:
+            self.assertNotEqual(child.returncode, 0, stdout)
+        return record if raw or not ok else json.loads(stdout)
+
+    def root(self):
+        self.call('attach', 'root', 'codex', 'saved-root', json.dumps(['/usr/bin/true']))
+        self.call('role', 'root', 'principal-conductor')
+        self.call('attach', 'operator', 'operator', '', '')
+        self.call('role', 'operator', 'operator')
+
+    def project_call(self, path, *args, ok=True):
+        if args[0] == 'resume':
+            args = ('as', 'root', 'resume', '--session', args[1], *args[2:])
+        argv = ['--project', str(path), *map(str, args)]
+        result = subprocess.run([str(EXE), *argv], env=self.environment,
+                                capture_output=True, text=True)
+        record = {'argv': argv, 'code': result.returncode,
+                  'stdout': result.stdout, 'stderr': result.stderr}
+        with (self.directory / 'commands.jsonl').open('a') as output:
+            output.write(json.dumps(record) + '\n')
+        if args[:3] == ('as', 'root', 'resume'):
+            outcomes = json.loads(result.stdout)
+            self.assertEqual(len(outcomes), 1, record)
+            outcome = outcomes[0]
+            if not ok:
+                self.assertNotEqual(outcome['status'], 'completed', record)
+                return {**record, 'nativeOutcome': outcome,
+                        'stderr': outcome.get('stderr') or outcome['cause']}
+            self.assertEqual(result.returncode, 0, result.stderr)
+            return self.project_resume_result(result.stdout)
+        if not ok:
+            self.assertNotEqual(result.returncode, 0, result.stdout)
+            return record
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return json.loads(result.stdout)
+
+    def project_resume_result(self, stdout):
+        outcomes = json.loads(stdout)
+        self.assertEqual(len(outcomes), 1, outcomes)
+        self.assertEqual(outcomes[0]['status'], 'completed', outcomes)
+        self.assertEqual(outcomes[0]['waitStatus'], 'exit 0', outcomes)
+        return json.loads(outcomes[0]['stdout'])
+
+    def recruit(self, session, harness='omp', parent='root'):
+        return self.call('recruit', session, parent, harness, session, 'low',
+                         self.repo, session + '-branch', self.checkouts / session, self.base)
+
+    def receiver(self, session):
+        log = self.directory / (session + '.jsonl')
+        result = self.call('receiver', session, self.fixture, log)
+        self.assertEqual(result['endpoint'], [str(EXE.resolve()), str(self.db.resolve()),
+                                             'receive', session, str(self.fixture.resolve()),
+                                             '', '', '', str(log.resolve())])
+        return log
+
+    def output_log(self, session):
+        rows = self.rows(
+            "SELECT g.log FROM log_generations g WHERE g.session=? "
+            "ORDER BY CASE WHEN g.attempt=(SELECT id FROM executions WHERE session=g.session) "
+            "THEN 0 ELSE 1 END, g.rowid DESC LIMIT 1", (session,))
+        self.assertTrue(rows, f'{session} has no registered output log generation')
+        return pathlib.Path(rows[0]['log'])
+
+    def dispatch(self, *args):
+        result = self.call(*args)
+        self.assertEqual(result['state'], 'launched')
+        self.assertGreater(result['deliveryPid'], 0)
+        self.dispatches.append(result['deliveryPid'])
+        return result
+
+    def accept_any(self):
+        connection, _ = self.server.accept()
+        stream = connection.makefile('rwb', buffering=0)
+        self.controls.append((stream, connection))
+        start = json.loads(stream.readline())
+        return stream, start
+
+    def accept(self, session, child=None):
+        if child is None:
+            stream, start = self.accept_any()
+        else:
+            stream, start = receive_fixture.Receive.accept_or_child_exit(
+                self, child, f'{session} project resume did not start its native fixture')
+        self.assertEqual(start['session'], session)
+        with (self.directory / 'native-starts.jsonl').open('a') as output:
+            output.write(json.dumps(start) + '\n')
+        return stream, start
+
+    def action(self, stream, **value):
+        connection = next(connection for candidate, connection in self.controls if candidate is stream)
+        connection.sendall((json.dumps(value) + '\n').encode())
+        return json.loads(stream.readline())
+
+    def finish(self, stream, body='Fixture native task completed.', fail=False):
+        self.assertEqual(self.action(stream, finish=body, fail=fail), {'terminal_written': True})
+        self.assertEqual(stream.readline(), b'')
+
+    def finish_project_resume(self, child, session, evidence, evidence_path):
+        outputs = [child.stdout, child.stderr]
+        evidence['unexpected_successors'] = []
+        while True:
+            if select.select([self.server], [], [], 0)[0]:
+                connection, _ = self.server.accept()
+                stream = connection.makefile('rwb', buffering=0)
+                self.controls.append((stream, connection))
+                start = json.loads(stream.readline())
+                processes = self.process_rows()
+                pids = [row.strip().split(None, 1)[0] for row in processes]
+                births = subprocess.run(['ps', '-p', ','.join(pids),
+                                         '-o', 'pid=,ppid=,lstart=,stat=,command='],
+                                        capture_output=True, text=True)
+                captured = getattr(child, 'fixture_output', [bytearray(), bytearray()])
+                evidence['failure'] = 'The settled project resume admitted an unexpected native successor.'
+                evidence['unexpected_successors'].append({'start': start,
+                    'state': {table: self.rows('SELECT * FROM ' + table)
+                        for table in ('sessions', 'messages', 'turns', 'executions', 'session_stops')},
+                    'processes': processes, 'process_births': {
+                        'argv': births.args, 'code': births.returncode,
+                        'stdout': births.stdout, 'stderr': births.stderr},
+                    'controller_output_before_cleanup': [bytes(value).decode(errors='replace')
+                                                         for value in captured]})
+                evidence_path.write_text(json.dumps(evidence, ensure_ascii=False, indent=2) + '\n')
+                connection.sendall(b'{"exit_fixture":true}\n')
+                evidence['failed_fixture_stop'] = self.call('stop', session,
+                    session + '-unexpected-successor-stop',
+                    'The completed project-resume fixture admitted an unexpected successor.', raw=True)
+            if child.poll() is not None:
+                return receive_fixture.Receive.child_communication(self, child)
+            ready, _, _ = select.select([self.server, *outputs], [], [], .01)
+            for output in ready:
+                if output is not self.server and not receive_fixture.Receive.capture_child_output(self, child, output):
+                    outputs.remove(output)
+
+    capture_child_output = receive_fixture.Receive.capture_child_output
+    child_communication = receive_fixture.Receive.child_communication
+
+    def rows(self, sql, parameters=()):
+        with sqlite3.connect(self.db) as database:
+            database.row_factory = sqlite3.Row
+            return [dict(row) for row in database.execute(sql, parameters)]
+
+    def eventually(self, observation):
+        while True:
+            result = observation()
+            if result:
+                return result
+            time.sleep(.01)
+
+    def process_rows(self):
+        result = subprocess.run(['ps', '-axo', 'pid=,ppid=,stat=,command='],
+                                check=True, capture_output=True, text=True)
+        return [line for line in result.stdout.splitlines()
+                if str(self.directory) in line and not line.strip().split(None, 3)[2].startswith('Z')]
+
+    def exited(self, session):
+        row = self.eventually(lambda: next((row for row in self.rows(
+            'SELECT * FROM executions WHERE session=?', (session,))
+            if row['phase'] == 'exited'), None))
+        self.assertEqual(row['status'], 'exit 0')
+        return row
+
+    def close_fixtures(self):
+        for stream, connection in self.controls:
+            try:
+                connection.sendall(b'{"exit_fixture":true}\n')
+            except (OSError, ValueError):
+                pass
+            try:
+                stream.close()
+            except OSError:
+                pass
+            connection.close()
+        self.server.close()
+        configured = json.loads((self.directory / 'fixture.json').read_text())['exe']
+        owner = f'{pathlib.Path(configured).resolve()} --instance-owner {self.db.resolve()}'
+        def settled_processes():
+            rows = self.process_rows()
+            if [row.split(None, 3)[3] for row in rows] in ([], [owner]):
+                return {'rows': rows}
+        settled = self.eventually(settled_processes)['rows']
+        if settled:
+            selected = receive_fixture.Receive.selected_process(self, int(settled[0].split()[0]))
+            self.assertIsNotNone(selected)
+            self.assertEqual(selected['command'], owner)
+            argv = [configured, str(self.db), 'owner-status']
+            result = subprocess.run(argv, env=self.environment, capture_output=True, text=True)
+            current = receive_fixture.Receive.selected_process(self, selected['pid'])
+            with (self.directory / 'commands.jsonl').open('a') as output:
+                output.write(json.dumps({'argv': argv, 'code': result.returncode,
+                    'stdout': result.stdout, 'stderr': result.stderr,
+                    'selected_owner': selected, 'owner_after_readiness': current,
+                    'direct_wait_completed': True}) + '\n')
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIsNotNone(current)
+            self.assertFalse(current['state'].startswith('Z'))
+            for field in ('pid', 'start', 'command'):
+                self.assertEqual(current[field], selected[field])
+        shutdown_fixture_owner(self)
+        self.eventually(lambda: not self.process_rows())
+
+    def test_cleanup_waits_for_owner_publication(self):
+        self.db.touch()
+        with tempfile.TemporaryDirectory(prefix='b758-', dir='/tmp') as runtime:
+            self.environment['XDG_RUNTIME_DIR'] = runtime
+            ipc = pathlib.Path(runtime) / 'baton2'
+            ipc.mkdir(mode=0o700)
+            info = self.db.stat()
+            generation = ipc / f'owner-{info.st_dev:x}-{info.st_ino:x}.generation'
+            record = generation.with_suffix('.record')
+            os.mkfifo(generation, 0o600)
+            owner = subprocess.Popen([str(EXE), '--instance-owner', str(self.db)],
+                env=self.environment, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            writer = None
+            cleanup = None
+            failures = []
+            try:
+                def waiting_for_generation():
+                    self.assertIsNone(owner.poll(), 'The fixture owner exited before publication.')
+                    try:
+                        return {'fd': os.open(generation, os.O_WRONLY | os.O_NONBLOCK)}
+                    except OSError as error:
+                        if error.errno != errno.ENXIO:
+                            raise
+                writer = self.eventually(waiting_for_generation)['fd']
+                selected = receive_fixture.Receive.selected_process(self, owner.pid)
+                self.assertIsNotNone(selected)
+                self.assertFalse(record.exists())
+                shutdown_fixture_owner(self)
+                self.assertIsNone(owner.poll())
+                self.assertFalse(record.exists())
+                def close():
+                    try:
+                        self.close_fixtures()
+                    except BaseException:
+                        failures.append(traceback.format_exc())
+                cleanup = threading.Thread(target=close)
+                cleanup.start()
+                def readiness_started():
+                    self.assertFalse(failures, '\n'.join(failures))
+                    self.assertTrue(cleanup.is_alive())
+                    command = f'{EXE} {self.db} owner-status'
+                    return next((row for row in self.process_rows()
+                                 if row.split(None, 3)[3] == command), None)
+                waiting = self.eventually(readiness_started)
+                self.assertFalse(record.exists())
+                (self.directory / 'owner-publication-boundary.json').write_text(json.dumps({
+                    'selected_owner': selected, 'generation_fifo': str(generation),
+                    'readiness_process': waiting, 'record_published': False}, indent=2) + '\n')
+            finally:
+                if writer is not None:
+                    os.write(writer, b'0\n')
+                    os.close(writer)
+                if cleanup is not None:
+                    cleanup.join()
+                else:
+                    self.close_fixtures()
+                stdout, stderr = owner.communicate()
+                (self.directory / 'publication-owner.stdout').write_text(stdout)
+                (self.directory / 'publication-owner.stderr').write_text(stderr)
+                (self.directory / 'publication-owner-execution.json').write_text(json.dumps({
+                    'argv': owner.args, 'pid': owner.pid, 'code': owner.returncode,
+                    'direct_wait_completed': True, 'natural_wait_completed': True}, indent=2) + '\n')
+            self.assertEqual(failures, [])
+            self.assertEqual(owner.returncode, 0, stderr)
+            self.assertEqual(self.process_rows(), [])
+            commands = [json.loads(line) for line in
+                        (self.directory / 'commands.jsonl').read_text().splitlines()]
+            readiness = next(item for item in commands if item['argv'][-1] == 'owner-status')
+            self.assertGreater(json.loads(readiness['stdout'])['generation'], 0)
+            for field in ('pid', 'start', 'command'):
+                self.assertEqual(readiness['selected_owner'][field], readiness['owner_after_readiness'][field])
+
+    def test_start_detaches_native_subscription_and_operator_report(self):
+        for harness in ('codex', 'omp'):
+            with self.subTest(harness=harness):
+                name = 'principal-' + harness
+                log = self.directory / (name + '.jsonl')
+                launched = self.dispatch('start', name, harness, self.fixture, name, 'low',
+                                         self.repo, log, name + '-task', self.task)
+                stream, native = self.accept(name)
+                self.assertEqual(os.getpgid(launched['deliveryPid']), launched['deliveryPid'])
+                self.assertEqual(native['cwd'], str(self.repo.resolve()))
+                self.assertIn(self.task.read_text(), native['prompt'])
+                self.assertEqual(native['args'][native['args'].index('--model') + 1], name)
+                if harness == 'codex':
+                    self.assertEqual(native['args'][:2], ['-c', 'forced_login_method="chatgpt"'])
+                    configs = [native['args'][index + 1] for index, arg in enumerate(native['args']) if arg == '-c']
+                    self.assertEqual(configs, ['forced_login_method="chatgpt"', 'model_reasoning_effort="low"'])
+                    self.assertEqual(native['apiKeyVariablesPresent'], [])
+                else:
+                    self.assertEqual(native['args'][native['args'].index('--thinking') + 1], 'low')
+                player = self.call('player', name)
+                self.assertEqual(player['role'], 'principal-conductor')
+                self.assertIsNone(player['parent'])
+                self.assertEqual((player['model'], player['effort'], player['workspace']),
+                                 (name, 'low', str(self.repo.resolve())))
+                endpoint = json.loads(player['endpoint'])
+                self.assertEqual(endpoint[-4:], ['', '', '', str(log.resolve())])
+                report = "Reviewed native operator report λ.\nIt's complete. 🙂\n" * 6000
+                self.finish(stream, report)
+                self.exited(name)
+                turns = self.eventually(lambda: self.call('turns', name))
+                self.assertEqual(len(turns), 1)
+                saved = self.call('delivery', turns[0]['id'])
+                self.assertEqual((saved['sender'], saved['recipient'], saved['kind'], saved['body']),
+                                 (name, 'operator', 'report', report))
+                self.assertEqual(turns[0]['reportBody'], report)
+                self.assertIsNone(saved['receipt'])
+                inbox = self.call('inbox', 'operator')
+                self.assertEqual(next(row for row in inbox if row['id'] == saved['id'])['body'], report)
+                self.call('ack', saved['id'], 'operator', 'operator-reviewed-native-result')
+                self.assertEqual(self.call('delivery', saved['id'])['receipt'], 'operator-reviewed-native-result')
+                self.assertEqual(self.call('delivery', name + '-task')['receipt'], 'fixture-native-reviewed')
+
+    def test_start_upgrades_compatible_parentless_assignment_and_resumes_saved_native(self):
+        self.call('attach', 'principal', 'codex', 'saved-native', '')
+        launched = self.dispatch('start', 'principal', 'codex', self.fixture, 'principal', 'low',
+                                 self.repo, self.directory / 'principal.jsonl', 'start-task', self.task)
+        stream, native = self.accept('principal')
+        self.assertEqual(native['args'][2:5], ['exec', 'resume', 'saved-native'])
+        self.assertEqual(self.call('player', 'principal')['role'], 'principal-conductor')
+        self.assertGreater(launched['deliveryPid'], 0)
+        self.finish(stream)
+        self.exited('principal')
+        self.assertEqual(self.call('player', 'principal')['native'], 'saved-native')
+
+    def test_start_assignment_conflicts_keep_native_parent_and_pending_input(self):
+        self.root()
+        self.recruit('assigned', 'codex')
+        self.call('connect', 'assigned', 'saved-native', '')
+        self.call('message', 'pending-task', 'root', 'assigned', 'task', self.task.read_text())
+        before = self.rows('SELECT * FROM sessions ORDER BY id'), self.rows('SELECT * FROM messages ORDER BY seq')
+        self.call('start', 'assigned', 'codex', self.fixture, 'assigned', 'low', self.repo,
+                  self.directory / 'refused.jsonl', 'refused-task', self.task, ok=False)
+        self.assertEqual((self.rows('SELECT * FROM sessions ORDER BY id'),
+                          self.rows('SELECT * FROM messages ORDER BY seq')), before)
+        self.assertEqual(self.call('player', 'assigned')['parent'], 'root')
+        self.assertEqual(self.call('player', 'assigned')['native'], 'saved-native')
+        self.dispatch('start', 'root', 'codex', self.fixture, 'root', 'high', self.repo,
+                      self.directory / 'root-assignment.jsonl', 'root-assignment', self.task)
+        stream, _ = self.accept('root')
+        self.finish(stream)
+        self.exited('root')
+        before = self.call('player', 'root')
+        for harness, model, effort, cwd in (('omp', 'root', 'high', self.repo),
+                                           ('codex', 'other-model', 'high', self.repo),
+                                           ('codex', 'root', 'low', self.repo),
+                                           ('codex', 'root', 'high', self.directory)):
+            self.call('start', 'root', harness, self.fixture, model, effort, cwd,
+                      self.directory / 'refused-root.jsonl', 'conflicting-task', self.task, ok=False)
+            self.assertEqual(self.call('player', 'root'), before)
+        self.assertEqual(self.rows("SELECT * FROM executions WHERE session='assigned'"), [])
+        self.assertFalse(self.dispatch_log('refused-task').exists())
+        self.assertFalse(self.dispatch_log('conflicting-task').exists())
+        self.assertIsNone(self.call('delivery', 'pending-task')['receipt'])
+
+    def test_receiver_refreshes_stopped_and_refuses_unsupported_or_missing_sessions(self):
+        self.root()
+        harness = 'unsupported-harness'
+        self.call('attach', harness, harness, 'saved-' + harness, '')
+        before = self.call('player', harness)
+        self.call('receiver', harness, self.fixture, self.directory / (harness + '.jsonl'), ok=False)
+        self.assertEqual(self.call('player', harness), before)
+        self.recruit('stopped')
+        self.call('connect', 'stopped', 'saved-stopped-native', '')
+        self.call('message', 'retained', 'root', 'stopped', 'task', self.task.read_text())
+        self.call('stop', 'stopped', 'idle-stop', 'Controlled idle stop.')
+        before = self.call('player', 'stopped')
+        stops = self.rows('SELECT * FROM session_stops WHERE session=?', ('stopped',))
+        self.receiver('stopped')
+        refreshed = self.call('player', 'stopped')
+        for field in ('id', 'parent', 'native', 'harness', 'model', 'effort',
+                      'workspace', 'branch', 'base', 'stop'):
+            self.assertEqual(refreshed[field], before[field])
+        self.call('receiver', 'stopped', self.fixture, self.directory / 'stopped.jsonl',
+                  self.repo)
+        moved = self.call('player', 'stopped')
+        self.assertEqual(moved['workspace'], str(self.repo.resolve()))
+        for field in ('id', 'parent', 'native', 'harness', 'model', 'effort', 'base', 'stop'):
+            self.assertEqual(moved[field], before[field])
+        self.call('dispatch-turn', 'stopped', 'refused-turn', self.fixture,
+                  self.directory / 'stopped.jsonl', self.task, ok=False)
+        self.assertEqual(self.call('player', 'stopped'), moved)
+        self.assertEqual(self.rows('SELECT * FROM session_stops WHERE session=?', ('stopped',)), stops)
+        self.assertIsNone(self.call('delivery', 'retained')['receipt'])
+        self.call('receiver', 'missing', self.fixture, self.directory / 'missing.jsonl', ok=False)
+        self.assertEqual(self.rows('SELECT * FROM executions'), [])
+
+    def test_project_discovery_keeps_worktree_sessions_and_shared_knowledge(self):
+        self.root()
+        assignment = self.recruit('project-linked', 'muse')
+        workspace = pathlib.Path(assignment['workspace'])
+        shared_workspace = self.repo / 'shared λ 🙂'
+        shared_workspace.mkdir()
+        self.call('join', 'project-shared', 'root', 'muse', 'project-shared',
+                  'low', shared_workspace)
+        self.call('connect', 'project-linked', 'saved-project-native', '')
+        self.call('message', 'project-owed', 'root', 'project-linked', 'task',
+                  'Continue the retained project work.')
+        self.call('record', 'project-finding', 'project-shared',
+                  'The retained project finding remains available.',
+                  'seed.txt', 'Fixture project.')
+
+        unrelated = self.repo / 'nested unrelated repository'
+        unrelated.mkdir()
+        for args in (('init', '-q', '-b', 'main'),
+                     ('config', 'user.name', 'Control fixture'),
+                     ('config', 'user.email', 'fixture@example.invalid'),
+                     ('commit', '-q', '--allow-empty', '-m', 'Unrelated fixture')):
+            subprocess.run(['git', '-C', str(unrelated), *args],
+                           env=self.environment, check=True,
+                           capture_output=True, text=True)
+        self.call('join', 'project-unrelated', 'root', 'muse',
+                  'project-unrelated', 'low', unrelated)
+
+        subdirectory = self.repo / 'project subdirectory'
+        subdirectory.mkdir()
+        linked_subdirectory = workspace / 'linked subdirectory'
+        linked_subdirectory.mkdir()
+        described = self.call('project', subdirectory)
+        linked = self.call('project', linked_subdirectory)
+        common = pathlib.Path(self.git('rev-parse', '--path-format=absolute',
+                                       '--git-common-dir').stdout.strip()).resolve()
+        self.assertEqual(described['project'], str(common))
+        self.assertEqual(linked['project'], described['project'])
+        self.assertEqual(described['rule'], 'common-dir')
+        self.assertEqual(described['git']['ok'], 1)
+        self.assertEqual(described['database'], str(self.db.resolve()))
+        pointer = common / 'baton2' / 'database'
+        self.assertEqual(described['pointer'], str(pointer))
+        self.assertEqual(pointer.read_text().rstrip('\n'), str(self.db.resolve()))
+
+        selected = self.project_call(linked_subdirectory, 'project-sessions', subdirectory)
+        sessions = {row['id']: row for row in selected['sessions']}
+        self.assertEqual(set(sessions), {'project-linked', 'project-shared'})
+        self.assertEqual(selected['project']['project'], str(common))
+        self.assertEqual(sessions['project-linked']['native'], 'saved-project-native')
+        self.assertEqual(sessions['project-shared']['workspace'], str(shared_workspace.resolve()))
+        self.assertEqual(sessions['project-linked']['pendingCount'], 1)
+        self.assertEqual(self.project_call(subdirectory, 'inbox', 'project-linked')[0]['id'],
+                         'project-owed')
+        for directory in (linked_subdirectory, subdirectory):
+            outcomes = self.project_call(directory, 'as', 'project-shared', 'knowledge', 'read')
+            self.assertEqual(len(outcomes), 1, outcomes)
+            self.assertEqual((outcomes[0]['status'], outcomes[0]['waitStatus']),
+                             ('completed', 'exit 0'), outcomes)
+            findings = json.loads(outcomes[0]['stdout'])
+            self.assertEqual(findings, self.call('knowledge', 'project-shared'))
+            self.assertEqual(findings[0]['claim'],
+                             'The retained project finding remains available.')
+
+    def test_project_resume_continues_same_native_and_preserves_tab_message_id(self):
+        self.root()
+        session = 'project-resumed-muse'
+        assignment = self.recruit(session, 'muse')
+        self.call('project', self.repo)
+        log = self.receiver(session)
+        self.dispatch('dispatch-turn', session, 'project-original-turn',
+                      self.fixture, log, self.task)
+        stream, first = self.accept(session)
+        self.finish(stream, 'Original project report.')
+        self.exited(session)
+        shutdown_fixture_owner(self)
+        self.eventually(lambda: not self.process_rows())
+        original = self.call('session', session)
+        endpoint = original['endpointArgv']
+        unfinished = pathlib.Path(assignment['workspace']) / 'unfinished.txt'
+        unfinished.write_text('Retained unfinished project source.\n')
+        self.call('connect', session, first['native'], '')
+        ident = 'project-input\twith-tab λ 🙂'
+        self.call('message', ident, 'root', session, 'task', 'Resume the original project task.')
+        self.assertIsNone(self.call('delivery', ident)['receipt'])
+        self.call('connect', session, first['native'], json.dumps(endpoint))
+
+        resumed = subprocess.Popen([str(EXE), '--project', assignment['workspace'],
+                                    'as', 'root', 'resume', '--session', session], env=self.environment,
+                                   stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        continued, start = self.accept(session, resumed)
+        self.assertEqual(start['native'], first['native'])
+        self.assertEqual(start['resume'], first['native'])
+        self.assertEqual(start['cwd'], assignment['workspace'])
+        self.assertIn('[id: ' + ident + ']', start['prompt'])
+        self.assertIn('Resume the original project task.', start['prompt'])
+        self.finish(continued, 'Resumed project work completed.')
+        stdout, stderr = self.child_communication(resumed)
+        self.assertEqual(resumed.returncode, 0, stderr)
+        answer = self.project_resume_result(stdout)
+        self.assertEqual((answer['session'], answer['message']), (session, ident))
+        self.assertEqual(answer['delivery']['id'], ident)
+        self.assertEqual(answer['delivery']['receipt'], 'fixture-native-reviewed')
+        self.exited(session)
+        self.assertEqual(answer['latestReport'], 'Resumed project work completed.')
+        self.assertEqual(answer['latestReportId'], self.call('turns', session)[-1]['id'])
+        self.assertEqual(self.call('inbox', session), [])
+        final = self.call('session', session)
+        for field in ('id', 'parent', 'harness', 'workspace', 'branch', 'native'):
+            self.assertEqual(final[field], original[field])
+        self.assertEqual(unfinished.read_text(), 'Retained unfinished project source.\n')
+        refusal = self.project_call(self.repo, 'resume', session, ok=False)
+        self.assertIn('no unacknowledged input or failed turn', refusal['stderr'])
+        self.assertEqual(self.call('inbox', session), [])
+
+    def test_project_resume_continues_acknowledged_task_after_native_failure(self):
+        self.root()
+        self.call('project', self.repo)
+        for harness in ('omp', 'muse', 'codex', 'claude-code'):
+            with self.subTest(harness=harness):
+                session = 'project-failed-' + harness
+                assignment = self.recruit(session, harness)
+                self.receiver(session)
+                task_id = session + '-task'
+                self.dispatch('dispatch-file', task_id, 'root', session, 'task', self.task)
+                stream, first = self.accept(session)
+                self.assertEqual(self.action(stream, ack=True), {'acknowledged': True})
+                receipt = self.call('delivery', task_id)['receipt']
+                unfinished = pathlib.Path(assignment['workspace']) / 'unfinished.txt'
+                unfinished.write_text('Source retained before a provider error.\n')
+                self.finish(stream, 'The provider request failed after task acceptance.', fail=True)
+                failed = self.exited(session)
+                original_turns = self.call('turns', session)
+                self.assertEqual(len(original_turns), 1)
+                self.assertEqual(self.call('player', session)['blockedCause'], 'provider-failure')
+                self.assertEqual(self.call('inbox', session), [])
+                shutdown_fixture_owner(self)
+                self.eventually(lambda: not self.process_rows())
+
+                resume_args = []
+                if harness == 'muse':
+                    self.call('stop', session, session + '-stop', 'Operator stopped this interrupted task.')
+                    stopped = self.project_call(self.repo, 'resume', session, ok=False)
+                    self.assertIn('terminally stopped', stopped['stderr'])
+                    self.assertEqual(self.call('inbox', session), [])
+                    self.assertEqual(self.call('turns', session), original_turns)
+                    resume_args = ['--lift-stop']
+
+                resumed = subprocess.Popen([str(EXE), '--project', assignment['workspace'],
+                                            'as', 'root', 'resume', '--session', session, *resume_args], env=self.environment,
+                                           stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                continued, start = self.accept(session, resumed)
+                evidence = {'argv': resumed.args, 'pid': resumed.pid,
+                            'first_native': first, 'resumed_native': start}
+                evidence_path = self.directory / (session + '-resume.json')
+                try:
+                    try:
+                        self.assertEqual(start['native'], first['native'])
+                        if harness == 'omp':
+                            storage = pathlib.Path(first['args'][first['args'].index('--session-dir') + 1])
+                            recorded = storage / ('fixture_' + first['native'] + '.jsonl')
+                            self.assertEqual(start['resume'], str(recorded))
+                            header = json.loads(recorded.read_text().splitlines()[0])
+                            self.assertEqual((header['type'], header['id']), ('session', first['native']))
+                        else:
+                            self.assertEqual(start['resume'], first['native'])
+                        self.assertEqual(start['cwd'], assignment['workspace'])
+                        self.assertIn(failed['id'], start['prompt'])
+                        self.assertIn('Continue unfinished work', start['prompt'])
+                        self.assertIn('The latest accepted task is ' + task_id + '.', start['prompt'])
+                        self.assertEqual(self.call('delivery', task_id)['receipt'], receipt)
+                        self.assertEqual(self.call('turns', session), original_turns)
+                    finally:
+                        evidence['assertion_failure'] = traceback.format_exc() if sys.exc_info()[0] else None
+                        evidence['before_finish'] = {table: self.rows('SELECT * FROM ' + table)
+                            for table in ('sessions', 'messages', 'turns', 'executions', 'session_stops')}
+                        evidence['processes_before_finish'] = self.process_rows()
+                        evidence_path.write_text(json.dumps(evidence, ensure_ascii=False, indent=2) + '\n')
+                        self.finish(continued, 'The interrupted project task continued.')
+                        stdout, stderr = self.finish_project_resume(resumed, session, evidence, evidence_path)
+                        evidence.update(code=resumed.returncode, stdout=stdout, stderr=stderr,
+                                        direct_wait_completed=True)
+                        evidence_path.write_text(json.dumps(evidence, ensure_ascii=False, indent=2) + '\n')
+                    self.assertEqual(resumed.returncode, 0, stdout + stderr)
+                    self.assertEqual(evidence['unexpected_successors'], [], evidence)
+                    answer = self.project_resume_result(stdout)
+                    self.assertEqual(answer['delivery']['kind'], 'recovery')
+                    self.assertEqual(answer['delivery']['receipt'], 'fixture-native-reviewed')
+                    self.exited(session)
+                    self.assertEqual(self.call('turns', session)[0], original_turns[0])
+                    self.assertEqual(self.call('session', session)['native'], first['native'])
+                    self.assertEqual(self.call('delivery', task_id)['receipt'], receipt)
+                    self.assertEqual(unfinished.read_text(), 'Source retained before a provider error.\n')
+                    self.assertEqual(self.call('inbox', session), [])
+                    self.assertEqual(self.rows('SELECT * FROM session_stops WHERE session=?', (session,)), [])
+                finally:
+                    shutdown_fixture_owner(self)
+                    self.eventually(lambda: not self.process_rows())
+                    evidence['after_finish'] = {table: self.rows('SELECT * FROM ' + table)
+                        for table in ('sessions', 'messages', 'turns', 'executions', 'session_stops')}
+                    evidence['remaining_processes'] = self.process_rows()
+                    evidence_path.write_text(json.dumps(evidence, ensure_ascii=False, indent=2) + '\n')
+
+    def test_project_resume_keeps_queued_delivery_separate_from_history_and_preserves_stops(self):
+        self.root()
+        session = 'project-active-muse'
+        self.recruit(session, 'muse')
+        self.call('project', self.repo)
+        log = self.receiver(session)
+        self.dispatch('dispatch-turn', session, 'project-history-turn',
+                      self.fixture, log, self.task)
+        original_stream, first = self.accept(session)
+        self.finish(original_stream, 'Historical project report.')
+        self.exited(session)
+        shutdown_fixture_owner(self)
+        self.eventually(lambda: not self.process_rows())
+
+        self.dispatch('dispatch-file', 'project-active-task', 'root', session, 'task', self.task)
+        active, started = self.accept(session)
+        self.assertEqual(started['resume'], first['native'])
+        self.assertEqual(self.action(active, ack=True), {'acknowledged': True})
+        self.call('message', 'project-next-task', 'root', session, 'task',
+                  'Input queued behind the active project turn.')
+        queued = self.project_call(self.repo, 'resume', session)
+        self.assertEqual((queued['session'], queued['message']), (session, 'project-next-task'))
+        self.assertEqual(queued['delivery']['id'], 'project-next-task')
+        self.assertIsNone(queued['delivery']['receipt'])
+        self.assertEqual(queued['latestReportId'], 'project-history-turn')
+        self.assertEqual(queued['latestReport'], 'Historical project report.')
+        self.assertEqual(self.rows('SELECT phase FROM executions WHERE session=?',
+                                   (session,))[0]['phase'], 'running')
+        self.finish(active, 'The active project task completed.')
+        continued, later = self.accept(session)
+        self.assertEqual(later['native'], first['native'])
+        self.assertEqual(later['resume'], first['native'])
+        self.assertIn('[id: project-next-task]', later['prompt'])
+        self.finish(continued, 'The queued project task completed.')
+        self.exited(session)
+        self.assertEqual(self.call('delivery', 'project-next-task')['receipt'],
+                         'fixture-native-reviewed')
+        self.assertEqual(self.call('inbox', session), [])
+
+        stopped = 'project-stopped-muse'
+        stopped_assignment = self.recruit(stopped, 'muse')
+        self.call('connect', stopped, 'saved-stopped-project-native', '')
+        self.call('message', 'project-stopped-task', 'root', stopped, 'task',
+                  'This input remains recorded under the operator stop.')
+        stopped_log = self.receiver(stopped)
+        self.dispatch('dispatch-turn', stopped, 'project-stopped-turn',
+                      self.fixture, stopped_log, self.task)
+        stopped_stream, stopped_native = self.accept(stopped)
+        unfinished = pathlib.Path(stopped_assignment['workspace']) / 'unfinished.txt'
+        unfinished.write_text('Preserved work from the stopped conversation.\n')
+        self.call('stop', stopped, 'project-stop', 'Operator stopped this project session.')
+        stopped_attempt = self.eventually(lambda: next((row for row in self.rows(
+            'SELECT * FROM executions WHERE session=?', (stopped,))
+            if row['phase'] == 'exited'), None))
+        self.assertEqual(stopped_attempt['status'], 'signal 15')
+        self.eventually(lambda: (pathlib.Path(stopped_attempt['directory']) / 'acknowledged').exists())
+        report_id = 'stop-result:' + 'project-stop'.encode().hex()
+        stop_report = self.call('delivery', report_id)
+        refusal = self.project_call(self.repo, 'resume', stopped, ok=False)
+        self.assertIn('terminally stopped', refusal['stderr'])
+        self.assertEqual(self.rows('SELECT id,status FROM executions WHERE session=?', (stopped,)),
+                         [{'id': stopped_attempt['id'], 'status': 'signal 15'}])
+        self.assertIsNone(self.call('delivery', 'project-stopped-task')['receipt'])
+        self.assertEqual(self.call('session', stopped)['native'], 'saved-stopped-project-native')
+        self.assertEqual(self.rows('SELECT id FROM session_stops WHERE session=?',
+                                   (stopped,)), [{'id': 'project-stop'}])
+        refreshed_log = self.directory / 'project-stopped-refreshed.jsonl'
+        refreshed = self.call('receiver', stopped, self.fixture, refreshed_log)
+        self.assertEqual(refreshed['endpoint'], [str(EXE.resolve()), str(self.db.resolve()),
+                                                'receive', stopped, str(self.fixture.resolve()),
+                                                '', '', '', str(refreshed_log.resolve())])
+        self.assertEqual(self.rows('SELECT id,status FROM executions WHERE session=?', (stopped,)),
+                         [{'id': stopped_attempt['id'], 'status': 'signal 15'}])
+        self.assertEqual(self.rows('SELECT id FROM session_stops WHERE session=?',
+                                   (stopped,)), [{'id': 'project-stop'}])
+        self.assertIsNone(self.call('delivery', 'project-stopped-task')['receipt'])
+        self.assertEqual(self.call('session', stopped)['native'], stopped_native['native'])
+        lifted = subprocess.Popen([str(EXE), '--project', stopped_assignment['workspace'],
+                                   'as', 'root', 'resume', '--session', stopped, '--lift-stop'], env=self.environment,
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        continued, lifted_native = self.accept(stopped)
+        self.assertEqual(lifted_native['native'], stopped_native['native'])
+        self.assertEqual(lifted_native['resume'], stopped_native['native'])
+        self.assertEqual(lifted_native['cwd'], stopped_assignment['workspace'])
+        self.assertIn('[id: project-stopped-task]', lifted_native['prompt'])
+        self.finish(continued, 'Explicitly resumed stopped project work.')
+        stdout, stderr = lifted.communicate()
+        self.assertEqual(lifted.returncode, 0, stdout + stderr)
+        self.assertEqual(self.project_resume_result(stdout)['delivery']['receipt'], 'fixture-native-reviewed')
+        self.assertEqual(self.rows('SELECT * FROM session_stops WHERE session=?', (stopped,)), [])
+        self.assertEqual(self.call('delivery', report_id)['body'], stop_report['body'])
+        self.assertEqual(self.call('session', stopped)['native'], stopped_native['native'])
+        self.assertEqual(unfinished.read_text(), 'Preserved work from the stopped conversation.\n')
+        self.assertEqual(self.call('inbox', stopped), [])
+
+    def test_completed_player_moves_to_shared_checkout_and_resumes_after_task_retirement(self):
+        self.root()
+        assignment = self.recruit('completed', 'muse')
+        workspace = pathlib.Path(assignment['workspace'])
+        configuration = self.directory / 'fixture.json'
+        configured = json.loads(configuration.read_text())
+        configured['muse_workspace_roots'] = {'native-completed': str(workspace.resolve())}
+        configuration.write_text(json.dumps(configured))
+        (workspace / 'completed.txt').write_text('Completed contribution.\n')
+        for args in (('add', 'completed.txt'), ('commit', '-q', '-m', 'Completed contribution')):
+            subprocess.run(['git', '-C', str(workspace), *args], env=self.environment,
+                           check=True, capture_output=True, text=True)
+        log = self.receiver('completed')
+        self.dispatch('dispatch-file', 'completed-task', 'root', 'completed', 'task', self.task)
+        stream, first = self.accept('completed')
+        self.assertEqual(first['cwd'], str(workspace))
+        self.finish(stream, 'Completed contribution is ready to integrate.')
+        self.exited('completed')
+        shutdown_fixture_owner(self)
+        self.eventually(lambda: not self.process_rows())
+        original = self.call('session', 'completed')
+        history = self.rows('SELECT * FROM messages ORDER BY seq'), self.rows('SELECT * FROM turns')
+        stops = self.rows('SELECT * FROM session_stops')
+
+        self.assertEqual(self.call('land', 'completed', self.repo, 'main')['status'], 'landed')
+        remote = self.directory / 'published.git'
+        self.git('init', '--bare', '-q', str(remote))
+        self.assertEqual(self.call('push', self.repo, 'main', remote)['status'], 'pushed')
+        unfinished = self.repo / 'unfinished.txt'
+        unfinished.write_text('Shared work remains unfinished.\n')
+        self.call('receiver', 'completed', self.fixture, log, self.repo)
+        moved = self.call('session', 'completed')
+        self.assertEqual((moved['workspace'], moved['branch']), (str(self.repo.resolve()), 'main'))
+        for field in ('id', 'parent', 'harness', 'model', 'effort', 'base', 'native'):
+            self.assertEqual(moved[field], original[field])
+        self.assertEqual((self.rows('SELECT * FROM messages ORDER BY seq'),
+                          self.rows('SELECT * FROM turns')), history)
+        self.assertEqual(self.rows('SELECT * FROM session_stops'), stops)
+        self.git('worktree', 'remove', str(workspace))
+        self.git('branch', '-d', assignment['branch'])
+        self.assertFalse(workspace.exists())
+        self.assertNotIn(assignment['branch'], self.git('branch', '--format=%(refname:short)').stdout.splitlines())
+        self.receiver('completed')
+        self.assertEqual(self.call('session', 'completed'), moved)
+
+        self.dispatch('dispatch-file', 'shared-task', 'root', 'completed', 'task', self.task)
+        continued, second = self.accept('completed')
+        self.assertEqual(second['cwd'], str(self.repo.resolve()))
+        self.assertEqual(second['native'], first['native'])
+        self.assertEqual(second['resume'], first['native'])
+        self.finish(continued, 'Original conversation continued in the shared checkout.')
+        self.exited('completed')
+        self.assertEqual(unfinished.read_text(), 'Shared work remains unfinished.\n')
+        self.assertEqual((self.repo / 'completed.txt').read_text(), 'Completed contribution.\n')
+        self.assertEqual(self.call('session', 'completed')['branch'], 'main')
+        turns = self.call('turns', 'completed')
+        self.assertEqual({row['reportBody'] for row in turns}, {
+            'Completed contribution is ready to integrate.',
+            'Original conversation continued in the shared checkout.'})
+        for ident in ('completed-task', 'shared-task'):
+            self.assertEqual(self.call('delivery', ident)['receipt'], 'fixture-native-reviewed')
+
+    def test_receiver_empty_cwd_keeps_assignment_and_non_git_cwd_is_supported(self):
+        self.root()
+        assignment = self.recruit('ordinary', 'codex')
+        self.call('connect', 'ordinary', 'saved-ordinary', '')
+        log = self.receiver('ordinary')
+        before = self.call('session', 'ordinary')
+        self.call('receiver', 'ordinary', self.fixture, log, '')
+        self.assertEqual(self.call('session', 'ordinary'), before)
+        plain = self.directory / 'plain workspace'
+        plain.mkdir()
+        self.call('receiver', 'ordinary', self.fixture, log, plain)
+        moved = self.call('session', 'ordinary')
+        self.assertEqual(moved['workspace'], str(plain.resolve()))
+        self.assertEqual((moved['branch'], moved['base'], moved['parent'], moved['native']),
+                         (assignment['branch'], assignment['base'], 'root', 'saved-ordinary'))
+        self.dispatch('dispatch-file', 'plain-task', 'root', 'ordinary', 'task', self.task)
+        stream, native = self.accept('ordinary')
+        self.assertEqual(native['cwd'], str(plain.resolve()))
+        self.assertEqual(native['resume'], 'saved-ordinary')
+        self.finish(stream)
+        self.exited('ordinary')
+
+    def test_detached_file_dispatch_uses_recorded_route_and_live_omp_guidance(self):
+        self.root()
+        assignment = self.recruit('leaf')
+        log = self.receiver('leaf')
+        self.dispatch('dispatch-file', 'leaf-task', 'root', 'leaf', 'task', self.task)
+        stream, native = self.accept('leaf')
+        self.assertEqual(native['cwd'], assignment['workspace'])
+        self.assertEqual(native['args'][native['args'].index('--thinking') + 1], 'low')
+        self.assertEqual(self.action(stream, ack=True), {'acknowledged': True})
+        guidance = self.directory / 'guidance.txt'
+        guidance.write_text('Preserve existing work.\nApply this mid-task correction λ.')
+        self.dispatch('dispatch-file', 'leaf-guidance', 'root', 'leaf', 'guidance', guidance)
+        accepted = self.action(stream, read_steer=True)['steer']
+        self.assertIn(guidance.read_text(), accepted['message'])
+        self.assertIsNone(self.call('delivery', 'leaf-guidance')['receipt'])
+        self.assertEqual(
+            self.action(stream, ack_message='leaf-guidance'),
+            {'acknowledged': 'leaf-guidance'},
+        )
+        self.eventually(
+            lambda: self.call('delivery', 'leaf-guidance')['receipt'] == 'fixture-native-reviewed'
+        )
+        self.assertEqual(self.call('player', 'leaf')['native'], native['native'])
+        self.finish(stream, 'Live guidance applied.')
+        self.exited('leaf')
+        self.assertEqual(self.call('turns', 'leaf')[0]['reportBody'], 'Live guidance applied.')
+        self.assertTrue(self.output_log('leaf').is_file())
+        denied = self.call('dispatch-file', 'wrong-route', 'operator', 'leaf', 'task', self.task, ok=False)
+        self.assertIn('message-route-denied', denied['stderr'])
+        self.assertEqual(self.rows("SELECT * FROM messages WHERE id='wrong-route'"), [])
+        self.assertFalse(self.dispatch_log('wrong-route').exists())
+
+    def test_independent_players_overlap_and_large_output_uses_regular_dispatch_streams(self):
+        self.root()
+        streams = []
+        for name, harness in (('omp-leaf', 'omp'), ('codex-leaf', 'codex')):
+            self.recruit(name, harness)
+            self.receiver(name)
+            self.dispatch('dispatch-file', name + '-task', 'root', name, 'task', self.task)
+            stream, native = self.accept(name)
+            streams.append((name, stream, native))
+        for name, _, native in streams:
+            self.assertTrue(os.getpgid(native['pid']))
+            self.eventually(lambda: self.call('player', name)['native'] == native['native'])
+        text = 'fixture output λ ' * 30000
+        self.assertEqual(self.action(streams[0][1], output=text), {'output_written': len(text)})
+        for name, stream, _ in streams:
+            body = text if name == 'omp-leaf' else 'Concurrent Codex task completed.'
+            self.finish(stream, body)
+            self.exited(name)
+            self.assertEqual(self.call('turns', name)[0]['reportBody'], body)
+            stdout = self.dispatch_log(name + '-task')
+            stderr = self.dispatch_log(name + '-task', '.stderr')
+            self.assertTrue(stat.S_ISREG(stdout.stat().st_mode))
+            self.assertTrue(stat.S_ISREG(stderr.stat().st_mode))
+            self.eventually(lambda: self.report_logged(body))
+        frames = [json.loads(line) for line in self.output_log('omp-leaf').read_text().splitlines()]
+        self.assertIn(text, [frame.get('text') for frame in frames])
+
+    def dispatch_log(self, ident, suffix='.stdout'):
+        return pathlib.Path(str(self.db) + '.dispatch-' + ident.encode().hex() + suffix)
+
+    def report_logged(self, body):
+        log = pathlib.Path(str(self.db) + '.root.log')
+        if not log.exists():
+            return False
+        for line in log.read_bytes().split(b'\n')[:-1]:
+            if not line.startswith(b'{'):
+                continue
+            try:
+                saved = json.loads(line)
+            except json.JSONDecodeError:
+                return False
+            if saved.get('body') == body:
+                return True
+        return False
+
+    def test_dispatch_stream_refuses_symlink_and_fifo_and_retains_committed_input(self):
+        self.root()
+        self.recruit('leaf')
+        original = self.directory / 'preserved-output'
+        original.write_text('Unrelated fixture bytes remain.\n')
+        for kind in ('symlink', 'fifo'):
+            ident = 'unsafe-' + kind
+            output = self.dispatch_log(ident)
+            if kind == 'symlink':
+                output.symlink_to(original)
+            else:
+                os.mkfifo(output)
+            self.call('dispatch-file', ident, 'root', 'leaf', 'task', self.task, ok=False)
+            saved = self.call('delivery', ident)
+            self.assertEqual((saved['sender'], saved['recipient'], saved['body'], saved['receipt']),
+                             ('root', 'leaf', self.task.read_text(), None))
+            self.assertEqual(original.read_text(), 'Unrelated fixture bytes remain.\n')
+            self.assertEqual(self.rows('SELECT * FROM executions'), [])
+            mode = output.lstat().st_mode
+            self.assertTrue(stat.S_ISLNK(mode) if kind == 'symlink' else stat.S_ISFIFO(mode))
+
+    def test_dispatch_turn_uses_saved_muse_and_claude_assignment_and_native_identity(self):
+        self.root()
+        for harness in ('muse', 'claude-code'):
+            with self.subTest(harness=harness):
+                session = 'direct-' + harness
+                assignment = self.recruit(session, harness)
+                self.call('connect', session, 'saved-' + session, '')
+                native = 'saved-' + session
+                for step in ('first', 'second'):
+                    ident = session + '-' + step
+                    log = self.directory / (ident + '.jsonl')
+                    self.dispatch('dispatch-turn', session, ident, self.fixture, log, self.task)
+                    stream, start = self.accept(session)
+                    self.assertEqual(start['cwd'], assignment['workspace'])
+                    self.assertEqual(start['resume'], native)
+                    retained_input = self.call('delivery', ident + ':task-input')
+                    self.assertEqual((retained_input['id'], retained_input['sender'],
+                                      retained_input['recipient'], retained_input['kind'],
+                                      retained_input['body']),
+                                     (ident + ':task-input', session, session,
+                                      'task-assignment', self.task.read_text()))
+                    self.assertTrue(start['prompt'].endswith(
+                        'Message (task-assignment) from ' + session + ' [id: ' +
+                        retained_input['id'] + ']:\n' + retained_input['body']), start['prompt'])
+                    effort_option = '--reasoning-effort' if harness == 'muse' else '--effort'
+                    self.assertEqual(start['args'][start['args'].index(effort_option) + 1], 'low')
+                    self.finish(stream, ident + ' completed.')
+                    self.eventually(lambda: any(row['id'] == ident for row in self.call('turns', session)))
+                    self.assertEqual(self.call('delivery', ident)['recipient'], 'root')
+                    self.assertEqual(self.call('player', session)['native'], native)
+                    shutdown_fixture_owner(self)
+                    self.eventually(lambda: not self.process_rows())
+
+    def instant_direct_harness(self, name):
+        executable = self.directory / name
+        completion_code = FIXTURE[FIXTURE.index('def command(*value):'):
+                                  FIXTURE.index('def acknowledge():')]
+        executable.write_text('#!' + sys.executable + '\n' + r'''
+import json,os,pathlib,sqlite3,subprocess,sys,time
+home=pathlib.Path(__file__).resolve().parent
+config=json.loads((home/'fixture.json').read_text())
+args=sys.argv[1:]
+model=args[args.index('--model')+1]
+session=config.get('sessions',{}).get(model,model)
+if '--prompt-file' in args:
+    prompt=pathlib.Path(args[args.index('--prompt-file')+1]).read_text()
+    print(json.dumps({'stream':{'kind':'session','id':'instant-native'},
+                      'payload_type':'run.model.configured',
+                      'payload':{'kind':'run_model_configured','model_id':model}}),flush=True)
+    print(json.dumps({'stream':{'kind':'session','id':'instant-native'},
+                      'payload_type':'turn.input.user',
+                      'payload':{'kind':'turn_input_user','command_id':'fixture-primary'}}),flush=True)
+else:
+    prompt=json.loads(sys.stdin.readline())['message']['content']
+    print(json.dumps({'type':'system','subtype':'init','session_id':'instant-native','model':model}),flush=True)
+''' + completion_code + r'''
+while json.loads(command('session',session)['stdout'])['native']!='instant-native':
+    time.sleep(.01)
+state=command('session',session)
+assert state['code']==0,state
+completion=json.loads(state['stdout'])['taskCompletion']
+assignment=command('delivery',completion['assignmentId'])
+assert assignment['code']==0,assignment
+assignment=json.loads(assignment['stdout'])
+assert (assignment['sender'],assignment['recipient'],assignment['kind'])==(session,session,'task-assignment'),assignment
+body=assignment['body']
+assert prompt.endswith('\n'+body),prompt
+assert 'Message (task-assignment) from '+session+' [id: '+assignment['id']+']:' in prompt,prompt
+pathlib.Path(__file__).with_suffix('.effect').write_text(body)
+accepted=command('ack',assignment['id'],session,'fixture-native-reviewed')
+assert accepted['code']==0,accepted
+fixture_completion(body)
+state=command('session',session)
+assert state['code']==0,state
+completion=json.loads(state['stdout'])['taskCompletion']
+assert completion['confirmed'] and not completion['open'],completion
+request=command('delivery',completion['requestId'])
+assert request['code']==0,request
+request=json.loads(request['stdout'])
+assert (request['sender'],request['recipient'],request['kind'],request['body'],request['receipt'])==(session,completion['coordinator'],'completion-request',body,'Fixture coordinator reviewed the result.'),request
+confirmation=command('delivery',request['id']+':confirmed')
+assert confirmation['code']==0,confirmation
+confirmation=json.loads(confirmation['stdout'])
+assert (confirmation['sender'],confirmation['recipient'],confirmation['kind'],confirmation['body'],confirmation['receipt'])==(completion['coordinator'],session,'completion-confirmed',request['id'],'Fixture worker handled confirmation.'),confirmation
+if '--prompt-file' in args:
+    print(json.dumps({'stream':{'kind':'session','id':'instant-native'},
+                      'payload_type':'run.terminal.completed',
+                      'payload':{'kind':'run_terminal','terminal':'completed',
+                                 'command_id':'fixture-primary','text':body}}),flush=True)
+else:
+    print(json.dumps({'type':'result','result':body,
+                      'session_id':'instant-native','is_error':False}),flush=True)
+''')
+        executable.chmod(0o700)
+        return executable
+
+    def test_completed_direct_id_rejects_changed_request(self):
+        self.root()
+        for harness in ('muse', 'claude-code'):
+            with self.subTest(harness=harness):
+                session = 'completed-' + harness
+                self.recruit(session, harness)
+                assignment = self.call('player', session)
+                first = self.instant_direct_harness('first-' + harness)
+                ident = session + '-turn'
+                argv = ['turn', session, ident, first, assignment['model'],
+                        assignment['effort'], assignment['workspace'], self.task,
+                        self.directory / (ident + '.jsonl'), assignment['native']]
+                self.call(*argv, raw=True)
+                self.assertEqual(first.with_suffix('.effect').read_text(), self.task.read_text())
+                retained = self.call('delivery', ident)
+                self.assertEqual(retained['body'], self.task.read_text())
+                self.call(*argv, raw=True)
+                self.assertEqual(self.call('delivery', ident), retained)
+                changed = self.instant_direct_harness('changed-' + harness)
+                changed_task = self.directory / ('changed-' + harness + '.txt')
+                changed_task.write_text('Different task and executable under the same turn ID.\n')
+                result = self.call('turn', session, ident, changed, assignment['model'],
+                                   assignment['effort'], assignment['workspace'], changed_task,
+                                   self.directory / ('changed-' + harness + '.jsonl'),
+                                   assignment['native'], ok=False)
+                self.assertIn('different retained request', result['stderr'])
+                self.assertEqual(self.call('delivery', ident), retained)
+                self.assertFalse(changed.with_suffix('.effect').exists())
+
+    def test_project_resume_recovers_direct_setup_failure_and_interruption(self):
+        self.root()
+        original = self.task.read_text()
+        for harness in ('omp', 'muse', 'codex', 'claude-code'):
+            for interrupted in (False, True):
+                with self.subTest(harness=harness, interrupted=interrupted):
+                    session = 'setup-' + harness + ('-interrupted' if interrupted else '-failed')
+                    self.recruit(session, harness)
+                    assignment = self.call('player', session)
+                    ident = session + '-turn'
+                    task = self.directory / (ident + '.txt')
+                    task.write_text(original)
+                    output_parent = self.directory / (ident + '-output')
+                    log = output_parent / 'native.jsonl'
+                    native = '' if interrupted else 'saved-' + session
+                    if native:
+                        self.call('connect', session, native, '')
+                    failed = self.call('turn', session, ident, self.fixture,
+                                       assignment['model'], assignment['effort'],
+                                       assignment['workspace'], task, log, native,
+                                       ok=False)
+                    self.assertIn('Native control setup failed', failed['stderr'])
+                    execution = self.rows('SELECT * FROM executions WHERE session=?', (session,))[0]
+                    self.assertEqual((execution['id'], execution['phase'], execution['status']),
+                                     (ident, 'starting', ''))
+                    self.assertEqual(failed['stderr'],
+                                     'Native control setup failed; inspect the registered session and retained input.\n')
+                    initialized = self.rows("SELECT name FROM sqlite_master WHERE type='table' AND name='native_initial_inputs'")
+                    if initialized:
+                        self.assertEqual(self.rows('SELECT * FROM native_initial_inputs WHERE attempt=?',
+                                                   (execution['directory'],)), [])
+                    request = self.rows('SELECT * FROM direct_turn_requests WHERE id=?', (ident,))[0]
+                    self.assertEqual(request['task'], original)
+                    self.assertEqual(request['native'], native)
+                    self.assertFalse(pathlib.Path(execution['directory']).exists())
+                    self.assertEqual(self.rows('SELECT id FROM turns WHERE id=?', (ident,)), [])
+                    self.assertEqual(self.rows('SELECT id FROM messages WHERE id=?', (ident,)), [])
+                    self.assertEqual(self.rows("SELECT * FROM turns WHERE worker=?", (session,)), [])
+                    if interrupted:
+                        # Restore the durable admission left when the caller exits
+                        # before retry setup has returned. The recorded conversation
+                        # is newer than the original request's empty native value.
+                        native = 'saved-retry-' + session
+                        self.call('connect', session, native, '')
+                        with sqlite3.connect(self.db) as database:
+                            database.execute("UPDATE executions SET phase='starting',status='',directory=? WHERE session=?",
+                                             (execution['directory'] + '.retry', session))
+                    else:
+                        self.call('stop', session, session + '-stop', 'Keep this unfinished task stopped.')
+                        refused = self.call('resume', session, ok=False)
+                        self.assertIn('terminally stopped', refused['stderr'])
+                        self.assertFalse(pathlib.Path(execution['directory']).exists())
+                    task.unlink()
+                    output_parent.mkdir()
+                    unfinished = pathlib.Path(assignment['workspace']) / 'unfinished.txt'
+                    unfinished.write_text('Uncommitted source retained before setup recovery.\n')
+                    resumed = self.call('resume', session, *([] if interrupted else ['--lift-stop']))
+                    self.assertEqual(resumed['attempt'], ident)
+                    self.assertEqual(resumed['launch']['state'], 'launched')
+                    stream, started = self.accept(session)
+                    initialization = self.rows('SELECT * FROM native_initial_inputs WHERE session=? AND turn=?',
+                                               (session, ident))
+                    self.assertEqual(len(initialization), 1, initialization)
+                    self.assertTrue(started['prompt'].startswith(initialization[0]['seed'] + '\n\n'))
+                    retained_input = self.call('delivery', ident + ':task-input')
+                    self.assertEqual((retained_input['id'], retained_input['sender'],
+                                      retained_input['recipient'], retained_input['kind'],
+                                      retained_input['body']),
+                                     (ident + ':task-input', session, session,
+                                      'task-assignment', original))
+                    self.assertTrue(started['prompt'].endswith(
+                        'Message (task-assignment) from ' + session + ' [id: ' +
+                        retained_input['id'] + ']:\n' + retained_input['body']), started['prompt'])
+                    self.assertEqual(started['resume'], native)
+                    self.assertEqual(started['cwd'], assignment['workspace'])
+                    self.assertEqual(started['args'][started['args'].index('--model') + 1], assignment['model'])
+                    self.assertEqual(unfinished.read_text(),
+                                     'Uncommitted source retained before setup recovery.\n')
+                    self.finish(stream, original)
+                    completed = self.exited(session)
+                    self.assertEqual((completed['id'], completed['status']), (ident, 'exit 0'))
+                    self.assertEqual(self.call('delivery', ident)['body'], original)
+                    self.assertEqual(self.call('player', session)['native'], started['native'])
+                    self.assertEqual(self.rows('SELECT * FROM direct_turn_requests WHERE id=?', (ident,)), [request])
+                    self.assertEqual(self.rows('SELECT id FROM session_stops WHERE session=?', (session,)), [])
+                    self.assertFalse(task.exists())
+
+    def test_direct_observer_loss_recovers_the_surviving_child(self):
+        self.root()
+        for harness in ('muse', 'claude-code'):
+            with self.subTest(harness=harness):
+                session = 'unresolved-' + harness
+                self.recruit(session, harness)
+                assignment = self.call('player', session)
+                first_id = session + '-first'
+                launched = self.dispatch('dispatch-turn', session, first_id, self.fixture,
+                                         self.directory / (first_id + '.jsonl'), self.task)
+                stream, start = self.accept(session)
+                before = self.rows('SELECT * FROM executions WHERE session=?', (session,))[0]
+                self.assertEqual((before['id'], before['mode']), (first_id, 'direct'))
+                self.assertTrue(before['directory'])
+                self.assertIn(before['phase'], ('starting', 'running'))
+                self.assertEqual(self.rows('SELECT id FROM messages WHERE id=?', (first_id,)), [])
+                observer = launched['deliveryPid']
+                selected = subprocess.run(['ps', '-p', str(observer), '-o', 'pid=,lstart=,stat=,command='],
+                                          capture_output=True, text=True, check=True).stdout.strip()
+                self.assertIn(str(self.db), selected)
+                self.assertIn(first_id, selected)
+                self.assertIn(' turn ', selected)
+                self.assertNotEqual(observer, start['ppid'])
+                replacement = self.instant_direct_harness('replacement-' + harness)
+                argv = ['turn', session, session + '-replacement', replacement,
+                        assignment['model'], assignment['effort'], assignment['workspace'],
+                        self.task, self.directory / (session + '-replacement.jsonl'),
+                        assignment['native']]
+                self.call(*argv, ok=False)
+                self.assertFalse(replacement.with_suffix('.effect').exists())
+                current = subprocess.run(['ps', '-p', str(observer), '-o', 'pid=,lstart=,stat=,command='],
+                                         capture_output=True, text=True, check=True).stdout.strip()
+                selected_fields = selected.split(None, 7)
+                current_fields = current.split(None, 7)
+                self.assertEqual(len(selected_fields), 8, selected)
+                self.assertEqual(len(current_fields), 8, current)
+                self.assertEqual(current_fields[:6], selected_fields[:6])
+                self.assertEqual(current_fields[7], selected_fields[7])
+                self.assertFalse(current_fields[6].startswith('Z'))
+                os.kill(observer, signal.SIGKILL)
+                self.eventually(lambda: not any(row.split(None, 1)[0] == str(observer)
+                                               for row in self.process_rows()))
+                self.assertEqual(self.action(stream, ack=True), {'acknowledged': True})
+                recovery = self.eventually(lambda: next((row for row in self.process_rows()
+                    if '--recover-direct' in row and first_id in row and str(self.db) in row), None))
+                result = self.call(*argv, ok=False)
+                after = self.rows('SELECT * FROM executions WHERE session=?', (session,))[0]
+                survived = self.action(stream, ack=True)
+                self.assertEqual(survived, {'acknowledged': True})
+                self.assertFalse(replacement.with_suffix('.effect').exists())
+                self.assertEqual((after['id'], after['directory']), (before['id'], before['directory']))
+                self.assertEqual(self.rows('SELECT id FROM messages WHERE id=?', (first_id,)), [])
+                with (self.directory / 'direct-boundary.jsonl').open('a') as evidence:
+                    evidence.write(json.dumps({'harness': harness, 'firstStart': start,
+                        'observer': selected, 'recovery': recovery, 'before': before, 'after': after,
+                        'retry': result, 'firstFixtureStillResponsive': survived}) + '\n')
+                self.finish(stream, 'The surviving direct child completed through recovery.')
+                self.exited(session)
+                self.eventually(lambda: any(row['id'] == first_id for row in self.call('turns', session)))
+                self.assertEqual(self.call('delivery', first_id)['body'],
+                                 'The surviving direct child completed through recovery.')
+                self.assertEqual(self.call('player', session)['native'], start['native'])
+                self.assertEqual(self.rows('SELECT id FROM messages WHERE id=?',
+                                          (session + '-replacement',)), [])
+                shutdown_fixture_owner(self)
+                self.eventually(lambda: not self.process_rows())
+
+    def test_direct_turn_delivers_pending_input_after_native_exit(self):
+        self.root()
+        root_endpoint = self.call('session', 'root')['endpoint']
+        for launch in ('dispatch-turn', 'turn'):
+            for harness in ('muse', 'omp', 'claude-code', 'codex'):
+                with self.subTest(launch=launch, harness=harness):
+                    session = launch + '-' + harness
+                    assignment = self.recruit(session, harness)
+                    native = 'saved-' + session
+                    self.call('connect', session, native, '')
+                    if harness == 'codex':
+                        self.receiver(session)
+                        configured_endpoint = self.call('session', session)['endpointArgv']
+                    ident = session + '-initial'
+                    log = self.directory / (ident + '.jsonl')
+                    child = None
+                    if launch == 'dispatch-turn':
+                        self.dispatch(launch, session, ident, self.fixture, log, self.task)
+                    else:
+                        child = subprocess.Popen([
+                            str(EXE), str(self.db), 'turn', session, ident, str(self.fixture),
+                            session, 'low', assignment['workspace'], str(self.task), str(log), native],
+                            env=self.environment, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, text=True)
+                    stream, start = self.accept(session)
+                    self.assertEqual(start['resume'], native)
+                    endpoint = self.call('session', session)['endpointArgv']
+                    if harness == 'codex':
+                        self.assertEqual(endpoint, configured_endpoint)
+                    else:
+                        self.assertEqual(endpoint, [str(EXE.resolve()), str(self.db.resolve()),
+                                                   'receive', session, str(self.fixture), session,
+                                                   'low', assignment['workspace'], str(log.resolve())])
+                    messages = [(session + '-pending-first', 'Finish the first pending task λ.'),
+                                (session + '-pending-second', 'Finish the second pending task 🙂.')]
+                    for message, body in messages:
+                        self.call('message', message, 'root', session, 'task', body)
+                        self.assertIsNone(self.call('delivery', message)['receipt'])
+                    self.finish(stream, 'The initial direct turn ended.')
+                    continued, resumed = self.accept(session)
+                    self.assertEqual(resumed['native'], native)
+                    self.assertEqual(resumed['cwd'], assignment['workspace'])
+                    for message, body in messages:
+                        self.assertIn('[id: ' + message + ']', resumed['prompt'])
+                        self.assertIn(body, resumed['prompt'])
+                        self.assertIsNone(self.call('delivery', message)['receipt'])
+                    self.finish(continued, 'Both pending tasks were handled.')
+                    self.exited(session)
+                    for message, _ in messages:
+                        self.assertEqual(self.call('delivery', message)['receipt'],
+                                         'fixture-native-reviewed')
+                    self.assertEqual(self.call('inbox', session), [])
+                    self.assertEqual(self.call('session', session)['endpointArgv'], endpoint)
+                    self.assertEqual(self.call('session', 'root')['endpoint'], root_endpoint)
+                    if child is not None:
+                        stdout, stderr = child.communicate()
+                        self.assertEqual(child.returncode, 0, stderr)
+                    shutdown_fixture_owner(self)
+                    self.eventually(lambda: not self.process_rows())
+
+    def test_direct_turn_preserves_a_configured_receiver(self):
+        self.root()
+        assignment = self.recruit('configured', 'muse')
+        self.receiver('configured')
+        endpoint = self.call('session', 'configured')['endpointArgv']
+        self.dispatch('dispatch-turn', 'configured', 'configured-turn', self.fixture,
+                      self.directory / 'direct.jsonl', self.task)
+        stream, _ = self.accept('configured')
+        self.assertEqual(self.call('session', 'configured')['endpointArgv'], endpoint)
+        self.finish(stream)
+        self.exited('configured')
+        self.assertEqual(self.call('session', 'configured')['endpointArgv'], endpoint)
+        self.assertEqual(self.call('session', 'configured')['workspace'], assignment['workspace'])
+
+    def test_receiver_registration_wakes_already_owed_muse_input(self):
+        self.root()
+        for registration in ('receiver', 'configure'):
+            with self.subTest(registration=registration):
+                session = 'registered-' + registration
+                assignment = self.recruit(session, 'muse')
+                native = 'saved-' + session
+                self.call('connect', session, native, '')
+                message = session + '-owed'
+                body = 'Handle the input already pending before receiver registration.'
+                self.call('message', message, 'root', session, 'task', body)
+                self.assertEqual(self.call('session', session)['endpoint'], '')
+                self.assertIsNone(self.call('delivery', message)['receipt'])
+                self.assertEqual(self.rows('SELECT * FROM executions WHERE session=?', (session,)), [])
+
+                log = self.directory / (session + '.jsonl')
+                if registration == 'receiver':
+                    self.receiver(session)
+                else:
+                    model = session + '-configured'
+                    configuration = self.directory / 'fixture.json'
+                    configured = json.loads(configuration.read_text())
+                    configured.setdefault('sessions', {})[model] = session
+                    configuration.write_text(json.dumps(configured))
+                    saved = self.call('configure', session, 'muse', model, 'low', self.fixture, log,
+                                      'muse', session, 'low')
+                    self.assertEqual(saved['model'], model)
+                registered = self.call('session', session)
+                self.assertTrue(registered['endpointArgv'], json.dumps(registered))
+                stream, start = self.accept(session)
+                self.assertEqual(start['resume'], native)
+                self.assertEqual(start['native'], native)
+                self.assertEqual(start['cwd'], assignment['workspace'])
+                self.assertIn('[id: ' + message + ']', start['prompt'])
+                self.assertIn(body, start['prompt'])
+                self.assertIsNone(self.call('delivery', message)['receipt'])
+                self.finish(stream, 'The input present before registration is complete.')
+                self.exited(session)
+                self.assertEqual(self.call('delivery', message)['receipt'], 'fixture-native-reviewed')
+                self.assertEqual(self.call('inbox', session), [])
+                self.assertEqual(self.call('session', session)['native'], native)
+                self.assertEqual(len(self.call('turns', session)), 1)
+                shutdown_fixture_owner(self)
+                self.eventually(lambda: not self.process_rows())
+
+    def test_completed_turn_replay_repairs_an_absent_receiver_and_delivers_pending_input(self):
+        self.root()
+        assignment = self.recruit('legacy-muse', 'muse')
+        native = 'saved-legacy-muse'
+        self.call('connect', 'legacy-muse', native, '')
+        log = self.directory / 'legacy-muse.jsonl'
+        self.dispatch('dispatch-turn', 'legacy-muse', 'completed-legacy-turn',
+                      self.fixture, log, self.task)
+        stream, _ = self.accept('legacy-muse')
+        self.finish(stream, 'The original task is complete.')
+        self.exited('legacy-muse')
+        shutdown_fixture_owner(self)
+        self.eventually(lambda: not self.process_rows())
+
+        self.call('connect', 'legacy-muse', native, '')
+        self.call('message', 'owed-legacy-input', 'root', 'legacy-muse', 'task',
+                  'Continue the original conversation.')
+        self.assertIsNone(self.call('delivery', 'owed-legacy-input')['receipt'])
+        replay = subprocess.Popen([str(EXE), str(self.db), 'turn', 'legacy-muse',
+                                   'completed-legacy-turn', str(self.fixture),
+                                   'legacy-muse', 'low', assignment['workspace'],
+                                   str(self.task), str(log), native],
+                                  env=self.environment, stdout=subprocess.PIPE,
+                                  stderr=subprocess.PIPE, text=True)
+        continued, start = self.accept('legacy-muse')
+        self.assertEqual(start['resume'], native)
+        self.assertIn('[id: owed-legacy-input]', start['prompt'])
+        self.assertNotEqual(start['prompt'], self.task.read_text())
+        self.finish(continued, 'The owed input is complete.')
+        replay_stdout, replay_stderr = replay.communicate()
+        self.assertEqual(replay.returncode, 0, replay_stderr)
+        self.assertEqual(json.loads(replay_stdout)['id'], 'completed-legacy-turn')
+        self.exited('legacy-muse')
+        self.assertEqual(self.call('delivery', 'owed-legacy-input')['receipt'],
+                         'fixture-native-reviewed')
+        self.assertEqual(self.call('inbox', 'legacy-muse'), [])
+
+        self.call('connect', 'legacy-muse', native, '')
+        self.call('stop', 'legacy-muse', 'legacy-stop', 'Operator stopped this session.')
+        self.call('turn', 'legacy-muse', 'completed-legacy-turn', self.fixture,
+                  'legacy-muse', 'low', assignment['workspace'], self.task, log, native)
+        self.assertEqual(self.call('session', 'legacy-muse')['endpoint'], '')
+
+    def test_pretty_reads_preserve_complete_machine_fields_and_long_report(self):
+        self.root()
+        self.recruit('leaf', 'muse')
+        body = 'A complete retained report λ.\n' * 100
+        self.call('report', 'review-report', 'leaf', body)
+        event = self.directory / 'pretty-event.json'
+        event.write_text(json.dumps({'type': 'result', 'session_id': 'native-pretty',
+                                     'result': body, 'is_error': False}))
+        self.call('observe-file', 'review-report', 'leaf', event)
+        retained = next(row for row in self.call('inbox', 'root') if row['id'] == 'review-report')
+        self.assertEqual((retained['sender'], retained['recipient'], retained['kind'], retained['body']),
+                         ('leaf', 'root', 'report', body))
+        self.assertEqual(self.call('session', 'root')['endpointArgv'], ['/usr/bin/true'])
+        for args in (('status',), ('players',), ('orchestra',), ('pending',), ('player', 'leaf'),
+                     ('session', 'leaf'), ('inbox', 'root'), ('delivery', 'review-report'), ('turns', 'leaf')):
+            with self.subTest(args=args):
+                ordinary = self.call(*args, raw=True)
+                readable = self.call(*args, '--pretty', raw=True)
+                self.assertEqual(json.loads(readable['stdout']), json.loads(ordinary['stdout']))
+                self.assertIn('\n', readable['stdout'].strip())
+        saved = self.call('delivery', 'review-report', '--pretty')
+        self.assertEqual(saved['body'], body)
+        self.assertIsNone(saved['receipt'])
+        missing = self.call('player', 'missing-player', '--pretty', ok=False)
+        self.assertEqual(missing['code'], 1)
+        self.assertEqual(missing['stdout'], '')
+        self.assertEqual(missing['stderr'].strip(),
+                         'No matching session or message; inspect status and the requested ID.')
+        self.assertEqual(self.rows("SELECT * FROM sessions WHERE id='missing-player'"), [])
+
+    def test_readers_present_the_registered_endpoint_argv_and_keep_the_stored_text(self):
+        self.root()
+        self.recruit('leaf', 'muse')
+        endpoint = json.dumps(['/usr/bin/true', 'leaf', ''])
+        connected = self.call('connect', 'leaf', 'native-leaf', endpoint)
+        self.assertEqual(connected['endpoint'], endpoint)
+        self.assertEqual(connected['endpointArgv'], ['/usr/bin/true', 'leaf', ''])
+        self.call('message', 'leaf-guide', 'root', 'leaf', 'guidance', 'Continue.')
+        session = self.call('session', 'leaf')
+        self.assertEqual(session['endpoint'], endpoint)
+        self.assertEqual(session['endpointArgv'], ['/usr/bin/true', 'leaf', ''])
+        self.assertEqual(self.call('player', 'leaf')['endpointArgv'], ['/usr/bin/true', 'leaf', ''])
+        self.assertEqual(self.call('session', 'root')['endpointArgv'], ['/usr/bin/true'])
+        rows = {row['id']: row for row in self.call('status')}
+        self.assertEqual(rows['leaf']['endpointArgv'], ['/usr/bin/true', 'leaf', ''])
+        self.assertEqual(rows['root']['endpointArgv'], ['/usr/bin/true'])
+        self.assertEqual(self.call('delivery', 'leaf-guide')['endpointArgv'], ['/usr/bin/true', 'leaf', ''])
+        pending = {row['id']: row for row in self.call('pending')}
+        self.assertEqual(pending['leaf-guide']['endpointArgv'], ['/usr/bin/true', 'leaf', ''])
+
+    def test_pretty_knowledge_preserves_shared_finding_for_registered_readers(self):
+        self.root()
+        self.recruit('researcher', 'muse')
+        self.recruit('sibling', 'muse')
+        body = 'Retained evidence λ.\nFull details with "quotes".\n'
+        self.call('report', 'finding-evidence', 'researcher', body)
+        self.call('record', 'finding', 'researcher', 'Observed claim λ.',
+                  'message:finding-evidence', 'One controlled fixture.')
+        for reader in ('researcher', 'root', 'sibling', 'missing-reader'):
+            with self.subTest(reader=reader):
+                ordinary = self.call('knowledge', reader, raw=True)
+                before = self.rows('SELECT * FROM knowledge'), self.rows('SELECT * FROM knowledge_promotions'), self.rows('SELECT * FROM messages')
+                readable = self.call('knowledge', reader, '--pretty', raw=True)
+                value = json.loads(readable['stdout'])
+                self.assertEqual(value, json.loads(ordinary['stdout']))
+                self.assertEqual(before, (self.rows('SELECT * FROM knowledge'), self.rows('SELECT * FROM knowledge_promotions'), self.rows('SELECT * FROM messages')))
+                if reader != 'missing-reader':
+                    self.assertEqual(value[0]['author'], 'researcher')
+                    self.assertEqual(value[0]['evidenceMessage']['body'], body)
+                    self.assertEqual(value[0]['limits'], 'One controlled fixture.')
+                    self.assertIn('\n', readable['stdout'].strip())
+                else:
+                    self.assertEqual(value, [])
+
+    def test_pretty_worktree_reads_fresh_status_and_preserves_fields(self):
+        self.root()
+        assignment = self.recruit('leaf-λ', 'muse')
+        for dirty in (False, True):
+            with self.subTest(dirty=dirty):
+                if dirty:
+                    (pathlib.Path(assignment['workspace']) / 'untracked λ.txt').write_text('retained work\n')
+                ordinary = self.call('worktree', 'leaf-λ', raw=True)
+                readable = self.call('worktree', 'leaf-λ', '--pretty', raw=True)
+                value = json.loads(readable['stdout'])
+                self.assertEqual(value, json.loads(ordinary['stdout']))
+                self.assertEqual(value, {'id': 'leaf-λ', 'workspace': assignment['workspace'],
+                                         'branch': 'leaf-λ-branch', 'commit': self.base, 'dirty': dirty})
+                self.assertIn('\n', readable['stdout'].strip())
+
+    def test_pretty_worktree_preserves_missing_session_refusal(self):
+        self.root()
+        ordinary = self.call('worktree', 'missing-player', ok=False)
+        readable = self.call('worktree', 'missing-player', '--pretty', ok=False)
+        self.assertEqual(readable['code'], 2)
+        self.assertEqual(readable['stdout'], ordinary['stdout'])
+        self.assertEqual(readable['stderr'], ordinary['stderr'])
+        self.assertEqual(readable['stderr'].strip(), 'The player has no recorded workspace.')
+        self.assertEqual(self.rows("SELECT * FROM sessions WHERE id='missing-player'"), [])
+
+
+if __name__ == '__main__':
+    unittest.main()

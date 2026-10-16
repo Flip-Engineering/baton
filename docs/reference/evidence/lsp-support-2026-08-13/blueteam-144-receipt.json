@@ -1,0 +1,37 @@
+{
+  "attempt": "2026-08-13T05:16:04.947Z",
+  "salt": "v320260813051604",
+  "role": "blueteam-144",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-be71f41e0f9a6163ff52bf50b6e65bbf"
+        ]
+      }
+    },
+    {
+      "step": "terminal:blueteam-144",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "blueteam-144": {
+      "pin": "06dc1d3b5886a6bcc1f324ceb6b26ba4527f9d50",
+      "paths": [
+        "docs/reference/evidence/lsp-support-2026-08-13/suite-blueteam.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 456,
+  "verdict": "BLUE-144-OK"
+}

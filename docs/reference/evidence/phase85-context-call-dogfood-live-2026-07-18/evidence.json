@@ -1,0 +1,240 @@
+{
+  "record": {
+    "schemaVersion": 1,
+    "deploymentRoot": "/var/folders/p5/v13h2kf1227ffch19r_83kkr0000gn/T/baton-phase85-context-call-aFZ2Fu",
+    "runId": "run-4cdb56de86dfb3b640ca56289ae7f89f",
+    "outcome": "selection_required",
+    "readiness": [
+      {
+        "harness": "codex",
+        "model": "gpt-5.6-sol",
+        "effort": "high",
+        "state": "ready",
+        "code": null
+      },
+      {
+        "harness": "codex",
+        "model": "gpt-5.6-sol",
+        "effort": "xhigh",
+        "state": "ready",
+        "code": null
+      }
+    ],
+    "selectedTeam": [
+      {
+        "role": "context-call-builder",
+        "exact": {
+          "harness": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": "high"
+        }
+      },
+      {
+        "role": "context-call-adversary",
+        "exact": {
+          "harness": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": "xhigh"
+        }
+      }
+    ],
+    "phase": "selection_required",
+    "candidates": [
+      {
+        "role": "context-call-adversary",
+        "route": {
+          "harness": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": "xhigh"
+        },
+        "candidateId": "candidate:f94f98ffce198b66f2ad3894747f4ef691c340f5e482896b40ee948914d2dfdb",
+        "resultSha": "d437b3e9bfb846875949358b028f39212f6db46a",
+        "retainedResultRef": "refs/baton/results/d437b3e9bfb846875949358b028f39212f6db46a",
+        "changedPaths": [
+          "impl/src/context-call.mjs",
+          "impl/src/index.mjs"
+        ],
+        "patch": {
+          "name": "candidate-context-call-adversary.patch",
+          "digest": "0e868058cf78d79f2ce95bacf29531ac48ca3fe64f838f10977b21be5f1bc938",
+          "bytes": 19314
+        }
+      },
+      {
+        "role": "context-call-builder",
+        "route": {
+          "harness": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": "high"
+        },
+        "candidateId": "candidate:26fc3bcc632f9e073bea4e3f610c7a7ca756794ed6a16d39660a18fa327ff386",
+        "resultSha": "47f892cebcdf24599cb9289e230b1240ba814a71",
+        "retainedResultRef": "refs/baton/results/47f892cebcdf24599cb9289e230b1240ba814a71",
+        "changedPaths": [
+          "impl/src/context-call.mjs",
+          "impl/src/index.mjs"
+        ],
+        "patch": {
+          "name": "candidate-context-call-builder.patch",
+          "digest": "884e89e16573c417bce0845caa3cbbd628777979de00620cd32a0f302bb2bb8a",
+          "bytes": 19080
+        }
+      }
+    ],
+    "attempts": [
+      {
+        "role": "context-call-adversary",
+        "state": "accepted",
+        "route": {
+          "requested": {
+            "harness": "codex",
+            "model": "gpt-5.6-sol",
+            "effort": "xhigh"
+          },
+          "resolved": {
+            "harness": "codex@codex-cli 0.144.6",
+            "model": "gpt-5.6-sol",
+            "effort": "xhigh"
+          },
+          "observed": {
+            "harness": null,
+            "model": "gpt-5.6-sol",
+            "effort": null
+          },
+          "launchEnforcement": {
+            "harness": {
+              "requested": "codex",
+              "resolved": "codex@codex-cli 0.144.6",
+              "state": "matched"
+            },
+            "model": {
+              "requested": "gpt-5.6-sol",
+              "resolved": "gpt-5.6-sol",
+              "state": "matched"
+            },
+            "effort": {
+              "requested": "xhigh",
+              "resolved": "xhigh",
+              "state": "matched"
+            }
+          },
+          "providerAttestation": {
+            "harness": {
+              "observed": null,
+              "state": "unavailable"
+            },
+            "model": {
+              "observed": "gpt-5.6-sol",
+              "state": "matched"
+            },
+            "effort": {
+              "observed": null,
+              "state": "unavailable"
+            }
+          }
+        },
+        "taskId": "baton-25752521995041cc245c5498-attempt-context-call-adversary",
+        "candidateId": "candidate:f94f98ffce198b66f2ad3894747f4ef691c340f5e482896b40ee948914d2dfdb"
+      },
+      {
+        "role": "context-call-builder",
+        "state": "accepted",
+        "route": {
+          "requested": {
+            "harness": "codex",
+            "model": "gpt-5.6-sol",
+            "effort": "high"
+          },
+          "resolved": {
+            "harness": "codex@codex-cli 0.144.6",
+            "model": "gpt-5.6-sol",
+            "effort": "high"
+          },
+          "observed": {
+            "harness": null,
+            "model": "gpt-5.6-sol",
+            "effort": null
+          },
+          "launchEnforcement": {
+            "harness": {
+              "requested": "codex",
+              "resolved": "codex@codex-cli 0.144.6",
+              "state": "matched"
+            },
+            "model": {
+              "requested": "gpt-5.6-sol",
+              "resolved": "gpt-5.6-sol",
+              "state": "matched"
+            },
+            "effort": {
+              "requested": "high",
+              "resolved": "high",
+              "state": "matched"
+            }
+          },
+          "providerAttestation": {
+            "harness": {
+              "observed": null,
+              "state": "unavailable"
+            },
+            "model": {
+              "observed": "gpt-5.6-sol",
+              "state": "matched"
+            },
+            "effort": {
+              "observed": null,
+              "state": "unavailable"
+            }
+          }
+        },
+        "taskId": "baton-5631bca616f06e1322ff911f-attempt-context-call-builder",
+        "candidateId": "candidate:26fc3bcc632f9e073bea4e3f610c7a7ca756794ed6a16d39660a18fa327ff386"
+      }
+    ]
+  },
+  "cleanup": {
+    "stopped": {
+      "state": "stopped",
+      "receipt": {
+        "schemaVersion": 1,
+        "state": "stopped",
+        "scope": "run_subtree",
+        "repoId": "repo-76d484205f22eed0163d8f21b8287740",
+        "runId": "run-4cdb56de86dfb3b640ca56289ae7f89f",
+        "targetCount": 2,
+        "remainingCount": 0,
+        "targetDigest": "99ce998308377c78884dcd513757adb2fd12b34423cc75cff1ba4e0a2fc21af3",
+        "counts": {
+          "pendingCancelled": 0,
+          "killConfirmed": 2,
+          "alreadyTerminal": 0,
+          "processesObserved": 2,
+          "processesClosed": 2
+        },
+        "checks": {
+          "dispatchClosed": true,
+          "interactionsResolved": true,
+          "runAuthorityReleased": true
+        },
+        "effects": {
+          "coordinatorClosed": false,
+          "writerReleased": false,
+          "transportsClosed": false
+        },
+        "receiptDigest": "36eac8a4e42500a438020de45e8db9e3371b9e04fd638ceb884c3af798952b2b"
+      },
+      "ownership": {
+        "workers": 0,
+        "workerIds": [],
+        "closed": false
+      }
+    },
+    "closed": {
+      "workers": 0,
+      "workerIds": [],
+      "closed": true
+    },
+    "callerStatusUnchanged": false,
+    "callerIndexUnchanged": true
+  }
+}

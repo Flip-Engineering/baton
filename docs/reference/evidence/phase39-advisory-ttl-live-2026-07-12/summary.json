@@ -1,0 +1,26 @@
+{
+  "at": "2026-07-12T21:03:11.849Z",
+  "package": {
+    "ecosystem": "npm",
+    "system": "NPM",
+    "package": "@ast-grep/napi",
+    "version": "0.44.1"
+  },
+  "decisionId": "reuse-decision:a80d869c4d247d34408f4afc294303e20235672efb9741b104390f0018513c8a",
+  "refreshResult": "checked",
+  "ttlResult": "invalidated",
+  "fetchCalls": 6,
+  "checks": {
+    "officialExternalEvidence": true,
+    "actualLockfile": true,
+    "immutableDecision": true,
+    "forcedRefreshChecked": true,
+    "greenNeverCreatesGuard": true,
+    "expirySafeBeforeWrite": true,
+    "durableTtlInvalidation": true,
+    "replayExact": true,
+    "noAuthority": true,
+    "cleanTree": true
+  },
+  "pass": true
+}

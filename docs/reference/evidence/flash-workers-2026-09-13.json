@@ -1,0 +1,491 @@
+{
+  "date": "2026-09-13",
+  "harness": "omp",
+  "nativeVersion": "17.4.0",
+  "startingHead": "38385116558a8e6c110a3b04fbb1fb8a2f95918d",
+  "routes": [
+    {
+      "provider": "zai",
+      "id": "glm-5.3-flash",
+      "selector": "zai/glm-5.3-flash",
+      "name": "GLM-5.3-Flash",
+      "contextWindow": 1000000,
+      "maxTokens": 131072,
+      "reasoning": true,
+      "thinking": [
+        "low",
+        "high",
+        "max"
+      ],
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0
+      }
+    },
+    {
+      "provider": "deepseek",
+      "id": "deepseek-flash",
+      "selector": "deepseek/deepseek-flash",
+      "name": "DeepSeek V4.1 Flash",
+      "contextWindow": 1000000,
+      "maxTokens": 384000,
+      "reasoning": true,
+      "thinking": [
+        "low",
+        "high",
+        "max"
+      ],
+      "input": [
+        "text",
+        "image"
+      ],
+      "cost": {
+        "input": 0.3,
+        "output": 1.2,
+        "cacheRead": 0.006,
+        "cacheWrite": 0
+      }
+    }
+  ],
+  "nativeProbes": [
+    {
+      "route": "zai/glm-5.3-flash",
+      "sourceSha256": "6b2a570a81c3f737520ef0bac3bdaa2b55d173c6242689e44fa8254ecd1ad8cd",
+      "assistantMessages": [
+        {
+          "provider": "zai",
+          "model": "glm-5.3-flash",
+          "stopReason": "stop",
+          "usage": {
+            "input": 23614,
+            "output": 34,
+            "cacheRead": 0,
+            "cacheWrite": 0,
+            "totalTokens": 23648,
+            "reasoningTokens": 28,
+            "cost": {
+              "input": 0,
+              "output": 0,
+              "cacheRead": 0,
+              "cacheWrite": 0,
+              "total": 0
+            }
+          }
+        }
+      ]
+    },
+    {
+      "route": "deepseek/deepseek-flash",
+      "sourceSha256": "db5bc17f0cd48ee9642ebd71769dfff4a018835f5ae1728f47abe4ef1ceccf0f",
+      "assistantMessages": [
+        {
+          "provider": "deepseek",
+          "model": "deepseek-flash",
+          "stopReason": "stop",
+          "usage": {
+            "input": 22561,
+            "output": 9,
+            "cacheRead": 2560,
+            "cacheWrite": 0,
+            "totalTokens": 25130,
+            "cost": {
+              "input": 0.0067683,
+              "output": 1.08e-05,
+              "cacheRead": 1.536e-05,
+              "cacheWrite": 0,
+              "total": 0.0067944599999999996
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "runs": [
+    {
+      "lane": "projection",
+      "runId": "run-27f8e8895559d1408d5a5f098a00dd13",
+      "route": {
+        "harness": "claude-code",
+        "provider": "claude",
+        "model": "claude-sonnet-4-6",
+        "effort": "high"
+      },
+      "scope": [
+        "impl/src/application-deployment.mjs",
+        "impl/test/omp-model-projection.test.mjs"
+      ],
+      "result": {
+        "state": "accepted",
+        "nodeKey": "work",
+        "sha": "4565d2e74851234736f8390e1133f7b0a44c2c40",
+        "commitArtifact": {
+          "id": "artifact:2d2dc2dbfd262871eb63f99637a29e52c2f189ad2ed9134228edc0e67ce72611",
+          "digest": "2d2dc2dbfd262871eb63f99637a29e52c2f189ad2ed9134228edc0e67ce72611"
+        },
+        "verificationArtifact": {
+          "id": "artifact:437e485d4dc2f79f23dadf07c27a329f7758023120efafd2da1b998726a0882c",
+          "digest": "437e485d4dc2f79f23dadf07c27a329f7758023120efafd2da1b998726a0882c"
+        },
+        "stability": null,
+        "preservation": {
+          "state": "pinned"
+        },
+        "adoption": null
+      },
+      "integratedCommit": "63b8fa66af9bd862e57d27ec455af9bb290115fa",
+      "logSha256": "5a72a7a5182635f889b9eba5194de71a3351ec4b811158ece3420dbe34bd42fe",
+      "processStarted": [
+        {
+          "at": "2026-09-13T16:22:53.082Z",
+          "schemaVersion": 1,
+          "generation": 1,
+          "pid": 51373,
+          "processGroupId": 51373,
+          "phase": "initializing"
+        }
+      ],
+      "processClosed": [
+        {
+          "at": "2026-09-13T16:39:17.134Z",
+          "schemaVersion": 1,
+          "generation": 1,
+          "pid": 51373,
+          "processGroupId": 51373,
+          "code": 143,
+          "signal": null,
+          "ready": true
+        }
+      ],
+      "pidsStillPresent": [],
+      "toolEvents": 62,
+      "observedModels": [
+        "claude-sonnet-4-6"
+      ],
+      "nativeUsage": {
+        "tokens": 55889,
+        "usdEstimate": 0.9544531
+      },
+      "terminalSeals": [
+        null,
+        null,
+        null
+      ],
+      "killConfirmed": true
+    },
+    {
+      "lane": "glm",
+      "runId": "run-a67bdd097e3117a3cb0e7098c8700285",
+      "route": {
+        "harness": "omp",
+        "model": "zai/glm-5.3-flash",
+        "effort": "high"
+      },
+      "scope": [
+        "docs/reference/42-flash-native-workers.md"
+      ],
+      "result": {
+        "state": "accepted",
+        "nodeKey": "work",
+        "sha": "b7254e979eb403080424912fadee0cc3724e45a7",
+        "commitArtifact": {
+          "id": "artifact:cd0c9887a93f0e66a542d09a846762dc723a88849fc709356d87c4eae2354dd7",
+          "digest": "cd0c9887a93f0e66a542d09a846762dc723a88849fc709356d87c4eae2354dd7"
+        },
+        "verificationArtifact": {
+          "id": "artifact:4dffa18e90bd40e013b6a5b4a7a8ee3ba394d0507b2421a54421e5cc02ef3478",
+          "digest": "4dffa18e90bd40e013b6a5b4a7a8ee3ba394d0507b2421a54421e5cc02ef3478"
+        },
+        "stability": null,
+        "preservation": {
+          "state": "pinned"
+        },
+        "adoption": null
+      },
+      "integratedCommit": "47216350bb1fb33bd6c316763aea8abe107e67ce",
+      "logSha256": "20b663a2746a72fc6df680e21b11225c36a00a7f7e85aa6a97ab786ff6b14e32",
+      "processStarted": [
+        {
+          "at": "2026-09-13T16:29:48.997Z",
+          "schemaVersion": 1,
+          "generation": 1,
+          "pid": 70228,
+          "processGroupId": 70228,
+          "phase": "initializing"
+        }
+      ],
+      "processClosed": [
+        {
+          "at": "2026-09-13T16:38:46.919Z",
+          "schemaVersion": 1,
+          "generation": 1,
+          "pid": 70228,
+          "processGroupId": 70228,
+          "code": 0,
+          "signal": null,
+          "ready": true
+        }
+      ],
+      "pidsStillPresent": [],
+      "toolEvents": 80,
+      "observedModels": [
+        "zai/glm-5.3-flash"
+      ],
+      "nativeUsage": {
+        "tokens": 1319815,
+        "usdEstimate": 0
+      },
+      "terminalSeals": [
+        {
+          "tokens": "reported",
+          "usd": "reported",
+          "counterId": "omp:w-1:1:1",
+          "tokenMetric": "message_end.totalTokens"
+        }
+      ],
+      "killConfirmed": true
+    },
+    {
+      "lane": "deepseek",
+      "runId": "run-73dd7cd96240b36447436a8399fbc5e6",
+      "route": {
+        "harness": "omp",
+        "model": "deepseek/deepseek-flash",
+        "effort": "high"
+      },
+      "scope": [
+        "impl/src/worktree-capacity.mjs",
+        "impl/test/worktree-capacity-initialization.test.mjs"
+      ],
+      "result": {
+        "state": "accepted",
+        "nodeKey": "work",
+        "sha": "9270cdc4cd15908757ef6db5d03d58b57f8578ac",
+        "commitArtifact": {
+          "id": "artifact:d211cf603ceb3463fca36a810bfa3875e7da61727e8db4eceb62e806359a316f",
+          "digest": "d211cf603ceb3463fca36a810bfa3875e7da61727e8db4eceb62e806359a316f"
+        },
+        "verificationArtifact": {
+          "id": "artifact:804d0e5b859f2610037deeb486732eeebbe13a3074062fd5eb5599a81fc44b3f",
+          "digest": "804d0e5b859f2610037deeb486732eeebbe13a3074062fd5eb5599a81fc44b3f"
+        },
+        "stability": null,
+        "preservation": {
+          "state": "pinned"
+        },
+        "adoption": null
+      },
+      "integratedCommit": "9e8a9ec93c3e70e89a23f09dcfc01c529e78ee94",
+      "logSha256": "9573309d0d03f75f03b350fc9b76348e16e6ebc9b4862e3adce6905cdc1f0cd1",
+      "processStarted": [
+        {
+          "at": "2026-09-13T16:30:11.736Z",
+          "schemaVersion": 1,
+          "generation": 1,
+          "pid": 71351,
+          "processGroupId": 71351,
+          "phase": "initializing"
+        }
+      ],
+      "processClosed": [
+        {
+          "at": "2026-09-13T16:33:24.577Z",
+          "schemaVersion": 1,
+          "generation": 1,
+          "pid": 71351,
+          "processGroupId": 71351,
+          "code": 0,
+          "signal": null,
+          "ready": true
+        }
+      ],
+      "pidsStillPresent": [],
+      "toolEvents": 48,
+      "observedModels": [
+        "deepseek/deepseek-flash"
+      ],
+      "nativeUsage": {
+        "tokens": 860151,
+        "usdEstimate": 0.04157783
+      },
+      "terminalSeals": [
+        {
+          "tokens": "reported",
+          "usd": "reported",
+          "counterId": "omp:w-1:1:1",
+          "tokenMetric": "message_end.totalTokens"
+        }
+      ],
+      "killConfirmed": true
+    },
+    {
+      "lane": "link_review",
+      "runId": "run-8acdda9d001f521725b457d12d6c33bd",
+      "route": {
+        "harness": "omp",
+        "model": "deepseek/deepseek-flash",
+        "effort": "high"
+      },
+      "scope": [
+        "docs/reference/43-toolchain-link-review.md"
+      ],
+      "result": {
+        "state": "accepted",
+        "nodeKey": "work",
+        "sha": "0c6d3169d849fbe19a1f7f00e0b2e415bcd0ed4c",
+        "commitArtifact": {
+          "id": "artifact:c21d4fb6dfa4f9af4b5771d799aa59916fcdd94c2bffbcaf83c40e5e96e0ff4d",
+          "digest": "c21d4fb6dfa4f9af4b5771d799aa59916fcdd94c2bffbcaf83c40e5e96e0ff4d"
+        },
+        "verificationArtifact": {
+          "id": "artifact:f6d62cbd9d3f0f074ca184770f74a261c84a7e4fc4d1e49df374ea60f1ef1ae7",
+          "digest": "f6d62cbd9d3f0f074ca184770f74a261c84a7e4fc4d1e49df374ea60f1ef1ae7"
+        },
+        "stability": null,
+        "preservation": {
+          "state": "pinned"
+        },
+        "adoption": null
+      },
+      "integratedCommit": "756a7ead27694742c075b7dc9cbb1c780a79a856",
+      "logSha256": "6d6418f90e4784cf80fb6b2e9d4a5d9177542f5988518abe08572254f2a65c60",
+      "processStarted": [
+        {
+          "at": "2026-09-13T16:34:45.659Z",
+          "schemaVersion": 1,
+          "generation": 1,
+          "pid": 99071,
+          "processGroupId": 99071,
+          "phase": "initializing"
+        }
+      ],
+      "processClosed": [
+        {
+          "at": "2026-09-13T16:38:53.143Z",
+          "schemaVersion": 1,
+          "generation": 1,
+          "pid": 99071,
+          "processGroupId": 99071,
+          "code": 143,
+          "signal": null,
+          "ready": true
+        }
+      ],
+      "pidsStillPresent": [],
+      "toolEvents": 82,
+      "observedModels": [
+        "deepseek/deepseek-flash"
+      ],
+      "nativeUsage": {
+        "tokens": 1772312,
+        "usdEstimate": 0.07524397399999999
+      },
+      "terminalSeals": [
+        {
+          "tokens": "reported",
+          "usd": "reported",
+          "counterId": "omp:w-1:1:1",
+          "tokenMetric": "message_end.totalTokens"
+        }
+      ],
+      "killConfirmed": true
+    }
+  ],
+  "startupFindings": [
+    "Initial model-worker startup refused npm executable symlinks; temporary native-run source used npm ci --no-bin-links while confined file-link support was implemented. Normal npm-installed .bin/yaml is covered by the final root deployment doctor and link materialization regressions.",
+    "Simultaneous native deployment initialization initially raced on .baton/capacity. DeepSeek repaired it; deterministic four-process tests validate one common integrity key.",
+    "Removed an obsolete dangling node_modules/baton link from an earlier owned self-development fixture after proving absent target, no handles and no tracked files."
+  ],
+  "limits": [
+    "Model observations are native-harness identity metadata, not independent model-weight attestation.",
+    "Reasoning effort is requested; native applied-effort observation is unavailable.",
+    "Native monetary usage is catalog-based estimation, not provider billing or subscription-quota accounting.",
+    "Provider/tool capabilities depend on actual isolated native environment.",
+    "No claim that the broader repository suite or CI is green."
+  ],
+  "finalDoctor": {
+    "ready": true,
+    "routes": [
+      {
+        "harness": "omp",
+        "model": "zai/glm-5.3-flash",
+        "effort": "high",
+        "state": "ready"
+      },
+      {
+        "harness": "omp",
+        "model": "deepseek/deepseek-flash",
+        "effort": "high",
+        "state": "ready"
+      }
+    ]
+  },
+  "validation": [
+    {
+      "check": "focused",
+      "logSha256": "ff6c0de4676dde351ed1517e5c8000ade451e4c10e0c279aa13a4123ec728c2f",
+      "tests": 211,
+      "pass": 211,
+      "fail": 0,
+      "cancelled": 0,
+      "status": "passed"
+    },
+    {
+      "check": "production",
+      "logSha256": "8f1c1458e376750ac76a574f47c43fe75e356866bb769129130d8d16793fb9c7",
+      "tests": 24,
+      "pass": 24,
+      "fail": 0,
+      "cancelled": 0,
+      "status": "passed"
+    },
+    {
+      "check": "package",
+      "logSha256": "3744389ec72485a12a1161ad35b10e67b4f6038b7b927868da66a3259bf76496",
+      "status": "passed"
+    },
+    {
+      "check": "surfaces",
+      "logSha256": "135ce6527c7faec65c566a814a74aaebf21ec6aa224745716aa9370deda1fd7f",
+      "status": "passed"
+    }
+  ],
+  "beforeAfterDeploymentFailures": {
+    "unchangedBase": "38385116",
+    "sameFailuresReproduced": 7,
+    "tests": [
+      "DF8 Claude/Kimi credentials",
+      "DF10 default Claude inventory",
+      "P92-DF10b Kimi adapter import",
+      "DP5 observed route metadata",
+      "DC1 parallel capacity admission credentials",
+      "DC2 close capacity owner credentials",
+      "DC4 dependency projection credentials"
+    ],
+    "beforeLogs": [
+      {
+        "sha256": "445e43d772c21825d4e117766bbea111791ae3083b25eed3b39c1c202050075e"
+      },
+      {
+        "sha256": "af0223aedb8dfe91673bad52075a3797b10338d79482630d281fb71f0f0645b3"
+      }
+    ]
+  },
+  "workerReportedAdditionalFailures": {
+    "worker": "deepseek",
+    "file": "impl/test/prescriptive-doctor-red.test.mjs",
+    "count": 13,
+    "classification": "Worker reported pre-existing stageGuard warning-surface failures; not included in parent focused pass count."
+  },
+  "sources": [
+    "https://docs.z.ai/guides/vlm/glm-5.3-flash",
+    "https://huggingface.co/zai-org/GLM-5.3-Flash",
+    "https://api-docs.deepseek.com/quick_start/pricing/",
+    "https://api-docs.deepseek.com/guides/thinking_mode/"
+  ]
+}

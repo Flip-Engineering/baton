@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "idempotencyKey": "dsh-comparison-2026-08-13-wave-a",
+  "members": [
+    {
+      "role": "coordinator",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-pro[1m]", "effort": "high" },
+      "scope": ["docs/reference/evidence/dsh-comparison-2026-08-13/**"],
+      "objectiveRef": "docs/reference/evidence/dsh-comparison-2026-08-13/coordinator-brief.md",
+      "report": "docs/reference/evidence/dsh-comparison-2026-08-13/dsh-qa.md"
+    },
+    {
+      "role": "row-dsh-arch",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": ["docs/reference/evidence/dsh-comparison-2026-08-13/**"],
+      "objectiveRef": "docs/reference/evidence/dsh-comparison-2026-08-13/row-dsh-arch.md",
+      "report": "docs/reference/evidence/dsh-comparison-2026-08-13/dsh-arch.md"
+    },
+    {
+      "role": "row-dsh-lifecycle",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": ["docs/reference/evidence/dsh-comparison-2026-08-13/**"],
+      "objectiveRef": "docs/reference/evidence/dsh-comparison-2026-08-13/row-dsh-lifecycle.md",
+      "report": "docs/reference/evidence/dsh-comparison-2026-08-13/dsh-lifecycle.md"
+    },
+    {
+      "role": "row-dsh-seams",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": ["docs/reference/evidence/dsh-comparison-2026-08-13/**"],
+      "objectiveRef": "docs/reference/evidence/dsh-comparison-2026-08-13/row-dsh-seams.md",
+      "report": "docs/reference/evidence/dsh-comparison-2026-08-13/dsh-seams.md"
+    },
+    {
+      "role": "row-dsh-redteam",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": ["docs/reference/evidence/dsh-comparison-2026-08-13/**"],
+      "objectiveRef": "docs/reference/evidence/dsh-comparison-2026-08-13/row-dsh-redteam.md",
+      "report": "docs/reference/evidence/dsh-comparison-2026-08-13/dsh-redteam.md"
+    }
+  ],
+  "steering": {
+    "approveOnAdvertisedPlan": true,
+    "nudgeOnCheckpoint": { "message": "Continue the comparison — cite both sides, verdict per candidate, the vetoes + the single-agent trap are law. Write your report incrementally; publish to shared when complete (or record the refusal)." },
+    "claimOnStall": true,
+    "messageOnSpawn": { "kind": "brief", "body": "Read your objectiveRef brief IN FULL first, then foundry-brief.md + dsh-digest/README.md in the same directory. Your [attempt:] line goes verbatim in your report's first five lines. Authority-class ambiguity → DECISION_REQUEST with options; judgment calls are yours — record them." },
+    "elevateWhenNotes": { "kinds": ["doubt", "plan"], "maxEntries": 20 },
+    "signalOnMembersDone": { "roles": ["row-dsh-arch", "row-dsh-lifecycle", "row-dsh-seams", "row-dsh-redteam"], "message": { "kind": "result", "body": "All four rows settled (you are the remaining member — pinned #175 semantics). Verify on disk per the #174 law, then merge + apply the rubric and write dsh-qa.md per your brief." } }
+  },
+  "harvest": {
+    "paths": [
+      { "path": "docs/reference/evidence/dsh-comparison-2026-08-13/dsh-qa.md", "mustContain": "DSH-QA v1" },
+      { "path": "docs/reference/evidence/dsh-comparison-2026-08-13/dsh-arch.md", "mustContain": "dsh-arch" },
+      { "path": "docs/reference/evidence/dsh-comparison-2026-08-13/dsh-lifecycle.md", "mustContain": "dsh-lifecycle" },
+      { "path": "docs/reference/evidence/dsh-comparison-2026-08-13/dsh-seams.md", "mustContain": "dsh-seams" },
+      { "path": "docs/reference/evidence/dsh-comparison-2026-08-13/dsh-redteam.md", "mustContain": "dsh-redteam" }
+    ]
+  }
+}

@@ -1,0 +1,1561 @@
+{
+  "base": "daf9add600783d37ad51e0fe4f2de817ad5d303a",
+  "runs": [
+    {
+      "lane": "catalog",
+      "runId": "run-de50163578d109f2c626b2ddf8b32e29",
+      "route": {
+        "harness": "codex",
+        "model": "gpt-5.6-sol",
+        "effort": "high"
+      },
+      "scope": [
+        "impl/src/surface-capability-catalog.mjs",
+        "impl/src/surface-capability-resolution.mjs",
+        "impl/scripts/unified-capability-audit.mjs",
+        "impl/test/surface-capability-catalog.test.mjs"
+      ],
+      "preservedCommit": "9ab526661869e1b3f028e7e1380a58e8c6db434a",
+      "routeObservation": {
+        "requested": {
+          "harness": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": "high"
+        },
+        "resolved": {
+          "harness": "codex@codex-cli 0.154.0",
+          "model": "gpt-5.6-sol",
+          "effort": "high"
+        },
+        "observed": {
+          "harness": null,
+          "model": "gpt-5.6-sol",
+          "effort": null
+        },
+        "launchEnforcement": {
+          "harness": {
+            "requested": "codex",
+            "resolved": "codex@codex-cli 0.154.0",
+            "state": "matched"
+          },
+          "model": {
+            "requested": "gpt-5.6-sol",
+            "resolved": "gpt-5.6-sol",
+            "state": "matched"
+          },
+          "effort": {
+            "requested": "high",
+            "resolved": "high",
+            "state": "matched"
+          }
+        },
+        "providerAttestation": {
+          "harness": {
+            "observed": null,
+            "state": "not_observed_before_stop"
+          },
+          "model": {
+            "observed": "gpt-5.6-sol",
+            "state": "matched"
+          },
+          "effort": {
+            "observed": null,
+            "state": "not_observed_before_stop"
+          }
+        },
+        "rationale": {
+          "launchEnforcement": "exact deployment-profile route",
+          "providerAttestation": "provider-native observation only"
+        }
+      },
+      "verification": [],
+      "closedResources": {
+        "state": "stopped",
+        "ownedCount": 0,
+        "cleanupState": "stopped",
+        "terminalCause": {
+          "kind": "provider_failure",
+          "code": "provider_crashed",
+          "category": "provider_runtime",
+          "summary": "The provider process or session ended unexpectedly; the specific cause is unclassified.",
+          "remediation": "Check Baton route readiness and the harness-native status, then retry. If it repeats, inspect the Run's bounded evidence.",
+          "retryable": true
+        }
+      },
+      "terminalCause": {
+        "kind": "provider_failure",
+        "code": "provider_crashed",
+        "category": "provider_runtime",
+        "summary": "The provider process or session ended unexpectedly; the specific cause is unclassified.",
+        "remediation": "Check Baton route readiness and the harness-native status, then retry. If it repeats, inspect the Run's bounded evidence.",
+        "retryable": true
+      }
+    },
+    {
+      "lane": "visualize",
+      "runId": "run-be0db000976e794b188173094d4f7433",
+      "route": {
+        "harness": "claude-code",
+        "provider": "claude",
+        "model": "claude-sonnet-4-6",
+        "effort": "high"
+      },
+      "scope": [
+        "impl/src/surface-cli.mjs",
+        "impl/src/production-cli-convergence.mjs",
+        "impl/scripts/baton.mjs",
+        "impl/test/surface-cli.test.mjs",
+        "impl/test/unified-cli-surface.test.mjs"
+      ],
+      "preservedCommit": "fd9ce3a686bdba768f2cf68a6886e5a19b23e72f",
+      "routeObservation": {
+        "requested": {
+          "harness": "claude-code",
+          "model": "claude-sonnet-4-6",
+          "effort": "high"
+        },
+        "resolved": {
+          "harness": "claude-code@2.1.269",
+          "model": "claude-sonnet-4-6",
+          "effort": "high"
+        },
+        "observed": {
+          "harness": null,
+          "model": "claude-sonnet-4-6",
+          "effort": null
+        },
+        "launchEnforcement": {
+          "harness": {
+            "requested": "claude-code",
+            "resolved": "claude-code@2.1.269",
+            "state": "matched"
+          },
+          "model": {
+            "requested": "claude-sonnet-4-6",
+            "resolved": "claude-sonnet-4-6",
+            "state": "matched"
+          },
+          "effort": {
+            "requested": "high",
+            "resolved": "high",
+            "state": "matched"
+          }
+        },
+        "providerAttestation": {
+          "harness": {
+            "observed": null,
+            "state": "not_observed_before_stop"
+          },
+          "model": {
+            "observed": "claude-sonnet-4-6",
+            "state": "matched"
+          },
+          "effort": {
+            "observed": null,
+            "state": "not_observed_before_stop"
+          }
+        },
+        "rationale": {
+          "launchEnforcement": "exact deployment-profile route",
+          "providerAttestation": "provider-native observation only"
+        }
+      },
+      "verification": [],
+      "closedResources": {
+        "state": "stopped",
+        "ownedCount": 0,
+        "cleanupState": "stopped",
+        "terminalCause": {
+          "kind": "budget_exceeded",
+          "code": "budget_hard_limit_exceeded",
+          "dimension": "usd",
+          "used": 1006.2358286999997,
+          "limit": 1000,
+          "ratio": 1.0062358286999997
+        }
+      },
+      "terminalCause": {
+        "kind": "budget_exceeded",
+        "code": "budget_hard_limit_exceeded",
+        "dimension": "usd",
+        "used": 1006.2358286999997,
+        "limit": 1000,
+        "ratio": 1.0062358286999997
+      }
+    },
+    {
+      "lane": "admission",
+      "runId": "run-ce9327edaa1037f52c0512f69f3a32a5",
+      "route": {
+        "harness": "omp",
+        "model": "deepseek/deepseek-v4-flash",
+        "effort": "high"
+      },
+      "scope": [
+        "impl/src/wave.mjs",
+        "impl/test/wave-admission-concurrency.test.mjs"
+      ],
+      "preservedCommit": "3f4e67f5bc7ab978baa7bce9a6515b1abc4f3d9d",
+      "routeObservation": {
+        "requested": {
+          "harness": "omp",
+          "model": "deepseek/deepseek-v4-flash",
+          "effort": "high"
+        },
+        "resolved": {
+          "harness": "omp@omp/17.4.0",
+          "model": "deepseek/deepseek-v4-flash",
+          "effort": "high"
+        },
+        "observed": null,
+        "launchEnforcement": {
+          "harness": {
+            "requested": "omp",
+            "resolved": "omp@omp/17.4.0",
+            "state": "matched"
+          },
+          "model": {
+            "requested": "deepseek/deepseek-v4-flash",
+            "resolved": "deepseek/deepseek-v4-flash",
+            "state": "matched"
+          },
+          "effort": {
+            "requested": "high",
+            "resolved": "high",
+            "state": "matched"
+          }
+        },
+        "providerAttestation": {
+          "harness": {
+            "observed": null,
+            "state": "not_observed_before_stop"
+          },
+          "model": {
+            "observed": null,
+            "state": "not_observed_before_stop"
+          },
+          "effort": {
+            "observed": null,
+            "state": "not_observed_before_stop"
+          }
+        },
+        "rationale": {
+          "launchEnforcement": "exact deployment-profile route",
+          "providerAttestation": "provider-native observation only"
+        }
+      },
+      "verification": [
+        {
+          "taskId": "baton-e9e0b9713e1eb78130bf414a-work",
+          "kind": "verification",
+          "refs": {
+            "worker": "w-1",
+            "workerSeq": 90
+          },
+          "mediaType": "application/vnd.baton.verdict+json",
+          "accepted": true,
+          "provenance": [
+            {
+              "worker": "w-1",
+              "workerSeq": 90,
+              "digest": "bd5b0469bc247182deecbfe97ed8c10d4a67205fb5911703b25c905a51f5ab01",
+              "kind": "verify.reverified",
+              "ts": "2026-09-13T05:11:45.958Z",
+              "coordinationSeq": 90
+            }
+          ],
+          "verdict": {
+            "schemaVersion": 1,
+            "reverified": true,
+            "observedExit": 0,
+            "outputExceeded": false,
+            "hadClaim": false,
+            "matchesClaim": true,
+            "passed": true,
+            "locus": "fresh_sandbox",
+            "redGreen": true,
+            "baseExit": 1,
+            "coverageOfChange": null,
+            "uncoveredChangedLineCount": 0,
+            "uncoveredChangedLinesDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "mutationStrength": null,
+            "mutationPassed": null,
+            "survivedMutantCount": 0,
+            "survivedMutantsDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "capturedOutputBytes": 380,
+            "capturedOutputDigest": "0090c609dc9c07b3ffd8d3b24cb7d1ff8076c59d6be8a3c32bab391bc0d0f7e0",
+            "diagnosticCode": "verification_passed",
+            "durationMs": 733,
+            "execution": {
+              "state": "completed",
+              "code": "verification_completed"
+            },
+            "baseExecution": {
+              "state": "completed",
+              "code": "verification_completed"
+            },
+            "runtimeDigest": "d5d4d41ac9fcead707eb133b90ab0e76c60c4f06aa3fac24f470d182436421ae",
+            "outcome": "passed",
+            "failureOwnership": null
+          },
+          "digest": "e06b9e5f11a5b2847bac97012f734973d30b13c587888f581e0e8968398d22ec",
+          "id": "artifact:e06b9e5f11a5b2847bac97012f734973d30b13c587888f581e0e8968398d22ec"
+        }
+      ],
+      "closedResources": {
+        "state": "stopped",
+        "ownedCount": 0,
+        "cleanupState": "stopped",
+        "terminalCause": {
+          "kind": "operator_stop",
+          "code": "operator_stop"
+        }
+      },
+      "terminalCause": {
+        "kind": "operator_stop",
+        "code": "operator_stop"
+      }
+    }
+  ],
+  "followupBase": "baeaa777f1570aa190745861a20001e682142e29",
+  "followupRuns": [
+    {
+      "lane": "accounting",
+      "runId": "run-59b196a062515c11ab9f2cc7be5e4cd6",
+      "route": {
+        "harness": "omp",
+        "model": "deepseek/deepseek-v4-flash",
+        "effort": "high"
+      },
+      "scope": [
+        "impl/src/claude-session.mjs",
+        "impl/test/claude-session.test.mjs",
+        "impl/test/claude-session-accounting.test.mjs"
+      ],
+      "preservedCommit": "d205ed4afd39e6f39bdc4b85563b408dc935af59",
+      "routeObservation": {
+        "requested": {
+          "harness": "omp",
+          "model": "deepseek/deepseek-v4-flash",
+          "effort": "high"
+        },
+        "resolved": {
+          "harness": "omp@omp/17.4.0",
+          "model": "deepseek/deepseek-v4-flash",
+          "effort": "high"
+        },
+        "observed": null,
+        "launchEnforcement": {
+          "harness": {
+            "requested": "omp",
+            "resolved": "omp@omp/17.4.0",
+            "state": "matched"
+          },
+          "model": {
+            "requested": "deepseek/deepseek-v4-flash",
+            "resolved": "deepseek/deepseek-v4-flash",
+            "state": "matched"
+          },
+          "effort": {
+            "requested": "high",
+            "resolved": "high",
+            "state": "matched"
+          }
+        },
+        "providerAttestation": {
+          "harness": {
+            "observed": null,
+            "state": "not_observed_before_stop"
+          },
+          "model": {
+            "observed": null,
+            "state": "not_observed_before_stop"
+          },
+          "effort": {
+            "observed": null,
+            "state": "not_observed_before_stop"
+          }
+        },
+        "rationale": {
+          "launchEnforcement": "exact deployment-profile route",
+          "providerAttestation": "provider-native observation only"
+        }
+      },
+      "verification": [
+        {
+          "taskId": "baton-2e32f735cbba9df9f63db676-work",
+          "kind": "verification",
+          "refs": {
+            "worker": "w-1",
+            "workerSeq": 201
+          },
+          "mediaType": "application/vnd.baton.verdict+json",
+          "accepted": true,
+          "provenance": [
+            {
+              "worker": "w-1",
+              "workerSeq": 201,
+              "digest": "4e9304280c7d694887d813aeb9e6fe6919daf3b0f1085b4a3b861cf7f2071bb6",
+              "kind": "verify.reverified",
+              "ts": "2026-09-13T05:42:24.503Z",
+              "coordinationSeq": 203
+            }
+          ],
+          "verdict": {
+            "schemaVersion": 1,
+            "reverified": true,
+            "observedExit": 0,
+            "outputExceeded": false,
+            "hadClaim": false,
+            "matchesClaim": true,
+            "passed": true,
+            "locus": "fresh_sandbox",
+            "redGreen": false,
+            "baseExit": 0,
+            "coverageOfChange": null,
+            "uncoveredChangedLineCount": 0,
+            "uncoveredChangedLinesDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "mutationStrength": null,
+            "mutationPassed": null,
+            "survivedMutantCount": 0,
+            "survivedMutantsDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "capturedOutputBytes": 10905,
+            "capturedOutputDigest": "f26b720b58cdf0389d24ae4b2c4ddf2cc1f6fc6f0956b7ae4e8b259a32f768dd",
+            "diagnosticCode": "verification_red_green_failed",
+            "durationMs": 5030,
+            "execution": {
+              "state": "completed",
+              "code": "verification_completed"
+            },
+            "baseExecution": {
+              "state": "completed",
+              "code": "verification_completed"
+            },
+            "runtimeDigest": "9ea0509ae155b69e48e56c4028edcaf268ec08b3ec27df3d90f0a2e9935eb2fd",
+            "outcome": "passed",
+            "failureOwnership": null
+          },
+          "digest": "19b522c893bd66f43cd9d228a0c6286c0c7109681c592b84a68a41c0e9543499",
+          "id": "artifact:19b522c893bd66f43cd9d228a0c6286c0c7109681c592b84a68a41c0e9543499"
+        }
+      ],
+      "closedResources": {
+        "state": "stopped",
+        "ownedCount": 0,
+        "cleanupState": "stopped",
+        "terminalCause": {
+          "kind": "operator_stop",
+          "code": "operator_stop"
+        }
+      },
+      "terminalCause": {
+        "kind": "operator_stop",
+        "code": "operator_stop"
+      }
+    },
+    {
+      "lane": "mcp_errors",
+      "runId": "run-6ea6efed969bbe8590b0b16fb8cf1349",
+      "route": {
+        "harness": "omp",
+        "model": "deepseek/deepseek-v4-flash",
+        "effort": "high"
+      },
+      "scope": [
+        "impl/src/mcp-northbound.mjs",
+        "impl/test/workflow-surface-red.test.mjs",
+        "impl/test/mcp-refusal-coaching.test.mjs"
+      ],
+      "preservedCommit": "efaa799dfcaef8d4896c76639c44426df70120cd",
+      "routeObservation": {
+        "requested": {
+          "harness": "omp",
+          "model": "deepseek/deepseek-v4-flash",
+          "effort": "high"
+        },
+        "resolved": {
+          "harness": "omp@omp/17.4.0",
+          "model": "deepseek/deepseek-v4-flash",
+          "effort": "high"
+        },
+        "observed": null,
+        "launchEnforcement": {
+          "harness": {
+            "requested": "omp",
+            "resolved": "omp@omp/17.4.0",
+            "state": "matched"
+          },
+          "model": {
+            "requested": "deepseek/deepseek-v4-flash",
+            "resolved": "deepseek/deepseek-v4-flash",
+            "state": "matched"
+          },
+          "effort": {
+            "requested": "high",
+            "resolved": "high",
+            "state": "matched"
+          }
+        },
+        "providerAttestation": {
+          "harness": {
+            "observed": null,
+            "state": "not_observed_before_stop"
+          },
+          "model": {
+            "observed": null,
+            "state": "not_observed_before_stop"
+          },
+          "effort": {
+            "observed": null,
+            "state": "not_observed_before_stop"
+          }
+        },
+        "rationale": {
+          "launchEnforcement": "exact deployment-profile route",
+          "providerAttestation": "provider-native observation only"
+        }
+      },
+      "verification": [
+        {
+          "taskId": "baton-988acdf7beb94ee7ddc4ac53-work",
+          "kind": "verification",
+          "refs": {
+            "worker": "w-1",
+            "workerSeq": 156
+          },
+          "mediaType": "application/vnd.baton.verdict+json",
+          "accepted": true,
+          "provenance": [
+            {
+              "worker": "w-1",
+              "workerSeq": 156,
+              "digest": "70bce20566adfb73721d77336050b2637f3ae04b69e584dc37cc1ca91db8a340",
+              "kind": "verify.reverified",
+              "ts": "2026-09-13T05:46:39.890Z",
+              "coordinationSeq": 158
+            }
+          ],
+          "verdict": {
+            "schemaVersion": 1,
+            "reverified": true,
+            "observedExit": 0,
+            "outputExceeded": false,
+            "hadClaim": false,
+            "matchesClaim": true,
+            "passed": true,
+            "locus": "fresh_sandbox",
+            "redGreen": true,
+            "baseExit": 1,
+            "coverageOfChange": null,
+            "uncoveredChangedLineCount": 0,
+            "uncoveredChangedLinesDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "mutationStrength": null,
+            "mutationPassed": null,
+            "survivedMutantCount": 0,
+            "survivedMutantsDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "capturedOutputBytes": 12619,
+            "capturedOutputDigest": "c8b722dd4a1fd68e5052fba7735472a065cfc57c89deba3432184e8a3491996b",
+            "diagnosticCode": "verification_passed",
+            "durationMs": 67924,
+            "execution": {
+              "state": "completed",
+              "code": "verification_completed"
+            },
+            "baseExecution": {
+              "state": "completed",
+              "code": "verification_completed"
+            },
+            "runtimeDigest": "9ea0509ae155b69e48e56c4028edcaf268ec08b3ec27df3d90f0a2e9935eb2fd",
+            "outcome": "passed",
+            "failureOwnership": null
+          },
+          "digest": "64d7e1d22b13e5a6af89aed3c9046f3e00f34fdb3475ada5c4d8e421706c0b79",
+          "id": "artifact:64d7e1d22b13e5a6af89aed3c9046f3e00f34fdb3475ada5c4d8e421706c0b79"
+        }
+      ],
+      "closedResources": {
+        "state": "stopped",
+        "ownedCount": 0,
+        "cleanupState": "stopped",
+        "terminalCause": {
+          "kind": "operator_stop",
+          "code": "operator_stop"
+        }
+      },
+      "terminalCause": {
+        "kind": "operator_stop",
+        "code": "operator_stop"
+      }
+    },
+    {
+      "lane": "acp_control",
+      "runId": "run-b2d87a54a33899350b6b214ec4ca1e4e",
+      "route": {
+        "harness": "omp",
+        "model": "deepseek/deepseek-v4-flash",
+        "effort": "high"
+      },
+      "scope": [
+        "impl/src/acp-json-rpc-process.mjs",
+        "impl/test/acp-json-rpc-process.test.mjs",
+        "impl/test/acp-control-truth.test.mjs"
+      ],
+      "preservedCommit": "765e877fcc0866bfdde4829673ba37e73187f4a4",
+      "routeObservation": {
+        "requested": {
+          "harness": "omp",
+          "model": "deepseek/deepseek-v4-flash",
+          "effort": "high"
+        },
+        "resolved": {
+          "harness": "omp@omp/17.4.0",
+          "model": "deepseek/deepseek-v4-flash",
+          "effort": "high"
+        },
+        "observed": null,
+        "launchEnforcement": {
+          "harness": {
+            "requested": "omp",
+            "resolved": "omp@omp/17.4.0",
+            "state": "matched"
+          },
+          "model": {
+            "requested": "deepseek/deepseek-v4-flash",
+            "resolved": "deepseek/deepseek-v4-flash",
+            "state": "matched"
+          },
+          "effort": {
+            "requested": "high",
+            "resolved": "high",
+            "state": "matched"
+          }
+        },
+        "providerAttestation": {
+          "harness": {
+            "observed": null,
+            "state": "not_observed_before_stop"
+          },
+          "model": {
+            "observed": null,
+            "state": "not_observed_before_stop"
+          },
+          "effort": {
+            "observed": null,
+            "state": "not_observed_before_stop"
+          }
+        },
+        "rationale": {
+          "launchEnforcement": "exact deployment-profile route",
+          "providerAttestation": "provider-native observation only"
+        }
+      },
+      "verification": [
+        {
+          "taskId": "baton-5893e866f622996a93bca441-work",
+          "kind": "verification",
+          "refs": {
+            "worker": "w-1",
+            "workerSeq": 111
+          },
+          "mediaType": "application/vnd.baton.verdict+json",
+          "accepted": true,
+          "provenance": [
+            {
+              "worker": "w-1",
+              "workerSeq": 111,
+              "digest": "be3df8bcea90ca8ad44b05013097f36e55a0794c68344a614186c82867863ada",
+              "kind": "verify.reverified",
+              "ts": "2026-09-13T05:55:42.001Z",
+              "coordinationSeq": 113
+            }
+          ],
+          "verdict": {
+            "schemaVersion": 1,
+            "reverified": true,
+            "observedExit": 0,
+            "outputExceeded": false,
+            "hadClaim": false,
+            "matchesClaim": true,
+            "passed": true,
+            "locus": "fresh_sandbox",
+            "redGreen": false,
+            "baseExit": 0,
+            "coverageOfChange": null,
+            "uncoveredChangedLineCount": 0,
+            "uncoveredChangedLinesDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "mutationStrength": null,
+            "mutationPassed": null,
+            "survivedMutantCount": 0,
+            "survivedMutantsDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "capturedOutputBytes": 3572,
+            "capturedOutputDigest": "aa16ee1404ce23cfc8f63b52831700fc150ad6917c7ec1814e48ec46b1a2db3a",
+            "diagnosticCode": "verification_red_green_failed",
+            "durationMs": 3668,
+            "execution": {
+              "state": "completed",
+              "code": "verification_completed"
+            },
+            "baseExecution": {
+              "state": "completed",
+              "code": "verification_completed"
+            },
+            "runtimeDigest": "9ea0509ae155b69e48e56c4028edcaf268ec08b3ec27df3d90f0a2e9935eb2fd",
+            "outcome": "passed",
+            "failureOwnership": null
+          },
+          "digest": "e8069dc7c067bb0343dc6c1b5f0d172595f10e3672e1799c14556f28aa369e05",
+          "id": "artifact:e8069dc7c067bb0343dc6c1b5f0d172595f10e3672e1799c14556f28aa369e05"
+        }
+      ],
+      "closedResources": {
+        "state": "stopped",
+        "ownedCount": 0,
+        "cleanupState": "stopped",
+        "terminalCause": {
+          "kind": "operator_stop",
+          "code": "operator_stop"
+        }
+      },
+      "terminalCause": {
+        "kind": "operator_stop",
+        "code": "operator_stop"
+      }
+    },
+    {
+      "lane": "completion",
+      "runId": "run-97c8adfcd613b1d76eafbc75ebe6c5a9",
+      "route": {
+        "harness": "omp",
+        "model": "deepseek/deepseek-v4-flash",
+        "effort": "high"
+      },
+      "scope": [
+        "impl/src/coordinator.mjs",
+        "impl/test/native-completion-loop.test.mjs",
+        "impl/test/tg3-window-red.test.mjs",
+        "docs/39-swarm-runtime.md"
+      ],
+      "preservedCommit": "8d0973a757806e492958539803c1cc9f0c99d145",
+      "routeObservation": {
+        "requested": {
+          "harness": "omp",
+          "model": "deepseek/deepseek-v4-flash",
+          "effort": "high"
+        },
+        "resolved": {
+          "harness": "omp@omp/17.4.0",
+          "model": "deepseek/deepseek-v4-flash",
+          "effort": "high"
+        },
+        "observed": null,
+        "launchEnforcement": {
+          "harness": {
+            "requested": "omp",
+            "resolved": "omp@omp/17.4.0",
+            "state": "matched"
+          },
+          "model": {
+            "requested": "deepseek/deepseek-v4-flash",
+            "resolved": "deepseek/deepseek-v4-flash",
+            "state": "matched"
+          },
+          "effort": {
+            "requested": "high",
+            "resolved": "high",
+            "state": "matched"
+          }
+        },
+        "providerAttestation": {
+          "harness": {
+            "observed": null,
+            "state": "not_observed_before_stop"
+          },
+          "model": {
+            "observed": null,
+            "state": "not_observed_before_stop"
+          },
+          "effort": {
+            "observed": null,
+            "state": "not_observed_before_stop"
+          }
+        },
+        "rationale": {
+          "launchEnforcement": "exact deployment-profile route",
+          "providerAttestation": "provider-native observation only"
+        }
+      },
+      "verification": [
+        {
+          "kind": "verify.reverified",
+          "workerSeq": 419,
+          "at": "2026-09-13T06:15:58.969Z",
+          "verdict": {
+            "schemaVersion": 1,
+            "reverified": true,
+            "observedExit": 0,
+            "outputExceeded": false,
+            "hadClaim": false,
+            "matchesClaim": true,
+            "passed": true,
+            "locus": "fresh_sandbox",
+            "redGreen": true,
+            "baseExit": 1,
+            "coverageOfChange": null,
+            "uncoveredChangedLineCount": 0,
+            "uncoveredChangedLinesDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "mutationStrength": null,
+            "mutationPassed": null,
+            "survivedMutantCount": 0,
+            "survivedMutantsDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "capturedOutputBytes": 1605,
+            "capturedOutputDigest": "66ea56dcb742ebc5134ab7789892788d32c9a1041966484ae357286a5ced307f",
+            "diagnosticCode": "verification_passed",
+            "durationMs": 571,
+            "execution": {
+              "state": "completed",
+              "code": "verification_completed"
+            },
+            "baseExecution": {
+              "state": "completed",
+              "code": "verification_completed"
+            },
+            "runtimeDigest": "9ea0509ae155b69e48e56c4028edcaf268ec08b3ec27df3d90f0a2e9935eb2fd",
+            "outcome": "passed",
+            "failureOwnership": null
+          },
+          "accepted": true
+        }
+      ],
+      "acceptedResult": {
+        "state": "accepted",
+        "nodeKey": "work",
+        "sha": "8d0973a757806e492958539803c1cc9f0c99d145",
+        "commitArtifact": {
+          "id": "artifact:bc067acebbbf095601e7ce7f3027df2bdaeb49ed7e52a7a258734d1425dad4b3",
+          "digest": "bc067acebbbf095601e7ce7f3027df2bdaeb49ed7e52a7a258734d1425dad4b3"
+        },
+        "verificationArtifact": {
+          "id": "artifact:d0089bf62a7e816311b5c678b6d909bfd6dd61ce18c9f0e593378fb36a7185e2",
+          "digest": "d0089bf62a7e816311b5c678b6d909bfd6dd61ce18c9f0e593378fb36a7185e2"
+        },
+        "stability": null,
+        "preservation": {
+          "state": "pinned"
+        },
+        "adoption": null
+      },
+      "closedResources": {
+        "state": "stopped",
+        "ownedCount": 0,
+        "cleanupState": "stopped",
+        "terminalCause": {
+          "kind": "operator_stop",
+          "code": "operator_stop"
+        }
+      },
+      "terminalCause": {
+        "kind": "operator_stop",
+        "code": "operator_stop"
+      }
+    },
+    {
+      "lane": "wave_observation",
+      "runId": "run-f4ecc6788858886881dba4571b60ee66",
+      "route": {
+        "harness": "omp",
+        "model": "deepseek/deepseek-v4-flash",
+        "effort": "high"
+      },
+      "scope": [
+        "impl/src/wave.mjs",
+        "impl/test/wave-observation-concurrency.test.mjs"
+      ],
+      "preservedCommit": "61a7441d69d8b88f71969e924f1703490def9092",
+      "routeObservation": {
+        "requested": {
+          "harness": "omp",
+          "model": "deepseek/deepseek-v4-flash",
+          "effort": "high"
+        },
+        "resolved": {
+          "harness": "omp@omp/17.4.0",
+          "model": "deepseek/deepseek-v4-flash",
+          "effort": "high"
+        },
+        "observed": null,
+        "launchEnforcement": {
+          "harness": {
+            "requested": "omp",
+            "resolved": "omp@omp/17.4.0",
+            "state": "matched"
+          },
+          "model": {
+            "requested": "deepseek/deepseek-v4-flash",
+            "resolved": "deepseek/deepseek-v4-flash",
+            "state": "matched"
+          },
+          "effort": {
+            "requested": "high",
+            "resolved": "high",
+            "state": "matched"
+          }
+        },
+        "providerAttestation": {
+          "harness": {
+            "observed": null,
+            "state": "not_observed_before_stop"
+          },
+          "model": {
+            "observed": null,
+            "state": "not_observed_before_stop"
+          },
+          "effort": {
+            "observed": null,
+            "state": "not_observed_before_stop"
+          }
+        },
+        "rationale": {
+          "launchEnforcement": "exact deployment-profile route",
+          "providerAttestation": "provider-native observation only"
+        }
+      },
+      "verification": [
+        {
+          "kind": "verify.reverified",
+          "workerSeq": 155,
+          "at": "2026-09-13T06:13:18.270Z",
+          "verdict": {
+            "schemaVersion": 1,
+            "reverified": true,
+            "observedExit": 0,
+            "outputExceeded": false,
+            "hadClaim": false,
+            "matchesClaim": true,
+            "passed": true,
+            "locus": "fresh_sandbox",
+            "redGreen": false,
+            "baseExit": 0,
+            "coverageOfChange": null,
+            "uncoveredChangedLineCount": 0,
+            "uncoveredChangedLinesDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "mutationStrength": null,
+            "mutationPassed": null,
+            "survivedMutantCount": 0,
+            "survivedMutantsDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "capturedOutputBytes": 1999,
+            "capturedOutputDigest": "1d0fec5b19305aeb51a20de0833f9a738fe516fc161cb77b406cfbb5ce0dbba7",
+            "diagnosticCode": "verification_red_green_failed",
+            "durationMs": 635,
+            "execution": {
+              "state": "completed",
+              "code": "verification_completed"
+            },
+            "baseExecution": {
+              "state": "completed",
+              "code": "verification_completed"
+            },
+            "runtimeDigest": "9ea0509ae155b69e48e56c4028edcaf268ec08b3ec27df3d90f0a2e9935eb2fd",
+            "outcome": "passed",
+            "failureOwnership": null
+          },
+          "accepted": true
+        }
+      ],
+      "acceptedResult": {
+        "state": "accepted",
+        "nodeKey": "work",
+        "sha": "61a7441d69d8b88f71969e924f1703490def9092",
+        "commitArtifact": {
+          "id": "artifact:8df972a5ed63bb536ef9d3673ff5e9a6d42120de2fdc62186fbf6b1314512680",
+          "digest": "8df972a5ed63bb536ef9d3673ff5e9a6d42120de2fdc62186fbf6b1314512680"
+        },
+        "verificationArtifact": {
+          "id": "artifact:18852293e125f04de76e4464ce30855853652d1f087a03a4be56f7b4fd94fae6",
+          "digest": "18852293e125f04de76e4464ce30855853652d1f087a03a4be56f7b4fd94fae6"
+        },
+        "stability": null,
+        "preservation": {
+          "state": "pinned"
+        },
+        "adoption": null
+      },
+      "closedResources": {
+        "state": "stopped",
+        "ownedCount": 0,
+        "cleanupState": "stopped",
+        "terminalCause": {
+          "kind": "operator_stop",
+          "code": "operator_stop"
+        }
+      },
+      "terminalCause": {
+        "kind": "operator_stop",
+        "code": "operator_stop"
+      }
+    },
+    {
+      "lane": "omp_features",
+      "runId": "run-8bb5e3d1fdff29e305b70bf610f7ad37",
+      "route": {
+        "harness": "omp",
+        "model": "deepseek/deepseek-v4-flash",
+        "effort": "high"
+      },
+      "scope": [
+        "impl/src/omp-rpc.mjs",
+        "impl/test/omp-native-features.test.mjs"
+      ],
+      "preservedCommit": "f65f26bb57a108e608b401aa91ff8f9c7070fb73",
+      "routeObservation": {
+        "requested": {
+          "harness": "omp",
+          "model": "deepseek/deepseek-v4-flash",
+          "effort": "high"
+        },
+        "resolved": {
+          "harness": "omp@omp/17.4.0",
+          "model": "deepseek/deepseek-v4-flash",
+          "effort": "high"
+        },
+        "observed": null,
+        "launchEnforcement": {
+          "harness": {
+            "requested": "omp",
+            "resolved": "omp@omp/17.4.0",
+            "state": "matched"
+          },
+          "model": {
+            "requested": "deepseek/deepseek-v4-flash",
+            "resolved": "deepseek/deepseek-v4-flash",
+            "state": "matched"
+          },
+          "effort": {
+            "requested": "high",
+            "resolved": "high",
+            "state": "matched"
+          }
+        },
+        "providerAttestation": {
+          "harness": {
+            "observed": null,
+            "state": "not_observed_before_stop"
+          },
+          "model": {
+            "observed": null,
+            "state": "not_observed_before_stop"
+          },
+          "effort": {
+            "observed": null,
+            "state": "not_observed_before_stop"
+          }
+        },
+        "rationale": {
+          "launchEnforcement": "exact deployment-profile route",
+          "providerAttestation": "provider-native observation only"
+        }
+      },
+      "verification": [
+        {
+          "kind": "verify.reverified",
+          "workerSeq": 136,
+          "at": "2026-09-13T06:16:47.185Z",
+          "verdict": {
+            "schemaVersion": 1,
+            "reverified": true,
+            "observedExit": 0,
+            "outputExceeded": false,
+            "hadClaim": false,
+            "matchesClaim": true,
+            "passed": true,
+            "locus": "fresh_sandbox",
+            "redGreen": false,
+            "baseExit": 0,
+            "coverageOfChange": null,
+            "uncoveredChangedLineCount": 0,
+            "uncoveredChangedLinesDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "mutationStrength": null,
+            "mutationPassed": null,
+            "survivedMutantCount": 0,
+            "survivedMutantsDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "capturedOutputBytes": 5350,
+            "capturedOutputDigest": "bf3d212092ee7f98f8b7d55375e339c22b99298ad5aac69df5d1d5f0df006c4b",
+            "diagnosticCode": "verification_red_green_failed",
+            "durationMs": 3433,
+            "execution": {
+              "state": "completed",
+              "code": "verification_completed"
+            },
+            "baseExecution": {
+              "state": "completed",
+              "code": "verification_completed"
+            },
+            "runtimeDigest": "9ea0509ae155b69e48e56c4028edcaf268ec08b3ec27df3d90f0a2e9935eb2fd",
+            "outcome": "passed",
+            "failureOwnership": null
+          },
+          "accepted": true
+        }
+      ],
+      "acceptedResult": {
+        "state": "accepted",
+        "nodeKey": "work",
+        "sha": "f65f26bb57a108e608b401aa91ff8f9c7070fb73",
+        "commitArtifact": {
+          "id": "artifact:9c5f3681d913a271082b3bd68466f194a7d8375cecac5c1728cde04addc36077",
+          "digest": "9c5f3681d913a271082b3bd68466f194a7d8375cecac5c1728cde04addc36077"
+        },
+        "verificationArtifact": {
+          "id": "artifact:85725d7dc8ef0852262c387becf6177351524bc0bb201aaa48aa39c1ea9ebd2a",
+          "digest": "85725d7dc8ef0852262c387becf6177351524bc0bb201aaa48aa39c1ea9ebd2a"
+        },
+        "stability": null,
+        "preservation": {
+          "state": "pinned"
+        },
+        "adoption": null
+      },
+      "closedResources": {
+        "state": "stopped",
+        "ownedCount": 0,
+        "cleanupState": "stopped",
+        "terminalCause": {
+          "kind": "operator_stop",
+          "code": "operator_stop"
+        }
+      },
+      "terminalCause": {
+        "kind": "operator_stop",
+        "code": "operator_stop"
+      }
+    }
+  ],
+  "finalProofBase": "89661c1ffc7f1040717165b5d490910434ddd523",
+  "finalProofRuns": [
+    {
+      "lane": "claude_timeout",
+      "runId": "run-3ed923a9be560966ac800efe52e83349",
+      "route": {
+        "harness": "claude-code",
+        "provider": "claude",
+        "model": "claude-sonnet-4-6",
+        "effort": "high"
+      },
+      "scope": [
+        "impl/src/supply-chain-oracle.mjs",
+        "impl/test/phase36-quartermaster-external.test.mjs",
+        "impl/test/oracle-timeout-lifecycle.test.mjs"
+      ],
+      "preservedCommit": "da6e1cb7bed5199a58bdd10eb1a27a4bed535900",
+      "routeObservation": {
+        "requested": {
+          "harness": "claude-code",
+          "model": "claude-sonnet-4-6",
+          "effort": "high"
+        },
+        "resolved": {
+          "harness": "claude-code@2.1.269",
+          "model": "claude-sonnet-4-6",
+          "effort": "high"
+        },
+        "observed": {
+          "harness": null,
+          "model": "claude-sonnet-4-6",
+          "effort": null
+        },
+        "launchEnforcement": {
+          "harness": {
+            "requested": "claude-code",
+            "resolved": "claude-code@2.1.269",
+            "state": "matched"
+          },
+          "model": {
+            "requested": "claude-sonnet-4-6",
+            "resolved": "claude-sonnet-4-6",
+            "state": "matched"
+          },
+          "effort": {
+            "requested": "high",
+            "resolved": "high",
+            "state": "matched"
+          }
+        },
+        "providerAttestation": {
+          "harness": {
+            "observed": null,
+            "state": "not_observed_before_stop"
+          },
+          "model": {
+            "observed": "claude-sonnet-4-6",
+            "state": "matched"
+          },
+          "effort": {
+            "observed": null,
+            "state": "not_observed_before_stop"
+          }
+        },
+        "rationale": {
+          "launchEnforcement": "exact deployment-profile route",
+          "providerAttestation": "provider-native observation only"
+        }
+      },
+      "verification": [
+        {
+          "kind": "verify.reverified",
+          "workerSeq": 55,
+          "at": "2026-09-13T06:29:14.888Z",
+          "verdict": {
+            "schemaVersion": 1,
+            "reverified": true,
+            "observedExit": 0,
+            "outputExceeded": false,
+            "hadClaim": false,
+            "matchesClaim": true,
+            "passed": true,
+            "locus": "fresh_sandbox",
+            "redGreen": true,
+            "baseExit": 1,
+            "coverageOfChange": null,
+            "uncoveredChangedLineCount": 0,
+            "uncoveredChangedLinesDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "mutationStrength": null,
+            "mutationPassed": null,
+            "survivedMutantCount": 0,
+            "survivedMutantsDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "capturedOutputBytes": 3336,
+            "capturedOutputDigest": "46402d391f274a469a334d4244e8b7c4f4771ea1180d9025666f2e3d9e477f3e",
+            "diagnosticCode": "verification_passed",
+            "durationMs": 1900,
+            "execution": {
+              "state": "completed",
+              "code": "verification_completed"
+            },
+            "baseExecution": {
+              "state": "completed",
+              "code": "verification_completed"
+            },
+            "runtimeDigest": "9ea0509ae155b69e48e56c4028edcaf268ec08b3ec27df3d90f0a2e9935eb2fd",
+            "outcome": "passed",
+            "failureOwnership": null
+          },
+          "accepted": true
+        }
+      ],
+      "acceptedResult": {
+        "state": "accepted",
+        "nodeKey": "work",
+        "sha": "da6e1cb7bed5199a58bdd10eb1a27a4bed535900",
+        "commitArtifact": {
+          "id": "artifact:92b60a795a4e05fdcca576a88aefcef8b5e840973ba628d3c2dd7cd62cefb4d4",
+          "digest": "92b60a795a4e05fdcca576a88aefcef8b5e840973ba628d3c2dd7cd62cefb4d4"
+        },
+        "verificationArtifact": {
+          "id": "artifact:72b7f0cdf55f35b4561eae99331a9a2b5b7d0d8ca4ddc74157a0ea87c2568eb8",
+          "digest": "72b7f0cdf55f35b4561eae99331a9a2b5b7d0d8ca4ddc74157a0ea87c2568eb8"
+        },
+        "stability": null,
+        "preservation": {
+          "state": "pinned"
+        },
+        "adoption": null
+      },
+      "closedResources": {
+        "state": "stopped",
+        "ownedCount": 0,
+        "cleanupState": "stopped",
+        "terminalCause": {
+          "kind": "operator_stop",
+          "code": "operator_stop"
+        }
+      },
+      "terminalCause": {
+        "kind": "operator_stop",
+        "code": "operator_stop"
+      },
+      "nativeCompletionProof": {
+        "nativeStartedTurns": 1,
+        "nativeCompletedTurns": 1,
+        "automaticNudges": 0,
+        "claimActor": "orchestrator",
+        "recordedUsd": 0.9040269,
+        "recordedTokens": 24476,
+        "processAbsent": true
+      }
+    },
+    {
+      "lane": "omp_control",
+      "runId": "run-82bd81e6a0ab5f54dc3df76d2074807e",
+      "route": {
+        "harness": "omp",
+        "model": "deepseek/deepseek-v4-flash",
+        "effort": "high"
+      },
+      "scope": [
+        "impl/src/omp-rpc.mjs",
+        "impl/test/omp-control-truth.test.mjs"
+      ],
+      "preservedCommit": "772f29862fd7e0abe7375c4efda84d9d87c1913e",
+      "routeObservation": {
+        "requested": {
+          "harness": "omp",
+          "model": "deepseek/deepseek-v4-flash",
+          "effort": "high"
+        },
+        "resolved": {
+          "harness": "omp@omp/17.4.0",
+          "model": "deepseek/deepseek-v4-flash",
+          "effort": "high"
+        },
+        "observed": null,
+        "launchEnforcement": {
+          "harness": {
+            "requested": "omp",
+            "resolved": "omp@omp/17.4.0",
+            "state": "matched"
+          },
+          "model": {
+            "requested": "deepseek/deepseek-v4-flash",
+            "resolved": "deepseek/deepseek-v4-flash",
+            "state": "matched"
+          },
+          "effort": {
+            "requested": "high",
+            "resolved": "high",
+            "state": "matched"
+          }
+        },
+        "providerAttestation": {
+          "harness": {
+            "observed": null,
+            "state": "not_observed_before_stop"
+          },
+          "model": {
+            "observed": null,
+            "state": "not_observed_before_stop"
+          },
+          "effort": {
+            "observed": null,
+            "state": "not_observed_before_stop"
+          }
+        },
+        "rationale": {
+          "launchEnforcement": "exact deployment-profile route",
+          "providerAttestation": "provider-native observation only"
+        }
+      },
+      "verification": [
+        {
+          "kind": "verify.reverified",
+          "workerSeq": 241,
+          "at": "2026-09-13T06:33:35.751Z",
+          "verdict": {
+            "schemaVersion": 1,
+            "reverified": true,
+            "observedExit": 0,
+            "outputExceeded": false,
+            "hadClaim": false,
+            "matchesClaim": true,
+            "passed": true,
+            "locus": "fresh_sandbox",
+            "redGreen": false,
+            "baseExit": 0,
+            "coverageOfChange": null,
+            "uncoveredChangedLineCount": 0,
+            "uncoveredChangedLinesDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "mutationStrength": null,
+            "mutationPassed": null,
+            "survivedMutantCount": 0,
+            "survivedMutantsDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "capturedOutputBytes": 7669,
+            "capturedOutputDigest": "ebf64130c935da710e024f9da2c300e1e9ea699649503a638425672f55a9cf17",
+            "diagnosticCode": "verification_red_green_failed",
+            "durationMs": 3480,
+            "execution": {
+              "state": "completed",
+              "code": "verification_completed"
+            },
+            "baseExecution": {
+              "state": "completed",
+              "code": "verification_completed"
+            },
+            "runtimeDigest": "9ea0509ae155b69e48e56c4028edcaf268ec08b3ec27df3d90f0a2e9935eb2fd",
+            "outcome": "passed",
+            "failureOwnership": null
+          },
+          "accepted": true
+        }
+      ],
+      "acceptedResult": {
+        "state": "accepted",
+        "nodeKey": "work",
+        "sha": "772f29862fd7e0abe7375c4efda84d9d87c1913e",
+        "commitArtifact": {
+          "id": "artifact:53030726d85a38aef9d2b4e61f5ba19f3a4472becb9e03abe561652e79fca228",
+          "digest": "53030726d85a38aef9d2b4e61f5ba19f3a4472becb9e03abe561652e79fca228"
+        },
+        "verificationArtifact": {
+          "id": "artifact:9f1c9cc3ff3436298a147159cfa456657350d4dcb760faf719cb0961097d5ed1",
+          "digest": "9f1c9cc3ff3436298a147159cfa456657350d4dcb760faf719cb0961097d5ed1"
+        },
+        "stability": null,
+        "preservation": {
+          "state": "pinned"
+        },
+        "adoption": null
+      },
+      "closedResources": {
+        "state": "stopped",
+        "ownedCount": 0,
+        "cleanupState": "stopped",
+        "terminalCause": {
+          "kind": "operator_stop",
+          "code": "operator_stop"
+        }
+      },
+      "terminalCause": {
+        "kind": "operator_stop",
+        "code": "operator_stop"
+      }
+    }
+  ],
+  "observerFollowup": {
+    "base": "b394a892aaa0f03d0dac8922068c863fe98f54cd",
+    "runId": "run-c95aa34350e5f811cea4f7d680a04cb1",
+    "routeRequested": {
+      "harness": "omp",
+      "model": "deepseek/deepseek-v4-flash",
+      "effort": "high"
+    },
+    "nativeCommit": "f1ef1e59c738b9ba76223e0d6aedcd8006a0097b",
+    "nativeTurnStarts": 3,
+    "nativeTurnCompletions": 1,
+    "acceptance": "not accepted: worktree_capacity_exceeded at trust gate capture; native commit checkpointed by Baton and locally verified after integration",
+    "observedNativeCost": null,
+    "events": [
+      {
+        "kind": "error",
+        "seq": 288,
+        "payload": {
+          "message": "worktree capacity is unavailable for this reservation wave",
+          "code": "worktree_capacity_exceeded",
+          "phase": "trust_gate",
+          "trustPhase": "capture"
+        }
+      },
+      {
+        "kind": "lifecycle.process_closed",
+        "seq": 293,
+        "payload": {
+          "schemaVersion": 1,
+          "generation": 1,
+          "pid": 37266,
+          "processGroupId": 37266,
+          "code": 0,
+          "signal": null,
+          "ready": true
+        }
+      },
+      {
+        "kind": "worktree.progress_checkpointed",
+        "seq": 295,
+        "payload": {
+          "checkpoint": {
+            "state": "pinned",
+            "sha": "f1ef1e59c738b9ba76223e0d6aedcd8006a0097b",
+            "ref": "refs/baton/checkpoints/f1ef1e59c738b9ba76223e0d6aedcd8006a0097b"
+          },
+          "stopSeq": null,
+          "snapshotted": false,
+          "changedPaths": [
+            "impl/src/wave.mjs",
+            "impl/test/wave-observer-lifetime.test.mjs"
+          ]
+        }
+      }
+    ],
+    "closure": [
+      {
+        "kind": "run.stop_completed",
+        "payload": {
+          "schemaVersion": 1,
+          "runId": "run-c95aa34350e5f811cea4f7d680a04cb1",
+          "receipt": {
+            "schemaVersion": 1,
+            "state": "stopped",
+            "scope": "run_subtree",
+            "repoId": "repo-76d484205f22eed0163d8f21b8287740",
+            "runId": "run-c95aa34350e5f811cea4f7d680a04cb1",
+            "targetCount": 1,
+            "remainingCount": 0,
+            "targetDigest": "8b86d04f37a85ee4785432f322fdf5b90ac48ee4eb01e12f40a1af0bff0f890f",
+            "counts": {
+              "pendingCancelled": 0,
+              "killConfirmed": 1,
+              "alreadyTerminal": 0,
+              "processesObserved": 1,
+              "processesClosed": 1
+            },
+            "checks": {
+              "dispatchClosed": true,
+              "interactionsResolved": true,
+              "runAuthorityReleased": true
+            },
+            "effects": {
+              "coordinatorClosed": false,
+              "writerReleased": false,
+              "transportsClosed": false
+            },
+            "receiptDigest": "23db5315deab7932ed6ce43ced027c1308b6746ccac24a7e3f3affbbd1b911ab"
+          }
+        }
+      },
+      {
+        "kind": "fleet.drain_completed",
+        "payload": {
+          "schemaVersion": 1,
+          "drainId": "fleet-drain:fa99d49d00fe3160e9a84552335de20fdccbc68eb8d9c8ec5e4871afaa75b62d",
+          "receipt": {
+            "schemaVersion": 1,
+            "state": "drained",
+            "scope": "local-controller",
+            "repoId": "repo-76d484205f22eed0163d8f21b8287740",
+            "targetCount": 0,
+            "remainingCount": 0,
+            "targetDigest": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+            "counts": {
+              "pendingCancelled": 0,
+              "killConfirmed": 0,
+              "alreadyTerminal": 0,
+              "processesObserved": 0,
+              "processesClosed": 0
+            },
+            "checks": {
+              "admissionClosed": true,
+              "authorityOpsDrained": true,
+              "stopWaitersDrained": true,
+              "cleanupDrained": true,
+              "localWorkerAuthorityReleased": true
+            },
+            "effects": {
+              "coordinatorClosed": false,
+              "writerReleased": false,
+              "transportsClosed": false
+            },
+            "receiptDigest": "91e6436ae8199df632fc829d5bf2cb02be9a0b4d19ec4916a4bd662efbb7b756"
+          }
+        }
+      }
+    ],
+    "rootFollowups": [
+      "Do not admit a drive if processing the status exhausted the deadline",
+      "Caller cancellation also detaches pending pump confirmation",
+      "Older observations cannot append stale steering evidence after a newer publication",
+      "Remove OMP replay of native steering at completion; separate regression fails before the repair"
+    ],
+    "secondLane": {
+      "name": "coordinator_checks",
+      "routeRequested": "claude-code/claude-sonnet-4-6/high",
+      "admission": "refused by worktree capacity before native worker spawn; deployment closed",
+      "disposition": "root diagnosed and repaired the obsolete read-triggered deadline expectation; 58/58 pass"
+    }
+  }
+}

@@ -1,0 +1,90 @@
+{
+  "schemaVersion": 1,
+  "idempotencyKey": "blue-team-2026-08-13-wave-a",
+  "members": [
+    {
+      "role": "coordinator",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-pro[1m]", "effort": "high" },
+      "scope": ["docs/reference/evidence/blue-team-2026-08-13-a/**"],
+      "objectiveRef": "docs/reference/evidence/blue-team-2026-08-13-a/coordinator-brief.md",
+      "report": "docs/reference/evidence/blue-team-2026-08-13-a/blueteam-qa.md"
+    },
+    {
+      "role": "row-bt157",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": ["docs/reference/evidence/blue-team-2026-08-13-a/**"],
+      "objectiveRef": "docs/reference/evidence/blue-team-2026-08-13-a/row-bt157.md",
+      "report": "docs/reference/evidence/blue-team-2026-08-13-a/blueteam-157.md"
+    },
+    {
+      "role": "row-bt158",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": ["docs/reference/evidence/blue-team-2026-08-13-a/**"],
+      "objectiveRef": "docs/reference/evidence/blue-team-2026-08-13-a/row-bt158.md",
+      "report": "docs/reference/evidence/blue-team-2026-08-13-a/blueteam-158.md"
+    },
+    {
+      "role": "row-bt159",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": ["docs/reference/evidence/blue-team-2026-08-13-a/**"],
+      "objectiveRef": "docs/reference/evidence/blue-team-2026-08-13-a/row-bt159.md",
+      "report": "docs/reference/evidence/blue-team-2026-08-13-a/blueteam-159.md"
+    },
+    {
+      "role": "row-bt160",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": ["docs/reference/evidence/blue-team-2026-08-13-a/**"],
+      "objectiveRef": "docs/reference/evidence/blue-team-2026-08-13-a/row-bt160.md",
+      "report": "docs/reference/evidence/blue-team-2026-08-13-a/blueteam-160.md"
+    },
+    {
+      "role": "row-bt155",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": ["docs/reference/evidence/blue-team-2026-08-13-a/**"],
+      "objectiveRef": "docs/reference/evidence/blue-team-2026-08-13-a/row-bt155.md",
+      "report": "docs/reference/evidence/blue-team-2026-08-13-a/blueteam-155.md"
+    },
+    {
+      "role": "row-bt156",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": ["docs/reference/evidence/blue-team-2026-08-13-a/**"],
+      "objectiveRef": "docs/reference/evidence/blue-team-2026-08-13-a/row-bt156.md",
+      "report": "docs/reference/evidence/blue-team-2026-08-13-a/blueteam-156.md"
+    },
+    {
+      "role": "row-bt161",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": ["docs/reference/evidence/blue-team-2026-08-13-a/**"],
+      "objectiveRef": "docs/reference/evidence/blue-team-2026-08-13-a/row-bt161.md",
+      "report": "docs/reference/evidence/blue-team-2026-08-13-a/blueteam-161.md"
+    },
+    {
+      "role": "row-bt164",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": ["docs/reference/evidence/blue-team-2026-08-13-a/**"],
+      "objectiveRef": "docs/reference/evidence/blue-team-2026-08-13-a/row-bt164.md",
+      "report": "docs/reference/evidence/blue-team-2026-08-13-a/blueteam-164.md"
+    }
+  ],
+  "steering": {
+    "approveOnAdvertisedPlan": true,
+    "nudgeOnCheckpoint": { "message": "Continue the attack — every capability row gets its cheapest-wrong-impl named, every pin gets its bite test. Write your report incrementally; run the split twice." },
+    "claimOnStall": true,
+    "messageOnSpawn": { "kind": "brief", "body": "Read your objectiveRef brief IN FULL first, then foundry-brief.md in the same directory (the blue-team law binds you, including the attempt-echo law in the FIRST FIVE lines). Publish your report to the `shared` scratchpad as well as your file; a failed publish is evidence — record the refusal. Authority-class ambiguity → DECISION_REQUEST with options; judgment calls are yours — record them." },
+    "elevateWhenNotes": { "kinds": ["doubt", "plan"], "maxEntries": 20 },
+    "signalOnMembersDone": { "roles": ["row-bt157", "row-bt158", "row-bt159", "row-bt160", "row-bt155", "row-bt156", "row-bt161", "row-bt164"], "message": { "kind": "result", "body": "All rows settled (you are the remaining member — the pinned #175 semantics). VERIFY ON DISK FIRST (sibling worktrees at ../../wt/ws-*/ or the main repo post-harvest; silence is not death). Then cross-check per your brief and write blueteam-qa.md." } }
+  },
+  "harvest": {
+    "paths": [
+      { "path": "docs/reference/evidence/blue-team-2026-08-13-a/blueteam-qa.md", "mustContain": "BLUETEAM-QA v1" },
+      { "path": "docs/reference/evidence/blue-team-2026-08-13-a/blueteam-157.md", "mustContain": "#157" },
+      { "path": "docs/reference/evidence/blue-team-2026-08-13-a/blueteam-158.md", "mustContain": "#158" },
+      { "path": "docs/reference/evidence/blue-team-2026-08-13-a/blueteam-159.md", "mustContain": "#159" },
+      { "path": "docs/reference/evidence/blue-team-2026-08-13-a/blueteam-160.md", "mustContain": "#160" },
+      { "path": "docs/reference/evidence/blue-team-2026-08-13-a/blueteam-155.md", "mustContain": "#155" },
+      { "path": "docs/reference/evidence/blue-team-2026-08-13-a/blueteam-156.md", "mustContain": "#156" },
+      { "path": "docs/reference/evidence/blue-team-2026-08-13-a/blueteam-161.md", "mustContain": "#161" },
+      { "path": "docs/reference/evidence/blue-team-2026-08-13-a/blueteam-164.md", "mustContain": "#164" }
+    ]
+  }
+}

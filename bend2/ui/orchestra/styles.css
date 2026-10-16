@@ -1,0 +1,1072 @@
+/* Orchestra live view styles. System font stacks include Linux fallbacks
+   for the hosted browser runner. */
+
+/* Baton live score. Two materials carry the page: the hall (what is playing
+   now, dark, lit by stand lamps) and the paper (what is written down, cool
+   music paper with engraving ink). Both are defined once here; a module reads
+   the same token names in either material, and .pit remaps the status colors to
+   their lit variants so nothing in a region needs to know which ground it
+   stands on. */
+
+:root {
+  color-scheme: light;
+  scrollbar-gutter: stable;
+
+  /* Paper: the written score, warm as stock rather than screen grey. */
+  --paper: #efe8db;
+  --surface: #f5efe3;
+  --ink: #1b1712;
+  --wash: #e7dccb;
+  --hairline: #d5c9b4;
+  --muted: #6a6257;
+
+  /* The hall: the pit ground and its lit reads. */
+  --hall: #131009;
+  --hall-edge: #2b2419;
+  --graphite-lit: #9aa3b4;
+  --attention-lit: #e2a94f;
+  --running-lit: #57c46a;
+  --failed-lit: #ef6b5f;
+
+  /* Rehearsal marks and plate figures. Never a status. */
+  --rehearsal: #7a2f1c;
+  --staff: #c3b7a3;
+
+  /* Selection, focus and links. */
+  --selection: #2a3e6b;
+
+  /* Pending counts, reading position and arrivals. This ink carries text on the
+     paper ground, so it clears 4.5:1 there (4.95 at #8f5519). */
+  --attention: #8f5519;
+
+  /* The baseline: the shell's block gaps are multiples of it, so the regions keep
+     one beat from the plate down to the record rail. The rule covers blocks: a
+     region's own lines sit 8 apart and its rows 12 to 32. Inline pairs inside a
+     row take the optical gap their marks need, and a row's inset stays aligned
+     with the row's own text rather than with the grid. */
+  --baseline: 4px;
+
+  /* Recorded activity colors. The running green carries text on the paper
+     ground, so it clears 4.5:1 there (4.99 at #1b7130). */
+  --running: #1b7130;
+  --waiting: #8a6d00;
+  --failed: #b3261e;
+
+  --display: "Hoefler Text", "Iowan Old Style", Baskerville, "Palatino Linotype",
+    Palatino, Georgia, "DejaVu Serif", serif;
+  --serif: "Iowan Old Style", Palatino, "Palatino Linotype", Georgia,
+    "DejaVu Serif", "Liberation Serif", serif;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue",
+    Helvetica, Arial, "DejaVu Sans", "Liberation Sans", "Noto Sans", sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, "DejaVu Sans Mono",
+    "Liberation Mono", monospace;
+
+  --step0: 12px;
+  --step1: 13px;
+  --step2: 15px;
+  --step3: 20px;
+  --step4: 26px;
+
+  /* The roster's row: a seat's open line and the knowledge band beneath it each
+     hold one, so a row carrying records grows by exactly one row. */
+  --row: 28px;
+  --gutter: 20px;
+  --radius: 3px;
+}
+
+/* The pit reads the status colors lit. Nothing inside it overrides these. */
+.pit {
+  --ink: #e8e9e4;
+  --muted: var(--graphite-lit);
+  --hairline: var(--hall-edge);
+  --wash: #1f1a12;
+  --surface: #191410;
+  --attention: var(--attention-lit);
+  --running: var(--running-lit);
+  --failed: var(--failed-lit);
+  --staff: #39404b;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 0 0 60px;
+  color: var(--ink);
+  background: var(--paper);
+  font-family: var(--serif);
+  font-size: var(--step2);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3 { margin: 0; font-family: var(--display); font-weight: 600; letter-spacing: -0.01em; }
+
+a { color: var(--selection); }
+
+.skip {
+  position: absolute;
+  left: -9999px;
+  top: 0;
+  padding: 8px 14px;
+  background: var(--paper);
+  color: var(--ink);
+  border: 1px solid var(--ink);
+  z-index: 5;
+}
+
+.skip:focus { left: 10px; top: 10px; }
+
+/* Page header, navigation and summary counts. */
+
+.plate {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 14px;
+  padding: 12px 28px 8px;
+  border-bottom: 2px solid var(--ink);
+}
+
+.plate-title {
+  margin: 0;
+  font-family: var(--display);
+  font-size: 19px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+}
+
+.plate-sub {
+  margin: 0;
+  font-family: var(--serif);
+  font-style: italic;
+  font-size: var(--step1);
+  color: var(--muted);
+}
+
+/* Overall run state, with its operational reading beside it: the mark carries the
+   page's character, the reading says what it means. An unfamiliar word without
+   its reading is a riddle, so the two travel together - and the mark element
+   holds the word alone, since the checks read that element's own text. */
+.plate-state {
+  margin: 0 0 0 auto;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.plate-mark {
+  font-family: var(--display);
+  font-style: italic;
+  font-size: 30px;
+  line-height: 1;
+  color: var(--rehearsal);
+  letter-spacing: 0.01em;
+}
+
+/* Summary counts use separate number and label elements. */
+.plate-facts {
+  flex: 1 1 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 16px;
+  margin: 4px 0 0;
+  font-family: var(--mono);
+  font-size: var(--step0);
+  color: var(--muted);
+}
+
+.plate-facts .fact {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+}
+
+.plate-facts .fact b {
+  font-size: var(--step2);
+  font-weight: 600;
+  color: var(--ink);
+  line-height: 1;
+}
+
+.plate-facts .fact.attention b { color: var(--attention); }
+.plate-facts .fact.failed b { color: var(--failed); }
+.plate-facts .fact.running b { color: var(--running); }
+
+/* The separator between two figures: quiet ink, the flex gap does the spacing. */
+.plate-facts .fact-sep { color: var(--hairline); }
+
+/* Snapshot age. */
+.plate-facts .fact-age { color: var(--muted); opacity: 0.85; }
+
+/* The movements the page holds, reachable by keyboard from the title. */
+.plate-nav {
+  flex: 1 1 100%;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 16px;
+  margin: 2px 0 0;
+  font-size: var(--step0);
+}
+
+.plate-nav a {
+  color: var(--muted);
+  text-decoration: none;
+  border-bottom: 1px solid transparent;
+  padding-bottom: 1px;
+}
+
+.plate-nav a:hover,
+.plate-nav a:focus-visible {
+  color: var(--ink);
+  border-bottom-color: var(--ink);
+}
+
+/* Each section link says what the section is for, so the names need no decoding. */
+.plate-nav a span {
+  color: var(--muted);
+  font-size: 11px;
+  margin-left: 4px;
+}
+
+/* A movement jump leaves the heading clear of the window edge. */
+#pit,
+#map,
+#staves,
+#record { scroll-margin-top: 12px; }
+
+/* Section labels and separators. */
+
+.movement {
+  font-family: var(--display);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.movement-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 16px;
+  margin: 0 0 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--hairline);
+}
+
+/* ── notices ───────────────────────────────────────────────────────────── */
+
+.notice {
+  margin: 12px 20px 0;
+  padding: 8px 12px;
+  background: var(--wash);
+  border-left: 3px solid var(--waiting);
+  font-size: var(--step1);
+}
+
+.notice.fixture { border-left-color: var(--attention); }
+
+button {
+  font: inherit;
+  font-size: var(--step1);
+  padding: 5px 10px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  cursor: pointer;
+}
+
+button:hover { border-color: var(--selection); color: var(--selection); }
+
+button:active { background: var(--wash); }
+
+:focus-visible { outline: 2px solid var(--selection); outline-offset: 2px; }
+
+.mono { font-family: var(--mono); }
+
+.muted { color: var(--muted); }
+
+/* ── responsive ────────────────────────────────────────────────────────── */
+
+@media (max-width: 720px) {
+  .notice { margin: 10px 14px 0; }
+}
+
+.lane-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 4px 4px 8px;
+}
+
+.lane-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  max-width: 280px;
+  padding: 4px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+}
+
+.lane-chip .lane-id {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lane-chip.selected { outline: 2px solid var(--selection); outline-offset: 1px; }
+
+.lane-chip:focus-visible { outline: 2px solid var(--selection); outline-offset: 1px; }
+
+/* ── the score: two materials, one page ────────────────────────────────── */
+
+[hidden] { display: none !important; }
+
+.sheet { margin: 0; padding: 0; }
+
+/* The pit: the hall, full width, the run's axis across its top. */
+.pit {
+  padding: 8px 28px 12px;
+  background: var(--hall);
+  color: var(--ink);
+  border-bottom: 3px solid var(--ink);
+}
+
+.pit-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 16px;
+  margin: 0 0 8px;
+}
+
+.pit .movement { color: #f2f1ea; letter-spacing: 0.18em; }
+
+/* Stage summary counts. */
+.pit .doc-counts {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0 18px;
+  font-family: var(--mono);
+  font-size: var(--step0);
+  color: var(--graphite-lit);
+}
+
+.pit .doc-counts .stat {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+}
+
+.pit .doc-counts .stat b {
+  font-size: var(--step3);
+  font-weight: 600;
+  line-height: 1;
+  color: #f2f1ea;
+}
+
+.pit .doc-counts .stat.running b { color: var(--running-lit); }
+.pit .doc-counts .stat.attention b { color: var(--attention-lit); }
+.pit .doc-counts .stat.failed b { color: var(--failed-lit); }
+
+.pit .doc-counts .stat-sep { color: var(--hall-edge); }
+
+/* The written surfaces and the record rail: one grid, so the record keeps the
+   reader's selection in view while the map and the staves pass it. */
+.work {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(330px, 400px);
+  gap: 0 28px;
+  padding: 0 28px 32px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.work-main { min-width: 0; }
+
+.staves-col { min-width: 0; }
+
+.paper {
+  padding: 20px 28px 0;
+  border-top: 1px solid var(--hairline);
+}
+.paper > .work { padding: 0 0 32px; }
+
+.record-col {
+  position: sticky;
+  top: 12px;
+  align-self: start;
+  min-width: 0;
+  /* The rail floats while the page scrolls, so it carries the paper ground with
+     it; without it the map draws through the record. It grows with its own
+     content rather than scrolling inside itself. */
+  background: var(--paper);
+  border-left: 1px solid var(--hairline);
+  padding: 20px 0 0 16px;
+}
+
+.map { padding: 20px 28px 28px; }
+
+/* The canvas box: the graph pans and zooms inside its own frame, which carries
+   the drawing at its own height while the page scrolls. */
+.map-frame {
+  position: relative;
+  min-width: 0;
+}
+
+/* The rail: the seats whose work is not progressing, one chip each, above the page. */
+.rail {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  padding: 8px 28px;
+  background: var(--ink);
+  color: #f2f1ea;
+  font-family: var(--mono);
+  font-size: var(--step0);
+}
+
+.rail .rail-label {
+  font-family: var(--serif);
+  font-style: italic;
+  font-size: var(--step1);
+  color: var(--attention-lit);
+  margin-right: 2px;
+}
+
+.rail .rail-count {
+  color: #cfd4de;
+  margin-right: 8px;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+}
+
+.rail .rail-count b {
+  font-size: var(--step2);
+  font-weight: 600;
+  line-height: 1;
+  color: #f2f1ea;
+}
+
+.rail button {
+  font: inherit;
+  padding: 2px 9px;
+  color: var(--attention-lit);
+  background: transparent;
+  border: 1px solid var(--attention-lit);
+  border-radius: 999px;
+  cursor: pointer;
+  max-width: 34ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.rail button:hover,
+.rail button:focus-visible { color: #0d0f12; background: var(--attention-lit); }
+
+/* The chip's ink is the seat's state, so the band reads at a glance: a held seat in
+   the failed or attention light, the default being an explicit stop. */
+.rail button.rail-failed { color: var(--failed-lit); border-color: var(--failed-lit); }
+
+.rail button.rail-failed:hover,
+.rail button.rail-failed:focus-visible { background: var(--failed-lit); color: #0d0f12; }
+
+/* The staff gutter: five lines per actor row, its recorded entries as note
+   heads on the shared window. Filled is committed, open is playing now. */
+.doc-staff {
+  position: relative;
+  flex: 0 0 38%;
+  min-width: 180px;
+  height: 21px;
+  margin: 0 10px 0 0;
+  background: repeating-linear-gradient(
+    to bottom,
+    var(--staff) 0 1px, transparent 1px 5px);
+  border-left: 1px solid var(--staff);
+}
+
+.staff-note {
+  position: absolute;
+  top: 50%;
+  width: 9px;
+  height: 7px;
+  margin: -3.5px 0 0 -4.5px;
+  border-radius: 50%;
+  background: var(--ink);
+}
+
+.staff-note.kind-run { background: var(--running); }
+.staff-note.kind-failed { background: var(--failed); }
+.staff-note.kind-compose { background: var(--rehearsal); }
+.staff-note.kind-quiet { background: var(--staff); }
+.staff-note.kind-run.open { background: transparent; box-shadow: inset 0 0 0 1.5px var(--running); }
+
+/* ── the sections ──────────────────────────────────────────────────────── */
+
+.doc-section {
+  margin: 0 0 6px;
+  font-family: var(--display);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.doc-counts {
+  margin: 0;
+  font-size: var(--step1);
+  color: var(--muted);
+}
+
+/* The fleet as one mark per recorded actor, in the roster's order: the state
+   ink carries the reading, the quiet seats are the faintest, and a failure is a
+   low bar rather than a shout. Shapes stay small so a large fleet reads as
+   proportion at a glance. */
+.doc-fleet {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: calc(var(--baseline) / 2);
+  max-width: 216px;
+  margin-left: calc(var(--baseline) * 2);
+}
+.doc-fleet-mark { width: 6px; height: 6px; border-radius: 1px; background: var(--staff); }
+.doc-fleet-mark.state-working { background: var(--running); }
+.doc-fleet-mark.state-queued { background: var(--attention); }
+.doc-fleet-mark.state-stopped { width: 8px; height: 3px; background: var(--attention); }
+.doc-fleet-mark.state-failed { width: 8px; height: 2px; background: var(--failed); }
+.doc-fleet-mark.state-quiet { width: 4px; height: 4px; border-radius: 50%; background: var(--staff); }
+.doc-fleet-rest { margin-left: 4px; font-size: var(--step0); color: var(--muted); }
+
+
+/* ── the attention strip ─────────────────────────────────────────────────── */
+
+.att-need { border-left: 2px solid var(--attention); }
+.att-activity { color: var(--ink); }
+.att-fold { margin-top: 6px; }
+.att-quiet { color: var(--muted); }
+
+/* ── the tools: one query, one disclosure, one reconnect ─────────────────── */
+
+.doc-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+}
+
+.doc-find { display: inline-flex; align-items: center; gap: 8px; }
+
+.doc-find-label {
+  font-size: var(--step0);
+  color: var(--muted);
+  text-transform: lowercase;
+}
+
+.doc-find input {
+  min-width: 220px;
+  padding: 4px 8px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--step1);
+}
+
+.doc-tools button {
+  padding: 4px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--step0);
+  cursor: pointer;
+}
+
+.doc-tools button[aria-pressed="true"] {
+  border-color: var(--selection);
+  color: var(--selection);
+}
+
+/* ── the staves: one staff per actor, the ensemble named once per run ────── */
+
+.doc-roster {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  container: actor-roster / inline-size;
+}
+
+.doc-band { margin: 0 0 8px; }
+
+/* The band the reader has selected: its rehearsal mark takes the selection ink, the
+   same ink a selected row's rule uses, so the position reads in the language the
+   roster already speaks. The band keeps its ground and the rows keep their ink; a
+   receded fleet would carry a meaning the selection does not. */
+.doc-band.is-selected .doc-bracket {
+  color: var(--selection);
+  border-color: var(--selection);
+}
+
+.doc-band-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 16px 0 4px;
+  padding-left: 2px;
+}
+
+/* The rehearsal mark: the boxed figure that names a run of rows. */
+.doc-bracket {
+  flex: none;
+  min-width: 22px;
+  padding: 1px 4px;
+  border: 1px solid var(--rehearsal);
+  color: var(--rehearsal);
+  font-family: var(--display);
+  font-size: var(--step0);
+  font-weight: 700;
+  line-height: 1.2;
+  text-align: center;
+}
+
+.doc-band-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-family: var(--serif);
+  font-style: italic;
+  font-size: var(--step1);
+  color: var(--muted);
+}
+
+/* The row's open line reads as one line: who, what it is doing, the staff of
+   what it has recorded, then the counts. The action text is elided, never
+   wrapped, so the line's own height is steady; a row that carries recorded
+   knowledge adds the knowledge band's one row below it. */
+.doc-open {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: var(--row);
+  padding: 2px 8px;
+  border: 0;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--step1);
+  text-align: left;
+  cursor: pointer;
+}
+
+.doc-open:hover { background: var(--wash); }
+
+.doc-name {
+  flex: 0 0 210px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--step0);
+}
+
+.doc-open .doc-lead {
+  flex: 1 1 auto;
+  min-width: 60px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--muted);
+}
+
+.doc-open .doc-work {
+  display: inline;
+  overflow-wrap: normal;
+}
+
+/* The row's one state word. A held seat states itself in the ink of the fact that
+   holds it: red for a failed attempt, amber for a recorded stop. */
+.doc-work.failed {
+  color: var(--failed);
+  font-family: var(--serif);
+  font-style: italic;
+}
+
+.doc-work.stopped {
+  color: var(--attention);
+  font-family: var(--serif);
+  font-style: italic;
+}
+
+/* A row's state reads as the rule down its left edge, the way a marked bar
+   reads in a score: red for a failed turn, amber for a seat held by a recorded
+   stop or a seat whose inbox is behind, green for a seat playing now, hairline
+   for a quiet one. Quiet rows recede; a seat playing now holds its ink. */
+.doc-row {
+  border-left: 3px solid transparent;
+  padding-left: 2px;
+}
+
+/* The row's state glyph: form and ink carry the state at a glance, so the word is
+   kept for the states an operator names and the rest read from the mark. */
+.doc-glyph {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin-right: 7px;
+  border-radius: 50%;
+  background: var(--staff);
+}
+
+.doc-glyph.state-working { background: var(--running); }
+.doc-glyph.state-queued { background: var(--attention); border-radius: 2px; }
+.doc-glyph.state-stopped { width: 11px; height: 3px; border-radius: 1px; background: var(--attention); }
+.doc-glyph.state-failed {
+  width: 10px;
+  height: 2.5px;
+  border-radius: 1px;
+  background: var(--failed);
+  transform: rotate(-24deg);
+}
+.doc-glyph.state-quiet { width: 5px; height: 5px; background: var(--staff); }
+
+.doc-row.state-failed { border-left-color: var(--failed); }
+.doc-row.state-stopped { border-left-color: var(--attention); }
+.doc-row.state-queued { border-left-color: var(--attention); }
+.doc-row.state-working { border-left-color: var(--running); }
+.doc-row.state-quiet { border-left-color: var(--staff); }
+
+.doc-row.state-quiet .doc-name,
+.doc-row.state-quiet .doc-lead { color: var(--muted); }
+
+.doc-row.state-working .doc-name { color: var(--ink); font-weight: 600; }
+
+.doc-row.state-working .staff-note.kind-run {
+  box-shadow: 0 0 0 2px rgba(30, 126, 52, 0.18);
+}
+
+.doc-row.selected { border-left-color: var(--selection); background: var(--wash); }
+
+/* The work leads. Names, ages and counts follow it and recede. */
+.doc-lead { flex: 1 1 auto; min-width: 0; }
+.doc-work { display: block; overflow-wrap: anywhere; }
+.doc-work.quiet { color: var(--muted); font-style: italic; }
+
+/* Waiting reads in two kinds. A queue of input this seat has not answered keeps
+   the attention accent as an outline; reports this seat was sent and never
+   acknowledged are filled ink, because "was given work" and "never answered" are
+   different things to the reader. */
+.doc-pending {
+  flex: none;
+  min-width: 20px;
+  padding: 0 6px;
+  border: 1px solid currentColor;
+  border-radius: 10px;
+  color: var(--attention);
+  font-size: var(--step0);
+  text-align: center;
+}
+
+.doc-owed {
+  flex: none;
+  min-width: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: var(--ink);
+  color: var(--paper);
+  font-size: var(--step0);
+  text-align: center;
+}
+
+/* Matching rows receive a cursor outline. */
+.doc-dim { opacity: 0.32; }
+.doc-cursor { outline: 2px solid var(--selection); outline-offset: -2px; }
+
+.doc-open:focus-visible,
+.doc-tools button:focus-visible,
+.doc-find input:focus-visible {
+  outline: 2px solid var(--selection);
+  outline-offset: 1px;
+}
+
+.doc-facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 12px;
+  margin: 4px 0 8px;
+  padding: 0 8px 6px 14px;
+}
+
+.doc-facts dt { color: var(--muted); font-size: 11px; }
+
+.doc-facts dd {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+/* The claim is the record's most-read sentence: its row spans the grid so it
+   wraps at the facts' full width instead of the value cell's short lines. */
+.doc-facts dt:has(+ dd.sel-claim),
+.doc-facts dd.sel-claim { grid-column: 1 / -1; }
+
+.doc-selection { min-width: 0; }
+
+
+.doc-whole-mount { margin-top: 8px; }
+
+.doc-ribbon { min-width: 0; }
+
+/* Narrow screens: the record drops under the written surfaces and the rail wraps. */
+@media (max-width: 1000px) {
+  .work { grid-template-columns: minmax(0, 1fr); }
+
+  .record-col {
+    position: static;
+    max-height: none;
+    border-left: 0;
+    padding-left: 0;
+  }
+
+  .map,
+  .paper,
+  .pit,
+  .rail,
+  .plate,
+  .map-frame { padding-left: 16px; padding-right: 16px; }
+}
+
+/* The author's recorded findings sit on the author's own row: the halo and the
+   slur carry the graphic, and the layer holds the line to one compact row. */
+.doc-row-knowledge { min-height: var(--row); padding: 0 8px 6px 14px; }
+
+@container actor-roster (max-width: 680px) {
+  .doc-open {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) repeat(3, auto);
+    gap: 6px 8px;
+    padding: 8px 28px 8px 8px;
+  }
+  .doc-name {
+    grid-column: 1 / -1;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .doc-open .doc-lead { grid-column: 1; grid-row: 2; min-width: 0; }
+  .doc-age, .doc-pending, .doc-owed { grid-row: 2; }
+  .doc-staff { grid-column: 1 / -1; grid-row: 3; min-width: 0; margin: 0; }
+}
+
+
+/* The plate's figures double as the index: a figure that jumps takes the ink of a link
+   and states what it does on hover. */
+.fact-jump {
+  appearance: none;
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.fact-jump:hover,
+.fact-jump:focus-visible { text-decoration: underline; }
+
+/* ── the map's scope line ─────────────────────────────────────────────────── */
+/* The map states which holdings it drew and offers the one step to every held
+   record; the scope word reads as a measurement, not as a control. */
+
+.doc-scope-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+  margin-left: auto;
+}
+
+.doc-scope {
+  font-size: var(--step1);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.doc-scope-btn {
+  appearance: none;
+  border: 0;
+  border-bottom: 1px solid var(--hairline);
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: var(--step1);
+  color: var(--selection);
+  cursor: pointer;
+}
+
+.doc-scope-btn:hover,
+.doc-scope-btn:focus-visible { border-bottom-color: var(--selection); }
+
+.doc-scope-btn[aria-pressed="true"] {
+  color: var(--attention);
+  border-bottom-color: var(--attention);
+}
+
+.knowledge-scope-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px 24px;
+  min-height: 56px;
+  padding: 8px 0 16px;
+}
+
+.knowledge-tiers { display: flex; flex-wrap: wrap; gap: 4px; }
+.knowledge-tiers button {
+  appearance: none;
+  font: inherit;
+  font-size: var(--step2);
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid transparent;
+  border-bottom: 2px solid transparent;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+.knowledge-tiers button[aria-pressed="true"] {
+  color: var(--selection);
+  border-bottom-color: currentColor;
+  background: var(--surface);
+}
+.knowledge-tiers button:hover { color: var(--ink); }
+.knowledge-tiers button:focus-visible,
+.knowledge-holder select:focus-visible { outline: 2px solid var(--selection); outline-offset: 2px; }
+.knowledge-holder { display: flex; align-items: center; gap: 8px; font-size: var(--step1); color: var(--muted); }
+.knowledge-holder select {
+  font: inherit;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  padding: 6px;
+  width: min(280px, 55vw);
+}
+.knowledge-scope-state { font-size: var(--step1); color: var(--muted); }
+.map[data-knowledge-tier="group"] .knowledge-tiers button[aria-pressed="true"] { color: var(--attention); }
+.map[data-knowledge-tier="worker"] .knowledge-tiers button[aria-pressed="true"] { color: var(--running); }
+
+/* A band's members as one state line: a tick per seat in the same inks the rows use,
+   so a group's activity reads at a glance. */
+.doc-band-ticks {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: 8px;
+}
+
+.doc-tick {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  background: var(--staff);
+}
+
+.doc-tick.state-working { background: var(--running); }
+.doc-tick.state-queued,
+.doc-tick.state-stopped { background: var(--attention); }
+.doc-tick.state-failed { background: var(--failed); }
+
+/* A band that names one recorded ensemble carries its group's knowledge: the name
+   itself is the control, in the ink of a link and the face it already had. */
+.doc-band-open {
+  appearance: none;
+  border: 0;
+  border-bottom: 1px solid transparent;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-family: var(--serif);
+  font-style: italic;
+  font-size: var(--step1);
+  color: var(--selection);
+  cursor: pointer;
+  text-align: left;
+}
+
+.doc-band-open:hover,
+.doc-band-open:focus-visible { border-bottom-color: var(--selection); }
+
+/* Recorded project identity, conversations, receipts and reports. */
+.project-body { margin: 12px 0 0; min-width: 0; }
+.project-body h3 { font-size: var(--step2); overflow-wrap: anywhere; }
+.project-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px 20px; margin: 12px 0; }
+.project-facts > div { min-width: 0; }
+.project-facts dt { color: var(--muted); font: var(--step0)/1.4 var(--sans); }
+.project-facts dd { margin: 2px 0 0; font: var(--step0)/1.5 var(--mono); overflow-wrap: anywhere; white-space: pre-wrap; }
+.project-identity { padding-bottom: 16px; border-bottom: 1px solid var(--hairline); }
+.project-selected-title { margin-top: 16px; white-space: normal; }
+.project-list { display: block; max-height: 420px; overflow-y: auto; overscroll-behavior: contain; margin: 20px 0 0; padding: 3px; list-style: none; border-top: 1px solid var(--hairline); }
+.project-list li + li { border-top: 1px solid var(--hairline); }
+.project-conversation { padding: 14px 12px; }
+.project-conversation.is-selected { background: var(--surface); box-shadow: inset 3px 0 var(--selection); }
+.project-session { display: block; width: 100%; padding: 2px 0; border: 0; border-radius: var(--radius); background: transparent; color: var(--ink); text-align: left; font: inherit; cursor: pointer; }
+.project-session:hover { background: var(--wash); }
+.project-session:focus-visible { outline: 2px solid var(--selection); outline-offset: -2px; }
+.project-session-id { font: 600 var(--step1)/1.5 var(--mono); overflow-wrap: anywhere; }
+.project-current { margin-left: 12px; color: var(--selection); font: var(--step0)/1.5 var(--sans); }
+.project-session-facts { margin-bottom: 0; }
+.project-session.is-stopped .project-session-id { color: var(--attention); }
+.project-resume { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 12px; margin: 12px 0; }
+.project-resume button:disabled { cursor: default; opacity: .65; }
+.project-outcome { margin: 0; min-width: 0; max-width: 100%; white-space: normal; font-size: var(--step1); overflow-wrap: anywhere; }
+.project-resume .project-outcome { flex-basis: 100%; }
+.project-response { margin: 16px 0; padding: 12px 16px; border-left: 3px solid var(--selection); background: var(--surface); }
+.project-response h4 { margin: 0; font-size: var(--step1); }
+.project-detail { margin: 12px 0 0; }
+.project-detail > summary { font-size: var(--step1); cursor: pointer; }
+.project-report { max-height: 420px; overflow: auto; margin: 8px 0; padding: 12px; background: var(--wash); white-space: pre-wrap; overflow-wrap: anywhere; font: var(--step0)/1.6 var(--mono); color: var(--ink); }
+@media (max-width: 760px) {
+  .project-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 12px; }
+}
+@media (max-width: 480px) {
+  .project-identity { grid-template-columns: minmax(0, 1fr); }
+  .project-conversation { padding: 12px 8px; }
+  .project-response { padding: 12px; }
+}
+
+/* The plate's contents line: each section with what it holds, so the page states its own shape. */
+.plate-nav .plate-count { color: var(--muted); font-size: var(--step0); }
+
+.doc-band-memberships {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  min-width: 0;
+}
+.doc-band-memberships .doc-band-name { overflow-wrap: anywhere; }
+
+/* Selection redraws preserve the page and each reading surface. */
+html, body, .sheet, .kw-science, .lane-strip, .record-col { overflow-anchor: none; }
+.paper .record-col { position: static; height: 360px; overflow: auto; padding: 16px; border: 1px solid var(--hairline); margin: 16px 0 24px; }
+.paper .pit { padding: 12px; margin: 12px 0; }
+.paper > .staves-col { min-width: 0; }

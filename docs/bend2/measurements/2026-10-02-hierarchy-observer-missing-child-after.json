@@ -1,0 +1,29 @@
+{
+  "driver_sha256": "cf95d8a3ba5f5a156f563dd58f655d6e3e40ae713dd8c9a62f700967307c4a8e",
+  "wrapper_pid": 15071,
+  "wrapper_exit": -15,
+  "actual_surviving_child": {
+    "pid": 15073,
+    "ppid": 1,
+    "started_local": "Fri Oct 2 04:06:09 2026",
+    "state": "S"
+  },
+  "inspection": {
+    "checked": true,
+    "observed_unix": 1790939169.9736571,
+    "processes": [],
+    "uncertain": [
+      {
+        "seat": "deepseek",
+        "pid": 15071,
+        "record_field": "child_pid",
+        "reason": "Unfinished wrapper has no recorded native child identity"
+      }
+    ]
+  },
+  "closed_failed_run": false,
+  "raw_record_unchanged": true,
+  "copied_record_sha256": "246038ab1f35414d4372756be57fd1d2785559c4b4817b158a17aa8015c261ec",
+  "boundary": "Actual controlled native-wrapper loss and surviving Python child; copied record omits child identity to exercise the persistence gap. No providers.",
+  "controlled_child_cleanup": "Original child identity absent after stdin EOF"
+}

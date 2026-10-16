@@ -1,0 +1,800 @@
+{
+  "issue": "https://github.com/Flip-Engineering/baton/issues/641",
+  "recorded_date": "2026-09-28",
+  "timezone": "America/Los_Angeles",
+  "runtime": {
+    "source": "770057cc24cf28acd443ec9a4d6aba8220e236f8",
+    "tree": "7915a7ef2c3e2fc713e57f6a6d9614445a35fc22",
+    "binary_sha256": "6b655a0a24c9b43d0d0358e8cf8aad05a58283a01c3976a84c5252a8fac1c8ec",
+    "omp_sha256": "861ac3d7a76499dbc36e6ec8769b58b61a962daac2b4775ce545474d9030e6ba",
+    "driver_sha256": "3246eaeca1f3f858c99bc526411a9aff49fd7cee07ea27c14ab7ef97bfc0a173",
+    "wrapper_sha256": "d0bb388cd69c6d1ba44cc8ecdf8bc7709f3a531722c64c204838ed6f0cb20bcb",
+    "extension_sha256": "a1e5907f2ee1f01abeaa7150f158d1598f7101a6a869307a8bb476815cc1963a",
+    "requested_model": "deepseek/deepseek-flash",
+    "requested_effort": "low",
+    "task": "A local extension will request input, selection, confirmation and editor text from the registered parent before this model turn. Read its returned native answers in the custom context. Read seed.txt in your assigned worktree. Keep every file unchanged. Acknowledge message native-question-task with the supplied coordinator command. Then give one final report containing the exact input answer, selected action, confirmation boolean, editor text and the exact seed.txt text. Do not recruit, install, change configuration, push, or perform further work.",
+    "compiler": "Bend 2.0.25",
+    "base": "4676778a64ca1c8652f7f8c743bd007502292b30",
+    "source_tree_clean_at_launch": true,
+    "omp_version": "17.4.0",
+    "omp_path": "/opt/homebrew/Cellar/omp/17.4.0/bin/omp"
+  },
+  "original_defect": {
+    "source": "08ee671b62528888a2facd0d3a8ce2af34e5ef98",
+    "binary_sha256": "c1fc3aa2c1396989cd79bb214d93cf786aeae22370ad6d1532d363899c82aed4",
+    "provider_calls": 0,
+    "observed": "Native OMP input frame retained; parent inbox empty; explicit ask delivered; no native answer command. Owned probe socket supplied answer after blocked-state capture and processes then exited naturally.",
+    "evidence": "/Users/wahargis/Development/Experiments/baton-bend2-hierarchy-637-20260928/.scratch/native-interaction-20260929/through-bend/evidence.json"
+  },
+  "live_acceptance": {
+    "result": "passed",
+    "scope": "Installed OMP before_agent_start extension calls input/select/confirm/editor; deterministic parent endpoint answers through native-reply; subsequent DeepSeek work reads seed, acknowledges task and reports answers.",
+    "parent_is_native_model": false,
+    "authority_defaults_changed": false,
+    "observer_loss_injected": false,
+    "landing_or_publication_exercised": false,
+    "process": {
+      "observer_pid": 36569,
+      "exit": 0,
+      "started_unix": 1790644477.419714,
+      "ended_unix": 1790644490.2986948,
+      "elapsed_seconds": 12.878980875015259
+    },
+    "launches": [
+      {
+        "unix": 1790644477.5925272,
+        "pid": 36575,
+        "ppid": 36573,
+        "argv": [
+          "/opt/homebrew/Cellar/omp/17.4.0/bin/omp",
+          "--mode",
+          "rpc",
+          "--model",
+          "deepseek/deepseek-flash",
+          "--thinking",
+          "low",
+          "--approval-mode",
+          "yolo",
+          "--session-dir",
+          "/Users/wahargis/Development/Experiments/baton-bend2-native-replies-641/.scratch/issue641/real-omp-current/state.db.session-776f726b6572",
+          "--no-extensions",
+          "--no-skills",
+          "--no-rules",
+          "--no-lsp",
+          "--no-pty",
+          "--tools",
+          "read,bash",
+          "-e",
+          "/Users/wahargis/Development/Experiments/baton-bend2-native-replies-641/.scratch/issue641/real-omp-current/native-questions.ts"
+        ]
+      }
+    ],
+    "session": {
+      "id": "worker",
+      "parent": "root",
+      "harness": "omp",
+      "model": "deepseek/deepseek-flash",
+      "effort": "low",
+      "native": "01a0eaba-6a37-7000-85e7-e86761e6a13d",
+      "observedHarness": "",
+      "observedModel": "deepseek/deepseek-flash",
+      "observedEffort": "",
+      "endpoint": "",
+      "workspace": "/Users/wahargis/Development/Experiments/baton-bend2-native-replies-641/.scratch/issue641/real-omp-current/worker",
+      "branch": "worker",
+      "base": "5af5fb1e868ff37c3192cc584070246fc8e91010"
+    },
+    "requests": [
+      {
+        "id": "receive:worker:1:5cb10287cf208f4aec9834104198f289:native:31353931666265666335303662376632",
+        "worker": "worker",
+        "parent": "root",
+        "attempt": "/Users/wahargis/Development/Experiments/baton-bend2-native-replies-641/.scratch/issue641/real-omp-current/state.db.attempt-726563656976653a776f726b65723a313a3563623130323837636632303866346165633938333431303431393866323839",
+        "native_id": "1591fbefc506b7f2",
+        "method": "input",
+        "written": 1,
+        "closed": "native-exited",
+        "native_request": {
+          "type": "extension_ui_request",
+          "id": "1591fbefc506b7f2",
+          "method": "input",
+          "title": "Which preserved work should continue?",
+          "placeholder": "State the selected work"
+        },
+        "native_response": {
+          "type": "extension_ui_response",
+          "id": "1591fbefc506b7f2",
+          "value": "Continue from the preserved seed file."
+        }
+      },
+      {
+        "id": "receive:worker:1:5cb10287cf208f4aec9834104198f289:native:31353931666266303664343662376633",
+        "worker": "worker",
+        "parent": "root",
+        "attempt": "/Users/wahargis/Development/Experiments/baton-bend2-native-replies-641/.scratch/issue641/real-omp-current/state.db.attempt-726563656976653a776f726b65723a313a3563623130323837636632303866346165633938333431303431393866323839",
+        "native_id": "1591fbf06d46b7f3",
+        "method": "select",
+        "written": 1,
+        "closed": "native-exited",
+        "native_request": {
+          "type": "extension_ui_request",
+          "id": "1591fbf06d46b7f3",
+          "method": "select",
+          "title": "Select the workspace action",
+          "options": [
+            "preserve",
+            "rewrite"
+          ]
+        },
+        "native_response": {
+          "type": "extension_ui_response",
+          "id": "1591fbf06d46b7f3",
+          "value": "preserve"
+        }
+      },
+      {
+        "id": "receive:worker:1:5cb10287cf208f4aec9834104198f289:native:31353931666266306135633662376634",
+        "worker": "worker",
+        "parent": "root",
+        "attempt": "/Users/wahargis/Development/Experiments/baton-bend2-native-replies-641/.scratch/issue641/real-omp-current/state.db.attempt-726563656976653a776f726b65723a313a3563623130323837636632303866346165633938333431303431393866323839",
+        "native_id": "1591fbf0a5c6b7f4",
+        "method": "confirm",
+        "written": 1,
+        "closed": "native-exited",
+        "native_request": {
+          "type": "extension_ui_request",
+          "id": "1591fbf0a5c6b7f4",
+          "method": "confirm",
+          "title": "Replace the preserved file?",
+          "message": "The parent decides whether this is requested."
+        },
+        "native_response": {
+          "type": "extension_ui_response",
+          "id": "1591fbf0a5c6b7f4",
+          "confirmed": false
+        }
+      },
+      {
+        "id": "receive:worker:1:5cb10287cf208f4aec9834104198f289:native:31353931666266306364343662376635",
+        "worker": "worker",
+        "parent": "root",
+        "attempt": "/Users/wahargis/Development/Experiments/baton-bend2-native-replies-641/.scratch/issue641/real-omp-current/state.db.attempt-726563656976653a776f726b65723a313a3563623130323837636632303866346165633938333431303431393866323839",
+        "native_id": "1591fbf0cd46b7f5",
+        "method": "editor",
+        "written": 1,
+        "closed": "native-exited",
+        "native_request": {
+          "type": "extension_ui_request",
+          "id": "1591fbf0cd46b7f5",
+          "method": "editor",
+          "title": "Provide the retained instruction",
+          "prefill": "Preserve this work."
+        },
+        "native_response": {
+          "type": "extension_ui_response",
+          "id": "1591fbf0cd46b7f5",
+          "value": "Preserve this work.\nKeep the native answer Ω."
+        }
+      }
+    ],
+    "native_answers": {
+      "input": "Continue from the preserved seed file.",
+      "select": "preserve",
+      "confirm": false,
+      "editor": "Preserve this work.\nKeep the native answer Ω."
+    },
+    "messages": [
+      {
+        "id": "native-question-task",
+        "sender": "root",
+        "recipient": "worker",
+        "kind": "task",
+        "body_bytes": 552,
+        "body_sha256": "7a479227b282a17f58abd5d5af93040a47f148c50f25a91d6af46c9dfece6a32",
+        "receipt": "Accepted: read native answers and seed.txt; files unchanged; no further work."
+      },
+      {
+        "id": "receive:worker:1:5cb10287cf208f4aec9834104198f289:native:31353931666265666335303662376632",
+        "sender": "worker",
+        "recipient": "root",
+        "kind": "question",
+        "body_bytes": 578,
+        "body_sha256": "8195a74e8d0ce9565b9002abed5f3273ea15d99404b40fa3fe7af2d52b94cba4",
+        "receipt": "parent accepted complete question"
+      },
+      {
+        "id": "receive:worker:1:5cb10287cf208f4aec9834104198f289:native:31353931666266303664343662376633",
+        "sender": "worker",
+        "recipient": "root",
+        "kind": "question",
+        "body_bytes": 562,
+        "body_sha256": "44df78148a965f203b9cb6553840b013d5402b805b859034ba803aa309bded0a",
+        "receipt": "parent accepted complete question"
+      },
+      {
+        "id": "receive:worker:1:5cb10287cf208f4aec9834104198f289:native:31353931666266306135633662376634",
+        "sender": "worker",
+        "recipient": "root",
+        "kind": "question",
+        "body_bytes": 611,
+        "body_sha256": "c0f8519b2f3aa68cc82659beff8d2dc650c6681d844c9835c4441a7eea70423b",
+        "receipt": "parent accepted complete question"
+      },
+      {
+        "id": "receive:worker:1:5cb10287cf208f4aec9834104198f289:native:31353931666266306364343662376635",
+        "sender": "worker",
+        "recipient": "root",
+        "kind": "question",
+        "body_bytes": 566,
+        "body_sha256": "a48b5e83cebdfd9fc34490e6ebdcb425f7037a00e90dd11deb05b39187494b51",
+        "receipt": "parent accepted complete question"
+      },
+      {
+        "id": "receive:worker:1:5cb10287cf208f4aec9834104198f289",
+        "sender": "worker",
+        "recipient": "root",
+        "kind": "report",
+        "body_bytes": 520,
+        "body_sha256": "5b1ca53088cf771be40373498334d3a0c24d11698185a6673c68826b5ced2933",
+        "receipt": "parent accepted complete report"
+      }
+    ],
+    "turn": {
+      "id": "receive:worker:1:5cb10287cf208f4aec9834104198f289",
+      "terminal_type": "agent_end",
+      "terminal": true,
+      "last_assistant_stop_reason": "stop"
+    },
+    "report": {
+      "bytes": 520,
+      "sha256": "5b1ca53088cf771be40373498334d3a0c24d11698185a6673c68826b5ced2933",
+      "full_native_body_equal": true
+    },
+    "inboxes_empty": [
+      "root",
+      "worker"
+    ],
+    "worktree_clean": true,
+    "seed_unchanged": true,
+    "observed_owned_processes": [
+      {
+        "pid": 36573,
+        "ppid": 36569,
+        "started": "Mon Sep 28 18:14:37 2026",
+        "status": "S",
+        "command": "/Users/wahargis/Development/Experiments/baton-bend2-native-replies-641/.scratch/issue641/real-omp-current/baton2 --host-process-keeper /Users/wahargis/Development/Experiments/baton-bend2-native-replies-641/.scratch/issue641/real-omp-current/state.db.attempt-726563656976653a776f726b65723a313a3563623130323837636632303866346165633938333431303431393866323839 4"
+      },
+      {
+        "pid": 36575,
+        "ppid": 36573,
+        "started": "Mon Sep 28 18:14:37 2026",
+        "status": "S",
+        "command": "/opt/homebrew/Cellar/omp/17.4.0/bin/omp --mode rpc --model deepseek/deepseek-flash --thinking low --approval-mode yolo --session-dir /Users/wahargis/Development/Experiments/baton-bend2-native-replies-641/.scratch/issue641/real-omp-current/state.db.session-776f726b6572 --no-extensions --no-skills --no-rules --no-lsp --no-pty --tools read,bash -e /Users/wahargis/Development/Experiments/baton-bend2-native-replies-641/.scratch/issue641/real-omp-current/native-questions.ts"
+      },
+      {
+        "pid": 37634,
+        "ppid": 36575,
+        "started": "Mon Sep 28 18:14:41 2026",
+        "status": "S",
+        "command": "ssh -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=6 -o TCPKeepAlive=yes -o ExitOnForwardFailure=yes -o ControlMaster=no -o ControlPath=none -o StrictHostKeyChecking=no atari-homelab project-manager --mcp"
+      }
+    ],
+    "remaining_observed_owned_processes": [],
+    "command_timings": [
+      {
+        "command": "attach",
+        "seconds": 0.7295191287994385,
+        "exit": 0
+      },
+      {
+        "command": "recruit",
+        "seconds": 0.11345887184143066,
+        "exit": 0
+      },
+      {
+        "command": "message",
+        "seconds": 0.010169029235839844,
+        "exit": 0
+      },
+      {
+        "command": "session",
+        "seconds": 0.02058100700378418,
+        "exit": 0
+      },
+      {
+        "command": "inbox",
+        "seconds": 0.011236906051635742,
+        "exit": 0
+      },
+      {
+        "command": "inbox",
+        "seconds": 0.012135744094848633,
+        "exit": 0
+      }
+    ],
+    "timing_scope": "Single receive invocation wall duration includes native startup, four question/reply deliveries, model work, report and cleanup; excludes build, seed repository setup, recruitment and task insertion. Command timings are one observation each on a shared host.",
+    "usage": {
+      "source": "OMP assistant message_end.message.usage",
+      "records": [
+        {
+          "input": 12328,
+          "output": 241,
+          "cacheRead": 640,
+          "cacheWrite": 0,
+          "totalTokens": 13209,
+          "reasoningTokens": 9,
+          "cost": {
+            "input": 0.0036983999999999997,
+            "output": 0.0002892,
+            "cacheRead": 3.84e-06,
+            "cacheWrite": 0,
+            "total": 0.00399144
+          }
+        },
+        {
+          "input": 547,
+          "output": 99,
+          "cacheRead": 12928,
+          "cacheWrite": 0,
+          "totalTokens": 13574,
+          "reasoningTokens": 5,
+          "cost": {
+            "input": 0.0001641,
+            "output": 0.0001188,
+            "cacheRead": 7.7568e-05,
+            "cacheWrite": 0,
+            "total": 0.00036046799999999996
+          }
+        },
+        {
+          "input": 154,
+          "output": 246,
+          "cacheRead": 13440,
+          "cacheWrite": 0,
+          "totalTokens": 13840,
+          "reasoningTokens": 24,
+          "cost": {
+            "input": 4.62e-05,
+            "output": 0.00029519999999999997,
+            "cacheRead": 8.064e-05,
+            "cacheWrite": 0,
+            "total": 0.00042203999999999994
+          }
+        },
+        {
+          "input": 418,
+          "output": 179,
+          "cacheRead": 13568,
+          "cacheWrite": 0,
+          "totalTokens": 14165,
+          "reasoningTokens": 49,
+          "cost": {
+            "input": 0.00012539999999999999,
+            "output": 0.0002148,
+            "cacheRead": 8.1408e-05,
+            "cacheWrite": 0,
+            "total": 0.00042160799999999997
+          }
+        }
+      ],
+      "totals": {
+        "input": 13447,
+        "output": 765,
+        "cacheRead": 40576,
+        "cacheWrite": 0,
+        "totalTokens": 54788,
+        "reasoningTokens": 87,
+        "cost": 0.005195556
+      },
+      "aggregation": "Sum of four completed assistant-message records within one native invocation. No replay occurred. reasoningTokens is separate metadata and is not added again to totalTokens. Costs are native-reported counters, not independently verified billing."
+    }
+  },
+  "validation": {
+    "host": {
+      "tests": 12,
+      "seconds": 1.77,
+      "result": "passed",
+      "scope": "Six existing process tests and six retained-control tests, including actual compiled br_waiter WNOWAIT observation before keeper-style waitpid reaping. Host code unchanged in the composed live pin."
+    },
+    "receive": {
+      "source": "770057cc24cf28acd443ec9a4d6aba8220e236f8",
+      "binary_sha256": "6b655a0a24c9b43d0d0358e8cf8aad05a58283a01c3976a84c5252a8fac1c8ec",
+      "tests": 27,
+      "seconds": 40.495,
+      "result": "passed",
+      "scope": "Existing recovery/fallback cases plus parent answer then actual report-delivery wait; response persistence before write; losses before/after completed write; root unsupported condition; invalid, cancelled, multiline and late responses."
+    },
+    "request_law_controls": {
+      "source_head": "0dcea66e8026d73e01acbfd91397f746bfd9acfd",
+      "module_sha256": "8ac1557a44364f27218d7322c2de25d1534c0dd6ff8e9788de73cb6c349d6816",
+      "laws_sha256": "fd5d0a1cd82343e4e8c6201054228cff3f8d78599925e8cdca7ed7a72d292724",
+      "rows": [
+        {
+          "control": "baseline",
+          "expected_named_failure": null,
+          "exit": 0,
+          "passed": true
+        },
+        {
+          "control": "remove-native_reply_refusal_cannot_write",
+          "expected_named_failure": "",
+          "exit": 1,
+          "passed": true
+        },
+        {
+          "control": "remove-native_reply_uses_recorded_attempt_and_frame",
+          "expected_named_failure": "",
+          "exit": 1,
+          "passed": true
+        },
+        {
+          "control": "remove-native_question_failed_record_cannot_wake",
+          "expected_named_failure": "",
+          "exit": 1,
+          "passed": true
+        },
+        {
+          "control": "remove-native_reply_send_reads_recorded_request",
+          "expected_named_failure": "",
+          "exit": 1,
+          "passed": true
+        },
+        {
+          "control": "remove-native_reply_failed_write_has_no_success_marker",
+          "expected_named_failure": "",
+          "exit": 1,
+          "passed": true
+        },
+        {
+          "control": "remove-native_reply_dispatch_follows_response_admission",
+          "expected_named_failure": "",
+          "exit": 1,
+          "passed": true
+        },
+        {
+          "control": "remove-native_reply_unadmitted_response_cannot_send",
+          "expected_named_failure": "",
+          "exit": 1,
+          "passed": true
+        },
+        {
+          "control": "remove-native_reply_sql_checks_parent_method_and_immutable_answer",
+          "expected_named_failure": "",
+          "exit": 1,
+          "passed": true
+        },
+        {
+          "control": "native-reply-parent-predicate-removed",
+          "expected_named_failure": "native_reply_sql_checks_parent_method_and_immutable_answer",
+          "exit": 1,
+          "passed": true
+        },
+        {
+          "control": "native-reply-confirm-method-bypassed",
+          "expected_named_failure": "native_reply_sql_checks_parent_method_and_immutable_answer",
+          "exit": 1,
+          "passed": true
+        },
+        {
+          "control": "native-reply-conflict-accepted",
+          "expected_named_failure": "native_reply_sql_checks_parent_method_and_immutable_answer",
+          "exit": 1,
+          "passed": true
+        },
+        {
+          "control": "native-reply-send-bypasses-open-request",
+          "expected_named_failure": "native_reply_send_reads_recorded_request",
+          "exit": 1,
+          "passed": true
+        },
+        {
+          "control": "native-reply-write-failure-marked-success",
+          "expected_named_failure": "native_reply_failed_write_has_no_success_marker",
+          "exit": 1,
+          "passed": true
+        },
+        {
+          "control": "native-reply-bypasses-response-admission",
+          "expected_named_failure": "native_reply_dispatch_follows_response_admission",
+          "exit": 1,
+          "passed": true
+        },
+        {
+          "control": "native-reply-refusal-writes",
+          "expected_named_failure": "native_reply_refusal_cannot_write",
+          "exit": 1,
+          "passed": true
+        },
+        {
+          "control": "native-reply-attempt-substituted",
+          "expected_named_failure": "native_reply_uses_recorded_attempt_and_frame",
+          "exit": 1,
+          "passed": true
+        }
+      ],
+      "source_scope": "HEAD records the host commit before request changes were committed. Exact request module/law hashes equal 770057cc; source pin alone does not identify that intermediate dirty tree."
+    },
+    "receive_law_controls": {
+      "source_head": "770057cc24cf28acd443ec9a4d6aba8220e236f8",
+      "module_sha256": "0494dde6f5084a5016b6b9efb52c20f4052571cc338897d9208c6b03b52f015f",
+      "laws_sha256": "c382973860fa4d1580490e48edec412f982ec74c58f2037d306a4913f7d7eeb3",
+      "rows": [
+        {
+          "control": "baseline",
+          "expected_named_failure": null,
+          "exit": 0,
+          "passed": true
+        },
+        {
+          "control": "remove-m17_not_refused_conversation_completes_the_attempt",
+          "expected_named_failure": "",
+          "exit": 1,
+          "passed": true
+        },
+        {
+          "control": "remove-m17_refused_conversation_restarts_the_attempt",
+          "expected_named_failure": "",
+          "exit": 1,
+          "passed": true
+        },
+        {
+          "control": "remove-m17_the_observed_dispatch_is_the_refusal_it_read",
+          "expected_named_failure": "",
+          "exit": 1,
+          "passed": true
+        },
+        {
+          "control": "remove-m17_restart_records_before_releasing_and_waking",
+          "expected_named_failure": "",
+          "exit": 1,
+          "passed": true
+        },
+        {
+          "control": "remove-m17_recorded_recovery_writes_nothing",
+          "expected_named_failure": "",
+          "exit": 1,
+          "passed": true
+        },
+        {
+          "control": "remove-m17_unrecorded_recovery_writes_the_workspace_note",
+          "expected_named_failure": "",
+          "exit": 1,
+          "passed": true
+        },
+        {
+          "control": "remove-m17_recovery_input_is_one_guarded_transaction",
+          "expected_named_failure": "",
+          "exit": 1,
+          "passed": true
+        },
+        {
+          "control": "m17-refused-conversation-completes-instead",
+          "expected_named_failure": "m17_refused_conversation_restarts_the_attempt",
+          "exit": 1,
+          "passed": true
+        },
+        {
+          "control": "m17-restart-drops-the-recovery-record",
+          "expected_named_failure": "m17_restart_records_before_releasing_and_waking",
+          "exit": 1,
+          "passed": true
+        },
+        {
+          "control": "m17-recovery-native-guard-dropped",
+          "expected_named_failure": "m17_recovery_input_is_one_guarded_transaction",
+          "exit": 1,
+          "passed": true
+        }
+      ]
+    },
+    "full_composed_gate": "Deferred to root composition; this lane ran the entry build/check, scoped proof controls and focused runtime suites."
+  },
+  "boundaries": [
+    "Runtime scope is retained OMP children. Direct turn, Codex exec, Claude and Muse native replies remain unsupported.",
+    "OMP root without a registered parent retains the raw frame and records an observation error that makes receive fail after native exit. A native waiting for an unanswered UI request may remain waiting until explicitly stopped.",
+    "stdin-written records complete pipe delivery. Native continuation is established by subsequent output; OMP has no separate UI-response receipt.",
+    "Concurrent identical replies can transmit duplicate frames while written is pending. The immutable logical response and original request ID are preserved; installed OMP removes the pending resolver before resolving the first response and ignores later same-ID frames.",
+    "Transport errors can follow partial or completed writes. Duplicate replay is allowed; no exactly-once byte guarantee is claimed.",
+    "Pure laws constrain called Bend admission/send/failure composition and SQL construction. SQLite execution, socket binding, native PID ownership, byte delivery and provider behavior remain runtime boundaries.",
+    "Surviving-owner observer recovery is covered by controlled fixtures. Keeper loss and host reboot are outside this acceptance.",
+    "The real run uses a deterministic extension before_agent_start hook and deterministic parent responder. Spontaneous model questions and native-model parent judgment are outside this run.",
+    "No matched old-Baton performance comparison is part of this acceptance."
+  ],
+  "raw_artifacts": [
+    {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-native-replies-641/.scratch/issue641/real-omp-current/evidence.json",
+      "bytes": 20312,
+      "sha256": "ef4c2a21fad58293cd5b49afbbab1c692c4e93782d16fbec91437a203c2ae910"
+    },
+    {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-native-replies-641/.scratch/issue641/real-omp-current/pins.json",
+      "bytes": 1192,
+      "sha256": "f3439359d714a6e702b553741d1fa84e9cd0b0d8d24cdf904cafae8391cbf1ac"
+    },
+    {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-native-replies-641/.scratch/issue641/real-omp-current/started.json",
+      "bytes": 660,
+      "sha256": "4707f5bf96399d404f9c4910c81001e5e3f618149cd41475e8d8a37cd7f4cefa"
+    },
+    {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-native-replies-641/.scratch/issue641/real-omp-current/process-result.json",
+      "bytes": 155,
+      "sha256": "d849de1ab24b7838123b6cbedaa3db721a08224eb49cbe8cf2a936f9d9a90185"
+    },
+    {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-native-replies-641/.scratch/issue641/real-omp-current/state.db",
+      "bytes": 65536,
+      "sha256": "88b71a10bb7774e3db2248278a85b4a680e794fa704831430ba2e672432703cb"
+    },
+    {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-native-replies-641/.scratch/issue641/real-omp-current/native.jsonl",
+      "bytes": 114422,
+      "sha256": "5f52538137923a31afa2bb32b04e8635d91227f5ec0b7549c3ef4fff6d149144"
+    },
+    {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-native-replies-641/.scratch/issue641/real-omp-current/native-answers.json",
+      "bytes": 145,
+      "sha256": "a8b0225ccc483d803993bd39f6b2a5b2fbe5193a6e54ff7bee399342c40be133"
+    },
+    {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-native-replies-641/.scratch/issue641/real-omp-current/parent-deliveries.jsonl",
+      "bytes": 12200,
+      "sha256": "3aece4ad17fbdf93ff1cf9cd6507a8e84128ab7bc235bea9b0eb30cc178796e8"
+    },
+    {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-native-replies-641/.scratch/issue641/real-omp-current/receive.stdout",
+      "bytes": 890,
+      "sha256": "7fe37abe255f37e2703fbfa200bf0df8fca5ce682d7ed4ca95c4d7d00a120c64"
+    },
+    {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-native-replies-641/.scratch/issue641/real-omp-current/receive.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-native-replies-641/.scratch/issue641/real-omp-current/launches.jsonl",
+      "bytes": 601,
+      "sha256": "4897672211c749be7712e3767a1e149ea16edd34c80cdb7c861225d4f2d2830f"
+    },
+    {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-native-replies-641/.scratch/issue641/real-omp-current/native-questions.ts",
+      "bytes": 774,
+      "sha256": "a1e5907f2ee1f01abeaa7150f158d1598f7101a6a869307a8bb476815cc1963a"
+    },
+    {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-native-replies-641/.scratch/issue641/real-omp-current/omp-with-native-questions",
+      "bytes": 564,
+      "sha256": "d0bb388cd69c6d1ba44cc8ecdf8bc7709f3a531722c64c204838ed6f0cb20bcb"
+    },
+    {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-native-replies-641/.scratch/issue641/real-omp-current/parent.py",
+      "bytes": 1683,
+      "sha256": "5b8553a0423f2e7f70637ae108d257f6349fe250370bb04f5d19c354d0c1b463"
+    },
+    {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-native-replies-641/.scratch/issue641/real-omp-current/config.json",
+      "bytes": 659,
+      "sha256": "0ec69a25295b563207e133a54d4a62c1ebd838f306170f1b5784c23be059d4dc"
+    },
+    {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-native-replies-641/.scratch/issue641/accept-real-omp.py",
+      "bytes": 10415,
+      "sha256": "3246eaeca1f3f858c99bc526411a9aff49fd7cee07ea27c14ab7ef97bfc0a173"
+    },
+    {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-native-replies-641/.scratch/issue641/real-omp-current-driver.log",
+      "bytes": 466,
+      "sha256": "0a83f52536915c3ddb011551e567299603d8df2afc95b4d83ce1d95b2c4525e6"
+    },
+    {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-native-replies-641/.scratch/issue641/build-current-law-source.log",
+      "bytes": 160,
+      "sha256": "b4c3ff1bf07b24889022a4ea62f164496cbf7059c7fedbbabee7055f72156182"
+    },
+    {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-native-replies-641/.scratch/issue641/current-entry-laws.log",
+      "bytes": 138,
+      "sha256": "91f81d6d2dd9defd69bd8d774257af2f727f559cb95e52e8f4ad4be67511a9a7"
+    },
+    {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-native-replies-641/.scratch/issue641/receive-current-law-source.log",
+      "bytes": 4524,
+      "sha256": "a9ae87c174388e550d1cf95f14e8487b79da103488b9c3a6005b2b1d13f395be"
+    },
+    {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-native-replies-641/.scratch/issue641/retained-control/final-host-tests.log",
+      "bytes": 1881,
+      "sha256": "509298a3898f0955b382f6129212366b3d6bc001958bdcd89c3b303c33d6b6c7"
+    },
+    {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-native-replies-641/.scratch/issue641/retained-control/waiter-test.log",
+      "bytes": 270,
+      "sha256": "3c5414bc48aad8397fbe3629c5533acfc114a3b4b8f75c06d063e61cfbbb91fb"
+    },
+    {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-native-replies-641/.scratch/issue641/retained-control/reply-failure/evidence.json",
+      "bytes": 5080,
+      "sha256": "9b2e95d6a3444cbb0d0f7941a8724387f39efc443f51a6cdc762373b6bcf3d0f"
+    },
+    {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-native-replies-641/.scratch/issue641/retained-control/question-boundary-evidence.json",
+      "bytes": 637,
+      "sha256": "75b843e7e3189c70a61d89f7cb876bf239a022b422f485d5802602306247b70c"
+    },
+    {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-native-replies-641/.scratch/issue641/retained-control/concurrent-reply/evidence.json",
+      "bytes": 4621,
+      "sha256": "fc12fca937378bdfa4297d4ba7155326e7efb5638fa3724f1805b8479cb5570f"
+    },
+    {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-native-replies-641/.scratch/issue641/retained-control/omp-response-id.json",
+      "bytes": 6227,
+      "sha256": "61898da2925bd4c3ec06b7518e44ee041c05c771b8a939a1f86d4912a97d187b"
+    },
+    {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-native-replies-641/.scratch/issue641/request-law-controls/evidence.json",
+      "bytes": 3177,
+      "sha256": "5db0c8f4b2e161cdccbf2a54ee9f6633303add9d04b97bc0ef1be918298d9d45"
+    },
+    {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-native-replies-641/.scratch/issue641/receive-law-composition/evidence.json",
+      "bytes": 2068,
+      "sha256": "04e742f5d8ffde5f540d5643c1d5ff8be1951fb47797175e1ee545c02d5f6640"
+    },
+    {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-hierarchy-637-20260928/.scratch/native-interaction-20260929/summary.json",
+      "bytes": 5798,
+      "sha256": "ac9601985f6efa5cc17c08ed6d39f3869271e9ecc4bf9d793670b1b87ea2f27e"
+    },
+    {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-hierarchy-637-20260928/.scratch/native-interaction-20260929/through-bend/evidence.json",
+      "bytes": 4433,
+      "sha256": "68fdcdf7f0b9e513dd33c0f5ed5b2e2bee97bdce18bdb05d5c62eb8aac22e2c5"
+    },
+    {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-hierarchy-637-20260928/.scratch/native-interaction-20260929/through-bend/blocked-state.json",
+      "bytes": 2574,
+      "sha256": "f83864715b3008102269f2329ac2c5784a67a91ca2718d130c2b7b5f16a4a523"
+    },
+    {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-native-replies-641/.scratch/issue641/real-omp-current/state.db.attempt-726563656976653a776f726b65723a313a3563623130323837636632303866346165633938333431303431393866323839/acknowledged",
+      "bytes": 13,
+      "sha256": "da4769119aa609d7631dc3331f1ff2ac9c59e1f0a6e282a44c8964523b271e69"
+    },
+    {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-native-replies-641/.scratch/issue641/real-omp-current/state.db.attempt-726563656976653a776f726b65723a313a3563623130323837636632303866346165633938333431303431393866323839/keeper.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-native-replies-641/.scratch/issue641/real-omp-current/state.db.attempt-726563656976653a776f726b65723a313a3563623130323837636632303866346165633938333431303431393866323839/launch",
+      "bytes": 7,
+      "sha256": "46ef88e17c41da5cc0cd057b46d6167f549c0762c12fcc6729537bee72a7733a"
+    },
+    {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-native-replies-641/.scratch/issue641/real-omp-current/state.db.attempt-726563656976653a776f726b65723a313a3563623130323837636632303866346165633938333431303431393866323839/manifest",
+      "bytes": 5865,
+      "sha256": "80bfcf043567bf27fb9bd7fd73e62f52417981fc123533f4ac5e973989f40636"
+    },
+    {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-native-replies-641/.scratch/issue641/real-omp-current/state.db.attempt-726563656976653a776f726b65723a313a3563623130323837636632303866346165633938333431303431393866323839/native.pid",
+      "bytes": 6,
+      "sha256": "e32f82f37c05a6ce31f48fcd60c25e239c62578850807dbe3c05374e874c01cd"
+    },
+    {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-native-replies-641/.scratch/issue641/real-omp-current/state.db.attempt-726563656976653a776f726b65723a313a3563623130323837636632303866346165633938333431303431393866323839/native.stderr",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-native-replies-641/.scratch/issue641/real-omp-current/state.db.attempt-726563656976653a776f726b65723a313a3563623130323837636632303866346165633938333431303431393866323839/released",
+      "bytes": 9,
+      "sha256": "fdc935e6a3f33abdcfb4f5d7a335d408b2b988e7a5f8411d9f73349d1fab39be"
+    },
+    {
+      "path": "/Users/wahargis/Development/Experiments/baton-bend2-native-replies-641/.scratch/issue641/real-omp-current/state.db.attempt-726563656976653a776f726b65723a313a3563623130323837636632303866346165633938333431303431393866323839/status",
+      "bytes": 2,
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    }
+  ]
+}

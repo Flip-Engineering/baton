@@ -1,0 +1,184 @@
+{
+  "scope": "Focused integration checkpoints; no new full-suite success claim. Stable 89661c1f full suite remains the latest complete local sweep.",
+  "checks": [
+    {
+      "name": "observer",
+      "passedTests": 39,
+      "localLog": "/tmp/baton-wave-observer-final.log",
+      "sha256": "98a2205e5067c155709c49ca390347f0bcfe5ff60695dc7a0fce13cec9e35a1d",
+      "tail": [
+        "  duration_ms: 50.3355",
+        "  type: 'test'",
+        "  ...",
+        "1..39",
+        "# tests 39",
+        "# suites 0",
+        "# pass 39",
+        "# fail 0",
+        "# cancelled 0",
+        "# skipped 0",
+        "# todo 0",
+        "# duration_ms 19507.330584"
+      ]
+    },
+    {
+      "name": "observer_checkpoint",
+      "passedTests": 36,
+      "localLog": "/tmp/baton-wave-observer-edge-final.log",
+      "sha256": "57de2999e2fc7971954edf9aaad1e97da78fc8024ae9648163e8733f11311b0f",
+      "tail": [
+        "  duration_ms: 52.005083",
+        "  type: 'test'",
+        "  ...",
+        "1..36",
+        "# tests 36",
+        "# suites 0",
+        "# pass 36",
+        "# fail 0",
+        "# cancelled 0",
+        "# skipped 0",
+        "# todo 0",
+        "# duration_ms 1208.680958"
+      ]
+    },
+    {
+      "name": "wave_adjacent",
+      "passedTests": 57,
+      "localLog": "/tmp/baton-wave-adjacent-final.log",
+      "sha256": "f97689ba46ca83a1e7d399228313ff00cd2bed8ee7db5db0eadd3ef50c80f2bd",
+      "tail": [
+        "  duration_ms: 49.847583",
+        "  type: 'test'",
+        "  ...",
+        "1..57",
+        "# tests 57",
+        "# suites 0",
+        "# pass 57",
+        "# fail 0",
+        "# cancelled 0",
+        "# skipped 0",
+        "# todo 0",
+        "# duration_ms 8835.514708"
+      ]
+    },
+    {
+      "name": "coordinator",
+      "passedTests": 58,
+      "localLog": "/tmp/baton-coordinator-followup.log",
+      "sha256": "34481ed5e623cc284b2b5cd80fd865f91f0b5446d94c8b0d67f77fc9ac3226c7",
+      "tail": [
+        "  duration_ms: 0.40625",
+        "  type: 'test'",
+        "  ...",
+        "1..58",
+        "# tests 58",
+        "# suites 0",
+        "# pass 58",
+        "# fail 0",
+        "# cancelled 0",
+        "# skipped 0",
+        "# todo 0",
+        "# duration_ms 471.508166"
+      ]
+    },
+    {
+      "name": "auxiliary_worktree",
+      "passedTests": 41,
+      "localLog": "/tmp/baton-worktree-race-final.log",
+      "sha256": "1e30756ff1df9bb90ae3a065b783ab57afc671fd41e6cc6130ca54ac1bce0a26",
+      "tail": [
+        "  duration_ms: 319.677291",
+        "  type: 'test'",
+        "  ...",
+        "1..41",
+        "# tests 41",
+        "# suites 0",
+        "# pass 41",
+        "# fail 0",
+        "# cancelled 0",
+        "# skipped 0",
+        "# todo 0",
+        "# duration_ms 4690.129959"
+      ]
+    },
+    {
+      "name": "omp_steering",
+      "passedTests": 32,
+      "localLog": "/tmp/baton-omp-steering-final.log",
+      "sha256": "da18524ffc57d7fa132e7217864412b0fc7e61904ece6d25697895155224a6d1",
+      "tail": [
+        "  duration_ms: 254.440833",
+        "  type: 'test'",
+        "  ...",
+        "1..32",
+        "# tests 32",
+        "# suites 0",
+        "# pass 32",
+        "# fail 0",
+        "# cancelled 0",
+        "# skipped 0",
+        "# todo 0",
+        "# duration_ms 6902.895958"
+      ]
+    },
+    {
+      "name": "surfaces",
+      "passedTests": null,
+      "localLog": "/tmp/baton-swarm-final-surfaces.log",
+      "sha256": "135ce6527c7faec65c566a814a74aaebf21ec6aa224745716aa9370deda1fd7f",
+      "tail": [
+        "  },",
+        "  \"completeCapabilityCount\": 116,",
+        "  \"metaNames\": [",
+        "    \"baton_surface_catalog\",",
+        "    \"baton_surface_describe\",",
+        "    \"baton_surface_invoke\",",
+        "    \"baton_surface_snapshot\",",
+        "    \"baton_surface_visualize\",",
+        "    \"baton_surface_watch\"",
+        "  ],",
+        "  \"cliMetaCases\": 7",
+        "}"
+      ]
+    },
+    {
+      "name": "production",
+      "passedTests": 24,
+      "localLog": "/tmp/baton-swarm-final-production.log",
+      "sha256": "056b693554c29be3e3a70a1d2ee19d0f5626f0de04c4f21b3352589042a42865",
+      "tail": [
+        "  duration_ms: 0.209833",
+        "  type: 'test'",
+        "  ...",
+        "1..24",
+        "# tests 24",
+        "# suites 0",
+        "# pass 24",
+        "# fail 0",
+        "# cancelled 0",
+        "# skipped 0",
+        "# todo 0",
+        "# duration_ms 2621.931417"
+      ]
+    },
+    {
+      "name": "package",
+      "passedTests": null,
+      "localLog": "/tmp/baton-swarm-final-package.log",
+      "sha256": "3744389ec72485a12a1161ad35b10e67b4f6038b7b927868da66a3259bf76496",
+      "tail": [
+        "",
+        "> baton@0.1.0 test:package",
+        "> node scripts/release-package-smoke.mjs",
+        "",
+        "{\"ok\":true,\"archive\":\"baton-0.1.0.tgz\",\"bins\":[\"baton\",\"baton-mcp\",\"baton-mcp-web\"],\"convergence\":true,\"unifiedCapabilities\":114,\"completeCapabilityNames\":612,\"notificationWatch\":true,\"connectedRunDebug\":true,\"workflowWebPorts\":8}"
+      ]
+    }
+  ],
+  "steeringRegression": {
+    "originalSource": "153677ad (same OMP source as b394a892)",
+    "localLog": "/tmp/baton-omp-steering-baseline.log",
+    "sha256": "cfdfe1e47fc2271388883392e0d8c7e21e7161d82e609bbb80de38c812ac25de",
+    "result": "same augmented test failed before repair because terminal native completion started another provider turn after steering; passed after removing Baton replay"
+  }
+}

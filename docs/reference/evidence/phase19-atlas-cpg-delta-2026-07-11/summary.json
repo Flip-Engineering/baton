@@ -1,0 +1,43 @@
+{
+  "at": "2026-07-12T02:42:35.524Z",
+  "source": "impl/src/atlas-cpg.mjs",
+  "syntheticChange": "add normalizeDigestInput and call it from sha",
+  "result": {
+    "status": "ok",
+    "summary": "9 nodes added, 0 removed, 1 modified; 16 impacted",
+    "provenance": {
+      "beforeSourceDigest": "26b112c8c7bbe70e8e22751f1e48c560d5e00e47cfdd4941773cfb97088402af",
+      "afterSourceDigest": "be154923014e05df01c9e5980a7ca72cc08eb9cf47e23edecf127d7833a86af7",
+      "beforeGraphDigest": "b07828d3fc90eed1aa21ca32b7f39b8a4232b9486b7bdf4ab03ffdf2c8ba6fc7",
+      "afterGraphDigest": "633ee35e044eb8a98ec7323379bad1bbee524c9d37be3a0f80653b0b16107665",
+      "deltaDigest": "b64969d41a80d00ea5782031379508a9206a44fd78721715668767ceb230fa8c",
+      "impactDepth": 8,
+      "counts": {
+        "nodesAdded": 9,
+        "nodesRemoved": 0,
+        "nodesModified": 1,
+        "edgesAdded": 10,
+        "edgesRemoved": 0,
+        "impacted": 16
+      },
+      "parseErrors": {
+        "before": 0,
+        "after": 0
+      },
+      "deterministic": true,
+      "impactMeaning": "seed_graph_reachability_not_behavioral_proof"
+    }
+  },
+  "checks": {
+    "noError": true,
+    "complete": true,
+    "nodeChanges": true,
+    "edgeChanges": true,
+    "impact": true,
+    "shaImpacted": true,
+    "reverified": true,
+    "auditPairs": true
+  },
+  "fatal": null,
+  "pass": true
+}

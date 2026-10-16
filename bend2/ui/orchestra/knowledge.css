@@ -1,0 +1,132 @@
+/* Knowledge graph, record reading and compact orchestra annotations. */
+
+.kw-band { display: block; }
+
+.kw-compact {
+  margin: 0;
+  font-size: var(--step0, 12px);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.kw-arcs {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.kw-arc {
+  fill: none;
+  stroke: var(--attention, #a2611f);
+  stroke-width: 1.5px;
+  opacity: 0.35;
+}
+
+.kw-arc-hot {
+  opacity: 1;
+  stroke-width: 2px;
+}
+
+.kw-row-halo {
+  fill: none;
+  stroke: var(--attention, #a2611f);
+  stroke-width: 1.5px;
+  opacity: 0.8;
+}
+
+.kw-row-arrival { fill: var(--attention, #a2611f); }
+
+.kw-science { container: knowledge-science / inline-size; }
+.kw-science-tools { position: sticky; top: 0; z-index: 3; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 12px; padding: 10px 0; border-bottom: 1px solid var(--hairline); background: var(--paper); }
+.kw-science-filters { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 12px; }
+.kw-science-filters input { flex: 1; min-width: min(100%, 210px); }
+.kw-science-tools button, .kw-science-filters input, .kw-science-filters select { font: inherit; padding: 7px 10px; }
+.kw-science-caption { font-size: 13px; color: var(--muted); margin: 10px 0 20px; }
+.kw-science-index { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: 22px; }
+.kw-science-kind-group > h3, .kw-science-incoming > h3, .kw-science-outgoing > h3 { margin: 0 0 12px; font-size: 15px; }
+.kw-science-node, .kw-science-connection { padding: 16px; margin: 0 0 14px; border: 1px solid var(--hairline); border-radius: 7px; background: var(--paper); overflow-wrap: anywhere; }
+.kw-science-kind { margin: 0 0 8px; font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+.kw-science-statement, .kw-science-reference, .kw-science-relation { padding: 0; border: 0; background: transparent; color: var(--ink); text-align: left; font: inherit; cursor: pointer; }
+.kw-science-statement { font-size: 16px; line-height: 1.5; }
+.kw-science-statement:hover, .kw-science-reference:hover { text-decoration: underline; text-underline-offset: 3px; }
+.kw-science-author, .kw-science-degree { margin: 9px 0 0; font-size: 12px; color: var(--muted); }
+.kw-science-reference-id { display: block; margin: 7px 0; font-size: 11px; overflow-wrap: anywhere; }
+.kw-science-uncertainty, .kw-science-assertion-note { padding-left: 10px; border-left: 2px solid var(--hairline); font-size: 13px; line-height: 1.55; }
+.kw-science-neighborhood { display: grid; grid-template-columns: minmax(0, 1fr); gap: 22px; align-items: start; }
+.kw-science-detail { grid-row: 1; padding: 20px; border: 1px solid var(--ink); border-radius: 8px; background: var(--paper); min-width: 0; overflow-wrap: anywhere; scroll-margin-top: 64px; }
+.kw-science-region { min-width: 0; scroll-margin-top: 64px; }
+.kw-science-region:focus { outline: 2px solid var(--selection); outline-offset: 3px; }
+.kw-science-connections-nav { display: flex; flex-wrap: wrap; gap: 8px; margin: 16px 0; }
+.kw-science-connections-nav button, .kw-science-record-return { font-size: 12px; text-align: left; }
+.kw-science-record-return { margin: 0 0 14px; }
+.kw-science-detail-title { font-size: 20px; line-height: 1.45; margin: 8px 0 16px; }
+.kw-science-field { margin: 14px 0 0; }
+.kw-science-details { margin-top: 18px; }
+.kw-science-details > h4 { margin: 0 0 8px; font-size: 13px; }
+.kw-science-reference-uses { margin-top: 18px; font-size: 13px; }
+.kw-science-reference-uses > summary { cursor: pointer; font-weight: 600; }
+.kw-science-reference-use { padding: 10px 0; border-bottom: 1px solid var(--hairline); }
+.kw-science-field > h4 { font-size: 12px; font-weight: 600; margin: 0 0 5px; text-transform: capitalize; }
+.kw-science-field .kw-science-field { padding-left: 12px; border-left: 1px solid var(--hairline); }
+.kw-science-value, .kw-science-rationale { margin: 5px 0; white-space: pre-wrap; font-size: 14px; line-height: 1.6; }
+.kw-science-values { margin: 6px 0; padding-left: 20px; }
+.kw-science-values > li { margin: 8px 0; }
+.kw-science-connection .kw-science-node { margin: 12px 0 0; }
+.kw-science-relation { font-size: 14px; font-weight: 600; text-transform: capitalize; text-decoration: underline; text-underline-offset: 3px; }
+.kw-science-identity { margin-top: 20px; font-size: 12px; }
+.kw-science-edge-index { margin: 28px 0; }
+.kw-science-edge-index .kw-science-connection { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 16px; }
+.kw-science-edge-index .kw-science-rationale { flex-basis: 100%; }
+.kw-science-legacy { margin-top: 16px; }
+@container knowledge-science (min-width: 680px) {
+  .kw-science-neighborhood { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .kw-science-detail { grid-column: 1 / -1; }
+}
+@container knowledge-science (min-width: 1040px) {
+  .kw-science-neighborhood { grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr) minmax(0, 1fr); }
+  .kw-science-incoming { grid-column: 1; grid-row: 1; }
+  .kw-science-detail { grid-column: 2; }
+  .kw-science-outgoing { grid-column: 3; grid-row: 1; }
+}
+
+.kw-science-message-body { margin: 12px 0; padding: 12px; border-left: 2px solid var(--hairline); white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 13px; line-height: 1.6; }
+
+/* The canvas keeps the graph visible while the selected record is read below it. */
+.kg-frame { border: 1px solid var(--hairline); background: var(--paper); }
+.kg-canvas { display: block; width: 100%; height: 520px; touch-action: pan-y; cursor: grab; }
+.kg-canvas:active { cursor: grabbing; }
+.kg-canvas:focus-visible { outline: 2px solid var(--selection); outline-offset: 2px; }
+.kg-node, .kg-edge { cursor: pointer; }
+.kg-node-boundary { fill: var(--paper); stroke: var(--ink); stroke-width: 1.2; }
+.kg-node.is-reference .kg-node-boundary { stroke-dasharray: 5 3; }
+.kg-node.is-selected .kg-node-boundary, .kg-node:focus-visible .kg-node-boundary { stroke: var(--selection); stroke-width: 3; }
+.kg-node-words { color: var(--ink); font: 15px/1.4 var(--sans); }
+.kg-node-kind { display: block; font-size: 11px; color: var(--muted); margin-bottom: 6px; }
+.kg-node-statement { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; overflow-wrap: anywhere; }
+.kg-edge-line { fill: none; stroke: var(--muted); stroke-width: 1.5; }
+.kg-edge.is-reference-use .kg-edge-line { stroke-dasharray: 4 3; stroke-opacity: .45; }
+.kg-edge.is-reference-use .kg-edge-label { opacity: 0; }
+.kg-edge.is-reference-use:hover .kg-edge-label,
+.kg-edge.is-reference-use:focus-visible .kg-edge-label,
+.kg-edge.is-reference-use.is-selected .kg-edge-label { opacity: 1; }
+.kg-arrow { fill: var(--muted); }
+.kg-edge-hit { fill: none; stroke: transparent; stroke-width: 18; }
+.kg-edge-label { fill: var(--ink); font: 12px var(--sans); text-anchor: middle; paint-order: stroke; stroke: var(--paper); stroke-width: 6px; stroke-linejoin: round; }
+.kg-edge.is-selected .kg-edge-line, .kg-edge:focus-visible .kg-edge-line { stroke: var(--selection); stroke-width: 3; }
+.kg-edge.is-selected .kg-edge-label { fill: var(--selection); font-weight: 600; }
+.kg-node.is-dim, .kg-edge.is-dim { opacity: .22; }
+.kg-node.is-dim:focus-visible, .kg-edge.is-dim:focus-visible { opacity: 1; }
+.kg-zoom-level { font: 12px var(--sans); min-width: 3ch; }
+.kg-empty { padding: 12px 0; color: var(--muted); }
+.kg-content { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; }
+.kg-content .kw-science-neighborhood { display: flex; flex-direction: column; margin-top: 0; height: 520px; overflow: auto; }
+.kg-content .kw-science-detail { order: -1; }
+@container knowledge-science (min-width: 960px) {
+  .kg-content { grid-template-columns: minmax(0, 1.8fr) minmax(320px, 1fr); }
+}
+.kw-science-kind { text-transform: none; letter-spacing: normal; }
+
+.kg-reader-prompt { height: 520px; margin: 0; padding: 20px; border: 1px solid var(--hairline); color: var(--muted); }

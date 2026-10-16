@@ -1,0 +1,485 @@
+{
+  "at": "2026-07-12T06:20:52.094Z",
+  "repoHead": "4d038d0116613b786fcfa9a894c741f8e9123b16",
+  "reviewProfile": "egraph-implementation",
+  "reviewTimeoutMs": 360000,
+  "grokVersion": "grok 0.1.216 (b139744655)",
+  "rows": [
+    {
+      "taskId": "grok-egraph-implementation-45",
+      "model": "grok-4.5",
+      "path": "reviews/dogfood/grok-egraph-implementation-45.md",
+      "stance": "authority",
+      "workerId": "w-1",
+      "handle": {
+        "id": "w-1",
+        "vendor": "grok",
+        "modelRequested": "grok-4.5",
+        "modelResolved": "grok-4.5",
+        "modelObserved": "grok-4.5",
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "effortRequested": null,
+        "effortResolved": null,
+        "effortObserved": null,
+        "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-4.5\",\"default\",\"grok\",\"representation-implementation-review\"]",
+        "modelMismatch": null,
+        "effortMismatch": null,
+        "modelPolicy": {
+          "allow": [
+            "grok-4.5"
+          ],
+          "allowFamilies": [
+            "grok"
+          ]
+        },
+        "sessionRequest": {
+          "mode": "new"
+        },
+        "sessionRef": {
+          "vendor": "grok",
+          "kind": "session",
+          "id": "019f54fb-5d05-7322-a1c7-9115f78d625b",
+          "persistence": "native",
+          "source": "wire"
+        },
+        "sessionContext": {
+          "worktree": "/private/tmp/baton-egraph-final.eP4Xmq/.baton/wt/grok-egraph-implementation-45",
+          "repoRoot": "/private/tmp/baton-egraph-final.eP4Xmq",
+          "baseSha": "4d038d0116613b786fcfa9a894c741f8e9123b16",
+          "branch": "baton/grok-egraph-implementation-45",
+          "ownerTaskId": "grok-egraph-implementation-45"
+        },
+        "lineage": null,
+        "runtimeScope": {
+          "root": "/private/tmp/baton-egraph-final.eP4Xmq/.baton/runtime/w-1",
+          "home": "/private/tmp/baton-egraph-final.eP4Xmq/.baton/runtime/w-1/home",
+          "tmp": "/private/tmp/baton-egraph-final.eP4Xmq/.baton/runtime/w-1/tmp",
+          "config": "/private/tmp/baton-egraph-final.eP4Xmq/.baton/runtime/w-1/home/.grok",
+          "family": "grok",
+          "strippedEnvKeys": [
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+            "GEMINI_API_KEY",
+            "OPENROUTER_API_KEY",
+            "SECURITYSESSIONID",
+            "SSH_AUTH_SOCK"
+          ],
+          "projectedEnvKeys": [],
+          "projectedFiles": [
+            "auth.json"
+          ],
+          "permissions": {
+            "directories": "0700",
+            "credentialFiles": "0600"
+          },
+          "sandboxPolicy": "native-workspace-profile",
+          "active": false
+        },
+        "review": null,
+        "taskId": "grok-egraph-implementation-45",
+        "worktree": "/private/tmp/baton-egraph-final.eP4Xmq/.baton/wt/grok-egraph-implementation-45",
+        "fence": 3,
+        "turnEpoch": 2,
+        "status": "dead",
+        "pendingApprovalId": null,
+        "pendingQuestionId": null,
+        "budgetUsed": {
+          "tokens": 42428,
+          "usd": 0
+        },
+        "createdAt": "2026-07-12T06:19:44.616Z"
+      },
+      "pid": 9293,
+      "verify": {
+        "worker": "w-1",
+        "harness": "grok@grok 0.1.216 (b139744655)",
+        "turnEpoch": 2,
+        "kind": "verify.reverified",
+        "actor": "policy",
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "modelRequested": "grok-4.5",
+        "modelResolved": "grok-4.5",
+        "modelObserved": "grok-4.5",
+        "effortRequested": null,
+        "effortResolved": null,
+        "effortObserved": null,
+        "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-4.5\",\"default\",\"grok\",\"representation-implementation-review\"]",
+        "payload": {
+          "verdict": {
+            "reverified": true,
+            "observedExit": 0,
+            "hadClaim": false,
+            "matchesClaim": true,
+            "passed": true,
+            "locus": "fresh_sandbox",
+            "redGreen": null,
+            "baseExit": null,
+            "coverageOfChange": null,
+            "uncoveredChangedLines": [],
+            "mutationStrength": null,
+            "mutationPassed": null,
+            "survivedMutants": [],
+            "observedOutputTail": "",
+            "note": "PASS: observed exit 0 matches expected 0.",
+            "durationMs": 17
+          },
+          "accept": true,
+          "acceptOpts": {
+            "requireRedGreen": false,
+            "requireCoverage": false,
+            "requireMutation": false
+          },
+          "capture": {
+            "sha": "f558f83125bb56a682cac5270f665efa246f4e78",
+            "snapshotted": true,
+            "vendor": "grok",
+            "model": "grok-4.5",
+            "effort": null,
+            "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-4.5\",\"default\",\"grok\",\"representation-implementation-review\"]"
+          }
+        },
+        "seq": 385,
+        "ts": "2026-07-12T06:20:51.705Z"
+      },
+      "result": {
+        "ready": true,
+        "status": "completed",
+        "verdict": {
+          "reverified": true,
+          "observedExit": 0,
+          "hadClaim": false,
+          "matchesClaim": true,
+          "passed": true,
+          "locus": "fresh_sandbox",
+          "redGreen": null,
+          "baseExit": null,
+          "coverageOfChange": null,
+          "uncoveredChangedLines": [],
+          "mutationStrength": null,
+          "mutationPassed": null,
+          "survivedMutants": [],
+          "observedOutputTail": "",
+          "note": "PASS: observed exit 0 matches expected 0.",
+          "durationMs": 17
+        },
+        "artifacts": {
+          "commits": [],
+          "files": []
+        },
+        "vendor": "grok",
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "modelRequested": "grok-4.5",
+        "modelResolved": "grok-4.5",
+        "modelObserved": "grok-4.5",
+        "modelMismatch": null,
+        "effortRequested": null,
+        "effortResolved": null,
+        "effortObserved": null,
+        "effortMismatch": null,
+        "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-4.5\",\"default\",\"grok\",\"representation-implementation-review\"]",
+        "sessionRequest": {
+          "mode": "new"
+        },
+        "sessionRef": {
+          "vendor": "grok",
+          "kind": "session",
+          "id": "019f54fb-5d05-7322-a1c7-9115f78d625b",
+          "persistence": "native",
+          "source": "wire"
+        },
+        "sessionContext": {
+          "worktree": "/private/tmp/baton-egraph-final.eP4Xmq/.baton/wt/grok-egraph-implementation-45",
+          "repoRoot": "/private/tmp/baton-egraph-final.eP4Xmq",
+          "baseSha": "4d038d0116613b786fcfa9a894c741f8e9123b16",
+          "branch": "baton/grok-egraph-implementation-45",
+          "ownerTaskId": "grok-egraph-implementation-45"
+        },
+        "lineage": null,
+        "review": null,
+        "integration": null,
+        "publication": null,
+        "retainedResultRef": null
+      },
+      "review": "# Adversarial dogfood — Phase 27 EG1–EG8 at `4d038d0`\n\nPinned commit: `4d038d0116613b786fcfa9a894c741f8e9123b16` (“Close e-graph refusal taxonomy”).  \nSources: `spec/phase27/egraph-evaluation.md`, `impl/src/atlas-egraph-evaluation.mjs`, `impl/src/index.mjs:47`, `impl/test/phase27-atlas-egraph-evaluation.test.mjs`, `docs/handoff/evidence/phase27-egraph-evaluation-2026-07-11.md`, Phase 24 ceiling (`spec/phase24/atlas-representation-ceiling.md`), Phase 25 behavior contract (`spec/phase25/atlas-behavior-fingerprint.md`), Phase 26 merge authority (`spec/phase26/structured-merge.md` SM8/SM10).\n\nScope is whether the executable retirement/redirect policy is honest and fail-closed—not whether a native e-graph should be built.\n\n## Decision\n\n**No actionable EG1–EG8 implementation defect remains at `4d038d0`.**\n\n`AtlasEGraphEvaluation` is a pure policy Decision surface: one advertised op, three domain verdicts with `nativeEngine: false`, five false R7 verbs always typed-refused, reopening thresholds emitted as non-enabling schema, policy-only ACI meaning, and no path into verification or merge authority. The negative native-build outcome is deliberate product Decision, not a missing engine defect.\n\n`4d038d0` closed the prior refusal-taxonomy hole: false ops with absent/unsupported `domain` no longer fall through `policy(domain)` as a generic `unsupported_domain` before typed R7 refusal; they now refuse `r7_domain_retired` with `decisionId` and `supportedDomains` (`impl/src/atlas-egraph-evaluation.mjs:60–66`, test lines 27–29).\n\n| Seam | Verdict |\n|------|---------|\n| EG1 honest card | Pass — only `egraph.evaluate`; limitations deny build/saturation/proof/authority |\n| EG2 per-domain Decision | Pass — three frozen verdicts; all `nativeEngine: false` |\n| EG3 typed false-op refusal | Pass — five ops × three domains + bad domains fail-closed |\n| EG4 reopening non-authority | Pass — gates are data; no gate evaluator unlocks capability |\n| EG5 ACI policy meaning | Pass — policy kind/mediaType/meaning; no proof/merge claim |\n| EG6 bounds/resume/integrity | Pass — budget, cancel, path/digest/schema, tamper, reverify |\n| EG7 authority boundary | Pass — no skip-verify / authorize-merge / Phase-25 upgrade path |\n| EG8 acceptance reds | Pass — focused suite maps EG1–EG7; evidence records green suite |\n\nDeliberate negative Decision (not a defect): whole-repo retired, whole-function redirected to Phase 25 + pinned verify, expression/kernel conditional external research only. That is the product of concurrent exact-model scope review, preserved as executable policy rather than a silent drop or a fake engine.\n\n## Proposed numbered contract\n\nContract under review is already numbered in `spec/phase27/egraph-evaluation.md`. Restated as the adversarial checklist used here (no new engine ops proposed):\n\n1. **EG1** — Card exposes solely `egraph.evaluate`; `ops` must not list `egraph.build`, `egraph.saturate`, `equivalence.prove`, `verification.skip`, or `semantic_merge.authorize`; limitations must deny native e-graph and verification/merge authority (`atlas-egraph-evaluation.mjs:48–54`).\n2. **EG2** — Domains exactly: `whole_repo` → `retired_native`; `whole_function` → `redirected_behavioral`; `expression_kernel` → `conditional_external_research`; every domain `nativeEngine: false`; expression/kernel must not be relabeled source-program or whole-function equivalence (`POLICIES` lines 11–24; card domains 52).\n3. **EG3** — The five false ops always throw typed errors with `decisionId: phase27-r7-egraph-retire-redirect`, domain, redirect, and `reopeningGates` when domain is one of the three; codes: whole_repo `r7_domain_retired`, whole_function `r7_redirect`, expression_kernel `r7_reopening_required`. Absent/unsupported domain on a false op refuses `r7_domain_retired` with `supportedDomains` (lines 60–66)—not a successful native op.\n4. **EG4** — Versioned gates match the spec minima (3 pinned real-repo tasks / 2 false-clean CEs; oracle corpus ×10 + pure kernel only; 5 real-task pairs / 20 labeled / 0 FP&FN / 3 incremental / bounds). `reopeningMeaning` must state thresholds do not enable capability; invoke must ignore any caller-supplied “gates satisfied” claim.\n5. **EG5** — Evaluate returns ACI envelope + content-addressed artifact; item `meaning` and provenance `meaning` are `policy_decision_not_equivalence_or_semantic_proof`; ref `kind`/`mediaType` contain policy wording; provenance `mergeAuthority` and `verificationAuthority` are false.\n6. **EG6** — Positive deployment `maxArtifactBytes` and `budgetTokens` required; cancel → `cancelled`; resume binds cursor digest/offset, realpath under root, digest, schemaVersion/op/decisionId; path substitution and byte tamper → `artifact_integrity`; reverify re-invokes evaluate and compares digest only.\n7. **EG7** — Decision cannot skip verification, advance main, authorize structured/semantic merge, or promote Phase 25 corpus agreement to equivalence. Redirects are advisory strings (`behavior.fingerprint`, `behavior.compare`, `verify.pinned`, etc.), not internal authority calls. Aligns with Phase 25 BF4 meaning (`observed_corpus_agreement_not_semantic_equivalence`) and Phase 26 SM8/SM10 (fingerprints/CPG advisory; asymmetric artifacts cannot reconstruct integration; true semantic merge remains research).\n8. **EG8** — Focused reds cover EG1–EG7 and all domains/false ops; suite green; no residue requirement is evidence-owned, not re-proven in this review.\n\nPhase 24 parallel: like `AtlasRepresentationCeiling` (R3 ceiling, typed `rung_ceiling` for false IR/TV ops), Phase 27 freezes an upper-rung refusal as policy without shipping the rung.\n\n## Red tests and proof\n\n### Concrete sequences (reproducible against current source)\n\n**S1 — Accidental capability enablement (EG1/EG3) — expect refuse, never succeed**\n\n```text\natlas = new AtlasEGraphEvaluation({ artifactRoot, maxArtifactBytes: 65536 })\ncard = atlas.card()\nassert Object.keys(card.ops) === ['egraph.evaluate']\nfor op in [egraph.build, egraph.saturate, equivalence.prove, verification.skip, semantic_merge.authorize]:\n  for domain in [whole_repo, whole_function, expression_kernel]:\n    atlas.invoke(op, { domain }, { budgetTokens: 2000 })  → throws codes above\n```\n\nProof: `FALSE_OPS` set + early branch before any write (`:6`, `:60–66`); test `EG3/EG7` lines 22–29. No saturation state, no e-class table, no equality proof object exists in the module.\n\n**S2 — Bad-domain false op must not open a different success path (EG3, fixed at 4d038d0)**\n\n```text\natlas.invoke('egraph.build', { domain: undefined }, ctx) → r7_domain_retired\natlas.invoke('egraph.build', { domain: '' }, ctx) → r7_domain_retired\natlas.invoke('egraph.build', { domain: 'source_file' }, ctx) → r7_domain_retired\natlas.invoke('egraph.build', { domain: { injected: true } }, ctx) → r7_domain_retired\n# each carries decisionId + supportedDomains.length === 3\n```\n\nPre-`4d038d0` these hit `policy(domain)` first and surfaced `unsupported_domain`, blurring “native op retired” with “unknown domain.” Current code refuses as retired native op taxonomy. Still never succeeds.\n\n**S3 — Reopening-threshold non-authority (EG4) — “gates met” does not unlock**\n\n```text\n# 1) Read gates\nr = await atlas.invoke('egraph.evaluate', { domain: 'expression_kernel' }, ctx)\nassert r.payload[0].reopeningGates.measuredFalsePositiveRateMax === 0\nassert /does_not_enable_capability/.test(r.payload[0].reopeningMeaning)\n# 2) Caller claims satisfaction\nawait atlas.invoke('egraph.saturate', {\n  domain: 'expression_kernel',\n  reopeningGatesSatisfied: true,\n  measuredFalsePositiveRate: 0,\n  realTaskKernelPairs: 99\n}, ctx)\n# → still r7_reopening_required; args beyond domain are ignored for authorization\n```\n\nProof: invoke reads only `args?.domain` for policy selection (`:59`, `:68`); no branch inspects gate satisfaction. Thresholds are frozen constants in `POLICIES` (`:14–22`), copied into artifacts only.\n\n**S4 — Verification / merge authority leakage (EG5/EG7)**\n\n```text\nr = await atlas.invoke('egraph.evaluate', { domain: 'whole_function' }, ctx)\nassert r.provenance.meaning === 'policy_decision_not_equivalence_or_semantic_proof'\nassert r.provenance.mergeAuthority === false\nassert r.provenance.verificationAuthority === false\nassert r.refs[0].kind === 'egraph_evaluation_policy'\nassert /policy/.test(r.refs[0].mediaType)\nawait atlas.invoke('verification.skip', { domain: 'whole_function' }, ctx) → r7_redirect\nawait atlas.invoke('semantic_merge.authorize', { domain: 'whole_repo' }, ctx) → r7_domain_retired\n# payload decision remains redirected_behavioral / retired_native — not equivalence, not merge grant\n```\n\nCross-boundary meaning: Phase 25 agreement is empirical corpus match only; Phase 26 SM10 forbids fingerprints/CPG from skipping post-merge verification. Phase 27 redirects *to* those evidence surfaces and never claims to supersede them. Export at `impl/src/index.mjs:47` is the class alone—no coordinator hook here grants merge.\n\n**S5 — Decision replay meaning (EG6 reverify) is policy digest equality, not proof replay**\n\n```text\nfirst = await atlas.invoke('egraph.evaluate', { domain: 'whole_repo' }, ctx)\nv = await atlas.reverify(first, { domain: 'whole_repo' }, ctx)\nassert v.ok === true && v.observedDigest === first.refs[0].digest\n# Wrong domain claim:\nv2 = await atlas.reverify(first, { domain: 'expression_kernel' }, ctx)\nassert v2.ok === false\n# Mutate on-disk artifact then resume:\nwriteFileSync(first.refs[0].path, readFileSync(...) + ' ')\nawait atlas.resume(first.refs[0], cursor, ctx) → artifact_integrity\n# Path substitution:\noutside = copy of artifact outside artifactRoot\nawait atlas.resume({ ...ref, path: outside }, cursor, ctx) → artifact_integrity\n```\n\nProof: `reverify` re-runs evaluate and compares digests only (`:107–108`); resume realpath-confines to `${root}/${digest}.json` (`:97–101`). Replay means “same policy Decision bytes,” explicitly not equivalence or merge authorization replay. Phase 26 SM8 separately requires operational + coordination batch for integration success—this module cannot reconstruct that.\n\n**S6 — Budget / cancel fail-closed (EG6)**\n\n```text\nnew AtlasEGraphEvaluation({ artifactRoot }) → TypeError maxArtifactBytes\nmake({ maxArtifactBytes: 32 }).invoke('egraph.evaluate', { domain: 'whole_repo' }, ctx) → artifact_too_large\naborted signal → cancelled\nbudgetTokens: 1 → status needs_resume, payload [], cursor bound to digest:0\nresume → full retired_native item\n```\n\nCovered by tests lines 50–66.\n\n### Actionable defect vs deliberate negative Decision\n\n| Observation | Class | Why |\n|-------------|-------|-----|\n| No native equality saturation | Deliberate Decision | Spec + evidence: negative native-build; module is retirement policy |\n| `expression_kernel` not an engine | Deliberate Decision | `conditional_external_research` + `externalOnly` gate |\n| False ops always throw | Required fail-closed | EG3; not a stub to fill later inside this class |\n| Resume provenance omits `mergeAuthority`/`meaning` flags | Non-actionable residual | EG5 binds `egraph.evaluate`; resume still returns only policy items and cannot authorize; evaluate path carries full denial |\n| Kind string contains `egraph_` | Non-actionable residual | Full kind is `egraph_evaluation_policy`; mediaType/provenance/item.meaning are policy-not-proof |\n| Module does not hard-block Phase 26 entrypoints | Non-defect | EG7 scopes this Decision surface; SM8/SM10 own merge authority |\n\nNo sequence above yields a successful build, saturation, equivalence proof, verification skip, or semantic-merge authorization through `AtlasEGraphEvaluation`.\n\n## Risks and rejection criteria\n\n**Residual risks (monitor, not current EG failures)**\n\n1. **Downstream misread of redirect as grant** — Consumers might treat `redirect: ['behavior.compare','verify.pinned']` as “equivalence proved via Phase 25.” Mitigation already in artifact: `meaning` + `reopeningMeaning` + Phase 25 BF4 wording. Reject any follow-on that sets `provenance.meaning` to equivalence language without a new reviewed spec.\n2. **Gate JSON cargo-cult** — A future patch that `if (gatesMet(args)) return enableNative()` would be a hard EG4/EG7 regression. Rejection criterion: any code path where `FALSE_OPS` can return non-throwing success, or where `nativeEngine` becomes true without new phase/spec id.\n3. **Authority flag drop on resume** — If orchestrators key only on resume envelopes, missing `mergeAuthority: false` could weaken defense-in-depth. Reject if resume ever adds proof-like kinds/mediaTypes or drops policy item `meaning` from payload.\n4. **Coordinator wiring outside this file** — This review does not re-audit every caller. Reject if any non-test production path catches `r7_*` and continues as verify-skip or merge-authorize success.\n5. **Homelab/native engine temptation** — Spec and constraints forbid inventing a Baton e-graph here. Reject PRs that add saturate/build under this Decision id or relabel CPG/fingerprint agreement as R7 equivalence (conflicts Phase 24 ceiling honesty and Phase 26 SM10).\n\n**Rejection criteria for claiming Phase 27 “done” incorrectly**\n\n- Card or export advertises any of the five false ops as callable success paths.\n- Any domain reports `nativeEngine: true` or decision other than the three frozen strings under Decision id `phase27-r7-egraph-retire-redirect`.\n- Meeting or forging `reopeningGates` changes invoke success for false ops.\n- Artifact kind/mediaType claims proof, TV certificate, or merge authority.\n- `verification.skip` or `semantic_merge.authorize` returns `status: 'ok'` for any domain.\n- Reverify `ok: true` against a tampered artifact digest, or resume accepts path escape.\n- Phase 25 corpus agreement or Phase 26 structured merge is advanced solely by holding an e-graph evaluation policy artifact.\n\n**EG8 evidence note:** Handoff evidence claims focused 6/6 and canonical 776/776 with reaped suite root. This review validated contract↔source↔focused-test alignment statically; it did not re-execute the suite (path-scoped write-only review).\n\n**Bottom line:** At `4d038d0`, EG1–EG8 are implemented as an honest, fail-closed, non-authoritative Decision. No actionable defect remains; remaining work for R7 is a future reviewed external-tool phase if and only if recorded gates and provenance requirements are met—not a patch inside this module to “complete” saturation."
+    },
+    {
+      "taskId": "grok-egraph-implementation-composer",
+      "model": "grok-composer-2.5-fast",
+      "path": "reviews/dogfood/grok-egraph-implementation-composer.md",
+      "stance": "security",
+      "workerId": "w-2",
+      "handle": {
+        "id": "w-2",
+        "vendor": "grok",
+        "modelRequested": "grok-composer-2.5-fast",
+        "modelResolved": "grok-composer-2.5-fast",
+        "modelObserved": "grok-composer-2.5-fast",
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "effortRequested": null,
+        "effortResolved": null,
+        "effortObserved": null,
+        "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-composer-2.5-fast\",\"default\",\"grok\",\"representation-implementation-review\"]",
+        "modelMismatch": null,
+        "effortMismatch": null,
+        "modelPolicy": {
+          "allow": [
+            "grok-composer-2.5-fast"
+          ],
+          "allowFamilies": [
+            "grok"
+          ]
+        },
+        "sessionRequest": {
+          "mode": "new"
+        },
+        "sessionRef": {
+          "vendor": "grok",
+          "kind": "session",
+          "id": "019f54fb-5cf6-71f0-85ef-b998bd84c409",
+          "persistence": "native",
+          "source": "wire"
+        },
+        "sessionContext": {
+          "worktree": "/private/tmp/baton-egraph-final.eP4Xmq/.baton/wt/grok-egraph-implementation-composer",
+          "repoRoot": "/private/tmp/baton-egraph-final.eP4Xmq",
+          "baseSha": "4d038d0116613b786fcfa9a894c741f8e9123b16",
+          "branch": "baton/grok-egraph-implementation-composer",
+          "ownerTaskId": "grok-egraph-implementation-composer"
+        },
+        "lineage": null,
+        "runtimeScope": {
+          "root": "/private/tmp/baton-egraph-final.eP4Xmq/.baton/runtime/w-2",
+          "home": "/private/tmp/baton-egraph-final.eP4Xmq/.baton/runtime/w-2/home",
+          "tmp": "/private/tmp/baton-egraph-final.eP4Xmq/.baton/runtime/w-2/tmp",
+          "config": "/private/tmp/baton-egraph-final.eP4Xmq/.baton/runtime/w-2/home/.grok",
+          "family": "grok",
+          "strippedEnvKeys": [
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+            "CLAUDE_CODE_MAX_OUTPUT_TOKENS",
+            "GEMINI_API_KEY",
+            "OPENROUTER_API_KEY",
+            "SECURITYSESSIONID",
+            "SSH_AUTH_SOCK"
+          ],
+          "projectedEnvKeys": [],
+          "projectedFiles": [
+            "auth.json"
+          ],
+          "permissions": {
+            "directories": "0700",
+            "credentialFiles": "0600"
+          },
+          "sandboxPolicy": "native-workspace-profile",
+          "active": false
+        },
+        "review": null,
+        "taskId": "grok-egraph-implementation-composer",
+        "worktree": "/private/tmp/baton-egraph-final.eP4Xmq/.baton/wt/grok-egraph-implementation-composer",
+        "fence": 3,
+        "turnEpoch": 2,
+        "status": "dead",
+        "pendingApprovalId": null,
+        "pendingQuestionId": null,
+        "budgetUsed": {
+          "tokens": 26882,
+          "usd": 0
+        },
+        "createdAt": "2026-07-12T06:19:45.033Z"
+      },
+      "pid": 9297,
+      "verify": {
+        "worker": "w-2",
+        "harness": "grok@grok 0.1.216 (b139744655)",
+        "turnEpoch": 2,
+        "kind": "verify.reverified",
+        "actor": "policy",
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "modelRequested": "grok-composer-2.5-fast",
+        "modelResolved": "grok-composer-2.5-fast",
+        "modelObserved": "grok-composer-2.5-fast",
+        "effortRequested": null,
+        "effortResolved": null,
+        "effortObserved": null,
+        "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-composer-2.5-fast\",\"default\",\"grok\",\"representation-implementation-review\"]",
+        "payload": {
+          "verdict": {
+            "reverified": true,
+            "observedExit": 0,
+            "hadClaim": false,
+            "matchesClaim": true,
+            "passed": true,
+            "locus": "fresh_sandbox",
+            "redGreen": null,
+            "baseExit": null,
+            "coverageOfChange": null,
+            "uncoveredChangedLines": [],
+            "mutationStrength": null,
+            "mutationPassed": null,
+            "survivedMutants": [],
+            "observedOutputTail": "",
+            "note": "PASS: observed exit 0 matches expected 0.",
+            "durationMs": 46
+          },
+          "accept": true,
+          "acceptOpts": {
+            "requireRedGreen": false,
+            "requireCoverage": false,
+            "requireMutation": false
+          },
+          "capture": {
+            "sha": "0a813dc1e995caa0e98085c2e9d99650f048eb32",
+            "snapshotted": true,
+            "vendor": "grok",
+            "model": "grok-composer-2.5-fast",
+            "effort": null,
+            "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-composer-2.5-fast\",\"default\",\"grok\",\"representation-implementation-review\"]"
+          }
+        },
+        "seq": 493,
+        "ts": "2026-07-12T06:20:41.436Z"
+      },
+      "result": {
+        "ready": true,
+        "status": "completed",
+        "verdict": {
+          "reverified": true,
+          "observedExit": 0,
+          "hadClaim": false,
+          "matchesClaim": true,
+          "passed": true,
+          "locus": "fresh_sandbox",
+          "redGreen": null,
+          "baseExit": null,
+          "coverageOfChange": null,
+          "uncoveredChangedLines": [],
+          "mutationStrength": null,
+          "mutationPassed": null,
+          "survivedMutants": [],
+          "observedOutputTail": "",
+          "note": "PASS: observed exit 0 matches expected 0.",
+          "durationMs": 46
+        },
+        "artifacts": {
+          "commits": [],
+          "files": []
+        },
+        "vendor": "grok",
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "modelRequested": "grok-composer-2.5-fast",
+        "modelResolved": "grok-composer-2.5-fast",
+        "modelObserved": "grok-composer-2.5-fast",
+        "modelMismatch": null,
+        "effortRequested": null,
+        "effortResolved": null,
+        "effortObserved": null,
+        "effortMismatch": null,
+        "routeKey": "[\"grok\",\"grok 0.1.216 (b139744655)\",\"grok-composer-2.5-fast\",\"default\",\"grok\",\"representation-implementation-review\"]",
+        "sessionRequest": {
+          "mode": "new"
+        },
+        "sessionRef": {
+          "vendor": "grok",
+          "kind": "session",
+          "id": "019f54fb-5cf6-71f0-85ef-b998bd84c409",
+          "persistence": "native",
+          "source": "wire"
+        },
+        "sessionContext": {
+          "worktree": "/private/tmp/baton-egraph-final.eP4Xmq/.baton/wt/grok-egraph-implementation-composer",
+          "repoRoot": "/private/tmp/baton-egraph-final.eP4Xmq",
+          "baseSha": "4d038d0116613b786fcfa9a894c741f8e9123b16",
+          "branch": "baton/grok-egraph-implementation-composer",
+          "ownerTaskId": "grok-egraph-implementation-composer"
+        },
+        "lineage": null,
+        "review": null,
+        "integration": null,
+        "publication": null,
+        "retainedResultRef": null
+      },
+      "review": "# Phase 27 EG1–EG8 adversarial review (commit 4d038d0)\n\nReviewed: `spec/phase27/egraph-evaluation.md`, `impl/src/atlas-egraph-evaluation.mjs`, export at `impl/src/index.mjs:47`, `impl/test/phase27-atlas-egraph-evaluation.test.mjs`, `docs/handoff/evidence/phase27-egraph-evaluation-2026-07-11.md`, and Phase 24–26 boundary evidence. Commit `4d038d0` (\"Close e-graph refusal taxonomy\") is the evaluation closure point; it tightens unsupported-domain handling on false R7 operations and aligns the focused gate.\n\n## Decision\n\n**No actionable EG1–EG8 implementation defect remains at `4d038d0`.** The executable retirement/redirect policy is honest, fail-closed, and contains no native e-graph engine smuggling. Residual findings below are either (a) deliberate negative-Decision semantics encoded in spec/tests, (b) acceptance/evidence obligations outside the implementation module, or (c) low-severity envelope asymmetries that do not reopen native build, proof, verification-bypass, or merge-authority paths.\n\nThe implementation is a ~110-line policy writer: one allowed op (`egraph.evaluate`), three frozen domain verdicts, five refused false ops, content-addressed JSON artifacts, and standard ACI bounds/resume/integrity. That matches the concurrent scope review's negative native-build decision documented in Phase 27 evidence.\n\n| Seam | Verdict |\n|------|---------|\n| EG1 capability card | Pass — deliberate negative Decision |\n| EG2 per-domain verdicts | Pass — deliberate negative Decision |\n| EG3 false-op refusal taxonomy | Pass after `4d038d0` taxonomy closure |\n| EG4 reopening thresholds | Pass — schema is honest; booleans are naming hazard only |\n| EG5 ACI artifact meaning | Pass — minor resume provenance asymmetry, not authority leak |\n| EG6 bounds/cancel/resume/integrity | Pass — implementation fail-closed; resume cancel untested |\n| EG7 authority boundary | Pass — no verification/merge upgrade path |\n| EG8 acceptance | Pass at impl/test layer; Baton-on-Baton proof is evidence-claimed |\n\n---\n\n## Proposed numbered contract\n\n### EG1 — honest capability card\n\n**Spec:** `AtlasEGraphEvaluation` exposes only `egraph.evaluate`; card reports retire/redirect/research verdicts; no native build, saturation, equivalence-proof, verification-bypass, or merge-authority advertisement.\n\n**Evidence:** `card()` at `atlas-egraph-evaluation.mjs:48-54` lists exactly one op, three domains with `nativeEngine: false`, and four explicit limitations. `invoke()` at `57-91` never executes build/saturation/proof paths. Export is a bare class re-export at `index.mjs:47` with no coordinator wiring that could smuggle engine startup.\n\n**Hostile sequence:** Construct `AtlasEGraphEvaluation`, call `card()`, enumerate `Object.keys(card.ops)` — only `egraph.evaluate`. Call `invoke('egraph.build', …)` — refusal path at `60-67`, not silent downgrade.\n\n**Verdict:** Pass. Card truthfully advertises a policy Decision, not an engine.\n\n### EG2 — per-domain Decision\n\n**Spec:** `whole_repo` → `retired_native`; `whole_function` → `redirected_behavioral`; `expression_kernel` → `conditional_external_research`; all `nativeEngine: false`; expression/kernel not relabeled as source-program or whole-function equivalence.\n\n**Evidence:** Frozen `POLICIES` at `atlas-egraph-evaluation.mjs:11-24`. Test `EG1/EG2` (`phase27-atlas-egraph-evaluation.test.mjs:12-20`) asserts all three decisions and `nativeEngine: false` on card and payload.\n\n**Hostile sequence:** `invoke('egraph.evaluate', { domain: 'expression_kernel' }, ctx)` → payload `decision: 'conditional_external_research'`, not `redirected_behavioral` or any equivalence label.\n\n**Verdict:** Pass. Domain labels match the negative Decision; no equivalence relabeling.\n\n### EG3 — false R7 operations refuse typed\n\n**Spec:** `egraph.build`, `egraph.saturate`, `equivalence.prove`, `verification.skip`, `semantic_merge.authorize` always refuse with domain-specific codes (`r7_domain_retired`, `r7_redirect`, `r7_reopening_required`) carrying Decision id, domain, redirect, and reopening gates.\n\n**Evidence:** `FALSE_OPS` set at `atlas-egraph-evaluation.mjs:6`; refusal block `60-67`. Test `EG3/EG7` (`test.mjs:22-30`) covers all five ops × three domains plus hostile domain shapes `undefined`, `''`, `'source_file'`, `{ injected: true }`.\n\n**`4d038d0` closure:** Prior ambiguity on non-string/unsupported domains on false ops is closed: all such shapes receive `r7_domain_retired` with `supportedDomains` length 3 (`test.mjs:27-29`), not a domain-specific code that could imply partial reopening.\n\n**Residual seam (not actionable):** Unsupported domains on false ops set `reopeningGates: null` and `redirect: []` (`atlas-egraph-evaluation.mjs:62`). Spec EG3 text says errors carry reopening gates; the focused red explicitly codifies null/empty for absent domains — this is deliberate taxonomy, not a bypass.\n\n**Adjacent taxonomy (not actionable):** `invoke('egraph.magic', { domain: 'source_file' }, ctx)` hits `unsupported_op` at line 69 before domain validation — error lacks Decision fields. This is an unknown-op path, not a false R7 op; no engine or authority is reachable.\n\n**Verdict:** Pass after `4d038d0`. False ops are fail-closed and typed per domain.\n\n### EG4 — machine-testable reopening thresholds\n\n**Spec:** Versioned gates per domain; numeric mins; meeting JSON thresholds does not enable capability; `reopeningMeaning` states new reviewed spec required.\n\n**Evidence:** `reopeningGates` frozen per domain (`atlas-egraph-evaluation.mjs:14,18,22`). Test `EG4` (`test.mjs:32-41`) pins exact numerics (3/2, 10, 5/20/0/3) and matches `reopeningMeaning` against `/does_not_enable_capability/`. Payload item sets `reopeningMeaning` at line 74.\n\n**Schema ambiguity (deliberate, not bypass):** Boolean fields such as `fingerprintAgreement: true` and `deploymentBoundsPass: true` read like satisfied predicates, not thresholds. A hostile consumer could misread the artifact as \"gates already green.\" Mitigation is explicit in `reopeningMeaning` and spec EG4 line 38–39: thresholds are schema only; reopening needs new reviewed spec + external tool. No code path auto-enables build/saturation when booleans are true.\n\n**Hostile sequence:** Parse `whole_function` artifact, observe `fingerprintAgreement: true`, call `invoke('egraph.build', { domain: 'whole_function' }, ctx)` — still `r7_redirect` refusal; no gate evaluation occurs.\n\n**Verdict:** Pass. Thresholds are machine-testable and inert; naming is a documentation hazard, not an implementation defect.\n\n### EG5 — ACI artifact and honest meaning\n\n**Spec:** Bounded ACI envelope; content-addressed policy artifact; provenance `policy_decision_not_equivalence_or_semantic_proof`; no proof/translation-validation/merge kind claims.\n\n**Evidence:** Artifact construction `71-89`: `recordType: 'egraph_evaluation_decision'`, ref `kind: 'egraph_evaluation_policy'`, `mediaType: 'application/vnd.baton.atlas-egraph-evaluation-policy+json'`, provenance `meaning` and authority flags false. Test `EG5/EG7` (`test.mjs:43-48`).\n\n**Resume provenance asymmetry (low severity):** `resume()` return at `104` omits `meaning`, `mergeAuthority`, and `verificationAuthority` present on `invoke()` at `88`. Sequence: bounded `invoke` with `budgetTokens: 1` → `resume` with full budget — payload is honest, but `provenance` only has `resumed_from`. A consumer that trusts resume provenance alone could miss authority denial wording; payload item still carries `meaning` and the artifact ref is unchanged. Not an authority leak.\n\n**Verdict:** Pass. No false proof vocabulary on evaluate path; resume envelope is thinner but fail-closed.\n\n### EG6 — bounds, cancellation, resume, and integrity\n\n**Spec:** Deployment-bounded artifact size and inline payload; typed cancellation; resume checks cursor, path, digest, schema, Decision id, offset; tamper/path substitution fail typed; reverify rebuilds same Decision digest.\n\n**Evidence:**\n\n- Bounds: constructor requires `maxArtifactBytes` (`41-44`); `artifact_too_large` at `78`; `bounded()` at `31-37` with token budget; test `EG6` (`test.mjs:50-56`) uses `maxArtifactBytes: 32` refusal.\n- Cancellation: `abort()` at `9`, called in `invoke`/`resume`; test aborts `invoke` (`test.mjs:53`). **Resume cancellation is implemented (`resume:94`) but not red-tested** — code path exists; gap is test coverage only.\n- Resume: regex cursor `95-96`; `realpathSync` path confinement `97-98`; digest check `99`; schema checks `101`; offset bounds `102`; bounded slice `103`.\n- Tamper: outside path and trailing-space tamper → `artifact_integrity` (`test.mjs:63-66`).\n- Reverify: `107-109` re-invokes and compares digests; test confirms `ok: true` (`test.mjs:62`).\n- Collision: pre-existing path with digest mismatch → `artifact_integrity` (`80`).\n\n**Hostile sequences:**\n\n1. **Path substitution:** `resume({ ...ref, path: outsideCopy }, cursor, ctx)` → `artifact_integrity` (test.mjs:63-64).\n2. **Digest tamper:** Append byte to artifact file → `artifact_integrity` on resume (test.mjs:65-66).\n3. **Budget exhaustion:** `budgetTokens: 1` on evaluate → `needs_resume`, empty `payload`, cursor `atlas-egraph-evaluation:<digest>:0` (test.mjs:60-61); resume completes.\n4. **Unsupported domain on evaluate:** `{ domain: 'source_file' }` → `unsupported_domain` via `policy()` (`26-28`, test.mjs:54) — fail-closed, not silent default domain.\n\n**Verdict:** Pass. Integrity and bounds are fail-closed; resume-cancel is implemented but acceptance red is thin.\n\n### EG7 — authority boundary\n\n**Spec:** Decision cannot skip verification, advance main, authorize structured/semantic merge, or upgrade Phase 25 corpus agreement to equivalence. CPG/fingerprints/external reports remain evidence inputs only.\n\n**Evidence:** `verification.skip` and `semantic_merge.authorize` in `FALSE_OPS` with typed refusal (`60-67`). Provenance `mergeAuthority: false`, `verificationAuthority: false` on evaluate (`88`). Redirects name Phase 25 (`behavior.fingerprint`) and Phase 26-adjacent paths (`integration.structured`) without implementing them. Phase 25 evidence explicitly labels agreement `observed_corpus_agreement_not_semantic_equivalence`; Phase 26 evidence bans CPG/fingerprint merge authority. Phase 27 does not import or call those modules.\n\n**Hostile sequence:** `invoke('verification.skip', { domain: 'whole_function' }, ctx)` → `r7_redirect` with redirects `['behavior.fingerprint', …]` but no skip occurs. `invoke('semantic_merge.authorize', { domain: 'whole_repo' }, ctx)` → `r7_domain_retired`; main is untouched.\n\n**Verdict:** Pass. Authority boundary is refusal-only; redirects are pointers, not elevation.\n\n### EG8 — acceptance\n\n**Spec:** Focused reds cover EG1–EG7 and all domains/false operations; canonical suite green; Baton-on-Baton proof queries domains, observes refusals, reverifies, kills reviewers, reaps state.\n\n**Evidence:** Six focused tests map to EG1–EG7 (`test.mjs:12-67`). Handoff evidence claims 6/6 focused gate and 776/776 canonical suite (`phase27-egraph-evaluation-2026-07-11.md:19-24`). Recursive Baton scope evidence is cited (`evidence doc:26-35`) but not re-executed in this review (no homelab integration per constraints).\n\n**Gaps (acceptance-layer, not impl defects):**\n\n- No in-repo red for resume-path cancellation (EG6 implementation present).\n- No in-repo red for invalid-cursor / offset-overflow resume attacks (implementation present at `95-102`).\n- EG8 Baton-on-Baton proof is evidence-documented, not encoded in `phase27-atlas-egraph-evaluation.test.mjs`.\n\n**Verdict:** Pass at implementation/test contract level. Full EG8 lifecycle proof rests on cited evidence artifacts, not on gaps in `atlas-egraph-evaluation.mjs`.\n\n---\n\n## Red tests and proof\n\n### Existing focused reds (sufficient for EG1–EG7 core)\n\n| Test block | Contract | What it proves |\n|------------|----------|----------------|\n| `EG1/EG2` (test.mjs:12-20) | EG1, EG2 | Single op; three domain decisions; `nativeEngine: false` on card and payload |\n| `EG3/EG7` (test.mjs:22-30) | EG3, EG7 | Five false ops × three domains; hostile domain shapes; Decision id + redirects |\n| `EG4` (test.mjs:32-41) | EG4 | Exact numeric gates; `does_not_enable_capability` meaning |\n| `EG5/EG7` (test.mjs:43-48) | EG5, EG7 | Policy kind/mediaType; no authority in provenance; schemaVersion + decisionId |\n| `EG6` bounds (test.mjs:50-56) | EG6 | maxArtifactBytes required; artifact too large; invoke cancel; unsupported domain/op |\n| `EG6` resume (test.mjs:58-67) | EG6 | Token-bound resume; path/digest tamper; deterministic reverify |\n\n### Reproducible failure sequences (adversarial)\n\n**F1 — False op on injected domain object (post-4d038d0):**\n```\natlas.invoke('egraph.saturate', { domain: { injected: true } }, ctx)\n→ code: 'r7_domain_retired', domain absent, reopeningGates: null, supportedDomains: ['whole_repo','whole_function','expression_kernel']\n```\nExpected refusal; no saturation. Confirms fail-closed taxonomy closure.\n\n**F2 — Native build attempt on whole_repo:**\n```\natlas.invoke('egraph.build', { domain: 'whole_repo' }, ctx)\n→ code: 'r7_domain_retired', redirect: ['integration.structured','behavior.compare','cpg.delta']\n```\nExpected typed refusal; deliberate negative Decision, not a defect.\n\n**F3 — Verification bypass attempt:**\n```\natlas.invoke('verification.skip', { domain: 'expression_kernel' }, ctx)\n→ code: 'r7_reopening_required'\n```\nExpected refusal; EG7 boundary holds.\n\n**F4 — Artifact budget exhaustion + honest resume:**\n```\ninvoke('egraph.evaluate', { domain: 'whole_repo' }, { budgetTokens: 1 })\n→ status: 'needs_resume', payload: []\nresume(refs[0], cursor, { budgetTokens: 2000 })\n→ status: 'ok', payload[0].decision: 'retired_native'\n```\nProves bounds do not drop records silently.\n\n**F5 — Path escape on resume:**\n```\nresume({ ...ref, path: copiedOutsideRoot }, cursor, ctx)\n→ code: 'artifact_integrity'\n```\nFail-closed integrity; not actionable.\n\n**F6 — Reopening threshold misread (consumer-side):**\n```\npayload[0].reopeningGates.fingerprintAgreement === true  // reads \"already satisfied\"\ninvoke('egraph.build', { domain: 'whole_function' }, ctx)  // still refuses\n```\nProves thresholds are inert schema; misreading is a consumer hazard, not engine smuggling.\n\n### Suggested supplemental reds (acceptance hardening only)\n\nThese would strengthen EG8 but do not indicate current impl bugs:\n\n1. `resume()` with `AbortSignal` already aborted → expect `cancelled`.\n2. `resume(ref, 'atlas-egraph-evaluation:deadbeef…:999', ctx)` → `invalid_cursor` or `invalid_cursor` offset.\n3. Assert `resume().provenance.meaning` parity with `invoke()` if envelope uniformity becomes a cross-phase contract.\n\n### False proof vocabulary audit\n\nSearched implementation for proof/merge/verification claims:\n\n- Allowed: `policy_decision_not_equivalence_or_semantic_proof`, `egraph_evaluation_policy`, `egraph_evaluation_decision`.\n- Refused: `equivalence.prove`, `verification.skip`, `semantic_merge.authorize`.\n- No `equivalence_`, `proof`, `semantic_merge` success paths exist.\n\nNative-engine smuggling audit: no `child_process`, no WASM/native imports, no graph data structures, no rewrite rules — only `node:crypto`, `node:fs`, `node:path`. The executable policy honestly retires R7 rather than redirecting to a hidden engine.\n\n---\n\n## Risks and rejection criteria\n\n### Reject if any of the following appear in a future revision\n\n1. **Native engine smuggling:** Any code path that constructs, saturates, or queries an e-graph; or `card.ops` listing build/saturation/prove verbs without typed refusal.\n2. **Fail-open false ops:** A false R7 op returning `ok` or writing an artifact that implies equivalence/verification/merge authority.\n3. **Threshold auto-enable:** Runtime logic that skips refusal when `reopeningGates` numerics or booleans are satisfied inside JSON alone.\n4. **Proof vocabulary regression:** Artifact kinds or media types containing `equivalence`, `proof`, `translation_validation`, or `merge_authority` without typed refusal.\n5. **Integrity fail-open:** Resume accepting digest-mismatched files, paths outside `artifactRoot`, or schema versions other than pinned `schemaVersion: 1` / `decisionId: 'phase27-r7-egraph-retire-redirect'`.\n6. **Authority elevation:** Provenance `verificationAuthority: true` or `mergeAuthority: true`; or redirects that invoke Phase 25 compare/Phase 26 merge without ordinary verification gates.\n7. **Phase boundary violation:** Using Phase 25 corpus agreement or Phase 26 structured merge outcomes as substitutes for refused equivalence claims within this module.\n\n### Residual risks (monitor, do not block `4d038d0`)\n\n| Risk | Severity | Notes |\n|------|----------|-------|\n| `reopeningGates` boolean naming | Medium (consumer) | Values like `fingerprintAgreement: true` invite misinterpretation; mitigated by `reopeningMeaning` |\n| Resume provenance thinning | Low | Authority flags only on invoke envelope |\n| `unsupported_op` vs `unsupported_domain` split | Low | Unknown op strings do not carry Decision context |\n| Null `reopeningGates` on bad-domain false ops | Low | Codified by test; spec prose is tighter than implementation |\n| EG8 Baton-on-Baton proof | External | Claimed in evidence doc; not re-run here |\n| Resume/tamper reds incomplete | Low | Implementation checks exist for cursor attacks and cancel |\n\n### Phase 24–26 boundary alignment\n\n- **Phase 24 (representation ceiling):** R4 IR refusal pattern mirrors Phase 27's retire/redirect Decision — JS/TS stops at honest ceiling; Phase 27 does not claim compiler IR or translation validation.\n- **Phase 25 (behavior fingerprint):** `whole_function` redirect includes `behavior.fingerprint`; Phase 27 never upgrades `observed_corpus_agreement_not_semantic_equivalence` to equivalence.\n- **Phase 26 (structured merge):** `semantic_merge.authorize` is explicitly refused; `integration.structured` appears only as a redirect label for whole_repo, not an in-module merge executor.\n\n### Conclusion\n\nCommit `4d038d0` delivers an honest, fail-closed executable negative Decision for R7 e-graph evaluation. Adversarial review found no remaining actionable defect that would reopen native build, bypass verification, authorize merge, or smuggle equivalence proof vocabulary. Remaining items are deliberate policy semantics, consumer-side schema reading hazards, and acceptance/evidence coverage gaps that do not falsify EG1–EG7 implementation correctness."
+    }
+  ],
+  "approvals": [
+    {
+      "workerId": "w-1",
+      "requestId": "w-1:apr:1",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "workerId": "w-1",
+      "requestId": "w-1:apr:2",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "workerId": "w-2",
+      "requestId": "w-2:apr:1",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "workerId": "w-1",
+      "requestId": "w-1:apr:3",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    },
+    {
+      "workerId": "w-1",
+      "requestId": "w-1:apr:4",
+      "ack": {
+        "ok": true,
+        "result": "applied"
+      }
+    }
+  ],
+  "stopResults": [
+    {
+      "taskId": "grok-egraph-implementation-45",
+      "ack": {
+        "ok": true,
+        "result": "confirmed",
+        "emulated": false
+      }
+    },
+    {
+      "taskId": "grok-egraph-implementation-composer",
+      "ack": {
+        "ok": true,
+        "result": "confirmed",
+        "emulated": false
+      }
+    }
+  ],
+  "checks": {
+    "noHarnessError": true,
+    "expectedReviews": true,
+    "distinctLivePids": true,
+    "concurrentTurns": true,
+    "exactModelsObserved": true,
+    "bothFreshVerified": true,
+    "reportsCaptured": true,
+    "allKillsConfirmed": true,
+    "processesGone": true,
+    "worktreesGone": true,
+    "runtimeGone": true,
+    "branchesGone": true
+  },
+  "fatal": null,
+  "pass": true
+}

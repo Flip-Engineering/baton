@@ -1,0 +1,113 @@
+// Red-team wave for the MCP+packaging contract v0.9 — codex (authority) + glm (lifecycle),
+// THROUGH baton.recipes.run.
+// Usage: node run-redteam.mjs
+import { writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { openBaton } from '../../../../impl/src/index.mjs';
+
+const repo = resolve(process.cwd());
+const EVIDENCE = resolve(repo, 'docs/reference/evidence/mcp-packaging-2026-08-02');
+const log = (line) => console.log(`[rt ${new Date().toISOString()}] ${line}`);
+
+const baton = await openBaton({
+  repo,
+  advanced: {
+    deploymentRoot: resolve(repo, '.baton', 'mcp-packaging-redteam-2026-08-02'),
+    routes: [
+      { harness: 'codex', model: 'gpt-5.6-sol', effort: 'high' },
+      { harness: 'glm', model: 'glm-5.2', effort: 'high' },
+    ],
+    verification: Object.freeze({ command: 'true', arguments: [] }),
+  },
+});
+
+try {
+  const receipt = await baton.recipes.run({
+    name: 'mcp-packaging-contract-redteam',
+    version: '0.9',
+    members: [
+      {
+        role: 'authority-attacker',
+        exact: { harness: 'codex', model: 'gpt-5.6-sol', effort: 'high' },
+        scope: ['docs/reference/evidence/mcp-packaging-2026-08-02/**'],
+        objectiveTemplate: {
+          task: [
+            'Adversarially red-team the MCP+packaging contract v0.9 (AUTHORITY angle). Contract:',
+            'docs/reference/evidence/mcp-packaging-2026-08-02/mcp-packaging-decisions.md. Ground',
+            'every claim in file:line. Anchors: impl/src/mcp-northbound.mjs (tool table, quota,',
+            'hidden fields :84-96, reflex table), application-semantics.mjs (registry rows,',
+            'surfaces), coordination-store.mjs admitBoardCommand :13495 (the S-2 envelope),',
+            'admitWorkflowFinding :14695 (XB session binding), application-cli.mjs,',
+            'impl/scripts/mcp-stdio.mjs + mcp-web.mjs, impl/MCP.md. Attack: (1) waves.start over',
+            'MCP — what stops a caller from spawning unbounded waves or off-profile routes; is the',
+            'deployment profile actually enforced at the MCP admission (find the profile check or',
+            'its absence)? (2) decision.answer principal binding — who may answer through MCP vs',
+            'the embedded path; can one harness answer another\'s decisions cross-repo (repoIds',
+            'scoping)? (3) MCP-W2: is the S-2 envelope ceremony or substance after #63 XB made the',
+            'lease session-bound — what EXACTLY does the envelope add, and can it be replayed',
+            'across stdio retries? (4) settlement_lease on MCP deriving session from the',
+            'deployment principal — does that re-open the bearer hole XB closed (any MCP caller',
+            'rides the host identity)? (5) PKG-1 descriptor: path escapes, file credential refs',
+            'outside repo, schema smuggling, env-ref leaking (a credential ref naming a SECRET env',
+            'var whose VALUE then appears in a tool argument or log). (6) PKG-2: npm pack leak',
+            'surface (repo-root credential files, .baton, evidence); the native @ast-grep/napi dep',
+            'on a clean host. Verdict each: CONFIRMED-HOLE / DEFENDED / NEEDS-AMENDMENT + amendment.',
+          ].join(' '),
+          constraints: [
+            'Write the report skeleton (all headings + stubs) FIRST so an in-scope diff exists from your first minutes, then deepen.',
+            'Work in ONE continuous turn to completion.',
+            'Read-only review: do not edit impl/ files; your only write target is your report path.',
+          ],
+        },
+        report: 'docs/reference/evidence/mcp-packaging-2026-08-02/redteam-authority.md',
+      },
+      {
+        role: 'lifecycle-attacker',
+        exact: { harness: 'glm', model: 'glm-5.2', effort: 'high' },
+        scope: ['docs/reference/evidence/mcp-packaging-2026-08-02/**'],
+        objectiveTemplate: {
+          task: [
+            'Adversarially red-team the MCP+packaging contract v0.9 (LIFECYCLE/TRANSPORT angle).',
+            'Contract: docs/reference/evidence/mcp-packaging-2026-08-02/mcp-packaging-decisions.md.',
+            'Ground every claim in file:line. Anchors: wave.mjs (createWave/attachWave/handle),',
+            'wave-driver.mjs (progress/steering claims), S-1 transportHidden semantics in',
+            'application-semantics.mjs (waves.attach row) + mcp-northbound.mjs, claude-session.mjs',
+            '(decision lanes), mcp-web bridge. Attack: (1) detached semantics — waves.start over',
+            'stdio MCP returns {waveId, members}; what happens when the MCP host process DIES',
+            'mid-wave (the runs keep going — who steers? is re-attach via waves.attach enough,',
+            'and is it idempotent across a transport retry that double-starts a wave — the',
+            'idempotencyKey story)? (2) waves.progress freshness — polling vs follow; can a',
+            'progress read wedge the MCP frame (large wave state vs maxMessageBytes 64KiB)?',
+            '(3) decision.answer across a transport gap — the decision expires (deadlineAt) while',
+            'the MCP caller is disconnected; what does the caller see, and is one-pending-decision',
+            'admission (decision_already_pending) honest over MCP? (4) the acceptance driver',
+            '(external process orchestrating a wave purely via MCP tools) — walk its failure',
+            'modes: which step silently degrades (progress hallucinated as fresh, answers lost,',
+            'outcomes duplicated)? (5) PKG-1 descriptor lifecycle: edits to the descriptor while',
+            'the server runs (re-read? restart? pinned at open?), partial JSON, BOM/encoding.',
+            '(6) MCP-W3 doctor freshness — per-call fresh read vs cached readiness; quota',
+            'interactions (doctor counting against tool quota). Verdict each: CONFIRMED-HOLE /',
+            'DEFENDED / NEEDS-AMENDMENT + amendment.',
+          ].join(' '),
+          constraints: [
+            'Write the report skeleton (all headings + stubs) FIRST so an in-scope diff exists from your first minutes, then deepen.',
+            'Work in ONE continuous turn to completion.',
+            'Read-only review: do not edit impl/ files; your only write target is your report path.',
+          ],
+        },
+        report: 'docs/reference/evidence/mcp-packaging-2026-08-02/redteam-lifecycle.md',
+      },
+    ],
+    policy: { steering: 'nudge-on-checkpoint', finalization: 'claim-on-stall' },
+  }, {
+    task: 'Red-team the MCP+packaging contract v0.9',
+    idempotencyKey: 'mcp-packaging-redteam-2026-08-02',
+    manifestPath: resolve(EVIDENCE, 'redteam-manifest.json'),
+    evidencePath: resolve(EVIDENCE, 'redteam-evidence.json'),
+  });
+  writeFileSync(resolve(EVIDENCE, 'redteam-receipt.json'), `${JSON.stringify(receipt, null, 2)}\n`);
+  log(`red-team settled: ${(receipt?.outcomes ?? []).map((o) => `${o.role}=${o.phase}`).join(' ')}`);
+  log('RT-DONE');
+} finally {
+  await baton.close().catch(() => {});
+}

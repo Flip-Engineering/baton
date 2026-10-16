@@ -1,0 +1,657 @@
+{
+  "schemaVersion": 1,
+  "answerProof": {
+    "requestId": "w-152:decision:1",
+    "answer": {
+      "optionId": "detailed"
+    },
+    "result": {
+      "schemaVersion": 1,
+      "runId": "run-703f839b0b8c4d635b2eda7a7e903999",
+      "objective": "Write a one-paragraph recommendation about adopting baton's REPL layer (docs/33) for a sister project — BUT you MUST gate on an orchestrator decision about the framing BEFORE writing anything. Emit exactly one line of the form DECISION_REQUEST: {\"question\":\"Which framing should the recommendation use?\",\"options\":[{\"id\":\"concise\",\"label\":\"Concise\",\"summary\":\"Three sentences, executive tone\"},{\"id\":\"detailed\",\"label\":\"Detailed\",\"summary\":\"A fuller paragraph with mechanism names\"},{\"id\":\"critical\",\"label\":\"Critical\",\"summary\":\"Lead with adoption risks first\"}],\"allowFreeResponse\":false,\"recommended\":null,\"deadlineMs\":1200000} then WAIT for the settlement. Do NOT write the report, and do NOT pick a framing yourself, until the orchestrator answers. When the answer arrives, write docs/reference/evidence/decision-live-2026-07-22/recommendation.md in EXACTLY the settled style, and state the settled option id in the first line as `framing: <id>`. Do not invoke nested Baton. One shell command per call. [attempt: 2026-07-23T06:07:52.832Z]",
+      "resultIntent": "change",
+      "objectiveResultPolicy": {
+        "mode": "change",
+        "repositoryMutation": "required_when_declared",
+        "acceptance": "verified_effect_result"
+      },
+      "profile": {
+        "name": "default",
+        "digest": "ca77505053f0642e883e147bfa9914df0b8ae1ed915780705d49da677316404c"
+      },
+      "phase": "running",
+      "cursor": 38367,
+      "nextActions": [
+        {
+          "kind": "steer"
+        },
+        {
+          "kind": "stop"
+        },
+        {
+          "kind": "wait"
+        }
+      ],
+      "goal": {
+        "id": "goal:5c03189b1b5f2ede55f0faf2684f849209171930f992981a241295f62e809d0d",
+        "version": 1,
+        "digest": "4196b0ebfe6b31c7d27f81abde36eb0fb74094e41b3d628154ca01cfa65c9451"
+      },
+      "plan": {
+        "id": "plan:4d963c4b74c134d0b2205240ed6cbd226aca6d6d80338df0eea4d954116f4dad",
+        "version": 1,
+        "digest": "7ceb959a54108acf9e475eac416782ba5efa17c3efcca645f5ef03d85ee64368",
+        "approval": {
+          "disposition": "approved",
+          "digest": "6368ff5b90444ac95f9621a5b276f8e06a5d92f880a6218ee64648d0f1ad73cd"
+        }
+      },
+      "planPreview": {
+        "objective": "Write a one-paragraph recommendation about adopting baton's REPL layer (docs/33) for a sister project — BUT you MUST gate on an orchestrator decision about the framing BEFORE writing anything. Emit exactly one line of the form DECISION_REQUEST: {\"question\":\"Which framing should the recommendation use?\",\"options\":[{\"id\":\"concise\",\"label\":\"Concise\",\"summary\":\"Three sentences, executive tone\"},{\"id\":\"detailed\",\"label\":\"Detailed\",\"summary\":\"A fuller paragraph with mechanism names\"},{\"id\":\"critical\",\"label\":\"Critical\",\"summary\":\"Lead with adoption risks first\"}],\"allowFreeResponse\":false,\"recommended\":null,\"deadlineMs\":1200000} then WAIT for the settlement. Do NOT write the report, and do NOT pick a framing yourself, until the orchestrator answers. When the answer arrives, write docs/reference/evidence/decision-live-2026-07-22/recommendation.md in EXACTLY the settled style, and state the settled option id in the first line as `framing: <id>`. Do not invoke nested Baton. One shell command per call. [attempt: 2026-07-23T06:07:52.832Z]",
+        "definitionOfDone": [
+          "Baton preserves exact route, result, and cleanup truth.",
+          "The requested repository improvement is implemented and verified."
+        ],
+        "constraints": [
+          "Baton deployment profile default@ca77505053f0642e883e147bfa9914df0b8ae1ed915780705d49da677316404c",
+          "Baton objective/result policy explicit change_v1",
+          "Do not claim completion without the deployment verification command."
+        ],
+        "risk": "high",
+        "goalBudget": {
+          "tokens": 100000000,
+          "usd": 1000,
+          "wallMin": 480,
+          "providerTurns": 2048
+        },
+        "node": {
+          "key": "work",
+          "objective": "Write a one-paragraph recommendation about adopting baton's REPL layer (docs/33) for a sister project — BUT you MUST gate on an orchestrator decision about the framing BEFORE writing anything. Emit exactly one line of the form DECISION_REQUEST: {\"question\":\"Which framing should the recommendation use?\",\"options\":[{\"id\":\"concise\",\"label\":\"Concise\",\"summary\":\"Three sentences, executive tone\"},{\"id\":\"detailed\",\"label\":\"Detailed\",\"summary\":\"A fuller paragraph with mechanism names\"},{\"id\":\"critical\",\"label\":\"Critical\",\"summary\":\"Lead with adoption risks first\"}],\"allowFreeResponse\":false,\"recommended\":null,\"deadlineMs\":1200000} then WAIT for the settlement. Do NOT write the report, and do NOT pick a framing yourself, until the orchestrator answers. When the answer arrives, write docs/reference/evidence/decision-live-2026-07-22/recommendation.md in EXACTLY the settled style, and state the settled option id in the first line as `framing: <id>`. Do not invoke nested Baton. One shell command per call. [attempt: 2026-07-23T06:07:52.832Z]",
+          "pathScope": [
+            "docs/reference/evidence/decision-live-2026-07-22/recommendation.md"
+          ],
+          "contextScope": [
+            "**"
+          ],
+          "risk": "high",
+          "budget": {
+            "tokens": 100000000,
+            "usd": 1000,
+            "wallMin": 480,
+            "providerTurns": 2048
+          },
+          "verification": {
+            "command": "node",
+            "arguments": [
+              "--test",
+              "impl/test/wave-driver-red.test.mjs"
+            ],
+            "cwd": ".",
+            "envAllowlist": [
+              "PATH"
+            ],
+            "expectExit": 0,
+            "expectResult": "exit_code",
+            "timeoutMs": 28800000,
+            "maxOutputBytes": 1048576,
+            "requiredPredecessorEvidence": []
+          },
+          "route": {
+            "harness": "claude-code",
+            "model": "claude-sonnet-5",
+            "effort": "high"
+          },
+          "capabilities": [
+            "baton_orchestrator",
+            "code",
+            "test"
+          ],
+          "effects": [
+            "provider_call",
+            "repository_edit"
+          ],
+          "requiredEffects": [
+            "repository_edit"
+          ]
+        },
+        "profileDigest": "ca77505053f0642e883e147bfa9914df0b8ae1ed915780705d49da677316404c",
+        "planDigest": "7ceb959a54108acf9e475eac416782ba5efa17c3efcca645f5ef03d85ee64368",
+        "resultIntent": "change",
+        "objectiveResultPolicy": {
+          "mode": "change",
+          "repositoryMutation": "required_when_declared",
+          "acceptance": "verified_effect_result"
+        },
+        "displayDigest": "58382ce21a0caffbfb22ffbe980d0f51d34ac95bb7fd3d717e883f72e3f604ba"
+      },
+      "nodes": [
+        {
+          "key": "work",
+          "deps": [],
+          "state": "dispatched",
+          "dispatchVersion": 1,
+          "taskId": "baton-f69cfac660d70ff9877223b1-work",
+          "terminalEvent": null,
+          "terminalOutcome": null,
+          "budget": {
+            "status": "pending",
+            "initial": {
+              "tokens": 100000000,
+              "usd": 1000,
+              "wallMin": 480,
+              "providerTurns": 2048
+            },
+            "reserved": {
+              "tokens": 100000000,
+              "usd": 1000,
+              "wallMin": 480,
+              "providerTurns": 2048
+            },
+            "consumed": {
+              "tokens": null,
+              "usd": null,
+              "wallMin": null,
+              "providerTurns": null
+            },
+            "released": {
+              "tokens": null,
+              "usd": null,
+              "wallMin": null,
+              "providerTurns": null
+            },
+            "held": {
+              "tokens": 100000000,
+              "usd": 1000,
+              "wallMin": 480,
+              "providerTurns": 2048
+            },
+            "overrun": {
+              "tokens": null,
+              "usd": null,
+              "wallMin": null,
+              "providerTurns": null
+            },
+            "availability": {
+              "tokens": "unavailable",
+              "usd": "unavailable",
+              "wallMin": "unavailable",
+              "providerTurns": "unavailable"
+            },
+            "settledEvent": null
+          }
+        }
+      ],
+      "route": {
+        "requested": {
+          "harness": "claude-code",
+          "model": "claude-sonnet-5",
+          "effort": "high"
+        },
+        "resolved": {
+          "harness": "claude-code@2.1.216",
+          "model": "claude-sonnet-5",
+          "effort": "high"
+        },
+        "observed": {
+          "harness": null,
+          "model": "claude-sonnet-5",
+          "effort": null
+        },
+        "launchEnforcement": {
+          "harness": {
+            "requested": "claude-code",
+            "resolved": "claude-code@2.1.216",
+            "state": "matched"
+          },
+          "model": {
+            "requested": "claude-sonnet-5",
+            "resolved": "claude-sonnet-5",
+            "state": "matched"
+          },
+          "effort": {
+            "requested": "high",
+            "resolved": "high",
+            "state": "matched"
+          }
+        },
+        "providerAttestation": {
+          "harness": {
+            "observed": null,
+            "state": "pending"
+          },
+          "model": {
+            "observed": "claude-sonnet-5",
+            "state": "matched"
+          },
+          "effort": {
+            "observed": null,
+            "state": "pending"
+          }
+        },
+        "rationale": {
+          "launchEnforcement": "exact deployment-profile route",
+          "providerAttestation": "provider-native observation only"
+        }
+      },
+      "workerPolicy": {
+        "schemaVersion": 1,
+        "requestDigest": "754c3f5f9ceb530a6cf3e0322ce3cd0684e0911f9f1da174cfedf419d7bcb2e8",
+        "autonomy": {
+          "requested": "unattended",
+          "resolved": "unattended",
+          "observation": "launch",
+          "mechanisms": [
+            "permission-mode-bypassPermissions"
+          ]
+        },
+        "access": {
+          "requested": "full",
+          "resolved": "full",
+          "observation": "launch",
+          "mechanisms": [
+            "claude-unsandboxed-permissions"
+          ]
+        },
+        "containment": {
+          "requested": {
+            "mode": "workspace_preferred",
+            "minimum": "private_runtime"
+          },
+          "resolved": "private_runtime_only",
+          "hostProcess": "same_uid",
+          "guarantees": [
+            "private_runtime"
+          ],
+          "configuredPreferences": [],
+          "observation": "unavailable",
+          "attestation": "preferred_gap"
+        },
+        "adapterCardDigest": "acb108f095a136107afd0a1b44054d01a25b458db06c6e4ca13d78db395d2249",
+        "resolutionDigest": "e184e0d21fd1ae5ee204841b0e9c6eab0af96ae341478deeaf74c790bfe8e12d",
+        "state": "observed",
+        "observation": {
+          "schemaVersion": 1,
+          "resolutionDigest": "e184e0d21fd1ae5ee204841b0e9c6eab0af96ae341478deeaf74c790bfe8e12d",
+          "autonomy": {
+            "source": "launch",
+            "observed": "unattended"
+          },
+          "access": {
+            "source": "launch",
+            "observed": "full"
+          },
+          "containment": {
+            "source": "unavailable",
+            "observed": null
+          },
+          "observationDigest": "860511afa3ef8cd04e15a4151969380c92b2a81a993f808bad4fd4ebf6b7a055"
+        },
+        "mismatch": null
+      },
+      "budget": {
+        "allocated": {
+          "tokens": 100000000,
+          "usd": 1000,
+          "wallMin": 480,
+          "providerTurns": 2048
+        },
+        "node": {
+          "status": "pending",
+          "initial": {
+            "tokens": 100000000,
+            "usd": 1000,
+            "wallMin": 480,
+            "providerTurns": 2048
+          },
+          "reserved": {
+            "tokens": 100000000,
+            "usd": 1000,
+            "wallMin": 480,
+            "providerTurns": 2048
+          },
+          "consumed": {
+            "tokens": null,
+            "usd": null,
+            "wallMin": null,
+            "providerTurns": null
+          },
+          "released": {
+            "tokens": null,
+            "usd": null,
+            "wallMin": null,
+            "providerTurns": null
+          },
+          "held": {
+            "tokens": 100000000,
+            "usd": 1000,
+            "wallMin": 480,
+            "providerTurns": 2048
+          },
+          "overrun": {
+            "tokens": null,
+            "usd": null,
+            "wallMin": null,
+            "providerTurns": null
+          },
+          "availability": {
+            "tokens": "unavailable",
+            "usd": "unavailable",
+            "wallMin": "unavailable",
+            "providerTurns": "unavailable"
+          },
+          "settledEvent": null
+        },
+        "termination": null
+      },
+      "attention": [],
+      "attentionTruncated": false,
+      "blockedInteraction": null,
+      "verification": {
+        "state": "pending",
+        "stability": null,
+        "verdict": null
+      },
+      "semanticReview": {
+        "state": "semantics_unverified",
+        "findings": []
+      },
+      "progress": {
+        "current": "provider",
+        "summary": "Provider turn: Provider identity observed",
+        "stages": [
+          {
+            "key": "intent",
+            "label": "Intent compiled",
+            "state": "complete",
+            "detail": "Goal authority recorded"
+          },
+          {
+            "key": "plan",
+            "label": "Plan approval",
+            "state": "complete",
+            "detail": "Exact Plan digest approved"
+          },
+          {
+            "key": "dispatch",
+            "label": "Worker dispatch",
+            "state": "complete",
+            "detail": "Plan node claimed exactly once"
+          },
+          {
+            "key": "provider",
+            "label": "Provider turn",
+            "state": "active",
+            "detail": "Provider identity observed"
+          },
+          {
+            "key": "verification",
+            "label": "Fresh verification",
+            "state": "pending",
+            "detail": "No accepted verification yet"
+          },
+          {
+            "key": "semantic_review",
+            "label": "Independent semantic review",
+            "state": "complete",
+            "detail": "Review not required by selected profile"
+          },
+          {
+            "key": "result",
+            "label": "Accepted result",
+            "state": "pending",
+            "detail": "No accepted result"
+          },
+          {
+            "key": "integration",
+            "label": "Repository integration",
+            "state": "pending",
+            "detail": "Integration remains gated"
+          },
+          {
+            "key": "export",
+            "label": "Accepted-result export",
+            "state": "pending",
+            "detail": "No accepted result to export"
+          },
+          {
+            "key": "cleanup",
+            "label": "Owned-resource cleanup",
+            "state": "active",
+            "detail": "Lifecycle ownership remains visible"
+          }
+        ]
+      },
+      "result": null,
+      "integration": null,
+      "export": null,
+      "ownership": {
+        "workers": 1,
+        "workerIds": [
+          "w-152"
+        ],
+        "closed": false
+      },
+      "execution": {
+        "state": "running",
+        "activeProviderTurns": 1,
+        "controllableAttachedMembers": 0,
+        "dispatchClosed": false
+      },
+      "evidence": [],
+      "narrative": "1 worker(s) active.",
+      "lastAction": {
+        "command": "run.answer",
+        "requestId": "w-152:decision:1",
+        "result": "applied"
+      },
+      "recovery": null,
+      "preservation": {
+        "state": "unavailable",
+        "available": false,
+        "checkpointSha": null
+      },
+      "resume": null,
+      "terminalCause": null,
+      "stop": null,
+      "close": null
+    }
+  },
+  "outcomes": [
+    {
+      "role": "recommender",
+      "phase": "work_completed",
+      "terminal": false,
+      "narrative": "0 worker(s) active, 1 done.",
+      "resultSha": "376c60feaeebdbabc4a92782d41cf7bf81db8a43"
+    }
+  ],
+  "stops": [
+    {
+      "role": "recommender",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    }
+  ],
+  "pumpQuiescent": true,
+  "waveEvidence": {
+    "schemaVersion": 1,
+    "startedAt": "2026-07-23T06:08:25.430Z",
+    "members": [
+      "recommender"
+    ],
+    "outcomes": [
+      {
+        "role": "recommender",
+        "phase": "work_completed",
+        "terminal": false,
+        "narrative": "0 worker(s) active, 1 done.",
+        "resultSha": "376c60feaeebdbabc4a92782d41cf7bf81db8a43"
+      }
+    ],
+    "steering": [],
+    "stops": [
+      {
+        "role": "recommender",
+        "stop": null,
+        "resources": {
+          "state": "stopped",
+          "cleanupState": "stopped",
+          "ownedCount": 0
+        },
+        "ownedCount": 0
+      }
+    ],
+    "progress": [
+      {
+        "at": "2026-07-23T06:08:57.263Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-23T06:09:13.163Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-23T06:09:28.950Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-23T06:09:44.570Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-23T06:10:00.148Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-23T06:10:15.749Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-23T06:10:31.184Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-23T06:10:46.437Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-23T06:11:01.973Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-23T06:11:17.136Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-23T06:11:32.591Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-23T06:11:47.978Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-23T06:12:03.350Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-23T06:12:18.733Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-23T06:12:34.108Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-23T06:12:49.449Z",
+        "members": [
+          {
+            "role": "recommender",
+            "phase": "work_completed"
+          }
+        ]
+      }
+    ],
+    "pumpDrained": true
+  }
+}

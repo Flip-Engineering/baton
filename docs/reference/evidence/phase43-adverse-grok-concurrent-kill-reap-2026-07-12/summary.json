@@ -1,0 +1,41 @@
+{
+  "at": "2026-07-13T02:48:48.371Z",
+  "repoHead": "3c491af40c8d6082cca832cc7a481c91fa0cbb44",
+  "grokVersion": "grok 0.1.216 (b139744655)",
+  "authProbe": {
+    "authenticated": false,
+    "result": "Authentication required"
+  },
+  "routes": [
+    {
+      "harness": "grok",
+      "modelRequested": "grok-4.5",
+      "modelResolved": "grok-4.5",
+      "modelObserved": null,
+      "effortRequested": "low",
+      "effortResolved": "low",
+      "nativePid": null
+    },
+    {
+      "harness": "grok",
+      "modelRequested": "grok-composer-2.5-fast",
+      "modelResolved": "grok-composer-2.5-fast",
+      "modelObserved": null,
+      "effortRequested": "low",
+      "effortResolved": "low",
+      "nativePid": null
+    }
+  ],
+  "checks": {
+    "twoRoutesAdmitted": true,
+    "exactRoutesRequestedResolved": true,
+    "providerAuthenticationAccepted": false,
+    "nativeConcurrencyProved": false,
+    "processesGone": true,
+    "worktreesGone": true,
+    "runtimesGone": true,
+    "branchesGone": true,
+    "writerAuthorityReleased": true
+  },
+  "pass": false
+}
