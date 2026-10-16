@@ -82,7 +82,7 @@ message reads and each action.
 ## Documentation
 
 - [Command guide](bend2/README.md): CLI commands and examples.
-- [Messaging](docs/bend2/messaging.md): delivery, acknowledgments, and retries.
+- [Messaging](docs/bend2/messaging.md): delivery, handling, and retries.
 - [Branching Ensembles](docs/bend2/branching-ensembles.md): workspace snapshots,
   fresh conversations, evaluation, and selection.
 - [Shared knowledge](docs/bend2/knowledge-context-2026-10-01.md): findings, scopes,

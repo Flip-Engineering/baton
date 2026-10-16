@@ -205,11 +205,11 @@ const unavailableTools = new Set([
 
 function messageInstructions() {
   if (contextualActions) {
-    return `Use ${dispatchInput ? 'baton2_dispatch' : 'baton2_task'} for complete task text or a UTF-8 file, with to or session selecting an existing conversation. Baton preserves its current assignment automatically. Dispatch input and setup outcomes are stored in the database. Use baton2_action for the contextual native actions: inbox, read, send, completion-request, completion-confirmed, guide, acknowledge and domain help. The attached session supplies actor identity. Pass action and its named argument tokens; use action:help with the domain name for usage. Complete action argument strings travel directly through JSON standard input to native admission. Multi-message reads, independent sends and explicit acknowledgements return each item outcome. Successful recipient turns record handling of complete inputs; failed turns retain unfinished handling. Baton generates mutation identities and selects current owned input, receipts and completion requests. Use acknowledge without identifiers after handling input, and completion-confirmed with an optional recipient. Task completion and coordinator decisions remain separate recorded actions.`;
+    return `Use ${dispatchInput ? 'baton2_dispatch' : 'baton2_task'} for complete task text or an existing UTF-8 file; to or session selects an existing conversation. Baton stores complete dispatch input and setup outcomes and preserves the assignment. Use baton2_action with action inbox to read pending input, report or ask with one text argument to reach your coordinator, send or guide with Player and text arguments, finish with one summary argument, and confirm with the selected Player. The attached session supplies actor identity. Action help describes named arguments and batches. Successful native turns automatically record handling of their complete owned reads; failed turns and unread input remain pending. Baton generates action identities and selects the current assignment, coordinator and completion request. Continue the assignment until your coordinator confirms completion. Explicit stops remain effective.`;
   }
   const messaging = batchMessaging
-    ? 'Use baton2_inbox or baton2_pending to see pending messages, and baton2_outbox to inspect authored messages and receipts. Their optional index:true argument returns metadata; baton2_delivery and baton2_delivery_batch read selected complete messages. Use baton2_ack to acknowledge your own fully read and handled input; retain unfinished work in your reports and project state. Use baton2_guide or baton2_message_batch to direct recipients. Each batch item keeps its own admission, wake, retained message and receipt facts.'
-    : 'Use baton2_inbox or baton2_pending to see pending messages. Their optional index:true argument returns metadata. baton2_delivery reads one complete stored message and its receipt. Use baton2_ack to acknowledge your own fully read and handled input; retain unfinished work in your reports and project state. Use baton2_guide to direct one recipient.';
+    ? 'Use baton2_inbox or baton2_pending to read complete pending input, and baton2_outbox to inspect authored messages and receipts. Their optional index:true argument returns metadata; baton2_delivery and baton2_delivery_batch read selected complete messages. Successful native turns automatically record handling of complete owned reads; failed turns and unread input remain pending. Use baton2_guide or baton2_message_batch to direct recipients. Each batch item retains its admission, wake, message and receipt.'
+    : 'Use baton2_inbox or baton2_pending to read complete pending input. Their optional index:true argument returns metadata. baton2_delivery reads one complete stored message and its receipt. Successful native turns automatically record handling of complete owned reads; failed turns and unread input remain pending. Use baton2_guide to direct one recipient.';
   return messaging + (inputDetail
     ? ' baton2_input relates one stored message to its admission, recipient-owned receipt, current recipient state and available attempt evidence.'
     : '');
@@ -321,7 +321,7 @@ const dispatchInputSchema = { type: 'object', properties: {
 const TOOLS = [
   {
     name: 'baton2_action',
-    description: 'Run a contextual native action as the attached session. Use inbox, read, send, completion-request, completion-confirmed, guide, acknowledge or help with a command domain. Named arguments and independent batch clauses use the same native grammar as baton. Complete argument strings travel through JSON standard input. Each item retains its outcome and actual failure cause.',
+    description: 'Run a contextual native action as the attached session. Use inbox, read, send, report, ask, guide, finish, confirm or help. Positional text arguments, named arguments and independent batch clauses use the same grammar as baton. Complete argument strings travel through JSON standard input. Each item retains its outcome and actual failure cause.',
     inputSchema: { type: 'object', properties: {
       action: { type: 'string' }, arguments: { type: 'array', items: { type: 'string' } },
     }, required: ['action'], additionalProperties: false },
@@ -634,7 +634,7 @@ const TOOLS = [
   },
   {
     name: 'baton2_ack',
-    description: 'Acknowledge the attached Conductor’s fully read and handled input. Record unfinished work in reports and project state.',
+    description: 'Compatibility action for explicit administrative handling. Successful native turns automatically record handling of complete owned reads.',
     inputSchema: {
       type: 'object',
       properties: {
