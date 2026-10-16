@@ -138,6 +138,11 @@ class CodexProxy(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr.decode())
         self.assertEqual(result.stdout, b'exit 7\n')
 
+    def test_cancel_refuses_actual_retired_child_with_outstanding_reference(self):
+        result = self.run_proxy('exit-seven', 'retired-cancel')
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        self.assertEqual(result.stdout, b'retired-child-refused\n')
+
     def test_cancel_returns_actual_signal(self):
         result = self.run_proxy('cancel', 'cancel')
         self.assertEqual(result.returncode, 0, result.stderr.decode())
