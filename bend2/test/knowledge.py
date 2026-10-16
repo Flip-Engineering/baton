@@ -70,6 +70,85 @@ class Knowledge(unittest.TestCase):
     def scoped(self, scope, subject=''):
         return self.call('knowledge-scope', 'root', scope, subject)
 
+    def discovery_commands(self, scope, subject):
+        commands = (
+            ('knowledge-scope', 'root', scope, subject),
+            ('knowledge-relations', 'root', scope, subject),
+            ('knowledge-scope', 'root', scope, subject, '--index'),
+            ('knowledge-scope', 'root', scope, subject, '--id', 'scope-finding'),
+            ('knowledge-search', 'root', scope, subject, 'scope'),
+            ('knowledge-traverse', 'root', scope, subject,
+             'finding:scope-finding', 'both', '', 'neighbors'),
+        )
+        return tuple(variant for command in commands
+                     for variant in (command, (*command, '--pretty')))
+
+    def test_unknown_scope_refuses_every_discovery_read(self):
+        self.call('record', 'scope-finding', 'worker', 'scope finding', 'run:scope', '')
+        for scope in ('wrker', '', 'ALL'):
+            for command in self.discovery_commands(scope, 'worker'):
+                with self.subTest(command=command):
+                    result = self.call(*command, success=False)
+                    self.assertEqual(result.returncode, 2)
+                    self.assertEqual(result.stdout, '')
+                    self.assertEqual(json.loads(result.stderr)['error'],
+                                     'knowledge-scope-invalid')
+
+    def test_worker_and_group_scopes_require_subjects_on_every_discovery_read(self):
+        for scope in ('worker', 'group'):
+            for command in self.discovery_commands(scope, ''):
+                with self.subTest(command=command):
+                    result = self.call(*command, success=False)
+                    self.assertEqual(result.returncode, 2)
+                    self.assertEqual(result.stdout, '')
+                    self.assertEqual(json.loads(result.stderr)['error'],
+                                     'knowledge-subject-required')
+        self.assertEqual(self.scoped('universal'), [])
+        self.assertEqual(self.scoped('all'), [])
+
+    def test_unknown_traversal_direction_refuses_neighbors_and_recursive_reads(self):
+        self.call('record', 'scope-finding', 'worker', 'scope finding', 'run:scope', '')
+        for direction in ('inout', '', 'OUT'):
+            for mode in ('neighbors', 'recursive'):
+                for flags in ((), ('--pretty',)):
+                    with self.subTest(direction=direction, mode=mode, flags=flags):
+                        result = self.call('knowledge-traverse', 'root', 'worker', 'worker',
+                                           'finding:scope-finding', direction, '', mode,
+                                           *flags, success=False)
+                        self.assertEqual(result.returncode, 2)
+                        self.assertEqual(result.stdout, '')
+                        self.assertEqual(json.loads(result.stderr)['error'],
+                                         'knowledge-direction-invalid')
+
+    def test_pretty_graph_reads_keep_the_selected_scope_and_direction(self):
+        self.call('record', 'scope-finding', 'worker', 'scope finding', 'run:scope', '')
+        for command in (
+                ('knowledge-search', 'root', 'worker', 'worker', 'scope'),
+                ('knowledge-traverse', 'root', 'worker', 'worker',
+                 'finding:scope-finding', 'out', '', 'neighbors')):
+            with self.subTest(command=command):
+                plain = self.call(*command)
+                self.assertEqual(self.call(*command, '--pretty'), plain)
+                self.assertEqual(plain['scope'], {'kind': 'worker', 'id': 'worker'})
+                self.assertEqual(plain['roots'], ['finding:scope-finding'])
+
+    def test_contextual_knowledge_commands_report_the_same_validation_errors(self):
+        for command, error in (
+                (('read', '--scope', 'wrker'), 'knowledge-scope-invalid'),
+                (('search', '--query', 'scope', '--scope', 'wrker'),
+                 'knowledge-scope-invalid'),
+                (('traverse', '--reference', 'finding:scope-finding',
+                  '--direction', 'inout'), 'knowledge-direction-invalid'),
+                (('read', '--scope', 'worker', '--subject', ''),
+                 'knowledge-subject-required')):
+            with self.subTest(command=command):
+                rows = self.call('as', 'root', 'knowledge', *command)
+                self.assertEqual(len(rows), 1)
+                self.assertEqual(rows[0]['status'], 'failed')
+                self.assertEqual(rows[0]['waitStatus'], 'exit 2')
+                self.assertEqual(rows[0]['stdout'], '')
+                self.assertEqual(json.loads(rows[0]['stderr'])['error'], error)
+
     def test_typed_evidence_and_corrections_follow_explicit_shared_holdings(self):
         self.call('role', 'worker', 'associate-conductor')
         self.call('ensemble', 'review-group', 'worker', 'tight')
