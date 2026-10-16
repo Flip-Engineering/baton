@@ -43,7 +43,16 @@ int main(int argc,char **argv) {
   BatonCodexCall open={.kind=BC_OPEN};baton_codex_call(&open);fixture_result(&open);
   if(open.error)return 1;
   uint32_t handle=open.handle;
-  if(external || blocked) {
+  if(!strcmp(argv[1],"retired-cancel")) {
+    BatonCodexProxy *held=bc_acquire(handle);if(!held)return 2;
+    char *status=NULL;int error=bc_finish(held,&status);
+    if(error || !status || strcmp(status,"exit 7"))return 2;free(status);
+    /* This is CLOSE's actual post-wait state while an earlier call still owns
+       a reference. Signal zero detects accidental process-group selection. */
+    BatonCodexCall cancel={.kind=BC_CANCEL,.handle=handle,.signal=0};baton_codex_call(&cancel);
+    if(cancel.error!=ECHILD)return 2;
+    bc_release(held);bc_remove(held);puts("retired-child-refused");return 0;
+  } else if(external || blocked) {
     BatonCodexCall ready={.kind=BC_NEXT,.handle=handle};baton_codex_call(&ready);
     if(ready.error)return 2;free(ready.text);free(ready.detail);
     FixtureReader reader={.handle=handle,.mutex=PTHREAD_MUTEX_INITIALIZER,.changed=PTHREAD_COND_INITIALIZER};

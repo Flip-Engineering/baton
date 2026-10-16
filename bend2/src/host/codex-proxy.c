@@ -474,7 +474,10 @@ static void baton_codex_call(BatonCodexCall *call) {
   } else if(call->kind==BC_NEXT) {
     pthread_mutex_lock(&proxy->reader);call->error=bc_message(proxy,&call->text,&call->length,&call->detail);pthread_mutex_unlock(&proxy->reader);
   } else if(call->kind==BC_CANCEL) {
-    if(kill(-proxy->pid,(int)call->signal))call->error=errno;
+    pthread_mutex_lock(&baton_codex_registry_lock);
+    if(proxy->pid<=0)call->error=ECHILD;
+    else if(kill(-proxy->pid,(int)call->signal))call->error=errno;
+    pthread_mutex_unlock(&baton_codex_registry_lock);
   } else call->error=EINVAL;
   bc_release(proxy);
 }
