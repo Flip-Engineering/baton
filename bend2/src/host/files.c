@@ -573,10 +573,15 @@ static void baton_copy_call(IoWork *w) {
   struct stat info;
   if(fstat(in,&info)) {call->error=errno;close(in);return;}
   if(!S_ISREG(info.st_mode)) {call->error=S_ISDIR(info.st_mode)?EISDIR:EINVAL;close(in);return;}
-  int out=open(call->to,O_WRONLY|O_CREAT|O_CLOEXEC,0600);
+  /* O_NONBLOCK keeps a writerless destination FIFO from blocking the
+     open; the opened descriptor must then stat as a regular file before
+     anything mutates it. A special destination refuses EINVAL with both
+     sides preserved; a missing-entry open keeps its ENOENT cause. */
+  int out=open(call->to,O_WRONLY|O_CREAT|O_NONBLOCK|O_CLOEXEC,0600);
   if(out<0) {call->error=errno;close(in);return;}
   struct stat outinfo;
   if(fstat(out,&outinfo)) {call->error=errno;close(out);close(in);return;}
+  if(!S_ISREG(outinfo.st_mode)) {call->error=EINVAL;close(out);close(in);return;}
   if(info.st_dev==outinfo.st_dev && info.st_ino==outinfo.st_ino) {
     call->error=EINVAL;close(out);close(in);return;
   }

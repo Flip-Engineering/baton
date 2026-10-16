@@ -71,6 +71,11 @@ def main() -> int:
         one = env_lines(read("results-1"))
         if one is None or any(line == "FOO=1" for line in one):
             failures.append("results-1: removal did not drop FOO=1")
+        two = env_lines(read("results-2"))
+        if two is None or "CHILD_BAR=2" not in two or any(
+                line.startswith("CHILD_BAR=") and line != "CHILD_BAR=2"
+                for line in two):
+            failures.append("results-2: set entry missing or mangled")
         seven = env_lines(read("results-7"))
         if seven is None or "FOO=9" not in seven or "FOO=1" in seven:
             failures.append("results-7: set after remove did not win")

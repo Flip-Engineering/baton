@@ -17,6 +17,7 @@ then run
 import os
 import pathlib
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -102,6 +103,14 @@ def main() -> int:
         check("results-c13", "ok:payload bytes\n")
         check("results-c14", "ok:existing\n")
         check("results-c15", "ok:640\n")
+        # A writerless destination FIFO refuses without touching either
+        # side: the open fails ENXIO under O_NONBLOCK, so the source
+        # keeps its bytes and the path stays a FIFO.
+        check("results-c16", "fail:6\n")
+        if (root / "cases/source").read_bytes() != b"payload bytes\n":
+            failures.append("results-c16: source bytes did not survive")
+        if not stat.S_ISFIFO(os.stat(root / "cases/pipe").st_mode):
+            failures.append("results-c16: destination did not stay a FIFO")
         if failures:
             for failure in failures:
                 print("files-path.py: " + failure, file=sys.stderr)

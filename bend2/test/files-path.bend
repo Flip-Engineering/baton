@@ -58,3 +58,5 @@ def main() -> IO(Unit):
     IO.try(Unit,Text.Text.append("results-c14",text_of(kept)))
     sourcemode : Result<&1,&1,U32 & String,String> <- Files.Files.mode("cases/source")
     IO.try(Unit,Text.Text.append("results-c15",text_of(sourcemode)))
+    fifodest : Result<&1,&1,U32 & String,Unit> <- Files.Files.copy("cases/source","cases/pipe")
+    IO.try(Unit,Text.Text.append("results-c16",unit_of(fifodest)))

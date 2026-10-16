@@ -19,7 +19,7 @@ import subprocess
 import sys
 import tempfile
 
-EXPECTED_ENTRIES = sorted(["a.txt", "z.txt", ".hidden", "with\nlf.txt"])
+EXPECTED_ENTRIES = sorted(["a.txt", "z.txt", ".hidden", "with\nlf.txt", "empty-dir"])
 
 
 def main() -> int:
