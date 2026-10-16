@@ -12,7 +12,7 @@ Three effects on one open description, so identity holds across chunks:
 
     def Files.open(path: String) -> IO(Result<&1,&1,U32 & String,U32>)
     def Files.read_chunk(handle: U32, max: U32)
-      -> IO(Result<&1,&1,U32 & String, List<U8> & U32>)
+      -> IO(Result<&1,&1,U32 & String, List<U32> & U32>)
     def Files.close(handle: U32) -> IO(Result<&1,&1,U32 & String,Unit>)
 
 - `open` admits regular files only (fstat after open; directories
@@ -49,18 +49,20 @@ the reason it cannot serve files:
 Grounded types per the review: the byte element is `U32` carrying
 0..255, masked on entry so the module stays total for any caller; the
 bit counter is a `U32` pair (bits_hi, bits_lo) - `U64` has no toolchain
-precedent, and the pair covers inputs to 2^64 bits with the carry
-detected by the lo word wrapping. `update` advances `bits_lo` by the
-chunk's bit count and increments `bits_hi` when the lo word wraps; a
-single chunk contributes at most 2^31 bits, so the carry is at most
-one per call. The FIPS 64-bit length field emits bits_hi as the high
-four bytes and bits_lo as the low four. The U32 operation set the
-round function needs (add, xor, and, not, shifts, rotations) is the
-exact set the K1 core already exercises in U32. Laws compile with the
-coordinator entry and carry the algorithm: FIPS 180 "abc" vector, the
-empty-input vector, and the 55/56/63/64/65 length-boundary vectors
-stated as compile-time equations - the algorithm is verified at every
-compile, which the C core could never offer.
+precedent, and the pair covers inputs to 2^64 bits. The carry is
+general, not bounded: adding a chunk of `m` bytes advances `bits_lo`
+by the U32-wrapped `m << 3` and raises `bits_hi` by `(m >> 29) plus
+one when the lo word wrapped` - `m >> 29` is exactly the number of
+whole 2^32-bit words in `8*m`, so the formula is exact for every U32
+`max` with no division and no stated cap. The FIPS 64-bit length
+field emits bits_hi as the high four bytes and bits_lo as the low
+four. The U32 operation set the round function and this carry need
+(add, xor, and, not, shifts, rotations, compare) is the exact set the
+K1 core already exercises in U32. Laws compile with the coordinator
+entry and carry the algorithm: FIPS 180 "abc" vector, the empty-input
+vector, and the 55/56/63/64/65 length-boundary vectors stated as
+compile-time equations - the algorithm is verified at every compile,
+which the C core could never offer.
 
 ## Composition and retirement sequencing
 
