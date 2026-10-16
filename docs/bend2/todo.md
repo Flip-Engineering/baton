@@ -4,6 +4,20 @@ The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3
 retain findings, ownership and acceptance requirements. This page links current
 Baton follow-up work for contributors. Every open issue has a link on this page.
 
+- [#779: Audit knowledge graph retrieval and traversal](https://github.com/Flip-Engineering/baton/issues/779).
+  Use a Baton Ensemble to review the implemented algorithms and CLI/MCP tools,
+  compare project-manager source and deployed behavior, and assess relevant
+  primary research. Reproduce representative and adversarial retrieval cases.
+  Review ranking, multi-hop traversal, authorization, citations, stale knowledge,
+  latency, memory and token use. Retain independent reports, peer critique and
+  synthesis, then track and qualify justified fixes. Coordinate with
+  [#710](https://github.com/Flip-Engineering/baton/issues/710),
+  [#718](https://github.com/Flip-Engineering/baton/issues/718),
+  [#720](https://github.com/Flip-Engineering/baton/issues/720),
+  [#724](https://github.com/Flip-Engineering/baton/issues/724),
+  [#777](https://github.com/Flip-Engineering/baton/issues/777) and
+  [#778](https://github.com/Flip-Engineering/baton/issues/778).
+
 - [#778: Add a Bend2 REPL written in Bend2](https://github.com/Flip-Engineering/baton/issues/778).
   Evaluate Bend2 expressions and definitions through CLI, MCP and an interactive
   session. Retain named definitions, results, submitted source and actual
@@ -35,8 +49,9 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   and toolchain inputs. Extend verified reuse, parallel independent compilation
   and tests, and exact cache verification. Preserve full selected comparison,
   native, package and installed acceptance, complete failures and provenance.
-  The Main7 backend trap remains a release blocker under diagnosis. Further
-  optimization proceeds alongside release work. Coordinate with
+  Main9 C generation completed with the packaged compiler after the retained
+  Main7 backend trap. Native compilation and release qualification continue.
+  Further optimization proceeds alongside release work. Coordinate with
   [#677](https://github.com/Flip-Engineering/baton/issues/677),
   [#741](https://github.com/Flip-Engineering/baton/issues/741),
   [#751](https://github.com/Flip-Engineering/baton/issues/751),
