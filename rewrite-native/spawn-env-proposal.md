@@ -85,14 +85,13 @@ the parameter - the delta applies exactly where Bend2 names the child.
 
 Native driver spawning `/usr/bin/env` with controlled parent cases:
 
-1. Removal: parent has `FOO=1`, child env delta `FOO` - child output
-   lacks `FOO=`.
-2. Set: delta `BAR=2` - child output contains `BAR=2`.
-3. Override: parent has `FOO=1`, delta `FOO=9` - child shows `FOO=9`.
-4. Inherit: empty delta - child output equals the parent's environment.
 5. Refusal: delta `=bad` - the effect answers `EINVAL` with the exact
    literal.
 6. Value containing `=`: delta `K=V=W` - child shows `K=V=W`.
+7. Last writer wins, set after removal: delta `FOO` then `FOO=9` -
+   child shows `FOO=9`.
+8. Last writer wins, removal after set: delta `FOO=9` then `FOO` -
+   child output lacks `FOO=`.
 
 The install-check consumer (rewrite-tooling) expresses
 `check-install.py:117-118` as delta `BUN_OPTIONS` plus whatever set
@@ -100,7 +99,7 @@ entries its policy names; the which-names decision stays in Bend2.
 
 ## Gates
 
-Landing needs the standing review gates: remote execution admission for
-the vectors, compiler-track answer on the U1 dual-import question is
-independent of this slice, and one concern per commit (declaration+C
-half+vectors in one commit, callers migrated in the same commit).
+Landing needs the standing review gates: remote execution admission
+for the vectors, and the adopted landing convention - the declaration,
+the C half, the caller migration, and the vectors land atomically in
+one commit so no intermediate state misparses or mis-registers.

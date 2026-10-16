@@ -169,21 +169,44 @@ C keeps byte IO, locks, and process mechanics. This is the
 smallest-justified-host-ABI end state for my role and is sequenced after
 the entries/kind, env, digest, and runtime-dir slices above.
 
-E2. `codex-proxy.c` RFC 6455 mechanics - SHA-1 Accept digest, /dev/
-urandom masks and keys, frame masking, auto-pong (`:147-152,213-377`) -
-remain host with a named platform requirement: they are wire-protocol
-byte mechanics with no product decision inside (E2 exception). The
-child selection argv `{"codex","app-server","proxy"}` (`:255-272`) and
-the close->EPIPE mapping (`:124,396-417`) move: argv composition to
+E2. `codex-proxy.c` split per mechanism under the item-4 standard
+(pure computation moves; the host keeps only what has a named platform
+requirement):
+
+- Pure, destination `bend2/src/harness/codex-framing.bend` (new): the
+  SHA-1 + base64 Accept digest and handshake validation (`:155-199,
+  309-323`; the role-digest SHA-256 precedent shows hashing composes in
+  Bend2, and RFC 6455 mandating SHA-1 is a specification fact, not a
+  host fact), the Sec-WebSocket-Key and upgrade-request composition
+  (`:286-288`), frame mask composition and XOR (`:228-244`), pong and
+  close-frame byte composition (`:350-358,394-395`), opcode/RSV/length
+  admission (`:327-377`), and UTF-8 admission (`:213-225`; same WHATWG
+  validator family as the E3 slice).
+- Host remainder, named: child process lifecycle - spawn with pipes,
+  process group, signal broadcast, deferred reap (`:56-67,255-280,
+  408-417`; platform process semantics, same territory as
+  process-spawn.c) - plus byte read/write and readiness wait on the
+  child's stdio descriptors, and mask/key entropy through the standard
+  random_u32 effect instead of ad-hoc `/dev/urandom` reads
+  (`:147-152`).
+
+The child selection argv `{"codex","app-server","proxy"}` (`:255-272`)
+and the close->EPIPE mapping (`:124,396-417`) move: argv composition to
 `harness/codex-player.bend` (`CodexProxy.open(argv)`), EPIPE surfaced as
 a code Bend2 wraps.
 
-E3. `raw.c` byte-offset read with BOM -> RFC 3629 -> NUL decision order
-(header, `:1-9`) stays host: the runtime's `io_str` replacement makes
-byte-exact validation and offset reporting unexpressible in Bend2 (named
-E2 exception, fixtures pin the order). The validation order itself can
-later compose from the standard file_read_bytes effect plus a pure Bend2
-validator if the fixtures move with it; not scheduled.
+E3. `raw.c` scheduled for composition, not a stay-host: the decision
+order (leading BOM, then RFC 3629 validity, then a decoded NUL; header
+`:1-9`, fixtures pin it) is pure and moves to a Bend2 validator beside
+`context/sha256.bend`, fed by the standard `file_read_bytes` /
+`file_read_at` effects (paired C/JS in `compiler/upstream/effs/`), so
+whole-file reads, offset reads, and the BOM/NUL/validity classification
+compose in `context/` without a custom effect. `raw.c` survives only if
+a measured read path needs byte-exact spool offsets beyond what
+`file_read_at` returns; that consumer trace is the evidence gate.
+Sequenced directly after the D1 sha256 slice (the validator shares its
+byte-literal and law patterns); fixtures must stay green across the
+move.
 
 ## F. Small-file residuals
 
