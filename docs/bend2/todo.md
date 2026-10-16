@@ -398,28 +398,6 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   owner-exit observation bound before the shutdown request. Logical sessions, findings and report review
   remain in the database. Real-route qualification remains open.
 
-- [#728: Repair native C generation after compiler exits with status 132](https://github.com/Flip-Engineering/baton/issues/728).
-  Candidate `3b37ad3f` completes term checking and exits during C generation
-  in workflow `38649718256`. Preserve its complete output, pinned compiler,
-  source and host evidence. Diagnose the demonstrated compiler failure while
-  preserving all command and task behavior. The diagnostic completed three C
-  emission passes and exited with SIGILL during its fourth pass. Its complete
-  phase stream ends during `legacy_cli` emission and retains repeated CLI costs.
-  Moving the fourteen-argument recovery flag comparison into a Boolean helper
-  passed term checking on `6c1e0a5a`; workflow `38675555092` then exited with a
-  trace/breakpoint trap after 1234.820655 seconds and produced no C output.
-  The earlier diagnostic records millions of intermediate operations in the
-  legacy argument matcher. The compiler expands its leading `--project` String
-  pattern through character and bit constructors and copies the long fallback
-  argument patterns into those branches. The source correction compares that
-  head with `String.eq` before entering the unchanged argument-count patterns.
-  Preserve project precedence, complete arguments and all recovery fallbacks.
-  C output, candidate tests, package verification and installed adoption remain incomplete for
-  [#717](https://github.com/Flip-Engineering/baton/issues/717). Coordinate with
-  [#722](https://github.com/Flip-Engineering/baton/issues/722),
-  [#723](https://github.com/Flip-Engineering/baton/issues/723) and
-  [#727](https://github.com/Flip-Engineering/baton/issues/727).
-
 - [#727: Use database task input and contextual actions in native validation](https://github.com/Flip-Engineering/baton/issues/727).
   The real-agent drivers `accept-kimi-hierarchy.py`, `accept-native-receive.py`,
   `accept-hierarchy.py`, `accept-root-day.py`, `accept-git.py`,
@@ -494,16 +472,6 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   [#720](https://github.com/Flip-Engineering/baton/issues/720).
   Candidate qualification is also blocked by the C-generation failure in
   [#728](https://github.com/Flip-Engineering/baton/issues/728).
-
-- [#722: Repair composed coordinator parsing](https://github.com/Flip-Engineering/baton/issues/722).
-  The pinned native compiler ended with SIGTRAP on `57e67d1d` and `ef735693`.
-  A retained remote Node diagnostic of the compiler derivative ended during
-  `Main.normal_cli` lowering with a stack overflow; native crash attribution
-  remains unverified. Preserve the complete grammar and output while repairing
-  source representation. Exact compiler, target/candidate and package acceptance
-  block the [#717](https://github.com/Flip-Engineering/baton/issues/717) release.
-  [#728](https://github.com/Flip-Engineering/baton/issues/728) records the later
-  failure after complete term checking during C generation.
 
 - [#721: Add Antigravity CLI agent harness support](https://github.com/Flip-Engineering/baton/issues/721).
   Verify the supported CLI protocol and add dispatch, resumption, complete
