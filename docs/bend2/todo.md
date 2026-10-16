@@ -607,7 +607,6 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   records its readiness for independent jobs. Full release qualification remains
   tracked in [#717](https://github.com/Flip-Engineering/baton/issues/717).
 - [#675: Baton2: qualify hosted parallel Bend2 validation](https://github.com/Flip-Engineering/baton/issues/675).
-- [#670: Baton2: classify OMP model errors separately from host exit status](https://github.com/Flip-Engineering/baton/issues/670).
 - [#669: Baton2: OMP terminal elision markers break native report extraction](https://github.com/Flip-Engineering/baton/issues/669).
 - [#668: Baton2: ordinary delivery waits for the recipient endpoint lifetime](https://github.com/Flip-Engineering/baton/issues/668).
 - [#666: Baton2: queued parent report receives no wake after observer recovery](https://github.com/Flip-Engineering/baton/issues/666).
