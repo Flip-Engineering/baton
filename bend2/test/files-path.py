@@ -37,6 +37,16 @@ def main() -> int:
         source = cases / "source"
         source.write_bytes(b"payload bytes\n")
         source.chmod(0o640)
+        os.link(source, cases / "alias-hard")
+        os.symlink(source, cases / "alias-sym")
+        (cases / "dir").mkdir()
+        dest_full = cases / "dest-full"
+        dest_full.write_bytes(b"existing\n")
+        dest_full.chmod(0o600)
+        os.mkfifo(cases / "pipe")
+        runme = cases / "runme"
+        runme.write_bytes(b"run\n")
+        runme.chmod(0o755)
         bindir = root / "bin"
         plaindir = root / "plain"
         bindir.mkdir()
@@ -76,6 +86,22 @@ def main() -> int:
         check("results-c3", "ok:640\n")
         check("results-c4", "fail:2\n")
         check("results-c5", "fail:2\n")
+        # Alias refusals: same-inode copies fail with EINVAL (22) and the
+        # original bytes and mode survive.
+        check("results-c6", "fail:22\n")
+        check("results-c7", "fail:22\n")
+        check("results-c8", "fail:22\n")
+        # A directory source fails with EISDIR (21) and the existing
+        # destination is preserved; a writerless FIFO fails with EINVAL (22)
+        # without waiting for a writer.
+        check("results-c9", "fail:21\n")
+        check("results-c10", "fail:22\n")
+        # A distinct regular copy keeps its executable mode.
+        check("results-c11", "ok:\n")
+        check("results-c12", "ok:755\n")
+        check("results-c13", "ok:payload bytes\n")
+        check("results-c14", "ok:existing\n")
+        check("results-c15", "ok:640\n")
         if failures:
             for failure in failures:
                 print("files-path.py: " + failure, file=sys.stderr)

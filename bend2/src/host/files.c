@@ -564,12 +564,23 @@ typedef struct { char *from,*to; int error; } BatonCopy;
 
 static void baton_copy_call(IoWork *w) {
   BatonCopy *call=(BatonCopy *)w->data;
-  int in=open(call->from,O_RDONLY|O_CLOEXEC);
+  /* Regular-file semantics are established before the destination is
+     mutated: O_NONBLOCK keeps a FIFO source from waiting for a writer, the
+     source must stat as a regular file, and a same-inode destination is
+     refused before any truncation. */
+  int in=open(call->from,O_RDONLY|O_NONBLOCK|O_CLOEXEC);
   if(in<0) {call->error=errno;return;}
   struct stat info;
   if(fstat(in,&info)) {call->error=errno;close(in);return;}
-  int out=open(call->to,O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC,0600);
+  if(!S_ISREG(info.st_mode)) {call->error=S_ISDIR(info.st_mode)?EISDIR:EINVAL;close(in);return;}
+  int out=open(call->to,O_WRONLY|O_CREAT|O_CLOEXEC,0600);
   if(out<0) {call->error=errno;close(in);return;}
+  struct stat outinfo;
+  if(fstat(out,&outinfo)) {call->error=errno;close(out);close(in);return;}
+  if(info.st_dev==outinfo.st_dev && info.st_ino==outinfo.st_ino) {
+    call->error=EINVAL;close(out);close(in);return;
+  }
+  if(ftruncate(out,0)) {call->error=errno;close(out);close(in);return;}
   char buffer[65536];
   for(;;) {
     ssize_t got=read(in,buffer,sizeof(buffer));

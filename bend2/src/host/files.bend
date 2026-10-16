@@ -69,8 +69,12 @@ def Files.executable(path: String) -> IO(Result<&1,&1,U32 & String,String>):
   import "./files.c"
 
 # Copies one regular file's bytes and permission bits. The source must
-# exist; a destination directory that cannot be opened for writing keeps
-# its cause.
+# exist and must be a regular file: a directory source is refused EISDIR
+# and any other non-regular source EINVAL, before the destination is
+# touched. A source and destination naming the same file (same path,
+# hardlink or symlink alias) are refused EINVAL before any truncation, so
+# a refused copy preserves both sides' bytes and mode. A destination
+# directory that cannot be opened for writing keeps its cause.
 def Files.copy(from: String, to: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   import "./files.c"
 
