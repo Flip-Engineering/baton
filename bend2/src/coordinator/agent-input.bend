@@ -1,4 +1,5 @@
 import Base
+import ./codex-inbox-result.bend as Outcome
 import ../coordinator/commands.bend as C
 import ../coordinator/message-status.bend as Status
 import ./store.bend as Store
@@ -410,15 +411,18 @@ def initial_observed(+db: String, +session: String, +attempt: String, +event: St
     identity : String <- IO.try(String,DB.Sql.read(db,"SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN coalesce(CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.type')='thread.started' THEN json_extract(" ++ C.q(event) ++ ",'$.thread_id') END,json_extract(" ++ C.q(event) ++ ",'$.session_id'),CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.type')='response' AND json_extract(" ++ C.q(event) ++ ",'$.command')='get_state' AND json_extract(" ++ C.q(event) ++ ",'$.success')=1 THEN json_extract(" ++ C.q(event) ++ ",'$.data.sessionId') END,CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.stream.kind')='session' THEN json_extract(" ++ C.q(event) ++ ",'$.stream.id') END,'')<>'' ELSE 0 END;"))
     Bool.pick(IO(Unit),String.eq(identity,"1\n"),settle_if(db,session,attempt,False{}),IO.pure(Unit,Unit{}))
 
-def settle_codex_if(+db: String, +session: String, +native: String, +turn: String, +status: String, known: Bool) -> IO(Unit):
+def settle_codex_result_if(+db: String, +session: String, +native: String, +turn: String, +status: String, known: Bool) -> Outcome.Checked(Unit):
   match known:
-    case False{}: IO.write("{\"status\":\"unrecorded\"}\n")
-    case True{}: do IO<Unit>:
-      stored : String <- Bool.pick(IO(String),String.eq(status,"completed"),IO.try(String,Store.transact_sql(db,Status.settle_codex_sql(session,native,turn))),IO.pure(String,""))
-      result : String <- IO.try(String,DB.Sql.read(db,"SELECT json_object('session'," ++ C.q(session) ++ ",'native'," ++ C.q(native) ++ ",'turnId'," ++ C.q(turn) ++ ",'nativeStatus'," ++ C.q(status) ++ ",'status',CASE WHEN EXISTS(SELECT 1 FROM message_reads WHERE recipient=" ++ C.q(session) ++ " AND native=" ++ C.q(native) ++ " AND attempt=" ++ C.q(Status.codex_attempt(turn)) ++ " AND identity=" ++ Status.codex_identity(native,turn) ++ " AND handled IS NOT NULL) THEN 'settled' WHEN EXISTS(SELECT 1 FROM message_reads WHERE recipient=" ++ C.q(session) ++ " AND native=" ++ C.q(native) ++ " AND attempt=" ++ C.q(Status.codex_attempt(turn)) ++ ") THEN 'incomplete' ELSE 'unrecorded' END);"))
-      IO.write(Tx.trim_nl(result) ++ "\n")
+    case False{}: Outcome.Checked.lift(Unit,IO.write("{\"status\":\"unrecorded\"}\n"))
+    case True{}: do Outcome.Checked<Unit>:
+      stored : String <- Bool.pick(Outcome.Checked(String),String.eq(status,"completed"),Store.transact_sql(db,Status.settle_codex_sql(session,native,turn)),Outcome.Checked.pure(String,""))
+      result : String <- DB.Sql.read(db,"SELECT json_object('session'," ++ C.q(session) ++ ",'native'," ++ C.q(native) ++ ",'turnId'," ++ C.q(turn) ++ ",'nativeStatus'," ++ C.q(status) ++ ",'status',CASE WHEN EXISTS(SELECT 1 FROM message_reads WHERE recipient=" ++ C.q(session) ++ " AND native=" ++ C.q(native) ++ " AND attempt=" ++ C.q(Status.codex_attempt(turn)) ++ " AND identity=" ++ Status.codex_identity(native,turn) ++ " AND handled IS NOT NULL) THEN 'settled' WHEN EXISTS(SELECT 1 FROM message_reads WHERE recipient=" ++ C.q(session) ++ " AND native=" ++ C.q(native) ++ " AND attempt=" ++ C.q(Status.codex_attempt(turn)) ++ ") THEN 'incomplete' ELSE 'unrecorded' END);")
+      Outcome.Checked.lift(Unit,IO.write(Tx.trim_nl(result) ++ "\n"))
+
+def settle_codex_result(+db: String, session: String, native: String, turn: String, status: String) -> Outcome.Checked(Unit):
+  do Outcome.Checked<Unit>:
+    value : String <- DB.Sql.read(db,Status.present_sql())
+    settle_codex_result_if(db,session,native,turn,status,String.eq(value,"1\n"))
 
 def settle_codex(+db: String, session: String, native: String, turn: String, status: String) -> IO(Unit):
-  do IO<Unit>:
-    known : Bool <- present(db)
-    settle_codex_if(db,session,native,turn,status,known)
+  IO.try(Unit,settle_codex_result(db,session,native,turn,status))
