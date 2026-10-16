@@ -115,6 +115,12 @@ def existing_child(+db: String, +round: String, +player: String, +owner: String,
       native_command(db,round,player,"join",["join",player,owner,harness,model,effort,path])
     case G.GBroken{detail}: IO.die(String,2,detail)
 
+def register_present(+db: String, +round: String, +player: String, +owner: String, +harness: String, +model: String, +effort: String, +source: String, +branch: String, +path: String, +snapshot: String, actual: G.GitOut) -> IO(String):
+  match actual:
+    case G.GRun{+code,out}:
+      Bool.pick(IO(String),U32.is_eq(code,0),existing_child(db,round,player,owner,harness,model,effort,branch,path,snapshot,G.GRun{code,out}),native_command(db,round,player,"recruit",["recruit",player,owner,harness,model,effort,source,branch,path,snapshot]))
+    case G.GBroken{detail}: native_command(db,round,player,"recruit",["recruit",player,owner,harness,model,effort,source,branch,path,snapshot])
+
 def register_child(+db: String, +round: String, +player: String, +owner: String, +harness: String, +model: String, +effort: String, +source: String, +branch: String, +path: String, +snapshot: String) -> IO(String):
   do IO<String>:
     registered : String <- M.scalar(db,"EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(player) ++ ")")
@@ -125,12 +131,6 @@ def register_child(+db: String, +round: String, +player: String, +owner: String,
       (do IO<String>:
         actual : G.GitOut <- Git.runGit(path,["rev-parse","--verify","HEAD"])
         register_present(db,round,player,owner,harness,model,effort,source,branch,path,snapshot,actual)))
-
-def register_present(+db: String, +round: String, +player: String, +owner: String, +harness: String, +model: String, +effort: String, +source: String, +branch: String, +path: String, +snapshot: String, actual: G.GitOut) -> IO(String):
-  match actual:
-    case G.GRun{+code,out}:
-      Bool.pick(IO(String),U32.is_eq(code,0),existing_child(db,round,player,owner,harness,model,effort,branch,path,snapshot,G.GRun{code,out}),native_command(db,round,player,"recruit",["recruit",player,owner,harness,model,effort,source,branch,path,snapshot]))
-    case G.GBroken{detail}: native_command(db,round,player,"recruit",["recruit",player,owner,harness,model,effort,source,branch,path,snapshot])
 
 def setup_child(+db: String, +round: String, +ordinal: U32, +owner: String) -> IO(Unit):
   do IO<Unit>:
@@ -149,13 +149,6 @@ def setup_child(+db: String, +round: String, +ordinal: U32, +owner: String) -> I
     launched : Unit <- Bool.pick(IO(Unit),ready,launch_child(db,round,player,owner),IO.pure(Unit,Unit{}))
     IO.pure(Unit,Unit{})
 
-def setup_children(+db: String, +round: String, +owner: String, rows: List<String>) -> IO(Unit):
-  match rows:
-    case Nil{}: IO.pure(Unit,Unit{})
-    case ordinal <> rest: do IO<Unit>:
-      prepared : Unit <- setup_child(db,round,number(ordinal),owner)
-      setup_children(db,round,owner,rest)
-
 def number_read(value: Maybe<U32>) -> U32:
   match value:
     case None{}: 0
@@ -163,6 +156,13 @@ def number_read(value: Maybe<U32>) -> U32:
 
 def number(value: String) -> U32:
   number_read(U32.read(value))
+
+def setup_children(+db: String, +round: String, +owner: String, rows: List<String>) -> IO(Unit):
+  match rows:
+    case Nil{}: IO.pure(Unit,Unit{})
+    case ordinal <> rest: do IO<Unit>:
+      prepared : Unit <- setup_child(db,round,number(ordinal),owner)
+      setup_children(db,round,owner,rest)
 
 def source_player(+db: String, +ensemble: String, +actor: String, +options: List<&2,D.Option>) -> IO(String):
   do IO<String>:
@@ -232,6 +232,17 @@ def start(+db: String, +actor: String, +ensemble: String, +options: List<&2,D.Op
 def evaluation_result(+db: String, +id: String, +result: String) -> IO(Unit):
   M.write(db,"UPDATE branch_evaluations SET result=" ++ C.q(result) ++ ",accepted=CASE WHEN json_extract(" ++ C.q(result) ++ ",'$.waitStatus')='exit 0' AND json_extract(" ++ C.q(result) ++ ",'$.cause')='' AND json_valid(json_extract(" ++ C.q(result) ++ ",'$.stdout')) THEN CASE WHEN json_type(json_extract(" ++ C.q(result) ++ ",'$.stdout'),'$.accepted') IN('true','false') AND json_type(json_extract(" ++ C.q(result) ++ ",'$.stdout'),'$.score') IN('integer','real') THEN json_extract(json_extract(" ++ C.q(result) ++ ",'$.stdout'),'$.accepted') ELSE NULL END ELSE NULL END,score=CASE WHEN json_extract(" ++ C.q(result) ++ ",'$.waitStatus')='exit 0' AND json_valid(json_extract(" ++ C.q(result) ++ ",'$.stdout')) THEN CASE WHEN json_type(json_extract(" ++ C.q(result) ++ ",'$.stdout'),'$.score') IN('integer','real') THEN json_extract(json_extract(" ++ C.q(result) ++ ",'$.stdout'),'$.score') ELSE NULL END ELSE NULL END WHERE id=" ++ C.q(id) ++ ";")
 
+def evaluate_created(+db: String, +round: String, +player: String, +id: String, path: String, argv: String, made: Result<&1,&1,G.GitFail,G.WorktreeCreated>) -> IO(Unit):
+  match made:
+    case Fail{error}: do IO<Unit>:
+      result : String = W.outcome(Fail{(1,G.fail_text(error))},argv)
+      evaluation_result(db,id,result)
+    case Done{created}: do IO<Unit>:
+      result : String <- W.evaluate(db,path,id,argv)
+      saved : Unit <- evaluation_result(db,id,result)
+      usage : String <- native_command(db,round,player,"observed-usage",["observed-usage",player])
+      IO.pure(Unit,Unit{})
+
 def evaluate_owned(+db: String, +round: String, +player: String, +path: String, lock: Maybe<U32>) -> IO(Unit):
   match lock:
     case None{}: M.operation(db,round,player,"evaluate","{\"status\":\"pending\",\"cause\":\"The Player still owns its native attempt.\"}")
@@ -246,17 +257,6 @@ def evaluate_owned(+db: String, +round: String, +player: String, +path: String, 
       released : Unit <- IO.try(Unit,Lock.SessionLock.release(handle))
       made : Result<&1,&1,G.GitFail,G.WorktreeCreated> <- CW.createWorktree(path,"baton/" ++ id,evaluation_path,snapshot)
       evaluated : Unit <- evaluate_created(db,round,player,id,evaluation_path,argv,made)
-      IO.pure(Unit,Unit{})
-
-def evaluate_created(+db: String, +round: String, +player: String, +id: String, path: String, argv: String, made: Result<&1,&1,G.GitFail,G.WorktreeCreated>) -> IO(Unit):
-  match made:
-    case Fail{error}: do IO<Unit>:
-      result : String = W.outcome(Fail{(1,G.fail_text(error))},argv)
-      evaluation_result(db,id,result)
-    case Done{created}: do IO<Unit>:
-      result : String <- W.evaluate(db,path,id,argv)
-      saved : Unit <- evaluation_result(db,id,result)
-      usage : String <- native_command(db,round,player,"observed-usage",["observed-usage",player])
       IO.pure(Unit,Unit{})
 
 def evaluate_child(+db: String, +round: String, +player: String) -> IO(Unit):
