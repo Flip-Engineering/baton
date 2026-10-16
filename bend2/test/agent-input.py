@@ -263,7 +263,7 @@ class AgentInput(unittest.TestCase):
         self.fx.coord('connect', 'parent', 'replacement-native', '')
         self.fx.action(stream, body='Controlled native result.', ack=False,
                        complete_task=False)
-        self.fx.finish(child)
+        self.fx.finish_without_start(child)
         calls = [json.loads(line) for line in self.fx.codex_calls.read_text().splitlines()]
         replacement = [call for call in calls
                        if call['params']['threadId'] == 'replacement-native']
