@@ -24,6 +24,11 @@ COMPILER_ARCHIVES = {
         'official_release_artifact': False,
         'binary_sha256': 'b929035652cba78ba1b034b7214a14bbc2f64f0e6c27265c64c53895d24890c0',
     },
+    '2df30208da307f7922fefc5517563ad1ee484bc60227f60d88994aad57e4779e': {
+        'name': 'Bend 2.0.25 with Baton memoization and Bun small heap',
+        'official_release_artifact': False,
+        'binary_sha256': 'a36231553ac8e1ed447a5d413e5a6787e24ac86ffe7188bb9c96f3fb26e1b554',
+    },
 }
 ENTRY = 'bend2/src/coordinator/main.bend'
 HOST_SOURCE = 'bend2/src/host/process-spawn.c'
