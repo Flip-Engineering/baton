@@ -2,7 +2,7 @@ name: bend2-native-development
 
 'on':
   pull_request:
-    branches: [bend2-rewrite, main]
+    branches: [main]
     paths:
       - '.github/workflows/bend2-native.yml'
       - '.github/scripts/record-native-checks.py'
@@ -22,7 +22,7 @@ name: bend2-native-development
       - 'docs/bend2/reference/toolchain/install-2.0.25.sh'
       - 'docs/bend2/reference/upstream/LICENSE'
   push:
-    branches: [bend2-rewrite, main]
+    branches: [main]
     paths:
       - '.github/workflows/bend2-native.yml'
       - '.github/scripts/record-native-checks.py'
