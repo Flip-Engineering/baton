@@ -123,11 +123,15 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   The target Control cleanup in run `38785813982` recorded shutdown success
   before the remaining owner's generation-3 record was published. The idle
   owner had zero physical slots and every retained attempt was acknowledged.
-  A supported shutdown settled it and preserved all baseline errors. Establish
-  public owner readiness at the exact sole-owner boundary before shutdown;
-  preserve the empty-process path and zero-process assertion. This post-release
-  fixture follow-up coordinates with [#747](https://github.com/Flip-Engineering/baton/issues/747)
-  and [#755](https://github.com/Flip-Engineering/baton/issues/755).
+  A supported shutdown settled it and preserved all baseline errors. Cleanup
+  now establishes public owner readiness at the exact sole-owner boundary and
+  verifies the same PID, process start and command before shutdown. The empty-process
+  path and zero-process assertion are preserved. The real owner-publication
+  regression and existing project-resume cleanup test passed remotely on Main6;
+  the held owner exited naturally with status 0. Integrate this fixture correction
+  and preserve the original unsupported baseline verdict. This follow-up coordinates
+  with [#747](https://github.com/Flip-Engineering/baton/issues/747) and
+  [#755](https://github.com/Flip-Engineering/baton/issues/755).
 
 - [#751: Add branching Ensemble variant after Baton 2.0](https://github.com/Flip-Engineering/baton/issues/751).
   Implementation is active after the [#717](https://github.com/Flip-Engineering/baton/issues/717)
