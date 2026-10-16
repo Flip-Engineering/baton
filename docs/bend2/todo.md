@@ -22,7 +22,10 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   active worktrees, uncommitted files and immutable build evidence. Coordinate
   the active [#772](https://github.com/Flip-Engineering/baton/pull/772) landing
   with [#717](https://github.com/Flip-Engineering/baton/issues/717) and
-  [#747](https://github.com/Flip-Engineering/baton/issues/747).
+  [#747](https://github.com/Flip-Engineering/baton/issues/747). After branch
+  consolidation concludes, close completed issues against verified main,
+  release and runtime evidence. Preserve open acceptance requirements for
+  unfinished source and pending qualification.
 
 - [#773: Use concise contextual agent actions and automatic handling receipts](https://github.com/Flip-Engineering/baton/issues/773).
   Add `send PLAYER "text"`, `finish "summary"` and `confirm PLAYER` to the
