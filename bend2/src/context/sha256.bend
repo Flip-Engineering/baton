@@ -178,23 +178,7 @@ def split_block(bs: List<U32>, n: Nat, acc: List<U32>) -> List<U32> & List<U32>:
     case 1n+p Nil{}: (list_rev(acc), Nil{})
     case 1n+p Con{h, t}: split_block(t, p, h <> acc)
 
-# Whether bs holds at least n bytes.
-def at_least(bs: List<U32>, n: Nat) -> Bool:
-  match n bs:
-    case 0n _: True{}
-    case 1n+p Nil{}: False{}
-    case 1n+p Con{h, t}: at_least(t, p)
-
-# Compress every complete 64-byte block at the head of bs, answering the
-# state and the remaining partial block.
-def drain(st: ShaState, bs: List<U32>, full: Bool) -> ShaState & List<U32>:
-  match full:
-    case False{}: (st, bs)
-    case True{}:
-      (block, rest) = split_block(bs, 64n, Nil{})
-      drain(compress(st, block), rest, at_least(rest, 64n))
-
-def len_bytes(bs: List<U32]) -> U32:
+def len_bytes(bs: List<U32>) -> U32:
   match bs:
     case Nil{}: 0
     case h <> t: U32.add(1, len_bytes(t))
@@ -213,11 +197,6 @@ def word_bytes(+x: U32) -> List<U32>:
   [U32.and(U32.shrn(x, 24n), 255), U32.and(U32.shrn(x, 16n), 255),
    U32.and(U32.shrn(x, 8n), 255), U32.and(x, 255)]
 
-# The 64-bit big-endian bit length: the high word is n shifted right 29, the
-# low word is n shifted left 3, both modulo 2^32 as FIPS 180-4 specifies.
-def len_suffix(+n: U32) -> List<U32>:
-  J.cat_bytes(word_bytes(U32.shrn(n, 29n)), word_bytes(U32.shln(n, 3n)))
-
 # The final state as 32 big-endian bytes.
 def state_bytes(+s: ShaState) -> List<U32>:
   match s:
@@ -232,26 +211,6 @@ def hex_go(bs: List<U32>, acc: String) -> String:
     case Nil{}: acc
     case b <> t: hex_go(t, acc ++ J.hex_byte(b))
 
-# The incremental interface. sha_update appends bytes, compressing every
-# complete block and retaining the partial tail; sha_final pads with 0x80,
-# zeroes and the 64-bit length, compresses the tail and answers the digest.
-def sha_init() -> ShaCtx:
-  ShaCtx{h_initial(), Nil{}, 0}
-
-def sha_update(+c: ShaCtx, +bs: List<U32>) -> ShaCtx:
-  match c:
-    case ShaCtx{+st, +buf, +total}:
-      +all = J.cat_bytes(buf, bs)
-      (st2, rest) = drain(st, all, at_least(all, 64n))
-      ShaCtx{st2, rest, U32.add(total, len_bytes(bs))}
-
-def sha_final(+c: ShaCtx) -> String:
-  match c:
-    case ShaCtx{+st, +buf, +total}:
-      +tail = J.cat_bytes(buf,
-        J.cat_bytes([128], J.cat_bytes(zeros(zero_count(total)), len_suffix(total))))
-      (st2, rest) = drain(st, tail, at_least(tail, 64n))
-      hex_go(state_bytes(st2), SNil{})
 
 # The lowercase hex digest of the string's exact UTF-8 bytes.
 
@@ -277,7 +236,7 @@ def last_bytes(bs: List<U32>, n: U32) -> List<U32>:
 
 # Drain every complete 64-byte block.
 def drain_go(+h: ShaState, bs: List<U32>) -> ShaState:
-  match U32.is_lt(63n, len_bytes(bs)):
+  match U32.is_lt(63, len_bytes(bs)):
     case True{}:
       (block, rest) = split_block(bs, 64n, Nil{})
       drain_go(compress(h, block), rest)
@@ -349,11 +308,23 @@ law sha256_bytes_65:
 
 # Exact bytes: NUL and invalid UTF-8 sequences pass as plain numbers.
 law sha256_bytes_binary:
-  {digest_bytes(Con{Con{0, Con{255, Con{192, Con{175, Con{65, Con{0, Con{128, Nil{}}}}}}}}) == "ee4863d37336f7d84618978356a04a7a7679958e8929845e48c045714c3113f2" : String}
+  {digest_bytes([0, 255, 192, 175, 65, 0, 128]) == "ee4863d37336f7d84618978356a04a7a7679958e8929845e48c045714c3113f2" : String}
 
 # Incremental splitting agrees with the one-shot digest on the same
 # bytes, split exactly at a block boundary.
 law sha256_incremental_split:
   {hex(final(Sha256.update(Sha256.update(Sha256.init, J.utf8("abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmno")),
      J.utf8("ijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu"))))
+    == hex(final(Sha256.update(Sha256.init, J.utf8("abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu")))) : String}
+
+# The role identity consumer path: the String digest over the exact
+# UTF-8 bytes.
+law sha256_digest_abc:
+  {digest("abc") == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" : String}
+
+# Incremental splitting at a non-block-aligned boundary: the partial
+# block carries used != 0 into the completing update.
+law sha256_incremental_nonmultiple:
+  {hex(final(Sha256.update(Sha256.update(Sha256.init, J.utf8("abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnop")),
+     J.utf8("qrstnopqrstu"))))
     == hex(final(Sha256.update(Sha256.init, J.utf8("abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu")))) : String}
