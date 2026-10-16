@@ -30,3 +30,24 @@ law m5_two_arguments_keep_their_order_and_count:
 
 def m5_two_arguments_keep_their_order_and_count(a, b):
   {==}
+
+# U1 Text.read backend parity (review-muse/text-read-parity.md at 2a48dbc,
+# spec rewrite-native/text-read-parity-spec.md at 2036666). This law proves
+# projection opacity over the failure pair: the code projection returns the
+# same code whatever the message carries. One compile cannot observe two
+# backends, so this is not the backend-agreement proof - that evidence is
+# the vector harnesses bend2/test/text-read.test.mjs and text-read.bend.
+def text_read_code(result: Result<&1,&1,U32 & String,String>) -> U32:
+  match result:
+    case Fail{(code, message)}: code
+    case Done{value}: 0
+
+law text_read_codes_project_through_any_message:
+  for +code: U32
+  for +native_message: String
+  for +node_message: String
+  {text_read_code(Fail{(code, native_message)}) ==
+   text_read_code(Fail{(code, node_message)}) : Bool}
+
+def text_read_codes_project_through_any_message(code, native_message, node_message):
+  {==}
