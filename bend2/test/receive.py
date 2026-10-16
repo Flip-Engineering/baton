@@ -1821,7 +1821,15 @@ class Receive(unittest.TestCase):
         self.action(original, progress=marker)
         self.assertEqual(json.loads(original.readline()), {'progress_written': marker})
         generation = self.output_log('parent')
-        self.eventually(lambda: generation.exists() and marker in generation.read_text(), 'original output was not projected')
+
+        def progress_projected():
+            if not generation.exists():
+                return False
+            complete = generation.read_bytes().rpartition(b'\n')[0]
+            return any(frame.get('type') == 'fixture_progress' and frame.get('marker') == marker
+                       for frame in (json.loads(line) for line in complete.splitlines()))
+
+        self.eventually(progress_projected, 'original output was not projected')
         with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
             ident, directory = database.execute("SELECT id,directory FROM executions WHERE session='parent'").fetchone()
         attempt = pathlib.Path(directory)
@@ -1863,8 +1871,13 @@ class Receive(unittest.TestCase):
         self.shutdown_idle_database_owner('recovered output attempt did not retire')
         output = generation.read_bytes()
         self.assertNotIn(b'\0', output)
-        self.assertEqual(output.decode().count(marker), 1)
-        self.assertIn(body, output.decode())
+        frames = [json.loads(line) for line in output.splitlines()]
+        self.assertEqual([frame['marker'] for frame in frames
+                          if frame.get('type') == 'fixture_progress'], [marker])
+        self.assertEqual([content['text'] for frame in frames
+                          if frame.get('type') == 'agent_end'
+                          for message in frame['messages'] for content in message['content']],
+                         [body])
         self.assertEqual(self.coord('delivery', 'missing-output-task')['receipt'], 'native-turn:' + ident)
         launches = [json.loads(line) for line in (self.directory / 'native-launches.jsonl').read_text().splitlines()]
         self.assertEqual(len(launches), 1, launches)
