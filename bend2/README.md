@@ -57,17 +57,17 @@ Read complete owed input, perform the assigned work and report its result:
 
 ```sh
 baton inbox
-baton acknowledge
-baton report --text 'The result and remaining work.'
+baton report 'The result and remaining work.'
+baton finish 'Summary of completed work.'
 ```
 
-Successful native turns record handling of their exact consumed input.
-`acknowledge` records explicit handling with native owned reads and a generated
-receipt. A worker uses `completion-request --text SUMMARY` when its assignment is
-ready for its parent's review. A coordinator reviews a Player's request with
-`completion-confirmed --to PLAYER`, or sends further work with `guide --to PLAYER
---text TEXT`. Use `dispatch
---to PLAYER --text TEXT` for complete task input to an existing conversation.
+Successful native turns automatically record handling of complete input reads.
+A worker uses `finish SUMMARY` when its assignment is ready for review. A
+coordinator uses `confirm PLAYER` to confirm the Player's current completion
+request or `guide PLAYER TEXT` to give further instructions. Use `send PLAYER
+TEXT` for a report to another permitted recipient and `ask TEXT` for a question
+to the recorded coordinator. Use `dispatch TEXT --to PLAYER` for complete task
+input to an existing conversation.
 The [agent command guide](../docs/bend2/agent-commands.md) describes named actions,
 independent batches, explicit selected-message reads and context overrides.
 

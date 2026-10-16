@@ -12,7 +12,7 @@ the session's client, model, workspace, and parent agent in a SQLite database.
 ## Capabilities
 
 - **Task coordination:** send tasks, guidance, questions, and reports between
-  agents. Messages retain their complete bodies and recipient acknowledgments.
+  agents. Messages retain their complete bodies and handling status.
 - **Agent teams:** recruit agents into Git worktrees and organize teams with
   explicit membership and communication permissions.
 - **Branching Ensembles:** start parallel agents from a workspace snapshot,
@@ -68,12 +68,12 @@ Reports route to the coordinating agent or operator inbox. Use the
 instructions, and manage contributions.
 
 Agents read complete owed input with `baton inbox` and carry out the assigned
-work. Successful native turns record handling of their consumed input;
-`baton acknowledge` records explicit handling. `baton report --text TEXT` sends a
-result to the recorded coordinator. A worker uses `baton completion-request --text
-SUMMARY` to request review of its completed assignment. A coordinator uses `baton
-completion-confirmed --to PLAYER` or `baton guide --to PLAYER --text TEXT` for its
-decision. Baton resolves the current project, actor, request and handling receipt.
+work. Successful native turns automatically record handling of their complete
+reads. `baton report 'The result and remaining work.'` sends a result to the
+recorded coordinator. A worker uses `baton finish 'Summary of completed work.'`
+to request review of its assignment. A coordinator uses `baton confirm PLAYER`
+to confirm completion or `baton guide PLAYER 'Further work.'` to give instructions.
+Baton resolves the current project, actor, request and handling state.
 Named arguments and independent batch clauses also cover receiver controls,
 worktrees, knowledge and project settings. The [agent command
 guide](docs/bend2/agent-commands.md) describes context selection, optional selected
