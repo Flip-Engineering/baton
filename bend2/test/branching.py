@@ -29,6 +29,7 @@ class Branching(unittest.TestCase):
     def setUp(self):
         self.setUp_control()
         self.root()
+        self.call('connect', 'root', 'saved-root', json.dumps(['/usr/bin/true']))
         source = self.recruit('source')
         self.source = pathlib.Path(source['workspace'])
         self.receiver('source')
@@ -98,7 +99,9 @@ sys.exit(value.get('exit',0))
 
     def settle(self, player, stream):
         self.finish(stream, body='Completed isolated branch work.')
-        return self.exited(player)
+        row = self.exited(player)
+        self.eventually(lambda: (pathlib.Path(row['directory']) / 'released').exists())
+        return row
 
     def test_snapshots_fresh_context_selection_and_same_conversation_continuation(self):
         state, streams, starts = self.start()
@@ -221,7 +224,7 @@ sys.exit(value.get('exit',0))
         self.assertGreater(len(failed['evaluations']), len(tied['evaluations']))
 
     def test_managed_transport_requires_an_explicit_native_command(self):
-        self.call('connect', 'source', json.dumps(['/usr/bin/true']))
+        self.call('connect', 'source', 'native-source', json.dumps(['/usr/bin/true']))
         refused = self.branch('start', '--from', 'source', '--count', '1', '--text', self.task_body,
                               '--evaluator', json.dumps([sys.executable, 'evaluate.py']), ok=False)
         self.assertIn('configured executable', refused['stderr'])
