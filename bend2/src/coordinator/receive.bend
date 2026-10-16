@@ -54,7 +54,7 @@ def orientation_text(db: String, session: String) -> IO(String):
 def instructions(executable: String, database: String, +session: String, orientation: String) -> String:
   "You are Baton Player " ++ session ++ ".\nRecorded coordination: " ++ orientation ++ "\n"
   ++ AgentGuidance.actions()
-  ++ "Use baton dispatch PLAYER \"task\" to assign work, and baton help ACTION for command details. Read your inbox as work continues.\n"
+  ++ "Use baton dispatch \"task\" --to PLAYER to assign work, and baton help ACTION for command details. Read your inbox as work continues.\n"
   ++ Turn.task_instructions()
   ++ Turn.knowledge_instructions()
 
