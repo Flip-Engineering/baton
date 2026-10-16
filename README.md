@@ -44,14 +44,14 @@ covers native client configuration.
 
 ## Start a task
 
-Choose a model available through your configured Codex client, then start a task
-from its complete text, standard input or a UTF-8 file. With the published
-release installed, replace `MODEL` and the absolute paths below:
+Choose an installed client (`claude-code`, `codex`, `muse` or `omp`), then select
+a model and effort setting it supports. With the published release installed,
+replace `HARNESS`, `MODEL`, `EFFORT` and the repository path below:
 
 ```sh
 baton dispatch 'Review the assigned source and report the result.' \
   --project /absolute/path/repository \
-  --harness codex --model MODEL --effort high
+  --harness HARNESS --model MODEL --effort EFFORT
 baton --project /absolute/path/repository as operator inbox
 ```
 
