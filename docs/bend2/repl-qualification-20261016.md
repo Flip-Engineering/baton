@@ -92,6 +92,21 @@ on the same tree. Admission recorded 139,211,340 KiB available memory, zero
 memory pressure averages, and no existing owned compiler or native model
 process. Its original wait and complete outputs remain retained.
 
+That C-generation process ended at 20:31:17.194666 UTC with SIGTRAP,
+return code -5 and raw wait status 133. The original wait completed after
+3071.617683 seconds, with maximum RSS 139,774,760 KiB. The result records
+`original_wait_completed: true` and `natural_exit: false`. Cgroup OOM counters
+and the kernel OOM-kill counter were zero. The crash cause remains under
+investigation. No retry has been admitted.
+
+The retained root is
+`/run/baton2-native-homelab/retained/baton-combined-main-v13-20261016T193951Z`.
+It contains `c-generation/result.json` and `failure.json`. The retained stderr
+contains 24,710,137 bytes with SHA256
+`cd260293c1f510bef4457c82b63f2a0dc62388f96e64c8be623a1ecd5a831b22`.
+Object compilation, native linking, the candidate handoff, installation and
+candidate runtime acceptance remain pending.
+
 The final test overlay has tree
 `dec7ea352fa1d7a77a5637229a209237d0c98ec9`. It changes
 `receive.py`, `root-wake.py` and `agent-input.py` from the checked tree. The tests report
