@@ -759,6 +759,9 @@ class Receive(unittest.TestCase):
 
     def accept_delivery(self, admission, session):
         stdout, stderr = self.finish(admission)
+        return self.accept_detached(session, stdout + stderr)
+
+    def accept_detached(self, session, diagnostic):
         owner = f'{EXE.resolve()} --instance-owner {self.db.resolve()}'
         while True:
             if select.select([self.server], [], [], 0)[0]:
@@ -767,7 +770,7 @@ class Receive(unittest.TestCase):
                          if process['command'] != owner]
             if not producers:
                 self.fail(f'{session} native did not connect after admission; '
-                          f'execution={self.execution(session)!r}; {stdout}{stderr}')
+                          f'execution={self.execution(session)!r}; {diagnostic}')
             time.sleep(.01)
 
     def accept_or_child_exit(self, child, description, failure_stream=None, allow_exit=False):
@@ -2942,7 +2945,8 @@ class Receive(unittest.TestCase):
         direct.wait()
         self.action(first, fail=True, ack=False, fail_message=cause)
         self.action(first, exit_fixture=True)
-        second, resumed = self.accept('root')
+        second, resumed = self.accept_detached(
+            'root', 'Recovered provider exited before the next native connected.')
         launches = [json.loads(line) for line in
                     (self.directory / 'native-launches.jsonl').read_text().splitlines()]
         self.assertEqual(len(launches), 2)
