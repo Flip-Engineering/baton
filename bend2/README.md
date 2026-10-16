@@ -196,8 +196,9 @@ Stored stop reports and turn history remain available. The MCP tool
 `baton2_resume` accepts `liftStop: true` for this explicit operation.
 
 Codex App notifications name the recipient's whole pending inbox. Additional
-admissions share the notification until recipient acknowledgement permits a
-new one. A failed submission retains the daemon's output and owed messages;
+admissions share the notification. Successful native turns automatically record
+handling of their complete owned reads and permit a new notification. A failed
+submission retains the daemon's output and owed messages;
 `resume` retries that submission through the public queue.
 
 For a managed Codex App session, `connect` records the compiled receiver endpoint
@@ -209,9 +210,9 @@ and preserve their explicit environment prefixes. `serve` owns one lifecycle
 subscription for each App session with pending input. When its App turn
 settles, the Bend coordinator checks its pending inbox and prompts the same conversation
 to handle it. The coordinator retains actual
-turn failures and public input admission results. Recipient acknowledgements
-clear handled input; an explicit stop closes the subscription and preserves
-the remaining messages.
+turn failures and public input admission results. Successful turns automatically
+clear their complete handled input. An explicit stop closes the subscription and
+preserves the remaining messages.
 
 The same coordinator serves recorded native receivers for Codex, OMP, Muse and
 Claude Code. A receiver checks its owed inbox when a turn settles and continues
@@ -258,22 +259,22 @@ has registered none.
 When the parentless `operator` session has the operator role, a Principal's
 native terminal result is retained in its turn history and sent to that session.
 `dispatch` registers the operator during routine task setup. `baton as operator
-inbox` reads its pending reports. A native actor can use `acknowledge`
-for its complete owned reads. Administrative review outside a native turn can
-use the explicit `ack REPORT_ID operator RECEIPT` compatibility form. Subordinate
-reports go to their recorded parent.
+inbox` reads its pending reports. Successful native turns automatically record
+handling of their complete owned reads. Administrative review outside a native
+turn can use the explicit `ack REPORT_ID operator RECEIPT` compatibility form.
+Subordinate reports go to their recorded parent.
 
 During an OMP turn, send guidance with:
 
 ```sh
-baton guide --to worker1 --text 'Focus the review on recovery.'
+baton guide worker1 'Focus the review on recovery.'
 ```
 
 The supervisor listens for newly committed guidance throughout an active OMP
 turn and forwards it through OMP's `steer` command. The native response remains
 in the observed stream. Forwarding advances the attempt's guidance cursor. The
-recipient reads guidance with `inbox`. A successful turn or `acknowledge` records
-handling for those complete owned reads. Unhandled guidance remains pending.
+recipient reads guidance with `inbox`. A successful native turn automatically
+records handling of those complete owned reads. Unhandled guidance remains pending.
 
 `join ID PARENT HARNESS MODEL EFFORT WORKSPACE` registers a Player in an
 existing checkout. The recorded workspace is absolute; branch and base come
@@ -725,10 +726,10 @@ The server stays attached to the Claude process. Its socket is created beside
 the database and closes with the server.
 
 Within its recorded native context, the Conductor reads complete reports with
-`baton inbox` and records handling with `baton acknowledge`. Baton selects the
-owned reads and creates their receipt. `baton guide --to PLAYER --text TEXT`
+`baton inbox`. Successful native turns automatically record handling and create
+receipts for their complete owned reads. `baton guide PLAYER TEXT`
 sends guidance. After reviewing a Player's current completion request, the
-Conductor records its decision with `baton completion-confirmed --to PLAYER`.
+Conductor records its decision with `baton confirm PLAYER`.
 It can inspect Git state with `worktree`, read a declared remote's advertised
 branch with `remote-tip`, and land and publish reviewed work with `land`,
 `land-checked` and `push`. Report receipts retain input handling; completion
@@ -775,8 +776,8 @@ baton /repo/state.db dispatch 'Review the assigned source.' --to worker1
 For a correction, dispatch complete text to the same Player with `--to SESSION`. Receive resumes its stored native conversation, uses
 its recorded route and workspace, and appends to its native log. A receiver that
 finds an active turn returns `queued`; newly pending work starts after native exit.
-The native recipient turn records complete input handling and reports its result
-to the Associate Conductor. `acknowledge` resolves owned inputs from native evidence.
+The successful native recipient turn automatically records complete input handling
+and reports its result to the Associate Conductor.
 
 `dispatch` returns the stored input and its setup or delivery outcome. End the
 parent turn so incoming reports can resume it. The
