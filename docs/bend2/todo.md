@@ -18,9 +18,14 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
 - [#771: Reuse completed Main evidence for the current qualification target](https://github.com/Flip-Engineering/baton/issues/771).
   The released candidate's target artifact embeds the earlier `ff5298d3` baseline.
   Current `main` is `b5b4c61a`; its production inputs match the released 2.0 source.
-  Select the completed Main handoff through the existing production-input and
-  compiler verification, then build and test the actual target checkout. Preserve
-  the existing exact-target artifact path. Coordinate with
+  The workflow accepts a completed target Main handoff through the existing
+  production-input and compiler verification. The exact `b5b4c61a` remote target
+  build and transfer verification passed naturally, with a direct object-cache
+  hit, generated C `ca552285` and executable `b27bf926`. The
+  [complete proof](https://github.com/Flip-Engineering/baton/issues/771#issuecomment-6207964053)
+  retains source, toolchain, substitution, streams and original wait results.
+  Full selected target and candidate CI remains pending. The existing exact-target
+  artifact path is preserved. Coordinate with
   [#741](https://github.com/Flip-Engineering/baton/issues/741),
   [#747](https://github.com/Flip-Engineering/baton/issues/747),
   [#751](https://github.com/Flip-Engineering/baton/issues/751) and
