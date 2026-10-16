@@ -4650,25 +4650,24 @@ class Receive(unittest.TestCase):
         self.coord('connect', 'parent', 'native-parent', json.dumps(['/usr/bin/true']))
         launches = self.explicit_native_endpoint()
         for verb in ('message', 'message-file', 'report', 'report-file', 'ask', 'ask-file'):
-            with self.subTest(verb=verb):
-                ident = 'held-' + verb
-                body = f'{verb}: full input λ🙂 with path /tmp/work tree/資料\nSecond line.\n'
-                argument = body
-                if verb.endswith('-file'):
-                    argument = self.directory / ('authored ' + verb + ' λ.txt')
-                    argument.write_text(body)
-                args = [verb, ident, 'parent']
-                if verb in ('message', 'message-file'):
-                    args += ['root', 'report']
-                child = self.spawn(*args, argument)
-                control, started, attempt, directory, stdout = self.explicit_native_admission(
-                    child, launches, ident, body)
-                admitted = json.loads(stdout)
-                self.assertEqual((admitted['id'], admitted['sender'], admitted['recipient'],
-                                  admitted['kind'], admitted['body'], admitted['receipt']),
-                                 (ident, 'parent', 'root', 'question' if verb.startswith('ask')
-                                  else 'report', body, None))
-                self.settle_explicit_native(control, ident, attempt, directory, started['native'])
+            ident = 'held-' + verb
+            body = f'{verb}: full input λ🙂 with path /tmp/work tree/資料\nSecond line.\n'
+            argument = body
+            if verb.endswith('-file'):
+                argument = self.directory / ('authored ' + verb + ' λ.txt')
+                argument.write_text(body)
+            args = [verb, ident, 'parent']
+            if verb in ('message', 'message-file'):
+                args += ['root', 'report']
+            child = self.spawn(*args, argument)
+            control, started, attempt, directory, stdout = self.explicit_native_admission(
+                child, launches, ident, body)
+            admitted = json.loads(stdout)
+            self.assertEqual((admitted['id'], admitted['sender'], admitted['recipient'],
+                              admitted['kind'], admitted['body'], admitted['receipt']),
+                             (ident, 'parent', 'root', 'question' if verb.startswith('ask')
+                              else 'report', body, None))
+            self.settle_explicit_native(control, ident, attempt, directory, started['native'])
 
     def test_ordinary_explicit_endpoint_accepts_mcp_input_before_native_completion(self):
         self.player(harness='claude-code')
@@ -4676,51 +4675,50 @@ class Receive(unittest.TestCase):
         launches = self.explicit_native_endpoint()
         script = ROOT / 'bend2/scripts/mcp-conductor.mjs'
         for action in ('send', 'report', 'ask'):
-            with self.subTest(action=action):
-                ident = 'held-mcp-' + action
-                body = f'{action}: complete MCP input λ🙂\nPath /tmp/work tree/資料\n'
-                arguments = ['--id', ident, '--text', body]
-                if action == 'send':
-                    arguments = ['root', '--kind', 'report', *arguments]
-                requests = [
-                    {'jsonrpc': '2.0', 'id': 1, 'method': 'initialize',
-                     'params': {'protocolVersion': '2024-11-05', 'capabilities': {},
-                                'clientInfo': {'name': 'ordinary-delivery-fixture', 'version': '0'}}},
-                    {'jsonrpc': '2.0', 'id': 2, 'method': 'tools/call',
-                     'params': {'name': 'baton2_action',
-                                'arguments': {'action': action, 'arguments': arguments}}},
-                ]
-                child = subprocess.Popen(['node', str(script), str(self.db), str(EXE),
-                                          '--session', 'parent'], stdin=subprocess.PIPE,
-                                         stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-                self.children.append(child)
-                child.stdin.write(''.join(json.dumps(request) + '\n' for request in requests))
-                child.stdin.close()
-                child.stdin = None
-                control, started, attempt, directory, stdout = self.explicit_native_admission(
-                    child, launches, ident, body)
-                replies = {reply['id']: reply for reply in map(json.loads, stdout.splitlines())
-                           if 'id' in reply}
-                self.assertNotIn('error', replies[1])
-                self.assertNotIn('error', replies[2])
-                result = replies[2]['result']
-                self.assertFalse(result.get('isError', False), result)
-                answer, = json.loads(result['content'][0]['text'])
-                if action == 'send':
-                    self.assertEqual(answer['admission']['status'], 'admitted')
-                    self.assertEqual(answer['wake']['status'], 'accepted')
-                    self.assertEqual(answer['receiptStatus'], 'pending')
-                    admitted = answer['delivery']
-                else:
-                    self.assertEqual(answer['status'], 'completed')
-                    self.assertEqual(answer['waitStatus'], 'exit 0')
-                    self.assertEqual(answer['cause'], '')
-                    admitted = json.loads(answer['stdout'])
-                self.assertEqual((admitted['id'], admitted['sender'], admitted['recipient'],
-                                  admitted['kind'], admitted['body'], admitted['receipt']),
-                                 (ident, 'parent', 'root', 'question' if action == 'ask'
-                                  else 'report', body, None))
-                self.settle_explicit_native(control, ident, attempt, directory, started['native'])
+            ident = 'held-mcp-' + action
+            body = f'{action}: complete MCP input λ🙂\nPath /tmp/work tree/資料\n'
+            arguments = ['--id', ident, '--text', body]
+            if action == 'send':
+                arguments = ['root', '--kind', 'report', *arguments]
+            requests = [
+                {'jsonrpc': '2.0', 'id': 1, 'method': 'initialize',
+                 'params': {'protocolVersion': '2024-11-05', 'capabilities': {},
+                            'clientInfo': {'name': 'ordinary-delivery-fixture', 'version': '0'}}},
+                {'jsonrpc': '2.0', 'id': 2, 'method': 'tools/call',
+                 'params': {'name': 'baton2_action',
+                            'arguments': {'action': action, 'arguments': arguments}}},
+            ]
+            child = subprocess.Popen(['node', str(script), str(self.db), str(EXE),
+                                      '--session', 'parent'], stdin=subprocess.PIPE,
+                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            self.children.append(child)
+            child.stdin.write(''.join(json.dumps(request) + '\n' for request in requests))
+            child.stdin.close()
+            child.stdin = None
+            control, started, attempt, directory, stdout = self.explicit_native_admission(
+                child, launches, ident, body)
+            replies = {reply['id']: reply for reply in map(json.loads, stdout.splitlines())
+                       if 'id' in reply}
+            self.assertNotIn('error', replies[1])
+            self.assertNotIn('error', replies[2])
+            result = replies[2]['result']
+            self.assertFalse(result.get('isError', False), result)
+            answer, = json.loads(result['content'][0]['text'])
+            if action == 'send':
+                self.assertEqual(answer['admission']['status'], 'admitted')
+                self.assertEqual(answer['wake']['status'], 'accepted')
+                self.assertEqual(answer['receiptStatus'], 'pending')
+                admitted = answer['delivery']
+            else:
+                self.assertEqual(answer['status'], 'completed')
+                self.assertEqual(answer['waitStatus'], 'exit 0')
+                self.assertEqual(answer['cause'], '')
+                admitted = json.loads(answer['stdout'])
+            self.assertEqual((admitted['id'], admitted['sender'], admitted['recipient'],
+                              admitted['kind'], admitted['body'], admitted['receipt']),
+                             (ident, 'parent', 'root', 'question' if action == 'ask'
+                              else 'report', body, None))
+            self.settle_explicit_native(control, ident, attempt, directory, started['native'])
 
     def test_explicit_endpoint_failure_retains_input_for_attached_public_resume(self):
         self.player(harness='claude-code')
