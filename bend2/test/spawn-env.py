@@ -51,6 +51,7 @@ def main() -> int:
     parent["FOO"] = "1"
     parent["PARENT_BAR"] = "keep"
     parent.pop("CHILD_BAR", None)
+    parent["A"] = "parent1"
     try:
         run = subprocess.run(
             [str(program)],
@@ -70,9 +71,15 @@ def main() -> int:
         one = env_lines(read("results-1"))
         if one is None or any(line == "FOO=1" for line in one):
             failures.append("results-1: removal did not drop FOO=1")
-        two = env_lines(read("results-2"))
-        if two is None or "CHILD_BAR=2" not in two:
-            failures.append("results-2: set entry missing")
+        seven = env_lines(read("results-7"))
+        if seven is None or "FOO=9" not in seven or "FOO=1" in seven:
+            failures.append("results-7: set after remove did not win")
+        eight = env_lines(read("results-8"))
+        if eight is None or any(line.startswith("FOO=") for line in eight):
+            failures.append("results-8: removal after set left a FOO line")
+        nine = env_lines(read("results-9"))
+        if nine is None or nine.count("A=2") != 1 or "A=1" in nine or "A=parent1" in nine:
+            failures.append("results-9: set-then-set did not answer exactly one A=2")
         three = env_lines(read("results-3"))
         if three is None or "FOO=9" not in three or "FOO=1" in three:
             failures.append("results-3: override did not replace FOO")
@@ -85,17 +92,11 @@ def main() -> int:
         six = env_lines(read("results-6"))
         if six is None or "K=V=W" not in six:
             failures.append("results-6: value with '=' mangled")
-        seven = env_lines(read("results-7"))
-        if seven is None or "FOO=9" not in seven or "FOO=1" in seven:
-            failures.append("results-7: set after remove did not win")
-        eight = env_lines(read("results-8"))
-        if eight is None or any(line.startswith("FOO=") for line in eight):
-            failures.append("results-8: removal after set left a FOO line")
         if failures:
             for failure in failures:
                 print("spawn-env.py: " + failure, file=sys.stderr)
             return 1
-        print("spawn-env.py: all eight env-delta vectors agree")
+        print("spawn-env.py: all nine env-delta vectors agree")
         return 0
     finally:
         shutil.rmtree(root, ignore_errors=True)

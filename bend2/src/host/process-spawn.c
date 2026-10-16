@@ -133,9 +133,15 @@ static void baton_child_spawn(BatonProcessCall *call) {
   for(size_t i=0;i<call->length;i++) if(!call->args[i]) {
     argv[index++]=call->args+start; start=i+1;
   }
+  /* Non-BP_SPAWN kinds arrive calloc'd with env NULL and length 0, so
+     the build inherits the whole environment for them. */
   char **envp=NULL,**envp_built=NULL;size_t envp_built_count=0;
   int env_error=baton_envp_build(call->env,call->env_length,&envp,&envp_built,&envp_built_count);
-  if(env_error) { call->error=env_error; free(argv); return; }
+  if(env_error) {
+    call->error=env_error;
+    if(env_error==EINVAL) call->detail="environment entry has an empty name";
+    free(argv);return;
+  }
   int in[2], out[2];
   call->error=baton_pipe(in);
   if(call->error) { baton_envp_free(envp,envp_built,envp_built_count);free(argv);return; }
@@ -4733,12 +4739,6 @@ static Term baton_process_begin_mode(Env e, Term *f, IoWork *w, int kind, int pr
     call->log=io_cstr(e,f[offset+2],&log_length);
     if(kind==BP_SPAWN) {
       call->env=io_cstr(e,f[3],&call->env_length);
-      for(size_t i=0;call->env && i<call->env_length;) {
-        size_t n=strnlen(call->env+i,call->env_length-i);
-        if(!n) {i+=1;continue;}
-        if(call->env[i]=='=') {call->error=EINVAL;break;}
-        i+=n+1;
-      }
     }
     if(strlen(call->cwd)!=cwd_length || strlen(call->log)!=log_length) call->error=EINVAL;
     if(kind==BP_RETAIN) {

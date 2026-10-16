@@ -35,4 +35,6 @@ def main() -> IO(Unit):
     seven : String <- run_env("FOO" ++ SCon{Char.from_u32(0),SNil{}} ++ "FOO=9")
     IO.try(Unit,Text.Text.append("results-7",seven))
     eight : String <- run_env("FOO=9" ++ SCon{Char.from_u32(0),SNil{}} ++ "FOO")
+    nine : String <- run_env("A=1" ++ SCon{Char.from_u32(0),SNil{}} ++ "A=2")
+    IO.try(Unit,Text.Text.append("results-9",nine))
     IO.try(Unit,Text.Text.append("results-8",eight))

@@ -15,6 +15,7 @@
 #ifndef BATON_ENV_DELTA_H
 #define BATON_ENV_DELTA_H
 
+#include <errno.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -39,15 +40,16 @@ static int baton_env_touched(const char *delta, size_t length,
   return 0;
 }
 
-/* Whether the set entry at delta[i0..i0+n) is removed by a later bare
-   NAME entry. */
-static int baton_env_removed_later(const char *delta, size_t length,
-                                   size_t i0, size_t n) {
-  for (size_t j = i0 + n + 1; j < length;) {
+/* Whether any entry after `from` names the variable set at delta[i0..],
+   whose name is name[0..nl). A later set or a later bare NAME both
+   supersede this entry: last writer wins either way. */
+static int baton_env_superseded_later(const char *delta, size_t length,
+                                      size_t from, const char *name,
+                                      size_t nl) {
+  for (size_t j = from; j < length;) {
     size_t m = strnlen(delta + j, length - j);
     if (!m) { j += 1; continue; }
-    if (!memchr(delta + j, '=', m) && m == n
-        && !memcmp(delta + i0, delta + j, n)) return 1;
+    if (baton_env_names(delta + j, m, name, nl)) return 1;
     j += m + 1;
   }
   return 0;
@@ -94,7 +96,11 @@ static int baton_envp_build(const char *delta, size_t length, char ***out,
     size_t start = i;
     i += n + 1;
     if (!equals) continue;
-    if (baton_env_removed_later(delta, length, start, n)) continue;
+    /* Last writer wins: any later entry naming this variable - a later
+       set or a later bare NAME - suppresses this set. */
+    size_t name_length = (size_t)(equals - (delta + start));
+    if (baton_env_superseded_later(delta, length, start + n + 1,
+                                   delta + start, name_length)) continue;
     char *item = malloc(n + 1);
     if (!item) {
       for (size_t k = 0; k < owned_used; k += 1) free(owned[k]);
