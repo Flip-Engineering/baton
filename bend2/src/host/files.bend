@@ -37,9 +37,9 @@ def Files.exists(path: String) -> IO(Result<&1,&1,U32 & String,String>):
   import "./files.c"
 
 # Every entry name in one directory, joined with one NUL each, in readdir
-# order with no ordering promise: consumers sort before comparing. The
-# entries named "." and ".." are excluded here; every other name passes,
-# including names containing newlines, which is why the join is NUL. A
+# order with no ordering promise: consumers sort before comparing. Exactly
+# the two pseudo-entries "." and ".." are excluded; every dot-prefixed
+# name passes. The join is NUL because entry names may contain newlines. A
 # directory that cannot be opened keeps its cause, so an empty listing
 # stays distinguishable from a missing directory.
 # Names are bytes in the host and Strings in Bend2: a name that is not

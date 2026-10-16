@@ -1,8 +1,9 @@
 """Files.entries vectors (contract in bend2/src/host/files.bend).
 
-Dot entries are excluded by the host; the join is one NUL per name, so a
-name containing a newline survives as one entry; an empty directory
-yields the empty string; a missing directory keeps its ENOENT cause.
+Exactly the two pseudo-entries "." and ".." are excluded by the host;
+every dot-prefixed name passes. The join is one NUL per name, so a name
+containing a newline survives as one entry; an empty directory yields
+the empty string; a missing directory keeps its ENOENT cause.
 Order is a readdir promise of none, so the driver sorts the splits
 before comparing. Build the program first with the native test gate,
 
