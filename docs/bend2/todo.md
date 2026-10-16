@@ -4,6 +4,18 @@ The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3
 retain findings, ownership and acceptance requirements. This page links current
 Baton follow-up work for contributors. Every open issue has a link on this page.
 
+- [#778: Add a Bend2 REPL written in Bend2](https://github.com/Flip-Engineering/baton/issues/778).
+  Evaluate Bend2 expressions and definitions through CLI, MCP and an interactive
+  session. Retain named definitions, results, submitted source and actual
+  diagnostics. Preserve Bend2 typing, effects and affine-value semantics, session
+  recovery, scoped authority, immutable references and complete failures. Baton
+  derives identity and scope and accepts source inline or through stdin. Qualify
+  external-agent evaluation, composition, sharing and restart through the
+  installed commands. Coordinate with
+  [#777](https://github.com/Flip-Engineering/baton/issues/777),
+  [#724](https://github.com/Flip-Engineering/baton/issues/724) and
+  [#710](https://github.com/Flip-Engineering/baton/issues/710).
+
 - [#777: Pass committed context snapshots between seats by citation](https://github.com/Flip-Engineering/baton/issues/777).
   Commit immutable sender context snapshots under a declared schema and carry
   versioned citations in briefs and reports. Resolve the cited values through
@@ -12,6 +24,7 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   current Bend context APIs. Compare token use and receiving-seat prefix-cache
   behavior on the same two-seat task with inline context and cited snapshots.
   Coordinate with [#707](https://github.com/Flip-Engineering/baton/issues/707),
+  [#778](https://github.com/Flip-Engineering/baton/issues/778),
   [#710](https://github.com/Flip-Engineering/baton/issues/710),
   [#718](https://github.com/Flip-Engineering/baton/issues/718) and
   [#720](https://github.com/Flip-Engineering/baton/issues/720).
