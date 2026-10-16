@@ -200,13 +200,15 @@ admissions share the notification until recipient acknowledgement permits a
 new one. A failed submission retains the daemon's output and owed messages;
 `resume` retries that submission through the public queue.
 
-For a managed Codex App session, `connect` accepts the installed helper endpoint
-`["node","/absolute/libexec/baton2/codex-inbox-wake.mjs","--session","/absolute/bin/baton2","/absolute/database","PLAYER","THREAD"]`.
-Codex App sessions with a recorded native conversation can also leave their
-receiver endpoint empty. `serve` owns one lifecycle subscription for each
-endpointless or configured App session with pending input. When its App turn
-settles, the helper checks its pending inbox and prompts the same conversation
-to handle it. The helper retains actual
+For a managed Codex App session, `connect` records the compiled receiver endpoint
+`["/usr/bin/env","HOME=/absolute/home","CODEX_HOME=/absolute/home/.codex","/absolute/bin/baton2","/absolute/database","codex-inbox-session","PLAYER","THREAD"]`.
+Registration captures the receiver credential environment and preserves explicit environment arguments.
+An empty endpoint passed to `connect` selects this default receiver.
+`configure` and managed delivery translate earlier recorded helper endpoints
+and preserve their explicit environment prefixes. `serve` owns one lifecycle
+subscription for each App session with pending input. When its App turn
+settles, the Bend coordinator checks its pending inbox and prompts the same conversation
+to handle it. The coordinator retains actual
 turn failures and public input admission results. Recipient acknowledgements
 clear handled input; an explicit stop closes the subscription and preserves
 the remaining messages.

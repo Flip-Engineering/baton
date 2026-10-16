@@ -18,6 +18,14 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   The installed Muse review inherited its private `HOME` during parent wake;
   explicit receiver environment configuration restored delivery. Retain the
   [observed socket failure](https://github.com/Flip-Engineering/baton/issues/761#issuecomment-6203830573).
+  The implementation now routes claims, input, stops, admission, continuation,
+  terminal reporting and failure retention through the compiled Bend coordinator.
+  The native adapter transports complete WebSocket frames and owns the proxy
+  process lifetime. Registration captures `HOME` and effective `CODEX_HOME`;
+  connect, configure and managed delivery translate recorded helper endpoints.
+  The fixtures retain #750/#760 writer contention through the original SQLite
+  busy callback, complete input, NULL receipts and exactly one successful RPC.
+  Composed Main, full native tests and actual public Codex acceptance remain pending.
 
 - [#758: Wait for fixture owner publication before cleanup shutdown](https://github.com/Flip-Engineering/baton/issues/758).
   The target Control cleanup in run `38785813982` recorded shutdown success
