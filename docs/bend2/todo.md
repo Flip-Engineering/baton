@@ -57,6 +57,8 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   inbox, authored-message and batch tools. Explain Conductor roles, Ensemble
   coupling and the branching workflow in CLI and MCP discovery; coordinate this
   chooser with [#751](https://github.com/Flip-Engineering/baton/issues/751).
+  Keep central branch help reachable through CLI and MCP; state role assignment
+  effects, tight peer membership, organizational Sections and action-batch grammar.
   Run the actual contextual inbox and native successful-turn handling acceptance
   after the help change. Coordinate
   with [#723](https://github.com/Flip-Engineering/baton/issues/723),
@@ -170,7 +172,8 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   A failed receiver setup retains its operation and prevents task admission.
   The [command and behavior guide](branching-ensembles.md) describes this surface.
   Keep the team and branching chooser concise across help, MCP and agent docs;
-  explain both coupling modes and the explicit or inferred source Player.
+  explain both coupling modes, Ensemble-scoped source defaults, selection of a sole owned
+  Ensemble, the default score direction and the explicit `select` trigger.
   All six remote branching fixtures pass. Four actual Codex branches passed the
   independent evaluator; the selected branch continued in the same conversation.
   A separate recovery run passed restart, retained lineage and explicit-stop

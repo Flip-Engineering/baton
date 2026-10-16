@@ -86,20 +86,27 @@ The named completion commands retain explicit body and identity options.
 ## Teams and branching
 
 A Principal Conductor coordinates the whole assignment; an Associate Conductor
-coordinates a delegated subtask. An Ensemble groups Players under one Conductor.
-Use loose coupling for coordination through the lead and parent-child routes.
-Use tight coupling when Players need peer communication under the role and
-hierarchy rules. A Section groups team members by capability.
+coordinates a delegated subtask. An Ensemble records a team owner and members.
+Configure loose coupling for parent-child and Conductor-descendant messaging.
+Tight coupling additionally permits non-operator peers sharing the Ensemble to
+exchange messages, including peers with different parents. Peers have no ancestor
+relationship; operators use the top-level Conductor route. The recorded Ensemble
+owner manages membership. A Section supplies capability labels and member subsets
+for work organization; routing, knowledge visibility and branching use Ensemble
+and session records.
 
-Use branching to compare alternative solutions: snapshot a settled Player's
-workspace, start fresh conversations in separate worktrees, evaluate the results,
-and continue the selected Player's existing conversation. Both coupling modes
-support branching. `--from PLAYER` selects the source; its default is the latest
-selected Player, or the current Conductor before any selection.
+Branching compares alternatives on a team with either coupling: snapshot a
+settled source agent, start fresh conversations in separate worktrees, evaluate,
+select, then continue the selected conversation. Omit `--ensemble` only for a
+Conductor's sole owned Ensemble. `--from SESSION` defaults to the latest selected
+Player in that Ensemble, or the current Conductor before any selection; the
+source needs a recorded Git workspace and settled native custody. `evaluate`
+records evidence; `select` without `--player` chooses the unique accepted best
+score after every branch settles successfully. Direction defaults to `max`.
 
-Use `baton help role`, `baton help ensemble` and `baton branch --help` for the
-commands. The [branching guide](branching-ensembles.md) describes evaluation,
-selection, continuation and recovery.
+Use `baton help role`, `baton help ensemble`, `baton help section` and
+`baton help branch` for usage. `baton branch --help` also shows branch usage.
+The [branching guide](branching-ensembles.md) describes selection and recovery.
 
 ## Named action batches
 
@@ -133,7 +140,13 @@ single forms. They resolve the recorded parent or retained request author and
 enforce the current coordinator and explicit recipient checks. Complete bodies
 travel to the child command through UTF-8 JSON standard input. Multiple explicit
 stdin file references share the invocation's complete captured text. MCP contextual
-arguments travel directly as a complete JSON array over standard input.
+arguments travel directly as a complete JSON array over standard input. One
+`baton2_action` call names one top-level contextual CLI action. Its `arguments`
+can contain the named batch grammar above; compact positional forms use their
+own grammar. A branch operation uses one `branch` call with subcommand arguments.
+The tool supports contextual inspections, dispatch, knowledge and team controls
+as well as messaging. `action: "help", arguments: []` discovers the surface;
+`action: "help", arguments: ["branch"]` reads complete branch usage.
 
 ## Native operations
 
@@ -289,9 +302,12 @@ baton section-member --ensemble review-team --id review --player worker --action
 baton ensemble --id review-team --and orchestra
 ```
 
-`role` reads the selected session role; `--role` invokes native role assignment.
-`ensemble --id ID` reads a group. `--owner SESSION` ensures it for the named
-owner, and `--coupling loose|tight` creates or configures its coupling. An omitted
+`role` reads the selected session role; `--role` assigns an existing session.
+Principal Conductor and operator require no parent; Associate Conductor requires
+a parent. Assignment updates the responsibility used by message routing and
+Conductor operations. Parentage, Ensemble ownership, live work and accepted input
+remain retained. `ensemble --id ID` reads a group. `--owner SESSION` ensures it
+for the named owner, and `--coupling loose|tight` creates or configures its coupling. An omitted
 configuration owner selects the current actor. `section` reads the named Section;
 `--capability TEXT` creates or configures it for `--owner`, which also defaults
 to the current actor. Membership actions require `--player` and `--action add|remove`.

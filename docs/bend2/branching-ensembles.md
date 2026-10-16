@@ -7,7 +7,8 @@ native configuration and evaluator command. Baton generates round, Player and
 evaluation identities.
 
 Use branching to compare alternative solutions and continue the selected Player's
-existing conversation. The Ensemble can use loose or tight coupling.
+existing conversation. Configure loose or tight coupling on the Ensemble; both
+support branching. `help branch` and `branch --help` show the same complete usage.
 
 ## Commands
 
@@ -25,11 +26,16 @@ baton branch select --ensemble experiments
 baton branch continue --ensemble experiments
 ```
 
-Commands infer the latest round within the selected Ensemble. The current actor's
-sole owned Ensemble is the default. `--round` selects recorded historical work.
-`branch --help` lists the complete command syntax.
-`--from PLAYER` selects the source. Its default is the latest selected Player,
-or the current Conductor before any selection.
+Omit `--ensemble` when the current Conductor owns exactly one Ensemble. With
+zero or several owned Ensembles, select an owned Ensemble explicitly; unresolved
+selection refuses with `Select --ensemble NAME for one Ensemble owned by this
+Conductor.` Commands default to the latest round within that Ensemble;
+`--round` selects recorded historical work.
+
+`--from SESSION` selects a source agent. Its default is the latest selected Player
+in this Ensemble, including score-based and explicit selections. Before any
+selection it uses the current Conductor. Either source needs a recorded Git
+workspace and settled native custody.
 
 Start inherits the source's recorded task and native configuration. `--text` or
 `--file` supplies task text; Baton stores the complete text in the database.
@@ -61,11 +67,13 @@ status. Successful evaluator output is one JSON object:
 {"accepted": true, "score": 12.5}
 ```
 
-Evaluation records identify the workspace snapshot, evaluator argv and observed
-native attempt. Automatic selection requires a successful settled attempt and
-accepted evaluation for every branch, with one unique best score according to
-`--direction max|min`. Missing native settlement remains visible as unknown.
-Failed, partial and tied outcomes require a Conductor decision:
+`branch evaluate` records the workspace snapshot, evaluator argv, observed native
+attempt and result. Then `branch select` without `--player` performs score-based
+selection. Every branch needs successful native settlement, no explicit stop and
+an accepted current evaluation, with one unique best score. Start defaults to
+`--direction max` for the highest score; `min` selects the lowest. Missing settlement remains visible as
+unknown. Evaluation alone records evidence. Failed, partial and tied outcomes
+require an explicit Conductor decision:
 
 ```sh
 baton branch select --ensemble experiments --player PLAYER --reason 'Decision evidence.'

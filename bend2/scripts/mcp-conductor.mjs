@@ -304,7 +304,7 @@ const unavailableTools = new Set([
 
 function messageInstructions() {
   if (contextualActions) {
-    return `Use ${dispatchInput ? 'baton2_dispatch' : 'baton2_task'} for complete task text or an existing UTF-8 file; to or session selects an existing conversation. Baton stores complete dispatch input and setup outcomes and preserves the assignment. Use baton2_action with action inbox to read pending input, report or ask with one text argument to reach your coordinator, send or guide with Player and text arguments, finish with one summary argument, and confirm with the selected Player. The attached session supplies actor identity. Action help describes named arguments and batches. Successful native turns automatically record handling of their complete owned reads; failed turns and unread input remain pending. Baton generates action identities and selects the current assignment, coordinator and completion request. Continue the assignment until your coordinator confirms completion. Explicit stops remain effective.`;
+    return `Use ${dispatchInput ? 'baton2_dispatch' : 'baton2_task'} for complete task text or an existing UTF-8 file; to or session selects an existing conversation. Baton stores complete dispatch input and setup outcomes and preserves the assignment. Use baton2_action with action inbox to read pending input, report or ask with one text argument to reach your coordinator, send or guide with Player and text arguments, finish with one summary argument, and confirm with the selected Player. The attached session supplies actor identity. One baton2_action call supplies a top-level action. Use action help with the action name in arguments for usage; named arguments support and or --and batch clauses. Branch operations use their own subcommand arguments in a separate call. Successful native turns automatically record handling of their complete owned reads; failed turns and unread input remain pending. Baton generates action identities and selects the current assignment, coordinator and completion request. Continue the assignment until your coordinator confirms completion. Explicit stops remain effective.`;
   }
   const messaging = batchMessaging
     ? 'Use baton2_inbox or baton2_pending to read complete pending input, and baton2_outbox to inspect authored messages and receipts. Their optional index:true argument returns metadata; baton2_delivery and baton2_delivery_batch read selected complete messages. Successful native turns automatically record handling of complete owned reads; failed turns and unread input remain pending. Use baton2_guide or baton2_message_batch to direct recipients. Each batch item retains its admission, wake, message and receipt.'
@@ -420,7 +420,7 @@ const dispatchInputSchema = { type: 'object', properties: {
 const TOOLS = [
   {
     name: 'baton2_action',
-    description: 'Run a native action as the attached session. Use inbox, read, send, report, ask, guide, finish and confirm for work; role, ensemble and section organize a team; branch compares parallel alternatives and continues the selected Player. Use action help with the command name in arguments, or action branch with ["--help"]. Complete argument strings use the CLI grammar and travel through JSON standard input. Each item retains its actual result and failure cause.',
+    description: 'Run any contextual CLI action as the attached session, including inbox, read, send, report, ask, guide, finish, confirm, dispatch, players, assignment, status, knowledge, role, ensemble, section and branch. One call supplies one top-level action; its named arguments can include and or --and batch clauses. Compact positional forms and branch subcommands use their own grammar. Use action help with [] for discovery or ["ACTION"] for usage, including ["branch"]. Branch compares alternatives on the selected Ensemble, evaluates evidence, selects a Player and continues that conversation. Complete argument strings travel through JSON standard input. Each batch clause retains its actual result and failure cause.',
     inputSchema: { type: 'object', properties: {
       action: { type: 'string' }, arguments: { type: 'array', items: { type: 'string' } },
     }, required: ['action'], additionalProperties: false },
@@ -640,7 +640,7 @@ const TOOLS = [
   },
   {
     name: 'baton2_role',
-    description: 'Read or assign a session responsibility. A Principal Conductor coordinates the whole assignment; an Associate Conductor coordinates a delegated subtask. Players perform assigned work; operators represent human control.',
+    description: 'Read or assign an existing session responsibility used by routing and Conductor operations. Principal Conductors coordinate the whole assignment and require no parent; Associate Conductors coordinate delegated work and require a parent. Players perform work; operators represent parentless human control. Assignment retains parentage, Ensemble ownership, live work and accepted input.',
     inputSchema: { type: 'object', properties: {
       session: { type: 'string' },
       role: { type: 'string', enum: ['player', 'principal-conductor', 'associate-conductor', 'operator'] },
@@ -648,10 +648,10 @@ const TOOLS = [
   },
   {
     name: 'baton2_ensemble',
-    description: 'Organize Players as a team under one Conductor, or inspect its owner and coupling. Use branching to compare parallel alternatives, evaluate them and continue the selected Player with either coupling; discover it through baton2_action with action branch and arguments ["--help"].',
+    description: 'Organize agents as a team with a recorded owner and coupling, or inspect that configuration. The owner manages membership. Choose coupling when configuring the Ensemble. Branching compares alternative solutions on a team with either coupling; use baton2_action with action help and arguments ["branch"] for start, evaluate, select and continue.',
     inputSchema: { type: 'object', properties: {
       ensemble: { type: 'string' }, owner: { type: 'string' },
-      coupling: { type: 'string', enum: ['loose', 'tight'], description: 'Loose teams coordinate through their lead and parent-child routes. Tight teams also permit peer messages under the role and hierarchy rules. Omission preserves existing coupling; new teams default to loose.' },
+      coupling: { type: 'string', enum: ['loose', 'tight'], description: 'Loose teams use parent-child and Conductor-descendant routes. Tight additionally permits non-operator peers sharing this Ensemble to exchange messages, including peers with different parents; peers have no ancestor relationship. Operators use the top-level Conductor route. Omission preserves existing coupling; new teams default to loose.' },
     }, required: ['ensemble'], additionalProperties: false },
   },
   {
@@ -664,7 +664,7 @@ const TOOLS = [
   },
   {
     name: 'baton2_section',
-    description: 'Inspect a Section or declare its capability within an Ensemble.',
+    description: 'Inspect a capability label and member subset within an Ensemble, or configure that organizational group through the recorded Ensemble owner. Routing, knowledge visibility and branching use Ensemble and session records.',
     inputSchema: { type: 'object', properties: {
       ensemble: { type: 'string' }, section: { type: 'string' },
       owner: { type: 'string' }, capability: { type: 'string' },

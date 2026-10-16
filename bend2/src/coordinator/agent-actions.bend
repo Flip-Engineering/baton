@@ -358,7 +358,7 @@ def parse(args: List<String>) -> Action:
 
 def help(action: String) -> String:
   match action:
-    case "branch": "branch start|evaluate|select|continue|status|recover|stop [--ensemble NAME]\nUse branch --help for branching workspace, evaluator and continuation arguments.\n"
+    case "branch": "branch start|evaluate|select|continue|status|recover|stop [--ensemble NAME]\nUse help branch or branch --help for source defaults, workspace, evaluator, selection and continuation arguments.\n"
     case "inbox": "inbox\nRead every pending message for the current agent with complete bodies. Reading preserves pending receipts.\n"
     case "read": "read ID...\nRead complete stored messages in argument order. Acknowledged messages remain readable. Each ID has its own result.\n"
     case "session": "session [SESSION]\nRead the complete registered session record. Omitted SESSION selects the current agent.\n" ++ Domain.help("session")
@@ -374,4 +374,4 @@ def help(action: String) -> String:
     case "acknowledge": "acknowledge [ID... | --message ID] [--receipt TEXT]\nRecord handling for the current native attempt's complete recipient-owned read inputs. Baton generates the native receipt. Explicit message selectors and receipts remain available; the first receipt remains retained. A standalone administrative command requires an explicit message selection.\n"
     case +other:
       +domain = Domain.help(other)
-      Bool.pick(String,String.is_empty(domain),"usage: baton ACTION ARGS\nActions: inbox, read, send, report, ask, guide, finish, confirm, dispatch, players, assignment, status, role, ensemble, ensemble-member, section, section-member, orchestra, branch, knowledge.\nBaton resolves your project and session. Successful native turns record handling of their complete owned reads. Use help ACTION for usage and explicit context options. Use help role and help ensemble to organize a team; branch --help describes parallel alternatives and selected continuation.\n",domain)
+      Bool.pick(String,String.is_empty(domain),"usage: baton ACTION ARGS\nActions: inbox, read, send, report, ask, guide, finish, confirm, dispatch, players, assignment, status, role, ensemble, ensemble-member, section, section-member, orchestra, branch, knowledge.\nBaton resolves your project and session. Successful native turns record handling of their complete owned reads. Use help ACTION for usage and explicit context options. Use help role for responsibilities, help ensemble for team coupling, help section for capability groups and help branch for alternatives, score-based selection and continuation.\n",domain)
