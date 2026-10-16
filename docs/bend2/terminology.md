@@ -56,7 +56,7 @@ peers with different parents. Peers have no ancestor relationship. Operators use
 the top-level Conductor route.
 
 [Branching](branching-ensembles.md) adds parallel alternatives to an Ensemble with
-either coupling. It snapshots a settled Player's workspace, starts fresh
+either coupling. It snapshots a settled agent's workspace, starts fresh
 conversations in separate worktrees, evaluates results, and continues the selected
 Player's existing conversation. `--from SESSION` defaults to the latest selected
 Player in that Ensemble, including explicit and score-based selections, or the

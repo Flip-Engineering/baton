@@ -96,7 +96,7 @@ for work organization; routing, knowledge visibility and branching use Ensemble
 and session records.
 
 Branching compares alternatives on a team with either coupling: snapshot a
-settled source agent, start fresh conversations in separate worktrees, evaluate,
+settled agent's workspace, start fresh conversations in separate worktrees, evaluate,
 select, then continue the selected conversation. Omit `--ensemble` only for a
 Conductor's sole owned Ensemble. `--from SESSION` defaults to the latest selected
 Player in that Ensemble, or the current Conductor before any selection; the
