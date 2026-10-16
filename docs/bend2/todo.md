@@ -332,18 +332,6 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   [#727](https://github.com/Flip-Engineering/baton/issues/727) and
   [#730](https://github.com/Flip-Engineering/baton/issues/730).
 
-- [#737: Render native prompt command arguments as readable text](https://github.com/Flip-Engineering/baton/issues/737).
-  Actual Muse and GLM contributor dispatches on `57b471e9` retained their task
-  input and failed before native startup with SQLite's NUL refusal. Receive and
-  direct prompt headers embed the process argument encoding. Render those two
-  headers as readable JSON arrays. Source fixtures check exact decoded arguments,
-  NUL-free guidance and complete Unicode task custody. Remote native acceptance
-  remains open. Coordinate with [#731](https://github.com/Flip-Engineering/baton/issues/731),
-  [#716](https://github.com/Flip-Engineering/baton/issues/716),
-  [#723](https://github.com/Flip-Engineering/baton/issues/723),
-  [#727](https://github.com/Flip-Engineering/baton/issues/727) and
-  [#717](https://github.com/Flip-Engineering/baton/issues/717).
-
 - [#733: Use authorized native credentials without interactive access dialogs](https://github.com/Flip-Engineering/baton/issues/733).
   Configure supported native credential stores for unattended Baton dispatch,
   resumption and contributor reports. The homelab Muse credential setup completed
