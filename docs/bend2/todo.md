@@ -4,6 +4,17 @@ The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3
 retain findings, ownership and acceptance requirements. This page links current
 Baton follow-up work for contributors. Every open issue has a link on this page.
 
+- [#771: Reuse completed Main evidence for the current qualification target](https://github.com/Flip-Engineering/baton/issues/771).
+  The released candidate's target artifact embeds the earlier `ff5298d3` baseline.
+  Current `main` is `b5b4c61a`; its production inputs match the released 2.0 source.
+  Select the completed Main handoff through the existing production-input and
+  compiler verification, then build and test the actual target checkout. Preserve
+  the existing exact-target artifact path. Coordinate with
+  [#741](https://github.com/Flip-Engineering/baton/issues/741),
+  [#747](https://github.com/Flip-Engineering/baton/issues/747),
+  [#751](https://github.com/Flip-Engineering/baton/issues/751) and
+  [#761](https://github.com/Flip-Engineering/baton/issues/761).
+
 - [#769: Preserve OMP output while handling event-filter compatibility](https://github.com/Flip-Engineering/baton/issues/769).
   OMP 17.4 rejected `set_event_filter` without echoing its request ID. Its
   cumulative message snapshots expanded a 112 KB thinking stream into a
