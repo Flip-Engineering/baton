@@ -2,11 +2,12 @@
 
 The mode effect answers the permission bits as octal text with no
 leading zero for files, directories and a 0000 file alike, and keeps
-ENOENT for a missing path. The executable effect answers 1 or 0 and
-keeps ENOENT for a missing path; a 0000 file refuses X_OK for root and
-non-root alike because no execute bit is set anywhere. Root-insensitive
-by construction, so no skip logic. Build the program first with the
-native test gate,
+ENOENT for a missing path. The executable effect answers 1 or 0: X_OK
+success is 1, EACCES is 0, and any other refusal keeps its errno, so a
+missing path answers fail:2 and a consumer can distinguish an absent
+tool from one it may not run. A 0000 file answers 0 for root and
+non-root alike, so the vectors need no skip logic. Build the program
+first with the native test gate,
 
     sh bend2/scripts/build-native.sh bend2/test/files-metadata.bend SCRATCH/files-metadata
 
@@ -24,11 +25,11 @@ EXPECTED = [
     "ok:644\n",    # mode plain
     "ok:755\n",    # mode runnable
     "ok:0\n",      # mode sealed (0000)
-    "ok:755\n",    # mode dir
+    "ok:755\n",    # mode dir (chmod'd explicitly; umask must not matter)
     "fail:2\n",    # mode missing keeps ENOENT
     "ok:1\n",      # executable runnable
     "ok:0\n",      # executable plain (no x bit for the owner; root agrees)
-    "fail:13\n",   # executable sealed (no x bit anywhere, root included)
+    "ok:0\n",      # executable sealed (EACCES answers 0, root included)
     "fail:2\n",    # executable missing keeps ENOENT
 ]
 
@@ -45,7 +46,9 @@ def main() -> int:
     try:
         cases = root / "cases"
         cases.mkdir()
-        (cases / "dir").mkdir()
+        directory = cases / "dir"
+        directory.mkdir()
+        directory.chmod(0o755)
         plain = cases / "plain"
         plain.write_bytes(b"")
         plain.chmod(0o644)
