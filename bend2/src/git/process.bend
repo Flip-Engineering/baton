@@ -9,12 +9,16 @@ import Base
 import ./types.bend as T
 import ./text.bend as Tx
 
-def Process.run(argv: String, cwd: String) -> IO(Result<&1, &1, U32 & String, String>):
+# env carries the child's environment delta over the inherited
+# environment, NUL-separated entries: NAME=VALUE sets or overrides, a
+# bare NAME removes, empty inherits all; an empty-name entry is
+# refused EINVAL.
+def Process.run(argv: String, cwd: String, env: String) -> IO(Result<&1, &1, U32 & String, String>):
   import "./process.c"
 
 def runFull(args: List<String>, cwd: String) -> IO(T.RunRes):
   IO.bind(Result<&1, &1, U32 & String, String>, T.RunRes,
-    Process.run(Tx.str_rev(Tx.str_rev(Tx.enc_argv(args))), cwd),
+    Process.run(Tx.str_rev(Tx.str_rev(Tx.enc_argv(args))), cwd, ""),
     x => IO.pure(T.RunRes, Tx.run_res(x)))
 
 def git_out(r: T.RunRes) -> T.GitOut:

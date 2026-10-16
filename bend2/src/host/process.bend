@@ -2,7 +2,11 @@ import Base
 
 # argv contains each argument followed by NUL, including the executable.
 # stderr is retained in a file so a child cannot block on an unread error pipe.
-def ProcessChild.spawn(argv: String, cwd: String, stderr: String) -> IO(Result<&1,&1,U32 & String,U32>):
+# env is a delta over the inherited environment, NUL-separated entries:
+# NAME=VALUE sets or overrides, a bare NAME removes, empty inherits all.
+# A NUL separates entries, so it cannot appear inside a name or value;
+# an entry whose name is empty is refused EINVAL.
+def ProcessChild.spawn(argv: String, cwd: String, stderr: String, env: String) -> IO(Result<&1,&1,U32 & String,U32>):
   import "./process-spawn.c"
 
 type RetainedStart is Data:

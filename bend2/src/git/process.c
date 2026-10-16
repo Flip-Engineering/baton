@@ -24,6 +24,7 @@
 #include <unistd.h>
 
 extern char** environ;
+#include "../host/env-delta.h"
 
 #define GIT_PROC_KIND_EXIT 0
 #define GIT_PROC_KIND_SIGNAL 1
@@ -59,8 +60,16 @@ static void git_proc_free_argv(char** argv) {
   }
   free(argv);
 }
+typedef struct {
+  char** envp;
+  char** built;
+  size_t built_count;
+} GitEnvp;
+
 
 static void git_proc_call(IoWork* w) {
+  GitEnvp* ctx = (GitEnvp*)(uintptr_t)w->made;
+  char** envp = ctx && ctx->envp ? ctx->envp : environ;
   char** argv = (char**)w->hand;
   char* cwd = w->text;
   int fds[2];
@@ -75,13 +84,13 @@ static void git_proc_call(IoWork* w) {
   posix_spawn_file_actions_addclose(&acts, fds[1]);
   posix_spawn_file_actions_addchdir_np(&acts, cwd);
   pid_t pid = -1;
-  int rc = posix_spawnp(&pid, argv[0], &acts, NULL, argv, environ);
+  int rc = posix_spawnp(&pid, argv[0], &acts, NULL, argv, envp);
   posix_spawn_file_actions_destroy(&acts);
   close(fds[1]);
   if (rc != 0) {
     close(fds[0]);
     w->code = (u32)rc;
-    return;
+    goto done;
   }
   for (;;) {
     if (w->size == w->word) {
@@ -95,7 +104,7 @@ static void git_proc_call(IoWork* w) {
       }
       w->code = errno;
       close(fds[0]);
-      return;
+      goto done;
     }
     if (got == 0) {
       break;
@@ -106,7 +115,7 @@ static void git_proc_call(IoWork* w) {
   int st = 0;
   if (waitpid(pid, &st, 0) < 0) {
     w->code = errno;
-    return;
+    goto done;
   }
   if (WIFEXITED(st)) {
     w->made = GIT_PROC_KIND_EXIT * 1000 + WEXITSTATUS(st);
@@ -115,8 +124,12 @@ static void git_proc_call(IoWork* w) {
   } else {
     w->made = GIT_PROC_KIND_SIGNAL * 1000 + 127;
   }
+done:
+  if (ctx) {
+    baton_envp_free(ctx->envp, ctx->built, ctx->built_count);
+    free(ctx);
+  }
 }
-
 static Term git_proc_pack(Env e, IoWork* w) {
   Term r;
   if (w->code) {
@@ -142,16 +155,48 @@ static Term git_proc_pack(Env e, IoWork* w) {
 #ifdef CID_PROCESS_RUN
 
 Term process_run_run(Env e, Term* f, IoWork* w) {
-  u64 alen = 0, clen = 0;
+  u64 alen = 0, clen = 0, elen = 0;
   char* enc = io_cstr(e, f[0], &alen);
   w->hand = (intptr_t)git_proc_parse_argv(enc);
   free(enc);
   w->text = io_cstr(e, f[1], &clen); // freed in pack
+  char* env = io_cstr(e, f[2], &elen);
+  GitEnvp* ctx = (GitEnvp*)malloc(sizeof(GitEnvp));
   w->word = 65536;
   w->size = 0;
   w->data = io_mem(malloc(w->word));
   w->made = 0;
   w->code = 0;
+  if (!ctx) {
+    w->code = ENOMEM;
+  } else {
+    ctx->envp = NULL;
+    ctx->built = NULL;
+    ctx->built_count = 0;
+    int error = baton_envp_build(env, elen, &ctx->envp, &ctx->built, &ctx->built_count);
+    if (error == EINVAL) {
+      free(ctx);
+      ctx = NULL;
+      free(env);
+      git_proc_free_argv((char**)w->hand);
+      free(w->text);
+      free(w->data);
+      return io_fail(e, EINVAL, "environment entry has an empty name");
+    }
+    if (error) w->code = (u32)error;
+  }
+  free(env);
+  if (w->code) {
+    if (ctx) {
+      baton_envp_free(ctx->envp, ctx->built, ctx->built_count);
+      free(ctx);
+    }
+    git_proc_free_argv((char**)w->hand);
+    free(w->text);
+    free(w->data);
+    return io_fail(e, w->code, NULL);
+  }
+  w->made = (u64)(uintptr_t)ctx;
   return io_work(w, git_proc_call, git_proc_pack);
 }
 

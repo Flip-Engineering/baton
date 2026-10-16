@@ -5,6 +5,7 @@
 #include <sys/wait.h>
 
 extern char **environ;
+#include "env-delta.h"
 
 typedef struct {
   pid_t pid;
@@ -23,6 +24,10 @@ typedef struct {
   uint64_t owner_incarnation,owner_attempt;
   int kind, error, eof, unstarted, fresh, preserve_line, notice_socket;
   char *directory, *initial, *recovery, *detail, *database, *artifact_name, *artifact, *identity, *owner_witness;
+  char *env;
+  size_t env_length;
+  char **envp, **envp_built;
+  size_t envp_built_count;
   size_t initial_length, recovery_length, artifact_name_length, artifact_length, identity_length;
   u32 keep_stdin, lock;
   char *cursor, *generation;
@@ -128,11 +133,14 @@ static void baton_child_spawn(BatonProcessCall *call) {
   for(size_t i=0;i<call->length;i++) if(!call->args[i]) {
     argv[index++]=call->args+start; start=i+1;
   }
+  char **envp=NULL,**envp_built=NULL;size_t envp_built_count=0;
+  int env_error=baton_envp_build(call->env,call->env_length,&envp,&envp_built,&envp_built_count);
+  if(env_error) { call->error=env_error; free(argv); return; }
   int in[2], out[2];
   call->error=baton_pipe(in);
-  if(call->error) { free(argv); return; }
+  if(call->error) { baton_envp_free(envp,envp_built,envp_built_count);free(argv);return; }
   call->error=baton_pipe(out);
-  if(call->error) { close(in[0]);close(in[1]);free(argv);return; }
+  if(call->error) { baton_envp_free(envp,envp_built,envp_built_count);close(in[0]);close(in[1]);free(argv);return; }
   int log=open(call->log,O_WRONLY|O_CREAT|O_APPEND|O_CLOEXEC,0600);
   if(log<0) { call->error=errno; goto pipes; }
   FILE *reader=fdopen(out[0],"r");
@@ -158,7 +166,7 @@ static void baton_child_spawn(BatonProcessCall *call) {
   BP_ACTION(posix_spawnattr_setsigdefault(&attr,&defaults));
   BP_ACTION(posix_spawnattr_setpgroup(&attr,0));
   BP_ACTION(posix_spawnattr_setflags(&attr,POSIX_SPAWN_SETPGROUP|POSIX_SPAWN_SETSIGDEF));
-  rc=posix_spawnp(&call->child->pid,argv[0],&actions,&attr,argv,environ);
+  rc=posix_spawnp(&call->child->pid,argv[0],&actions,&attr,argv,envp?envp:environ);
 actions_done:
 #undef BP_ACTION
   posix_spawnattr_destroy(&attr); posix_spawn_file_actions_destroy(&actions); close(log);
@@ -170,6 +178,7 @@ actions_done:
 pipes:
   if(in[0]>=0)close(in[0]); if(in[1]>=0)close(in[1]);
   if(out[0]>=0)close(out[0]); if(out[1]>=0)close(out[1]);
+  baton_envp_free(envp,envp_built,envp_built_count);
   free(argv);
 }
 
@@ -4722,6 +4731,15 @@ static Term baton_process_begin_mode(Env e, Term *f, IoWork *w, int kind, int pr
     call->args=io_cstr(e,f[offset],&length);call->length=length;
     call->cwd=io_cstr(e,f[offset+1],&cwd_length);
     call->log=io_cstr(e,f[offset+2],&log_length);
+    if(kind==BP_SPAWN) {
+      call->env=io_cstr(e,f[3],&call->env_length);
+      for(size_t i=0;call->env && i<call->env_length;) {
+        size_t n=strnlen(call->env+i,call->env_length-i);
+        if(!n) {i+=1;continue;}
+        if(call->env[i]=='=') {call->error=EINVAL;break;}
+        i+=n+1;
+      }
+    }
     if(strlen(call->cwd)!=cwd_length || strlen(call->log)!=log_length) call->error=EINVAL;
     if(kind==BP_RETAIN) {
       call->initial=io_cstr(e,f[4],&length);call->initial_length=length;
