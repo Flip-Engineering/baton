@@ -1,6 +1,8 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <pthread.h>
+#include <poll.h>
+#include <sched.h>
 #include <signal.h>
 #include <spawn.h>
 #include <stdint.h>
@@ -33,8 +35,79 @@ typedef struct {
 enum { BC_OPEN, BC_SEND, BC_NEXT, BC_CLOSE, BC_CANCEL };
 static pthread_mutex_t baton_codex_registry_lock=PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t baton_codex_registry_changed=PTHREAD_COND_INITIALIZER;
+static pthread_mutex_t baton_codex_lifecycle_lock=PTHREAD_MUTEX_INITIALIZER;
 static BatonCodexProxy *baton_codex_proxies;
 static uint32_t baton_codex_serial;
+static int bc_pipe(int fds[2]);
+static int bc_signal_pipe[2]={-1,-1},bc_signal_started;
+static volatile sig_atomic_t bc_signal_writer=-1,bc_signal_handlers;
+static pthread_t bc_signal_thread;
+static struct sigaction bc_previous_interrupt,bc_previous_terminate;
+
+static void bc_forward_signal(int signal) {
+  int saved=errno;
+  __atomic_add_fetch(&bc_signal_handlers,1,__ATOMIC_SEQ_CST);
+  int fd=__atomic_load_n(&bc_signal_writer,__ATOMIC_SEQ_CST);
+  if(fd>=0){unsigned char value=(unsigned char)signal;ssize_t ignored=write(fd,&value,1);(void)ignored;}
+  __atomic_sub_fetch(&bc_signal_handlers,1,__ATOMIC_SEQ_CST);
+  errno=saved;
+}
+
+static void *bc_signal_worker(void *unused) {
+  (void)unused;
+  for(;;) {
+    unsigned char signal;ssize_t count=read(bc_signal_pipe[0],&signal,1);
+    if(count<0 && errno==EINTR)continue;
+    if(count!=1 || !signal)return NULL;
+    pthread_mutex_lock(&baton_codex_registry_lock);
+    for(BatonCodexProxy *proxy=baton_codex_proxies;proxy;proxy=proxy->next)
+      if(proxy->pid>0)kill(-proxy->pid,(int)signal);
+    pthread_mutex_unlock(&baton_codex_registry_lock);
+  }
+}
+
+static void bc_signal_stop(void) {
+  if(!bc_signal_started)return;
+  __atomic_store_n(&bc_signal_writer,-1,__ATOMIC_SEQ_CST);
+  sigaction(SIGINT,&bc_previous_interrupt,NULL);sigaction(SIGTERM,&bc_previous_terminate,NULL);
+  while(__atomic_load_n(&bc_signal_handlers,__ATOMIC_SEQ_CST))sched_yield();
+  unsigned char stop=0;
+  for(;;) {
+    ssize_t count=write(bc_signal_pipe[1],&stop,1);
+    if(count==1)break;
+    if(count<0 && errno==EINTR)continue;
+    if(count<0 && (errno==EAGAIN || errno==EWOULDBLOCK)) {
+      struct pollfd ready={bc_signal_pipe[1],POLLOUT,0};
+      while(poll(&ready,1,-1)<0 && errno==EINTR){}
+      continue;
+    }
+    break;
+  }
+  pthread_join(bc_signal_thread,NULL);
+  close(bc_signal_pipe[0]);close(bc_signal_pipe[1]);
+  bc_signal_pipe[0]=bc_signal_pipe[1]=-1;bc_signal_started=0;
+}
+
+/* Called under lifecycle and registry locks before a child can be spawned. */
+static int bc_signal_start(void) {
+  if(bc_signal_started)return 0;
+  int error=bc_pipe(bc_signal_pipe);if(error)return error;
+  int flags=fcntl(bc_signal_pipe[1],F_GETFL);
+  if(flags<0 || fcntl(bc_signal_pipe[1],F_SETFL,flags|O_NONBLOCK)<0) {
+    error=errno;close(bc_signal_pipe[0]);close(bc_signal_pipe[1]);return error;
+  }
+  if(sigaction(SIGINT,NULL,&bc_previous_interrupt) || sigaction(SIGTERM,NULL,&bc_previous_terminate)) {
+    error=errno;close(bc_signal_pipe[0]);close(bc_signal_pipe[1]);return error;
+  }
+  error=pthread_create(&bc_signal_thread,NULL,bc_signal_worker,NULL);
+  if(error){close(bc_signal_pipe[0]);close(bc_signal_pipe[1]);return error;}
+  bc_signal_started=1;
+  struct sigaction action={0};action.sa_handler=bc_forward_signal;sigemptyset(&action.sa_mask);
+  sigaddset(&action.sa_mask,SIGINT);sigaddset(&action.sa_mask,SIGTERM);
+  __atomic_store_n(&bc_signal_writer,bc_signal_pipe[1],__ATOMIC_SEQ_CST);
+  if(sigaction(SIGINT,&action,NULL) || sigaction(SIGTERM,&action,NULL))error=errno;
+  return error;
+}
 
 static int bc_read(int fd,void *bytes,size_t length,size_t *received) {
   size_t offset=0;
@@ -333,8 +406,15 @@ static int bc_finish(BatonCodexProxy *proxy,char **status) {
     break;
   }
   close(proxy->output);proxy->output=-1;pthread_mutex_unlock(&proxy->reader);
+  /* Keep the exited child unreaped until signal forwarding stops selecting it. */
+  siginfo_t observed;int settled;
+  do {settled=waitid(P_PID,(id_t)proxy->pid,&observed,WEXITED|WNOWAIT);}while(settled<0 && errno==EINTR);
+  if(settled<0)return errno;
+  pthread_mutex_lock(&baton_codex_registry_lock);
+  pid_t child=proxy->pid;proxy->pid=0;
   int actual;pid_t waited;
-  do {waited=waitpid(proxy->pid,&actual,0);}while(waited<0 && errno==EINTR);
+  do {waited=waitpid(child,&actual,0);}while(waited<0 && errno==EINTR);
+  pthread_mutex_unlock(&baton_codex_registry_lock);
   if(waited<0)return errno;
   char text[64];
   if(WIFEXITED(actual))snprintf(text,sizeof(text),"exit %d",WEXITSTATUS(actual));
@@ -347,23 +427,35 @@ static void bc_destroy(BatonCodexProxy *proxy) {
   pthread_mutex_destroy(&proxy->reader);pthread_mutex_destroy(&proxy->writer);free(proxy);
 }
 
+static void bc_remove(BatonCodexProxy *proxy) {
+  pthread_mutex_lock(&baton_codex_lifecycle_lock);
+  pthread_mutex_lock(&baton_codex_registry_lock);
+  while(proxy->references)pthread_cond_wait(&baton_codex_registry_changed,&baton_codex_registry_lock);
+  BatonCodexProxy **link=&baton_codex_proxies;while(*link!=proxy)link=&(*link)->next;*link=proxy->next;
+  int empty=baton_codex_proxies==NULL;
+  pthread_mutex_unlock(&baton_codex_registry_lock);
+  if(empty)bc_signal_stop();
+  pthread_mutex_unlock(&baton_codex_lifecycle_lock);bc_destroy(proxy);
+}
+
 static void baton_codex_call(BatonCodexCall *call) {
   if(call->kind==BC_OPEN) {
     BatonCodexProxy *proxy=calloc(1,sizeof(*proxy));if(!proxy){call->error=ENOMEM;return;}
     proxy->input=proxy->output=-1;
     int reader=pthread_mutex_init(&proxy->reader,NULL),writer=reader?0:pthread_mutex_init(&proxy->writer,NULL);
     if(reader || writer){if(!reader)pthread_mutex_destroy(&proxy->reader);free(proxy);call->error=reader?reader:writer;return;}
-    call->error=bc_spawn(proxy);
-    if(!call->error) {
-      call->error=bc_upgrade(proxy,&call->detail);
-      if(call->error){char *status=NULL;bc_finish(proxy,&status);free(status);}
-    }
-    if(call->error){bc_destroy(proxy);return;}
+    pthread_mutex_lock(&baton_codex_lifecycle_lock);
     pthread_mutex_lock(&baton_codex_registry_lock);
     if(baton_codex_serial==UINT32_MAX)call->error=EMFILE;
-    else {proxy->handle=++baton_codex_serial;proxy->next=baton_codex_proxies;baton_codex_proxies=proxy;call->handle=proxy->handle;}
+    else call->error=bc_signal_start();
+    if(!call->error)call->error=bc_spawn(proxy);
+    if(!call->error){proxy->handle=++baton_codex_serial;proxy->next=baton_codex_proxies;baton_codex_proxies=proxy;call->handle=proxy->handle;}
     pthread_mutex_unlock(&baton_codex_registry_lock);
-    if(call->error){char *status=NULL;bc_finish(proxy,&status);free(status);bc_destroy(proxy);}
+    if(call->error && !baton_codex_proxies)bc_signal_stop();
+    pthread_mutex_unlock(&baton_codex_lifecycle_lock);
+    if(call->error){bc_destroy(proxy);return;}
+    call->error=bc_upgrade(proxy,&call->detail);
+    if(call->error){char *status=NULL;bc_finish(proxy,&status);free(status);bc_remove(proxy);}
     return;
   }
   if(call->kind==BC_CLOSE) {
@@ -373,10 +465,7 @@ static void baton_codex_call(BatonCodexCall *call) {
     if(!proxy || proxy->closing){pthread_mutex_unlock(&baton_codex_registry_lock);call->error=EBADF;return;}
     proxy->closing=1;pthread_mutex_unlock(&baton_codex_registry_lock);
     call->error=bc_finish(proxy,&call->text);if(call->text)call->length=strlen(call->text);
-    pthread_mutex_lock(&baton_codex_registry_lock);
-    while(proxy->references)pthread_cond_wait(&baton_codex_registry_changed,&baton_codex_registry_lock);
-    BatonCodexProxy **link=&baton_codex_proxies;while(*link!=proxy)link=&(*link)->next;*link=proxy->next;
-    pthread_mutex_unlock(&baton_codex_registry_lock);bc_destroy(proxy);return;
+    bc_remove(proxy);return;
   }
   BatonCodexProxy *proxy=bc_acquire(call->handle);if(!proxy){call->error=EBADF;return;}
   if(call->kind==BC_SEND) {

@@ -52,6 +52,12 @@ if mode=='echo':
 elif mode=='utf8':frame(b'\xed\xa0\x80')
 elif mode=='binary':frame(b'\x00\xffcomplete',2)
 elif mode=='partial':out.write(b'\x81\x05ab');out.flush();sys.exit(9)
+elif mode=='external':
+    signal.signal(signal.SIGINT,signal.SIG_DFL)
+    signal.signal(signal.SIGTERM,signal.SIG_DFL)
+    frame(b'{"ready":true}')
+    signal.pause()
+elif mode=='blocked-close':frame(b'{"ready":true}')
 elif mode=='cancel':
     # The parent cancels only after the complete upgrade was observed.
     signal.pause()
@@ -149,6 +155,26 @@ class CodexProxy(unittest.TestCase):
         self.assertEqual(json.loads(notice)['params']['text'], '\u2603\U0001f680')
         self.assertEqual(json.loads(response), {'id': 1, 'method': 'transport-test'})
         self.assertEqual(status, b'exit 0')
+
+    def test_close_settles_a_concurrent_blocked_reader(self):
+        result = self.run_proxy('blocked-close', 'blocked-close')
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        self.assertEqual(result.stdout, b'exit 0\n')
+
+    def test_external_interrupt_restores_prior_handlers_after_actual_wait(self):
+        result = self.run_proxy('external', 'external-int')
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        self.assertEqual(result.stdout, f'signal {signal.SIGINT}\n'.encode())
+
+    def test_external_termination_restores_prior_handlers_after_actual_wait(self):
+        result = self.run_proxy('external', 'external-term')
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        self.assertEqual(result.stdout, f'signal {signal.SIGTERM}\n'.encode())
+
+    def test_external_signal_reaches_all_owned_handles_until_last_close(self):
+        result = self.run_proxy('external', 'external-two')
+        self.assertEqual(result.returncode, 0, result.stderr.decode())
+        self.assertEqual(result.stdout, (f'signal {signal.SIGTERM}\n' * 2).encode())
 
 
 if __name__ == '__main__':
