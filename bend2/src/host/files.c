@@ -752,3 +752,190 @@ static Term baton_digest_run(Env e,Term *f,IoWork *w) {
 }
 static void __attribute__((constructor)) baton_digest_use(void) {io_eff(CID_FILES_DIGEST,baton_digest_run,0);}
 #endif
+
+/* The open-description registry for exact-byte chunk reads. Handles pack
+   slot and generation exactly like the child capability handles in
+   process-spawn.c: a retired slot is reused with a higher generation and
+   a stale request refuses ESTALE instead of reaching the new file. */
+#define BATONFILE_INDEX_MASK 0xffffu
+#define BATONFILE_GENERATION_MAX 0xffffu
+
+typedef struct { int fd; uint32_t generation; } BatonOpenFile;
+static BatonOpenFile **baton_open_files;
+static size_t baton_open_count, baton_open_capacity;
+static uint32_t *baton_open_free;
+static size_t baton_open_free_count, baton_open_free_capacity;
+static uint32_t baton_open_next_generation=1;
+
+typedef struct {
+  char *path;
+  unsigned char *buffer;
+  size_t length;
+  uint32_t handle;
+  int error, eof;
+} BatonBytes;
+
+static int baton_open_allocate(BatonOpenFile **out,u32 *handle) {
+  uint32_t generation=baton_open_next_generation;
+  if(baton_open_next_generation==BATONFILE_GENERATION_MAX) baton_open_next_generation=1;
+  else baton_open_next_generation+=1;
+  size_t slot;
+  if(baton_open_free_count) {
+    slot=(size_t)baton_open_free[--baton_open_free_count];
+    free(baton_open_files[slot]);
+  } else {
+    if(baton_open_count==baton_open_capacity) {
+      size_t capacity=baton_open_capacity?baton_open_capacity*2:8;
+      BatonOpenFile **files=realloc(baton_open_files,capacity*sizeof(*files));
+      if(!files) return ENOMEM;
+      baton_open_files=files;baton_open_capacity=capacity;
+    }
+    slot=baton_open_count++;
+    baton_open_files[slot]=NULL;
+  }
+  BatonOpenFile *file=calloc(1,sizeof(*file));
+  if(!file) return ENOMEM;
+  file->generation=generation;
+  baton_open_files[slot]=file;
+  *out=file;
+  *handle=(u32)(slot|(generation<<16));
+  return 0;
+}
+
+/* A request names the opened description when its slot is live and its
+   generation matches; a live slot with the wrong generation is ESTALE,
+   anything else is EBADF. */
+static BatonOpenFile *baton_open_lookup(u32 handle,size_t *slot,int *stale) {
+  size_t index=handle&BATONFILE_INDEX_MASK;
+  *stale=0;
+  if(index>=baton_open_count || !baton_open_files[index]) return NULL;
+  BatonOpenFile *file=baton_open_files[index];
+  if(file->generation!=(handle>>16)) {*stale=1;return NULL;}
+  *slot=index;
+  return file;
+}
+
+static void baton_open_release(size_t slot) {
+  free(baton_open_files[slot]);
+  baton_open_files[slot]=NULL;
+  if(baton_open_free_count==baton_open_free_capacity) {
+    size_t capacity=baton_open_free_capacity?baton_open_free_capacity*2:8;
+    uint32_t *free_slots=realloc(baton_open_free,capacity*sizeof(*free_slots));
+    if(!free_slots) return;
+    baton_open_free=free_slots;baton_open_free_capacity=capacity;
+  }
+  baton_open_free[baton_open_free_count++]=(uint32_t)slot;
+}
+
+static void baton_byte_open_call(IoWork *w) {
+  BatonBytes *call=(BatonBytes *)w->data;
+  int fd=open(call->path,O_RDONLY|O_CLOEXEC);
+  if(fd<0) {call->error=errno;return;}
+  struct stat info;
+  if(fstat(fd,&info)) {call->error=errno;close(fd);return;}
+  if(!S_ISREG(info.st_mode)) {
+    call->error=S_ISDIR(info.st_mode)?EISDIR:EINVAL;
+    close(fd);return;
+  }
+  BatonOpenFile *file=NULL;
+  call->error=baton_open_allocate(&file,&call->handle);
+  if(call->error) {close(fd);return;}
+  file->fd=fd;
+}
+
+static Term baton_byte_open_pack(Env e,IoWork *w) {
+  BatonBytes *call=(BatonBytes *)w->data;
+  Term result=call->error ? io_fail(e,call->error,NULL)
+    : io_done(e,(Term)call->handle);
+  free(call->path);free(call);w->data=NULL;
+  return result;
+}
+
+#ifdef CID_FILES_OPEN
+static Term baton_byte_open_run(Env e,Term *f,IoWork *w) {
+  BatonBytes *call=calloc(1,sizeof(*call));
+  if(!call) return io_fail(e,ENOMEM,NULL);
+  u64 length=0;
+  call->path=io_cstr(e,f[0],&length);
+  if(!call->path || strlen(call->path)!=length) {
+    free(call->path);free(call);
+    return io_fail(e,EINVAL,"path contains NUL");
+  }
+  w->data=(char *)call;
+  return io_work(w,baton_byte_open_call,baton_byte_open_pack);
+}
+static void __attribute__((constructor)) baton_byte_open_use(void) {io_eff(CID_FILES_OPEN,baton_byte_open_run,0);}
+#endif
+
+static void baton_byte_read_call(IoWork *w) {
+  BatonBytes *call=(BatonBytes *)w->data;
+  size_t slot=0;int stale=0;
+  BatonOpenFile *file=baton_open_lookup(call->handle,&slot,&stale);
+  if(!file) {call->error=stale?ESTALE:EBADF;return;}
+  size_t max=call->length;
+  call->buffer=malloc(max?max:1);
+  if(!call->buffer) {call->error=ENOMEM;return;}
+  size_t total=0;
+  while(total<max) {
+    ssize_t got=read(file->fd,call->buffer+total,max-total);
+    if(got<0) {if(errno==EINTR)continue;call->error=errno;break;}
+    if(!got) {call->eof=1;break;}
+    total+=(size_t)got;
+  }
+  call->length=total;
+}
+
+static Term baton_byte_read_pack(Env e,IoWork *w) {
+  BatonBytes *call=(BatonBytes *)w->data;
+  Term result;
+  if(call->error) result=io_fail(e,call->error,NULL);
+  else {
+    Term xs=term_pak(CID_NIL,0);
+    for(size_t i=call->length;i>0;i-=1)
+      xs=io_node(e,CID_CON,(Term)(unsigned char)call->buffer[i-1],xs);
+    result=io_done(e,io_tup(e,xs,(Term)(call->eof?1:0)));
+  }
+  free(call->buffer);
+  free(call->path);free(call);w->data=NULL;
+  return result;
+}
+
+#ifdef CID_FILES_READ_CHUNK
+static Term baton_byte_read_run(Env e,Term *f,IoWork *w) {
+  BatonBytes *call=calloc(1,sizeof(*call));
+  if(!call) return io_fail(e,ENOMEM,NULL);
+  call->handle=(u32)f[0];
+  call->length=(size_t)(u32)f[1];
+  w->data=(char *)call;
+  return io_work(w,baton_byte_read_call,baton_byte_read_pack);
+}
+static void __attribute__((constructor)) baton_byte_read_use(void) {io_eff(CID_FILES_READ_CHUNK,baton_byte_read_run,0);}
+#endif
+
+static void baton_byte_close_call(IoWork *w) {
+  BatonBytes *call=(BatonBytes *)w->data;
+  size_t slot=0;int stale=0;
+  BatonOpenFile *file=baton_open_lookup(call->handle,&slot,&stale);
+  if(!file) {call->error=stale?ESTALE:EBADF;return;}
+  if(close(file->fd)) call->error=errno;
+  baton_open_release(slot);
+}
+
+static Term baton_byte_close_pack(Env e,IoWork *w) {
+  BatonBytes *call=(BatonBytes *)w->data;
+  Term result=call->error ? io_fail(e,call->error,NULL)
+    : io_done(e,term_pak(CID_UNIT,0));
+  free(call);w->data=NULL;
+  return result;
+}
+
+#ifdef CID_FILES_CLOSE
+static Term baton_byte_close_run(Env e,Term *f,IoWork *w) {
+  BatonBytes *call=calloc(1,sizeof(*call));
+  if(!call) return io_fail(e,ENOMEM,NULL);
+  call->handle=(u32)f[0];
+  w->data=(char *)call;
+  return io_work(w,baton_byte_close_call,baton_byte_close_pack);
+}
+static void __attribute__((constructor)) baton_byte_close_use(void) {io_eff(CID_FILES_CLOSE,baton_byte_close_run,0);}
+#endif

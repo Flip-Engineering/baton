@@ -100,3 +100,20 @@ def Files.which(name: String) -> IO(Result<&1,&1,U32 & String,String>):
 # core is the role identity digest's, shared through host/sha256.h.
 def Files.digest(path: String) -> IO(Result<&1,&1,U32 & String,String>):
   import "./files.c"
+
+# Exact-byte chunk reads over one open description, for callers that
+# stream a file into a pure computation. open admits regular files only
+# (directories refuse EISDIR, other special files EINVAL) and answers a
+# capability handle; read_chunk answers up to max bytes, one U32 cell
+# per byte carrying 0..255 exactly - NUL and invalid UTF-8 pass as
+# numbers - paired with an end-of-file flag 1 when the read returned
+# none; close releases the handle. A stale or closed handle refuses
+# ESTALE or EBADF; every other failure keeps its errno.
+def Files.open(path: String) -> IO(Result<&1,&1,U32 & String,U32>):
+  import "./files.c"
+
+def Files.read_chunk(handle: U32, max: U32) -> IO(Result<&1,&1,U32 & String,List<U32> & U32>):
+  import "./files.c"
+
+def Files.close(handle: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
+  import "./files.c"
