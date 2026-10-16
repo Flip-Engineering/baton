@@ -57,6 +57,9 @@ def body_option(body: Body, value: Body) -> Body:
     case Bad{cause}: Bad{cause}
     case other: Bad{"send accepts exactly one --text TEXT or --file PATH per message."}
 
+def send_kind(kind: String) -> String:
+  Bool.pick(String,String.is_empty(kind),"report",kind)
+
 def send_done(+recipient: String, id: String, +kind: String, body: Body,
               items: List<&2,Message>) -> Action:
   match body:
@@ -66,9 +69,6 @@ def send_done(+recipient: String, id: String, +kind: String, body: Body,
       Bool.pick(Action,String.is_empty(recipient),
         Invalid{"send requires a recipient for each message."},
         Send{reverse_items(Con{Item{recipient,id,send_kind(kind),value},items},Nil{})})
-
-def send_kind(kind: String) -> String:
-  Bool.pick(String,String.is_empty(kind),"report",kind)
 
 def send_options(args: List<String>, +recipient: String, +id: String,
                  +kind: String, body: Body, items: List<&2,Message>) -> Action:
@@ -321,6 +321,10 @@ def parse_verb(+verb: String, args: List<String>) -> Action:
       Bool.pick(Action,Bool.and(Domain.member(verb,["report","ask"]),Bool.not(Tx.starts_with(text,"--"))),
         domain_action(Domain.parse([verb,"--text",text])),
         parse_verb_shared(verb,Domain.shared_strings([text])))
+    case +player <> +text <> Nil{}:
+      Bool.pick(Action,Bool.and(String.eq(verb,"guide"),Bool.not(Tx.starts_with(player,"--"))),
+        parse_action(GuideVerb{},[player,text]),
+        parse_verb_shared(verb,Domain.shared_strings([player,text])))
     case other: parse_verb_shared(verb,Domain.shared_strings(other))
 
 def parse_one(+verb: String) -> Action:
@@ -370,4 +374,4 @@ def help(action: String) -> String:
     case "acknowledge": "acknowledge [ID... | --message ID] [--receipt TEXT]\nRecord handling for the current native attempt's complete recipient-owned read inputs. Baton generates the native receipt. Explicit message selectors and receipts remain available; the first receipt remains retained. A standalone administrative command requires an explicit message selection.\n"
     case +other:
       +domain = Domain.help(other)
-      Bool.pick(String,String.is_empty(domain),"usage: baton ACTION ARGS\nActions: inbox, send PLAYER TEXT, finish SUMMARY, confirm PLAYER.\nBaton resolves your project and session. Successful native turns record handling of their complete owned reads. Use help ACTION for other actions and explicit context options.\n",domain)
+      Bool.pick(String,String.is_empty(domain),"usage: baton ACTION ARGS\nActions: inbox, read, send, report, ask, guide, finish, confirm, dispatch, players, assignment, status, branch, knowledge.\nBaton resolves your project and session. Successful native turns record handling of their complete owned reads. Use help ACTION for usage and explicit context options.\n",domain)
