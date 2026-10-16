@@ -309,11 +309,18 @@ def notification_selected(+db: String, +session: String, +thread: String, +state
     case False{}: IO.pure(State,state)
     case True{}: notification_method(db,session,thread,state,frame,method)
 
+def notification_error(+db: String, +session: String, +thread: String, +state: State, +frame: String, +failed: Bool) -> IO(State):
+  match failed:
+    case True{}: IO.die(State,1,"Public Codex notification failed: " ++ frame)
+    case False{}: do IO<State>:
+      +method : String <- Proxy.text(frame,"$.method")
+      +source : String <- Proxy.text(frame,"$.params.threadId")
+      notification_selected(db,session,thread,state,frame,method,String.eq(source,thread))
+
 def notification(+db: String, +session: String, +thread: String, +state: State, +frame: String) -> IO(State):
   do IO<State>:
-    +method : String <- Proxy.text(frame,"$.method")
-    +source : String <- Proxy.text(frame,"$.params.threadId")
-    notification_selected(db,session,thread,state,frame,method,String.eq(source,thread))
+    failed : Bool <- Proxy.truth(frame,"json_type(value,'$.error') IS NOT NULL AND json_type(value,'$.error')<>'null'")
+    notification_error(db,session,thread,state,frame,failed)
 
 def released(+session: String, +thread: String, +row: Inbox.Snapshot) -> IO(Unit):
   Proxy.record("{\"type\":\"codexInboxReleased\",\"session\":" ++ J.string_literal(session) ++ ",\"threadId\":" ++ J.string_literal(thread) ++ ",\"stopped\":" ++ Bool.pick(String,Inbox.stopped(row),"true","false") ++ ",\"pendingCount\":" ++ Inbox.pending(row) ++ "}")

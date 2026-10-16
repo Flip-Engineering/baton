@@ -188,7 +188,7 @@ def configure(+db: String, +id: String, +harness: String, +model: String, effort
     accepted : String <- registered(found)
     endpoint : String <- Bool.pick(IO(String),Bool.and(String.eq(harness,expected_harness),String.eq(model,expected_model)),IO.pure(String,""),configure_endpoint(db,id,harness,cmd,log,model))
     +saved : String <- IO.try(String,DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ C.configure_sql(id,harness,model,effort,endpoint,expected_harness,expected_model,expected_effort) ++ "COMMIT;"))
-    migrated : String <- Bool.pick(IO(String),String.eq(harness,"codex"),CodexRoute.normalize(db,id),IO.pure(String,""))
+    migrated : String <- Bool.pick(IO(String),Bool.and(String.eq(harness,"codex"),Bool.not(Tx.starts_with(saved,"{\"error\":\"configure-refused\""))),CodexRoute.normalize(db,id),IO.pure(String,""))
     configure_result(saved,Tx.starts_with(saved,"{\"error\":\"configure-refused\""))
 
 def principal_matches(+session: String, +harness: String, +model: String, +effort: String, +cwd: String) -> String:

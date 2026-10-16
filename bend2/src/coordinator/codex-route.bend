@@ -10,7 +10,7 @@ import ../json/canonical.bend as J
 
 # Recorded receiver argv carries the native client's credential environment.
 def managed_sql(+endpoint: String, +session: String, +native: String) -> String:
-  "CASE WHEN json_valid(" ++ endpoint ++ ") THEN json_type(" ++ endpoint ++ ")='array' AND ((json_extract(" ++ endpoint ++ ",'$[#-3]')='codex-inbox-session' AND json_extract(" ++ endpoint ++ ",'$[#-2]')=" ++ session ++ " AND json_extract(" ++ endpoint ++ ",'$[#-1]')=" ++ native ++ ") OR EXISTS(SELECT 1 FROM json_each(" ++ endpoint ++ ") old WHERE old.value LIKE '%/codex-inbox-wake.mjs' AND json_extract(" ++ endpoint ++ ",'$['||(old.key+1)||']')='--session' AND json_extract(" ++ endpoint ++ ",'$[#-2]')=" ++ session ++ " AND json_extract(" ++ endpoint ++ ",'$[#-1]')=" ++ native ++ ")) ELSE 0 END"
+  "CASE WHEN json_valid(" ++ endpoint ++ ") THEN json_type(" ++ endpoint ++ ")='array' AND (json_array_length(" ++ endpoint ++ ")=0 OR (json_extract(" ++ endpoint ++ ",'$[#-3]')='codex-inbox-session' AND json_extract(" ++ endpoint ++ ",'$[#-2]')=" ++ session ++ " AND json_extract(" ++ endpoint ++ ",'$[#-1]')=" ++ native ++ ") OR EXISTS(SELECT 1 FROM json_each(" ++ endpoint ++ ") old WHERE old.value LIKE '%/codex-inbox-wake.mjs' AND json_extract(" ++ endpoint ++ ",'$['||(old.key+1)||']')='--session' AND json_extract(" ++ endpoint ++ ",'$[#-2]')=" ++ session ++ " AND json_extract(" ++ endpoint ++ ",'$[#-1]')=" ++ native ++ ")) ELSE 0 END"
 
 def environment_value(result: Result<&1,&1,U32 & String,String>) -> IO(String):
   match result:
@@ -80,7 +80,7 @@ def normalize(+db: String, +session: String) -> IO(String):
     +native : String <- IO.try(String,DB.Sql.read(db,"SELECT native FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
     +old : String <- IO.try(String,DB.Sql.read(db,"SELECT endpoint FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
     +current : String <- endpoint(executable,db,session,Tx.trim_nl(native),Tx.trim_nl(old))
-    +saved : String <- IO.try(String,DB.Sql.query(db,"UPDATE sessions SET endpoint=" ++ C.q(current) ++ " WHERE id=" ++ C.q(session) ++ " AND native=" ++ C.q(Tx.trim_nl(native)) ++ " AND endpoint=" ++ C.q(Tx.trim_nl(old)) ++ ";"))
+    +saved : String <- IO.try(String,DB.Sql.query(db,"UPDATE sessions SET endpoint=" ++ C.q(current) ++ " WHERE id=" ++ C.q(session) ++ " AND native<>'' AND native=" ++ C.q(Tx.trim_nl(native)) ++ " AND endpoint=" ++ C.q(Tx.trim_nl(old)) ++ ";"))
     IO.pure(String,current)
 
 def argument_fields(lines: List<String>) -> IO(List<String>):

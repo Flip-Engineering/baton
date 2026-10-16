@@ -76,7 +76,7 @@ def row_fields(fields: List<String>) -> IO(Result<&1,&1,U32 & String,Snapshot>):
 def checked_native(row: Snapshot, +session: String, +thread: String, +same: Bool) -> IO(Result<&1,&1,U32 & String,Snapshot>):
   match same:
     case True{}: IO.pure(Result<&1,&1,U32 & String,Snapshot>,Done{row})
-    case False{}: IO.pure(Result<&1,&1,U32 & String,Snapshot>,Fail{(2,"Baton session now records another native conversation: {\"session\":" ++ J.string_literal(session) ++ ",\"native\":" ++ J.string_literal(native(row)) ++ "}")})
+    case False{}: IO.pure(Result<&1,&1,U32 & String,Snapshot>,Fail{(1,"Baton session now records another native conversation: {\"session\":" ++ J.string_literal(session) ++ ",\"native\":" ++ J.string_literal(native(row)) ++ "}")})
 
 def read_checked(result: Result<&1,&1,U32 & String,Snapshot>, +session: String, +thread: String) -> IO(Result<&1,&1,U32 & String,Snapshot>):
   match result:
