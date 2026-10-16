@@ -315,9 +315,9 @@ class OmpRootAdapter(unittest.TestCase):
         self.assertEqual(len(native_calls), 2)
         self.assertEqual(native_calls[0]['cwd'], str(self.checkouts / 'lead'))
         prompt = native_calls[0]['prompt']
-        self.assertIn('You are session lead in a Baton Orchestra.', prompt)
-        self.assertIn('Read complete owed input with inbox.', prompt)
-        self.assertIn('Use acknowledge after handling', prompt)
+        self.assertIn('You are Baton Player lead.', prompt)
+        self.assertIn('Use baton inbox to read complete input', prompt)
+        self.assertIn('records handling of complete owned reads after a successful native turn', prompt)
         self.assertEqual(native_calls[1]['args'][native_calls[1]['args'].index('--resume') + 1], 'native-lead')
         reports = [json.loads(line) for line in root_calls.read_text().splitlines()]
         self.assertEqual([r['body'] for r in reports], ['Reviewed and landed first', 'Reviewed and landed second'])
@@ -362,13 +362,14 @@ class OmpRootAdapter(unittest.TestCase):
         self.assertEqual(argv[argv.index('--resume') + 1], 'saved-omp')
         self.assertEqual(argv[argv.index('--model') + 1], 'legacy-model')
         prompt = observed['prompt']
-        self.assertIn('You are session ' + associate + ' in a Baton Orchestra.', prompt)
-        prefix = 'Coordinator executable/database argv: '
-        coordinator = next(line[len(prefix):] for line in prompt.splitlines()
-                           if line.startswith(prefix))
-        self.assertEqual(json.loads(coordinator), [str(EXE), str(self.db)])
-        self.assertIn('Read complete owed input with inbox.', prompt)
-        self.assertIn('Use acknowledge after handling', prompt)
+        self.assertIn('You are Baton Player ' + associate + '.', prompt)
+        prefix = 'Recorded coordination: '
+        coordination = json.loads(next(line[len(prefix):] for line in prompt.splitlines()
+                                       if line.startswith(prefix)))
+        self.assertEqual(coordination['parent'], 'none recorded')
+        self.assertIn('child', [row['id'] for row in coordination['recipients']])
+        self.assertIn('Use baton inbox to read complete input', prompt)
+        self.assertIn('records handling of complete owned reads after a successful native turn', prompt)
         selected = json.loads(self.coord('player', associate))
         self.assertEqual(selected['role'], 'associate-conductor')
         self.assertEqual(json.loads(selected['endpoint'])[2:4], ['receive', associate])
@@ -617,9 +618,12 @@ class OmpRootAdapter(unittest.TestCase):
         p = self.once(native)
         self.assertEqual(p.returncode, 0, p.stderr)
         observed = json.loads(observed_path.read_text())
-        for action in ['acknowledge', 'completion-request --text', 'dispatch --to',
-                       'knowledge record --kind', 'players', 'land --session']:
+        for action in ['baton inbox', 'baton report "text"', 'baton ask "question"',
+                       'baton send PLAYER "text"', 'baton guide PLAYER "text"',
+                       'baton finish "summary"', 'baton confirm PLAYER', 'Use baton knowledge']:
             self.assertIn(action, observed['prompt'])
+        self.assertIn('records handling of complete owned reads after a successful native turn', observed['prompt'])
+        self.assertNotIn('acknowledge', observed['prompt'])
         self.assertNotIn('ack ID', observed['prompt'])
         self.assertNotIn('--system-prompt', observed['argv'])
 

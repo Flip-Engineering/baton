@@ -511,13 +511,14 @@ class CodexRootAdapter(unittest.TestCase):
                          ['model_reasoning_effort="low"'])
         self.assertEqual(observed['api_keys'], [])
         self.assertEqual(observed['cwd'], str(self.checkouts / associate))
-        self.assertIn('You are session ' + associate + ' in a Baton Orchestra.', observed['prompt'])
-        prefix = 'Coordinator executable/database argv: '
-        coordinator = next(line[len(prefix):] for line in observed['prompt'].splitlines()
-                           if line.startswith(prefix))
-        self.assertEqual(json.loads(coordinator), [str(EXE), str(self.db)])
-        self.assertIn('Read complete owed input with inbox.', observed['prompt'])
-        self.assertIn('Use acknowledge after handling', observed['prompt'])
+        self.assertIn('You are Baton Player ' + associate + '.', observed['prompt'])
+        prefix = 'Recorded coordination: '
+        coordination = json.loads(next(line[len(prefix):] for line in observed['prompt'].splitlines()
+                                       if line.startswith(prefix)))
+        self.assertEqual(coordination['parent'], 'none recorded')
+        self.assertIn('child', [row['id'] for row in coordination['recipients']])
+        self.assertIn('Use baton inbox to read complete input', observed['prompt'])
+        self.assertIn('records handling of complete owned reads after a successful native turn', observed['prompt'])
         self.assertEqual(json.loads(self.coord('role', associate))['role'], 'associate-conductor')
         reports = json.loads(self.coord('inbox', ''))
         self.assertEqual([(r['sender'], r['recipient'], r['body']) for r in reports],
@@ -719,13 +720,12 @@ class CodexRootAdapter(unittest.TestCase):
         self.assertEqual(p.returncode, 0, f'stderr: {p.stderr}')
 
         stdin_content = (pathlib.Path(self.temp.name) / 'stdin.txt').read_text()
-        self.assertIn('baton2', stdin_content)
-        self.assertIn('status', stdin_content)
-        self.assertIn('players', stdin_content)
-        self.assertIn('land', stdin_content)
-        self.assertIn('acknowledge', stdin_content)
-        self.assertIn('dispatch --to', stdin_content)
-        self.assertIn('knowledge record --kind', stdin_content)
+        for action in ['baton inbox', 'baton report "text"', 'baton ask "question"',
+                       'baton send PLAYER "text"', 'baton guide PLAYER "text"',
+                       'baton finish "summary"', 'baton confirm PLAYER', 'Use baton knowledge']:
+            self.assertIn(action, stdin_content)
+        self.assertIn('records handling of complete owned reads after a successful native turn', stdin_content)
+        self.assertNotIn('acknowledge', stdin_content)
         self.assertNotIn('ack ID', stdin_content)
 
     def test_adapter_passes_json_and_exec_flags(self):
