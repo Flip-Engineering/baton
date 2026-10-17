@@ -295,6 +295,9 @@ identities and selects the latest query owned by the current actor for its resul
 An explicit `--id ID` selects a retained query.
 `models`, `observed-usage` and `logs` select the current session, with an optional
 `--session SESSION`; `logs --level LEVEL` uses the native log configuration.
+`models --all` reads the distinct harness, command and model triples recorded
+across sessions and reports one observation per route. Routes without a recorded
+session are unknown, not absent; account-wide usable models remain unknown.
 
 ## Results and compatibility
 

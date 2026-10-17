@@ -408,6 +408,80 @@ def models_command(+db: String, +session: String, +harness: String, +command: St
       models_unknown(session,harness,command,model,cwd,argv,"unsupportedHarness")))
     Bool.pick(IO(Unit),String.is_empty(answer),models_query(db,session,harness,command,model,effort,cwd),models_print(db,answer))
 
+# --- the cross-harness model discovery read -----------------------------------
+
+# The recorded routes are the distinct harness, command and model triples in the
+# sessions table. A harness without a recorded session is unknown here, not
+# absent, and account-wide usable models remain unknown. The read reports one
+# observation per route and changes no seat identity, route or pending work.
+def models_all_routes_sql() -> String:
+  "SELECT DISTINCT harness || '|' || CASE WHEN json_valid(endpoint) THEN CASE json_array_length(endpoint) WHEN 9 THEN coalesce(json_extract(endpoint,'$[4]'),'') WHEN 17 THEN coalesce(json_extract(endpoint,'$[12]'),'') ELSE '' END ELSE '' END || '|' || coalesce(model,'') FROM sessions WHERE harness <> '' ORDER BY 1;"
+
+def split_route_parts(parts: List<&2,String>) -> (String & String) & String:
+  match parts:
+    case harness <> command <> model <> Nil{}: ((Tx.trim_nl(harness),Tx.trim_nl(command)),Tx.trim_nl(model))
+    case other: (("", ""), "")
+
+def split_route(+line: String) -> (String & String) & String:
+  split_route_parts(String.split(Tx.trim_nl(line),Char.from_u32(124)))
+
+def models_all_routes(lines: List<String>) -> List<((String & String) & String)>:
+  match lines:
+    case Nil{}: Nil{}
+    case line <> rest: Con{split_route(line),models_all_routes(rest)}
+
+def models_route_answer(+db: String, +session: String, +harness: String, +command: String, +model: String, +cwd: String) -> IO(String):
+  do IO<String>:
+    +argv : String <- IO.pure(String,models_argv(harness,model))
+    args : List<String> <- IO.pure(List<String>,models_args(harness,command,model))
+    run : Result<&1,&1,U32 & String,String> <- Process.Process.run(Tx.enc_argv(args),Bool.pick(String,String.is_empty(cwd),".",cwd))
+    answer : String <- models_result(db,session,harness,command,model,cwd,argv,run)
+    IO.pure(String,answer)
+
+def models_route_guarded(+db: String, +session: String, +harness: String, +command: String, +model: String, +cwd: String) -> IO(String):
+  do IO<String>:
+    +argv : String <- IO.pure(String,models_argv(harness,model))
+    answer : String <- Bool.pick(IO(String),models_supported(harness),
+      Bool.pick(IO(String),String.is_empty(command),IO.pure(String,models_unknown(session,harness,command,model,cwd,argv,"noRecordedHarnessCommand")),models_route_answer(db,session,harness,command,model,cwd)),
+      IO.pure(String,models_unknown(session,harness,command,model,cwd,argv,"unsupportedHarness")))
+    IO.pure(String,answer)
+
+def models_all_observed(db: String, session: String, cwd: String, harness: String, command: String, model: String, rest: List<((String & String) & String)>) -> IO(String):
+  do IO<String>:
+    answer : String <- models_route_guarded(db,session,harness,command,model,cwd)
+    tail : String <- models_all_answers(db,session,cwd,rest)
+    IO.pure(String,Bool.pick(String,String.is_empty(tail),answer,answer ++ "," ++ tail))
+
+def models_all_cons(db: String, session: String, cwd: String, triple: ((String & String) & String), rest: List<((String & String) & String)>) -> IO(String):
+  match triple:
+    case ((harness, command), model): Bool.pick(IO(String),String.is_empty(harness),models_all_answers(db,session,cwd,rest),models_all_observed(db,session,cwd,harness,command,model,rest))
+
+def models_all_answers(db: String, session: String, cwd: String, routes: List<((String & String) & String)>) -> IO(String):
+  match routes:
+    case Nil{}: IO.pure(String,"")
+    case triple <> rest: models_all_cons(db,session,cwd,triple,rest)
+
+def models_all_limits() -> String:
+  "Routes are the distinct harness, command and model triples recorded in sessions. A harness without a recorded session is unknown here, not absent. Account-wide usable models remain unknown. Muse entries show one recorded model's profile; model existence stays unknown. Quota, budget, freshness and probe outcomes do not gate this read."
+
+def models_all_envelope(+session: String, +routes: String) -> String:
+  "{\"schema\":\"baton2-model-discovery-v1\",\"state\":\"reported\",\"session\":" ++ J.string_literal(session) ++ ",\"scope\":\"recorded-harnesses\",\"routes\":[" ++ routes ++ "],\"limits\":" ++ J.string_literal(models_all_limits()) ++ "}"
+
+def models_all_print(db: String, session: String, routes: String) -> IO(Unit):
+  do IO<Unit>:
+    observed : String <- IO.try(String,DB.Sql.read(db,"SELECT json_set(" ++ C.q(models_all_envelope(session,routes)) ++ ",'$.observedAt',CAST(strftime('%s','now') AS INTEGER)*1000);"))
+    IO.print(observed)
+
+def models_all(+db: String, +session: String) -> IO(Unit):
+  do IO<Unit>:
+    found : String <- IO.try(String,Store.read(db,C.Session{session}))
+    present : Unit <- usage_registered(found)
+    +cwd : String <- IO.try(String,DB.Sql.read(db,"SELECT coalesce(workspace,'') FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
+    listed : String <- IO.try(String,DB.Sql.query(db,models_all_routes_sql()))
+    +routes : List<((String & String) & String)> <- IO.pure(List<((String & String) & String)>,models_all_routes(Tx.split_lines(listed)))
+    body : String <- models_all_answers(db,session,Tx.trim_nl(cwd),routes)
+    models_all_print(db,session,Tx.trim_nl(body))
+
 # --- the command ------------------------------------------------------------
 
 def usage_registered(saved: String) -> IO(Unit):
