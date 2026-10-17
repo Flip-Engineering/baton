@@ -82,13 +82,6 @@ name: bend2-native-development
         required: false
         default: ''
         type: string
-      linux_runner:
-        description: 'Linux qualification host'
-        required: true
-        default: homelab
-        type: choice
-        options: [homelab, hosted]
-
 permissions:
   contents: read
 
@@ -97,9 +90,11 @@ env:
 
 jobs:
   linux-candidate:
-    runs-on: ${{ fromJSON(inputs.linux_runner == 'homelab' && '["self-hosted", "Linux", "X64", "baton2-native-linux-x64"]' || '["ubuntu-24.04"]') }}
+    runs-on:
+      group: baton2-native-homelab
+      labels: [self-hosted, Linux, X64, baton2-native-linux-x64]
     env:
-      CC: ${{ inputs.linux_runner == 'homelab' && '/usr/bin/clang-19' || 'clang' }}
+      CC: /usr/bin/clang-19
       BEND_NO_TELEMETRY: '1'
       BUN_JSC_maxPerThreadStackUsage: '67108864'
     steps:
@@ -113,7 +108,6 @@ jobs:
         with:
           node-version: '22'
       - name: Select homelab browser executable
-        if: inputs.linux_runner == 'homelab'
         shell: bash
         run: printf '%s\n' "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Prepare candidate toolchain and TypeScript runtime
@@ -122,7 +116,7 @@ jobs:
           BATON2_RETAINED_COMPILER_ARCHIVE: ${{ inputs.retained_compiler_archive }}
           BATON2_RETAINED_COMPILER_SHA256: ${{ inputs.retained_compiler_archive_sha256 }}
           BATON2_RETAINED_CCACHE: ${{ inputs.retained_ccache }}
-          BATON2_LINUX_RUNNER: ${{ inputs.linux_runner }}
+          BATON2_LINUX_RUNNER: homelab
         run: |
           set -euo pipefail
           run="$RUNNER_TEMP/baton2-candidate-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
@@ -145,7 +139,7 @@ jobs:
         env:
           BATON2_RETAINED_MAIN_HANDOFF: ${{ inputs.retained_main_handoff }}
           BATON2_RETAINED_MAIN_SHA256: ${{ inputs.retained_main_handoff_sha256 }}
-          BATON2_LINUX_RUNNER: ${{ inputs.linux_runner }}
+          BATON2_LINUX_RUNNER: homelab
         run: |
           set -euo pipefail
           printf 'BATON2_MAIN_GENERATED_C=\nBATON2_MAIN_GENERATED_C_ROOT=\nBATON2_MAIN_GENERATED_C_PROOF=\nBATON2_MAIN_GENERATED_C_PROOF_SHA256=\nBATON2_MAIN_C_VERIFIER=\n' >> "$GITHUB_ENV"
@@ -266,9 +260,11 @@ jobs:
     permissions:
       contents: read
       actions: read
-    runs-on: ${{ fromJSON(inputs.linux_runner == 'homelab' && '["self-hosted", "Linux", "X64", "baton2-native-linux-x64"]' || '["ubuntu-24.04"]') }}
+    runs-on:
+      group: baton2-native-homelab
+      labels: [self-hosted, Linux, X64, baton2-native-linux-x64]
     env:
-      CC: ${{ inputs.linux_runner == 'homelab' && '/usr/bin/clang-19' || 'clang' }}
+      CC: /usr/bin/clang-19
       BEND_NO_TELEMETRY: '1'
       BUN_JSC_maxPerThreadStackUsage: '67108864'
       BATON2_TARGET_COMMIT: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'push' && github.event.before || inputs.target_commit }}
@@ -285,7 +281,6 @@ jobs:
         with:
           node-version: '22'
       - name: Select homelab browser executable
-        if: inputs.linux_runner == 'homelab'
         shell: bash
         run: printf '%s\n' "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Download completed target build evidence
@@ -380,7 +375,7 @@ jobs:
 
   darwin-arm64:
     needs: [linux-candidate, linux-target]
-    runs-on: macos-15
+    runs-on: [self-hosted, macOS, ARM64, baton2-native-darwin-arm64]
     env:
       BATON2_RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.release_version || '' }}
     steps:
