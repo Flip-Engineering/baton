@@ -461,8 +461,8 @@ def models_route_guarded(+db: String, +source: String, +harness: String, +comman
 
 def models_all_observed(db: String, route: Discovered, rest: List<&2,Discovered>) -> IO(String):
   do IO<String>:
-    answer : String <- models_all_entry(db,route)
-    tail : String <- models_all_answers(db,rest)
+    +answer : String <- models_all_entry(db,route)
+    +tail : String <- models_all_answers(db,rest)
     IO.pure(String,Bool.pick(String,String.is_empty(tail),answer,answer ++ "," ++ tail))
 
 def models_all_entry(db: String, route: Discovered) -> IO(String):
