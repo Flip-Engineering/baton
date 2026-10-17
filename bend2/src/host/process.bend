@@ -79,6 +79,11 @@ def ProcessChild.close_stdin(handle: U32) -> IO(Result<&1,&1,U32 & String,Unit>)
 def ProcessChild.read_line(handle: U32) -> IO(Result<&1,&1,U32 & String,Maybe<String>>):
   import "./process-spawn.c"
 
+# Read a line from a retained stdout spool as its decimal byte offset and length.
+# The range excludes LF and remains valid until the retained attempt is acknowledged.
+def ProcessChild.read_retained_line_span(handle: U32) -> IO(Result<&1,&1,U32 & String,Maybe<String> & String>):
+  import "./process-spawn.c"
+
 # Returns complete text lines, including their actual final LF when present.
 def ProcessChild.read_text_line(handle: U32) -> IO(Result<&1,&1,U32 & String,Maybe<String>>):
   import "./process-spawn.c"

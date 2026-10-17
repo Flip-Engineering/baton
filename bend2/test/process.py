@@ -61,5 +61,33 @@ class Process(unittest.TestCase):
         self.assertEqual(p.returncode, 0, p.stderr)
         self.assertEqual(p.stdout, '\n' + 'x'*300000 + '\nexit 0\n')
 
+    def test_retained_line_span_reads_eight_mib_without_bend_string(self):
+        db = self.cwd / 'session.db'
+        db.touch()
+        attempt = self.cwd / 'attempt'
+        payload = self.cwd / 'input'
+        payload.write_text('')
+        script = 'import sys; sys.stdout.write("x"*8388608+"\\n")'
+        p = subprocess.run([str(EXE), 'retain', str(db), str(attempt), str(self.cwd),
+                            str(payload), 'span', sys.executable, '-c', script],
+                           text=True, capture_output=True, timeout=90)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn('0\t8388608\n', p.stdout)
+        self.assertIn('native-exit 0\nretained-complete\n', p.stdout)
+
+    def test_retained_line_spans_preserve_empty_and_unterminated_lines(self):
+        db = self.cwd / 'session.db'
+        db.touch()
+        attempt = self.cwd / 'attempt'
+        payload = self.cwd / 'input'
+        payload.write_text('')
+        script = 'import sys; sys.stdout.write("a\\n\\nlast")'
+        p = subprocess.run([str(EXE), 'retain', str(db), str(attempt), str(self.cwd),
+                            str(payload), 'span', sys.executable, '-c', script],
+                           text=True, capture_output=True, timeout=30)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertIn('0\t1\n2\t0\n3\t4\n', p.stdout)
+        self.assertIn('native-exit 0\nretained-complete\n', p.stdout)
+
 if __name__ == '__main__':
     unittest.main()
