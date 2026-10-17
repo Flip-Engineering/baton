@@ -891,7 +891,7 @@ def inventory_record_json(record: String) -> String:
 
 def inventory_profile_result(read: Result<&1,&1,U32 & String,String>) -> String:
   match read:
-    case Fail{(code,detail)}: Bool.pick(String,U32.is_eq(code,2),"null","{\"state\":\"unknown\",\"code\":" ++ U32.show(code) ++ ",\"detail\":" ++ J.string_literal(detail) ++ "}")
+    case Fail{(+code,detail)}: Bool.pick(String,U32.is_eq(code,2),"null","{\"state\":\"unknown\",\"code\":" ++ U32.show(code) ++ ",\"detail\":" ++ J.string_literal(detail) ++ "}")
     case Done{record}: inventory_record_json(record)
 
 def inventory_session_profile(+db: String, +idhex: String) -> IO(String):
@@ -919,7 +919,7 @@ def inventory_session_next(+db: String, +line: String, +rest: List<String>) -> I
 def inventory_session_tail(+db: String, +lines: List<String>) -> IO(String):
   match lines:
     case Nil{}: IO.pure(String,"")
-    case +line <> rest: Bool.pick(IO(String),String.is_empty(line),inventory_session_tail(db,rest),inventory_session_next(db,line,rest))
+    case +line <> +rest: Bool.pick(IO(String),String.is_empty(line),inventory_session_tail(db,rest),inventory_session_next(db,line,rest))
 
 # The operator-ordered profile list as stated: order is fallback preference,
 # never an availability claim. A missing list is unknown; an empty list is a
@@ -937,7 +937,7 @@ def inventory_profile_order(profiles: List<&2,Profile>) -> String:
 
 def inventory_profiles_result(read: Result<&1,&1,U32 & String,String>) -> String:
   match read:
-    case Fail{(code,detail)}: Bool.pick(String,U32.is_eq(code,2),
+    case Fail{(+code,detail)}: Bool.pick(String,U32.is_eq(code,2),
       "{\"state\":\"unknown\",\"reason\":\"noOperatorProfileList\"}",
       "{\"state\":\"unknown\",\"reason\":\"profileListReadFailure\",\"code\":" ++ U32.show(code) ++ ",\"detail\":" ++ J.string_literal(detail) ++ "}")
     case Done{listed}: "{\"state\":\"reported\",\"order\":[" ++ inventory_profile_order(profile_lines(Tx.split_lines(listed))) ++ "]}"
