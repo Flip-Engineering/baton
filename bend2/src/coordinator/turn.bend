@@ -684,16 +684,15 @@ def consume_complete_pair(result: Outcome & List<Chan(Result<&1,&1,U32 & String,
 def consume_complete(action: IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>)) -> IO(ConsumeStep):
   IO.bind(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>, ConsumeStep, action, result => IO.pure(ConsumeStep,consume_complete_pair(result)))
 
-def native_line_contains_nul_parts(parts: List<&2,String>) -> Bool:
-  match parts:
-    case Nil{}: False{}
-    case Con{head,tail}:
-      match tail:
-        case Nil{}: False{}
-        case Con{head,tail}: True{}
+def native_line_contains_nul_scan(+line: String, +nul: Char, found: Bool) -> Bool:
+  match line found:
+    case SNil{} True{}: True{}
+    case SNil{} False{}: False{}
+    case SCon{h,t} True{}: True{}
+    case SCon{h,t} False{}: native_line_contains_nul_scan(t,nul,Char.is_eq(h,nul))
 
 def native_line_contains_nul(+line: String) -> Bool:
-  native_line_contains_nul_parts(String.split(line,Char.from_u32(0)))
+  native_line_contains_nul_scan(line,Char.from_u32(0),False{})
 
 def wake_text_result_case(+text: String, notice: String, active: Bool, has_nul: Bool) -> WakeRead:
   match has_nul:
