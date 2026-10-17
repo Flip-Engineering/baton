@@ -636,12 +636,76 @@ def with_restore_result(-A: Type, result: Result<&1,&1,U32 & String,Unit>, next:
 # The host returns a right-nested line, notice and subscription status.
 type WakeRead is Data:
   AwakeEnd{notice: String, active: Bool}
+  AwakeInvalid{notice: String, active: Bool}
   AwakeLine{line: String, notice: String, active: Bool}
+
+type ConsumeCheckpoint is Data:
+  ConsumeCheckpoint{guidance_cursor: String, last_message: String, muse_primary: String, muse_current: String, terminal: String, filter_mode: String, codex_log: String, held: String, omp_activity: String, output: String, output_done: Bool, episode: String}
+
+def consume_checkpoint_from(state: Observer.State) -> ConsumeCheckpoint:
+  match state:
+    case Observer.State{guidance_cursor,last_message,muse_primary,muse_current,terminal,filter_mode,codex_log,held,omp_activity,output,output_done,episode}:
+      ConsumeCheckpoint{guidance_cursor,last_message,muse_primary,muse_current,terminal,filter_mode,codex_log,held,omp_activity,output,output_done,episode}
+
+def consume_checkpoint_to(state: ConsumeCheckpoint) -> Observer.State:
+  match state:
+    case ConsumeCheckpoint{guidance_cursor,last_message,muse_primary,muse_current,terminal,filter_mode,codex_log,held,omp_activity,output,output_done,episode}:
+      Observer.State{guidance_cursor,last_message,muse_primary,muse_current,terminal,filter_mode,codex_log,held,omp_activity,output,output_done,episode}
+
+type ConsumeDeliveries is Data:
+  ConsumeNoDeliveries{}
+  ConsumeDelivery{channel: Chan(Result<&1,&1,U32 & String,String>), rest: ConsumeDeliveries}
+
+def consume_deliveries_from(values: List<Chan(Result<&1,&1,U32 & String,String>)>) -> ConsumeDeliveries:
+  match values:
+    case Nil{}: ConsumeNoDeliveries{}
+    case Con{head,tail}: ConsumeDelivery{head,consume_deliveries_from(tail)}
+
+def consume_deliveries_to(values: ConsumeDeliveries) -> List<Chan(Result<&1,&1,U32 & String,String>)>:
+  match values:
+    case ConsumeNoDeliveries{}: Nil{}
+    case ConsumeDelivery{channel,rest}: Con{channel,consume_deliveries_to(rest)}
+
+type ConsumeLoopState is Data:
+  ConsumeLoopState{policy_level: String, held: String, log_failed: Bool, cursor: String, last_message: String, primary: String, current: String, terminal: String, filter: String, requested: String, codex_log: String, first_error: String, checkpoint_state: ConsumeCheckpoint, incomplete_observation: Bool, wake_on: Bool, deliveries: ConsumeDeliveries}
+
+type ConsumeStep is Data:
+  ConsumeContinue{state: ConsumeLoopState, wake_on: Bool}
+  ConsumeComplete{outcome: Outcome, deliveries: ConsumeDeliveries}
+
+def consume_policy_level(policy: Logs.Policy) -> String:
+  match policy:
+    case Logs.Policy{level}: level
+
+def consume_complete_pair(result: Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>) -> ConsumeStep:
+  match result:
+    case (outcome,deliveries): ConsumeComplete{outcome,consume_deliveries_from(deliveries)}
+
+def consume_complete(action: IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>)) -> IO(ConsumeStep):
+  IO.bind(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>, ConsumeStep, action, result => IO.pure(ConsumeStep,consume_complete_pair(result)))
+
+def native_line_contains_nul_scan(+line: String, +nul: Char, found: Bool) -> Bool:
+  match line found:
+    case SNil{} True{}: True{}
+    case SNil{} False{}: False{}
+    case SCon{h,t} True{}: True{}
+    case SCon{h,t} False{}: native_line_contains_nul_scan(t,nul,Char.is_eq(h,nul))
+
+def native_line_contains_nul(+line: String) -> Bool:
+  native_line_contains_nul_scan(line,Char.from_u32(0),False{})
+
+def wake_text_result_case(+text: String, notice: String, active: Bool, has_nul: Bool) -> WakeRead:
+  match has_nul:
+    case True{}: AwakeInvalid{notice,active}
+    case False{}: AwakeLine{text,notice,active}
+
+def wake_text_result(+text: String, notice: String, active: Bool) -> WakeRead:
+  wake_text_result_case(text,notice,active,native_line_contains_nul(text))
 
 def wake_read(line: Maybe<String>, notice: String, active: Bool) -> WakeRead:
   match line:
     case None{}: AwakeEnd{notice,active}
-    case Some{text}: AwakeLine{text,notice,active}
+    case Some{text}: wake_text_result(text,notice,active)
 
 def subscribe_fields(opened: Result<&1,&1,U32 & String,U32 & String>) -> Sigma<&2,&2,U32,_ => Bool>:
   match opened:
@@ -714,10 +778,31 @@ def consume_exhausted(+db: String, +player: String, +id: String, +log: String, h
     +incomplete : Bool <- IO.pure(Bool,Bool.or(incomplete_observation,Bool.or(checkpoint_write_failed(unshared_result(Unit,wake_closed)),Bool.or(wait_failed(unshared_result(String,status)),Bool.or(checkpoint_write_failed(unshared_result(Unit,sent)),Bool.or(checkpoint_write_failed(unshared_result(Unit,flushed)),Bool.or(checkpoint_write_failed(unshared_result(Unit,checkpoint_done)),Bool.or(checkpoint_write_failed(unshared_result(Unit,checkpointed)),observation_store_failed(unshared_result(String,closed))))))))))
     IO.pure(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>,(Ended{status_text(unshared_result(String,status)),event,error,incomplete},deliveries))
 
-@unsafe
-def consume(+db: String, +player: String, +id: String, +log: String, +policy: Logs.Policy, +held: String, +log_failed: Bool, +handle: U32, +harness: String, +cursor: String, +last_message: String, +primary: String, +current: String, +terminal: String, +filter: String, +requested: String, +codex_log: String, +first_error: String, +sender: Chan(Result<&1,&1,U32 & String,Unit>), +attempt: String, +checkpoint_state: Observer.State, +incomplete_observation: Bool, +wake_sub: U32, wake_on: Bool, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, result: Result<&1,&1,U32 & String,WakeRead>) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
+def invalid_tail_error() -> String:
+  "Native output contains an embedded NUL byte; observation stopped at the last validated checkpoint."
+
+def invalid_tail_terminal_status(+status: String) -> Bool:
+  Bool.or(Bool.and(Tx.starts_with(status,"exit "),Bool.not(String.eq(status,"exit 0"))),Bool.or(Tx.starts_with(status,"signal "),String.eq(status,"unknown after keeper loss")))
+
+def invalid_tail_matches_error(+error: String) -> Bool:
+  String.eq(error,invalid_tail_error())
+
+def invalid_tail_ended(+status: String, event: String, +error: String, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>) -> Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>:
+  terminal : Bool = invalid_tail_terminal_status(status)
+  only_corruption : Bool = invalid_tail_matches_error(error)
+  (Ended{status,event,error,Bool.pick(Bool,Bool.and(terminal,only_corruption),False{},True{})},deliveries)
+
+def invalid_tail_result(result: Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>) -> Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>:
   match result:
-    case Fail{error}: do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
+    case (Ended{status,event,error,incomplete},deliveries): invalid_tail_ended(status,event,error,deliveries)
+
+def invalid_tail_finish(action: IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>)) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
+  IO.bind(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>,Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>,action,result => IO.pure(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>,invalid_tail_result(result)))
+
+@unsafe
+def consume_frame(+db: String, +player: String, +id: String, +log: String, +policy: Logs.Policy, +held: String, +log_failed: Bool, +handle: U32, +harness: String, +cursor: String, +last_message: String, +primary: String, +current: String, +terminal: String, +filter: String, +requested: String, +codex_log: String, +first_error: String, +sender: Chan(Result<&1,&1,U32 & String,Unit>), +attempt: String, +checkpoint_state: Observer.State, +incomplete_observation: Bool, +wake_sub: U32, wake_on: Bool, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, result: Result<&1,&1,U32 & String,WakeRead>) -> IO(ConsumeStep):
+  match result:
+    case Fail{error}: do IO<ConsumeStep>:
       wake_closed : Result<&1,&1,U32 & String,Unit> <- wake_close(wake_sub,wake_on)
       closed : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.close_stdin(handle)
       sent : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,sender)
@@ -732,17 +817,17 @@ def consume(+db: String, +player: String, +id: String, +log: String, +policy: Lo
       sent_error : String <- IO.pure(String,append_write_error(append_write_error(append_write_error(read_error,wake_closed),closed),sent))
       waited_error : String <- IO.pure(String,append_store_error(sent_error,unshared_result(String,waited)))
       error : String <- IO.pure(String,append_write_error(append_write_error(append_write_error(waited_error,unshared_result(Unit,flushed)),checkpoint_done),named))
-      IO.pure(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>,(Ended{status_text(unshared_result(String,waited)),terminal,error,True{}},deliveries))
-    case Done{AwakeEnd{+notice,+alive}}: do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
+      IO.pure(ConsumeStep,ConsumeComplete{Ended{status_text(unshared_result(String,waited)),terminal,error,True{}},consume_deliveries_from(deliveries)})
+    case Done{AwakeInvalid{+notice,+alive}}:
+      consume_complete(invalid_tail_finish(consume_exhausted(db,player,id,log,held,log_failed,handle,harness,codex_log,terminal,filter,requested,append_error(invalid_tail_error(),first_error),sender,attempt,checkpoint_state,True{},deliveries,wake_sub,alive)))
+    case Done{AwakeEnd{+notice,+alive}}: do IO<ConsumeStep>:
       +drained : String <- Guidance.awake_pending(db,player,handle,cursor,Bool.and(String.eq(harness,"omp\n"),Bool.and(Bool.not(String.is_empty(notice)),String.is_empty(terminal))))
-      continuation : (List<Chan(Result<&1,&1,U32 & String,String>)> -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>)) <- IO.pure(List<Chan(Result<&1,&1,U32 & String,String>)> -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>),Bool.pick(List<Chan(Result<&1,&1,U32 & String,String>)> -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>),String.is_empty(notice),
-        pending => consume_exhausted(db,player,id,log,held,log_failed,handle,harness,codex_log,terminal,filter,requested,first_error,sender,attempt,checkpoint_state,incomplete_observation,pending,wake_sub,alive),
-        pending => do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
-          next : Result<&1,&1,U32 & String,WakeRead> <- wake_line(handle,wake_sub,alive)
-          consume(db,player,id,log,policy,held,log_failed,handle,harness,drained,last_message,primary,current,terminal,filter,requested,codex_log,first_error,sender,attempt,checkpoint_state,incomplete_observation,wake_sub,alive,pending,next)))
+      continuation : (List<Chan(Result<&1,&1,U32 & String,String>)> -> IO(ConsumeStep)) <- IO.pure(List<Chan(Result<&1,&1,U32 & String,String>)> -> IO(ConsumeStep),Bool.pick(List<Chan(Result<&1,&1,U32 & String,String>)> -> IO(ConsumeStep),String.is_empty(notice),
+        pending => consume_complete(consume_exhausted(db,player,id,log,held,log_failed,handle,harness,codex_log,terminal,filter,requested,first_error,sender,attempt,checkpoint_state,incomplete_observation,pending,wake_sub,alive)),
+        pending => IO.pure(ConsumeStep,ConsumeContinue{ConsumeLoopState{consume_policy_level(policy),held,log_failed,drained,last_message,primary,current,terminal,filter,requested,codex_log,first_error,consume_checkpoint_from(checkpoint_state),incomplete_observation,alive,consume_deliveries_from(pending)},alive})))
       continuation(deliveries)
     case Done{AwakeLine{+line,notice,+alive}}:
-      do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
+      do IO<ConsumeStep>:
         +drained : String <- Guidance.awake_pending(db,player,handle,cursor,Bool.and(String.eq(harness,"omp\n"),Bool.and(Bool.not(String.is_empty(notice)),String.is_empty(terminal))))
         +current_policy : Logs.Policy <- Logs.level_open(db,player)
         +kind : String <- frame_kind(db,line,harness)
@@ -754,7 +839,7 @@ def consume(+db: String, +player: String, +id: String, +log: String, +policy: Lo
         +event : String <- omp_terminal(db,line,message,activity,Bool.and(String.eq(harness,"omp\n"),String.eq(Tx.trim_nl(kind),"agent_end")))
         +kept : String <- Logs.retained(db,current_policy,Tx.trim_nl(kind),line,event,log)
         step : List<String> & String <- IO.pure(List<String> & String,Logs.frame_step(current_policy,Tx.trim_nl(kind),frame_key,kept,held))
-        with_frame_step(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>,step,lines => next_held_value => do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
+        with_frame_step(ConsumeStep,step,lines => next_held_value => do IO<ConsumeStep>:
           +next_held : String <- IO.pure(String,next_held_value)
           +positioned : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,String> <- shared_result_io(String,Logs.write_positioned(log,lines,Observer.output(checkpoint_state),log_failed,Bool.not(String.is_empty(attempt)),False{}))
           +logged : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,Unit> <- shared_result_io(Unit,IO.pure(Result<&1,&1,U32 & String,Unit>,Logs.position_write(log,unshared_result(String,positioned))))
@@ -782,7 +867,7 @@ def consume(+db: String, +player: String, +id: String, +log: String, +policy: Lo
           +mode : String <- filter_mode(db,line,Bool.and(String.eq(harness,"omp\n"),String.eq(Tx.trim_nl(kind),"response")),requested)
           +next_filter : String <- IO.pure(String,Omp.filter_next(filter,Tx.trim_nl(mode)))
           +next_checkpoint : Observer.State <- IO.pure(Observer.State,Observer.with_episode(Observer.with_output(Observer.with_omp_activity(Observer.make(next_cursor,message,next_primary,next_current,ended,next_filter,codex_state,next_held),activity),Logs.position(Observer.output(checkpoint_state),unshared_result(String,positioned))),episode))
-          NativeRequests.with_observation(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>,questions,wakes => question_error => question_incomplete => do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
+          NativeRequests.with_observation(ConsumeStep,questions,wakes => question_error => question_incomplete => do IO<ConsumeStep>:
             +question_text : String <- IO.pure(String,question_error)
             +request_incomplete : Bool <- IO.pure(Bool,question_incomplete)
             +checkpoint_enabled : Bool <- IO.pure(Bool,Bool.and(Bool.not(incomplete_observation),Bool.and(Bool.not(failed),Bool.and(Bool.not(request_incomplete),Bool.and(Bool.not(String.is_empty(attempt)),Observer.checkpoint_due_fields(checkpoint_state,next_checkpoint,message_frame,terminal_selected,codex_frame))))))
@@ -790,8 +875,26 @@ def consume(+db: String, +player: String, +id: String, +log: String, +policy: Lo
             checkpoint_notice : Unit <- checkpoint_failure_notice(db,player,id,attempt,checkpoint_enabled,unshared_result(Unit,checkpointed))
             +next_error : String <- IO.pure(String,append_write_error(append_write_error(append_store_error(append_write_error(append_error(first_error,question_text),unshared_result(Unit,written)),unshared_result(String,observed)),unshared_result(Unit,closed_input)),unshared_result(Unit,checkpointed)))
             +next_incomplete : Bool <- IO.pure(Bool,Bool.or(incomplete_observation,Bool.or(request_incomplete,Bool.or(observation_store_failed(unshared_result(String,observed)),Bool.or(checkpoint_write_failed(unshared_result(Unit,closed_input)),Bool.or(checkpoint_write_failed(unshared_result(Unit,checkpointed)),failed))))))
-            next : Result<&1,&1,U32 & String,WakeRead> <- wake_line(handle,wake_sub,alive)
-            consume(db,player,id,log,current_policy,next_held,failed,handle,harness,next_cursor,message,next_primary,next_current,ended,next_filter,requested,codex_state,next_error,sender,attempt,next_checkpoint,next_incomplete,wake_sub,alive,wakes,next)))
+            IO.pure(ConsumeStep,ConsumeContinue{ConsumeLoopState{consume_policy_level(current_policy),next_held,failed,next_cursor,message,next_primary,next_current,ended,next_filter,requested,codex_state,next_error,consume_checkpoint_from(next_checkpoint),next_incomplete,alive,consume_deliveries_from(wakes)},alive})))
+
+# The retained process sends its initial input once. Reattachment reads the same
+# attempt from its first frame so native completion can be reconstructed.
+def consume_step_resume(step: ConsumeStep, continue_loop: Bool -> ConsumeLoopState -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>)) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
+  match step:
+    case ConsumeComplete{outcome,deliveries}: IO.pure(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>,(outcome,consume_deliveries_to(deliveries)))
+    case ConsumeContinue{state,wake_on}: continue_loop(wake_on,state)
+
+@unsafe
+def consume_loop(+db: String, +player: String, +id: String, +log: String, +handle: U32, +harness: String, +sender: Chan(Result<&1,&1,U32 & String,Unit>), +attempt: String, +wake_sub: U32, state: ConsumeLoopState, result: Result<&1,&1,U32 & String,WakeRead>) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
+  match state:
+    case ConsumeLoopState{policy_level,held,log_failed,cursor,last_message,primary,current,terminal,filter,requested,codex_log,first_error,checkpoint_state,incomplete_observation,wake_on,deliveries}:
+      IO.bind(ConsumeStep, Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>, consume_frame(db,player,id,log,Logs.Policy{policy_level},held,log_failed,handle,harness,cursor,last_message,primary,current,terminal,filter,requested,codex_log,first_error,sender,attempt,consume_checkpoint_to(checkpoint_state),incomplete_observation,wake_sub,wake_on,consume_deliveries_to(deliveries),result), step => consume_step_resume(step, next_wake_on => next_state => do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
+        next : Result<&1,&1,U32 & String,WakeRead> <- wake_line(handle,wake_sub,next_wake_on)
+        consume_loop(db,player,id,log,handle,harness,sender,attempt,wake_sub,next_state,next)))
+
+@unsafe
+def consume(+db: String, +player: String, +id: String, +log: String, +policy: Logs.Policy, +held: String, +log_failed: Bool, +handle: U32, +harness: String, +cursor: String, +last_message: String, +primary: String, +current: String, +terminal: String, +filter: String, +requested: String, +codex_log: String, +first_error: String, +sender: Chan(Result<&1,&1,U32 & String,Unit>), +attempt: String, +checkpoint_state: Observer.State, +incomplete_observation: Bool, +wake_sub: U32, wake_on: Bool, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, result: Result<&1,&1,U32 & String,WakeRead>) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
+  consume_loop(db,player,id,log,handle,harness,sender,attempt,wake_sub,ConsumeLoopState{consume_policy_level(policy),held,log_failed,cursor,last_message,primary,current,terminal,filter,requested,codex_log,first_error,consume_checkpoint_from(checkpoint_state),incomplete_observation,wake_on,consume_deliveries_from(deliveries)},result)
 
 def direct_observed(observation: Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>) -> IO(Outcome):
   (outcome,deliveries)=observation
@@ -815,9 +918,6 @@ def started(+db: String, +player: String, +id: String, +log: String, prompt: Str
           observation : Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- consume(db,player,id,generation,policy,"",False{},handle,harness,"0\n","","","","","",requested,"",restore_error,sender,"",Observer.empty(),restore_failed,0,False{},Nil{},first)
           direct_observed(observation))
 
-# The retained process sends its initial input once. Reattachment reads the same
-# attempt from its first frame so native completion can be reconstructed.
-@unsafe
 def retained_output(+db: String, +player: String, +id: String, +log: String, +harness: String, +attempt: String, +handle: U32, +supplied_requested: String) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
   do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
     +generation : String <- IO.pure(String,generation_log(log,id))
@@ -1046,9 +1146,9 @@ def refusal_read(resumable: Bool, event: String, text: Result<&1,&1,U32 & String
 def refusal(+log: String, resumable: Bool, +outcome: Outcome) -> IO(Bool):
   match outcome:
     case Ended{status,event,error,incomplete}:
-      do IO<Bool>:
+      Bool.pick(IO(Bool),Tx.starts_with(error,invalid_tail_error()),IO.pure(Bool,False{}),do IO<Bool>:
         text : Result<&1,&1,U32 & String,String> <- T.Text.read(log)
-        refusal_read(resumable,event,text)
+        refusal_read(resumable,event,text))
 
 # The refused conversation is gone, so the pending input runs fresh and names
 # the state the workspace holds; the fresh turn records its own identity.

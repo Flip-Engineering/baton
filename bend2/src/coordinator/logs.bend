@@ -197,7 +197,7 @@ def codex_kind(+kind: String) -> Bool:
   Bool.or(String.eq(kind,"codex_command_start"),String.eq(kind,"codex_command_end"))
 
 def frame_id_sql(+line: String) -> String:
-  "WITH frame(value) AS (VALUES(" ++ C.q(line) ++ ")) SELECT coalesce(json_extract(value,'$.toolCallId'),json_extract(value,'$.messageId'),json_extract(value,'$.message.id'),'') FROM frame;"
+  "WITH frame(value) AS (VALUES(" ++ C.q(line) ++ ")) SELECT CASE WHEN json_extract(value,'$.type')='message_update' AND json_type(value,'$.assistantMessageEvent.partial') IS NULL THEN '' ELSE coalesce(json_extract(value,'$.toolCallId'),json_extract(value,'$.messageId'),json_extract(value,'$.message.responseId'),json_extract(value,'$.message.id'),'') END FROM frame;"
 
 def frame_id(db: String, line: String, omp: Bool) -> IO(String):
   match omp:

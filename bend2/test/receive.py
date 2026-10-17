@@ -417,10 +417,42 @@ while True:
         print(json.dumps({'type':'system','subtype':'init','session_id':native}),flush=True)
         reply({'initialized':native})
         continue
+    if action.get('emit_nul_tail'):
+        count=int(action['emit_nul_tail'])
+        os.write(1,b'\x00'*count)
+        sys.stdout.flush()
+        reply({'nul_tail_written':count})
+        if action.get('exit_after_nul_tail',False): break
+        continue
     if action.get('exit_fixture'):
         if action.get('complete_task',False):
             confirm_finished_fixture_task('Completed the controlled native observation task.')
         break
+    if action.get('emit_delta_batch'):
+        batch=action['emit_delta_batch']
+        count=int(batch['count'])
+        payload='x'*int(batch['bytes'])
+        frame=json.dumps({'type':'message_update','assistantMessageEvent':{'type':'text_delta','delta':payload}})
+        for _ in range(count): print(frame)
+        sys.stdout.flush()
+        reply({'delta_frames_written':count,'batch':batch['id']})
+        continue
+    if action.get('emit_snapshot'):
+        size=int(action['emit_snapshot'])
+        payload='s'*size
+        frame={'type':'message_update',
+               'assistantMessageEvent':{'partial':{'type':'text','text':payload}},
+               'message':{'role':'assistant','content':[{'type':'text','text':payload}]}}
+        line=json.dumps(frame)
+        print(line,flush=True)
+        reply({'snapshot_bytes_written':size})
+        continue
+    if action.get('emit_checkpoint_message'):
+        ident=action['emit_checkpoint_message']
+        frame={'type':'message_end','message':{'id':ident,'role':'assistant','content':[{'type':'text','text':'checkpoint '+ident}]}}
+        print(json.dumps(frame),flush=True)
+        reply({'checkpoint_message_written':ident})
+        continue
     if action.get('progress'):
         progress(action)
         continue
@@ -695,6 +727,35 @@ class Receive(unittest.TestCase):
         if row is None:
             self.fail(f'{session} has no registered output log generation')
         return pathlib.Path(row[0])
+
+    def checkpoint_covers_output_marker(self, session, marker, checkpoint, raw_output):
+        """Wait for the observer cursor to cover a valid marker before tail tests."""
+        if not checkpoint.is_file() or not raw_output.is_file():
+            return False
+        log = self.output_log(session)
+        if not log.is_file():
+            return False
+        log_size = log.stat().st_size
+        with log.open('rb') as stream:
+            stream.seek(max(0, log_size - 8192))
+            tail = stream.read()
+        marker_at = tail.rfind(marker.encode())
+        if marker_at < 0:
+            return False
+        line_end = tail.find(b'\n', marker_at)
+        if line_end < 0:
+            return False
+        record = checkpoint.read_bytes()
+        state_at = record.find(b'{"schema":1,')
+        if state_at < 0:
+            return False
+        try:
+            state = json.loads(record[state_at:])
+            output_cursor = int(state.get('output', -1))
+        except (ValueError, TypeError):
+            return False
+        absolute_line_end = log_size - len(tail) + line_end + 1
+        return output_cursor >= absolute_line_end
 
     def reference_startup_stderr(self, executable, session):
         """Read the complete platform diagnostic for the harness's fresh launch.
@@ -4438,6 +4499,368 @@ class Receive(unittest.TestCase):
                           {'type': 'fixture_progress', 'marker': marker, 'native_pid': started['pid']}])
         self.assertEqual(len((self.directory / 'native-launches.jsonl').read_text().splitlines()), 1)
         self.assert_no_start()
+
+    def test_nul_tail_after_exit_zero_preserves_raw_checkpoint_and_pending_input(self):
+        self.player(harness='omp')
+        config_path = self.directory / 'fixture.json'
+        config = json.loads(config_path.read_text())
+        config['record_launches'] = True
+        config_path.write_text(json.dumps(config))
+        self.prepare_input('nul-exit-zero-task', 'parent',
+                           'Retain the native attempt when successful exit has invalid output.',
+                           kind='task')
+        observer = self.spawn(*self.receive_args('parent'))
+        control, started = self.accept('parent')
+        native_id = self.eventually(lambda: self.coord('player', 'parent')['native'],
+                                    'The original OMP identity was not recorded.')
+        self.assertEqual(native_id, started['native'])
+        with sqlite3.connect(self.db) as database:
+            old_id, old_directory = database.execute(
+                'SELECT id,directory FROM executions WHERE session=?', ('parent',)).fetchone()
+        attempt = pathlib.Path(old_directory)
+        checkpoint = attempt / 'checkpoint'
+        raw_output = attempt / 'stdout'
+
+        self.action(control, emit_checkpoint_message='nul-exit-zero-checkpoint')
+        self.assertEqual(json.loads(control.readline()),
+                         {'checkpoint_message_written':'nul-exit-zero-checkpoint'})
+        self.eventually(lambda: self.checkpoint_covers_output_marker(
+            'parent', 'nul-exit-zero-checkpoint', checkpoint, raw_output),
+            'The observer did not checkpoint the valid pre-tail message_end.')
+        checkpoint_before = checkpoint.read_bytes()
+        checkpoint_stat = checkpoint.stat()
+        raw_before = raw_output.read_bytes()
+        raw_stat = raw_output.stat()
+        tail = b'\x00' * 1642
+        self.action(control, emit_nul_tail=len(tail), exit_after_nul_tail=True)
+        self.assertEqual(json.loads(control.readline()), {'nul_tail_written':len(tail)})
+        output, error = self.finish(observer, ok=False)
+        self.assertIn('Native output contains an embedded NUL byte', output + error)
+        self.assertEqual(raw_output.read_bytes(), raw_before + tail,
+                         'The invalid native tail was altered or discarded.')
+        self.assertEqual((raw_output.stat().st_ino, raw_output.stat().st_size),
+                         (raw_stat.st_ino, raw_stat.st_size + len(tail)))
+        self.assertEqual(checkpoint.read_bytes(), checkpoint_before,
+                         'Invalid output moved or rewrote the last valid observer checkpoint.')
+        self.assertEqual((checkpoint.stat().st_ino, checkpoint.stat().st_size),
+                         (checkpoint_stat.st_ino, checkpoint_stat.st_size))
+        self.assertFalse((attempt / 'acknowledged').exists(),
+                         'A successful process exit must not acknowledge an invalid raw tail.')
+        self.assertEqual(self.execution('parent')[:2], ('exited', 'exit 0'))
+        self.assertIsNone(self.coord('delivery', 'nul-exit-zero-task')['receipt'],
+                          'Invalid output acknowledged the input owned by the retained attempt.')
+        self.assertEqual([message['id'] for message in self.coord('inbox', 'parent')],
+                         ['nul-exit-zero-task'])
+        self.assertEqual(self.coord('player', 'parent')['native'], native_id)
+        self.assertEqual(self.execution('parent')[2], old_directory,
+                         'A held invalid tail must remain attached to its original attempt.')
+        self.assertEqual(self.coord('player', 'parent')['native'], native_id)
+
+    def test_nul_tail_after_keeper_loss_preserves_input_and_starts_fresh_attempt(self):
+        self.player(harness='omp')
+        config_path = self.directory / 'fixture.json'
+        config = json.loads(config_path.read_text())
+        config['record_launches'] = True
+        config_path.write_text(json.dumps(config))
+        self.prepare_input('nul-tail-task', 'parent', 'Retain the native attempt across invalid output.', kind='task')
+        observer = self.spawn(*self.receive_args('parent'))
+        control, started = self.accept('parent')
+        native_id = self.eventually(lambda: self.coord('player', 'parent')['native'],
+                                    'The original OMP identity was not recorded.')
+        self.assertEqual(native_id, started['native'])
+        with sqlite3.connect(self.db) as database:
+            old_id, old_directory = database.execute(
+                'SELECT id,directory FROM executions WHERE session=?', ('parent',)).fetchone()
+        attempt = pathlib.Path(old_directory)
+        checkpoint = attempt / 'checkpoint'
+        raw_output = attempt / 'stdout'
+
+        self.action(control, emit_checkpoint_message='nul-tail-checkpoint')
+        self.assertEqual(json.loads(control.readline()),
+                         {'checkpoint_message_written':'nul-tail-checkpoint'})
+        self.eventually(lambda: self.checkpoint_covers_output_marker(
+            'parent', 'nul-tail-checkpoint', checkpoint, raw_output),
+            'The observer did not checkpoint the valid pre-tail message_end.')
+        checkpoint_before = checkpoint.read_bytes()
+        checkpoint_stat = checkpoint.stat()
+        raw_before = raw_output.read_bytes()
+        raw_stat = raw_output.stat()
+        tail = b'\x00' * 1642
+        self.action(control, emit_nul_tail=len(tail))
+        self.assertEqual(json.loads(control.readline()), {'nul_tail_written':len(tail)})
+        self.eventually(lambda: raw_output.stat().st_size == raw_stat.st_size + len(tail),
+                        'The shared owner did not spool the invalid tail before keeper loss.')
+        owner_command = f'{EXE.resolve()} --instance-owner {self.db.resolve()}'
+        owners = [process for process in self.owned_processes()
+                  if process['command'] == owner_command]
+        self.assertEqual(len(owners), 1)
+        selected_owner = self.selected_process(owners[0]['pid'])
+        selected_native = self.selected_process(started['pid'])
+        self.assertIsNotNone(selected_owner)
+        self.assertIsNotNone(selected_native)
+        self.signal_selected(selected_owner, signal.SIGKILL)
+        self.signal_selected(selected_native, signal.SIGKILL)
+        output, error = self.finish(observer, ok=False)
+        self.assertIn('Native output contains an embedded NUL byte', output + error)
+        self.assertEqual(raw_output.read_bytes(), raw_before + tail,
+                         'The invalid native tail was altered or discarded.')
+        self.assertEqual((raw_output.stat().st_ino, raw_output.stat().st_size),
+                         (raw_stat.st_ino, raw_stat.st_size + len(tail)))
+        self.assertEqual(checkpoint.read_bytes(), checkpoint_before,
+                         'Invalid output moved or rewrote the last valid observer checkpoint.')
+        self.assertEqual((checkpoint.stat().st_ino, checkpoint.stat().st_size),
+                         (checkpoint_stat.st_ino, checkpoint_stat.st_size))
+        self.assertTrue((attempt / 'acknowledged').is_file(),
+                        'The dead process attempt was not settled for a fresh observer attempt.')
+        self.assertEqual(self.execution('parent')[:2], ('exited', 'unknown after keeper loss'))
+        self.assertEqual(self.coord('delivery', 'nul-tail-task')['receipt'], None,
+                         'Invalid output acknowledged the input owned by the retained attempt.')
+        self.assertEqual([message['id'] for message in self.coord('inbox', 'parent')],
+                         ['nul-tail-task'])
+        self.assertEqual(self.coord('player', 'parent')['native'], native_id)
+
+        fresh = self.spawn(*self.receive_args('parent'))
+        _fresh_control, fresh_started = self.accept('parent')
+        self.assertEqual(fresh_started['native'], native_id)
+        with sqlite3.connect(self.db) as database:
+            new_id, new_directory = database.execute(
+                'SELECT id,directory FROM executions WHERE session=?', ('parent',)).fetchone()
+        self.assertNotEqual(new_id, old_id)
+        self.assertNotEqual(new_directory, old_directory)
+        self.assertEqual(self.coord('delivery', 'nul-tail-task')['receipt'], None)
+        fresh.kill()
+        fresh.wait()
+
+    def test_output_only_frames_replay_from_durable_checkpoint(self):
+        self.player(harness='omp')
+        self.prepare_input('output-replay-task', 'parent', 'Replay output from the last semantic checkpoint.')
+        observer = self.spawn(*self.receive_args('parent'))
+        control, started = self.accept('parent')
+        native_id = self.eventually(lambda: self.coord('player', 'parent')['native'],
+                                    'The original OMP identity was not recorded.')
+        self.assertEqual(native_id, started['native'])
+        attempt = pathlib.Path(self.execution('parent')[2])
+        checkpoint = attempt / 'checkpoint'
+        log = self.output_log('parent')
+
+        self.action(control, emit_checkpoint_message='durable-output-cursor')
+        self.assertEqual(json.loads(control.readline()),
+                         {'checkpoint_message_written': 'durable-output-cursor'})
+        def checkpoint_state():
+            if not checkpoint.is_file():
+                return None
+            record = checkpoint.read_bytes()
+            state_at = record.find(b'{"schema":1,')
+            if state_at < 0:
+                return None
+            try:
+                return record, json.loads(record[state_at:])
+            except json.JSONDecodeError:
+                return None
+
+        def durable_semantic_checkpoint():
+            saved = checkpoint_state()
+            return saved is not None and 'durable-output-cursor' in saved[1].get('last_message', '')
+
+        self.eventually(durable_semantic_checkpoint,
+                        'The semantic frame was not included in the durable checkpoint.')
+        durable_checkpoint, durable_state = checkpoint_state()
+        state_at = durable_checkpoint.find(b'{"schema":1,')
+        self.assertGreaterEqual(state_at, 0, 'Checkpoint has no schema-1 observer state.')
+        self.assertIn('durable-output-cursor', durable_state['last_message'])
+        durable_output = int(durable_state['output'])
+
+        self.action(control, emit_delta_batch={'id': 'uncommitted', 'count': 3, 'bytes': 128})
+        self.assertEqual(json.loads(control.readline()),
+                         {'delta_frames_written': 3, 'batch': 'uncommitted'})
+        expected_lines = 3
+        def output_batch_written():
+            if not log.exists():
+                return False
+            with log.open() as stream:
+                return sum(json.loads(line).get('type') == 'message_update' for line in stream) >= expected_lines
+        self.eventually(output_batch_written, 'The output-only frames were not written before interruption.')
+        self.assertEqual(checkpoint.read_bytes(), durable_checkpoint,
+                         'Output-only changes advanced the durable checkpoint.')
+        self.assertEqual(int(json.loads(checkpoint.read_bytes()[state_at:])['output']), durable_output)
+        self.assertGreater(log.stat().st_size, durable_output,
+                           'Output-only frames did not extend beyond the durable cursor.')
+
+        observer.kill()
+        observer.wait()
+        self.assertTrue(any(process['pid'] == started['pid'] for process in self.owned_processes()),
+                        'The native process did not survive observer recovery.')
+        self.assertEqual(self.coord('player', 'parent')['native'], native_id)
+        recovered = self.spawn(*self.receive_args('parent'))
+        self.assertIsNone(recovered.poll(), 'Same-attempt receiver did not adopt the live native.')
+
+        marker = 'semantic checkpoint after output replay'
+        self.action(control, emit_checkpoint_message=marker)
+        self.assertEqual(json.loads(control.readline()), {'checkpoint_message_written': marker})
+        self.eventually(lambda: marker.encode() in log.read_bytes(),
+                        'The recovered observer did not consume frames after its saved cursor.')
+        def replay_checkpointed():
+            saved = checkpoint_state()
+            return saved is not None and marker in saved[1].get('last_message', '')
+
+        self.eventually(replay_checkpointed,
+                        'The recovered observer did not checkpoint the next semantic change.')
+        replay_state = checkpoint_state()[1]
+        self.assertGreaterEqual(int(replay_state['output']), log.stat().st_size,
+                                'The recovered checkpoint cursor does not cover replayed output.')
+        self.assert_no_start()
+        with log.open() as stream:
+            updates = [json.loads(line) for line in stream
+                       if json.loads(line).get('type') == 'message_update']
+        self.assertEqual(sum(update.get('assistantMessageEvent', {}).get('delta') == 'x' * 128
+                             for update in updates), 3,
+                         'Replay duplicated or lost output-only frames.')
+        self.assertEqual(self.coord('player', 'parent')['native'], native_id)
+        self.action(control, body='Output replay completed.', hold_exit=True)
+        self.assertEqual(json.loads(control.readline()), {'terminal_written': True})
+        self.action(control, exit_fixture=True)
+        self.assertEqual(control.readline(), b'')
+        self.finish(recovered)
+
+    def test_long_omp_stream_releases_frames_and_recovers_checkpoint(self):
+        self.player(harness='omp')
+        config_path = self.directory / 'fixture.json'
+        config = json.loads(config_path.read_text())
+        config['record_launches'] = True
+        config_path.write_text(json.dumps(config))
+        self.prepare_input('memory-task', 'parent', 'Retain the original native conversation.', kind='task')
+        observer = self.spawn(*self.receive_args('parent'))
+        control, started = self.accept('parent')
+        native_id = self.eventually(lambda: self.coord('player', 'parent')['native'],
+                                    'The original OMP identity was not recorded.')
+        self.assertEqual(native_id, started['native'])
+        attempt = pathlib.Path(self.execution('parent')[2])
+        log = self.output_log('parent')
+
+        def rss_bytes():
+            status = pathlib.Path(f'/proc/{observer.pid}/status').read_text()
+            value = next(line.split()[1] for line in status.splitlines() if line.startswith('VmRSS:'))
+            return int(value) * 1024
+
+        batch_count = 8
+        frames_per_batch = 500
+        payload_bytes = 8192
+        frame = json.dumps({'type': 'message_update',
+                            'assistantMessageEvent': {'type': 'text_delta',
+                                                      'delta': 'x' * payload_bytes}})
+        bytes_per_frame = len(frame.encode()) + 1
+        samples = [rss_bytes()]
+        start_size = log.stat().st_size if log.exists() else 0
+        for index in range(batch_count):
+            self.action(control, emit_delta_batch={'id': index, 'count': frames_per_batch,
+                                                   'bytes': payload_bytes})
+            self.assertEqual(json.loads(control.readline()),
+                             {'delta_frames_written': frames_per_batch, 'batch': index})
+            expected = start_size + (index + 1) * frames_per_batch * bytes_per_frame
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline and (not log.exists() or log.stat().st_size < expected):
+                if observer.poll() is not None:
+                    stdout, stderr = self.child_communication(observer)
+                    self.fail(f'Observer exited during long stream: {stdout}{stderr}')
+                time.sleep(.05)
+            self.assertTrue(log.exists() and log.stat().st_size >= expected,
+                            f'Observer did not retain batch {index}')
+            samples.append(rss_bytes())
+            print(json.dumps({'memoryBatch': index, 'rssBytes': samples[-1],
+                              'rssGrowthBytes': max(samples) - samples[0],
+                              'retainedLogBytes': log.stat().st_size}), flush=True)
+            self.assertLess(max(samples) - samples[0], 768 * 1024 * 1024,
+                            'Observer RSS grew with the emitted frame stream')
+
+        last_half_input = (batch_count // 2) * frames_per_batch * bytes_per_frame
+        last_half_growth = max(0, samples[batch_count] - samples[batch_count // 2])
+        print(json.dumps({'smallDeltaLastHalfInputBytes': last_half_input,
+                          'smallDeltaLastHalfRssGrowthBytes': last_half_growth}), flush=True)
+        self.assertLess(last_half_growth, max(4 * 1024 * 1024, last_half_input // 4),
+                        'Observer RSS retained a linear share of the small-delta stream')
+
+        snapshot_bytes = 0
+        for size in (1, 2, 4, 8):
+            payload = 's' * (size * 1024 * 1024)
+            snapshot = json.dumps({'type': 'message_update',
+                                   'assistantMessageEvent': {'partial': {'type': 'text', 'text': payload}},
+                                   'message': {'role': 'assistant',
+                                               'content': [{'type': 'text', 'text': payload}]}})
+            self.action(control, emit_snapshot=size * 1024 * 1024)
+            self.assertEqual(json.loads(control.readline()),
+                             {'snapshot_bytes_written': size * 1024 * 1024})
+            snapshot_bytes += len(snapshot.encode())
+            expected = start_size + batch_count * frames_per_batch * bytes_per_frame + snapshot_bytes
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline and log.stat().st_size < expected:
+                if observer.poll() is not None:
+                    stdout, stderr = self.child_communication(observer)
+                    self.fail(f'Observer exited during cumulative snapshot: {stdout}{stderr}')
+                time.sleep(.05)
+            self.assertGreaterEqual(log.stat().st_size, expected,
+                                    f'Observer did not retain the {size} MiB snapshot')
+            samples.append(rss_bytes())
+            print(json.dumps({'cumulativeSnapshotMiB': size, 'rssBytes': samples[-1],
+                              'rssGrowthBytes': max(samples) - samples[0],
+                              'retainedLogBytes': log.stat().st_size}), flush=True)
+            self.assertLess(max(samples) - samples[0], 768 * 1024 * 1024,
+                            'Observer RSS grew with cumulative snapshot size')
+
+        self.action(control, emit_checkpoint_message='memory-checkpoint')
+        self.assertEqual(json.loads(control.readline()),
+                         {'checkpoint_message_written': 'memory-checkpoint'})
+        checkpoint = attempt / 'checkpoint'
+        self.eventually(lambda: checkpoint.exists(), 'The long-stream observer did not checkpoint.')
+        record = checkpoint.read_bytes()
+        state_at = record.find(b'{"schema":1,')
+        self.assertGreaterEqual(state_at, 0, 'Checkpoint has no schema-1 observer state.')
+        state = json.loads(record[state_at:])
+        tail = log.read_bytes()[-8192:]
+        marker_at = tail.rfind(b'memory-checkpoint')
+        self.assertGreaterEqual(marker_at, 0, 'The checkpoint message is absent from the public log.')
+        line_end = tail.find(b'\n', marker_at)
+        self.assertGreaterEqual(line_end, 0)
+        self.assertGreaterEqual(int(state['output']), log.stat().st_size - len(tail) + line_end + 1,
+                                'Checkpoint output cursor does not cover the observed message_end.')
+        self.assertLess(max(samples[-5:]) - min(samples[-5:]), 256 * 1024 * 1024,
+                        'Observer RSS did not settle over the final batches.')
+
+        observer.kill()
+        observer.wait()
+        self.assertTrue(any(process['pid'] == started['pid'] for process in self.owned_processes()),
+                        'The native process did not survive observer recovery.')
+        self.assertEqual(self.coord('player', 'parent')['native'], native_id)
+        marker = 'post-checkpoint output from the original native'
+        self.action(control, progress=marker)
+        self.assertEqual(json.loads(control.readline()), {'progress_written': marker})
+
+        def log_tail_contains(value):
+            if not log.exists():
+                return False
+            with log.open('rb') as stream:
+                stream.seek(max(0, log.stat().st_size - 8192))
+                return value.encode() in stream.read()
+
+        self.eventually(lambda: log_tail_contains(marker),
+                        'Recovered observer did not continue from the saved checkpoint.')
+        self.action(control, body='Long native stream completed after observer recovery.', hold_exit=True)
+        self.assertEqual(json.loads(control.readline()), {'terminal_written': True})
+        self.eventually(lambda: log_tail_contains('agent_end'),
+                        'Recovered observer did not retain the terminal native event.')
+        self.action(control, exit_fixture=True)
+        self.assertEqual(control.readline(), b'')
+        self.finish(observer, ok=False)
+        self.eventually(lambda: self.coord('turns', 'parent'),
+                        'The recovered task completion was not recorded.')
+        self.assertEqual(self.coord('player', 'parent')['native'], native_id)
+        self.assertEqual(len((self.directory / 'native-launches.jsonl').read_text().splitlines()), 1)
+        with log.open() as stream:
+            observed_updates = sum(1 for line in stream
+                                  if json.loads(line).get('type') == 'message_update')
+        self.assertEqual(observed_updates, batch_count * frames_per_batch + 4)
+        self.assertEqual(self.coord('delivery', 'memory-task')['receipt'],
+                         'native-turn:' + self.execution('parent')[0])
+        self.shutdown_idle_database_owner('The long-stream receive owner did not exit.')
 
     def test_successful_turn_handles_complete_initial_input_without_explicit_ack(self):
         """A successful native result settles the complete initial input read
