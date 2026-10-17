@@ -1225,7 +1225,7 @@ static int br_observer_attempt_custody(pid_t pid,const char *database,const char
   char *stdout_path=br_path(canonical,"stdout");
   char *log_path=br_path(canonical,"observer.log");
   int error=!stdout_path || !log_path?ENOMEM:0;
-  int ended=0,life=-1,public_receive=0;
+  int ended=0,life=-1,public_receive=0,recovery=0;
   if(!error) {
     life=br_process_lifetime(pid,&ended);
     if(life<0)error=ended?ESRCH:errno;
@@ -1263,7 +1263,7 @@ static int br_observer_attempt_custody(pid_t pid,const char *database,const char
       }
       int receive=!error && (argc==14 || argc==15) && !strcmp(argv[1],"--recover-receive");
       public_receive=!error && argc==10 && !strcmp(argv[2],"receive");
-      int recovery=!error && argc==5 && !strcmp(argv[2],"recover-observer");
+      recovery=!error && argc==5 && !strcmp(argv[2],"recover-observer");
       if(!error && !receive && !public_receive && !recovery)error=EPERM;
       if(!error && strcmp(argv[3],session))error=EPERM;
       if(!error) {
@@ -1323,7 +1323,7 @@ static int br_observer_attempt_custody(pid_t pid,const char *database,const char
       if(stdout_owned && log_owned && lock_owned)break;
     }
     if(fds)closedir(fds);
-    if(!error && (!stdout_owned || (!public_receive && !log_owned) || !lock_owned))error=EPERM;
+    if(!error && (!stdout_owned || (!public_receive && !recovery && !log_owned) || !lock_owned))error=EPERM;
   }
   if(!error) {
     struct pollfd alive={life,POLLIN,0};
