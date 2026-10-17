@@ -910,16 +910,21 @@ def inventory_session_json(+db: String, fields: List<String>) -> IO(String):
         ++ ",\"profile\":" ++ profile ++ "}")
     case _: IO.pure(String,"{\"state\":\"unknown\",\"reason\":\"inventoryRowShape\"}")
 
-def inventory_session_next(+db: String, +line: String, +rest: List<String>) -> IO(String):
+def inventory_session_next(+db: String, +line: String, rest: List<String>) -> IO(String):
   do IO<String>:
     head : String <- inventory_session_json(db,split_parts(String.split(line,Char.from_u32(31))))
     tail : String <- inventory_session_tail(db,rest)
     IO.pure(String,Bool.pick(String,String.is_empty(tail),head,head ++ "," ++ tail))
 
-def inventory_session_tail(+db: String, +lines: List<String>) -> IO(String):
+def inventory_session_pick(+db: String, +line: String, rest: List<String>, empty: Bool) -> IO(String):
+  match empty:
+    case True{}: inventory_session_tail(db,rest)
+    case False{}: inventory_session_next(db,line,rest)
+
+def inventory_session_tail(+db: String, lines: List<String>) -> IO(String):
   match lines:
     case Nil{}: IO.pure(String,"")
-    case +line <> +rest: Bool.pick(IO(String),String.is_empty(line),inventory_session_tail(db,rest),inventory_session_next(db,line,rest))
+    case +line <> rest: inventory_session_pick(db,line,rest,String.is_empty(line))
 
 # The operator-ordered profile list as stated: order is fallback preference,
 # never an availability claim. A missing list is unknown; an empty list is a
