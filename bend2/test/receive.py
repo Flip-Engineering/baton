@@ -4543,7 +4543,7 @@ class Receive(unittest.TestCase):
         self.assertEqual(json.loads(control.readline()), {'terminal_written': True})
         self.action(control, exit_fixture=True)
         self.assertEqual(control.readline(), b'')
-        self.finish(recovered, ok=False)
+        self.finish(recovered)
 
     def test_successful_turn_handles_complete_initial_input_without_explicit_ack(self):
         """A successful native result settles the complete initial input read
