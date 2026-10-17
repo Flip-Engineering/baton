@@ -259,6 +259,12 @@ remain open under [#782](https://github.com/Flip-Engineering/baton/issues/782).
   [#686](https://github.com/Flip-Engineering/baton/issues/686),
   [#761](https://github.com/Flip-Engineering/baton/issues/761) and
   [#770](https://github.com/Flip-Engineering/baton/issues/770).
+  The 2026-10-17 recovery patch is on retained source HEAD
+  `35152919ad99f1938c76dfa8db33f2b1ebfa762d`; the invalid-tail helper passed
+  its focused type check in 359 ms. The combined Main build is still running.
+  Its acceptance requires bounded-memory receive and checkpoint recovery from
+  a NUL-corrupted tail, with the original bytes and pending input preserved.
+  The exact-hash review is assigned to the existing `rewrite-deepseek` session.
 
 - [#770: Retain actual native wait status after a filesystem write failure](https://github.com/Flip-Engineering/baton/issues/770).
   The [#769](https://github.com/Flip-Engineering/baton/issues/769) review reaped
@@ -776,6 +782,11 @@ remain open under [#782](https://github.com/Flip-Engineering/baton/issues/782).
   [#761](https://github.com/Flip-Engineering/baton/issues/761),
   [#769](https://github.com/Flip-Engineering/baton/issues/769) and
   [#770](https://github.com/Flip-Engineering/baton/issues/770).
+  The current #769 candidate treats a NUL-bearing native line as an incomplete
+  tail only after terminal status or custody-proven owner loss. It retains the
+  last validated checkpoint and raw stream, records the process failure, and
+  leaves the owed inbox input unsettled. Focused type checking passed; full
+  build and runtime bounded-memory/recovery evidence remain open.
 - [#782: Update stale coordinator laws and include their evaluation in validation](https://github.com/Flip-Engineering/baton/issues/782).
   The knowledge audit in [#779](https://github.com/Flip-Engineering/baton/issues/779)
   tracks the retained compiler failures, source review and passing hosted
@@ -828,22 +839,20 @@ remain open under [#782](https://github.com/Flip-Engineering/baton/issues/782).
   while `native.birth` and `native-start-error` are absent. Track this failed-start
   recovery boundary with [#712](https://github.com/Flip-Engineering/baton/issues/712);
   the new owner was elected and retained zero attempts and observers.
-  On 2026-10-17, seven portfolio sessions retained running executions after native
-  process loss, and each raw stdout ended in a NUL-corrupted tail beyond its valid
-  checkpoint. The pinned 2.0.0 receiver returned NUL22 before provider launch, so
-  these sessions remain unresumed with their original logs, checkpoints, UUIDs and
-  pending input preserved. A separate source-reviewed recovery follow-up is on
-  branch `luna/769-invalid-tail-recovery`: `turn.bend` SHA
-  `0217bf65870c5a156fe7ad8840d4cfbbfef7c0f56bd1f48ccf8117ce853f13d0` and
-  `receive.py` SHA `6fdae696d797912d7a55b1a4363aaa752eca643ac7eebc5c46f7107ca0dd03a5`.
-  Its crash-shaped fixture and this source change are not yet built or run.
-  The separate receive-memory source commit
-  `0880cf3dddee47c68dd98c6411a3570fc53749b7` passed focused compiler checking;
-  its emergency `-O0` Main11 build is still generating C (Bun PID 133396) and has
-  no binary artifact yet. The deployed OMP producer correction and its acceptance
-  remain tracked in [#769](https://github.com/Flip-Engineering/baton/issues/769);
-  follow-on retry behavior is cross-referenced in
-  [#786](https://github.com/Flip-Engineering/baton/issues/786).
+  On 2026-10-17, seven retained portfolio attempts had raw stdout ending in a
+  NUL-corrupted tail beyond the last valid checkpoint. The pinned 2.0.0 receiver
+  returned NUL22 before provider launch. The original logs, checkpoints, native
+  UUIDs and pending inputs remain preserved. The isolated recovery candidate is
+  on source HEAD `35152919ad99f1938c76dfa8db33f2b1ebfa762d`; its invalid-tail
+  helper has SHA256
+  `feeaac508b11a55ff1fa1a6e1f72e9d3350b691f385b2d84ff0740b67c8c37d4` and
+  passed a focused type check in 359 ms. The combined emergency `-O0` Main build
+  is running from that source. Acceptance still requires bounded-memory
+  receive and checkpoint recovery with the original bytes and pending input
+  preserved. An exact-hash review is assigned to the existing `rewrite-deepseek`
+  session. The deployed OMP producer correction remains tracked in
+  [#769](https://github.com/Flip-Engineering/baton/issues/769), with follow-on
+  retry behavior in [#786](https://github.com/Flip-Engineering/baton/issues/786).
 - [#676: Baton2: share one native instance across connected agents](https://github.com/Flip-Engineering/baton/issues/676).
 
   Follow-up 2026-10-17: the separate clean-stream `knowledge-deepseek` setup
@@ -851,23 +860,24 @@ remain open under [#782](https://github.com/Flip-Engineering/baton/issues/782).
   pending dispatch `dispatch:bb56091c-a309-43eb-a490-fb89f4dc0909` is now read
   under UUID `01a147c2-99b1-7000-bcb7-cbaea84d2e53`; attempt
   `receive:knowledge-deepseek:42:8e458cd46f641dd816c5b02d89530874` is running
-  with driver PID 223556. The input receipt remains pending. The failed Kimi
+  with a running execution. The input receipt remains pending. The failed Kimi
   quota report `receive:rewrite-kimi:893:4e9ee3cd15600e2468722b117b5d22b8`
   remains unacknowledged; its #769 scope was routed to the existing DeepSeek
   native as guidance `message:rewrite-tooling:a8c03fce4bfa7a5adebc8d2ab5660f1f`,
-  read under the same native UUID in running attempt 941 (PID 226782). The
-  fframes lead remains in its active inherited `muse-wonder-full-1.0` attempt
-  with UUID `01a1475d-d987-7bf2-8968-b31165d91a60`; operator guidance asks it
-  to finish naturally and wait for standard `muse-wonder-1.0` routing before a
-  future turn. No live model switch was attempted.
+  read under the same native UUID in attempt 941. The exact-hash review update
+  `message:rewrite-tooling:d915a4983290d89d7fcf8de3fd8b212e` is admitted to the
+  same DeepSeek UUID but has no owned-read record yet; attempt 953 is running.
+  The original fframes attempt 694 exited with status 0. A guarded configure
+  then set `fframes-lead` to `muse-wonder-1.0` at high effort, preserving UUID
+  `01a1475d-d987-7bf2-8968-b31165d91a60` for future work.
 
-  At 02:51 UTC, user units `acp-render-farm.service` and
+  At 02:55 UTC, user units `acp-render-farm.service` and
   `acp-render-farm-gpu1.service` were active with four running render containers
-  (all restart count 0) and measured container CPU usage above 100%. The bounded
-  NVIDIA sample showed 0% GPU utilization; GPU0 admission reported thermal or
-  power-brake code `0x20`, and GPU3 remained user-held. This proves active queue
-  processes and does not establish completed GPU rendering. No GPU controls were
-  used.
+  and two sampled worker processes using 120% Blender CPU and 97% Python CPU.
+  The bounded NVIDIA sample showed 0% GPU utilization; GPU0 admission reported
+  thermal or power-brake code `0x20` at 47 C, GPU1 was 63 C, and GPU3 remained
+  user-held. These samples show active CPU work and do not establish completed
+  GPU rendering. No GPU controls were used.
 
   The combined memory and invalid-tail candidate is compiling from
   `0724077c03f4802f2a396a6fecec5d717c423c32` under
