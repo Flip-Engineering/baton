@@ -406,6 +406,35 @@ class Knowledge(unittest.TestCase):
         self.assertEqual(self.ids(self.read('root')), ['finding-3'])
         self.assertEqual(self.ids(self.read('sibling')), ['finding-3'])
 
+
+    def test_a_second_identity_for_the_same_share_refuses_and_keeps_the_stored_promotion(self):
+        self.call('record', 'share-finding', 'grand', 'the share is one row',
+                  self.evidence('share-report', 'grand'), 'one run')
+        first = self.call('promote', 'share-1', 'worker', 'grand', 'worker', 'share-finding')
+        self.assertEqual(first['id'], 'share-1')
+        duplicate = self.call('promote', 'share-2', 'worker', 'grand', 'worker', 'share-finding',
+                              success=False)
+        self.assertIn('promotion-coordinate-conflict', duplicate.stderr)
+        self.assertIn('share-1', duplicate.stderr)
+        seen = self.read('grand')
+        self.assertEqual(self.ids(seen), ['share-finding'])
+        self.assertEqual(seen[0]['destinations'], ['worker'])
+        self.assertEqual(len(seen[0]['promotions']), 1)
+        with sqlite3.connect(self.db) as db:
+            self.assertEqual(db.execute(
+                "SELECT count(*) FROM knowledge_promotions WHERE finding='share-finding'").fetchone()[0], 1)
+            self.assertEqual(db.execute(
+                "SELECT count(*) FROM messages WHERE id='share-1:promotion-notice'").fetchone()[0], 1)
+            self.assertEqual(db.execute(
+                "SELECT count(*) FROM messages WHERE id='share-2:promotion-notice'").fetchone()[0], 0)
+        self.assertEqual(self.call('promote', 'share-1', 'worker', 'grand', 'worker', 'share-finding'),
+                         first)
+        second = self.call('promote', 'share-3', 'root', 'worker', 'root', 'share-finding')
+        self.assertEqual(second['id'], 'share-3')
+        changed = self.call('promote', 'share-1', 'root', 'worker', 'root', 'share-finding',
+                            success=False)
+        self.assertIn('promotion-id-conflict', changed.stderr)
+
     def test_another_destination_owner_promotes_from_a_recorded_destination(self):
         self.call('record', 'finding-6', 'grand', 'the lock is held for a second',
                   self.evidence('report-3', 'grand'), 'one host')

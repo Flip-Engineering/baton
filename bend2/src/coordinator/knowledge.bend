@@ -390,9 +390,24 @@ def source_carries(+kind: String, +source: String) -> String:
 def promotion_coordinates(+id: String, +promoter: String, +source_kind: String, +source: String, +destination_kind: String, +destination: String, +finding: String) -> String:
   "id=" ++ C.q(id) ++ " AND finding=" ++ C.q(finding) ++ " AND source_kind=" ++ C.q(source_kind) ++ " AND source=" ++ C.q(source) ++ " AND destination_kind=" ++ C.q(destination_kind) ++ " AND destination=" ++ C.q(destination) ++ " AND promoted_by=" ++ C.q(promoter)
 
+# A second identity for the same finding, source and destination is a duplicate
+# logical share. The guard names the stored identity and leaves the stored row
+# in place. An identical retry of the stored identity keeps its idempotent
+# answer.
+def promotion_coordinate_match(+alias: String, +source_kind: String, +source: String, +destination_kind: String, +destination: String, +finding: String) -> String:
+  alias ++ ".finding=" ++ C.q(finding) ++ " AND " ++ alias ++ ".source_kind=" ++ C.q(source_kind) ++ " AND " ++ alias ++ ".source=" ++ C.q(source) ++ " AND " ++ alias ++ ".destination_kind=" ++ C.q(destination_kind) ++ " AND " ++ alias ++ ".destination=" ++ C.q(destination)
+
+def promotion_duplicate(+id: String, +source_kind: String, +source: String, +destination_kind: String, +destination: String, +finding: String) -> String:
+  "EXISTS(SELECT 1 FROM knowledge_promotions prev WHERE prev.id<>" ++ C.q(id) ++ " AND " ++ promotion_coordinate_match("prev",source_kind,source,destination_kind,destination,finding) ++ ")"
+
+def promotion_coordinate_conflict_sql(+id: String, +source_kind: String, +source: String, +destination_kind: String, +destination: String, +finding: String) -> String:
+  "SELECT json_object('error','promotion-coordinate-conflict','id',prev.id,'stored',json_object('finding',prev.finding,'source',prev.source,'sourceKind',prev.source_kind,'destination',prev.destination,'destinationKind',prev.destination_kind),'condition','Another promotion identity already stores this finding, source and destination.','next','Read knowledge and retain the stored promotion, then retry with its identity or choose a different destination.') FROM knowledge_promotions prev WHERE prev.id<>" ++ C.q(id) ++ " AND " ++ promotion_coordinate_match("prev",source_kind,source,destination_kind,destination,finding) ++ " ORDER BY prev.id LIMIT 1;"
+
 def promotion_statement(+id: String, +promoter: String, +source_kind: String, +source: String, +destination_kind: String, +destination: String, +finding: String) -> String:
-  "INSERT INTO knowledge_promotions(id,finding,author,source_kind,source,destination_kind,destination,promoted_by) SELECT " ++ C.q(id) ++ ",k.id,k.author," ++ C.q(source_kind) ++ "," ++ C.q(source) ++ "," ++ C.q(destination_kind) ++ "," ++ C.q(destination) ++ "," ++ C.q(promoter) ++ " FROM knowledge k WHERE k.id=" ++ C.q(finding) ++ " AND " ++ promotion_admitted(promoter,destination_kind,destination) ++ " AND " ++ source_carries(source_kind,source)
+  +duplicate = promotion_duplicate(id,source_kind,source,destination_kind,destination,finding)
+  "INSERT INTO knowledge_promotions(id,finding,author,source_kind,source,destination_kind,destination,promoted_by) SELECT " ++ C.q(id) ++ ",k.id,k.author," ++ C.q(source_kind) ++ "," ++ C.q(source) ++ "," ++ C.q(destination_kind) ++ "," ++ C.q(destination) ++ "," ++ C.q(promoter) ++ " FROM knowledge k WHERE k.id=" ++ C.q(finding) ++ " AND " ++ promotion_admitted(promoter,destination_kind,destination) ++ " AND " ++ source_carries(source_kind,source) ++ " AND NOT " ++ duplicate
   ++ " ON CONFLICT(id) DO NOTHING;"
+  ++ promotion_coordinate_conflict_sql(id,source_kind,source,destination_kind,destination,finding)
   ++ knowledge_conflict_sql("promotion-id-conflict","knowledge_promotions",C.q(id),"EXISTS(SELECT 1 FROM knowledge k WHERE k.id=" ++ C.q(finding) ++ " AND " ++ promotion_admitted(promoter,destination_kind,destination) ++ " AND " ++ source_carries(source_kind,source) ++ ")",promotion_coordinates(id,promoter,source_kind,source,destination_kind,destination,finding),"'finding',finding,'source',source,'sourceKind',source_kind,'destination',destination,'destinationKind',destination_kind")
 
 def promotion_answer(id: String, promoter: String, source_kind: String, source: String, destination_kind: String, destination: String, finding: String) -> String:
