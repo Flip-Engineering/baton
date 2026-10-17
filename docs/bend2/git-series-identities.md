@@ -32,6 +32,7 @@ The registry has explicit exact-model mappings and series directories:
   "models": {
     "gpt-6-astra": "gpt",
     "kimi-code/k3": "kimi",
+    "kimi-code/kimi-for-coding": "kimi",
     "deepseek/deepseek-flash": "deepseek",
     "muse-spark-1.3-contributor": "muse"
   },
@@ -45,6 +46,14 @@ The registry has explicit exact-model mappings and series directories:
   }
 }
 ```
+
+Both Kimi keys route to the same Kimi series.
+`kimi-code/kimi-for-coding` is the provider-qualified OMP selector for Kimi
+K2.8 Preview: `kimi-code` names the OMP provider and `kimi-for-coding` is
+Kimi's API model ID. The display name `K2.8 Preview` identifies the model in
+the OMP catalog; Kimi's [model documentation](https://www.kimi.com/code/docs/en/kimi-code/models)
+gives the API model ID and the accepted effort levels `low`, `high` and `max`.
+Registry keys and `--model-key` values use the selector verbatim.
 
 The registry may set one shared author and committer with a top-level
 `attribution` object:
