@@ -184,7 +184,13 @@ remain open under [#782](https://github.com/Flip-Engineering/baton/issues/782).
   comparisons produced byte-identical C. The dependency fixture improved by
   2.8%; the foreign-C change reduced repeated source assembly, with no reliable
   measured wall-time improvement. Main-program improvement remains unverified.
-  A fixed-point analysis implementation is under review. A bounded Main profile
+  The composed compiler candidate (`3e1b9ded`) enables analysis passes by
+  default, includes the dependency and foreign-C changes, and reduces temporary
+  allocation during diagnostic dependency traversal. Three focused programs
+  produce byte-identical C, including a five-pass fixed point with foreign C.
+  A diagnostic stress fixture uses 277,524 KiB versus 316,288 KiB and takes
+  1.33 seconds versus 1.67 seconds. Main-program effects remain unverified.
+  A bounded Main profile
   measured 49 seconds for loading and 155 seconds for validation, then exhausted
   its 16 GiB limit during diagnostic dependency traversal. The production Main
   build completed validation and diagnostics and continues in C generation.
@@ -910,8 +916,13 @@ remain open under [#782](https://github.com/Flip-Engineering/baton/issues/782).
   preserves exit-zero invalid output and owed input. Bounded-memory receive,
   checkpoint recovery and runtime deployment remain pending. A separate host-C
   recovery candidate supports live observer replacement through the retained
-  keeper, with process and attempt custody checks. Its C compilation and
-  repeated-handover qualification remain pending. The deployed OMP producer correction remains tracked in
+  keeper, with process and attempt custody checks. Commit `697d1664` covers
+  public receive, internal receive and recovery process arguments. Its C
+  compilation and repeated-handover qualification remain pending. The separate
+  SQLite projection fix (`ca42f103`) has compiled and passed repeated setup
+  through the executable on a database copy: schema version and trigger
+  definitions remain unchanged. Runtime adoption remains pending. The deployed
+  OMP producer correction remains tracked in
   [#769](https://github.com/Flip-Engineering/baton/issues/769), with follow-on
   retry behavior in [#786](https://github.com/Flip-Engineering/baton/issues/786).
 - [#676: Baton2: share one native instance across connected agents](https://github.com/Flip-Engineering/baton/issues/676).
