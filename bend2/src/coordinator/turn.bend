@@ -684,10 +684,13 @@ def consume_complete_pair(result: Outcome & List<Chan(Result<&1,&1,U32 & String,
 def consume_complete(action: IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>)) -> IO(ConsumeStep):
   IO.bind(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>, ConsumeStep, action, result => IO.pure(ConsumeStep,consume_complete_pair(result)))
 
-def native_line_contains_nul(line: String) -> Bool:
-  match String.split(line,Char.from_u32(0)):
+def native_line_contains_nul_parts(parts: List<&2,String>) -> Bool:
+  match parts:
     case first <> second <> rest: True{}
     case other: False{}
+
+def native_line_contains_nul(line: String) -> Bool:
+  native_line_contains_nul_parts(String.split(line,Char.from_u32(0)))
 
 def wake_read(line: Maybe<String>, notice: String, active: Bool) -> WakeRead:
   match line:
@@ -768,7 +771,7 @@ def consume_exhausted(+db: String, +player: String, +id: String, +log: String, h
 def invalid_tail_error() -> String:
   "Native output contains an embedded NUL byte; observation stopped at the last validated checkpoint."
 
-def invalid_tail_result(result: Outcome & List<Chan<Result<&1,&1,U32 & String,String>)>) -> Outcome & List<Chan<Result<&1,&1,U32 & String,String>)>:
+def invalid_tail_result(result: Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>) -> Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>:
   match result:
     case (Ended{status,event,error,incomplete},deliveries):
       terminal : Bool = Bool.or(Tx.starts_with(status,"exit "),Bool.or(Tx.starts_with(status,"signal "),String.eq(status,"unknown after keeper loss")))
