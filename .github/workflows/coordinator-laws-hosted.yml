@@ -1,0 +1,60 @@
+name: Coordinator aggregate laws
+
+'on':
+  push:
+    branches: [codex/hosted-laws-782-20261017]
+
+permissions:
+  contents: read
+
+jobs:
+  laws:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout qualification driver and compiler source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+      - name: Read selected source identity
+        id: source
+        shell: bash
+        run: |
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
+          import json
+          from pathlib import Path
+          plan = json.loads(Path('.github/scripts/coordinator-laws-hosted-plan.json').read_text())
+          print('commit=' + plan['source_commit'])
+          PY
+      - name: Checkout exact law candidate
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ steps.source.outputs.commit }}
+          path: candidate
+          persist-credentials: false
+      - name: Prepare exact Bun build
+        shell: bash
+        run: |
+          set -euo pipefail
+          run="$RUNNER_TEMP/coordinator-laws-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          mkdir -m 700 "$run"
+          printf 'BATON_LAWS_RUN=%s\n' "$run" >> "$GITHUB_ENV"
+          curl --proto '=https' --tlsv1.2 -fsSL \
+            https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/bun-linux-x64.zip \
+            -o "$run/bun.zip"
+          printf '951ee2aee855f08595aeec6225226a298d3fea83a3dcd6465c09cbccdf7e848f  %s\n' "$run/bun.zip" | sha256sum -c -
+          unzip -q "$run/bun.zip" -d "$run"
+      - name: Check coordinator aggregate laws
+        shell: bash
+        run: |
+          python3 .github/scripts/check-coordinator-laws-hosted.py \
+            --source "$GITHUB_WORKSPACE/candidate" \
+            --bun "$BATON_LAWS_RUN/bun-linux-x64/bun" \
+            --evidence "$BATON_LAWS_RUN/evidence"
+      - name: Retain complete check output and original process result
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: coordinator-laws-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/coordinator-laws-${{ github.run_id }}-${{ github.run_attempt }}/evidence/
+          include-hidden-files: true
+          if-no-files-found: error
