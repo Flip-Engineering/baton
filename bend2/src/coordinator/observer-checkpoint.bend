@@ -103,20 +103,19 @@ def changed_when(enabled: Bool, previous: String, next: String) -> Bool:
     case False{}: False{}
     case True{}: Bool.not(String.eq(previous,next))
 
-# Turn supplies the payload fields its reducer can change on this frame.
-# Cursor, command and filter changes always participate in the decision.
+# Output cursor changes are replayable from the prior durable spool offset.
+# Persist the cursor with the next reducer-state change or final checkpoint.
 def checkpoint_due_fields(+previous: State, +next: State, message_enabled: Bool, terminal_enabled: Bool, codex_enabled: Bool) -> Bool:
   +episode_changed = Bool.not(String.eq(episode(previous),episode(next)))
   +guidance_changed = Bool.not(String.eq(cursor(previous),cursor(next)))
   +message_changed = changed_when(message_enabled,last_message(previous),last_message(next))
-  +output_changed = Bool.not(String.eq(output(previous),output(next)))
   +activity_changed = Bool.not(String.eq(omp_activity(previous),omp_activity(next)))
   +primary_changed = Bool.not(String.eq(muse_primary(previous),muse_primary(next)))
   +current_changed = Bool.not(String.eq(muse_current(previous),muse_current(next)))
   +terminal_changed = changed_when(terminal_enabled,terminal(previous),terminal(next))
   +filter_changed = Bool.not(String.eq(filter_mode(previous),filter_mode(next)))
   +codex_changed = changed_when(codex_enabled,codex_log(previous),codex_log(next))
-  Bool.or(episode_changed,Bool.or(output_changed,Bool.or(activity_changed,Bool.or(guidance_changed,Bool.or(message_changed,Bool.or(primary_changed,Bool.or(current_changed,Bool.or(terminal_changed,Bool.or(filter_changed,codex_changed)))))))))
+  Bool.or(episode_changed,Bool.or(activity_changed,Bool.or(guidance_changed,Bool.or(message_changed,Bool.or(primary_changed,Bool.or(current_changed,Bool.or(terminal_changed,Bool.or(filter_changed,codex_changed))))))))
 
 def checkpoint_due(previous: State, next: State) -> Bool:
   checkpoint_due_fields(previous,next,True{},True{},True{})
@@ -194,15 +193,23 @@ def decode_valid(db: String, value: String) -> IO(State):
     row : String <- IO.try(String,DB.Sql.query(db,decode_fields_sql(value)))
     decode_fields(ContextText.split_tabs(without_query_newline(row)))
 
-def reset_empty(handle: U32) -> IO(State):
+def commit(db: String, handle: U32, +state: State, enabled: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match enabled:
+    case False{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
+    case True{}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      saved : String <- IO.try(String,DB.Sql.query(db,encode_sql(state)))
+      Custody.Instance.commit(handle,schema_version(),Tx.trim_nl(saved))
+
+def reset_empty(db: String, +handle: U32) -> IO(State):
   do IO<State>:
     reset : Unit <- IO.try(Unit,Custody.Instance.replay(handle))
+    committed : Unit <- IO.try(Unit,commit(db,handle,empty(),True{}))
     IO.pure(State,empty())
 
 def decode_nonempty(+db: String, handle: U32, +value: String) -> IO(State):
   do IO<State>:
     valid : String <- IO.try(String,DB.Sql.query(db,valid_sql(value)))
-    Bool.pick(IO(State),String.eq(Tx.trim_nl(valid),"1"),decode_valid(db,value),reset_empty(handle))
+    Bool.pick(IO(State),String.eq(Tx.trim_nl(valid),"1"),decode_valid(db,value),reset_empty(db,handle))
 
 def decode(db: String, handle: U32, +value: String) -> IO(State):
   Bool.pick(IO(State),String.is_empty(value),IO.pure(State,empty()),decode_nonempty(db,handle,value))
@@ -211,13 +218,6 @@ def restore(db: String, +handle: U32) -> IO(State):
   do IO<State>:
     saved : String <- IO.try(String,Custody.Instance.restore(handle,schema_version()))
     decode(db,handle,without_query_newline(saved))
-
-def commit(db: String, handle: U32, +state: State, enabled: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
-  match enabled:
-    case False{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
-    case True{}: do IO<Result<&1,&1,U32 & String,Unit>>:
-      saved : String <- IO.try(String,DB.Sql.query(db,encode_sql(state)))
-      Custody.Instance.commit(handle,schema_version(),Tx.trim_nl(saved))
 
 def after_observation(db: String, handle: U32, +state: State, enabled: Bool, observed: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match observed:

@@ -36,12 +36,18 @@ else
   "$compiler" "$entry" -o "$output.c"
 fi
 if [ "$entry_path" = "$root/bend2/src/coordinator/main.bend" ]; then
-  if [ -n "${BATON2_CCACHE:-}" ]; then
-    "$BATON2_CCACHE" "${CC:-clang}" -O1 -pthread -Dmain=baton2_runtime_main -c "$output.c" -o "$output.o"
-  else
-    "${CC:-clang}" -O1 -pthread -Dmain=baton2_runtime_main -c "$output.c" -o "$output.o"
+  python3 "$root/tools/cgen-clang-parallel/build_native.py" \
+    --source "$output.c" --output "$output" \
+    --entry "$root/bend2/src/host/native-entry.c" \
+    --cc "${CC:-clang}" --ccache "${BATON2_CCACHE:-}"
+  if [ -f "$output.build.json" ]; then
+    python3 "$root/.github/scripts/reuse-native-main.py" verify-build \
+      --receipt "$output.build.json" --source "$output.c" \
+      --entry "$root/bend2/src/host/native-entry.c" --output "$output"
   fi
-  "${CC:-clang}" -O1 -pthread bend2/src/host/native-entry.c "$output.o" -lsqlite3 -lm -o "$output"
+elif [ -n "${BATON2_CCACHE:-}" ]; then
+  "$BATON2_CCACHE" "${CC:-clang}" -O1 -pthread -c "$output.c" -o "$output.o"
+  "${CC:-clang}" -O1 -pthread "$output.o" -lsqlite3 -lm -o "$output"
 else
   "${CC:-clang}" -O1 -pthread "$output.c" -lsqlite3 -lm -o "$output"
 fi

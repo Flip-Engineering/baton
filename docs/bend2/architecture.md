@@ -36,6 +36,8 @@ write transactions.
 | `coordinator/recruit.bend`, `turn.bend` | Create Player workspaces and supervise native turns. |
 | `coordinator/receive.bend` | Read parent input, select the native route and continue queued session work. |
 | `coordinator/guidance.bend`, `delivery.bend` | Send OMP guidance and invoke the recipient endpoint after a committed message. |
+| `coordinator/codex-inbox*.bend`, `codex-route.bend` | Admit Codex inbox input, preserve its receiver environment, and report completed native turns. |
+| `coordinator/branching*.bend` | Snapshot workspaces, start fresh conversations, retain evaluations, and continue a selected Player. |
 | `bend2/src/harness/` | Construct the four harness launch and resume protocols. |
 | `bend2/src/git/` | Inspect Git state, create worktrees, prepare and judge landings, update refs and push. |
 | `bend2/src/host/` | Bind process, file and SQLite effects to the host. |
@@ -46,6 +48,12 @@ Claude channel adapter uses Node's standard library, including `node:sqlite`.
 Native `receive` supplies Codex, OMP, Muse and Claude Code Conductor delivery. Their earlier Node
 adapters remain available for existing configurations.
 Application decisions live in the Bend modules; C bindings perform host effects.
+Codex's interactive inbox uses `codex app-server proxy`. The native host handles
+WebSocket framing and the proxy process. Bend reads the committed inbox, selects
+turn admission or steering, retains terminal reports, and resolves handling from
+complete owned input reads. Receiver argv retains `HOME` and `CODEX_HOME` for
+cross-provider delivery. Restart reconstructs pending work from the database and
+the retained native conversation.
 Production modules are imported libraries. Earlier JSON and replay experiments
 and their frozen-output checks remain optional reference programs.
 
@@ -296,8 +304,11 @@ On attachment, pending messages wait until tool discovery completes a client
 `ping` round trip. That order addresses the observed native startup replay loss.
 The server's in-memory sent set suppresses repeated notifications during that
 process lifetime. On restart it reads pending messages from SQLite again.
-The interactive Conductor must enable the local development channel. Its native
-session is resumed with the same database and MCP configuration.
+The adapter's `--claude` launcher supplies session-scoped native hooks. Complete
+reads include Claude's prompt identity. Its successful `Stop` event invokes
+Bend's existing owned-read settlement. `StopFailure` preserves failed input;
+interrupted prompts remain pending. The native session resumes with the same
+database and recorded native identity.
 
 ## Landing and publication
 

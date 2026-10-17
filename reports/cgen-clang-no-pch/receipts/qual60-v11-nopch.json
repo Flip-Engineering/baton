@@ -1,0 +1,174 @@
+{
+  "split_dir": "/run/baton2-native-homelab/retained/baton-compiler-forkflush-20261016T195048Z/worktrees/cgen-clang-review-20261017/reports/cgen-clang-review/scratch/big-v11",
+  "input_sha256": "e10d4c38ae230bb4ff6d40a2696a7944940a3fceb848c83f4ec0c1a8c43f7062",
+  "input_bytes": 60071815,
+  "segments": 23726,
+  "shards": 4,
+  "dropped_split_declarations": [
+    "kernel void bend_dev(Corpus H [[buffer(0)]], constant u32& pass [[buffer(1)]],"
+  ],
+  "cap_kib": 25165824,
+  "cc": "clang-19",
+  "cflags": [
+    "-O1",
+    "-pthread",
+    "-Dmain=baton2_runtime_main"
+  ],
+  "pch": false,
+  "compile": {
+    "wall_s": 100.2656,
+    "aggregate_peak_kib": 7632116,
+    "aggregate_pss_peak_kib": 7269193,
+    "aborted_over_cap": false,
+    "jobs": [
+      {
+        "cmd": [
+          "clang-19",
+          "-O1",
+          "-pthread",
+          "-Dmain=baton2_runtime_main",
+          "-c",
+          "baton_core.c",
+          "-o",
+          "baton_core.o"
+        ],
+        "code": 0,
+        "stdout": "",
+        "stderr": "",
+        "peak_kib": 516572,
+        "pss_peak_kib": 443103
+      },
+      {
+        "cmd": [
+          "clang-19",
+          "-O1",
+          "-pthread",
+          "-Dmain=baton2_runtime_main",
+          "-c",
+          "baton_spins.c",
+          "-o",
+          "baton_spins.o"
+        ],
+        "code": 0,
+        "stdout": "",
+        "stderr": "",
+        "peak_kib": 1544532,
+        "pss_peak_kib": 1473457
+      },
+      {
+        "cmd": [
+          "clang-19",
+          "-O1",
+          "-pthread",
+          "-Dmain=baton2_runtime_main",
+          "-c",
+          "shard_00.c",
+          "-o",
+          "shard_00.o"
+        ],
+        "code": 0,
+        "stdout": "",
+        "stderr": "",
+        "peak_kib": 1302556,
+        "pss_peak_kib": 1234082
+      },
+      {
+        "cmd": [
+          "clang-19",
+          "-O1",
+          "-pthread",
+          "-Dmain=baton2_runtime_main",
+          "-c",
+          "shard_01.c",
+          "-o",
+          "shard_01.o"
+        ],
+        "code": 0,
+        "stdout": "",
+        "stderr": "",
+        "peak_kib": 1533944,
+        "pss_peak_kib": 1459346
+      },
+      {
+        "cmd": [
+          "clang-19",
+          "-O1",
+          "-pthread",
+          "-Dmain=baton2_runtime_main",
+          "-c",
+          "shard_02.c",
+          "-o",
+          "shard_02.o"
+        ],
+        "code": 0,
+        "stdout": "",
+        "stderr": "",
+        "peak_kib": 1709312,
+        "pss_peak_kib": 1633844
+      },
+      {
+        "cmd": [
+          "clang-19",
+          "-O1",
+          "-pthread",
+          "-Dmain=baton2_runtime_main",
+          "-c",
+          "shard_03.c",
+          "-o",
+          "shard_03.o"
+        ],
+        "code": 0,
+        "stdout": "",
+        "stderr": "",
+        "peak_kib": 1774960,
+        "pss_peak_kib": 1703512
+      }
+    ]
+  },
+  "compile_aborted_over_cap": false,
+  "link": {
+    "wall_s": 0.5306,
+    "peak_kib": 171856,
+    "pss_peak_kib": 119374,
+    "code": 0,
+    "stderr": ""
+  },
+  "binaries": {
+    "baseline": {
+      "path": "/var/tmp/baton-live-observer-public-recovery-sqlite-5142-boot644/baton2",
+      "sha256": "aac70b1a80ef5f2ba577d616d615abafd20e1513149590102e03585e80c90bb3"
+    },
+    "sharded": {
+      "path": "/run/baton2-native-homelab/retained/baton-compiler-forkflush-20261016T195048Z/worktrees/cgen-clang-review-20261017/reports/cgen-clang-review/scratch/qual60-v11-nopch/baton2",
+      "sha256": "3a939deadc5897e420db76c9fd3e484847e2652a1bf58d11cbcf8b09e32fa720"
+    }
+  },
+  "cli_help": {
+    "baseline": {
+      "code": 0,
+      "stdout": "usage: baton ACTION ARGS\nActions: inbox, read, send, report, ask, guide, finish, confirm, dispatch, players, assignment, status, role, ensemble, ensemble-member, section, section-member, orchestra, branch, knowledge.\nBaton resolves your project and session. Successful native turns record handling of their complete owned reads. Use help ACTION for usage and explicit context options. Use help role for responsibilities, help ensemble for team coupling, help section for capability groups and help branch for alternatives, score-based selection and continuation.\ndispatch TEXT [OPTIONS]\ndispatch --stdin [OPTIONS]\ndispatch --help shows project, saved routes, overrides and continuation options.\ntask-input-read --current returns the current actor's latest complete request and setup result.\ntask-input-read --session PLAYER selects that actor's latest dispatch to the Player.\nAdministration: baton DATABASE COMMAND ARGS\nserve\nowner-status\nproject PATH\nproject-sessions PATH\ntask-input-read --current | --session PLAYER\ndelivery MESSAGE_ID\ndelivery-batch IDS_JSON\nmessage-batch SENDER MESSAGES_JSON\ninput MESSAGE_ID\nturns PLAYER\nui-subscribe AFTER GENERATION\nview SUBJECT [READER [PORT]]\nlogs-storage\nlogs-clean SESSION\nproject PATH registers this database in the project Git common directory. --project PATH selects the registered database.\ndelivery and input inspect an intentionally selected historical message. Native command forms remain available for existing integrations.\nnative-attachment-input SESSION COMPONENT initializes recorded external native guidance from complete stdin.\n\nknowledge record --kind KIND --claim TEXT [--evidence TEXT] [--limits TEXT] [--links JSON]\nknowledge search --query TEXT [--scope universal|worker|group|all] [--subject SUBJECT]\nknowledge traverse --reference REFERENCE --direction in|out|both [--relation RELATION] [--recursive] [--scope universal|worker|group|all]\nBaton resolves the author and generates finding and relation identities. Links contain source, relation and target evidence references. Kinds and relations are authored strings. Search matches all query terms across complete findings and retained evidence messages and returns typed neighbors with detail reads. Traversal follows scoped relations and terminates on cycles. Use help knowledge for the available actions.\n",
+      "stderr": ""
+    },
+    "sharded": {
+      "code": 0,
+      "stdout": "usage: baton ACTION ARGS\nActions: inbox, read, send, report, ask, guide, finish, confirm, dispatch, players, assignment, status, role, ensemble, ensemble-member, section, section-member, orchestra, branch, knowledge.\nBaton resolves your project and session. Successful native turns record handling of their complete owned reads. Use help ACTION for usage and explicit context options. Use help role for responsibilities, help ensemble for team coupling, help section for capability groups and help branch for alternatives, score-based selection and continuation.\ndispatch TEXT [OPTIONS]\ndispatch --stdin [OPTIONS]\ndispatch --help shows project, saved routes, overrides and continuation options.\ntask-input-read --current returns the current actor's latest complete request and setup result.\ntask-input-read --session PLAYER selects that actor's latest dispatch to the Player.\nAdministration: baton DATABASE COMMAND ARGS\nserve\nowner-status\nproject PATH\nproject-sessions PATH\ntask-input-read --current | --session PLAYER\ndelivery MESSAGE_ID\ndelivery-batch IDS_JSON\nmessage-batch SENDER MESSAGES_JSON\ninput MESSAGE_ID\nturns PLAYER\nui-subscribe AFTER GENERATION\nview SUBJECT [READER [PORT]]\nlogs-storage\nlogs-clean SESSION\nproject PATH registers this database in the project Git common directory. --project PATH selects the registered database.\ndelivery and input inspect an intentionally selected historical message. Native command forms remain available for existing integrations.\nnative-attachment-input SESSION COMPONENT initializes recorded external native guidance from complete stdin.\n\nknowledge record --kind KIND --claim TEXT [--evidence TEXT] [--limits TEXT] [--links JSON]\nknowledge search --query TEXT [--scope universal|worker|group|all] [--subject SUBJECT]\nknowledge traverse --reference REFERENCE --direction in|out|both [--relation RELATION] [--recursive] [--scope universal|worker|group|all]\nBaton resolves the author and generates finding and relation identities. Links contain source, relation and target evidence references. Kinds and relations are authored strings. Search matches all query terms across complete findings and retained evidence messages and returns typed neighbors with detail reads. Traversal follows scoped relations and terminates on cycles. Use help knowledge for the available actions.\n",
+      "stderr": ""
+    },
+    "code_equal": true,
+    "stdout_equal": true,
+    "stderr_equal": true,
+    "stdout_sha256": "bc652f96ac257bf1890f076437b75d1e5c1cbfe33f7c118b0d1d570c8f499228",
+    "stderr_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "stdout_bytes": 2324,
+    "stderr_bytes": 0
+  },
+  "symbols": {
+    "baseline_count": 24525,
+    "sharded_count": 25259,
+    "missing_named": [],
+    "missing_all_count": 293,
+    "extra_named_count": 1027,
+    "dynamic_sharded": []
+  },
+  "status": "built"
+}

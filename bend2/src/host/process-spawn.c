@@ -3,6 +3,7 @@
 #include <fcntl.h>
 #include <spawn.h>
 #include <sys/wait.h>
+#include <dirent.h>
 
 extern char **environ;
 
@@ -21,7 +22,7 @@ typedef struct {
   size_t length;
   u32 handle, signal, index;
   uint64_t owner_incarnation,owner_attempt;
-  int kind, error, eof, unstarted, fresh, preserve_line;
+  int kind, error, eof, unstarted, fresh, preserve_line, notice_socket;
   char *directory, *initial, *recovery, *detail, *database, *artifact_name, *artifact, *identity, *owner_witness;
   size_t initial_length, recovery_length, artifact_name_length, artifact_length, identity_length;
   u32 keep_stdin, lock;
@@ -597,7 +598,25 @@ static char *br_self(void) {
   if(buffer && !_NSGetExecutablePath(buffer,&size)) path=realpath(buffer,NULL);
   free(buffer);return path;
 #else
-  return realpath("/proc/self/exe",NULL);
+  static const char deleted[]=" (deleted)";
+  char link[PATH_MAX+1];
+  ssize_t length=readlink("/proc/self/exe",link,PATH_MAX);
+  if(length<0 || length>=PATH_MAX)return NULL;
+  link[length]=0;
+  size_t suffix=sizeof(deleted)-1;
+  if((size_t)length<suffix || memcmp(link+length-suffix,deleted,suffix))
+    return realpath(link,NULL);
+  struct stat exact;
+  if(!stat(link,&exact))return realpath(link,NULL);
+  if(errno!=ENOENT)return NULL;
+  link[length-suffix]=0;
+  char *current=realpath(link,NULL);
+  if(!current)return NULL;
+  struct stat info;
+  if(stat(current,&info) || !S_ISREG(info.st_mode) || access(current,X_OK)) {
+    free(current);return NULL;
+  }
+  return current;
 #endif
 }
 
@@ -1213,6 +1232,132 @@ static int br_observer_pid(int socket,pid_t *pid) {
   *pid=peer.pid;return 0;
 #endif
 }
+/* A live replacement must identify the supplied process from the exact retained
+   attempt it is observing. The pidfd remains open through handoff and retirement. */
+static int br_observer_attempt_custody(pid_t pid,const char *database,const char *session,
+                                       const char *directory,int lock,int *life_out) {
+  if(!life_out)return EINVAL;
+  *life_out=-1;
+  char *canonical=realpath(directory,NULL),*database_path=realpath(database,NULL);
+  if(!canonical || !database_path) {free(canonical);free(database_path);return errno;}
+  char *stdout_path=br_path(canonical,"stdout");
+  char *log_path=br_path(canonical,"observer.log");
+  int error=!stdout_path || !log_path?ENOMEM:0;
+  int ended=0,life=-1,public_receive=0,recovery=0;
+  if(!error) {
+    life=br_process_lifetime(pid,&ended);
+    if(life<0)error=ended?ESRCH:errno;
+  }
+#ifndef __APPLE__
+  char command_path[PATH_MAX];
+  unsigned char command[65536];
+  size_t command_length=0;
+  if(!error) {
+    int n=snprintf(command_path,sizeof(command_path),"/proc/%ld/cmdline",(long)pid);
+    if(n<0 || (size_t)n>=sizeof(command_path))error=EOVERFLOW;
+  }
+  if(!error) {
+    int fd=open(command_path,O_RDONLY|O_CLOEXEC);
+    if(fd<0)error=errno;
+    else {
+      while(command_length<sizeof(command)) {
+        ssize_t n=read(fd,command+command_length,sizeof(command)-command_length);
+        if(n<0 && errno==EINTR)continue;
+        if(n<0){error=errno;break;}
+        if(!n)break;
+        command_length+=(size_t)n;
+      }
+      if(!error && command_length==sizeof(command))error=E2BIG;
+      close(fd);
+    }
+  }
+  if(!error) {
+    char *argv[16];size_t argc=0,start=0;
+    if(!command_length || command[command_length-1])error=EINVAL;
+    else {
+      for(size_t i=0;i<command_length;i++)if(!command[i]) {
+        if(argc==sizeof(argv)/sizeof(argv[0])){error=E2BIG;break;}
+        argv[argc++]=(char *)command+start;start=i+1;
+      }
+      int receive=!error && (argc==14 || argc==15) && !strcmp(argv[1],"--recover-receive");
+      public_receive=!error && argc==10 && !strcmp(argv[2],"receive");
+      recovery=!error && argc==5 && !strcmp(argv[2],"recover-observer");
+      if(!error && !receive && !public_receive && !recovery)error=EPERM;
+      if(!error && strcmp(argv[3],session))error=EPERM;
+      if(!error) {
+        char *saved_database=realpath(receive?argv[2]:argv[1],NULL);
+        if(!saved_database || strcmp(saved_database,database_path))error=EPERM;
+        free(saved_database);
+      }
+      if(!error && receive) {
+        char *saved_directory=realpath(argv[12],NULL);
+        if(!saved_directory || strcmp(saved_directory,canonical))error=EPERM;
+        free(saved_directory);
+        const char *name=strrchr(canonical,'/');name=name?name+1:canonical;
+        const char *encoded=strstr(name,".attempt-");
+        const char *id=argv[4];static const char hex[]="0123456789abcdef";
+        size_t id_length=strlen(id);
+        if(!encoded || strlen(encoded+9)!=id_length*2)error=EPERM;
+        else for(size_t i=0;i<id_length;i++) {
+          unsigned char c=(unsigned char)id[i];
+          if(encoded[9+i*2]!=hex[c>>4] || encoded[10+i*2]!=hex[c&15]){error=EPERM;break;}
+        }
+      }
+      if(!error && recovery) {
+        char *end=NULL;errno=0;unsigned long prior=strtoul(argv[4],&end,10);
+        if(errno || end==argv[4] || *end || !prior || prior>INT_MAX)error=EPERM;
+      }
+    }
+  }
+
+  if(!error) {
+    struct pollfd alive={life,POLLIN,0};
+    int ready;do {ready=poll(&alive,1,0);}while(ready<0 && errno==EINTR);
+    if(ready<0)error=errno;
+    else if(ready || (alive.revents&(POLLIN|POLLHUP|POLLERR)))error=ESRCH;
+  }
+  if(!error) {
+    struct stat lock_info;
+    if(fstat(lock,&lock_info))error=errno;
+    char fd_directory[PATH_MAX],fd_path[PATH_MAX],target[PATH_MAX+1];
+    int length=snprintf(fd_directory,sizeof(fd_directory),"/proc/%ld/fd",(long)pid);
+    if(!error && (length<0 || (size_t)length>=sizeof(fd_directory)))error=EOVERFLOW;
+    DIR *fds=!error?opendir(fd_directory):NULL;
+    if(!error && !fds)error=errno;
+    int stdout_owned=0,log_owned=0,lock_owned=0;
+    struct dirent *entry;
+    while(!error && (entry=readdir(fds))) {
+      if(entry->d_name[0]=='.')continue;
+      length=snprintf(fd_path,sizeof(fd_path),"%s/%s",fd_directory,entry->d_name);
+      if(length<0 || (size_t)length>=sizeof(fd_path)){error=EOVERFLOW;break;}
+      ssize_t n=readlink(fd_path,target,sizeof(target)-1);
+      if(n>=0) {
+        target[n]=0;
+        if(!strcmp(target,stdout_path))stdout_owned=1;
+        if(!strcmp(target,log_path))log_owned=1;
+      }
+      struct stat info;
+      if(!stat(fd_path,&info) && info.st_dev==lock_info.st_dev && info.st_ino==lock_info.st_ino)lock_owned=1;
+      if(stdout_owned && log_owned && lock_owned)break;
+    }
+    if(fds)closedir(fds);
+    if(!error && (!stdout_owned || (!public_receive && !recovery && !log_owned) || !lock_owned))error=EPERM;
+  }
+  if(!error) {
+    struct pollfd alive={life,POLLIN,0};
+    int ready;do {ready=poll(&alive,1,0);}while(ready<0 && errno==EINTR);
+    if(ready<0)error=errno;
+    else if(ready || (alive.revents&(POLLIN|POLLHUP|POLLERR)))error=ESRCH;
+  }
+#else
+  if(!error)error=ENOTSUP;
+#endif
+  free(stdout_path);free(log_path);free(canonical);free(database_path);
+  if(error) {if(life>=0)close(life);return error;}
+  *life_out=life;
+  return 0;
+}
+
 static int br_control_command(BrKeeper *keeper,BrControl *control,BrFrame frame,const char *payload) {
   const char *end=memchr(payload,0,(size_t)frame.length);
   int error=0;
@@ -4113,10 +4258,29 @@ static int br_instance_publish(const char *database,uint64_t cursor) {
 }
 static void br_subscription_free(BatonRetained *retained) {
   if(!retained)return;
-  if(retained->socket>=0)close(retained->socket);
+  if(retained->socket>=0) {
+    shutdown(retained->socket,SHUT_RDWR);
+    close(retained->socket);
+  }
   retained->socket=-1;
   free(retained->directory);free(retained->database);
   free(retained);
+}
+/* The IO loop selects a live handle before it queues a worker. Each notice
+   owns its socket until its read returns. Unsubscribe removes the registry
+   entry here, while later effect selections are serialized with this one. */
+static int br_subscription_prepare(BatonProcessCall *call) {
+  BatonRetained *retained=call->child?call->child->retained:NULL;
+  if(!retained || retained->socket<0)return EBADF;
+  if(call->kind==BP_INSTANCE_NOTICE) {
+    int socket_fd=fcntl(retained->socket,F_DUPFD_CLOEXEC,0);
+    if(socket_fd<0)return errno;
+    call->notice_socket=socket_fd;
+    call->child=NULL;
+  } else {
+    baton_children[call->index]=NULL;
+  }
+  return 0;
 }
 /* Woken-read design note: every wait round below blocks in poll with no
    timeout. The watcher thread only watches the spool condition and pokes a
@@ -4325,11 +4489,10 @@ static void br_instance_subscribe_call(BatonProcessCall *call) {
   call->length=(size_t)written;
 }
 static void br_instance_notice_call(BatonProcessCall *call) {
-  BatonRetained *retained=call->child?call->child->retained:NULL;
-  if(!retained || retained->socket<0) {call->error=EBADF;return;}
   BrInstanceNotice notice={0};
   uint64_t generation=0;
-  int error=br_instance_notice(retained->socket,&notice,&generation);
+  int error=br_instance_notice(call->notice_socket,&notice,&generation);
+  close(call->notice_socket);call->notice_socket=-1;
   if(error) {call->error=error;return;}
   const char *kind=notice.kind==BN_COMMIT?"commit":notice.kind==BN_GAP?"gap":"unknown";
   char text[192];
@@ -4347,7 +4510,6 @@ static void br_instance_unsubscribe_call(BatonProcessCall *call) {
   if(!call->child) {call->error=EBADF;return;}
   br_subscription_free(call->child->retained);
   call->child->retained=NULL;
-  baton_children[call->index]=NULL;
   free(call->child);
   call->child=NULL;
 }
@@ -4674,6 +4836,7 @@ static Term baton_process_begin_mode(Env e, Term *f, IoWork *w, int kind, int pr
               kind==BP_INSTANCE_SUBSCRIBE;
   call->kind=kind;
   call->preserve_line=preserve_line;
+  call->notice_socket=-1;
   if(acquire) {
     int error=baton_child_allocate(call);
     if(error) {free(call);return io_fail(e,(u32)error,NULL);}
@@ -4782,6 +4945,8 @@ static Term baton_process_begin_mode(Env e, Term *f, IoWork *w, int kind, int pr
     if(kind==BP_INSTANCE_RESTORE) call->signal=(u32)f[1];
     if(kind==BP_SIGNAL) call->signal=(u32)f[1];
     if(kind==BP_READ_AWAKE) call->signal=(u32)f[1];
+    if(kind==BP_INSTANCE_NOTICE || kind==BP_INSTANCE_UNSUBSCRIBE)
+      call->error=br_subscription_prepare(call);
   }
   w->data=(char *)call;
   if(call->error) return baton_process_pack(e,w);
@@ -4949,7 +5114,7 @@ static void __attribute__((constructor)) baton_process_signals(void){signal(SIGP
 typedef struct {
   char *database, *session, *path, *directory;
   const char *detail;
-  int handle, error, kind, keeper;
+  int handle, error, kind, keeper, observer_life, observer_absent, observer_retired;
   u32 observer;
   BatonProcessCall attempt;
 } BatonSessionLock;
@@ -4959,19 +5124,55 @@ static int baton_observer_completed(BatonSessionLock *call) {
   int error=br_admission_verify(call->directory,call->database,-1);
   if(error)return error;
   char *path=br_path(call->directory,"status");
-  FILE *file=path?fopen(path,"r"):NULL;
-  error=file?0:path?errno:ENOMEM;
+  if(!path)return ENOMEM;
+  errno=0;
+  FILE *file=fopen(path,"r");
+  int status_error=file?0:errno;
   free(path);
-  int status=0;
+  int status=0,live_pending=0;
   if(file) {
-    if(fscanf(file,"%d",&status)!=1)error=EINVAL;
-    else if(!WIFEXITED(status) && !WIFSIGNALED(status))error=EBUSY;
+    if(fscanf(file,"%d",&status)!=1)status_error=EINVAL;
+    else if(!WIFEXITED(status) && !WIFSIGNALED(status))status_error=EBUSY;
     fclose(file);
+  } else if(status_error==ENOENT) {
+    live_pending=1;
+    status_error=0;
   }
-  if(error) {call->detail="Observer recovery requires the retained native exit status.";return error;}
+  if(status_error) {call->detail="Observer recovery requires a valid retained native status or a live native birth.";return status_error;}
   BrBirth native;
   if((error=br_read_file(call->directory,"native.birth",&native,sizeof(native))))return error;
   if(call->observer==(u32)native.pid)return EINVAL;
+  if(live_pending) {
+    int ended=0,life=br_lifetime(call->directory,&ended);
+    if(life<0) {
+      error=ended?ESRCH:errno;
+      call->detail="Live observer recovery requires the recorded native birth to remain alive.";
+      return error;
+    }
+    close(life);
+    error=br_observer_attempt_custody((pid_t)call->observer,call->database,call->session,call->directory,call->handle,&call->observer_life);
+    if(error) {
+      call->detail="Live observer recovery requires the supplied process to hold this attempt's required custody descriptors.";
+      return error;
+    }
+  }
+#ifndef __APPLE__
+  else {
+    /* Bind a live terminal observer to this retained attempt before any
+       legacy EBUSY fallback can retire the supplied PID. */
+    error=br_observer_attempt_custody((pid_t)call->observer,call->database,call->session,call->directory,call->handle,&call->observer_life);
+    if(error==ESRCH || error==ENOENT) {
+      int ended=0,life=br_process_lifetime((pid_t)call->observer,&ended);
+      if(life>=0) {close(life);error=EPERM;}
+      else if(ended) {error=0;call->observer_absent=1;}
+      else error=errno;
+    }
+    if(error) {
+      call->detail="Terminal observer recovery requires the supplied live process to hold this attempt's custody descriptors.";
+      return error;
+    }
+  }
+#endif
   BrManifest manifest={0};
   if((error=br_manifest_read(call->directory,&manifest))) {
     br_manifest_free(&manifest);return error;
@@ -4986,25 +5187,42 @@ static int baton_observer_completed(BatonSessionLock *call) {
       call->keeper=1;
     } else {
       error=errno;
-      if(error==ENOENT || error==ECONNREFUSED)error=0;
+      if(!live_pending && (error==ENOENT || error==ECONNREFUSED))error=0;
     }
   }
   if(probe>=0)close(probe);
+  if(!error && live_pending && !call->keeper) {
+    error=ECONNREFUSED;
+    call->detail="Live observer recovery requires the active native keeper.";
+  }
   return error;
 }
 
 static int baton_observer_retire(BatonSessionLock *call) {
-  int ended=0,life=br_process_lifetime((pid_t)call->observer,&ended);
-  if(life<0 && !ended)return errno;
+  if(call->observer_retired)return 0;
+  if(call->observer_absent) {call->observer_retired=1;return 0;}
+  int ended=0,life=call->observer_life;
+  call->observer_life=-1;
+  if(life<0)life=br_process_lifetime((pid_t)call->observer,&ended);
+  if(life<0) {
+    if(ended)call->observer_retired=1;
+    return ended?0:errno;
+  }
+  call->observer_retired=1;
   int error=0;
+#ifdef SYS_pidfd_send_signal
+  if(syscall(SYS_pidfd_send_signal,life,SIGTERM,NULL,0) && errno!=ESRCH)error=errno;
+  if(!error && syscall(SYS_pidfd_send_signal,life,SIGCONT,NULL,0) && errno!=ESRCH)error=errno;
+#else
   if(kill((pid_t)call->observer,SIGTERM) && errno!=ESRCH)error=errno;
   if(!error && kill((pid_t)call->observer,SIGCONT) && errno!=ESRCH)error=errno;
-  if(!error && life>=0) {
+#endif
+  if(!error) {
     struct pollfd observed={life,POLLIN,0};
     int ready;do {ready=poll(&observed,1,-1);}while(ready<0 && errno==EINTR);
     if(ready<0)error=errno;
   }
-  if(life>=0)close(life);
+  close(life);
   return error;
 }
 
@@ -5126,6 +5344,7 @@ static Term baton_session_lock_pack(Env e, IoWork *w) {
     }
   }
   Term result=call->error ? io_fail(e,call->error,call->detail) : io_done(e,value);
+  if(call->observer_life>=0)close(call->observer_life);
   free(call->database);free(call->session);free(call->path);free(call->directory);free(call);
   w->data=NULL;
   return result;
@@ -5135,6 +5354,7 @@ static Term baton_session_lock_begin(Env e, Term *f, IoWork *w, int kind) {
   BatonSessionLock *call=calloc(1,sizeof(*call));
   if(!call) return io_fail(e,ENOMEM,NULL);
   call->kind=kind;
+  call->observer_life=-1;
   if(kind==3 || kind==5 || kind==6) {
     u64 dn=0,sn=0;
     call->database=io_cstr(e,f[0],&dn);
