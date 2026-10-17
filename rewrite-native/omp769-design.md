@@ -91,3 +91,64 @@ and replay order are Bend2 policy over the existing SQL probe style.
    ordered.
 6. Pre-store checkpoint (legacy `.pending`) still restores via the
    compat path.
+
+## Review response (muse conditional pass, five items)
+
+1. Missing-id refusal attribution is BLOCKED on evidence: no OMP17.4
+   refusal text exists in this worktree. Requested: the actual refusal
+   frame from the operator's observed run (it is a line of the live
+   attempts' raw spools - capturing it is read-only evidence work,
+   e.g. a search of the two retained spools for `set_event_filter`
+   responses with no id field). Until that text lands, the design
+   carries both candidate rules and picks none: (i) refuse on any
+   `success != 1` response with absent/empty id while a filter request
+   is outstanding; (ii) restrict (i) to responses that also carry
+   `command:'set_event_filter'` if observed refusals echo the command.
+2. Identity encoding: hardened for the NEW artifact and store - the
+   length-prefixed byte encoding (the argv `enc_argv` convention)
+   replaces raw TAB joins, making TAB/newline-bearing ids safe without
+   any charset claim. Checkpoint compatibility: legacy `.pending`
+   files keep the TAB format and are read by the legacy parser; the
+   hardened writer is new-format only, and a version marker in the
+   manifest distinguishes them. Coalesce precedence justification:
+   `frame_id_sql` (logs.bend:199-201) selects
+   `toolCallId`, then `messageId`, then `message.id` - tool
+   executions carry only `toolCallId`, message frames carry only
+   `messageId`/`message.id`, and one frame is never both, so the
+   precedence is a total selection per frame shape, not a policy.
+3. Retention target accepted: the repair targets the raw spool. Two
+   bounding options exist for the (c) unbounded rewind and the spool
+   growth itself, and the choice is a trio decision because it trades
+   evidence retention: (i) spool compaction/rotation keyed to
+   committed offsets (raw bytes below the committed offset move to
+   operator-owned archive storage; the spool keeps only unobserved
+   bytes); (ii) cumulative-snapshot suppression at the writer - which
+   requires the writer to classify frames and therefore moves policy
+   into the host unless suppression is done by the Bend2 observer
+   rewriting the spool it reads, contradicting read-only lineage.
+   Option (i) keeps the host mechanical and bounds the spool by
+   durable progress; option (ii) is rejected as designed.
+4. Replay domains separated as directed: (a) the guidance/wake cursor
+   replay from 0 (receive.bend:307) is bounded by re-emitting the
+   stored newest-per-identity and non-cumulative record instead of
+   re-deriving from the spool; (b) spool resume already reads from the
+   committed offset and is bounded; (c) the unbounded full rewind
+   happens only on an unusable/rejected checkpoint, and the fix that
+   bounds it is the durable per-frame store - a lost checkpoint no
+   longer forces spool re-derivation because the store IS the
+   checkpoint (reconstruction reads it directly). With the store
+   landed, case (c) degenerates to reading the store plus the unread
+   tail.
+5. Staged-set exclusion recorded: the unrelated exec slice stays out
+   of every 769 implementation commit, enforced by a staged-set check
+   before each commit. File hashes while staged:
+   exec.c 28b3d867eb03204eca552e5616d8b724361ab43d465b220706be573caa6289c4,
+   exec.bend 2ebdded9dfb2f0eff2ebef666782e3ba7b7945299404dd66d51f5d46ced3cd89,
+   exit.c e5c685176216026cac3f3aaabe8cb508660fb9f5de14af2e1ba7540481127897,
+   exit.bend 8281e1413aec6e9c6d86aa4264acb558063c684c23933df05a86a3dd589acba6,
+   exit.js 132ac55e82afb58836ec527bfa67f3453afe9fb495bc3de7b1ed191df989c549,
+   git/process.bend 93909215127baeffc45f2a930cdb4b2f8316904492ec0b2f6329446d216f1f56
+   (the last is the relocation rewiring, to commit as its own slice).
+   The OMP17.4 evidence request above is the open blocker for design
+   item 1; item 3's trio decision is the open blocker for the storage
+   choice. Both are requested from root through muse.
