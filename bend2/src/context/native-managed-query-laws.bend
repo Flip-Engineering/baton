@@ -35,7 +35,7 @@ def sealed_bootstrap_recovery_preserves_the_original_owner_witness_and_artifact(
   {==}
 
 law an_absent_origin_attempt_serializes_as_null:
-  {Managed.nullable_text("") == J.Jnil{} : J.Json}
+  {Managed.nullable_text("") == J.Jnull{} : J.Json}
 
 def an_absent_origin_attempt_serializes_as_null():
   {==}
