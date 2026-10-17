@@ -686,16 +686,27 @@ def consume_complete(action: IO(Outcome & List<Chan(Result<&1,&1,U32 & String,St
 
 def native_line_contains_nul_parts(parts: List<&2,String>) -> Bool:
   match parts:
-    case first <> second <> rest: True{}
-    case other: False{}
+    case Nil{}: False{}
+    case Con{head,tail}:
+      match tail:
+        case Nil{}: False{}
+        case Con{head,tail}: True{}
 
-def native_line_contains_nul(line: String) -> Bool:
+def native_line_contains_nul(+line: String) -> Bool:
   native_line_contains_nul_parts(String.split(line,Char.from_u32(0)))
+
+def wake_text_result_case(+text: String, notice: String, active: Bool, has_nul: Bool) -> WakeRead:
+  match has_nul:
+    case True{}: AwakeInvalid{notice,active}
+    case False{}: AwakeLine{text,notice,active}
+
+def wake_text_result(+text: String, notice: String, active: Bool) -> WakeRead:
+  wake_text_result_case(text,notice,active,native_line_contains_nul(text))
 
 def wake_read(line: Maybe<String>, notice: String, active: Bool) -> WakeRead:
   match line:
     case None{}: AwakeEnd{notice,active}
-    case Some{text}: Bool.pick(WakeRead,native_line_contains_nul(text),AwakeInvalid{notice,active},AwakeLine{text,notice,active})
+    case Some{text}: wake_text_result(text,notice,active)
 
 def subscribe_fields(opened: Result<&1,&1,U32 & String,U32 & String>) -> Sigma<&2,&2,U32,_ => Bool>:
   match opened:
