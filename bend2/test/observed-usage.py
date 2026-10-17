@@ -212,6 +212,30 @@ class ObservedUsage(unittest.TestCase):
         self.assertEqual(json.loads((workspace / 'queried.json').read_text()),
                          {'argv': ['debug', 'models'], 'cwd': str(workspace)})
 
+    def test_models_all_aggregates_each_distinct_source_and_names_absent_assessments(self):
+        catalog = {'models': [{'provider': 'fixture-provider', 'selector': 'fixture/model'}]}
+        workspace, command = self.provider_command(json.dumps(catalog), identity_prefix=True)
+        self.call('attach', 'other', 'muse', 'native-2', '')
+        result = self.call('models-all')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        answer = json.loads(result.stdout)
+        self.assertEqual(answer['schema'], 'baton2-model-discovery-set-v1')
+        self.assertGreater(answer['observedAt'], 0)
+        sources = {source['harness']: source for source in answer['sources']}
+        self.assertEqual(set(sources), {'omp', 'muse'})
+        self.assertEqual(sources['omp']['state'], 'reported')
+        self.assertEqual(sources['omp']['response'], catalog)
+        self.assertGreater(sources['omp']['observedAt'], 0)
+        self.assertEqual(sources['muse']['state'], 'unknown')
+        self.assertEqual(sources['muse']['reason'], 'noRecordedHarnessCommand')
+        self.assertEqual(answer['accountsSection'],
+                         {'state': 'unknown', 'reason': 'noRecordedAccounts', 'accounts': []})
+        self.assertEqual(answer['capabilityAssessments'], [])
+        self.assertEqual(answer['capabilityAssessmentReason'], 'noRecordedAssessmentSource')
+        # The one distinct OMP source was queried exactly once.
+        self.assertEqual(json.loads((workspace / 'queried.json').read_text()),
+                         {'argv': ['models', '--json'], 'cwd': str(workspace)})
+
     def test_models_keeps_unparseable_catalog_bytes(self):
         raw = 'provider returned text that is not JSON'
         workspace, command = self.provider_command(raw)

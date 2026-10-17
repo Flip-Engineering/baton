@@ -64,6 +64,7 @@ type Command is Data:
   ObservedUsage{session: String}
   Account{action: String, id: String, provider: String, harness: String, funding: String, secret_ref: String, organization: String, detail: String, session: String}
   Models{session: String}
+  ModelsAll{}
   Logs{session: String, level: String}
   LogsStorage{}
   LogsClean{session: String}
@@ -625,6 +626,7 @@ def sql(command: Command) -> String:
     case RemoteTip{repo,branch,remote}: ""
     case ObservedUsage{session}: ""
     case Models{session}: ""
+    case ModelsAll{}: ""
     case Logs{session,level}: ""
     case LogsStorage{}: ""
     case LogsClean{session}: ""
@@ -662,6 +664,7 @@ def parse_verb_only(+verb: String) -> Command:
   match verb:
     case "context-engines": ContextEngines{""}
     case "logs-storage": LogsStorage{}
+    case "models-all": ModelsAll{}
     case "help": Help{}
     case "--help": Help{}
     case "status": Status{}

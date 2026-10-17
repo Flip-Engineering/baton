@@ -40,7 +40,7 @@ def member(+value: String, values: List<String>) -> Bool:
     case +head <> rest: Bool.or(String.eq(value,head),member(value,rest))
 
 def known(verb: String) -> Bool:
-  member(verb,Tx.split_spaces("session player players assignment completion-request completion-confirmed guide acknowledge status pending orchestra role ensemble ensemble-member section section-member attempt attempts outbox receiver configure account resume stop force-stop recover-observer continue-task turn receive profile-bind connect bind report ask native-reply dispatch recruit join worktree land push remote-tip knowledge project context models observed-usage logs"))
+  member(verb,Tx.split_spaces("session player players assignment completion-request completion-confirmed guide acknowledge status pending orchestra role ensemble ensemble-member section section-member attempt attempts outbox receiver configure account resume stop force-stop recover-observer continue-task turn receive profile-bind connect bind report ask native-reply dispatch recruit join worktree land push remote-tip knowledge project context models models-all observed-usage logs"))
 
 def names_lookup(entries: List<NameSet>, +verb: String) -> List<String>:
   match entries:
@@ -107,6 +107,7 @@ def names(verb: String) -> List<String>:
     Names{"context-query","--owner --id --file"},
     Names{"context-result","--id"},
     Names{"models","--session"},
+    Names{"models-all",""},
     Names{"observed-usage","--session"},
     Names{"logs","--session --level"}
   ],verb)
@@ -315,6 +316,7 @@ def help(action: String) -> String:
     case "context-result": "context result [--id QUERY]\nRead the latest query owned by the current actor when its ID is omitted, or the explicitly selected retained query.\n"
     case "context": "context engines|install|query|result NAMED_ARGS\nUse help with the corresponding context action name.\n"
     case "models": "models [--session SESSION]\nRead observed model capability information for the selected session.\n"
+    case "models-all": "models-all\nRead the model discovery set for every configured harness and account source in the project database. Each source answer carries its state and observation time; unsupported or failed sources read unknown with their cause. Accounts appear by label with provider, harness, funding route and organization state. Capability assessments list recorded sources with their dates; the set names noRecordedAssessmentSource when none is recorded.\n"
     case "observed-usage": "observed-usage [--session SESSION]\nRead the selected session's actual usage observations.\n"
     case "logs": "logs [--session SESSION] [--level LEVEL]\nInspect or configure existing native log capture through its ordinary operation.\n"
     case other: ""

@@ -379,6 +379,7 @@ def legacy_args_selected(+session: String, verb: String, +options: List<&2,D.Opt
     case "context-query": ["context-query-file",D.value(options,"--owner",session),D.value(options,"--id",""),D.value(options,"--file","")]
     case "context-result": ["context-result",D.value(options,"--id","")]
     case "models": ["models",target]
+    case "models-all": ["models-all"]
     case "observed-usage": ["observed-usage",target]
     case "logs": Bool.pick(List<String>,D.present(options,"--level"),["logs",target,D.value(options,"--level","")],["logs",target])
     case other: Nil{}
