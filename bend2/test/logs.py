@@ -760,12 +760,22 @@ while not pathlib.Path('resume-native').exists(): time.sleep(.01)
         frames = [json.dumps({'type': 'message_start', 'messageId': 'unfinished-message',
                              'message': {'id': 'unfinished-message', 'role': 'assistant', 'content': []}})]
         frames.extend(json.dumps({'type': 'message_update', 'messageId': 'unfinished-message',
+                                  'assistantMessageEvent': {'partial': {'type': 'text', 'text': 'partial answer %d' % i}},
                                   'message': {'id': 'unfinished-message', 'role': 'assistant',
                                               'content': [{'type': 'text', 'text': 'partial answer %d' % i}]}})
                       for i in range(3))
         self.stream(frames + [self.terminal()])
         updates = [row for row in map(json.loads, self.lines()) if row.get('type') == 'message_update']
         self.assertEqual(updates, [json.loads(frames[-1])])
+
+    def test_update_deltas_with_message_id_are_appended(self):
+        frames = [json.dumps({'type': 'message_update', 'messageId': 'delta-message',
+                              'assistantMessageEvent': {'type': 'text_delta', 'delta': 'part %d' % i},
+                              'message': {'role': 'assistant'}})
+                  for i in range(3)]
+        self.stream(frames + [self.terminal()])
+        updates = [row for row in map(json.loads, self.lines()) if row.get('type') == 'message_update']
+        self.assertEqual(updates, list(map(json.loads, frames)))
 
     def test_existing_policy_migrates_and_preserves_registered_logs(self):
         with sqlite3.connect(self.db) as connection:

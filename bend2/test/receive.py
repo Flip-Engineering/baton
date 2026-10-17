@@ -420,6 +420,31 @@ while True:
         if action.get('complete_task',False):
             confirm_finished_fixture_task('Completed the controlled native observation task.')
         break
+    if action.get('emit_delta_batch'):
+        batch=action['emit_delta_batch']
+        count=int(batch['count'])
+        payload='x'*int(batch['bytes'])
+        frame=json.dumps({'type':'message_update','assistantMessageEvent':{'type':'text_delta','delta':payload}})
+        for _ in range(count): print(frame)
+        sys.stdout.flush()
+        reply({'delta_frames_written':count,'batch':batch['id']})
+        continue
+    if action.get('emit_snapshot'):
+        size=int(action['emit_snapshot'])
+        payload='s'*size
+        frame={'type':'message_update',
+               'assistantMessageEvent':{'partial':{'type':'text','text':payload}},
+               'message':{'role':'assistant','content':[{'type':'text','text':payload}]}}
+        line=json.dumps(frame)
+        print(line,flush=True)
+        reply({'snapshot_bytes_written':size})
+        continue
+    if action.get('emit_checkpoint_message'):
+        ident=action['emit_checkpoint_message']
+        frame={'type':'message_end','message':{'id':ident,'role':'assistant','content':[{'type':'text','text':'checkpoint '+ident}]}}
+        print(json.dumps(frame),flush=True)
+        reply({'checkpoint_message_written':ident})
+        continue
     if action.get('progress'):
         progress(action)
         continue
@@ -4303,6 +4328,146 @@ class Receive(unittest.TestCase):
                           {'type': 'fixture_progress', 'marker': marker, 'native_pid': started['pid']}])
         self.assertEqual(len((self.directory / 'native-launches.jsonl').read_text().splitlines()), 1)
         self.assert_no_start()
+
+    def test_long_omp_stream_releases_frames_and_recovers_checkpoint(self):
+        self.player(harness='omp')
+        config_path = self.directory / 'fixture.json'
+        config = json.loads(config_path.read_text())
+        config['record_launches'] = True
+        config_path.write_text(json.dumps(config))
+        self.prepare_input('memory-task', 'parent', 'Retain the original native conversation.', kind='task')
+        observer = self.spawn(*self.receive_args('parent'))
+        control, started = self.accept('parent')
+        native_id = self.eventually(lambda: self.coord('player', 'parent')['native'],
+                                    'The original OMP identity was not recorded.')
+        self.assertEqual(native_id, started['native'])
+        attempt = pathlib.Path(self.execution('parent')[2])
+        log = self.output_log('parent')
+
+        def rss_bytes():
+            status = pathlib.Path(f'/proc/{observer.pid}/status').read_text()
+            value = next(line.split()[1] for line in status.splitlines() if line.startswith('VmRSS:'))
+            return int(value) * 1024
+
+        batch_count = 8
+        frames_per_batch = 500
+        payload_bytes = 8192
+        frame = json.dumps({'type': 'message_update',
+                            'assistantMessageEvent': {'type': 'text_delta',
+                                                      'delta': 'x' * payload_bytes}})
+        bytes_per_frame = len(frame.encode()) + 1
+        samples = [rss_bytes()]
+        start_size = log.stat().st_size if log.exists() else 0
+        for index in range(batch_count):
+            self.action(control, emit_delta_batch={'id': index, 'count': frames_per_batch,
+                                                   'bytes': payload_bytes})
+            self.assertEqual(json.loads(control.readline()),
+                             {'delta_frames_written': frames_per_batch, 'batch': index})
+            expected = start_size + (index + 1) * frames_per_batch * bytes_per_frame
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline and (not log.exists() or log.stat().st_size < expected):
+                if observer.poll() is not None:
+                    stdout, stderr = self.child_communication(observer)
+                    self.fail(f'Observer exited during long stream: {stdout}{stderr}')
+                time.sleep(.05)
+            self.assertTrue(log.exists() and log.stat().st_size >= expected,
+                            f'Observer did not retain batch {index}')
+            samples.append(rss_bytes())
+            print(json.dumps({'memoryBatch': index, 'rssBytes': samples[-1],
+                              'rssGrowthBytes': max(samples) - samples[0],
+                              'retainedLogBytes': log.stat().st_size}), flush=True)
+            self.assertLess(max(samples) - samples[0], 768 * 1024 * 1024,
+                            'Observer RSS grew with the emitted frame stream')
+
+        last_half_input = (batch_count // 2) * frames_per_batch * bytes_per_frame
+        last_half_growth = max(0, samples[batch_count] - samples[batch_count // 2])
+        print(json.dumps({'smallDeltaLastHalfInputBytes': last_half_input,
+                          'smallDeltaLastHalfRssGrowthBytes': last_half_growth}), flush=True)
+        self.assertLess(last_half_growth, max(4 * 1024 * 1024, last_half_input // 4),
+                        'Observer RSS retained a linear share of the small-delta stream')
+
+        snapshot_bytes = 0
+        for size in (1, 2, 4, 8):
+            payload = 's' * (size * 1024 * 1024)
+            snapshot = json.dumps({'type': 'message_update',
+                                   'assistantMessageEvent': {'partial': {'type': 'text', 'text': payload}},
+                                   'message': {'role': 'assistant',
+                                               'content': [{'type': 'text', 'text': payload}]}})
+            self.action(control, emit_snapshot=size * 1024 * 1024)
+            self.assertEqual(json.loads(control.readline()),
+                             {'snapshot_bytes_written': size * 1024 * 1024})
+            snapshot_bytes += len(snapshot.encode())
+            expected = start_size + batch_count * frames_per_batch * bytes_per_frame + snapshot_bytes
+            deadline = time.monotonic() + 30
+            while time.monotonic() < deadline and log.stat().st_size < expected:
+                if observer.poll() is not None:
+                    stdout, stderr = self.child_communication(observer)
+                    self.fail(f'Observer exited during cumulative snapshot: {stdout}{stderr}')
+                time.sleep(.05)
+            self.assertGreaterEqual(log.stat().st_size, expected,
+                                    f'Observer did not retain the {size} MiB snapshot')
+            samples.append(rss_bytes())
+            print(json.dumps({'cumulativeSnapshotMiB': size, 'rssBytes': samples[-1],
+                              'rssGrowthBytes': max(samples) - samples[0],
+                              'retainedLogBytes': log.stat().st_size}), flush=True)
+            self.assertLess(max(samples) - samples[0], 768 * 1024 * 1024,
+                            'Observer RSS grew with cumulative snapshot size')
+
+        self.action(control, emit_checkpoint_message='memory-checkpoint')
+        self.assertEqual(json.loads(control.readline()),
+                         {'checkpoint_message_written': 'memory-checkpoint'})
+        checkpoint = attempt / 'checkpoint'
+        self.eventually(lambda: checkpoint.exists(), 'The long-stream observer did not checkpoint.')
+        record = checkpoint.read_bytes()
+        state_at = record.find(b'{"schema":1,')
+        self.assertGreaterEqual(state_at, 0, 'Checkpoint has no schema-1 observer state.')
+        state = json.loads(record[state_at:])
+        tail = log.read_bytes()[-8192:]
+        marker_at = tail.rfind(b'memory-checkpoint')
+        self.assertGreaterEqual(marker_at, 0, 'The checkpoint message is absent from the public log.')
+        line_end = tail.find(b'\n', marker_at)
+        self.assertGreaterEqual(line_end, 0)
+        self.assertGreaterEqual(int(state['output']), log.stat().st_size - len(tail) + line_end + 1,
+                                'Checkpoint output cursor does not cover the observed message_end.')
+        self.assertLess(max(samples[-5:]) - min(samples[-5:]), 256 * 1024 * 1024,
+                        'Observer RSS did not settle over the final batches.')
+
+        observer.kill()
+        observer.wait()
+        self.assertTrue(any(process['pid'] == started['pid'] for process in self.owned_processes()),
+                        'The native process did not survive observer recovery.')
+        self.assertEqual(self.coord('player', 'parent')['native'], native_id)
+        marker = 'post-checkpoint output from the original native'
+        self.action(control, progress=marker)
+        self.assertEqual(json.loads(control.readline()), {'progress_written': marker})
+
+        def log_tail_contains(value):
+            if not log.exists():
+                return False
+            with log.open('rb') as stream:
+                stream.seek(max(0, log.stat().st_size - 8192))
+                return value.encode() in stream.read()
+
+        self.eventually(lambda: log_tail_contains(marker),
+                        'Recovered observer did not continue from the saved checkpoint.')
+        self.action(control, body='Long native stream completed after observer recovery.', hold_exit=True)
+        self.assertEqual(json.loads(control.readline()), {'terminal_written': True})
+        self.eventually(lambda: log_tail_contains('agent_end'),
+                        'Recovered observer did not retain the terminal native event.')
+        self.action(control, exit_fixture=True)
+        self.assertEqual(control.readline(), b'')
+        self.finish(observer, ok=False)
+        self.eventually(lambda: self.coord('turns', 'parent'),
+                        'The recovered task completion was not recorded.')
+        self.assertEqual(self.coord('player', 'parent')['native'], native_id)
+        self.assertEqual(len((self.directory / 'native-launches.jsonl').read_text().splitlines()), 1)
+        with log.open() as stream:
+            observed_updates = sum(1 for line in stream
+                                  if json.loads(line).get('type') == 'message_update')
+        self.assertEqual(observed_updates, batch_count * frames_per_batch + 4)
+        self.assertEqual(self.coord('delivery', 'memory-task')['receipt'],
+                         'native-turn:' + self.execution('parent')[0])
+        self.shutdown_idle_database_owner('The long-stream receive owner did not exit.')
 
     def test_successful_turn_handles_complete_initial_input_without_explicit_ack(self):
         """A successful native result settles the complete initial input read
