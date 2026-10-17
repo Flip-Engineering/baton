@@ -4505,7 +4505,7 @@ class Receive(unittest.TestCase):
         self.action(control, emit_nul_tail=len(tail), exit_after_nul_tail=True)
         self.assertEqual(json.loads(control.readline()), {'nul_tail_written':len(tail)})
         output, error = self.finish(observer, ok=False)
-        self.assertIn('Native output contains a NUL byte', output + error)
+        self.assertIn('Native output contains an embedded NUL byte', output + error)
         self.assertEqual(raw_output.read_bytes(), raw_before + tail,
                          'The invalid native tail was altered or discarded.')
         self.assertEqual((raw_output.stat().st_ino, raw_output.stat().st_size),
@@ -4570,7 +4570,7 @@ class Receive(unittest.TestCase):
         self.signal_selected(selected_owner, signal.SIGKILL)
         self.signal_selected(selected_native, signal.SIGKILL)
         output, error = self.finish(observer, ok=False)
-        self.assertIn('Native output contains a NUL byte', output + error)
+        self.assertIn('Native output contains an embedded NUL byte', output + error)
         self.assertEqual(raw_output.read_bytes(), raw_before + tail,
                          'The invalid native tail was altered or discarded.')
         self.assertEqual((raw_output.stat().st_ino, raw_output.stat().st_size),
