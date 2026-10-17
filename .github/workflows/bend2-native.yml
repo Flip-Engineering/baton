@@ -90,7 +90,9 @@ env:
 
 jobs:
   linux-candidate:
-    runs-on: [self-hosted, Linux, X64, baton2-native-linux-x64]
+    runs-on:
+      group: baton2-native-homelab
+      labels: [self-hosted, Linux, X64, baton2-native-linux-x64]
     env:
       CC: /usr/bin/clang-19
       BEND_NO_TELEMETRY: '1'
@@ -258,7 +260,9 @@ jobs:
     permissions:
       contents: read
       actions: read
-    runs-on: [self-hosted, Linux, X64, baton2-native-linux-x64]
+    runs-on:
+      group: baton2-native-homelab
+      labels: [self-hosted, Linux, X64, baton2-native-linux-x64]
     env:
       CC: /usr/bin/clang-19
       BEND_NO_TELEMETRY: '1'
