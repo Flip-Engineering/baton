@@ -912,8 +912,8 @@ def inventory_session_json(+db: String, fields: List<String>) -> IO(String):
 
 def inventory_session_next(+db: String, +line: String, rest: List<String>) -> IO(String):
   do IO<String>:
-    head : String <- inventory_session_json(db,split_parts(String.split(line,Char.from_u32(31))))
-    tail : String <- inventory_session_tail(db,rest)
+    +head : String <- inventory_session_json(db,split_parts(String.split(line,Char.from_u32(31))))
+    +tail : String <- inventory_session_tail(db,rest)
     IO.pure(String,Bool.pick(String,String.is_empty(tail),head,head ++ "," ++ tail))
 
 def inventory_session_pick(+db: String, +line: String, rest: List<String>, empty: Bool) -> IO(String):
