@@ -60,6 +60,61 @@ static const char *const baton_change_schema[] = {
   NULL
 };
 
+/* Return whether a DROP TRIGGER is immediately followed by the same trigger
+   definition already stored in sqlite_schema. SQLite omits the final semicolon
+   from sqlite_schema.sql, so compare after trimming that terminator. */
+static int baton_sql_trigger_matches(sqlite3 *db, const char *drop_sql,
+                                     const char *create_sql, int *matches,
+                                     char **error) {
+  static const char drop_prefix[] = "DROP TRIGGER IF EXISTS ";
+  static const char create_prefix[] = "CREATE TRIGGER ";
+  *matches = 0;
+  if (strncmp(drop_sql, drop_prefix, sizeof(drop_prefix) - 1) != 0 ||
+      strncmp(create_sql, create_prefix, sizeof(create_prefix) - 1) != 0)
+    return SQLITE_OK;
+  const char *drop_name = drop_sql + sizeof(drop_prefix) - 1;
+  size_t drop_name_length = strcspn(drop_name, "; \t\r\n");
+  const char *create_name = create_sql + sizeof(create_prefix) - 1;
+  size_t create_name_length = strcspn(create_name, " \t\r\n");
+  if (!drop_name_length || drop_name[drop_name_length] != ';' ||
+      drop_name_length != create_name_length ||
+      memcmp(drop_name, create_name, drop_name_length) != 0)
+    return SQLITE_OK;
+
+  sqlite3_stmt *statement = NULL;
+  int code = sqlite3_prepare_v2(db,
+    "SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?1;",
+    -1, &statement, NULL);
+  if (code == SQLITE_OK)
+    code = sqlite3_bind_text(statement, 1, drop_name, (int)drop_name_length, SQLITE_STATIC);
+  if (code == SQLITE_OK) {
+    code = sqlite3_step(statement);
+    if (code == SQLITE_ROW) {
+      const char *stored = (const char *)sqlite3_column_text(statement, 0);
+      size_t stored_length = (size_t)sqlite3_column_bytes(statement, 0);
+      size_t wanted_length = strlen(create_sql);
+      while (stored_length && (stored[stored_length - 1] == ';' ||
+             stored[stored_length - 1] == ' ' || stored[stored_length - 1] == '\t' ||
+             stored[stored_length - 1] == '\r' || stored[stored_length - 1] == '\n'))
+        stored_length--;
+      while (wanted_length && (create_sql[wanted_length - 1] == ';' ||
+             create_sql[wanted_length - 1] == ' ' || create_sql[wanted_length - 1] == '\t' ||
+             create_sql[wanted_length - 1] == '\r' || create_sql[wanted_length - 1] == '\n'))
+        wanted_length--;
+      *matches = stored && stored_length == wanted_length &&
+        memcmp(stored, create_sql, wanted_length) == 0;
+      code = SQLITE_OK;
+    } else if (code == SQLITE_DONE) {
+      code = SQLITE_OK;
+    }
+  }
+  int final = sqlite3_finalize(statement);
+  if (code == SQLITE_OK && final != SQLITE_OK) code = final;
+  if (code != SQLITE_OK && error && !*error)
+    *error = sqlite3_mprintf("%s", sqlite3_errmsg(db));
+  return code;
+}
+
 static int baton_sql_install_projection(sqlite3 *db, const char *schema, char **error) {
   int code = sqlite3_exec(db, "BEGIN IMMEDIATE", NULL, NULL, error);
   if (code == SQLITE_OK)
@@ -74,8 +129,19 @@ static int baton_sql_install_projection(sqlite3 *db, const char *schema, char **
     code = sqlite3_exec(db, "ALTER TABLE knowledge_promotions ADD COLUMN source_kind TEXT NOT NULL DEFAULT 'session';", NULL, NULL, error);
   if (code == SQLITE_OK && sqlite3_table_column_metadata(db, NULL, "knowledge_promotions", "destination_kind", NULL, NULL, NULL, NULL, NULL) != SQLITE_OK)
     code = sqlite3_exec(db, "ALTER TABLE knowledge_promotions ADD COLUMN destination_kind TEXT NOT NULL DEFAULT 'session';", NULL, NULL, error);
-  for (size_t i = 0; code == SQLITE_OK && baton_change_schema[i]; i++)
-    code = sqlite3_exec(db, baton_change_schema[i], NULL, NULL, error);
+  for (size_t i = 0; code == SQLITE_OK && baton_change_schema[i]; i++) {
+    int matches = 0;
+    if (baton_change_schema[i + 1] &&
+        strncmp(baton_change_schema[i], "DROP TRIGGER IF EXISTS ", 23) == 0)
+      code = baton_sql_trigger_matches(db, baton_change_schema[i],
+        baton_change_schema[i + 1], &matches, error);
+    if (code == SQLITE_OK && matches) {
+      i++;
+      continue;
+    }
+    if (code == SQLITE_OK)
+      code = sqlite3_exec(db, baton_change_schema[i], NULL, NULL, error);
+  }
   if (code == SQLITE_OK)
     code = sqlite3_exec(db, "COMMIT", NULL, NULL, error);
   if (code != SQLITE_OK)
