@@ -1,5 +1,6 @@
 import Base
 import ../src/host/process.bend as P
+import ../src/host/instance.bend as Custody
 import ../src/host/session-lock.bend as Lock
 import ../src/host/text.bend as Text
 
@@ -117,15 +118,68 @@ def observe_retained_spans(+handle: U32, lock: Maybe<U32>, payload: String, clos
     first : Maybe<String> & String <- IO.try(Maybe<String> & String,P.ProcessChild.read_retained_line_span(handle))
     retained_span_lines(handle,lock,sender,first)
 
+def checkpoint_span_replay(+handle: U32, lock: Maybe<U32>, sender: Chan(Unit), replay: Maybe<String> & String) -> IO(Unit):
+  match replay:
+    case (None{},_): IO.die(Unit,1,"checkpoint-replay-missing")
+    case (Some{offset},length): do IO<Unit>:
+      shown : Unit <- IO.print("replay:" ++ offset ++ "\t" ++ length)
+      next : Maybe<String> & String <- IO.try(Maybe<String> & String,P.ProcessChild.read_retained_line_span(handle))
+      retained_span_lines(handle,lock,sender,next)
+
+def checkpoint_span_result(+handle: U32, lock: Maybe<U32>, sender: Chan(Unit), result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
+  match result:
+    case Fail{(code,text)}: IO.die(Unit,1,"checkpoint-restore:" ++ U32.show(code) ++ ":" ++ text)
+    case Done{value}: do IO<Unit>:
+      printed : Unit <- IO.print("restored:" ++ value)
+      replay : Maybe<String> & String <- IO.try(Maybe<String> & String,P.ProcessChild.read_retained_line_span(handle))
+      checkpoint_span_replay(handle,lock,sender,replay)
+
+def checkpoint_span_pending(+handle: U32, lock: Maybe<U32>, sender: Chan(Unit), pending: Maybe<String> & String) -> IO(Unit):
+  match pending:
+    case (None{},_): IO.die(Unit,1,"checkpoint-pending-line-missing")
+    case (Some{next_offset},next_length): do IO<Unit>:
+      shown_pending : Unit <- IO.print("uncommitted:" ++ next_offset ++ "\t" ++ next_length)
+      restored : Result<&1,&1,U32 & String,String> <- Custody.Instance.restore(handle,1)
+      checkpoint_span_result(handle,lock,sender,restored)
+
+def checkpoint_span_saved(+handle: U32, lock: Maybe<U32>, sender: Chan(Unit), saved: Result<&1,&1,U32 & String,Unit>) -> IO(Unit):
+  match saved:
+    case Fail{(code,text)}: IO.die(Unit,1,"checkpoint-commit:" ++ U32.show(code) ++ ":" ++ text)
+    case Done{unit}: do IO<Unit>:
+      pending : Maybe<String> & String <- IO.try(Maybe<String> & String,P.ProcessChild.read_retained_line_span(handle))
+      checkpoint_span_pending(handle,lock,sender,pending)
+
+def checkpoint_span_first(+handle: U32, lock: Maybe<U32>, sender: Chan(Unit), span: Maybe<String> & String) -> IO(Unit):
+  match span:
+    case (None{},_): IO.die(Unit,1,"checkpoint-first-line-missing")
+    case (Some{offset},length): do IO<Unit>:
+      shown : Unit <- IO.print("durable:" ++ offset ++ "\t" ++ length)
+      saved : Result<&1,&1,U32 & String,Unit> <- Custody.Instance.commit(handle,1,"durable")
+      checkpoint_span_saved(handle,lock,sender,saved)
+
+def observe_retained_checkpoint_spans(+handle: U32, lock: Maybe<U32>, payload: String, close: Bool) -> IO(Unit):
+  do IO<Unit>:
+    attempt : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.release(handle)
+    checked : Unit <- early_release(attempt)
+    sender : Chan(Unit) <- IO.fork(Unit,observer_write(handle,payload,close))
+    first : Maybe<String> & String <- IO.try(Maybe<String> & String,P.ProcessChild.read_retained_line_span(handle))
+    checkpoint_span_first(handle,lock,sender,first)
+
 def retained_span_started(start: P.RetainedStart, lock: U32, payload: String, close: Bool) -> IO(Unit):
   match start:
     case P.Unstarted{error}: IO.die(Unit,1,error)
     case P.Retained{handle}: observe_retained_spans(handle,Some{lock},payload,close)
 
-def retained_choose(start: P.RetainedStart, lock: U32, payload: String, span: Bool, close: Bool) -> IO(Unit):
-  match span:
-    case True{}: retained_span_started(start,lock,payload,close)
-    case False{}: retained_started(start,lock,payload,close)
+def checkpoint_span_started(start: P.RetainedStart, lock: U32, payload: String, close: Bool) -> IO(Unit):
+  match start:
+    case P.Unstarted{error}: IO.die(Unit,1,error)
+    case P.Retained{handle}: observe_retained_checkpoint_spans(handle,Some{lock},payload,close)
+
+def retained_choose(start: P.RetainedStart, lock: U32, payload: String, mode: String, close: Bool) -> IO(Unit):
+  match mode:
+    case "span": retained_span_started(start,lock,payload,close)
+    case "checkpoint-span": checkpoint_span_started(start,lock,payload,close)
+    case _: retained_started(start,lock,payload,close)
 
 def retained_locked(+directory: String, +cwd: String, payload: String, +mode: String, program: List<String>, lock: Maybe<U32>) -> IO(Unit):
   match lock:
@@ -135,7 +189,7 @@ def retained_locked(+directory: String, +cwd: String, payload: String, +mode: St
       bytes : String <- IO.try(String,Text.Text.read(payload))
       stderr : String = Bool.pick(String,String.eq(mode,"setup-failure"),cwd ++ "/setup.stderr",directory ++ "/native.stderr")
       start : P.RetainedStart <- IO.try(P.RetainedStart,P.ProcessChild.retain(directory,P.argv(program),cwd,stderr,"",1,handle,P.argv([executable,"recover-retained",directory])))
-      retained_choose(start,handle,bytes,String.eq(mode,"span"),String.eq(mode,"close"))
+      retained_choose(start,handle,bytes,mode,String.eq(mode,"close"))
 
 def retained_cli(args: List<String>) -> IO(Unit):
   match args:
