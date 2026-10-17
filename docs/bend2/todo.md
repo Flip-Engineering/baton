@@ -190,6 +190,10 @@ remain open under [#782](https://github.com/Flip-Engineering/baton/issues/782).
   produce byte-identical C, including a five-pass fixed point with foreign C.
   A diagnostic stress fixture uses 277,524 KiB versus 316,288 KiB and takes
   1.33 seconds versus 1.67 seconds. Main-program effects remain unverified.
+  Review then found a missed reference inside a dependent function in the
+  diagnostic visitor. Corrected compiler commit `96f47e27` passes the new
+  regression and real Main diagnostic parity: all 39 report lines match the
+  pinned baseline. Main C-generation effects remain unverified.
   A bounded Main profile
   measured 49 seconds for loading and 155 seconds for validation, then exhausted
   its 16 GiB limit during diagnostic dependency traversal. The production Main
@@ -918,10 +922,18 @@ remain open under [#782](https://github.com/Flip-Engineering/baton/issues/782).
   recovery candidate supports live observer replacement through the retained
   keeper, with process and attempt custody checks. Commit `697d1664` covers
   public receive, internal receive and recovery process arguments. Its C
-  compilation and repeated-handover qualification remain pending. The separate
+  compilation completed, and the public-form fixture exposed its missing
+  observer-log descriptor. Corrected commit `b8e20833` passes ten exact-source
+  process and descriptor cases; its executable build is running.
+  The internal and recovery forms passed live and terminal-provider handovers.
+  Their combined host-C and SQLite executable was installed at 04:29 UTC with
+  SHA-256 `9cc011e95da93526c433de7887863f3ef8d10df55043011125fba2ba52d602c5`;
+  the previous executable remains available for rollback. Source consolidation
+  is in [#798](https://github.com/Flip-Engineering/baton/pull/798). This temporarily
+  enables observer rotation while the Bend callback build continues. The separate
   SQLite projection fix (`ca42f103`) has compiled and passed repeated setup
   through the executable on a database copy: schema version and trigger
-  definitions remain unchanged. Runtime adoption remains pending. The deployed
+  definitions remain unchanged. The deployed
   OMP producer correction remains tracked in
   [#769](https://github.com/Flip-Engineering/baton/issues/769), with follow-on
   retry behavior in [#786](https://github.com/Flip-Engineering/baton/issues/786).
