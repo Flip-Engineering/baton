@@ -165,6 +165,8 @@ def verify_sharded_build(receipt_path, source, entry, output, path_map=None, too
         return record['argv']
 
     split_argv = validate_command_record(receipt.get('split'), 'splitter')
+    recorded_staging_directory = pathlib.Path(split_argv[5]).parent
+    staging_directory = pathlib.Path(resolve_recorded(recorded_staging_directory)).resolve()
     require(len(split_argv) == 8
             and resolve_executable(split_argv[0])
             and resolve_recorded(split_argv[1]) == splitter
@@ -172,11 +174,10 @@ def verify_sharded_build(receipt_path, source, entry, output, path_map=None, too
             and split_argv[4] == '--outdir'
             and pathlib.Path(split_argv[5]).is_absolute()
             and pathlib.Path(split_argv[5]).name == 'split'
-            and pathlib.Path(split_argv[5]).parent.parent == output.parent
-            and pathlib.Path(split_argv[5]).parent.name.startswith('.' + output.name + '.clang-shards-')
+            and staging_directory.parent == output.parent
+            and staging_directory.name.startswith('.' + output.name + '.clang-shards-')
             and split_argv[6:8] == ['--shards', str(receipt['shards'])],
             'Sharded Main splitter invocation differs.')
-    staging_directory = pathlib.Path(split_argv[5]).parent
     compile_prefix = ([ccache, compiler_argv] if ccache else [compiler_argv])
     compile_rows = []
     expected_names = ['baton_core.c', 'baton_spins.c'] + [f'shard_{index:02d}.c' for index in range(4)]
@@ -213,10 +214,10 @@ def verify_sharded_build(receipt_path, source, entry, output, path_map=None, too
             require(argv[:len(compile_prefix)] == compile_prefix
                     and argv[len(compile_prefix):command_source_index]
                         == receipt['compile_flags'] + ['-c']
-                    and pathlib.Path(argv[command_source_index])
+                    and resolve_recorded(argv[command_source_index])
                         == staging_directory / 'split' / name
                     and argv[command_source_index + 1] == '-o'
-                    and pathlib.Path(argv[command_source_index + 2])
+                    and resolve_recorded(argv[command_source_index + 2])
                         == staging_directory / row['object_name'],
                     'Sharded Main compile invocation differs: ' + name)
             compile_rows.append(row)
@@ -225,10 +226,10 @@ def verify_sharded_build(receipt_path, source, entry, output, path_map=None, too
             'Sharded Main retained object set differs.')
     aggregate_argv = validate_command_record(receipt.get('aggregate'), 'object aggregation')
     require(resolve_executable(aggregate_argv[0]) == compiler and aggregate_argv[1] == '-r'
-            and [pathlib.Path(value) for value in aggregate_argv[2:8]]
+            and [resolve_recorded(value) for value in aggregate_argv[2:8]]
                 == [staging_directory / row['object_name'] for row in compile_rows]
             and aggregate_argv[8] == '-o'
-            and pathlib.Path(aggregate_argv[9]) == staging_directory / (output.name + '.o'),
+            and resolve_recorded(aggregate_argv[9]) == staging_directory / (output.name + '.o'),
             'Sharded Main object aggregation invocation differs.')
     require(receipt.get('aggregate_command') == [compiler_argv, '-r',
             *[row['object_name'] for row in compile_objects], '-o', output.name + '.o'],
@@ -241,9 +242,9 @@ def verify_sharded_build(receipt_path, source, entry, output, path_map=None, too
     link_argv = validate_command_record(receipt.get('link'), 'native link')
     require(link_argv[:3] == [compiler_argv, '-O1', '-pthread']
             and resolve_recorded(link_argv[3]) == entry
-            and pathlib.Path(link_argv[4]) == staging_directory / (output.name + '.o')
+            and resolve_recorded(link_argv[4]) == staging_directory / (output.name + '.o')
             and link_argv[5:8] == ['-lsqlite3', '-lm', '-o']
-            and pathlib.Path(link_argv[8]).name == output.name,
+            and resolve_recorded(link_argv[8]) == staging_directory / output.name,
             'Sharded Main native link execution differs.')
     object_file = output.with_name(output.name + '.o')
     require(resolve_recorded(receipt['object']) == object_file

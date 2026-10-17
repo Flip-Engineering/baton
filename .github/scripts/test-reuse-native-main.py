@@ -192,16 +192,24 @@ receipt['split_manifest_sha256'] = hashlib.sha256(json.dumps(
     receipt['split_manifest'], sort_keys=True, separators=(',', ':')).encode()).hexdigest()
 receipt['split']['argv'][1] = logical_path(receipt['split']['argv'][1])
 receipt['split']['argv'][3] = logical_path(receipt['split']['argv'][3])
+receipt['split']['argv'][5] = logical_path(receipt['split']['argv'][5])
 receipt['compiler_version_probe']['argv'][0] = logical_path(receipt['compiler_version_probe']['argv'][0])
 for row in receipt['compile_objects']:
     row['object_path'] = logical_path(row['object_path'])
     row['compile']['argv'][0] = logical_path(row['compile']['argv'][0])
+    row['compile']['argv'][5] = logical_path(row['compile']['argv'][5])
+    row['compile']['argv'][7] = logical_path(row['compile']['argv'][7])
 receipt['aggregate']['argv'][0] = logical_path(receipt['aggregate']['argv'][0])
+for index in range(2, 8):
+    receipt['aggregate']['argv'][index] = logical_path(receipt['aggregate']['argv'][index])
+receipt['aggregate']['argv'][9] = logical_path(receipt['aggregate']['argv'][9])
 receipt['aggregate_command'][0] = logical_path(receipt['aggregate_command'][0])
 receipt['link']['argv'][0] = logical_path(receipt['link']['argv'][0])
 receipt['link_command'][3] = logical_path(receipt['link_command'][3])
 receipt['link_command'][0] = logical_path(receipt['link_command'][0])
 receipt['link']['argv'][3] = logical_path(receipt['link']['argv'][3])
+receipt['link']['argv'][4] = logical_path(receipt['link']['argv'][4])
+receipt['link']['argv'][8] = logical_path(receipt['link']['argv'][8])
 save(route_receipt_path, receipt)
 for item in sharded_handoff['build_artifacts']:
     name = Path(item['original']['path']).name
