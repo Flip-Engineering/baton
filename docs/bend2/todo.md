@@ -261,10 +261,27 @@ remain open under [#782](https://github.com/Flip-Engineering/baton/issues/782).
   [#770](https://github.com/Flip-Engineering/baton/issues/770).
   The 2026-10-17 recovery patch is on retained source HEAD
   `35152919ad99f1938c76dfa8db33f2b1ebfa762d`; the invalid-tail helper passed
-  its focused type check in 359 ms. The combined Main build is still running.
-  Its acceptance requires bounded-memory receive and checkpoint recovery from
-  a NUL-corrupted tail, with the original bytes and pending input preserved.
-  The exact-hash review is assigned to the existing `rewrite-deepseek` session.
+  its focused type check in 359 ms. A combined Main build was started from this
+  source; a separate memory-only build from `0880cf3` is being used for the
+  memory correction. Runtime acceptance requires bounded-memory receive and
+  checkpoint recovery from a NUL-corrupted tail, with the original bytes and
+  pending input preserved.
+  The exact-hash review was read under the existing DeepSeek native, attempt
+  `receive:rewrite-deepseek:984:691184f811a59c6b8a14f0707ae2ba0e`. It confirms
+  the affine failure is fixed and verifies the error-appending and keeper-loss
+  marker dependencies. Follow-up source tracing established that the full-spool
+  check in `instance.bend:166` gates successful input-witness settlement; it
+  does not gate process-attempt retirement. The nonempty corruption error keeps
+  the owed inbox input unsettled. A separate raw-preservation constraint remains:
+  normal keeper exit-zero acknowledgement unlinks stdout in
+  `process-spawn.c:1100-1111`, while the owner-loss path preserves it. The pure
+  Bend2 recovery path must leave an exit-zero NUL tail incomplete and retain its
+  raw spool, checkpoint, native UUID and owed input. Custody-proven owner loss
+  can retire the dead attempt while leaving the inbox input unsettled.
+  Supporting failed-observation retirement after exit zero requires a separate
+  process-acknowledgement change. The repaired plan has a passing Muse review;
+  native implementation, admission pins and the compaction decision remain
+  open.
 
 - [#770: Retain actual native wait status after a filesystem write failure](https://github.com/Flip-Engineering/baton/issues/770).
   The [#769](https://github.com/Flip-Engineering/baton/issues/769) review reaped
@@ -782,10 +799,15 @@ remain open under [#782](https://github.com/Flip-Engineering/baton/issues/782).
   [#761](https://github.com/Flip-Engineering/baton/issues/761),
   [#769](https://github.com/Flip-Engineering/baton/issues/769) and
   [#770](https://github.com/Flip-Engineering/baton/issues/770).
-  The current #769 candidate treats a NUL-bearing native line as an incomplete
-  tail only after terminal status or custody-proven owner loss. It retains the
-  last validated checkpoint and raw stream, records the process failure, and
-  leaves the owed inbox input unsettled. Focused type checking passed; full
+  The #769 candidate leaves the owed input unsettled on the NUL-tail path. The
+  full-spool checkpoint check gates successful input-witness settlement, while
+  process retirement follows a separate exited-and-released path. Normal
+  exit-zero acknowledgement unlinks stdout, so the pending pure Bend2 follow-up
+  will keep an exit-zero NUL tail incomplete. Custody-proven owner loss with no
+  status marker can retire the dead process attempt while retaining the raw
+  spool, checkpoint, native UUID and owed inbox input. Supporting
+  failed-observation retirement after exit zero remains a separate
+  process-acknowledgement task linked here. Focused type checking passed; full
   build and runtime bounded-memory/recovery evidence remain open.
 - [#782: Update stale coordinator laws and include their evaluation in validation](https://github.com/Flip-Engineering/baton/issues/782).
   The knowledge audit in [#779](https://github.com/Flip-Engineering/baton/issues/779)
@@ -866,14 +888,23 @@ remain open under [#782](https://github.com/Flip-Engineering/baton/issues/782).
   native as guidance `message:rewrite-tooling:a8c03fce4bfa7a5adebc8d2ab5660f1f`,
   read under the same native UUID in attempt 941. The exact-hash review update
   `message:rewrite-tooling:d915a4983290d89d7fcf8de3fd8b212e` is admitted to the
-  same DeepSeek UUID but has no owned-read record yet; attempt 953 is running.
+  same DeepSeek UUID and was read under attempt
+  `receive:rewrite-deepseek:984:691184f811a59c6b8a14f0707ae2ba0e`; its review
+  report is pending delivery.
   The original fframes attempt 694 exited with status 0. A guarded configure
   then set `fframes-lead` to `muse-wonder-1.0` at high effort, preserving UUID
   `01a1475d-d987-7bf2-8968-b31165d91a60`. The retained coordinator task was
   resumed once on the same UUID after identifying open child work. Guidance
   `message:operator:a7c7a1da93eb2e889a164f7c1b54ed87` was read under attempt
   `receive:fframes-lead:735:5e1acf5a17c271f828ce9dce9bef577d`; the session remains
-  running on the standard model.
+  running on the standard model, with no unread inbox items. The latest owned
+  report `report:0e6847548dfc53dde2bb0f3696682fe0` says `native-gpu` is actively
+  editing `fframes-3d/src/gpu/mod.rs` and should remain undisturbed.
+  `material-shader` has repeated queued-message preemption that prevents tool
+  calls from executing; the lead reports additional guidance would worsen the
+  queue. Simulation is cycling Kimi quota failures and quality has exited on
+  Kimi quota. No new SHAs were reported; tips remain `3e6d9da` and `0ee836f`,
+  with parity incomplete.
 
   At 02:55 UTC, user units `acp-render-farm.service` and
   `acp-render-farm-gpu1.service` were active with four running render containers
@@ -882,3 +913,9 @@ remain open under [#782](https://github.com/Flip-Engineering/baton/issues/782).
   thermal or power-brake code `0x20` at 47 C, GPU1 was 63 C, and GPU3 remained
   user-held. These samples show active CPU work and do not establish completed
   GPU rendering. No GPU controls were used.
+  At 03:02 UTC, both user units were still active. A bounded `nvidia-smi`
+  sample showed UUID `GPU-1a60290b-b538-1ac7-9a81-3978d3b12c60` at 22% GPU,
+  49 C and 49.28 W; `GPU-b7aaa373-d194-a71f-539d-e0a10dbfc4ce` was at 0%,
+  67 C and 64.17 W; user-held `GPU-b983e9da-46fc-ecd8-1449-53e039430591`
+  was at 0%, 57 C and 41.62 W. This shows GPU0 rendering activity while the
+  other sampled lanes remain idle; no GPU controls were used.
