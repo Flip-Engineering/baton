@@ -42,7 +42,7 @@ def connect_updates_and_answers_only_after_admission(id,native,endpoint):
 
 law connect_refusal_is_classified_before_delivery:
   for detail: String
-  {Store.refused("{\"error\":\"invalid-endpoint\"" ++ detail) == True{} : Bool}
+  {Store.refused("{\"error\":\"invalid-endpoint\"}" ++ detail) == True{} : Bool}
 
 def connect_refusal_is_classified_before_delivery(detail):
   {==}
