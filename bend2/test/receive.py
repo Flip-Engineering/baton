@@ -4631,6 +4631,97 @@ class Receive(unittest.TestCase):
         fresh.kill()
         fresh.wait()
 
+    def test_output_only_frames_replay_from_durable_checkpoint(self):
+        self.player(harness='omp')
+        self.prepare_input('output-replay-task', 'parent', 'Replay output from the last semantic checkpoint.')
+        observer = self.spawn(*self.receive_args('parent'))
+        control, started = self.accept('parent')
+        native_id = self.eventually(lambda: self.coord('player', 'parent')['native'],
+                                    'The original OMP identity was not recorded.')
+        self.assertEqual(native_id, started['native'])
+        attempt = pathlib.Path(self.execution('parent')[2])
+        checkpoint = attempt / 'checkpoint'
+        log = self.output_log('parent')
+
+        self.action(control, emit_checkpoint_message='durable-output-cursor')
+        self.assertEqual(json.loads(control.readline()),
+                         {'checkpoint_message_written': 'durable-output-cursor'})
+        def checkpoint_state():
+            if not checkpoint.is_file():
+                return None
+            record = checkpoint.read_bytes()
+            state_at = record.find(b'{"schema":1,')
+            if state_at < 0:
+                return None
+            try:
+                return record, json.loads(record[state_at:])
+            except json.JSONDecodeError:
+                return None
+
+        def durable_semantic_checkpoint():
+            saved = checkpoint_state()
+            return saved is not None and 'durable-output-cursor' in saved[1].get('last_message', '')
+
+        self.eventually(durable_semantic_checkpoint,
+                        'The semantic frame was not included in the durable checkpoint.')
+        durable_checkpoint, durable_state = checkpoint_state()
+        state_at = durable_checkpoint.find(b'{"schema":1,')
+        self.assertGreaterEqual(state_at, 0, 'Checkpoint has no schema-1 observer state.')
+        self.assertIn('durable-output-cursor', durable_state['last_message'])
+        durable_output = int(durable_state['output'])
+
+        self.action(control, emit_delta_batch={'id': 'uncommitted', 'count': 3, 'bytes': 128})
+        self.assertEqual(json.loads(control.readline()),
+                         {'delta_frames_written': 3, 'batch': 'uncommitted'})
+        expected_lines = 3
+        def output_batch_written():
+            if not log.exists():
+                return False
+            with log.open() as stream:
+                return sum(json.loads(line).get('type') == 'message_update' for line in stream) >= expected_lines
+        self.eventually(output_batch_written, 'The output-only frames were not written before interruption.')
+        self.assertEqual(checkpoint.read_bytes(), durable_checkpoint,
+                         'Output-only changes advanced the durable checkpoint.')
+        self.assertEqual(json.loads(checkpoint.read_bytes()[state_at:])['output'], durable_output)
+        self.assertGreater(log.stat().st_size, durable_output,
+                           'Output-only frames did not extend beyond the durable cursor.')
+
+        observer.kill()
+        observer.wait()
+        self.assertTrue(any(process['pid'] == started['pid'] for process in self.owned_processes()),
+                        'The native process did not survive observer recovery.')
+        self.assertEqual(self.coord('player', 'parent')['native'], native_id)
+        recovered = self.spawn(*self.receive_args('parent'))
+        self.assertIsNone(recovered.poll(), 'Same-attempt receiver did not adopt the live native.')
+
+        marker = 'semantic checkpoint after output replay'
+        self.action(control, emit_checkpoint_message=marker)
+        self.assertEqual(json.loads(control.readline()), {'checkpoint_message_written': marker})
+        self.eventually(lambda: marker.encode() in log.read_bytes(),
+                        'The recovered observer did not consume frames after its saved cursor.')
+        def replay_checkpointed():
+            saved = checkpoint_state()
+            return saved is not None and marker in saved[1].get('last_message', '')
+
+        self.eventually(replay_checkpointed,
+                        'The recovered observer did not checkpoint the next semantic change.')
+        replay_state = checkpoint_state()[1]
+        self.assertGreaterEqual(int(replay_state['output']), log.stat().st_size,
+                                'The recovered checkpoint cursor does not cover replayed output.')
+        self.assert_no_start()
+        with log.open() as stream:
+            updates = [json.loads(line) for line in stream
+                       if json.loads(line).get('type') == 'message_update']
+        self.assertEqual(sum(update.get('assistantMessageEvent', {}).get('delta') == 'x' * 128
+                             for update in updates), 3,
+                         'Replay duplicated or lost output-only frames.')
+        self.assertEqual(self.coord('player', 'parent')['native'], native_id)
+        self.action(control, body='Output replay completed.', hold_exit=True)
+        self.assertEqual(json.loads(control.readline()), {'terminal_written': True})
+        self.action(control, exit_fixture=True)
+        self.assertEqual(control.readline(), b'')
+        self.finish(recovered, ok=False)
+
     def test_long_omp_stream_releases_frames_and_recovers_checkpoint(self):
         self.player(harness='omp')
         config_path = self.directory / 'fixture.json'
