@@ -47,6 +47,7 @@ class AccountCredits(unittest.TestCase):
     root = identity.ControlIdentity.root
     dispatch = identity.ControlIdentity.dispatch
     accept = identity.ControlIdentity.accept
+    action = identity.ControlIdentity.action
     finish = identity.ControlIdentity.finish
     rows = identity.ControlIdentity.rows
     eventually = identity.ControlIdentity.eventually
@@ -280,6 +281,32 @@ class AccountCredits(unittest.TestCase):
         self.finish(stream)
         self.exited('leaf')
         self.assertEqual(self.send('attempts', session='leaf')['attempts'], attempts)
+
+    def test_exhaustion_advances_the_bound_account_and_records_the_next_attempt(self):
+        self.root()
+        self.recruit('leaf')
+        self.call('message', 'retained-task', 'root', 'leaf', 'task', self.task.read_text())
+        self.record('omp-main', 'anthropic', 'omp', 'subscription', '/fixture/stores/omp-a')
+        self.record('omp-next', 'anthropic', 'omp', 'subscription', '/fixture/stores/omp-b')
+        self.send('bind', id='omp-main', session='leaf')
+        first, started = self.accept('leaf')
+        cause = "You've hit your session limit. Try again later."
+        self.action(first, fail=True, ack=False, fail_message=cause)
+        self.action(first, exit_fixture=True)
+        second, resumed = self.accept('leaf')
+        self.assertEqual(resumed['native'], started['native'])
+        self.finish(second)
+        self.exited('leaf')
+        attempts = self.send('attempts', session='leaf')['attempts']
+        self.assertEqual([row['account'] for row in attempts], ['omp-main', 'omp-next'], attempts)
+        self.assertEqual([row['session'] for row in attempts], ['leaf', 'leaf'])
+        self.assertEqual(attempts[1]['secretRef'], '/fixture/stores/omp-b')
+        handoff = [row for row in self.rows(
+            "SELECT body FROM messages WHERE body LIKE 'account handoff:%'")]
+        self.assertEqual(len(handoff), 1, handoff)
+        self.assertIn('refused account=omp-main', handoff[0]['body'])
+        self.assertIn('bound account=omp-next', handoff[0]['body'])
+        self.assertIn(cause, handoff[0]['body'])
 
 
 if __name__ == '__main__':
