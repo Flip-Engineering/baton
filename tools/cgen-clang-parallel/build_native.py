@@ -10,6 +10,7 @@ import json
 import os
 import platform
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -43,19 +44,28 @@ def qualified_linux_clang(cc: str, system: str | None = None,
     return re.search(r"\bclang version 19(?:\.\d+)?\b", version) is not None
 
 
-def command_output(command: list[str], log: Path, cwd: Path) -> float:
+def command_output(command: list[str], stdout_log: Path, stderr_log: Path, cwd: Path) -> dict:
     started = time.monotonic()
-    with log.open("wb") as output:
-        result = subprocess.run(command, cwd=cwd, stdout=output,
-                                stderr=subprocess.STDOUT, check=False)
+    with stdout_log.open("wb") as stdout, stderr_log.open("wb") as stderr:
+        result = subprocess.run(command, cwd=cwd, stdout=stdout, stderr=stderr, check=False)
     elapsed = time.monotonic() - started
+    record = {
+        "argv": command,
+        "returncode": result.returncode,
+        "wait_completed": True,
+        "natural_exit": result.returncode >= 0,
+        "elapsed_seconds": round(elapsed, 3),
+        "stdout_sha256": sha256(stdout_log),
+        "stderr_sha256": sha256(stderr_log),
+    }
     if result.returncode:
-        detail = log.read_text(errors="replace")
+        detail = (stdout_log.read_text(errors="replace") +
+                  stderr_log.read_text(errors="replace"))[-32_768:]
         raise RuntimeError(
             f"command failed with exit {result.returncode}: {' '.join(command)}\n"
             f"{detail}\nfull build artifacts retained in {cwd}"
         )
-    return elapsed
+    return record
 
 
 def main() -> int:
@@ -72,14 +82,18 @@ def main() -> int:
     entry = args.entry.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
 
-    compile_prefix = [args.ccache, args.cc] if args.ccache else [args.cc]
+    compiler_path = Path(shutil.which(args.cc) or args.cc).resolve()
+    compiler = str(compiler_path)
+    ccache_path = (Path(shutil.which(args.ccache) or args.ccache).resolve()
+                   if args.ccache else None)
+    compile_prefix = [str(ccache_path), compiler] if ccache_path else [compiler]
     flags = ["-O1", "-pthread", "-Dmain=baton2_runtime_main"]
 
-    if not qualified_linux_clang(args.cc):
+    if not qualified_linux_clang(compiler):
         object_file = output.with_name(output.name + ".o")
         subprocess.run([*compile_prefix, *flags, "-c", str(source), "-o", str(object_file)],
                        check=True)
-        subprocess.run([args.cc, "-O1", "-pthread", str(entry), str(object_file),
+        subprocess.run([compiler, "-O1", "-pthread", str(entry), str(object_file),
                         "-lsqlite3", "-lm", "-o", str(output)], check=True)
         stale_receipt = output.with_name(output.name + ".build.json")
         if stale_receipt.exists():
@@ -96,7 +110,7 @@ def main() -> int:
                      str(Path(__file__).with_name("shard_emitted_c.py")),
                      "--input", str(source), "--outdir", str(split_dir),
                      "--shards", str(SHARDS)]
-        command_output(split_cmd, split_log, staging)
+        split_record = command_output(split_cmd, split_log, staging / "split.stderr", staging)
         manifest = json.loads((split_dir / "manifest.json").read_text())
         shard_sources = sorted(split_dir.glob("shard_*.c"))
         core = split_dir / "baton_core.c"
@@ -108,45 +122,60 @@ def main() -> int:
         jobs: list[tuple[Path, Path]] = []
         for item in sources:
             obj = staging / (item.stem + ".o")
-            log = staging / (item.stem + ".compile.log")
             jobs.append((item, obj))
 
         started = time.monotonic()
-        def compile_one(job: tuple[Path, Path]) -> tuple[Path, float]:
+        def compile_one(job: tuple[Path, Path]) -> tuple[Path, Path, dict]:
             item, obj = job
-            elapsed = command_output([*compile_prefix, *flags, "-c", str(item), "-o", str(obj)],
-                                     staging / (item.stem + ".compile.log"), staging)
-            return obj, elapsed
+            command = [*compile_prefix, *flags, "-c", str(item), "-o", str(obj)]
+            record = command_output(command, staging / (item.stem + ".stdout"),
+                                    staging / (item.stem + ".stderr"), staging)
+            return item, obj, record
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=len(jobs)) as pool:
             objects = list(pool.map(compile_one, jobs))
         compile_wall = time.monotonic() - started
-        ordered_objects = [obj for obj, _ in objects]
+        ordered_objects = [obj for _, obj, _ in objects]
         staged_object = staging / (output.name + ".o")
-        aggregate_log = staging / "aggregate.log"
-        aggregate_command = [args.cc, "-r", *map(str, ordered_objects),
+        aggregate_command = [compiler, "-r", *map(str, ordered_objects),
                              "-o", str(staged_object)]
-        aggregate_wall = command_output(aggregate_command, aggregate_log, staging)
+        aggregate_record = command_output(aggregate_command, staging / "aggregate.stdout",
+                                          staging / "aggregate.stderr", staging)
         staged_binary = staging / output.name
-        link_log = staging / "link.log"
-        link_command = [args.cc, "-O1", "-pthread", str(entry),
+        link_command = [compiler, "-O1", "-pthread", str(entry),
                         str(staged_object), "-lsqlite3", "-lm",
                         "-o", str(staged_binary)]
-        link_wall = command_output(link_command, link_log, staging)
+        link_record = command_output(link_command, staging / "link.stdout",
+                                     staging / "link.stderr", staging)
         artifact_object = output.with_name(output.name + ".o")
         artifact_receipt = output.with_name(output.name + ".build.json")
         receipt_tmp = staging / "build.json"
-        compile_rows = [
-            {"source_name": item.name, "object_name": obj.name,
-             "source_sha256": sha256(item), "object_sha256": sha256(obj)}
-            for item, (obj, _) in zip(sources, objects)]
+        object_directory = output.with_name(
+            output.name + ".objects-" + secrets.token_hex(8))
+        compile_rows = []
+        for item, obj, record in objects:
+            compile_rows.append({
+                "source_name": item.name,
+                "source_sha256": sha256(item),
+                "object_name": obj.name,
+                "object_path": str(object_directory / obj.name),
+                "object_sha256": sha256(obj),
+                "compile": record,
+            })
+        version_record = command_output([compiler, "--version"],
+                                        staging / "compiler-version.stdout",
+                                        staging / "compiler-version.stderr", staging)
+        compiler_version_output = (staging / "compiler-version.stdout").read_text(errors="replace")
+        if version_record["returncode"] != 0 or not compiler_version_output.splitlines():
+            raise RuntimeError("Clang version probe returned no version line.")
         receipt = {
-            "schema": "baton2-clang-sharded-main-build-v1",
+            "schema": "baton2-clang-sharded-main-build-v2",
             "route": "linux-x86_64-clang-19-no-pch",
-            "compiler": args.cc,
-            "compiler_version": subprocess.run(
-                [args.cc, "--version"], check=True, text=True,
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT).stdout.splitlines()[0],
+            "compiler": compiler,
+            "compiler_sha256": sha256(compiler_path),
+            "compiler_version": compiler_version_output.splitlines()[0],
+            "compiler_version_sha256": sha256(staging / "compiler-version.stdout"),
+            "compiler_version_probe": version_record,
             "source": str(source),
             "source_sha256": sha256(source),
             "entry": str(entry),
@@ -155,30 +184,36 @@ def main() -> int:
             "splitter_sha256": sha256(Path(__file__).with_name("shard_emitted_c.py")),
             "driver": str(Path(__file__).resolve()),
             "driver_sha256": sha256(Path(__file__).resolve()),
-            "ccache": str(Path(shutil.which(args.ccache)).resolve()) if args.ccache else "",
-            "ccache_sha256": sha256(Path(shutil.which(args.ccache))) if args.ccache else "",
-            "split_manifest_file_sha256": sha256(split_dir / "manifest.json"),
+            "ccache": str(ccache_path) if ccache_path else "",
+            "ccache_sha256": sha256(ccache_path) if ccache_path else "",
             "split_manifest_sha256": hashlib.sha256(json.dumps(
                 manifest, sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
             "split_manifest": manifest,
             "shards": len(shard_sources),
             "segments": manifest["counts"]["segments"],
             "compile_flags": flags,
+            "object_directory": str(object_directory),
+            "split": split_record,
             "compile_objects": compile_rows,
-            "aggregate_command": [args.cc, "-r",
+            "aggregate": aggregate_record,
+            "aggregate_command": [compiler, "-r",
                                   *[row["object_name"] for row in compile_rows],
                                   "-o", output.name + ".o"],
-            "aggregate_wall_seconds": round(aggregate_wall, 3),
             "object": str(artifact_object),
             "object_sha256": sha256(staged_object),
-            "link_command": [args.cc, "-O1", "-pthread", str(entry),
+            "link": link_record,
+            "link_command": [compiler, "-O1", "-pthread", str(entry),
                              output.name + ".o", "-lsqlite3", "-lm", "-o", output.name],
             "compile_wall_seconds": round(compile_wall, 3),
-            "link_wall_seconds": round(link_wall, 3),
             "output": str(output),
             "output_sha256": sha256(staged_binary),
         }
         receipt_tmp.write_text(json.dumps(receipt, sort_keys=True) + "\n")
+        staged_objects = staging / "retained-objects"
+        staged_objects.mkdir()
+        for _, obj, _ in objects:
+            shutil.copyfile(obj, staged_objects / obj.name)
+        os.replace(staged_objects, object_directory)
         os.replace(staged_object, artifact_object)
         os.replace(staged_binary, output)
         os.replace(receipt_tmp, artifact_receipt)

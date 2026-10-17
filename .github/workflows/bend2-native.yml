@@ -364,6 +364,17 @@ jobs:
           if main_build is not None:
               shutil.copyfile(binary.with_name(binary.name + '.o'), run / 'generated/baton2.o')
               shutil.copyfile(main_receipt, run / 'generated/baton2.build.json')
+              object_copy_dir = run / 'generated/baton2-shard-objects'
+              object_copy_dir.mkdir()
+              for row in main_build['retained_objects']:
+                  original = pathlib.Path(row['path'])
+                  copied = object_copy_dir / row['object_name']
+                  shutil.copyfile(original, copied)
+                  row['copy_path'] = str(pathlib.Path('baton2-shard-objects') / row['object_name'])
+                  row['size_bytes'] = copied.stat().st_size
+                  row['sha256'] = hashlib.sha256(copied.read_bytes()).hexdigest()
+              main_build = {key: main_build[key] for key in (
+                  'route', 'receipt_sha256', 'output_sha256', 'object_sha256', 'retained_objects')}
           main_c_reuse = json.loads((run / 'generated/main-c-reuse.json').read_text())
           subprocess.run([sys.executable, str(root / '.github/scripts/reuse-native-main.py'), 'verify-transfer',
                           '--source', str(root), '--generated', str(run / 'generated')], check=True,
@@ -382,6 +393,11 @@ jobs:
                      'checks': records, 'selected_results': selected_results, 'main_c_reuse': main_c_reuse,
                      'main_native_build': main_build}
           (run / 'generated/handoff-manifest.json').write_text(json.dumps(handoff, indent=2) + '\n')
+          if main_build is not None:
+              verify_sharded_transfer = runpy.run_path(
+                  str(root / '.github/scripts/reuse-native-main.py'))['verify_sharded_transfer']
+              verify_sharded_transfer(main_build, run / 'generated/baton2.build.json',
+                                      run / 'generated')
           PY
       - name: Retain required REPL compiler source inputs
         shell: bash
@@ -708,6 +724,9 @@ jobs:
               assert hashlib.sha256(object_file.read_bytes()).hexdigest() == native_build['object_sha256']
               assert hashlib.sha256(build_receipt.read_bytes()).hexdigest() == native_build['receipt_sha256']
               assert hashlib.sha256(linux_binary.read_bytes()).hexdigest() == native_build['output_sha256']
+              subprocess.run(['python3', str(root / '.github/scripts/reuse-native-main.py'),
+                  'verify-sharded-transfer', '--handoff', str(generated / 'handoff-manifest.json'),
+                  '--generated', str(generated)], check=True)
           main_c_reuse = json.loads((generated / 'main-c-reuse.json').read_text())
           assert main_c_reuse == handoff['main_c_reuse']
           subprocess.run(['python3', str(root / '.github/scripts/reuse-native-main.py'), 'verify-transfer',

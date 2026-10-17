@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import tempfile
 import time
 import traceback
 
@@ -66,8 +67,21 @@ def verify_sharded_build(receipt_path, source, entry, output, path_map=None, too
     receipt_path = pathlib.Path(receipt_path).resolve()
     source, entry, output = (pathlib.Path(path).resolve() for path in (source, entry, output))
     resolve_recorded = path_map or (lambda value: pathlib.Path(value).resolve())
+
+    def resolve_executable(value):
+        try:
+            resolved = pathlib.Path(resolve_recorded(value)).resolve()
+        except ValueError:
+            recorded = pathlib.Path(value)
+            require(recorded.is_absolute() and '..' not in recorded.parts,
+                    'Sharded Main executable path is not normalized.')
+            resolved = recorded.resolve()
+        require(resolved.is_file() and not resolved.is_symlink(),
+                'Sharded Main executable is missing or indirect.')
+        return resolved
+
     receipt = json.loads(receipt_path.read_text())
-    require(receipt.get('schema') == 'baton2-clang-sharded-main-build-v1',
+    require(receipt.get('schema') == 'baton2-clang-sharded-main-build-v2',
             'Unknown sharded Main build receipt.')
     require(receipt.get('route') == 'linux-x86_64-clang-19-no-pch',
             'Unexpected sharded Main build route.')
@@ -95,36 +109,157 @@ def verify_sharded_build(receipt_path, source, entry, output, path_map=None, too
             'Sharded Main object list differs.')
     require(receipt.get('compile_flags') == ['-O1', '-pthread', '-Dmain=baton2_runtime_main'],
             'Sharded Main compile flags differ.')
-    compiler = receipt['compiler']
+    compiler_argv = receipt['compiler']
+    compiler = resolve_executable(compiler_argv)
+    require(receipt.get('compiler_sha256') == digest(compiler),
+            'Sharded Main compiler executable differs.')
+    compiler_version_probe = receipt.get('compiler_version_probe')
+    require(isinstance(compiler_version_probe, dict)
+            and compiler_version_probe.get('argv') == [compiler_argv, '--version']
+            and compiler_version_probe.get('returncode') == 0
+            and compiler_version_probe.get('wait_completed') is True
+            and compiler_version_probe.get('natural_exit') is True,
+            'Sharded Main compiler version probe is incomplete.')
+    for key in ('stdout_sha256', 'stderr_sha256'):
+        require(re.fullmatch(r'[0-9a-f]{64}', compiler_version_probe.get(key, '')) is not None,
+                'Sharded Main compiler version stream digest is invalid.')
+    require(receipt.get('compiler_version_sha256') == compiler_version_probe['stdout_sha256'],
+            'Sharded Main compiler version digest differs.')
+    version_run = subprocess.run([str(compiler), '--version'], check=False,
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    require(version_run.returncode == 0
+            and hashlib.sha256(version_run.stdout).hexdigest() == receipt['compiler_version_sha256']
+            and hashlib.sha256(version_run.stderr).hexdigest() == compiler_version_probe['stderr_sha256'],
+            'Sharded Main compiler version output differs.')
+    version_text = version_run.stdout.decode(errors='replace')
+    require(version_text.splitlines()
+            and version_text.splitlines()[0] == receipt.get('compiler_version')
+            and re.search(r'\bclang version 19(?:\.\d+)?\b', version_text) is not None,
+            'Sharded Main compiler version is not the exact recorded Clang 19 build.')
     ccache = receipt.get('ccache', '')
     require(bool(ccache) == bool(receipt.get('ccache_sha256')),
             'Sharded Main ccache binding is incomplete.')
     if ccache:
-        require(digest(pathlib.Path(ccache)) == receipt['ccache_sha256'],
+        require(digest(resolve_executable(ccache)) == receipt['ccache_sha256'],
                 'Sharded Main ccache executable differs.')
     require(receipt.get('segments') == manifest.get('counts', {}).get('segments'),
             'Sharded Main segment count differs from its manifest.')
-    require(receipt.get('aggregate_command') == [compiler, '-r',
+    object_directory = pathlib.Path(resolve_recorded(receipt['object_directory'])).resolve()
+    require(object_directory.parent == output.parent
+            and object_directory.name.startswith(output.name + '.objects-')
+            and object_directory.is_dir() and not object_directory.is_symlink(),
+            'Sharded Main retained object directory is missing.')
+
+    def validate_command_record(record, name):
+        require(isinstance(record, dict)
+                and isinstance(record.get('argv'), list)
+                and record.get('returncode') == 0
+                and record.get('wait_completed') is True
+                and record.get('natural_exit') is True
+                and isinstance(record.get('elapsed_seconds'), (int, float))
+                and record['elapsed_seconds'] >= 0,
+                'Sharded Main ' + name + ' process did not complete naturally.')
+        for key in ('stdout_sha256', 'stderr_sha256'):
+            require(re.fullmatch(r'[0-9a-f]{64}', record.get(key, '')) is not None,
+                    'Sharded Main ' + name + ' stream digest is invalid.')
+        return record['argv']
+
+    split_argv = validate_command_record(receipt.get('split'), 'splitter')
+    require(len(split_argv) == 8
+            and resolve_executable(split_argv[0])
+            and resolve_recorded(split_argv[1]) == splitter
+            and split_argv[2] == '--input' and resolve_recorded(split_argv[3]) == source
+            and split_argv[4] == '--outdir'
+            and pathlib.Path(split_argv[5]).is_absolute()
+            and pathlib.Path(split_argv[5]).name == 'split'
+            and pathlib.Path(split_argv[5]).parent.parent == output.parent
+            and pathlib.Path(split_argv[5]).parent.name.startswith('.' + output.name + '.clang-shards-')
+            and split_argv[6:8] == ['--shards', str(receipt['shards'])],
+            'Sharded Main splitter invocation differs.')
+    staging_directory = pathlib.Path(split_argv[5]).parent
+    compile_prefix = ([ccache, compiler_argv] if ccache else [compiler_argv])
+    compile_rows = []
+    expected_names = ['baton_core.c', 'baton_spins.c'] + [f'shard_{index:02d}.c' for index in range(4)]
+    with tempfile.TemporaryDirectory(prefix='baton-verify-sharded-main-') as temp:
+        split_dir = pathlib.Path(temp)
+        split_result = subprocess.run(
+            [sys.executable, str(splitter), '--input', str(source),
+             '--outdir', str(split_dir), '--shards', str(receipt['shards'])],
+            check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        require(split_result.returncode == 0,
+                'Sharded Main splitter could not rederive the retained C partition.')
+        regenerated = json.loads((split_dir / 'manifest.json').read_text())
+        expected_manifest = dict(manifest)
+        require(resolve_recorded(expected_manifest.get('input', '')) == source,
+                'Sharded Main split manifest input differs.')
+        expected_manifest['input'] = regenerated['input']
+        require(regenerated == expected_manifest,
+                'Sharded Main split outputs differ from the retained manifest.')
+        command_source_index = len(compile_prefix) + len(receipt['compile_flags']) + 1
+        for row, name in zip(compile_objects, expected_names):
+            require(set(row) == {'source_name', 'source_sha256', 'object_name',
+                                 'object_path', 'object_sha256', 'compile'},
+                    'Sharded Main compile row fields differ.')
+            generated_source = split_dir / name
+            require(row.get('source_sha256') == digest(generated_source),
+                    'Sharded Main generated source hash differs: ' + name)
+            object_path = pathlib.Path(resolve_recorded(row.get('object_path', ''))).resolve()
+            require(object_path.parent == object_directory
+                    and object_path.name == row['object_name']
+                    and object_path.is_file() and not object_path.is_symlink()
+                    and row.get('object_sha256') == digest(object_path),
+                    'Sharded Main retained object differs: ' + name)
+            argv = validate_command_record(row.get('compile'), 'compile ' + name)
+            require(argv[:len(compile_prefix)] == compile_prefix
+                    and argv[len(compile_prefix):command_source_index]
+                        == receipt['compile_flags'] + ['-c']
+                    and pathlib.Path(argv[command_source_index])
+                        == staging_directory / 'split' / name
+                    and argv[command_source_index + 1] == '-o'
+                    and pathlib.Path(argv[command_source_index + 2])
+                        == staging_directory / row['object_name'],
+                    'Sharded Main compile invocation differs: ' + name)
+            compile_rows.append(row)
+    require({path.name for path in object_directory.iterdir()} ==
+            {row['object_name'] for row in compile_rows},
+            'Sharded Main retained object set differs.')
+    aggregate_argv = validate_command_record(receipt.get('aggregate'), 'object aggregation')
+    require(resolve_executable(aggregate_argv[0]) == compiler and aggregate_argv[1] == '-r'
+            and [pathlib.Path(value) for value in aggregate_argv[2:8]]
+                == [staging_directory / row['object_name'] for row in compile_rows]
+            and aggregate_argv[8] == '-o'
+            and pathlib.Path(aggregate_argv[9]) == staging_directory / (output.name + '.o'),
+            'Sharded Main object aggregation invocation differs.')
+    require(receipt.get('aggregate_command') == [compiler_argv, '-r',
             *[row['object_name'] for row in compile_objects], '-o', output.name + '.o'],
             'Sharded Main object aggregation command differs.')
     link_command = receipt.get('link_command', [])
-    require(len(link_command) == 9 and link_command[:3] == [compiler, '-O1', '-pthread']
+    require(len(link_command) == 9 and link_command[:3] == [compiler_argv, '-O1', '-pthread']
             and resolve_recorded(link_command[3]) == entry
             and link_command[4:] == [output.name + '.o', '-lsqlite3', '-lm', '-o', output.name],
             'Sharded Main native link command differs.')
+    link_argv = validate_command_record(receipt.get('link'), 'native link')
+    require(link_argv[:3] == [compiler_argv, '-O1', '-pthread']
+            and resolve_recorded(link_argv[3]) == entry
+            and pathlib.Path(link_argv[4]) == staging_directory / (output.name + '.o')
+            and link_argv[5:8] == ['-lsqlite3', '-lm', '-o']
+            and pathlib.Path(link_argv[8]).name == output.name,
+            'Sharded Main native link execution differs.')
     object_file = output.with_name(output.name + '.o')
     require(resolve_recorded(receipt['object']) == object_file
             and receipt['object_sha256'] == digest(object_file), 'Sharded Main object differs.')
     require(resolve_recorded(receipt['output']) == output
             and receipt['output_sha256'] == digest(output), 'Sharded Main executable differs.')
-    version = subprocess.run([compiler, '--version'], check=True, text=True,
-                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT).stdout
-    require(re.search(r'\bclang version 19(?:\.\d+)?\b', version) is not None,
-            'Sharded Main compiler is not Clang 19.')
     return {'status': 'verified', 'receipt': str(receipt_path),
             'receipt_sha256': digest(receipt_path), 'source_sha256': digest(source),
             'object_sha256': digest(object_file), 'output_sha256': digest(output),
-            'route': receipt['route']}
+            'route': receipt['route'],
+            'retained_objects': [
+                {'source_name': row['source_name'], 'object_name': row['object_name'],
+                 'path': row['object_path'], 'size_bytes': pathlib.Path(
+                     resolve_recorded(row['object_path'])).stat().st_size,
+                 'sha256': row['object_sha256']}
+                for row in compile_rows]}
 
 
 def save(path, value):
@@ -482,13 +617,37 @@ def combined_evidence(handoff, binding, origin, compiler_archive):
             'Combined compiler layout differs.')
     native_build = handoff.get('native_build')
     if native_build is not None:
-        require(set(native_build) == {'route', 'receipt'}
+        require(set(native_build) == {'route', 'receipt', 'retained_objects'}
                 and native_build['route'] == 'linux-x86_64-clang-19-no-pch',
                 'Combined sharded Main build declaration differs.')
         receipt = retained(native_build['receipt'])
         receipt_copy = origin / 'sharded-main-build.json'
         copy_record(receipt, receipt_copy)
         receipt_data = json.loads(receipt_copy.read_text())
+        retained_objects = native_build['retained_objects']
+        require(len(retained_objects) == 6
+                and [row.get('source_name') for row in retained_objects]
+                    == [row['source_name'] for row in receipt_data['compile_objects']],
+                'Combined sharded object custody is incomplete.')
+        for object_row, compiled_row in zip(retained_objects, receipt_data['compile_objects']):
+            require(set(object_row) == {'source_name', 'object_name', 'path',
+                                        'copy_path', 'size_bytes', 'sha256'}
+                    and object_row['object_name'] == compiled_row['object_name']
+                    and object_row['path'] == compiled_row['object_path']
+                    and object_row['sha256'] == compiled_row['object_sha256'],
+                    'Combined sharded object custody differs from its build receipt.')
+            copy_path = pathlib.Path(object_row['copy_path'])
+            generated_root = origin.parent.resolve()
+            retained_object_path = (generated_root / copy_path).resolve()
+            require(copy_path == pathlib.Path('baton2-shard-objects') / object_row['object_name']
+                    and retained_object_path.is_relative_to(generated_root)
+                    and retained_object_path.is_file() and not retained_object_path.is_symlink()
+                    and retained_object_path.stat().st_size == object_row['size_bytes']
+                    and digest(retained_object_path) == object_row['sha256'],
+                    'Combined retained shard object differs: ' + object_row['object_name'])
+            original_object_path = mapped(object_row['path'])
+            original_object_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(retained_object_path, original_object_path)
         c_artifact = next((item for item in handoff['build_artifacts']
                            if pathlib.Path(item['original']['path']).name == 'baton2.c'), None)
         object_artifact = next((item for item in handoff['build_artifacts']
@@ -709,6 +868,19 @@ def verify_transfer(args):
     require(digest(origin / 'handoff.json') == result['origin_handoff_sha256'], 'Origin handoff binding differs.')
     require(digest(generated / 'baton2.c') == result['generated_c_sha256']
             and (generated / 'baton2.c').stat().st_size == result['generated_c_size'], 'Reused Main C differs.')
+    original_handoff = json.loads((origin / 'original-combined-handoff.json').read_text()) \
+        if (origin / 'original-combined-handoff.json').is_file() else json.loads((origin / 'handoff.json').read_text())
+    native_build = original_handoff.get('native_build')
+    if native_build is not None:
+        receipt_copy = origin / 'sharded-main-build.json'
+        receipt_data = json.loads(receipt_copy.read_text())
+        verify_sharded_transfer({
+            'route': native_build['route'],
+            'receipt_sha256': native_build['receipt']['sha256'],
+            'output_sha256': receipt_data['output_sha256'],
+            'object_sha256': receipt_data['object_sha256'],
+            'retained_objects': native_build['retained_objects'],
+        }, receipt_copy, generated, verify_outputs=False)
     rows = source_files(args.source.resolve(), result['current_source_commit'], result['current_source_tree'])
     require(rows == json.loads((origin / 'current-source-files.json').read_text()), 'Current full source differs from reuse proof.')
     current, issue = production_inputs(args.source.resolve(), rows)
@@ -741,6 +913,58 @@ def verify_transfer(args):
     return result
 
 
+def verify_sharded_transfer(native_build, receipt_path, generated, verify_outputs=True):
+    require(set(native_build) == {'route', 'receipt_sha256', 'output_sha256',
+                                  'object_sha256', 'retained_objects'}
+            and native_build['route'] == 'linux-x86_64-clang-19-no-pch',
+            'Transferred sharded Main declaration differs.')
+    receipt_path = pathlib.Path(receipt_path)
+    require(receipt_path.is_file() and digest(receipt_path) == native_build['receipt_sha256'],
+            'Transferred sharded Main build receipt differs.')
+    receipt = json.loads(receipt_path.read_text())
+    require(receipt['output_sha256'] == native_build['output_sha256']
+            and receipt['object_sha256'] == native_build['object_sha256'],
+            'Transferred sharded Main build result differs.')
+    if verify_outputs:
+        object_file = pathlib.Path(generated) / 'baton2.o'
+        executable = pathlib.Path(generated) / 'baton2-linux-x64'
+        require(object_file.is_file() and not object_file.is_symlink()
+                and digest(object_file) == native_build['object_sha256'],
+                'Transferred sharded aggregate object differs.')
+        require(executable.is_file() and not executable.is_symlink()
+                and digest(executable) == native_build['output_sha256'],
+                'Transferred sharded executable differs.')
+    rows = native_build['retained_objects']
+    expected = receipt.get('compile_objects', [])
+    require(isinstance(rows, list) and len(rows) == len(expected) == 6,
+            'Transferred sharded object set is incomplete.')
+    seen = set()
+    for row, compiled in zip(rows, expected):
+        require(set(row) == {'source_name', 'object_name', 'path', 'copy_path',
+                             'size_bytes', 'sha256'}
+                and row['source_name'] == compiled['source_name']
+                and row['object_name'] == compiled['object_name']
+                and row['path'] == compiled['object_path']
+                and row['sha256'] == compiled['object_sha256'],
+                'Transferred shard object receipt differs.')
+        relative = pathlib.Path(row['copy_path'])
+        require(relative == pathlib.Path('baton2-shard-objects') / row['object_name'],
+                'Transferred shard object path differs.')
+        object_path = pathlib.Path(generated) / relative
+        require(object_path.is_file() and not object_path.is_symlink()
+                and object_path.stat().st_size == row['size_bytes']
+                and digest(object_path) == row['sha256'],
+                'Transferred shard object bytes differ: ' + row['object_name'])
+        seen.add(row['object_name'])
+    object_directory = pathlib.Path(generated) / 'baton2-shard-objects'
+    require(object_directory.is_dir() and not object_directory.is_symlink()
+            and {path.name for path in object_directory.iterdir()} == seen,
+            'Transferred shard object directory contents differ.')
+    return {'status': 'verified', 'object_count': len(seen),
+            'objects_sha256': hashlib.sha256(json.dumps(rows, sort_keys=True,
+                separators=(',', ':')).encode()).hexdigest()}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     modes = parser.add_subparsers(dest='mode', required=True)
@@ -755,6 +979,9 @@ def main():
     verify_parser = modes.add_parser('verify-transfer')
     verify_parser.add_argument('--source', type=pathlib.Path, required=True)
     verify_parser.add_argument('--generated', type=pathlib.Path, required=True)
+    sharded_transfer_parser = modes.add_parser('verify-sharded-transfer')
+    sharded_transfer_parser.add_argument('--handoff', type=pathlib.Path, required=True)
+    sharded_transfer_parser.add_argument('--generated', type=pathlib.Path, required=True)
     build_parser = modes.add_parser('verify-build')
     build_parser.add_argument('--receipt', type=pathlib.Path, required=True)
     build_parser.add_argument('--source', type=pathlib.Path, required=True)
@@ -771,6 +998,14 @@ def main():
     args = parser.parse_args()
     if args.mode == 'verify-transfer':
         print(json.dumps(verify_transfer(args)))
+        return
+    if args.mode == 'verify-sharded-transfer':
+        handoff = json.loads(args.handoff.read_text())
+        native_build = handoff.get('main_native_build')
+        require(native_build is not None, 'Sharded Main build record is missing.')
+        receipt_path = args.generated / 'baton2.build.json'
+        result = verify_sharded_transfer(native_build, receipt_path, args.generated.resolve())
+        print(json.dumps(result))
         return
     if args.mode == 'verify-build':
         print(json.dumps(verify_sharded_build(args.receipt, args.source,
