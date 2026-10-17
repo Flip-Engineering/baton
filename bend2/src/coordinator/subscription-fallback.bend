@@ -256,11 +256,14 @@ def failed_terminal_sql_expr(+event: String) -> String:
 # "reached your" fragment below covers. The "hit your" fragment omits the apostrophe so
 # the curly and ASCII forms both match. ZAI reports "Usage limit reached for 5 hour"
 # with its reset time. The observed OMP 402 stopReason=error shape reports
-# "402 Insufficient Balance" with type=unknown_error. Not matched: the upstream
+# "402 Insufficient Balance" with type=unknown_error. A funded API-key route reports
+# the Claude API credit stop: "Your credit balance is too low to access the Anthropic
+# API. Please go to Plans & Billing to upgrade or purchase credits.", and Claude Code
+# shows the footer "Credit balance too low · Add funds: ...". Not matched: the upstream
 # "limit reached" header flag, "rate limit exceeded", the context-window message,
 # stream disconnection and timeouts.
 def exhausted_marker_sql(+text: String) -> String:
-  "CASE WHEN (instr(lower(" ++ text ++ "),'hit your')>0 AND (instr(lower(" ++ text ++ "),'limit')>0 OR instr(lower(" ++ text ++ "),'budget')>0)) OR (instr(lower(" ++ text ++ "),'reached your')>0 AND (instr(lower(" ++ text ++ "),'limit')>0 OR instr(lower(" ++ text ++ "),'quota')>0)) OR instr(lower(" ++ text ++ "),'usage limit reached for ')>0 OR instr(lower(" ++ text ++ "),'out of credits')>0 OR instr(lower(" ++ text ++ "),'spend cap')>0 OR instr(lower(" ++ text ++ "),'quota exceeded')>0 OR instr(lower(" ++ text ++ "),'spend limit reached')>0 OR instr(lower(" ++ text ++ "),'spend limit unavailable')>0 OR instr(lower(" ++ text ++ "),'insufficient balance')>0 THEN 1 ELSE 0 END"
+  "CASE WHEN (instr(lower(" ++ text ++ "),'hit your')>0 AND (instr(lower(" ++ text ++ "),'limit')>0 OR instr(lower(" ++ text ++ "),'budget')>0)) OR (instr(lower(" ++ text ++ "),'reached your')>0 AND (instr(lower(" ++ text ++ "),'limit')>0 OR instr(lower(" ++ text ++ "),'quota')>0)) OR instr(lower(" ++ text ++ "),'usage limit reached for ')>0 OR instr(lower(" ++ text ++ "),'out of credits')>0 OR instr(lower(" ++ text ++ "),'spend cap')>0 OR instr(lower(" ++ text ++ "),'quota exceeded')>0 OR instr(lower(" ++ text ++ "),'spend limit reached')>0 OR instr(lower(" ++ text ++ "),'spend limit unavailable')>0 OR instr(lower(" ++ text ++ "),'insufficient balance')>0 OR instr(lower(" ++ text ++ "),'credit balance is too low')>0 OR instr(lower(" ++ text ++ "),'credit balance too low')>0 THEN 1 ELSE 0 END"
 
 # Bind the complete terminal once and extract its diagnostic once for the
 # provider's subscription-limit wording and the returned cause.

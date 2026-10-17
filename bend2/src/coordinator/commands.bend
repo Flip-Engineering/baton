@@ -62,6 +62,7 @@ type Command is Data:
   Push{repo: String, branch: String, remote: String}
   RemoteTip{repo: String, branch: String, remote: String}
   ObservedUsage{session: String}
+  Account{action: String, id: String, provider: String, harness: String, funding: String, secret_ref: String, organization: String, detail: String, session: String}
   Models{session: String}
   Logs{session: String, level: String}
   LogsStorage{}
@@ -654,6 +655,7 @@ def sql(command: Command) -> String:
     case Serve{}: ""
     case OwnerStatus{}: ""
     case Help{}: ""
+    case Account{action,id,provider,harness,funding,secret_ref,organization,detail,session}: ""
     case Invalid{}: ""
 
 def parse_verb_only(+verb: String) -> Command:
@@ -838,6 +840,7 @@ def parse_receive(+verb: String, +session: String, +cmd: String, +model: String,
 def parse_verb_nine_args(+verb: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +session: String) -> Command:
   match verb:
     case "configure": Configure{player,id,cmd,model,effort,cwd,task,log,session}
+    case "account": Account{player,id,cmd,model,effort,cwd,task,log,session}
     case "start": Start{player,id,cmd,model,effort,cwd,task,log,session}
     case "turn": RunTurn{player,id,cmd,model,effort,cwd,task,log,session}
     case "recruit": Recruit{player,id,cmd,model,effort,cwd,task,log,session}
@@ -1130,4 +1133,30 @@ law owner_status_parser_rejects_extra_arguments:
   {parse(["owner-status",extra]) == Invalid{} : Command}
 
 def owner_status_parser_rejects_extra_arguments(extra):
+  {==}
+
+law account_parser_keeps_the_named_fields:
+  for +action: String
+  for +id: String
+  for +provider: String
+  for +harness: String
+  for +funding: String
+  for +secret_ref: String
+  for +organization: String
+  for +detail: String
+  for +session: String
+  {parse(["account",action,id,provider,harness,funding,secret_ref,organization,detail,session]) == Account{action,id,provider,harness,funding,secret_ref,organization,detail,session} : Command}
+
+def account_parser_keeps_the_named_fields(action,id,provider,harness,funding,secret_ref,organization,detail,session):
+  {==}
+
+law account_parser_rejects_a_missing_field:
+  for +id: String
+  for +provider: String
+  for +harness: String
+  for +funding: String
+  for +secret_ref: String
+  {parse(["account","record",id,provider,harness,funding,secret_ref]) == Invalid{} : Command}
+
+def account_parser_rejects_a_missing_field(id,provider,harness,funding,secret_ref):
   {==}

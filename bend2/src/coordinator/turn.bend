@@ -4,6 +4,7 @@ import ./agent-input.bend as AgentInput
 import ../coordinator/commands.bend as C
 import ./store.bend as Store
 import ./stop.bend as Stop
+import ./accounts.bend as Accounts
 import ./subscription-fallback.bend as Subs
 import ./delivery.bend as Delivery
 import ./control.bend as Control
@@ -954,6 +955,14 @@ def retained_native(+db: String, +player: String, +sessions: String, +session: S
     legacy : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ C.q(db ++ ".session-") ++ " || lower(hex(id)) FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
     Omp.resume_file(Tx.trim_nl(legacy),sessions,selected,Bool.and(enabled,String.eq(selected,session)))
 
+def retained_launch_arguments(omp: Bool, claude: Bool, cmd: String, model: String, effort: String, sessions: String, +native: String, +prefix: String, +history: String, harness: String, account: Maybe<&2,Accounts.AccountRecord>, binding: Maybe<List<String>>) -> Result<&1,&1,U32 & String,String:
+  match binding:
+    case Some{+bound}: Done{prefix ++ retained_profile_arguments(omp,claude,bound,Subs.history_override(Tx.trim_nl(harness),history),cmd,model,effort,sessions,native)}
+    case None{}:
+      match account:
+        case None{}: Done{prefix ++ retained_arguments(omp,claude,cmd,model,effort,sessions,native)}
+        case Some{+refused}: Fail{(2,"The account " ++ Accounts.account_id(refused) ++ " funds its work through an API key and this deployment installs no api-key resolver beside the resolved identity helper; the attempt was not started and its input stays owed.")}
+
 def retained_prepare(+db: String, +player: String, +directory: String, +cmd: String, +model: String, +effort: String, +session: String, +harness: String, +sessions: String, +prompt: String, +level: String, seal_prompt: Bool, predecessor: String) -> IO(Result<&1,&1,U32 & String,RetainedLaunch>):
   do IO<Result<&1,&1,U32 & String,RetainedLaunch>>:
     +initial : String <- IO.try(String,NativeInitialInput.prepare(db,player,directory,prompt,predecessor))
@@ -966,9 +975,12 @@ def retained_prepare(+db: String, +player: String, +directory: String, +cmd: Str
     muse_args : String <- IO.pure(String,prefix ++ P.argv(muse_retained_arguments(cmd,model,effort,prompt_file,session)))
     +omp : Bool <- IO.pure(Bool,String.eq(harness,"omp\n"))
     +claude : Bool <- IO.pure(Bool,String.eq(harness,"claude-code\n"))
-    +store : String <- current_store(db,player,harness)
+    +account : Maybe<&2,Accounts.AccountRecord> <- Accounts.current_account(db,player,harness)
+    store : String <- current_store(db,player,harness)
     history : String <- current_history(db,player)
-    +args : String <- IO.pure(String,prefix ++ Bool.pick(String,String.is_empty(store),retained_arguments(omp,claude,cmd,model,effort,sessions,native),retained_profile_arguments(omp,claude,Subs.store_binding(Tx.trim_nl(harness),store),Subs.history_override(Tx.trim_nl(harness),history),cmd,model,effort,sessions,native)))
+    +binding : Maybe<List<String>> <- IO.pure(Maybe<List<String>>,Accounts.account_binding(Tx.trim_nl(harness),account,Accounts.api_key_resolver(identity),store))
+    recorded : Unit <- Accounts.record_current_attempt(db,player,directory,predecessor,account)
+    +args : String <- IO.try(String,IO.pure(Result<&1,&1,U32 & String,String>,retained_launch_arguments(omp,claude,cmd,model,effort,sessions,native,prefix,history,Tx.trim_nl(harness),account,binding)))
     +muse : Bool <- IO.pure(Bool,String.eq(harness,"muse\n"))
     IO.pure(Result<&1,&1,U32 & String,RetainedLaunch>,Done{Prepared{Bool.pick(String,muse,muse_args,args),retained_input(muse,omp,claude,initial,level),initial,retained_keep_stdin(muse,omp,claude),Bool.or(muse,seal_prompt)}})
 

@@ -40,7 +40,7 @@ def member(+value: String, values: List<String>) -> Bool:
     case +head <> rest: Bool.or(String.eq(value,head),member(value,rest))
 
 def known(verb: String) -> Bool:
-  member(verb,Tx.split_spaces("session player players assignment completion-request completion-confirmed guide acknowledge status pending orchestra role ensemble ensemble-member section section-member attempt attempts outbox receiver configure resume stop force-stop recover-observer continue-task turn receive profile-bind connect bind report ask native-reply dispatch recruit join worktree land push remote-tip knowledge project context models observed-usage logs"))
+  member(verb,Tx.split_spaces("session player players assignment completion-request completion-confirmed guide acknowledge status pending orchestra role ensemble ensemble-member section section-member attempt attempts outbox receiver configure account resume stop force-stop recover-observer continue-task turn receive profile-bind connect bind report ask native-reply dispatch recruit join worktree land push remote-tip knowledge project context models observed-usage logs"))
 
 def names_lookup(entries: List<NameSet>, +verb: String) -> List<String>:
   match entries:
@@ -71,6 +71,7 @@ def names(verb: String) -> List<String>:
     Names{"outbox","--session"},
     Names{"receiver","--session --command --output-log --cwd"},
     Names{"configure","--session --harness --model --effort --command --output-log --expected-harness --expected-model --expected-effort"},
+    Names{"account","--session --action --id --provider --harness --funding --secret-ref --organization --detail"},
     Names{"resume","--session --lift-stop"},
     Names{"stop","--session --id --reason --reason-file"},
     Names{"force-stop","--session --id"},
@@ -283,6 +284,7 @@ def help(action: String) -> String:
     case "turn": "turn [--id TURN_ID] --command EXECUTABLE --file TASK_PATH --output-log PATH [--session SESSION] [--model MODEL] [--effort EFFORT] [--cwd PATH] [--native ID]\nStart the existing managed direct turn. Omitted route, workspace and native identity use the selected session. PATH - reads stdin.\n"
     case "receive": "receive [--session SESSION] [--command EXECUTABLE] [--output-log PATH] [--model MODEL] [--effort EFFORT] [--cwd PATH] [--message ID]\nUse the recorded receiver and native retained receive operation.\n"
     case "profile-bind": "profile-bind --profile LABEL --store PATH [--session SESSION] [--harness NAME]\nBind the named existing account through the native profile operation. Omitted harness uses the selected session.\n"
+    case "account": "account --action record|read|bind|attempts|select|observe|import-credit [--session SESSION] [--id LABEL] [--provider NAME] [--harness NAME] [--funding subscription|api_key] [--secret-ref REFERENCE] [--organization ID] [--detail JSON]\nrecord stores a provider identity, its funding route and a secret-store reference; the organization is written only by an observation that verified it. read prints the recorded accounts. bind records the account in force for the session's next attempts. attempts prints the account and funding route recorded for each attempt. select prints the operator-ordered account for a harness and funding route, preferring one whose organization is not recorded credit-unavailable. observe records a provider organization, usage or cost document with its source and observed time. import-credit records a promotional or purchased credit balance and expiry the operator read from the provider's billing display.\n"
     case "connect": "connect --endpoint JSON_ARGV [--session SESSION] [--native ID]\nRecord the ordinary endpoint through the existing operation. Omitted native ID preserves the selected session's identity. An empty endpoint explicitly disconnects it.\n"
     case "bind": "bind --harness NAME --model MODEL --effort EFFORT [--session SESSION] [--native ID]\nRecord the native route through the existing binding operation. Omitted native ID preserves the selected session's identity.\n"
     case "report": "report TEXT\nreport [--id ID] (--text TEXT | --file PATH)\nSend a complete report to your recorded coordinator. Baton generates the operation identity.\n"

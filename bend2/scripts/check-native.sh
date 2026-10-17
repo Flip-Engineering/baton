@@ -21,3 +21,5 @@ sh bend2/scripts/build-native.sh bend2/tests/git.bend .scratch/bend2/git-test
 sh bend2/scripts/build-native.sh bend2/tests/land.bend .scratch/bend2/land-test
 .scratch/bend2/land-test
 "$PYTHON3" bend2/scripts/check-native-parallel.py "$PYTHON3"
+sh bend2/scripts/build-native.sh bend2/test/account-credits.bend .scratch/bend2/account-credits-test
+.scratch/bend2/account-credits-test
