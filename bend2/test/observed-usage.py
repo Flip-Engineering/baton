@@ -227,13 +227,14 @@ class ObservedUsage(unittest.TestCase):
         profile = 'model: requested-but-unverified\nprovider: fixture\nprofile: retained text'
         workspace, command = self.provider_command(profile)
         with sqlite3.connect(self.db) as database:
-            database.execute("UPDATE sessions SET harness='muse', model='requested-but-unverified' WHERE id='reader'")
+            database.execute("UPDATE sessions SET harness='muse', model='requested-but-unverified', effort='high' WHERE id='reader'")
         answer = self.models()
         self.assertEqual(answer['state'], 'reported')
         self.assertEqual(answer['harness'], 'muse')
         self.assertEqual(answer['command'], command)
         self.assertEqual(answer['argv'], ['model-profile', 'show', 'requested-but-unverified'])
         self.assertEqual(answer['requestedModel'], 'requested-but-unverified')
+        self.assertEqual(answer['requestedEffort'], 'high')
         self.assertEqual(answer['modelExistence'], 'unknown')
         self.assertEqual(answer['profileText'], profile + '\n')
         self.assertEqual(json.loads((workspace / 'queried.json').read_text()),
