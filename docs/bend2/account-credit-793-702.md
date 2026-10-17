@@ -34,14 +34,22 @@ Facts from the platform document:
   `Your credit balance is too low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase credits.`
 - Credits do not change Claude or Claude Code subscription usage limits.
 
-Issue #793 states that self-run `claude -p` and Agent SDK execution qualify.
-The current platform document lists Claude Code as not covered.
-`claude -p` is Claude Code headless mode.
-The Bend2 Muse harness builds `--print` arguments in
+Eligibility depends on launch origin and authentication.
+The support article states: API credits cover `claude -p` and the Claude Agent SDK
+when the operator runs them with an API key from the linked Console organization,
+because that usage bills as Agent SDK usage.
+When signed in with a Claude plan, the same commands draw plan usage limits.
+Runs started by the Claude Code GitHub Action, an IDE extension or the desktop app
+count as Claude Code usage and are not covered, even with `-p`.
+Interactive Claude Code sessions are not covered.
+The platform document table lists Claude Code as not covered.
+The support article FAQ gives the self-run headless case.
+This specification records `launch_origin` and `auth_kind` for each attempt and
+applies the support article rule to self-run headless work.
+Baton native attempts spawn `claude --print` in
 [bend2/src/harness/claude-player.bend](/run/baton2-native-homelab/retained/baton-account-credits-793-702-20261017T0106Z/repo/bend2/src/harness/claude-player.bend:5).
-This specification records eligibility per workload kind.
-It does not treat a Claude Code attempt as promotional-credit eligible.
-The discrepancy stays open for root and operator confirmation.
+A Baton attempt with an API-key route from a verified linked organization records
+`credit_eligible` as true. A subscription-authenticated attempt records it as false.
 
 ## Supported observation sources
 
@@ -161,11 +169,13 @@ Input: workload kind, configured accounts in operator order, credit observations
 
 Rules:
 
-1. A `claude-code` workload selects a subscription route.
-   It does not select `api-credit` on promotional-credit grounds.
-2. An `agent-sdk` or `api` workload may select `api-credit` when the account
-   has `auth_kind` equal to `api-key`, a verified organization, and a
-   `reported` observation for that organization.
+1. A self-run headless workload (`claude --print`, Agent SDK or API) with
+   `auth_kind` equal to `api-key` from a verified linked organization may select
+   `api-credit`. The attempt records `credit_eligible` as true.
+   Interactive, IDE, desktop and GitHub Action launches do not select
+   `api-credit`. Baton does not spawn those launch origins.
+2. A subscription-authenticated workload selects a subscription route and
+   records `credit_eligible` as false.
 3. Unknown organization or unknown balance produces `api-unknown`.
    The conductor decides. The state stays visible in the attempt record.
 4. Subscription exhaustion and API-credit exhaustion are distinct causes.
@@ -258,8 +268,9 @@ its exhaustion is a fixture or an actual provider outcome.
    replaces the balance and keeps the expired record.
 5. Unknown balance selects `api-unknown`. Code does not report it as available.
 6. A `reported` observation selects `api-credit` for an `agent-sdk` workload.
-7. A `claude-code` workload with only an API-credit observation selects a
-   subscription route and records the eligibility fact.
+7. A subscription-authenticated headless workload records `credit_eligible`
+   as false and selects a subscription route. An API-key headless workload
+   from a verified organization records `credit_eligible` as true.
 8. Credit exhaustion on attempt one selects the next account.
    Player, task, conversation and pending inbox ids stay equal across attempts.
    Attempt one keeps its original error text.
@@ -283,5 +294,5 @@ That proof is outstanding until root completes account setup.
 
 - Account-to-organization mapping for the two Chrome sign-ins: unverified. Owner: root.
 - Native secret-store references for API credentials: not placed yet. Owner: root.
-- Whether root confirms `claude -p` eligibility against the platform document: open.
+- Eligibility rule recorded from the support article FAQ on 2026-10-17. Live billing proof for a Baton attempt is outstanding.
 - Remote compiler result for the new module: not run yet.
