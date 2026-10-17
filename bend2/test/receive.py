@@ -4505,7 +4505,7 @@ class Receive(unittest.TestCase):
         self.eventually(output_batch_written, 'The output-only frames were not written before interruption.')
         self.assertEqual(checkpoint.read_bytes(), durable_checkpoint,
                          'Output-only changes advanced the durable checkpoint.')
-        self.assertEqual(json.loads(checkpoint.read_bytes()[state_at:])['output'], durable_output)
+        self.assertEqual(int(json.loads(checkpoint.read_bytes()[state_at:])['output']), durable_output)
         self.assertGreater(log.stat().st_size, durable_output,
                            'Output-only frames did not extend beyond the durable cursor.')
 
