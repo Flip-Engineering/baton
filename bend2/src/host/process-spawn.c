@@ -1225,7 +1225,7 @@ static int br_observer_attempt_custody(pid_t pid,const char *database,const char
   char *stdout_path=br_path(canonical,"stdout");
   char *log_path=br_path(canonical,"observer.log");
   int error=!stdout_path || !log_path?ENOMEM:0;
-  int ended=0,life=-1;
+  int ended=0,life=-1,public_receive=0;
   if(!error) {
     life=br_process_lifetime(pid,&ended);
     if(life<0)error=ended?ESRCH:errno;
@@ -1262,8 +1262,9 @@ static int br_observer_attempt_custody(pid_t pid,const char *database,const char
         argv[argc++]=(char *)command+start;start=i+1;
       }
       int receive=!error && (argc==14 || argc==15) && !strcmp(argv[1],"--recover-receive");
+      public_receive=!error && argc==10 && !strcmp(argv[2],"receive");
       int recovery=!error && argc==5 && !strcmp(argv[2],"recover-observer");
-      if(!error && !receive && !recovery)error=EPERM;
+      if(!error && !receive && !public_receive && !recovery)error=EPERM;
       if(!error && strcmp(argv[3],session))error=EPERM;
       if(!error) {
         char *saved_database=realpath(receive?argv[2]:argv[1],NULL);
@@ -1322,7 +1323,7 @@ static int br_observer_attempt_custody(pid_t pid,const char *database,const char
       if(stdout_owned && log_owned && lock_owned)break;
     }
     if(fds)closedir(fds);
-    if(!error && (!stdout_owned || !log_owned || !lock_owned))error=EPERM;
+    if(!error && (!stdout_owned || (!public_receive && !log_owned) || !lock_owned))error=EPERM;
   }
   if(!error) {
     struct pollfd alive={life,POLLIN,0};
@@ -5133,7 +5134,7 @@ static int baton_observer_completed(BatonSessionLock *call) {
     close(life);
     error=br_observer_attempt_custody((pid_t)call->observer,call->database,call->session,call->directory,call->handle,&call->observer_life);
     if(error) {
-      call->detail="Live observer recovery requires the supplied process to hold this attempt's stdout and observer log.";
+      call->detail="Live observer recovery requires the supplied process to hold this attempt's required custody descriptors.";
       return error;
     }
   }
