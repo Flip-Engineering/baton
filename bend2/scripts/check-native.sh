@@ -7,6 +7,11 @@ if python3 --version 2>/dev/null; then
 else
   PYTHON3=/usr/bin/python3
 fi
+compiler=${BEND:-"$root/.bend/bin/bend"}
+if [ ! -x "$compiler" ]; then
+  compiler="$root/node_modules/.bend/bin/bend"
+fi
+BEND_NO_TELEMETRY=1 "$compiler" bend2/src/coordinator/laws.bend --check-only
 sh bend2/scripts/build-native.sh
 sh bend2/scripts/build-native.sh bend2/test/process.bend .scratch/bend2/process-test
 sh bend2/scripts/build-native.sh bend2/test/codex-proxy.bend .scratch/bend2/codex-proxy-test
