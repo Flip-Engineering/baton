@@ -152,6 +152,10 @@ def execute(+db: String, command: C.Command) -> IO(Unit):
       Usage.observed_usage(db,session)
     case C.Models{session}:
       Usage.models(db,session)
+    case C.ModelsAll{session}:
+      Usage.models_all(db,session)
+    case C.HarnessInventory{}:
+      Subscription.inventory(db)
     case C.Logs{session,level}: do IO<Unit>:
       saved : String <- Logs.apply(db,session,level)
       log_answer(saved)

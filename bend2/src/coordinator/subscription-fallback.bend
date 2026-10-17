@@ -854,3 +854,112 @@ def clear_when(clear: Bool, +db: String, +session: String) -> IO(Unit):
 
 def clear_incompatible_native(db: String, session: String, old_harness: String, new_harness: String) -> IO(Unit):
   clear_when(String.eq(old_harness,new_harness),db,session)
+
+# --- recorded harness/account inventory (#792) --------------------------------
+#
+# A native session assembling a heterogeneous ensemble reads the recorded
+# harness/model/effort identities across sessions and the operator-ordered
+# account profiles in one descriptive answer. The read runs no harness
+# command, writes nothing, and decides nothing: quota, budget, catalog
+# membership, freshness, and probe outcomes never gate admission,
+# continuation, or validation. Missing records stay visible as null or
+# unknown with their cause.
+
+# One unit-separator-joined row per recorded session, ordered by id. Every
+# text field is JSON-quoted in SQL, so no field is ever empty and no value
+# can carry the separator: json_quote escapes control characters. The
+# trailing field carries the hex identity the profile sidecar name records.
+# The operator bookkeeping row is not a harness and is excluded.
+def inventory_rows_sql() -> String:
+  "SELECT coalesce(group_concat(row, char(10)),'') FROM (SELECT "
+  ++ "json_quote(id) || char(31) || json_quote(harness) || char(31) || json_quote(model) || char(31) || json_quote(effort) || char(31)"
+  ++ " || json_quote(observed_harness) || char(31) || json_quote(observed_model) || char(31) || json_quote(observed_effort) || char(31)"
+  ++ " || CASE WHEN endpoint<>'' THEN '1' ELSE '0' END || char(31) || CASE WHEN workspace<>'' THEN '1' ELSE '0' END || char(31) || lower(hex(id)) AS row"
+  ++ " FROM sessions WHERE id<>'operator' ORDER BY id);"
+
+# The profile the session's own record file states, beside the record's own
+# harness: a record written under another harness stays distinguishable
+# from the session's harness instead of being scoped away. Store paths stay
+# out of the answer; every parsed record carries a nonempty store.
+def inventory_record_parsed(parsed: Maybe<&2,Profile>) -> String:
+  match parsed:
+    case None{}: "null"
+    case Some{+profile}: "{\"harness\":" ++ J.string_literal(profile_harness(profile)) ++ ",\"label\":" ++ J.string_literal(profile_label(profile)) ++ "}"
+
+def inventory_record_json(record: String) -> String:
+  inventory_record_parsed(record_of(last_line(Tx.split_lines(record))))
+
+def inventory_profile_result(read: Result<&1,&1,U32 & String,String>) -> String:
+  match read:
+    case Fail{(+code,detail)}: Bool.pick(String,U32.is_eq(code,2),"null","{\"state\":\"unknown\",\"code\":" ++ U32.show(code) ++ ",\"detail\":" ++ J.string_literal(detail) ++ "}")
+    case Done{record}: inventory_record_json(record)
+
+def inventory_session_profile(+db: String, +idhex: String) -> IO(String):
+  do IO<String>:
+    read : Result<&1,&1,U32 & String,String> <- Text.Text.read(db ++ ".profile-" ++ idhex)
+    IO.pure(String,inventory_profile_result(read))
+
+def inventory_session_json(+db: String, fields: List<String>) -> IO(String):
+  match fields:
+    case sid <> harness <> model <> effort <> oharness <> omodel <> oeffort <> hasCmd <> hasWs <> idhex <> Nil{}: do IO<String>:
+      profile : String <- inventory_session_profile(db,idhex)
+      IO.pure(String,"{\"session\":" ++ sid ++ ",\"harness\":" ++ harness ++ ",\"model\":" ++ model ++ ",\"effort\":" ++ effort
+        ++ ",\"observedHarness\":" ++ oharness ++ ",\"observedModel\":" ++ omodel ++ ",\"observedEffort\":" ++ oeffort
+        ++ ",\"hasRecordedCommand\":" ++ Bool.pick(String,String.eq(hasCmd,"1"),"true","false")
+        ++ ",\"hasWorkspace\":" ++ Bool.pick(String,String.eq(hasWs,"1"),"true","false")
+        ++ ",\"profile\":" ++ profile ++ "}")
+    case _: IO.pure(String,"{\"state\":\"unknown\",\"reason\":\"inventoryRowShape\"}")
+
+def inventory_session_tail(+db: String, lines: List<String>) -> IO(String):
+  match lines:
+    case Nil{}: IO.pure(String,"")
+    case +line <> rest: do IO<String>:
+      +empty : Bool <- IO.pure(Bool,String.is_empty(line))
+      +head : String <- Bool.pick(IO(String),empty,IO.pure(String,""),inventory_session_json(db,split_parts(String.split(line,Char.from_u32(31)))))
+      +tail : String <- inventory_session_tail(db,rest)
+      IO.pure(String,Bool.pick(String,empty,tail,Bool.pick(String,String.is_empty(tail),head,head ++ "," ++ tail)))
+
+# The operator-ordered profile list as stated: order is fallback preference,
+# never an availability claim. A missing list is unknown; an empty list is a
+# reported empty order, like an empty catalog.
+def inventory_profile_entry(+profile: Profile) -> String:
+  "{\"harness\":" ++ J.string_literal(profile_harness(profile)) ++ ",\"label\":" ++ J.string_literal(profile_label(profile)) ++ "}"
+
+def inventory_profile_order(profiles: List<&2,Profile>) -> String:
+  match profiles:
+    case Nil{}: ""
+    case +profile <> +rest:
+      +head = inventory_profile_entry(profile)
+      +tail = inventory_profile_order(rest)
+      Bool.pick(String,String.is_empty(tail),head,head ++ "," ++ tail)
+
+def inventory_profiles_result(read: Result<&1,&1,U32 & String,String>) -> String:
+  match read:
+    case Fail{(+code,detail)}: Bool.pick(String,U32.is_eq(code,2),
+      "{\"state\":\"unknown\",\"reason\":\"noOperatorProfileList\"}",
+      "{\"state\":\"unknown\",\"reason\":\"profileListReadFailure\",\"code\":" ++ U32.show(code) ++ ",\"detail\":" ++ J.string_literal(detail) ++ "}")
+    case Done{listed}: "{\"state\":\"reported\",\"order\":[" ++ inventory_profile_order(profile_lines(Tx.split_lines(listed))) ++ "]}"
+
+def inventory_profiles(+db: String) -> IO(String):
+  do IO<String>:
+    list_path : String <- profile_list_path(db)
+    read : Result<&1,&1,U32 & String,String> <- Text.Text.read(list_path)
+    IO.pure(String,inventory_profiles_result(read))
+
+def inventory_limits() -> String:
+  "[\"Sessions list recorded sessions only; the operator bookkeeping row is excluded.\","
+  ++ "\"hasRecordedCommand and hasWorkspace report presence only, never values.\","
+  ++ "\"Operator profile order is fallback preference; it states no availability.\","
+  ++ "\"A per-session profile names the account record last bound for that session; a missing record is null.\","
+  ++ "\"A Muse profile echo does not establish model existence; read models --session for the single-profile observation.\","
+  ++ "\"No Artificial Analysis or Design Arena assessments are read here.\","
+  ++ "\"Quota, budget, catalog membership, freshness, and probe outcomes decide nothing in this read.\","
+  ++ "\"Harnesses and accounts with no recorded session or profile are not enumerated.\"]"
+
+def inventory(+db: String) -> IO(Unit):
+  do IO<Unit>:
+    rows : String <- IO.try(String,DB.Sql.read(db,inventory_rows_sql()))
+    observed : String <- IO.try(String,DB.Sql.read(db,"SELECT CAST(strftime('%s','now') AS INTEGER)*1000;"))
+    sessions : String <- inventory_session_tail(db,Tx.split_lines(Tx.trim_nl(rows)))
+    profiles : String <- inventory_profiles(db)
+    IO.print("{\"schema\":\"baton2-harness-inventory-v1\",\"observedAt\":" ++ Tx.trim_nl(observed) ++ ",\"sessions\":[" ++ sessions ++ "],\"profiles\":" ++ profiles ++ ",\"limits\":" ++ inventory_limits() ++ "}")
