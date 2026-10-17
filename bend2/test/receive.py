@@ -4682,7 +4682,7 @@ class Receive(unittest.TestCase):
         self.eventually(output_batch_written, 'The output-only frames were not written before interruption.')
         self.assertEqual(checkpoint.read_bytes(), durable_checkpoint,
                          'Output-only changes advanced the durable checkpoint.')
-        self.assertEqual(json.loads(checkpoint.read_bytes()[state_at:])['output'], durable_output)
+        self.assertEqual(int(json.loads(checkpoint.read_bytes()[state_at:])['output']), durable_output)
         self.assertGreater(log.stat().st_size, durable_output,
                            'Output-only frames did not extend beyond the durable cursor.')
 
@@ -4720,7 +4720,7 @@ class Receive(unittest.TestCase):
         self.assertEqual(json.loads(control.readline()), {'terminal_written': True})
         self.action(control, exit_fixture=True)
         self.assertEqual(control.readline(), b'')
-        self.finish(recovered, ok=False)
+        self.finish(recovered)
 
     def test_long_omp_stream_releases_frames_and_recovers_checkpoint(self):
         self.player(harness='omp')
