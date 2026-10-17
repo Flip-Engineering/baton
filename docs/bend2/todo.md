@@ -602,6 +602,8 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
 
 ## Other open work
 
+- [#797: Track Kimi Code usage windows and reset times](https://github.com/Flip-Engineering/baton/issues/797). The usage-window store, the exhaustion-time observation in the account advance, the operator observation and provider refresh commands, and the wake gate with held/restored reports land on `codex/kimi-797-usage-reset-20261017`; see [usage windows](usage-windows-20261017.md).
+- [#793: Track monthly Claude API credits and native account funding routes](https://github.com/Flip-Engineering/baton/issues/793).
 - [#711: Baton2: preserve authored numeric precision in scientific knowledge reads](https://github.com/Flip-Engineering/baton/issues/711).
 - [#710: Define structured causal and evidentiary Knowledge nodes and edges with provenance and uncertainty](https://github.com/Flip-Engineering/baton/issues/710).
 - [#709: Make Baton2 the main branch after current delivery settles](https://github.com/Flip-Engineering/baton/issues/709).
