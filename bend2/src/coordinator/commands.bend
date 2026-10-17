@@ -63,6 +63,7 @@ type Command is Data:
   RemoteTip{repo: String, branch: String, remote: String}
   ObservedUsage{session: String}
   Models{session: String}
+  ModelsAll{session: String}
   Logs{session: String, level: String}
   LogsStorage{}
   LogsClean{session: String}
@@ -624,6 +625,7 @@ def sql(command: Command) -> String:
     case RemoteTip{repo,branch,remote}: ""
     case ObservedUsage{session}: ""
     case Models{session}: ""
+    case ModelsAll{session}: ""
     case Logs{session,level}: ""
     case LogsStorage{}: ""
     case LogsClean{session}: ""
@@ -720,6 +722,9 @@ def parse_verb_session_id(+verb: String, +session: String, +id: String) -> Comma
     case "pending": Bool.pick(Command,Bool.or(Bool.and(String.eq(session,"--index"),String.eq(id,"--pretty")),Bool.and(String.eq(session,"--pretty"),String.eq(id,"--index"))),Pretty{PendingIndex{}},Invalid{})
     case "resume": match id:
       case "--lift-stop": Resume{session,True{}}
+      case _: Invalid{}
+    case "models": match id:
+      case "--all": ModelsAll{session}
       case _: Invalid{}
     case "ui-subscribe": UiSubscribe{session,id}
     case "logs": Logs{session,id}
