@@ -5096,7 +5096,7 @@ static void __attribute__((constructor)) baton_process_signals(void){signal(SIGP
 typedef struct {
   char *database, *session, *path, *directory;
   const char *detail;
-  int handle, error, kind, keeper, observer_life, observer_absent;
+  int handle, error, kind, keeper, observer_life, observer_absent, observer_retired;
   u32 observer;
   BatonProcessCall attempt;
 } BatonSessionLock;
@@ -5181,11 +5181,16 @@ static int baton_observer_completed(BatonSessionLock *call) {
 }
 
 static int baton_observer_retire(BatonSessionLock *call) {
-  if(call->observer_absent) {call->observer_absent=0;return 0;}
+  if(call->observer_retired)return 0;
+  if(call->observer_absent) {call->observer_retired=1;return 0;}
   int ended=0,life=call->observer_life;
   call->observer_life=-1;
   if(life<0)life=br_process_lifetime((pid_t)call->observer,&ended);
-  if(life<0)return ended?0:errno;
+  if(life<0) {
+    if(ended)call->observer_retired=1;
+    return ended?0:errno;
+  }
+  call->observer_retired=1;
   int error=0;
 #ifdef SYS_pidfd_send_signal
   if(syscall(SYS_pidfd_send_signal,life,SIGTERM,NULL,0) && errno!=ESRCH)error=errno;
