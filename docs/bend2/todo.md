@@ -943,8 +943,22 @@ remain open under [#782](https://github.com/Flip-Engineering/baton/issues/782).
   calls from executing; the lead reports additional guidance would worsen the
   queue. Simulation and quality had exited on Kimi quota; their routes have
   since been guardedly changed to DeepSeek Flash and their same-UUID
-  continuations are running. No new SHAs were reported; tips remain `3e6d9da`
-  and `0ee836f`, with parity incomplete.
+  continuations are running. The latest lead report says asset-contract commit
+  `9c6ef30` was integrated and its 35/35 suite was re-verified. No new SHAs
+  were reported from material, native-gpu, reviewer or quality; tips remain
+  `7ee64e6` and `0ee836f`, with parity incomplete.
+
+  At 03:14 UTC, reviewer attempt
+  `receive:independent-review-codex:576:29ff733713bd41ffd4562526677abfae`
+  had a 761708342-byte retained stdout stream. Its Baton receive wrapper PID
+  275329 held the raw-file descriptor; recorded native PID 26207 was absent.
+  Across a 12-second sample the raw stream size stayed fixed while the
+  projected log grew from 301047003 to 301237949 bytes and the checkpoint
+  mtime advanced. Bounded projected-log tails contained both large
+  `message_update` snapshots and later `thinking_delta`/`toolcall_delta` events.
+  This is observer replay of retained output, not new provider bytes. The
+  historical OMP child hash is unavailable after its exit; preserve the stream
+  and do not attribute its events to the installed replacement binary.
 
   At the terminal windows for `simulation` attempt 743 and `quality` attempt
   681, guarded `configure --expected-model kimi-code/k3` changed each route to
@@ -987,3 +1001,6 @@ remain open under [#782](https://github.com/Flip-Engineering/baton/issues/782).
   67 C and 64.17 W; user-held `GPU-b983e9da-46fc-ecd8-1449-53e039430591`
   was at 0%, 57 C and 41.62 W. This shows GPU0 rendering activity while the
   other sampled lanes remain idle; no GPU controls were used.
+  At 03:15 UTC, both user units remained active. GPU1 was at 98%; Blender PID
+  275745 used 3452 MiB. GPU0 was at 0% and 46 C; user-held GPU3 remained at 0%.
+  No reset or signal was used.
