@@ -19,9 +19,10 @@ valid scope tokens only.
 Evidence: `docs/bend2/measurements/2026-10-17-knowledge-elevation-sharing.json`,
 produced by `bend2/scripts/probe-knowledge-elevation-sharing.py`.
 
-Status: design and evidence for #724 elevation semantics and #746 sharing
-acceptance. No production CLI or MCP operation is added here. #789-791 remain
-in delivery qualification and are not claimed accepted.
+Status: design and evidence accepted as design-only by the coordinator on
+2026-10-17. Decisions are recorded in section 6. No production CLI or MCP
+operation is added here. #789-791 remain in delivery qualification and are not
+claimed accepted.
 
 ## 1. Current source contract
 
@@ -138,7 +139,8 @@ removing the fixture path and Git base commit.
 The duplicate share contradicts the one-row-per-share statement. The lifecycle
 audit describes one promotion row per
 `(finding, source, destination)`
-(`reports/knowledge-generation-lifecycle-1017/report.md`, section 2.7). The
+(`/run/baton2-native-homelab/retained/baton-compiler-forkflush-20261016T195048Z/worktrees/knowledge-generation-lifecycle-1017/reports/knowledge-generation-lifecycle-1017/report.md`,
+section 2.7; retained outside this checkout). The
 second identity produces a second row for the same destination, a repeated
 `destinations` entry, an inflated promotion count, and a second notice.
 
@@ -150,6 +152,10 @@ conversation; flushing clears the conversation and retains the workspace;
 selection continues from the highest-scoring branch
 (https://arxiv.org/html/2610.07447v1, sections 2 and 4). Baton records these
 operations at Conductor boundaries (`docs/bend2/branching-ensembles.md:99-103`).
+
+Retained evidence outside this checkout: the Cgen reports and the lifecycle
+audit cited in this document are under
+`/run/baton2-native-homelab/retained/baton-compiler-forkflush-20261016T195048Z/worktrees/`.
 
 The Cgen round records this evidence:
 
@@ -167,9 +173,9 @@ The Cgen round records this evidence:
   `branch-296cd6de0cf87074bed83445807905aa`. Branch 0 (relation immutability
   trigger) scored 1119.37; branch 1 (trigger, five lookup indexes, insertion-order
   aggregates) scored 1173.21 and was selected in the recorded round. Branch 1
-  search medians from 1.5981, 1.6275, and 0.9981 seconds to 0.1580, 0.1605, and
-  0.2584 seconds (7.321x) at 1.368x database bytes
-  (`reports/knowledge-graph-wonder-1017/report.md`, section 1).
+  reduced read, scope, and search medians from 1.5981, 1.6275, and 0.9981
+  seconds to 0.1580, 0.1605, and 0.2584 seconds (7.321x) at 1.368x database
+  bytes (`reports/knowledge-graph-wonder-1017/report.md`, section 1).
 - The branches were stopped to settle evaluation; score-based selection then
   refused, and the conductor recorded an explicit selection with a reason and
   resumed the selected branch with `resume --lift-stop`. Every branch's
@@ -203,6 +209,9 @@ A note is a `knowledge` row with an authored kind such as `note`, `plan`, or
 `doubt`. The row keeps the author, complete text, evidence reference, limits,
 and kind under the existing identity, conflict, notice, and visibility rules.
 This uses the existing store and adds no table.
+
+Decision (2026-10-17): accepted. A private note scope is deferred; it needs a
+recorded failure and a new authority rule.
 
 An append is a new note row with a `DerivedFrom` or `Continues` relation to the
 previous note version. The previous version remains unchanged. A note has one
@@ -247,8 +256,10 @@ the note's visibility; the finding has its own visibility.
 The current model has no private note scope and no confidentiality boundary.
 Any registered session can name any `worker` or `group` scope and read its
 holdings. The measured group read by a non-member session confirms this for
-`group`. Operators who need a private holding need a new authority rule with a
-recorded failure; this design keeps the declared-actor model.
+`group`. Decision (2026-10-17): keep the existing declared-actor scopes; no
+private note scope and no confidentiality claim. The measured non-member group
+read and the authority gap remain recorded. A private holding needs a recorded
+failure and a new authority rule.
 
 ### Authority
 
@@ -290,7 +301,30 @@ exception in G1.
 | S9 | Scope names select holdings. They are not a confidentiality boundary; group membership is not checked on reads. |
 | S10 | A finding's ID, author, claim, evidence, and limits are immutable under a changed-content repeat. `kind` is the current classification and can change on an exact-coordinate repeat (G6). |
 
-## 6. Gaps and proposals
+## 6. Decisions, gaps and proposals
+
+### Coordinator decisions (2026-10-17)
+
+1. G1 duplicate share: finding f84a260a is accepted. The
+   one-row-per-`(finding, source_kind, source, destination_kind, destination)`
+   invariant is authoritative. Implementation is assigned to
+   knowledge-storage-traversal-ds-20261017 as a separate
+   promotion-coordinate-conflict candidate on its branch; it is not part of the
+   knowledge-deepseek-782-785 candidate and is not implemented here.
+2. #724 note representation: accepted. Notes are knowledge rows with kind
+   `note`, `plan` or `doubt`; append is a new row with `DerivedFrom` or
+   `Continues`; elevation composes `record-linked` with `DerivedFrom` to the note
+   version. Keep one store and the existing scopes. A private note scope is
+   deferred; it needs a recorded failure and a new authority rule.
+3. G3 reference detail read: keep the current all-scope detail read for
+   resolvability at this pin. Record it as a navigation inconsistency to revisit
+   only if a consumer requires strict scope. No source change.
+4. G6 kind mutability: keep `kind` as the current classification. Do not add
+   `kind` to the conflict coordinates. The existing test stands; an immutability
+   change needs a recorded consumer failure and a test update.
+5. Note visibility: keep the existing declared-actor scopes. No private note
+   scope and no confidentiality claim. The measured non-member group read and
+   the authority gap remain recorded.
 
 ### G1: duplicate logical share under a new identity
 
@@ -303,15 +337,20 @@ repeats one destination. Repeated shares grow `knowledge_promotions` and
 `messages` linearly with no new provenance. The duplicate notice repeats an
 event the destination already received.
 
-Proposal, not applied: extend `promotion_statement` with a coordinate guard
-before the insert. If another stored row has the same finding, source endpoint,
-and destination endpoint, refuse with a typed
-`promotion-coordinate-conflict` that names the stored promotion ID, and keep the
-stored row. This is a query guard inside the existing transaction; it adds no
+Status: assigned, not applied. Finding f84a260a is accepted and the
+one-row-per-`(finding, source_kind, source, destination_kind, destination)`
+invariant is authoritative. Implementation is assigned to
+knowledge-storage-traversal-ds-20261017 as a separate
+promotion-coordinate-conflict candidate on its branch. It is not part of the
+current knowledge-deepseek-782-785 candidate and is not implemented here.
+The candidate extends `promotion_statement` with a coordinate guard before the
+insert. If another stored row has the same finding, source endpoint, and
+destination endpoint, it refuses with a typed `promotion-coordinate-conflict`
+that names the stored promotion ID and keeps the stored row. The guard adds no
 column or index and stops new duplicates on databases that already contain
 legacy duplicates.
 
-Behavior case, for the owner of `bend2/test/knowledge.py`:
+Behavior case for the assigned candidate (`bend2/test/knowledge.py` owner):
 
 1. Record `shared`; promote `p-1` from `worker` to `worker`; promote `p-2` with
    the same coordinates.
@@ -322,9 +361,8 @@ Behavior case, for the owner of `bend2/test/knowledge.py`:
 5. A promotion to a different destination succeeds and adds one destination.
 6. A changed repeat of `p-1` still refuses with `promotion-id-conflict`.
 
-This case is independently specified and uses existing commands. It is not
-added here because the promotion functions belong to the storage/traversal
-worker's source boundary.
+This case is independently specified and uses existing commands. It belongs
+with the assigned candidate; it is not added in this branch.
 
 ### G2: destination identity has no kind in `destinations`
 
@@ -342,9 +380,11 @@ A scoped graph read returns an out-of-scope finding reference with
 `group`). The node content is absent while the literal read command is
 unscoped. The unqualified `knowledge` command reads `all` for every registered
 session, so this is a navigation inconsistency with the declared scope.
-Decision: keep `all` for resolvability, or emit the current scope so a
-reference resolves consistently with the node set. No measured consumer
-depends on either form.
+Decision (2026-10-17): keep the current all-scope detail read for
+resolvability at this pin. Scope names are holdings selectors, not a
+confidentiality boundary (S9), and the graph includes the reference without
+node content. Revisit only if a consumer requires strict scope. No source
+change.
 
 ### G4: unresolved evidence references
 
@@ -379,10 +419,9 @@ new promotion row or a new finding identity. A destination reads the current
 kind. For elevation, a note row's kind can be reclassified; the finding's
 `DerivedFrom` relation and evidence reference still name the note row.
 
-Decision: treat `kind` as the current classification and keep the existing
-test. If authored classification must be immutable, include `kind` in the
-conflict coordinates or retain kind revisions; either change needs a recorded
-consumer failure and a test update. No source change is proposed here.
+Decision (2026-10-17): keep `kind` as the current classification and do not add
+`kind` to the conflict coordinates. The existing test stands. An immutability
+change needs a recorded consumer failure and a test update.
 
 ## 7. Limits
 
