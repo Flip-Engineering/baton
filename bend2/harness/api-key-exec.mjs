@@ -116,9 +116,25 @@ function run(reference, command, args) {
   }
   let child;
   try {
-    child = spawn(command, args, { env: { ...process.env, [VARIABLE]: secret }, stdio: 'inherit' });
+    // The child leads its own process group so a stop signal sent to this
+    // wrapper reaches the harness and anything it spawned, and the wrapper
+    // forwards the signals it receives to that group.
+    child = spawn(command, args, { env: { ...process.env, [VARIABLE]: secret }, stdio: 'inherit', detached: true });
   } catch (error) {
     refuse(kind, 'spawnFailed', `command ${command} could not be started (${error.code ?? error.name})`);
+  }
+  for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+    process.on(signal, () => {
+      try {
+        process.kill(-child.pid, signal);
+      } catch {
+        try {
+          child.kill(signal);
+        } catch {
+          // The child already exited; its exit event ends the wrapper.
+        }
+      }
+    });
   }
   child.on('error', (error) => {
     refuse(kind, 'spawnFailed', `command ${command} could not be started (${error.code ?? error.name})`);

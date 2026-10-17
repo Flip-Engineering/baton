@@ -107,6 +107,49 @@ class AccountCredits(unittest.TestCase):
             self.assertIn('No account was recorded', refused['stderr'])
         self.assertEqual(self.send('read')['accounts'], [])
 
+    def test_api_key_funding_records_only_for_the_claude_code_harness(self):
+        self.root()
+        refused = self.record('omp-api', 'anthropic', 'omp', 'api_key',
+                              'file:/fixture/secrets/api', ok=False)
+        self.assertEqual(refused['code'], 2, refused)
+        self.assertIn('No account was recorded', refused['stderr'])
+        self.assertEqual(self.send('read')['accounts'], [])
+
+    def test_rerecording_a_label_with_different_fields_is_refused(self):
+        self.root()
+        self.record('claude-api', 'anthropic', 'claude-code', 'api_key', 'file:/fixture/secrets/one')
+        same = self.record('claude-api', 'anthropic', 'claude-code', 'api_key', 'file:/fixture/secrets/one')
+        self.assertEqual(same['accounts'][0]['secretRef'], 'file:/fixture/secrets/one')
+        refused = self.record('claude-api', 'anthropic', 'claude-code', 'api_key',
+                              'file:/fixture/secrets/rotated', ok=False)
+        self.assertEqual(refused['code'], 2, refused)
+        self.assertIn('already recorded with a different', refused['stderr'])
+        self.assertEqual(self.send('read', id='claude-api')['accounts'][0]['secretRef'],
+                         'file:/fixture/secrets/one')
+
+    def test_the_pool_names_conflicting_readings_and_unknown_credit_state(self):
+        self.root()
+        self.record('claude-max', 'anthropic', 'claude-code', 'subscription', '/fixture/stores/claude')
+        self.record('claude-api', 'anthropic', 'claude-code', 'api_key', 'file:/fixture/secrets/api')
+        self.observe('claude-max', organization_document('org-fixture'))
+        self.observe('claude-api', organization_document('org-fixture'))
+        pooled = self.send('pool', organization='org-fixture')['organizations'][0]
+        self.assertEqual(pooled['observationState'], 'unknown')
+        self.imported('claude-max', 'org-fixture', credit(
+            fact='promotional_credit', balance='200.00', unit='USD', cycle='2026-10',
+            source='console-billing-display', observedAt=1760000001000))
+        self.imported('claude-api', 'org-fixture', credit(
+            fact='promotional_credit', balance='184.32', unit='USD', cycle='2026-10',
+            source='console-billing-display', observedAt=1760000002000))
+        pooled = self.send('pool', organization='org-fixture')['organizations'][0]
+        self.assertEqual(pooled['observationState'], 'reported')
+        fact = {row['fact']: row for row in pooled['facts']}['promotional_credit']
+        self.assertTrue(fact['conflict'])
+        self.assertEqual(sorted(row['balance'] for row in fact['readings']), ['184.32', '200.00'])
+        chosen = self.send('select', harness='claude-code', funding='api_key')
+        self.assertEqual((chosen['selected'], chosen['creditEligible'], chosen['observationState']),
+                         ('claude-api', True, 'reported'))
+
     def test_bind_requires_a_session_whose_harness_the_account_records(self):
         self.root()
         self.recruit('leaf')
@@ -203,7 +246,7 @@ class AccountCredits(unittest.TestCase):
         # A reported amount is a fact the conductor reads; it never refuses work.
         self.imported('claude-max', 'org-max', credit(
             fact='promotional_credit', balance='0.00', unit='USD', cycle='2026-10',
-            source='console-billing-display'))
+            source='console-billing-display', observedAt=1760000001000))
         chosen = self.send('select', harness='claude-code')
         self.assertEqual(chosen['selected'], 'claude-max')
         self.assertTrue(chosen['preferredByObservation'])

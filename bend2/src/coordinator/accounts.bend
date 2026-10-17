@@ -87,6 +87,13 @@ def decimal_text(+text: String) -> Bool:
 def funding_known(+funding: String) -> Bool:
   Bool.or(String.eq(funding,"subscription"),String.eq(funding,"api_key"))
 
+# An API-key funding route launches only on the claude-code harness, whose
+# retained launch resolves the secret reference into the child's environment.
+# Other harnesses authenticate through their own stores, so recording an
+# API-key route for them would record a funding route the launch never uses.
+def funding_route_ok(+harness: String, +funding: String) -> Bool:
+  Bool.or(String.eq(funding,"subscription"),Bool.and(String.eq(funding,"api_key"),String.eq(harness,"claude-code")))
+
 def harness_launchable(+harness: String) -> Bool:
   Bool.or(String.eq(harness,"codex"),Bool.or(String.eq(harness,"omp"),Bool.or(String.eq(harness,"muse"),String.eq(harness,"claude-code"))))
 
@@ -151,7 +158,7 @@ def funding_matches(+required: String, +funding: String) -> Bool:
   Bool.or(String.is_empty(required),String.eq(required,funding))
 
 def account_matches(+harness: String, +required_funding: String, +account: AccountRecord) -> Bool:
-  Bool.and(String.eq(account_harness(account),harness),funding_matches(required_funding,account_funding(account)))
+  Bool.and(String.eq(account_harness(account),harness),Bool.and(funding_matches(required_funding,account_funding(account)),funding_route_ok(account_harness(account),account_funding(account))))
 
 def account_viable(blocked: List<String>, +harness: String, +required_funding: String, +account: AccountRecord) -> Bool:
   Bool.and(account_matches(harness,required_funding,account),Bool.not(organization_blocked(blocked,account_organization(account))))
@@ -191,7 +198,7 @@ def api_key_binding(+secret_ref: String, helper: Maybe<String>) -> Maybe<List<St
     case Some{+script}: Some{Con{"node",Con{script,Con{secret_ref,Nil{}}}}}
 
 def launch_binding(+harness: String, +funding: String, +secret_ref: String, helper: Maybe<String>) -> Maybe<List<String>>:
-  Bool.pick(Maybe<List<String>>,String.eq(funding,"api_key"),api_key_binding(secret_ref,helper),Some{Subs.store_binding(harness,secret_ref)})
+  Bool.pick(Maybe<List<String>>,Bool.and(String.eq(funding,"api_key"),Bool.not(String.eq(harness,"claude-code"))),None{},Bool.pick(Maybe<List<String>>,String.eq(funding,"api_key"),api_key_binding(secret_ref,helper),Some{Subs.store_binding(harness,secret_ref)}))
 
 # The packaged resolver sits beside the resolved identity helper, so it is
 # installed and versioned with the runtime this deployment resolves.
@@ -288,13 +295,26 @@ def account_insert_sql(id: String, +provider: String, +harness: String, +funding
 # observation that verified it.
 def record_admitted(+db: String, id: String, provider: String, harness: String, funding: String, secret_ref: String, present: Bool) -> IO<Unit>:
   match present:
-    case False{}: IO.die(Unit,2,"Account recording requires a label without whitespace or control characters, a provider name, a launchable harness (codex, omp, muse or claude-code), a funding route of subscription or api_key, and a nonempty secret-store reference without control characters. No account was recorded.")
+    case False{}: IO.die(Unit,2,"Account recording requires a label without whitespace or control characters, a provider name, a launchable harness (codex, omp, muse or claude-code), a funding route of subscription or api_key (api_key launches only on claude-code), and a nonempty secret-store reference without control characters. No account was recorded.")
     case True{}: do IO<Unit>:
       saved : String <- IO.try(String,commit_read(db,account_insert_sql(id,provider,harness,funding,secret_ref)))
       IO.print(Tx.trim_nl(saved))
 
+# Whether the label is free, already holds this exact record, or holds a
+# different one. A different record under the same label is refused, so a
+# rotated credential cannot silently leave the old reference in force.
+def record_state_sql(+id: String, +provider: String, +harness: String, +funding: String, +secret_ref: String) -> String:
+  "SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM accounts WHERE id=" ++ C.q(id) ++ ") THEN 'new' WHEN EXISTS(SELECT 1 FROM accounts WHERE id=" ++ C.q(id) ++ " AND provider=" ++ C.q(provider) ++ " AND harness=" ++ C.q(harness) ++ " AND funding=" ++ C.q(funding) ++ " AND secret_ref=" ++ C.q(secret_ref) ++ ") THEN 'same' ELSE 'different' END;"
+
+def record_decided(+db: String, +id: String, provider: String, harness: String, funding: String, secret_ref: String, present: Bool, state: String) -> IO<Unit>:
+  match present:
+    case False{}: record_admitted(db,id,provider,harness,funding,secret_ref,False{})
+    case True{}: Bool.pick(IO(Unit),String.eq(state,"different"),IO.die(Unit,2,"Account " ++ id ++ " is already recorded with a different provider, harness, funding route or secret-store reference; nothing was changed. Record the rotated credential under a new label."),record_admitted(db,id,provider,harness,funding,secret_ref,True{}))
+
 def record(+db: String, id: String, provider: String, harness: String, funding: String, secret_ref: String) -> IO<Unit>:
-  record_admitted(db,id,provider,harness,funding,secret_ref,Bool.and(label_ok(id),Bool.and(Bool.not(String.is_empty(provider)),Bool.and(harness_launchable(harness),Bool.and(funding_known(funding),ref_ok(secret_ref))))))
+  do IO<Unit>:
+    state : String <- IO.try(String,DB.Sql.read(db,record_state_sql(id,provider,harness,funding,secret_ref)))
+    record_decided(db,id,provider,harness,funding,secret_ref,Bool.and(label_ok(id),Bool.and(Bool.not(String.is_empty(provider)),Bool.and(harness_launchable(harness),Bool.and(funding_known(funding),Bool.and(funding_route_ok(harness,funding),ref_ok(secret_ref)))))),Tx.trim_nl(state))
 
 # --- reading accounts --------------------------------------------------------
 
@@ -495,10 +515,10 @@ def import_credit(+db: String, +authority: String, +account: String, +organizati
 # anything.
 def pool_answer_sql(where: String) -> String:
   "WITH ranked AS (SELECT organization,fact,state,balance,unit,expires,cycle,source,observed_at,row_number() OVER (PARTITION BY organization,fact ORDER BY observed_at DESC,rowid DESC) AS rank FROM credit_observations),"
-  ++ " organizations AS (SELECT DISTINCT organization FROM credit_observations WHERE " ++ where ++ ")"
-  ++ " SELECT json_object('organizations',coalesce(json_group_array(json_object('organization',o.organization,'facts',json(o.facts),'accounts',json(o.accounts))),json('[]'))) FROM ("
+  ++ " organizations AS (SELECT organization FROM credit_observations WHERE " ++ where ++ " UNION SELECT organization FROM accounts WHERE organization<>'' AND " ++ where ++ ")"
+  ++ " SELECT json_object('organizations',coalesce(json_group_array(json_object('organization',o.organization,'observationState',CASE WHEN EXISTS(SELECT 1 FROM ranked r2 WHERE r2.organization=o.organization AND r2.fact='promotional_credit' AND r2.rank=1 AND r2.state='reported') THEN 'reported' WHEN EXISTS(SELECT 1 FROM ranked r3 WHERE r3.organization=o.organization AND r3.fact='promotional_credit' AND r3.rank=1) THEN 'unavailable' ELSE 'unknown' END,'facts',json(o.facts),'accounts',json(o.accounts))),json('[]'))) FROM ("
   ++ " SELECT organization AS organization,"
-  ++ " (SELECT coalesce(json_group_array(json_object('fact',r.fact,'state',r.state,'balance',r.balance,'unit',r.unit,'expires',r.expires,'cycle',r.cycle,'source',r.source,'observedAt',r.observed_at,'previous',CASE WHEN r.state='unavailable' THEN (SELECT json_object('balance',p.balance,'unit',p.unit,'cycle',p.cycle,'observedAt',p.observed_at,'source',p.source) FROM credit_observations p WHERE p.organization=r.organization AND p.fact=r.fact AND p.state='reported' ORDER BY p.observed_at DESC,p.rowid DESC LIMIT 1) END)),json('[]')) FROM ranked r WHERE r.rank=1 AND r.organization=o.organization) AS facts,"
+  ++ " (SELECT coalesce(json_group_array(json_object('fact',r.fact,'state',r.state,'balance',r.balance,'unit',r.unit,'expires',r.expires,'cycle',r.cycle,'source',r.source,'observedAt',r.observed_at,'previous',CASE WHEN r.state='unavailable' THEN (SELECT json_object('balance',p.balance,'unit',p.unit,'cycle',p.cycle,'observedAt',p.observed_at,'source',p.source) FROM credit_observations p WHERE p.organization=r.organization AND p.fact=r.fact AND p.state='reported' ORDER BY p.observed_at DESC,p.rowid DESC LIMIT 1) END,'conflict',json(CASE WHEN (SELECT count(DISTINCT balance) FROM credit_observations WHERE organization=r.organization AND fact=r.fact AND state='reported' AND balance<>'')>1 THEN 'true' ELSE 'false' END),'readings',(SELECT coalesce(json_group_array(json_object('balance',balance,'unit',unit,'source',source,'observedAt',observed_at,'authority',authority)),json('[]')) FROM (SELECT DISTINCT balance,unit,source,observed_at,authority FROM credit_observations WHERE organization=r.organization AND fact=r.fact AND state='reported' AND balance<>'')))),json('[]')) FROM ranked r WHERE r.rank=1 AND r.organization=o.organization) AS facts,"
   ++ " (SELECT coalesce(json_group_array(id),json('[]')) FROM accounts a WHERE a.organization=o.organization) AS accounts"
   ++ " FROM organizations o) o;"
 
@@ -513,13 +533,25 @@ def pool(+db: String, organization: String) -> IO<Unit>:
 def blocked_organizations_sql() -> String:
   "WITH ranked AS (SELECT organization,state,row_number() OVER (PARTITION BY organization ORDER BY observed_at DESC,rowid DESC) AS rank FROM credit_observations WHERE fact='promotional_credit' AND organization<>'') SELECT coalesce(group_concat(organization,char(10)),'') FROM ranked WHERE rank=1 AND state='unavailable';"
 
-def selection_json(selected: Selected) -> String:
-  "{\"selected\":" ++ J.string_literal(account_id(selected_account(selected))) ++ ",\"preferredByObservation\":" ++ Bool.pick(String,selected_preferred(selected),"true","false") ++ ",\"harness\":" ++ J.string_literal(account_harness(selected_account(selected))) ++ ",\"funding\":" ++ J.string_literal(account_funding(selected_account(selected))) ++ ",\"organization\":" ++ J.string_literal(account_organization(selected_account(selected))) ++ "}"
+# The newest promotional-credit reading of one organization as
+# state<US>cycle, or unknown when the organization has no such reading.
+def org_observation_sql(+organization: String) -> String:
+  "WITH ranked AS (SELECT state,cycle,row_number() OVER (PARTITION BY organization ORDER BY observed_at DESC,rowid DESC) AS rank FROM credit_observations WHERE fact='promotional_credit' AND organization=" ++ C.q(organization) ++ ") SELECT coalesce((SELECT state||char(31)||cycle FROM ranked WHERE rank=1),'unknown'||char(31));"
+
+def selection_json(selected: Selected, +state: String, +cycle: String) -> String:
+  "{\"selected\":" ++ J.string_literal(account_id(selected_account(selected))) ++ ",\"preferredByObservation\":" ++ Bool.pick(String,selected_preferred(selected),"true","false") ++ ",\"harness\":" ++ J.string_literal(account_harness(selected_account(selected))) ++ ",\"funding\":" ++ J.string_literal(account_funding(selected_account(selected))) ++ ",\"organization\":" ++ J.string_literal(account_organization(selected_account(selected))) ++ ",\"creditEligible\":" ++ Bool.pick(String,Bool.and(String.eq(account_funding(selected_account(selected)),"api_key"),Bool.not(String.is_empty(account_organization(selected_account(selected))))),"true","false") ++ ",\"observationState\":" ++ J.string_literal(state) ++ ",\"creditCycle\":" ++ J.string_literal(cycle) ++ "}"
 
 def select_answer(db: String, harness: String, funding: String, chosen: Maybe<&2,Selected>) -> IO<Unit>:
   match chosen:
     case None{}: IO.die(Unit,2,"No recorded account matches harness " ++ harness ++ " and funding " ++ funding ++ "; record an account and retry.")
-    case Some{+selected}: IO.print(selection_json(selected))
+    case Some{+selected}: do IO<Unit>:
+      fields : String <- IO.try(String,DB.Sql.read(db,org_observation_sql(account_organization(selected_account(selected)))))
+      IO.print(selection_fields_json(selected,String.split(Tx.trim_nl(fields),Char.from_u32(31))))
+
+def selection_fields_json(selected: Selected, fields: List<String>) -> String:
+  match fields:
+    case state <> cycle <> rest: selection_json(selected,state,cycle)
+    case other: selection_json(selected,"unknown","")
 
 def select(+db: String, harness: String, funding: String) -> IO<Unit>:
   do IO<Unit>:
@@ -533,7 +565,7 @@ def select(+db: String, harness: String, funding: String) -> IO<Unit>:
 # --- the command -------------------------------------------------------------
 
 def unknown_action(action: String) -> IO<Unit>:
-  IO.die(Unit,2,"Unknown account action " ++ action ++ ". Use record, read, bind, attempts, select, observe or import-credit.")
+  IO.die(Unit,2,"Unknown account action " ++ action ++ ". Use record, read, bind, attempts, select, pool, observe or import-credit.")
 
 # The verb's argv carries one action and the eight named options in a fixed
 # order: action, id, provider, harness, funding, secret-ref, organization,
@@ -546,9 +578,10 @@ def run(+db: String, action: String, id: String, provider: String, harness: Stri
       Bool.pick(IO(Unit),String.eq(action,"bind"),bind(db,id,session),
       Bool.pick(IO(Unit),String.eq(action,"attempts"),attempts(db,session),
       Bool.pick(IO(Unit),String.eq(action,"select"),select(db,harness,funding),
+      Bool.pick(IO(Unit),String.eq(action,"pool"),pool(db,organization),
       Bool.pick(IO(Unit),String.eq(action,"observe"),observe(db,authority_of(session),id,detail),
       Bool.pick(IO(Unit),String.eq(action,"import-credit"),import_credit(db,authority_of(session),id,organization,detail),
-      unknown_action(action))))))))
+      unknown_action(action)))))))))
     IO.pure(Unit,Unit{})
 
 # The launch path records the account and funding route for the attempt it is
