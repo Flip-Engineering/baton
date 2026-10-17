@@ -97,6 +97,12 @@ retains its accepted findings and limits. Local disk archival completed its
 authorized cleanup scope. These completed activities do not complete the open
 product acceptance listed above.
 
+The coordinator law aggregate at `a16fbc5e3` passed its hosted compiler check in
+[run 38989564886](https://github.com/Flip-Engineering/baton/actions/runs/38989564886),
+with original wait status 0 and empty stderr. This proves the checked aggregate
+compiles. Runtime law evaluation, integrated release and installed acceptance
+remain open under [#782](https://github.com/Flip-Engineering/baton/issues/782).
+
 ## Issue backlog
 
 - [#781: Release blocked and queued subscription reads during unsubscribe](https://github.com/Flip-Engineering/baton/issues/781).
@@ -772,7 +778,9 @@ product acceptance listed above.
   [#770](https://github.com/Flip-Engineering/baton/issues/770).
 - [#782: Update stale coordinator laws and include their evaluation in validation](https://github.com/Flip-Engineering/baton/issues/782).
   The knowledge audit in [#779](https://github.com/Flip-Engineering/baton/issues/779)
-  tracks the retained compiler failures and source review.
+  tracks the retained compiler failures, source review and passing hosted
+  aggregate compiler check. Runtime evaluation and release qualification remain
+  open.
 - [#783: Validate knowledge scope and traversal direction on each command surface](https://github.com/Flip-Engineering/baton/issues/783).
   Track the CLI and MCP contract with the [#779 audit](https://github.com/Flip-Engineering/baton/issues/779).
 - [#784: Define and validate knowledge evidence references and citation lineage](https://github.com/Flip-Engineering/baton/issues/784).
