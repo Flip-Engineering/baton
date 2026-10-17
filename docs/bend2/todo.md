@@ -869,7 +869,9 @@ remain open under [#782](https://github.com/Flip-Engineering/baton/issues/782).
   same DeepSeek UUID but has no owned-read record yet; attempt 953 is running.
   The original fframes attempt 694 exited with status 0. A guarded configure
   then set `fframes-lead` to `muse-wonder-1.0` at high effort, preserving UUID
-  `01a1475d-d987-7bf2-8968-b31165d91a60` for future work.
+  `01a1475d-d987-7bf2-8968-b31165d91a60`. The retained coordinator task was
+  resumed once on the same UUID after identifying open child work; attempt 735
+  is running and its new owned-read record is pending.
 
   At 02:55 UTC, user units `acp-render-farm.service` and
   `acp-render-farm-gpu1.service` were active with four running render containers
@@ -878,10 +880,3 @@ remain open under [#782](https://github.com/Flip-Engineering/baton/issues/782).
   thermal or power-brake code `0x20` at 47 C, GPU1 was 63 C, and GPU3 remained
   user-held. These samples show active CPU work and do not establish completed
   GPU rendering. No GPU controls were used.
-
-  The combined memory and invalid-tail candidate is compiling from
-  `0724077c03f4802f2a396a6fecec5d717c423c32` under
-  `baton-main11-0724077c-final-memory-nul-o0.service` (Bun PID 227093). No
-  executable artifact or focused runtime acceptance is available yet; see
-  [#769](https://github.com/Flip-Engineering/baton/issues/769) and
-  [#786](https://github.com/Flip-Engineering/baton/issues/786).
