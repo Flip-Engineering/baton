@@ -281,7 +281,7 @@ remain open under [#782](https://github.com/Flip-Engineering/baton/issues/782).
   Supporting failed-observation retirement after exit zero requires a separate
   process-acknowledgement change. The repaired plan has a passing Muse review;
   native implementation, admission pins and the compaction decision remain
-  open.
+  open. See the [October 17 issue update](https://github.com/Flip-Engineering/baton/issues/769#issuecomment-6228858193).
 
 - [#770: Retain actual native wait status after a filesystem write failure](https://github.com/Flip-Engineering/baton/issues/770).
   The [#769](https://github.com/Flip-Engineering/baton/issues/769) review reaped
@@ -808,7 +808,8 @@ remain open under [#782](https://github.com/Flip-Engineering/baton/issues/782).
   spool, checkpoint, native UUID and owed inbox input. Supporting
   failed-observation retirement after exit zero remains a separate
   process-acknowledgement task linked here. Focused type checking passed; full
-  build and runtime bounded-memory/recovery evidence remain open.
+  build and runtime bounded-memory/recovery evidence remain open. See the
+  [October 17 recovery update](https://github.com/Flip-Engineering/baton/issues/786#issuecomment-6228858963).
 - [#782: Update stale coordinator laws and include their evaluation in validation](https://github.com/Flip-Engineering/baton/issues/782).
   The knowledge audit in [#779](https://github.com/Flip-Engineering/baton/issues/779)
   tracks the retained compiler failures, source review and passing hosted
@@ -898,7 +899,8 @@ remain open under [#782](https://github.com/Flip-Engineering/baton/issues/782).
   exit-zero NUL tail incomplete; custody-proven owner loss can retire the dead
   process attempt with the original spool, checkpoint, native UUID and input
   retained. Failed-observation retirement after exit zero remains a separate
-  process-acknowledgement task tracked by #696, #769 and #786.
+  process-acknowledgement task tracked by #696, #769 and #786. See the
+  [October 17 #696 update](https://github.com/Flip-Engineering/baton/issues/696#issuecomment-6228856867).
   The original fframes attempt 694 exited with status 0. A guarded configure
   then set `fframes-lead` to `muse-wonder-1.0` at high effort, preserving UUID
   `01a1475d-d987-7bf2-8968-b31165d91a60`. The retained coordinator task was
@@ -910,9 +912,10 @@ remain open under [#782](https://github.com/Flip-Engineering/baton/issues/782).
   editing `fframes-3d/src/gpu/mod.rs` and should remain undisturbed.
   `material-shader` has repeated queued-message preemption that prevents tool
   calls from executing; the lead reports additional guidance would worsen the
-  queue. Simulation is cycling Kimi quota failures and quality has exited on
-  Kimi quota. No new SHAs were reported; tips remain `3e6d9da` and `0ee836f`,
-  with parity incomplete.
+  queue. Simulation and quality had exited on Kimi quota; their routes have
+  since been guardedly changed to DeepSeek Flash and their same-UUID
+  continuations are running. No new SHAs were reported; tips remain `3e6d9da`
+  and `0ee836f`, with parity incomplete.
 
   At the terminal windows for `simulation` attempt 743 and `quality` attempt
   681, guarded `configure --expected-model kimi-code/k3` changed each route to
