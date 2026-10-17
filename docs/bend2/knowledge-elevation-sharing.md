@@ -131,6 +131,7 @@ not a member.
 | Kind reclassification | `record-typed kind-probe worker observation ...` stores `observation`; the same coordinates with `correction` exit 0 and the stored kind becomes `correction`. |
 | Notice recovery | First promotion exits 1 with `The row is committed and its notice is undelivered...`; row `repair-share` exists and its notice has no receipt. After the endpoint is repaired, the retry returns the stored promotion; one row, one notice, one delivered line. |
 | Final state | 204,800 bytes; 5 findings, 4 promotions, 2 relations, 10 messages. |
+| Process memory | On the 204,800-byte fixture, `knowledge-scope` used 11,016 KiB maximum resident set size in 0.03 s and `knowledge-search` used 20,724 KiB in 0.15 s. Both figures include process startup and SQLite open. |
 
 The duplicate share contradicts the one-row-per-share statement. The lifecycle
 audit describes one promotion row per
@@ -388,9 +389,9 @@ consumer failure and a test update. No source change is proposed here.
   byte-identical at both pins; scope-token validation differs between the pins,
   and the probe uses valid tokens only.
 - One host, one small fixture, SQLite 3.45.1, sequential processes. No
-  concurrent writers, crash injection, or large-scale latency and memory
-  measurement. The Cgen and knowledge branch-round figures are retained
-  evidence, not reruns.
+  concurrent writers, crash injection, or large-scale latency measurement. The
+  two process memory maxima in section 2 include startup and SQLite open. The
+  Cgen and knowledge branch-round figures are retained evidence, not reruns.
 - No full Main-v13 compile and no broad run. The probe starts a throwaway
   database and a throwaway Git repository only.
 - #789-791 delivery qualification remains in backlog. This document claims no
