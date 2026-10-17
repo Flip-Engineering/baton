@@ -323,12 +323,24 @@ export function startTask(executable, database, argv) {
       'The selected conversation records a different working directory.',
       'Use receiver SESSION COMMAND LOG CWD to relocate it explicitly, then retry the task.');
     const receiver = recordedReceiver(selected);
-    const command = options.command ?? receiver?.command ?? (!selected ? executableInPath(route.harness) : undefined);
+    // An existing session with no command-line receiver and no direct Codex App
+    // route cannot launch admitted input. Resolve its recorded harness from PATH
+    // and register that receiver, as a new session already does.
+    const directAppRoute = Boolean(selected && selected.harness === 'codex'
+      && selected.native && !selected.endpoint);
+    const endpointAbsent = !Array.isArray(selected?.endpointArgv)
+      || selected.endpointArgv.length === 0 || !selected.endpointArgv[0];
+    const receiverMissing = Boolean(selected && !receiver && !directAppRoute
+      && options.command === undefined && endpointAbsent);
+    const command = options.command ?? receiver?.command
+      ?? (receiverMissing || !selected ? executableInPath(route.harness) : undefined);
     result.command = { executable: command ?? null,
-      source: options.command !== undefined ? 'explicit' : receiver ? 'recorded-receiver' : selected ? 'recorded-endpoint' : 'PATH' };
+      source: options.command !== undefined ? 'explicit' : receiver ? 'recorded-receiver'
+        : receiverMissing ? 'PATH' : selected ? 'recorded-endpoint' : 'PATH' };
     const log = resolve(options.log ?? receiver?.log ??
       join(`${database}.transcripts`, Buffer.from(sessionId).toString('hex'), requestId, 'native.jsonl'));
-    result.outputLog = selected && !options.command && options.log === undefined ? receiver?.log ?? null : log;
+    result.outputLog = selected && !options.command && options.log === undefined && !receiverMissing
+      ? receiver?.log ?? null : log;
     let profile = null;
     if (named?.profile) {
       const store = resolveRouteProfile(saved, route.harness, named.profile);
@@ -358,9 +370,9 @@ export function startTask(executable, database, argv) {
         native('configure', sessionId, route.harness, route.model, route.effort,
           command ?? '', log, selected.harness, selected.model, selected.effort);
       }
-      if (options.command !== undefined) {
+      if (options.command !== undefined || receiverMissing) {
         mkdirSync(dirname(log), { recursive: true, mode: 0o700 });
-        native('receiver', sessionId, options.command, log);
+        native('receiver', sessionId, options.command ?? command, log);
       }
     }
     if (profile) native('profile-bind', sessionId, route.harness, profile.label, profile.store);

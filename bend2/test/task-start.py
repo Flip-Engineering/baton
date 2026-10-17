@@ -264,6 +264,31 @@ class TaskStart(unittest.TestCase):
         self.assertEqual(native['args'][native['args'].index('--thinking') + 1], 'high')
         self.failed_turn('named', stream, 'Retain the named route result.')
 
+    def test_existing_session_without_receiver_registers_recorded_harness_receiver(self):
+        session = 'receiver-less'
+        self.route(session)
+        self.call('join', session, 'root', 'codex', 'gpt-6-astra', 'low', self.repo)
+        self.assertFalse(self.call('session', session)['endpointArgv'])
+        directory = self.directory / 'receiver-less-path'
+        directory.mkdir()
+        (directory / 'codex').symlink_to(self.fixture)
+        self.environment['PATH'] = str(directory) + ':' + self.environment['PATH']
+        body = 'Deliver to an existing session with no recorded receiver λ🙂.'
+        result = self.task_call('--sender', 'root', '--to', session, '--text', body)
+        self.assertEqual(result['status'], 'admitted')
+        self.assertEqual(result['command'], {'executable': str(self.fixture.resolve()), 'source': 'PATH'})
+        steps = [step['argv'][2] for step in result['steps']]
+        self.assertLess(steps.index('receiver'), steps.index('message-batch-file'))
+        state = self.call('session', session)
+        self.assertEqual(state['blockedCause'], '')
+        self.assertEqual(state['endpointArgv'][-7:-5], ['receive', session])
+        self.assertIn(str(self.fixture.resolve()), state['endpointArgv'])
+        self.assert_retained_input(result, body)
+        stream, native = self.accept(session)
+        self.assert_initial_prompt(result, body, native)
+        self.finish(stream, 'Completed the receiver-less dispatch task.')
+        self.exited(session)
+
     def test_missing_route_does_not_choose_first_saved_route_or_an_existing_session(self):
         self.settings([{'name': 'first', 'harness': 'codex', 'model': 'gpt-6-astra', 'effort': 'low'}])
         result = self.task_call('Task text is retained when defaults are incomplete.',
