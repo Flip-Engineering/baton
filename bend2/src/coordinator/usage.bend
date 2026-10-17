@@ -466,7 +466,7 @@ def models(+db: String, +session: String) -> IO(Unit):
 # sessions, with the harness command its endpoint records: session, harness,
 # model, workspace and command, unit separated.
 def models_sources_sql() -> String:
-  "WITH sources AS (SELECT id,harness,model,coalesce(workspace,'') AS workspace,CASE WHEN json_valid(endpoint) THEN CASE json_array_length(endpoint) WHEN 9 THEN coalesce(json_extract(endpoint,'$[4]'),'') WHEN 17 THEN coalesce(json_extract(endpoint,'$[12]'),'') ELSE '' END ELSE '' END AS command FROM sessions), ranked AS (SELECT *,row_number() OVER (PARTITION BY harness,command,workspace ORDER BY id) AS rank FROM sources) SELECT id||char(31)||harness||char(31)||model||char(31)||workspace||char(31)||command FROM ranked WHERE rank=1 ORDER BY harness,id;"
+  "WITH sources AS (SELECT id,harness,model,coalesce(workspace,'') AS workspace,CASE WHEN json_valid(endpoint) THEN CASE json_array_length(endpoint) WHEN 9 THEN coalesce(json_extract(endpoint,'$[4]'),'') WHEN 17 THEN coalesce(json_extract(endpoint,'$[12]'),'') ELSE '' END ELSE '' END AS command FROM sessions), ranked AS (SELECT *,row_number() OVER (PARTITION BY harness,command,workspace,CASE WHEN harness='muse' THEN model ELSE '' END ORDER BY id) AS rank FROM sources) SELECT id||char(31)||harness||char(31)||model||char(31)||workspace||char(31)||command FROM ranked WHERE rank=1 ORDER BY harness,id;"
 
 def models_accounts_sql() -> String:
   "SELECT coalesce(json_group_array(json_object('label',id,'provider',provider,'harness',harness,'funding',funding,'organization',organization,'organizationKnown',CASE WHEN organization='' THEN json('false') ELSE json('true') END)),json('[]')) FROM accounts;"

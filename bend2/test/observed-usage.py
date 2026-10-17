@@ -236,6 +236,15 @@ class ObservedUsage(unittest.TestCase):
         self.assertEqual(json.loads((workspace / 'queried.json').read_text()),
                          {'argv': ['models', '--json'], 'cwd': str(workspace)})
 
+    def test_models_all_reports_an_empty_accounts_table_as_reported(self):
+        self.provider_command(json.dumps({'models': []}), identity_prefix=True)
+        with sqlite3.connect(self.db) as database:
+            database.execute("CREATE TABLE accounts (id TEXT PRIMARY KEY, provider TEXT,"
+                             " harness TEXT, funding TEXT, secret_ref TEXT,"
+                             " organization TEXT DEFAULT '', verified_at TEXT DEFAULT '')")
+        answer = json.loads(self.call('models-all').stdout)
+        self.assertEqual(answer['accountsSection'], {'state': 'reported', 'accounts': []})
+
     def test_models_keeps_unparseable_catalog_bytes(self):
         raw = 'provider returned text that is not JSON'
         workspace, command = self.provider_command(raw)
