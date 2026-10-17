@@ -90,6 +90,25 @@ token`; the current `AND` search returned only `auth-cache`. The fixture is smal
 and its relevance labels are authored for this audit. It shows that term
 statistics alone do not justify dropping the term requirement.
 
+### Authorization and visibility
+
+A read requires a registered reader session. Scope names select holdings:
+`worker` names one session, `group` names one Ensemble owner, `universal` names
+parentless conductors, and `all` names every session. A registered session can
+name another session's or Ensemble's scope.
+
+The elevation probe measured a non-member session `sibling` naming
+`group review-group` and reading a finding promoted to that Ensemble. The read
+returned the complete finding, the promotion provenance with
+`sourceKind: session` and `destinationKind: group`, and an incident cross-author
+relation. Group membership is not checked on reads. Scope names are holdings
+selectors, not a confidentiality boundary.
+
+A relation is visible when its author is a holder or when either endpoint is a
+visible finding. An out-of-scope endpoint appears as a reference with an
+all-scope `detailRead` and no node content. The elevation artifact records the
+measured reference and the navigation inconsistency.
+
 ## Gaps and ownership
 
 | Gap | Evidence | Owner and next action |
