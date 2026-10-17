@@ -67,11 +67,11 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   [#792](https://github.com/Flip-Engineering/baton/issues/792), coordinated with
   account discovery, availability and
   [subscription fallback](https://github.com/Flip-Engineering/baton/issues/702).
-  Track exact DeepSeek model versions and capabilities, including the requested
-  V4.1-Flash-1016 API version, under
-  [#802](https://github.com/Flip-Engineering/baton/issues/802). The official
-  catalog currently names `deepseek-flash` as V4.1-Flash; the dated 1016 version
-  remains unconfirmed.
+  Track dated DeepSeek V4.1 Flash API versions and capabilities under
+  [#802](https://github.com/Flip-Engineering/baton/issues/802). The current
+  expected suffix is 1017; retain 1016 as the earlier estimate until the API
+  confirms the exact entry. The authenticated catalog currently exposes
+  `deepseek-flash` as V4.1-Flash without either dated identifier.
 - [ ] Research and implement [account and API-credit tracking](https://github.com/Flip-Engineering/baton/issues/793)
   for multiple configured accounts and native funding routes. Preserve the
   distinction between subscription usage and Console/API-key usage, report
@@ -818,11 +818,13 @@ remain open under [#782](https://github.com/Flip-Engineering/baton/issues/782).
   [#694](https://github.com/Flip-Engineering/baton/issues/694),
   [#683](https://github.com/Flip-Engineering/baton/issues/683) and
   [#681](https://github.com/Flip-Engineering/baton/issues/681).
-- [#802: Track exact DeepSeek V4.1-Flash API versions and capabilities](https://github.com/Flip-Engineering/baton/issues/802).
-  Watch official model metadata for the requested 1016 version, retain exact
-  IDs and capability fields, and qualify the native API transports before
-  changing a default route. The current catalog exposes `deepseek-flash` as
-  V4.1-Flash; the dated version remains unconfirmed. Coordinate model discovery
+- [#802: Discover dated DeepSeek V4.1 Flash API versions and capabilities](https://github.com/Flip-Engineering/baton/issues/802).
+  Query the authenticated list-models API every five minutes for the requested
+  dated version, with 1017 as the current estimate and 1016 retained for
+  detection. Preserve exact IDs, capability fields and appearance/removal
+  history. Deliver operator alerts and qualify native API transports before
+  changing a default route. The operator reports an earlier transient catalog
+  entry; this watcher has not captured its exact metadata. Coordinate model discovery
   in [#792](https://github.com/Flip-Engineering/baton/issues/792), provider
   capability evidence in [#683](https://github.com/Flip-Engineering/baton/issues/683)
   and API-credit/funding observations in
