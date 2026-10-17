@@ -23,7 +23,12 @@ root = Path(tempfile.mkdtemp(prefix='reuse-combined-fixture.'))
 source = root / 'source'
 source.mkdir()
 (source / 'bend2/src/coordinator').mkdir(parents=True)
+(source / 'bend2/src/host').mkdir(parents=True)
+(source / 'tools/cgen-clang-parallel').mkdir(parents=True)
 (source / module.ENTRY).write_text('import Base\n\ndef main() -> IO(Unit):\n  IO.pure(Unit,Unit{})\n')
+(source / 'bend2/src/host/native-entry.c').write_text('int main(void) { return 0; }\n')
+(source / 'tools/cgen-clang-parallel/build_native.py').write_text('# synthetic sharder driver\n')
+(source / 'tools/cgen-clang-parallel/shard_emitted_c.py').write_text('# synthetic splitter\n')
 (source / 'README.md').write_text('Synthetic reuse evidence fixture.\n')
 for argv in (['git', 'init', '-q'], ['git', 'add', '-A'],
              ['git', '-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid',
@@ -66,6 +71,9 @@ save(checked, {'source_tree': tree, 'success': True, 'records': [
 check = root / 'check.json'
 save(check, {'source_tree': tree, 'natural_check_success_verified': True, 'result': fact(checked)})
 records = []
+fixture_pid = os.getpid()
+fixture_birth = '123456'
+fixture_stat = f"{fixture_pid} (synthetic fixture) " + ' '.join(['S'] + ['0'] * 18 + [fixture_birth])
 phase_argv = {
     'c-generation': [str(logical / 'toolchain/bin/bend'), module.ENTRY, '-o', '.scratch/bend2/baton2.c'],
     'main-object': ['/usr/bin/clang-19', '-O1', '-pthread', '-Dmain=baton2_runtime_main',
@@ -80,8 +88,8 @@ for phase, argv in phase_argv.items():
     row = {'argv': argv, 'cwd': str(logical / 'source'), 'source_tree': tree,
            'returncode': 0, 'wait_status': 0, 'natural_exit': True, 'original_wait': True,
            'original_wait_completed': True, 'pid': os.getpid(),
-           'stat_after_spawn': Path('/proc/self/stat').read_text(),
-           'birth': Path('/proc/self/stat').read_text().rsplit(')', 1)[1].split()[19],
+           'stat_after_spawn': fixture_stat,
+           'birth': fixture_birth,
            'environment': {'BEND_NO_TELEMETRY': '1', 'BUN_JSC_maxPerThreadStackUsage': '67108864'},
            'stdout': fact(directory / 'stdout'), 'stderr': fact(directory / 'stderr')}
     save(directory / 'result.json', row)
@@ -106,7 +114,7 @@ save(original_handoff, handoff)
 reference = root / 'reference.json'
 save(reference, {'schema': 'baton2-combined-main-ci-reference-v1',
                  'original_handoff': module.fact(original_handoff),
-                 'path_maps': [{'original': str(logical), 'copy': str(root)}]})
+                 'path_maps': [{'original': str(logical), 'copy': str(root.resolve())}]})
 selected, binding = module.handoff_binding(reference, module.digest(reference))
 assert selected == handoff
 os.environ['BUN_JSC_maxPerThreadStackUsage'] = '67108864'
@@ -122,9 +130,89 @@ assert module.verify_transfer(types.SimpleNamespace(source=source, generated=run
 selection = {}
 proof = run / 'generated/main-c-reuse.json'
 module.select(types.SimpleNamespace(source=source, compiler=toolchain / 'bin/bend', proof=proof,
-    proof_sha256=module.digest(proof), bound_root=str(source), generated_c=run / 'generated/baton2.c'), selection)
+    proof_sha256=module.digest(proof), bound_root=str(source.resolve()), generated_c=run / 'generated/baton2.c'), selection)
 assert selection['status'] == 'reused'
 outcomes = [{'case': 'prepare-transfer-select-with-mapped-original', 'success': True}]
+
+# A declared no-PCH sharded route retains the same three Main artifacts and
+# binds their object/link work through one hash-verified build receipt.
+sharded_handoff = copy.deepcopy(handoff)
+sharded_handoff['records'] = [handoff['records'][0]]
+route_build_dir = root / 'combined-sharded-build'
+route_build_dir.mkdir()
+fake_clang = route_build_dir / 'clang-19'
+fake_clang.write_text('#!/bin/sh\nprintf "%s\\n" "Debian clang version 19.1.7"\n')
+fake_clang.chmod(0o700)
+route_source = source / '.scratch/bend2/baton2.c'
+route_entry = source / 'bend2/src/host/native-entry.c'
+route_output = source / '.scratch/bend2/baton2'
+route_object = source / '.scratch/bend2/baton2.o'
+compile_names = ['baton_core.c', 'baton_spins.c'] + [f'shard_{index:02d}.c' for index in range(4)]
+split_manifest = {'schema': 'baton2-clang-c-shards-v1', 'counts': {'segments': 12}}
+compile_rows = [{'source_name': name, 'object_name': Path(name).with_suffix('.o').name,
+                 'source_sha256': module.digest(route_source),
+                 'object_sha256': hashlib.sha256(name.encode()).hexdigest()} for name in compile_names]
+receipt = {'schema': 'baton2-clang-sharded-main-build-v1',
+    'route': 'linux-x86_64-clang-19-no-pch', 'compiler': str(fake_clang),
+    'compiler_version': 'Debian clang version 19.1.7',
+    'source': str(logical / route_source.relative_to(root)),
+    'source_sha256': module.digest(route_source),
+    'entry': str(logical / route_entry.relative_to(root)),
+    'entry_sha256': module.digest(route_entry),
+    'splitter': str(logical / Path('source/tools/cgen-clang-parallel/shard_emitted_c.py')),
+    'splitter_sha256': module.digest(source / 'tools/cgen-clang-parallel/shard_emitted_c.py'),
+    'driver': str(logical / Path('source/tools/cgen-clang-parallel/build_native.py')),
+    'driver_sha256': module.digest(source / 'tools/cgen-clang-parallel/build_native.py'),
+    'ccache': '', 'ccache_sha256': '',
+    'split_manifest_sha256': hashlib.sha256(json.dumps(split_manifest, sort_keys=True,
+                                         separators=(',', ':')).encode()).hexdigest(),
+    'split_manifest': split_manifest, 'shards': 4, 'segments': 12,
+    'compile_flags': ['-O1', '-pthread', '-Dmain=baton2_runtime_main'],
+    'compile_objects': compile_rows,
+    'aggregate_command': [str(fake_clang), '-r', *[row['object_name'] for row in compile_rows],
+                          '-o', 'baton2.o'],
+    'link_command': [str(fake_clang), '-O1', '-pthread',
+                     str(logical / route_entry.relative_to(root)), 'baton2.o',
+                     '-lsqlite3', '-lm', '-o', 'baton2'],
+    'object': str(logical / route_object.relative_to(root)),
+    'object_sha256': module.digest(route_object),
+    'output': str(logical / route_output.relative_to(root)),
+    'output_sha256': module.digest(route_output)}
+route_receipt_path = source / '.scratch/bend2/baton2.build.json'
+save(route_receipt_path, receipt)
+sharded_handoff['native_build'] = {'route': receipt['route'], 'receipt': fact(route_receipt_path)}
+sharded_result = root / 'sharded-route-validation'
+sharded_result.mkdir()
+validated, native_record = module.combined_evidence(sharded_handoff, binding, sharded_result, archive)
+assert json.loads((sharded_result / 'sharded-main-build-validation.json').read_text())['status'] == 'verified'
+assert native_record['original_native']['original_record']['argv'] == handoff['records'][0]['argv']
+outcomes.append({'case': 'combined-sharded-route-receipt', 'success': True})
+sharded_handoff_path = root / 'sharded-handoff.json'
+save(sharded_handoff_path, sharded_handoff)
+sharded_reference = root / 'sharded-reference.json'
+save(sharded_reference, {'schema': 'baton2-combined-main-ci-reference-v1',
+    'original_handoff': module.fact(sharded_handoff_path),
+    'path_maps': [{'original': str(logical), 'copy': str(root.resolve())}]})
+sharded_prepared = {}
+module.prepare(types.SimpleNamespace(source=source, run=root / 'sharded-reuse-run',
+    handoff=str(sharded_reference), handoff_sha256=module.digest(sharded_reference),
+    compiler=toolchain / 'bin/bend', compiler_archive=archive,
+    github_env=root / 'sharded-reuse-env'), sharded_prepared)
+assert sharded_prepared['status'] == 'reused'
+outcomes.append({'case': 'prepare-sharded-route-reuse', 'success': True})
+
+legacy_sharded = copy.deepcopy(sharded_handoff)
+legacy_sharded.pop('native_build')
+legacy_result = root / 'sharded-legacy-refusal'
+legacy_result.mkdir()
+try:
+    module.combined_evidence(legacy_sharded, binding, legacy_result, archive)
+except ValueError as error:
+    assert 'phase record is missing' in str(error)
+    outcomes.append({'case': 'sharded-route-requires-declaration', 'success': True,
+                     'refusal': str(error)})
+else:
+    raise AssertionError('Sharded build without a receipt declaration was accepted.')
 
 
 def rejected(label, changed, expected, selected_binding=binding):
@@ -251,6 +339,63 @@ except ValueError as error:
     outcomes.append({'case': 'legacy-missing-marker', 'success': True, 'refusal': str(error)})
 else:
     raise AssertionError('Incomplete legacy marker was accepted.')
+
+sharded = root / 'sharded-build'
+sharded.mkdir()
+sharded_source = sharded / 'baton2.c'
+sharded_source.write_bytes(b'generated C fixture\n')
+sharded_entry = sharded / 'native-entry.c'
+sharded_entry.write_bytes(b'int main(void) { return 0; }\n')
+sharded_output = sharded / 'baton2'
+sharded_output.write_bytes(b'linked executable fixture\n')
+sharded_object = sharded / 'baton2.o'
+sharded_object.write_bytes(b'aggregated object fixture\n')
+fake_clang = sharded / 'clang-19'
+fake_clang.write_text('#!/bin/sh\nprintf "%s\\n" "Debian clang version 19.1.7"\n')
+fake_clang.chmod(0o700)
+compile_names = ['baton_core.c', 'baton_spins.c'] + [f'shard_{index:02d}.c' for index in range(4)]
+split_manifest = {'schema': 'baton2-clang-c-shards-v1', 'counts': {'segments': 12}}
+compile_rows = [{'source_name': name, 'object_name': Path(name).with_suffix('.o').name,
+                 'source_sha256': module.digest(sharded_source),
+                 'object_sha256': hashlib.sha256(name.encode()).hexdigest()} for name in compile_names]
+driver = args.helper.resolve().parents[2] / 'tools/cgen-clang-parallel/build_native.py'
+splitter = driver.with_name('shard_emitted_c.py')
+manifest_sha = hashlib.sha256(json.dumps(split_manifest, sort_keys=True,
+                                         separators=(',', ':')).encode()).hexdigest()
+sharded_receipt = {'schema': 'baton2-clang-sharded-main-build-v1',
+    'route': 'linux-x86_64-clang-19-no-pch', 'compiler': str(fake_clang),
+    'source': str(sharded_source), 'source_sha256': module.digest(sharded_source),
+    'entry': str(sharded_entry), 'entry_sha256': module.digest(sharded_entry),
+    'splitter': str(splitter), 'splitter_sha256': module.digest(splitter),
+    'driver': str(driver), 'driver_sha256': module.digest(driver),
+    'ccache': '', 'ccache_sha256': '',
+    'split_manifest_file_sha256': hashlib.sha256(
+        (json.dumps(split_manifest, indent=2) + '\n').encode()).hexdigest(),
+    'split_manifest_sha256': manifest_sha, 'split_manifest': split_manifest,
+    'shards': 4, 'segments': 12,
+    'compile_flags': ['-O1', '-pthread', '-Dmain=baton2_runtime_main'],
+    'compile_objects': compile_rows,
+    'aggregate_command': [str(fake_clang), '-r', *[row['object_name'] for row in compile_rows],
+                          '-o', 'baton2.o'],
+    'link_command': [str(fake_clang), '-O1', '-pthread', str(sharded_entry.resolve()),
+                     'baton2.o', '-lsqlite3', '-lm', '-o', 'baton2'],
+    'object': str(sharded_object), 'object_sha256': module.digest(sharded_object),
+    'output': str(sharded_output), 'output_sha256': module.digest(sharded_output)}
+receipt_path = sharded / 'baton2.build.json'
+save(receipt_path, sharded_receipt)
+verified_build = module.verify_sharded_build(receipt_path, sharded_source, sharded_entry, sharded_output)
+assert verified_build['status'] == 'verified'
+outcomes.append({'case': 'sharded-build-receipt', 'success': True})
+bad_receipt = copy.deepcopy(sharded_receipt)
+bad_receipt['compile_flags'] = ['-O2']
+save(receipt_path, bad_receipt)
+try:
+    module.verify_sharded_build(receipt_path, sharded_source, sharded_entry, sharded_output)
+except ValueError as error:
+    assert 'compile flags differ' in str(error)
+    outcomes.append({'case': 'sharded-build-receipt-flags-refused', 'success': True})
+else:
+    raise AssertionError('A changed sharded compile command was accepted.')
 # Restore the mapped fixture facts before testing dirty tracked source.
 save(check, {'source_tree': tree, 'natural_check_success_verified': True, 'result': fact(checked)})
 for row in handoff['records']:

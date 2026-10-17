@@ -62,6 +62,71 @@ def verify_file(row):
     return pathlib.Path(row['path'])
 
 
+def verify_sharded_build(receipt_path, source, entry, output, path_map=None, tool_root=None):
+    receipt_path = pathlib.Path(receipt_path).resolve()
+    source, entry, output = (pathlib.Path(path).resolve() for path in (source, entry, output))
+    resolve_recorded = path_map or (lambda value: pathlib.Path(value).resolve())
+    receipt = json.loads(receipt_path.read_text())
+    require(receipt.get('schema') == 'baton2-clang-sharded-main-build-v1',
+            'Unknown sharded Main build receipt.')
+    require(receipt.get('route') == 'linux-x86_64-clang-19-no-pch',
+            'Unexpected sharded Main build route.')
+    require(resolve_recorded(receipt['source']) == source
+            and receipt['source_sha256'] == digest(source), 'Sharded Main C source differs.')
+    require(resolve_recorded(receipt['entry']) == entry
+            and receipt['entry_sha256'] == digest(entry), 'Sharded Main native entry differs.')
+    tool_root = pathlib.Path(tool_root).resolve() if tool_root else pathlib.Path(__file__).resolve().parents[2]
+    splitter = tool_root / 'tools/cgen-clang-parallel/shard_emitted_c.py'
+    require(resolve_recorded(receipt['splitter']) == splitter
+            and receipt['splitter_sha256'] == digest(splitter), 'Sharder source differs.')
+    driver = tool_root / 'tools/cgen-clang-parallel/build_native.py'
+    require(resolve_recorded(receipt['driver']) == driver
+            and receipt['driver_sha256'] == digest(driver), 'Sharded Main build driver differs.')
+    manifest = receipt.get('split_manifest')
+    manifest_bytes = json.dumps(manifest, sort_keys=True, separators=(',', ':')).encode()
+    require(hashlib.sha256(manifest_bytes).hexdigest() == receipt.get('split_manifest_sha256'),
+            'Sharded Main split manifest differs.')
+    expected_names = ['baton_core.c', 'baton_spins.c'] + [f'shard_{index:02d}.c' for index in range(4)]
+    compile_objects = receipt.get('compile_objects')
+    require(receipt.get('shards') == 4 and len(compile_objects) == 6
+            and [row['source_name'] for row in compile_objects] == expected_names
+            and [row['object_name'] for row in compile_objects]
+                == [pathlib.Path(name).with_suffix('.o').name for name in expected_names],
+            'Sharded Main object list differs.')
+    require(receipt.get('compile_flags') == ['-O1', '-pthread', '-Dmain=baton2_runtime_main'],
+            'Sharded Main compile flags differ.')
+    compiler = receipt['compiler']
+    ccache = receipt.get('ccache', '')
+    require(bool(ccache) == bool(receipt.get('ccache_sha256')),
+            'Sharded Main ccache binding is incomplete.')
+    if ccache:
+        require(digest(pathlib.Path(ccache)) == receipt['ccache_sha256'],
+                'Sharded Main ccache executable differs.')
+    require(receipt.get('segments') == manifest.get('counts', {}).get('segments'),
+            'Sharded Main segment count differs from its manifest.')
+    require(receipt.get('aggregate_command') == [compiler, '-r',
+            *[row['object_name'] for row in compile_objects], '-o', output.name + '.o'],
+            'Sharded Main object aggregation command differs.')
+    link_command = receipt.get('link_command', [])
+    require(len(link_command) == 9 and link_command[:3] == [compiler, '-O1', '-pthread']
+            and resolve_recorded(link_command[3]) == entry
+            and link_command[4:] == [output.name + '.o', '-lsqlite3', '-lm', '-o', output.name],
+            'Sharded Main native link command differs.')
+    object_file = output.with_name(output.name + '.o')
+    require(resolve_recorded(receipt['object']) == object_file
+            and receipt['object_sha256'] == digest(object_file), 'Sharded Main object differs.')
+    require(resolve_recorded(receipt['output']) == output
+            and receipt['output_sha256'] == digest(output), 'Sharded Main executable differs.')
+    version = subprocess.run([compiler, '--version'], check=True, text=True,
+                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT).stdout
+    require(re.search(r'\bclang version 19(?:\.\d+)?\b', version) is not None,
+            'Sharded Main compiler is not Clang 19.')
+    return {'status': 'verified', 'receipt': str(receipt_path),
+            'receipt_sha256': digest(receipt_path), 'source_sha256': digest(source),
+            'object_sha256': digest(object_file), 'output_sha256': digest(output),
+            'route': receipt['route']}
+
+
 def save(path, value):
     path.write_text(json.dumps(value, indent=2, ensure_ascii=False) + '\n')
 
@@ -253,7 +318,7 @@ def select(args, result):
     proof = json.loads(args.proof.read_text())
     require(proof['schema'] == 'baton2-main-c-reuse-v1' and proof['status'] == 'reused'
             and proof['root'] == args.bound_root, 'Main C reuse proof does not bind the selected checkout.')
-    origin = args.proof.parent / 'main-c-origin'
+    origin = args.proof.parent.resolve() / 'main-c-origin'
     for row in proof['origin_assets']:
         path = args.proof.parent / row['path']
         require(path.resolve().is_relative_to(origin), 'Origin asset leaves Main compilation evidence.')
@@ -415,8 +480,36 @@ def combined_evidence(handoff, binding, origin, compiler_archive):
     logical_compiler = pathlib.Path(handoff['compiler']['path'])
     require(logical_compiler.name == 'bend' and logical_compiler.parent.name == 'bin',
             'Combined compiler layout differs.')
+    native_build = handoff.get('native_build')
+    if native_build is not None:
+        require(set(native_build) == {'route', 'receipt'}
+                and native_build['route'] == 'linux-x86_64-clang-19-no-pch',
+                'Combined sharded Main build declaration differs.')
+        receipt = retained(native_build['receipt'])
+        receipt_copy = origin / 'sharded-main-build.json'
+        copy_record(receipt, receipt_copy)
+        receipt_data = json.loads(receipt_copy.read_text())
+        c_artifact = next((item for item in handoff['build_artifacts']
+                           if pathlib.Path(item['original']['path']).name == 'baton2.c'), None)
+        object_artifact = next((item for item in handoff['build_artifacts']
+                                if pathlib.Path(item['original']['path']).name == 'baton2.o'), None)
+        binary_artifact = next((item for item in handoff['build_artifacts']
+                                if pathlib.Path(item['original']['path']).name == 'baton2'), None)
+        require(c_artifact and object_artifact and binary_artifact,
+                'Combined sharded Main artifact set is incomplete.')
+        entry = source / 'bend2/src/host/native-entry.c'
+        sharded_validation = verify_sharded_build(
+            receipt_copy, mapped(c_artifact['original']['path']), entry,
+            mapped(binary_artifact['original']['path']), path_map=mapped, tool_root=source)
+        require(mapped(receipt_data['object'])
+                == mapped(object_artifact['original']['path']),
+                'Sharded receipt object does not name the retained Main object.')
+        save(origin / 'sharded-main-build-validation.json', sharded_validation)
+        expected_phases = ('c-generation',)
+    else:
+        expected_phases = ('c-generation', 'main-object', 'native-link')
     native = None
-    for phase in ('c-generation', 'main-object', 'native-link'):
+    for phase in expected_phases:
         matches = [row for row in handoff['records'] if pathlib.Path(row['stdout']['path']).parent.name == phase]
         require(len(matches) == 1, 'Combined Main phase record is missing or repeated: ' + phase)
         row = matches[0]
@@ -449,10 +542,14 @@ def combined_evidence(handoff, binding, origin, compiler_archive):
             require(argv == ['/usr/bin/clang-19', '-O1', '-pthread', '-Dmain=baton2_runtime_main',
                              '-c', '.scratch/bend2/baton2.c', '-o', '.scratch/bend2/baton2.o'],
                     'Combined Main object invocation differs.')
-        else:
+        elif phase == 'native-link':
             require(row['argv'] == ['/usr/bin/clang-19', '-O1', '-pthread', 'bend2/src/host/native-entry.c',
                                     '.scratch/bend2/baton2.o', '-lsqlite3', '-lm', '-o', '.scratch/bend2/baton2'],
                     'Combined Main native link invocation differs.')
+    require(len([row for row in handoff['records']
+                 if pathlib.Path(row['stdout']['path']).parent.name in
+                 ('c-generation', 'main-object', 'native-link')]) == len(expected_phases),
+            'Combined Main build phase set differs from its declared route.')
     artifacts = []
     for item in handoff['build_artifacts']:
         require(item['stable_during_copy'] is True, 'Combined Main artifact copy was unstable.')
@@ -658,6 +755,11 @@ def main():
     verify_parser = modes.add_parser('verify-transfer')
     verify_parser.add_argument('--source', type=pathlib.Path, required=True)
     verify_parser.add_argument('--generated', type=pathlib.Path, required=True)
+    build_parser = modes.add_parser('verify-build')
+    build_parser.add_argument('--receipt', type=pathlib.Path, required=True)
+    build_parser.add_argument('--source', type=pathlib.Path, required=True)
+    build_parser.add_argument('--entry', type=pathlib.Path, required=True)
+    build_parser.add_argument('--output', type=pathlib.Path, required=True)
     select_parser = modes.add_parser('select')
     select_parser.add_argument('--source', type=pathlib.Path, required=True)
     select_parser.add_argument('--compiler', type=pathlib.Path, required=True)
@@ -669,6 +771,10 @@ def main():
     args = parser.parse_args()
     if args.mode == 'verify-transfer':
         print(json.dumps(verify_transfer(args)))
+        return
+    if args.mode == 'verify-build':
+        print(json.dumps(verify_sharded_build(args.receipt, args.source,
+                                              args.entry, args.output)))
         return
     if args.mode == 'select':
         result = {'pid': os.getpid(), 'observed_at_ns': time.time_ns(), 'output': str(args.output.resolve())}

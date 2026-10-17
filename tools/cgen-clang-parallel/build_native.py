@@ -81,6 +81,9 @@ def main() -> int:
                        check=True)
         subprocess.run([args.cc, "-O1", "-pthread", str(entry), str(object_file),
                         "-lsqlite3", "-lm", "-o", str(output)], check=True)
+        stale_receipt = output.with_name(output.name + ".build.json")
+        if stale_receipt.exists():
+            stale_receipt.unlink()
         return 0
 
     staging = Path(tempfile.mkdtemp(prefix=f".{output.name}.clang-shards-",
@@ -119,25 +122,71 @@ def main() -> int:
             objects = list(pool.map(compile_one, jobs))
         compile_wall = time.monotonic() - started
         ordered_objects = [obj for obj, _ in objects]
+        staged_object = staging / (output.name + ".o")
+        aggregate_log = staging / "aggregate.log"
+        aggregate_command = [args.cc, "-r", *map(str, ordered_objects),
+                             "-o", str(staged_object)]
+        aggregate_wall = command_output(aggregate_command, aggregate_log, staging)
         staged_binary = staging / output.name
         link_log = staging / "link.log"
-        link_wall = command_output([args.cc, "-O1", "-pthread", str(entry),
-                                    *map(str, ordered_objects), "-lsqlite3", "-lm",
-                                    "-o", str(staged_binary)], link_log, staging)
-        os.replace(staged_binary, output)
-        summary = {
+        link_command = [args.cc, "-O1", "-pthread", str(entry),
+                        str(staged_object), "-lsqlite3", "-lm",
+                        "-o", str(staged_binary)]
+        link_wall = command_output(link_command, link_log, staging)
+        artifact_object = output.with_name(output.name + ".o")
+        artifact_receipt = output.with_name(output.name + ".build.json")
+        receipt_tmp = staging / "build.json"
+        compile_rows = [
+            {"source_name": item.name, "object_name": obj.name,
+             "source_sha256": sha256(item), "object_sha256": sha256(obj)}
+            for item, (obj, _) in zip(sources, objects)]
+        receipt = {
+            "schema": "baton2-clang-sharded-main-build-v1",
             "route": "linux-x86_64-clang-19-no-pch",
             "compiler": args.cc,
+            "compiler_version": subprocess.run(
+                [args.cc, "--version"], check=True, text=True,
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT).stdout.splitlines()[0],
             "source": str(source),
             "source_sha256": sha256(source),
+            "entry": str(entry),
+            "entry_sha256": sha256(entry),
+            "splitter": str(Path(__file__).with_name("shard_emitted_c.py").resolve()),
+            "splitter_sha256": sha256(Path(__file__).with_name("shard_emitted_c.py")),
+            "driver": str(Path(__file__).resolve()),
+            "driver_sha256": sha256(Path(__file__).resolve()),
+            "ccache": str(Path(shutil.which(args.ccache)).resolve()) if args.ccache else "",
+            "ccache_sha256": sha256(Path(shutil.which(args.ccache))) if args.ccache else "",
+            "split_manifest_file_sha256": sha256(split_dir / "manifest.json"),
+            "split_manifest_sha256": hashlib.sha256(json.dumps(
+                manifest, sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
+            "split_manifest": manifest,
             "shards": len(shard_sources),
             "segments": manifest["counts"]["segments"],
+            "compile_flags": flags,
+            "compile_objects": compile_rows,
+            "aggregate_command": [args.cc, "-r",
+                                  *[row["object_name"] for row in compile_rows],
+                                  "-o", output.name + ".o"],
+            "aggregate_wall_seconds": round(aggregate_wall, 3),
+            "object": str(artifact_object),
+            "object_sha256": sha256(staged_object),
+            "link_command": [args.cc, "-O1", "-pthread", str(entry),
+                             output.name + ".o", "-lsqlite3", "-lm", "-o", output.name],
             "compile_wall_seconds": round(compile_wall, 3),
             "link_wall_seconds": round(link_wall, 3),
             "output": str(output),
-            "output_sha256": sha256(output),
+            "output_sha256": sha256(staged_binary),
         }
-        print(json.dumps(summary, sort_keys=True), file=sys.stderr)
+        receipt_tmp.write_text(json.dumps(receipt, sort_keys=True) + "\n")
+        os.replace(staged_object, artifact_object)
+        os.replace(staged_binary, output)
+        os.replace(receipt_tmp, artifact_receipt)
+        print(json.dumps({"route": receipt["route"], "source_sha256": receipt["source_sha256"],
+                          "object_sha256": receipt["object_sha256"],
+                          "output_sha256": receipt["output_sha256"],
+                          "receipt": str(artifact_receipt),
+                          "receipt_sha256": sha256(artifact_receipt)}, sort_keys=True), file=sys.stderr)
         succeeded = True
         return 0
     finally:

@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import importlib.util
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -40,6 +42,28 @@ class NativeBuildSelection(unittest.TestCase):
                 with self.subTest(version=version):
                     cc = self.compiler(Path(temp), version)
                     self.assertFalse(BUILD.qualified_linux_clang(cc, "Linux", "x86_64"))
+
+    def test_successful_serial_fallback_removes_stale_sharded_receipt(self):
+        with tempfile.TemporaryDirectory() as temp:
+            directory = Path(temp)
+            cc = directory / "gcc-like-compiler"
+            cc.write_text("#!/bin/sh\nif [ \"${1:-}\" = --version ]; then\n"
+                          "  echo 'gcc fixture 13'\n  exit 0\nfi\n"
+                          "for last do :; done\nprintf 'fixture output\\n' > \"$last\"\n")
+            cc.chmod(0o700)
+            source = directory / "baton2.c"
+            entry = directory / "native-entry.c"
+            output = directory / "baton2"
+            source.write_text("int coordinator(void) { return 0; }\n")
+            entry.write_text("int main(void) { return 0; }\n")
+            stale = output.with_name(output.name + ".build.json")
+            stale.write_text('{"schema":"stale sharded receipt"}\n')
+            subprocess.run([sys.executable, str(MODULE), "--source", str(source),
+                            "--entry", str(entry), "--output", str(output), "--cc", str(cc)],
+                           check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            self.assertTrue(output.is_file())
+            self.assertTrue(output.with_name(output.name + ".o").is_file())
+            self.assertFalse(stale.exists())
 
 
 if __name__ == "__main__":
