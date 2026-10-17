@@ -47,7 +47,7 @@ law text_read_codes_project_through_any_message:
   for +native_message: String
   for +node_message: String
   {text_read_code(Fail{(code, native_message)}) ==
-   text_read_code(Fail{(code, node_message)}) : Bool}
+   text_read_code(Fail{(code, node_message)}) : U32}
 
 def text_read_codes_project_through_any_message(code, native_message, node_message):
   {==}
