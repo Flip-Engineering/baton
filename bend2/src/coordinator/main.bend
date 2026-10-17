@@ -27,6 +27,7 @@ import ./agent-input.bend as AgentInput
 import ./agent-native.bend as AgentNative
 import ./task-input.bend as TaskInput
 import ./codex-inbox.bend as CodexInbox
+import ./repl.bend as Repl
 import ../host/text.bend as T
 import ../host/process.bend as P
 import ../host/instance.bend as Custody
@@ -261,6 +262,7 @@ type NormalCliKind is Data:
   AgentCurrentInput{}
   NativeAttachmentInput{}
   CodexInboxInput{}
+  ReplObserverInput{}
   OrdinaryInput{}
 
 def normal_cli_existing_kind(+head: String) -> NormalCliKind:
@@ -275,6 +277,7 @@ def normal_cli_existing_kind(+head: String) -> NormalCliKind:
 
 def normal_cli_kind(+head: String) -> NormalCliKind:
   match head:
+    case "repl-observe": ReplObserverInput{}
     case "codex-inbox-session": CodexInboxInput{}
     case "codex-inbox-follow": CodexInboxInput{}
     case "codex-inbox-deliver": CodexInboxInput{}
@@ -375,6 +378,11 @@ def normal_cli_codex(args: List<String>, db: String, head: String) -> IO(Unit):
     case "codex-input-witness": normal_cli_codex_witness(args,db,head)
     case other: normal_cli_fallback(db,other,args)
 
+def normal_cli_repl_observer(db: String, args: List<String>) -> IO(Unit):
+  match args:
+    case cell <> Nil{}: Repl.observe(db,cell)
+    case other: IO.die(Unit,2,"repl-observe requires its retained cell identity.")
+
 def normal_cli_selected(kind: NormalCliKind, db: String, head: String, args: List<String>) -> IO(Unit):
   match kind:
     case NativeInput{}: normal_cli_native(args,db,head)
@@ -386,6 +394,7 @@ def normal_cli_selected(kind: NormalCliKind, db: String, head: String, args: Lis
     case AgentCurrentInput{}: normal_cli_agent_current(args,db,head)
     case NativeAttachmentInput{}: normal_cli_native_attachment(args,db,head)
     case CodexInboxInput{}: normal_cli_codex(args,db,head)
+    case ReplObserverInput{}: normal_cli_repl_observer(db,args)
     case OrdinaryInput{}: normal_cli_fallback(db,head,args)
 
 def normal_cli_tail(args: List<String>, +db: String) -> IO(Unit):

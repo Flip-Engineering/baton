@@ -89,6 +89,11 @@ class AgentActions(unittest.TestCase):
                               'FROM messages ORDER BY seq').fetchall()
 
     def endpoint_output(self):
+        owner = f'{EXE.resolve()} --instance-owner '
+        receive_fixture.Receive.eventually(self, lambda: all(
+            process['command'].startswith(owner)
+            for process in receive_fixture.Receive.owned_processes(self)),
+            'The fixture endpoint did not finish its detached delivery.')
         return self.deliveries.read_bytes() if self.deliveries.exists() else b''
 
     def test_compact_actions_resolve_context_and_retained_completion(self):
@@ -1038,7 +1043,7 @@ class AgentActions(unittest.TestCase):
                            'and', 'other-root', '--kind', 'report', '--text',
                            'Denied route.', '--id', 'denied-route',
                            'and', 'worker-b', '--kind', 'guidance', '--text',
-                           'Retained after wake refusal.', '--id', 'wake-refused',
+                           'Retained after endpoint failure.', '--id', 'wake-refused',
                            'and', 'worker-a', '--kind', 'guidance', '--text',
                            'Valid body.', '--id', 'valid-after-errors')
         self.assertEqual([row['id'] for row in rows],
@@ -1048,9 +1053,14 @@ class AgentActions(unittest.TestCase):
         self.assertNotEqual(rows[1]['status'], 'admitted')
         self.assertTrue(rows[0].get('error') or rows[0].get('admission'))
         self.assertEqual(rows[2]['admission']['status'], 'admitted')
-        self.assertEqual(rows[2]['wake']['status'], 'refused')
+        self.assertEqual(rows[2]['wake']['status'], 'accepted')
+        self.assertIsNone(rows[2]['delivery']['receipt'])
+        self.endpoint_output()
+        failure = pathlib.Path(str(self.db) + '.dispatch-' + 'wake-refused'.encode().hex() + '.stderr')
+        self.assertIn('session delivery failed', failure.read_text())
+        self.assertIn('exit 7', failure.read_text())
         self.assertEqual(rows[2]['delivery']['body'],
-                         'Retained after wake refusal.')
+                         'Retained after endpoint failure.')
         self.assertEqual(rows[3]['status'], 'admitted')
         self.assertEqual(rows[3]['delivery']['body'], 'Valid body.')
         stored = {row[0] for row in self.stored_messages()}
