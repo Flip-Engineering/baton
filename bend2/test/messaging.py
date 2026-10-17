@@ -149,6 +149,15 @@ class Messaging(unittest.TestCase):
         self.send('operator-report', 'root', 'operator', 'report')
         self.refused('operator-to-subordinate', 'operator', 'leaf-a')
         self.refused('subordinate-to-operator', 'leaf-a', 'operator')
+        self.call('recruit', 'operator-lead', 'operator', 'fixture', 'model', 'low',
+                  str(self.repo), 'operator-lead-branch', str(self.directory / 'operator-lead'), 'HEAD')
+        self.call('role', 'operator-lead', 'associate-conductor')
+        self.call('connect', 'operator-lead', '', self.endpoint)
+        self.send('operator-child-task', 'operator', 'operator-lead', 'task')
+        self.send('operator-child-report', 'operator-lead', 'operator', 'report')
+        self.call('recruit', 'operator-leaf', 'operator', 'fixture', 'model', 'low',
+                  str(self.repo), 'operator-leaf-branch', str(self.directory / 'operator-leaf'), 'HEAD')
+        self.refused('operator-to-child-player', 'operator', 'operator-leaf')
         self.call('role', 'leaf-a', 'operator', success=False)
         self.assertEqual(self.call('role', 'leaf-a')['role'], 'player')
         self.ensemble('null-peers', 'root', 'unassigned')
