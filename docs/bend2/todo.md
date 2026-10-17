@@ -179,6 +179,15 @@ remain open under [#782](https://github.com/Flip-Engineering/baton/issues/782).
   all six unchanged ReceiveOutput tests passed on the homelab. Main9 C generation
   took 2,101 seconds and peaked at 136 GiB. Release qualification and compiler
   memory work continue.
+  The October 17 branching investigation committed ordered dependency lookup
+  (`07645b0c`) and deferred foreign-C emission (`a691b7e5`). Focused compiler
+  comparisons produced byte-identical C. The dependency fixture improved by
+  2.8%; the foreign-C change reduced repeated source assembly, with no reliable
+  measured wall-time improvement. Main-program improvement remains unverified.
+  A fixed-point analysis implementation is under review. A bounded Main profile
+  measured 49 seconds for loading and 155 seconds for validation, then exhausted
+  its 16 GiB limit during diagnostic dependency traversal. The production Main
+  build completed validation and diagnostics and continues in C generation.
   Further optimization proceeds alongside release work. Coordinate with
   [#677](https://github.com/Flip-Engineering/baton/issues/677),
   [#741](https://github.com/Flip-Engineering/baton/issues/741),
@@ -894,14 +903,15 @@ remain open under [#782](https://github.com/Flip-Engineering/baton/issues/782).
   NUL-corrupted tail beyond the last valid checkpoint. The pinned 2.0.0 receiver
   returned NUL22 before provider launch. The original logs, checkpoints, native
   UUIDs and pending inputs remain preserved. The isolated recovery candidate is
-  on source HEAD `35152919ad99f1938c76dfa8db33f2b1ebfa762d`; its invalid-tail
-  helper has SHA256
-  `feeaac508b11a55ff1fa1a6e1f72e9d3350b691f385b2d84ff0740b67c8c37d4` and
-  passed a focused type check in 359 ms. The combined emergency `-O0` Main build
-  is running from that source. Acceptance still requires bounded-memory
-  receive and checkpoint recovery with the original bytes and pending input
-  preserved. An exact-hash review is assigned to the existing `rewrite-deepseek`
-  session. The deployed OMP producer correction remains tracked in
+  on source HEAD `1d7bcfec6db94f82e776210311d426a5793f189a`, published as
+  [PR #795](https://github.com/Flip-Engineering/baton/pull/795). Main validation
+  and ownership checks completed at 2026-10-17 03:18 UTC; C generation continues.
+  The candidate moves observation recursion outside the frame callback and
+  preserves exit-zero invalid output and owed input. Bounded-memory receive,
+  checkpoint recovery and runtime deployment remain pending. A separate host-C
+  recovery candidate supports live observer replacement through the retained
+  keeper, with process and attempt custody checks. Its C compilation and
+  repeated-handover qualification remain pending. The deployed OMP producer correction remains tracked in
   [#769](https://github.com/Flip-Engineering/baton/issues/769), with follow-on
   retry behavior in [#786](https://github.com/Flip-Engineering/baton/issues/786).
 - [#676: Baton2: share one native instance across connected agents](https://github.com/Flip-Engineering/baton/issues/676).
