@@ -19,18 +19,32 @@ class Process(unittest.TestCase):
         self.cwd = pathlib.Path(self.temp.name)
         self.log = self.cwd / 'stderr.log'
         self.runtime = pathlib.Path(tempfile.mkdtemp(prefix='br-'))
+        self.environment = dict(os.environ, XDG_RUNTIME_DIR=str(self.runtime))
 
     def tearDown(self):
         database = self.cwd / 'state.db'
         if database.exists():
-            subprocess.run([str(EXE), 'shutdown', str(database)],
-                           text=True, capture_output=True, timeout=10)
+            shutdown = subprocess.run([str(EXE), 'shutdown', str(database)],
+                                      text=True, capture_output=True,
+                                      env=self.environment, timeout=10)
+            self.assertEqual(shutdown.returncode, 0, shutdown.stderr)
+            deadline = time.monotonic() + 2
+            owners = []
+            while time.monotonic() < deadline:
+                process_list = subprocess.run(['ps', '-A', '-o', 'pid=', '-o', 'command='],
+                                              text=True, capture_output=True, check=True)
+                owners = [line.strip() for line in process_list.stdout.splitlines()
+                          if '--instance-owner' in line and str(database.resolve()) in line]
+                if not owners:
+                    break
+                time.sleep(0.02)
+            self.assertFalse(owners, 'fixture owner remained after shutdown: ' + repr(owners))
         self.temp.cleanup()
         shutil.rmtree(self.runtime, ignore_errors=True)
 
     def run_child(self, *args, mode='run', cwd=None):
         return subprocess.run([str(EXE), mode, str(cwd or self.cwd), str(self.log), *args],
-                              text=True, capture_output=True)
+                              text=True, capture_output=True, env=self.environment)
 
     def wait_for_native_exit(self, attempt, observer, timeout=20):
         deadline = time.monotonic() + timeout
@@ -95,20 +109,19 @@ class Process(unittest.TestCase):
         attempt = self.cwd / 'retained-attempt'
         payload = self.cwd / 'payload.txt'
         payload.write_text('fixture input\n')
-        environment = dict(os.environ, XDG_RUNTIME_DIR=str(runtime))
         observer = subprocess.Popen(
             [str(EXE), 'retain', str(database), str(attempt), str(self.cwd),
              str(payload), 'close', sys.executable, '-c',
              'import sys; sys.stdin.read(); print("fixture-done")'],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, env=environment)
+            text=True, env=self.environment)
         try:
             self.wait_for_native_exit(attempt, observer)
             if (attempt / 'status').exists():
                 (attempt / 'status').unlink()
             recovery = subprocess.run(
                 [str(EXE), 'recover-observer', str(database), str(attempt), str(observer.pid)],
-                text=True, capture_output=True, env=environment, timeout=20)
+                text=True, capture_output=True, env=self.environment, timeout=20)
             self.assertEqual(recovery.returncode, 0, recovery.stderr)
             self.assertIn('observer-recovered:exit 0', recovery.stdout)
             self.assertEqual((attempt / 'status').read_text(), '0\n')
@@ -132,13 +145,12 @@ class Process(unittest.TestCase):
         attempt = self.cwd / 'retained-attempt'
         payload = self.cwd / 'payload.txt'
         payload.write_text('fixture input\n')
-        environment = dict(os.environ, XDG_RUNTIME_DIR=str(runtime))
         observer = subprocess.Popen(
             [str(EXE), 'retain', str(database), str(attempt), str(self.cwd),
              str(payload), 'close', sys.executable, '-c',
              'import sys; sys.stdin.read(); print("fixture-done")'],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, env=environment)
+            text=True, env=self.environment)
         try:
             self.wait_for_native_exit(attempt, observer)
             birth = (attempt / 'native.birth').read_bytes()
@@ -154,7 +166,7 @@ class Process(unittest.TestCase):
             birth_path.write_bytes(forged)
             refused = subprocess.run(
                 [str(EXE), 'recover-observer', str(database), str(attempt), str(observer.pid)],
-                text=True, capture_output=True, env=environment, timeout=20)
+                text=True, capture_output=True, env=self.environment, timeout=20)
             self.assertNotEqual(refused.returncode, 0, refused.stdout)
             self.assertIsNone(observer.poll(),
                               f'a mismatched start identity retired the observer with '
@@ -166,7 +178,7 @@ class Process(unittest.TestCase):
             (attempt / 'status').write_bytes(status)
             recovered = subprocess.run(
                 [str(EXE), 'recover-observer', str(database), str(attempt), str(observer.pid)],
-                text=True, capture_output=True, env=environment, timeout=20)
+                text=True, capture_output=True, env=self.environment, timeout=20)
             self.assertEqual(recovered.returncode, 0, recovered.stderr)
             self.assertIn('observer-recovered:exit 0', recovered.stdout)
             self.assertEqual(observer.wait(timeout=10), -signal.SIGTERM)
