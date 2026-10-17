@@ -870,8 +870,10 @@ remain open under [#782](https://github.com/Flip-Engineering/baton/issues/782).
   The original fframes attempt 694 exited with status 0. A guarded configure
   then set `fframes-lead` to `muse-wonder-1.0` at high effort, preserving UUID
   `01a1475d-d987-7bf2-8968-b31165d91a60`. The retained coordinator task was
-  resumed once on the same UUID after identifying open child work; attempt 735
-  is running and its new owned-read record is pending.
+  resumed once on the same UUID after identifying open child work. Guidance
+  `message:operator:a7c7a1da93eb2e889a164f7c1b54ed87` was read under attempt
+  `receive:fframes-lead:735:5e1acf5a17c271f828ce9dce9bef577d`; the session remains
+  running on the standard model.
 
   At 02:55 UTC, user units `acp-render-farm.service` and
   `acp-render-farm-gpu1.service` were active with four running render containers
