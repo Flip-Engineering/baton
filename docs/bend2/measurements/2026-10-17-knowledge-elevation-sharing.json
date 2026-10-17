@@ -1,0 +1,265 @@
+{
+ "workdir": "/tmp/baton-knowledge-elevation-sharing-20261017",
+ "pin": {
+  "binary": "/run/baton2-native-homelab/retained/baton-knowledge-730-746-main9-20261016/knowledge-context/bin/baton2",
+  "binary_sha256": "d91c9e40efa00ec812f67eec304f0269bd3e45f8c25e89cae421888322ef476d",
+  "fixture_base": "16136d8d2f16b550bcf0014def2d2276039742ff"
+ },
+ "promotion_write": {
+  "before": {
+   "id": "shared",
+   "author": "worker",
+   "kind": "finding",
+   "claim": "the retry doubles the work",
+   "evidence": "message:worker-evidence",
+   "evidenceMessage": {
+    "id": "worker-evidence",
+    "sender": "worker",
+    "recipient": "root",
+    "body": "observed body"
+   },
+   "limits": "one run",
+   "destinations": [],
+   "promotions": [],
+   "relations": []
+  },
+  "after": {
+   "id": "shared",
+   "author": "worker",
+   "kind": "finding",
+   "claim": "the retry doubles the work",
+   "evidence": "message:worker-evidence",
+   "evidenceMessage": {
+    "id": "worker-evidence",
+    "sender": "worker",
+    "recipient": "root",
+    "body": "observed body"
+   },
+   "limits": "one run",
+   "destinations": [
+    "worker"
+   ],
+   "promotions": [
+    {
+     "finding": "shared",
+     "author": "worker",
+     "source": "worker",
+     "destination": "worker",
+     "promotedBy": "worker"
+    }
+   ],
+   "relations": []
+  },
+  "same_claim": true,
+  "same_author": true
+ },
+ "reads_do_not_materialize": {
+  "before": {
+   "bytes": 204800,
+   "counts": {
+    "knowledge": 1,
+    "knowledge_promotions": 1,
+    "knowledge_relations": 0,
+    "messages": 3
+   }
+  },
+  "after": {
+   "bytes": 204800,
+   "counts": {
+    "knowledge": 1,
+    "knowledge_promotions": 1,
+    "knowledge_relations": 0,
+    "messages": 3
+   }
+  },
+  "equal": true
+ },
+ "duplicate_share": {
+  "promotion_rows": [
+   [
+    "share-to-worker",
+    "session",
+    "worker",
+    "session",
+    "worker",
+    "worker"
+   ],
+   [
+    "share-to-worker-2",
+    "session",
+    "worker",
+    "session",
+    "worker",
+    "worker"
+   ]
+  ],
+  "notices": [
+   [
+    "share-to-worker-2:promotion-notice"
+   ],
+   [
+    "share-to-worker:promotion-notice"
+   ]
+  ],
+  "destinations": [
+   "worker",
+   "worker"
+  ],
+  "promotion_count": 2
+ },
+ "group_share": {
+  "reader": "sibling",
+  "reader_is_member": false,
+  "finding_ids": [
+   "shared"
+  ],
+  "claims": [
+   "the retry doubles the work"
+  ],
+  "promotions": [
+   {
+    "finding": "shared",
+    "author": "worker",
+    "source": "worker",
+    "destination": "worker",
+    "promotedBy": "worker"
+   },
+   {
+    "finding": "shared",
+    "author": "worker",
+    "source": "worker",
+    "destination": "worker",
+    "promotedBy": "worker"
+   },
+   {
+    "finding": "shared",
+    "author": "worker",
+    "source": "worker",
+    "destination": "review-group",
+    "promotedBy": "root",
+    "sourceKind": "session",
+    "destinationKind": "group"
+   }
+  ],
+  "relation_ids": [
+   "cross"
+  ],
+  "node_ids": [
+   "shared"
+  ],
+  "edge_ids": [
+   "cross",
+   "citation:shared"
+  ],
+  "references": [
+   {
+    "reference": "finding:root-only",
+    "kind": "finding",
+    "detailRead": [
+     "knowledge-scope",
+     "sibling",
+     "all",
+     "",
+     "--id",
+     "root-only"
+    ],
+    "deliveryRead": null
+   },
+   {
+    "reference": "message:worker-evidence",
+    "kind": "message",
+    "detailRead": null,
+    "deliveryRead": [
+     "delivery",
+     "worker-evidence"
+    ]
+   }
+  ]
+ },
+ "dangling_evidence": {
+  "evidence_message": null,
+  "edge_ids": [
+   "citation:dangling"
+  ],
+  "references": [
+   {
+    "reference": "message:absent-0000",
+    "kind": "message",
+    "detailRead": null,
+    "deliveryRead": [
+     "delivery",
+     "absent-0000"
+    ]
+   }
+  ]
+ },
+ "elevation_pattern": {
+  "finding": {
+   "id": "elevated",
+   "author": "worker",
+   "kind": "finding",
+   "claim": "draft observation claim",
+   "evidence": "message:note-1",
+   "evidenceMessage": {
+    "id": "note-1",
+    "sender": "root",
+    "recipient": "worker",
+    "body": "draft observation"
+   },
+   "limits": "one note",
+   "destinations": [],
+   "promotions": [],
+   "relations": [
+    {
+     "id": "derived",
+     "author": "worker",
+     "source": "finding:elevated",
+     "sourceReference": "finding:elevated",
+     "sourceKind": "finding",
+     "relation": "DerivedFrom",
+     "target": "message:note-1",
+     "targetReference": "message:note-1",
+     "targetKind": "message"
+    }
+   ]
+  },
+  "note_body": "draft observation",
+  "note_sender": "root"
+ },
+ "notice_recovery": {
+  "first_rc": 1,
+  "first_stderr": "The row is committed and its notice is undelivered. Read the pending inbox and retry the delivery.\n",
+  "row_after_failure": [
+   "repair-share"
+  ],
+  "notice_unreceipted_after_failure": [
+   1
+  ],
+  "retry_answer": {
+   "id": "repair-share",
+   "finding": "shared",
+   "author": "worker",
+   "source": "worker",
+   "destination": "root",
+   "promotedBy": "root"
+  },
+  "rows_after_retry": 1,
+  "notices_after_retry": 1,
+  "delivered_lines": [
+   "repair-share:promotion-notice"
+  ]
+ },
+ "kind_rewrite": {
+  "first_kind": "observation",
+  "second_kind": "correction"
+ },
+ "final_state": {
+  "bytes": 204800,
+  "counts": {
+   "knowledge": 5,
+   "knowledge_promotions": 4,
+   "knowledge_relations": 2,
+   "messages": 10
+  }
+ }
+}
