@@ -465,6 +465,86 @@ class Knowledge(unittest.TestCase):
                            success=False)
         self.assertIn('promotion-id-conflict', reused.stderr)
 
+    def test_unrecognized_scope_and_direction_refuse_every_read_surface(self):
+        self.call('record', 'visible', 'worker', 'claim', 'run:visible', 'One run')
+        scope_cases = (
+            ('knowledge-scope', 'root', 'unrecognized', ''),
+            ('knowledge-scope', 'root', 'worker', ''),
+            ('knowledge-scope', 'root', 'unrecognized', '', '--index'),
+            ('knowledge-scope', 'root', 'unrecognized', '', '--id', 'visible'),
+            ('knowledge-relations', 'root', 'unrecognized', ''),
+            ('knowledge-search', 'root', 'unrecognized', '', 'claim'),
+            ('knowledge-traverse', 'root', 'unrecognized', 'worker',
+             'finding:visible', 'both', '', 'neighbors'),
+        )
+        for args in scope_cases:
+            with self.subTest(args=args):
+                refused = self.call(*args, success=False)
+                self.assertEqual(refused.returncode, 2)
+                self.assertIn('knowledge-scope-refused', refused.stderr)
+                self.assertIn(args[2], refused.stderr)
+        direction_cases = (
+            ('knowledge-traverse', 'root', 'worker', 'worker',
+             'finding:visible', 'sideways', '', 'neighbors'),
+            ('knowledge-traverse', 'root', 'worker', 'worker',
+             'finding:visible', '', '', 'neighbors'),
+        )
+        for args in direction_cases:
+            with self.subTest(args=args):
+                refused = self.call(*args, success=False)
+                self.assertEqual(refused.returncode, 2)
+                self.assertIn('knowledge-direction-refused', refused.stderr)
+
+    def test_relation_id_collision_preserves_the_stored_author_and_content(self):
+        first = self.call('relate', 'link-1', 'grand',
+                          'finding:a', 'Supports', 'finding:b')
+        self.assertEqual(self.call('relate', 'link-1', 'grand',
+                                   'finding:a', 'Supports', 'finding:b'), first)
+        for changed in (
+                ('worker', 'finding:a', 'Supports', 'finding:b'),
+                ('grand', 'finding:a', 'Contradicts', 'finding:b'),
+                ('grand', 'finding:a', 'Supports', 'finding:c'),
+                ('grand', 'finding:c', 'Supports', 'finding:b')):
+            with self.subTest(changed=changed):
+                refused = self.call('relate', 'link-1', *changed, success=False)
+                self.assertEqual(refused.returncode, 2)
+                self.assertIn('relation-id-conflict', refused.stderr)
+        stored = self.call('knowledge-relations', 'grand')
+        self.assertEqual([row['id'] for row in stored], ['link-1'])
+        self.assertEqual((stored[0]['author'], stored[0]['source'],
+                          stored[0]['relation'], stored[0]['target']),
+                         ('grand', 'finding:a', 'Supports', 'finding:b'))
+
+    def test_linked_relation_collision_withholds_the_record_and_links(self):
+        self.call('relate', 'existing-link', 'grand',
+                  'finding:a', 'Supports', 'finding:b')
+        links = [{'id': 'existing-link', 'source': 'finding:a',
+                  'relation': 'Contradicts', 'target': 'finding:b'}]
+        refused = self.call('record-linked', 'linked-record', 'grand', 'decision',
+                            'claim', 'run:linked', 'One run',
+                            json.dumps(links), success=False)
+        self.assertIn('relation-id-conflict', refused.stderr)
+        self.assertEqual(self.read('grand'), [])
+        self.assertEqual(self.call('knowledge-relations', 'grand')[0]['relation'],
+                         'Supports')
+        links[0]['relation'] = 'Supports'
+        self.call('record-linked', 'linked-record', 'grand', 'decision',
+                  'claim', 'run:linked', 'One run', json.dumps(links))
+        self.assertEqual(self.ids(self.read('grand')), ['linked-record'])
+        self.assertEqual([row['id'] for row in self.call('knowledge-relations', 'grand')],
+                         ['existing-link'])
+        duplicate = [{'id': 'batch-link', 'source': 'finding:a',
+                      'relation': 'Supports', 'target': 'finding:b'},
+                     {'id': 'batch-link', 'source': 'finding:a',
+                      'relation': 'Contradicts', 'target': 'finding:b'}]
+        refused = self.call('record-linked', 'duplicate-record', 'grand', 'decision',
+                            'claim', 'run:duplicate', 'One run',
+                            json.dumps(duplicate), success=False)
+        self.assertIn('relation-id-conflict', refused.stderr)
+        self.assertEqual(self.ids(self.read('grand')), ['linked-record'])
+        self.assertNotIn('batch-link', [row['id'] for row in
+                                        self.call('knowledge-relations', 'grand')])
+
     def test_a_mismatched_evidence_repeat_is_refused_and_keeps_the_stored_row(self):
         evidence = self.evidence('report-9', 'worker')
         self.call('record', 'finding-8', 'worker', 'a', evidence, 'c')
