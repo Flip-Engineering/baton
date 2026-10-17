@@ -728,6 +728,35 @@ class Receive(unittest.TestCase):
             self.fail(f'{session} has no registered output log generation')
         return pathlib.Path(row[0])
 
+    def checkpoint_covers_output_marker(self, session, marker, checkpoint, raw_output):
+        """Wait for the observer cursor to cover a valid marker before tail tests."""
+        if not checkpoint.is_file() or not raw_output.is_file():
+            return False
+        log = self.output_log(session)
+        if not log.is_file():
+            return False
+        log_size = log.stat().st_size
+        with log.open('rb') as stream:
+            stream.seek(max(0, log_size - 8192))
+            tail = stream.read()
+        marker_at = tail.rfind(marker.encode())
+        if marker_at < 0:
+            return False
+        line_end = tail.find(b'\n', marker_at)
+        if line_end < 0:
+            return False
+        record = checkpoint.read_bytes()
+        state_at = record.find(b'{"schema":1,')
+        if state_at < 0:
+            return False
+        try:
+            state = json.loads(record[state_at:])
+            output_cursor = int(state.get('output', -1))
+        except (ValueError, TypeError):
+            return False
+        absolute_line_end = log_size - len(tail) + line_end + 1
+        return output_cursor >= absolute_line_end
+
     def reference_startup_stderr(self, executable, session):
         """Read the complete platform diagnostic for the harness's fresh launch.
 
@@ -4495,8 +4524,9 @@ class Receive(unittest.TestCase):
         self.action(control, emit_checkpoint_message='nul-exit-zero-checkpoint')
         self.assertEqual(json.loads(control.readline()),
                          {'checkpoint_message_written':'nul-exit-zero-checkpoint'})
-        self.eventually(lambda: checkpoint.is_file() and raw_output.is_file(),
-                        'The observer did not persist the pre-tail checkpoint and raw output.')
+        self.eventually(lambda: self.checkpoint_covers_output_marker(
+            'parent', 'nul-exit-zero-checkpoint', checkpoint, raw_output),
+            'The observer did not checkpoint the valid pre-tail message_end.')
         checkpoint_before = checkpoint.read_bytes()
         checkpoint_stat = checkpoint.stat()
         raw_before = raw_output.read_bytes()
@@ -4548,8 +4578,9 @@ class Receive(unittest.TestCase):
         self.action(control, emit_checkpoint_message='nul-tail-checkpoint')
         self.assertEqual(json.loads(control.readline()),
                          {'checkpoint_message_written':'nul-tail-checkpoint'})
-        self.eventually(lambda: checkpoint.is_file() and raw_output.is_file(),
-                        'The observer did not persist the pre-tail checkpoint and raw output.')
+        self.eventually(lambda: self.checkpoint_covers_output_marker(
+            'parent', 'nul-tail-checkpoint', checkpoint, raw_output),
+            'The observer did not checkpoint the valid pre-tail message_end.')
         checkpoint_before = checkpoint.read_bytes()
         checkpoint_stat = checkpoint.stat()
         raw_before = raw_output.read_bytes()
