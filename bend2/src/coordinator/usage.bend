@@ -468,7 +468,7 @@ def models_all_entry(db: String, route: Discovered) -> IO(String):
   match route:
     case DRoute{session,harness,command,model,effort,workspace}: models_route_guarded(db,session,harness,command,model,effort,workspace)
 
-def models_all_answers(db: String, routes: List<&2,Discovered>) -> IO(String):
+def models_all_answers(+db: String, routes: List<&2,Discovered>) -> IO(String):
   match routes:
     case Nil{}: IO.pure(String,"")
     case route <> rest: do IO<String>:
