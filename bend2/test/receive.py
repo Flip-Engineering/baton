@@ -416,6 +416,13 @@ while True:
         print(json.dumps({'type':'system','subtype':'init','session_id':native}),flush=True)
         reply({'initialized':native})
         continue
+    if action.get('emit_nul_tail'):
+        count=int(action['emit_nul_tail'])
+        os.write(1,b'\x00'*count)
+        sys.stdout.flush()
+        reply({'nul_tail_written':count})
+        if action.get('exit_after_nul_tail',False): break
+        continue
     if action.get('exit_fixture'):
         if action.get('complete_task',False):
             confirm_finished_fixture_task('Completed the controlled native observation task.')
@@ -4328,6 +4335,80 @@ class Receive(unittest.TestCase):
                           {'type': 'fixture_progress', 'marker': marker, 'native_pid': started['pid']}])
         self.assertEqual(len((self.directory / 'native-launches.jsonl').read_text().splitlines()), 1)
         self.assert_no_start()
+
+    def test_nul_tail_after_keeper_loss_preserves_input_and_starts_fresh_attempt(self):
+        self.player(harness='omp')
+        config_path = self.directory / 'fixture.json'
+        config = json.loads(config_path.read_text())
+        config['record_launches'] = True
+        config_path.write_text(json.dumps(config))
+        self.prepare_input('nul-tail-task', 'parent', 'Retain the native attempt across invalid output.', kind='task')
+        observer = self.spawn(*self.receive_args('parent'))
+        control, started = self.accept('parent')
+        native_id = self.eventually(lambda: self.coord('player', 'parent')['native'],
+                                    'The original OMP identity was not recorded.')
+        self.assertEqual(native_id, started['native'])
+        with sqlite3.connect(self.db) as database:
+            old_id, old_directory = database.execute(
+                'SELECT id,directory FROM executions WHERE session=?', ('parent',)).fetchone()
+        attempt = pathlib.Path(old_directory)
+        checkpoint = attempt / 'checkpoint'
+        raw_output = attempt / 'stdout'
+
+        self.action(control, emit_checkpoint_message='nul-tail-checkpoint')
+        self.assertEqual(json.loads(control.readline()),
+                         {'checkpoint_message_written':'nul-tail-checkpoint'})
+        self.eventually(lambda: checkpoint.is_file() and raw_output.is_file(),
+                        'The observer did not persist the pre-tail checkpoint and raw output.')
+        checkpoint_before = checkpoint.read_bytes()
+        checkpoint_stat = checkpoint.stat()
+        raw_before = raw_output.read_bytes()
+        raw_stat = raw_output.stat()
+        tail = b'\x00' * 1642
+        self.action(control, emit_nul_tail=len(tail))
+        self.assertEqual(json.loads(control.readline()), {'nul_tail_written':len(tail)})
+        self.eventually(lambda: raw_output.stat().st_size == raw_stat.st_size + len(tail),
+                        'The shared owner did not spool the invalid tail before keeper loss.')
+        owner_command = f'{EXE.resolve()} --instance-owner {self.db.resolve()}'
+        owners = [process for process in self.owned_processes()
+                  if process['command'] == owner_command]
+        self.assertEqual(len(owners), 1)
+        selected_owner = self.selected_process(owners[0]['pid'])
+        selected_native = self.selected_process(started['pid'])
+        self.assertIsNotNone(selected_owner)
+        self.assertIsNotNone(selected_native)
+        self.signal_selected(selected_owner, signal.SIGKILL)
+        self.signal_selected(selected_native, signal.SIGKILL)
+        output, error = self.finish(observer, ok=False)
+        self.assertIn('Native output contains a NUL byte', output + error)
+        self.assertEqual(raw_output.read_bytes(), raw_before + tail,
+                         'The invalid native tail was altered or discarded.')
+        self.assertEqual((raw_output.stat().st_ino, raw_output.stat().st_size),
+                         (raw_stat.st_ino, raw_stat.st_size + len(tail)))
+        self.assertEqual(checkpoint.read_bytes(), checkpoint_before,
+                         'Invalid output moved or rewrote the last valid observer checkpoint.')
+        self.assertEqual((checkpoint.stat().st_ino, checkpoint.stat().st_size),
+                         (checkpoint_stat.st_ino, checkpoint_stat.st_size))
+        self.assertTrue((attempt / 'acknowledged').is_file(),
+                        'The dead process attempt was not settled for a fresh observer attempt.')
+        self.assertEqual(self.execution('parent')[:2], ('exited', 'unknown after keeper loss'))
+        self.assertEqual(self.coord('delivery', 'nul-tail-task')['receipt'], None,
+                         'Invalid output acknowledged the input owned by the retained attempt.')
+        self.assertEqual([message['id'] for message in self.coord('inbox', 'parent')],
+                         ['nul-tail-task'])
+        self.assertEqual(self.coord('player', 'parent')['native'], native_id)
+
+        fresh = self.spawn(*self.receive_args('parent'))
+        _fresh_control, fresh_started = self.accept('parent')
+        self.assertEqual(fresh_started['native'], native_id)
+        with sqlite3.connect(self.db) as database:
+            new_id, new_directory = database.execute(
+                'SELECT id,directory FROM executions WHERE session=?', ('parent',)).fetchone()
+        self.assertNotEqual(new_id, old_id)
+        self.assertNotEqual(new_directory, old_directory)
+        self.assertEqual(self.coord('delivery', 'nul-tail-task')['receipt'], None)
+        fresh.kill()
+        fresh.wait()
 
     def test_long_omp_stream_releases_frames_and_recovers_checkpoint(self):
         self.player(harness='omp')
