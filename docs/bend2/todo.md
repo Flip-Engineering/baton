@@ -258,7 +258,9 @@ remain open under [#782](https://github.com/Flip-Engineering/baton/issues/782).
   and derive display output from accepted message events. Coordinate with
   [#686](https://github.com/Flip-Engineering/baton/issues/686),
   [#761](https://github.com/Flip-Engineering/baton/issues/761) and
-  [#770](https://github.com/Flip-Engineering/baton/issues/770).
+  [#770](https://github.com/Flip-Engineering/baton/issues/770), with the
+  exit-zero raw-preservation case tracked by
+  [#796](https://github.com/Flip-Engineering/baton/issues/796).
   The 2026-10-17 recovery patch is on retained source HEAD
   `35152919ad99f1938c76dfa8db33f2b1ebfa762d`; the invalid-tail helper passed
   its focused type check in 359 ms. A combined Main build was started from this
@@ -798,7 +800,9 @@ remain open under [#782](https://github.com/Flip-Engineering/baton/issues/782).
   failures through recovery. Coordinate with
   [#761](https://github.com/Flip-Engineering/baton/issues/761),
   [#769](https://github.com/Flip-Engineering/baton/issues/769) and
-  [#770](https://github.com/Flip-Engineering/baton/issues/770).
+  [#770](https://github.com/Flip-Engineering/baton/issues/770), with the
+  exit-zero raw-preservation case tracked by
+  [#796](https://github.com/Flip-Engineering/baton/issues/796).
   The #769 candidate leaves the owed input unsettled on the NUL-tail path. The
   full-spool checkpoint check gates successful input-witness settlement, while
   process retirement follows a separate exited-and-released path. Normal
@@ -810,6 +814,14 @@ remain open under [#782](https://github.com/Flip-Engineering/baton/issues/782).
   process-acknowledgement task linked here. Focused type checking passed; full
   build and runtime bounded-memory/recovery evidence remain open. See the
   [October 17 recovery update](https://github.com/Flip-Engineering/baton/issues/786#issuecomment-6228858963).
+- [#796: Retain raw output when retiring exit-zero invalid observation](https://github.com/Flip-Engineering/baton/issues/796).
+  Process-attempt acknowledgement after an exit-zero observer error unlinks
+  stdout. Preserve the original stream, validated checkpoint, manifest and
+  native UUID while leaving the owed inbox receipt pending. Qualify a later
+  receive on that same UUID. Coordinate with [#696](https://github.com/Flip-Engineering/baton/issues/696),
+  [#769](https://github.com/Flip-Engineering/baton/issues/769),
+  [#770](https://github.com/Flip-Engineering/baton/issues/770) and
+  [#786](https://github.com/Flip-Engineering/baton/issues/786).
 - [#782: Update stale coordinator laws and include their evaluation in validation](https://github.com/Flip-Engineering/baton/issues/782).
   The knowledge audit in [#779](https://github.com/Flip-Engineering/baton/issues/779)
   tracks the retained compiler failures, source review and passing hosted
@@ -899,7 +911,8 @@ remain open under [#782](https://github.com/Flip-Engineering/baton/issues/782).
   exit-zero NUL tail incomplete; custody-proven owner loss can retire the dead
   process attempt with the original spool, checkpoint, native UUID and input
   retained. Failed-observation retirement after exit zero remains a separate
-  process-acknowledgement task tracked by #696, #769 and #786. See the
+  process-acknowledgement task tracked by #696, #769 and #786. See
+  [#796](https://github.com/Flip-Engineering/baton/issues/796) and the
   [October 17 #696 update](https://github.com/Flip-Engineering/baton/issues/696#issuecomment-6228856867).
   The original fframes attempt 694 exited with status 0. A guarded configure
   then set `fframes-lead` to `muse-wonder-1.0` at high effort, preserving UUID
@@ -932,6 +945,18 @@ remain open under [#782](https://github.com/Flip-Engineering/baton/issues/782).
   prior Kimi quota reports remain in both ledgers; no new Kimi turn was started.
   These are active continuations, not completed implementation or quality
   evidence.
+
+  The reports describe a five-hour quota window but provide no reset timestamp
+  or `Retry-After`; the reset time is unknown. A read-only `omp usage
+  --provider kimi-code --json --redact` query returned no Kimi usage report.
+  The default OMP store in the seats' HOME has one `kimi-code` OAuth credential
+  disabled after `invalid_grant`, updated 2026-10-06 18:51:01 UTC, and no Kimi
+  usage-history or cooldown rows. The saved seat command has no explicit API
+  key, profile or config override, and the owner environment contains no
+  credential variable names. The historical 403 does not identify its token,
+  so credential binding remains unproven. Track OAuth refresh separately under
+  [#793](https://github.com/Flip-Engineering/baton/issues/793); no Kimi retry
+  or credential mutation was performed.
 
   At 02:55 UTC, user units `acp-render-farm.service` and
   `acp-render-farm-gpu1.service` were active with four running render containers
