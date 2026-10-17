@@ -845,3 +845,33 @@ remain open under [#782](https://github.com/Flip-Engineering/baton/issues/782).
   follow-on retry behavior is cross-referenced in
   [#786](https://github.com/Flip-Engineering/baton/issues/786).
 - [#676: Baton2: share one native instance across connected agents](https://github.com/Flip-Engineering/baton/issues/676).
+
+  Follow-up 2026-10-17: the separate clean-stream `knowledge-deepseek` setup
+  failure was repaired through the supported Baton `receiver` action. Its
+  pending dispatch `dispatch:bb56091c-a309-43eb-a490-fb89f4dc0909` is now read
+  under UUID `01a147c2-99b1-7000-bcb7-cbaea84d2e53`; attempt
+  `receive:knowledge-deepseek:42:8e458cd46f641dd816c5b02d89530874` is running
+  with driver PID 223556. The input receipt remains pending. The failed Kimi
+  quota report `receive:rewrite-kimi:893:4e9ee3cd15600e2468722b117b5d22b8`
+  remains unacknowledged; its #769 scope was routed to the existing DeepSeek
+  native as guidance `message:rewrite-tooling:a8c03fce4bfa7a5adebc8d2ab5660f1f`,
+  read under the same native UUID in running attempt 941 (PID 226782). The
+  fframes lead remains in its active inherited `muse-wonder-full-1.0` attempt
+  with UUID `01a1475d-d987-7bf2-8968-b31165d91a60`; operator guidance asks it
+  to finish naturally and wait for standard `muse-wonder-1.0` routing before a
+  future turn. No live model switch was attempted.
+
+  At 02:51 UTC, user units `acp-render-farm.service` and
+  `acp-render-farm-gpu1.service` were active with four running render containers
+  (all restart count 0) and measured container CPU usage above 100%. The bounded
+  NVIDIA sample showed 0% GPU utilization; GPU0 admission reported thermal or
+  power-brake code `0x20`, and GPU3 remained user-held. This proves active queue
+  processes and does not establish completed GPU rendering. No GPU controls were
+  used.
+
+  The combined memory and invalid-tail candidate is compiling from
+  `0724077c03f4802f2a396a6fecec5d717c423c32` under
+  `baton-main11-0724077c-final-memory-nul-o0.service` (Bun PID 227093). No
+  executable artifact or focused runtime acceptance is available yet; see
+  [#769](https://github.com/Flip-Engineering/baton/issues/769) and
+  [#786](https://github.com/Flip-Engineering/baton/issues/786).
