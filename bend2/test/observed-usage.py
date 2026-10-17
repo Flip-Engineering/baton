@@ -221,6 +221,9 @@ class ObservedUsage(unittest.TestCase):
         answer = json.loads(result.stdout)
         self.assertEqual(answer['schema'], 'baton2-model-discovery-set-v1')
         self.assertGreater(answer['observedAt'], 0)
+        self.assertEqual(answer['enumerationBasis'],
+                         {'recordedSessions': 2, 'queriedSources': 2,
+                          'recordedAccounts': 0, 'routesListIncluded': False})
         sources = {source['harness']: source for source in answer['sources']}
         self.assertEqual(set(sources), {'omp', 'muse'})
         self.assertEqual(sources['omp']['state'], 'reported')

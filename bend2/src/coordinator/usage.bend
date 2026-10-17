@@ -505,6 +505,14 @@ def models_reverse(lines: List<String>, tail: List<String>) -> List<String>:
 def models_accounts_json(+db: String, +count: String) -> IO(String):
   Bool.pick(IO(String),String.eq(Tx.trim_nl(count),"0"),IO.pure(String,"{\"state\":\"unknown\",\"reason\":\"noRecordedAccounts\",\"accounts\":[]}"),models_accounts_present(db))
 
+def models_count(lines: List<String>) -> U32:
+  match lines:
+    case Nil{}: 0
+    case head <> rest: 1 + models_count(rest)
+
+def models_accounts_count(+db: String, +table_count: String) -> IO(String):
+  Bool.pick(IO(String),String.eq(Tx.trim_nl(table_count),"0"),IO.pure(String,"0"),IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM accounts;")))
+
 def models_accounts_present(+db: String) -> IO(String):
   do IO<String>:
     rows : String <- IO.try(String,DB.Sql.read(db,models_accounts_sql()))
@@ -521,5 +529,7 @@ def models_all(+db: String) -> IO(Unit):
     sources : List<String> <- IO.pure(List<String>,models_reverse(collected,Nil{}))
     count : String <- IO.try(String,DB.Sql.read(db,models_accounts_state_sql()))
     accounts : String <- models_accounts_json(db,Tx.trim_nl(count))
+    account_count : String <- models_accounts_count(db,Tx.trim_nl(count))
+    session_count : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM sessions;"))
     now : String <- IO.try(String,DB.Sql.read(db,"SELECT CAST(strftime('%s','now') AS INTEGER)*1000;"))
-    IO.print("{\"schema\":\"baton2-model-discovery-set-v1\",\"observedAt\":" ++ Tx.trim_nl(now) ++ ",\"sources\":[" ++ Tx.join(",",sources) ++ "],\"accountsSection\":" ++ accounts ++ ",\"capabilityAssessments\":[],\"capabilityAssessmentReason\":\"noRecordedAssessmentSource\"}")
+    IO.print("{\"schema\":\"baton2-model-discovery-set-v1\",\"observedAt\":" ++ Tx.trim_nl(now) ++ ",\"enumerationBasis\":{\"recordedSessions\":" ++ Tx.trim_nl(session_count) ++ ",\"queriedSources\":" ++ U32.show(models_count(sources)) ++ ",\"recordedAccounts\":" ++ Tx.trim_nl(account_count) ++ ",\"routesListIncluded\":false},\"sources\":[" ++ Tx.join(",",sources) ++ "],\"accountsSection\":" ++ accounts ++ ",\"capabilityAssessments\":[],\"capabilityAssessmentReason\":\"noRecordedAssessmentSource\"}")

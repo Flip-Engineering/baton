@@ -47,7 +47,7 @@ The support article FAQ gives the self-run headless case.
 This specification records `launch_origin` and `auth_kind` for each attempt and
 applies the support article rule to self-run headless work.
 Baton native attempts spawn `claude --print` in
-[bend2/src/harness/claude-player.bend](/run/baton2-native-homelab/retained/baton-account-credits-793-702-20261017T0106Z/repo/bend2/src/harness/claude-player.bend:5).
+[bend2/src/harness/claude-player.bend](bend2/src/harness/claude-player.bend:5).
 A Baton attempt with an API-key route from a verified linked organization records
 `credit_eligible` as true. A subscription-authenticated attempt records it as false.
 
@@ -115,7 +115,7 @@ Fields:
   `organizations-me` with its observation time, or empty when unverified.
 - `store`: credential store path for subscription profiles.
   This field extends the profile record in
-  [subscription-fallback.bend](/run/baton2-native-homelab/retained/baton-account-credits-793-702-20261017T0106Z/repo/bend2/src/coordinator/subscription-fallback.bend:16).
+  [subscription-fallback.bend](bend2/src/coordinator/subscription-fallback.bend:16).
 
 A browser sign-in does not verify an organization.
 The two operator Chrome sign-ins stay unmapped until root verifies each
@@ -215,19 +215,19 @@ Fallback follows #702 and #681.
 Existing code that this extends:
 
 - Profile order and next-profile selection sit in
-  [subscription-fallback.bend](/run/baton2-native-homelab/retained/baton-account-credits-793-702-20261017T0106Z/repo/bend2/src/coordinator/subscription-fallback.bend:103).
+  [subscription-fallback.bend](bend2/src/coordinator/subscription-fallback.bend:103).
 - Exhaustion wording detection sits in the same file at line 262.
   The API-credit exhaustion text from the platform document is a separate marker.
   It must not reuse subscription-limit wording.
 - The Muse profile route clears `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`
   and `CLAUDE_CODE_OAUTH_TOKEN` before binding a credential store in
-  [claude-player.bend](/run/baton2-native-homelab/retained/baton-account-credits-793-702-20261017T0106Z/repo/bend2/src/harness/claude-player.bend:27).
+  [claude-player.bend](bend2/src/harness/claude-player.bend:27).
   An API-key route needs the inverse binding: resolve one secret reference at
   launch, set `ANTHROPIC_API_KEY` for the child process only, and record the
   credential label in the attempt record. The secret value appears in no
   argv display, message, transcript, report or file.
 - Provider usage observations sit in
-  [usage.bend](/run/baton2-native-homelab/retained/baton-account-credits-793-702-20261017T0106Z/repo/bend2/src/coordinator/usage.bend:240).
+  [usage.bend](bend2/src/coordinator/usage.bend:240).
   Credit observations add an organization scope beside that read.
   Conversation token totals stay separate from account observations (#694).
 
@@ -258,7 +258,7 @@ The product adds these reads and writes to the existing command surface:
   funding records for the project database.
 - `account-bind`: record one account with its secret reference and auth kind.
   This command follows `profile-bind` in
-  [agent-domain.bend](/run/baton2-native-homelab/retained/baton-account-credits-793-702-20261017T0106Z/repo/bend2/src/coordinator/agent-domain.bend:81).
+  [agent-domain.bend](bend2/src/coordinator/agent-domain.bend:81).
 - `credit-observe`: record one credit observation from a listed source kind.
   A `usage-cost-api` observation records spend and leaves balance empty.
 - `credit-refresh`: run the supported organization verification request and,
@@ -302,7 +302,7 @@ That proof is outstanding until root completes account setup.
 
 ## Model discovery for #792
 
-The `models` read in [usage.bend](/run/baton2-native-homelab/retained/baton-account-credits-793-702-20261017T0106Z/repo/bend2/src/coordinator/usage.bend:466)
+The `models` read in [usage.bend](bend2/src/coordinator/usage.bend)
 reads one recorded session's harness. It does not enumerate the operator's
 configured harnesses or accounts. Muse inspection resolves one supplied
 model identifier and reports `modelExistence` as unknown.
@@ -310,8 +310,15 @@ model identifier and reports `modelExistence` as unknown.
 The product adds a `models-all` read with these rules:
 
 - Sources are the recorded sessions and the recorded accounts in the project
-  database. Each distinct harness, command and workspace is queried once
-  through the existing per-harness query. The read runs no new process type.
+  database. The project database bounds the set; a harness configured outside
+  it does not appear. Each distinct harness, command and workspace is queried
+  once through the existing per-harness query. The read runs no new process type.
+- The answer states its enumeration basis: recorded session count, queried
+  source count, recorded account count, and whether the declared route list
+  is included. The route list is not a source in this read.
+- An account with no session sharing its harness contributes its identity to
+  the accounts section and no query. A source whose harness the query does
+  not support reads unknown with the cause `unsupportedHarness`.
 - Each source answer keeps its schema, observation time and source identity.
   A failed or unsupported query stays in the result as unknown with its cause.
 - Accounts appear by label with provider, harness, funding route and
