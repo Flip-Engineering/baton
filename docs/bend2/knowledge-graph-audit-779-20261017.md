@@ -6,9 +6,11 @@ Source pin: `knowledge-deepseek-782-785` at `69558f7`, base `dd62ce8`.
 
 Measured behavior: retained Main9 binary at
 `/mnt/nvme4tb/ci-runners/baton2-native-homelab/retained/baton-knowledge-730-746-main9-20261016/knowledge-context/bin/baton2`.
-Its `bend2/src/coordinator/knowledge.bend` sha256 is
+The full binary source commit is `b1f006a` (retained `preparation-binding.json`).
+Its `bend2/src/coordinator/knowledge.bend` file sha256 is
 `1a7d4a0d652f4bd6f9797fbfd7498467cefed6d13331e0a7b1e72fc192802b5d`, equal to
-`dd62ce8`. The measurements therefore describe the deployed source, not the
+`dd62ce8`; other source files, including `main.bend` REPL-observer code, may
+differ. The measurements describe the measured knowledge source, not the
 `69558f7` candidate.
 
 Status: source comparison, measured surface behavior and research assessment.
@@ -30,7 +32,7 @@ larger benchmark or latency measurement exists.
 
 | PM surface | PM behavior (`pm-digest`) | Bend2 state | Verdict | Action |
 |---|---|---|---|---|
-| `pm_search` | FTS5 text match with composite text 1.0, evidence 0.2, recency 0.3 (`v6-cognitive-augmentation-scope.md` §7, §9) | Lexical `AND` over six fields; exact-id, claim and kind weights plus incident edge count (`knowledge.bend:221-228`) | ADAPT | Add term statistics and evidence/recency terms to the existing score under deployment-owned weights. Keep the term requirement or add phrase/proximity: the local fixture ranks better under exact `AND` than under an OR BM25 baseline. |
+| `pm_search` | FTS5 text match with composite text 1.0, evidence 0.2, recency 0.3 (`v6-cognitive-augmentation-scope.md` §7) | Lexical `AND` over six fields; exact-id, claim and kind weights plus incident edge count (`knowledge.bend:221-228`) | ADAPT | Add term statistics and evidence/recency terms to the existing score under deployment-owned weights. Keep the term requirement or add phrase/proximity: the local fixture ranks better under exact `AND` than under an OR BM25 baseline. |
 | `pm_query` | Search, rank, top 3 results with graph neighbors | Search returns every match, typed nodes, edges and references (`knowledge.bend:234-236`) | ADAPT | Add a compact grouped result for agent briefs. The graph data already exists in the response. |
 | `pm_context` | Topic search grouped by node type, 1-hop neighbor expansion, cross-references | Search plus explicit traversal; no grouped projection (`knowledge.bend:234-262`) | ADAPT | Add a read projection that groups nodes by `kind` and includes typed 1-hop neighbors. |
 | `pm_kg_traverse` | Single-hop and BFS multi-hop traversal with depth, edge filter and bidirectionality (`src_kg_traversal.rs`) | Recursive CTE with direction and relation filters; no depth, path or proximity metadata (`knowledge.bend:239-262`) | ADAPT | Add an optional depth bound and path metadata to the response. Preserve cycle termination. |
@@ -63,13 +65,13 @@ Fixture: sessions `root` (principal conductor), `worker` and `sibling`; findings
 | `knowledge-search root all "" "alpha beta"` | Roots `finding:r-alpha` only. All terms must match. |
 | `knowledge-search root all "" "alpha"` | Roots `finding:r-alpha`, `finding:r-alpha-only`. |
 | `knowledge-search root all "" "probe"` and `..."probes"` | Both return `finding:r-alpha`. Matching is substring based; there is no stemming distinction. |
-| `knowledge-search root all "" "r-alpha"` | `r-alpha` scores 100; `r-alpha-only` scores 0 because the id field contains the query string. A zero-score match remains in the result. |
+| `knowledge-search root all "" "r-alpha"` | After relations `e1`-`e3` exist, `r-alpha` scores 102 and `r-alpha-only` scores 2: 100 and 0 base scores plus two incident edges each. The zero-base substring match remains in the result. |
 | `knowledge-traverse root all "" finding:r-alpha both "" recursive` | Returns `r-alpha`, `r-alpha-only`, `r-beta-only` and edges `e1`, `e2`, `e3`; the `e3` cycle terminates. No depth or path field is present. |
 | `knowledge-traverse ... supports neighbors` and `... support_s neighbors` | Both match relation `Supports`. |
 | `knowledge-scope` worker/universal/all | Worker sees `r-beta-only`; universal sees the two root findings; all sees all three. |
 | `knowledge-traverse` on a `run:` evidence finding | No `citation:` edge and no reference. |
 | `knowledge-traverse` on a `message:` evidence finding | `citation:<id>` edge with relation `Cited` and a `message:` reference with `deliveryRead`. |
-| `knowledge-audit`, `knowledge-since` | Unknown verbs; the CLI prints general help. No audit or delta surface exists. |
+| `knowledge-audit`, `knowledge-since` | Unknown verbs; `main.bend:78` writes usage and knowledge help to stderr and exits 2. No audit or delta surface exists. |
 
 ### Retrieval fixture
 
@@ -96,17 +98,21 @@ statistics alone do not justify dropping the term requirement.
 | Relation collision provenance | #785; source now matches the preserved f77cc16d function bodies | `knowledge-deepseek`; remote 36-case candidate arm at `69558f7` |
 | Law gate and stale laws | #782; `check-native.sh:14` runs `laws.bend --check-only`; retained law-gate candidate fails at `messaging-laws.ensemble_creation_defaults_to_loose` | `knowledge-glm` owns the critic branch; no execution attempt. Next action: correct the law chain, wire evaluation, add focused laws for the new refusals and collision admission |
 | Structured causal and evidentiary edges | #710; `knowledge_relations` has five columns | Root owns the model. PPR and edge-weighted ranking depend on these edge weights |
-| Numeric precision in scientific reads | #711; retained diagnostic rounds `9007199254740993` and `0.123456789012345678901234567890` | Root owns the product correction |
-| Deliberate scratchpad operations | #724; no CLI or MCP scratchpad operation | Separate owner; no source change here |
-| Evidence inference from retained reports | #730; record requires an explicit `message:` ID | Separate owner |
-| Consumer reads of promoted root holdings | #746; driver uses the unqualified read | Separate owner; needs the final installed candidate |
+| Numeric precision in scientific reads | #711; retained diagnostic against source `38eb7757` rounds `9007199254740993` and `0.123456789012345678901234567890` | Root owns the product correction |
+| Deliberate scratchpad operations | #724; no CLI or MCP scratchpad operation; design and measured elevation composition are in `docs/bend2/knowledge-elevation-sharing.md` | Separate owner; no source change here |
+| Evidence inference from retained reports | #730; `knowledge record --evidence report` selects one report authored after the current assignment (`agent-native.bend:240-253`; help `agent-domain.bend:298`); acceptance of unambiguous, ambiguous and absent report cases remains open | Separate owner |
+| Consumer reads of promoted root holdings | #746; the consumer driver uses `knowledge read --scope universal --subject root` and `knowledge-scope ... universal root`; the producer/verifier path uses the unqualified read; fresh installed acceptance remains open | Separate owner; needs the final installed candidate |
 | Commit-and-cite context passing | #777; no cross-seat context value surface | Release/context owner |
 | Retrieval quality benchmark | A 10-finding, 6-query fixture exists; no larger labeled or adversarial fixture and no latency measurement | This audit; next action: build a larger labeled and adversarial fixture before changing scoring or term semantics |
 
 ## Limits
 
-- The measured binary is the retained Main9 production binary with the
-  `dd62ce8` knowledge source. It is not the `69558f7` candidate.
+- The measured binary is the retained Main9 production binary. Its
+  `knowledge.bend` file equals `dd62ce8`; the full binary source commit is
+  `b1f006a`. It is not the `69558f7` candidate.
+- The measured commands are ad hoc from one session. No fixture database,
+  transcript manifest or committed probe accompanies them; the table records the
+  observed commands and outputs. A committed probe is a next action.
 - The comparison uses the retained `pm-digest` source and the cited papers. No
   project-manager runtime was available.
 - The retrieval fixture has ten findings and six queries. It is not a
