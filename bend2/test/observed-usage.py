@@ -275,7 +275,7 @@ class ObservedUsage(unittest.TestCase):
         self.assertEqual(missing['state'], 'unknown')
         self.assertEqual(missing['reason'], 'noRecordedHarnessCommand')
 
-    def test_models_all_reports_each_recorded_route_with_its_observation(self):
+    def test_models_all_reports_each_recorded_session_with_its_own_observation(self):
         omp_catalog = {'models': [{'selector': 'fixture/omp-model'}]}
         omp_workspace, omp_command = self.provider_command(json.dumps(omp_catalog),
                                                            identity_prefix=True)
@@ -284,6 +284,13 @@ class ObservedUsage(unittest.TestCase):
         self.assertEqual(attached.returncode, 0, attached.stderr)
         codex_workspace, _ = self.provider_command(json.dumps(codex_catalog),
                                                    session='second', native='native-2')
+        profile = 'model: fixture-muse-model\nprovider: fixture\nprofile: retained text'
+        attached = self.call('attach', 'third', 'muse', 'native-3', '')
+        self.assertEqual(attached.returncode, 0, attached.stderr)
+        muse_workspace, _ = self.provider_command(profile, session='third', native='native-3')
+        with sqlite3.connect(self.db) as database:
+            database.execute("UPDATE sessions SET model='fixture-muse-model', effort='high'"
+                             " WHERE id='third'")
         answer = self.models_all()
         self.assertEqual(answer['state'], 'reported')
         self.assertEqual(answer['session'], 'reader')
@@ -291,13 +298,34 @@ class ObservedUsage(unittest.TestCase):
         self.assertGreater(answer['observedAt'], 0)
         self.assertTrue(answer['limits'])
         by_harness = {route['harness']: route for route in answer['routes']}
-        self.assertEqual(set(by_harness), {'omp', 'codex'})
+        self.assertEqual(set(by_harness), {'omp', 'codex', 'muse'})
+        self.assertEqual(by_harness['omp']['session'], 'reader')
         self.assertEqual(by_harness['omp']['response'], omp_catalog)
         self.assertEqual(by_harness['omp']['command'], omp_command)
         self.assertEqual(by_harness['omp']['workspace'], str(omp_workspace))
+        self.assertEqual(by_harness['codex']['session'], 'second')
         self.assertEqual(by_harness['codex']['response'], codex_catalog)
+        self.assertEqual(by_harness['codex']['workspace'], str(codex_workspace))
         self.assertEqual(json.loads((codex_workspace / 'queried.json').read_text()),
                          {'argv': ['debug', 'models'], 'cwd': str(codex_workspace)})
+        self.assertEqual(by_harness['muse']['session'], 'third')
+        self.assertEqual(by_harness['muse']['requestedModel'], 'fixture-muse-model')
+        self.assertEqual(by_harness['muse']['requestedEffort'], 'high')
+        self.assertEqual(by_harness['muse']['modelExistence'], 'unknown')
+        self.assertEqual(by_harness['muse']['profileText'], profile + '\n')
+        self.assertEqual(by_harness['muse']['workspace'], str(muse_workspace))
+        self.assertEqual(json.loads((muse_workspace / 'queried.json').read_text()),
+                         {'argv': ['model-profile', 'show', 'fixture-muse-model'],
+                          'cwd': str(muse_workspace)})
+
+    def test_models_all_reports_empty_routes_when_no_harness_recorded(self):
+        with sqlite3.connect(self.db) as database:
+            database.execute("UPDATE sessions SET harness='' WHERE id='reader'")
+        answer = self.models_all()
+        self.assertEqual(answer['state'], 'reported')
+        self.assertEqual(answer['session'], 'reader')
+        self.assertEqual(answer['routes'], [])
+        self.assertTrue(answer['limits'])
 
     def test_models_all_keeps_unknown_routes_without_gating(self):
         self.provider_command('{}')
