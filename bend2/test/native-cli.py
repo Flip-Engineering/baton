@@ -42,8 +42,10 @@ class NativeCli(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertEqual(result.stderr, '')
         self.assertTrue(result.stdout.startswith('usage: baton ACTION ARGS\n'))
-        for operation in ['baton --project PATH ACTION ARGS', 'baton as SESSION ACTION ARGS',
-                          'baton DATABASE as SESSION ACTION ARGS', 'Use help ACTION']:
+        for operation in ['Actions: inbox, read, send, report, ask, guide, finish, confirm,',
+                          'Baton resolves your project and session.',
+                          'Successful native turns record handling of their complete owned reads.',
+                          'Use help ACTION']:
             self.assertIn(operation, result.stdout)
         if global_help:
             for operation in ['dispatch TEXT [OPTIONS]', 'Administration:',
@@ -63,6 +65,15 @@ class NativeCli(unittest.TestCase):
         for verb in ['help', '--help']:
             with self.subTest(verb=verb):
                 self.assertEqual(self.assert_help(self.invoke(self.db, verb)), expected)
+                self.assertEqual(list(self.directory.iterdir()), [])
+
+    def test_explicit_context_help_succeeds_without_creating_state(self):
+        expected = self.assert_help(self.invoke('help'))
+        for args in [('as', 'principal', 'help'),
+                     ('--project', self.directory, 'as', 'principal', 'help'),
+                     (self.db, 'as', 'principal', 'help')]:
+            with self.subTest(args=args):
+                self.assertEqual(self.assert_help(self.invoke(*args)), expected)
                 self.assertEqual(list(self.directory.iterdir()), [])
 
     def test_invalid_commands_keep_usage_and_failure_status(self):

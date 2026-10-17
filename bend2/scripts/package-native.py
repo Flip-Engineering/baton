@@ -3,6 +3,7 @@
 import argparse
 import datetime
 import hashlib
+import importlib.util
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -107,12 +108,39 @@ def stage_adapters(payload):
     shutil.copyfile(ROOT / 'bend2/harness/native-history.mjs', directory / 'native-history.mjs')
     shutil.copyfile(ROOT / 'bend2/harness/project-settings.mjs', directory / 'project-settings.mjs')
     shutil.copyfile(ROOT / 'bend2/harness/task-start.mjs', directory / 'task-start.mjs')
-    shutil.copyfile(ROOT / 'bend2/scripts/codex-inbox-wake.mjs', directory / 'codex-inbox-wake.mjs')
     shutil.copytree(ROOT / 'bend2/ui/orchestra', directory / 'ui')
     shutil.copyfile(ROOT / 'bend2/scripts/context-provider.mjs', directory / 'context-provider.mjs')
     shutil.copyfile(ROOT / 'bend2/scripts/context-project-policy.mjs', directory / 'context-project-policy.mjs')
     shutil.copyfile(ROOT / 'bend2/scripts/context-query-artifact.mjs', directory / 'context-query-artifact.mjs')
     shutil.copyfile(ROOT / 'bend2/scripts/context-worktree-capture.mjs', directory / 'context-worktree-capture.mjs')
+    shutil.copyfile(ROOT / 'bend2/scripts/check-install.py', directory / 'check-install.py')
+
+
+def system_dependencies(system):
+    spec = importlib.util.spec_from_file_location('baton_install_check', ROOT / 'bend2/scripts/check-install.py')
+    checker = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(checker)
+    return checker.system_dependencies(system)
+
+
+def repl_inputs(args):
+    selected = (args.repl_compiler_source, args.repl_runtime,
+                args.repl_runtime_sha256, args.repl_runtime_notices)
+    require(all(value is not None for value in selected),
+            'Native packages require the REPL compiler source, platform Bun runtime, SHA256 and complete runtime notices')
+
+
+def stage_repl(payload, args):
+    repl_inputs(args)
+    module_path = ROOT / 'bend2/scripts/stage-repl-compiler.py'
+    spec = importlib.util.spec_from_file_location('baton_repl_compiler', module_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    fact = module.stage(args.repl_compiler_source, args.repl_runtime,
+                        args.repl_runtime_sha256, args.repl_runtime_notices,
+                        payload / 'libexec/baton2/repl')
+    return [{'id': 'bend2-repl-compiler', 'required': True,
+             'path': 'libexec/baton2/repl', **fact}]
 
 
 def stage_selected_context_payload(payload, module_name='bend2'):
@@ -469,6 +497,7 @@ def package(args):
     result = {'status': 'running', 'source_directory': str(ROOT), 'output': str(output)}
     write_json(output / 'result.json', result)
     try:
+        repl_inputs(args)
         require(platform.system() == 'Darwin' and platform.machine() == 'arm64',
                 'This native artifact requires a Darwin arm64 build host')
         identity = artifact_identity(args.release_version)
@@ -494,6 +523,7 @@ def package(args):
         shutil.copyfile(binary, payload / 'bin/baton')
         (payload / 'bin/baton').chmod(0o755)
         stage_adapters(payload)
+        repl_compiler = stage_repl(payload, args)
         selected_context = [stage_selected_context_payload(payload), stage_runtime_context_module(payload)]
         selected_context.extend(stage_clang_context_modules(payload, args.context_clang_package))
         if args.context_typescript_package is not None:
@@ -504,8 +534,10 @@ def package(args):
             'created_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
             'platform': {'system': platform.system(), 'machine': platform.machine(), 'artifact': 'darwin-arm64'},
             'source': source,
-            'binary': {'path': 'bin/baton2', 'alias': 'bin/baton'},
+            'binary': {'path': 'bin/baton2', 'alias': 'bin/baton', 'sha256': sha256(payload / 'bin/baton2')},
             'selected_modules': selected_context,
+            'selected_dependencies': repl_compiler,
+            'required_system_dependencies': system_dependencies(platform.system()),
             'build': {'command': build_record, 'compiler_archive': {
                 'url': COMPILER_ARCHIVE_URL, 'sha256': sha256(archive)}},
             'terms': terms,
@@ -541,6 +573,14 @@ def main():
     parser.add_argument('--context-typescript-package', type=Path,
                         help='installed TypeScript package to copy into the selected TypeScript module')
     parser.add_argument('--release-version', help='version identifier for a release archive; requires the project root LICENSE')
+    parser.add_argument('--repl-compiler-source', type=Path, default=ROOT / 'bend2/compiler/upstream',
+                        help='exact pinned compiler source; defaults to the required checked-in closure')
+    parser.add_argument('--repl-runtime', type=Path, required=True,
+                        help='required platform Bun executable for the bundled REPL compiler')
+    parser.add_argument('--repl-runtime-sha256', required=True,
+                        help='verified SHA256 of the required platform Bun executable')
+    parser.add_argument('--repl-runtime-notices', type=Path, required=True,
+                        help='complete distribution notices for the required Bun runtime')
     args = parser.parse_args()
     package(args)
 

@@ -503,6 +503,30 @@ def write_positioned_retained(log: String, lines: List<String>, +position: Strin
     case Nil{}: Bool.pick(IO(Result<&1,&1,U32 & String,String>),finish,T.Text.write_at(log,position,"",1),IO.pure(Result<&1,&1,U32 & String,String>,Done{position}))
     case other: T.Text.write_at(log,position,lines_text(other),Bool.pick(U32,finish,1,0))
 
+def output_parent_path(+prefix: String, +part: String) -> String:
+  Bool.pick(String,String.is_empty(prefix),Bool.pick(String,String.is_empty(part),"/",part),
+    Bool.pick(String,String.eq(prefix,"/"),prefix ++ part,prefix ++ "/" ++ part))
+
+def prepare_output_parents(parts: List<&2,String>, prefix: String) -> IO(Unit):
+  match parts:
+    case part <> next <> rest: do IO<Unit>:
+      +directory : String <- IO.pure(String,output_parent_path(prefix,part))
+      made : Unit <- IO.try(Unit,F.Files.mkdir(directory))
+      prepare_output_parents(Con{next,rest},directory)
+    case other: IO.pure(Unit,Unit{})
+
+# A missing generation is reconstructed from the retained native spool. Its
+# former output position belongs to the lost file, so the observer replays it.
+def prepare_retained_output_named(+log: String) -> IO(Bool):
+  do IO<Bool>:
+    present : String <- IO.try(String,F.Files.exists(log))
+    +exists : Bool <- IO.pure(Bool,String.eq(present,"1"))
+    prepared : Unit <- Bool.pick(IO(Unit),exists,IO.pure(Unit,Unit{}),prepare_output_parents(String.split(log,Char.from_u32(47)),""))
+    IO.pure(Bool,exists)
+
+def prepare_retained_output(+log: String) -> IO(Bool):
+  Bool.pick(IO(Bool),String.is_empty(log),IO.pure(Bool,True{}),prepare_retained_output_named(log))
+
 # Retained observers write each batch at the output cursor in their checkpoint.
 # Equal bytes already present stay in place, including a partial replayed batch.
 # Direct turns retain their existing append and incomplete-frame checkpoint.

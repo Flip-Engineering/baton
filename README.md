@@ -15,12 +15,14 @@ the session's client, model, workspace, and parent agent in a SQLite database.
   agents. Messages retain their complete bodies and handling status.
 - **Agent teams:** recruit agents into Git worktrees and organize teams with
   explicit membership and communication permissions.
+- **Branching Ensembles:** start parallel agents from a workspace snapshot,
+  evaluate their results, and continue a selected agent's conversation.
 - **Git integration:** prepare a candidate, run selected checks on the target and
   candidate, update the target branch, and publish to a specified remote.
 - **Shared knowledge:** record findings with evidence, control their visibility,
   and promote them to a coordinating agent or team.
 - **Inspection:** read sessions, messages, turns, and repository operations through
-  the CLI, MCP tools, and optional Orchestra browser view.
+  the CLI, MCP tools, and Orchestra browser view.
 
 ## Build from source
 
@@ -67,11 +69,11 @@ instructions, and manage contributions.
 
 Agents read complete owed input with `baton inbox` and carry out the assigned
 work. Successful native turns automatically record handling of their complete
-reads. `baton report --text TEXT` sends a
-result to the recorded coordinator. A worker uses `baton completion-request --text
-SUMMARY` to request review of its completed assignment. A coordinator uses `baton
-completion-confirmed --to PLAYER` or `baton guide --to PLAYER --text TEXT` for its
-decision. Baton resolves the current project, actor, request and handling state.
+reads. `baton report 'The result and remaining work.'` sends a result to the
+recorded coordinator. A worker uses `baton finish 'Summary of completed work.'`
+to request review of its assignment. A coordinator uses `baton confirm PLAYER`
+to confirm completion or `baton guide PLAYER 'Further work.'` to give instructions.
+Baton resolves the current project, actor, request and handling state.
 Named arguments and independent batch clauses also cover receiver controls,
 worktrees, knowledge and project settings. The [agent command
 guide](docs/bend2/agent-commands.md) describes context selection, optional selected
@@ -81,6 +83,8 @@ message reads and each action.
 
 - [Command guide](bend2/README.md): CLI commands and examples.
 - [Messaging](docs/bend2/messaging.md): delivery, handling, and retries.
+- [Branching Ensembles](docs/bend2/branching-ensembles.md): workspace snapshots,
+  fresh conversations, evaluation, and selection.
 - [Shared knowledge](docs/bend2/knowledge-context-2026-10-01.md): findings, scopes,
   review, and promotion.
 - [Architecture](docs/bend2/architecture.md): coordinator and subsystem design.

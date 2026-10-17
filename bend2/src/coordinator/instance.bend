@@ -5,7 +5,7 @@ import ../host/session-lock.bend as Lock
 import ../host/sqlite.bend as DB
 import ../host/instance.bend as Custody
 import ../git/text.bend as Tx
-import ../harness/codex-player.bend as Codex
+import ./codex-route.bend as CodexRoute
 import ./delivery.bend as Delivery
 
 # The fixed coordinator drives every session with actionable pending input as
@@ -49,7 +49,7 @@ def recorded_endpoint(+db: String, +session: String, index: String) -> IO(String
     IO.pure(String, Tx.trim_nl(saved))
 
 def managed_receiver_sql() -> String:
-  "s.harness='codex' AND s.native<>'' AND CASE WHEN s.endpoint='' THEN 1 WHEN json_valid(s.endpoint) THEN json_type(s.endpoint)='array' AND (json_array_length(s.endpoint)=0 OR (json_extract(s.endpoint,'$[1]') LIKE '%/codex-inbox-wake.mjs' AND json_extract(s.endpoint,'$[#-5]')='--session' AND json_extract(s.endpoint,'$[#-2]')=s.id AND json_extract(s.endpoint,'$[#-1]')=s.native)) ELSE 0 END"
+  "s.harness='codex' AND s.native<>'' AND (s.endpoint='' OR " ++ CodexRoute.managed_sql("s.endpoint","s.id","s.native") ++ ")"
 
 def native_receiver_sql() -> String:
   Delivery.native_receiver_sql()
@@ -170,8 +170,7 @@ def managed_result(result: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1
 def serve_managed(+db: String, +session: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     row : String <- IO.try(String,DB.Sql.query(db,"SELECT native FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
-    executable : Result<&1,&1,U32 & String,String> <- Lock.SessionLock.executable()
-    run : Result<&1,&1,U32 & String,String> <- Codex.inbox_follow(executable,db,session,Tx.trim_nl(row))
+    run : Result<&1,&1,U32 & String,String> <- CodexRoute.follow(db,session,Tx.trim_nl(row))
     logged : Result<&1,&1,U32 & String,String> <- Delivery.completed(db,"",run)
     managed_result(logged)
 

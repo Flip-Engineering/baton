@@ -57,17 +57,17 @@ Read complete owed input, perform the assigned work and report its result:
 
 ```sh
 baton inbox
-baton acknowledge
-baton report --text 'The result and remaining work.'
+baton report 'The result and remaining work.'
+baton finish 'Summary of completed work.'
 ```
 
-Successful native turns record handling of their exact consumed input.
-`acknowledge` records explicit handling with native owned reads and a generated
-receipt. A worker uses `completion-request --text SUMMARY` when its assignment is
-ready for its parent's review. A coordinator reviews a Player's request with
-`completion-confirmed --to PLAYER`, or sends further work with `guide --to PLAYER
---text TEXT`. Use `dispatch
---to PLAYER --text TEXT` for complete task input to an existing conversation.
+Successful native turns automatically record handling of complete input reads.
+A worker uses `finish SUMMARY` when its assignment is ready for review. A
+coordinator uses `confirm PLAYER` to confirm the Player's current completion
+request or `guide PLAYER TEXT` to give further instructions. Use `send PLAYER
+TEXT` for a report to another permitted recipient and `ask TEXT` for a question
+to the recorded coordinator. Use `dispatch TEXT --to PLAYER` for complete task
+input to an existing conversation.
 The [agent command guide](../docs/bend2/agent-commands.md) describes named actions,
 independent batches, explicit selected-message reads and context overrides.
 
@@ -196,20 +196,23 @@ Stored stop reports and turn history remain available. The MCP tool
 `baton2_resume` accepts `liftStop: true` for this explicit operation.
 
 Codex App notifications name the recipient's whole pending inbox. Additional
-admissions share the notification until recipient acknowledgement permits a
-new one. A failed submission retains the daemon's output and owed messages;
+admissions share the notification. Successful native turns automatically record
+handling of their complete owned reads and permit a new notification. A failed
+submission retains the daemon's output and owed messages;
 `resume` retries that submission through the public queue.
 
-For a managed Codex App session, `connect` accepts the installed helper endpoint
-`["node","/absolute/libexec/baton2/codex-inbox-wake.mjs","--session","/absolute/bin/baton2","/absolute/database","PLAYER","THREAD"]`.
-Codex App sessions with a recorded native conversation can also leave their
-receiver endpoint empty. `serve` owns one lifecycle subscription for each
-endpointless or configured App session with pending input. When its App turn
-settles, the helper checks its pending inbox and prompts the same conversation
-to handle it. The helper retains actual
-turn failures and public input admission results. Recipient acknowledgements
-clear handled input; an explicit stop closes the subscription and preserves
-the remaining messages.
+For a managed Codex App session, `connect` records the compiled receiver endpoint
+`["/usr/bin/env","HOME=/absolute/home","CODEX_HOME=/absolute/home/.codex","/absolute/bin/baton2","/absolute/database","codex-inbox-session","PLAYER","THREAD"]`.
+Registration captures the receiver credential environment and preserves explicit environment arguments.
+An empty endpoint passed to `connect` selects this default receiver.
+`configure` and managed delivery translate earlier recorded helper endpoints
+and preserve their explicit environment prefixes. `serve` owns one lifecycle
+subscription for each App session with pending input. When its App turn
+settles, the Bend coordinator checks its pending inbox and prompts the same conversation
+to handle it. The coordinator retains actual
+turn failures and public input admission results. Successful turns automatically
+clear their complete handled input. An explicit stop closes the subscription and
+preserves the remaining messages.
 
 The same coordinator serves recorded native receivers for Codex, OMP, Muse and
 Claude Code. A receiver checks its owed inbox when a turn settles and continues
@@ -256,22 +259,22 @@ has registered none.
 When the parentless `operator` session has the operator role, a Principal's
 native terminal result is retained in its turn history and sent to that session.
 `dispatch` registers the operator during routine task setup. `baton as operator
-inbox` reads its pending reports. A native actor can use `acknowledge`
-for its complete owned reads. Administrative review outside a native turn can
-use the explicit `ack REPORT_ID operator RECEIPT` compatibility form. Subordinate
-reports go to their recorded parent.
+inbox` reads its pending reports. Successful native turns automatically record
+handling of their complete owned reads. Administrative review outside a native
+turn can use the explicit `ack REPORT_ID operator RECEIPT` compatibility form.
+Subordinate reports go to their recorded parent.
 
 During an OMP turn, send guidance with:
 
 ```sh
-baton guide --to worker1 --text 'Focus the review on recovery.'
+baton guide worker1 'Focus the review on recovery.'
 ```
 
 The supervisor listens for newly committed guidance throughout an active OMP
 turn and forwards it through OMP's `steer` command. The native response remains
 in the observed stream. Forwarding advances the attempt's guidance cursor. The
-recipient reads guidance with `inbox`. A successful turn or `acknowledge` records
-handling for those complete owned reads. Unhandled guidance remains pending.
+recipient reads guidance with `inbox`. A successful native turn automatically
+records handling of those complete owned reads. Unhandled guidance remains pending.
 
 `join ID PARENT HARNESS MODEL EFFORT WORKSPACE` registers a Player in an
 existing checkout. The recorded workspace is absolute; branch and base come
@@ -702,15 +705,18 @@ under the output directory. The command starts real model sessions.
 ## Claude Code Conductor channel adapter
 
 A Claude Code Conductor uses an interactive session with a Channels MCP configuration.
-For example, save this as `conductor-mcp.json`, replacing `/repo` with absolute paths:
-
-```json
-{"mcpServers":{"baton-conductor":{"command":"node","args":["/repo/bend2/scripts/mcp-conductor.mjs","/repo/state.db","/repo/.scratch/bend2/baton2","--session","root"]}}}
-```
+Launch the native client through the adapter, replacing `/repo` with absolute paths:
 
 ```sh
-claude --mcp-config conductor-mcp.json --dangerously-load-development-channels server:baton-conductor
+node /repo/bend2/scripts/mcp-conductor.mjs /repo/state.db /repo/.scratch/bend2/baton2 --session root --claude /path/to/claude
 ```
+
+The launcher supplies the MCP configuration and session-scoped Claude lifecycle
+hooks. `PreToolUse` binds complete reads to Claude's native prompt identity;
+`Stop` records successful handling through the coordinator. Failed and interrupted
+prompts retain pending input. Claude Code must provide `prompt_id` in its hook
+payloads and the `StopFailure` event. Version 2.1.287 supplies those fields.
+Arguments after `--claude /path/to/claude --` pass to the native client.
 
 Accept the local development-channel prompt. To recover a Conductor, use the same
 command with `--resume NATIVE_SESSION` and the same database and harness
@@ -723,10 +729,10 @@ The server stays attached to the Claude process. Its socket is created beside
 the database and closes with the server.
 
 Within its recorded native context, the Conductor reads complete reports with
-`baton inbox` and records handling with `baton acknowledge`. Baton selects the
-owned reads and creates their receipt. `baton guide --to PLAYER --text TEXT`
+`baton inbox`. Successful native turns automatically record handling and create
+receipts for their complete owned reads. `baton guide PLAYER TEXT`
 sends guidance. After reviewing a Player's current completion request, the
-Conductor records its decision with `baton completion-confirmed --to PLAYER`.
+Conductor records its decision with `baton confirm PLAYER`.
 It can inspect Git state with `worktree`, read a declared remote's advertised
 branch with `remote-tip`, and land and publish reviewed work with `land`,
 `land-checked` and `push`. Report receipts retain input handling; completion
@@ -773,8 +779,8 @@ baton /repo/state.db dispatch 'Review the assigned source.' --to worker1
 For a correction, dispatch complete text to the same Player with `--to SESSION`. Receive resumes its stored native conversation, uses
 its recorded route and workspace, and appends to its native log. A receiver that
 finds an active turn returns `queued`; newly pending work starts after native exit.
-The native recipient turn records complete input handling and reports its result
-to the Associate Conductor. `acknowledge` resolves owned inputs from native evidence.
+The successful native recipient turn automatically records complete input handling
+and reports its result to the Associate Conductor.
 
 `dispatch` returns the stored input and its setup or delivery outcome. End the
 parent turn so incoming reports can resume it. The

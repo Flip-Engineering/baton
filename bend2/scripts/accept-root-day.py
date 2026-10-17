@@ -10,6 +10,7 @@ from pathlib import Path
 import pty
 import re
 import signal
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -228,6 +229,7 @@ class Acceptance:
         self.config = args.config.resolve()
         self.routes = json.loads(self.config.read_text())
         self.env = dict(os.environ)
+        self.env['DISABLE_AUTOUPDATER'] = '1'
         self.env.update(CODEX_CONDUCTOR_MODEL=self.routes['codex']['model'],
                         OMP_CONDUCTOR_MODEL=self.routes['omp']['model'],
                         OMP_CONDUCTOR_THINKING=self.routes['omp']['effort'])
@@ -338,8 +340,8 @@ sys.exit(p.wait())
             before = c.sequence()
             p = c.turn('omp', 'Do not use tools or edit files. Reply exactly with this report: '
                        f'Root: remember review label {marker} for later turns. Include it in your '
-                       'authored response and use the acknowledge action after reviewing this '
-                       'complete input. Do not edit, land, push or start Players.',
+                       'authored response after reviewing this complete input. Finish your '
+                       'native turn; Baton records handling automatically. Do not edit, land, push or start Players.',
                        'root-report')
             report = c.completed(p, 'root-report')
             starts = list(events(c.path / 'starts.jsonl'))
@@ -352,8 +354,8 @@ sys.exit(p.wait())
             before = c.sequence()
             task = ('Read bend2/scripts/mcp-conductor.mjs and bend2/src/coordinator/delivery.bend '
                     'completely and review recovery. Give a source finding and the review label '
-                    'remembered from our earlier turn in your authored response. Use the acknowledge '
-                    'action after handling the complete input. Do not search for the label, edit '
+                    'remembered from our earlier turn in your authored response. Finish your native '
+                    'turn after handling the complete input; Baton records handling automatically. Do not search for the label, edit '
                     'files or launch agents.')
             p = c.start(c.command('agent-native-input'), 'root-interrupted', input=json.dumps(
                 ['message', 'root-interrupted', 'operator', 'root', 'guidance', task], ensure_ascii=False))
@@ -382,21 +384,21 @@ sys.exit(p.wait())
         marker = self.ident + '-root-claude'
         c.coord('message', 'root-setup', 'operator', 'root', 'guidance',
                 f'Remember root review label {marker}. Use baton2_inbox to read complete input. '
-                'When Player reports arrive, use baton2_action with action report and --text '
+                'When Player reports arrive, use baton2_action with action report and one text argument '
                 'to publish your remembered review label and the complete text of that Player '
-                'report to operator. Then use baton2_ack with no arguments after handling the input. '
-                'Acknowledge this setup after reading it. Do not poll, edit files, '
+                'report to operator. Read this complete setup and finish each native turn after '
+                'handling its input. Baton records successful-turn handling automatically. Do not poll, edit files, '
                 'land, push or launch Players.')
-        config = c.path / 'mcp.json'
-        save(config, {'mcpServers': {'baton-conductor': {'command': 'node', 'args': [
-            str(ROOT / 'bend2/scripts/mcp-conductor.mjs'), str(c.db), str(self.coordinator)]}}})
         route = self.routes['claude-code']
         def start(resume):
             phase = 'resumed' if resume else 'initial'
-            args = [route['executable'], '--resume' if resume else '--session-id', session,
+            args = [shutil.which('node', path=self.env.get('PATH')),
+                    str(ROOT / 'bend2/scripts/mcp-conductor.mjs'),
+                    str(c.db), str(self.coordinator), '--session', 'root',
+                    '--claude', route['executable'], '--',
+                    '--resume' if resume else '--session-id', session,
                     '--model', route['model'], '--effort', route['effort'],
-                    '--dangerously-skip-permissions', '--strict-mcp-config', '--mcp-config', str(config),
-                    '--dangerously-load-development-channels', 'server:baton-conductor',
+                    '--dangerously-skip-permissions', '--strict-mcp-config',
                     '--debug-file', str(c.path / (phase + '.debug')), '--ax-screen-reader']
             if not resume:
                 guidance = 'Act as the Bend2 Principal Conductor. Handle the baton-conductor channel messages using its tools.'
@@ -485,7 +487,7 @@ class Terminal:
                 # An unknown prompt remains in the transcript for diagnosis.
                 prompts = [('development', 'Enter y/n:', 'y\r'),
                            ('trust', 'Yes, I trust this folder', '\r'),
-                           ('bypass', 'Yes, I accept', '\x1b[B\r')]
+                           ('bypass', 'Yes, I accept', 'y\r')]
                 for key, phrase, answer in prompts:
                     if key not in answered and phrase in text:
                         self.send(answer)
