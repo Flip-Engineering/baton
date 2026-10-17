@@ -459,12 +459,6 @@ def models_route_guarded(+db: String, +source: String, +harness: String, +comman
       IO.pure(String,models_unknown(source,harness,command,model,cwd,argv,"unsupportedHarness")))
     IO.pure(String,answer)
 
-def models_all_observed(db: String, route: Discovered, rest: List<&2,Discovered>) -> IO(String):
-  do IO<String>:
-    +answer : String <- models_all_entry(db,route)
-    +tail : String <- models_all_answers(db,rest)
-    IO.pure(String,Bool.pick(String,String.is_empty(tail),answer,answer ++ "," ++ tail))
-
 def models_all_entry(db: String, route: Discovered) -> IO(String):
   match route:
     case DRoute{session,harness,command,model,effort,workspace}: models_route_guarded(db,session,harness,command,model,effort,workspace)
@@ -472,7 +466,10 @@ def models_all_entry(db: String, route: Discovered) -> IO(String):
 def models_all_answers(db: String, routes: List<&2,Discovered>) -> IO(String):
   match routes:
     case Nil{}: IO.pure(String,"")
-    case route <> rest: models_all_observed(db,route,rest)
+    case route <> rest: do IO<String>:
+      +answer : String <- models_all_entry(db,route)
+      +tail : String <- models_all_answers(db,rest)
+      IO.pure(String,Bool.pick(String,String.is_empty(tail),answer,answer ++ "," ++ tail))
 
 def models_all_limits() -> String:
   "Entries are one observation per recorded session with a harness, each carrying its source session and recorded workspace. A harness without a recorded session is unknown here, not absent. Sessions whose recorded route fields contain '|' are excluded. Account-wide usable models remain unknown. Muse entries show one recorded model's profile with its recorded effort; model existence stays unknown. Quota, budget, freshness and probe outcomes do not gate this read."
