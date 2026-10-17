@@ -408,6 +408,11 @@ def models_command(+db: String, +session: String, +harness: String, +command: St
       models_unknown(session,harness,command,model,cwd,argv,"unsupportedHarness")))
     Bool.pick(IO(Unit),String.is_empty(answer),models_query(db,session,harness,command,model,effort,cwd),models_print(db,answer))
 
+def usage_registered(saved: String) -> IO(Unit):
+  match saved:
+    case SNil{}: IO.die(Unit,2,"Session is not registered; inspect status and the requested ID.")
+    case other: IO.pure(Unit,Unit{})
+
 # --- the cross-harness model discovery read -----------------------------------
 
 # One observation per recorded session with a harness. Each entry carries its
@@ -492,11 +497,6 @@ def models_all(+db: String, +session: String) -> IO(Unit):
     models_all_print(db,session,Tx.trim_nl(body))
 
 # --- the command ------------------------------------------------------------
-
-def usage_registered(saved: String) -> IO(Unit):
-  match saved:
-    case SNil{}: IO.die(Unit,2,"Session is not registered; inspect status and the requested ID.")
-    case other: IO.pure(Unit,Unit{})
 
 # The file's lines as one JSON array, read once for the identity check and the
 # extraction.
