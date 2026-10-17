@@ -778,8 +778,14 @@ remain open under [#782](https://github.com/Flip-Engineering/baton/issues/782).
   provider failure in [#681](https://github.com/Flip-Engineering/baton/issues/681),
   availability in [#694](https://github.com/Flip-Engineering/baton/issues/694),
   persistent settings in [#703](https://github.com/Flip-Engineering/baton/issues/703),
-  authored numeric precision in [#711](https://github.com/Flip-Engineering/baton/issues/711)
-  and model discovery in [#792](https://github.com/Flip-Engineering/baton/issues/792).
+  authored numeric precision in [#711](https://github.com/Flip-Engineering/baton/issues/711),
+  model discovery in [#792](https://github.com/Flip-Engineering/baton/issues/792),
+  and Kimi usage-window tracking in
+  [#797](https://github.com/Flip-Engineering/baton/issues/797). The observed
+  web reset text was `5-hour usage / Code / 100% / Resets 10-16 20:41`
+  (2026-10-16 20:41 PDT / 2026-10-17 03:41 UTC). The read-only OMP usage
+  query returned no Kimi report; API availability remains unverified. The
+  separate OAuth refresh failure does not establish the historical 403 token.
 - [#792: Expose configured model options and capability context](https://github.com/Flip-Engineering/baton/issues/792).
   Discover configured harness/account choices, model availability and capability
   assessments with their observed limits. Coordinate with
@@ -842,6 +848,16 @@ remain open under [#782](https://github.com/Flip-Engineering/baton/issues/782).
 - [#685: Pending notifications must wake idle seats or require inbox review](https://github.com/Flip-Engineering/baton/issues/685).
 - [#682: Baton2: live browser view of Orchestra structure and status](https://github.com/Flip-Engineering/baton/issues/682).
 - [#681: Baton2: preserve pending work when a provider quota failure requires model failover](https://github.com/Flip-Engineering/baton/issues/681).
+  Coordinate reset-aware retry and model routing with
+  [#797](https://github.com/Flip-Engineering/baton/issues/797); preserve
+  unknown reset data until a supported source is verified.
+- [#797: Track Kimi Code usage windows and reset times](https://github.com/Flip-Engineering/baton/issues/797).
+  The user observed `5-hour usage / Code / 100% / Resets 10-16 20:41`,
+  equivalent to 2026-10-16 20:41 PDT / 2026-10-17 03:41 UTC. A read-only OMP
+  usage query had no Kimi report. Verify a supported provider usage/reset source
+  before implementing; use known resets for retry timing and available
+  account/model routing. Preserve unknown values. Track OAuth refresh separately
+  under [#793](https://github.com/Flip-Engineering/baton/issues/793).
 - [#677: Baton2: prevent duplicate heavy validation and qualify remote execution placement](https://github.com/Flip-Engineering/baton/issues/677).
   Homelab runners 725 and 24006 are online in the existing restricted Baton
   runner group. Runner 24006 has a separate account, service, mount namespace,
