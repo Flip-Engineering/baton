@@ -881,11 +881,13 @@ def inventory_rows_sql() -> String:
 # harness: a record written under another harness stays distinguishable
 # from the session's harness instead of being scoped away. Store paths stay
 # out of the answer; every parsed record carries a nonempty store.
-def inventory_record_json(record: String) -> String:
-  +parsed = record_of(last_line(Tx.split_lines(record)))
+def inventory_record_parsed(parsed: Maybe<&2,Profile>) -> String:
   match parsed:
     case None{}: "null"
     case Some{+profile}: "{\"harness\":" ++ J.string_literal(profile_harness(profile)) ++ ",\"label\":" ++ J.string_literal(profile_label(profile)) ++ "}"
+
+def inventory_record_json(record: String) -> String:
+  inventory_record_parsed(record_of(last_line(Tx.split_lines(record))))
 
 def inventory_profile_result(read: Result<&1,&1,U32 & String,String>) -> String:
   match read:
