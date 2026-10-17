@@ -31,8 +31,8 @@ def refused(+saved: String) -> Bool:
       Bool.or(Tx.starts_with(saved,"{\"error\":\"message-route-denied\""),
         Bool.or(Tx.starts_with(saved,"{\"error\":\"invalid-endpoint\""),
           Bool.or(Tx.starts_with(saved,"{\"error\":\"message-id-conflict\""),
-            Bool.or(Tx.starts_with(saved,"{\"error\":\"finding-id-conflict\""),
-              Bool.or(Tx.starts_with(saved,"{\"error\":\"relation-id-conflict\""),
+            Bool.or(Tx.starts_with(saved,"{\"error\":\"relation-id-conflict\""),
+              Bool.or(Tx.starts_with(saved,"{\"error\":\"finding-id-conflict\""),
                 Bool.or(Tx.starts_with(saved,"{\"error\":\"knowledge-notice-conflict\""),
                   Bool.or(Tx.starts_with(saved,"{\"error\":\"promotion-id-conflict\""),
                     Tx.starts_with(saved,"{\"error\":\"promotion-notice-conflict\""))))))))))

@@ -7,44 +7,6 @@ import ../coordinator/commands.bend as C
 import ./delivery.bend as Delivery
 import ./store.bend as Store
 import ../host/sqlite.bend as DB
-import ../json/canonical.bend as J
-
-# Knowledge reads accept the same four scope names and three traversal
-# directions that the MCP schemas advertise. Worker and group scopes name an
-# exact holder, so an empty subject is refused instead of matching no holder or
-# widening to every session.
-def scope_admitted(scope: String, +subject: String) -> Bool:
-  match scope:
-    case "worker": Bool.not(String.is_empty(subject))
-    case "group": Bool.not(String.is_empty(subject))
-    case "universal": True{}
-    case "all": True{}
-    case _: False{}
-
-def direction_admitted(direction: String) -> Bool:
-  match direction:
-    case "in": True{}
-    case "out": True{}
-    case "both": True{}
-    case _: False{}
-
-def scope_refusal(scope: String, subject: String) -> String:
-  "{\"error\":\"knowledge-scope-refused\",\"scope\":" ++ J.string_literal(scope)
-  ++ ",\"subject\":" ++ J.string_literal(subject)
-  ++ ",\"condition\":\"Scope must be worker, group, universal or all. Worker and group require a nonempty subject.\""
-  ++ ",\"next\":\"Use --scope worker|group|universal|all and name the matching session or Ensemble.\"}"
-
-def direction_refusal(direction: String) -> String:
-  "{\"error\":\"knowledge-direction-refused\",\"direction\":" ++ J.string_literal(direction)
-  ++ ",\"condition\":\"Direction must be in, out or both.\""
-  ++ ",\"next\":\"Use --direction in|out|both.\"}"
-
-def require_scope(+scope: String, +subject: String) -> IO(Unit):
-  Bool.pick(IO(Unit),scope_admitted(scope,subject),IO.pure(Unit,Unit{}),IO.die(Unit,2,scope_refusal(scope,subject)))
-
-def require_direction(+direction: String) -> IO(Unit):
-  Bool.pick(IO(Unit),direction_admitted(direction),IO.pure(Unit,Unit{}),IO.die(Unit,2,direction_refusal(direction)))
-
 
 # The notice a record writes for the author's immediate parent.
 def notice_id(finding: String) -> String:
@@ -112,11 +74,34 @@ def knowledge_item_with_types(+typed: Bool, groups: Bool) -> String:
 def knowledge_item() -> String:
   knowledge_item_with_types(True{},True{})
 
+def subject_error(subject: String) -> String:
+  Bool.pick(String,String.is_empty(subject),
+    "{\"error\":\"knowledge-subject-required\",\"condition\":\"worker and group scopes require a nonempty subject\"}","")
+
+def scope_error(scope: String, subject: String) -> String:
+  match scope:
+    case "worker": subject_error(subject)
+    case "group": subject_error(subject)
+    case "universal": ""
+    case "all": ""
+    case _: "{\"error\":\"knowledge-scope-invalid\",\"condition\":\"scope must be universal, worker, group or all\"}"
+
+def direction_error(direction: String) -> String:
+  match direction:
+    case "in": ""
+    case "out": ""
+    case "both": ""
+    case _: "{\"error\":\"knowledge-direction-invalid\",\"condition\":\"direction must be in, out or both\"}"
+
+def validate_read(+error: String) -> IO(Unit):
+  Bool.pick(IO(Unit),String.is_empty(error),IO.pure(Unit,Unit{}),IO.die(Unit,2,error))
+
 def scope_holders_sql(scope: String, +subject: String) -> String:
   match scope:
     case "worker": "SELECT id FROM sessions WHERE id=" ++ C.q(subject)
     case "group": "SELECT owner AS id FROM ensembles WHERE id=" ++ C.q(subject)
     case "universal": "SELECT s.id FROM sessions s JOIN session_roles r ON r.session=s.id WHERE s.parent IS NULL AND r.role IN('principal-conductor','conductor') AND (" ++ C.q(subject) ++ "='' OR s.id=" ++ C.q(subject) ++ ")"
+    case "all": "SELECT id FROM sessions"
     case _: "SELECT id FROM sessions WHERE 0"
 
 def scope_findings_sql(+scope: String, +subject: String, +groups: Bool) -> String:
@@ -154,9 +139,9 @@ def relations_when_present(+db: String, reader: String, scope: String, subject: 
         typed : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM pragma_table_info('knowledge') WHERE name='kind';"))
         IO.try(String,DB.Sql.read(db,relations_read_sql(reader,scope,subject,groups,String.eq(typed,"1\n"))))
 
-def relations_value(+db: String, reader: String, scope: String, subject: String) -> IO(String):
+def relations_value(+db: String, reader: String, +scope: String, +subject: String) -> IO(String):
   do IO<String>:
-    admitted : Unit <- require_scope(scope,subject)
+    checked : Unit <- validate_read(scope_error(scope,subject))
     present : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM sqlite_master WHERE type='table' AND name='knowledge_relations';"))
     relations_when_present(db,reader,scope,subject,String.eq(present,"1\n"))
 
@@ -191,23 +176,23 @@ def scoped_detail_sql(+reader: String, +scope: String, +subject: String, +id: St
 
 def index_value(+db: String, +reader: String, +scope: String, +subject: String, +scoped: Bool) -> IO(String):
   do IO<String>:
-    admitted : Unit <- require_scope(scope,subject)
+    checked : Unit <- validate_read(scope_error(scope,subject))
     typed : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM pragma_table_info('knowledge') WHERE name='kind';"))
     groups : Bool <- promotion_groups_value(db)
     IO.try(String,DB.Sql.read(db,scoped_index_sql(reader,scope,subject,scoped,String.eq(typed,"1\n"),groups)))
 
 def detail_value(+db: String, +reader: String, +scope: String, +subject: String, +id: String) -> IO(String):
   do IO<String>:
-    admitted : Unit <- require_scope(scope,subject)
+    checked : Unit <- validate_read(scope_error(scope,subject))
     typed : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM pragma_table_info('knowledge') WHERE name='kind';"))
     groups : Bool <- promotion_groups_value(db)
     IO.try(String,DB.Sql.read(db,scoped_detail_sql(reader,scope,subject,id,String.eq(typed,"1\n"),groups)))
 
 # A read of an older database retains its existing findings before any writer
 # installs the new columns and relationship table.
-def read_scope_value(+db: String, reader: String, scope: String, subject: String) -> IO(String):
+def read_scope_value(+db: String, reader: String, +scope: String, +subject: String) -> IO(String):
   do IO<String>:
-    admitted : Unit <- require_scope(scope,subject)
+    checked : Unit <- validate_read(scope_error(scope,subject))
     typed : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM pragma_table_info('knowledge') WHERE name='kind';"))
     groups : Bool <- promotion_groups_value(db)
     IO.try(String,DB.Sql.read(db,scoped_read_sql(reader,scope,subject,String.eq(typed,"1\n"),groups)))
@@ -255,6 +240,7 @@ def traversal_join(+direction: String) -> String:
   match direction:
     case "out": "e.source_ref=w.reference"
     case "in": "e.target_ref=w.reference"
+    case "both": "(e.source_ref=w.reference OR e.target_ref=w.reference)"
     case _: "0"
 
 def traversal_relation(+relation: String) -> String:
@@ -275,14 +261,18 @@ def graph_read_sql(+reader: String, +scope: String, +subject: String, +query: St
   +edges = String.eq(present,"1\n")
   Bool.pick(String,search,search_sql(reader,scope,subject,query,types,groups,edges),traverse_sql(reader,scope,subject,query,direction,relation,recursive,types,groups,edges))
 
-def graph_read(+db: String, +reader: String, +scope: String, +subject: String, +query: String, search: Bool, direction: String, relation: String, recursive: Bool) -> IO(Unit):
-  do IO<Unit>:
-    admitted : Unit <- require_scope(scope,subject)
-    directed : Unit <- require_direction(direction)
+def graph_value(+db: String, +reader: String, +scope: String, +subject: String, +query: String, +search: Bool, +direction: String, relation: String, recursive: Bool) -> IO(String):
+  do IO<String>:
+    scope_checked : Unit <- validate_read(scope_error(scope,subject))
+    direction_checked : Unit <- validate_read(Bool.pick(String,search,"",direction_error(direction)))
     typed : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM pragma_table_info('knowledge') WHERE name='kind';"))
     +groups : Bool <- promotion_groups_value(db)
     present : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM sqlite_master WHERE type='table' AND name='knowledge_relations';"))
-    saved : String <- IO.try(String,DB.Sql.read(db,graph_read_sql(reader,scope,subject,query,search,direction,relation,recursive,typed,groups,present)))
+    IO.try(String,DB.Sql.read(db,graph_read_sql(reader,scope,subject,query,search,direction,relation,recursive,typed,groups,present)))
+
+def graph_read(db: String, reader: String, scope: String, subject: String, query: String, search: Bool, direction: String, relation: String, recursive: Bool) -> IO(Unit):
+  do IO<Unit>:
+    saved : String <- graph_value(db,reader,scope,subject,query,search,direction,relation,recursive)
     IO.write(saved)
 
 # The stored finding, read back only when it is this invocation's own finding:
@@ -307,65 +297,67 @@ def knowledge_conflict_sql(+name: String, +table: String, +id: String, +guards: 
 # The notice rides the existing question kind, so a parent already handed off or
 # stopped still receives it under the dispatch family it already serves. It is
 # written only for this invocation's own finding coordinates.
-def notice_statement(+id: String, +author: String, +claim: String, +evidence: String, +limits: String) -> String:
+def notice_statement_when(+id: String, +author: String, +claim: String, +evidence: String, +limits: String, +allowed: String) -> String:
   "INSERT INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(notice_id(id)) ++ "," ++ C.q(author) ++ "," ++ notice_target(author) ++ ",'question'," ++ notice_body(id,author) ++ " WHERE EXISTS(SELECT 1 FROM knowledge WHERE id=" ++ C.q(id) ++ " AND author=" ++ C.q(author) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits) ++ ") AND " ++ notice_target(author) ++ " IS NOT NULL"
-  ++ " ON CONFLICT(id) DO NOTHING;"
-  ++ knowledge_conflict_sql("knowledge-notice-conflict","messages",C.q(notice_id(id)),notice_target(author) ++ " IS NOT NULL AND EXISTS(SELECT 1 FROM knowledge WHERE id=" ++ C.q(id) ++ " AND author=" ++ C.q(author) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits) ++ ")", "sender=" ++ C.q(author) ++ " AND recipient=" ++ notice_target(author) ++ " AND kind='question' AND body=" ++ notice_body(id,author),"'sender',sender,'recipient',recipient,'kind',kind")
+  ++ " AND (" ++ allowed ++ ") ON CONFLICT(id) DO NOTHING;"
+  ++ knowledge_conflict_sql("knowledge-notice-conflict","messages",C.q(notice_id(id)),"(" ++ allowed ++ ") AND " ++ notice_target(author) ++ " IS NOT NULL AND EXISTS(SELECT 1 FROM knowledge WHERE id=" ++ C.q(id) ++ " AND author=" ++ C.q(author) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits) ++ ")", "sender=" ++ C.q(author) ++ " AND recipient=" ++ notice_target(author) ++ " AND kind='question' AND body=" ++ notice_body(id,author),"'sender',sender,'recipient',recipient,'kind',kind")
 
-def finding_statement(+id: String, +author: String, +claim: String, +evidence: String, +limits: String) -> String:
+def notice_statement(id: String, author: String, claim: String, evidence: String, limits: String) -> String:
+  notice_statement_when(id,author,claim,evidence,limits,"1")
+
+def finding_statement_when(+id: String, +author: String, +claim: String, +evidence: String, +limits: String, +allowed: String) -> String:
   "INSERT INTO knowledge(id,author,claim,evidence,limits) SELECT " ++ C.q(id) ++ "," ++ C.q(author) ++ "," ++ C.q(claim) ++ "," ++ C.q(evidence) ++ "," ++ C.q(limits) ++ " WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(author) ++ ")"
-  ++ " ON CONFLICT(id) DO NOTHING;"
-  ++ knowledge_conflict_sql("finding-id-conflict","knowledge",C.q(id),"EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(author) ++ ")","author=" ++ C.q(author) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits),"'author',author")
+  ++ " AND (" ++ allowed ++ ") ON CONFLICT(id) DO NOTHING;"
+  ++ knowledge_conflict_sql("finding-id-conflict","knowledge",C.q(id),"(" ++ allowed ++ ") AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(author) ++ ")","author=" ++ C.q(author) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits),"'author',author")
+
+def finding_statement(id: String, author: String, claim: String, evidence: String, limits: String) -> String:
+  finding_statement_when(id,author,claim,evidence,limits,"1")
 
 def record_statements(+id: String, +author: String, +claim: String, +evidence: String, +limits: String) -> String:
   finding_statement(id,author,claim,evidence,limits) ++ notice_statement(id,author,claim,evidence,limits) ++ knowledge_answer(id,author,claim,evidence,limits)
 
-def typed_record_statements(+id: String, +author: String, kind: String, +claim: String, +evidence: String, +limits: String) -> String:
-  finding_statement(id,author,claim,evidence,limits)
-  ++ "UPDATE knowledge SET kind=" ++ C.q(kind) ++ " WHERE id=" ++ C.q(id) ++ " AND author=" ++ C.q(author) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits) ++ ";"
-  ++ notice_statement(id,author,claim,evidence,limits)
-  ++ "SELECT json_object('id',id,'author',author,'kind',kind,'claim',claim,'evidence',evidence,'limits',limits) FROM knowledge WHERE id=" ++ C.q(id) ++ " AND author=" ++ C.q(author) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits) ++ ";"
+def typed_record_statements_when(+id: String, +author: String, kind: String, +claim: String, +evidence: String, +limits: String, +allowed: String) -> String:
+  finding_statement_when(id,author,claim,evidence,limits,allowed)
+  ++ "UPDATE knowledge SET kind=" ++ C.q(kind) ++ " WHERE id=" ++ C.q(id) ++ " AND author=" ++ C.q(author) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits) ++ " AND (" ++ allowed ++ ");"
+  ++ notice_statement_when(id,author,claim,evidence,limits,allowed)
+  ++ "SELECT json_object('id',id,'author',author,'kind',kind,'claim',claim,'evidence',evidence,'limits',limits) FROM knowledge WHERE id=" ++ C.q(id) ++ " AND author=" ++ C.q(author) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits) ++ " AND (" ++ allowed ++ ");"
 
-# Source and target are ordinary reference strings. An agent can link findings,
-# retained messages or external evidence and choose the relationship's name.
-def relation_statements(+id: String, author: String, source: String, relation: String, target: String) -> String:
-  +same = "author=" ++ C.q(author) ++ " AND source=" ++ C.q(source) ++ " AND relation=" ++ C.q(relation) ++ " AND target=" ++ C.q(target)
-  "INSERT INTO knowledge_relations(id,author,source,relation,target) VALUES(" ++ C.q(id) ++ "," ++ C.q(author) ++ "," ++ C.q(source) ++ "," ++ C.q(relation) ++ "," ++ C.q(target) ++ ") ON CONFLICT(id) DO NOTHING;"
-  ++ knowledge_conflict_sql("relation-id-conflict","knowledge_relations",C.q(id),"1",same,"'author',author,'source',source,'relation',relation,'target',target")
-  ++ "SELECT json_object('id',id,'author',author,'source',source,'relation',relation,'target',target) FROM knowledge_relations WHERE id=" ++ C.q(id) ++ " AND " ++ same ++ ";"
+def typed_record_statements(id: String, author: String, kind: String, claim: String, evidence: String, limits: String) -> String:
+  typed_record_statements_when(id,author,kind,claim,evidence,limits,"1")
 
-# A linked retry that changes any coordinate of an already stored relation is a
-# collision. The complete link batch is withheld so no authored relationship is
-# replaced, and the refusal names the stored relation.
-def linked_difference(+author: String, +links: String) -> String:
-  "r.author<>" ++ C.q(author) ++ " OR r.source<>json_extract(j.value,'$.source') OR r.relation<>json_extract(j.value,'$.relation') OR r.target<>json_extract(j.value,'$.target')"
+def relation_coordinates(+author: String, source: String, relation: String, target: String) -> String:
+  "author=" ++ C.q(author) ++ " AND source=" ++ C.q(source) ++ " AND relation=" ++ C.q(relation) ++ " AND target=" ++ C.q(target)
 
-def linked_batch_difference(+links: String) -> String:
-  "json_extract(a.value,'$.source')<>json_extract(b.value,'$.source') OR json_extract(a.value,'$.relation')<>json_extract(b.value,'$.relation') OR json_extract(a.value,'$.target')<>json_extract(b.value,'$.target')"
+# A relation identity binds its author, source, relationship and target.
+# An identical retry returns the stored row.
+def relation_statements(+id: String, +author: String, +source: String, +relation: String, +target: String) -> String:
+  +same = relation_coordinates(author,source,relation,target)
+  +registered = "EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(author) ++ ")"
+  "INSERT INTO knowledge_relations(id,author,source,relation,target) SELECT " ++ C.q(id) ++ "," ++ C.q(author) ++ "," ++ C.q(source) ++ "," ++ C.q(relation) ++ "," ++ C.q(target) ++ " WHERE " ++ registered ++ " ON CONFLICT(id) DO NOTHING;"
+  ++ knowledge_conflict_sql("relation-id-conflict","knowledge_relations",C.q(id),registered,same,"'author',author,'source',source,'relation',relation,'target',target")
+  ++ "SELECT json_object('id',id,'author',author,'source',source,'relation',relation,'target',target) FROM knowledge_relations WHERE id=" ++ C.q(id) ++ " AND " ++ registered ++ " AND " ++ same ++ ";"
 
-def linked_batch_conflict(+links: String) -> String:
-  "EXISTS(SELECT 1 FROM json_each(" ++ C.q(links) ++ ") a JOIN json_each(" ++ C.q(links) ++ ") b ON json_extract(a.value,'$.id')=json_extract(b.value,'$.id') AND a.key<b.key WHERE " ++ linked_batch_difference(links) ++ ")"
+# Preflight covers stored identities and conflicting duplicates in this input.
+# Every write in the linked record shares this transaction's admission result.
+def link_text(value: String, field: String) -> String:
+  "CAST(json_extract(" ++ value ++ ",'$." ++ field ++ "') AS TEXT)"
 
-def linked_conflict(+author: String, +links: String) -> String:
-  "(" ++ "EXISTS(SELECT 1 FROM knowledge_relations r JOIN json_each(" ++ C.q(links) ++ ") j ON r.id=json_extract(j.value,'$.id') WHERE " ++ linked_difference(author,links) ++ ") OR " ++ linked_batch_conflict(links) ++ ")"
+def link_collisions_sql(+author: String, +links: String) -> String:
+  "SELECT r.id,r.author,r.source,r.relation,r.target FROM knowledge_relations r JOIN json_each(" ++ C.q(links) ++ ") j ON r.id=" ++ link_text("j.value","id") ++ " WHERE NOT (r.author=" ++ C.q(author) ++ " AND r.source IS " ++ link_text("j.value","source") ++ " AND r.relation IS " ++ link_text("j.value","relation") ++ " AND r.target IS " ++ link_text("j.value","target") ++ ")"
+  ++ " UNION ALL SELECT " ++ link_text("j.value","id") ++ " AS id," ++ C.q(author) ++ " AS author," ++ link_text("j.value","source") ++ " AS source," ++ link_text("j.value","relation") ++ " AS relation," ++ link_text("j.value","target") ++ " AS target FROM json_each(" ++ C.q(links) ++ ") j WHERE j.key IN (SELECT MIN(k.key) FROM json_each(" ++ C.q(links) ++ ") k GROUP BY " ++ link_text("k.value","id") ++ " HAVING COUNT(DISTINCT json_array(" ++ link_text("k.value","source") ++ "," ++ link_text("k.value","relation") ++ "," ++ link_text("k.value","target") ++ "))>1)"
 
-def linked_conflict_sql(+author: String, +links: String) -> String:
-  "SELECT json_object('error','relation-id-conflict','id',r.id,'stored',json_object('author',r.author,'source',r.source,'relation',r.relation,'target',r.target),'condition','This relation identity is already stored with different content.','next','Read knowledge relations and retain the stored relation, then retry the new link under a different ID.') FROM knowledge_relations r JOIN json_each(" ++ C.q(links) ++ ") j ON r.id=json_extract(j.value,'$.id') WHERE " ++ linked_difference(author,links) ++ " LIMIT 1;"
-  ++ "SELECT json_object('error','relation-id-conflict','id',json_extract(a.value,'$.id'),'stored',json_object('author'," ++ C.q(author) ++ ",'source',json_extract(a.value,'$.source'),'relation',json_extract(a.value,'$.relation'),'target',json_extract(a.value,'$.target')),'condition','Two links in this batch share an identity with different content.','next','Use one identity per link.') FROM json_each(" ++ C.q(links) ++ ") a JOIN json_each(" ++ C.q(links) ++ ") b ON json_extract(a.value,'$.id')=json_extract(b.value,'$.id') AND a.key<b.key WHERE " ++ linked_batch_difference(links) ++ " LIMIT 1;"
+def link_conflict_answer(author: String, collisions: String) -> String:
+  "SELECT json_object('error','relation-id-conflict','id',id,'stored',json_object('author',author,'source',source,'relation',relation,'target',target),'condition','This relation identity is already supplied with different content.','next','Retain the existing relation and retry the new input under a different ID.') FROM (" ++ collisions ++ ") WHERE EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(author) ++ ") ORDER BY id LIMIT 1;"
 
 # A producer can commit a typed record and its authored relationships together.
 # Each JSON link names id, source, relation and target. The notice is delivered
 # after the complete record and links have committed.
-def linked_record_statements(+id: String, +author: String, +kind: String, +claim: String, +evidence: String, +limits: String, links: String) -> String:
-  +conflict = linked_conflict(author,links)
-  +author_exists = "EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(author) ++ ")"
-  "INSERT INTO knowledge(id,author,claim,evidence,limits) SELECT " ++ C.q(id) ++ "," ++ C.q(author) ++ "," ++ C.q(claim) ++ "," ++ C.q(evidence) ++ "," ++ C.q(limits) ++ " WHERE " ++ author_exists ++ " AND NOT " ++ conflict ++ " ON CONFLICT(id) DO NOTHING;"
-  ++ knowledge_conflict_sql("finding-id-conflict","knowledge",C.q(id),author_exists,"author=" ++ C.q(author) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits),"'author',author")
-  ++ "UPDATE knowledge SET kind=" ++ C.q(kind) ++ " WHERE id=" ++ C.q(id) ++ " AND author=" ++ C.q(author) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits) ++ " AND NOT " ++ conflict ++ ";"
-  ++ notice_statement(id,author,claim,evidence,limits)
-  ++ "INSERT INTO knowledge_relations(id,author,source,relation,target) SELECT json_extract(j.value,'$.id')," ++ C.q(author) ++ ",json_extract(j.value,'$.source'),json_extract(j.value,'$.relation'),json_extract(j.value,'$.target') FROM json_each(" ++ C.q(links) ++ ") j WHERE EXISTS(SELECT 1 FROM knowledge WHERE id=" ++ C.q(id) ++ " AND author=" ++ C.q(author) ++ " AND kind=" ++ C.q(kind) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits) ++ ") AND NOT " ++ conflict ++ " ON CONFLICT(id) DO NOTHING;"
-  ++ linked_conflict_sql(author,links)
-  ++ "SELECT json_object('id',id,'author',author,'kind',kind,'claim',claim,'evidence',evidence,'limits',limits) FROM knowledge WHERE id=" ++ C.q(id) ++ " AND author=" ++ C.q(author) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits) ++ " AND NOT " ++ conflict ++ ";"
+def linked_record_statements(+id: String, +author: String, +kind: String, +claim: String, +evidence: String, +limits: String, +links: String) -> String:
+  +collisions = link_collisions_sql(author,links)
+  +allowed = "EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(author) ++ ") AND NOT EXISTS(" ++ collisions ++ ")"
+  link_conflict_answer(author,collisions)
+  ++ typed_record_statements_when(id,author,kind,claim,evidence,limits,allowed)
+  ++ "INSERT INTO knowledge_relations(id,author,source,relation,target) SELECT " ++ link_text("j.value","id") ++ "," ++ C.q(author) ++ "," ++ link_text("j.value","source") ++ "," ++ link_text("j.value","relation") ++ "," ++ link_text("j.value","target") ++ " FROM json_each(" ++ C.q(links) ++ ") j WHERE (" ++ allowed ++ ") AND EXISTS(SELECT 1 FROM knowledge WHERE id=" ++ C.q(id) ++ " AND author=" ++ C.q(author) ++ " AND kind=" ++ C.q(kind) ++ " AND claim=" ++ C.q(claim) ++ " AND evidence=" ++ C.q(evidence) ++ " AND limits=" ++ C.q(limits) ++ ") ON CONFLICT(id) DO NOTHING;"
 
 # Session destinations notify that session; group destinations notify the
 # recorded Ensemble owner.
@@ -449,11 +441,11 @@ def record_linked(+db: String, +id: String, author: String, kind: String, claim:
       answered(delivery))
 
 def tool_help() -> String:
-  "\nknowledge record --kind KIND --claim TEXT [--evidence TEXT] [--limits TEXT] [--links JSON]\nknowledge search --query TEXT [--scope universal|worker|group|all] [--subject SUBJECT]\nknowledge traverse --reference REFERENCE --direction in|out|both [--relation RELATION] [--recursive] [--scope universal|worker|group|all]\nBaton resolves the author and generates finding and relation identities. Links contain source, relation and target evidence references. Kinds and relations are authored strings. Search matches all query terms across complete findings and retained evidence messages and returns typed neighbors with detail reads. Traversal follows scoped relations and terminates on cycles. Use help knowledge for the available actions.\n"
+  "\nknowledge record --kind KIND --claim TEXT [--evidence TEXT] [--limits TEXT] [--links JSON]\nknowledge search --query TEXT [--scope universal|worker|group|all] [--subject SUBJECT]\nknowledge traverse --reference REFERENCE --direction in|out|both [--relation RELATION] [--recursive] [--scope universal|worker|group|all]\nBaton resolves the author and generates finding and relation identities. Links contain source, relation and target evidence references. Kinds and relations are authored strings. Worker and group scopes require a nonempty subject; contextual commands default the subject to the current session. Search matches all query terms across complete findings and retained evidence messages and returns typed neighbors with detail reads. Traversal follows scoped relations and terminates on cycles. Use help knowledge for the available actions.\n"
 
 def relate(db: String, id: String, author: String, source: String, relation: String, target: String) -> IO(Unit):
   do IO<Unit>:
-    saved : String <- IO.try(String,Store.transact_sql(db,commit_sql(relation_statements(id,author,source,relation,target))))
+    +saved : String <- IO.try(String,Store.transact_sql(db,commit_sql(relation_statements(id,author,source,relation,target))))
     Bool.pick(IO(Unit),Store.refused(saved),IO.die(Unit,2,saved),write_answer(saved))
 
 # Read: the shared findings as a JSON array. An unregistered reader receives the

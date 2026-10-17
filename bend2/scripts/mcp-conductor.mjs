@@ -501,7 +501,7 @@ const TOOLS = [
     name: 'baton2_knowledge',
     description: 'Discover finding metadata or read an exact finding and its complete evidence as the attached session. Index rows carry literal detailRead argv, and retained-message metadata carries literal deliveryRead argv.',
     inputSchema: { type: 'object', properties: {
-      scope: { type: 'string', description: 'universal, worker, group, or all (the default discovery view)' },
+      scope: { type: 'string', enum: ['worker', 'group', 'universal', 'all'], description: 'universal, worker, group, or all (the default discovery view)' },
       subject: { type: 'string', description: 'Worker or Ensemble ID; universal can name its Principal Conductor' },
       index: { type: 'boolean', description: 'Return compact metadata for visible findings' },
       id: { type: 'string', description: 'Return the complete visible finding with this exact stored ID' },
@@ -512,7 +512,7 @@ const TOOLS = [
     name: 'baton2_knowledge_relations',
     description: 'Read directed knowledge relationships, including message and external-reference links. Defaults to the attached session\'s authored relationships and links touching its held findings; optional scopes use the existing knowledge holdings.',
     inputSchema: { type: 'object', properties: {
-      scope: { type: 'string', description: 'worker (default), group, universal, or all' },
+      scope: { type: 'string', enum: ['worker', 'group', 'universal', 'all'], description: 'worker (default), group, universal, or all' },
       subject: { type: 'string', description: 'Worker or Ensemble ID; universal can name its Principal Conductor' },
       pretty: { type: 'boolean', description: 'Pretty-print the JSON result' },
     }, additionalProperties: false },

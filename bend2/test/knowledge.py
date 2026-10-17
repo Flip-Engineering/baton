@@ -469,7 +469,6 @@ class Knowledge(unittest.TestCase):
         self.call('record', 'visible', 'worker', 'claim', 'run:visible', 'One run')
         scope_cases = (
             ('knowledge-scope', 'root', 'unrecognized', ''),
-            ('knowledge-scope', 'root', 'worker', ''),
             ('knowledge-scope', 'root', 'unrecognized', '', '--index'),
             ('knowledge-scope', 'root', 'unrecognized', '', '--id', 'visible'),
             ('knowledge-relations', 'root', 'unrecognized', ''),
@@ -481,8 +480,19 @@ class Knowledge(unittest.TestCase):
             with self.subTest(args=args):
                 refused = self.call(*args, success=False)
                 self.assertEqual(refused.returncode, 2)
-                self.assertIn('knowledge-scope-refused', refused.stderr)
-                self.assertIn(args[2], refused.stderr)
+                self.assertIn('knowledge-scope-invalid', refused.stderr)
+        subject_cases = (
+            ('knowledge-scope', 'root', 'worker', ''),
+            ('knowledge-relations', 'root', 'group', ''),
+            ('knowledge-search', 'root', 'worker', '', 'claim'),
+            ('knowledge-traverse', 'root', 'group', '', 'finding:visible',
+             'both', '', 'neighbors'),
+        )
+        for args in subject_cases:
+            with self.subTest(args=args):
+                refused = self.call(*args, success=False)
+                self.assertEqual(refused.returncode, 2)
+                self.assertIn('knowledge-subject-required', refused.stderr)
         direction_cases = (
             ('knowledge-traverse', 'root', 'worker', 'worker',
              'finding:visible', 'sideways', '', 'neighbors'),
@@ -493,7 +503,7 @@ class Knowledge(unittest.TestCase):
             with self.subTest(args=args):
                 refused = self.call(*args, success=False)
                 self.assertEqual(refused.returncode, 2)
-                self.assertIn('knowledge-direction-refused', refused.stderr)
+                self.assertIn('knowledge-direction-invalid', refused.stderr)
 
     def test_relation_id_collision_preserves_the_stored_author_and_content(self):
         first = self.call('relate', 'link-1', 'grand',
@@ -514,6 +524,12 @@ class Knowledge(unittest.TestCase):
         self.assertEqual((stored[0]['author'], stored[0]['source'],
                           stored[0]['relation'], stored[0]['target']),
                          ('grand', 'finding:a', 'Supports', 'finding:b'))
+        unregistered = self.call('relate', 'link-2', 'absent',
+                                 'finding:a', 'Supports', 'finding:b',
+                                 success=False)
+        self.assertEqual(unregistered.returncode, 1)
+        self.assertEqual([row['id'] for row in
+                          self.call('knowledge-relations', 'grand')], ['link-1'])
 
     def test_linked_relation_collision_withholds_the_record_and_links(self):
         self.call('relate', 'existing-link', 'grand',
@@ -544,6 +560,22 @@ class Knowledge(unittest.TestCase):
         self.assertEqual(self.ids(self.read('grand')), ['linked-record'])
         self.assertNotIn('batch-link', [row['id'] for row in
                                         self.call('knowledge-relations', 'grand')])
+        affinity = [{'id': 1, 'source': 'finding:a',
+                     'relation': 'Supports', 'target': 5},
+                    {'id': '1', 'source': 'finding:a',
+                     'relation': 'Supports', 'target': 4}]
+        refused = self.call('record-linked', 'affinity-record', 'grand', 'decision',
+                            'claim', 'run:affinity', 'One run',
+                            json.dumps(affinity), success=False)
+        self.assertIn('relation-id-conflict', refused.stderr)
+        self.assertEqual(self.ids(self.read('grand')), ['linked-record'])
+        self.assertNotIn('1', [str(row['id']) for row in
+                               self.call('knowledge-relations', 'grand')])
+        unregistered = self.call('record-linked', 'absent-record', 'absent', 'decision',
+                                 'claim', 'run:absent', 'One run', '[]',
+                                 success=False)
+        self.assertEqual(unregistered.returncode, 1)
+        self.assertEqual(self.ids(self.read('grand')), ['linked-record'])
 
     def test_a_mismatched_evidence_repeat_is_refused_and_keeps_the_stored_row(self):
         evidence = self.evidence('report-9', 'worker')

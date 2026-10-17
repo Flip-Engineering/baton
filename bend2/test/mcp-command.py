@@ -650,6 +650,13 @@ class McpCommand(unittest.TestCase):
                 expected_properties = set(arguments) | optional
                 self.assertEqual(set(schema['properties']), expected_properties)
                 self.assertFalse(schema['additionalProperties'])
+        for tool in ('baton2_knowledge', 'baton2_knowledge_relations',
+                     'baton2_knowledge_search', 'baton2_knowledge_traverse'):
+            self.assertEqual(set(self.tools[tool]['inputSchema']['properties']['scope']['enum']),
+                             {'worker', 'group', 'universal', 'all'})
+        self.assertEqual(
+            set(self.tools['baton2_knowledge_traverse']['inputSchema']['properties']['direction']['enum']),
+            {'in', 'out', 'both'})
         self.command(stdout='{"session":"recorded consumer"}\n', tool='baton2_resume',
                      arguments={'session': 'recorded consumer', 'liftStop': True}, session=session,
                      expected_args=['resume', 'recorded consumer', '--lift-stop'])
