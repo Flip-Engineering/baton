@@ -66,6 +66,17 @@ def retained_lines(+handle: U32, lock: Maybe<U32>, sender: Chan(Unit), line: May
       next : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.read_line(handle))
       retained_lines(handle,lock,sender,next)
 
+@unsafe
+def retained_span_lines(+handle: U32, lock: Maybe<U32>, sender: Chan(Unit), span: Maybe<String> & String) -> IO(Unit):
+  match span:
+    case (offset,length):
+      match offset:
+        case None{}: retained_finish(handle,lock,sender)
+        case Some{value}: do IO<Unit>:
+          printed : Unit <- IO.print(value ++ "\t" ++ length)
+          next : Maybe<String> & String <- IO.try(Maybe<String> & String,P.ProcessChild.read_retained_line_span(handle))
+          retained_span_lines(handle,lock,sender,next)
+
 def observer_close(handle: U32, close: Bool) -> IO(Unit):
   match close:
     case False{}: IO.pure(Unit,Unit{})
@@ -98,6 +109,24 @@ def retained_started(start: P.RetainedStart, lock: U32, payload: String, close: 
     case P.Unstarted{error}: IO.die(Unit,1,error)
     case P.Retained{handle}: observe_retained(handle,Some{lock},payload,close)
 
+def observe_retained_spans(+handle: U32, lock: Maybe<U32>, payload: String, close: Bool) -> IO(Unit):
+  do IO<Unit>:
+    attempt : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.release(handle)
+    checked : Unit <- early_release(attempt)
+    sender : Chan(Unit) <- IO.fork(Unit,observer_write(handle,payload,close))
+    first : Maybe<String> & String <- IO.try(Maybe<String> & String,P.ProcessChild.read_retained_line_span(handle))
+    retained_span_lines(handle,lock,sender,first)
+
+def retained_span_started(start: P.RetainedStart, lock: U32, payload: String, close: Bool) -> IO(Unit):
+  match start:
+    case P.Unstarted{error}: IO.die(Unit,1,error)
+    case P.Retained{handle}: observe_retained_spans(handle,Some{lock},payload,close)
+
+def retained_choose(start: P.RetainedStart, lock: U32, payload: String, span: Bool, close: Bool) -> IO(Unit):
+  match span:
+    case True{}: retained_span_started(start,lock,payload,close)
+    case False{}: retained_started(start,lock,payload,close)
+
 def retained_locked(+directory: String, +cwd: String, payload: String, +mode: String, program: List<String>, lock: Maybe<U32>) -> IO(Unit):
   match lock:
     case None{}: IO.die(Unit,1,"fixture session busy")
@@ -106,7 +135,7 @@ def retained_locked(+directory: String, +cwd: String, payload: String, +mode: St
       bytes : String <- IO.try(String,Text.Text.read(payload))
       stderr : String = Bool.pick(String,String.eq(mode,"setup-failure"),cwd ++ "/setup.stderr",directory ++ "/native.stderr")
       start : P.RetainedStart <- IO.try(P.RetainedStart,P.ProcessChild.retain(directory,P.argv(program),cwd,stderr,"",1,handle,P.argv([executable,"recover-retained",directory])))
-      retained_started(start,handle,bytes,String.eq(mode,"close"))
+      retained_choose(start,handle,bytes,String.eq(mode,"span"),String.eq(mode,"close"))
 
 def retained_cli(args: List<String>) -> IO(Unit):
   match args:

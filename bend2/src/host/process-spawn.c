@@ -19,6 +19,7 @@ typedef struct {
   BatonChild *child;
   char *args, *cwd, *log, *text;
   size_t length;
+  uint64_t frame_start, frame_length;
   u32 handle, signal, index;
   uint64_t owner_incarnation,owner_attempt;
   int kind, error, eof, unstarted, fresh, preserve_line, notice_socket;
@@ -57,7 +58,7 @@ enum { BP_SPAWN, BP_WRITE, BP_CLOSE, BP_READ, BP_READ_AWAKE, BP_WAIT, BP_SIGNAL,
        BP_INSTANCE_PREPARE_WITH_FILE, BP_INSTANCE_START, BP_INSTANCE_CANCEL,
        BP_INSTANCE_OWNER_WITNESS, BP_INSTANCE_ENSURE_OWNER_WITNESS,
        BP_INSTANCE_RECOVER, BP_INSTANCE_INPUT_WITNESS, BP_INSTANCE_INPUT_PROMPT,
-       BP_OBSERVER_RECOVERY };
+       BP_OBSERVER_RECOVERY, BP_READ_SPAN };
 
 static int baton_pipe(int fds[2]) {
   if (pipe(fds)) return errno;
@@ -825,6 +826,58 @@ static void br_read_line(BatonProcessCall *call) {
   }
   pthread_mutex_unlock(&retained->reader);
 }
+/* Read one complete retained-spool line as a byte range. The newline advances
+   the reader but is excluded from the returned span, matching read_line.
+   Keeping the bytes in the immutable spool avoids converting large frames to
+   Bend String values during classification. */
+static void br_read_line_span(BatonProcessCall *call) {
+  BatonRetained *retained=call->child->retained;
+  pthread_mutex_lock(&retained->reader);
+  if(retained->spool<0 || retained->offset<0) {call->error=EBADF;goto done;}
+  call->frame_start=(uint64_t)retained->offset;
+  for(;;) {
+    pthread_mutex_lock(&retained->state);
+    uint64_t version=retained->version;int exited=retained->exited;
+    call->error=retained->error;pthread_mutex_unlock(&retained->state);
+    if(call->error) break;
+    char chunk[8192];ssize_t n=pread(retained->spool,chunk,sizeof(chunk),retained->offset);
+    if(n<0 && errno==EINTR) continue;
+    if(n<0) {call->error=errno;break;}
+    if(n) {
+      char *newline=memchr(chunk,'\n',(size_t)n);
+      size_t consumed=newline?(size_t)(newline-chunk)+1:(size_t)n;
+      size_t content=consumed-(newline?1u:0u);
+      if(content>UINT64_MAX-call->frame_length || consumed>(size_t)LLONG_MAX ||
+         retained->offset>LLONG_MAX-(off_t)consumed) {call->error=EOVERFLOW;break;}
+      call->frame_length+=(uint64_t)content;
+      retained->offset+=(off_t)consumed;
+      if(newline) break;
+      continue;
+    }
+    pthread_mutex_lock(&retained->state);
+    if(retained->error) call->error=retained->error;
+    else if(exited) call->eof=call->frame_length==0;
+    else if(!retained->exited) {
+      while(version==retained->version && !retained->exited && !retained->error)
+        pthread_cond_wait(&retained->changed,&retained->state);
+    }
+    pthread_mutex_unlock(&retained->state);
+    if(call->error || exited) break;
+  }
+  if(!call->error && !call->eof) {
+    char start[32],length[32];
+    int a=snprintf(start,sizeof(start),"%llu",(unsigned long long)call->frame_start);
+    int b=snprintf(length,sizeof(length),"%llu",(unsigned long long)call->frame_length);
+    if(a<0 || (size_t)a>=sizeof(start) || b<0 || (size_t)b>=sizeof(length)) call->error=EOVERFLOW;
+    else {
+      call->cursor=strdup(start);
+      call->generation=strdup(length);
+      if(!call->cursor || !call->generation) call->error=ENOMEM;
+    }
+  }
+done:
+  pthread_mutex_unlock(&retained->reader);
+}
 static void baton_retained_call(BatonProcessCall *call) {
   BatonRetained *retained=call->child->retained;
   if(retained->observer_only &&
@@ -842,6 +895,7 @@ static void baton_retained_call(BatonProcessCall *call) {
     return;
   }
   if(call->kind==BP_READ) {br_read_line(call);return;}
+  if(call->kind==BP_READ_SPAN) {br_read_line_span(call);return;}
   if(call->kind==BP_INSTANCE_COMMIT) {
     /* One atomic record: the consumed offset and the reducer state the caller
        committed after its own durable store and reducer effects for that frame.
@@ -4549,6 +4603,7 @@ static void baton_process_call(IoWork *w) {
     baton_retained_begin_call(call);return;
   }
   if(call->kind==BP_READ_AWAKE && child->retained) {br_read_awake(call);return;}
+  if(call->kind==BP_READ_SPAN && !child->retained) {call->error=ENOTSUP;return;}
   if(child->retained) { baton_retained_call(call);return; }
   if(call->kind==BP_RELEASE || call->kind==BP_ACK || call->kind==BP_INSTANCE_COMMIT ||
      call->kind==BP_INSTANCE_RESTORE || call->kind==BP_INSTANCE_REPLAY) { call->error=EINVAL;return; }
@@ -4621,6 +4676,12 @@ static Term baton_process_pack(Env e, IoWork *w) {
 #ifdef CID_SOME
     else if(call->kind==BP_READ || call->kind==BP_RECOVERY || call->kind==BP_OBSERVER_RECOVERY) value=call->eof ? term_pak(CID_NONE,0)
       : io_box(e,CID_SOME,io_str(e,call->text,call->length));
+#ifdef CID_PROCESSCHILD_READ_RETAINED_LINE_SPAN
+    else if(call->kind==BP_READ_SPAN) value=io_tup(e,
+      call->eof ? term_pak(CID_NONE,0)
+        : io_box(e,CID_SOME,io_str(e,call->cursor?call->cursor:"",call->cursor?strlen(call->cursor):0)),
+      io_str(e,call->generation?call->generation:"",call->generation?strlen(call->generation):0));
+#endif
 #endif
 #ifdef CID_PROCESSCHILD_READ_AWAKE
 #ifdef CID_SOME
@@ -4837,6 +4898,9 @@ static void __attribute__((constructor)) baton_process_read_text_use(void) {
 #endif
 #ifdef CID_PROCESSCHILD_READ_AWAKE
 BP_EFFECT(baton_process_read_awake,CID_PROCESSCHILD_READ_AWAKE,BP_READ_AWAKE)
+#endif
+#ifdef CID_PROCESSCHILD_READ_RETAINED_LINE_SPAN
+BP_EFFECT(baton_process_read_span,CID_PROCESSCHILD_READ_RETAINED_LINE_SPAN,BP_READ_SPAN)
 #endif
 #ifdef CID_PROCESSCHILD_WAIT
 BP_EFFECT(baton_process_wait,CID_PROCESSCHILD_WAIT,BP_WAIT)
