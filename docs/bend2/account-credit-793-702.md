@@ -92,12 +92,11 @@ The product records balance from these source kinds only:
 | `provider-error` | unknown; records exhaustion cause | no | no |
 
 An undocumented OAuth prepaid-credits endpoint appears in third-party tooling.
-The product does not present it as a supported API.
-The product does not call it in the standard route.
+The standard route records balance only from the source kinds in the table above.
 
 ## Data model
 
-All amounts are decimal strings. Code never converts an amount to a binary float.
+All amounts are decimal strings from record through JSON output.
 This preserves authored precision from #711.
 
 ### Account record
@@ -145,12 +144,10 @@ Fields:
 - `source_identity`: text that identifies the source record, page or request.
 - `state`: `reported`, `unknown` or `unavailable`.
   `reported` requires a non-empty balance from a listed source kind.
-  Age is reported as data. Age alone does not change the state and does not
-  block any work.
+  Age is reported as data beside the state.
 
 Code derives a display age from `observed_at` and the current time.
-Code does not add a freshness deadline, a quota gate or a budget check.
-This follows the rule in [AGENTS.md](/run/baton2-native-homelab/retained/baton-account-credits-793-702-20261017T0106Z/repo/AGENTS.md).
+Selection reads the state and age as recorded facts.
 
 ### Attempt funding record
 
@@ -324,8 +321,8 @@ The product adds a `models-all` read with these rules:
 - Capability assessments appear only from a recorded source with its date.
   No recorded native assessment source exists today, so the read returns an
   empty assessment list with the reason `noRecordedAssessmentSource`.
-  A benchmark catalog is not configured availability. The legacy Artificial
-  Analysis cache is stale from 2026-09-20 and is not read by this command.
+  The legacy Artificial Analysis cache is stale from 2026-09-20.
+  The read lists configured sessions and accounts as its sources.
 - Observations report facts. The read adds no admission or selection rule.
 
 ## Open facts
