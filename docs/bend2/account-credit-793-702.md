@@ -51,6 +51,19 @@ Baton native attempts spawn `claude --print` in
 A Baton attempt with an API-key route from a verified linked organization records
 `credit_eligible` as true. A subscription-authenticated attempt records it as false.
 
+Two clocks stay distinct in every observation and classifier.
+Organization spend caps reset on the first of a calendar month.
+Promotional credits refresh on the plan billing cycle.
+A request can fail on a spend cap while promotional credit remains, and
+promotional credit can expire while a spend cap has reset.
+The classifier records which fact the provider reported.
+Documented exhaustion wording from the platform document:
+`Your credit balance is too low to access the Anthropic API.`
+Classification is status-first on Claude result frames
+(`api_error_status` 402, spend-limit 400, tier-cap 429 without retry-after),
+scoped to the funding route that produced the frame.
+The OMP `errorStatus=429` transient rule stays scoped to OMP frame shapes.
+
 ## Supported observation sources
 
 The Organization API provides `GET /v1/organizations/me`.
