@@ -334,6 +334,16 @@ jobs:
               if result.returncode:
                   raise SystemExit(result.returncode)
           record('complete-native', ['sh', 'bend2/scripts/check-native.sh'])
+          main_binary = root / '.scratch/bend2/baton2'
+          main_receipt = main_binary.with_name(main_binary.name + '.build.json')
+          main_build = None
+          if main_receipt.is_file():
+              verification = subprocess.check_output([
+                  sys.executable, str(root / '.github/scripts/reuse-native-main.py'), 'verify-build',
+                  '--receipt', str(main_receipt), '--source', str(main_binary) + '.c',
+                  '--entry', str(root / 'bend2/src/host/native-entry.c'),
+                  '--output', str(main_binary)], text=True)
+              main_build = json.loads(verification)
           selected_results = {name: json.loads((evidence / 'selected' / (name + '.json')).read_text()) for name in selected}
           assert all(result['judged'] and result['exit_code'] == 0 for result in selected_results.values())
           def git(*args):
@@ -351,6 +361,20 @@ jobs:
           linux_binary.write_bytes(binary.read_bytes())
           linux_binary.chmod(0o755)
           (run / 'generated/baton2.c').write_bytes(c.read_bytes())
+          if main_build is not None:
+              shutil.copyfile(binary.with_name(binary.name + '.o'), run / 'generated/baton2.o')
+              shutil.copyfile(main_receipt, run / 'generated/baton2.build.json')
+              object_copy_dir = run / 'generated/baton2-shard-objects'
+              object_copy_dir.mkdir()
+              for row in main_build['retained_objects']:
+                  original = pathlib.Path(row['path'])
+                  copied = object_copy_dir / row['object_name']
+                  shutil.copyfile(original, copied)
+                  row['copy_path'] = str(pathlib.Path('baton2-shard-objects') / row['object_name'])
+                  row['size_bytes'] = copied.stat().st_size
+                  row['sha256'] = hashlib.sha256(copied.read_bytes()).hexdigest()
+              main_build = {key: main_build[key] for key in (
+                  'route', 'receipt_sha256', 'output_sha256', 'object_sha256', 'retained_objects')}
           main_c_reuse = json.loads((run / 'generated/main-c-reuse.json').read_text())
           subprocess.run([sys.executable, str(root / '.github/scripts/reuse-native-main.py'), 'verify-transfer',
                           '--source', str(root), '--generated', str(run / 'generated')], check=True,
@@ -366,8 +390,14 @@ jobs:
                      'linux_binary_sha256': hashlib.sha256(binary.read_bytes()).hexdigest(),
                      'linux_binary_path': 'baton2-linux-x64', 'linux_binary_size': linux_binary.stat().st_size,
                      'source_manifest_sha256': hashlib.sha256((run / 'generated/source-manifest.json').read_bytes()).hexdigest(),
-                     'checks': records, 'selected_results': selected_results, 'main_c_reuse': main_c_reuse}
+                     'checks': records, 'selected_results': selected_results, 'main_c_reuse': main_c_reuse,
+                     'main_native_build': main_build}
           (run / 'generated/handoff-manifest.json').write_text(json.dumps(handoff, indent=2) + '\n')
+          if main_build is not None:
+              verify_sharded_transfer = runpy.run_path(
+                  str(root / '.github/scripts/reuse-native-main.py'))['verify_sharded_transfer']
+              verify_sharded_transfer(main_build, run / 'generated/baton2.build.json',
+                                      run / 'generated')
           PY
       - name: Retain required REPL compiler source inputs
         shell: bash
@@ -685,6 +715,18 @@ jobs:
           assert linux_binary.is_file() and not linux_binary.is_symlink()
           assert linux_binary.stat().st_size == handoff['linux_binary_size']
           assert hashlib.sha256(linux_binary.read_bytes()).hexdigest() == handoff['linux_binary_sha256']
+          native_build = handoff.get('main_native_build')
+          if native_build is not None:
+              object_file = generated / 'baton2.o'
+              build_receipt = generated / 'baton2.build.json'
+              assert object_file.is_file() and not object_file.is_symlink()
+              assert build_receipt.is_file() and not build_receipt.is_symlink()
+              assert hashlib.sha256(object_file.read_bytes()).hexdigest() == native_build['object_sha256']
+              assert hashlib.sha256(build_receipt.read_bytes()).hexdigest() == native_build['receipt_sha256']
+              assert hashlib.sha256(linux_binary.read_bytes()).hexdigest() == native_build['output_sha256']
+              subprocess.run(['python3', str(root / '.github/scripts/reuse-native-main.py'),
+                  'verify-sharded-transfer', '--handoff', str(generated / 'handoff-manifest.json'),
+                  '--generated', str(generated)], check=True)
           main_c_reuse = json.loads((generated / 'main-c-reuse.json').read_text())
           assert main_c_reuse == handoff['main_c_reuse']
           subprocess.run(['python3', str(root / '.github/scripts/reuse-native-main.py'), 'verify-transfer',
