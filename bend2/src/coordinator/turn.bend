@@ -782,12 +782,20 @@ def consume_exhausted(+db: String, +player: String, +id: String, +log: String, h
 def invalid_tail_error() -> String:
   "Native output contains an embedded NUL byte; observation stopped at the last validated checkpoint."
 
+def invalid_tail_terminal_status(+status: String) -> Bool:
+  Bool.or(Tx.starts_with(status,"exit "),Bool.or(Tx.starts_with(status,"signal "),String.eq(status,"unknown after keeper loss")))
+
+def invalid_tail_matches_error(+error: String) -> Bool:
+  String.eq(error,invalid_tail_error())
+
+def invalid_tail_ended(+status: String, event: String, +error: String, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>) -> Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>:
+  terminal : Bool = invalid_tail_terminal_status(status)
+  only_corruption : Bool = invalid_tail_matches_error(error)
+  (Ended{status,event,error,Bool.pick(Bool,Bool.and(terminal,only_corruption),False{},True{})},deliveries)
+
 def invalid_tail_result(result: Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>) -> Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>:
   match result:
-    case (Ended{status,event,error,incomplete},deliveries):
-      terminal : Bool = Bool.or(Tx.starts_with(status,"exit "),Bool.or(Tx.starts_with(status,"signal "),String.eq(status,"unknown after keeper loss")))
-      only_corruption : Bool = String.eq(error,invalid_tail_error())
-      (Ended{status,event,error,Bool.pick(Bool,Bool.and(terminal,only_corruption),False{},True{})},deliveries)
+    case (Ended{status,event,error,incomplete},deliveries): invalid_tail_ended(status,event,error,deliveries)
 
 def invalid_tail_finish(action: IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>)) -> IO(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>):
   IO.bind(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>,Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>,action,result => IO.pure(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>,invalid_tail_result(result)))
