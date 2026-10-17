@@ -375,7 +375,7 @@ jobs:
 
   darwin-arm64:
     needs: [linux-candidate, linux-target]
-    runs-on: macos-15
+    runs-on: [self-hosted, macOS, ARM64, baton2-native-darwin-arm64]
     env:
       BATON2_RELEASE_VERSION: ${{ github.event_name == 'workflow_dispatch' && inputs.release_version || '' }}
     steps:
