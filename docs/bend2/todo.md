@@ -71,7 +71,9 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   for multiple configured accounts and native funding routes. Preserve the
   distinction between subscription usage and Console/API-key usage, report
   actual usage and known availability, and qualify fallback with unknown
-  balance capability explicitly retained. Coordinate
+  balance capability explicitly retained. The operator reports two Max
+  accounts, each with a recurring $200 monthly API credit; track that credit
+  separately from subscription quota and use it in workload routing. Coordinate
   [#702](https://github.com/Flip-Engineering/baton/issues/702),
   [#681](https://github.com/Flip-Engineering/baton/issues/681),
   [#694](https://github.com/Flip-Engineering/baton/issues/694),
@@ -280,29 +282,18 @@ remain open under [#782](https://github.com/Flip-Engineering/baton/issues/782).
   [#770](https://github.com/Flip-Engineering/baton/issues/770), with the
   exit-zero raw-preservation case tracked by
   [#796](https://github.com/Flip-Engineering/baton/issues/796).
-  The 2026-10-17 recovery patch is on retained source HEAD
-  `35152919ad99f1938c76dfa8db33f2b1ebfa762d`; the invalid-tail helper passed
-  its focused type check in 359 ms. A combined Main build was started from this
-  source; a separate memory-only build from `0880cf3` is being used for the
-  memory correction. Runtime acceptance requires bounded-memory receive and
-  checkpoint recovery from a NUL-corrupted tail, with the original bytes and
-  pending input preserved.
-  The exact-hash review was read under the existing DeepSeek native, attempt
-  `receive:rewrite-deepseek:984:691184f811a59c6b8a14f0707ae2ba0e`. It confirms
-  the affine failure is fixed and verifies the error-appending and keeper-loss
-  marker dependencies. Follow-up source tracing established that the full-spool
-  check in `instance.bend:166` gates successful input-witness settlement; it
-  does not gate process-attempt retirement. The nonempty corruption error keeps
-  the owed inbox input unsettled. A separate raw-preservation constraint remains:
-  normal keeper exit-zero acknowledgement unlinks stdout in
-  `process-spawn.c:1100-1111`, while the owner-loss path preserves it. The pure
-  Bend2 recovery path must leave an exit-zero NUL tail incomplete and retain its
-  raw spool, checkpoint, native UUID and owed input. Custody-proven owner loss
-  can retire the dead attempt while leaving the inbox input unsettled.
-  Supporting failed-observation retirement after exit zero requires a separate
-  process-acknowledgement change. The repaired plan has a passing Muse review;
-  native implementation, admission pins and the compaction decision remain
-  open. See the [October 17 issue update](https://github.com/Flip-Engineering/baton/issues/769#issuecomment-6228858193).
+  The current recovery candidate is commit `1d7bcfec`, published in
+  [PR #795](https://github.com/Flip-Engineering/baton/pull/795). It moves
+  observation recursion outside the frame callback and keeps NUL-corrupted
+  exit-zero output incomplete so its raw spool, checkpoint, native UUID and
+  owed input remain retained. Main validation and diagnostics passed; full
+  C generation and focused runtime acceptance remain pending. Earlier build
+  attempts and review corrections remain in the
+  [October 17 issue update](https://github.com/Flip-Engineering/baton/issues/769#issuecomment-6228858193).
+  The full-spool check gates successful input-witness settlement, while process
+  retirement follows a separate exited-and-released transition. Supporting
+  failed-observation retirement after exit zero requires the separate
+  acknowledgement change in [#796](https://github.com/Flip-Engineering/baton/issues/796).
 
 - [#770: Retain actual native wait status after a filesystem write failure](https://github.com/Flip-Engineering/baton/issues/770).
   The [#769](https://github.com/Flip-Engineering/baton/issues/769) review reaped
@@ -791,7 +782,9 @@ remain open under [#782](https://github.com/Flip-Engineering/baton/issues/782).
 ## Other open work
 
 - [#793: Track configured accounts, native funding routes and API credits](https://github.com/Flip-Engineering/baton/issues/793).
-  Research supported account and usage APIs, preserve unknown balances and
+  Track the two operator-supplied Max accounts and their recurring $200 monthly
+  API credits separately from subscription usage quota. Research supported
+  account and usage APIs, preserve unknown balances and
   qualify account-aware observation and fallback. Coordinate subscription
   routing in [#702](https://github.com/Flip-Engineering/baton/issues/702),
   provider failure in [#681](https://github.com/Flip-Engineering/baton/issues/681),
@@ -929,7 +922,7 @@ remain open under [#782](https://github.com/Flip-Engineering/baton/issues/782).
   Their combined host-C and SQLite executable was installed at 04:29 UTC with
   SHA-256 `9cc011e95da93526c433de7887863f3ef8d10df55043011125fba2ba52d602c5`;
   the previous executable remains available for rollback. Source consolidation
-  is in [#798](https://github.com/Flip-Engineering/baton/pull/798). This temporarily
+  merged in [#798](https://github.com/Flip-Engineering/baton/pull/798). This temporarily
   enables observer rotation while the Bend callback build continues. The separate
   SQLite projection fix (`ca42f103`) has compiled and passed repeated setup
   through the executable on a database copy: schema version and trigger
@@ -939,101 +932,23 @@ remain open under [#782](https://github.com/Flip-Engineering/baton/issues/782).
   retry behavior in [#786](https://github.com/Flip-Engineering/baton/issues/786).
 - [#676: Baton2: share one native instance across connected agents](https://github.com/Flip-Engineering/baton/issues/676).
 
-  Follow-up 2026-10-17: the separate clean-stream `knowledge-deepseek` setup
-  failure was repaired through the supported Baton `receiver` action. Its
-  pending dispatch `dispatch:bb56091c-a309-43eb-a490-fb89f4dc0909` is now read
-  under UUID `01a147c2-99b1-7000-bcb7-cbaea84d2e53`; attempt
-  `receive:knowledge-deepseek:42:8e458cd46f641dd816c5b02d89530874` is running
-  with a running execution. The input receipt remains pending. The failed Kimi
-  quota report `receive:rewrite-kimi:893:4e9ee3cd15600e2468722b117b5d22b8`
-  remains unacknowledged; its #769 scope was routed to the existing DeepSeek
-  native as guidance `message:rewrite-tooling:a8c03fce4bfa7a5adebc8d2ab5660f1f`,
-  read under the same native UUID in attempt 941. The exact-hash review update
-  `message:rewrite-tooling:d915a4983290d89d7fcf8de3fd8b212e` is admitted to the
-  same DeepSeek UUID and was read under attempt
-  `receive:rewrite-deepseek:984:691184f811a59c6b8a14f0707ae2ba0e`; its review
-  report is pending delivery. Source tracing corrected the review's initial
-  concern: the full-spool witness gates successful input settlement, while
-  process-attempt retirement is a separate exited-and-released transition. The
-  nonempty NUL error leaves the owed input unsettled. Normal exit-zero
-  acknowledgement unlinks stdout, so the pure Bend2 candidate must keep an
-  exit-zero NUL tail incomplete; custody-proven owner loss can retire the dead
-  process attempt with the original spool, checkpoint, native UUID and input
-  retained. Failed-observation retirement after exit zero remains a separate
-  process-acknowledgement task tracked by #696, #769 and #786. See
-  [#796](https://github.com/Flip-Engineering/baton/issues/796) and the
-  [October 17 #696 update](https://github.com/Flip-Engineering/baton/issues/696#issuecomment-6228856867).
-  The original fframes attempt 694 exited with status 0. A guarded configure
-  then set `fframes-lead` to `muse-wonder-1.0` at high effort, preserving UUID
-  `01a1475d-d987-7bf2-8968-b31165d91a60`. The retained coordinator task was
-  resumed once on the same UUID after identifying open child work. Guidance
-  `message:operator:a7c7a1da93eb2e889a164f7c1b54ed87` was read under attempt
-  `receive:fframes-lead:735:5e1acf5a17c271f828ce9dce9bef577d`; the session remains
-  running on the standard model, with no unread inbox items. The latest owned
-  report `report:0e6847548dfc53dde2bb0f3696682fe0` says `native-gpu` is actively
-  editing `fframes-3d/src/gpu/mod.rs` and should remain undisturbed.
-  `material-shader` has repeated queued-message preemption that prevents tool
-  calls from executing; the lead reports additional guidance would worsen the
-  queue. Simulation and quality had exited on Kimi quota; their routes have
-  since been guardedly changed to DeepSeek Flash and their same-UUID
-  continuations are running. The latest lead report says asset-contract commit
-  `9c6ef30` was integrated and its 35/35 suite was re-verified. No new SHAs
-  were reported from material, native-gpu, reviewer or quality; tips remain
-  `7ee64e6` and `0ee836f`, with parity incomplete.
+  The October 17 recovery preserves the original native UUIDs and owed input.
+  Standard Wonder conductors and DeepSeek continuations have resumed through
+  supported Baton actions. Seven retained portfolio streams have NUL-corrupted
+  tails and require the recovery candidate in #795. Their original output,
+  checkpoints and pending inputs remain retained. The
+  [custody update](https://github.com/Flip-Engineering/baton/issues/696#issuecomment-6229653996)
+  records deployed observer containment and its validation.
 
-  At 03:14 UTC, reviewer attempt
-  `receive:independent-review-codex:576:29ff733713bd41ffd4562526677abfae`
-  had a 761708342-byte retained stdout stream. Its Baton receive wrapper PID
-  275329 held the raw-file descriptor; recorded native PID 26207 was absent.
-  Across a 12-second sample the raw stream size stayed fixed while the
-  projected log grew from 301047003 to 301237949 bytes and the checkpoint
-  mtime advanced. Bounded projected-log tails contained both large
-  `message_update` snapshots and later `thinking_delta`/`toolcall_delta` events.
-  This is observer replay of retained output, not new provider bytes. The
-  historical OMP child hash is unavailable after its exit; preserve the stream
-  and do not attribute its events to the installed replacement binary.
+  The fframes lead uses standard `muse-wonder-1.0` on its original UUID.
+  Simulation and quality results have been integrated and their selected CPU
+  checks pass. Material and native GPU work still require continuation after
+  their retained-attempt setup failures are repaired. Preserve their dirty Rust
+  and WGSL worktrees, output and pending input during that repair. The lead must
+  evaluate, integrate and qualify completed child work.
 
-  At the terminal windows for `simulation` attempt 743 and `quality` attempt
-  681, guarded `configure --expected-model kimi-code/k3` changed each route to
-  `deepseek/deepseek-flash`. Both stayed on the OMP harness, retained their
-  existing endpoints and native UUIDs, and resumed through the configure wake.
-  `simulation` is running attempt
-  `receive:simulation:743:e6ef015825d0940a0669fdaaa1b5d69e` on UUID
-  `01a14713-d3b8-7000-b15a-112318059965`; PID 275354/birth 577257 matches its
-  native birth record. It owns 11 pending reads, including the retained task
-  continuations, and its stdout/checkpoint are 726751/423 bytes. `quality` is
-  running attempt `receive:quality:681:ba9ce72234e0ee01c934eeab81d32c9f` on UUID
-  `01a14714-293d-7000-b23e-1d3738750b6e`; PID 278344/birth 583887 matches. It
-  owns both pending inputs and its stdout/checkpoint are 92238/332 bytes. The
-  prior Kimi quota reports remain in both ledgers; no new Kimi turn was started.
-  These are active continuations, not completed implementation or quality
-  evidence.
-
-  The reports describe a five-hour quota window but provide no reset timestamp
-  or `Retry-After`; the reset time is unknown. A read-only `omp usage
-  --provider kimi-code --json --redact` query returned no Kimi usage report.
-  The default OMP store in the seats' HOME has one `kimi-code` OAuth credential
-  disabled after `invalid_grant`, updated 2026-10-06 18:51:01 UTC, and no Kimi
-  usage-history or cooldown rows. The saved seat command has no explicit API
-  key, profile or config override, and the owner environment contains no
-  credential variable names. The historical 403 does not identify its token,
-  so credential binding remains unproven. Track OAuth refresh separately under
-  [#793](https://github.com/Flip-Engineering/baton/issues/793); no Kimi retry
-  or credential mutation was performed.
-
-  At 02:55 UTC, user units `acp-render-farm.service` and
-  `acp-render-farm-gpu1.service` were active with four running render containers
-  and two sampled worker processes using 120% Blender CPU and 97% Python CPU.
-  The bounded NVIDIA sample showed 0% GPU utilization; GPU0 admission reported
-  thermal or power-brake code `0x20` at 47 C, GPU1 was 63 C, and GPU3 remained
-  user-held. These samples show active CPU work and do not establish completed
-  GPU rendering. No GPU controls were used.
-  At 03:02 UTC, both user units were still active. A bounded `nvidia-smi`
-  sample showed UUID `GPU-1a60290b-b538-1ac7-9a81-3978d3b12c60` at 22% GPU,
-  49 C and 49.28 W; `GPU-b7aaa373-d194-a71f-539d-e0a10dbfc4ce` was at 0%,
-  67 C and 64.17 W; user-held `GPU-b983e9da-46fc-ecd8-1449-53e039430591`
-  was at 0%, 57 C and 41.62 W. This shows GPU0 rendering activity while the
-  other sampled lanes remain idle; no GPU controls were used.
-  At 03:15 UTC, both user units remained active. GPU1 was at 98%; Blender PID
-  275745 used 3452 MiB. GPU0 was at 0% and 46 C; user-held GPU3 remained at 0%.
-  No reset or signal was used.
+  The GPU rendering farm resumed CPU and GPU work after recovery. Verify queue
+  progress and completed outputs, preserve the user-held GPU, and investigate
+  source-specific holds with their original renderer and kernel evidence.
+  Continue quota/reset-source implementation under #793 and #797 with the
+  recorded historical provider failures retained.
