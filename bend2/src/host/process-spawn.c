@@ -1052,15 +1052,20 @@ static void br_disconnected(BrKeeper *keeper) {
   br_detach_observer(keeper);
   if(!keeper->finishing && keeper->native_pid) br_recover(keeper);
 }
-static int br_native_exited(BrKeeper *keeper) {
-  if(!keeper->ready || !keeper->native_waiting || !keeper->native_pid)return 0;
+static int br_record_native_exit(BrKeeper *keeper) {
+  if(!keeper->native_waiting || !keeper->native_pid)return 0;
   pid_t reaped;int status;
   do {reaped=waitpid(keeper->native_pid,&status,0);}while(reaped<0 && errno==EINTR);
   if(reaped<0)return errno;
   keeper->status=status;keeper->exited=1;keeper->native_waiting=0;
   char text[64];int n=snprintf(text,sizeof(text),"%d\n",status);
   int error=br_file(keeper->directory,"status",text,(size_t)n,1);
-  return error?error:br_send(keeper,(BrFrame){.op=BR_EXIT,.value=status},NULL);
+  if(error)return error;
+  return keeper->ready?br_send(keeper,(BrFrame){.op=BR_EXIT,.value=status},NULL):0;
+}
+static int br_native_exited(BrKeeper *keeper) {
+  if(!keeper->ready)return 0;
+  return br_record_native_exit(keeper);
 }
 static int br_command(BrKeeper *keeper,BrFrame frame,const char *payload) {
   int error=0;
@@ -1233,7 +1238,7 @@ static int br_reconcile_native(BrKeeper *keeper,BrBirth requested) {
   if(waited<0)return errno;
   if(information.si_pid!=keeper->native_pid)return EBUSY;
   keeper->native_waiting=1;
-  error=br_native_exited(keeper);
+  error=br_record_native_exit(keeper);
   if(error)return error;
   return br_exists(keeper->directory,"status")?0:ENOENT;
 }

@@ -187,11 +187,10 @@ class RetainedControl(unittest.TestCase):
                               sys.executable, self.fixture, self.server.getsockname()[1], native_mode)
         stream, native = self.accept()
         self.assertEqual(native['role'], 'native')
-        self.line(observer, 'early-release-refused')
         self.line(observer, 'observer-write-start')
-        keeper = next(row for row in self.processes() if row['pid'] == native['ppid'])
-        self.assertEqual(keeper['ppid'], observer.pid)
-        self.assertIn('--host-process-keeper', keeper['command'])
+        owner = next(row for row in self.processes() if row['pid'] == native['ppid'])
+        self.assertEqual(owner['ppid'], observer.pid)
+        self.assertIn('--instance-owner', owner['command'])
         self.assertEqual(native['pgid'], native['pid'])
         return observer, stream, native
 
@@ -208,6 +207,7 @@ class RetainedControl(unittest.TestCase):
         observer.stdin.close()
         self.assertEqual(observer.wait(), 0, observer.stderr.read())
         self.line(observer, 'retained-complete')
+        self.run_control('shutdown', self.db)
         while self.processes():
             time.sleep(.01)
         self.assertEqual(self.run_control('lock-try', self.db).stdout, 'acquired\n')
