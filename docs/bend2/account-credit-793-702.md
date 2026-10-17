@@ -303,6 +303,31 @@ Source, tests, executable, installation and actual provider proof stay separate 
 Live provider proof requires root-placed credentials and a verified organization.
 That proof is outstanding until root completes account setup.
 
+## Model discovery for #792
+
+The `models` read in [usage.bend](/run/baton2-native-homelab/retained/baton-account-credits-793-702-20261017T0106Z/repo/bend2/src/coordinator/usage.bend:466)
+reads one recorded session's harness. It does not enumerate the operator's
+configured harnesses or accounts. Muse inspection resolves one supplied
+model identifier and reports `modelExistence` as unknown.
+
+The product adds a `models-all` read with these rules:
+
+- Sources are the recorded sessions and the recorded accounts in the project
+  database. Each distinct harness, command and workspace is queried once
+  through the existing per-harness query. The read runs no new process type.
+- Each source answer keeps its schema, observation time and source identity.
+  A failed or unsupported query stays in the result as unknown with its cause.
+- Accounts appear by label with provider, harness, funding route and
+  organization state. Secret-store references do not appear in this read.
+- Muse model enumeration stays unknown. The Muse client resolves one
+  supplied identifier; the read states that limit per Muse source.
+- Capability assessments appear only from a recorded source with its date.
+  No recorded native assessment source exists today, so the read returns an
+  empty assessment list with the reason `noRecordedAssessmentSource`.
+  A benchmark catalog is not configured availability. The legacy Artificial
+  Analysis cache is stale from 2026-09-20 and is not read by this command.
+- Observations report facts. The read adds no admission or selection rule.
+
 ## Open facts
 
 - Account-to-organization mapping for the two Chrome sign-ins: unverified. Owner: root.
