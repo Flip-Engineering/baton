@@ -132,6 +132,8 @@ not a member.
 | Notice recovery | First promotion exits 1 with `The row is committed and its notice is undelivered...`; row `repair-share` exists and its notice has no receipt. After the endpoint is repaired, the retry returns the stored promotion; one row, one notice, one delivered line. |
 | Final state | 204,800 bytes; 5 findings, 4 promotions, 2 relations, 10 messages. |
 | Process memory | On the 204,800-byte fixture, `knowledge-scope` used 11,016 KiB maximum resident set size in 0.03 s and `knowledge-search` used 20,724 KiB in 0.15 s. Both figures include process startup and SQLite open. |
+Two independent runs in fresh fixture directories produced the same JSON after
+removing the fixture path and Git base commit.
 
 The duplicate share contradicts the one-row-per-share statement. The lifecycle
 audit describes one promotion row per
