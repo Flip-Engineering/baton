@@ -1,0 +1,37 @@
+{
+  "attempt": "2026-08-13T07:35:57.974Z",
+  "salt": "z520260813073557",
+  "role": "fold-157",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-f4159b58dffdc2e0670a8c4a7e0b1ff3"
+        ]
+      }
+    },
+    {
+      "step": "terminal:fold-157",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "fold-157": {
+      "pin": "e62675ff4b10e487dc62454780777c71e4fa9bed",
+      "paths": [
+        "docs/reference/evidence/cli-wave-fidelity-2026-08-13/contract-fold.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 474,
+  "verdict": "FOLD-157-OK"
+}

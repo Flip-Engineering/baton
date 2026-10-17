@@ -1,0 +1,216 @@
+{
+  "source": "589ea5cec0a24a0bf0ceee81938a3f171fb0fbba",
+  "compiler": "bend 2.0.25",
+  "coordinator_sha256": "2f0397100b793a87b180068434526b2f0963c6e8e8258338455fa56876702f30",
+  "generated_c_sha256": "58814a0174d5040163e3f043a0537025c71997252b021b426d42211b4bb93ca6",
+  "workspace": "/Users/wahargis/Development/Experiments/baton-bend2-supervisor-loss-625",
+  "baseline": {
+    "source": "455d6ea74805932ee980868f644055346d36560d",
+    "firstSupervisor": 52914,
+    "firstNative": 52922,
+    "retryNative": 53645,
+    "recordedNativeId": "native-parent",
+    "duplicateNativeSession": true,
+    "coordinator_sha256": "8cc2f966f1b33578633ba002ed67563b5a04460b76e7a9e018d6b998ce6d7aa1"
+  },
+  "probe": {
+    "source": "589ea5cec0a24a0bf0ceee81938a3f171fb0fbba",
+    "status": "passed",
+    "firstSupervisor": 8202,
+    "firstNative": 8227,
+    "keeper": 8223,
+    "supervisorExit": -9,
+    "recordedNativeId": "native-parent",
+    "retryStatus": "queued",
+    "retryAfterTerminalStatus": "queued",
+    "duplicateNativeSession": false,
+    "postLossOutputRetained": true,
+    "originalCompletionRetained": true,
+    "pendingInputDrained": true,
+    "parentNotified": true,
+    "originalExitedBeforeContinuation": true,
+    "processesBeforeCleanup": []
+  },
+  "live": {
+    "source": "589ea5cec0a24a0bf0ceee81938a3f171fb0fbba",
+    "model": "gpt-6-astra",
+    "effort": "medium",
+    "subscription_login": "Logged in using ChatGPT",
+    "elapsed_seconds": 93.75563788414001,
+    "observer_exit": -9,
+    "original_native_pid": 85466,
+    "native_session": "01a0e8a1-c7b0-7bd1-a8de-2ad6d77456a7",
+    "launches": [
+      {
+        "kind": "launch",
+        "pid": 85466,
+        "ppid": 85452,
+        "unix": 1790609311.024145,
+        "argv": [
+          "exec",
+          "--json",
+          "--model",
+          "gpt-6-astra",
+          "-c",
+          "model_reasoning_effort=\"medium\"",
+          "--dangerously-bypass-approvals-and-sandbox",
+          "-"
+        ],
+        "resume": ""
+      },
+      {
+        "kind": "launch",
+        "pid": 92107,
+        "ppid": 92103,
+        "unix": 1790609362.9446661,
+        "argv": [
+          "exec",
+          "resume",
+          "01a0e8a1-c7b0-7bd1-a8de-2ad6d77456a7",
+          "--json",
+          "--model",
+          "gpt-6-astra",
+          "-c",
+          "model_reasoning_effort=\"medium\"",
+          "--dangerously-bypass-approvals-and-sandbox",
+          "-"
+        ],
+        "resume": "01a0e8a1-c7b0-7bd1-a8de-2ad6d77456a7"
+      }
+    ],
+    "repository_commits": [
+      "c64a5001fc8deef8800329bfd29fe9807bb28858",
+      "89f6a14842411025a5707f023764b5dda5cb7ec4"
+    ],
+    "remaining_processes": [],
+    "assertions": [
+      "The actual initial Bend receive observer exited from SIGKILL.",
+      "The original Codex process remained alive and normal retry returned queued.",
+      "Exactly two native launches occurred; follow-up began after original process exit.",
+      "The follow-up resumed the original native conversation.",
+      "Native output after observer loss produced complete matching parent reports.",
+      "Both task messages and both parent reports have receipts; both inboxes are empty.",
+      "Codex made two document commits in the isolated clone and all run processes exited."
+    ],
+    "limitations": [
+      "One receive observer was killed while its keeper and native Codex process survived.",
+      "The parent endpoint records and acknowledges reports; it is a local deterministic process.",
+      "No keeper loss, host restart, direct-turn loss, landing or remote publication is exercised."
+    ],
+    "observer_pid": 85399,
+    "runtime_source_manifest_sha256": "9403e7a1d273d700504484586a34c260fcb37f4fc12fea95960f0a65485dbc87",
+    "evidence_sha256": "3c0784774f201aaffe40bf682018d8fdfea7044c23a5c707a78d144815c37993",
+    "raw_terminal_frames": [
+      {
+        "type": "turn.completed",
+        "usage": {
+          "input_tokens": 202268,
+          "cached_input_tokens": 179840,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 1114,
+          "reasoning_output_tokens": 24
+        }
+      },
+      {
+        "type": "turn.completed",
+        "usage": {
+          "input_tokens": 411105,
+          "cached_input_tokens": 376320,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 2025,
+          "reasoning_output_tokens": 43
+        }
+      }
+    ],
+    "timing": {
+      "seconds_to_loss": 10.374976634979248,
+      "seconds_loss_to_initial_parent_report": 42.8956241607666,
+      "seconds_loss_to_followup_launch": 42.83432126045227,
+      "seconds_followup_launch_to_followup_parent_report": 40.278907775878906
+    }
+  },
+  "live_reports": [
+    {
+      "id": "receive:worker:1:abf240dc15e420b868fe8548613837cc",
+      "body_sha256": "b2d57da192822be5c58bb6c65d66351e7d6ba43dfe4de43257f449bdebf87d83",
+      "body_bytes": 411,
+      "receipt": "parent received complete report receive:worker:1:abf240dc15e420b868fe8548613837cc"
+    },
+    {
+      "id": "receive:worker:2:8912576df5d366b82cdbdb0c5bd7b1a1",
+      "body_sha256": "dcb9b8118890e09d5fb607ac466d0a14bcfe6b962fcf70daf410fb108873573a",
+      "body_bytes": 437,
+      "receipt": "parent received complete report receive:worker:2:8912576df5d366b82cdbdb0c5bd7b1a1"
+    }
+  ],
+  "artifacts": {
+    "baseline": ".scratch/issue625/baseline/probe.json",
+    "probe": ".scratch/issue625/closure-probe.json",
+    "live": ".scratch/issue625/live/run-4/evidence.json",
+    "native_checks": ".scratch/issue625/check-native-closure.log",
+    "build": ".scratch/issue625/build-closure.log"
+  },
+  "provider_rejection": {
+    "path": ".scratch/issue625/live/run-1/failure.json",
+    "model": "gpt-5.4",
+    "outcome": "The subscription endpoint rejected the route before fault injection. Both diagnostic reports were acknowledged and owned processes exited."
+  },
+  "observed_shutdown_regression": {
+    "source": "1fbde426c8f33d24f65cd3c36e78d1fc6edb2ced",
+    "coordinator_sha256": "c660bba2ed958a2e9792b5c1474c36eb9246df571c99cda4ad76548591afc052",
+    "path": ".scratch/issue625/terminal-guidance-replay/evidence.json",
+    "outcome": "Guidance queued after OMP stdin closed caused Broken pipe during observer recovery while the original native process survived.",
+    "regression_test": "test_omp_recovery_after_input_closes_defers_guidance_until_native_exit"
+  },
+  "checks": {
+    "command": "BEND=/Users/wahargis/Development/Experiments/bend2-trial/.bend/bin/bend sh bend2/scripts/check-native.sh",
+    "exit_code": 0,
+    "python_tests": 123,
+    "bend_suites": [
+      "git",
+      "land"
+    ],
+    "log_sha256": "2e1da76ffa2a38ce124d64f4eca63d9bdddebe2ad94cd0a97f667b2f4cf0e47d",
+    "rebuild_sha256": "2f0397100b793a87b180068434526b2f0963c6e8e8258338455fa56876702f30"
+  },
+  "integration": {
+    "source": "276b62b5baef6e6aae17f60c364957b96a08cf35",
+    "upstream": "cd2310afc073272f8339fca41676900ed3ca7fed",
+    "coordinator_sha256": "6b7f8f7c0207a92198de12f2bfacbac17398a015155ed8665120d3c9c7691c91",
+    "runtime_files_changed_since_original_measurement": [
+      "bend2/src/coordinator/turn.bend"
+    ],
+    "checks": {
+      "command": "BEND=/Users/wahargis/Development/Experiments/bend2-trial/.bend/bin/bend sh bend2/scripts/check-native.sh",
+      "exit_code": 0,
+      "python_tests": 124,
+      "bend_suites": [
+        "git",
+        "land"
+      ],
+      "log": "/Users/wahargis/Development/Experiments/baton-bend2-supervisor-loss-625/.scratch/issue625/all-process-loss/check-native-626.log",
+      "log_sha256": "4c7fbb9f37c0f9b6bedf59d6f800dfdf1e21974843893168920374dbd82837db"
+    },
+    "probe": {
+      "status": "passed",
+      "firstSupervisor": 15516,
+      "firstNative": 15523,
+      "keeper": 15517,
+      "duplicateNativeSession": false,
+      "postLossOutputRetained": true,
+      "originalCompletionRetained": true,
+      "pendingInputDrained": true,
+      "parentNotified": true,
+      "processesBeforeCleanup": []
+    },
+    "probe_artifact": ".scratch/issue625/all-process-loss/receive-probe-626.json",
+    "probe_artifact_sha256": "231963feda4d670d8b823e4c4c266526c379311258ca79a71f6fa42db6949c6c",
+    "codex_process_loss_record": "docs/bend2/measurements/2026-09-28-codex-process-loss.json",
+    "remaining_receive_626_gap": {
+      "source": "276b62b5baef6e6aae17f60c364957b96a08cf35",
+      "evidence": "/Users/wahargis/Development/Experiments/baton-bend2-supervisor-loss-625/.scratch/issue625/all-process-loss/receive-626-gap/evidence.json",
+      "evidence_sha256": "3d9ef30eb47ac05f3e605f23b15dfc3d26c40655a399eec5d91ba84c94cfb9ac",
+      "outcome": "Retained receive reports the missing OMP conversation, leaves its original input pending, and starts no fresh conversation."
+    }
+  }
+}

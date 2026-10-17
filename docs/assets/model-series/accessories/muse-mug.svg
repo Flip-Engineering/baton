@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-15 -15 40 32" role="img" aria-label="Cobalt ceramic mug accessory">
+  <title>Cobalt ceramic mug accessory</title>
+  <g id="ceramic-mug" data-anchor="mug" data-layer="front" style="--ceramic:#FAFCFE;--cobalt:#0040DC;--ink:#305CAC" stroke-linecap="round" stroke-linejoin="round">
+    <path id="handle" d="M10 -6 C24 -10 26 7 11 6" fill="none" stroke="var(--ink)" stroke-width="2.3"/>
+    <path id="body" d="M-11 -8 Q0 -11 11 -8 V7 Q11 11 0 11 Q-11 11 -11 7 Z" fill="var(--cobalt)" stroke="var(--ink)" stroke-width="1.25"/>
+    <path id="cream-front" d="M-9 -6.5 Q0 -9 9 -6.5 V6.8 Q9 9 0 9 Q-9 9 -9 6.8 Z" fill="var(--ceramic)"/>
+  </g>
+</svg>

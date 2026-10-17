@@ -1,0 +1,497 @@
+/* The stage: the seating plan drawn by attention.js.
+
+   An ordinary stylesheet: the page serves `default-src 'self'` and refuses an inserted
+   <style>. Every rule is scoped to the stage's own mount, `.lane-strip`, so the drawing
+   looks the same wherever its region sits.
+
+   The mount carries the material the drawing needs, because the Agents region sits on
+   the paper material and the stage is the seats rather than a written surface: it keeps
+   the hall's dark ground and the lit status tokens the marks were drawn against, copied
+   from the hall's own block, which the stage used to inherit. The band keeps no cap and
+   no scroll of its own: the page carries the length, and a large hall runs long. The
+   rules below read `var(--muted)`, `var(--hairline)`, `var(--ink)`,
+   `var(--wash)` and the ground tokens, and name no state colour: the state inks are set
+   by the module, in PAINT, on the shapes that own them. One token the hall does not
+   remap carries a ground value here for the module's own inks: `--stage-starting`
+   matches the ribbon's lit waiting. */
+
+.lane-strip {
+  --ink: #e8e9e4;
+  --muted: var(--graphite-lit, #9aa3b4);
+  --hairline: var(--hall-edge, #2b2419);
+  --wash: #1f1a12;
+  --surface: #191410;
+  --attention: var(--attention-lit, #e2a94f);
+  --running: var(--running-lit, #57c46a);
+  --failed: var(--failed-lit, #ef6b5f);
+  --staff: #39404b;
+  --stage-starting: #d7b45a;
+  background: var(--hall, #131009);
+  color: var(--ink);
+}
+
+.lane-strip .att-stage {
+  display: block;
+  overflow: visible;
+  width: auto;
+  min-width: 100%;
+  flex: 0 0 100%;
+}
+
+.lane-strip .att-stage-viewport { flex: 0 0 100%; min-width: 0; overflow-x: auto; }
+.lane-strip .att-stage-tools { display: flex; gap: 8px; flex-basis: 100%; padding: 10px; }
+.lane-strip .att-stage-view { color: var(--ink); border-color: var(--muted); font: 12px var(--sans); }
+.lane-strip .att-ensemble-details { flex-basis: 100%; padding: 10px; }
+.lane-strip .att-ensemble-details > summary { cursor: pointer; font: 13px var(--sans); }
+.lane-strip .att-peer-boundary { fill: var(--wash); fill-opacity: .45; stroke: #78869a; stroke-width: 1; }
+.lane-strip .att-peer-heading { fill: #78869a; fill-opacity: .22; }
+.lane-strip .att-peer-name { fill: var(--ink); font: 500 12px var(--sans); }
+.lane-strip .att-peer-name[role="button"] { cursor: pointer; text-decoration: underline; }
+
+.lane-strip .att-stage:focus { outline: none; }
+
+/* ── the hall: ground, tier bands, floor ───────────────────────────────── */
+
+/* The ground runs from the lifted surface at the top to the deep floor, so the
+   drawing reads as a room. The gradient is defined in the SVG. */
+.lane-strip .att-hall { fill: var(--surface); }
+
+/* A lifted band behind every other tier, so a wide row reads across as one line. */
+.lane-strip .att-tier {
+  fill: var(--wash);
+  opacity: 0.55;
+}
+
+/* The trail behind a seat: its length grades how recently the seat acted, on a
+   channel the state does not own, so shape and ink keep reading the state alone.
+   These are the floor values, the ones a grade of 0 draws; the module sets the
+   width and the opacity for each grade. */
+.lane-strip .att-trail {
+  stroke: var(--muted);
+  stroke-width: 1.1;
+  stroke-linecap: round;
+  opacity: 0.6;
+}
+
+/* An action from an earlier event reads as a broken trail, never a fresh one. */
+.lane-strip .att-trail-earlier { stroke-dasharray: 2 3; }
+
+/* What a seat owes, in the band below its mark: one unit mark per recorded item.
+   The sign stands for an amount and more signs are more, so the count is read by
+   counting the marks in the row rather than by measuring the length of a bar. The
+   ink is the muted one the queue bar wore and never a state's own, and the exact
+   figure travels in the seat's title. Six units are the cap the bar took; the row
+   of six spans the same twenty pixels, and every unit stays inside the bar's band. */
+.lane-strip .att-owed {
+  stroke: var(--muted, #9aa3b4);
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+/* The podium rule: the line the tiers stand behind. */
+.lane-strip .att-plate {
+  stroke: var(--muted);
+  stroke-width: 1;
+  opacity: 0.4;
+}
+
+/* ── the seats ─────────────────────────────────────────────────────────── */
+
+/* A seat is a pointer target and one stop in the stage's own keyboard walk. */
+.lane-strip .att-seat { cursor: pointer; }
+
+.lane-strip .att-ring { fill: none; }
+
+.lane-strip .att-seat-ring {
+  fill: none;
+  stroke: var(--ink);
+  opacity: 0;
+}
+
+.lane-strip .att-seat:hover .att-seat-ring,
+.lane-strip .att-seat.att-cursor .att-seat-ring { opacity: 0.9; }
+
+/* The keyboard cursor is the focus ring on the hall ground. */
+.lane-strip .att-seat.att-cursor .att-seat-ring { stroke-width: 2; }
+
+/* The selection ring marks the opened actor in the page's own ink, the same ink the
+   keyboard cursor uses, so no ring borrows a state colour: an amber ring would read
+   as a stop. */
+.lane-strip .att-seat.att-selected .att-seat-ring {
+  opacity: 1;
+  stroke-width: 2;
+  stroke: var(--ink);
+}
+
+/* The conductor's role enclosure, in the foreground colour: a whole ring at radius + 7
+   for the principal conductor, the same ring with two gaps for an associate. The
+   fermata ring uses the seat state's colour at radius + 4 and the selection ring marks
+   focus at radius + 3. The enclosure uses radius + 7, and its shape identifies the
+   conductor's role. */
+.lane-strip .att-role {
+  fill: none;
+  stroke: var(--ink);
+  stroke-width: 1;
+  opacity: 0.9;
+}
+
+.lane-strip .att-hit { fill: transparent; }
+
+/* A tier's name sits flush left and its seat count flush right, so the column is
+   a table of groups and sizes: the name is readable without hover, and the count
+   is the figure that tells its size. */
+.lane-strip .att-section-label {
+  font-family: var(--mono);
+  font-size: 12px;
+  fill: var(--ink);
+}
+
+.lane-strip .att-section {
+  font-family: var(--mono);
+  font-size: 10px;
+  fill: var(--muted);
+  text-anchor: end;
+  font-variant-numeric: tabular-nums;
+}
+
+/* The tier's condition, beside its name: the same unit mark the seats use - one mark
+   per seat that is not progressing, in the colour that seat's state uses, then one per
+   seat that owes work in the muted colour. The module sets each mark's stroke from
+   the same PAINT table the seat marks read, so the tier's marks and the hall's marks
+   use one set of colours. */
+.lane-strip .att-tier-mark {
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+
+/* The sections the payload records for an ensemble, one line under the tier's name:
+   the capability and its member count, joined when there are several, in the seat
+   labels' own face and ink. Nothing is drawn when the payload carries none. */
+.lane-strip .att-sections {
+  font-family: var(--mono);
+  font-size: 9px;
+  fill: var(--muted);
+}
+
+/* The seat's own name, under its mark, in the same ink as the tier labels. */
+.lane-strip .att-seat-label {
+  font-family: var(--mono);
+  font-size: 13px;
+  fill: var(--ink);
+  text-anchor: middle;
+}
+
+.lane-strip .att-seat:hover .att-seat-label,
+.lane-strip .att-seat.att-cursor .att-seat-label { fill: var(--ink); }
+
+/* The baton: a curved line from the podium to the seat that acted most recently. It
+   wears the page's own ink rather than a state's, so no line on the stage borrows a
+   state colour its shape does not own. */
+.lane-strip .att-baton {
+  fill: none;
+  stroke: var(--ink);
+  stroke-width: 1.5;
+  opacity: 0.75;
+  stroke-dasharray: 4 4;
+  animation: att-march 1200ms linear infinite;
+}
+
+/* A recorded relation: stroke only, no filled body, width against the recorded
+   count, and its kind read from the pattern rather than from a state's colour.
+   The ladder is measured in absolute pixels, so the smallest hall it draws in carries
+   the same pattern as the largest, and each family's period is about half again the
+   one before it: promotions are dots (1 on, 3 off), receipts and reports short dashes
+   (3 on, 3 off), tasks and guidance dashes (6 on, 4 off), stops long dashes (10 on,
+   6 off), executions run solid, and a kind the five families do not name draws one dot
+   with a 23px gap. A dash pattern only shows its gap past its first painted dash, so
+   these counts are chosen against the shortest thread the stage models, which is long
+   enough for every family to repeat. The kind is named in each thread's title as well,
+   so the pattern is never the only channel. */
+.lane-strip .att-know,
+.lane-strip .att-thread {
+  fill: none;
+  stroke: var(--muted);
+  vector-effect: non-scaling-stroke;
+}
+
+.lane-strip .att-know { opacity: 0.35; stroke-dasharray: 1 3; }
+
+.lane-strip .att-thread-receipt,
+.lane-strip .att-thread-report { stroke-dasharray: 3 3; }
+.lane-strip .att-thread-task,
+.lane-strip .att-thread-guidance,
+.lane-strip .att-thread-recovery { stroke-dasharray: 6 4; }
+.lane-strip .att-thread-stop { stroke-dasharray: 10 6; }
+
+/* A kind the five families do not name: the sparsest mark on the ladder, one dot with
+   a 23px gap (period 24, half again the stop family's 16), so an unnamed kind can
+   never be read as an execution or as any family. Its title still names it. */
+.lane-strip .att-thread-recorded { stroke-dasharray: 1 23; }
+
+/* A typed edge between two seats: an authored claim, or structured recorded evidence.
+   The two read on value and on the glyph at the far end. Ink hue belongs to the seat
+   states, so a seam wears the seams' own muted ink and never a state's, and width
+   states how many recorded edges pair the two seats. */
+.lane-strip .att-seam {
+  fill: none;
+  stroke: var(--muted, #9aa3b4);
+  vector-effect: non-scaling-stroke;
+}
+
+/* An authored claim: the brighter seam, 5.68:1 on the pit's flat ground. */
+.lane-strip .att-seam-authored { opacity: 0.85; }
+
+/* Recorded evidence: the quieter seam, 3.05:1, above SC 1.4.11's 3:1 floor for a
+   graphic a reader needs. The two seam values differ by 1.92:1. */
+.lane-strip .att-seam-cited { opacity: 0.55; }
+
+/* The authored end: one solid chevron pointing along the seam at the seat the claim is
+   about. Six pixels across, and no seat silhouette, so no state can be read from it. */
+.lane-strip .att-seam-chevron {
+  fill: var(--muted, #9aa3b4);
+  opacity: 0.85;
+}
+
+/* The cited end: two short bars across the seam, the mark a quotation takes. The pair
+   reads as one mark and never as the counted units, which stand under a seat's mark. */
+.lane-strip .att-seam-bar {
+  stroke: var(--muted, #9aa3b4);
+  stroke-width: 1.2;
+  stroke-linecap: round;
+  opacity: 0.55;
+}
+
+/* A reference the store does not hold: an open bead where its seam leaves the hall. */
+.lane-strip .att-ref {
+  fill: none;
+  stroke: var(--muted, #9aa3b4);
+  stroke-width: 1.4;
+  opacity: 0.85;
+}
+
+/* A seam's hit target: the seam's own geometry at 6px, transparent, above the drawing,
+   carrying the seam's title so the pointer still reads what the seam says. A click
+   reaches the relation's record through the shell; the drawing itself is unchanged. */
+.lane-strip .att-seam-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 6;
+  pointer-events: stroke;
+  cursor: pointer;
+}
+
+/* ── motion ────────────────────────────────────────────────────────────── */
+
+/* Motion marks work in flight and a state that has just changed; a state that
+   holds still keeps the fermata ring and does not pulse. */
+.lane-strip .att-working .att-halo { animation: att-breathe 2600ms ease-in-out infinite; }
+.lane-strip .att-new .att-core { animation: att-flash 900ms ease-out 1; }
+
+@keyframes att-breathe {
+  0%, 100% { opacity: 0.18; }
+  50% { opacity: 0.6; }
+}
+
+/* A state that has just changed flashes in the seat's own ink, which the module
+   sets on the seat group as currentColor: the flash states the new state in colour
+   as the mark states it in shape. */
+@keyframes att-flash {
+  0% { stroke: currentColor; stroke-width: 3; }
+  100% { stroke: currentColor; stroke-width: 0; }
+}
+
+@keyframes att-march {
+  to { stroke-dashoffset: -16; }
+}
+
+/* ── the legend and the strip ──────────────────────────────────────────── */
+
+/* The legend is the label for the state vocabulary: one silhouette and ink per
+   state, with its word in plain sight beside it. */
+.lane-strip .att-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px 14px;
+  margin: 6px 0 2px;
+  font-family: var(--mono);
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+.lane-strip .att-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: default;
+}
+
+.lane-strip .att-key-mark,
+.lane-strip .att-chip-mark {
+  display: block;
+  flex: none;
+}
+
+/* The sentence that says nothing needs a person reads in the pit's own ledger face,
+   at the size the run's reading line uses beside the tempo mark. */
+.lane-strip .att-quiet {
+  margin: 6px 0 0;
+  font-family: var(--mono);
+  font-size: var(--step0, 12px);
+  color: var(--muted);
+}
+
+/* The chip states a state and a name. The name never clips and the chip keeps a
+   floor, so no chip can render as a fragment; the activity yields instead. */
+.lane-strip .lane-chip { min-width: 104px; }
+
+/* The pit speaks in its ledger face, so the strip's chips take it here. The rule is
+   scoped to this mount, which is the pit's seat strip; the rail's chips sit outside
+   it and keep the page's face. The size stays the shell's step. */
+.lane-strip .lane-chip { font-family: var(--mono); }
+
+.lane-strip .lane-chip .lane-id { flex: none; }
+
+.lane-strip .lane-chip .att-activity {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* What the stage announces when the keyboard walks it. */
+.lane-strip .att-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lane-strip .att-working .att-halo,
+  .lane-strip .att-baton,
+  .lane-strip .att-new .att-core { animation: none; }
+
+  .lane-strip .att-working .att-halo { opacity: 0.4; }
+  .lane-strip .att-baton { opacity: 0.6; }
+}
+
+/* Actor cards reserve their full label geometry during hover and focus. */
+.lane-strip .att-seat-card {
+  fill: var(--surface);
+  stroke: var(--hairline);
+  stroke-width: 1;
+}
+.lane-strip .att-seat:hover .att-seat-card,
+.lane-strip .att-seat.att-cursor .att-seat-card,
+.lane-strip .att-seat.att-selected .att-seat-card { stroke: var(--ink); }
+.lane-strip .att-seat-role,
+.lane-strip .att-seat-state,
+.lane-strip .att-seat-memberships {
+  font-family: var(--mono);
+  font-size: 11px;
+  text-anchor: middle;
+  fill: var(--muted);
+}
+.lane-strip .att-seat-role { fill: var(--ink); }
+.lane-strip .att-parent-link {
+  fill: none;
+  stroke: var(--ink);
+  stroke-width: 1.5;
+  opacity: 0.65;
+  vector-effect: non-scaling-stroke;
+}
+.lane-strip .att-legend { flex: 0 0 100%; font-size: 11px; }
+.lane-strip .att-ensembles { flex: 0 0 100%; min-width: 0; }
+.lane-strip .att-context-heading {
+  display: block;
+  margin: 18px 0 10px;
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--ink);
+}
+.lane-strip .att-ensemble-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+  gap: 14px;
+}
+.lane-strip .att-ensemble {
+  min-width: 0;
+  padding: 14px;
+  background: var(--surface);
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.lane-strip .att-ensemble.is-selected { border-color: var(--ink); }
+.lane-strip .att-ensemble-name {
+  display: block;
+  max-width: 100%;
+  margin: 0 0 4px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+  color: var(--ink);
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.lane-strip button.att-ensemble-name { cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
+.lane-strip .att-coupling { display: block; color: var(--muted); margin-bottom: 10px; }
+.lane-strip .att-ensemble-owner { margin-bottom: 12px; overflow-wrap: anywhere; }
+.lane-strip .att-members,
+.lane-strip .att-capability { display: flex; flex-wrap: wrap; gap: 5px; align-items: baseline; }
+.lane-strip .att-members-label,
+.lane-strip .att-capability-name { flex: 0 0 100%; color: var(--muted); }
+.lane-strip .att-capability { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--hairline); }
+.lane-strip .att-member {
+  max-width: 100%;
+  padding: 3px 6px;
+  border: 1px solid var(--hairline);
+  border-radius: 3px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.lane-strip .att-member:hover { border-color: var(--ink); }
+.lane-strip .att-member:focus-visible,
+.lane-strip .att-ensemble-name:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+.lane-strip .att-context-empty { color: var(--muted); }
+
+.lane-strip .att-seat[data-att-role="principal-conductor"] .att-seat-card {
+  stroke: var(--ink);
+  stroke-width: 1.5;
+}
+.lane-strip .att-parent-key::before {
+  content: "";
+  width: 24px;
+  border-top: 1.5px solid var(--ink);
+}
+
+/* The overview retains screen-size labels and uses state marks in dense rows. */
+.lane-strip .att-compact .att-seat-role,
+.lane-strip .att-compact .att-seat-memberships { display: none; }
+.lane-strip .att-compact .att-seat-label { font-size: 12px; }
+.lane-strip .att-compact .att-seat-state { font-size: 10px; }
+.lane-strip .att-compact[data-att-context] .att-seat-card { stroke-dasharray: 3 2; }
+.lane-strip .att-dense .att-seat-label,
+.lane-strip .att-dense .att-seat-state { display: none; }
+.lane-strip .att-dense .att-seat-card { rx: 3px; }
+
+.lane-strip .att-parent-link { opacity: 0.4; }
+
+.lane-strip .att-legend { order: -2; padding: 12px 10px; }
+.lane-strip .att-staff-line { stroke: var(--muted); stroke-opacity: .35; stroke-width: .7; }
+.lane-strip .att-activity-note { fill: var(--attention); cursor: pointer; }
+.lane-strip .att-activity-note:focus-visible { stroke: var(--ink); stroke-width: 2; }

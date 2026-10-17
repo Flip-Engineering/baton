@@ -1,0 +1,40 @@
+{
+  "attempt": "2026-08-06T01:12:17.289Z",
+  "salt": "sw20260806011217",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-cca6d785e0e3349c15b74dd9d2ecc9e4",
+          "run-1befc4d68d0187699845d0ef1b5bb80d"
+        ]
+      }
+    },
+    {
+      "step": "terminal:harvest-contract",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "terminal:tight-cell-contract",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "tight-cell-contract": {
+      "pin": "99cbb7c664fcdd5b41b1ecacb566c70dc734399b",
+      "bytes": 35534
+    }
+  },
+  "verdict": "SPEC-WAVE-INCOMPLETE"
+}

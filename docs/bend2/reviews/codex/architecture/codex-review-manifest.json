@@ -1,0 +1,62 @@
+{
+  "source_commit": "387ff4399c382e49a8320e12ab48d949c3cd54b6",
+  "report_sha256": "39d3ce14317fcb07fc728d48f0c10c821461e0e19875e00a37d1af59363da55d",
+  "input_artifacts": [
+    {
+      "path": "target-architecture.md",
+      "sha256": "603b2fbc7954a463dfb82e25a5180b6ca0d20ad9b5907eb5d314e4851ccc845b",
+      "matches_git_object": true,
+      "hash_in_report": true
+    },
+    {
+      "path": "architecture-review.md",
+      "sha256": "34506e37131fded326faff8f441af5938ee68c35f76a0ac014f7146190b44369",
+      "matches_git_object": true,
+      "hash_in_report": true
+    },
+    {
+      "path": "architecture-findings-coordination.md",
+      "sha256": "1b7d6d428f7aa9c5549aeaa6ea9b1b32b745e1dd130f799404fa33473a3002d5",
+      "matches_git_object": true,
+      "hash_in_report": true
+    },
+    {
+      "path": "architecture-findings-surface.md",
+      "sha256": "199a623459d4a39298724af58d15592f16bc01a37013f4219967dc2059b356a3",
+      "matches_git_object": true,
+      "hash_in_report": true
+    },
+    {
+      "path": "rewrite-plan.md",
+      "sha256": "a4dcad9c9bbd3dcc2cd9effd3c604179ce248a4409042fb873d73614989a51c2",
+      "matches_git_object": true,
+      "hash_in_report": true
+    },
+    {
+      "path": "go-no-go.md",
+      "sha256": "d275976052d6d492e6063b75b72b5ff37e919726128815deb712063dcc52a3d1",
+      "matches_git_object": true,
+      "hash_in_report": true
+    }
+  ],
+  "findings_count": 24,
+  "laws": [
+    "M-1",
+    "M-2",
+    "M-3a",
+    "M-3b",
+    "M-3c",
+    "M-4",
+    "M-5",
+    "M-7",
+    "M-8",
+    "M-10",
+    "M-11",
+    "M-12",
+    "M-13",
+    "M-14",
+    "M-17",
+    "M-18"
+  ],
+  "compiler_sha256": "3850c7cd281a687715a181ad6a2ecdef041704f320ea2b4304cf9e802309203c"
+}

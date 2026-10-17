@@ -1,0 +1,237 @@
+{
+  "schemaVersion": 1,
+  "outcomes": [
+    {
+      "role": "implementer",
+      "phase": "failed",
+      "resultSha": null
+    }
+  ],
+  "stops": [
+    {
+      "runId": "run-b5fbdfa9828d90a74eedd468cb1de915",
+      "stop": null,
+      "ownership": null
+    }
+  ],
+  "progress": [
+    {
+      "at": "2026-07-21T04:26:38.853Z",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T04:26:58.960Z",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T04:27:19.063Z",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T04:27:39.165Z",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T04:27:59.262Z",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T04:28:19.360Z",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T04:28:39.466Z",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T04:28:59.557Z",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T04:29:19.649Z",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T04:29:39.717Z",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T04:29:59.838Z",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T04:30:19.925Z",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T04:30:40.028Z",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T04:31:00.135Z",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T04:31:20.223Z",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T04:31:40.320Z",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T04:32:00.420Z",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T04:32:20.525Z",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T04:32:40.615Z",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T04:33:00.702Z",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T04:33:20.814Z",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T04:33:40.892Z",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T04:34:00.959Z",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T04:34:21.035Z",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T04:34:41.120Z",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T04:35:01.202Z",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T04:35:21.323Z",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T04:35:41.426Z",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T04:36:01.493Z",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T04:36:21.602Z",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T04:36:41.739Z",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T04:37:01.813Z",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T04:37:21.955Z",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T04:37:42.062Z",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T04:38:02.173Z",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T04:38:22.255Z",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T04:38:42.366Z",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T04:39:02.479Z",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T04:39:22.549Z",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T04:39:42.616Z",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T04:40:02.725Z",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T04:40:22.836Z",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T04:40:42.982Z",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T04:41:03.159Z",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T04:41:23.371Z",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T04:41:43.544Z",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T04:42:03.653Z",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T04:42:23.767Z",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T04:42:43.874Z",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T04:43:03.942Z",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T04:43:24.052Z",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T04:43:44.159Z",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T04:44:04.241Z",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T04:44:24.344Z",
+      "phase": "failed"
+    }
+  ],
+  "steering": [],
+  "failure": null
+}

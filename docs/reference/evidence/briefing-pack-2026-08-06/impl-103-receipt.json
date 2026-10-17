@@ -1,0 +1,37 @@
+{
+  "attempt": "2026-08-07T05:47:27.853Z",
+  "salt": "i320260807054727",
+  "role": "impl-103",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-7e94503de8fdabb5e5684f85abf1e119"
+        ]
+      }
+    },
+    {
+      "step": "dead:impl-103",
+      "receipt": {
+        "phase": "failed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "impl-103": {
+      "pin": "4c9594bb96cf163180bb5e716b51e647e3b7cfd9",
+      "paths": [
+        "impl/src/wave-driver.mjs"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 364,
+  "verdict": "IMPL-103-FAILED"
+}

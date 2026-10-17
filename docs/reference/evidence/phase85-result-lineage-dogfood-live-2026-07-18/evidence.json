@@ -1,0 +1,243 @@
+{
+  "record": {
+    "schemaVersion": 1,
+    "deploymentRoot": "/var/folders/p5/v13h2kf1227ffch19r_83kkr0000gn/T/baton-phase85-result-lineage-SjYHVp",
+    "runId": "run-8810b975be8654d282e3c5cda645ee61",
+    "outcome": "selection_required",
+    "readiness": [
+      {
+        "harness": "codex",
+        "model": "gpt-5.6-sol",
+        "effort": "high",
+        "state": "ready",
+        "code": null
+      },
+      {
+        "harness": "codex",
+        "model": "gpt-5.6-sol",
+        "effort": "xhigh",
+        "state": "ready",
+        "code": null
+      }
+    ],
+    "selectedTeam": [
+      {
+        "role": "result-lineage-builder",
+        "exact": {
+          "harness": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": "high"
+        }
+      },
+      {
+        "role": "result-lineage-adversary",
+        "exact": {
+          "harness": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": "xhigh"
+        }
+      }
+    ],
+    "phase": "selection_required",
+    "candidates": [
+      {
+        "role": "result-lineage-adversary",
+        "route": {
+          "harness": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": "xhigh"
+        },
+        "candidateId": "candidate:e28dda75b8b663872584160b58c37e0c4150131a96920945c4b46b073ac9dfd3",
+        "resultSha": "2fe4b30397b96ccd5e52f4654002684ef53d429c",
+        "retainedResultRef": "refs/baton/results/2fe4b30397b96ccd5e52f4654002684ef53d429c",
+        "changedPaths": [
+          "impl/src/context-result-lineage.mjs",
+          "spec/phase85-context-lineage-recursive-synthesis.md"
+        ],
+        "patch": {
+          "name": "candidate-result-lineage-adversary.patch",
+          "digest": "8e69af899723a6029433b71c986ed6f07a4afdc6ddd12f2374176de4ccc1566f",
+          "bytes": 17132
+        }
+      },
+      {
+        "role": "result-lineage-builder",
+        "route": {
+          "harness": "codex",
+          "model": "gpt-5.6-sol",
+          "effort": "high"
+        },
+        "candidateId": "candidate:2783850d2a66e5b8e166b40d9b9914aea1f4ca9f4f314fd8f3f7fa82d4a5d4b3",
+        "resultSha": "77aa81d5aac30b16dd06a1c494e3c7c7f0ef8152",
+        "retainedResultRef": "refs/baton/results/77aa81d5aac30b16dd06a1c494e3c7c7f0ef8152",
+        "changedPaths": [
+          "impl/src/application.mjs",
+          "impl/src/context-result-lineage.mjs",
+          "impl/src/context-runtime.mjs",
+          "impl/src/coordination-store.mjs",
+          "impl/src/index.mjs"
+        ],
+        "patch": {
+          "name": "candidate-result-lineage-builder.patch",
+          "digest": "d2dcc8bd2c7200bd0195fe1eb2a60e1eae4afc140cb1b535a1b8562b8b747465",
+          "bytes": 24196
+        }
+      }
+    ],
+    "attempts": [
+      {
+        "role": "result-lineage-adversary",
+        "state": "accepted",
+        "route": {
+          "requested": {
+            "harness": "codex",
+            "model": "gpt-5.6-sol",
+            "effort": "xhigh"
+          },
+          "resolved": {
+            "harness": "codex@codex-cli 0.144.6",
+            "model": "gpt-5.6-sol",
+            "effort": "xhigh"
+          },
+          "observed": {
+            "harness": null,
+            "model": "gpt-5.6-sol",
+            "effort": null
+          },
+          "launchEnforcement": {
+            "harness": {
+              "requested": "codex",
+              "resolved": "codex@codex-cli 0.144.6",
+              "state": "matched"
+            },
+            "model": {
+              "requested": "gpt-5.6-sol",
+              "resolved": "gpt-5.6-sol",
+              "state": "matched"
+            },
+            "effort": {
+              "requested": "xhigh",
+              "resolved": "xhigh",
+              "state": "matched"
+            }
+          },
+          "providerAttestation": {
+            "harness": {
+              "observed": null,
+              "state": "unavailable"
+            },
+            "model": {
+              "observed": "gpt-5.6-sol",
+              "state": "matched"
+            },
+            "effort": {
+              "observed": null,
+              "state": "unavailable"
+            }
+          }
+        },
+        "taskId": "baton-bacc4d269c1ea2981641e16b-attempt-result-lineage-adversary",
+        "candidateId": "candidate:e28dda75b8b663872584160b58c37e0c4150131a96920945c4b46b073ac9dfd3"
+      },
+      {
+        "role": "result-lineage-builder",
+        "state": "accepted",
+        "route": {
+          "requested": {
+            "harness": "codex",
+            "model": "gpt-5.6-sol",
+            "effort": "high"
+          },
+          "resolved": {
+            "harness": "codex@codex-cli 0.144.6",
+            "model": "gpt-5.6-sol",
+            "effort": "high"
+          },
+          "observed": {
+            "harness": null,
+            "model": "gpt-5.6-sol",
+            "effort": null
+          },
+          "launchEnforcement": {
+            "harness": {
+              "requested": "codex",
+              "resolved": "codex@codex-cli 0.144.6",
+              "state": "matched"
+            },
+            "model": {
+              "requested": "gpt-5.6-sol",
+              "resolved": "gpt-5.6-sol",
+              "state": "matched"
+            },
+            "effort": {
+              "requested": "high",
+              "resolved": "high",
+              "state": "matched"
+            }
+          },
+          "providerAttestation": {
+            "harness": {
+              "observed": null,
+              "state": "unavailable"
+            },
+            "model": {
+              "observed": "gpt-5.6-sol",
+              "state": "matched"
+            },
+            "effort": {
+              "observed": null,
+              "state": "unavailable"
+            }
+          }
+        },
+        "taskId": "baton-6d174ffd057a01cf0eda4697-attempt-result-lineage-builder",
+        "candidateId": "candidate:2783850d2a66e5b8e166b40d9b9914aea1f4ca9f4f314fd8f3f7fa82d4a5d4b3"
+      }
+    ]
+  },
+  "cleanup": {
+    "stopped": {
+      "state": "stopped",
+      "receipt": {
+        "schemaVersion": 1,
+        "state": "stopped",
+        "scope": "run_subtree",
+        "repoId": "repo-76d484205f22eed0163d8f21b8287740",
+        "runId": "run-8810b975be8654d282e3c5cda645ee61",
+        "targetCount": 2,
+        "remainingCount": 0,
+        "targetDigest": "3d1f17bf5b49d2bc68981e6ac1985fcb6ee47c44bcb9b41d97e1659c4d01a42f",
+        "counts": {
+          "pendingCancelled": 0,
+          "killConfirmed": 2,
+          "alreadyTerminal": 0,
+          "processesObserved": 2,
+          "processesClosed": 2
+        },
+        "checks": {
+          "dispatchClosed": true,
+          "interactionsResolved": true,
+          "runAuthorityReleased": true
+        },
+        "effects": {
+          "coordinatorClosed": false,
+          "writerReleased": false,
+          "transportsClosed": false
+        },
+        "receiptDigest": "df0b40ea2f0ccba5dbb972252404831288acdfb1306e25281579e3ffef3bc358"
+      },
+      "ownership": {
+        "workers": 0,
+        "workerIds": [],
+        "closed": false
+      }
+    },
+    "closed": {
+      "workers": 0,
+      "workerIds": [],
+      "closed": true
+    },
+    "callerStatusUnchanged": true,
+    "callerIndexUnchanged": true
+  }
+}

@@ -1,0 +1,13 @@
+frames	bytes	category
+32	185646	message_end
+17	21683	tool_execution_start
+17	65479	tool_execution_end
+15	330	turn_start
+14	180869	turn_end
+3	43924	response
+1	131	ready
+1	104	extension_ui_request
+1	32	advisor_cost_changed
+1	16983	available_commands_update
+1	23	agent_start
+TOTAL	515204	103 frames

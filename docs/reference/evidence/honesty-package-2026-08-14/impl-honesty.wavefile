@@ -1,0 +1,59 @@
+wave impl-honesty-2026-08-14-wave-b
+member coordinator
+  harness deepseek
+  model "deepseek-v4-pro[1m]"
+  effort high
+  scope "docs/reference/evidence/honesty-package-2026-08-14/**"
+  objectiveRef "docs/reference/evidence/honesty-package-2026-08-14/coordinator-brief.md"
+  report "docs/reference/evidence/honesty-package-2026-08-14/impl-qa.md"
+member row-cli
+  harness deepseek
+  model deepseek-v4-flash
+  effort high
+  scope "impl/src/application-cli.mjs"
+  scope "impl/src/application.mjs"
+  scope "docs/reference/evidence/honesty-package-2026-08-14/**"
+  objectiveRef "docs/reference/evidence/honesty-package-2026-08-14/row-cli-brief.md"
+  report "docs/reference/evidence/honesty-package-2026-08-14/notes-row-cli.md"
+member row-kernel
+  harness deepseek
+  model deepseek-v4-flash
+  effort high
+  scope "impl/src/coordination-store.mjs"
+  scope "impl/src/application-semantics.mjs"
+  scope "impl/src/mcp-northbound.mjs"
+  scope "impl/src/web-northbound.mjs"
+  scope "docs/reference/evidence/honesty-package-2026-08-14/**"
+  objectiveRef "docs/reference/evidence/honesty-package-2026-08-14/row-kernel-brief.md"
+  report "docs/reference/evidence/honesty-package-2026-08-14/notes-row-kernel.md"
+member row-docs
+  harness deepseek
+  model deepseek-v4-flash
+  effort high
+  scope "impl/scripts/**"
+  scope "impl/CLI.md"
+  scope "impl/MCP.md"
+  scope "docs/reference/evidence/honesty-package-2026-08-14/**"
+  objectiveRef "docs/reference/evidence/honesty-package-2026-08-14/row-docs-brief.md"
+  report "docs/reference/evidence/honesty-package-2026-08-14/notes-row-docs.md"
+member row-errors
+  harness deepseek
+  model deepseek-v4-flash
+  effort high
+  scope "impl/src/mcp-northbound.mjs"
+  scope "impl/src/web-northbound.mjs"
+  scope "impl/src/application-cli.mjs"
+  scope "docs/reference/evidence/honesty-package-2026-08-14/**"
+  objectiveRef "docs/reference/evidence/honesty-package-2026-08-14/row-errors-brief.md"
+  report "docs/reference/evidence/honesty-package-2026-08-14/notes-row-errors.md"
+approveOnAdvertisedPlan
+claimOnStall
+nudgeOnCheckpoint "Continue your seam's impl — your suite's rows green at named stages, PINs unmoved, adjacents undisturbed. Write your notes file incrementally so a mid-flight death still harvests."
+messageOnSpawn brief "Read your objectiveRef brief IN FULL first — your contract is the authority, your suite is your acceptance machinery, and your brief names the files you OWN (the wave's partition law: stay in your seam). The craft laws bind (no clocks, additive-only, NUL discipline, generated docs regenerate never hand-edit). Your [attempt:] line verbatim in your notes' first five lines. Never edit a suite — a wrong row is a DECISION_REQUEST with options."
+elevateWhenNotes doubt,plan 20
+signalOnMembersDone row-cli,row-kernel,row-docs,row-errors result "All four rows settled (you are the remaining member — the pinned #175 semantics). Verify on disk per the #174 law, then run the full acceptance and write impl-qa.md per your brief."
+harvest "docs/reference/evidence/honesty-package-2026-08-14/impl-qa.md" mustContain "IMPL-QA v1"
+harvest "docs/reference/evidence/honesty-package-2026-08-14/notes-row-cli.md" mustContain "#157"
+harvest "docs/reference/evidence/honesty-package-2026-08-14/notes-row-kernel.md" mustContain "#158"
+harvest "docs/reference/evidence/honesty-package-2026-08-14/notes-row-docs.md" mustContain "#159"
+harvest "docs/reference/evidence/honesty-package-2026-08-14/notes-row-errors.md" mustContain "#160"

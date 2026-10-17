@@ -1,0 +1,49 @@
+{
+  "at": "2026-07-13T05:31:59.700Z",
+  "scenario": {
+    "verifiedFirstTurn": true,
+    "simulatedProcessLoss": true,
+    "exactNativeRejoin": true,
+    "verifiedRefinement": true,
+    "asyncClose": true
+  },
+  "facts": {
+    "first": {
+      "workerId": "w-1",
+      "status": "completed",
+      "sessionId": "resume-live-native",
+      "worktreeOwner": "phase45-auto-rejoin",
+      "runtimeWorker": "w-1"
+    },
+    "readiness": {
+      "status": "ready",
+      "eligible": 1,
+      "attached": 1,
+      "failed": 0,
+      "skipped": 0,
+      "failures": []
+    },
+    "attached": {
+      "sessionId": "resume-live-native",
+      "modelResolved": "resume-live-model",
+      "effortResolved": "low",
+      "worktreeOwner": "phase45-auto-rejoin",
+      "runtimeWorker": "w-1"
+    }
+  },
+  "checks": {
+    "firstVerified": true,
+    "firstOwnershipPresent": true,
+    "crashWriterReleased": true,
+    "commandBlockedBeforeReady": true,
+    "exactIdentityAttached": true,
+    "exactRoutePreserved": true,
+    "ownershipPreserved": true,
+    "refinementVerified": true,
+    "recoveryDurable": true,
+    "writerReleased": true,
+    "fullReap": true
+  },
+  "fatal": null,
+  "pass": true
+}

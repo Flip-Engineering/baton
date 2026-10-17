@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 1,
+  "startedAt": "2026-08-02T01:47:37.971Z",
+  "members": [
+    "remediation-verifier"
+  ],
+  "outcomes": [
+    {
+      "role": "remediation-verifier",
+      "phase": "result_ready",
+      "terminal": false,
+      "narrative": "1 worker(s) active, 1 done.",
+      "resultSha": "3cbdc3942848144e87686f94d27a67dbd22dba5a"
+    }
+  ],
+  "steering": [],
+  "stops": [
+    {
+      "role": "remediation-verifier",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    }
+  ],
+  "progress": [],
+  "pumpDrained": true,
+  "remainingCount": 0,
+  "residueUnknown": false,
+  "basis": "completed",
+  "nudges": [
+    {
+      "role": "remediation-verifier",
+      "requestId": "pause:baton-be2156720442c712f036585e-work:58",
+      "at": "2026-08-02T01:54:25.825Z"
+    }
+  ],
+  "claims": [
+    {
+      "role": "remediation-verifier",
+      "requestId": "pause:baton-be2156720442c712f036585e-work:72",
+      "at": "2026-08-02T01:54:48.930Z",
+      "code": "claimed"
+    }
+  ],
+  "decisions": [],
+  "follows": [],
+  "salt": null,
+  "knowledge": {
+    "candidates": 0,
+    "admittedThisRun": 0
+  },
+  "manifest": {
+    "schemaVersion": 1,
+    "waveId": "wave:08a85b8ccb28d7317ea3c9318f4e8af9",
+    "idempotencyKey": "kg-settlement-test-blueteam-v2-2026-08-01",
+    "recipeDigest": "0c7323a4eb7b5972919853d24e3516ef33d6f085bb53ad001a4b741dad56be34",
+    "salt": "faccee32-f74d-4239-ac10-f3d90a71ead4",
+    "renderedMembers": [
+      {
+        "role": "remediation-verifier",
+        "objective": "BLUE-TEAM RE-VERIFY the KG settlement suite v2.1 against your own GATE-NOT-READY report. Prior report: docs/reference/evidence/kg-settlement-2026-08-01/test-blueteam.md (its blocking items: FG-10 unsatisfiable control assertion, KS7 missing admit+revoke-done partial state, FG-8/C9 missing link kind + not-ready row, KS5 vacuousness, C3 return shape + command→promote end-to-end, C7 errors shape + outline surfacing, FG-9/C8 recursive-gate dynamic half, C1 mislabeled stale block, C6 one-sided title bound, FG-3 weak spy rows, FG-1 hand-derived lease identity in KS6/KS7). Suite v2.1: impl/test/kg-settlement-red.test.mjs at HEAD. For EACH blocking item: verify REPAIRED or still-BLOCKING with the v2.1 line(s). Then re-run the vacuousness hunt on the NEW assertions (KS5 replay-discipline, KS9b, the KS3 normalized-args rows): can a wrong implementation still pass? Close with GATE-READY or GATE-NOT-READY + blocking items. Ground every claim in file:line.\nBlue-team re-verify the KG settlement v2.1 suite remediation\nWrite the report skeleton (all headings + stubs) FIRST so an in-scope diff exists from your first minutes, then deepen.\nWork in ONE continuous turn to completion; the trust gate kills no-diff workers.\nRead-only review: do not edit impl/ files; your only write target is your report path.\nName the report test-blueteam-v2.md.\n[attempt: faccee32-f74d-4239-ac10-f3d90a71ead4 remediation-verifier]",
+        "exact": {
+          "harness": "claude-code",
+          "model": "claude-sonnet-5",
+          "effort": "high"
+        },
+        "scope": [
+          "docs/reference/evidence/kg-settlement-2026-08-01/**"
+        ],
+        "report": "docs/reference/evidence/kg-settlement-2026-08-01/test-blueteam-v2.md"
+      }
+    ]
+  }
+}

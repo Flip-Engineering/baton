@@ -1,0 +1,102 @@
+{
+  "at": "2026-07-13T08:02:04.672Z",
+  "repoHead": "ff0f24a46cc8031767b3706ba93831505ed20f42",
+  "runId": "phase49-spec-review",
+  "credentialPosture": {
+    "glm": "project-local owner-only ignored key loaded only by GlmSessionCli",
+    "codex": "owner-only auth projected into private runtime"
+  },
+  "rows": [
+    {
+      "taskId": "phase49-codex-spec-review",
+      "harness": "codex",
+      "model": "gpt-5.6-sol",
+      "workerId": "w-1",
+      "pid": null,
+      "result": {
+        "status": "failed",
+        "ready": true
+      },
+      "route": {
+        "harnessRequested": "codex",
+        "harnessResolved": "codex@codex-cli 0.144.1",
+        "modelRequested": "gpt-5.6-sol",
+        "modelResolved": "gpt-5.6-sol",
+        "modelObserved": null,
+        "effortRequested": "low",
+        "effortResolved": "low",
+        "effortObserved": null
+      },
+      "budgetUsed": {
+        "tokens": 0,
+        "usd": 0
+      },
+      "verifyAccept": false,
+      "reportCaptured": false,
+      "terminalReason": "worktree unavailable"
+    },
+    {
+      "taskId": "phase49-glm-spec-review",
+      "harness": "glm",
+      "model": "glm-4.7",
+      "workerId": "w-2",
+      "pid": null,
+      "result": {
+        "status": "failed",
+        "ready": true
+      },
+      "route": {
+        "harnessRequested": "glm",
+        "harnessResolved": "glm-via-claude-session@claude-code-2.1.206+zai-anthropic",
+        "modelRequested": "glm-4.7",
+        "modelResolved": "glm-4.7",
+        "modelObserved": null,
+        "effortRequested": "low",
+        "effortResolved": "low",
+        "effortObserved": null
+      },
+      "budgetUsed": {
+        "tokens": 0,
+        "usd": 0
+      },
+      "verifyAccept": false,
+      "reportCaptured": false,
+      "terminalReason": "worktree unavailable"
+    }
+  ],
+  "responses": [],
+  "kills": [
+    {
+      "taskId": "phase49-codex-spec-review",
+      "ack": {
+        "ok": true,
+        "result": "already_dead"
+      }
+    },
+    {
+      "taskId": "phase49-glm-spec-review",
+      "ack": {
+        "ok": true,
+        "result": "already_dead"
+      }
+    }
+  ],
+  "checks": {
+    "runnerHealthy": true,
+    "bothAdmitted": true,
+    "exactRoutes": false,
+    "providerIdentityHonest": true,
+    "terminal": true,
+    "reportsVerified": false,
+    "overlappingTurns": true,
+    "distinctPids": true,
+    "killSafe": true,
+    "processesGone": true,
+    "worktreesGone": true,
+    "runtimesGone": true,
+    "branchesGone": true,
+    "writerReleased": true
+  },
+  "fatal": null,
+  "pass": false
+}

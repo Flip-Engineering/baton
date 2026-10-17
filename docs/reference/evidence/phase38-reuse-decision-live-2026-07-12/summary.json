@@ -1,0 +1,35 @@
+{
+  "at": "2026-07-12T20:10:37.165Z",
+  "package": {
+    "ecosystem": "npm",
+    "system": "NPM",
+    "package": "@ast-grep/napi",
+    "version": "0.44.1"
+  },
+  "recommendation": "borrow_candidate",
+  "decisionId": "reuse-decision:0b7433f27a1721358e2f853f246b609eedb82c826d6203f22e7aa62ad9e7ebc2",
+  "decisionDigest": "0b7433f27a1721358e2f853f246b609eedb82c826d6203f22e7aa62ad9e7ebc2",
+  "decisionArtifactDigest": "7ec0060d98cda3b895bd659650f80cc00daf1103ab57e822da3c3d1b34b7e97d",
+  "subjectDigest": "bb9191a127c8e5ec54bf7799e423bbfbefe9adf334b57c80b233e1cc69aacfd6",
+  "envRef": {
+    "repoId": "baton-phase38-live",
+    "treeSha": "f7b38b0c29481e2910e6b098046cbafc9b729a21",
+    "indexEpoch": "2a9d26463986b16b481d776c0088a38e55b79e904654f311d794cb7f82cadfd5",
+    "overlayDigest": "3937c866841d95d06989f8ccca74e08f03353bba369dfbfd95b92ccef4ce7528",
+    "lockfileDigest": "1115bd851ccf9dcb2aaf94181de60d56aa485b5ef623e31214b99b842e1a99be"
+  },
+  "componentCount": 10,
+  "fetchCalls": 3,
+  "checks": {
+    "officialExternalEvidence": true,
+    "actualLockfile": true,
+    "environmentBound": true,
+    "immutableArtifacts": true,
+    "causalProjection": true,
+    "noAuthority": true,
+    "actorPreserved": true,
+    "replayExact": true,
+    "cleanTree": true
+  },
+  "pass": true
+}

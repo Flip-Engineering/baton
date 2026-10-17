@@ -1,0 +1,484 @@
+{
+  "schema": "baton-native-qualification-summary-v1",
+  "recorded_utc": "2026-10-02T13:02:31.939405+00:00",
+  "result": {
+    "helper_predicate": "passed",
+    "helper_process_exit_code": 0,
+    "helper_evidence_sha256": "0cf42f185de26f35f884211d83ca45dd79c26f914d77e85dbcaae3e1a434bc36",
+    "elapsed_seconds": 1691.9171891212463,
+    "native_invocations": 25,
+    "all_wrapper_and_native_child_exit_codes": 0,
+    "unknown_exit_count": 0,
+    "initial_worker_overlap_seconds": 182.4714720249176,
+    "operator_review_assistance_count": 1,
+    "muse_correction_invocations": 4,
+    "ordinary_squash_conflicts": 2
+  },
+  "source": {
+    "runtime": "204972f7dba9b0f84e445e5c308b79cd5c8ec7a3",
+    "runtime_tree": "757918154e990026aa30700e9554f5b010091c71",
+    "task_base": "204972f7dba9b0f84e445e5c308b79cd5c8ec7a3",
+    "coordinator_sha256": "e9374848831ccdb233839215c84ab6d1f1ee84a39a8fd2a601d2758f55987da8",
+    "driver_sha256": "215cc42c59f2782923e2fd76bc5f14ecd7e4450a95bedce2231a641afad90c7a",
+    "imported_helper_sha256": "4a1f07b1b2a942b5ea8e336c50cf4d753ce8deeb6b237f03f4fb13f1f75b18ad",
+    "freeze_sha256": "d28a329f2043dcbd07a4064e12645c0d1c4e5f1dbbfe5e227f30e8a732835014",
+    "compiler_version": "2.0.25",
+    "compiler_sha256": "3850c7cd281a687715a181ad6a2ecdef041704f320ea2b4304cf9e802309203c",
+    "compiler_core_library_pins": "retained in freeze.toolchain_pins.installation_library_files"
+  },
+  "prepublication_gates": {
+    "source": "204972f7dba9b0f84e445e5c308b79cd5c8ec7a3",
+    "tree": "757918154e990026aa30700e9554f5b010091c71",
+    "summary_sha256": "0d10978773788a537bf70a361e4b285f740b8d59b016f9684d73e7e2b596460b",
+    "status": "passed",
+    "laws": 361,
+    "implementation_mutations": 87,
+    "compiles": 449,
+    "failures": 0,
+    "python_tests": 232,
+    "python_suites": 22,
+    "bend_suites": 2,
+    "stages": [
+      {
+        "name": "build-native",
+        "exit_code": 0,
+        "elapsed_seconds": 18.94442804200662,
+        "log_sha256": "7b30de00167383460f7c871d582a60ca9ae9acf5f88da7bff6adf5ab82f63422"
+      },
+      {
+        "name": "laws-check",
+        "exit_code": 0,
+        "elapsed_seconds": 1624.1040976250006,
+        "log_sha256": "a357094a9e573fd4daeb3a887279469824952f23fd5c4646bd8342774e1814dd"
+      },
+      {
+        "name": "check-native",
+        "exit_code": 0,
+        "elapsed_seconds": 150.11814458300069,
+        "log_sha256": "b6c70783f96ab04793cd14c4adf8e3cbdecfa0dbd1827371c3db502f60c22dab"
+      }
+    ]
+  },
+  "runtime_publication": {
+    "source": "204972f7dba9b0f84e445e5c308b79cd5c8ec7a3",
+    "ref": "refs/heads/bend2-rewrite",
+    "status": "published-and-verified",
+    "receipt_sha256": "c2dd3349f83153077265855269f111d67bbc00f284ffc2c7a34deb5fdd700019"
+  },
+  "authentication": {
+    "codex_mode": "ChatGPT subscription",
+    "preflight": "passed",
+    "receipt_sha256": "46a6b1fc8324d75debf74c3f11d6948bb525ea778ed2036e80af40d42770a074",
+    "removed_api_key_variables": [
+      "OPENAI_API_KEY",
+      "CODEX_API_KEY"
+    ],
+    "credential_values_published": false
+  },
+  "tasks": {
+    "deepseek": {
+      "files": [
+        "bend2/test/recruit.py"
+      ],
+      "selected_checks": [
+        "bend2/test/recruit.py",
+        "bend2/test/connect.py"
+      ],
+      "body_sha256": "15696fbfcc9c42728b40da9956cc56c989d4c2c3b26cdca063afa1398384b915"
+    },
+    "muse": {
+      "files": [
+        "docs/bend2/examples/worker-assignment-recovery.md"
+      ],
+      "selected_checks": [
+        "bend2/test/recruit.py",
+        "bend2/test/connect.py"
+      ],
+      "body_sha256": "9bda41d1389a7d73d93d3238f853fae57213224d7560925f6641de75a0cf4d17"
+    }
+  },
+  "guidance": {
+    "message_id": "unexpected-success-guidance",
+    "sender": "lead",
+    "recipient": "deepseek",
+    "body_sha256": "20109f7d8ef3cbe0399d2934ed356b9f46cb641f30d7dcd955e9da99264067d1",
+    "native_steer_response_success": true,
+    "native_response_received_unix": 1790944173.992509,
+    "actual_lead_tool_call_verified": true
+  },
+  "seats": {
+    "root": {
+      "invocations": 10,
+      "closed_invocations": 10,
+      "native_ids": [
+        "01a0fc95-6fbe-76a3-8e71-5c0ffc2e8939"
+      ],
+      "sum_recorded_child_duration_seconds": 426.1663410663605,
+      "raw_stdout_bytes": 191986,
+      "native_records": [
+        "native-root-36717.process.json",
+        "native-root-37608.process.json",
+        "native-root-50213.process.json",
+        "native-root-56087.process.json",
+        "native-root-56558.process.json",
+        "native-root-57681.process.json",
+        "native-root-63883.process.json",
+        "native-root-64375.process.json",
+        "native-root-65067.process.json",
+        "native-root-71315.process.json"
+      ],
+      "latest_cumulative_usage": {
+        "01a0fc95-6fbe-76a3-8e71-5c0ffc2e8939": {
+          "record": "native-root-71315.process.json",
+          "started_unix": 1790945555.697706,
+          "usage": {
+            "input_tokens": 1885675,
+            "cached_input_tokens": 1798400,
+            "cache_write_input_tokens": 0,
+            "output_tokens": 6021,
+            "reasoning_output_tokens": 351
+          }
+        }
+      },
+      "requested": {
+        "model": "gpt-6-astra",
+        "effort": "low"
+      },
+      "observed_model": null,
+      "observed_model_source": "Not exposed by retained Codex exec events",
+      "native_executable_sha256": "4f85982624b3898c8991cb80c0981b2aa71070e3537046c9a95950318a95afcc",
+      "launcher_sha256": "95cee7f2de7aa3d279f84f7b340327df5c72ea54a13f5c4b4ae0be16d2f9aa1e",
+      "cumulative_usage_evidence": {
+        "receipt_sha256": "5c4d1c52ebb1ffdfffe5745139f67fa53c951f9475e88ac35f89c087e32f0d0f",
+        "native_id": "01a0fc95-6fbe-76a3-8e71-5c0ffc2e8939",
+        "token_count_records": 34,
+        "latest_total_token_usage": {
+          "input_tokens": 1885675,
+          "cached_input_tokens": 1798400,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 6021,
+          "reasoning_output_tokens": 351,
+          "total_tokens": 1891696
+        },
+        "latest_last_token_usage": {
+          "input_tokens": 81465,
+          "cached_input_tokens": 78976,
+          "cache_write_input_tokens": 0,
+          "output_tokens": 56,
+          "reasoning_output_tokens": 0,
+          "total_tokens": 81521
+        },
+        "final_cli_fields_equal_total_token_usage": true,
+        "private_native_rollout_sha256": "b42a3b0e5db4db251dda6bc332e8a0b3772c4c93c9ceb4553849440409a9c396"
+      }
+    },
+    "lead": {
+      "invocations": 9,
+      "closed_invocations": 9,
+      "native_ids": [
+        "01a0fc96-02cc-7000-9872-39876510422a"
+      ],
+      "sum_recorded_child_duration_seconds": 1053.327180147171,
+      "raw_stdout_bytes": 3442975,
+      "native_records": [
+        "native-lead-37065.process.json",
+        "native-lead-44938.process.json",
+        "native-lead-50211.process.json",
+        "native-lead-56371.process.json",
+        "native-lead-56937.process.json",
+        "native-lead-57956.process.json",
+        "native-lead-64114.process.json",
+        "native-lead-64699.process.json",
+        "native-lead-65332.process.json"
+      ],
+      "usage": {
+        "input": 103914,
+        "output": 24355,
+        "cacheRead": 4048128,
+        "cacheWrite": 0,
+        "totalTokens": 4176397
+      },
+      "emitted_cost_total": 0,
+      "assistant_message_end_usage_records": 70,
+      "requested": {
+        "model": "kimi-code/k3",
+        "effort": "high"
+      },
+      "observed_model": "kimi-code/k3",
+      "observed_model_source": "OMP get_state",
+      "native_executable_sha256": "861ac3d7a76499dbc36e6ec8769b58b61a962daac2b4775ce545474d9030e6ba",
+      "launcher_sha256": "bf46fc087f44e8bf89013503ff39dfa141cc94b77c865295304f41e1124c3aa8"
+    },
+    "deepseek": {
+      "invocations": 1,
+      "closed_invocations": 1,
+      "native_ids": [
+        "01a0fc97-3752-7000-83e9-4bc5b50fd242"
+      ],
+      "sum_recorded_child_duration_seconds": 197.86758494377136,
+      "raw_stdout_bytes": 2216779,
+      "native_records": [
+        "native-deepseek-37500.process.json"
+      ],
+      "usage": {
+        "input": 61224,
+        "output": 29565,
+        "cacheRead": 2583808,
+        "cacheWrite": 0,
+        "totalTokens": 2674597
+      },
+      "emitted_cost_total": 0.069348048,
+      "assistant_message_end_usage_records": 36,
+      "requested": {
+        "model": "deepseek/deepseek-flash",
+        "effort": "low"
+      },
+      "observed_model": "deepseek/deepseek-flash",
+      "observed_model_source": "OMP get_state",
+      "native_executable_sha256": "861ac3d7a76499dbc36e6ec8769b58b61a962daac2b4775ce545474d9030e6ba",
+      "launcher_sha256": "bf46fc087f44e8bf89013503ff39dfa141cc94b77c865295304f41e1124c3aa8"
+    },
+    "muse": {
+      "invocations": 5,
+      "closed_invocations": 5,
+      "native_ids": [
+        "01a0fc97-3631-7200-b853-5289b5f4b569"
+      ],
+      "sum_recorded_child_duration_seconds": 475.96148800849915,
+      "raw_stdout_bytes": 1556892,
+      "native_records": [
+        "native-muse-37503.process.json",
+        "native-muse-56511.process.json",
+        "native-muse-57499.process.json",
+        "native-muse-64261.process.json",
+        "native-muse-64948.process.json"
+      ],
+      "usage": "unknown; no native usage counters extracted",
+      "requested": {
+        "model": "muse-spark-1.3-contributor",
+        "effort": "low"
+      },
+      "observed_model": "muse-spark-1.3-contributor",
+      "observed_model_source": "Muse run.model.configured",
+      "native_executable_sha256": "e9987ef4267a648dc1931c2836a23f6f16f8b4417368b126a810bece2abd308d",
+      "launcher_sha256": "320eb73ca4f2c7f9e9e6d638210bbefcc941e87d70dc0cc9f38d4b993972b043"
+    }
+  },
+  "review": {
+    "autonomous_root_correction_message": "root-review-correction",
+    "operator_assistance_message": "operator-doc-receipt-review",
+    "operator_assistance_receipt_sha256": "4420063eb781430da470553e0cc2e7c2ec25a81813c4cd01fc859665cdc65463",
+    "operator_task_receipt": "external-review-accepted",
+    "forwarded_task": "operator-doc-review-forward",
+    "correction_reports": [
+      "muse-correction-review-1",
+      "muse-correction-review-2",
+      "muse-correction-review-3",
+      "muse-correction-review-4"
+    ]
+  },
+  "git": {
+    "tips": {
+      "target": "5a9cdfd0d822578902be85b1095746cdc0128702",
+      "lead": "81e5ac3b9b467c6826e9a21e74b688587e57ed67",
+      "deepseek": "1f4ee591230495b1b43f9e5518e44c07817d570a",
+      "muse": "25b654705bbe0fa57f9f82f3d5b4411e0e71c14c"
+    },
+    "target_and_reviewed_lead_tree": "26f65cfccf5d09f0b51074c926e4c511ac7959b4",
+    "landings": [
+      {
+        "artifact": "landing-deepseek.json",
+        "sha256": "f0708060fcfa46d74e4eabfbc25e061d32e218177bde3e91155b2d805ccd8bc4",
+        "status": "landed",
+        "target": "hierarchy-lead",
+        "commit": "6ad009d6f26d9b78d10f53efc498071c2fada4e5"
+      },
+      {
+        "artifact": "landing-muse-review-1.json",
+        "sha256": "55db3f96013a377243a90d990323c47f02b3a62353617f173902b6dd2f2a69b6",
+        "status": "conflict"
+      },
+      {
+        "artifact": "landing-muse-review-2.json",
+        "sha256": "6b7c70db49a28cec5cbb2be84b6a422eb9f138c35144039976f90c117509c5d2",
+        "status": "landed",
+        "target": "hierarchy-lead",
+        "commit": "dddbea7fdfb7048ab6a7ef143cbae04d70552a29"
+      },
+      {
+        "artifact": "landing-muse-review-3.json",
+        "sha256": "9787639359e82deac873c1c5daa0bb9eaa8616d6e1d2421a04b14ec27b03b4de",
+        "status": "conflict"
+      },
+      {
+        "artifact": "landing-muse-review-4.json",
+        "sha256": "d357e17b99ef15c3fb7a332c51e2abb2fba290e1114d8e80c5df443f6d69761b",
+        "status": "landed",
+        "target": "hierarchy-lead",
+        "commit": "81e5ac3b9b467c6826e9a21e74b688587e57ed67"
+      },
+      {
+        "artifact": "landing-muse.json",
+        "sha256": "63f922d6e6450f4be61b9350c162c89d93ce3344697f88fef11da042c8f10b36",
+        "status": "landed",
+        "target": "hierarchy-lead",
+        "commit": "ef6d3b456f7b1510d68ceae9e2c329eb95bdbed8"
+      },
+      {
+        "artifact": "landing-root.json",
+        "sha256": "5e57513e26d7c3074bbc9d11cb2a4347ee283110d53fd34f09bb98a1d62db6d8",
+        "status": "landed",
+        "target": "bend2-trial",
+        "commit": "5a9cdfd0d822578902be85b1095746cdc0128702"
+      }
+    ],
+    "publication_boundary": "The run checked landed to its isolated bend2-trial target. This record makes no remote publication claim for that task target."
+  },
+  "reports": [
+    {
+      "id": "receive:lead:2:e6da1af266e18fb72cc12845a4c7baa4",
+      "sender": "lead",
+      "recipient": "root",
+      "body_bytes": 1484,
+      "body_sha256": "49bfb4fb92c6d9fcbee0b5d483307c3a39cb447e4bcf4058fc820918f3c10a20"
+    },
+    {
+      "id": "muse-turn",
+      "sender": "muse",
+      "recipient": "lead",
+      "body_bytes": 1833,
+      "body_sha256": "865a4a582c20f180fc62c8e8900216af80d6392d0c0fcf56d5a07485af9a812c"
+    },
+    {
+      "id": "deepseek-turn",
+      "sender": "deepseek",
+      "recipient": "lead",
+      "body_bytes": 4507,
+      "body_sha256": "dd85ac1be85a04aa5367ee68be6769d183c40f0bc0e84d019899155940c8de27"
+    },
+    {
+      "id": "receive:lead:5:beb78d6ea5f50e2b3af20f24ea43ca64",
+      "sender": "lead",
+      "recipient": "root",
+      "body_bytes": 1362,
+      "body_sha256": "3873e0c0692dca83b9f59e04bd1b6f42067d5e0e0bd26aadd3f29f482102730e"
+    },
+    {
+      "id": "receive:lead:6:ffc0804609092cb12feb08811350b28b",
+      "sender": "lead",
+      "recipient": "root",
+      "body_bytes": 2180,
+      "body_sha256": "59252f61d431f2674e895384ca097e57c0f9202b103bd1f8fa3d18b06a9022e0"
+    },
+    {
+      "id": "receive:lead:9:1374037c56b642dfc0440f2d0ee0c233",
+      "sender": "lead",
+      "recipient": "root",
+      "body_bytes": 1891,
+      "body_sha256": "b2c42f3af06e6dd91446ee99b58a1072439e4775a71cb05f31dac642f5542cc4"
+    },
+    {
+      "id": "muse-correction-review-1",
+      "sender": "muse",
+      "recipient": "lead",
+      "body_bytes": 1782,
+      "body_sha256": "39a3578ea4da248643e1ceb39404df75117d8b9ff9a0d68ad8ded1ca7a89e068"
+    },
+    {
+      "id": "receive:lead:11:16d6fea5b4a9d715580b80d60faa4762",
+      "sender": "lead",
+      "recipient": "root",
+      "body_bytes": 1962,
+      "body_sha256": "5684a6cc1d0c015859c8b104649838f70778bd6c2c80aaec3d1ede4c5833cf3a"
+    },
+    {
+      "id": "muse-correction-review-2",
+      "sender": "muse",
+      "recipient": "lead",
+      "body_bytes": 1356,
+      "body_sha256": "185aced1ee6d1db400cf26228e89fb304be578e0a1c1cb28c98005ced49fb5d7"
+    },
+    {
+      "id": "receive:lead:13:a40825ca8a9ddb88e1dad37d1c4f26e3",
+      "sender": "lead",
+      "recipient": "root",
+      "body_bytes": 2313,
+      "body_sha256": "c2bc3edb2a308384f89196ea7ab873be98281ad63594c19b4e17135b55c36475"
+    },
+    {
+      "id": "receive:lead:16:f90443937ce7ea9214c61c20020ba58c",
+      "sender": "lead",
+      "recipient": "root",
+      "body_bytes": 2150,
+      "body_sha256": "25468f0d2d5f3df18f6ee82d6211ee67cfaa3ed9503ace409b8311c9df9d2695"
+    },
+    {
+      "id": "muse-correction-review-3",
+      "sender": "muse",
+      "recipient": "lead",
+      "body_bytes": 1872,
+      "body_sha256": "7a7edd23f44c32f43462981e416450f6e38adedf54698a6335ac38d82992db3d"
+    },
+    {
+      "id": "receive:lead:18:5c1bf5b5ff6534270e6c29a5b0775a1f",
+      "sender": "lead",
+      "recipient": "root",
+      "body_bytes": 2166,
+      "body_sha256": "9d397a47768838386c4d5526099e2f9c9efed73aad5f5c7f5c499d549c7e93b7"
+    },
+    {
+      "id": "muse-correction-review-4",
+      "sender": "muse",
+      "recipient": "lead",
+      "body_bytes": 1143,
+      "body_sha256": "6a859179362069fa3acd5d3fd450b6e5b0ba60fa75580f694a20ead06255e032"
+    },
+    {
+      "id": "receive:lead:20:bfe2a96add4f265f6bc715b23da7e0f1",
+      "sender": "lead",
+      "recipient": "root",
+      "body_bytes": 2940,
+      "body_sha256": "20833de55929e8bcb1ae2115a8f5cd62d56c638ce8608b0114b1f697edd4c9c7"
+    },
+    {
+      "id": "hierarchy-complete",
+      "sender": "root",
+      "recipient": "operator",
+      "body_bytes": 8390,
+      "body_sha256": "c62d40d4b2dbb3fd1dc71947ddb4c4dddf1d8a3c5ab2f778e6d55686f2d9f26d"
+    }
+  ],
+  "completion": {
+    "owned_pid_count": 54,
+    "observed_owned_processes_remaining": 0,
+    "closure_receipt_sha256": "862b7c9cb397648a2c8c49035617841c537f981b2b3384f4744ae64d29113041",
+    "native_count": 25,
+    "all_wrapper_and_child_exits_zero": true,
+    "operator_ack": {
+      "message": "hierarchy-complete",
+      "recipient": "operator",
+      "exit_code": 0,
+      "receipt": "reviewed-success",
+      "artifact_sha256": "c5542b5b2f9039b64dc761c9fe1231bf25ecedeb2405fe68a10dc60c63190270",
+      "db_sha256_before": "a75f553d367ec9ec0e8b0d00176bd0c4fde88afee8951788728d50f8ea7742d1",
+      "db_sha256_after": "e43956604ec1697927cd1323947724a6a5fac90745c289454120a6cf2aa43034",
+      "boundary": "Ordinary operator acknowledgment occurred after immutable helper evidence completed; original evidence and process records remain unchanged."
+    },
+    "exact_run_path_inspection": {
+      "receipt_sha256": "9c920410ef4f5898b09cbf3f09b97266f30639b114369080e9ae6990f769fc8f",
+      "query_exit_code": 0,
+      "matching_processes": [],
+      "boundary": "Host-visible command paths containing the exact run directory; independent of the recorded-PID inspection."
+    }
+  },
+  "limitations": [
+    "One explicit external operator review task contributed to completion.",
+    "The earlier failed matched original/Bend2 trials retain their failed complete predicates.",
+    "OMP usage sums assistant message_end counters once; terminal and history copies are excluded.",
+    "Codex uses the latest cumulative usage per native identity once across resumed invocations; cached input and reasoning are included dimensions.",
+    "Kimi emitted zero cost and DeepSeek emitted a cost field; neither field is a billing receipt. Muse usage and cost remain unknown.",
+    "Native duration sums can overlap and do not measure comparative workflow speed.",
+    "This record supports the frozen helper acceptance predicate and stated source/model/process boundaries; it does not establish causal performance, cost, maintainability or broad release readiness.",
+    "Prepublication gates apply to the frozen runtime source. Composing the delivered test/documentation changes requires its own validation."
+  ]
+}

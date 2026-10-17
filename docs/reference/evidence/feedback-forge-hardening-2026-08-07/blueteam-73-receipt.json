@@ -1,0 +1,30 @@
+{
+  "attempt": "2026-08-13T03:19:12.230Z",
+  "salt": "u420260813031912",
+  "role": "blueteam-73",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-fd8b0c8c703c8b66caad6aa98c044203"
+        ]
+      }
+    },
+    {
+      "step": "dead:blueteam-73",
+      "receipt": {
+        "phase": "failed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {},
+  "harvestStalePinsSkipped": 443,
+  "verdict": "BLUE-73-FAILED"
+}

@@ -1,0 +1,185 @@
+{
+  "at": "2026-07-13T07:36:07.893Z",
+  "repoHead": "c426b5ddc45626fc13a4d358f4602ec84aadfcce",
+  "runId": "phase48-harness-matrix",
+  "grokAuthProbe": {
+    "authenticated": false,
+    "output": "You are not authenticated.\n\nDefault model: grok-build\n\nAvailable models:\n  * grok-build (default)"
+  },
+  "credentialPosture": {
+    "glm": "project-local owner-only ignored file loaded only by GlmSessionCli",
+    "codex": "explicit owner-only private runtime projection",
+    "grok": "explicit owner-only private runtime projection",
+    "claude": "subscription/keychain; no credential file projection"
+  },
+  "rows": [
+    {
+      "taskId": "phase48-codex-recall-review",
+      "harness": "codex",
+      "model": "gpt-5.6-sol",
+      "target": "reviews/dogfood/phase48-codex-recall-review.md",
+      "workerId": "w-1",
+      "pid": 9153,
+      "result": {
+        "status": "failed",
+        "ready": true
+      },
+      "route": {
+        "harnessRequested": "codex",
+        "harnessResolved": "codex@codex-cli 0.144.1",
+        "modelRequested": "gpt-5.6-sol",
+        "modelResolved": "gpt-5.6-sol",
+        "modelObserved": "gpt-5.6-sol",
+        "effortRequested": "low",
+        "effortResolved": "low",
+        "effortObserved": null
+      },
+      "budgetUsed": {
+        "tokens": 254393,
+        "usd": 0
+      },
+      "verifyAccept": false,
+      "reportCaptured": false,
+      "terminalReason": ""
+    },
+    {
+      "taskId": "phase48-glm-ranking-review",
+      "harness": "glm",
+      "model": "glm-4.7",
+      "target": "reviews/dogfood/phase48-glm-ranking-review.md",
+      "workerId": "w-2",
+      "pid": 9159,
+      "result": {
+        "status": "completed",
+        "ready": true
+      },
+      "route": {
+        "harnessRequested": "glm",
+        "harnessResolved": "glm-via-claude-session@claude-code-2.1.206+zai-anthropic",
+        "modelRequested": "glm-4.7",
+        "modelResolved": "glm-4.7",
+        "modelObserved": "glm-4.7",
+        "effortRequested": "low",
+        "effortResolved": "low",
+        "effortObserved": null
+      },
+      "budgetUsed": {
+        "tokens": 78605,
+        "usd": 0.568361
+      },
+      "verifyAccept": true,
+      "reportCaptured": true,
+      "terminalReason": ""
+    },
+    {
+      "taskId": "phase48-claude-transport-review",
+      "harness": "claude",
+      "model": "claude-opus-4-6",
+      "target": "reviews/dogfood/phase48-claude-transport-review.md",
+      "workerId": "w-3",
+      "pid": 9165,
+      "result": {
+        "status": "failed",
+        "ready": true
+      },
+      "route": {
+        "harnessRequested": "claude",
+        "harnessResolved": "claude-code@2.1.206",
+        "modelRequested": "claude-opus-4-6",
+        "modelResolved": "claude-opus-4-6",
+        "modelObserved": "claude-opus-4-6",
+        "effortRequested": "low",
+        "effortResolved": "low",
+        "effortObserved": null
+      },
+      "budgetUsed": {
+        "tokens": 0,
+        "usd": 0
+      },
+      "verifyAccept": false,
+      "reportCaptured": false,
+      "terminalReason": ""
+    },
+    {
+      "taskId": "phase48-grok-contamination-review",
+      "harness": "grok",
+      "model": "grok-4.5",
+      "target": "reviews/dogfood/phase48-grok-contamination-review.md",
+      "workerId": "w-4",
+      "pid": null,
+      "result": {
+        "status": "failed",
+        "ready": true
+      },
+      "route": {
+        "harnessRequested": "grok",
+        "harnessResolved": "grok@grok 0.1.216 (b139744655)",
+        "modelRequested": "grok-4.5",
+        "modelResolved": "grok-4.5",
+        "modelObserved": null,
+        "effortRequested": "low",
+        "effortResolved": "low",
+        "effortObserved": null
+      },
+      "budgetUsed": {
+        "tokens": 0,
+        "usd": 0
+      },
+      "verifyAccept": false,
+      "reportCaptured": false,
+      "terminalReason": "Authentication required"
+    }
+  ],
+  "responses": [],
+  "kills": [
+    {
+      "taskId": "phase48-codex-recall-review",
+      "ack": {
+        "ok": true,
+        "result": "confirmed",
+        "emulated": false
+      }
+    },
+    {
+      "taskId": "phase48-glm-ranking-review",
+      "ack": {
+        "ok": true,
+        "result": "confirmed",
+        "emulated": false
+      }
+    },
+    {
+      "taskId": "phase48-claude-transport-review",
+      "ack": {
+        "ok": true,
+        "result": "confirmed",
+        "emulated": false
+      }
+    },
+    {
+      "taskId": "phase48-grok-contamination-review",
+      "ack": {
+        "ok": true,
+        "result": "already_dead"
+      }
+    }
+  ],
+  "checks": {
+    "runnerHealthy": true,
+    "allHarnessesAdmitted": true,
+    "exactRoutesRequestedResolved": true,
+    "noFalseProviderObservation": true,
+    "allTerminal": true,
+    "successfulReportsCaptured": true,
+    "successfulTurnsOverlap": false,
+    "distinctNativePids": true,
+    "killSafe": true,
+    "processesGone": true,
+    "worktreesGone": true,
+    "runtimesGone": true,
+    "branchesGone": true,
+    "writerAuthorityReleased": true
+  },
+  "fatal": null,
+  "pass": false
+}

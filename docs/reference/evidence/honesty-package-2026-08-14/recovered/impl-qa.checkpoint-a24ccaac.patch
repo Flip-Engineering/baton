@@ -1,0 +1,158 @@
+From a24ccaac24e3fe99c9767bd5c693484c75236e9e Mon Sep 17 00:00:00 2001
+From: "baton-worker-deepseek:deepseek"
+ <baton-worker-deepseek:deepseek@localhost>
+Date: Thu, 13 Aug 2026 21:29:32 -0700
+Subject: [PATCH] baton snapshot: ws-179d42ff64231506ed4bc5e2785c7bdc
+
+Baton-Task: ws-179d42ff64231506ed4bc5e2785c7bdc
+Baton-Vendor: deepseek:deepseek
+Baton-Model: deepseek-v4-pro[1m]
+Baton-Effort: high
+---
+ .../honesty-package-2026-08-14/impl-qa.md     | 134 ++++++++++++++++++
+ 1 file changed, 134 insertions(+)
+ create mode 100644 docs/reference/evidence/honesty-package-2026-08-14/impl-qa.md
+
+diff --git a/docs/reference/evidence/honesty-package-2026-08-14/impl-qa.md b/docs/reference/evidence/honesty-package-2026-08-14/impl-qa.md
+new file mode 100644
+index 0000000..76ef098
+--- /dev/null
++++ b/docs/reference/evidence/honesty-package-2026-08-14/impl-qa.md
+@@ -0,0 +1,134 @@
++IMPL-QA v1
++
++[attempt: c8a3f4fc-fe15-4311-953e-5fc21b03ec44 coordinator]
++
++Coordinator QA — the honesty-package four-row impl wave (#157 CLI fidelity · #158 scratchpad
++write · #159 doc-truth · #160 error actionability). Every claim below is cited evidence (message
++ids, on-disk files, git SHAs, node --test run summaries) or an explicitly named absence. No
++clocks, no fabrication. Verdicts drive the landing.
++
++## Signal status
++
++| Lane | Expected (wavefile `steering`) | Received | State |
++|---|---|---|---|
++| messageOnSpawn | `brief` (steering→every member) | `message:4522ca40a7645269a626551a0c4324e747a7b3f5c4adab266b5472ec314b4df5` | RECEIVED — body verbatim equals `impl-honesty.wavefile` `messageOnSpawn` |
++| signalOnMembersDone | `result` to the coordinator once `row-cli,row-kernel,row-docs,row-errors` are all terminal | — | NOT RECEIVED |
++
++The signal did not fire: the four watched rows are not all terminal, and no row produced a
++report on disk (below). This is the #175 corrected semantics (`signalOnMembersDone` names the
++watched rows; the remaining member — this coordinator — is the recipient), verified against
++`impl-honesty.wavefile` line 54.
++
++## Per-row verdicts
++
++| Row | Contract | Owns (wavefile scope) | Notes file | Worktree | Verdict |
++|---|---|---|---|---|---|
++| row-cli | #157 (+ CLI half of #158) | `impl/src/application-cli.mjs` · `impl/src/application.mjs` | `notes-row-cli.md` — ABSENT | no changes | **not-landed** |
++| row-kernel | #158 | `impl/src/coordination-store.mjs` · `application-semantics.mjs` · admission tables in `mcp-northbound.mjs`/`web-northbound.mjs` | `notes-row-kernel.md` — ABSENT | no changes | **not-landed** |
++| row-docs | #159 | `impl/scripts/**` · `impl/CLI.md` · `impl/MCP.md` | `notes-row-docs.md` — ABSENT | no changes | **not-landed** |
++| row-errors | #160 | error rendering in `mcp-northbound.mjs` · `web-northbound.mjs` · `application-cli.mjs` error line | `notes-row-errors.md` — ABSENT | no changes | **not-landed** |
++
++"not-landed" is not "dead": per the #174 law, silence is not death and a missing attempt marker
++is not a dead row. What is true at verification time is that no row produced a notes file, a
++worktree diff, or a signal — so there is no implementation to grade sound vs needs-fix. Each
++row's target suite is still at its base RED split (below), which is the on-disk proof that no
++row's seam was implemented.
++
++On-disk verification: `git worktree list` shows four `.baton/wt` worktrees, all at baseSha
++`69f8a8d` (mine + three siblings: `ws-9e576927…`, `ws-be931764…`, `ws-e62a4874…`). All three
++siblings are clean (`git status --short` empty). `find` for `notes-row-*.md`, `impl-qa.md`, and
++`impl-honesty-notes.md` across every worktree, the main repo, and the `/private/tmp` checkouts
++returns nothing. The main repo's `impl/` and `honesty-package-2026-08-14/` are clean.
++
++## Collision list (for the landing — from wavefile scopes, not from landed diffs)
++
++The wavefile gives row-kernel and row-errors overlapping ownership of the northbound files, and
++row-cli/row-errors overlapping ownership of the CLI file. These are the seams the landing must
++reconcile (no row has produced a diff yet, so these are the *declared* collision points, noted
++by name):
++
++1. `impl/src/mcp-northbound.mjs` — **row-kernel** (the append verb's command/admission TABLE rows)
++   × **row-errors** (the error/refusal RENDERING paths).
++2. `impl/src/web-northbound.mjs` — **row-kernel** (admission tables) × **row-errors** (error
++   rendering).
++3. `impl/src/application-cli.mjs` — **row-cli** (the CLI parser / interpreter-wave registry
++   projection) × **row-errors** (the `baton: <code>: …` error line).
++
++Each row's brief already partitions these files verbally ("row-errors owns the error-rendering
++internals … stay out of their error paths"; "row-kernel owns those, row-cli owns the CLI
++parser"), but the partition is prose, not a byte-range fence — the landing must diff-check the
++three files above for overlapping hunks.
++
++## Measured splits (acceptance, run from repo root: `node --test`)
++
++Four targets — all at their base RED split (the rows' capability rows still fail at their named
++stages; no implementation landed):
++
++| Suite | tests | pass | fail | designed |
++|---|---|---|---|---|
++| cli-wave-fidelity-red (#157) | 16 | 8 | 8 | 8 RED capability + 8 PIN — at base |
++| scratchpad-write-red (#158) | 23 | 5 | 18 | at base (5 PIN green / 18 RED) |
++| doc-truth-conformance-red (#159) | 13 | 2 | 11 | at base |
++| error-actionability-red (#160) | 22 | 6 | 16 | at base |
++
++PIN rows + adjacents — all unmoved (green at their designed stages, red at designed-only stages):
++
++| Suite | tests | pass | fail | brief's bar | status |
++|---|---|---|---|---|---|
++| workflow-dsl-red | 35 | 35 | 0 | 35/35 | ✓ |
++| workflow-dsl-package-red | 12 | 12 | 0 | 12/12 | ✓ |
++| workflow-as-data-red | 30 | 30 | 0 | 30/30 | ✓ |
++| wave-observability-red | 30 | 30 | 0 | 30/30 | ✓ |
++| control-surface-truth-red | 7 | 7 | 0 | 7/7 | ✓ |
++| mcp-profile-parity-red | 21 | 8 | 13 | 8/13 at DESIGNED stages only | ✓ |
++| blind-waits-red | 34 | 23 | 11 | 23/11 by design | ✓ |
++| orchestrator-plan-object-red | 47 | 5 | 42 | 5/42 by design | ✓ |
++| mcp-reflex-surface-red | 21 | 21 | 0 | 21/21 (row-errors adjacent) | ✓ |
++| phase16-mcp-northbound | 29 | 29 | 0 | 29/29 (row-errors adjacent) | ✓ |
++
++The adjacents are undisturbed (nothing landed to disturb them); the four targets are undisturbed
++at their base RED — the two facts together are the proof that the rows have not landed.
++
++## Publish-to-shared (#158 negative test, live)
++
++Step 4 instructs "Publish to `shared` — or record the exact refusal." The exact outcome is a
++silent scope hardcode, not a typed refusal. On disk at this base:
++
++- `coordination-store.mjs:14103` — `const scope = \`worker:${fields.workerId}\`;` inside
++  `writeScratchpad` hardcodes the write scope to the worker partition; there is no worker-visible
++  path to a `shared` scope.
++- `claude-session.mjs:103-118` — `scanForScratchpadWrite` admits only the closed shape
++  `{entry, expectedFence, idempotencyKey}` (`Object.keys(parsed).sort().join(',') !==
++  'entry,expectedFence,idempotencyKey'`); the up-channel wire frame carries NO scope field, so a
++  worker cannot name `shared`.
++- `coordination-store.mjs:14333` — the `shared` scope that exists is `settleWorkflowScratchpad`,
++  an orchestrator-only settlement path (`auth?.actor !== 'orchestrator'` refuses); not a write
++  lane.
++
++So there is no exact refusal string to record — a publish-to-shared is silently admitted and
++lands in `worker:<id>`, never `shared`. This is the #158 root cause, and it is still live
++because row-kernel has not landed. (Corroborates the lane-proof `lane-qa.md` L6 finding at the
++code level.)
++
++## Residual register
++
++1. **Signal absent.** `signalOnMembersDone` did not fire; the four watched rows are not all
++   terminal (no report on disk). Recorded, not fabricated.
++2. **Worktree count.** Four `.baton/wt` worktrees exist (coordinator + three siblings) for a
++   five-member wave (coordinator + four rows). One row's worktree is absent.
++3. **Base drift.** The worktrees are provisioned at `69f8a8d` ("Baton private effective-tree
++   snapshot", child of `68163cf`); the wave-b definition — `impl-honesty.wavefile`,
++   `coordinator-brief.md`, `row-{cli,kernel,docs,errors}-brief.md` — lives only on master at
++   `ee8bc8f` (`68163cf → e44d776 → ed22930 → ee8bc8f`), a divergent sibling, so none of the
++   member worktrees contain the wave definition on disk. `git merge-base --is-ancestor 69f8a8d
++   ee8bc8f` → NO.
++4. **Shared publish gapped** (above) — a live #158 confirmation, not an impl regression.
++5. **Escalation** — the disposition of the four unlanded rows is authority-class; see the
++   DECISION_REQUEST in this coordinator's turn text.
++
++## Escalation
++
++The four rows are silent (no notes, no diffs, no signal) and their suites are at base RED. Whether
++the landing should conclude them GAPPED now, hold for a re-check, or re-drive them is not mine to
++decide alone — escalated UP via a real DECISION_REQUEST (options: `release-gapped` /
++`hold-recheck` / `redrive-rows`). See the wire frame in the turn text.
+-- 
+2.50.1
+

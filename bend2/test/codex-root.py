@@ -1,0 +1,874 @@
+"""Integration test for the Bend2 Codex Conductor adapter."""
+import json
+import os
+import pathlib
+import sqlite3
+import subprocess
+import sys
+import tempfile
+import time
+import unittest
+
+from receive import install_public_queue_codex
+
+ROOT = pathlib.Path(__file__).resolve().parents[2]
+EXE = ROOT / '.scratch/bend2/baton2'
+CODEX_CONDUCTOR_SCRIPT = ROOT / 'bend2/scripts/codex-conductor.mjs'
+NOTICE_ENDPOINT = json.dumps(['/usr/bin/true'])
+
+
+class CodexRootAdapter(unittest.TestCase):
+    """Test the Codex Conductor adapter's report-triggered delivery and message formatting."""
+
+    def setUp(self):
+        if not EXE.exists():
+            self.skipTest(f'Coordinator not built at {EXE}')
+        self.temp = tempfile.TemporaryDirectory(dir=ROOT / '.scratch/bend2')
+        install_public_queue_codex(self, self.temp.name)
+        self.repo = pathlib.Path(self.temp.name) / 'repository'
+        self.repo.mkdir()
+        self.checkouts = pathlib.Path(self.temp.name) / 'checkouts'
+        self.checkouts.mkdir()
+        for argv in (['init', '-q', '-b', 'main'], ['config', 'user.email', 'fixture@example.invalid'],
+                     ['config', 'user.name', 'Codex adapter fixture']):
+            subprocess.run(['git', '-C', str(self.repo), *argv], check=True, capture_output=True)
+        (self.repo / 'seed.txt').write_text('seed\n')
+        subprocess.run(['git', '-C', str(self.repo), 'add', 'seed.txt'], check=True, capture_output=True)
+        subprocess.run(['git', '-C', str(self.repo), 'commit', '-q', '-m', 'seed'],
+                       check=True, capture_output=True)
+        self.base = subprocess.run(['git', '-C', str(self.repo), 'rev-parse', 'HEAD'],
+                                   check=True, capture_output=True, text=True).stdout.strip()
+        self.db = pathlib.Path(self.temp.name) / 'state.db'
+        self.addCleanup(self.cleanup_fixture)
+
+    def register(self, name, parent, harness, model, effort, workspace=None, branch=None, base=None):
+        """Recruit the session into this suite's fixture repository."""
+        return self.coord('recruit', name, parent, harness, model, effort, str(self.repo),
+                          branch or (name + '-branch'), str(self.checkouts / name), self.base)
+
+    def instance_owner_pids(self):
+        expected = f'{EXE.resolve()} --instance-owner {self.db.resolve()}'
+        processes = subprocess.run(['ps', '-axo', 'pid=,ppid=,stat=,command='],
+                                   check=True, capture_output=True, text=True)
+        owners = set()
+        for line in processes.stdout.splitlines():
+            fields = line.strip().split(None, 3)
+            if len(fields) == 4 and fields[3] == expected and not fields[2].startswith('Z'):
+                owners.add(int(fields[0]))
+        try:
+            observation = getattr(self, '_cleanup_observation', None)
+            if observation is not None:
+                recorded = {'argv': ['ps', '-axo', 'pid=,ppid=,stat=,command='],
+                            'returncode': processes.returncode, 'stdout': processes.stdout,
+                            'stderr': processes.stderr, 'expectedOwnerArgv': expected,
+                            'matchedOwnerIds': sorted(owners)}
+                observation.setdefault('ordinaryPsInitial', recorded)
+                observation['ordinaryPsLast'] = recorded
+                observation['ordinaryPsCalls'] = observation.get('ordinaryPsCalls', 0) + 1
+        except BaseException:
+            pass
+        return owners
+
+    def delivery_pids(self):
+        prefixes = (f'{EXE.resolve()} --dispatch-message {self.db.resolve()} ',
+                    f'{EXE.resolve()} {self.db.resolve()} receive ')
+        processes = subprocess.run(['ps', '-axo', 'pid=,ppid=,stat=,command='],
+                                   check=True, capture_output=True, text=True)
+        deliveries = set()
+        for line in processes.stdout.splitlines():
+            fields = line.strip().split(None, 3)
+            if (len(fields) == 4 and not fields[2].startswith('Z')
+                    and any(fields[3].startswith(prefix) for prefix in prefixes)):
+                deliveries.add(int(fields[0]))
+        try:
+            observation = getattr(self, '_cleanup_observation', None)
+            if observation is not None:
+                recorded = {'argv': ['ps', '-axo', 'pid=,ppid=,stat=,command='],
+                            'returncode': processes.returncode, 'stdout': processes.stdout,
+                            'stderr': processes.stderr, 'expectedDeliveryPrefixes': list(prefixes),
+                            'matchedDeliveryIds': sorted(deliveries)}
+                observation.setdefault('deliveryPsInitial', recorded)
+                observation['deliveryPsLast'] = recorded
+                observation['deliveryPsCalls'] = observation.get('deliveryPsCalls', 0) + 1
+        except BaseException:
+            pass
+        return deliveries
+
+    def cleanup_ps(self, wide):
+        argv = ['ps', *(['-ww'] if wide else []), '-axo', 'pid=,ppid=,stat=,command=']
+        result = subprocess.run(argv, capture_output=True, text=True)
+        expected = f'{EXE.resolve()} --instance-owner {self.db.resolve()}'
+        matches = []
+        for line in result.stdout.splitlines():
+            fields = line.strip().split(None, 3)
+            if len(fields) == 4 and fields[3] == expected and not fields[2].startswith('Z'):
+                matches.append(int(fields[0]))
+        return {'argv': argv, 'returncode': result.returncode, 'stdout': result.stdout,
+                'stderr': result.stderr, 'expectedOwnerArgv': expected,
+                'matchedOwnerIds': sorted(matches)}
+
+    def cleanup_entries(self):
+        root = pathlib.Path(self.temp.name)
+        rows = []
+        def add(path):
+            row = {'path': str(path.relative_to(root)) if path != root else '.'}
+            try:
+                info = path.lstat()
+                row.update(mode=info.st_mode, uid=info.st_uid, device=info.st_dev,
+                           inode=info.st_ino, size=info.st_size, mtimeNs=info.st_mtime_ns)
+            except OSError as error:
+                row['error'] = repr(error)
+            rows.append(row)
+        add(root)
+        for directory, subdirs, files in os.walk(root, followlinks=False,
+                onerror=lambda error: rows.append({'walkError': repr(error)})):
+            for name in sorted(subdirs + files):
+                add(pathlib.Path(directory) / name)
+        return rows
+
+    def cleanup_related_fds(self):
+        root = self.temp.name
+        related = []
+        if not os.path.isdir('/proc'):
+            return related
+        for entry in os.scandir('/proc'):
+            if not entry.name.isdigit():
+                continue
+            proc = pathlib.Path(entry.path)
+            found = []
+            try:
+                cwd = os.readlink(proc / 'cwd')
+                if cwd == root or cwd.startswith(root + '/'):
+                    found.append({'fd': 'cwd', 'target': cwd})
+            except OSError:
+                pass
+            try:
+                for fd in os.scandir(proc / 'fd'):
+                    try:
+                        target = os.readlink(fd.path)
+                        if target == root or target.startswith(root + '/'):
+                            found.append({'fd': fd.name, 'target': target})
+                    except OSError:
+                        pass
+            except OSError:
+                pass
+            if found:
+                try:
+                    argv = (proc / 'cmdline').read_bytes().rstrip(b'\0').split(b'\0')
+                    command = [arg.decode('utf-8', 'replace') for arg in argv]
+                except OSError as error:
+                    command = [repr(error)]
+                related.append({'pid': int(entry.name), 'argv': command, 'links': found})
+        return related
+
+    def cleanup_failure_observe(self, error):
+        try:
+            observation = self._cleanup_observation
+            observation['cleanupError'] = repr(error)
+            if isinstance(error, subprocess.CalledProcessError):
+                observation['failedCommand'] = {'argv': error.cmd, 'returncode': error.returncode,
+                                                'stdout': error.stdout, 'stderr': error.stderr}
+            observation['beforeDirectoryEntries'] = 'unavailable'
+            observation['timeNs'] = time.time_ns()
+            for key, collect in (('ordinaryPsAfterFailure', lambda: self.cleanup_ps(False)),
+                                 ('widePsAfterFailure', lambda: self.cleanup_ps(True)),
+                                 ('remainingEntries', self.cleanup_entries),
+                                 ('relatedFdsAfterFailure', self.cleanup_related_fds)):
+                try:
+                    observation[key] = collect()
+                except BaseException as diagnostic_error:
+                    observation[key + 'Error'] = repr(diagnostic_error)
+            try:
+                sys.stderr.write('CODEX_CLEANUP_OBSERVATION '
+                                 + json.dumps(observation, ensure_ascii=False) + '\n')
+                sys.stderr.flush()
+            except BaseException:
+                pass
+        except BaseException:
+            pass
+
+    def cleanup_fixture(self):
+        try:
+            self._cleanup_observation = {'test': self.id(), 'directory': self.temp.name,
+                                         'database': str(self.db)}
+        except BaseException:
+            self._cleanup_observation = None
+        try:
+            try:
+                if self.db.exists():
+                    while self.delivery_pids():
+                        time.sleep(.01)
+                    owners = self.instance_owner_pids()
+                    stopped = subprocess.run([str(EXE), '--instance-shutdown', str(self.db)],
+                                             capture_output=True, text=True)
+                    try:
+                        self._cleanup_observation['shutdown'] = {
+                            'argv': [str(EXE), '--instance-shutdown', str(self.db)],
+                            'returncode': stopped.returncode, 'stdout': stopped.stdout,
+                            'stderr': stopped.stderr}
+                    except BaseException:
+                        pass
+                    self.assertEqual(stopped.returncode, 0, stopped.stdout + stopped.stderr)
+                    while owners & self.instance_owner_pids():
+                        time.sleep(.01)
+            except Exception:
+                self.temp._finalizer.detach()
+                raise
+            self.temp.cleanup()
+        except BaseException as error:
+            self.cleanup_failure_observe(error)
+            raise
+
+    def coord(self, *args, ok=True):
+        p = subprocess.run(
+            [str(EXE), str(self.db), *args],
+            text=True, capture_output=True,
+        )
+        if ok:
+            self.assertEqual(p.returncode, 0, p.stderr)
+        return p.stdout.strip()
+
+    def observe(self, observation):
+        while True:
+            value = observation()
+            if value is not None:
+                return value
+            time.sleep(0.05)
+
+    def accepted(self, ident, receipt, missing=False):
+        def observation():
+            stored = subprocess.run([str(EXE), str(self.db), 'delivery', ident],
+                                    text=True, capture_output=True)
+            if (missing and stored.returncode == 1 and stored.stdout == ''
+                    and stored.stderr == 'No matching session or message; inspect status and the requested ID.\n'):
+                return None
+            self.assertEqual(stored.returncode, 0, stored.stdout + stored.stderr)
+            value = json.loads(stored.stdout)
+            if value['receipt'] is None:
+                return None
+            self.assertEqual(value['receipt'], receipt, value)
+            return value
+        return self.observe(observation)
+
+    def exited(self, session, status='exit 0'):
+        def observation():
+            player = next(row for row in json.loads(self.coord('players')) if row['id'] == session)
+            execution = player['execution']
+            if execution is None:
+                return None
+            self.assertEqual(execution['mode'], 'retained')
+            self.assertIn(execution['phase'], ('starting', 'running', 'exited'))
+            if execution['phase'] != 'exited':
+                self.assertEqual(execution['status'], '')
+                return None
+            self.assertEqual(execution['status'], status)
+            return execution
+        return self.observe(observation)
+
+    def completed(self, session, bodies):
+        def observation():
+            turns = json.loads(self.coord('turns', session))
+            return turns if len(turns) >= len(bodies) else None
+        turns = self.observe(observation)
+        self.assertEqual([turn['reportBody'] for turn in turns], bodies)
+        self.exited(session)
+        return turns
+
+    def test_player_terminal_starts_attached_root_without_a_listener(self):
+        import time
+
+        def observe(observation):
+            while True:
+                value = observation()
+                if value is not None:
+                    return value
+                time.sleep(0.05)
+
+        temp = pathlib.Path(self.temp.name)
+        received = temp / 'received.txt'
+        reviewed = temp / 'completion-reviewed.json'
+        report_execution = temp / 'report-root-execution.json'
+        request, confirmation = 'finished-completion-request', 'finished-completion-confirmed'
+        native = temp / 'root.py'
+        native.write_text('#!' + sys.executable + '\n' +
+            'import sys,pathlib,subprocess,json,time\n' +
+            'body=sys.stdin.read()\n' +
+            f'exe,db={str(EXE)!r},{str(self.db)!r}\n' +
+            'def cli(*args):return json.loads(subprocess.check_output([exe,db,*args],text=True))\n' +
+            'print(json.dumps({"type":"thread.started","thread_id":"native-root"}),flush=True)\n' +
+            'while cli("session","root")["native"]!="native-root":time.sleep(0.01)\n' +
+            f'if "[id: {request}]" in body:\n' +
+            f' value=cli("delivery",{request!r})\n' +
+            ' state=cli("session","w1")["taskCompletion"]\n' +
+            f' assert value["sender"]=="w1" and value["recipient"]=="root" and value["kind"]=="completion-request" and value["body"]=="Completed live task.",value\n' +
+            f' assert state=={{"assignmentId":"finished:task-input","coordinator":"root","requestId":{request!r},"confirmed":False,"open":True}},state\n' +
+            ' assert cli("delivery","finished:task-input")["receipt"]=="native-work-accepted"\n' +
+            f' pathlib.Path({str(reviewed)!r}).write_text(json.dumps({{"request":value,"completion":state}}))\n' +
+            f' cli("ack",{request!r},"root","native-completion-reviewed")\n' +
+            f' cli("message",{confirmation!r},"root","w1","completion-confirmed",{request!r})\n' +
+            'else:\n' +
+            f' pathlib.Path({str(received)!r}).write_text(body)\n' +
+            ' execution=next(row for row in cli("players") if row["id"]=="root")["execution"]\n' +
+            ' assert execution["mode"]=="retained" and execution["phase"] in ("starting","running"),execution\n' +
+            f' pathlib.Path({str(report_execution)!r}).write_text(json.dumps(execution))\n' +
+            ' cli("ack","finished","root","native-reviewed")\n' +
+            'print(json.dumps({"type":"item.completed","item":{"type":"agent_message","text":"Reviewed."}}))\n' +
+            'print(json.dumps({"type":"turn.completed"}))\n')
+        native.chmod(0o700)
+        attached = subprocess.run(['node', str(CODEX_CONDUCTOR_SCRIPT), str(self.db), str(EXE), str(native), '--attach'], capture_output=True, text=True)
+        self.assertEqual(attached.returncode, 0, attached.stderr)
+        self.assertFalse(received.exists())
+        root_log = json.loads(self.coord('session', 'root'))['endpointArgv'][-1]
+        self.register('w1', 'root', 'claude-code', 'model', 'low', str(temp), 'branch', 'base')
+        player = temp / 'worker.py'
+        player.write_text('#!' + sys.executable + '\n' +
+            'import sys,json,subprocess,time\n' +
+            'sys.stdin.read()\n' +
+            f'exe,db={str(EXE)!r},{str(self.db)!r}\n' +
+            'def cli(*args):return json.loads(subprocess.check_output([exe,db,*args],text=True))\n' +
+            'def delivery(ident,missing=False):\n' +
+            ' while True:\n' +
+            '  value=subprocess.run([exe,db,"delivery",ident],text=True,capture_output=True)\n' +
+            '  if missing and value.returncode==1 and value.stdout=="" and value.stderr=="No matching session or message; inspect status and the requested ID.\\n":\n' +
+            '   time.sleep(0.05)\n' +
+            '   continue\n' +
+            '  assert value.returncode==0,(value.returncode,value.stdout,value.stderr)\n' +
+            '  return json.loads(value.stdout)\n' +
+            'print(json.dumps({"type":"system","subtype":"init","session_id":"native-worker"}),flush=True)\n' +
+            'while cli("session","w1")["native"]!="native-worker":time.sleep(0.01)\n' +
+            'cli("ack","finished:task-input","w1","native-work-accepted")\n' +
+            f'cli("message",{request!r},"w1","root","completion-request","Completed live task.")\n' +
+            'while True:\n' +
+            f' value=delivery({request!r})\n' +
+            ' assert value["sender"]=="w1" and value["recipient"]=="root" and value["kind"]=="completion-request" and value["body"]=="Completed live task.",value\n' +
+            ' if value["receipt"] is not None:\n' +
+            '  assert value["receipt"]=="native-completion-reviewed",value\n' +
+            '  break\n' +
+            ' time.sleep(0.05)\n' +
+            f'value=delivery({confirmation!r},missing=True)\n' +
+            f'assert value["sender"]=="root" and value["recipient"]=="w1" and value["kind"]=="completion-confirmed" and value["body"]=={request!r},value\n' +
+            'assert value["receipt"] is None,value\n' +
+            f'cli("ack",{confirmation!r},"w1","native-completion-confirmed")\n' +
+            'print(json.dumps({"type":"result","result":"Completed live task."}))\n')
+        player.chmod(0o700)
+        task = temp / 'task.txt'
+        task.write_text('Task')
+        self.coord('turn', 'w1', 'finished', str(player), 'model', 'low', str(temp), str(task), str(temp / 'worker.jsonl'), '')
+        def report_received():
+            value = json.loads(self.coord('delivery', 'finished'))
+            self.assertEqual((value['sender'], value['recipient'], value['kind'], value['body']),
+                             ('w1', 'root', 'report', 'Completed live task.'))
+            if value['receipt'] is None:
+                return None
+            self.assertEqual(value['receipt'], 'native-reviewed')
+            return value
+        observe(report_received)
+        reported_execution = json.loads(report_execution.read_text())
+        def root_exited():
+            root = next(row for row in json.loads(self.coord('players')) if row['id'] == 'root')
+            execution = root['execution']
+            self.assertEqual(execution['attempt'], reported_execution['attempt'])
+            self.assertEqual(execution['mode'], 'retained')
+            self.assertIn(execution['phase'], ('starting', 'running', 'exited'))
+            if execution['phase'] != 'exited':
+                self.assertEqual(execution['status'], '')
+                return None
+            self.assertEqual(execution['status'], 'exit 0')
+            return execution
+        settled_execution = observe(root_exited)
+        self.assertIn('Completed live task.', received.read_text())
+        self.assertEqual(json.loads(self.coord('delivery', 'finished'))['receipt'], 'native-reviewed')
+        self.assertEqual(json.loads(self.coord('delivery', request))['receipt'], 'native-completion-reviewed')
+        self.assertEqual(json.loads(self.coord('delivery', confirmation))['receipt'], 'native-completion-confirmed')
+        self.assertEqual(json.loads(self.coord('session', 'w1'))['taskCompletion'], {
+            'assignmentId': 'finished:task-input', 'coordinator': 'root',
+            'requestId': request, 'confirmed': True, 'open': False})
+        self.assertEqual(json.loads(reviewed.read_text())['request']['id'], request)
+        self.assertEqual(json.loads(self.coord('inbox', 'w1')), [])
+        logs = json.loads(self.coord('logs-storage'))['logs']
+        attempt_code = ''.join(
+            c if c.isascii() and (c.isalnum() or c in '-_')
+            else ('%%%02x' if ord(c) < 256 else '%%%06x') % ord(c)
+            for c in settled_execution['attempt'])
+        generation = [row for row in logs if row['session'] == 'root'
+                      and row['attempt'] == attempt_code]
+        self.assertEqual(len(generation), 1, logs)
+        self.assertEqual(generation[0]['path'], root_log + '.attempt-' + attempt_code)
+        self.assertIn('Reviewed.', pathlib.Path(generation[0]['path']).read_text())
+
+    def test_failed_native_delivery_keeps_the_committed_report_pending(self):
+        temp = pathlib.Path(self.temp.name)
+        native = temp / 'root.py'
+        native.write_text('#!' + sys.executable + '\nimport sys,json\nsys.stdin.read()\nprint(json.dumps({"type":"turn.failed","error":{"message":"provider failed"}}))\nsys.exit(23)\n')
+        native.chmod(0o700)
+        attached = subprocess.run(['node', str(CODEX_CONDUCTOR_SCRIPT), str(self.db), str(EXE), str(native), '--attach'], capture_output=True, text=True)
+        self.assertEqual(attached.returncode, 0, attached.stderr)
+        self.register('w1', 'root', 'codex', 'model', 'low', str(temp), 'branch', 'base')
+        failed = subprocess.run([str(EXE), str(self.db), 'report', 'failed-delivery', 'w1', 'Retained report'], capture_output=True, text=True)
+        self.assertEqual(failed.returncode, 0, failed.stdout + failed.stderr)
+        self.exited('root', 'exit 23')
+        pending = json.loads(self.coord('inbox', 'root'))
+        self.assertEqual(pending[0]['body'], 'Retained report')
+        retained = json.loads(self.coord('delivery', 'failed-delivery'))
+        self.assertEqual((retained['sender'], retained['recipient'], retained['kind'], retained['body']),
+                         ('w1', 'root', 'report', 'Retained report'))
+        self.assertIsNone(retained['receipt'])
+
+    def test_attached_session_continues_later_input_and_reattaches_same_native(self):
+        temp = pathlib.Path(self.temp.name)
+        calls = temp / 'calls.jsonl'
+        native = temp / 'root.py'
+        native.write_text('#!' + sys.executable + '\nimport sys,pathlib,json,subprocess\n' +
+            'body=sys.stdin.read()\n' +
+            f'with pathlib.Path({str(calls)!r}).open("a") as f:f.write(json.dumps({{"argv":sys.argv[1:],"prompt":body}})+"\\n")\n' +
+            'ident="first" if "[id: first]" in body else ("during-turn" if "[id: during-turn]" in body else "second")\n' +
+            'print(\'{"type": "thread.started", "thread_id": "native-root"}\',flush=True)\n' +
+            f'subprocess.run({[str(EXE), str(self.db), "ack"]!r}+[ident,"root","reviewed"],check=True,stdout=subprocess.DEVNULL)\n' +
+            'if ident=="first":\n' +
+            f' subprocess.run({[str(EXE), str(self.db), "report", "during-turn", "sender", "Later report during the live turn."]!r},check=True,stdout=subprocess.DEVNULL)\n' +
+            'print(\'{"type": "item.completed", "item": {"type": "agent_message", "text": "Reviewed"}}\')\n' +
+            'print(\'{"type":"turn.completed"}\')\n')
+        native.chmod(0o700)
+        args = ['node', str(CODEX_CONDUCTOR_SCRIPT), str(self.db), str(EXE), str(native), '--attach']
+        for message in ['first', 'second']:
+            attached = subprocess.run(args, text=True, capture_output=True)
+            self.assertEqual(attached.returncode, 0, attached.stderr)
+            if message == 'first':
+                self.register('sender', 'root', 'fixture', 'model', 'low')
+            self.coord('report', message, 'sender', 'Review this message.')
+            self.accepted(message, 'reviewed')
+            if message == 'first':
+                self.accepted('during-turn', 'reviewed', missing=True)
+            self.exited('root')
+            self.assertEqual(json.loads(self.coord('player', 'root'))['native'], 'native-root')
+        observed = [json.loads(line) for line in calls.read_text().splitlines()]
+        self.assertEqual(len(observed), 3)
+        self.assertIn('Later report during the live turn.', observed[1]['prompt'])
+        self.assertEqual(json.loads(self.coord('delivery', 'during-turn'))['receipt'], 'reviewed')
+        self.assertEqual(json.loads(self.coord('inbox', 'root')), [])
+        for call in observed[1:]:
+            start = call['argv'].index('exec')
+            self.assertEqual(call['argv'][start:start + 3], ['exec', 'resume', 'native-root'])
+        self.assertNotIn('--ephemeral', observed[0]['argv'])
+
+    def test_adapter_exits_cleanly_with_no_pending_messages(self):
+        """With no root and no messages, the adapter exits 0."""
+        p = subprocess.run(
+            ['node', str(CODEX_CONDUCTOR_SCRIPT), str(self.db), str(EXE), 'false-codex', '--once'],
+            text=True, capture_output=True,
+        )
+        self.assertEqual(p.returncode, 0)
+        self.assertIn('no pending messages', p.stderr)
+
+    def test_associate_selected_identity_workspace_parent_and_subscription(self):
+        """A selected Associate resumes, reports to its empty-ID parent and quotes its CLI."""
+        self.assert_selected_associate_launch('saved-codex')
+
+    def test_fresh_associate_selected_identity_workspace_parent_and_subscription(self):
+        """A selected Associate starts a conversation with its recorded route."""
+        self.assert_selected_associate_launch('')
+
+    def assert_selected_associate_launch(self, native_id):
+        temp = pathlib.Path(self.temp.name)
+        self.db = temp / "state's λ.db"
+        associate = "delegated's λ"
+        self.coord('attach', '', 'codex', 'parent-native', '')
+        self.coord('role', '', 'principal-conductor')
+        self.register(associate, '', 'codex', 'stored-model', 'low', branch='associate-branch')
+        self.coord('connect', associate, native_id, '')
+        self.register('child', associate, 'fixture', 'child-model', 'low')
+        calls = temp / 'selected.json'
+        native = temp / 'selected.py'
+        native.write_text('#!' + sys.executable + '\nimport json,os,pathlib,subprocess,sys\n'
+            + f'pathlib.Path({str(calls)!r}).write_text(json.dumps({{"argv":sys.argv[1:],"cwd":os.getcwd(),"prompt":sys.stdin.read(),"api_keys":[k for k in ("OPENAI_API_KEY","CODEX_API_KEY") if k in os.environ]}}))\n'
+            + f'subprocess.run({[str(EXE), str(self.db), "ack", "selected-report", associate, "selected-reviewed"]!r},check=True,stdout=subprocess.DEVNULL)\n'
+            + 'print(json.dumps({"type":"thread.started","thread_id":"saved-codex"}),flush=True)\n'
+            + 'print(json.dumps({"type":"item.completed","item":{"type":"agent_message","text":"Selected Associate reviewed."}}),flush=True)\n'
+            + 'print(json.dumps({"type":"turn.completed"}),flush=True)\n')
+        native.chmod(0o700)
+        attached = subprocess.run(['node', str(CODEX_CONDUCTOR_SCRIPT), str(self.db), str(EXE),
+                                   str(native), '--session', associate, '--attach'],
+                                  text=True, capture_output=True,
+                                  env={**os.environ, 'OPENAI_API_KEY': 'fixture-only',
+                                       'CODEX_API_KEY': 'fixture-only'})
+        self.assertEqual(attached.returncode, 0, attached.stderr)
+        self.assertFalse(calls.exists())
+        reported = subprocess.run([str(EXE), str(self.db), 'report', 'selected-report',
+                                   'child', 'Selected child report'], text=True, capture_output=True,
+                                  env={**os.environ, 'OPENAI_API_KEY': 'fixture-only',
+                                       'CODEX_API_KEY': 'fixture-only'})
+        self.assertEqual(reported.returncode, 0, reported.stderr)
+        self.accepted('selected-report', 'selected-reviewed')
+        self.completed(associate, ['Selected Associate reviewed.'])
+        observed = json.loads(calls.read_text())
+        expected_prefix = ['exec', 'resume', native_id] if native_id else ['exec', '--json', '--model']
+        start = observed['argv'].index('exec')
+        self.assertEqual(observed['argv'][start:start + 3], expected_prefix)
+        self.assertEqual(observed['argv'][observed['argv'].index('--model') + 1], 'stored-model')
+        self.assertIn('forced_login_method="chatgpt"', observed['argv'])
+        self.assertEqual([observed['argv'][index + 1]
+                          for index, value in enumerate(observed['argv'][:-1])
+                          if value == '-c' and observed['argv'][index + 1].startswith('model_reasoning_effort=')],
+                         ['model_reasoning_effort="low"'])
+        self.assertEqual(observed['api_keys'], [])
+        self.assertEqual(observed['cwd'], str(self.checkouts / associate))
+        self.assertIn('You are Baton Player ' + associate + '.', observed['prompt'])
+        prefix = 'Recorded coordination: '
+        coordination = json.loads(next(line[len(prefix):] for line in observed['prompt'].splitlines()
+                                       if line.startswith(prefix)))
+        self.assertEqual(coordination['parent'], 'none recorded')
+        self.assertIn('child', [row['id'] for row in coordination['recipients']])
+        self.assertIn('Use baton inbox to read complete input', observed['prompt'])
+        self.assertIn('records handling of complete owned reads after a successful native turn', observed['prompt'])
+        self.assertEqual(json.loads(self.coord('role', associate))['role'], 'associate-conductor')
+        reports = json.loads(self.coord('inbox', ''))
+        self.assertEqual([(r['sender'], r['recipient'], r['body']) for r in reports],
+                         [(associate, '', 'Selected Associate reviewed.')])
+        self.assertEqual(json.loads(self.coord('inbox', associate)), [])
+
+    def test_stored_legacy_entry_and_model_environment_remain_valid(self):
+        temp = pathlib.Path(self.temp.name)
+        legacy = ROOT / 'bend2/scripts/codex-root.mjs'
+        calls = temp / 'legacy.json'
+        native = temp / 'legacy.py'
+        native.write_text('#!' + sys.executable + '\nimport json,pathlib,subprocess,sys\n'
+            + f'pathlib.Path({str(calls)!r}).write_text(json.dumps({{"argv":sys.argv[1:],"prompt":sys.stdin.read()}}))\n'
+            + f'subprocess.run({[str(EXE), str(self.db), "ack", "legacy-report", "root", "legacy-reviewed"]!r},check=True,stdout=subprocess.DEVNULL)\n'
+            + 'print(json.dumps({"type":"thread.started","thread_id":"saved-native"}),flush=True)\n'
+            + 'print(json.dumps({"type":"item.completed","item":{"type":"agent_message","text":"Legacy report reviewed."}}),flush=True)\n'
+            + 'print(json.dumps({"type":"turn.completed"}),flush=True)\n')
+        native.chmod(0o700)
+        attached = subprocess.run(['node', str(legacy), str(self.db), str(EXE),
+                                   str(native), '--attach'], text=True, capture_output=True,
+                                  env={**os.environ, 'CODEX_ROOT_MODEL': 'legacy-model'})
+        self.assertEqual(attached.returncode, 0, attached.stderr)
+        self.assertFalse(calls.exists())
+        callback = ['/usr/bin/env', 'CODEX_ROOT_MODEL=legacy-model', 'node', str(legacy),
+                    str(self.db), str(EXE), str(native), '--session', 'root', '--message']
+        self.coord('connect', 'root', 'saved-native', json.dumps(callback))
+        self.register('sender', 'root', 'fixture', 'model', 'low')
+        self.coord('report', 'legacy-report', 'sender', 'Stored callback input.')
+        observed = json.loads(calls.read_text())
+        start = observed['argv'].index('exec')
+        self.assertEqual(observed['argv'][start:start + 3], ['exec', 'resume', 'saved-native'])
+        self.assertIn('Stored callback input.', observed['prompt'])
+        self.assertEqual(json.loads(self.coord('delivery', 'legacy-report'))['receipt'], 'legacy-reviewed')
+        selected = json.loads(self.coord('player', 'root'))
+        endpoint = json.loads(selected['endpoint'])
+        self.assertEqual(endpoint[2:4], ['receive', 'root'])
+        self.assertEqual(endpoint[5], 'legacy-model')
+        self.assertEqual(selected['native'], 'saved-native')
+        self.assertEqual(selected['role'], 'principal-conductor')
+
+    def test_adapter_formats_pending_report(self):
+        """The adapter detects pending messages and formats them for Codex."""
+        self.coord('attach', 'root', 'codex', 'root-session', NOTICE_ENDPOINT)
+        self.register('w1', 'root', 'codex', 'model', 'high', '/wt', 'br', 'base')
+        self.coord('report', 'turn-1', 'w1', 'Task completed successfully.')
+
+        mock_codex = pathlib.Path(self.temp.name) / 'mock-codex.sh'
+        stdin_file = self.temp.name + '/stdin.txt'
+        mock_codex.write_text(
+            '#!/bin/sh\n'
+            '# Mock Codex: read stdin and emit JSON events\n'
+            f'cat > {stdin_file}\n'
+            'echo \'{"type":"thread.started","thread_id":"mock-thread"}\'\n'
+            'echo \'{"type":"turn.started"}\'\n'
+            'echo \'{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"Acknowledged"}}\'\n'
+            'echo \'{"type":"turn.completed"}\'\n'
+        )
+        mock_codex.chmod(0o755)
+
+        p = subprocess.run(
+            ['node', str(CODEX_CONDUCTOR_SCRIPT), str(self.db), str(EXE), str(mock_codex), '--once'],
+            text=True, capture_output=True,
+        )
+
+        self.assertEqual(p.returncode, 0, f'stderr: {p.stderr}')
+        self.assertIn('1 pending message(s)', p.stderr)
+
+        received = (pathlib.Path(self.temp.name) / 'stdin.txt').read_text()
+        self.assertIn('Task completed successfully', received)
+        self.assertIn('turn-1', received)
+        self.assertIn('w1', received)
+        with sqlite3.connect(self.db) as connection:
+            row = connection.execute(
+                'SELECT n.seed,n.instruction,n.guidance,e.directory,e.phase '
+                'FROM native_initial_inputs n JOIN executions e '
+                'ON e.session=n.session AND e.id=n.turn AND e.directory=n.attempt '
+                'WHERE n.session=?', ('root',)).fetchone()
+        self.assertIsNotNone(row)
+        seed, instruction, guidance, directory, phase = row
+        self.assertRegex(seed, r'^[0-9a-f]{128}$')
+        self.assertEqual(received, seed + '\n\n' + instruction + '\n\n' + guidance)
+        self.assertIn('Ideate briefly', instruction)
+        self.assertEqual(phase, 'exited')
+        self.assertEqual((pathlib.Path(directory) / 'prompt.txt').read_text(), received)
+        self.assertEqual(json.loads(self.coord('player', 'root'))['endpoint'], NOTICE_ENDPOINT)
+
+
+    def test_once_selected_associate_reports_through_retained_turn(self):
+        self.coord('attach', 'root', 'codex', 'parent-native', NOTICE_ENDPOINT)
+        self.coord('role', 'root', 'principal-conductor')
+        self.register('lead', 'root', 'codex', 'stored-model', 'low')
+        self.coord('connect', 'lead', 'mock-thread', NOTICE_ENDPOINT)
+        self.register('child', 'lead', 'fixture', 'model', 'low')
+        self.coord('report', 'child-report', 'child', 'Complete child evidence. café λ🙂')
+        observed_path = pathlib.Path(self.temp.name) / 'once-associate.json'
+        native = pathlib.Path(self.temp.name) / 'once-codex.py'
+        native.write_text('#!' + sys.executable + '\nimport json,os,pathlib,sys\n'
+            + f'pathlib.Path({str(observed_path)!r}).write_text(json.dumps({{"argv":sys.argv[1:],"cwd":os.getcwd(),"prompt":sys.stdin.read()}}))\n'
+            + 'print(json.dumps({"type":"thread.started","thread_id":"mock-thread"}),flush=True)\n'
+            + 'print(json.dumps({"type":"item.completed","item":{"type":"agent_message","text":"Full Associate result. λ🙂"}}),flush=True)\n'
+            + 'print(json.dumps({"type":"turn.completed"}),flush=True)\n')
+        native.chmod(0o700)
+        p = subprocess.run(['node', str(CODEX_CONDUCTOR_SCRIPT), str(self.db), str(EXE),
+                            str(native), '--session', 'lead', '--once'],
+                           capture_output=True, text=True)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        self.assertEqual(p.stdout, 'Full Associate result. λ🙂\n')
+        observed = json.loads(observed_path.read_text())
+        self.assertEqual(observed['cwd'], str(self.checkouts / 'lead'))
+        argv = observed['argv']
+        self.assertEqual(argv[argv.index('--model') + 1], 'stored-model')
+        self.assertIn('model_reasoning_effort="low"', argv)
+        self.assertEqual(argv[argv.index('resume') + 1], 'mock-thread')
+        reports = json.loads(self.coord('inbox', 'root'))
+        self.assertEqual([(row['sender'], row['body']) for row in reports],
+                         [('lead', 'Full Associate result. λ🙂')])
+        with sqlite3.connect(self.db) as connection:
+            report_id, worker = connection.execute(
+                'SELECT t.id,t.worker FROM turns t WHERE t.id=?', (reports[0]['id'],)).fetchone()
+            attempt, phase = connection.execute(
+                'SELECT id,phase FROM executions WHERE session=?', ('lead',)).fetchone()
+        self.assertEqual((report_id, worker, phase), (attempt, 'lead', 'exited'))
+        lead = json.loads(self.coord('player', 'lead'))
+        self.assertEqual((lead['native'], lead['endpoint']), ('mock-thread', NOTICE_ENDPOINT))
+
+    def test_once_retains_provider_failure_and_pending_input(self):
+        self.coord('attach', 'root', 'codex', 'root-session', NOTICE_ENDPOINT)
+        self.register('w1', 'root', 'codex', 'model', 'high')
+        self.coord('report', 'r1', 'w1', 'Keep this complete input pending on failure.')
+        native = pathlib.Path(self.temp.name) / 'failed-codex.py'
+        native.write_text('#!' + sys.executable + '\nimport json,sys\n'
+            + 'sys.stdin.read()\n'
+            + 'print(json.dumps({"type":"thread.started","thread_id":"root-session"}),flush=True)\n'
+            + 'print(json.dumps({"type":"turn.failed","error":{"message":"Fixture provider failure. λ🙂"}}),flush=True)\n'
+            + 'sys.exit(9)\n')
+        native.chmod(0o700)
+        p = subprocess.run(['node', str(CODEX_CONDUCTOR_SCRIPT), str(self.db), str(EXE),
+                            str(native), '--once'], capture_output=True, text=True)
+        self.assertNotEqual(p.returncode, 0)
+        self.assertIn('Fixture provider failure. λ🙂', p.stdout)
+        self.assertIsNone(json.loads(self.coord('delivery', 'r1'))['receipt'])
+        with sqlite3.connect(self.db) as connection:
+            status, directory = connection.execute(
+                'SELECT status,directory FROM executions WHERE session=?', ('root',)).fetchone()
+        self.assertIn('9', status)
+        self.assertIn('Fixture provider failure.', (pathlib.Path(directory) / 'stdout').read_text())
+
+    def test_adapter_detects_multiple_messages(self):
+        """The adapter formats multiple pending messages in one prompt."""
+        self.coord('attach', 'root', 'codex', 'root-session', NOTICE_ENDPOINT)
+        self.register('w1', 'root', 'codex', 'model', 'high', '/wt', 'br', 'base')
+        self.register('w2', 'root', 'codex', 'model', 'high', '/wt2', 'br2', 'base')
+        self.coord('report', 'r1', 'w1', 'First report.')
+        self.coord('report', 'r2', 'w2', 'Second report.')
+
+        mock_codex = pathlib.Path(self.temp.name) / 'mock-codex.sh'
+        stdin_file = self.temp.name + '/stdin.txt'
+        mock_codex.write_text(
+            '#!/bin/sh\n'
+            f'cat > {stdin_file}\n'
+            'echo \'{"type":"thread.started","thread_id":"mock"}\'\n'
+            'echo \'{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"ok"}}\'\n'
+            'echo \'{"type":"turn.completed"}\'\n'
+        )
+        mock_codex.chmod(0o755)
+
+        p = subprocess.run(
+            ['node', str(CODEX_CONDUCTOR_SCRIPT), str(self.db), str(EXE), str(mock_codex), '--once'],
+            text=True, capture_output=True,
+        )
+        self.assertEqual(p.returncode, 0, f'stderr: {p.stderr}')
+        self.assertIn('2 pending message(s)', p.stderr)
+
+        stdin_content = (pathlib.Path(self.temp.name) / 'stdin.txt').read_text()
+        self.assertIn('First report', stdin_content)
+        self.assertIn('Second report', stdin_content)
+
+    def test_system_instructions_contain_coordinator_commands(self):
+        """The instructions piped to Codex include the coordinator CLI."""
+        self.coord('attach', 'root', 'codex', 'root-session', NOTICE_ENDPOINT)
+        self.register('w1', 'root', 'codex', 'model', 'high', '/wt', 'br', 'base')
+        self.coord('report', 'r1', 'w1', 'done')
+
+        mock_codex = pathlib.Path(self.temp.name) / 'mock-codex.sh'
+        stdin_file = self.temp.name + '/stdin.txt'
+        mock_codex.write_text(
+            '#!/bin/sh\n'
+            f'cat > {stdin_file}\n'
+            'echo \'{"type":"thread.started","thread_id":"mock"}\'\n'
+            'echo \'{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"ok"}}\'\n'
+            'echo \'{"type":"turn.completed"}\'\n'
+        )
+        mock_codex.chmod(0o755)
+
+        p = subprocess.run(
+            ['node', str(CODEX_CONDUCTOR_SCRIPT), str(self.db), str(EXE), str(mock_codex), '--once'],
+            text=True, capture_output=True,
+        )
+        self.assertEqual(p.returncode, 0, f'stderr: {p.stderr}')
+
+        stdin_content = (pathlib.Path(self.temp.name) / 'stdin.txt').read_text()
+        for action in ['baton inbox', 'baton report "text"', 'baton ask "question"',
+                       'baton send PLAYER "text"', 'baton guide PLAYER "text"',
+                       'baton finish "summary"', 'baton confirm PLAYER', 'Use baton knowledge']:
+            self.assertIn(action, stdin_content)
+        self.assertIn('records handling of complete owned reads after a successful native turn', stdin_content)
+        self.assertNotIn('acknowledge', stdin_content)
+        self.assertNotIn('ack ID', stdin_content)
+
+    def test_adapter_passes_json_and_exec_flags(self):
+        """Codex is started with exec --json flags."""
+        self.coord('attach', 'root', 'codex', 'root-session', NOTICE_ENDPOINT)
+        self.register('w1', 'root', 'codex', 'model', 'high', '/wt', 'br', 'base')
+        self.coord('report', 'r1', 'w1', 'done')
+
+        mock_codex = pathlib.Path(self.temp.name) / 'mock-codex.sh'
+        args_file = self.temp.name + '/args.txt'
+        mock_codex.write_text(
+            '#!/bin/sh\n'
+            f'echo "$@" > {args_file}\n'
+            'cat > /dev/null\n'
+            'echo \'{"type":"thread.started","thread_id":"mock"}\'\n'
+            'echo \'{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"ok"}}\'\n'
+            'echo \'{"type":"turn.completed"}\'\n'
+        )
+        mock_codex.chmod(0o755)
+
+        subprocess.run(
+            ['node', str(CODEX_CONDUCTOR_SCRIPT), str(self.db), str(EXE), str(mock_codex), '--once'],
+            text=True, capture_output=True,
+        )
+
+        args_text = (pathlib.Path(self.temp.name) / 'args.txt').read_text()
+        self.assertIn('exec', args_text)
+        self.assertIn('--json', args_text)
+        self.assertIn('--dangerously-bypass-approvals-and-sandbox', args_text)
+
+    def test_adapter_extracts_result_text(self):
+        """The adapter extracts text from the Codex item.completed event."""
+        self.coord('attach', 'root', 'codex', 'root-session', NOTICE_ENDPOINT)
+        self.register('w1', 'root', 'codex', 'model', 'high', '/wt', 'br', 'base')
+        self.coord('report', 'r1', 'w1', 'done')
+
+        mock_codex = pathlib.Path(self.temp.name) / 'mock-codex.sh'
+        mock_codex.write_text(
+            '#!/bin/sh\n'
+            'cat > /dev/null\n'
+            'echo \'{"type":"thread.started","thread_id":"mock"}\'\n'
+            'echo \'{"type":"item.completed","item":{"type":"agent_message","text":"Reviewing the report."}}\'\n'
+            'echo \'{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"I have acknowledged the report."}}\'\n'
+            'echo \'{"type":"item.completed","item":{"type":"command_execution","aggregated_output":"Tool output"}}\'\n'
+            'echo \'{"type":"turn.completed"}\'\n'
+        )
+        mock_codex.chmod(0o755)
+
+        p = subprocess.run(
+            ['node', str(CODEX_CONDUCTOR_SCRIPT), str(self.db), str(EXE), str(mock_codex), '--once'],
+            text=True, capture_output=True,
+        )
+        self.assertEqual(p.returncode, 0, f'stderr: {p.stderr}')
+        self.assertEqual(p.stdout, 'I have acknowledged the report.\n')
+
+
+class CodexRootEndToEnd(unittest.TestCase):
+    """End-to-end: recruit a worker, report, process with Codex root."""
+
+    instance_owner_pids = CodexRootAdapter.instance_owner_pids
+    delivery_pids = CodexRootAdapter.delivery_pids
+    cleanup_ps = CodexRootAdapter.cleanup_ps
+    cleanup_entries = CodexRootAdapter.cleanup_entries
+    cleanup_related_fds = CodexRootAdapter.cleanup_related_fds
+    cleanup_failure_observe = CodexRootAdapter.cleanup_failure_observe
+    cleanup_fixture = CodexRootAdapter.cleanup_fixture
+
+    def setUp(self):
+        if not EXE.exists():
+            self.skipTest(f'Coordinator not built at {EXE}')
+        self.temp = tempfile.TemporaryDirectory(dir=ROOT / '.scratch/bend2')
+        self.directory = pathlib.Path(self.temp.name)
+        install_public_queue_codex(self, self.directory)
+        self.repo = self.directory / 'repository'
+        self.repo.mkdir()
+        self.db = self.directory / 'state.db'
+        self.addCleanup(self.cleanup_fixture)
+        self.git('init', '-q', '-b', 'main')
+        self.git('config', 'user.name', 'Baton test')
+        self.git('config', 'user.email', 'baton@example.invalid')
+        self.git('commit', '-q', '--allow-empty', '-m', 'initial')
+        self.base = self.git('rev-parse', 'HEAD').strip()
+
+    def git(self, *args):
+        return subprocess.run(
+            ['git', '-C', str(self.repo), *args],
+            check=True, text=True, capture_output=True,
+        ).stdout
+
+    def coord(self, *args, ok=True):
+        p = subprocess.run(
+            [str(EXE), str(self.db), *map(str, args)],
+            text=True, capture_output=True,
+        )
+        if ok:
+            self.assertEqual(p.returncode, 0, p.stderr)
+        return p.stdout.strip()
+
+    def test_recruit_report_codex_root_processes(self):
+        """Full cycle: recruit worker, worker reports, Codex root processes."""
+        self.coord('attach', 'root', 'codex', 'root-session', NOTICE_ENDPOINT)
+        self.coord('recruit', 'w1', 'root', 'codex', 'model', 'high',
+                   self.repo, 'w1-branch', 'wt', self.base)
+
+        wt = self.repo / 'wt'
+        (wt / 'feature.txt').write_text('codex root delivered')
+        subprocess.run(['git', '-C', str(wt), 'add', 'feature.txt'],
+                       check=True, capture_output=True)
+        subprocess.run(['git', '-C', str(wt), 'commit', '-q', '-m', 'worker feature'],
+                       check=True, capture_output=True)
+        player_commit = self.git('rev-parse', 'w1-branch').strip()
+
+        self.coord('report', 'turn-1', 'w1',
+                   'Feature implemented. Committed feature.txt on w1-branch.')
+
+        mock_codex = self.directory / 'mock-codex-land.py'
+        mock_codex.write_text(
+            '#!' + sys.executable + '\nimport json,subprocess,sys\n'
+            'sys.stdin.read()\n'
+            'print(json.dumps({"type":"thread.started","thread_id":"mock"}),flush=True)\n'
+            'print(json.dumps({"type":"turn.started"}),flush=True)\n'
+            f'subprocess.run({[str(EXE), str(self.db), "as", "root", "inbox"]!r},check=True,stdout=subprocess.DEVNULL)\n'
+            f'subprocess.run({[str(EXE), str(self.db), "land", "w1", str(self.repo), "main"]!r},check=True)\n'
+            'print(json.dumps({"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"Reviewed and landed."}}),flush=True)\n'
+            'print(json.dumps({"type":"turn.completed"}),flush=True)\n'
+        )
+        mock_codex.chmod(0o755)
+
+        p = subprocess.run(
+            ['node', str(CODEX_CONDUCTOR_SCRIPT), str(self.db), str(EXE),
+             str(mock_codex), '--once'],
+            text=True, capture_output=True,
+        )
+        self.assertEqual(p.returncode, 0, f'stderr: {p.stderr}')
+
+        inbox = json.loads(self.coord('inbox', 'root'))
+        self.assertEqual(len(inbox), 0, 'Successful native completion handles the complete inbox read')
+        self.assertTrue(json.loads(self.coord('delivery', 'turn-1'))['receipt'].startswith('native-turn:'))
+
+        main_tip = self.git('rev-parse', 'main').strip()
+        self.assertEqual(main_tip, player_commit)
+
+
+if __name__ == '__main__':
+    unittest.main()

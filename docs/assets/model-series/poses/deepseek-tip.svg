@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-label="Flip winking and tipping a visor">
+  <title>Flip winking and tipping a visor</title>
+  <g id="eyebrows" data-replaces="eyebrows"><path d="M27 34 Q34 31 41 34 M55 29 Q63.5 25 69.5 28.5" fill="none" stroke="var(--flip-ink)" stroke-width="3.5" stroke-linecap="round"/></g>
+  <g id="eyes" data-replaces="eyes">
+    <path d="M29 46 Q36 40 43 46" fill="none" stroke="var(--flip-ink)" stroke-width="3.5" stroke-linecap="round"/>
+    <path d="M57 46a7 7 0 1 0 14 0a7 7 0 1 0 -14 0Z" fill="var(--flip-eye-white)"/>
+    <path d="M60.5 44.5a4.5 4.5 0 1 0 9 0a4.5 4.5 0 1 0 -9 0Z" fill="var(--flip-ink)"/>
+    <path d="M65 43a1.5 1.5 0 1 0 3 0a1.5 1.5 0 1 0 -3 0Z" fill="var(--flip-eye-white)"/>
+  </g>
+  <g id="mouth" data-replaces="mouth"><path d="M39 64 Q52 70 63 59" fill="none" stroke="var(--flip-ink)" stroke-width="3.4" stroke-linecap="round"/></g>
+  <g id="hand" data-replaces="hand" data-layer="foreground">
+    <path d="M76 34 C73.5 33.5 71.8 30.6 72.8 28 L71 24 C70 23 68.8 23 67.8 23.5 C66.3 24 65.4 22.2 66.8 21.3 C69.2 19.9 71.8 20.5 73 22.1 L75 24.7 C77 24 79.2 24.7 80 26.4 C82 29.3 80.2 34.2 76 34 Z" fill="var(--flip-pink)" stroke="var(--flip-ink)" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M74.5 26 Q77 26 78 28" fill="none" stroke="var(--flip-ink)" stroke-width="1.8" stroke-linecap="round"/>
+  </g>
+  <g id="mint-accents" data-replaces="mint-accents"><path d="M84.8 29a4.2 4.2 0 1 0 8.4 0a4.2 4.2 0 1 0 -8.4 0Z M91.4 18.5a2.6 2.6 0 1 0 5.2 0a2.6 2.6 0 1 0 -5.2 0Z" fill="var(--flip-mint)" fill-opacity="0.85"/></g>
+</svg>

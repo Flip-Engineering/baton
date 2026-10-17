@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 1,
+  "startedAt": "2026-08-02T01:17:55.436Z",
+  "members": [
+    "remediation-verifier"
+  ],
+  "outcomes": [
+    {
+      "role": "remediation-verifier",
+      "phase": "failed",
+      "terminal": true,
+      "narrative": "1 worker(s) active.",
+      "resultSha": null
+    }
+  ],
+  "steering": [],
+  "stops": [
+    {
+      "role": "remediation-verifier",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    }
+  ],
+  "progress": [],
+  "pumpDrained": true,
+  "remainingCount": 0,
+  "residueUnknown": false,
+  "basis": "completed",
+  "nudges": [
+    {
+      "role": "remediation-verifier",
+      "requestId": "pause:baton-ec695576caacc6c4a3b8ca82-work:102",
+      "at": "2026-08-02T01:30:26.763Z"
+    }
+  ],
+  "claims": [
+    {
+      "role": "remediation-verifier",
+      "requestId": "pause:baton-ec695576caacc6c4a3b8ca82-work:114",
+      "at": "2026-08-02T01:30:47.437Z",
+      "code": "claimed"
+    }
+  ],
+  "decisions": [],
+  "follows": [],
+  "salt": null,
+  "knowledge": {
+    "candidates": 0,
+    "admittedThisRun": 0
+  },
+  "manifest": {
+    "schemaVersion": 1,
+    "waveId": "wave:abb621c487f0e9e50e5dfed5c356cb2b",
+    "idempotencyKey": "kg-settlement-test-blueteam-2026-08-01",
+    "recipeDigest": "e1a7b5b2d7c0006934078ca9d9bb241097d3e5b12ef4ad14fdf20f523e9cbd15",
+    "salt": "f9b48363-f0e4-47d7-832c-1c1473dea3bd",
+    "renderedMembers": [
+      {
+        "role": "remediation-verifier",
+        "objective": "BLUE-TEAM verify the KG settlement red-first suite v2 against the two red-team reports. Suite v2: impl/test/kg-settlement-red.test.mjs (current HEAD). Reports: docs/reference/evidence/kg-settlement-2026-08-01/test-redteam-falsegreen.md (codex, remediation matrix at the end) and test-redteam-coverage.md (deepseek, decision-point map). For EVERY row of both remediation matrices (codex P0/P1 items, deepseek C1-C12), verify against the v2 suite text whether the defect is REPAIRED, PARTIALLY repaired, or UNREPAIRED — quote the v2 line(s) that repair it or state exactly what is still missing. Be adversarial: a repair that renamed the assertion without changing its strength is UNREPAIRED. Also re-run the vacuousness hunt on the NEW rows (KS5 crash walk, KS7 partial states, KS3 spy rows, KS4 event-log diffs): can any wrong implementation still pass them? Close with: GATE-READY or GATE-NOT-READY + the blocking items. Ground every claim in file:line.\nBlue-team verify the KG settlement v2 suite remediation\nWrite the report skeleton (all headings + stubs) FIRST so an in-scope diff exists from your first minutes, then deepen.\nWork in ONE continuous turn to completion; the trust gate kills no-diff workers.\nRead-only review: do not edit impl/ files; your only write target is your report path.\n[attempt: f9b48363-f0e4-47d7-832c-1c1473dea3bd remediation-verifier]",
+        "exact": {
+          "harness": "claude-code",
+          "model": "claude-sonnet-5",
+          "effort": "high"
+        },
+        "scope": [
+          "docs/reference/evidence/kg-settlement-2026-08-01/**"
+        ],
+        "report": "docs/reference/evidence/kg-settlement-2026-08-01/test-blueteam.md"
+      }
+    ]
+  }
+}

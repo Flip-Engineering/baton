@@ -1,0 +1,39 @@
+{
+  "attempt": "2026-08-13T07:11:42.547Z",
+  "salt": "x920260813071142",
+  "role": "fix-154b",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-c79eca6df4204d397f9c4d3c6476833c"
+        ]
+      }
+    },
+    {
+      "step": "dead:fix-154b",
+      "receipt": {
+        "phase": "failed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "fix-154b": {
+      "pin": "f8a15144a3eb5984a7fdd1dc02f7b7ca8ec13023",
+      "paths": [
+        "impl/test/workflow-as-data-red.test.mjs",
+        "impl/src/workflow-interpreter.mjs",
+        "docs/reference/evidence/workflow-as-data-2026-08-06/fix-154-notes.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 463,
+  "verdict": "FIX-154B-FAILED"
+}

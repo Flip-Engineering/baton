@@ -1,0 +1,26 @@
+{
+  "attempt": "2026-08-13T06:07:20.870Z",
+  "salt": "x120260813060720",
+  "role": "fix-154",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-2ca05a453c0843be738d20f1e118dd4f"
+        ]
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": [
+          "fix-154"
+        ]
+      }
+    }
+  ],
+  "harvest": {},
+  "harvestStalePinsSkipped": 460,
+  "verdict": "FIX-154-DRAINED"
+}

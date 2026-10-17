@@ -1,0 +1,486 @@
+diff --git a/impl/src/application.mjs b/impl/src/application.mjs
+index 55c832c..401d456 100644
+--- a/impl/src/application.mjs
++++ b/impl/src/application.mjs
+@@ -6098,7 +6098,7 @@ export class BatonApplication {
+         })
+         : this.context.materializeCallResult({
+           call: this._contextMapCallCore(call), children: settledChildren,
+-          cleanup, providerResultRequests,
++          cleanup, planDigest: call.expectedPlanDigest, providerResultRequests,
+         });
+       const principal = this.context.principal;
+       this.driver.coordination.settleContextMapCall({
+diff --git a/impl/src/context-result-lineage.mjs b/impl/src/context-result-lineage.mjs
+new file mode 100644
+index 0000000..65f1a65
+--- /dev/null
++++ b/impl/src/context-result-lineage.mjs
+@@ -0,0 +1,290 @@
++import {
++  canonicalContextCoordinates, contextLineageDigest, validatePureContextOutputLineage,
++} from './context-lineage.mjs';
++import { normalizeContextMapCall } from './context-map.mjs';
++import {
++  validateContextProviderResultCapsule, validateContextProviderResultReference,
++} from './context-result.mjs';
++
++const DIGEST = /^[a-f0-9]{64}$/u;
++const GIT_SHA = /^[a-f0-9]{40}$/u;
++const BUILD_FIELDS = Object.freeze([
++  'call', 'capsules', 'children', 'cleanupDigest', 'planDigest', 'providerResults',
++  'sourceEvidence', 'sourceOutput',
++]);
++const VALIDATE_FIELDS = Object.freeze([
++  ...BUILD_FIELDS, 'coordinateDigest', 'outputLineageDigest', 'outputLineages',
++  'sourceCoordinates',
++]);
++const OUTPUT_FIELDS = Object.freeze([
++  'chunks', 'items', 'kind', 'schemaVersion', 'selectedSourceItems', 'sourceBranches',
++  'sourceItems',
++]);
++const SOURCE_EVIDENCE_FIELDS = Object.freeze([
++  'cellId', 'coordinateDigest', 'environmentDigest', 'kind', 'manifestDigest', 'outputLineageDigest',
++  'outputLineages', 'outputRef', 'policyDigest', 'programDigest', 'providerEffects',
++  'schemaVersion', 'selectedSourceItems', 'sourceBranches', 'sourceCoordinates', 'sourceItems',
++]);
++const ARTIFACT_FIELDS = Object.freeze(['bytes', 'digest', 'handle', 'kind', 'mediaType']);
++const ACCEPTED_CHILD_FIELDS = Object.freeze([
++  'artifactDigest', 'artifacts', 'childDigest', 'cleanupDigest', 'index', 'nodeDigest',
++  'nodeKey', 'partitionDigest', 'partitionId', 'resourceRelease', 'resultSha', 'route',
++  'schemaVersion', 'state', 'taskId', 'taskVersion', 'terminalEvent', 'workerId',
++]);
++const ROUTE_FIELDS = Object.freeze(['effort', 'harness', 'model']);
++
++function resultLineageError(message, cause = undefined) {
++  return Object.assign(new TypeError(message), {
++    code: 'context_result_lineage_invalid',
++    ...(cause === undefined ? {} : { cause }),
++  });
++}
++
++function exact(value, fields, label) {
++  if (!value || typeof value !== 'object' || Array.isArray(value)
++    || Object.keys(value).sort().join(',') !== [...fields].sort().join(',')) {
++    throw resultLineageError(`${label} is malformed`);
++  }
++}
++
++function canonical(value, active = new Set()) {
++  if (value === null || typeof value === 'boolean' || typeof value === 'string') return value;
++  if (typeof value === 'number') {
++    if (!Number.isFinite(value)) throw resultLineageError('Context result lineage is not JSON');
++    return Object.is(value, -0) ? 0 : value;
++  }
++  if (!value || typeof value !== 'object' || active.has(value)) {
++    throw resultLineageError('Context result lineage is not JSON');
++  }
++  active.add(value);
++  let normalized;
++  if (Array.isArray(value)) {
++    if (Object.keys(value).some((key) => !/^(0|[1-9]\d*)$/u.test(key)
++      || Number(key) >= value.length)
++      || Array.from({ length: value.length }, (_, index) => index)
++        .some((index) => !Object.hasOwn(value, index))) {
++      throw resultLineageError('Context result lineage contains a sparse or decorated array');
++    }
++    normalized = value.map((entry) => canonical(entry, active));
++  } else {
++    const prototype = Object.getPrototypeOf(value);
++    if (prototype !== Object.prototype && prototype !== null) {
++      throw resultLineageError('Context result lineage contains a non-JSON object');
++    }
++    normalized = Object.fromEntries(Object.keys(value).sort().map((key) => [
++      key, canonical(value[key], active),
++    ]));
++  }
++  active.delete(value);
++  return normalized;
++}
++
++function stable(value) { return JSON.stringify(canonical(value)); }
++
++function deepFreeze(value) {
++  if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value;
++  for (const child of Object.values(value)) deepFreeze(child);
++  return Object.freeze(value);
++}
++
++function artifactRef(value, expectedKind, expectedMediaType, content, label) {
++  exact(value, ARTIFACT_FIELDS, label);
++  const digest = contextLineageDigest(content);
++  if (value.kind !== expectedKind || value.mediaType !== expectedMediaType
++    || value.digest !== digest || value.handle !== `art:sha256:${digest}`
++    || value.bytes !== Buffer.byteLength(stable(content))) {
++    throw resultLineageError(`${label} differs from its content`);
++  }
++  return canonical(value);
++}
++
++function sourceArtifacts(call, sourceOutputValue, sourceEvidenceValue) {
++  exact(sourceOutputValue, OUTPUT_FIELDS, 'Context map source output');
++  exact(sourceEvidenceValue, SOURCE_EVIDENCE_FIELDS, 'Context map source evidence');
++  const sourceOutput = canonical(sourceOutputValue);
++  const sourceEvidence = canonical(sourceEvidenceValue);
++  if (sourceOutput.schemaVersion !== 1 || sourceOutput.kind !== 'baton.context_value'
++    || !Array.isArray(sourceOutput.items) || !Array.isArray(sourceOutput.sourceBranches)
++    || !Number.isSafeInteger(sourceOutput.sourceItems) || sourceOutput.sourceItems < 0
++    || !Number.isSafeInteger(sourceOutput.selectedSourceItems)
++    || sourceOutput.selectedSourceItems < 0
++    || !Number.isSafeInteger(sourceOutput.chunks) || sourceOutput.chunks < 0
++    || sourceEvidence.schemaVersion !== 2
++    || sourceEvidence.kind !== 'baton.context_cell_evidence'
++    || sourceEvidence.cellId !== call.source.cellId
++    || sourceEvidence.manifestDigest !== call.source.manifestDigest
++    || sourceEvidence.programDigest !== call.source.sourceProgramDigest
++    || sourceEvidence.environmentDigest !== call.source.environmentDigest
++    || sourceEvidence.policyDigest !== call.source.policyDigest
++    || sourceEvidence.providerEffects !== 0
++    || stable(sourceEvidence.sourceBranches) !== stable(sourceOutput.sourceBranches)
++    || sourceEvidence.sourceItems !== sourceOutput.sourceItems
++    || sourceEvidence.selectedSourceItems !== sourceOutput.selectedSourceItems) {
++    throw resultLineageError('Context map source artifacts are invalid');
++  }
++  const outputRef = artifactRef(
++    call.source.outputRef, 'context_value',
++    'application/vnd.baton.context-value+json', sourceOutput, 'Context map source output ref',
++  );
++  const evidenceRef = artifactRef(
++    call.source.evidenceRef, 'context_evidence',
++    'application/vnd.baton.context-cell-evidence+json', sourceEvidence,
++    'Context map source evidence ref',
++  );
++  if (stable(sourceEvidence.outputRef) !== stable(outputRef)
++    || sourceEvidence.coordinateDigest !== call.source.coordinateDigest
++    || sourceEvidence.outputLineageDigest !== call.source.outputLineageDigest) {
++    throw resultLineageError('Context map source authority changed');
++  }
++  validatePureContextOutputLineage({
++    items: sourceOutput.items,
++    outputLineages: sourceEvidence.outputLineages,
++    outputLineageDigest: sourceEvidence.outputLineageDigest,
++    sourceCoordinates: sourceEvidence.sourceCoordinates,
++    coordinateDigest: sourceEvidence.coordinateDigest,
++  });
++  return { sourceOutput, sourceEvidence, evidenceRef };
++}
++
++function acceptedChild(value, partition, cleanupDigest) {
++  exact(value, ACCEPTED_CHILD_FIELDS, 'Context map accepted child');
++  exact(value.route, ROUTE_FIELDS, 'Context map accepted child route');
++  if (value.schemaVersion !== 1 || value.state !== 'accepted'
++    || value.partitionId !== partition.partitionId
++    || value.partitionDigest !== partition.partitionDigest || value.index !== partition.index
++    || !DIGEST.test(value.nodeDigest ?? '') || !DIGEST.test(value.artifactDigest ?? '')
++    || value.cleanupDigest !== cleanupDigest || !DIGEST.test(value.cleanupDigest ?? '')
++    || !GIT_SHA.test(value.resultSha ?? '')
++    || typeof value.nodeKey !== 'string' || value.nodeKey.length === 0
++    || typeof value.taskId !== 'string' || value.taskId.length === 0
++    || typeof value.workerId !== 'string' || value.workerId.length === 0
++    || !Number.isSafeInteger(value.taskVersion) || value.taskVersion <= 0
++    || !Number.isSafeInteger(value.terminalEvent) || value.terminalEvent <= 0
++    || !Array.isArray(value.artifacts) || !value.resourceRelease
++    || typeof value.resourceRelease !== 'object' || Array.isArray(value.resourceRelease)
++    || !DIGEST.test(value.resourceRelease.releaseDigest ?? '')
++    || ROUTE_FIELDS.some((field) => (
++      typeof value.route[field] !== 'string' || value.route[field].length === 0
++    ))) {
++    throw resultLineageError('Context map accepted child is invalid');
++  }
++  const core = Object.fromEntries(Object.entries(value).filter(([field]) => field !== 'childDigest'));
++  if (value.childDigest !== contextLineageDigest(core)) {
++    throw resultLineageError('Context map accepted child identity changed');
++  }
++  return canonical(value);
++}
++
++function build(value) {
++  exact(value, BUILD_FIELDS, 'Context map result lineage input');
++  if (!DIGEST.test(value.planDigest ?? '') || !DIGEST.test(value.cleanupDigest ?? '')) {
++    throw resultLineageError('Context map result lineage authority is invalid');
++  }
++  const call = normalizeContextMapCall(value.call);
++  if (call.schemaVersion !== 2 || stable(call) !== stable(value.call)) {
++    throw resultLineageError('Context map result lineage call is invalid');
++  }
++  const { sourceOutput, sourceEvidence, evidenceRef } = sourceArtifacts(
++    call, value.sourceOutput, value.sourceEvidence,
++  );
++  if (!Array.isArray(value.children) || !Array.isArray(value.providerResults)
++    || !Array.isArray(value.capsules)
++    || value.children.length !== call.partitions.length
++    || value.providerResults.length !== call.partitions.length
++    || value.capsules.length !== call.partitions.length
++    || sourceOutput.items.length !== call.partitions.length) {
++    throw resultLineageError('Context map result lineage set is incomplete');
++  }
++
++  const outputLineages = call.partitions.map((partition, index) => {
++    const source = sourceEvidence.outputLineages[index];
++    const child = acceptedChild(value.children[index], partition, value.cleanupDigest);
++    const capsule = validateContextProviderResultCapsule(value.capsules[index]);
++    const providerResult = validateContextProviderResultReference(
++      value.providerResults[index], capsule,
++    );
++    if (partition.index !== index
++      || partition.itemDigest !== contextLineageDigest(sourceOutput.items[index])
++      || source.index !== index || source.itemDigest !== partition.itemDigest
++      || source.coordinateDigest !== partition.coordinateDigest
++      || source.lineageDigest !== partition.lineageDigest
++      || providerResult.unitId !== partition.partitionId
++      || providerResult.childDigest !== child.childDigest
++      || providerResult.capsuleId !== capsule.capsuleId
++      || providerResult.capsuleDigest !== capsule.capsuleDigest
++      || providerResult.resultSourceDigest !== capsule.resultSourceDigest
++      || capsule.callId !== call.callId || capsule.unitId !== partition.partitionId
++      || capsule.taskId !== child.taskId || capsule.taskVersion !== child.taskVersion
++      || capsule.terminalEvent !== child.terminalEvent
++      || capsule.childDigest !== child.childDigest
++      || stable(capsule.route) !== stable(child.route)
++      || capsule.artifactDigest !== child.artifactDigest
++      || capsule.cleanupDigest !== value.cleanupDigest) {
++      throw resultLineageError('Context map result lineage derivation authority changed');
++    }
++    const sourceCoordinates = canonicalContextCoordinates(source.sourceCoordinates);
++    const itemDigest = contextLineageDigest(providerResult);
++    const coordinateDigest = contextLineageDigest(sourceCoordinates);
++    const parents = canonical([{
++      sourceKind: 'cell_output', sourceId: call.source.cellId,
++      sourceSettlementDigest: call.source.cellSettlementDigest,
++      outputIndex: index, itemDigest: source.itemDigest,
++      lineageDigest: source.lineageDigest, evidenceRef,
++    }]);
++    const parentDigest = contextLineageDigest(parents);
++    const derivations = canonical([{
++      kind: 'provider_attempt', callId: call.callId, unitId: child.partitionId,
++      planDigest: value.planDigest, nodeDigest: child.nodeDigest,
++      taskId: child.taskId, taskVersion: child.taskVersion,
++      routeDigest: contextLineageDigest(child.route), artifactDigest: child.artifactDigest,
++      resultCapsuleId: capsule.capsuleId, resultCapsuleDigest: capsule.capsuleDigest,
++      resultSourceDigest: capsule.resultSourceDigest, cleanupDigest: value.cleanupDigest,
++      childDigest: child.childDigest,
++    }]);
++    const derivationDigest = contextLineageDigest(derivations);
++    const lineageDigest = contextLineageDigest({
++      schemaVersion: 1, itemDigest, coordinateDigest, parentDigest, derivationDigest,
++    });
++    return {
++      index, itemDigest, sourceCoordinates, coordinateDigest,
++      parents, parentDigest, derivations, derivationDigest, lineageDigest,
++    };
++  });
++  const sourceCoordinates = canonicalContextCoordinates(
++    outputLineages.flatMap((lineage) => lineage.sourceCoordinates),
++  );
++  return deepFreeze({
++    outputLineages: canonical(outputLineages),
++    outputLineageDigest: contextLineageDigest(outputLineages.map((lineage) => ({
++      index: lineage.index, itemDigest: lineage.itemDigest, lineageDigest: lineage.lineageDigest,
++    }))),
++    sourceCoordinates,
++    coordinateDigest: contextLineageDigest(sourceCoordinates),
++  });
++}
++
++export function buildContextMapResultLineage(value) {
++  try { return build(value); }
++  catch (cause) {
++    if (cause?.code === 'context_result_lineage_invalid') throw cause;
++    throw resultLineageError(cause?.message ?? 'Context map result lineage is invalid', cause);
++  }
++}
++
++export function validateContextMapResultLineage(value) {
++  try {
++    exact(value, VALIDATE_FIELDS, 'Context map result lineage');
++    const base = Object.fromEntries(BUILD_FIELDS.map((field) => [field, value[field]]));
++    const expected = build(base);
++    const supplied = Object.fromEntries([
++      'outputLineages', 'outputLineageDigest', 'sourceCoordinates', 'coordinateDigest',
++    ].map((field) => [field, value[field]]));
++    if (stable(supplied) !== stable(expected)) {
++      throw resultLineageError('Context map result lineage changed');
++    }
++    return expected;
++  } catch (cause) {
++    if (cause?.code === 'context_result_lineage_invalid') throw cause;
++    throw resultLineageError(cause?.message ?? 'Context map result lineage is invalid', cause);
++  }
++}
+diff --git a/impl/src/context-runtime.mjs b/impl/src/context-runtime.mjs
+index f24eaa8..f8465d8 100644
+--- a/impl/src/context-runtime.mjs
++++ b/impl/src/context-runtime.mjs
+@@ -16,6 +16,7 @@ import {
+   normalizeContextResultPathScope, validateContextProviderResultCapsule,
+   validateContextProviderResultReference,
+ } from './context-result.mjs';
++import { buildContextMapResultLineage } from './context-result-lineage.mjs';
+ import { pathInScopes } from './path-scope.mjs';
+ import {
+   validateWorkflowDefinitionLegacy, validateWorkflowDefinitionV3,
+@@ -789,16 +790,20 @@ export class RepositoryContextRuntime {
+     const providerResults = requests.map((projection) => (
+       this.projectRetainedCommitResult(projection).providerResult
+     ));
+-    return Object.freeze(normalizeCallProviderResults(
++    const normalized = normalizeCallProviderResults(
+       this.bench, call, children, cleanup, providerResults,
++    );
++    const capsules = normalized.map((providerResult) => (
++      this.bench.readProviderResult(providerResult.capsuleRef)
+     ));
++    return Object.freeze({ providerResults: Object.freeze(normalized), capsules: Object.freeze(capsules) });
+   }
+ 
+   materializeCallResult(request) {
+     if (Object.hasOwn(request ?? {}, 'termination')) {
+       return this.materializeCallFailure(request);
+     }
+-    exact(request, ['call', 'children', 'cleanup', 'providerResultRequests'],
++    exact(request, ['call', 'children', 'cleanup', 'planDigest', 'providerResultRequests'],
+       'Context call materialization request');
+     const call = normalizeContextMapCall(request.call);
+     if (!Array.isArray(request.children) || request.children.length !== call.partitions.length) {
+@@ -819,7 +824,11 @@ export class RepositoryContextRuntime {
+       throw runtimeError('Context call terminal child order differs from its partitions',
+         'context_call_settlement_invalid');
+     }
+-    const providerResults = this._projectCallProviderResults(
++    if (!/^[a-f0-9]{64}$/u.test(request.planDigest ?? '')) {
++      throw runtimeError('Context call successor Plan identity is invalid',
++        'context_call_settlement_invalid');
++    }
++    const { providerResults, capsules } = this._projectCallProviderResults(
+       call, children, request.cleanup, request.providerResultRequests,
+     );
+     const childDigest = contextValueDigest(children);
+@@ -834,14 +843,29 @@ export class RepositoryContextRuntime {
+     const outputRef = this.bench._writeArtifact(
+       output, 'context_value', 'application/vnd.baton.context-value+json',
+     );
++    let sourceOutput; let sourceEvidence; let lineage;
++    try {
++      sourceOutput = this.bench.readReference(call.source.outputRef);
++      sourceEvidence = this.bench.readReference(call.source.evidenceRef);
++      lineage = buildContextMapResultLineage({
++        call, children, providerResults, capsules, sourceOutput, sourceEvidence,
++        planDigest: request.planDigest, cleanupDigest: request.cleanup.cleanupDigest,
++      });
++    } catch (cause) {
++      throw Object.assign(runtimeError('Context call output lineage is invalid',
++        'context_call_settlement_invalid'), { cause });
++    }
+     const evidence = {
+-      schemaVersion: 2, kind: 'baton.context_call_evidence',
++      schemaVersion: 3, kind: 'baton.context_call_evidence',
+       callId: call.callId, callDigest: call.callDigest,
+       programDigest: call.programDigest, generation: call.generation,
+       source: call.source, partitions: call.partitions, children, childDigest,
+       providerResults, providerResultDigest, cleanup: request.cleanup,
+       providerEffects: children.length,
+-      coordinateDigest: call.source.coordinateDigest,
++      sourceCoordinates: lineage.sourceCoordinates,
++      coordinateDigest: lineage.coordinateDigest,
++      outputLineages: lineage.outputLineages,
++      outputLineageDigest: lineage.outputLineageDigest,
+       outputRef,
+     };
+     const evidenceRef = this.bench._writeArtifact(
+@@ -880,7 +904,7 @@ export class RepositoryContextRuntime {
+       throw runtimeError('Context call failed child order differs from its partitions',
+         'context_call_settlement_invalid');
+     }
+-    const providerResults = this._projectCallProviderResults(
++    const { providerResults } = this._projectCallProviderResults(
+       call, children, cleanup, request.providerResultRequests,
+     );
+     const childDigest = contextValueDigest(children);
+diff --git a/impl/src/coordination-store.mjs b/impl/src/coordination-store.mjs
+index 6a491a7..26967b9 100644
+--- a/impl/src/coordination-store.mjs
++++ b/impl/src/coordination-store.mjs
+@@ -34,6 +34,7 @@ import {
+ } from './context-authority.mjs';
+ import { contextValueDigest, normalizeContextManifest, normalizeContextProgram } from './context-program.mjs';
+ import { validatePureContextOutputLineage } from './context-lineage.mjs';
++import { validateContextMapResultLineage } from './context-result-lineage.mjs';
+ import {
+   contextMapCallIdentity, contextMapNodeBinding, normalizeContextMapCall,
+ } from './context-map.mjs';
+@@ -5289,10 +5290,13 @@ export class CoordinationStore {
+       'chunks', 'items', 'kind', 'schemaVersion', 'selectedSourceItems', 'sourceBranches',
+       'sourceItems',
+     ];
++    const lineageEvidence = state === 'completed' && evidence?.schemaVersion === 3;
+     const evidenceFields = [
+       'callDigest', 'callId', 'childDigest', 'children', 'cleanup', 'coordinateDigest',
+       'generation', 'kind', 'outputRef', 'partitions', 'programDigest', 'providerEffects',
+       'providerResultDigest', 'providerResults', 'schemaVersion', 'source',
++      ...(lineageEvidence
++        ? ['outputLineageDigest', 'outputLineages', 'sourceCoordinates'] : []),
+       ...(state === 'failed' ? ['state', 'termination'] : []),
+     ];
+     const outputValid = state === 'failed' ? output === null
+@@ -5309,7 +5313,12 @@ export class CoordinationStore {
+       evidence?.state === 'failed' && evidence.outputRef === null
+       && canonicalDigest(evidence.termination) === canonicalDigest(termination)
+     );
+-    if (!outputValid || !evidence || evidence.schemaVersion !== 2
++    const evidenceVersionValid = state === 'failed'
++      ? evidence?.schemaVersion === 2
++      : integrity
++        ? [2, 3].includes(evidence?.schemaVersion)
++        : evidence?.schemaVersion === 3;
++    if (!outputValid || !evidence || !evidenceVersionValid
+       || evidence.kind !== 'baton.context_call_evidence'
+       || Object.keys(evidence).sort().join(',') !== evidenceFields.sort().join(',')
+       || evidence.callId !== call.callId || evidence.callDigest !== call.callDigest
+@@ -5329,6 +5338,33 @@ export class CoordinationStore {
+         integrity ? 'context_map_call_settlement_integrity'
+           : 'context_map_call_settlement_invalid', integrity);
+     }
++    if (state === 'completed' && evidence.schemaVersion === 3) {
++      try {
++        const sourceOutput = this._contextReferenceRead(call.source.outputRef);
++        const sourceEvidence = this._contextReferenceRead(call.source.evidenceRef);
++        const capsules = providerResults.map((providerResult) => (
++          this._contextReferenceRead(providerResult.capsuleRef)
++        ));
++        validateContextMapResultLineage({
++          call: {
++            schemaVersion: call.schemaVersion, kind: call.kind, generation: call.generation,
++            source: clone(call.source), role: call.role, instruction: call.instruction,
++            partitions: clone(call.partitions), programDigest: call.programDigest,
++            callId: call.callId, callDigest: call.callDigest,
++          },
++          children, providerResults, capsules, sourceOutput, sourceEvidence,
++          planDigest: call.expectedPlanDigest, cleanupDigest: cleanup.cleanupDigest,
++          outputLineages: evidence.outputLineages,
++          outputLineageDigest: evidence.outputLineageDigest,
++          sourceCoordinates: evidence.sourceCoordinates,
++          coordinateDigest: evidence.coordinateDigest,
++        });
++      } catch (error) {
++        this._contextFailure(error?.message ?? 'Context map result lineage changed',
++          integrity ? 'context_map_call_settlement_integrity'
++            : 'context_map_call_settlement_invalid', integrity);
++      }
++    }
+     const settlementCore = {
+       authority, callId: call.callId, admissionDigest: call.admissionDigest,
+       expectedVersion: 1, newVersion: 2, result,
+diff --git a/impl/src/index.mjs b/impl/src/index.mjs
+index 180b03b..4dbd404 100644
+--- a/impl/src/index.mjs
++++ b/impl/src/index.mjs
+@@ -94,6 +94,9 @@ export {
+   DEFAULT_CONTEXT_PROGRAM_POLICY, contextValueDigest,
+   normalizeContextManifest, normalizeContextProgram, normalizeContextProgramPolicy,
+ } from './context-program.mjs';
++export {
++  buildContextMapResultLineage, validateContextMapResultLineage,
++} from './context-result-lineage.mjs';
+ export {
+   contextCellIdentity, contextProgramInputRefs, contextProgramIsPure, contextSessionIdentity,
+   normalizeContextArtifactRef,

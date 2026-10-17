@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "outcomes": [
+    {
+      "role": "grammar-m1-implementer",
+      "phase": "running",
+      "terminal": false,
+      "narrative": "1 worker(s) active.",
+      "resultSha": null
+    }
+  ],
+  "stops": [
+    {
+      "role": "grammar-m1-implementer",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    }
+  ],
+  "remainingCount": 0,
+  "residueUnknown": false
+}

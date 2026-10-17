@@ -1,0 +1,939 @@
+{
+  "schemaVersion": 1,
+  "outcomes": [
+    {
+      "role": "ax1-implementer",
+      "phase": "work_completed",
+      "terminal": false,
+      "narrative": "0 worker(s) active, 1 done.",
+      "resultSha": "d2a1bb53f8c0d9d5e358805263ae26b8f76a73d1"
+    },
+    {
+      "role": "reflex-redteam",
+      "phase": "work_completed",
+      "terminal": false,
+      "narrative": "0 worker(s) active, 1 done.",
+      "resultSha": "89e7574cb2bca6390c36856a36e70380662d6913"
+    }
+  ],
+  "steering": [],
+  "stops": [
+    {
+      "role": "ax1-implementer",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    },
+    {
+      "role": "reflex-redteam",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    }
+  ],
+  "remainingCount": 0,
+  "residueUnknown": false,
+  "waveEvidence": {
+    "schemaVersion": 1,
+    "startedAt": "2026-07-21T23:30:07.966Z",
+    "members": [
+      "ax1-implementer",
+      "reflex-redteam"
+    ],
+    "outcomes": [
+      {
+        "role": "ax1-implementer",
+        "phase": "work_completed",
+        "terminal": false,
+        "narrative": "0 worker(s) active, 1 done.",
+        "resultSha": "d2a1bb53f8c0d9d5e358805263ae26b8f76a73d1"
+      },
+      {
+        "role": "reflex-redteam",
+        "phase": "work_completed",
+        "terminal": false,
+        "narrative": "0 worker(s) active, 1 done.",
+        "resultSha": "89e7574cb2bca6390c36856a36e70380662d6913"
+      }
+    ],
+    "steering": [],
+    "stops": [
+      {
+        "role": "ax1-implementer",
+        "stop": null,
+        "resources": {
+          "state": "stopped",
+          "cleanupState": "stopped",
+          "ownedCount": 0
+        },
+        "ownedCount": 0
+      },
+      {
+        "role": "reflex-redteam",
+        "stop": null,
+        "resources": {
+          "state": "stopped",
+          "cleanupState": "stopped",
+          "ownedCount": 0
+        },
+        "ownedCount": 0
+      }
+    ],
+    "progress": [
+      {
+        "at": "2026-07-21T23:30:33.230Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:30:53.391Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:31:13.561Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:31:33.715Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:31:53.883Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:32:14.026Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:32:34.181Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:32:54.334Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:33:14.482Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:33:34.662Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:33:54.819Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:34:14.984Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:34:35.131Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:34:55.278Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:35:15.421Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:35:35.564Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:35:55.729Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:36:15.889Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:36:36.052Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:36:56.200Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:37:16.350Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:37:36.522Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:37:56.666Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:38:16.827Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:38:36.971Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:38:57.136Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:39:17.296Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:39:37.446Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:39:57.595Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:40:17.737Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:40:37.886Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:40:58.027Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:41:18.181Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:41:38.327Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:41:58.478Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:42:18.620Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:42:38.786Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:42:58.948Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:43:19.099Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:43:39.408Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:43:59.553Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:44:19.770Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "running"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:44:39.942Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "work_completed"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:45:00.101Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "work_completed"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:45:20.277Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "work_completed"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:45:40.443Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "work_completed"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:46:00.615Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "work_completed"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:46:20.787Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "work_completed"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:46:40.957Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "work_completed"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:47:01.108Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "work_completed"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:47:21.268Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "work_completed"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:47:41.438Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "work_completed"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:48:01.651Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "work_completed"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:48:21.816Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "work_completed"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:48:42.134Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "work_completed"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:49:02.615Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "work_completed"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:49:22.966Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "work_completed"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:49:43.318Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "work_completed"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:50:04.090Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "work_completed"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:50:24.660Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "work_completed"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:50:45.029Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "work_completed"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:51:05.423Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "work_completed"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:51:25.776Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "work_completed"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:51:46.114Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "running"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "work_completed"
+          }
+        ]
+      },
+      {
+        "at": "2026-07-21T23:52:06.496Z",
+        "members": [
+          {
+            "role": "ax1-implementer",
+            "phase": "work_completed"
+          },
+          {
+            "role": "reflex-redteam",
+            "phase": "work_completed"
+          }
+        ]
+      }
+    ],
+    "pumpDrained": true
+  }
+}

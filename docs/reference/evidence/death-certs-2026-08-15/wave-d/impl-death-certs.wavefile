@@ -1,0 +1,26 @@
+wave death-certs-2026-08-15-wave-d
+member coordinator
+  harness omp
+  model "deepseek/deepseek-v4-flash"
+  effort high
+  scope "docs/reference/evidence/death-certs-2026-08-15/wave-d/**"
+  objectiveRef "docs/reference/evidence/death-certs-2026-08-15/wave-d/coordinator-brief.md"
+  report "docs/reference/evidence/death-certs-2026-08-15/wave-d/verify-notes.md"
+member row-death-certs
+  harness omp
+  model "deepseek/deepseek-v4-flash"
+  effort high
+  scope "impl/src/process-lifecycle.mjs"
+  scope "impl/src/claude-session.mjs"
+  scope "impl/src/coordinator.mjs"
+  scope "docs/reference/evidence/death-certs-2026-08-15/wave-d/**"
+  objectiveRef "docs/reference/evidence/death-certs-2026-08-15/wave-d/row-death-certs-brief.md"
+  report "docs/reference/evidence/death-certs-2026-08-15/wave-d/notes-row-death-certs.md"
+approveOnAdvertisedPlan
+claimOnStall
+nudgeOnCheckpoint "Continue — the suite is the contract; terminal-event enrichment ONLY (no new event kinds, no clocks, no unbounded capture). Write deliverables incrementally."
+messageOnSpawn brief "Read your objectiveRef brief IN FULL first; it binds. gh may be unauthenticated in your worktree. Your [attempt:] line verbatim in your deliverable's first five lines. Judgment calls recorded; authority-class ambiguity → DECISION_REQUEST with options."
+elevateWhenNotes doubt,plan 20
+signalOnMembersDone row-death-certs result "The row settled (you are the remaining member — pinned #175 semantics). Verify per your brief and write verify-notes.md."
+harvest "docs/reference/evidence/death-certs-2026-08-15/wave-d/notes-row-death-certs.md" mustContain "attempt:"
+harvest "docs/reference/evidence/death-certs-2026-08-15/wave-d/verify-notes.md" mustContain "DEATH-CERTS-VERIFY v1"

@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "startedAt": "2026-08-02T21:19:13.348Z",
+  "members": [
+    "implementer"
+  ],
+  "outcomes": [
+    {
+      "role": "implementer",
+      "phase": "result_ready",
+      "terminal": false,
+      "narrative": "1 worker(s) active, 1 done.",
+      "resultSha": "a1e0a5421e929b445b5f99838012738720b2c2e3"
+    }
+  ],
+  "steering": [],
+  "stops": [
+    {
+      "role": "implementer",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    }
+  ],
+  "progress": [],
+  "pumpDrained": true,
+  "remainingCount": 0,
+  "residueUnknown": false,
+  "basis": "completed",
+  "nudges": [
+    {
+      "role": "implementer",
+      "requestId": "pause:baton-6e340213413b0f265fdc1091-work:722",
+      "at": "2026-08-02T22:05:07.743Z"
+    }
+  ],
+  "claims": [
+    {
+      "role": "implementer",
+      "requestId": "pause:baton-6e340213413b0f265fdc1091-work:742",
+      "at": "2026-08-02T22:05:47.419Z",
+      "code": "claimed"
+    }
+  ],
+  "decisions": [],
+  "follows": [],
+  "salt": null,
+  "knowledge": {
+    "candidates": 0,
+    "admittedThisRun": 0,
+    "candidatesAwaitingAdmission": 0,
+    "settlementRunId": null
+  },
+  "settlement": {
+    "errors": []
+  },
+  "manifest": {
+    "schemaVersion": 1,
+    "waveId": "wave:c12ac073e9b6cf0deda5a32a9f439ab8",
+    "idempotencyKey": "trust-gate-steering-impl-2026-08-02",
+    "recipeDigest": "bf7d834ba98695b02abeb458e7aeeebdc8aa7a0bd76e855c5e8ac242fdbe592d",
+    "salt": "385efb7d-393b-43b0-81da-28ae65ab3a53",
+    "renderedMembers": [
+      {
+        "role": "implementer",
+        "objective": "Implement the assigned contract rung. The task that follows is your sole work authority.\n\nImplement the trust-gate steering epic per docs/reference/evidence/trust-gate-steering-2026-08-02/ trust-gate-steering-decisions.md (v1.0+v1.0.1 — READ IT FULLY first) until impl/test/trust-gate-steering-red.test.mjs (the v1.2 red-first suite, READ IT FULLY second) is green with zero weakening edits. Anchors (verify each before editing — some files contain NUL, use grep -an + sed -n): (1) TG1 taxonomy at coordinator.mjs:10791-10806 (turn_completed dispatch) + _admitPauseRecord :2003-2063 — a pausable turn_completed with no registered driver must NOT auto-settle into _runTrustGate dispatch; it holds the pause and arms TG3's cycle. (2) TG3: one bounded steering cycle per pause record — policy nudge via the worker control lane (provenance prefix 'baton-progress-check:', sanitized through messages.mjs's 6-pattern SECRET pipeline + NFKC + bounds), bounded window from a NEW Coordinator opts knob progressNudgeWindowMs (default 300_000; deployment wires it in application-deployment.mjs near :1710); answers: diff capture, TG2-class receipt, resumed turn, or claim; on expiry unanswered the pause settles and the FULL gate runs with steered:{nudgeId,answered:false} durable on the verdict event (kind 'error', the :11460+ mint). Once per record (epoch-keyed); drivered runs unchanged (the hasDriver path at :2051 stays); claimTurn counts as the answer and never mints the expiry receipt. (3) TG2 evidence rules at the cycle's answer detection: scratchpad.write_result ok:true receipts dedupe by content digest (one distinct answers); question.asked/ decision.requested/approval.requested count only when resolved inside the window; pending or past-deadline interactions never count. (4) TG4: the terminal cause keeps naming the gate (policy_failure + exact code — coordinator.mjs:12051-12055 region) and the verdict event carries sanitized {gate, detail} (digests, never path strings). (5) TG5: analysis:true as a closed plan-node field — goal-plan.mjs normalizeNode (:296 area) accepts it, a node omitting required repository_edit WITHOUT it fails GoalPlanValidationError with an analysis-named message, and the gate's required_effect phase (coordinator.mjs:11160-11175) skips nodes whose brief carries analysis:true while every other phase runs unchanged (T14c: path_scope still fires). (6) The mid-window worker is ALIVE (no verdict before window expiry — T7b/T8b assert the timing). Verify: node --test impl/test/trust-gate-steering-red.test.mjs, then adjacents: decision-gate-trust-gate-red, phase73-required-effects, reflex1-decision-requests-red, diagnostics-red, wave-driver-red — all from the repo root.\nWork red-first: write the failing test first, then implement until green.\nHARD CONSTRAINT (wire_frame_oversize, issue #28): never read a whole file over ~1500 lines; grep -an to locate, then read targeted ranges.\nDo NOT git commit — the orchestrator harvests your worktree.\nMatch existing code style; minimal diffs; no new application commands, registry entries, or MCP/CLI/web surfaces.\nSCRATCHPAD_WRITE is printed TEXT, never a tool; entries are EXACTLY note{text} | plan{objective,steps[{text,state}],supersedes} | doubt{question,context} | link{label,relation,target} (+ expectedFence:\"current\", unique idempotencyKey).\n[attempt: 385efb7d-393b-43b0-81da-28ae65ab3a53 implementer]",
+        "exact": {
+          "harness": "deepseek",
+          "model": "deepseek-v4-flash",
+          "effort": "high"
+        },
+        "scope": [
+          "impl/**",
+          "docs/reference/evidence/trust-gate-steering-2026-08-02/**"
+        ]
+      }
+    ]
+  }
+}

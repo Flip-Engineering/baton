@@ -1,0 +1,49 @@
+{
+  "driver_sha256": "054396959049fad2988367f985e2f09ef42a78ae591662c79cd1ec561c04b8c1",
+  "wrapper_pid": 14979,
+  "wrapper_exit": -15,
+  "actual_surviving_child": {
+    "pid": 14981,
+    "ppid": 1,
+    "started_local": "Fri Oct 2 04:03:00 2026",
+    "state": "S"
+  },
+  "inspection": {
+    "checked": true,
+    "observed_unix": 1790938980.841195,
+    "processes": [],
+    "uncertain": []
+  },
+  "closed_failed_run": true,
+  "raw_record_unchanged": true,
+  "copied_record_sha256": "c5a187b25fb4a1d434574ca91ba99a63ae5f80de9ebf4c4297d28f6c19b19532",
+  "boundary": "Actual controlled native-wrapper loss and surviving Python child; copied record omits child identity to exercise the persistence gap. No providers.",
+  "closure": {
+    "status": "failed",
+    "terminal_id": "hierarchy-failed",
+    "closed_unix": 1790938980.841223,
+    "inspection": {
+      "checked": true,
+      "observed_unix": 1790938980.841195,
+      "processes": [],
+      "uncertain": []
+    },
+    "unknown_native_exits": [
+      {
+        "seat": "deepseek",
+        "pid": 14979,
+        "started_local": "Fri Oct 2 04:03:00 2026",
+        "child_pid": null,
+        "child_started_local": null,
+        "exit_code": null,
+        "child_exit_code": null,
+        "ended_unix": null,
+        "child_ended_unix": null
+      }
+    ],
+    "process_record_sha256": {
+      "native-deepseek.process.json": "c5a187b25fb4a1d434574ca91ba99a63ae5f80de9ebf4c4297d28f6c19b19532"
+    }
+  },
+  "controlled_child_cleanup": "Original child identity absent after stdin EOF"
+}

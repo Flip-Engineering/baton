@@ -1,0 +1,299 @@
+{
+  "schemaVersion": 1,
+  "legs": {
+    "scriptedPattern": {
+      "runId": "run-cd394562491af28f659d5d9b67684fe7",
+      "phase": "selection_required"
+    },
+    "selection": {
+      "state": "no_verified_candidate"
+    },
+    "nested": {
+      "runId": "run-bc6567aed937aeae0e6f8ff5555d9209",
+      "phase": "work_completed",
+      "narrative": "0 worker(s) active, 1 done."
+    }
+  },
+  "stops": [
+    {
+      "label": "leg1-review",
+      "runId": "run-cd394562491af28f659d5d9b67684fe7",
+      "stop": null,
+      "ownership": null
+    },
+    {
+      "label": "leg3-nested",
+      "runId": "run-bc6567aed937aeae0e6f8ff5555d9209",
+      "stop": null,
+      "ownership": null
+    }
+  ],
+  "progress": [
+    {
+      "at": "2026-07-21T07:59:26.955Z",
+      "label": "leg1",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T07:59:49.566Z",
+      "label": "leg1",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T08:00:10.676Z",
+      "label": "leg1",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T08:00:31.835Z",
+      "label": "leg1",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T08:00:53.038Z",
+      "label": "leg1",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T08:01:14.174Z",
+      "label": "leg1",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T08:01:35.438Z",
+      "label": "leg1",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T08:01:56.545Z",
+      "label": "leg1",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T08:02:17.668Z",
+      "label": "leg1",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T08:02:39.622Z",
+      "label": "leg1",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T08:03:00.743Z",
+      "label": "leg1",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T08:03:21.853Z",
+      "label": "leg1",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T08:03:43.694Z",
+      "label": "leg1",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T08:04:04.811Z",
+      "label": "leg1",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T08:04:25.939Z",
+      "label": "leg1",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T08:04:47.061Z",
+      "label": "leg1",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T08:05:08.166Z",
+      "label": "leg1",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T08:05:29.277Z",
+      "label": "leg1",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T08:05:50.388Z",
+      "label": "leg1",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T08:06:11.495Z",
+      "label": "leg1",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T08:06:32.610Z",
+      "label": "leg1",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T08:06:55.851Z",
+      "label": "leg1",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T08:07:16.951Z",
+      "label": "leg1",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T08:07:38.063Z",
+      "label": "leg1",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T08:07:59.174Z",
+      "label": "leg1",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T08:08:20.294Z",
+      "label": "leg1",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T08:08:43.902Z",
+      "label": "leg1",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T08:09:05.030Z",
+      "label": "leg1",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T08:09:26.146Z",
+      "label": "leg1",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T08:09:47.262Z",
+      "label": "leg1",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T08:10:08.364Z",
+      "label": "leg1",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T08:10:29.551Z",
+      "label": "leg1",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T08:10:50.695Z",
+      "label": "leg1",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T08:11:11.820Z",
+      "label": "leg1",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T08:11:32.936Z",
+      "label": "leg1",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T08:11:54.057Z",
+      "label": "leg1",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T08:12:15.167Z",
+      "label": "leg1",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T08:12:36.298Z",
+      "label": "leg1",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T08:12:57.417Z",
+      "label": "leg1",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T08:13:18.525Z",
+      "label": "leg1",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T08:13:39.649Z",
+      "label": "leg1",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T08:14:00.739Z",
+      "label": "leg1",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T08:14:21.855Z",
+      "label": "leg1",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T08:14:42.962Z",
+      "label": "leg1",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T08:15:04.085Z",
+      "label": "leg1",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T08:15:25.166Z",
+      "label": "leg1",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T08:15:46.292Z",
+      "label": "leg1",
+      "phase": "selection_required"
+    },
+    {
+      "at": "2026-07-21T08:16:09.619Z",
+      "label": "leg3",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T08:16:29.708Z",
+      "label": "leg3",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T08:16:49.812Z",
+      "label": "leg3",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T08:17:09.899Z",
+      "label": "leg3",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T08:17:29.971Z",
+      "label": "leg3",
+      "phase": "running"
+    },
+    {
+      "at": "2026-07-21T08:17:50.078Z",
+      "label": "leg3",
+      "phase": "work_completed"
+    }
+  ],
+  "failure": null
+}

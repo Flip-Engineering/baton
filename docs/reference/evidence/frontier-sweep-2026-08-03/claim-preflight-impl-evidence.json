@@ -1,0 +1,61 @@
+{
+  "schemaVersion": 1,
+  "startedAt": "2026-08-04T11:48:41.001Z",
+  "members": [
+    "implementer"
+  ],
+  "outcomes": [
+    {
+      "role": "implementer",
+      "phase": "result_ready",
+      "terminal": false,
+      "narrative": "1 worker(s) active, 1 done.",
+      "resultSha": "f9c257554960448b06bbbfa022e1c939331d36df"
+    }
+  ],
+  "steering": [],
+  "stops": [
+    {
+      "role": "implementer",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    }
+  ],
+  "progress": [],
+  "pumpDrained": true,
+  "remainingCount": 0,
+  "residueUnknown": false,
+  "basis": "completed",
+  "nudges": [
+    {
+      "role": "implementer",
+      "requestId": "pause:baton-5fbfcc93a7f409c3a7955437-work:426",
+      "at": "2026-08-04T12:20:05.603Z"
+    }
+  ],
+  "claims": [
+    {
+      "role": "implementer",
+      "requestId": "pause:baton-5fbfcc93a7f409c3a7955437-work:446",
+      "at": "2026-08-04T12:21:09.507Z",
+      "code": "claimed"
+    }
+  ],
+  "decisions": [],
+  "follows": [],
+  "salt": null,
+  "knowledge": {
+    "candidates": 0,
+    "admittedThisRun": 0,
+    "candidatesAwaitingAdmission": 0,
+    "settlementRunId": null
+  },
+  "settlement": {
+    "errors": []
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "attempt": "2026-08-13T05:17:04.101Z",
+  "salt": "v420260813051704",
+  "role": "impl-74",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-3ace3f0a3c2d34637697b720634e3092"
+        ]
+      }
+    },
+    {
+      "step": "terminal:impl-74",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "impl-74": {
+      "pin": "35ba9b03adc38f224167cd0c041dcc22c3dd83cf",
+      "paths": [
+        "impl/src/workflow-interpreter.mjs",
+        "impl/src/application-deployment.mjs",
+        "impl/src/coordinator.mjs",
+        "impl/src/application.mjs",
+        "impl/src/limits.mjs",
+        "docs/reference/evidence/worker-orchestrated-swarm-2026-08-13/impl-74-notes.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 456,
+  "verdict": "IMPL-74-OK"
+}

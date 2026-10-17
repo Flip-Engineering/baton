@@ -1,0 +1,41 @@
+wave baton-builds-baton-2026-08-19-wave-a
+member coordinator
+  harness omp
+  model "deepseek/deepseek-v4-flash"
+  effort high
+  scope "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-a/**"
+  objectiveRef "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-a/coordinator-brief.md"
+  report "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-a/verify-notes.md"
+member row-plan-effects
+  harness omp
+  model "deepseek/deepseek-v4-flash"
+  effort high
+  scope "impl/src/**"
+  scope "impl/test/**"
+  scope "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-a/**"
+  objectiveRef "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-a/row-plan-effects-brief.md"
+  report "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-a/notes-row-plan-effects.md"
+member row-harvest-recovery
+  harness omp
+  model "deepseek/deepseek-v4-flash"
+  effort high
+  scope "impl/src/**"
+  scope "impl/test/**"
+  scope "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-a/**"
+  objectiveRef "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-a/row-harvest-recovery-brief.md"
+  report "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-a/notes-row-harvest-recovery.md"
+member row-resume-wiring
+  harness omp
+  model "deepseek/deepseek-v4-flash"
+  effort high
+  scope "impl/src/**"
+  scope "impl/test/**"
+  scope "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-a/**"
+  objectiveRef "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-a/row-resume-wiring-brief.md"
+  report "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-a/notes-row-resume-wiring.md"
+approveOnAdvertisedPlan
+messageOnSpawn brief "Read your objectiveRef brief IN FULL first; it binds. RED-first always: write the pin, verify RED at HEAD, then implement to GREEN, then run the named batteries. Your [attempt:] line verbatim in your report's first five lines. Judgment calls recorded in your report."
+harvest "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-a/notes-row-plan-effects.md" mustContain "attempt:"
+harvest "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-a/notes-row-harvest-recovery.md" mustContain "attempt:"
+harvest "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-a/notes-row-resume-wiring.md" mustContain "attempt:"
+harvest "docs/reference/evidence/baton-builds-baton-2026-08-19/wave-a/verify-notes.md" mustContain "BATON-BUILDS-BATON-VERIFY v1"

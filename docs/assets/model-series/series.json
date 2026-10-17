@@ -1,0 +1,141 @@
+{
+  "background": "#F3F1ED",
+  "characterTransform": "translate(14 14) scale(1.72)",
+  "anchors": {
+    "forehead": [
+      47,
+      17
+    ],
+    "mug": [
+      62,
+      78
+    ],
+    "book": [
+      50,
+      80
+    ],
+    "headset": [
+      50,
+      51
+    ]
+  },
+  "variants": [
+    {
+      "key": "gpt",
+      "label": "GPT smiling wave pose",
+      "pose": "poses/gpt-hello.svg",
+      "modules": [
+        {
+          "source": "accessories/gpt-knot-beret.svg",
+          "anchor": "forehead",
+          "layer": "front",
+          "emblem": {
+            "source": "emblems/gpt.svg",
+            "transform": "translate(-12.5 -11) scale(0.0319) translate(-170 -170)"
+          }
+        }
+      ],
+      "displaySeries": "GPT",
+      "assetId": "flip-gpt"
+    },
+    {
+      "key": "claude",
+      "label": "Claude reading pose",
+      "pose": "poses/claude-reading.svg",
+      "poseTransform": "rotate(-3 50 52)",
+      "modules": [
+        {
+          "source": "accessories/claude-open-book.svg",
+          "anchor": "book",
+          "layer": "front",
+          "emblem": {
+            "source": "emblems/claude.svg",
+            "transform": "translate(7.75 -7.25) scale(0.1)"
+          }
+        }
+      ],
+      "displaySeries": "Claude",
+      "assetId": "flip-claude"
+    },
+    {
+      "key": "deepseek",
+      "label": "DeepSeek visor-tip pose",
+      "pose": "poses/deepseek-tip.svg",
+      "poseTransform": "rotate(2 50 52)",
+      "modules": [
+        {
+          "source": "accessories/deepseek-whale-visor.svg",
+          "anchor": "forehead",
+          "layer": "front",
+          "emblem": {
+            "source": "emblems/deepseek.svg",
+            "transform": "translate(-9.2 -8.5) scale(0.47)"
+          }
+        }
+      ],
+      "displaySeries": "DeepSeek",
+      "assetId": "flip-deepseek"
+    },
+    {
+      "key": "kimi",
+      "label": "Kimi listening pose",
+      "pose": "poses/kimi-listening.svg",
+      "poseTransform": "rotate(-2 50 52)",
+      "modules": [
+        {
+          "source": "accessories/kimi-headset-band.svg",
+          "anchor": "headset",
+          "layer": "back"
+        },
+        {
+          "source": "accessories/kimi-headset-cups.svg",
+          "anchor": "headset",
+          "layer": "front",
+          "emblem": {
+            "source": "emblems/kimi.svg",
+            "transform": "translate(-47.4 -4.5) scale(0.063) translate(-24 -27)"
+          }
+        }
+      ],
+      "displaySeries": "Kimi",
+      "assetId": "flip-kimi"
+    },
+    {
+      "key": "muse",
+      "label": "Muse relaxed mug pose",
+      "pose": "poses/muse-relaxed.svg",
+      "modules": [
+        {
+          "source": "accessories/muse-mug.svg",
+          "anchor": "mug",
+          "layer": "front",
+          "emblem": {
+            "source": "emblems/muse.svg",
+            "transform": "translate(-7 -7) scale(0.14)"
+          }
+        }
+      ],
+      "displaySeries": "Muse",
+      "assetId": "flip-muse"
+    },
+    {
+      "key": "glm",
+      "label": "GLM pointing pose",
+      "pose": "poses/glm-point.svg",
+      "poseTransform": "rotate(2 50 52)",
+      "modules": [
+        {
+          "source": "accessories/glm-z-folded-cap.svg",
+          "anchor": "forehead",
+          "layer": "front",
+          "emblem": {
+            "source": "emblems/glm.svg",
+            "transform": "translate(-6.2 -8.5) scale(0.39) translate(-4 -6)"
+          }
+        }
+      ],
+      "displaySeries": "GLM",
+      "assetId": "flip-glm"
+    }
+  ]
+}

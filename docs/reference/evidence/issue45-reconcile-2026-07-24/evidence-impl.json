@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "outcomes": [
+    {
+      "role": "issue45-implementer-codex",
+      "phase": "failed",
+      "terminal": true,
+      "narrative": "Run terminated: provider_crashed.",
+      "resultSha": null
+    }
+  ],
+  "stops": [
+    {
+      "role": "issue45-implementer-codex",
+      "stop": null,
+      "resources": {
+        "state": "stopped",
+        "cleanupState": "stopped",
+        "ownedCount": 0
+      },
+      "ownedCount": 0
+    }
+  ],
+  "remainingCount": 0,
+  "residueUnknown": false
+}

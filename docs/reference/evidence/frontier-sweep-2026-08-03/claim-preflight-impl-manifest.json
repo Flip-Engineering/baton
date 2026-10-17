@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "waveId": "wave:13e393bf952a9d52279eeca21c24b0a6",
+  "idempotencyKey": "l2-claim-preflight-impl-2026-08-03",
+  "recipeDigest": "00bb8a8e08cf331d238d6f5e1307605c0a118e36114b6c2c8e862d496d5bf7c1",
+  "salt": "ccfa840c-37da-4f29-b252-55115268b400",
+  "renderedMembers": [
+    {
+      "role": "implementer",
+      "objective": "Implement the assigned contract rung. The task that follows is your sole work authority.\n\nImplement the assigned contract rung. The task that follows is your sole work authority. Implement the #88 epic per docs/reference/evidence/claim-preflight-2026-08-03/claim-preflight-contract.md (READ IT FULLY first), the folded blue-team blockers in docs/reference/evidence/claim-preflight-2026-08-03/contract-fold.md + suite-fold.md (READ IT second — it carries the sharpened oracles), and make impl/test/claim-preflight-red.test.mjs (READ IT FULLY third) green with ZERO weakening edits. The suite is red-first post-fold: every row fails at a named stage for a missing capability — your work is to make each named capability real, never to move a stage or relax an assertion. Some files contain NUL bytes (application.mjs, coordinator.mjs, coordination-store.mjs) — grep -an + sed -n only, never open them whole. Campaign law: controls are eval-able, constructive, or conversational — NEVER clocks or turn-limits; scanners stay shape-only (no content caps at the wire, #86/#89); localeCompare is BANNED (use (a < b ? -1 : a > b ? 1 : 0)); sorted-key closed-shape literals must be written in ACTUAL sorted order (the BD3-A0 lesson). claim-time liveness preflight (#88, contract v1.1 CP1-CP10 as folded): inside claimTurn BEFORE _clearSteeringTimer (coordinator.mjs ~2492-2529 — verify current lines), count liveness in the pause epoch (hub-receipted scratchpad ok:true, context.read admissions, governance-counted read-only tool calls, content.message analysis, approval.resolved, decision.settled — the CLOSED six-class set; stale-epoch NEVER counts), then rollback + RETURN (never throw) the typed refusal {ok:false, result:\"claim_premature_liveness\", ...} with liveness as counts/digests only; silent workers still face the full killing gate (T18b control must stay green); error path rollback-on-throw (resolving always released, T18c); expiryPending flag set-by-guard-skip consumed only by the refuse path (T18g); the registry flip claim_turn destructive:false → true (application-semantics.mjs — the flag + summary naming the final evaluation; authority projection digest moves, expected); wave-driver refusalNudgeBudget (integer >=0, default 2) + per-pauseId claimAttempted + ONE L4-exempt corrective nudge per refusal consumed on delivered ack + exhaustion → record-only → pre-existing stall clock → basis stall → guaranteed close (NO new clock, campaign law). The gate-kill RETURNS envelope ({ok:true, result:\"claimed\", outcome:\"failed\"}) is the verified shape — mirror the suite's assertGateKill. X1-X3 exoneration pins must stay byte-identical. Anchors: impl/src/coordinator.mjs claimTurn + _runTrustGate + the pause record, impl/src/application-semantics.mjs claim_turn registry entry, impl/src/wave-driver.mjs claimOnce/L4. Verify: node --test impl/test/claim-preflight-red.test.mjs from the repo root, then the suite's adjacents it names.\nWork red-first: write the failing test first, then implement until green.\nHARD CONSTRAINT (wire_frame_oversize, issue #28): never read a whole file over ~1500 lines; grep -an to locate, then read targeted ranges.\nDo NOT git commit — the orchestrator harvests your worktree.\nMatch existing code style; minimal diffs; no new application commands, registry entries, or MCP/CLI/web surfaces.\nSCRATCHPAD_WRITE is printed TEXT, never a tool; entries are EXACTLY note{text} | plan{objective,steps[{text,state}],supersedes} | doubt{question,context} | link{label,relation,target} (+ expectedFence:\"current\", unique idempotencyKey).\n[attempt: ccfa840c-37da-4f29-b252-55115268b400 implementer]",
+      "exact": {
+        "harness": "deepseek",
+        "model": "deepseek-v4-flash",
+        "effort": "high"
+      },
+      "scope": [
+        "impl/**",
+        "docs/reference/evidence/frontier-sweep-2026-08-03/**"
+      ]
+    }
+  ]
+}

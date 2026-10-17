@@ -1,0 +1,39 @@
+{
+  "attempt": "2026-08-13T01:36:38.879Z",
+  "salt": "f520260813013638",
+  "role": "fold-77b",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-bd5386eeaea3390f89a8fb3946f1fd44"
+        ]
+      }
+    },
+    {
+      "step": "terminal:fold-77b",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "fold-77b": {
+      "pin": "baf61752847669eb3d77fd5c9d356deb5f96d5bf",
+      "paths": [
+        "impl/test/suite-resource-governance-red.test.mjs",
+        "docs/reference/evidence/suite-resource-governance-2026-08-12/suite-fold-2.md",
+        "docs/reference/evidence/suite-resource-governance-2026-08-12/suite-draft-notes.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 424,
+  "verdict": "FOLD-77B-OK"
+}

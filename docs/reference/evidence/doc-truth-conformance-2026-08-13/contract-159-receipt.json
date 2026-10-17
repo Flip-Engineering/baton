@@ -1,0 +1,37 @@
+{
+  "attempt": "2026-08-13T07:01:04.460Z",
+  "salt": "x520260813070104",
+  "role": "contract-159",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-90ae1b4f3aa24981dd18e5f5ebcdb747"
+        ]
+      }
+    },
+    {
+      "step": "terminal:contract-159",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "contract-159": {
+      "pin": "b9e00ab45dfccabed22dca88fd4f9c88b1c8ed37",
+      "paths": [
+        "docs/reference/evidence/doc-truth-conformance-2026-08-13/doc-truth-conformance-contract.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 460,
+  "verdict": "CONTRACT-159-OK"
+}

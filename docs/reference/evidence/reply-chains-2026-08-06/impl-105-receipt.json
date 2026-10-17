@@ -1,0 +1,37 @@
+{
+  "attempt": "2026-08-07T08:25:31.183Z",
+  "salt": "i520260807082531",
+  "role": "impl-105",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-fa73a0014f84da9cec92ebde40504fd5"
+        ]
+      }
+    },
+    {
+      "step": "terminal:impl-105",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "impl-105": {
+      "pin": "e43f6ecf029c85ea8d7b255057e67d4fca467e20",
+      "paths": [
+        "impl/src/coordinator.mjs"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 387,
+  "verdict": "IMPL-105-OK"
+}

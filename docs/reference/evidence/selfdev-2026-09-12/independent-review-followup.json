@@ -1,0 +1,154 @@
+{
+  "mode": "Independent native Claude Code review in shared checkout, read-only tools; not Baton acceptance. A fresh Baton workspace was capacity-refused.",
+  "reviewedHead": "6692d712a035abc551fd900d84257e9e42108a04",
+  "sessionId": "7935c8ac-261a-4763-98f6-52e9c8589ea2",
+  "model": "claude-sonnet-4-6",
+  "nativeResult": {
+    "terminal_reason": "completed",
+    "is_error": false,
+    "num_turns": 13,
+    "total_cost_usd": 1.5764049,
+    "modelUsage": {
+      "claude-sonnet-4-5-20250929": {
+        "inputTokens": 1247,
+        "outputTokens": 15,
+        "cacheReadInputTokens": 0,
+        "cacheCreationInputTokens": 0,
+        "webSearchRequests": 0,
+        "costUSD": 0.003966000000000001,
+        "contextWindow": 200000,
+        "maxOutputTokens": 32000,
+        "thinkingTokens": 0,
+        "canonicalModel": "claude-sonnet-4-5",
+        "provider": "firstParty",
+        "costBasis": "list"
+      },
+      "claude-sonnet-4-6": {
+        "inputTokens": 7,
+        "outputTokens": 49897,
+        "cacheReadInputTokens": 279303,
+        "cacheCreationInputTokens": 123362,
+        "webSearchRequests": 0,
+        "costUSD": 1.5724388999999999,
+        "contextWindow": 200000,
+        "maxOutputTokens": 32000,
+        "thinkingTokens": 46536,
+        "canonicalModel": "claude-sonnet-4-6",
+        "provider": "firstParty",
+        "costBasis": "list"
+      }
+    },
+    "result": "---\n\n## Code Review: Agent/swarm-runtime-foundation Follow-up Changes\n\nReviewed: `impl/src/wave.mjs`, `impl/src/omp-rpc.mjs`, `impl/src/worktree.mjs` (reconciliation section), and tests `wave-observer-lifetime.test.mjs`, `auxiliary-workspace-reconciliation.test.mjs`, `omp-turn-in-flight-red.test.mjs`.\n\n---\n\n### Concurrency and Observer Lifetime (wave.mjs)\n\nThe per-member `Promise.all` settlement in `settle()` is correctly structured. The `canObserve()` guard at `wave.mjs:647` includes `!owner.abandoned`, so even if the outer catch sets `owner.abandoned = true` while another member loop is between iterations, the guard fires on that loop's next `canObserve()` check before any `armPump` call. The secondary `owner.abandoned` check inside `armPump` (line 519) is belt-and-suspenders.\n\nCancelled-but-unsettled pump tracking (`armPump:525-526`): when `existing.cancelled` is true, the new observation's `owner` is not added. `releasePumps(owner)` later finds nothing to release and returns an empty array. `observeRetired([], ...)` immediately returns true. `pumpDrained = true && pumpQuiescent()` \u2014 `pumpQuiescent()` correctly returns false because the unsettled pump is still in the map. No incorrect `pumpDrained: true` claim. \u2713\n\nInvocation ordering (`wave.mjs:799`): `invocationSeq` is a creation-order counter. A later-created but earlier-finishing settle correctly wins the ledger. An earlier-created settle that finishes last does not overwrite. \u2713\n\n`releasePumps(owner)` idempotency: if called twice for the same owner (catch-path double release), `!record.owners.delete(owner)` returns true on the second call and the loop skips. No double-abort. \u2713\n\n### Concrete Introduced Issue 1: `_onAgentEnd` dual-event emission on natural completion with pending interrupt\n\n**Source:** `impl/src/omp-rpc.mjs:644-650`\n\n```javascript\nthis._emit(session, 'lifecycle.turn_completed', { ... });\nif (session.pendingInterrupt) {\n  const { then } = session.pendingInterrupt;\n  session.pendingInterrupt = null;\n  this._emit(session, 'control.interrupt_confirmed', { ... });\n  then?.();\n}\n```\n\n**Adverse scenario:** `interrupt(worker, then)` is called mid-turn (sets `pendingInterrupt`). The provider delivers the agent's final response before the `abort` frame propagates through omp's queue. `_onAgentEnd` fires with `isTerminal: true`: `lifecycle.turn_completed` emits (normal completion path), then `control.interrupt_confirmed` also emits, then `then?.()` fires. The coordinator receives both events for what was an ordinary completion. If `then` starts a new turn or performs any continuation action, that action fires unconditionally on what was a natural termination, not only on interrupted turns.\n\nThis is a behavioral change introduced by the fix. The prior behavior (replay steer as new prompt) was worse, but the coordinator was exposed to only one event class per turn boundary. The new code exposes two. The `pendingInterrupt.turnId` field (`omp-rpc.mjs:921`) is set but never validated in `_onAgentEnd` against the completing turn's ID, so no guard distinguishes \"interrupt was effective\" from \"agent completed before abort arrived.\"\n\nThis is a regression relative to any coordinator implementation that treats `interrupt_confirmed` as exclusive to the interrupted-turn path, or that relies on `then` being called only when the abort took effect.\n\n### Concrete Introduced Issue 2: `evidence().pumpDrained` not updated by `close()`\n\n**Source:** `impl/src/wave.mjs:867-879`\n\n`close()` returns `pumpQuiescent: pumpQuiescent()` in its receipt but never writes `state.pumpDrained`. The field is written only inside `settle()`'s publish path (`wave.mjs:804`). After close confirms all drives drained (`pumpQuiescent: true`), `wave.evidence().pumpDrained` still reflects the last settle's observation.\n\n**Adverse scenario:** A `settle()` call times out with an unconfirmed drive and publishes `state.pumpDrained = false`. The caller then calls `close()`, which drains the drive and returns `pumpQuiescent: true`. Any subsequent `evidence()` read still reports `pumpDrained: false` despite the close receipt showing clean drainage. An orchestrator logging the evidence trace would conclude an outstanding drive persisted through close.\n\nThis is a newly introduced inconsistency: `state.pumpDrained` is a new field, and `close()` does not participate in its lifecycle. The close receipt's own `pumpQuiescent` field is accurate; only the persistent `evidence()` view is stale.\n\n### Concrete Introduced Issue 3: `prompt(mode='nudge')` with no active turn returns misleading error\n\n**Source:** `impl/src/omp-rpc.mjs:909`\n\n`prompt(worker, content, 'nudge')` with `session.activeTurn === null` falls through the routing conditions to `if (mode !== 'turn') return { ok: false, notSent: true, reason: 'omp rpc nudge is unsupported' }`. The caller receives \"nudge is unsupported\" when the actual failure is \"no active turn.\" The test covers only the active-turn case. This is a minor diagnostic regression introduced by using 'nudge' as an undocumented pseudo-mode in the test while the implementation has no explicit case for it.\n\n**Adverse scenario:** A coordinator that calls `prompt(worker, msg, 'nudge')` after a turn completes (timing window) gets `reason: 'omp rpc nudge is unsupported'` rather than `reason: 'no active turn to steer'`. The coordinator's error-recovery path keys on the reason string to distinguish \"wrong mode\" from \"turn boundary\" \u2014 only one string leads to the right recovery. Severity is low if the coordinator keys on `notSent: true` uniformly; higher if it branches on the reason text.\n\n### Auxiliary Workspace Reconciliation\n\nThe conservative retention logic (`worktree.mjs:1569-1601`) correctly applies `retainSandbox` for both directory-enumeration and registered-worktree paths (`worktree.mjs:1945-1950`). The `retainedSandboxes` Set provides deduplication when both paths encounter the same sandbox. The symlink-refusal path in `freshVerifySandbox` (tested by `auxiliary-workspace-reconciliation.test.mjs:75-85`) correctly protects against escape via unsafe auxiliary roots. The concurrent-creation EEXIST handling validates the winner directory before proceeding, and refuses a symlink planted in the race window. \u2713\n\nPreservation claims in the reconcile receipt are honest: `authority: 'unproven'` for retained sandboxes, no cleanup authority asserted. The gap (automatic orphan reclamation without durable process-closure evidence) is correctly identified in docs/40 as a tracked gap, not a new regression here.\n\n### OMP Turn-In-Flight Fix\n\n`_startTurn` correctly emits `lifecycle.turn_started` and uses `process.send` (fire-and-forget catch) for the prompt, not `notify`. A mid-turn `prompt(mode='steer'/'nudge')` correctly uses `process.notify` (no response awaited, no second `turn_started`, no new prompt frame). After a terminal `agent_end`, `session.activeTurn = null`, and a subsequent `prompt(mode='turn')` correctly issues a new prompt frame via `_startTurn`. The test at `omp-turn-in-flight-red.test.mjs:84` verifies exactly one prompt frame was written before the second explicit turn. \u2713\n\nThe `mode='turn'` with `session.activeTurn !== null` silently routing to steer (`omp-rpc.mjs:903`) is pre-existing design, not introduced by this patch.\n\n### Known Gaps (not regressions)\n\nThe following are explicitly identified as gaps in docs/40 and are not introduced regressions:\n- OMP usage identity/accounting (`message_end` usage, `agent_end` aggregate vs per-message delta)\n- Automatic orphan reclamation for auxiliary workspaces without durable closure evidence\n- `unknown`/`silence` not constituting worker termination authority (upheld throughout)\n\n### Review Limits\n\nThis pass does not cover: `coordinator.mjs`, `workflow-interpreter.mjs`, `claude-session.mjs`, `surface-capability-catalog.mjs`, the full `worktree.mjs` (only the reconcile section), or `wave-observability-red.test.mjs` beyond its header. The coordinator's handling of `interrupt_confirmed` + `turn_completed` dual emission (Issue 1) requires inspecting coordinator state machine paths not reviewed here. The `evidence().pumpDrained` inconsistency (Issue 2) requires a caller that reads evidence after close rather than relying on the close receipt's `pumpQuiescent` field."
+  },
+  "disposition": [
+    {
+      "finding": "Interrupt/completion overlap",
+      "result": "Confirmed a stronger failure: Adapter then is follow-up text, and then?.() throws. Pending interruption now binds its target turn, suppresses contribution completion, waits for terminal event plus successful correlated abort response, and delivers follow-up once. Repeated interrupts share the issued effect; kill withdraws continuation. Coordinator integration passes."
+    },
+    {
+      "finding": "Stale pumpDrained evidence",
+      "result": "Confirmed in both directions: stale false after closure and stale true during a newer observation. evidence() now reads the owned pump registry when called; historical outcomes keep invocation ordering."
+    },
+    {
+      "finding": "Nudge at an idle boundary",
+      "result": "Confirmed inconsistent mode handling; coordinator uses nudge as a native continuation. Explicit nudge now starts a turn when idle and steers while active. Unknown modes refuse before effects, and plain steer retains its active-turn requirement."
+    }
+  ],
+  "checks": [
+    {
+      "name": "wave_prior_source",
+      "localLog": "/tmp/baton-review-wave-before.log",
+      "sha256": "ab0b81110dba3bb9395838997e039c9041250bd48f30100f303a12779153c2aa",
+      "tail": [
+        "    async Test.run (node:internal/test_runner/test:1054:7)",
+        "    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)",
+        "  ...",
+        "1..18",
+        "# tests 18",
+        "# suites 0",
+        "# pass 16",
+        "# fail 2",
+        "# cancelled 0",
+        "# skipped 0",
+        "# todo 0",
+        "# duration_ms 1311.924167"
+      ]
+    },
+    {
+      "name": "interrupt_prior_source",
+      "localLog": "/tmp/baton-review-interrupt-before.log",
+      "sha256": "32ed21826eeffd2bfed4565a57f8c554516abc637762d86f7eb49d136e159b0a",
+      "tail": [
+        "    async Test.run (node:internal/test_runner/test:1054:7)",
+        "    async Test.processPendingSubtests (node:internal/test_runner/test:744:7)",
+        "  ...",
+        "1..5",
+        "# tests 5",
+        "# suites 0",
+        "# pass 0",
+        "# fail 5",
+        "# cancelled 0",
+        "# skipped 0",
+        "# todo 0",
+        "# duration_ms 64.26525"
+      ]
+    },
+    {
+      "name": "wave_integration",
+      "localLog": "/tmp/baton-review-wave-integration.log",
+      "sha256": "92173ba73af79e570e25340ee8128658fffbfa57c228afdeac5e365fb8f5b697",
+      "tail": [
+        "  duration_ms: 75.418916",
+        "  type: 'test'",
+        "  ...",
+        "1..86",
+        "# tests 86",
+        "# suites 0",
+        "# pass 86",
+        "# fail 0",
+        "# cancelled 0",
+        "# skipped 0",
+        "# todo 0",
+        "# duration_ms 19490.386208"
+      ]
+    },
+    {
+      "name": "omp_integration_before_additional_edges",
+      "localLog": "/tmp/baton-review-omp-integration.log",
+      "sha256": "c1727587a7e1ae7cfcb4fc802d22a4141f7f0581e8a722da03e0daa855d0b321",
+      "tail": [
+        "  duration_ms: 657.649292",
+        "  type: 'test'",
+        "  ...",
+        "1..38",
+        "# tests 38",
+        "# suites 0",
+        "# pass 38",
+        "# fail 0",
+        "# cancelled 0",
+        "# skipped 0",
+        "# todo 0",
+        "# duration_ms 6990.81925"
+      ]
+    },
+    {
+      "name": "interrupt_coordinator_and_edges",
+      "localLog": "/tmp/baton-review-interrupt-final.log",
+      "sha256": "9c65285c8102ccd222183d611532a92fa12c6129baa847b39b3de1803b43b987",
+      "tail": [
+        "  duration_ms: 296.70875",
+        "  type: 'test'",
+        "  ...",
+        "1..19",
+        "# tests 19",
+        "# suites 0",
+        "# pass 19",
+        "# fail 0",
+        "# cancelled 0",
+        "# skipped 0",
+        "# todo 0",
+        "# duration_ms 3672.587291"
+      ]
+    }
+  ]
+}

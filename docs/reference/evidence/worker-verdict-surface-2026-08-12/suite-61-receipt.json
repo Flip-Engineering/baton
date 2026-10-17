@@ -1,0 +1,38 @@
+{
+  "attempt": "2026-08-13T03:16:11.967Z",
+  "salt": "u120260813031611",
+  "role": "suite-61",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-a5c7cdf3cded4eb71ee52ab19ffbe520"
+        ]
+      }
+    },
+    {
+      "step": "terminal:suite-61",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "suite-61": {
+      "pin": "baf8c0969dfb7bba2b2b5f25d029f3733a1b039a",
+      "paths": [
+        "impl/test/worker-verdict-surface-red.test.mjs",
+        "docs/reference/evidence/worker-verdict-surface-2026-08-12/suite-draft-notes.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 442,
+  "verdict": "SUITE-61-OK"
+}

@@ -1,0 +1,37 @@
+{
+  "attempt": "2026-08-07T03:14:38.796Z",
+  "salt": "c520260807031438",
+  "role": "contract-79",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-31f1b3f0cb712881ff723dc01db3dc63"
+        ]
+      }
+    },
+    {
+      "step": "terminal:contract-79",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "contract-79": {
+      "pin": "2dd607a9c274049546c051ab6150597dfba5ee53",
+      "paths": [
+        "docs/reference/evidence/worker-delivery-push-2026-08-07/worker-delivery-push-contract.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 353,
+  "verdict": "CONTRACT-79-OK"
+}

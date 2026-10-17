@@ -1,0 +1,67 @@
+{
+  "at": "2026-07-13T07:10:52.511Z",
+  "repoHead": "3e1c8601fd6d314f3cba933a8d5d6a40bcda442e",
+  "runId": "phase47-postfix-glm-review",
+  "credentialPosture": {
+    "glm": "project-local owner-only ignored file loaded only by GlmSessionCli",
+    "codex": "explicit owner-only private runtime projection",
+    "claude": "subscription/keychain; no credential file projection"
+  },
+  "rows": [
+    {
+      "taskId": "phase47-glm-causal-review",
+      "harness": "glm",
+      "model": "glm-4.7",
+      "target": "reviews/dogfood/phase47-glm-causal-review.md",
+      "workerId": "w-1",
+      "pid": 15291,
+      "result": {
+        "status": "completed",
+        "ready": true
+      },
+      "route": {
+        "harnessRequested": "glm",
+        "harnessResolved": "glm-via-claude-session@claude-code-2.1.206+zai-anthropic",
+        "modelRequested": "glm-4.7",
+        "modelResolved": "glm-4.7",
+        "modelObserved": "glm-4.7",
+        "effortRequested": "low",
+        "effortResolved": "low",
+        "effortObserved": null
+      },
+      "budgetUsed": {
+        "tokens": 85497,
+        "usd": 0.8342700000000002
+      },
+      "verifyAccept": true,
+      "reportCaptured": true
+    }
+  ],
+  "responses": [],
+  "kills": [
+    {
+      "taskId": "phase47-glm-causal-review",
+      "ack": {
+        "ok": true,
+        "result": "confirmed",
+        "emulated": false
+      }
+    }
+  ],
+  "checks": {
+    "runnerHealthy": true,
+    "allHarnessesAdmitted": true,
+    "exactRoutesRequestedResolved": true,
+    "exactProviderModelsObserved": true,
+    "freshVerified": true,
+    "reportsCaptured": true,
+    "killSafe": true,
+    "processesGone": true,
+    "worktreesGone": true,
+    "runtimesGone": true,
+    "branchesGone": true,
+    "writerAuthorityReleased": true
+  },
+  "fatal": null,
+  "pass": true
+}

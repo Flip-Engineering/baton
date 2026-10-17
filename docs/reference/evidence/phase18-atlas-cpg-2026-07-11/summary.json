@@ -1,0 +1,38 @@
+{
+  "at": "2026-07-12T01:02:50.831Z",
+  "path": "impl/src/mcp-northbound.mjs",
+  "result": {
+    "status": "ok",
+    "summary": "1255 nodes, 1984 edges",
+    "provenance": {
+      "sourceDigest": "86b644e7ebabef64c9a30547ad33f4f7d9513ee54d76ff3ef69f1937f6804ec5",
+      "graphDigest": "5f30ae2d870397a22abcc05312782ae8b7d3e75e2f5deae6cd1650c01173a096",
+      "parseErrors": 0,
+      "deterministic": true,
+      "scope": "single_file_intraprocedural_seed"
+    }
+  },
+  "edgeTypes": [
+    "CALLS",
+    "CFG_ENTRY",
+    "CFG_EXIT",
+    "CFG_FALSE",
+    "CFG_NEXT",
+    "CFG_TRUE",
+    "CONTAINS",
+    "REACHING_DEF"
+  ],
+  "checks": {
+    "noError": true,
+    "complete": true,
+    "substantial": true,
+    "containment": true,
+    "cfg": true,
+    "defUse": true,
+    "localCalls": true,
+    "reverified": true,
+    "auditPairs": true
+  },
+  "fatal": null,
+  "pass": true
+}

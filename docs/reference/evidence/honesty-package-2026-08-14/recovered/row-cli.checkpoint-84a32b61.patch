@@ -1,0 +1,170 @@
+From 84a32b61f2a541d689a0c3a521eaba09efe4103e Mon Sep 17 00:00:00 2001
+From: "baton-worker-deepseek:deepseek"
+ <baton-worker-deepseek:deepseek@localhost>
+Date: Thu, 13 Aug 2026 19:13:52 -0700
+Subject: [PATCH] baton snapshot: ws-01d07152cd35d8c0cae7a4f0203ba893
+
+Baton-Task: ws-01d07152cd35d8c0cae7a4f0203ba893
+Baton-Vendor: deepseek:deepseek
+Baton-Model: deepseek-v4-pro[1m]
+Baton-Effort: high
+---
+ impl/CLI.md                  |  2 ++
+ impl/src/application-cli.mjs | 63 ++++++++++++++++++++++++++++++++----
+ impl/src/application.mjs     | 35 +++++++++++++++++---
+ 3 files changed, 89 insertions(+), 11 deletions(-)
+
+diff --git a/impl/CLI.md b/impl/CLI.md
+index 52a02d7..587f74f 100644
+--- a/impl/CLI.md
++++ b/impl/CLI.md
+@@ -54,7 +54,9 @@ ordinary-CLI inventory. The conformance suite fails if they drift from served tr
+ | `waves.list` | `ordinary` | `baton waves list` | `baton waves list` |
+ | `waves.progress` | `ordinary` | `baton waves progress` | `baton waves progress WAVE_ID --cursor 0` |
+ | `waves.run` | `ordinary` | `baton waves run` | `baton waves run path/to/spec.json` |
++| `waves.send` | `ordinary` | `baton waves send` | `baton waves send RUN_ID --message TEXT` |
+ | `waves.start` | `ordinary` | `baton waves start` | `baton waves start --members JSON` |
++| `waves.stop` | `ordinary` | `baton waves stop` | `baton waves stop RUN_ID --reason TEXT` |
+ 
+ <!-- END GENERATED: cli-verb-inventory -->
+ 
+diff --git a/impl/src/application-cli.mjs b/impl/src/application-cli.mjs
+index 38fc9c2..fc3ec3a 100644
+--- a/impl/src/application-cli.mjs
++++ b/impl/src/application-cli.mjs
+@@ -24,7 +24,7 @@ export const CLI_WEB_COMMANDS = new Set([
+   // S-1 v2: portable atomic attach-and-harvest; #132 D4 adds the two CLI read verbs the client
+   // dispatches over the web envelope (waves.list/waves.progress, admitted at the port as direct
+   // commands — web-northbound.mjs WEB_DIRECT_PORT_COMMANDS).
+-  'waves.attach', 'waves.start', 'waves.list', 'waves.progress', 'waves.run', 'waves.compile',
++  'waves.attach', 'waves.start', 'waves.list', 'waves.progress', 'waves.send', 'waves.stop', 'waves.run', 'waves.compile',
+   // Facade-projection epic (#87+#48, contract v2.2): the eight workflow-surface command names.
+   'run.message.send', 'run.message.receipt', 'run.attention.watch',
+   'run.scratchpad.read', 'run.scratchpad.elevate', 'run.board.post', 'run.board.read',
+@@ -1331,12 +1331,18 @@ export function parseBatonCli(rawArgs) {
+       if (typeof specPath !== 'string' || specPath.length === 0) throw cliError('waves run requires a spec path');
+       return { kind: 'command', command: 'waves.run', name: 'waves.run', args: { specPath }, idempotencyKey };
+     }
+-    // #170 (D4): the inspectable compile seam — `baton waves compile <specPath>` → waves.compile.
++    // #170 (D4): the inspectable compile seam — `baton waves compile [specPath]` → waves.compile.
++    // The registry schema requires nothing (`required: []`, application-semantics.mjs:1651+), so a
++    // bare `baton waves compile` is admitted (the D3 closed-set pin derives the minimal invocation
++    // mechanically from the schema — a required specPath would over-refuse the documented verb).
+     if (action === 'compile') {
+-      const specPath = args.shift();
++      const specPath = args.length > 0 && !args[0].startsWith('--') ? args.shift() : null;
+       noRemainder(args);
+-      if (typeof specPath !== 'string' || specPath.length === 0) throw cliError('waves compile requires a spec path');
+-      return { kind: 'command', command: 'waves.compile', name: 'waves.compile', args: { specPath }, idempotencyKey };
++      return {
++        kind: 'command', command: 'waves.compile', name: 'waves.compile',
++        args: specPath === null ? {} : { specPath },
++        idempotencyKey,
++      };
+     }
+     // #132 D4.1/D4.2 (wave-observability-2026-08-06/contract.md §D4): the read/steer verbs.
+     // `baton waves list` → waves.list — the registry read, no args (A5-1).
+@@ -1387,8 +1393,53 @@ export function parseBatonCli(rawArgs) {
+     if (action === 'attach' && args.length === 0) {
+       return { kind: 'command', command: 'waves.list', name: 'waves.list', args: {}, idempotencyKey };
+     }
++    // #157 (D1.2): `baton waves send RUN_ID --message TEXT [--nudge|--now|--turn] [--claim-grant JSON]`
++    // → waves.send. The runId rides positionally (id() helper); --message required; at most one
++    // delivery mode (the run send idiom, :1733-1738); --claim-grant is the optional closed JSON
++    // the web wire already carries (web-northbound.mjs:54-61) — never silently dropped.
++    if (action === 'send') {
++      const sendRunId = id(args.shift(), 'run ID');
++      const message = take(args, '--message');
++      const modes = [['--nudge', 'nudge'], ['--now', 'now'], ['--turn', 'turn']]
++        .filter(([name]) => flag(args, name));
++      const claimGrantRaw = take(args, '--claim-grant');
++      noRemainder(args);
++      if (message === null) throw cliError('--message is required', 'cli_action_inputs_invalid');
++      if (!nonempty(message) || modes.length > 1) {
++        throw cliError('waves send requires bounded guidance and at most one delivery mode', 'cli_action_inputs_invalid');
++      }
++      let claimGrant = null;
++      if (claimGrantRaw !== null) {
++        try { claimGrant = JSON.parse(claimGrantRaw); }
++        catch { throw cliError('--claim-grant must be JSON', 'cli_action_inputs_invalid'); }
++        if (!record(claimGrant)) throw cliError('--claim-grant must be a JSON object', 'cli_action_inputs_invalid');
++      }
++      return {
++        kind: 'command', command: 'waves.send', name: 'waves.send',
++        args: {
++          runId: sendRunId, message,
++          ...(modes.length === 0 ? {} : { delivery: modes[0][1] }),
++          ...(claimGrant === null ? {} : { claimGrant }),
++        },
++        idempotencyKey,
++      };
++    }
++    // #157 (D1.2): `baton waves stop RUN_ID --reason TEXT` → waves.stop. The CLI requires --reason
++    // to match the dispatcher (_normalizeWaveMemberAction 'wave stop' requires reason), refusing
++    // early cli_action_inputs_invalid, never a server refusal (OQ1).
++    if (action === 'stop') {
++      const stopRunId = id(args.shift(), 'run ID');
++      const reason = take(args, '--reason');
++      noRemainder(args);
++      if (reason === null) throw cliError('--reason is required', 'cli_action_inputs_invalid');
++      return {
++        kind: 'command', command: 'waves.stop', name: 'waves.stop',
++        args: { runId: stopRunId, reason },
++        idempotencyKey,
++      };
++    }
+     if (action !== 'attach') {
+-      throw cliError('expected waves list, progress, start, attach, or run', 'cli_command_unavailable');
++      throw cliError('expected waves list, progress, start, send, stop, attach, run, or compile', 'cli_command_unavailable');
+     }
+     const waveId = id(args.shift(), 'wave ID');
+     const membersRaw = take(args, '--members');
+diff --git a/impl/src/application.mjs b/impl/src/application.mjs
+index 9ed780e..40e0a17 100644
+--- a/impl/src/application.mjs
++++ b/impl/src/application.mjs
+@@ -11842,11 +11842,36 @@ export class BatonApplication {
+           // Issue #74 (D3/A6): the seat map — the interpreter seam (createWave, wave.mjs:180)
+           // mints a role-only string roster, so the route is recovered from the member run's
+           // steering-registered `route` record (start() mints it) rather than rendered as null.
+-          const route = this._runWaveRoute(this._runIdForWaveMember(row.waveId, member));
+-          members.push(deepFreeze({
+-            role: member, route: route ?? null, scope: null,
+-            liveness: 'local', phase: null, progressClass: null, attentionCount: null,
+-          }));
++          // #157 (D2.3): when the member IS steering-registered, hydrate phase/progressClass/
++          // attentionCount from the live run inspect exactly as the object branch does — never
++          // hardcode nulls for a live member. The hydrated read carries the D5.2 seam: a registered
++          // run that vanished refuses wave_not_found, never a silent null.
++          const runId = this._runIdForWaveMember(row.waveId, member);
++          const route = this._runWaveRoute(runId);
++          let view = null;
++          if (runId !== null) {
++            try {
++              view = await this.inspect({ runId }, principal, context);
++            } catch (error) {
++              if (error?.code !== 'application_run_not_found') throw error;
++              throw applicationError(`wave member ${member} run is no longer available`, 'wave_not_found', { runId, role: member });
++            }
++          }
++          if (runId === null) {
++            members.push(deepFreeze({
++              role: member, route: null, scope: null,
++              liveness: 'local', phase: null, progressClass: null, attentionCount: null,
++            }));
++          } else {
++            const attention = Array.isArray(view?.attention) ? view.attention.length : 0;
++            members.push(deepFreeze({
++              role: member, route: route ?? null, scope: null,
++              liveness: 'local',
++              phase: view?.phase ?? view?.outline?.phase ?? null,
++              progressClass: view?.progressClass ?? view?.outline?.progressClass ?? null,
++              attentionCount: attention,
++            }));
++          }
+           continue;
+         }
+         const role = member?.role ?? null;
+-- 
+2.50.1
+

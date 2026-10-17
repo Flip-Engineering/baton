@@ -1,0 +1,203 @@
+{
+  "schemaVersion": 1,
+  "completed": {
+    "schemaVersion": 1,
+    "state": "ready",
+    "counts": {
+      "total": 2,
+      "active": 0,
+      "waiting": 0,
+      "ready": 2,
+      "completed": 0,
+      "failed": 0,
+      "stopped": 0,
+      "terminal": 0,
+      "attention": 0,
+      "cleanupIncomplete": 0,
+      "byPhase": {
+        "work_completed": 2
+      }
+    },
+    "members": [
+      {
+        "runId": "run-37b66085de32d80308cfc275044be5b7",
+        "objective": "Act as the independent resident-architecture reviewer for Baton's Phase 89 resident application. Inspect spec/phase89-authenticated-resident-application.md, spec/phase89-authenticated-resident-security-matrix.md, impl/src/application.mjs, impl/src/application-client.mjs, impl/src/application-deployment.mjs, impl/src/application-cli.mjs, impl/src/application-host.mjs, impl/src/web-northbound.mjs, and impl/test/phase89-resident-application-red.test.mjs. Review the new bounded runs.list, validating attach, exposed deployment.runs, common Web command-port binding, connectBaton handshake, progress timing, and the ordered resident-host plan. Identify concrete correctness/security/AX defects separately from later acceptance-red gaps. Prefer the smallest integrated fix that advances openBaton().host() and connectBaton() without weakening TLS/auth/repository/semantic authority or exposing caller budgets/limits. Do not invoke nested Baton. Use rtk for every shell operation, exactly one command per call, with no pipes, &&, semicolons, or unwrapped shell commands. Do not mutate home state, credentials, harness installations, toolchains, caches, global configuration, runtime paths, or the main checkout. Write only docs/reference/evidence/phase89-resident-application-dogfood-live-2026-07-18/glm-resident-review.md, then finish immediately.",
+        "state": "ready",
+        "phase": "work_completed",
+        "terminal": false,
+        "attention": "clear",
+        "stage": "cleanup",
+        "route": {
+          "requested": {
+            "harness": "glm",
+            "model": "glm-5.2",
+            "effort": "xhigh"
+          },
+          "resolved": {
+            "harness": "glm@claude-code-2.1.211+zai-anthropic",
+            "model": "glm-5.2",
+            "effort": "xhigh"
+          },
+          "observed": {
+            "harness": null,
+            "model": "glm-5.2",
+            "effort": null
+          },
+          "launchEnforcement": {
+            "harness": {
+              "requested": "glm",
+              "resolved": "glm@claude-code-2.1.211+zai-anthropic",
+              "state": "matched"
+            },
+            "model": {
+              "requested": "glm-5.2",
+              "resolved": "glm-5.2",
+              "state": "matched"
+            },
+            "effort": {
+              "requested": "xhigh",
+              "resolved": "xhigh",
+              "state": "matched"
+            }
+          },
+          "providerAttestation": {
+            "harness": {
+              "observed": null,
+              "state": "unavailable"
+            },
+            "model": {
+              "observed": "glm-5.2",
+              "state": "matched"
+            },
+            "effort": {
+              "observed": null,
+              "state": "unavailable"
+            }
+          },
+          "rationale": {
+            "launchEnforcement": "exact deployment-profile route",
+            "providerAttestation": "provider-native observation only"
+          }
+        },
+        "verification": "complete",
+        "cleanup": "active",
+        "terminalCause": null,
+        "actions": [
+          "integrate",
+          "stop"
+        ],
+        "viewDigest": "b6ff37f9e05ec638754bb47cf0db7ef5fc75944f1b36bb08b1e92b76214bf2c2"
+      },
+      {
+        "runId": "run-33f30deaedb24c336fef7c226bb2f13f",
+        "objective": "Act as the independent application-ax-security reviewer for Baton's Phase 89 resident application. Inspect spec/phase89-authenticated-resident-application.md, spec/phase89-authenticated-resident-security-matrix.md, impl/src/application.mjs, impl/src/application-client.mjs, impl/src/application-deployment.mjs, impl/src/application-cli.mjs, impl/src/application-host.mjs, impl/src/web-northbound.mjs, and impl/test/phase89-resident-application-red.test.mjs. Review the new bounded runs.list, validating attach, exposed deployment.runs, common Web command-port binding, connectBaton handshake, progress timing, and the ordered resident-host plan. Identify concrete correctness/security/AX defects separately from later acceptance-red gaps. Prefer the smallest integrated fix that advances openBaton().host() and connectBaton() without weakening TLS/auth/repository/semantic authority or exposing caller budgets/limits. Do not invoke nested Baton. Use rtk for every shell operation, exactly one command per call, with no pipes, &&, semicolons, or unwrapped shell commands. Do not mutate home state, credentials, harness installations, toolchains, caches, global configuration, runtime paths, or the main checkout. Write only docs/reference/evidence/phase89-resident-application-dogfood-live-2026-07-18/codex-application-review.md, then finish immediately.",
+        "state": "ready",
+        "phase": "work_completed",
+        "terminal": false,
+        "attention": "clear",
+        "stage": "cleanup",
+        "route": {
+          "requested": {
+            "harness": "codex",
+            "model": "gpt-5.6-sol",
+            "effort": "medium"
+          },
+          "resolved": {
+            "harness": "codex@codex-cli 0.144.6",
+            "model": "gpt-5.6-sol",
+            "effort": "medium"
+          },
+          "observed": {
+            "harness": null,
+            "model": "gpt-5.6-sol",
+            "effort": null
+          },
+          "launchEnforcement": {
+            "harness": {
+              "requested": "codex",
+              "resolved": "codex@codex-cli 0.144.6",
+              "state": "matched"
+            },
+            "model": {
+              "requested": "gpt-5.6-sol",
+              "resolved": "gpt-5.6-sol",
+              "state": "matched"
+            },
+            "effort": {
+              "requested": "medium",
+              "resolved": "medium",
+              "state": "matched"
+            }
+          },
+          "providerAttestation": {
+            "harness": {
+              "observed": null,
+              "state": "unavailable"
+            },
+            "model": {
+              "observed": "gpt-5.6-sol",
+              "state": "matched"
+            },
+            "effort": {
+              "observed": null,
+              "state": "unavailable"
+            }
+          },
+          "rationale": {
+            "launchEnforcement": "exact deployment-profile route",
+            "providerAttestation": "provider-native observation only"
+          }
+        },
+        "verification": "complete",
+        "cleanup": "active",
+        "terminalCause": null,
+        "actions": [
+          "integrate",
+          "stop"
+        ],
+        "viewDigest": "c7cb42966e2fcf4b2ece202c3507f6b990e6e64e9deaf066f605d0185b3d1208"
+      }
+    ]
+  },
+  "materialized": [
+    {
+      "role": "resident-architecture",
+      "route": {
+        "harness": "glm",
+        "model": "glm-5.2",
+        "effort": "xhigh"
+      },
+      "path": "docs/reference/evidence/phase89-resident-application-dogfood-live-2026-07-18/glm-resident-review.md",
+      "sha": "73fba0fba960c18645ef10e21d9741424f879745"
+    },
+    {
+      "role": "application-ax-security",
+      "route": {
+        "harness": "codex",
+        "model": "gpt-5.6-sol",
+        "effort": "medium"
+      },
+      "path": "docs/reference/evidence/phase89-resident-application-dogfood-live-2026-07-18/codex-application-review.md",
+      "sha": "8237d684440974cbda65eb4cd3e4ce5a1316b2d8"
+    }
+  ],
+  "cleanup": {
+    "stops": [
+      {
+        "runId": "run-37b66085de32d80308cfc275044be5b7",
+        "stop": null,
+        "ownership": null
+      },
+      {
+        "runId": "run-33f30deaedb24c336fef7c226bb2f13f",
+        "stop": null,
+        "ownership": null
+      }
+    ],
+    "closed": {
+      "workers": 0,
+      "workerIds": [],
+      "closed": true
+    }
+  }
+}

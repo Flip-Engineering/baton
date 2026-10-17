@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "idempotencyKey": "channel-audit-2026-08-13-wave-a",
+  "members": [
+    {
+      "role": "coordinator",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-pro[1m]", "effort": "high" },
+      "scope": ["docs/reference/evidence/channel-audit-2026-08-13/**"],
+      "objectiveRef": "docs/reference/evidence/channel-audit-2026-08-13/coordinator-brief.md",
+      "report": "docs/reference/evidence/channel-audit-2026-08-13/audit-qa.md"
+    },
+    {
+      "role": "row-chan",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": ["docs/reference/evidence/channel-audit-2026-08-13/**"],
+      "objectiveRef": "docs/reference/evidence/channel-audit-2026-08-13/row-chan.md",
+      "report": "docs/reference/evidence/channel-audit-2026-08-13/channels.md"
+    },
+    {
+      "role": "row-suborch",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": ["docs/reference/evidence/channel-audit-2026-08-13/**"],
+      "objectiveRef": "docs/reference/evidence/channel-audit-2026-08-13/row-suborch.md",
+      "report": "docs/reference/evidence/channel-audit-2026-08-13/suborchestrator.md"
+    },
+    {
+      "role": "row-know",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": ["docs/reference/evidence/channel-audit-2026-08-13/**"],
+      "objectiveRef": "docs/reference/evidence/channel-audit-2026-08-13/row-know.md",
+      "report": "docs/reference/evidence/channel-audit-2026-08-13/knowledge.md"
+    },
+    {
+      "role": "row-env",
+      "exact": { "harness": "deepseek", "model": "deepseek-v4-flash", "effort": "high" },
+      "scope": ["docs/reference/evidence/channel-audit-2026-08-13/**"],
+      "objectiveRef": "docs/reference/evidence/channel-audit-2026-08-13/row-env.md",
+      "report": "docs/reference/evidence/channel-audit-2026-08-13/environment.md"
+    }
+  ],
+  "steering": {
+    "approveOnAdvertisedPlan": true,
+    "nudgeOnCheckpoint": { "message": "Continue the audit — every verdict needs a cited instance; a publish that fails IS a finding (record the exact refusal). Write your report incrementally." },
+    "claimOnStall": true,
+    "messageOnSpawn": { "kind": "brief", "body": "Read your objectiveRef brief IN FULL first, then foundry-brief.md in the same directory (the shared frame binds you, including the known evidence anchors). Publish findings to the `shared` scratchpad as well as your file — if the publish fails, record the exact refusal (that is audit evidence). Authority-class ambiguity → DECISION_REQUEST with options; judgment calls are yours — record them." },
+    "elevateWhenNotes": { "kinds": ["doubt", "plan"], "maxEntries": 20 },
+    "signalOnMembersDone": { "roles": ["coordinator"], "message": { "kind": "result", "body": "All rows settled — BUT verify on disk first: silence is not death (#163 evidence). Read their reports from `shared` (durable files as fallback) and write audit-qa.md per your brief." } }
+  },
+  "harvest": {
+    "paths": [
+      { "path": "docs/reference/evidence/channel-audit-2026-08-13/audit-qa.md", "mustContain": "AUDIT-QA v1" },
+      { "path": "docs/reference/evidence/channel-audit-2026-08-13/channels.md", "mustContain": "row-chan" },
+      { "path": "docs/reference/evidence/channel-audit-2026-08-13/suborchestrator.md", "mustContain": "row-suborch" },
+      { "path": "docs/reference/evidence/channel-audit-2026-08-13/knowledge.md", "mustContain": "row-know" },
+      { "path": "docs/reference/evidence/channel-audit-2026-08-13/environment.md", "mustContain": "row-env" }
+    ]
+  }
+}

@@ -1,0 +1,39 @@
+{
+  "attempt": "2026-08-13T04:39:54.548Z",
+  "salt": "v220260813043954",
+  "role": "fold-73b",
+  "steps": [
+    {
+      "step": "waves.start",
+      "receipt": {
+        "runs": [
+          "run-6c7f132b27d28edde9e4f648a7002815"
+        ]
+      }
+    },
+    {
+      "step": "terminal:fold-73b",
+      "receipt": {
+        "phase": "work_completed"
+      }
+    },
+    {
+      "step": "loop-drained",
+      "receipt": {
+        "pending": []
+      }
+    }
+  ],
+  "harvest": {
+    "fold-73b": {
+      "pin": "9dce20fb9b2ba5e22090a01b59256baf8bc1418f",
+      "paths": [
+        "impl/test/feedback-forge-hardening-red.test.mjs",
+        "docs/reference/evidence/feedback-forge-hardening-2026-08-07/suite-fold-2.md",
+        "docs/reference/evidence/feedback-forge-hardening-2026-08-07/suite-draft-notes.md"
+      ]
+    }
+  },
+  "harvestStalePinsSkipped": 450,
+  "verdict": "FOLD-73B-OK"
+}
