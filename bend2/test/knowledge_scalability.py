@@ -123,6 +123,50 @@ class KnowledgeScalability(unittest.TestCase):
                 self.assertIn(relation['sourceKind'], ('finding', 'observation'))
                 self.assertIn(relation['targetKind'], ('finding', 'observation'))
 
+    def test_search_and_traversal_return_complete_deterministic_results(self):
+        self.call('report', 'evidence-1', 'worker', 'evidence mentions reconnect')
+        self.call('record-typed', 'claim-1', 'worker', 'observation',
+                  'first claim', 'message:evidence-1', 'one session')
+        self.call('record-typed', 'claim-2', 'worker', 'observation',
+                  'second claim', 'run:two', 'one session')
+        self.call('record-typed', 'claim-3', 'worker', 'decision',
+                  'third claim', 'run:three', 'one session')
+        self.call('record-typed', 'claim-4', 'worker', 'hypothesis',
+                  'fourth claim', 'run:four', 'one session')
+        self.call('relate', 'support-1', 'worker', 'finding:claim-1', 'Supports', 'finding:claim-2')
+        self.call('relate', 'inform-1', 'worker', 'finding:claim-2', 'Informed', 'finding:claim-3')
+        self.call('relate', 'derive-1', 'worker', 'finding:claim-3', 'DerivedFrom', 'finding:claim-4')
+        self.call('relate', 'cycle-1', 'worker', 'finding:claim-4', 'Informed', 'finding:claim-1')
+
+        first = self.call('knowledge-search', 'root', 'all', '', 'first claim')
+        second = self.call('knowledge-search', 'root', 'all', '', 'first claim')
+        self.assertEqual(first, second)
+        self.assertEqual([match['id'] for match in first['matches']], ['claim-1'])
+        self.assertEqual(first['roots'], [match['reference'] for match in first['matches']])
+        self.assertIn('claim-2', {node['id'] for node in first['nodes']})
+        self.assertIn('message:evidence-1',
+                      {reference['reference'] for reference in first['references']})
+        cited = next(node for node in first['nodes'] if node['id'] == 'claim-1')
+        self.assertEqual(cited['evidenceMessage']['body'], 'evidence mentions reconnect')
+
+        walked = self.call('knowledge-traverse', 'root', 'all', '',
+                           'finding:claim-1', 'both', '', 'recursive')
+        again = self.call('knowledge-traverse', 'root', 'all', '',
+                          'finding:claim-1', 'both', '', 'recursive')
+        self.assertEqual(walked, again)
+        self.assertTrue({'finding:claim-1', 'finding:claim-2',
+                         'finding:claim-3', 'finding:claim-4'} <= set(walked['roots']))
+        self.assertEqual(walked['roots'], sorted(walked['roots']))
+        self.assertEqual([node['id'] for node in walked['nodes']],
+                         sorted(node['id'] for node in walked['nodes']))
+        self.assertEqual([edge['id'] for edge in walked['edges']],
+                         sorted(edge['id'] for edge in walked['edges']))
+        self.assertIn('citation:claim-1', {edge['id'] for edge in walked['edges']})
+
+        filtered = self.call('knowledge-traverse', 'root', 'all', '',
+                             'finding:claim-1', 'both', 'supports', 'recursive')
+        self.assertEqual({edge['id'] for edge in filtered['edges']}, {'support-1'})
+
 
 if __name__ == '__main__':
     unittest.main()
