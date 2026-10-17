@@ -186,20 +186,28 @@ remain open under [#782](https://github.com/Flip-Engineering/baton/issues/782).
   comparisons produced byte-identical C. The dependency fixture improved by
   2.8%; the foreign-C change reduced repeated source assembly, with no reliable
   measured wall-time improvement. Main-program improvement remains unverified.
-  The composed compiler candidate (`3e1b9ded`) enables analysis passes by
-  default, includes the dependency and foreign-C changes, and reduces temporary
-  allocation during diagnostic dependency traversal. Three focused programs
-  produce byte-identical C, including a five-pass fixed point with foreign C.
-  A diagnostic stress fixture uses 277,524 KiB versus 316,288 KiB and takes
-  1.33 seconds versus 1.67 seconds. Main-program effects remain unverified.
-  Review then found a missed reference inside a dependent function in the
-  diagnostic visitor. Corrected compiler commit `96f47e27` passes the new
-  regression and real Main diagnostic parity: all 39 report lines match the
-  pinned baseline. Main C-generation effects remain unverified.
-  A bounded Main profile
-  measured 49 seconds for loading and 155 seconds for validation, then exhausted
-  its 16 GiB limit during diagnostic dependency traversal. The production Main
-  build completed validation and diagnostics and continues in C generation.
+  Corrected compiler `96f47e27` passes dependent-function reference regressions
+  and real Main diagnostic parity: all 39 report lines match the pinned baseline.
+  Its full C-generation run uses immutable receive-memory source `1d7bcfec`.
+  Main-program performance and generated-output qualification remain pending.
+  The competing older compiler run was retired after retaining its source,
+  process identity, logs and resource receipt. Its output directory is preserved.
+  The pinned 2.0.25 compiler changes are published in
+  [bendlang/bend#1650](https://github.com/bendlang/bend/pull/1650); the current
+  upstream report traversal and C-output cache are separate in
+  [bendlang/bend#1649](https://github.com/bendlang/bend/pull/1649).
+  Port the remaining changes to current upstream and qualify the normal Baton
+  compiler pin. Five workers cover fixed-point implementation, independent
+  compiler-state review, toolchain integration, C sharding and its independent
+  parser/linkage/runtime review. Measure shared-header or precompiled-header
+  reuse, complete build time and aggregate memory before default adoption.
+  A 603 KB C fixture compiled in 3.23–3.32 seconds with four shards versus
+  6.81–6.96 seconds serially, with matching executable output. Aggregate memory
+  increased from 156 MiB to 551 MiB. Parser corrections and qualification on the
+  complete 60 MB Baton C file remain pending.
+  Segmented rendering improved its measured slice but slowed the complete
+  compile; it remains a prototype. Current evidence is in the
+  [compiler update](https://github.com/Flip-Engineering/baton/issues/776#issuecomment-6229891933).
   Further optimization proceeds alongside release work. Coordinate with
   [#677](https://github.com/Flip-Engineering/baton/issues/677),
   [#741](https://github.com/Flip-Engineering/baton/issues/741),
@@ -908,22 +916,30 @@ remain open under [#782](https://github.com/Flip-Engineering/baton/issues/782).
   UUIDs and pending inputs remain preserved. The isolated recovery candidate is
   on source HEAD `1d7bcfec6db94f82e776210311d426a5793f189a`, published as
   [PR #795](https://github.com/Flip-Engineering/baton/pull/795). Main validation
-  and ownership checks completed at 2026-10-17 03:18 UTC; C generation continues.
+  and ownership checks passed. The corrected compiler's C-generation run is
+  active on this immutable input; its output remains pending. The older
+  competing run has been retired with its evidence.
   The candidate moves observation recursion outside the frame callback and
   preserves exit-zero invalid output and owed input. Bounded-memory receive,
   checkpoint recovery and runtime deployment remain pending. A separate host-C
   recovery candidate supports live observer replacement through the retained
-  keeper, with process and attempt custody checks. Commit `697d1664` covers
-  public receive, internal receive and recovery process arguments. Its C
-  compilation completed, and the public-form fixture exposed its missing
-  observer-log descriptor. Corrected commit `b8e20833` passes ten exact-source
-  process and descriptor cases; its executable build is running.
-  The internal and recovery forms passed live and terminal-provider handovers.
-  Their combined host-C and SQLite executable was installed at 04:29 UTC with
-  SHA-256 `9cc011e95da93526c433de7887863f3ef8d10df55043011125fba2ba52d602c5`;
-  the previous executable remains available for rollback. Source consolidation
-  merged in [#798](https://github.com/Flip-Engineering/baton/pull/798). This temporarily
-  enables observer rotation while the Bend callback build continues. The separate
+  keeper, with process and attempt custody checks. The repeated live fixture
+  exposed missing observer-log descriptors in both public receive and public
+  recovery. Corrected source in [#800](https://github.com/Flip-Engineering/baton/pull/800)
+  passes 14 exact-source process and descriptor cases and the complete repeated
+  live-handover fixture. The executable was installed at 05:08 UTC with SHA-256
+  `aac70b1a80ef5f2ba577d616d615abafd20e1513149590102e03585e80c90bb3`.
+  The supervised watcher adopted this executable and completed a guarded
+  observer rotation with the original attempt, UUID and raw output preserved.
+  The source is merged in #800; the previous executable is retained for rollback.
+  The separate terminal process-lifetime fix in
+  [#801](https://github.com/Flip-Engineering/baton/pull/801) passes seven helper
+  cases, including absent-PID reuse and retained-pidfd identity. Complete
+  executable and live terminal qualification remain pending.
+  The host-C and SQLite corrections from
+  [#798](https://github.com/Flip-Engineering/baton/pull/798) are included in this
+  deployment. Observer rotation contains memory growth while the Bend callback
+  build continues. The separate
   SQLite projection fix (`ca42f103`) has compiled and passed repeated setup
   through the executable on a database copy: schema version and trigger
   definitions remain unchanged. The deployed
