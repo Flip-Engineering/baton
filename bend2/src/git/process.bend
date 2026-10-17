@@ -1,11 +1,13 @@
-# The one foreign effect of the Git operations module and its typed wrappers.
-# Process.run spawns a process with no shell anywhere: the Bend side passes
-# the argv as a length-prefixed string (Tx.enc_argv) and the C half forks,
-# execs and waits on a helper thread. runFull keeps the exit/signal
-# distinction the landing gate needs; runGit flattens a git command to its
-# exit code and stdout. Child stderr is inherited for the coordinator's log.
+# The Git operations module's typed wrappers over the generic exec
+# effect. The foreign half lives in bend2/src/host/exec.c: the Bend side
+# passes the argv as a length-prefixed string (Tx.enc_argv) and the C
+# half forks, execs and waits on a helper thread. runFull keeps the
+# exit/signal distinction the landing gate needs; runGit flattens a git
+# command to its exit code and stdout. Child stderr is inherited for the
+# coordinator's log.
 
 import Base
+import ../host/exec.bend as Exec
 import ./types.bend as T
 import ./text.bend as Tx
 
@@ -14,7 +16,7 @@ import ./text.bend as Tx
 # bare NAME removes, empty inherits all; an empty-name entry is
 # refused EINVAL.
 def Process.run(argv: String, cwd: String, env: String) -> IO(Result<&1, &1, U32 & String, String>):
-  import "./process.c"
+  Exec.run(argv, cwd, env)
 
 def runFull(args: List<String>, cwd: String) -> IO(T.RunRes):
   IO.bind(Result<&1, &1, U32 & String, String>, T.RunRes,
