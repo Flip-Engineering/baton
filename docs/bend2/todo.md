@@ -890,7 +890,15 @@ remain open under [#782](https://github.com/Flip-Engineering/baton/issues/782).
   `message:rewrite-tooling:d915a4983290d89d7fcf8de3fd8b212e` is admitted to the
   same DeepSeek UUID and was read under attempt
   `receive:rewrite-deepseek:984:691184f811a59c6b8a14f0707ae2ba0e`; its review
-  report is pending delivery.
+  report is pending delivery. Source tracing corrected the review's initial
+  concern: the full-spool witness gates successful input settlement, while
+  process-attempt retirement is a separate exited-and-released transition. The
+  nonempty NUL error leaves the owed input unsettled. Normal exit-zero
+  acknowledgement unlinks stdout, so the pure Bend2 candidate must keep an
+  exit-zero NUL tail incomplete; custody-proven owner loss can retire the dead
+  process attempt with the original spool, checkpoint, native UUID and input
+  retained. Failed-observation retirement after exit zero remains a separate
+  process-acknowledgement task tracked by #696, #769 and #786.
   The original fframes attempt 694 exited with status 0. A guarded configure
   then set `fframes-lead` to `muse-wonder-1.0` at high effort, preserving UUID
   `01a1475d-d987-7bf2-8968-b31165d91a60`. The retained coordinator task was
@@ -905,6 +913,22 @@ remain open under [#782](https://github.com/Flip-Engineering/baton/issues/782).
   queue. Simulation is cycling Kimi quota failures and quality has exited on
   Kimi quota. No new SHAs were reported; tips remain `3e6d9da` and `0ee836f`,
   with parity incomplete.
+
+  At the terminal windows for `simulation` attempt 743 and `quality` attempt
+  681, guarded `configure --expected-model kimi-code/k3` changed each route to
+  `deepseek/deepseek-flash`. Both stayed on the OMP harness, retained their
+  existing endpoints and native UUIDs, and resumed through the configure wake.
+  `simulation` is running attempt
+  `receive:simulation:743:e6ef015825d0940a0669fdaaa1b5d69e` on UUID
+  `01a14713-d3b8-7000-b15a-112318059965`; PID 275354/birth 577257 matches its
+  native birth record. It owns 11 pending reads, including the retained task
+  continuations, and its stdout/checkpoint are 726751/423 bytes. `quality` is
+  running attempt `receive:quality:681:ba9ce72234e0ee01c934eeab81d32c9f` on UUID
+  `01a14714-293d-7000-b23e-1d3738750b6e`; PID 278344/birth 583887 matches. It
+  owns both pending inputs and its stdout/checkpoint are 92238/332 bytes. The
+  prior Kimi quota reports remain in both ledgers; no new Kimi turn was started.
+  These are active continuations, not completed implementation or quality
+  evidence.
 
   At 02:55 UTC, user units `acp-render-farm.service` and
   `acp-render-farm-gpu1.service` were active with four running render containers
