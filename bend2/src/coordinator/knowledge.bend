@@ -17,6 +17,11 @@ def knowledge_schema() -> String:
   "CREATE TABLE IF NOT EXISTS knowledge (id TEXT UNIQUE NOT NULL, author TEXT NOT NULL, claim TEXT NOT NULL, evidence TEXT NOT NULL, limits TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'finding');"
   ++ "CREATE TABLE IF NOT EXISTS knowledge_promotions (id TEXT UNIQUE NOT NULL, finding TEXT NOT NULL, author TEXT NOT NULL, source TEXT NOT NULL, destination TEXT NOT NULL, promoted_by TEXT NOT NULL, source_kind TEXT NOT NULL DEFAULT 'session', destination_kind TEXT NOT NULL DEFAULT 'session');"
   ++ "CREATE TABLE IF NOT EXISTS knowledge_relations (id TEXT UNIQUE NOT NULL, author TEXT NOT NULL, source TEXT NOT NULL, relation TEXT NOT NULL, target TEXT NOT NULL);"
+  ++ "CREATE INDEX IF NOT EXISTS knowledge_author ON knowledge(author);"
+  ++ "CREATE INDEX IF NOT EXISTS knowledge_promotions_finding ON knowledge_promotions(finding);"
+  ++ "CREATE INDEX IF NOT EXISTS knowledge_relations_source ON knowledge_relations(source);"
+  ++ "CREATE INDEX IF NOT EXISTS knowledge_relations_target ON knowledge_relations(target);"
+  ++ "CREATE INDEX IF NOT EXISTS knowledge_relations_author ON knowledge_relations(author);"
 
 def commit_sql(statements: String) -> String:
   "BEGIN IMMEDIATE;" ++ C.schema() ++ knowledge_schema() ++ statements ++ "COMMIT;"
@@ -66,7 +71,7 @@ def relation_item(+typed: Bool) -> String:
   "json_object('id',r.id,'author',r.author,'source',r.source,'sourceReference'," ++ reference_sql("r.source") ++ ",'sourceKind'," ++ reference_kind("r.source",typed) ++ ",'relation',r.relation,'target',r.target,'targetReference'," ++ reference_sql("r.target") ++ ",'targetKind'," ++ reference_kind("r.target",typed) ++ ")"
 
 def knowledge_relations() -> String:
-  "(SELECT coalesce(json_group_array(" ++ relation_item(True{}) ++ "),json('[]')) FROM knowledge_relations r WHERE r.source IN(k.id,'finding:'||k.id) OR r.target IN(k.id,'finding:'||k.id))"
+  "(SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT " ++ relation_item(True{}) ++ " AS item FROM knowledge_relations r WHERE r.source IN(k.id,'finding:'||k.id) OR r.target IN(k.id,'finding:'||k.id) ORDER BY r.id))"
 
 def knowledge_item_with_types(+typed: Bool, groups: Bool) -> String:
   "json_object('id',k.id,'author',k.author,'kind'," ++ Bool.pick(String,typed,"k.kind","'finding'") ++ ",'claim',k.claim,'evidence',k.evidence,'evidenceMessage'," ++ evidence_message("k.evidence") ++ ",'limits',k.limits,'destinations'," ++ knowledge_destinations() ++ ",'promotions'," ++ knowledge_promotions(groups) ++ ",'relations'," ++ Bool.pick(String,typed,knowledge_relations(),"json('[]')") ++ ")"
