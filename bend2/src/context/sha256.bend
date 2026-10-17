@@ -309,9 +309,9 @@ law sha256_bytes_binary:
 # Incremental splitting agrees with the one-shot digest on the same
 # bytes, split exactly at a block boundary.
 law sha256_incremental_split:
-  {hex(final(Sha256.update(Sha256.update(Sha256.init, J.utf8("abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmno")),
+  {hex(final(update(update(init, J.utf8("abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmno")),
      J.utf8("ijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu"))))
-    == hex(final(Sha256.update(Sha256.init, J.utf8("abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu")))) : String}
+    == hex(final(update(init, J.utf8("abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu")))) : String}
 
 # The role identity consumer path: the String digest over the exact
 # UTF-8 bytes.
@@ -321,6 +321,6 @@ law sha256_digest_abc:
 # Incremental splitting at a non-block-aligned boundary: the partial
 # block carries used != 0 into the completing update.
 law sha256_incremental_nonmultiple:
-  {hex(final(Sha256.update(Sha256.update(Sha256.init, J.utf8("abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnop")),
+  {hex(final(update(update(init, J.utf8("abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnop")),
      J.utf8("qrstnopqrstu"))))
-    == hex(final(Sha256.update(Sha256.init, J.utf8("abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu")))) : String}
+    == hex(final(update(init, J.utf8("abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu")))) : String}
