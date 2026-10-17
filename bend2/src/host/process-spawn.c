@@ -193,7 +193,7 @@ pipes:
 enum { BR_HELLO=1, BR_CHANGE, BR_EXIT, BR_REPLY, BR_WRITE, BR_CLOSE,
        BR_SIGNAL, BR_RELEASE, BR_ACK, BR_INPUT_CLOSED,
        BR_ATTACH, BR_CONTROL_WRITE, BR_CONTROL_SIGNAL, BR_READY, BR_CANCELLED,
-       BR_UNKNOWN };
+       BR_UNKNOWN, BR_CONTROL_RECONCILE };
 typedef struct { uint32_t op; int32_t error; uint64_t serial,length; int64_t value; } BrFrame;
 typedef struct { int32_t pid,exited,status,released,input_closed; } BrState;
 typedef struct {
@@ -244,6 +244,7 @@ typedef struct BrKeeper {
   int listener,client,input,lock,watch,wake[2],spool,native_life,finishing,change_queued;
   uint64_t generation;
   pid_t native_pid,recovery_pid;
+  BrBirth native_birth;
   int exited,status,released,input_closed,ready,native_waiting,prepared,cancelled;
   int monitor_only,status_unavailable;
   /* Recovery observers are owner-managed continuation work. An acknowledged
@@ -1202,6 +1203,40 @@ static void br_control_reply(BrControl *control,uint64_t serial,int error) {
   control->reply=(BrFrame){.op=BR_REPLY,.serial=serial,.error=error};
   control->answered=1;
 }
+/* The original keeper validates the native birth and performs the wait itself.
+   A lost status file can then be restored from durable wait status. */
+static int br_reconcile_native(BrKeeper *keeper,BrBirth requested) {
+  if(!keeper->native_pid || requested.pid!=keeper->native_pid ||
+     !br_same_birth(requested,keeper->native_birth))return ESTALE;
+  BrBirth recorded;
+  int error=br_read_file(keeper->directory,"native.birth",&recorded,sizeof(recorded));
+  if(error)return error;
+  if(!br_same_birth(recorded,keeper->native_birth))return ESTALE;
+  if(keeper->exited) {
+    char text[64];int length=snprintf(text,sizeof(text),"%d\n",keeper->status);
+    error=br_file(keeper->directory,"status",text,(size_t)length,1);
+    if(error!=EEXIST)return error;
+    char *path=br_path(keeper->directory,"status");FILE *file=path?fopen(path,"r"):NULL;
+    error=file?0:path?errno:ENOMEM;free(path);
+    int status=0;
+    if(file) {if(fscanf(file,"%d",&status)!=1)error=EINVAL;fclose(file);}
+    return error?error:status==keeper->status?0:ESTALE;
+  }
+  BrBirth current;
+  error=br_birth(keeper->native_pid,&current);
+  if(error)return error;
+  if(!br_same_birth(current,keeper->native_birth))return ESTALE;
+  siginfo_t information;memset(&information,0,sizeof(information));
+  int waited;
+  do {waited=waitid(P_PID,(id_t)keeper->native_pid,&information,WEXITED|WNOHANG|WNOWAIT);}
+  while(waited<0 && errno==EINTR);
+  if(waited<0)return errno;
+  if(information.si_pid!=keeper->native_pid)return EBUSY;
+  keeper->native_waiting=1;
+  error=br_native_exited(keeper);
+  if(error)return error;
+  return br_exists(keeper->directory,"status")?0:ENOENT;
+}
 static int br_observer_pid(int socket,pid_t *pid) {
 #ifdef __APPLE__
   socklen_t length=sizeof(*pid);
@@ -1242,7 +1277,16 @@ static int br_control_command(BrKeeper *keeper,BrControl *control,BrFrame frame,
         .value=keeper->monitor_only?(keeper->status_unavailable?4:5):keeper->native_pid?2:3},&state);
     }
   } else if(!frame.serial)br_control_reply(control,frame.serial,EPROTO);
-  else if(frame.op==BR_CONTROL_WRITE) {
+  else if(frame.op==BR_CONTROL_RECONCILE) {
+    if(frame.length!=identity+sizeof(BrBirth) || frame.value<=1 || frame.value>INT_MAX)
+      error=EPROTO;
+    else {
+      BrBirth requested;memcpy(&requested,payload+identity,sizeof(requested));
+      if(requested.pid!=(int32_t)frame.value)error=ESTALE;
+      else error=br_reconcile_native(keeper,requested);
+    }
+    br_control_reply(control,frame.serial,error);
+  } else if(frame.op==BR_CONTROL_WRITE) {
     if(keeper->input_closed || keeper->exited)error=EPIPE;
     else {
       error=br_queue(&keeper->writes,&keeper->writes_tail,payload+identity,
@@ -1476,6 +1520,7 @@ static int br_keeper_spawn(BrKeeper *keeper,const unsigned char *expected_digest
   if((error=br_file(keeper->directory,"native.pid",pid,(size_t)n,1)))goto spawned_failed;
   if((error=br_birth(keeper->native_pid,&birth)))goto spawned_failed;
   if((error=br_file(keeper->directory,"native.birth",&birth,sizeof(birth),1)))goto spawned_failed;
+  keeper->native_birth=birth;
   if((error=br_wait_start(keeper,keeper->native_pid,'N')))goto spawned_failed;
   if((error=br_queue(&keeper->writes,&keeper->writes_tail,keeper->manifest.field[3],
                     (size_t)keeper->manifest.header.lengths[3],0,0,0)))goto spawned_failed;
@@ -1522,9 +1567,11 @@ static int br_attempt_ready(BrKeeper *keeper,struct pollfd *fds,BrControl **clie
     BrWake event;
     if((error=br_read_all(keeper->wake[0],&event,sizeof(event))))return error;
     if(event.kind=='N') {
-      if(event.status<0)return ECHILD;
-      keeper->native_waiting=1;
-      if((error=br_native_exited(keeper)))return error;
+      if(!keeper->exited) {
+        if(event.status<0)return ECHILD;
+        keeper->native_waiting=1;
+        if((error=br_native_exited(keeper)))return error;
+      }
     } else if(event.kind=='R') {
       /* Recovery waiters belong to this keeper attempt, not an observer
          generation. A replacement observer must not strand their counts. */
@@ -4958,6 +5005,17 @@ static int baton_observer_completed(BatonSessionLock *call) {
   if(call->observer<=1 || call->observer>INT_MAX || call->observer==(u32)getpid())return EINVAL;
   int error=br_admission_verify(call->directory,call->database,-1);
   if(error)return error;
+  BrBirth native;
+  if((error=br_read_file(call->directory,"native.birth",&native,sizeof(native))))return error;
+  FILE *pid_file=NULL;char *pid_path=br_path(call->directory,"native.pid");
+  if(!pid_path)return ENOMEM;
+  pid_file=fopen(pid_path,"r");error=pid_file?0:errno;free(pid_path);
+  long recorded_pid=0;
+  if(!error && (fscanf(pid_file,"%ld",&recorded_pid)!=1 || recorded_pid<=1 || recorded_pid>INT_MAX))error=EINVAL;
+  if(pid_file)fclose(pid_file);
+  if(error)return error;
+  if(recorded_pid!=native.pid || native.pid<=1)return ESTALE;
+  if(call->observer==(u32)native.pid)return EINVAL;
   char *path=br_path(call->directory,"status");
   FILE *file=path?fopen(path,"r"):NULL;
   error=file?0:path?errno:ENOMEM;
@@ -4967,11 +5025,29 @@ static int baton_observer_completed(BatonSessionLock *call) {
     if(fscanf(file,"%d",&status)!=1)error=EINVAL;
     else if(!WIFEXITED(status) && !WIFSIGNALED(status))error=EBUSY;
     fclose(file);
+  } else if(error==ENOENT) {
+    int socket_fd=-1;
+    error=br_attempt_socket(call->directory,BR_CONTROL_RECONCILE,1,native.pid,
+                                      (const char *)&native,sizeof(native),&socket_fd);
+    if(!error) {
+      BrFrame reply;
+      error=br_read_all(socket_fd,&reply,sizeof(reply));
+      if(!error && (reply.op!=BR_REPLY || reply.serial!=1 || reply.length))error=EPROTO;
+      if(!error)error=reply.error;
+    }
+    if(socket_fd>=0)close(socket_fd);
+    if(!error) {
+      path=br_path(call->directory,"status");
+      file=path?fopen(path,"r"):NULL;
+      error=file?0:path?errno:ENOMEM;free(path);
+      if(file) {
+        if(fscanf(file,"%d",&status)!=1)error=EINVAL;
+        else if(!WIFEXITED(status) && !WIFSIGNALED(status))error=EBUSY;
+        fclose(file);
+      }
+    }
   }
-  if(error) {call->detail="Observer recovery requires the retained native exit status.";return error;}
-  BrBirth native;
-  if((error=br_read_file(call->directory,"native.birth",&native,sizeof(native))))return error;
-  if(call->observer==(u32)native.pid)return EINVAL;
+  if(error) {call->detail="Observer recovery requires the original keeper to verify and retain the native exit status.";return error;}
   BrManifest manifest={0};
   if((error=br_manifest_read(call->directory,&manifest))) {
     br_manifest_free(&manifest);return error;
