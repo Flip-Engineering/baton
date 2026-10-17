@@ -4336,6 +4336,61 @@ class Receive(unittest.TestCase):
         self.assertEqual(len((self.directory / 'native-launches.jsonl').read_text().splitlines()), 1)
         self.assert_no_start()
 
+    def test_nul_tail_after_exit_zero_preserves_raw_checkpoint_and_pending_input(self):
+        self.player(harness='omp')
+        config_path = self.directory / 'fixture.json'
+        config = json.loads(config_path.read_text())
+        config['record_launches'] = True
+        config_path.write_text(json.dumps(config))
+        self.prepare_input('nul-exit-zero-task', 'parent',
+                           'Retain the native attempt when successful exit has invalid output.',
+                           kind='task')
+        observer = self.spawn(*self.receive_args('parent'))
+        control, started = self.accept('parent')
+        native_id = self.eventually(lambda: self.coord('player', 'parent')['native'],
+                                    'The original OMP identity was not recorded.')
+        self.assertEqual(native_id, started['native'])
+        with sqlite3.connect(self.db) as database:
+            old_id, old_directory = database.execute(
+                'SELECT id,directory FROM executions WHERE session=?', ('parent',)).fetchone()
+        attempt = pathlib.Path(old_directory)
+        checkpoint = attempt / 'checkpoint'
+        raw_output = attempt / 'stdout'
+
+        self.action(control, emit_checkpoint_message='nul-exit-zero-checkpoint')
+        self.assertEqual(json.loads(control.readline()),
+                         {'checkpoint_message_written':'nul-exit-zero-checkpoint'})
+        self.eventually(lambda: checkpoint.is_file() and raw_output.is_file(),
+                        'The observer did not persist the pre-tail checkpoint and raw output.')
+        checkpoint_before = checkpoint.read_bytes()
+        checkpoint_stat = checkpoint.stat()
+        raw_before = raw_output.read_bytes()
+        raw_stat = raw_output.stat()
+        tail = b'\x00' * 1642
+        self.action(control, emit_nul_tail=len(tail), exit_after_nul_tail=True)
+        self.assertEqual(json.loads(control.readline()), {'nul_tail_written':len(tail)})
+        output, error = self.finish(observer, ok=False)
+        self.assertIn('Native output contains a NUL byte', output + error)
+        self.assertEqual(raw_output.read_bytes(), raw_before + tail,
+                         'The invalid native tail was altered or discarded.')
+        self.assertEqual((raw_output.stat().st_ino, raw_output.stat().st_size),
+                         (raw_stat.st_ino, raw_stat.st_size + len(tail)))
+        self.assertEqual(checkpoint.read_bytes(), checkpoint_before,
+                         'Invalid output moved or rewrote the last valid observer checkpoint.')
+        self.assertEqual((checkpoint.stat().st_ino, checkpoint.stat().st_size),
+                         (checkpoint_stat.st_ino, checkpoint_stat.st_size))
+        self.assertFalse((attempt / 'acknowledged').exists(),
+                         'A successful process exit must not acknowledge an invalid raw tail.')
+        self.assertEqual(self.execution('parent')[:2], ('exited', 'exit 0'))
+        self.assertIsNone(self.coord('delivery', 'nul-exit-zero-task')['receipt'],
+                          'Invalid output acknowledged the input owned by the retained attempt.')
+        self.assertEqual([message['id'] for message in self.coord('inbox', 'parent')],
+                         ['nul-exit-zero-task'])
+        self.assertEqual(self.coord('player', 'parent')['native'], native_id)
+        self.assertEqual(self.execution('parent')[2], old_directory,
+                         'A held invalid tail must remain attached to its original attempt.')
+        self.assertEqual(self.coord('player', 'parent')['native'], native_id)
+
     def test_nul_tail_after_keeper_loss_preserves_input_and_starts_fresh_attempt(self):
         self.player(harness='omp')
         config_path = self.directory / 'fixture.json'

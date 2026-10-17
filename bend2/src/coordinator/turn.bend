@@ -783,7 +783,7 @@ def invalid_tail_error() -> String:
   "Native output contains an embedded NUL byte; observation stopped at the last validated checkpoint."
 
 def invalid_tail_terminal_status(+status: String) -> Bool:
-  Bool.or(Tx.starts_with(status,"exit "),Bool.or(Tx.starts_with(status,"signal "),String.eq(status,"unknown after keeper loss")))
+  Bool.or(Bool.and(Tx.starts_with(status,"exit "),Bool.not(String.eq(status,"exit 0"))),Bool.or(Tx.starts_with(status,"signal "),String.eq(status,"unknown after keeper loss")))
 
 def invalid_tail_matches_error(+error: String) -> Bool:
   String.eq(error,invalid_tail_error())
