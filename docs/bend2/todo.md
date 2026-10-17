@@ -828,4 +828,20 @@ remain open under [#782](https://github.com/Flip-Engineering/baton/issues/782).
   while `native.birth` and `native-start-error` are absent. Track this failed-start
   recovery boundary with [#712](https://github.com/Flip-Engineering/baton/issues/712);
   the new owner was elected and retained zero attempts and observers.
+  On 2026-10-17, seven portfolio sessions retained running executions after native
+  process loss, and each raw stdout ended in a NUL-corrupted tail beyond its valid
+  checkpoint. The pinned 2.0.0 receiver returned NUL22 before provider launch, so
+  these sessions remain unresumed with their original logs, checkpoints, UUIDs and
+  pending input preserved. A separate source-reviewed recovery follow-up is on
+  branch `luna/769-invalid-tail-recovery`: `turn.bend` SHA
+  `0217bf65870c5a156fe7ad8840d4cfbbfef7c0f56bd1f48ccf8117ce853f13d0` and
+  `receive.py` SHA `6fdae696d797912d7a55b1a4363aaa752eca643ac7eebc5c46f7107ca0dd03a5`.
+  Its crash-shaped fixture and this source change are not yet built or run.
+  The separate receive-memory source commit
+  `0880cf3dddee47c68dd98c6411a3570fc53749b7` passed focused compiler checking;
+  its emergency `-O0` Main11 build is still generating C (Bun PID 133396) and has
+  no binary artifact yet. The deployed OMP producer correction and its acceptance
+  remain tracked in [#769](https://github.com/Flip-Engineering/baton/issues/769);
+  follow-on retry behavior is cross-referenced in
+  [#786](https://github.com/Flip-Engineering/baton/issues/786).
 - [#676: Baton2: share one native instance across connected agents](https://github.com/Flip-Engineering/baton/issues/676).
