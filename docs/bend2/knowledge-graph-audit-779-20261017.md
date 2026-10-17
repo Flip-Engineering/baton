@@ -12,7 +12,8 @@ Its `bend2/src/coordinator/knowledge.bend` sha256 is
 `69558f7` candidate.
 
 Status: source comparison, measured surface behavior and research assessment.
-No `69558f7` build exists. No recall, precision or latency benchmark exists.
+No `69558f7` build exists. A 10-finding, 6-query retrieval fixture exists; no
+larger benchmark or latency measurement exists.
 
 ## Current Bend2 surface
 
@@ -29,7 +30,7 @@ No `69558f7` build exists. No recall, precision or latency benchmark exists.
 
 | PM surface | PM behavior (`pm-digest`) | Bend2 state | Verdict | Action |
 |---|---|---|---|---|
-| `pm_search` | FTS5 text match with composite text 1.0, evidence 0.2, recency 0.3 (`v6-cognitive-augmentation-scope.md` §7, §9) | Lexical `AND` over six fields; exact-id, claim and kind weights plus incident edge count (`knowledge.bend:221-228`) | ADAPT | Add term statistics and evidence/recency terms to the existing SQL score under deployment-owned weights. Keep one SQLite store. |
+| `pm_search` | FTS5 text match with composite text 1.0, evidence 0.2, recency 0.3 (`v6-cognitive-augmentation-scope.md` §7, §9) | Lexical `AND` over six fields; exact-id, claim and kind weights plus incident edge count (`knowledge.bend:221-228`) | ADAPT | Add term statistics and evidence/recency terms to the existing score under deployment-owned weights. Keep the term requirement or add phrase/proximity: the local fixture ranks better under exact `AND` than under an OR BM25 baseline. |
 | `pm_query` | Search, rank, top 3 results with graph neighbors | Search returns every match, typed nodes, edges and references (`knowledge.bend:234-236`) | ADAPT | Add a compact grouped result for agent briefs. The graph data already exists in the response. |
 | `pm_context` | Topic search grouped by node type, 1-hop neighbor expansion, cross-references | Search plus explicit traversal; no grouped projection (`knowledge.bend:234-262`) | ADAPT | Add a read projection that groups nodes by `kind` and includes typed 1-hop neighbors. |
 | `pm_kg_traverse` | Single-hop and BFS multi-hop traversal with depth, edge filter and bidirectionality (`src_kg_traversal.rs`) | Recursive CTE with direction and relation filters; no depth, path or proximity metadata (`knowledge.bend:239-262`) | ADAPT | Add an optional depth bound and path metadata to the response. Preserve cycle termination. |
@@ -43,7 +44,7 @@ No `69558f7` build exists. No recall, precision or latency benchmark exists.
 
 | Source | Finding | Applicability |
 |---|---|---|
-| Robertson and Zaragoza, *The Probabilistic Relevance Framework: BM25 and Beyond* (2009), https://dl.acm.org/doi/10.1561/1500000019 | Term frequency, inverse document frequency and document-length normalization produce a strong lexical ranking baseline. | Applicable to `search_score`. The current score has no term frequency, document length or collection statistics. A SQL BM25 implementation over the six searched fields fits the existing store. |
+| Robertson and Zaragoza, *The Probabilistic Relevance Framework: BM25 and Beyond* (2009), https://dl.acm.org/doi/10.1561/1500000019 | Term frequency, inverse document frequency and document-length normalization produce a strong lexical ranking baseline. | Applicable to `search_score`, with a measured caveat: an OR BM25 baseline over the same fields lost precision on the local fixture because it admits single-term distractors. Evaluate term statistics inside a term-required result set before changing semantics. |
 | Haveliwala, *Topic-Sensitive PageRank* (2002), https://dl.acm.org/doi/10.1145/511446.511513 | Query-specific PageRank biases the graph walk toward topic-relevant nodes. | Applicable to traversal ranking. The current recursive traversal returns a reachable set with no node rank. A bounded personalization vector over the same edge table supplies a rank without a new store. |
 | Edge et al., *From Local to Global: A Graph RAG Approach to Query-Focused Summarization* (2024), https://arxiv.org/abs/2404.16130 | Local entity neighborhoods serve local queries; community summaries serve global queries. | The local-neighborhood shape applies to `pm_context`-style reads. Global community summaries introduce derived text, freshness and cost. Defer until a measured global-query workload exists. |
 | Gutiérrez et al., *HippoRAG* (2024), https://arxiv.org/abs/2405.14831 | Personalized PageRank over a knowledge graph supports single-step multi-hop retrieval and matches iterative retrieval at lower cost. | Applicable to multi-hop traversal ranking. The current relation graph already has the required directed edges. Measure PPR against the current reachable-set read before adding it. |
@@ -70,6 +71,23 @@ Fixture: sessions `root` (principal conductor), `worker` and `sibling`; findings
 | `knowledge-traverse` on a `message:` evidence finding | `citation:<id>` edge with relation `Cited` and a `message:` reference with `deliveryRead`. |
 | `knowledge-audit`, `knowledge-since` | Unknown verbs; the CLI prints general help. No audit or delta surface exists. |
 
+### Retrieval fixture
+
+A separate throwaway database held ten findings and six queries. Each query named
+one or two relevant finding IDs by intent. The current search and a BM25 baseline
+over the same id, claim, evidence and limits text produced these aggregate
+metrics:
+
+| Ranking | Precision@1 | Recall@3 | MRR |
+|---|---|---|---|
+| Current Bend2 search | 1.000 | 1.000 | 1.000 |
+| BM25 OR baseline | 0.833 | 1.000 | 0.917 |
+
+The BM25 baseline ranked `token-audit` above `auth-cache` for query `revoked
+token`; the current `AND` search returned only `auth-cache`. The fixture is small
+and its relevance labels are authored for this audit. It shows that term
+statistics alone do not justify dropping the term requirement.
+
 ## Gaps and ownership
 
 | Gap | Evidence | Owner and next action |
@@ -83,7 +101,7 @@ Fixture: sessions `root` (principal conductor), `worker` and `sibling`; findings
 | Evidence inference from retained reports | #730; record requires an explicit `message:` ID | Separate owner |
 | Consumer reads of promoted root holdings | #746; driver uses the unqualified read | Separate owner; needs the final installed candidate |
 | Commit-and-cite context passing | #777; no cross-seat context value surface | Release/context owner |
-| Retrieval quality benchmark | No recall/precision, ranking or latency fixture exists for the current search and traversal | This audit; next action: build a representative fixture and measure before changing scoring |
+| Retrieval quality benchmark | A 10-finding, 6-query fixture exists; no larger labeled or adversarial fixture and no latency measurement | This audit; next action: build a larger labeled and adversarial fixture before changing scoring or term semantics |
 
 ## Limits
 
@@ -91,6 +109,7 @@ Fixture: sessions `root` (principal conductor), `worker` and `sibling`; findings
   `dd62ce8` knowledge source. It is not the `69558f7` candidate.
 - The comparison uses the retained `pm-digest` source and the cited papers. No
   project-manager runtime was available.
-- No recall, precision, ranking, multi-hop quality or latency measurement exists
-  yet. The recommendations above are source and research assessments.
+- The retrieval fixture has ten findings and six queries. It is not a
+  representative or adversarial benchmark. No latency, index/update cost or
+  multi-hop quality measurement exists yet.
 - The audit does not change #784 evidence handling or the frozen #784 packet.
