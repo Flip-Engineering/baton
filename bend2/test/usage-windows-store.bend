@@ -72,6 +72,8 @@ def observe_cases(+db: String) -> IO(Unit):
     expect("operator-reset-rejects-date-only",Bool.not(UW.operator_reset_token("2026-10-17")))
     expect("operator-reset-rejects-offsetless",Bool.not(UW.operator_reset_token("2026-10-17T03:41:00")))
     expect("operator-reset-rejects-short-offset",Bool.not(UW.operator_reset_token("2026-10-17T03:41:00+05")))
+    expect("operator-reset-rejects-empty-fraction",Bool.not(UW.operator_reset_token("2026-10-17T03:41:00.Z")))
+    expect("operator-reset-accepts-fraction",UW.operator_reset_token("2026-10-17T03:41:00.125Z"))
     expect("operator-reset-rejects-sqlite-keyword",Bool.not(UW.operator_reset_token("now")))
     expect("operator-reset-rejects-localtime-modifier",Bool.not(UW.operator_reset_token("localtime")))
     expect("operator-reset-rejects-utc-modifier",Bool.not(UW.operator_reset_token("utc")))
