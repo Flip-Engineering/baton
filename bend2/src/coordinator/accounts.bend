@@ -200,6 +200,12 @@ def api_key_binding(+secret_ref: String, helper: Maybe<String>) -> Maybe<List<St
     case None{}: None{}
     case Some{+script}: Some{Con{script,Con{secret_ref,Nil{}}}}
 
+# Anthropic API-key funding is held until every request can reserve its maximum
+# charge before it reaches the provider. A CLI spend threshold is not sufficient
+# for this decision because a request already in flight can cross it.
+def credit_api_key_held(account: AccountRecord) -> Bool:
+  Bool.and(String.eq(account_provider(account),"anthropic"),Bool.and(String.eq(account_harness(account),"claude-code"),String.eq(account_funding(account),"api_key")))
+
 def launch_binding(+harness: String, +funding: String, +secret_ref: String, helper: Maybe<String>) -> Maybe<List<String>>:
   Bool.pick(Maybe<List<String>>,Bool.and(String.eq(funding,"api_key"),Bool.not(String.eq(harness,"claude-code"))),None{},Bool.pick(Maybe<List<String>>,String.eq(funding,"api_key"),api_key_binding(secret_ref,helper),Some{Subs.store_binding(harness,secret_ref)}))
 
@@ -223,7 +229,7 @@ def api_key_resolver(identity: String & String) -> Maybe<String>:
 def account_binding(+harness: String, chosen: Maybe<&2,AccountRecord>, helper: Maybe<String>, +profile_store: String) -> Maybe<List<String>>:
   match chosen:
     case None{}: Bool.pick(Maybe<List<String>>,String.is_empty(profile_store),None{},Some{Subs.store_binding(harness,profile_store)})
-    case Some{+account}: launch_binding(harness,account_funding(account),account_secret_ref(account),helper)
+    case Some{+account}: Bool.pick(Maybe<List<String>>,credit_api_key_held(account),None{},launch_binding(harness,account_funding(account),account_secret_ref(account),helper))
 
 # --- the schema --------------------------------------------------------------
 

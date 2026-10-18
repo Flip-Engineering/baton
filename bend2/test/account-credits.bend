@@ -45,12 +45,20 @@ def binding_is(binding: Maybe<List<String>>, +label: String, +expected_head: Str
     case None{}: IO.die(Unit,1,"fixture-account " ++ label ++ ": no binding")
     case Some{values}: binding_value(List.head(&1,String,values),label,expected_head)
 
+def binding_refuses(binding: Maybe<List<String>>, +label: String) -> IO(Unit):
+  match binding:
+    case None{}: check(label,True{})
+    case Some{values}: IO.die(Unit,1,"fixture-account " ++ label ++ ": unexpected binding")
+
 def binding_checks() -> IO(Unit):
   do IO<Unit>:
     codex : Unit <- binding_is(A.launch_binding("codex","subscription","/fixture/stores/codex alt",None{}),"subscription-codex-store","CODEX_HOME=/fixture/stores/codex alt")
     claude : Unit <- binding_is(A.launch_binding("claude-code","subscription","/fixture/stores/claude",None{}),"subscription-claude-store","CLAUDE_CONFIG_DIR=/fixture/stores/claude")
-    resolver : Unit <- binding_is(A.launch_binding("claude-code","api_key","file:/fixture/secrets/api",Some{"/fixture/libexec/api-key-exec"}),"api-key-runs-the-resolver","/fixture/libexec/api-key-exec")
+    resolver : Unit <- binding_is(A.launch_binding("claude-code","api_key","file:/fixture/secrets/api",Some{"/fixture/libexec/api-key-exec"}),"api-key-helper-binding-for-admitted-route","/fixture/libexec/api-key-exec")
     profile : Unit <- binding_is(A.account_binding("codex",None{},None{},"/fixture/stores/codex"),"no-account-keeps-the-profile-store","CODEX_HOME=/fixture/stores/codex")
+    anthropic_api : Unit <- binding_refuses(A.account_binding("claude-code",Some{A.Ac{"claude-credit","anthropic","claude-code","api_key","file:/fixture/secrets/api","org-fixture","2026-10-18"}},Some{"/fixture/libexec/api-key-exec"},""),"anthropic-api-key-is-held-without-request-admission")
+    anthropic_subscription : Unit <- binding_is(A.account_binding("claude-code",Some{A.Ac{"claude-max","anthropic","claude-code","subscription","/fixture/stores/claude","org-fixture","2026-10-18"}},None{},""),"anthropic-subscription-binding-is-preserved","CLAUDE_CONFIG_DIR=/fixture/stores/claude")
+    other_provider : Unit <- binding_is(A.account_binding("claude-code",Some{A.Ac{"other-api","other-provider","claude-code","api_key","file:/fixture/secrets/other","org-other","2026-10-18"}},Some{"/fixture/libexec/api-key-exec"},""),"other-provider-binding-is-unchanged","/fixture/libexec/api-key-exec")
     IO.pure(Unit,Unit{})
 
 def decimal_checks() -> IO(Unit):
