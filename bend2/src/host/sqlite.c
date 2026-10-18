@@ -1,4 +1,7 @@
 #include <sqlite3.h>
+#include <stdint.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <sys/file.h>
@@ -170,6 +173,193 @@ static Term baton_sql_run(Env e, Term *f, IoWork *w) {
 }
 static void __attribute__((constructor)) baton_sql_use(void) {
   io_eff(CID_SQL_QUERY, baton_sql_run, 0);
+}
+#endif
+
+#if defined(CID_SQL_QUERY_SPAN) || defined(CID_SQL_QUERY_SPAN_TEXT) || defined(CID_SQL_QUERY_SPAN_2TEXT)
+/* Runs caller SQL with a byte range of an immutable stdout spool bound once
+   as parameter 1, plus optional caller text as parameters 2 and 3. The range
+   is mapped read-only and bound with SQLITE_STATIC, so a large native frame
+   reaches SQLite without becoming a Bend String. Rows use the Sql.query
+   format: columns joined by a tab and each row newline terminated. */
+typedef struct {
+  char *path, *spool, *sql, *text, *text2, *output, *error;
+  size_t length, text_length, text2_length, map_length;
+  uint64_t offset, span_length;
+  int code, params, spool_fd;
+  void *map;
+} BatonSqlSpan;
+
+static int baton_sql_span_parse_u64(const char *digits, uint64_t *value) {
+  if (!digits || !*digits) return EINVAL;
+  uint64_t n = 0;
+  for (const unsigned char *at = (const unsigned char *)digits; *at; at++) {
+    if (*at < '0' || *at > '9') return EINVAL;
+    unsigned digit = (unsigned)(*at - '0');
+    if (n > (UINT64_MAX - digit) / 10) return EOVERFLOW;
+    n = n * 10 + digit;
+  }
+  *value = n;
+  return 0;
+}
+
+static int baton_sql_span_row(BatonSqlSpan *call, sqlite3_stmt *statement) {
+  int count = sqlite3_column_count(statement);
+  for (int i = 0; i < count; i++) {
+    const unsigned char *value = sqlite3_column_text(statement, i);
+    size_t n = value ? (size_t)sqlite3_column_bytes(statement, i) : 0;
+    char *next = realloc(call->output, call->length + n + 2);
+    if (!next) return 1;
+    call->output = next;
+    if (n) memcpy(next + call->length, value, n);
+    call->length += n;
+    next[call->length++] = i + 1 == count ? '\n' : '\t';
+    next[call->length] = 0;
+  }
+  return 0;
+}
+
+static void baton_sql_span_call(IoWork *w) {
+  BatonSqlSpan *call = (BatonSqlSpan *)w->data;
+  sqlite3 *db = NULL;
+  call->spool_fd = open(call->spool, O_RDONLY | O_CLOEXEC);
+  if (call->spool_fd < 0) { call->code = errno; call->error = strdup("cannot open stdout spool"); return; }
+  struct stat info;
+  if (fstat(call->spool_fd, &info)) { call->code = errno; call->error = strdup("cannot inspect stdout spool"); return; }
+  if (!S_ISREG(info.st_mode) || info.st_size < 0) {
+    call->code = EINVAL; call->error = strdup("stdout spool is not a regular file"); return;
+  }
+  uint64_t size = (uint64_t)info.st_size;
+  if (call->offset > size || call->span_length > size - call->offset) {
+    call->code = EINVAL; call->error = strdup("stdout span is outside the spool"); return;
+  }
+  const char *bytes = "";
+  if (call->span_length) {
+    if (call->span_length > SIZE_MAX) { call->code = EOVERFLOW; call->error = strdup("stdout span is too large"); return; }
+    long page_size = sysconf(_SC_PAGESIZE);
+    if (page_size <= 0) { call->code = errno ? errno : EINVAL; call->error = strdup("cannot determine mmap page size"); return; }
+    uint64_t page = (uint64_t)page_size;
+    uint64_t aligned_offset = call->offset - call->offset % page;
+    uint64_t delta = call->offset - aligned_offset;
+    if (delta > SIZE_MAX || call->span_length > SIZE_MAX - (size_t)delta) {
+      call->code = EOVERFLOW; call->error = strdup("stdout span mapping length overflows"); return;
+    }
+    off_t map_offset = (off_t)aligned_offset;
+    if (map_offset < 0 || (uint64_t)map_offset != aligned_offset) {
+      call->code = EOVERFLOW; call->error = strdup("stdout span offset is too large"); return;
+    }
+    call->map_length = (size_t)delta + (size_t)call->span_length;
+    call->map = mmap(NULL, call->map_length, PROT_READ, MAP_PRIVATE, call->spool_fd, map_offset);
+    if (call->map == MAP_FAILED) { call->map = NULL; call->code = errno; call->error = strdup("cannot map stdout span"); return; }
+    bytes = (const char *)call->map + (size_t)delta;
+    if (memchr(bytes, 0, (size_t)call->span_length)) {
+      call->code = EILSEQ; call->error = strdup("stdout frame contains NUL"); return;
+    }
+  }
+  call->code = sqlite3_open(call->path, &db);
+  if (call->code != SQLITE_OK) {
+    call->error = strdup(db ? sqlite3_errmsg(db) : "cannot open database");
+  } else {
+    sqlite3_busy_handler(db, baton_sql_busy, NULL);
+    char *error = NULL;
+    call->code = sqlite3_create_function_v2(db, "baton_json_pretty", 1, SQLITE_UTF8 | SQLITE_DETERMINISTIC, NULL, baton_sql_json_pretty, NULL, NULL, NULL);
+    if (call->code == SQLITE_OK)
+      call->code = sqlite3_exec(db, "PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL;", NULL, NULL, &error);
+    const char *tail = call->sql;
+    while (call->code == SQLITE_OK && tail && *tail) {
+      sqlite3_stmt *statement = NULL;
+      const char *next = NULL;
+      call->code = sqlite3_prepare_v2(db, tail, -1, &statement, &next);
+      if (call->code != SQLITE_OK) break;
+      if (!statement) { tail = next; continue; }
+      call->code = sqlite3_bind_text64(statement, 1, bytes, (sqlite3_uint64)call->span_length, SQLITE_STATIC, SQLITE_UTF8);
+      if (call->code == SQLITE_OK && call->params > 1)
+        call->code = sqlite3_bind_text64(statement, 2, call->text ? call->text : "", (sqlite3_uint64)call->text_length, SQLITE_STATIC, SQLITE_UTF8);
+      if (call->code == SQLITE_OK && call->params > 2)
+        call->code = sqlite3_bind_text64(statement, 3, call->text2 ? call->text2 : "", (sqlite3_uint64)call->text2_length, SQLITE_STATIC, SQLITE_UTF8);
+      while (call->code == SQLITE_OK) {
+        int step = sqlite3_step(statement);
+        if (step == SQLITE_ROW) { if (baton_sql_span_row(call, statement)) call->code = SQLITE_NOMEM; }
+        else if (step == SQLITE_DONE) break;
+        else call->code = step;
+      }
+      int final = sqlite3_finalize(statement);
+      if (call->code == SQLITE_OK) call->code = final;
+      tail = next;
+    }
+    if (call->code != SQLITE_OK) {
+      call->error = strdup(error ? error : sqlite3_errmsg(db));
+      sqlite3_exec(db, "ROLLBACK", NULL, NULL, NULL);
+    }
+    sqlite3_free(error);
+  }
+  if (db) sqlite3_close(db);
+}
+
+static void baton_sql_span_release(BatonSqlSpan *call) {
+  if (call->map) munmap(call->map, call->map_length);
+  if (call->spool_fd >= 0) close(call->spool_fd);
+  free(call->path); free(call->spool); free(call->sql); free(call->text); free(call->text2);
+  free(call->output); free(call->error); free(call);
+}
+
+static Term baton_sql_span_pack(Env e, IoWork *w) {
+  BatonSqlSpan *call = (BatonSqlSpan *)w->data;
+  Term result = call->code == SQLITE_OK
+    ? io_done(e, io_str(e, call->output ? call->output : "", call->length))
+    : io_fail(e, (u32)call->code, call->error ? call->error : "SQLite failed");
+  baton_sql_span_release(call);
+  w->data = NULL;
+  return result;
+}
+
+static Term baton_sql_span_run(Env e, Term *f, IoWork *w, int params) {
+  BatonSqlSpan *call = calloc(1, sizeof(*call));
+  if (!call) return io_fail(e, ENOMEM, NULL);
+  call->spool_fd = -1;
+  call->params = params;
+  u64 path_n = 0, spool_n = 0, offset_n = 0, length_n = 0, sql_n = 0, text_n = 0, text2_n = 0;
+  call->path = io_cstr(e, f[0], &path_n);
+  call->spool = io_cstr(e, f[1], &spool_n);
+  char *offset_text = io_cstr(e, f[2], &offset_n);
+  char *length_text = io_cstr(e, f[3], &length_n);
+  call->sql = io_cstr(e, f[4], &sql_n);
+  if (params > 1) { call->text = io_cstr(e, f[5], &text_n); call->text_length = text_n; }
+  if (params > 2) { call->text2 = io_cstr(e, f[6], &text2_n); call->text2_length = text2_n; }
+  if (!call->path || !call->spool || !call->sql || !offset_text || !length_text ||
+      strlen(call->path) != path_n || strlen(call->spool) != spool_n || strlen(call->sql) != sql_n ||
+      strlen(offset_text) != offset_n || strlen(length_text) != length_n) {
+    call->code = EINVAL; call->error = strdup("database path, spool path or SQL contains NUL");
+  } else {
+    call->code = baton_sql_span_parse_u64(offset_text, &call->offset);
+    if (!call->code) call->code = baton_sql_span_parse_u64(length_text, &call->span_length);
+    if (call->code) call->error = strdup("stdout span is not a decimal byte range");
+  }
+  free(offset_text); free(length_text);
+  w->data = (char *)call;
+  if (call->code) return baton_sql_span_pack(e, w);
+  return io_work(w, baton_sql_span_call, baton_sql_span_pack);
+}
+#endif
+
+#ifdef CID_SQL_QUERY_SPAN
+static Term baton_sql_query_span_run(Env e, Term *f, IoWork *w) { return baton_sql_span_run(e, f, w, 1); }
+static void __attribute__((constructor)) baton_sql_query_span_use(void) {
+  io_eff(CID_SQL_QUERY_SPAN, baton_sql_query_span_run, 0);
+}
+#endif
+
+#ifdef CID_SQL_QUERY_SPAN_TEXT
+static Term baton_sql_query_span_text_run(Env e, Term *f, IoWork *w) { return baton_sql_span_run(e, f, w, 2); }
+static void __attribute__((constructor)) baton_sql_query_span_text_use(void) {
+  io_eff(CID_SQL_QUERY_SPAN_TEXT, baton_sql_query_span_text_run, 0);
+}
+#endif
+
+#ifdef CID_SQL_QUERY_SPAN_2TEXT
+static Term baton_sql_query_span_2text_run(Env e, Term *f, IoWork *w) { return baton_sql_span_run(e, f, w, 3); }
+static void __attribute__((constructor)) baton_sql_query_span_2text_use(void) {
+  io_eff(CID_SQL_QUERY_SPAN_2TEXT, baton_sql_query_span_2text_run, 0);
 }
 #endif
 

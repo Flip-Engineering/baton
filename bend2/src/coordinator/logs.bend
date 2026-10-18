@@ -7,6 +7,7 @@ import ../host/files.bend as F
 import ../git/text.bend as Tx
 import ../host/session-lock.bend as Lock
 import ../json/canonical.bend as J
+import ./../coordinator/frame-span.bend as Frame
 
 # Baton2-owned log classification, storage inspection and cleanup.
 #
@@ -204,15 +205,19 @@ def codex_kind(+kind: String) -> Bool:
 # an explicit identity share one slot: each update replaces the held one,
 # message_end drops the slot, and an interrupted stream flushes the newest
 # snapshot it held. Explicit identities keep their own keys.
-def frame_id_sql(+line: String) -> String:
-  "WITH frame(value) AS (VALUES(" ++ C.q(line) ++ ")) SELECT coalesce(json_extract(value,'$.toolCallId'),json_extract(value,'$.messageId'),json_extract(value,'$.message.id'),CASE WHEN json_extract(value,'$.type') IN ('message_start','message_update','message_end') THEN 'omp-open-message' END,json_extract(value,'$.message.responseId'),json_extract(value,'$.assistantMessageEvent.partial.responseId'),'') FROM frame;"
+def frame_id_sql(+value: String) -> String:
+  "WITH frame(value) AS (VALUES(" ++ value ++ ")) SELECT coalesce(json_extract(value,'$.toolCallId'),json_extract(value,'$.messageId'),json_extract(value,'$.message.id'),CASE WHEN json_extract(value,'$.type') IN ('message_start','message_update','message_end') THEN 'omp-open-message' END,json_extract(value,'$.message.responseId'),json_extract(value,'$.assistantMessageEvent.partial.responseId'),'') FROM frame;"
 
-def frame_id(db: String, line: String, omp: Bool) -> IO(String):
+def frame_id(+db: String, +line: String, omp: Bool) -> IO(String):
   match omp:
     case False{}: IO.pure(String,"")
-    case True{}: do IO<String>:
-      found : String <- IO.try(String,DB.Sql.query(db,frame_id_sql(line)))
-      IO.pure(String,Tx.trim_nl(found))
+    case True{}: Bool.pick(IO(String),Frame.is_span(line),
+      (do IO<String>:
+        found : String <- IO.try(String,DB.Sql.query_span(db,Frame.spool_of(line),Frame.offset_of(line),Frame.length_of(line),frame_id_sql("?1")))
+        IO.pure(String,Tx.trim_nl(found))),
+      (do IO<String>:
+        found : String <- IO.try(String,DB.Sql.query(db,frame_id_sql(C.q(line))))
+        IO.pure(String,Tx.trim_nl(found))))
 
 # Codex command identities live in item.id; held entries use the separate
 # codex_command_start kind and persist through the existing checkpoint path.
@@ -293,7 +298,7 @@ def attempt_of(+log: String) -> String:
 # come from the normalized event, including its streamed-message fallback.
 # The turns row stores that event. Retained receive stdout keeps raw frames
 # until acknowledgement; the provider journal retains its original record.
-def terminal_object_sql(+line: String, +event: String, +log: String) -> String:
+def terminal_object_sql(+value: String, +observed: String, +log: String) -> String:
   +messages = terminal_messages_of("frame.value")
   +results = terminal_results_of("frame.value")
   +text = terminal_text_of("observed")
@@ -318,15 +323,19 @@ def terminal_object_sql(+line: String, +event: String, +log: String) -> String:
     ++ "r3(o3) AS (SELECT CASE WHEN json_extract(o2,'$.isTerminal') IS NULL THEN json_remove(o2,'$.isTerminal') ELSE o2 END FROM r2), "
     ++ "r4(o4) AS (SELECT CASE WHEN json_extract(o3,'$.yielded') IS NULL THEN json_remove(o3,'$.yielded') ELSE o3 END FROM r3), "
     ++ "r5(o5) AS (SELECT CASE WHEN json_extract(o4,'$.full.turnsRow')='' THEN json_remove(o4,'$.full.turnsRow') ELSE o4 END FROM r4)"
-  "WITH frame(value,observed) AS (VALUES(" ++ C.q(line) ++ "," ++ C.q(event) ++ ")), " ++ calls ++ ", " ++ strip ++ " SELECT coalesce(o5,'') FROM r5;"
+  "WITH frame(value,observed) AS (VALUES(" ++ value ++ "," ++ observed ++ ")), " ++ calls ++ ", " ++ strip ++ " SELECT coalesce(o5,'') FROM r5;"
 
 # The projection is not idempotent: projecting a compact line again zeroes the
 # counts and can embed the line as the error text, so a compact line is never
 # fed back as a frame. No replay path does that today.
-def terminal_compact(db: String, +line: String, +event: String, +log: String) -> IO(String):
-  do IO<String>:
-    projected : String <- IO.try(String,DB.Sql.query(db,terminal_object_sql(line,event,log)))
-    IO.pure(String,Tx.trim_nl(projected))
+def terminal_compact(+db: String, +line: String, +event: String, +log: String) -> IO(String):
+  Bool.pick(IO(String),Frame.is_span(line),
+    (do IO<String>:
+      projected : String <- IO.try(String,DB.Sql.query_span_text(db,Frame.spool_of(line),Frame.offset_of(line),Frame.length_of(line),terminal_object_sql("?1","?2",log),event))
+      IO.pure(String,Tx.trim_nl(projected))),
+    (do IO<String>:
+      projected : String <- IO.try(String,DB.Sql.query(db,terminal_object_sql(C.q(line),C.q(event),log)))
+      IO.pure(String,Tx.trim_nl(projected))))
 
 def retained_from(compact: Bool, db: String, +line: String, event: String, +log: String) -> IO(String):
   match compact:
@@ -486,11 +495,6 @@ def write_lines(log: String, lines: List<String>, stopped: Bool) -> IO(Result<&1
     case True{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
     case False{}: write_each(log,lines,Done{Unit{}})
 
-def lines_text(lines: List<String>) -> String:
-  match lines:
-    case Nil{}: ""
-    case Con{head,tail}: head ++ "\n" ++ lines_text(tail)
-
 def positioned_result(+position: String, written: Result<&1,&1,U32 & String,Unit>) -> Result<&1,&1,U32 & String,String>:
   match written:
     case Fail{error}: Fail{error}
@@ -506,10 +510,18 @@ def position_write(log: String, written: Result<&1,&1,U32 & String,String>) -> R
     case Fail{(code,text)}: Fail{(code,"Log " ++ log ++ ": " ++ text)}
     case Done{position}: Done{Unit{}}
 
+def lines_text(lines: List<String>) -> String:
+  match lines:
+    case Nil{}: ""
+    case Con{head,tail}: head ++ "\n" ++ lines_text(tail)
+
+# One native write for the batch. A text line is written from the plan; a span
+# line is copied from its spool range. Every line carries its newline, so a
+# replay keeps the matching prefix and finish truncates after the last line.
 def write_positioned_retained(log: String, lines: List<String>, +position: String, finish: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   match lines:
     case Nil{}: Bool.pick(IO(Result<&1,&1,U32 & String,String>),finish,T.Text.write_at(log,position,"",1),IO.pure(Result<&1,&1,U32 & String,String>,Done{position}))
-    case other: T.Text.write_at(log,position,lines_text(other),Bool.pick(U32,finish,1,0))
+    case other: T.Text.write_batch_at(log,position,lines_text(other),Bool.pick(U32,finish,1,0))
 
 def output_parent_path(+prefix: String, +part: String) -> String:
   Bool.pick(String,String.is_empty(prefix),Bool.pick(String,String.is_empty(part),"/",part),

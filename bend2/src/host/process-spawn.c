@@ -58,7 +58,7 @@ enum { BP_SPAWN, BP_WRITE, BP_CLOSE, BP_READ, BP_READ_AWAKE, BP_WAIT, BP_SIGNAL,
        BP_INSTANCE_PREPARE_WITH_FILE, BP_INSTANCE_START, BP_INSTANCE_CANCEL,
        BP_INSTANCE_OWNER_WITNESS, BP_INSTANCE_ENSURE_OWNER_WITNESS,
        BP_INSTANCE_RECOVER, BP_INSTANCE_INPUT_WITNESS, BP_INSTANCE_INPUT_PROMPT,
-       BP_OBSERVER_RECOVERY, BP_READ_SPAN };
+       BP_OBSERVER_RECOVERY, BP_READ_SPAN, BP_READ_AWAKE_SPAN };
 
 static int baton_pipe(int fds[2]) {
   if (pipe(fds)) return errno;
@@ -4242,6 +4242,49 @@ static int br_spool_try_line(BatonRetained *retained,BatonProcessCall *call) {
   if(staged) {call->length=base;call->text[base]=0;}
   return call->error?-1:0;
 }
+/* Bounded spool probe that reports one complete retained line as a byte range
+   instead of building its text. The newline is consumed and excluded; an end
+   of output commits a partial tail with its own length, mirroring
+   br_spool_try_line. A silent or failed probe commits nothing. */
+static int br_spool_try_line_span(BatonRetained *retained,BatonProcessCall *call) {
+  uint64_t start=(uint64_t)retained->offset;
+  uint64_t staged=0;
+  for(;;) {
+    pthread_mutex_lock(&retained->state);
+    int exited=retained->exited;
+    call->error=retained->error;pthread_mutex_unlock(&retained->state);
+    if(call->error) break;
+    char chunk[8192];
+    ssize_t n=pread(retained->spool,chunk,sizeof(chunk),retained->offset+(off_t)staged);
+    if(n<0 && errno==EINTR) continue;
+    if(n<0) {call->error=errno;break;}
+    if(n==0) {
+      pthread_mutex_lock(&retained->state);
+      if(retained->error) call->error=retained->error;
+      else if(exited) {
+        if(staged>(uint64_t)LLONG_MAX || retained->offset>LLONG_MAX-(off_t)staged) call->error=EOVERFLOW;
+        else retained->offset+=(off_t)staged;
+        call->eof=staged==0;
+        if(!call->error && staged) {call->frame_start=start;call->frame_length=staged;}
+      }
+      pthread_mutex_unlock(&retained->state);
+      if(call->error || exited) return -1;
+      break;
+    }
+    char *newline=memchr(chunk,'\n',(size_t)n);
+    size_t consumed=newline?(size_t)(newline-chunk)+1:(size_t)n;
+    if(consumed>UINT64_MAX-staged) {call->error=EOVERFLOW;break;}
+    staged+=consumed;
+    if(newline) {
+      if(staged>(uint64_t)LLONG_MAX || retained->offset>LLONG_MAX-(off_t)staged) {call->error=EOVERFLOW;break;}
+      retained->offset+=(off_t)staged;
+      call->frame_start=start;
+      call->frame_length=staged-1;
+      return 1;
+    }
+  }
+  return call->error?-1:0;
+}
 typedef struct { BatonRetained *retained;uint64_t version;int wake;int done; } BrAwakeWatch;
 /* Single-shot spool watcher: waits for spool progress, child exit or failure,
    then writes one byte so the owner's poll returns. Never reads the
@@ -4278,7 +4321,7 @@ static void *br_awake_watch(void *raw) {
    this call returns. A consumed notice is always reported, including at end
    of output; the Turn layer drains it and terminates on the following
    notice-free round. */
-static void br_read_awake(BatonProcessCall *call) {
+static void br_read_awake_probe(BatonProcessCall *call,int (*probe)(BatonRetained*,BatonProcessCall*)) {
   BatonChild *child=call->child;
   BatonRetained *retained=child?child->retained:NULL;
   if(!retained || retained->spool<0) {call->error=EBADF;return;}
@@ -4306,7 +4349,7 @@ static void br_read_awake(BatonProcessCall *call) {
     pthread_mutex_lock(&retained->state);
     uint64_t version=retained->version;
     pthread_mutex_unlock(&retained->state);
-    int line=br_spool_try_line(retained,call);
+    int line=probe(retained,call);
     if(line!=0 || call->error || call->eof || noticed) {
       if(noticed && line==0) call->eof=1;
       if(!call->error) call->awake_alive=1;
@@ -4362,6 +4405,8 @@ static void br_read_awake(BatonProcessCall *call) {
     }
   }
 }
+static void br_read_awake(BatonProcessCall *call) {br_read_awake_probe(call,br_spool_try_line);}
+static void br_read_awake_span(BatonProcessCall *call) {br_read_awake_probe(call,br_spool_try_line_span);}
 static void br_instance_subscribe_call(BatonProcessCall *call) {
   uint64_t generation=0,after_cursor=0;
   int error=br_parse_u64(call->generation,call->generation?strlen(call->generation):0,&generation);
@@ -4604,6 +4649,8 @@ static void baton_process_call(IoWork *w) {
   }
   if(call->kind==BP_READ_AWAKE && child->retained) {br_read_awake(call);return;}
   if(call->kind==BP_READ_SPAN && !child->retained) {call->error=ENOTSUP;return;}
+  if(call->kind==BP_READ_AWAKE_SPAN && child->retained) {br_read_awake_span(call);return;}
+  if(call->kind==BP_READ_AWAKE_SPAN) {call->error=ENOTSUP;return;}
   if(child->retained) { baton_retained_call(call);return; }
   if(call->kind==BP_RELEASE || call->kind==BP_ACK || call->kind==BP_INSTANCE_COMMIT ||
      call->kind==BP_INSTANCE_RESTORE || call->kind==BP_INSTANCE_REPLAY) { call->error=EINVAL;return; }
@@ -4690,6 +4737,20 @@ static Term baton_process_pack(Env e, IoWork *w) {
         call->eof ? term_pak(CID_NONE,0)
         : io_box(e,CID_SOME,io_str(e,call->text?call->text:"",call->length)),
         io_tup(e,io_str(e,call->notice?call->notice:"",call->notice_length),(Term)call->awake_alive));
+#ifdef CID_PROCESSCHILD_READ_AWAKE_SPAN
+#ifdef CID_SOME
+    else if(call->kind==BP_READ_AWAKE_SPAN) {
+      char offset[32], length[32];
+      int a=snprintf(offset,sizeof(offset),"%llu",(unsigned long long)call->frame_start);
+      int b=snprintf(length,sizeof(length),"%llu",(unsigned long long)call->frame_length);
+      value=io_tup(e,
+        call->eof ? term_pak(CID_NONE,0)
+        : io_box(e,CID_SOME,io_str(e,a<0?"":offset,a<0?0:(size_t)a)),
+        io_tup(e,io_str(e,b<0?"":length,b<0?0:(size_t)b),
+          io_tup(e,io_str(e,call->notice?call->notice:"",call->notice_length),(Term)call->awake_alive)));
+    }
+#endif
+#endif
 #endif
 #endif
   }
@@ -4898,6 +4959,9 @@ static void __attribute__((constructor)) baton_process_read_text_use(void) {
 #endif
 #ifdef CID_PROCESSCHILD_READ_AWAKE
 BP_EFFECT(baton_process_read_awake,CID_PROCESSCHILD_READ_AWAKE,BP_READ_AWAKE)
+#endif
+#ifdef CID_PROCESSCHILD_READ_AWAKE_SPAN
+BP_EFFECT(baton_process_read_awake_span,CID_PROCESSCHILD_READ_AWAKE_SPAN,BP_READ_AWAKE_SPAN)
 #endif
 #ifdef CID_PROCESSCHILD_READ_RETAINED_LINE_SPAN
 BP_EFFECT(baton_process_read_span,CID_PROCESSCHILD_READ_RETAINED_LINE_SPAN,BP_READ_SPAN)

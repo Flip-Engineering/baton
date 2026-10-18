@@ -3,6 +3,8 @@ import ../coordinator/commands.bend as C
 import ../host/sqlite.bend as DB
 import ../host/process.bend as P
 
+import ./../coordinator/frame-span.bend as Frame
+
 def relevant(+kind: String, omp: Bool) -> Bool:
   Bool.or(Bool.not(omp),Bool.or(String.eq(kind,"response\n"),
     Bool.or(String.eq(kind,"message_end\n"),Bool.or(String.eq(kind,"tool_execution_start\n"),
@@ -54,8 +56,8 @@ def drain_pending(+db: String, +player: String, +handle: U32, +cursor: String) -
 def awake_pending(db: String, player: String, handle: U32, +cursor: String, woke: Bool) -> IO(String):
   Bool.pick(IO(String),woke,drain_pending(db,player,handle,cursor),IO.pure(String,cursor))
 
-def terminal_sql(+event: String) -> String:
-  "SELECT CASE WHEN " ++ C.terminal(event) ++ " THEN 1 ELSE 0 END;"
+def terminal_sql(+value: String) -> String:
+  "SELECT CASE WHEN " ++ C.terminal(value) ++ " THEN 1 ELSE 0 END;"
 
 # Native responses remain in the observed stream. The recipient's ack records
 # handled guidance; this observer only forwards input and closes it at terminal.
@@ -63,5 +65,7 @@ def observe(+db: String, +player: String, handle: U32, +event: String, cursor: S
   match enabled:
     case False{}: IO.pure(String,cursor)
     case True{}: do IO<String>:
-      ended : String <- IO.try(String,DB.Sql.query(db,terminal_sql(event)))
+      ended : String <- Bool.pick(IO(String),Frame.is_span(event),
+        IO.try(String,DB.Sql.query_span(db,Frame.spool_of(event),Frame.offset_of(event),Frame.length_of(event),terminal_sql("?1"))),
+        IO.try(String,DB.Sql.query(db,terminal_sql(C.q(event)))))
       continued(db,player,handle,cursor,String.eq(ended,"1\n"))

@@ -94,6 +94,13 @@ def ProcessChild.read_text_line(handle: U32) -> IO(Result<&1,&1,U32 & String,May
 def ProcessChild.read_awake(read: U32, sub: U32) -> IO(Result<&1,&1,U32 & String,Maybe<String> & (String & U32)>):
   import "./process-spawn.c"
 
+
+# The same multiplexed wake as read_awake, reporting a retained line as its
+# decimal byte offset and length in the immutable stdout spool. A notice-only
+# wake returns None. The final field is 1 while the subscription remains usable.
+def ProcessChild.read_awake_span(read: U32, sub: U32) -> IO(Result<&1,&1,U32 & String,Maybe<String> & (String & (String & U32))>):
+  import "./process-spawn.c"
+
 def ProcessChild.wait(handle: U32) -> IO(Result<&1,&1,U32 & String,String>):
   import "./process-spawn.c"
 
