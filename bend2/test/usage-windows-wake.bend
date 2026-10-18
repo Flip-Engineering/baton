@@ -66,7 +66,9 @@ def message(+db: String, +session: String, +message: String, +receipt: String) -
   query(db,"INSERT INTO messages(id,sender,recipient,kind,body,receipt) VALUES(" ++ C.q(message) ++ ",'root'," ++ C.q(session) ++ ",'guidance','owed',nullif(" ++ C.q(receipt) ++ ",''));")
 
 def session(+db: String, +id: String) -> IO(Unit):
-  query(db,"INSERT OR IGNORE INTO sessions(id,parent,harness,model,effort,native,endpoint) VALUES(" ++ C.q(id) ++ ",'root','omp'," ++ C.q(id ++ "-kimi/kimi-for-coding") ++ ",'high','','');")
+  # The window rows bind provider 'kimi-code'; the session model must name that
+  # provider or the gate sees no matching window. Account isolates the cases.
+  query(db,"INSERT OR IGNORE INTO sessions(id,parent,harness,model,effort,native,endpoint) VALUES(" ++ C.q(id) ++ ",'root','omp','kimi-code/kimi-for-coding','high','','');")
 
 def handled_case(+db: String, +self: String) -> IO(Unit):
   do IO<Unit>:
