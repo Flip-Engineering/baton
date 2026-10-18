@@ -1,6 +1,42 @@
 #include <errno.h>
 #include <fcntl.h>
+#include <stdio.h>
+#include <string.h>
 #include <unistd.h>
+
+
+#ifdef CID_REPLHOST_LINE
+typedef struct { char *line; size_t capacity; int eof; int error; } BatonReplLine;
+
+static void baton_repl_line_call(IoWork *work) {
+  BatonReplLine *call=(BatonReplLine *)work->data;
+  errno=0;
+  if(getline(&call->line,&call->capacity,stdin)<0) {
+    if(feof(stdin)) call->eof=1;
+    else call->error=errno?errno:EIO;
+  }
+}
+
+static Term baton_repl_line_pack(Env env,IoWork *work) {
+  BatonReplLine *call=(BatonReplLine *)work->data;
+  Term result;
+  if(call->error) result=io_fail(env,call->error,"Reading a REPL input line failed.");
+  else if(call->eof) result=io_done(env,term_pak(CID_NONE,0));
+  else result=io_done(env,io_box(env,CID_SOME,io_str(env,call->line,(u64)strlen(call->line))));
+  free(call->line); free(call); work->data=NULL;
+  return result;
+}
+
+static Term baton_repl_line(Env env,Term *fields,IoWork *work) {
+  BatonReplLine *call=calloc(1,sizeof(*call));
+  if(!call) return io_fail(env,ENOMEM,NULL);
+  work->data=(char *)call;
+  return io_work(work,baton_repl_line_call,baton_repl_line_pack);
+}
+static void __attribute__((constructor)) baton_repl_line_use(void) {
+  io_eff(CID_REPLHOST_LINE,baton_repl_line,0);
+}
+#endif
 
 #ifdef CID_REPLHOST_PRESERVE_OUTPUT
 typedef struct { char *directory; int error; } BatonReplOutput;

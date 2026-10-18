@@ -92,8 +92,23 @@ class ReplCritiqueFixtures(unittest.TestCase):
         self.directory = pathlib.Path(self.temp.name)
         self.db = self.directory / 'state.db'
         self.observer = None
+        self.owner = None
+        if EXE.exists():
+            self.owner = subprocess.Popen([str(EXE), '--instance-owner', str(self.db)],
+                                          cwd=self.directory,
+                                          stdout=subprocess.DEVNULL,
+                                          stderr=subprocess.DEVNULL)
+            time.sleep(0.5)
 
     def tearDown(self):
+        if self.owner is not None and self.owner.poll() is None:
+            subprocess.run([str(EXE), '--instance-shutdown', str(self.db)],
+                           cwd=self.directory, capture_output=True, timeout=30)
+            try:
+                self.owner.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                self.owner.kill()
+                self.owner.wait(timeout=30)
         if self.observer is not None and self.observer.poll() is None:
             self.observer.kill()
             self.observer.wait(timeout=30)
@@ -112,6 +127,8 @@ class ReplCritiqueFixtures(unittest.TestCase):
     def actors(self):
         result = self.invoke('attach', 'critic', 'fixture', '', '')
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        with sqlite3.connect(self.db) as connection:
+            connection.execute("UPDATE sessions SET workspace=? WHERE id='critic'", (str(self.directory),))
 
     def compiler(self):
         if not hasattr(self, '_compiler'):
@@ -237,10 +254,15 @@ class ReplCritiqueFixtures(unittest.TestCase):
                       'the guard refusal cause is missing from the session output')
 
     def hold_notebook_guard(self):
-        """Hold the physical notebook guard the coordinator derives for repl:main."""
+        """Hold the physical notebook guard the coordinator derives for the current notebook."""
         stat = os.stat(self.db)
         key = 'owner-%x-%x' % (stat.st_dev, stat.st_ino)
-        suffix = '.lock-' + b'repl:main'.hex()
+        with sqlite3.connect(self.db) as connection:
+            row = connection.execute(
+                "SELECT id FROM repl_notebooks WHERE owner='critic' AND name='main' ORDER BY rowid DESC LIMIT 1").fetchone()
+        if row is None:
+            return None
+        suffix = '.lock-' + ('repl:' + row[0]).encode().hex()
         runtime = os.environ.get('XDG_RUNTIME_DIR') or ''
         candidates = []
         if runtime:
