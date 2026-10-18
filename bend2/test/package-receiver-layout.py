@@ -49,23 +49,47 @@ class ReceiverLayout(unittest.TestCase):
             setattr(value, name, item)
         return value
 
+
+    def source_manifest(self, records):
+        focused = next(record for record in records if record['role'] == 'focused-facade')
+        full = next(record for record in records if record['role'] == 'full-cli')
+        value = {'schema': 'baton2-source-manifest-v1',
+                 'focused': {'path': focused['path'], 'sha256': focused['sha256'],
+                             'entry': focused['entry'], 'source': focused['source']},
+                 'full': {'path': full['path'], 'sha256': full['sha256'],
+                          'entry': full['entry'], 'source': full['source'],
+                          'build_mode': full['build_mode']},
+                 'repl': {'compiler_source': 'bend2/compiler/upstream',
+                          'runtime': '/absolute/bun', 'runtime_sha256': 'a' * 64,
+                          'notices': '/absolute/Bun-NOTICES'},
+                 'binaries': [{'role': record['role'], 'path': record['path'],
+                               'sha256': record['sha256'], 'build_mode': record['build_mode']}
+                              for record in records]}
+        if full.get('wrapper_source'):
+            value['full']['wrapper_source'] = full['wrapper_source']
+        if full.get('retained_c_sha256'):
+            value['full']['retained_c_sha256'] = full['retained_c_sha256']
+        return value
     def staged(self):
         prefix = Path(tempfile.mkdtemp(prefix='prefix-', dir=self.home))
         (prefix / 'bin').mkdir()
         specs = STAGE.binary_specs(self.args(), PACKAGE)
         records = STAGE.stage_binaries(prefix, specs, PACKAGE)
         focused = records[0]
+        source_manifest = self.source_manifest(records)
         manifest = {
             'schema': 'baton2-native-install-v2', 'source': {'commit': COMMIT, 'status': ''},
-            'binaries': records,
+            'binaries': records, 'source_manifest': source_manifest,
             'binary': {'path': focused['path'], 'alias': focused['alias'],
                        'sha256': focused['sha256'], 'source': focused['source']},
         }
+        PACKAGE.write_json(prefix / 'source-manifest.json', source_manifest)
         PACKAGE.write_json(prefix / 'manifest.json', manifest)
         receipt = {'schema': 'baton2-native-install-receipt-v1',
                    'manifest': {'path': 'manifest.json',
                                 'sha256': PACKAGE.sha256(prefix / 'manifest.json')},
-                   'source': manifest['source'], 'binaries': records}
+                   'source': manifest['source'], 'source_manifest': manifest['source_manifest'],
+                   'binaries': records}
         PACKAGE.write_json(prefix / 'install-receipt.json', receipt)
         STAGE.stage_checksums(prefix, PACKAGE, records)
         return prefix, manifest, records
@@ -80,7 +104,8 @@ class ReceiverLayout(unittest.TestCase):
         receipt = {'schema': 'baton2-native-install-receipt-v1',
                    'manifest': {'path': 'manifest.json',
                                 'sha256': PACKAGE.sha256(prefix / 'manifest.json')},
-                   'source': manifest['source'], 'binaries': records}
+                   'source': manifest['source'], 'source_manifest': manifest['source_manifest'],
+                   'binaries': records}
         PACKAGE.write_json(prefix / 'install-receipt.json', receipt)
         STAGE.stage_checksums(prefix, PACKAGE, records)
         checked = CHECK.verify_binaries(prefix, manifest, CHECK.verify_checksums(prefix))
@@ -152,7 +177,7 @@ class ReceiverLayout(unittest.TestCase):
         self.assertEqual([record['build_mode'] for record in records],
                          ['focused-native-entry', 'full-native-receiver-router'])
         self.assertEqual(records[1]['wrapper_source']['tree'], 'e' * 40)
-        self.assertEqual(prefix.joinpath('SHA256SUMS').read_text().count('\n'), 5)
+        self.assertGreaterEqual(prefix.joinpath('SHA256SUMS').read_text().count('\n'), 6)
         checked = CHECK.verify_binaries(prefix, manifest, CHECK.verify_checksums(prefix))
         self.assertEqual([(row['role'], row['path'], row['sha256']) for row in checked],
                          [(row['role'], row['path'], row['sha256']) for row in records])

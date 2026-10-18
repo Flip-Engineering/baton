@@ -102,12 +102,13 @@ BINARY_LAYOUT = (
     {'role': 'full-cli', 'option': 'full', 'label': 'baton-full',
      'installed': 'bin/baton-full', 'alias': None,
      'entry': 'bend2/src/coordinator/main.bend',
-     'build_mode': 'full-native-receiver-router', 'focused': False, 'router': True,
-     'wrapper': True},
+     'build_modes': ('full-native-receiver-router', 'retained-full-cli'),
+     'focused': False, 'router': True, 'wrapper': True},
 )
 
 
-def source_pin(commit, tree, status, manifest_sha256, default):
+def source_pin(commit, tree, status, manifest_sha256, default, directory=None):
+    source_directory = str(Path(directory).resolve()) if directory is not None else str(ROOT)
     commit = default['commit'] if commit is None else commit
     require(re.fullmatch(r'[0-9a-f]{40}', commit) is not None,
             'A receiver binary source commit must be a 40-character lowercase Git object name')
@@ -124,7 +125,7 @@ def source_pin(commit, tree, status, manifest_sha256, default):
     if manifest_sha256 is not None:
         require(re.fullmatch(r'[0-9a-f]{64}', manifest_sha256) is not None,
                 'A receiver binary source manifest must be a SHA256')
-    pin = {'directory': str(ROOT), 'commit': commit, 'tree': tree, 'status': status}
+    pin = {'directory': source_directory, 'commit': commit, 'tree': tree, 'status': status}
     if manifest_sha256 is not None:
         pin['manifest_sha256'] = manifest_sha256
     return pin
@@ -142,23 +143,32 @@ def receiver_binaries(args):
         pin = source_pin(commit,
                          getattr(args, option + '_source_tree'),
                          getattr(args, option + '_source_status'),
-                         getattr(args, option + '_source_manifest_sha256'), default)
-        spec = {**layout, 'supplied': supplied, 'source': pin}
+                         getattr(args, option + '_source_manifest_sha256'), default,
+                         getattr(args, option + '_source_directory', None))
+        build_mode = layout['build_mode'] if 'build_mode' in layout else layout['build_modes'][0]
+        if layout.get('build_modes'):
+            build_mode = getattr(args, 'full_build_mode', 'full-native-receiver-router')
+            require(build_mode in layout['build_modes'], 'Unsupported full build mode')
+            if supplied is None and build_mode != 'full-native-receiver-router':
+                raise RuntimeError('The retained full CLI mode requires a supplied full binary')
+        spec = {**layout, 'supplied': supplied, 'source': pin, 'build_mode': build_mode}
         if layout.get('wrapper'):
             c_sha = getattr(args, 'full_c_sha256', None)
             if c_sha is not None:
                 require(re.fullmatch(r'[0-9a-f]{64}', c_sha) is not None,
                         'The retained full C hash must be a SHA256')
                 spec['retained_c_sha256'] = c_sha
-            wrapper_commit = getattr(args, 'full_wrapper_source_commit')
-            require(supplied is None or wrapper_commit is not None,
-                    'A supplied full CLI requires its explicit current wrapper source commit')
-            require(commit is None or commit == default['commit'] or wrapper_commit is not None,
-                    'A retained earlier full CLI requires its current wrapper source commit')
-            spec['wrapper_source'] = source_pin(
-                wrapper_commit, getattr(args, 'full_wrapper_source_tree'),
-                getattr(args, 'full_wrapper_source_status'),
-                getattr(args, 'full_wrapper_source_manifest_sha256'), default)
+            if build_mode == 'full-native-receiver-router':
+                wrapper_commit = getattr(args, 'full_wrapper_source_commit')
+                require(supplied is None or wrapper_commit is not None,
+                        'A supplied full CLI requires its explicit current wrapper source commit')
+                require(commit is None or commit == default['commit'] or wrapper_commit is not None,
+                        'A retained earlier full CLI requires its current wrapper source commit')
+                spec['wrapper_source'] = source_pin(
+                    wrapper_commit, getattr(args, 'full_wrapper_source_tree'),
+                    getattr(args, 'full_wrapper_source_status'),
+                    getattr(args, 'full_wrapper_source_manifest_sha256'), default,
+                    getattr(args, 'full_wrapper_source_directory', None))
         specs.append(spec)
     return specs
 
@@ -624,10 +634,12 @@ def package(args):
                         'The supplied ' + role + ' binary is unavailable or not executable: ' + str(path))
                 built[role] = path
                 builds[role] = {'mode': 'supplied', 'path': str(path), 'sha256': sha256(path)}
+                if spec.get('retained_c_sha256'):
+                    c_hashes[role] = spec['retained_c_sha256']
             else:
                 path, record = build_binary(env, build_output, spec['label'],
                                             entry=spec['entry'], focused=spec['focused'],
-                                            router=spec.get('router', False))
+                                            router=spec.get('router', False) and spec['build_mode'] == 'full-native-receiver-router')
                 require(path.is_file(), 'The production build did not create ' + str(path))
                 generated = path.with_name(path.name + '.c')
                 if generated.is_file():
@@ -654,12 +666,33 @@ def package(args):
             selected_context.append(stage_typescript_context_module(payload, args.context_typescript_package))
         terms = stage_notices(payload, compiler_notices, identity['kind'])
         focused = next(record for record in records if record['role'] == 'focused-facade')
+        full_record = next(record for record in records if record['role'] == 'full-cli')
+        source_manifest = {
+            'schema': 'baton2-source-manifest-v1',
+            'focused': {'path': focused['path'], 'sha256': focused['sha256'],
+                        'entry': focused['entry'], 'source': focused['source']},
+            'full': {'path': full_record['path'], 'sha256': full_record['sha256'],
+                     'entry': full_record['entry'], 'source': full_record['source'],
+                     'build_mode': full_record['build_mode']},
+            'repl': {'compiler_source': str(args.repl_compiler_source),
+                     'runtime': str(args.repl_runtime),
+                     'runtime_sha256': args.repl_runtime_sha256,
+                     'notices': str(args.repl_runtime_notices)},
+            'binaries': [{'role': record['role'], 'path': record['path'],
+                          'sha256': record['sha256'], 'build_mode': record['build_mode']}
+                         for record in records],
+        }
+        if full_record.get('wrapper_source') is not None:
+            source_manifest['full']['wrapper_source'] = full_record['wrapper_source']
+        if full_record.get('retained_c_sha256') is not None:
+            source_manifest['full']['retained_c_sha256'] = full_record['retained_c_sha256']
+        write_json(payload / 'source-manifest.json', source_manifest)
         manifest = {
             'schema': 'baton2-native-artifact-v2', **identity,
             'created_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
             'platform': {'system': platform.system(), 'machine': platform.machine(), 'artifact': 'darwin-arm64'},
             'source': source,
-            'binaries': records,
+            'binaries': records, 'source_manifest': source_manifest,
             'binary': {'path': focused['path'], 'alias': focused['alias'],
                        'sha256': focused['sha256'], 'source': focused['source']},
             'selected_modules': selected_context,
@@ -673,11 +706,12 @@ def package(args):
         receipt = {'schema': 'baton2-native-install-receipt-v1',
                    'created_at': manifest['created_at'],
                    'manifest': {'path': 'manifest.json', 'sha256': sha256(payload / 'manifest.json')},
-                   'source': source, 'binaries': records}
+                   'source': source, 'source_manifest': source_manifest,
+                   'binaries': records}
         write_json(payload / 'install-receipt.json', receipt)
-        checksum_paths = [record['path'] for record in records]
-        checksum_paths.extend(record['alias'] for record in records if record.get('alias'))
-        checksum_paths.extend(['manifest.json', 'install-receipt.json'])
+        checksum_paths = sorted(path.relative_to(payload).as_posix()
+                                for path in payload.rglob('*')
+                                if path.is_file() and path.name != 'SHA256SUMS')
         (payload / 'SHA256SUMS').write_text('\n'.join(
             sha256(payload / name) + '  ' + name for name in checksum_paths) + '\n')
         shutil.copyfile(payload / 'manifest.json', output / 'manifest.json')
@@ -711,8 +745,12 @@ def main():
         parser.add_argument('--' + role + '-source-commit')
         parser.add_argument('--' + role + '-source-tree')
         parser.add_argument('--' + role + '-source-status')
+        parser.add_argument('--' + role + '-source-directory')
         parser.add_argument('--' + role + '-source-manifest-sha256')
     parser.add_argument('--full-c-sha256', help='retained full generated-C SHA256')
+    parser.add_argument('--full-wrapper-source-directory')
+    parser.add_argument('--full-build-mode', choices=('full-native-receiver-router', 'retained-full-cli'),
+                        default='full-native-receiver-router')
     for name in ('commit', 'tree', 'status', 'manifest_sha256'):
         parser.add_argument('--full-wrapper-source-' + name.replace('_', '-'))
     parser.add_argument('--context-clang-package', type=Path,

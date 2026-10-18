@@ -105,8 +105,8 @@ BINARY_LAYOUT = (
     {'role': 'focused-facade', 'path': 'bin/baton', 'alias': 'bin/baton2',
      'entry': 'bend2/src/coordinator/receive-focused.bend', 'build_mode': 'focused-native-entry'},
     {'role': 'full-cli', 'path': 'bin/baton-full', 'alias': None,
-     'entry': 'bend2/src/coordinator/main.bend', 'build_mode': 'full-native-receiver-router',
-     'wrapper': True},
+     'entry': 'bend2/src/coordinator/main.bend',
+     'build_modes': ('full-native-receiver-router', 'retained-full-cli'), 'wrapper': True},
 )
 
 
@@ -125,6 +125,14 @@ def verify_checksums(prefix):
         rows[name] = digest
     return rows
 
+
+
+def verify_payload_checksums(prefix, checksums):
+    actual = {path.relative_to(prefix).as_posix() for path in prefix.rglob('*')
+              if path.is_file() and path.name != 'SHA256SUMS'}
+    require(set(checksums) == actual, 'SHA256SUMS does not cover exactly the payload files')
+    for name, digest in checksums.items():
+        require(archive_digest(prefix / name) == digest, 'Payload checksum differs: ' + name)
 
 def verify_binaries(prefix, manifest, checksums):
     require(manifest.get('schema') in ('baton2-native-install-v2', 'baton2-native-artifact-v2'),
@@ -151,22 +159,28 @@ def verify_binaries(prefix, manifest, checksums):
                 'The installed ' + record['role'] + ' binary differs from its manifest hash')
         require(checksums.get(layout['path']) == digest,
                 'The installed ' + record['role'] + ' binary is absent from SHA256SUMS')
-        require(record.get('entry') == layout['entry'] and record.get('build_mode') == layout['build_mode'],
-                'The installed ' + record['role'] + ' binary records another entry or build mode')
+        require(record.get('entry') == layout['entry'],
+                'The installed ' + record['role'] + ' binary records another entry')
+        modes = layout.get('build_modes', (layout.get('build_mode'),))
+        require(record.get('build_mode') in modes,
+                'The installed ' + record['role'] + ' binary records an unsupported build mode')
         source = record.get('source')
-        require(isinstance(source, dict) and isinstance(source.get('commit'), str)
-                and re.fullmatch(r'[0-9a-f]{40}', source['commit']) is not None
-                and isinstance(source.get('status'), str)
-                and (isinstance(source.get('tree'), str)
-                     and re.fullmatch(r'[0-9a-f]{40}', source['tree']) is not None
-                     or isinstance(source.get('manifest_sha256'), str)
-                     and re.fullmatch(r'[0-9a-f]{64}', source['manifest_sha256']) is not None),
+        require(isinstance(source, dict) and isinstance(source.get('status'), str),
+                'The installed ' + record['role'] + ' binary lacks a source pin')
+        commit_tree = (isinstance(source.get('commit'), str)
+                       and re.fullmatch(r'[0-9a-f]{40}', source['commit']) is not None
+                       and isinstance(source.get('tree'), str)
+                       and re.fullmatch(r'[0-9a-f]{40}', source['tree']) is not None)
+        manifest_pin = (isinstance(source.get('manifest_sha256'), str)
+                        and re.fullmatch(r'[0-9a-f]{64}', source['manifest_sha256']) is not None)
+        require(commit_tree or manifest_pin,
                 'The installed ' + record['role'] + ' binary lacks an exact source commit/tree or manifest pin')
         if layout.get('wrapper'):
             c_sha = record.get('retained_c_sha256')
             require(c_sha is None or isinstance(c_sha, str)
                     and re.fullmatch(r'[0-9a-f]{64}', c_sha) is not None,
                     'The retained full C hash is malformed')
+        if layout.get('wrapper') and record.get('build_mode') == 'full-native-receiver-router':
             wrapper = record.get('wrapper_source')
             require(isinstance(wrapper, dict) and isinstance(wrapper.get('commit'), str)
                     and re.fullmatch(r'[0-9a-f]{40}', wrapper['commit']) is not None
@@ -191,14 +205,52 @@ def verify_binaries(prefix, manifest, checksums):
                     'The ' + record['role'] + ' binary has an unexpected alias')
         checked = {'role': record['role'], 'path': layout['path'],
                    'sha256': digest, 'source': source,
-                   'entry': layout['entry'], 'build_mode': layout['build_mode']}
+                   'entry': layout['entry'], 'build_mode': record['build_mode']}
         if layout.get('wrapper'):
-            checked['wrapper_source'] = record['wrapper_source']
             if record.get('retained_c_sha256'):
                 checked['retained_c_sha256'] = record['retained_c_sha256']
+        if layout.get('wrapper') and record.get('build_mode') == 'full-native-receiver-router':
+            checked['wrapper_source'] = record['wrapper_source']
         records.append(checked)
     require(seen == set(expected), 'The installation is missing the focused or full binary')
+    source_manifest = manifest.get('source_manifest')
+    require(isinstance(source_manifest, dict)
+            and source_manifest.get('schema') == 'baton2-source-manifest-v1',
+            'The installation is missing its composite source manifest')
+    source_manifest_path = prefix / 'source-manifest.json'
+    require(source_manifest_path.is_file() and not source_manifest_path.is_symlink()
+            and json.loads(source_manifest_path.read_text()) == source_manifest,
+            'The installed source-manifest.json differs from the manifest')
     focused = next(record for record in records if record['role'] == 'focused-facade')
+    full = next(record for record in records if record['role'] == 'full-cli')
+    for role, record in (('focused', focused), ('full', full)):
+        entry = source_manifest.get(role)
+        require(isinstance(entry, dict) and entry.get('path') == record['path']
+                and entry.get('sha256') == record['sha256']
+                and entry.get('entry') == record['entry']
+                and entry.get('source') == record['source'],
+                'The composite source manifest differs for ' + role)
+    require(source_manifest['full'].get('build_mode') == full['build_mode'],
+            'The composite source manifest full build mode differs')
+    if full['build_mode'] == 'full-native-receiver-router':
+        require(source_manifest['full'].get('wrapper_source') == full.get('wrapper_source'),
+                'The composite source manifest lacks the full wrapper source')
+    if full.get('retained_c_sha256') is not None:
+        require(source_manifest['full'].get('retained_c_sha256') == full['retained_c_sha256'],
+                'The composite source manifest lacks the retained full C hash')
+    repl_source = source_manifest.get('repl')
+    require(isinstance(repl_source, dict)
+            and isinstance(repl_source.get('compiler_source'), str) and repl_source['compiler_source']
+            and isinstance(repl_source.get('runtime'), str) and repl_source['runtime']
+            and isinstance(repl_source.get('notices'), str) and repl_source['notices']
+            and isinstance(repl_source.get('runtime_sha256'), str)
+            and re.fullmatch(r'[0-9a-f]{64}', repl_source['runtime_sha256']) is not None,
+            'The composite source manifest lacks required REPL pins')
+    require([(row['role'], row['path'], row['sha256'], row['build_mode'])
+             for row in source_manifest.get('binaries', [])]
+            == [(record['role'], record['path'], record['sha256'], record['build_mode'])
+                for record in records],
+            'The composite source manifest binary list differs')
     binary = manifest.get('binary')
     require(isinstance(binary, dict) and binary.get('path') == focused['path']
             and binary.get('alias') == 'bin/baton2' and binary.get('sha256') == focused['sha256'],
@@ -213,8 +265,9 @@ def verify_binaries(prefix, manifest, checksums):
             'The installation receipt differs from the manifest')
     require(receipt.get('binaries') == manifest.get('binaries'),
             'The installation receipt binary pins differ from the manifest')
-    require(receipt.get('source') == manifest.get('source'),
-            'The installation receipt source differs from the manifest')
+    require(receipt.get('source') == manifest.get('source')
+            and receipt.get('source_manifest') == manifest.get('source_manifest'),
+            'The installation receipt source or source manifest differs from the manifest')
     require(checksums.get('manifest.json') == archive_digest(prefix / 'manifest.json')
             and checksums.get('install-receipt.json') == archive_digest(receipt_path),
             'The manifest or install receipt is absent from SHA256SUMS')
@@ -224,6 +277,7 @@ def check(prefix, output):
     manifest_path = prefix / 'manifest.json'
     manifest = json.loads(manifest_path.read_text())
     checksums = verify_checksums(prefix)
+    verify_payload_checksums(prefix, checksums)
     binaries = verify_binaries(prefix, manifest, checksums)
     dependency = verify_repl(prefix, manifest)
     system = platform.system()
