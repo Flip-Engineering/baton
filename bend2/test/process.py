@@ -137,6 +137,101 @@ class Process(unittest.TestCase):
             if observer.stderr:
                 observer.stderr.close()
 
+    def test_observer_recovery_does_not_retire_unrelated_live_pid(self):
+        (self.runtime / 'baton2').mkdir(parents=True, mode=0o700)
+        database = self.cwd / 'state.db'
+        database.touch()
+        attempt = self.cwd / 'retained-attempt'
+        payload = self.cwd / 'payload.txt'
+        payload.write_text('fixture input\n')
+        observer = subprocess.Popen(
+            [str(EXE), 'retain', str(database), str(attempt), str(self.cwd),
+             str(payload), 'close', sys.executable, '-c',
+             'import sys; sys.stdin.read(); print("fixture-done")'],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, env=self.environment)
+        unrelated = subprocess.Popen(
+            [sys.executable, '-c', 'import time; time.sleep(60)'],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, env=self.environment)
+        try:
+            self.wait_for_native_exit(attempt, observer)
+            names = ('manifest', 'native.birth', 'native.pid', 'status', 'capabilities',
+                     'stdout', 'checkpoint', 'custody', 'acknowledged', 'released')
+            before = {name: (attempt / name).read_bytes() for name in names
+                      if (attempt / name).exists()}
+            refused = subprocess.run(
+                [str(EXE), 'recover-observer', str(database), str(attempt),
+                 str(unrelated.pid)], text=True, capture_output=True,
+                env=self.environment, timeout=20)
+            self.assertNotEqual(refused.returncode, 0, refused.stdout)
+            self.assertIsNone(unrelated.poll(), 'recovery signaled an unrelated live PID')
+            self.assertIsNone(observer.poll(), 'refusal stopped the actual observer')
+            after = {name: (attempt / name).read_bytes() for name in names
+                     if (attempt / name).exists()}
+            self.assertEqual(after, before, 'refusal changed retained attempt custody')
+
+            ended = subprocess.Popen(
+                [sys.executable, '-c', 'pass'], stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                env=self.environment)
+            ended_pid = ended.pid
+            self.assertEqual(ended.wait(timeout=10), 0)
+            refused_ended = subprocess.run(
+                [str(EXE), 'recover-observer', str(database), str(attempt),
+                 str(ended_pid)], text=True, capture_output=True,
+                env=self.environment, timeout=20)
+            self.assertNotEqual(refused_ended.returncode, 0, refused_ended.stdout)
+            after_ended = {name: (attempt / name).read_bytes() for name in names
+                           if (attempt / name).exists()}
+            self.assertEqual(after_ended, before,
+                             'an already-ended observer PID changed retained custody')
+
+            status_bytes = (attempt / 'status').read_bytes()
+            capability_bytes = ((attempt / 'capabilities').read_bytes()
+                                if (attempt / 'capabilities').exists() else None)
+            (attempt / 'status').unlink()
+            if capability_bytes is not None:
+                (attempt / 'capabilities').unlink()
+            legacy_before = {name: (attempt / name).read_bytes() for name in names
+                             if (attempt / name).exists()}
+            legacy_refused = subprocess.run(
+                [str(EXE), 'recover-observer', str(database), str(attempt),
+                 str(unrelated.pid)], text=True, capture_output=True,
+                env=self.environment, timeout=20)
+            self.assertNotEqual(legacy_refused.returncode, 0, legacy_refused.stdout)
+            self.assertIsNone(unrelated.poll(), 'legacy recovery signaled an unrelated live PID')
+            self.assertIsNone(observer.poll(), 'legacy refusal stopped the actual observer')
+            legacy_after = {name: (attempt / name).read_bytes() for name in names
+                            if (attempt / name).exists()}
+            self.assertEqual(legacy_after, legacy_before,
+                             'legacy refusal changed retained attempt custody')
+            (attempt / 'status').write_bytes(status_bytes)
+            if capability_bytes is not None:
+                (attempt / 'capabilities').write_bytes(capability_bytes)
+
+            os.kill(observer.pid, signal.SIGSTOP)
+            recovered = subprocess.run(
+                [str(EXE), 'recover-observer', str(database), str(attempt),
+                 str(observer.pid)], text=True, capture_output=True,
+                env=self.environment, timeout=20)
+            self.assertEqual(recovered.returncode, 0, recovered.stderr)
+            self.assertIn('observer-recovered:exit 0', recovered.stdout)
+            self.assertEqual(observer.wait(timeout=10), -signal.SIGTERM)
+        finally:
+            if observer.poll() is None:
+                observer.terminate()
+                observer.wait(timeout=10)
+            if unrelated.poll() is None:
+                unrelated.terminate()
+                unrelated.wait(timeout=10)
+            if observer.stdin:
+                observer.stdin.close()
+            if observer.stdout:
+                observer.stdout.close()
+            if observer.stderr:
+                observer.stderr.close()
+
     def test_observer_recovery_rejects_reused_pid_start_identity(self):
         runtime = self.runtime
         (runtime / 'baton2').mkdir(parents=True, mode=0o700)

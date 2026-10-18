@@ -385,6 +385,7 @@ typedef struct {
 typedef struct BatonRetained {
   int socket,spool,error,exited,status,input_closed;
   int guard,watch,life,orphan,unknown,released,acknowledged,observer_only,custody_lock;
+  int observer_detached;
   char *directory,*database;
   uint64_t version,serial,reply_serial,owner_attempt,owner_incarnation,owner_epoch;
   int reply_error;
@@ -402,6 +403,9 @@ typedef struct BrKeeper {
   uint32_t id;
   uint64_t identity;
   int listener,client,input,lock,watch,wake[2],spool,native_life,finishing,change_queued;
+  pid_t client_pid;
+  BrBirth client_birth;
+  int client_birth_set;
   uint64_t generation;
   pid_t native_pid,recovery_pid;
   BrBirth native_birth;
@@ -856,6 +860,7 @@ static int br_hello(int socket,BrFrame *hello,int *guard) {
 static int br_attach_socket(BatonChild *child,const char *directory,int socket,int *unstarted,uint64_t incarnation,int ready_ack) {
   BrFrame hello;BrState state={0};int guard=-1;
   int error=br_hello(socket,&hello,&guard);
+  if(!error && hello.serial>1)error=EPROTO;
   if(!error && hello.error) {
     error=hello.error;
     if(unstarted && hello.op==BR_HELLO && hello.value==1)*unstarted=1;
@@ -876,6 +881,7 @@ static int br_attach_socket(BatonChild *child,const char *directory,int socket,i
   retained->custody_lock=-1;
   retained->directory=strdup(directory);retained->exited=state.exited;retained->status=state.status;
   retained->input_closed=state.input_closed;retained->released=state.released;
+  retained->observer_detached=hello.serial==1;
   retained->observer_only=hello.value==4 || hello.value==5;
   if(hello.value==4)retained->unknown=1;
   pthread_mutex_init(&retained->state,NULL);pthread_mutex_init(&retained->command,NULL);
@@ -1266,7 +1272,9 @@ static void br_recover(BrKeeper *keeper) {
 }
 static void br_detach_observer(BrKeeper *keeper) {
   if(keeper->client>=0) close(keeper->client);
-  keeper->client=-1;keeper->ready=0;keeper->incoming_size=0;keeper->change_queued=0;
+  keeper->client=-1;keeper->client_pid=0;keeper->client_birth_set=0;
+  memset(&keeper->client_birth,0,sizeof(keeper->client_birth));
+  keeper->ready=0;keeper->incoming_size=0;keeper->change_queued=0;
   br_buffer_free(&keeper->outgoing,&keeper->outgoing_tail);
 }
 static void br_disconnected(BrKeeper *keeper) {
@@ -1483,7 +1491,7 @@ static int br_observer_pid(int socket,pid_t *pid) {
 }
 static int br_control_command(BrKeeper *keeper,BrControl *control,BrFrame frame,const char *payload) {
   const char *end=memchr(payload,0,(size_t)frame.length);
-  int error=0;
+  int error=0,observer_detached=0;
   if(!end || strcmp(payload,keeper->directory))error=EINVAL;
   else if(keeper->finishing)error=ESHUTDOWN;
   else if(keeper->monitor_only &&
@@ -1491,22 +1499,43 @@ static int br_control_command(BrKeeper *keeper,BrControl *control,BrFrame frame,
   if(error) {br_control_reply(control,frame.serial,error);return 0;}
   size_t identity=(size_t)(end-payload)+1;
   if(frame.op==BR_ATTACH) {
+    pid_t new_pid=0;BrBirth new_birth={0};
     if(frame.length!=identity || frame.serial)error=EPROTO;
-    else if(keeper->client>=0) {
+    else {
+      error=br_observer_pid(control->socket,&new_pid);
+      if(!error)error=br_birth(new_pid,&new_birth);
+    }
+    if(!error && keeper->client>=0) {
       pid_t observer=0;
       /* A completed attempt can transfer the selected observer's connection. */
       if(frame.value>1 && frame.value<=INT_MAX && keeper->exited) {
+        BrBirth current={0};
         error=br_observer_pid(keeper->client,&observer);
-        if(!error && observer==(pid_t)frame.value)br_detach_observer(keeper);
-        else if(!error)error=EBUSY;
+        if(!error && observer==(pid_t)frame.value && observer==keeper->client_pid &&
+           keeper->client_birth_set)
+          error=br_birth(observer,&current);
+        else if(!error)error=ESTALE;
+        if(!error && br_same_birth(current,keeper->client_birth)) {
+          br_detach_observer(keeper);
+          observer_detached=1;
+        } else if(!error)error=ESTALE;
       } else error=EBUSY;
+    } else if(!error && frame.value>1 && frame.value<=INT_MAX) {
+      /* A recovery request may attach without replacing a keeper client only
+         after the requested observer has ended. A live PID is not proof that
+         it owns this attempt. */
+      int ended=0,life=br_process_lifetime((pid_t)frame.value,&ended);
+      if(life>=0) {close(life);error=EBUSY;}
+      else if(!ended)error=errno;
     }
     if(error) {
       control->reply=(BrFrame){.op=BR_HELLO,.error=error};control->answered=1;
     } else {
       keeper->client=control->socket;control->socket=-1;keeper->generation++;keeper->ready=0;
+      keeper->client_pid=new_pid;keeper->client_birth=new_birth;keeper->client_birth_set=1;
       BrState state={keeper->native_pid,keeper->exited,keeper->status,keeper->released,keeper->input_closed};
-      return br_send(keeper,(BrFrame){.op=BR_HELLO,.length=sizeof(state),
+      return br_send(keeper,(BrFrame){.op=BR_HELLO,.serial=observer_detached,
+        .length=sizeof(state),
         .value=keeper->monitor_only?(keeper->status_unavailable?4:5):keeper->native_pid?2:3},&state);
     }
   } else if(!frame.serial)br_control_reply(control,frame.serial,EPROTO);
@@ -2779,6 +2808,10 @@ static int br_keeper(const char *directory,int lock) {
   int error=0;
   keeper.directory=realpath(directory,NULL);
   if(!keeper.directory)return errno;
+  error=br_observer_pid(keeper.client,&keeper.client_pid);
+  if(!error)error=br_birth(keeper.client_pid,&keeper.client_birth);
+  if(error)goto done;
+  keeper.client_birth_set=1;
   fcntl(keeper.client,F_SETFD,FD_CLOEXEC);
   if((error=br_nonblock(keeper.client)))goto done;
   if((error=br_keeper_start(&keeper,directory,lock)))goto done;
@@ -2797,7 +2830,7 @@ done:
       br_write_all(keeper.client,&hello,sizeof(hello));
     }
   }
-  if(keeper.finishing || (error && !keeper.native_pid)) {
+  if((keeper.finishing || (error && !keeper.native_pid)) && keeper.manifest.field[5]) {
     unlink(keeper.manifest.field[5]);
     char *parent=strdup(keeper.manifest.field[5]);
     if(parent){char *slash=strrchr(parent,'/');if(slash){*slash=0;rmdir(parent);}free(parent);}
@@ -5345,7 +5378,7 @@ static void __attribute__((constructor)) baton_process_signals(void){signal(SIGP
 typedef struct {
   char *database, *session, *path, *directory;
   const char *detail;
-  int handle, error, kind, keeper, legacy_unknown;
+  int handle, error, kind, keeper, legacy_unknown, observer_life, observer_ended;
   u32 observer;
   BatonProcessCall attempt;
 } BatonSessionLock;
@@ -5659,23 +5692,32 @@ static int baton_observer_completed(BatonSessionLock *call) {
 }
 
 static int baton_observer_retire(BatonSessionLock *call) {
-  int ended=0,life=br_process_lifetime((pid_t)call->observer,&ended);
-  if(life<0 && !ended)return errno;
-  int error=0;
-  if(kill((pid_t)call->observer,SIGTERM) && errno!=ESRCH)error=errno;
-  if(!error && kill((pid_t)call->observer,SIGCONT) && errno!=ESRCH)error=errno;
-  if(!error && life>=0) {
-    struct pollfd observed={life,POLLIN,0};
-    int ready;do {ready=poll(&observed,1,-1);}while(ready<0 && errno==EINTR);
-    if(ready<0)error=errno;
-  }
-  if(life>=0)close(life);
-  return error;
+  BatonRetained *retained=call->attempt.child?call->attempt.child->retained:NULL;
+  if(!retained || !retained->observer_detached)return 0;
+  if(call->observer_ended)return 0;
+  if(call->observer_life<0)return EBUSY;
+#if defined(__linux__) && defined(SYS_pidfd_send_signal)
+  int signaled=syscall(SYS_pidfd_send_signal,call->observer_life,SIGTERM,NULL,0);
+  if(signaled<0 && errno!=ESRCH)return errno;
+  if(signaled==0 && syscall(SYS_pidfd_send_signal,call->observer_life,SIGCONT,NULL,0)<0 && errno!=ESRCH)
+    return errno;
+  struct pollfd observed={call->observer_life,POLLIN,0};
+  int ready;do {ready=poll(&observed,1,-1);}while(ready<0 && errno==EINTR);
+  if(ready<0)return errno;
+  return 0;
+#else
+  /* A numeric PID signal cannot be bound to the incarnation attested by the
+     keeper. Keep the old observer alive when the platform cannot signal its
+     already-open process handle. */
+  return ENOTSUP;
+#endif
 }
 
 static int baton_observer_recover(BatonSessionLock *call) {
   int error=baton_observer_completed(call);
   if(error)return error;
+  call->observer_life=br_process_lifetime((pid_t)call->observer,&call->observer_ended);
+  if(call->observer_life<0 && !call->observer_ended)return errno;
   call->attempt.database=call->database;
   call->attempt.directory=call->directory;
   call->attempt.lock=(u32)call->handle;
@@ -5692,11 +5734,14 @@ static int baton_observer_recover(BatonSessionLock *call) {
         error=br_guard_lock((int)call->handle);
         if(!error)error=br_adopt_orphan(&call->attempt,call->directory,(int)call->handle);
       }
-    } else if(error==EBUSY) {
-      /* Current keepers use ordinary attachment after observer exit. */
-      error=baton_observer_retire(call);
-      if(!error)error=br_instance_attach(&call->attempt);
-    } else if(!error)error=baton_observer_retire(call);
+    } else if(!error) {
+      BatonRetained *retained=call->attempt.child?call->attempt.child->retained:NULL;
+      if(call->legacy_unknown && !call->observer_ended &&
+         (!retained || !retained->observer_detached)) {
+        call->detail="Legacy observer recovery cannot verify the live keeper connection.";
+        error=EBUSY;
+      } else error=baton_observer_retire(call);
+    }
     else if(call->legacy_unknown &&
             (error==EPROTO || error==EPIPE || error==ECONNRESET ||
              error==ENOENT || error==ECONNREFUSED)) {
@@ -5714,7 +5759,10 @@ static int baton_observer_recover(BatonSessionLock *call) {
       }
     } else if(error!=ENOENT && error!=ECONNREFUSED && error!=EPIPE && error!=ECONNRESET)return error;
   }
-  if(!call->attempt.child->retained && (error=baton_observer_retire(call)))return error;
+  if(!call->attempt.child->retained && !call->observer_ended) {
+    call->detail="Observer recovery cannot verify the live observer connection; inspect its current receive.";
+    return EBUSY;
+  }
   int guard_error=br_guard_lock((int)call->handle);
   if(guard_error) {
     if(guard_error==EBUSY)call->detail="Another observer holds the retained attempt; inspect its current receive.";
@@ -5820,6 +5868,7 @@ static Term baton_session_lock_pack(Env e, IoWork *w) {
     }
   }
   Term result=call->error ? io_fail(e,call->error,call->detail) : io_done(e,value);
+  if(call->observer_life>=0)close(call->observer_life);
   free(call->database);free(call->session);free(call->path);free(call->directory);free(call);
   w->data=NULL;
   return result;
@@ -5829,6 +5878,7 @@ static Term baton_session_lock_begin(Env e, Term *f, IoWork *w, int kind) {
   BatonSessionLock *call=calloc(1,sizeof(*call));
   if(!call) return io_fail(e,ENOMEM,NULL);
   call->kind=kind;
+  call->observer_life=-1;
   if(kind==3 || kind==5 || kind==6) {
     u64 dn=0,sn=0;
     call->database=io_cstr(e,f[0],&dn);
