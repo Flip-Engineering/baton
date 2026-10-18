@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stage and verify the focused/full/registrar receiver installation layout."""
+"""Stage and verify the focused facade and full receiver-router installation layout."""
 import argparse
 import json
 import os
@@ -37,12 +37,14 @@ def main():
     parser.add_argument('--prefix', type=Path, required=True)
     parser.add_argument('--focused-binary', type=Path, required=True)
     parser.add_argument('--full-binary', type=Path, required=True)
-    parser.add_argument('--register-binary', type=Path, required=True)
-    for role in ('focused', 'full', 'register'):
+    for role in ('focused', 'full'):
         parser.add_argument('--' + role + '-source-commit', required=True)
         parser.add_argument('--' + role + '-source-tree', required=True)
         parser.add_argument('--' + role + '-source-status', default='')
         parser.add_argument('--' + role + '-source-manifest-sha256')
+    parser.add_argument('--full-c-sha256')
+    for name in ('commit', 'tree', 'status', 'manifest_sha256'):
+        parser.add_argument('--full-wrapper-source-' + name.replace('_', '-'))
     parser.add_argument('--repl-compiler-source', type=Path, required=True)
     parser.add_argument('--repl-runtime', type=Path, required=True)
     parser.add_argument('--repl-runtime-sha256', required=True)
@@ -53,18 +55,24 @@ def main():
     source = args.source.resolve()
     stage = [sys.executable, source / 'bend2/scripts/stage-native-install.py',
              '--prefix', args.prefix, '--focused-binary', args.focused_binary,
-             '--full-binary', args.full_binary, '--register-binary', args.register_binary,
+             '--full-binary', args.full_binary,
              '--repl-compiler-source', args.repl_compiler_source,
              '--repl-runtime', args.repl_runtime,
              '--repl-runtime-sha256', args.repl_runtime_sha256,
              '--repl-runtime-notices', args.repl_runtime_notices]
-    for role in ('focused', 'full', 'register'):
+    for role in ('focused', 'full'):
         stage += ['--' + role + '-source-commit', getattr(args, role + '_source_commit'),
                   '--' + role + '-source-tree', getattr(args, role + '_source_tree'),
                   '--' + role + '-source-status', getattr(args, role + '_source_status')]
         manifest = getattr(args, role + '_source_manifest_sha256')
         if manifest:
             stage += ['--' + role + '-source-manifest-sha256', manifest]
+    if args.full_c_sha256:
+        stage += ['--full-c-sha256', args.full_c_sha256]
+    for name in ('commit', 'tree', 'status', 'manifest_sha256'):
+        value = getattr(args, 'full_wrapper_source_' + name)
+        if value is not None:
+            stage += ['--full-wrapper-source-' + name.replace('_', '-'), value]
     for name in ('context_clang_package', 'context_typescript_package'):
         value = getattr(args, name)
         if value:
@@ -86,14 +94,14 @@ def main():
         operations.append(probe(prefix, 78, [prefix / 'bin/baton', '--help']))
     finally:
         hidden_full.rename(full)
-    register = prefix / 'bin/baton-register'
-    hidden_register = prefix / 'bin/.baton-register.retained'
-    register.rename(hidden_register)
+    focused = prefix / 'bin/baton'
+    hidden_focused = prefix / 'bin/.baton.retained'
+    focused.rename(hidden_focused)
     try:
-        operations.append(probe(prefix, 78, [prefix / 'bin/baton', 'state.db', 'receiver',
+        operations.append(probe(prefix, 78, [prefix / 'bin/baton-full', 'state.db', 'receive',
                                              'session', 'harness', 'output.jsonl']))
     finally:
-        hidden_register.rename(register)
+        hidden_focused.rename(focused)
     print(json.dumps({'status': 'verified', 'stage': json.loads(staged.stdout),
                       'check': json.loads(checked.stdout), 'operations': operations}))
 

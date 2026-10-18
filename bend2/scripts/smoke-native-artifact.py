@@ -196,11 +196,10 @@ def extract(archive, manifest_path, destination):
     require((prefix / 'manifest.json').read_bytes() == manifest_bytes,
             'Archive manifest differs from supplied manifest')
     binaries = manifest.get('binaries')
-    require(isinstance(binaries, list) and len(binaries) == 3,
-            'The receiver archive must declare focused, full and registrar binaries')
+    require(isinstance(binaries, list) and len(binaries) == 2,
+            'The receiver archive must declare the focused facade and full CLI')
     expected = {'focused-facade': ('bin/baton', 'bin/baton2'),
-                'full-cli': ('bin/baton-full', None),
-                'receiver-register': ('bin/baton-register', None)}
+                'full-cli': ('bin/baton-full', None)}
     seen = set()
     focused = None
     for record in binaries:
@@ -224,7 +223,7 @@ def extract(archive, manifest_path, destination):
             focused = record
         else:
             require(record.get('alias') is None, 'Unexpected binary alias in the archive')
-    require(seen == set(expected), 'Archive is missing focused, full or registrar binary')
+    require(seen == set(expected), 'Archive is missing the focused or full binary')
     binary = manifest['binary']
     require(binary.get('path') == focused['path'] and binary.get('alias') == focused['alias']
             and binary.get('sha256') == focused['sha256'],

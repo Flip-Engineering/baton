@@ -56,10 +56,7 @@ class PackageLicenses(unittest.TestCase):
                 ('focused-facade', 'baton', 'baton2',
                  'bend2/src/coordinator/receive-focused.bend', 'focused-native-entry'),
                 ('full-cli', 'baton-full', None,
-                 'bend2/src/coordinator/main.bend', 'full-native-entry'),
-                ('receiver-register', 'baton-register', None,
-                 'bend2/src/coordinator/receiver-register-focused-direct.bend',
-                 'standalone-registrar')):
+                 'bend2/src/coordinator/main.bend', 'full-native-receiver-router')):
             path = self.payload / 'bin' / name
             path.write_bytes(('File-only ' + role + ' fixture; never run.\n').encode())
             path.chmod(0o755)
@@ -68,6 +65,9 @@ class PackageLicenses(unittest.TestCase):
                       'source': {'directory': str(self.source), 'commit': 'a' * 40,
                                  'tree': 'b' * 40, 'status': ''},
                       'entry': entry, 'build_mode': mode}
+            if role == 'full-cli':
+                record['wrapper_source'] = {'directory': str(self.source), 'commit': 'c' * 40,
+                                            'tree': 'd' * 40, 'status': ''}
             if alias:
                 alias_path = self.payload / 'bin' / alias
                 shutil.copyfile(path, alias_path)

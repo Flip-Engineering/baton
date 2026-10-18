@@ -105,10 +105,8 @@ BINARY_LAYOUT = (
     {'role': 'focused-facade', 'path': 'bin/baton', 'alias': 'bin/baton2',
      'entry': 'bend2/src/coordinator/receive-focused.bend', 'build_mode': 'focused-native-entry'},
     {'role': 'full-cli', 'path': 'bin/baton-full', 'alias': None,
-     'entry': 'bend2/src/coordinator/main.bend', 'build_mode': 'full-native-entry'},
-    {'role': 'receiver-register', 'path': 'bin/baton-register', 'alias': None,
-     'entry': 'bend2/src/coordinator/receiver-register-focused-direct.bend',
-     'build_mode': 'standalone-registrar'},
+     'entry': 'bend2/src/coordinator/main.bend', 'build_mode': 'full-native-receiver-router',
+     'wrapper': True},
 )
 
 
@@ -129,11 +127,11 @@ def verify_checksums(prefix):
 
 
 def verify_binaries(prefix, manifest, checksums):
-    require(manifest.get('schema') == 'baton2-native-install-v2',
+    require(manifest.get('schema') in ('baton2-native-install-v2', 'baton2-native-artifact-v2'),
             'The installation manifest does not declare the receiver layout')
     binaries = manifest.get('binaries')
     require(isinstance(binaries, list) and len(binaries) == len(BINARY_LAYOUT),
-            'The receiver layout requires exactly three installed binaries')
+            'The receiver layout requires exactly two installed binaries')
     expected = {item['role']: item for item in BINARY_LAYOUT}
     seen = set()
     records = []
@@ -164,6 +162,20 @@ def verify_binaries(prefix, manifest, checksums):
                      or isinstance(source.get('manifest_sha256'), str)
                      and re.fullmatch(r'[0-9a-f]{64}', source['manifest_sha256']) is not None),
                 'The installed ' + record['role'] + ' binary lacks an exact source commit/tree or manifest pin')
+        if layout.get('wrapper'):
+            c_sha = record.get('retained_c_sha256')
+            require(c_sha is None or isinstance(c_sha, str)
+                    and re.fullmatch(r'[0-9a-f]{64}', c_sha) is not None,
+                    'The retained full C hash is malformed')
+            wrapper = record.get('wrapper_source')
+            require(isinstance(wrapper, dict) and isinstance(wrapper.get('commit'), str)
+                    and re.fullmatch(r'[0-9a-f]{40}', wrapper['commit']) is not None
+                    and isinstance(wrapper.get('status'), str)
+                    and (isinstance(wrapper.get('tree'), str)
+                         and re.fullmatch(r'[0-9a-f]{40}', wrapper['tree']) is not None
+                         or isinstance(wrapper.get('manifest_sha256'), str)
+                         and re.fullmatch(r'[0-9a-f]{64}', wrapper['manifest_sha256']) is not None),
+                    'The installed full CLI lacks an exact wrapper source pin')
         if layout['alias']:
             require(record.get('alias') == layout['alias'],
                     'The focused facade must expose its baton2 alias')
@@ -177,10 +189,15 @@ def verify_binaries(prefix, manifest, checksums):
         else:
             require(record.get('alias') is None,
                     'The ' + record['role'] + ' binary has an unexpected alias')
-        records.append({'role': record['role'], 'path': layout['path'],
-                        'sha256': digest, 'source': source,
-                        'entry': layout['entry'], 'build_mode': layout['build_mode']})
-    require(seen == set(expected), 'The installation is missing the focused, full or registrar binary')
+        checked = {'role': record['role'], 'path': layout['path'],
+                   'sha256': digest, 'source': source,
+                   'entry': layout['entry'], 'build_mode': layout['build_mode']}
+        if layout.get('wrapper'):
+            checked['wrapper_source'] = record['wrapper_source']
+            if record.get('retained_c_sha256'):
+                checked['retained_c_sha256'] = record['retained_c_sha256']
+        records.append(checked)
+    require(seen == set(expected), 'The installation is missing the focused or full binary')
     focused = next(record for record in records if record['role'] == 'focused-facade')
     binary = manifest.get('binary')
     require(isinstance(binary, dict) and binary.get('path') == focused['path']

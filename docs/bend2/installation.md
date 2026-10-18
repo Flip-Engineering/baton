@@ -22,17 +22,18 @@ The check refuses before command links change.
 
 ## Stage a source installation
 
-A source installation from the receiver layout contains four executable paths.
-`bin/baton` is the focused receiver facade, `bin/baton2` is its alias,
-`bin/baton-full` is the general CLI, and `bin/baton-register` is the native
-Bend2 receiver registrar. The focused facade sends general actions to
-`bin/baton-full` and receiver registration to `bin/baton-register`. A missing
-or non-executable sibling makes the focused facade refuse the operation with
-exit status 78.
+A source installation from the receiver layout contains three executable paths.
+`bin/baton` is the focused receiver facade, `bin/baton2` is its alias, and
+`bin/baton-full` is the general CLI. The focused facade sends general actions
+to `bin/baton-full`. The full CLI is relinked with
+`BATON2_NATIVE_RECEIVER_ROUTER` and forwards internal receiver actions to the
+focused facade. A missing or non-executable sibling makes the operation refuse
+with exit status 78.
 
-Stage the layout from three already-built binaries. Each binary needs its
-exact source commit and either its source tree object or a source manifest
-SHA256. `bend2/scripts/stage-native-install.py` also requires the current REPL
+Stage the layout from two already-built binaries. Each binary needs its exact
+source commit and either its source tree object or a source manifest SHA256.
+The full CLI also records its current native-entry wrapper source separately
+from the retained full source or C identity. `bend2/scripts/stage-native-install.py` also requires the current REPL
 compiler source, Bun runtime, runtime SHA256 and complete runtime notices.
 
 ```sh
@@ -40,13 +41,12 @@ python3 "$BATON2_SOURCE/bend2/scripts/stage-native-install.py" \
   --prefix "$BATON2_PREFIX" \
   --focused-binary "$BATON2_FOCUSED" \
   --full-binary "$BATON2_FULL" \
-  --register-binary "$BATON2_REGISTER" \
   --focused-source-commit "$BATON2_FOCUSED_COMMIT" \
   --focused-source-tree "$BATON2_FOCUSED_TREE" \
   --full-source-commit "$BATON2_FULL_COMMIT" \
   --full-source-tree "$BATON2_FULL_TREE" \
-  --register-source-commit "$BATON2_REGISTER_COMMIT" \
-  --register-source-tree "$BATON2_REGISTER_TREE" \
+  --full-wrapper-source-commit "$BATON2_WRAPPER_COMMIT" \
+  --full-wrapper-source-tree "$BATON2_WRAPPER_TREE" \
   --repl-compiler-source "$BATON2_SOURCE/bend2/compiler/upstream" \
   --repl-runtime "$BATON2_BUN" \
   --repl-runtime-sha256 "$BATON2_BUN_SHA256" \
@@ -54,14 +54,15 @@ python3 "$BATON2_SOURCE/bend2/scripts/stage-native-install.py" \
 ```
 
 An emergency general CLI may retain an earlier installed `baton-full` binary.
-Pass its earlier commit and tree with `--full-source-commit` and
-`--full-source-tree`; the manifest and install receipt then record that pin
-while the focused facade and registrar keep their current pins. The earlier
-binary's own features remain limited to that source pin.
+Pass its earlier retained source with `--full-source-commit` and
+`--full-source-tree`, its retained C with `--full-c-sha256`, and the current wrapper with
+`--full-wrapper-source-commit` and `--full-wrapper-source-tree`. The manifest
+and install receipt record both pins while the focused facade keeps its current
+pin. The earlier binary's own features remain limited to its retained source pin.
 
 The staging manifest uses schema `baton2-native-install-v2` and records each
 binary's role, installed path, SHA256, source pin, entry and build mode.
-`SHA256SUMS` covers the four executable paths, the manifest and the install
+`SHA256SUMS` covers the three executable paths, the manifest and the install
 receipt. `install-receipt.json` binds the manifest hash and binary pins.
 `libexec/baton2/check-install.py` verifies those files, the focused alias and
 the required REPL payload. It refuses a missing, non-executable, altered or

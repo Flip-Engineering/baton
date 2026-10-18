@@ -61,7 +61,7 @@ def source_identity():
     return {'commit': git('rev-parse', 'HEAD'), 'status': git('status', '--porcelain=v1')}
 
 
-def build_binary(env, directory, label, entry=None, focused=False):
+def build_binary(env, directory, label, entry=None, focused=False, router=False):
     build_dir = directory / label
     build_dir.mkdir()
     output = ROOT / '.scratch/bend2/' + label
@@ -75,6 +75,8 @@ def build_binary(env, directory, label, entry=None, focused=False):
         role_env.pop('BEND_GENERATED_C', None)
     if focused:
         role_env['BATON2_RECEIVE_FOCUSED'] = '1'
+    if router:
+        role_env['BATON2_NATIVE_RECEIVER_ROUTER'] = '1'
     started = time.monotonic()
     with stdout.open('wb') as out, stderr.open('wb') as err:
         result = subprocess.run(argv, cwd=ROOT, env=role_env, stdin=subprocess.DEVNULL,
@@ -96,15 +98,12 @@ BINARY_LAYOUT = (
     {'role': 'focused-facade', 'option': 'focused', 'label': 'baton-focused',
      'installed': 'bin/baton', 'alias': 'bin/baton2',
      'entry': 'bend2/src/coordinator/receive-focused.bend',
-     'build_mode': 'focused-native-entry', 'focused': True},
+     'build_mode': 'focused-native-entry', 'focused': True, 'router': False},
     {'role': 'full-cli', 'option': 'full', 'label': 'baton-full',
      'installed': 'bin/baton-full', 'alias': None,
      'entry': 'bend2/src/coordinator/main.bend',
-     'build_mode': 'full-native-entry', 'focused': False},
-    {'role': 'receiver-register', 'option': 'register', 'label': 'baton-register',
-     'installed': 'bin/baton-register', 'alias': None,
-     'entry': 'bend2/src/coordinator/receiver-register-focused-direct.bend',
-     'build_mode': 'standalone-registrar', 'focused': False},
+     'build_mode': 'full-native-receiver-router', 'focused': False, 'router': True,
+     'wrapper': True},
 )
 
 
@@ -144,7 +143,23 @@ def receiver_binaries(args):
                          getattr(args, option + '_source_tree'),
                          getattr(args, option + '_source_status'),
                          getattr(args, option + '_source_manifest_sha256'), default)
-        specs.append({**layout, 'supplied': supplied, 'source': pin})
+        spec = {**layout, 'supplied': supplied, 'source': pin}
+        if layout.get('wrapper'):
+            c_sha = getattr(args, 'full_c_sha256', None)
+            if c_sha is not None:
+                require(re.fullmatch(r'[0-9a-f]{64}', c_sha) is not None,
+                        'The retained full C hash must be a SHA256')
+                spec['retained_c_sha256'] = c_sha
+            wrapper_commit = getattr(args, 'full_wrapper_source_commit')
+            require(supplied is None or wrapper_commit is not None,
+                    'A supplied full CLI requires its explicit current wrapper source commit')
+            require(commit is None or commit == default['commit'] or wrapper_commit is not None,
+                    'A retained earlier full CLI requires its current wrapper source commit')
+            spec['wrapper_source'] = source_pin(
+                wrapper_commit, getattr(args, 'full_wrapper_source_tree'),
+                getattr(args, 'full_wrapper_source_status'),
+                getattr(args, 'full_wrapper_source_manifest_sha256'), default)
+        specs.append(spec)
     return specs
 
 
@@ -548,7 +563,7 @@ def stage_notices(payload, compiler_notices, kind='development'):
     return terms
 
 
-def stage_receiver_binaries(payload, specs, built):
+def stage_receiver_binaries(payload, specs, built, c_hashes=None):
     (payload / 'bin').mkdir(parents=True)
     records = []
     for spec in specs:
@@ -558,6 +573,10 @@ def stage_receiver_binaries(payload, specs, built):
         record = {'role': spec['role'], 'path': spec['installed'],
                   'sha256': sha256(destination), 'source': spec['source'],
                   'entry': spec['entry'], 'build_mode': spec['build_mode']}
+        if spec.get('wrapper_source'):
+            record['wrapper_source'] = spec['wrapper_source']
+        if c_hashes and spec['role'] in c_hashes:
+            record['retained_c_sha256'] = c_hashes[spec['role']]
         if spec['alias']:
             alias = payload / spec['alias']
             shutil.copyfile(built[spec['role']], alias)
@@ -596,6 +615,7 @@ def package(args):
         specs = receiver_binaries(args)
         built = {}
         builds = {}
+        c_hashes = {}
         for spec in specs:
             role = spec['role']
             if spec['supplied'] is not None:
@@ -606,13 +626,17 @@ def package(args):
                 builds[role] = {'mode': 'supplied', 'path': str(path), 'sha256': sha256(path)}
             else:
                 path, record = build_binary(env, build_output, spec['label'],
-                                            entry=spec['entry'], focused=spec['focused'])
+                                            entry=spec['entry'], focused=spec['focused'],
+                                            router=spec.get('router', False))
                 require(path.is_file(), 'The production build did not create ' + str(path))
                 generated = path.with_name(path.name + '.c')
                 if generated.is_file():
                     target = build_output / spec['label'] / (path.name + '.c')
                     shutil.copyfile(generated, target)
-                    record['generated_c'] = {'path': target.relative_to(build_output).as_posix()}
+                    record['generated_c'] = {'path': target.relative_to(build_output).as_posix(),
+                                             'sha256': sha256(target)}
+                    if role == 'full-cli':
+                        c_hashes[role] = record['generated_c']['sha256']
                     write_json(build_output / spec['label'] / 'build.json', record)
                 built[role] = path
                 builds[role] = {'mode': 'built', 'path': str(path), 'sha256': sha256(path)}
@@ -621,7 +645,7 @@ def package(args):
         source = {'directory': str(ROOT), **source_identity(),
                   'tree': git('rev-parse', 'HEAD^{tree}')}
         payload = output / identity['archive_root']
-        records = stage_receiver_binaries(payload, specs, built)
+        records = stage_receiver_binaries(payload, specs, built, c_hashes)
         stage_adapters(payload)
         repl_compiler = stage_repl(payload, args)
         selected_context = [stage_selected_context_payload(payload), stage_runtime_context_module(payload)]
@@ -688,6 +712,9 @@ def main():
         parser.add_argument('--' + role + '-source-tree')
         parser.add_argument('--' + role + '-source-status')
         parser.add_argument('--' + role + '-source-manifest-sha256')
+    parser.add_argument('--full-c-sha256', help='retained full generated-C SHA256')
+    for name in ('commit', 'tree', 'status', 'manifest_sha256'):
+        parser.add_argument('--full-wrapper-source-' + name.replace('_', '-'))
     parser.add_argument('--context-clang-package', type=Path,
                         help='already-built context-clang-20 runtime package, including the executable and linked libraries')
     parser.add_argument('--context-typescript-package', type=Path,

@@ -16,10 +16,8 @@ BINARY_LAYOUT = (
     {'role': 'focused-facade', 'option': 'focused', 'name': 'baton', 'alias': 'baton2',
      'entry': 'bend2/src/coordinator/receive-focused.bend', 'build_mode': 'focused-native-entry'},
     {'role': 'full-cli', 'option': 'full', 'name': 'baton-full', 'alias': None,
-     'entry': 'bend2/src/coordinator/main.bend', 'build_mode': 'full-native-entry'},
-    {'role': 'receiver-register', 'option': 'register', 'name': 'baton-register', 'alias': None,
-     'entry': 'bend2/src/coordinator/receiver-register-focused-direct.bend',
-     'build_mode': 'standalone-registrar'},
+     'entry': 'bend2/src/coordinator/main.bend', 'build_mode': 'full-native-receiver-router',
+     'wrapper': True},
 )
 
 
@@ -68,14 +66,30 @@ def binary_specs(args, package):
                             getattr(args, option + '_source_tree'),
                             getattr(args, option + '_source_manifest_sha256'),
                             default, item['role'])
-        specs.append({**item, 'source_path': path, 'source': source})
+        spec = {**item, 'source_path': path, 'source': source}
+        if item.get('wrapper'):
+            c_sha = getattr(args, 'full_c_sha256', None)
+            if c_sha is not None:
+                require(re.fullmatch(r'[0-9a-f]{64}', c_sha) is not None,
+                        'The retained full C hash must be a SHA256')
+                spec['retained_c_sha256'] = c_sha
+            full_commit = getattr(args, 'full_source_commit')
+            require(full_commit is None or full_commit == default['commit']
+                    or getattr(args, 'full_wrapper_source_commit') is not None,
+                    'A retained earlier full CLI requires its current wrapper source commit')
+            spec['wrapper_source'] = source_pin(
+                package, getattr(args, 'full_wrapper_source_commit'),
+                getattr(args, 'full_wrapper_source_status'),
+                getattr(args, 'full_wrapper_source_tree'),
+                getattr(args, 'full_wrapper_source_manifest_sha256'), default, item['role'] + ' wrapper')
+        specs.append(spec)
     return specs
 
 
 def stage_binaries(prefix, specs, package):
-    require(len(specs) == len(BINARY_LAYOUT), 'The receiver layout requires exactly three binaries')
+    require(len(specs) == len(BINARY_LAYOUT), 'The receiver layout requires exactly two binaries')
     require({spec['role'] for spec in specs} == {item['role'] for item in BINARY_LAYOUT},
-            'The receiver layout requires focused-facade, full-cli and receiver-register binaries')
+            'The receiver layout requires focused-facade and full-cli binaries')
     paths = set()
     records = []
     for spec in specs:
@@ -90,6 +104,10 @@ def stage_binaries(prefix, specs, package):
         record = {'role': spec['role'], 'path': 'bin/' + path,
                   'sha256': package.sha256(destination), 'source': spec['source'],
                   'entry': spec['entry'], 'build_mode': spec['build_mode']}
+        if spec.get('wrapper_source'):
+            record['wrapper_source'] = spec['wrapper_source']
+        if spec.get('retained_c_sha256'):
+            record['retained_c_sha256'] = spec['retained_c_sha256']
         if spec['alias']:
             alias = 'bin/' + spec['alias']
             require(alias not in paths, 'Duplicate installed alias path: ' + alias)
@@ -121,9 +139,7 @@ def main():
                         help='source-built focused receiver facade installed as bin/baton and bin/baton2')
     parser.add_argument('--full-binary', type=Path, required=True,
                         help='full CLI installed as bin/baton-full')
-    parser.add_argument('--register-binary', type=Path, required=True,
-                        help='native Bend2 receiver registrar installed as bin/baton-register')
-    for role in ('focused', 'full', 'register'):
+    for role in ('focused', 'full'):
         parser.add_argument('--' + role + '-source-commit',
                             help='exact Git commit that produced the ' + role + ' binary; defaults to this source tree')
         parser.add_argument('--' + role + '-source-status',
@@ -132,6 +148,10 @@ def main():
                             help='exact Git tree object for the ' + role + ' binary; defaults to the commit tree')
         parser.add_argument('--' + role + '-source-manifest-sha256',
                             help='complete source manifest SHA256 for the ' + role + ' binary')
+    parser.add_argument('--full-c-sha256', help='retained full generated-C SHA256')
+    for name in ('commit', 'tree', 'status', 'manifest_sha256'):
+        parser.add_argument('--full-wrapper-source-' + name.replace('_', '-'),
+                            help='current native-entry wrapper source ' + name)
     parser.add_argument('--prefix', type=Path, required=True, help='new installation prefix')
     parser.add_argument('--repl-compiler-source', type=Path, default=ROOT / 'bend2/compiler/upstream')
     parser.add_argument('--repl-runtime', type=Path, required=True)
