@@ -6,6 +6,7 @@ adopts the attempt as monitor-only custody, reads its spool, advances the
 durable checkpoint once and leaves the owed input unread. The native identity,
 PID, UUID argument and manifest stay unchanged.
 """
+import json
 import os
 import pathlib
 import shutil
@@ -146,24 +147,41 @@ class ObserverMonitor(unittest.TestCase):
 
     def start_attempt(self, stderr_text='', native_uuid=NATIVE_UUID, attempt_id='attempt1',
                       stdout_text='monitor-line\n', sleep_seconds=8,
-                      later_stdout_text=''):
+                      later_stdout_text='', stdout_file=None, later_stdout_file=None):
         self.native.write_text(
             '\n'.join([
                 '#!' + sys.executable,
                 'import pathlib,sys,time',
                 'pathlib.Path(sys.argv[2]).write_text(sys.argv[1])',
                 *(['sys.stderr.write(' + repr(stderr_text) + ')'] if stderr_text else []),
-                'sys.stdout.write(' + repr(stdout_text) + ')',
-                'sys.stdout.flush()',
+                *(['sys.stdout.write(' + repr(stdout_text) + ')',
+                   'sys.stdout.flush()'] if stdout_file is None else [
+                   'source = open(' + repr(str(stdout_file)) + ', "rb")',
+                   'while True:',
+                   '    chunk = source.read(65536)',
+                   '    if not chunk: break',
+                   '    sys.stdout.buffer.write(chunk)',
+                   '    sys.stdout.buffer.flush()',
+                   'source.close()']),
                 *(['while not pathlib.Path(sys.argv[3]).exists(): time.sleep(0.02)',
                    'sys.stdout.write(' + repr(later_stdout_text) + ')',
                    'sys.stdout.flush()'] if later_stdout_text else []),
+                *(['while not pathlib.Path(sys.argv[3]).exists(): time.sleep(0.02)',
+                   'source = open(' + repr(str(later_stdout_file)) + ', "rb")',
+                   'while True:',
+                   '    chunk = source.read(65536)',
+                   '    if not chunk: break',
+                   '    sys.stdout.buffer.write(chunk)',
+                   '    sys.stdout.buffer.flush()',
+                   'source.close()'] if later_stdout_file is not None else []),
                 'time.sleep(' + repr(sleep_seconds) + ')',
             ]) + '\n')
         self.native.chmod(0o700)
         self.attempt_id = attempt_id
         self.native_uuid = native_uuid
         self.stdout_text = stdout_text
+        expected_stdout_bytes = (pathlib.Path(stdout_file).stat().st_size
+                                 if stdout_file is not None else len(stdout_text.encode()))
         self.fixture('init', self.db)
         with sqlite3.connect(self.db) as database:
             database.execute("UPDATE sessions SET native=? WHERE id='parent'", (native_uuid,))
@@ -181,7 +199,7 @@ class ObserverMonitor(unittest.TestCase):
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
             if (self.attempt / 'native.pid').exists() and (self.attempt / 'stdout').exists():
-                if (self.attempt / 'stdout').stat().st_size >= len(stdout_text.encode()):
+                if (self.attempt / 'stdout').stat().st_size >= expected_stdout_bytes:
                     break
             time.sleep(0.02)
         self.assertTrue((self.attempt / 'native.pid').exists(), 'native.pid was not written')
@@ -256,6 +274,341 @@ class ObserverMonitor(unittest.TestCase):
                              'unknown native status must not be synthesized')
         else:
             self.assertEqual(execution, ('running', ''), 'live native status must remain pending')
+
+    def test_codex_large_assistant_frame_stays_spanned_through_report(self):
+        import hashlib
+
+        assistant_bytes = 8 * 1024 * 1024
+        prefix = b'{"type":"item.completed","item":{"id":"bounded-large-message","type":"agent_message","text":"'
+        suffix = b'"}}\n'
+        terminal = b'{"type":"turn.completed"}\n'
+        text_bytes = assistant_bytes - len(prefix) - len(suffix)
+        self.assertGreater(text_bytes, 0)
+        output_file = self.directory / 'large-codex-stdout.jsonl'
+        digest = hashlib.sha256()
+        remaining = text_bytes
+        block = b'x' * 65536
+        with output_file.open('wb') as output:
+            output.write(prefix)
+            while remaining:
+                chunk = block[:min(remaining, len(block))]
+                output.write(chunk)
+                digest.update(chunk)
+                remaining -= len(chunk)
+            output.write(suffix)
+        expected_offset = assistant_bytes
+
+        observer, birth, manifest = self.start_attempt(
+            stdout_text='', stdout_file=output_file, sleep_seconds=15,
+            later_stdout_text=terminal.decode())
+        argv = [str(COORDINATOR), '--recover-observer', str(self.db),
+                'parent', str(observer)]
+        monitor = subprocess.Popen(
+            argv, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            env=self.environment)
+        self.addCleanup(self.stop_owned_process, monitor)
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            if checkpoint_offset(self.attempt) == expected_offset and custody_offset(self.attempt) == expected_offset:
+                break
+            if monitor.poll() is not None:
+                out, err = monitor.communicate(timeout=10)
+                self.fail('large Codex stream stopped before checkpoint: %r %r' % (out, err))
+            time.sleep(0.02)
+
+        self.assertEqual(checkpoint_offset(self.attempt), expected_offset)
+        self.assertEqual(custody_offset(self.attempt), expected_offset)
+        checkpoint = (self.attempt / 'checkpoint').read_bytes()
+        header_size = struct.calcsize('@8sII8Qi4xQQ')
+        fields = struct.unpack_from('@8sII8Qi4xQQ', checkpoint)
+        self.assertEqual(fields[0], b'BATONC03')
+        self.assertEqual(fields[8], expected_offset)
+        state = json.loads(checkpoint[header_size:])
+        codex_log = state['codex_log']
+        self.assertLess(len(codex_log.encode()), 1024)
+        codex_parts = codex_log.split('\n')
+        self.assertEqual(codex_parts[0], 'codex-span-v1')
+        self.assertIn('\x1e' + str(self.attempt / 'stdout') + '\x1e', codex_parts[1])
+        self.assertEqual(codex_parts[2], '-')
+        self.assertEqual((self.attempt / 'native.birth').read_bytes(), birth)
+        self.assertEqual((self.attempt / 'manifest').read_bytes(), manifest)
+        self.assertEqual(self.uuid_marker.read_text(), NATIVE_UUID)
+        self.assertEqual((self.attempt / 'stdout').stat().st_size, expected_offset)
+        self.assertEqual(hashlib.sha256((self.attempt / 'stdout').read_bytes()).digest(),
+                         hashlib.sha256(output_file.read_bytes()).digest())
+        self.assert_unknown_pending()
+        self.assertEqual(self.row('SELECT receipt FROM messages WHERE id=?', 'task'), (None,))
+        self.assertEqual(self.row("SELECT COUNT(*) FROM messages WHERE kind='report' AND sender='parent'"), (0,))
+        self.assertFalse((self.attempt / 'acknowledged').exists())
+        self.assertFalse((self.attempt / 'released').exists())
+
+        # Stop only this fixture-owned monitor while the native child remains
+        # blocked before the terminal frame. Reopen from the durable assistant
+        # cursor and verify the checkpoint does not replay the large message.
+        self.stop_owned_process(monitor)
+        os.kill(self.native_process, 0)
+        second_monitor = subprocess.Popen(
+            argv, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            env=self.environment)
+        self.addCleanup(self.stop_owned_process, second_monitor)
+        time.sleep(0.25)
+        self.assertIsNone(second_monitor.poll(), 'reopened monitor exited before native completion')
+        self.assertEqual(checkpoint_offset(self.attempt), expected_offset)
+        self.assertEqual(custody_offset(self.attempt), expected_offset)
+        self.assertEqual(self.row("SELECT COUNT(*) FROM messages WHERE kind='report' AND sender='parent'"), (0,))
+        self.assertEqual(self.row('SELECT receipt FROM messages WHERE id=?', 'task'), (None,))
+        self.assertEqual((self.attempt / 'native.birth').read_bytes(), birth)
+        self.assertEqual((self.attempt / 'manifest').read_bytes(), manifest)
+        self.assertEqual(self.uuid_marker.read_text(), NATIVE_UUID)
+        reopened_state = json.loads((self.attempt / 'checkpoint').read_bytes()[header_size:])
+        self.assertEqual(reopened_state['codex_log'], codex_log)
+        self.assertFalse((self.attempt / 'acknowledged').exists())
+        self.assertFalse((self.attempt / 'released').exists())
+
+        self.release_marker.touch()
+        expected_offset += len(terminal)
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            if ((self.attempt / 'stdout').stat().st_size == expected_offset and
+                    checkpoint_offset(self.attempt) == expected_offset and
+                    custody_offset(self.attempt) == expected_offset):
+                break
+            if second_monitor.poll() is not None:
+                out, err = second_monitor.communicate(timeout=10)
+                self.fail('reopened monitor stopped before terminal checkpoint: %r %r' % (out, err))
+            time.sleep(0.02)
+        self.assertEqual((self.attempt / 'stdout').stat().st_size, expected_offset)
+        self.assertEqual((self.attempt / 'stdout').read_bytes(), output_file.read_bytes() + terminal)
+        self.assertEqual(checkpoint_offset(self.attempt), expected_offset)
+        self.assertEqual(custody_offset(self.attempt), expected_offset)
+        self.wait_native_exit(timeout=20)
+        out, err = second_monitor.communicate(timeout=20)
+        self.assertNotEqual(second_monitor.returncode, 0, out + err)
+        self.assertEqual(checkpoint_offset(self.attempt), expected_offset)
+        self.assertEqual(custody_offset(self.attempt), expected_offset)
+        self.assert_unknown_pending(native_exited=True)
+        report = self.row("SELECT body FROM messages WHERE kind='report' AND sender='parent' LIMIT 1")
+        self.assertIsNotNone(report, 'completed Codex result report was not persisted')
+        self.assertEqual(len(report[0].encode()), text_bytes)
+        self.assertEqual(hashlib.sha256(report[0].encode()).digest(), digest.digest())
+        self.assertEqual(self.row("SELECT COUNT(*) FROM messages WHERE kind='report' AND sender='parent'"), (1,))
+        self.assertEqual(self.row('SELECT receipt FROM messages WHERE id=?', 'task'), (None,))
+        turn_event = self.row("SELECT event FROM turns WHERE worker='parent' LIMIT 1")
+        self.assertIsNotNone(turn_event)
+        result_event = json.loads(turn_event[0])
+        self.assertEqual(result_event['type'], 'result')
+        self.assertEqual(result_event['is_error'], 0)
+        self.assertEqual(result_event['result'], report[0])
+        self.assertFalse((self.attempt / 'acknowledged').exists())
+        self.assertFalse((self.attempt / 'released').exists())
+
+    def test_codex_large_failed_terminal_replaces_legacy_checkpoint(self):
+        import hashlib
+
+        error_bytes = 8 * 1024 * 1024
+        prefix = b'{"type":"turn.failed","error":{"message":"'
+        suffix = b'"}}\n'
+        text_bytes = error_bytes - len(prefix) - len(suffix)
+        output_file = self.directory / 'large-codex-legacy-failure.jsonl'
+        digest = hashlib.sha256()
+        remaining = text_bytes
+        block = b'f' * 65536
+        with output_file.open('wb') as output:
+            output.write(prefix)
+            while remaining:
+                chunk = block[:min(remaining, len(block))]
+                output.write(chunk)
+                digest.update(chunk)
+                remaining -= len(chunk)
+            output.write(suffix)
+        expected_offset = output_file.stat().st_size
+
+        legacy = ('{"type":"item.completed","item":{"id":"legacy","type":"agent_message",'
+                  '"text":"prior assistant result"}}\n')
+        observer, birth, manifest = self.start_attempt(
+            stdout_text=legacy, later_stdout_file=output_file, sleep_seconds=5)
+        argv = [str(COORDINATOR), '--recover-observer', str(self.db),
+                'parent', str(observer)]
+        monitor = subprocess.Popen(
+            argv, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            env=self.environment)
+        self.addCleanup(self.stop_owned_process, monitor)
+        legacy_offset = len(legacy.encode())
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            if checkpoint_offset(self.attempt) == legacy_offset and custody_offset(self.attempt) == legacy_offset:
+                break
+            if monitor.poll() is not None:
+                out, err = monitor.communicate(timeout=10)
+                self.fail('legacy assistant checkpoint did not settle before failed frame: %r %r' % (out, err))
+            time.sleep(0.02)
+        self.assertEqual(checkpoint_offset(self.attempt), legacy_offset)
+        self.assertEqual(custody_offset(self.attempt), legacy_offset)
+        checkpoint = (self.attempt / 'checkpoint').read_bytes()
+        header_size = struct.calcsize('@8sII8Qi4xQQ')
+        state = json.loads(checkpoint[header_size:])
+        self.assertEqual(state['codex_log'], legacy.rstrip('\n'))
+
+        # Restart only this fixture observer while the native waits for release.
+        self.stop_owned_process(monitor)
+        os.kill(self.native_process, 0)
+        monitor = subprocess.Popen(
+            argv, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            env=self.environment)
+        self.addCleanup(self.stop_owned_process, monitor)
+        time.sleep(0.25)
+        self.assertIsNone(monitor.poll(), 'reopened monitor exited before failed frame')
+        self.assertEqual(checkpoint_offset(self.attempt), legacy_offset)
+        self.assertEqual(custody_offset(self.attempt), legacy_offset)
+        self.assertEqual(self.row("SELECT COUNT(*) FROM messages WHERE kind='report' AND sender='parent'"), (0,))
+        self.assertEqual(self.row('SELECT receipt FROM messages WHERE id=?', 'task'), (None,))
+
+        self.release_marker.touch()
+        final_offset = legacy_offset + expected_offset
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            if (checkpoint_offset(self.attempt) == final_offset and
+                    custody_offset(self.attempt) == final_offset and
+                    (self.attempt / 'stdout').stat().st_size == final_offset):
+                break
+            if monitor.poll() is not None:
+                out, err = monitor.communicate(timeout=10)
+                self.fail('reopened monitor stopped before failed terminal checkpoint: %r %r' % (out, err))
+            time.sleep(0.02)
+        self.assertEqual(checkpoint_offset(self.attempt), final_offset)
+        self.assertEqual(custody_offset(self.attempt), final_offset)
+        self.wait_native_exit(timeout=30)
+        out, err = monitor.communicate(timeout=20)
+        self.assertNotEqual(monitor.returncode, 0, out + err)
+        self.assert_unknown_pending(native_exited=True)
+        report = self.row("SELECT body FROM messages WHERE kind='report' AND sender='parent' LIMIT 1")
+        self.assertIsNotNone(report, 'failed Codex result report was not persisted')
+        self.assertEqual(len(report[0].encode()), text_bytes)
+        self.assertEqual(hashlib.sha256(report[0].encode()).digest(), digest.digest())
+        self.assertEqual(self.row("SELECT COUNT(*) FROM messages WHERE kind='report' AND sender='parent'"), (1,))
+        self.assertEqual(self.row('SELECT receipt FROM messages WHERE id=?', 'task'), (None,))
+        turn_event = self.row("SELECT event FROM turns WHERE worker='parent' LIMIT 1")
+        self.assertIsNotNone(turn_event)
+        result_event = json.loads(turn_event[0])
+        self.assertEqual(result_event['type'], 'result')
+        self.assertEqual(result_event['is_error'], 1)
+        self.assertEqual(result_event['result'], report[0])
+        self.assertEqual(result_event['nativeEvent']['type'], 'turn.failed')
+        self.assertFalse((self.attempt / 'acknowledged').exists())
+        self.assertFalse((self.attempt / 'released').exists())
+        self.assertEqual((self.attempt / 'native.birth').read_bytes(), birth)
+        self.assertEqual((self.attempt / 'manifest').read_bytes(), manifest)
+        self.assertEqual(self.uuid_marker.read_text(), NATIVE_UUID)
+
+    def test_codex_large_failed_terminal_stays_spanned_through_report(self):
+        import hashlib
+
+        error_bytes = 8 * 1024 * 1024
+        prefix = b'{"type":"turn.failed","error":{"message":"'
+        suffix = b'"}}\n'
+        text_bytes = error_bytes - len(prefix) - len(suffix)
+        self.assertGreater(text_bytes, 0)
+        output_file = self.directory / 'large-codex-failure.jsonl'
+        digest = hashlib.sha256()
+        remaining = text_bytes
+        block = b'e' * 65536
+        with output_file.open('wb') as output:
+            output.write(prefix)
+            while remaining:
+                chunk = block[:min(remaining, len(block))]
+                output.write(chunk)
+                digest.update(chunk)
+                remaining -= len(chunk)
+            output.write(suffix)
+        expected_offset = output_file.stat().st_size
+
+        observer, birth, manifest = self.start_attempt(
+            stdout_text='', stdout_file=output_file, sleep_seconds=30)
+        argv = [str(COORDINATOR), '--recover-observer', str(self.db),
+                'parent', str(observer)]
+        monitor = subprocess.Popen(
+            argv, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            env=self.environment)
+        self.addCleanup(self.stop_owned_process, monitor)
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            if checkpoint_offset(self.attempt) == expected_offset and custody_offset(self.attempt) == expected_offset:
+                break
+            if monitor.poll() is not None:
+                out, err = monitor.communicate(timeout=10)
+                self.fail('large failure frame stopped before checkpoint: %r %r' % (out, err))
+            time.sleep(0.02)
+
+        self.assertEqual(checkpoint_offset(self.attempt), expected_offset)
+        self.assertEqual(custody_offset(self.attempt), expected_offset)
+        checkpoint = (self.attempt / 'checkpoint').read_bytes()
+        header_size = struct.calcsize('@8sII8Qi4xQQ')
+        fields = struct.unpack_from('@8sII8Qi4xQQ', checkpoint)
+        self.assertEqual(fields[0], b'BATONC03')
+        self.assertEqual(fields[8], expected_offset)
+        state = json.loads(checkpoint[header_size:])
+        codex_log = state['codex_log']
+        self.assertLess(len(codex_log.encode()), 1024)
+        codex_parts = codex_log.split('\n')
+        self.assertEqual(codex_parts[0], 'codex-span-v1')
+        self.assertEqual(codex_parts[1], '-')
+        self.assertIn('\x1e' + str(self.attempt / 'stdout') + '\x1e', codex_parts[2])
+        self.assertEqual((self.attempt / 'native.birth').read_bytes(), birth)
+        self.assertEqual((self.attempt / 'manifest').read_bytes(), manifest)
+        self.assertEqual(self.uuid_marker.read_text(), NATIVE_UUID)
+        self.assertEqual((self.attempt / 'stdout').stat().st_size, expected_offset)
+        self.assertEqual(hashlib.sha256((self.attempt / 'stdout').read_bytes()).digest(),
+                         hashlib.sha256(output_file.read_bytes()).digest())
+        self.assertEqual(self.row("SELECT COUNT(*) FROM messages WHERE kind='report' AND sender='parent'"), (0,))
+        self.assert_unknown_pending()
+        self.assertEqual(self.row('SELECT receipt FROM messages WHERE id=?', 'task'), (None,))
+        self.assertFalse((self.attempt / 'acknowledged').exists())
+        self.assertFalse((self.attempt / 'released').exists())
+
+        self.stop_owned_process(monitor)
+        os.kill(self.native_process, 0)
+        second_monitor = subprocess.Popen(
+            argv, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            env=self.environment)
+        self.addCleanup(self.stop_owned_process, second_monitor)
+        time.sleep(0.25)
+        self.assertIsNone(second_monitor.poll(), 'reopened monitor exited before native completion')
+        self.assertEqual(checkpoint_offset(self.attempt), expected_offset)
+        self.assertEqual(custody_offset(self.attempt), expected_offset)
+        self.assertEqual(self.row("SELECT COUNT(*) FROM messages WHERE kind='report' AND sender='parent'"), (0,))
+        self.assertEqual(self.row('SELECT receipt FROM messages WHERE id=?', 'task'), (None,))
+        self.assertEqual((self.attempt / 'native.birth').read_bytes(), birth)
+        self.assertEqual((self.attempt / 'manifest').read_bytes(), manifest)
+        self.assertEqual(self.uuid_marker.read_text(), NATIVE_UUID)
+        self.assertEqual(int((self.attempt / 'native.pid').read_text()), self.native_process)
+        reopened_state = json.loads((self.attempt / 'checkpoint').read_bytes()[header_size:])
+        self.assertEqual(reopened_state['codex_log'], codex_log)
+        self.assertEqual(hashlib.sha256((self.attempt / 'stdout').read_bytes()).digest(),
+                         hashlib.sha256(output_file.read_bytes()).digest())
+        self.assertFalse((self.attempt / 'acknowledged').exists())
+        self.assertFalse((self.attempt / 'released').exists())
+
+        self.wait_native_exit(timeout=40)
+        out, err = second_monitor.communicate(timeout=20)
+        self.assertNotEqual(second_monitor.returncode, 0, out + err)
+        self.assertEqual(checkpoint_offset(self.attempt), expected_offset)
+        self.assertEqual(custody_offset(self.attempt), expected_offset)
+        self.assert_unknown_pending(native_exited=True)
+        report = self.row("SELECT body FROM messages WHERE kind='report' AND sender='parent' LIMIT 1")
+        self.assertIsNotNone(report, 'failed Codex result report was not persisted')
+        result_body = json.loads(report[0])
+        self.assertEqual(result_body['type'], 'result')
+        self.assertEqual(result_body['is_error'], 1)
+        self.assertEqual(len(result_body['result'].encode()), text_bytes)
+        self.assertEqual(hashlib.sha256(result_body['result'].encode()).digest(), digest.digest())
+        self.assertEqual(result_body['nativeEvent']['type'], 'turn.failed')
+        self.assertEqual(result_body['nativeEvent']['error']['message'], result_body['result'])
+        turn_event = self.row("SELECT event FROM turns WHERE worker='parent' LIMIT 1")
+        self.assertEqual(turn_event, report)
+        self.assertEqual(self.row("SELECT COUNT(*) FROM messages WHERE kind='report' AND sender='parent'"), (1,))
+        self.assertEqual(self.row('SELECT receipt FROM messages WHERE id=?', 'task'), (None,))
+        self.assertFalse((self.attempt / 'acknowledged').exists())
+        self.assertFalse((self.attempt / 'released').exists())
 
     def test_unknown_status_monitor_advances_once_and_keeps_owed_input(self):
         first_line = 'monitor-line\n'
