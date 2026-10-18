@@ -7,6 +7,7 @@ import ./store.bend as Store
 import ./stop.bend as Stop
 import ./subscription-fallback.bend as Subs
 import ./accounts.bend as Accounts
+import ./usage-windows.bend as UW
 import ./turn.bend as Turn
 import ./native-initial-input.bend as NativeInitialInput
 import ../json/canonical.bend as J
@@ -289,6 +290,41 @@ def recover_if_dead(+db: String, +session: String, dead: Bool) -> IO(Unit):
 def wake_admit(+db: String, +session: String, +cursor: String, launch: String -> IO(Result<&1,&1,U32 & String,Unit>), lock: U32, state: String, +dead: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   wake_stand(db,session,cursor,launch,lock,wake_held(state,dead))
 
+# The usage window gate runs before the claim read: a held window keeps the
+# owed input unlaunched and reports the hold to the session and its conductor;
+# an elapsed window reports the restoration once and admits the owed input on
+# its retained assignment and account. An unknown or absent observation never
+# blocks the wake. The restoration report is a no-op for every gate that is not
+# a just-elapsed one.
+def wake_fenced_owed(+db: String, +session: String, +cursor: String, launch: String -> IO(Result<&1,&1,U32 & String,Unit>), lock: U32, gate: UW.Gate) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    +found : String <- wake_found(db,session,cursor)
+    restored : Unit <- UW.report_restored(db,session,Tx.trim_nl(found),gate)
+    state : String <- Store.claim_state(db,session)
+    dir : String <- IO.try(String,DB.Sql.query(db,attempt_dir_sql(session)))
+    +trimmed : String <- IO.pure(String,Tx.trim_nl(dir))
+    +dead : Bool <- custody_dead(db,trimmed,String.is_empty(trimmed))
+    recovered : Unit <- recover_if_dead(db,session,dead)
+    replay_cursor : String = Bool.pick(String,Bool.and(dead,Bool.not(String.is_empty(trimmed))),"0",cursor)
+    wake_admit(db,session,replay_cursor,launch,lock,state,dead)
+
+def wake_fenced_gate(+db: String, +session: String, +cursor: String, launch: String -> IO(Result<&1,&1,U32 & String,Unit>), lock: U32, gate: UW.Gate) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match gate:
+    case UW.GateHeld{+window,+resets_at,+source,+receipt}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      +found : String <- wake_found(db,session,cursor)
+      held : Unit <- UW.report_held(db,session,Tx.trim_nl(found),UW.GateHeld{window,resets_at,source,receipt})
+      scheduled : Unit <- UW.schedule_held(db,Tx.trim_nl(found),resets_at)
+      released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
+      IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
+    case other: wake_fenced_owed(db,session,cursor,launch,lock,gate)
+
+def wake_fenced_gated(+db: String, +session: String, +cursor: String, launch: String -> IO(Result<&1,&1,U32 & String,Unit>), lock: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    +label : String <- Subs.profile_label_io(db,session)
+    gate : UW.Gate <- UW.window_gate(db,session,Tx.trim_nl(label))
+    next : Result<&1,&1,U32 & String,Unit> <- wake_fenced_gate(db,session,cursor,launch,lock,gate)
+    IO.pure(Result<&1,&1,U32 & String,Unit>,next)
+
 # The wake reads the claim and retained attempt under the session lock. A
 # retained attempt with unknown native status keeps its claim for public receive
 # adoption. Observed native death updates the execution and admits the message.
@@ -297,14 +333,7 @@ def wake_fenced(+db: String, +session: String, +cursor: String, launch: String -
     case False{}: do IO<Result<&1,&1,U32 & String,Unit>>:
       released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
       IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
-    case True{}: do IO<Result<&1,&1,U32 & String,Unit>>:
-      state : String <- Store.claim_state(db,session)
-      dir : String <- IO.try(String,DB.Sql.query(db,attempt_dir_sql(session)))
-      +trimmed : String <- IO.pure(String,Tx.trim_nl(dir))
-      +dead : Bool <- custody_dead(db,trimmed,String.is_empty(trimmed))
-      recovered : Unit <- recover_if_dead(db,session,dead)
-      replay_cursor : String = Bool.pick(String,Bool.and(dead,Bool.not(String.is_empty(trimmed))),"0",cursor)
-      wake_admit(db,session,replay_cursor,launch,lock,state,dead)
+    case True{}: wake_fenced_gated(db,session,cursor,launch,lock)
 
 def wake_owned(+db: String, +session: String, +cursor: String, launch: String -> IO(Result<&1,&1,U32 & String,Unit>), lock: Maybe<U32>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match lock:
