@@ -56,6 +56,16 @@ checks pass, merge into the target branch and remove the completed contributor
 branch. Preserve active worktrees, uncommitted files and retained execution
 evidence.
 
+During the [#774](https://github.com/Flip-Engineering/baton/issues/774)
+delivery window, merges into the advertised target branch, issue closures,
+publication and installation follow independent review plus passing remote
+gates. The release conductor coordinates admission of full native builds; the
+current gate evidence is
+[docs/bend2/release-gate-evidence-2026-10-17.md](docs/bend2/release-gate-evidence-2026-10-17.md).
+Prepare merge-ready evidence on the assigned branch and record the branch
+disposition (deletable by advertised tip or ancestry, or preserved) with
+exact heads before requesting consolidation.
+
 Native workflow qualification uses the harnesses' existing logins.
 [Harness setup](docs/bend2/harness-setup.md) documents the subscription-only Codex
 native adapter and the measured OMP and Muse routes, with the immutable 1.0
