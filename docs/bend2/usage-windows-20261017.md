@@ -78,13 +78,15 @@ the latest provider row per window for exhaustion evidence:
 - None: no exhausted window. Partial reports stay visible in the query and do
   not hold.
 
-The continuation sleeps until the recorded reset and re-runs the wake through
-the existing dispatch entry (`--dispatch-message`) with no new input. The delay
-is capped at one day, so a far reset re-checks in bounded segments and a
-still-held gate schedules the next segment. It is one detached process, not a
-daemon, and it does not poll. Delivery stays receipt-gated, so a message that
-was handled before the reset keeps its receipt and gains no second delivery;
-two continuations for the same message leave one delivery and one held report.
+The continuation sleeps until the recorded reset and re-enters the wake driver
+(`--wake-message`, which calls `Wake.drive_id`) with no new input, so the gate
+is evaluated again when it fires. A still-held window reports and schedules the
+next segment; an elapsed one admits the owed input; a message that already has
+a receipt is a no-op. The delay is capped at one day, so a far reset re-checks
+in bounded segments. It is one detached process, not a daemon, and it does not
+poll. Delivery stays receipt-gated, so a handled message gains no second
+delivery; two continuations for the same message leave one delivery and one
+held report.
 
 ## Query
 

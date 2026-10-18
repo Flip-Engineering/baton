@@ -525,7 +525,7 @@ def window_gate(+db: String, +session: String, +account: String) -> IO(Gate):
 # continuation is not a daemon and does not poll.
 
 def schedule_argv(+self: String, +db: String, +message: String, +delay_s: String) -> List<String>:
-  ["/bin/sh","-c","sleep \"$1\"; shift; exec \"$@\"","sh",delay_s,self,"--dispatch-message",db,message]
+  ["/bin/sh","-c","sleep \"$1\"; shift; exec \"$@\"","sh",delay_s,self,"--wake-message",db,message]
 
 def schedule_delay_sql(+resets_at: String) -> String:
   "SELECT CAST(max(1,min(86400,(" ++ resets_at ++ "-" ++ now_ms() ++ "+999)/1000)) AS TEXT);"
