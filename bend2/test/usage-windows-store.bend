@@ -62,6 +62,7 @@ def session(+db: String, id: String) -> IO(Unit):
 
 def observe_cases(+db: String) -> IO(Unit):
   do IO<Unit>:
+    printed_unknown : Unit <- expect("operator-observation-json-null",String.eq(UW.observe_json("leaf","5-hour","NULL"),"{\"schema\":\"baton2-usage-window-observation-v1\",\"session\":\"leaf\",\"window\":\"5-hour\",\"resetsAt\":null}"))
     UW.record_cause(db,"leaf","m-leaf","",kimi_cause())
     reset_z : String <- UW.observe_reset_value(db,"2026-10-17T03:41:00Z")
     expect("operator-reset-explicit-z",String.eq(reset_z,"1792208460000"))

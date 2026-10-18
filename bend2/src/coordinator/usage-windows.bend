@@ -333,8 +333,14 @@ def observe_reset_value_known(+db: String, +resets: String, unknown: Bool) -> IO
 def observe_reset_value(+db: String, +resets: String) -> IO(String):
   observe_reset_value_known(db,resets,observe_reset_unknown(resets))
 
+def observe_resets_json(+resets: String) -> String:
+  Bool.pick(String,String.eq(resets,"NULL"),"null",resets)
+
+def observe_json(+session: String, +window: String, +resets: String) -> String:
+  "{\"schema\":\"baton2-usage-window-observation-v1\",\"session\":" ++ J.string_literal(session) ++ ",\"window\":" ++ J.string_literal(window) ++ ",\"resetsAt\":" ++ observe_resets_json(resets) ++ "}"
+
 def observe_print(+session: String, +window: String, +resets: String) -> IO(Unit):
-  IO.print("{\"schema\":\"baton2-usage-window-observation-v1\",\"session\":" ++ J.string_literal(session) ++ ",\"window\":" ++ J.string_literal(window) ++ ",\"resetsAt\":" ++ resets ++ "}")
+  IO.print(observe_json(session,window,resets))
 
 def observe(+db: String, +session: String, +window: String, +resets: String, +source: String, +account: String) -> IO(Unit):
   do IO<Unit>:

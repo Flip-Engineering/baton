@@ -110,6 +110,19 @@ class UsageWindows(unittest.TestCase):
         self.assertEqual(rows['5-hour']['state'], 'unknown')
         self.assertIsNone(rows['5-hour']['resetsAt'])
 
+    def test_unknown_reset_prints_json_null_and_keeps_sql_null(self):
+        self.recruit()
+        self.limit()
+        result = self.call('usage-window-observe', 'leaf', '5-hour', 'unknown',
+                           'kimi console shows none', raw=True)
+        self.assertEqual(result['code'], 0, result['stderr'])
+        self.assertIn('"resetsAt":null', result['stdout'])
+        answer = json.loads(result['stdout'])
+        self.assertIsNone(answer['resetsAt'])
+        with closing(sqlite3.connect(self.db)) as db:
+            row = db.execute('SELECT resets_at FROM usage_windows ORDER BY id DESC LIMIT 1').fetchone()
+        self.assertEqual(row, (None,))
+
     def test_partial_provider_report_is_open_and_not_held(self):
         self.recruit()
         self.reported()
