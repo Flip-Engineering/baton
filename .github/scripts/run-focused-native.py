@@ -12,7 +12,6 @@ import subprocess
 import sys
 import threading
 import time
-import urllib.request
 
 
 def digest(path):
@@ -34,20 +33,6 @@ def number_env(name):
     if not value.isdecimal() or int(value) <= 0:
         raise SystemExit('missing or invalid runner policy variable: ' + name)
     return int(value)
-
-
-def current_main():
-    token = os.environ.get('GH_TOKEN')
-    repo = os.environ.get('GITHUB_REPOSITORY')
-    if not token or not repo:
-        raise SystemExit('GitHub read token or repository identity is missing')
-    request = urllib.request.Request(
-        'https://api.github.com/repos/' + repo + '/commits/main',
-        headers={'Accept': 'application/vnd.github+json',
-                 'Authorization': 'Bearer ' + token,
-                 'X-GitHub-Api-Version': '2022-11-28'})
-    with urllib.request.urlopen(request, timeout=20) as response:
-        return json.load(response)['sha']
 
 
 def read_int(path):
@@ -224,6 +209,8 @@ def one_source(root, label, run, compiler, cgroup, deadline, records):
 
 
 def inside(args):
+    if 'GH_TOKEN' in os.environ or 'GITHUB_TOKEN' in os.environ:
+        raise SystemExit('GitHub tokens must not enter the admitted compiler scope')
     run = pathlib.Path(args.run).resolve()
     cg = pathlib.Path('/sys/fs/cgroup') / unified_cgroup().lstrip('/')
     expected_memory = int(args.memory)
@@ -318,9 +305,9 @@ def launch(args):
     source = args.source
     target = args.target
     verify_lineage(root, source, target)
-    actual_main = current_main()
+    actual_main = os.environ.get('BATON2_FOCUSED_CURRENT_MAIN', '')
     if actual_main != target:
-        raise SystemExit('target_commit is not current GitHub main: ' + actual_main)
+        raise SystemExit('preflight did not verify target_commit against current GitHub main')
     if args.suite != 'observer-recovery':
         raise SystemExit('unsupported focused suite')
     configured_max = number_env('BATON2_FOCUSED_MEMORY_MAX_BYTES')
