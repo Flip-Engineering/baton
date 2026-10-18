@@ -90,10 +90,16 @@ two continuations for the same message leave one delivery and one held report.
 
 `usage-windows SESSION` prints the newest observation per window with its
 current state: `held`, `elapsed`, and `unknown` for exhausted windows, and
-`open` for a row without exhaustion evidence (a partial report or an
-operator-only record). The reset time is printed in milliseconds and UTC text
-with its source and receipt. No matching row reads back `none recorded`; a
-model without a provider prefix reports `noProviderQualifiedModel`.
+`open` for a window without exhaustion evidence (a partial report or an
+operator-only record). The state uses the same per-window provider-exhaustion
+projection as the gate, so an operator-observed reset after a provider limit
+message reports `held` before the reset and `elapsed` after it, matching the
+gate verdict. Each row carries `source` (the reset's provenance, for example
+`operator-observation`), `exhausted`, and `exhaustionSource` (the latest
+provider row's source), so the reset fact and the exhaustion fact stay
+separate. The reset time is printed in milliseconds and UTC text with its
+receipt. No matching row reads back `none recorded`; a model without a
+provider prefix reports `noProviderQualifiedModel`.
 
 ## Verification
 

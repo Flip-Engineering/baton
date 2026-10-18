@@ -369,6 +369,18 @@ def refresh(+db: String, +session: String, +account: String) -> IO(Unit):
     ran : Unit <- Bool.pick(IO(Unit),String.eq(Tx.trim_nl(harness),"omp"),refresh_omp(db,session,account),refresh_unsupported(session,Tx.trim_nl(harness)))
     IO.pure(Unit,Unit{})
 
+def exhausted_sql(+alias: String) -> String:
+  "((" ++ alias ++ ".used_fraction IS NOT NULL AND " ++ alias ++ ".used_fraction >= 1) OR " ++ alias ++ ".reset_source='provider-message')"
+
+def latest_rows_sql(+harness: String, +provider: String, +account: String) -> String:
+  "SELECT w.* FROM usage_windows w WHERE " ++ window_match_sql(harness,provider,account) ++ " AND w.id=(SELECT w2.id FROM usage_windows w2 WHERE " ++ window_match_sql(harness,provider,account) ++ " AND w2.window=w.window ORDER BY w2.recorded_at DESC, w2.id DESC LIMIT 1)"
+
+def latest_provider_rows_sql(+harness: String, +provider: String, +account: String) -> String:
+  "SELECT p.* FROM usage_windows p WHERE " ++ window_match_sql(harness,provider,account) ++ " AND p.reset_source IN ('provider-message','provider-report') AND p.id=(SELECT p2.id FROM usage_windows p2 WHERE " ++ window_match_sql(harness,provider,account) ++ " AND p2.reset_source IN ('provider-message','provider-report') AND p2.window=p.window ORDER BY p2.recorded_at DESC, p2.id DESC LIMIT 1)"
+
+def exhausted_windows_sql(+harness: String, +provider: String, +account: String) -> String:
+  "SELECT p.window FROM (" ++ latest_provider_rows_sql(harness,provider,account) ++ ") p WHERE " ++ exhausted_sql("p")
+
 # --- the query ---------------------------------------------------------------
 
 # The latest observation per window for the session's binding, each with its
@@ -378,7 +390,9 @@ def query_none(+session: String, +account: String) -> String:
   "{\"schema\":\"baton2-usage-windows-v1\",\"session\":" ++ J.string_literal(session) ++ ",\"account\":" ++ J.string_literal(account) ++ ",\"windows\":\"none recorded\",\"condition\":\"noProviderQualifiedModel\"}"
 
 def query_answer_sql(+session: String, +harness: String, +provider: String, +account: String) -> String:
-  "SELECT json_object('schema','baton2-usage-windows-v1','session'," ++ C.q(session) ++ ",'account'," ++ C.q(account) ++ ",'windows',coalesce(nullif((SELECT json_group_array(json(item)) FROM (SELECT json_object('window',w.window,'state',CASE WHEN NOT ((w.used_fraction IS NOT NULL AND w.used_fraction >= 1) OR w.reset_source='provider-message') THEN 'open' WHEN w.resets_at IS NULL THEN 'unknown' WHEN w.resets_at > " ++ now_ms() ++ " THEN 'held' ELSE 'elapsed' END,'resetsAt',w.resets_at,'resetsAtText',CASE WHEN w.resets_at IS NULL THEN NULL ELSE strftime('%Y-%m-%dT%H:%M:%SZ',w.resets_at/1000,'unixepoch') END,'usedFraction',w.used_fraction,'source',w.reset_source,'receipt',w.receipt,'recordedAt',w.recorded_at,'message',nullif(w.message,'')) AS item FROM usage_windows w WHERE " ++ window_match_sql(harness,provider,account) ++ " AND w.id=(SELECT w2.id FROM usage_windows w2 WHERE " ++ window_match_sql(harness,provider,account) ++ " AND w2.window=w.window ORDER BY w2.recorded_at DESC, w2.id DESC LIMIT 1) ORDER BY w.window)),'[]'),'none recorded')) FROM sessions WHERE id=" ++ C.q(session) ++ ";"
+  +exhausted = exhausted_windows_sql(harness,provider,account)
+  +providers = latest_provider_rows_sql(harness,provider,account)
+  "SELECT json_object('schema','baton2-usage-windows-v1','session'," ++ C.q(session) ++ ",'account'," ++ C.q(account) ++ ",'windows',coalesce(nullif((SELECT json_group_array(json(item)) FROM (SELECT json_object('window',w.window,'state',CASE WHEN w.window NOT IN (" ++ exhausted ++ ") THEN 'open' WHEN w.resets_at IS NULL THEN 'unknown' WHEN w.resets_at > " ++ now_ms() ++ " THEN 'held' ELSE 'elapsed' END,'exhausted',json(CASE WHEN w.window IN (" ++ exhausted ++ ") THEN 'true' ELSE 'false' END),'exhaustionSource',(SELECT p.reset_source FROM (" ++ providers ++ ") p WHERE p.window=w.window),'resetsAt',w.resets_at,'resetsAtText',CASE WHEN w.resets_at IS NULL THEN NULL ELSE strftime('%Y-%m-%dT%H:%M:%SZ',w.resets_at/1000,'unixepoch') END,'usedFraction',w.used_fraction,'source',w.reset_source,'receipt',w.receipt,'recordedAt',w.recorded_at,'message',nullif(w.message,'')) AS item FROM usage_windows w WHERE " ++ window_match_sql(harness,provider,account) ++ " AND w.id=(SELECT w2.id FROM usage_windows w2 WHERE " ++ window_match_sql(harness,provider,account) ++ " AND w2.window=w.window ORDER BY w2.recorded_at DESC, w2.id DESC LIMIT 1) ORDER BY w.window)),'[]'),'none recorded')) FROM sessions WHERE id=" ++ C.q(session) ++ ";"
 
 def query_bound(+db: String, +session: String, +harness: String, +provider: String, +account: String) -> IO(Unit):
   do IO<Unit>:
@@ -406,18 +420,6 @@ def query(+db: String, +session: String, +account: String) -> IO(Unit):
 # exhausted window's reset is still in the future, is elapsed when one has
 # passed, is unknown when the only exhausted evidence carries no reset, and is
 # none otherwise.
-
-def exhausted_sql(+alias: String) -> String:
-  "((" ++ alias ++ ".used_fraction IS NOT NULL AND " ++ alias ++ ".used_fraction >= 1) OR " ++ alias ++ ".reset_source='provider-message')"
-
-def latest_rows_sql(+harness: String, +provider: String, +account: String) -> String:
-  "SELECT w.* FROM usage_windows w WHERE " ++ window_match_sql(harness,provider,account) ++ " AND w.id=(SELECT w2.id FROM usage_windows w2 WHERE " ++ window_match_sql(harness,provider,account) ++ " AND w2.window=w.window ORDER BY w2.recorded_at DESC, w2.id DESC LIMIT 1)"
-
-def latest_provider_rows_sql(+harness: String, +provider: String, +account: String) -> String:
-  "SELECT p.* FROM usage_windows p WHERE " ++ window_match_sql(harness,provider,account) ++ " AND p.reset_source IN ('provider-message','provider-report') AND p.id=(SELECT p2.id FROM usage_windows p2 WHERE " ++ window_match_sql(harness,provider,account) ++ " AND p2.reset_source IN ('provider-message','provider-report') AND p2.window=p.window ORDER BY p2.recorded_at DESC, p2.id DESC LIMIT 1)"
-
-def exhausted_windows_sql(+harness: String, +provider: String, +account: String) -> String:
-  "SELECT p.window FROM (" ++ latest_provider_rows_sql(harness,provider,account) ++ ") p WHERE " ++ exhausted_sql("p")
 
 def window_state_rows_sql(+harness: String, +provider: String, +account: String) -> String:
   latest_rows_sql(harness,provider,account) ++ " AND w.window IN (" ++ exhausted_windows_sql(harness,provider,account) ++ ")"
