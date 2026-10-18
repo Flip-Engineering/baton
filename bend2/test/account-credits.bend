@@ -61,6 +61,12 @@ def binding_checks() -> IO(Unit):
     other_provider : Unit <- binding_is(A.account_binding("codex",Some{A.Ac{"openai-codex","openai","codex","subscription","/fixture/stores/codex","org-openai","2026-10-18"}},None{},""),"other-provider-subscription-binding-is-unchanged","CODEX_HOME=/fixture/stores/codex")
     IO.pure(Unit,Unit{})
 
+def refusal_checks() -> IO(Unit):
+  do IO<Unit>:
+    anthropic : Unit <- check("api-key-credit-hold-refusal",String.eq(A.credit_api_key_refusal(A.Ac{"claude-credit","anthropic","claude-code","api_key","file:/fixture/secrets/api","org-fixture","2026-10-18"}),"The account claude-credit funds Anthropic API calls through an API key, but request-level promotional-credit admission is unavailable; the attempt was not started and its input stays owed."))
+    other : Unit <- check("other-provider-resolver-refusal",String.eq(A.credit_api_key_refusal(A.Ac{"openai-api","openai","codex","api_key","file:/fixture/secrets/openai","org-openai","2026-10-18"}),"The account openai-api funds its work through an API key and this deployment installs no api-key resolver beside the resolved identity helper; the attempt was not started and its input stays owed."))
+    IO.pure(Unit,Unit{})
+
 def decimal_checks() -> IO(Unit):
   do IO<Unit>:
     whole : Unit <- check("balance-whole-decimal",A.decimal_text("200"))
@@ -122,6 +128,7 @@ def main() -> IO(Unit):
     vocab : Unit <- vocabulary_checks()
     operations : Unit <- operation_checks()
     binds : Unit <- binding_checks()
+    refusals : Unit <- refusal_checks()
     states : Unit <- state_checks()
     selections : Unit <- selection_checks()
     authority : Unit <- authority_checks()
