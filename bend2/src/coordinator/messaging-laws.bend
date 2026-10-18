@@ -79,12 +79,12 @@ law peer_routes_require_shared_tight_membership:
 def peer_routes_require_shared_tight_membership(sender,recipient):
   {==}
 
-law operator_routes_require_an_explicit_top_level_conductor:
+law operator_routes_admit_a_top_level_or_recorded_conductor:
   for +sender: String
   for +recipient: String
-  {C.operator_route(sender,recipient) == "((" ++ C.assigned_role(sender) ++ "='operator' AND " ++ C.assigned_role(recipient) ++ "='conductor' AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ recipient ++ " AND parent IS NULL)) OR (" ++ C.assigned_role(recipient) ++ "='operator' AND " ++ C.assigned_role(sender) ++ "='conductor' AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ sender ++ " AND parent IS NULL)))" : String}
+  {C.operator_route(sender,recipient) == "((" ++ C.assigned_role(sender) ++ "='operator' AND " ++ C.assigned_role(recipient) ++ "='conductor' AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ recipient ++ " AND (parent IS NULL OR parent=" ++ sender ++ "))) OR (" ++ C.assigned_role(recipient) ++ "='operator' AND " ++ C.assigned_role(sender) ++ "='conductor' AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ sender ++ " AND parent IS NULL)))" : String}
 
-def operator_routes_require_an_explicit_top_level_conductor(sender,recipient):
+def operator_routes_admit_a_top_level_or_recorded_conductor(sender,recipient):
   {==}
 
 law message_routes_require_registered_distinct_sessions_and_a_permitted_relation:

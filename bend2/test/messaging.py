@@ -156,6 +156,20 @@ class Messaging(unittest.TestCase):
         self.send('childless-conductor', 'root', 'unassigned')
         self.call('ensemble-member', 'null-peers', 'root', 'operator', 'add', success=False)
 
+    def test_operator_guidance_reaches_its_recorded_associate_conductor_child(self):
+        self.call('recruit', 'operator-child', 'operator', 'fixture', 'model', 'low',
+                  str(self.repo), 'operator-child-branch',
+                  str(self.directory / 'operator-child'), 'HEAD')
+        self.call('role', 'operator-child', 'associate-conductor')
+        self.send('operator-recorded-child', 'operator', 'operator-child')
+        self.refused('operator-non-child-conductor', 'operator', 'lead-a')
+        self.refused('ancestry-grandparent', 'deep-leaf', 'root')
+        self.call('stop', 'operator-child', 'operator-child-stop', 'Route regression stop.')
+        stopped = self.call('message', 'operator-recorded-child-stopped', 'operator',
+                            'operator-child', 'guidance', 'Task information.', success=False)
+        self.assertIn('terminally stopped', stopped.stderr)
+        self.assertNotIn('message-route-denied', stopped.stderr)
+
     def test_closed_declarations_and_ownership_preserve_existing_policy(self):
         self.call('role', 'root', 'unknown', success=False)
         self.call('role', 'missing', 'principal-conductor', success=False)
