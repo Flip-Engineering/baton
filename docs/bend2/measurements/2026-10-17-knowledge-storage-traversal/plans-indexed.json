@@ -1,0 +1,5678 @@
+{
+ "read": [
+  [
+   2,
+   0,
+   0,
+   "CO-ROUTINE (subquery-13)"
+  ],
+  [
+   5,
+   2,
+   0,
+   "SCAN k"
+  ],
+  [
+   9,
+   2,
+   0,
+   "SCALAR SUBQUERY 12"
+  ],
+  [
+   13,
+   9,
+   0,
+   "SEARCH sessions USING COVERING INDEX sqlite_autoindex_sessions_1 (id=?)"
+  ],
+  [
+   27,
+   2,
+   0,
+   "CORRELATED SCALAR SUBQUERY 1"
+  ],
+  [
+   35,
+   27,
+   0,
+   "SEARCH messages USING INDEX sqlite_autoindex_messages_1 (id=?)"
+  ],
+  [
+   53,
+   2,
+   0,
+   "CORRELATED SCALAR SUBQUERY 2"
+  ],
+  [
+   59,
+   53,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   78,
+   2,
+   0,
+   "CORRELATED SCALAR SUBQUERY 4"
+  ],
+  [
+   84,
+   78,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   123,
+   2,
+   0,
+   "CORRELATED SCALAR SUBQUERY 11"
+  ],
+  [
+   130,
+   123,
+   0,
+   "MULTI-INDEX OR"
+  ],
+  [
+   131,
+   130,
+   0,
+   "INDEX 1"
+  ],
+  [
+   150,
+   131,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_source (source=?)"
+  ],
+  [
+   156,
+   130,
+   0,
+   "INDEX 2"
+  ],
+  [
+   175,
+   156,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_target (target=?)"
+  ],
+  [
+   194,
+   123,
+   0,
+   "CORRELATED SCALAR SUBQUERY 5"
+  ],
+  [
+   198,
+   194,
+   0,
+   "SEARCH knowledge USING COVERING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   215,
+   123,
+   0,
+   "CORRELATED SCALAR SUBQUERY 6"
+  ],
+  [
+   220,
+   215,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   241,
+   123,
+   0,
+   "CORRELATED SCALAR SUBQUERY 7"
+  ],
+  [
+   246,
+   241,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   269,
+   123,
+   0,
+   "CORRELATED SCALAR SUBQUERY 8"
+  ],
+  [
+   273,
+   269,
+   0,
+   "SEARCH knowledge USING COVERING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   290,
+   123,
+   0,
+   "CORRELATED SCALAR SUBQUERY 9"
+  ],
+  [
+   295,
+   290,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   316,
+   123,
+   0,
+   "CORRELATED SCALAR SUBQUERY 10"
+  ],
+  [
+   321,
+   316,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   351,
+   0,
+   0,
+   "SCAN (subquery-13)"
+  ]
+ ],
+ "index": [
+  [
+   2,
+   0,
+   0,
+   "CO-ROUTINE (subquery-6)"
+  ],
+  [
+   5,
+   2,
+   0,
+   "SCAN k"
+  ],
+  [
+   9,
+   2,
+   0,
+   "SCALAR SUBQUERY 5"
+  ],
+  [
+   13,
+   9,
+   0,
+   "SEARCH sessions USING COVERING INDEX sqlite_autoindex_sessions_1 (id=?)"
+  ],
+  [
+   32,
+   2,
+   0,
+   "CORRELATED SCALAR SUBQUERY 1"
+  ],
+  [
+   40,
+   32,
+   0,
+   "SEARCH messages USING INDEX sqlite_autoindex_messages_1 (id=?)"
+  ],
+  [
+   67,
+   2,
+   0,
+   "CORRELATED SCALAR SUBQUERY 2"
+  ],
+  [
+   73,
+   67,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   92,
+   2,
+   0,
+   "CORRELATED SCALAR SUBQUERY 3"
+  ],
+  [
+   97,
+   92,
+   0,
+   "SEARCH p USING COVERING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   109,
+   2,
+   0,
+   "CORRELATED SCALAR SUBQUERY 4"
+  ],
+  [
+   116,
+   109,
+   0,
+   "MULTI-INDEX OR"
+  ],
+  [
+   117,
+   116,
+   0,
+   "INDEX 1"
+  ],
+  [
+   136,
+   117,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_source (source=?)"
+  ],
+  [
+   142,
+   116,
+   0,
+   "INDEX 2"
+  ],
+  [
+   161,
+   142,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_target (target=?)"
+  ],
+  [
+   182,
+   0,
+   0,
+   "SCAN (subquery-6)"
+  ]
+ ],
+ "detail": [
+  [
+   2,
+   0,
+   0,
+   "CO-ROUTINE (subquery-13)"
+  ],
+  [
+   6,
+   2,
+   0,
+   "SEARCH k USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   13,
+   2,
+   0,
+   "SCALAR SUBQUERY 12"
+  ],
+  [
+   17,
+   13,
+   0,
+   "SEARCH sessions USING COVERING INDEX sqlite_autoindex_sessions_1 (id=?)"
+  ],
+  [
+   31,
+   2,
+   0,
+   "CORRELATED SCALAR SUBQUERY 1"
+  ],
+  [
+   39,
+   31,
+   0,
+   "SEARCH messages USING INDEX sqlite_autoindex_messages_1 (id=?)"
+  ],
+  [
+   57,
+   2,
+   0,
+   "CORRELATED SCALAR SUBQUERY 2"
+  ],
+  [
+   63,
+   57,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   82,
+   2,
+   0,
+   "CORRELATED SCALAR SUBQUERY 4"
+  ],
+  [
+   88,
+   82,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   127,
+   2,
+   0,
+   "CORRELATED SCALAR SUBQUERY 11"
+  ],
+  [
+   134,
+   127,
+   0,
+   "MULTI-INDEX OR"
+  ],
+  [
+   135,
+   134,
+   0,
+   "INDEX 1"
+  ],
+  [
+   154,
+   135,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_source (source=?)"
+  ],
+  [
+   160,
+   134,
+   0,
+   "INDEX 2"
+  ],
+  [
+   179,
+   160,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_target (target=?)"
+  ],
+  [
+   198,
+   127,
+   0,
+   "CORRELATED SCALAR SUBQUERY 5"
+  ],
+  [
+   202,
+   198,
+   0,
+   "SEARCH knowledge USING COVERING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   219,
+   127,
+   0,
+   "CORRELATED SCALAR SUBQUERY 6"
+  ],
+  [
+   224,
+   219,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   245,
+   127,
+   0,
+   "CORRELATED SCALAR SUBQUERY 7"
+  ],
+  [
+   250,
+   245,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   273,
+   127,
+   0,
+   "CORRELATED SCALAR SUBQUERY 8"
+  ],
+  [
+   277,
+   273,
+   0,
+   "SEARCH knowledge USING COVERING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   294,
+   127,
+   0,
+   "CORRELATED SCALAR SUBQUERY 9"
+  ],
+  [
+   299,
+   294,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   320,
+   127,
+   0,
+   "CORRELATED SCALAR SUBQUERY 10"
+  ],
+  [
+   325,
+   320,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   354,
+   0,
+   0,
+   "SCAN (subquery-13)"
+  ]
+ ],
+ "relations": [
+  [
+   2,
+   0,
+   0,
+   "CO-ROUTINE (subquery-8)"
+  ],
+  [
+   6,
+   2,
+   0,
+   "SCAN r USING INDEX sqlite_autoindex_knowledge_relations_1"
+  ],
+  [
+   11,
+   2,
+   0,
+   "SCALAR SUBQUERY 7"
+  ],
+  [
+   15,
+   11,
+   0,
+   "SEARCH sessions USING COVERING INDEX sqlite_autoindex_sessions_1 (id=?)"
+  ],
+  [
+   35,
+   2,
+   0,
+   "CORRELATED SCALAR SUBQUERY 1"
+  ],
+  [
+   39,
+   35,
+   0,
+   "SEARCH knowledge USING COVERING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   55,
+   2,
+   0,
+   "CORRELATED SCALAR SUBQUERY 2"
+  ],
+  [
+   60,
+   55,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   81,
+   2,
+   0,
+   "CORRELATED SCALAR SUBQUERY 3"
+  ],
+  [
+   86,
+   81,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   108,
+   2,
+   0,
+   "CORRELATED SCALAR SUBQUERY 4"
+  ],
+  [
+   112,
+   108,
+   0,
+   "SEARCH knowledge USING COVERING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   128,
+   2,
+   0,
+   "CORRELATED SCALAR SUBQUERY 5"
+  ],
+  [
+   133,
+   128,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   154,
+   2,
+   0,
+   "CORRELATED SCALAR SUBQUERY 6"
+  ],
+  [
+   159,
+   154,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   175,
+   0,
+   0,
+   "SCAN (subquery-8)"
+  ]
+ ],
+ "search": [
+  [
+   1,
+   0,
+   0,
+   "SCAN CONSTANT ROW"
+  ],
+  [
+   10,
+   0,
+   0,
+   "SCALAR SUBQUERY 42"
+  ],
+  [
+   15,
+   10,
+   0,
+   "SCAN k"
+  ],
+  [
+   19,
+   10,
+   0,
+   "SCALAR SUBQUERY 16"
+  ],
+  [
+   23,
+   19,
+   0,
+   "SEARCH sessions USING COVERING INDEX sqlite_autoindex_sessions_1 (id=?)"
+  ],
+  [
+   56,
+   10,
+   0,
+   "CORRELATED SCALAR SUBQUERY 1"
+  ],
+  [
+   64,
+   56,
+   0,
+   "SEARCH messages USING INDEX sqlite_autoindex_messages_1 (id=?)"
+  ],
+  [
+   91,
+   10,
+   0,
+   "CORRELATED SCALAR SUBQUERY 2"
+  ],
+  [
+   97,
+   91,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   116,
+   10,
+   0,
+   "CORRELATED SCALAR SUBQUERY 3"
+  ],
+  [
+   121,
+   116,
+   0,
+   "SEARCH p USING COVERING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   133,
+   10,
+   0,
+   "CORRELATED SCALAR SUBQUERY 4"
+  ],
+  [
+   140,
+   133,
+   0,
+   "MULTI-INDEX OR"
+  ],
+  [
+   141,
+   140,
+   0,
+   "INDEX 1"
+  ],
+  [
+   160,
+   141,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_source (source=?)"
+  ],
+  [
+   166,
+   140,
+   0,
+   "INDEX 2"
+  ],
+  [
+   185,
+   166,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_target (target=?)"
+  ],
+  [
+   208,
+   10,
+   0,
+   "CORRELATED SCALAR SUBQUERY 5"
+  ],
+  [
+   216,
+   208,
+   0,
+   "SEARCH messages USING INDEX sqlite_autoindex_messages_1 (id=?)"
+  ],
+  [
+   234,
+   10,
+   0,
+   "CORRELATED SCALAR SUBQUERY 6"
+  ],
+  [
+   240,
+   234,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   259,
+   10,
+   0,
+   "CORRELATED SCALAR SUBQUERY 8"
+  ],
+  [
+   265,
+   259,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   304,
+   10,
+   0,
+   "CORRELATED SCALAR SUBQUERY 15"
+  ],
+  [
+   311,
+   304,
+   0,
+   "MULTI-INDEX OR"
+  ],
+  [
+   312,
+   311,
+   0,
+   "INDEX 1"
+  ],
+  [
+   331,
+   312,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_source (source=?)"
+  ],
+  [
+   337,
+   311,
+   0,
+   "INDEX 2"
+  ],
+  [
+   356,
+   337,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_target (target=?)"
+  ],
+  [
+   375,
+   304,
+   0,
+   "CORRELATED SCALAR SUBQUERY 9"
+  ],
+  [
+   379,
+   375,
+   0,
+   "SEARCH knowledge USING COVERING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   396,
+   304,
+   0,
+   "CORRELATED SCALAR SUBQUERY 10"
+  ],
+  [
+   401,
+   396,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   422,
+   304,
+   0,
+   "CORRELATED SCALAR SUBQUERY 11"
+  ],
+  [
+   427,
+   422,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   450,
+   304,
+   0,
+   "CORRELATED SCALAR SUBQUERY 12"
+  ],
+  [
+   454,
+   450,
+   0,
+   "SEARCH knowledge USING COVERING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   471,
+   304,
+   0,
+   "CORRELATED SCALAR SUBQUERY 13"
+  ],
+  [
+   476,
+   471,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   497,
+   304,
+   0,
+   "CORRELATED SCALAR SUBQUERY 14"
+  ],
+  [
+   502,
+   497,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   561,
+   0,
+   0,
+   "SCALAR SUBQUERY 44"
+  ],
+  [
+   566,
+   561,
+   0,
+   "SCAN k"
+  ],
+  [
+   570,
+   561,
+   0,
+   "SCALAR SUBQUERY 16"
+  ],
+  [
+   574,
+   570,
+   0,
+   "SEARCH sessions USING COVERING INDEX sqlite_autoindex_sessions_1 (id=?)"
+  ],
+  [
+   585,
+   561,
+   0,
+   "LIST SUBQUERY 43"
+  ],
+  [
+   588,
+   585,
+   0,
+   "MATERIALIZE references_in_view"
+  ],
+  [
+   591,
+   588,
+   0,
+   "COMPOUND QUERY"
+  ],
+  [
+   592,
+   591,
+   0,
+   "LEFT-MOST SUBQUERY"
+  ],
+  [
+   594,
+   592,
+   0,
+   "SCAN k"
+  ],
+  [
+   598,
+   592,
+   0,
+   "SCALAR SUBQUERY 16"
+  ],
+  [
+   602,
+   598,
+   0,
+   "SEARCH sessions USING COVERING INDEX sqlite_autoindex_sessions_1 (id=?)"
+  ],
+  [
+   635,
+   592,
+   0,
+   "CORRELATED SCALAR SUBQUERY 1"
+  ],
+  [
+   643,
+   635,
+   0,
+   "SEARCH messages USING INDEX sqlite_autoindex_messages_1 (id=?)"
+  ],
+  [
+   670,
+   592,
+   0,
+   "CORRELATED SCALAR SUBQUERY 2"
+  ],
+  [
+   676,
+   670,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   695,
+   592,
+   0,
+   "CORRELATED SCALAR SUBQUERY 3"
+  ],
+  [
+   700,
+   695,
+   0,
+   "SEARCH p USING COVERING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   712,
+   592,
+   0,
+   "CORRELATED SCALAR SUBQUERY 4"
+  ],
+  [
+   719,
+   712,
+   0,
+   "MULTI-INDEX OR"
+  ],
+  [
+   720,
+   719,
+   0,
+   "INDEX 1"
+  ],
+  [
+   739,
+   720,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_source (source=?)"
+  ],
+  [
+   745,
+   719,
+   0,
+   "INDEX 2"
+  ],
+  [
+   764,
+   745,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_target (target=?)"
+  ],
+  [
+   787,
+   592,
+   0,
+   "CORRELATED SCALAR SUBQUERY 5"
+  ],
+  [
+   795,
+   787,
+   0,
+   "SEARCH messages USING INDEX sqlite_autoindex_messages_1 (id=?)"
+  ],
+  [
+   813,
+   592,
+   0,
+   "CORRELATED SCALAR SUBQUERY 6"
+  ],
+  [
+   819,
+   813,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   838,
+   592,
+   0,
+   "CORRELATED SCALAR SUBQUERY 8"
+  ],
+  [
+   844,
+   838,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   883,
+   592,
+   0,
+   "CORRELATED SCALAR SUBQUERY 15"
+  ],
+  [
+   890,
+   883,
+   0,
+   "MULTI-INDEX OR"
+  ],
+  [
+   891,
+   890,
+   0,
+   "INDEX 1"
+  ],
+  [
+   910,
+   891,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_source (source=?)"
+  ],
+  [
+   916,
+   890,
+   0,
+   "INDEX 2"
+  ],
+  [
+   935,
+   916,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_target (target=?)"
+  ],
+  [
+   954,
+   883,
+   0,
+   "CORRELATED SCALAR SUBQUERY 9"
+  ],
+  [
+   958,
+   954,
+   0,
+   "SEARCH knowledge USING COVERING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   975,
+   883,
+   0,
+   "CORRELATED SCALAR SUBQUERY 10"
+  ],
+  [
+   980,
+   975,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   1001,
+   883,
+   0,
+   "CORRELATED SCALAR SUBQUERY 11"
+  ],
+  [
+   1006,
+   1001,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   1029,
+   883,
+   0,
+   "CORRELATED SCALAR SUBQUERY 12"
+  ],
+  [
+   1033,
+   1029,
+   0,
+   "SEARCH knowledge USING COVERING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   1050,
+   883,
+   0,
+   "CORRELATED SCALAR SUBQUERY 13"
+  ],
+  [
+   1055,
+   1050,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   1076,
+   883,
+   0,
+   "CORRELATED SCALAR SUBQUERY 14"
+  ],
+  [
+   1081,
+   1076,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   1129,
+   591,
+   0,
+   "UNION USING TEMP B-TREE"
+  ],
+  [
+   1132,
+   1129,
+   0,
+   "MATERIALIZE edges"
+  ],
+  [
+   1134,
+   1132,
+   0,
+   "COMPOUND QUERY"
+  ],
+  [
+   1135,
+   1134,
+   0,
+   "LEFT-MOST SUBQUERY"
+  ],
+  [
+   1137,
+   1135,
+   0,
+   "SCAN r"
+  ],
+  [
+   1141,
+   1135,
+   0,
+   "SCALAR SUBQUERY 28"
+  ],
+  [
+   1145,
+   1141,
+   0,
+   "SEARCH sessions USING COVERING INDEX sqlite_autoindex_sessions_1 (id=?)"
+  ],
+  [
+   1166,
+   1135,
+   0,
+   "CORRELATED SCALAR SUBQUERY 18"
+  ],
+  [
+   1170,
+   1166,
+   0,
+   "SEARCH knowledge USING COVERING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   1191,
+   1135,
+   0,
+   "CORRELATED SCALAR SUBQUERY 19"
+  ],
+  [
+   1195,
+   1191,
+   0,
+   "SEARCH knowledge USING COVERING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   1219,
+   1135,
+   0,
+   "CORRELATED SCALAR SUBQUERY 20"
+  ],
+  [
+   1223,
+   1219,
+   0,
+   "SEARCH knowledge USING COVERING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   1239,
+   1135,
+   0,
+   "CORRELATED SCALAR SUBQUERY 21"
+  ],
+  [
+   1244,
+   1239,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   1265,
+   1135,
+   0,
+   "CORRELATED SCALAR SUBQUERY 22"
+  ],
+  [
+   1270,
+   1265,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   1292,
+   1135,
+   0,
+   "CORRELATED SCALAR SUBQUERY 23"
+  ],
+  [
+   1296,
+   1292,
+   0,
+   "SEARCH knowledge USING COVERING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   1312,
+   1135,
+   0,
+   "CORRELATED SCALAR SUBQUERY 24"
+  ],
+  [
+   1317,
+   1312,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   1338,
+   1135,
+   0,
+   "CORRELATED SCALAR SUBQUERY 25"
+  ],
+  [
+   1343,
+   1338,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   1364,
+   1135,
+   0,
+   "CORRELATED SCALAR SUBQUERY 26"
+  ],
+  [
+   1368,
+   1364,
+   0,
+   "SEARCH knowledge USING COVERING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   1389,
+   1135,
+   0,
+   "CORRELATED SCALAR SUBQUERY 27"
+  ],
+  [
+   1393,
+   1389,
+   0,
+   "SEARCH knowledge USING COVERING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   1411,
+   1134,
+   0,
+   "UNION ALL"
+  ],
+  [
+   1413,
+   1411,
+   0,
+   "SCAN k"
+  ],
+  [
+   1417,
+   1411,
+   0,
+   "SCALAR SUBQUERY 16"
+  ],
+  [
+   1421,
+   1417,
+   0,
+   "SEARCH sessions USING COVERING INDEX sqlite_autoindex_sessions_1 (id=?)"
+  ],
+  [
+   1471,
+   1411,
+   0,
+   "CORRELATED SCALAR SUBQUERY 1"
+  ],
+  [
+   1479,
+   1471,
+   0,
+   "SEARCH messages USING INDEX sqlite_autoindex_messages_1 (id=?)"
+  ],
+  [
+   1506,
+   1411,
+   0,
+   "CORRELATED SCALAR SUBQUERY 2"
+  ],
+  [
+   1512,
+   1506,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   1531,
+   1411,
+   0,
+   "CORRELATED SCALAR SUBQUERY 3"
+  ],
+  [
+   1536,
+   1531,
+   0,
+   "SEARCH p USING COVERING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   1548,
+   1411,
+   0,
+   "CORRELATED SCALAR SUBQUERY 4"
+  ],
+  [
+   1555,
+   1548,
+   0,
+   "MULTI-INDEX OR"
+  ],
+  [
+   1556,
+   1555,
+   0,
+   "INDEX 1"
+  ],
+  [
+   1575,
+   1556,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_source (source=?)"
+  ],
+  [
+   1581,
+   1555,
+   0,
+   "INDEX 2"
+  ],
+  [
+   1600,
+   1581,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_target (target=?)"
+  ],
+  [
+   1623,
+   1411,
+   0,
+   "CORRELATED SCALAR SUBQUERY 5"
+  ],
+  [
+   1631,
+   1623,
+   0,
+   "SEARCH messages USING INDEX sqlite_autoindex_messages_1 (id=?)"
+  ],
+  [
+   1649,
+   1411,
+   0,
+   "CORRELATED SCALAR SUBQUERY 6"
+  ],
+  [
+   1655,
+   1649,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   1674,
+   1411,
+   0,
+   "CORRELATED SCALAR SUBQUERY 8"
+  ],
+  [
+   1680,
+   1674,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   1719,
+   1411,
+   0,
+   "CORRELATED SCALAR SUBQUERY 15"
+  ],
+  [
+   1726,
+   1719,
+   0,
+   "MULTI-INDEX OR"
+  ],
+  [
+   1727,
+   1726,
+   0,
+   "INDEX 1"
+  ],
+  [
+   1746,
+   1727,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_source (source=?)"
+  ],
+  [
+   1752,
+   1726,
+   0,
+   "INDEX 2"
+  ],
+  [
+   1771,
+   1752,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_target (target=?)"
+  ],
+  [
+   1790,
+   1719,
+   0,
+   "CORRELATED SCALAR SUBQUERY 9"
+  ],
+  [
+   1794,
+   1790,
+   0,
+   "SEARCH knowledge USING COVERING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   1811,
+   1719,
+   0,
+   "CORRELATED SCALAR SUBQUERY 10"
+  ],
+  [
+   1816,
+   1811,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   1837,
+   1719,
+   0,
+   "CORRELATED SCALAR SUBQUERY 11"
+  ],
+  [
+   1842,
+   1837,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   1865,
+   1719,
+   0,
+   "CORRELATED SCALAR SUBQUERY 12"
+  ],
+  [
+   1869,
+   1865,
+   0,
+   "SEARCH knowledge USING COVERING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   1886,
+   1719,
+   0,
+   "CORRELATED SCALAR SUBQUERY 13"
+  ],
+  [
+   1891,
+   1886,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   1912,
+   1719,
+   0,
+   "CORRELATED SCALAR SUBQUERY 14"
+  ],
+  [
+   1917,
+   1912,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   1963,
+   1411,
+   0,
+   "CORRELATED SCALAR SUBQUERY 30"
+  ],
+  [
+   1968,
+   1963,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   1989,
+   1411,
+   0,
+   "CORRELATED SCALAR SUBQUERY 31"
+  ],
+  [
+   1994,
+   1989,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   2013,
+   1129,
+   0,
+   "SCAN e"
+  ],
+  [
+   2018,
+   1129,
+   0,
+   "LIST SUBQUERY 36"
+  ],
+  [
+   2020,
+   2018,
+   0,
+   "SCAN k"
+  ],
+  [
+   2024,
+   2018,
+   0,
+   "SCALAR SUBQUERY 16"
+  ],
+  [
+   2028,
+   2024,
+   0,
+   "SEARCH sessions USING COVERING INDEX sqlite_autoindex_sessions_1 (id=?)"
+  ],
+  [
+   2061,
+   2018,
+   0,
+   "CORRELATED SCALAR SUBQUERY 1"
+  ],
+  [
+   2069,
+   2061,
+   0,
+   "SEARCH messages USING INDEX sqlite_autoindex_messages_1 (id=?)"
+  ],
+  [
+   2096,
+   2018,
+   0,
+   "CORRELATED SCALAR SUBQUERY 2"
+  ],
+  [
+   2102,
+   2096,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   2121,
+   2018,
+   0,
+   "CORRELATED SCALAR SUBQUERY 3"
+  ],
+  [
+   2126,
+   2121,
+   0,
+   "SEARCH p USING COVERING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   2138,
+   2018,
+   0,
+   "CORRELATED SCALAR SUBQUERY 4"
+  ],
+  [
+   2145,
+   2138,
+   0,
+   "MULTI-INDEX OR"
+  ],
+  [
+   2146,
+   2145,
+   0,
+   "INDEX 1"
+  ],
+  [
+   2165,
+   2146,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_source (source=?)"
+  ],
+  [
+   2171,
+   2145,
+   0,
+   "INDEX 2"
+  ],
+  [
+   2190,
+   2171,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_target (target=?)"
+  ],
+  [
+   2213,
+   2018,
+   0,
+   "CORRELATED SCALAR SUBQUERY 5"
+  ],
+  [
+   2221,
+   2213,
+   0,
+   "SEARCH messages USING INDEX sqlite_autoindex_messages_1 (id=?)"
+  ],
+  [
+   2239,
+   2018,
+   0,
+   "CORRELATED SCALAR SUBQUERY 6"
+  ],
+  [
+   2245,
+   2239,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   2264,
+   2018,
+   0,
+   "CORRELATED SCALAR SUBQUERY 8"
+  ],
+  [
+   2270,
+   2264,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   2309,
+   2018,
+   0,
+   "CORRELATED SCALAR SUBQUERY 15"
+  ],
+  [
+   2316,
+   2309,
+   0,
+   "MULTI-INDEX OR"
+  ],
+  [
+   2317,
+   2316,
+   0,
+   "INDEX 1"
+  ],
+  [
+   2336,
+   2317,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_source (source=?)"
+  ],
+  [
+   2342,
+   2316,
+   0,
+   "INDEX 2"
+  ],
+  [
+   2361,
+   2342,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_target (target=?)"
+  ],
+  [
+   2380,
+   2309,
+   0,
+   "CORRELATED SCALAR SUBQUERY 9"
+  ],
+  [
+   2384,
+   2380,
+   0,
+   "SEARCH knowledge USING COVERING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   2401,
+   2309,
+   0,
+   "CORRELATED SCALAR SUBQUERY 10"
+  ],
+  [
+   2406,
+   2401,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   2427,
+   2309,
+   0,
+   "CORRELATED SCALAR SUBQUERY 11"
+  ],
+  [
+   2432,
+   2427,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   2455,
+   2309,
+   0,
+   "CORRELATED SCALAR SUBQUERY 12"
+  ],
+  [
+   2459,
+   2455,
+   0,
+   "SEARCH knowledge USING COVERING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   2476,
+   2309,
+   0,
+   "CORRELATED SCALAR SUBQUERY 13"
+  ],
+  [
+   2481,
+   2476,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   2502,
+   2309,
+   0,
+   "CORRELATED SCALAR SUBQUERY 14"
+  ],
+  [
+   2507,
+   2502,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   2565,
+   1129,
+   0,
+   "LIST SUBQUERY 37"
+  ],
+  [
+   2567,
+   2565,
+   0,
+   "SCAN k"
+  ],
+  [
+   2571,
+   2565,
+   0,
+   "SCALAR SUBQUERY 16"
+  ],
+  [
+   2575,
+   2571,
+   0,
+   "SEARCH sessions USING COVERING INDEX sqlite_autoindex_sessions_1 (id=?)"
+  ],
+  [
+   2608,
+   2565,
+   0,
+   "CORRELATED SCALAR SUBQUERY 1"
+  ],
+  [
+   2616,
+   2608,
+   0,
+   "SEARCH messages USING INDEX sqlite_autoindex_messages_1 (id=?)"
+  ],
+  [
+   2643,
+   2565,
+   0,
+   "CORRELATED SCALAR SUBQUERY 2"
+  ],
+  [
+   2649,
+   2643,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   2668,
+   2565,
+   0,
+   "CORRELATED SCALAR SUBQUERY 3"
+  ],
+  [
+   2673,
+   2668,
+   0,
+   "SEARCH p USING COVERING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   2685,
+   2565,
+   0,
+   "CORRELATED SCALAR SUBQUERY 4"
+  ],
+  [
+   2692,
+   2685,
+   0,
+   "MULTI-INDEX OR"
+  ],
+  [
+   2693,
+   2692,
+   0,
+   "INDEX 1"
+  ],
+  [
+   2712,
+   2693,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_source (source=?)"
+  ],
+  [
+   2718,
+   2692,
+   0,
+   "INDEX 2"
+  ],
+  [
+   2737,
+   2718,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_target (target=?)"
+  ],
+  [
+   2760,
+   2565,
+   0,
+   "CORRELATED SCALAR SUBQUERY 5"
+  ],
+  [
+   2768,
+   2760,
+   0,
+   "SEARCH messages USING INDEX sqlite_autoindex_messages_1 (id=?)"
+  ],
+  [
+   2786,
+   2565,
+   0,
+   "CORRELATED SCALAR SUBQUERY 6"
+  ],
+  [
+   2792,
+   2786,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   2811,
+   2565,
+   0,
+   "CORRELATED SCALAR SUBQUERY 8"
+  ],
+  [
+   2817,
+   2811,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   2856,
+   2565,
+   0,
+   "CORRELATED SCALAR SUBQUERY 15"
+  ],
+  [
+   2863,
+   2856,
+   0,
+   "MULTI-INDEX OR"
+  ],
+  [
+   2864,
+   2863,
+   0,
+   "INDEX 1"
+  ],
+  [
+   2883,
+   2864,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_source (source=?)"
+  ],
+  [
+   2889,
+   2863,
+   0,
+   "INDEX 2"
+  ],
+  [
+   2908,
+   2889,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_target (target=?)"
+  ],
+  [
+   2927,
+   2856,
+   0,
+   "CORRELATED SCALAR SUBQUERY 9"
+  ],
+  [
+   2931,
+   2927,
+   0,
+   "SEARCH knowledge USING COVERING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   2948,
+   2856,
+   0,
+   "CORRELATED SCALAR SUBQUERY 10"
+  ],
+  [
+   2953,
+   2948,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   2974,
+   2856,
+   0,
+   "CORRELATED SCALAR SUBQUERY 11"
+  ],
+  [
+   2979,
+   2974,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   3002,
+   2856,
+   0,
+   "CORRELATED SCALAR SUBQUERY 12"
+  ],
+  [
+   3006,
+   3002,
+   0,
+   "SEARCH knowledge USING COVERING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   3023,
+   2856,
+   0,
+   "CORRELATED SCALAR SUBQUERY 13"
+  ],
+  [
+   3028,
+   3023,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   3049,
+   2856,
+   0,
+   "CORRELATED SCALAR SUBQUERY 14"
+  ],
+  [
+   3054,
+   3049,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   3112,
+   591,
+   0,
+   "UNION USING TEMP B-TREE"
+  ],
+  [
+   3115,
+   3112,
+   0,
+   "SCAN e"
+  ],
+  [
+   3120,
+   3112,
+   0,
+   "LIST SUBQUERY 36"
+  ],
+  [
+   3122,
+   3120,
+   0,
+   "SCAN k"
+  ],
+  [
+   3126,
+   3120,
+   0,
+   "SCALAR SUBQUERY 16"
+  ],
+  [
+   3130,
+   3126,
+   0,
+   "SEARCH sessions USING COVERING INDEX sqlite_autoindex_sessions_1 (id=?)"
+  ],
+  [
+   3163,
+   3120,
+   0,
+   "CORRELATED SCALAR SUBQUERY 1"
+  ],
+  [
+   3171,
+   3163,
+   0,
+   "SEARCH messages USING INDEX sqlite_autoindex_messages_1 (id=?)"
+  ],
+  [
+   3198,
+   3120,
+   0,
+   "CORRELATED SCALAR SUBQUERY 2"
+  ],
+  [
+   3204,
+   3198,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   3223,
+   3120,
+   0,
+   "CORRELATED SCALAR SUBQUERY 3"
+  ],
+  [
+   3228,
+   3223,
+   0,
+   "SEARCH p USING COVERING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   3240,
+   3120,
+   0,
+   "CORRELATED SCALAR SUBQUERY 4"
+  ],
+  [
+   3247,
+   3240,
+   0,
+   "MULTI-INDEX OR"
+  ],
+  [
+   3248,
+   3247,
+   0,
+   "INDEX 1"
+  ],
+  [
+   3267,
+   3248,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_source (source=?)"
+  ],
+  [
+   3273,
+   3247,
+   0,
+   "INDEX 2"
+  ],
+  [
+   3292,
+   3273,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_target (target=?)"
+  ],
+  [
+   3315,
+   3120,
+   0,
+   "CORRELATED SCALAR SUBQUERY 5"
+  ],
+  [
+   3323,
+   3315,
+   0,
+   "SEARCH messages USING INDEX sqlite_autoindex_messages_1 (id=?)"
+  ],
+  [
+   3341,
+   3120,
+   0,
+   "CORRELATED SCALAR SUBQUERY 6"
+  ],
+  [
+   3347,
+   3341,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   3366,
+   3120,
+   0,
+   "CORRELATED SCALAR SUBQUERY 8"
+  ],
+  [
+   3372,
+   3366,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   3411,
+   3120,
+   0,
+   "CORRELATED SCALAR SUBQUERY 15"
+  ],
+  [
+   3418,
+   3411,
+   0,
+   "MULTI-INDEX OR"
+  ],
+  [
+   3419,
+   3418,
+   0,
+   "INDEX 1"
+  ],
+  [
+   3438,
+   3419,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_source (source=?)"
+  ],
+  [
+   3444,
+   3418,
+   0,
+   "INDEX 2"
+  ],
+  [
+   3463,
+   3444,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_target (target=?)"
+  ],
+  [
+   3482,
+   3411,
+   0,
+   "CORRELATED SCALAR SUBQUERY 9"
+  ],
+  [
+   3486,
+   3482,
+   0,
+   "SEARCH knowledge USING COVERING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   3503,
+   3411,
+   0,
+   "CORRELATED SCALAR SUBQUERY 10"
+  ],
+  [
+   3508,
+   3503,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   3529,
+   3411,
+   0,
+   "CORRELATED SCALAR SUBQUERY 11"
+  ],
+  [
+   3534,
+   3529,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   3557,
+   3411,
+   0,
+   "CORRELATED SCALAR SUBQUERY 12"
+  ],
+  [
+   3561,
+   3557,
+   0,
+   "SEARCH knowledge USING COVERING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   3578,
+   3411,
+   0,
+   "CORRELATED SCALAR SUBQUERY 13"
+  ],
+  [
+   3583,
+   3578,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   3604,
+   3411,
+   0,
+   "CORRELATED SCALAR SUBQUERY 14"
+  ],
+  [
+   3609,
+   3604,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   3667,
+   3112,
+   0,
+   "LIST SUBQUERY 37"
+  ],
+  [
+   3669,
+   3667,
+   0,
+   "SCAN k"
+  ],
+  [
+   3673,
+   3667,
+   0,
+   "SCALAR SUBQUERY 16"
+  ],
+  [
+   3677,
+   3673,
+   0,
+   "SEARCH sessions USING COVERING INDEX sqlite_autoindex_sessions_1 (id=?)"
+  ],
+  [
+   3710,
+   3667,
+   0,
+   "CORRELATED SCALAR SUBQUERY 1"
+  ],
+  [
+   3718,
+   3710,
+   0,
+   "SEARCH messages USING INDEX sqlite_autoindex_messages_1 (id=?)"
+  ],
+  [
+   3745,
+   3667,
+   0,
+   "CORRELATED SCALAR SUBQUERY 2"
+  ],
+  [
+   3751,
+   3745,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   3770,
+   3667,
+   0,
+   "CORRELATED SCALAR SUBQUERY 3"
+  ],
+  [
+   3775,
+   3770,
+   0,
+   "SEARCH p USING COVERING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   3787,
+   3667,
+   0,
+   "CORRELATED SCALAR SUBQUERY 4"
+  ],
+  [
+   3794,
+   3787,
+   0,
+   "MULTI-INDEX OR"
+  ],
+  [
+   3795,
+   3794,
+   0,
+   "INDEX 1"
+  ],
+  [
+   3814,
+   3795,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_source (source=?)"
+  ],
+  [
+   3820,
+   3794,
+   0,
+   "INDEX 2"
+  ],
+  [
+   3839,
+   3820,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_target (target=?)"
+  ],
+  [
+   3862,
+   3667,
+   0,
+   "CORRELATED SCALAR SUBQUERY 5"
+  ],
+  [
+   3870,
+   3862,
+   0,
+   "SEARCH messages USING INDEX sqlite_autoindex_messages_1 (id=?)"
+  ],
+  [
+   3888,
+   3667,
+   0,
+   "CORRELATED SCALAR SUBQUERY 6"
+  ],
+  [
+   3894,
+   3888,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   3913,
+   3667,
+   0,
+   "CORRELATED SCALAR SUBQUERY 8"
+  ],
+  [
+   3919,
+   3913,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   3958,
+   3667,
+   0,
+   "CORRELATED SCALAR SUBQUERY 15"
+  ],
+  [
+   3965,
+   3958,
+   0,
+   "MULTI-INDEX OR"
+  ],
+  [
+   3966,
+   3965,
+   0,
+   "INDEX 1"
+  ],
+  [
+   3985,
+   3966,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_source (source=?)"
+  ],
+  [
+   3991,
+   3965,
+   0,
+   "INDEX 2"
+  ],
+  [
+   4010,
+   3991,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_target (target=?)"
+  ],
+  [
+   4029,
+   3958,
+   0,
+   "CORRELATED SCALAR SUBQUERY 9"
+  ],
+  [
+   4033,
+   4029,
+   0,
+   "SEARCH knowledge USING COVERING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   4050,
+   3958,
+   0,
+   "CORRELATED SCALAR SUBQUERY 10"
+  ],
+  [
+   4055,
+   4050,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   4076,
+   3958,
+   0,
+   "CORRELATED SCALAR SUBQUERY 11"
+  ],
+  [
+   4081,
+   4076,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   4104,
+   3958,
+   0,
+   "CORRELATED SCALAR SUBQUERY 12"
+  ],
+  [
+   4108,
+   4104,
+   0,
+   "SEARCH knowledge USING COVERING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   4125,
+   3958,
+   0,
+   "CORRELATED SCALAR SUBQUERY 13"
+  ],
+  [
+   4130,
+   4125,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   4151,
+   3958,
+   0,
+   "CORRELATED SCALAR SUBQUERY 14"
+  ],
+  [
+   4156,
+   4151,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   4224,
+   585,
+   0,
+   "SCAN references_in_view"
+  ],
+  [
+   4249,
+   561,
+   0,
+   "CORRELATED SCALAR SUBQUERY 1"
+  ],
+  [
+   4257,
+   4249,
+   0,
+   "SEARCH messages USING INDEX sqlite_autoindex_messages_1 (id=?)"
+  ],
+  [
+   4284,
+   561,
+   0,
+   "CORRELATED SCALAR SUBQUERY 2"
+  ],
+  [
+   4290,
+   4284,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   4310,
+   561,
+   0,
+   "CORRELATED SCALAR SUBQUERY 3"
+  ],
+  [
+   4315,
+   4310,
+   0,
+   "SEARCH p USING COVERING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   4328,
+   561,
+   0,
+   "CORRELATED SCALAR SUBQUERY 4"
+  ],
+  [
+   4335,
+   4328,
+   0,
+   "MULTI-INDEX OR"
+  ],
+  [
+   4336,
+   4335,
+   0,
+   "INDEX 1"
+  ],
+  [
+   4355,
+   4336,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_source (source=?)"
+  ],
+  [
+   4361,
+   4335,
+   0,
+   "INDEX 2"
+  ],
+  [
+   4380,
+   4361,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_target (target=?)"
+  ],
+  [
+   4403,
+   561,
+   0,
+   "CORRELATED SCALAR SUBQUERY 5"
+  ],
+  [
+   4411,
+   4403,
+   0,
+   "SEARCH messages USING INDEX sqlite_autoindex_messages_1 (id=?)"
+  ],
+  [
+   4429,
+   561,
+   0,
+   "CORRELATED SCALAR SUBQUERY 6"
+  ],
+  [
+   4435,
+   4429,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   4455,
+   561,
+   0,
+   "CORRELATED SCALAR SUBQUERY 8"
+  ],
+  [
+   4461,
+   4455,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   4501,
+   561,
+   0,
+   "CORRELATED SCALAR SUBQUERY 15"
+  ],
+  [
+   4508,
+   4501,
+   0,
+   "MULTI-INDEX OR"
+  ],
+  [
+   4509,
+   4508,
+   0,
+   "INDEX 1"
+  ],
+  [
+   4528,
+   4509,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_source (source=?)"
+  ],
+  [
+   4534,
+   4508,
+   0,
+   "INDEX 2"
+  ],
+  [
+   4553,
+   4534,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_target (target=?)"
+  ],
+  [
+   4572,
+   4501,
+   0,
+   "CORRELATED SCALAR SUBQUERY 9"
+  ],
+  [
+   4576,
+   4572,
+   0,
+   "SEARCH knowledge USING COVERING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   4593,
+   4501,
+   0,
+   "CORRELATED SCALAR SUBQUERY 10"
+  ],
+  [
+   4598,
+   4593,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   4619,
+   4501,
+   0,
+   "CORRELATED SCALAR SUBQUERY 11"
+  ],
+  [
+   4624,
+   4619,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   4647,
+   4501,
+   0,
+   "CORRELATED SCALAR SUBQUERY 12"
+  ],
+  [
+   4651,
+   4647,
+   0,
+   "SEARCH knowledge USING COVERING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   4668,
+   4501,
+   0,
+   "CORRELATED SCALAR SUBQUERY 13"
+  ],
+  [
+   4673,
+   4668,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   4694,
+   4501,
+   0,
+   "CORRELATED SCALAR SUBQUERY 14"
+  ],
+  [
+   4699,
+   4694,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   4746,
+   0,
+   0,
+   "SCALAR SUBQUERY 45"
+  ],
+  [
+   4752,
+   4746,
+   0,
+   "SCAN e"
+  ],
+  [
+   4757,
+   4746,
+   0,
+   "LIST SUBQUERY 36"
+  ],
+  [
+   4759,
+   4757,
+   0,
+   "SCAN k"
+  ],
+  [
+   4763,
+   4757,
+   0,
+   "SCALAR SUBQUERY 16"
+  ],
+  [
+   4767,
+   4763,
+   0,
+   "SEARCH sessions USING COVERING INDEX sqlite_autoindex_sessions_1 (id=?)"
+  ],
+  [
+   4800,
+   4757,
+   0,
+   "CORRELATED SCALAR SUBQUERY 1"
+  ],
+  [
+   4808,
+   4800,
+   0,
+   "SEARCH messages USING INDEX sqlite_autoindex_messages_1 (id=?)"
+  ],
+  [
+   4835,
+   4757,
+   0,
+   "CORRELATED SCALAR SUBQUERY 2"
+  ],
+  [
+   4841,
+   4835,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   4860,
+   4757,
+   0,
+   "CORRELATED SCALAR SUBQUERY 3"
+  ],
+  [
+   4865,
+   4860,
+   0,
+   "SEARCH p USING COVERING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   4877,
+   4757,
+   0,
+   "CORRELATED SCALAR SUBQUERY 4"
+  ],
+  [
+   4884,
+   4877,
+   0,
+   "MULTI-INDEX OR"
+  ],
+  [
+   4885,
+   4884,
+   0,
+   "INDEX 1"
+  ],
+  [
+   4904,
+   4885,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_source (source=?)"
+  ],
+  [
+   4910,
+   4884,
+   0,
+   "INDEX 2"
+  ],
+  [
+   4929,
+   4910,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_target (target=?)"
+  ],
+  [
+   4952,
+   4757,
+   0,
+   "CORRELATED SCALAR SUBQUERY 5"
+  ],
+  [
+   4960,
+   4952,
+   0,
+   "SEARCH messages USING INDEX sqlite_autoindex_messages_1 (id=?)"
+  ],
+  [
+   4978,
+   4757,
+   0,
+   "CORRELATED SCALAR SUBQUERY 6"
+  ],
+  [
+   4984,
+   4978,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   5003,
+   4757,
+   0,
+   "CORRELATED SCALAR SUBQUERY 8"
+  ],
+  [
+   5009,
+   5003,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   5048,
+   4757,
+   0,
+   "CORRELATED SCALAR SUBQUERY 15"
+  ],
+  [
+   5055,
+   5048,
+   0,
+   "MULTI-INDEX OR"
+  ],
+  [
+   5056,
+   5055,
+   0,
+   "INDEX 1"
+  ],
+  [
+   5075,
+   5056,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_source (source=?)"
+  ],
+  [
+   5081,
+   5055,
+   0,
+   "INDEX 2"
+  ],
+  [
+   5100,
+   5081,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_target (target=?)"
+  ],
+  [
+   5119,
+   5048,
+   0,
+   "CORRELATED SCALAR SUBQUERY 9"
+  ],
+  [
+   5123,
+   5119,
+   0,
+   "SEARCH knowledge USING COVERING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   5140,
+   5048,
+   0,
+   "CORRELATED SCALAR SUBQUERY 10"
+  ],
+  [
+   5145,
+   5140,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   5166,
+   5048,
+   0,
+   "CORRELATED SCALAR SUBQUERY 11"
+  ],
+  [
+   5171,
+   5166,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   5194,
+   5048,
+   0,
+   "CORRELATED SCALAR SUBQUERY 12"
+  ],
+  [
+   5198,
+   5194,
+   0,
+   "SEARCH knowledge USING COVERING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   5215,
+   5048,
+   0,
+   "CORRELATED SCALAR SUBQUERY 13"
+  ],
+  [
+   5220,
+   5215,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   5241,
+   5048,
+   0,
+   "CORRELATED SCALAR SUBQUERY 14"
+  ],
+  [
+   5246,
+   5241,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   5304,
+   4746,
+   0,
+   "LIST SUBQUERY 37"
+  ],
+  [
+   5306,
+   5304,
+   0,
+   "SCAN k"
+  ],
+  [
+   5310,
+   5304,
+   0,
+   "SCALAR SUBQUERY 16"
+  ],
+  [
+   5314,
+   5310,
+   0,
+   "SEARCH sessions USING COVERING INDEX sqlite_autoindex_sessions_1 (id=?)"
+  ],
+  [
+   5347,
+   5304,
+   0,
+   "CORRELATED SCALAR SUBQUERY 1"
+  ],
+  [
+   5355,
+   5347,
+   0,
+   "SEARCH messages USING INDEX sqlite_autoindex_messages_1 (id=?)"
+  ],
+  [
+   5382,
+   5304,
+   0,
+   "CORRELATED SCALAR SUBQUERY 2"
+  ],
+  [
+   5388,
+   5382,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   5407,
+   5304,
+   0,
+   "CORRELATED SCALAR SUBQUERY 3"
+  ],
+  [
+   5412,
+   5407,
+   0,
+   "SEARCH p USING COVERING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   5424,
+   5304,
+   0,
+   "CORRELATED SCALAR SUBQUERY 4"
+  ],
+  [
+   5431,
+   5424,
+   0,
+   "MULTI-INDEX OR"
+  ],
+  [
+   5432,
+   5431,
+   0,
+   "INDEX 1"
+  ],
+  [
+   5451,
+   5432,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_source (source=?)"
+  ],
+  [
+   5457,
+   5431,
+   0,
+   "INDEX 2"
+  ],
+  [
+   5476,
+   5457,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_target (target=?)"
+  ],
+  [
+   5499,
+   5304,
+   0,
+   "CORRELATED SCALAR SUBQUERY 5"
+  ],
+  [
+   5507,
+   5499,
+   0,
+   "SEARCH messages USING INDEX sqlite_autoindex_messages_1 (id=?)"
+  ],
+  [
+   5525,
+   5304,
+   0,
+   "CORRELATED SCALAR SUBQUERY 6"
+  ],
+  [
+   5531,
+   5525,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   5550,
+   5304,
+   0,
+   "CORRELATED SCALAR SUBQUERY 8"
+  ],
+  [
+   5556,
+   5550,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   5595,
+   5304,
+   0,
+   "CORRELATED SCALAR SUBQUERY 15"
+  ],
+  [
+   5602,
+   5595,
+   0,
+   "MULTI-INDEX OR"
+  ],
+  [
+   5603,
+   5602,
+   0,
+   "INDEX 1"
+  ],
+  [
+   5622,
+   5603,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_source (source=?)"
+  ],
+  [
+   5628,
+   5602,
+   0,
+   "INDEX 2"
+  ],
+  [
+   5647,
+   5628,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_target (target=?)"
+  ],
+  [
+   5666,
+   5595,
+   0,
+   "CORRELATED SCALAR SUBQUERY 9"
+  ],
+  [
+   5670,
+   5666,
+   0,
+   "SEARCH knowledge USING COVERING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   5687,
+   5595,
+   0,
+   "CORRELATED SCALAR SUBQUERY 10"
+  ],
+  [
+   5692,
+   5687,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   5713,
+   5595,
+   0,
+   "CORRELATED SCALAR SUBQUERY 11"
+  ],
+  [
+   5718,
+   5713,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   5741,
+   5595,
+   0,
+   "CORRELATED SCALAR SUBQUERY 12"
+  ],
+  [
+   5745,
+   5741,
+   0,
+   "SEARCH knowledge USING COVERING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   5762,
+   5595,
+   0,
+   "CORRELATED SCALAR SUBQUERY 13"
+  ],
+  [
+   5767,
+   5762,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   5788,
+   5595,
+   0,
+   "CORRELATED SCALAR SUBQUERY 14"
+  ],
+  [
+   5793,
+   5788,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   5863,
+   0,
+   0,
+   "SCALAR SUBQUERY 49"
+  ],
+  [
+   5869,
+   5863,
+   0,
+   "SCAN references_in_view"
+  ],
+  [
+   5874,
+   5863,
+   0,
+   "LIST SUBQUERY 48"
+  ],
+  [
+   5876,
+   5874,
+   0,
+   "SCAN k USING COVERING INDEX sqlite_autoindex_knowledge_1"
+  ],
+  [
+   5880,
+   5874,
+   0,
+   "SCALAR SUBQUERY 16"
+  ],
+  [
+   5884,
+   5880,
+   0,
+   "SEARCH sessions USING COVERING INDEX sqlite_autoindex_sessions_1 (id=?)"
+  ],
+  [
+   5915,
+   5863,
+   0,
+   "CORRELATED SCALAR SUBQUERY 46"
+  ],
+  [
+   5926,
+   5915,
+   0,
+   "BLOOM FILTER ON e (source_ref=?)"
+  ],
+  [
+   5937,
+   5915,
+   0,
+   "SEARCH e USING AUTOMATIC COVERING INDEX (source_ref=?)"
+  ],
+  [
+   5946,
+   5915,
+   0,
+   "LIST SUBQUERY 36"
+  ],
+  [
+   5948,
+   5946,
+   0,
+   "SCAN k"
+  ],
+  [
+   5952,
+   5946,
+   0,
+   "SCALAR SUBQUERY 16"
+  ],
+  [
+   5956,
+   5952,
+   0,
+   "SEARCH sessions USING COVERING INDEX sqlite_autoindex_sessions_1 (id=?)"
+  ],
+  [
+   5989,
+   5946,
+   0,
+   "CORRELATED SCALAR SUBQUERY 1"
+  ],
+  [
+   5997,
+   5989,
+   0,
+   "SEARCH messages USING INDEX sqlite_autoindex_messages_1 (id=?)"
+  ],
+  [
+   6024,
+   5946,
+   0,
+   "CORRELATED SCALAR SUBQUERY 2"
+  ],
+  [
+   6030,
+   6024,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   6049,
+   5946,
+   0,
+   "CORRELATED SCALAR SUBQUERY 3"
+  ],
+  [
+   6054,
+   6049,
+   0,
+   "SEARCH p USING COVERING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   6066,
+   5946,
+   0,
+   "CORRELATED SCALAR SUBQUERY 4"
+  ],
+  [
+   6073,
+   6066,
+   0,
+   "MULTI-INDEX OR"
+  ],
+  [
+   6074,
+   6073,
+   0,
+   "INDEX 1"
+  ],
+  [
+   6093,
+   6074,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_source (source=?)"
+  ],
+  [
+   6099,
+   6073,
+   0,
+   "INDEX 2"
+  ],
+  [
+   6118,
+   6099,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_target (target=?)"
+  ],
+  [
+   6141,
+   5946,
+   0,
+   "CORRELATED SCALAR SUBQUERY 5"
+  ],
+  [
+   6149,
+   6141,
+   0,
+   "SEARCH messages USING INDEX sqlite_autoindex_messages_1 (id=?)"
+  ],
+  [
+   6167,
+   5946,
+   0,
+   "CORRELATED SCALAR SUBQUERY 6"
+  ],
+  [
+   6173,
+   6167,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   6192,
+   5946,
+   0,
+   "CORRELATED SCALAR SUBQUERY 8"
+  ],
+  [
+   6198,
+   6192,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   6237,
+   5946,
+   0,
+   "CORRELATED SCALAR SUBQUERY 15"
+  ],
+  [
+   6244,
+   6237,
+   0,
+   "MULTI-INDEX OR"
+  ],
+  [
+   6245,
+   6244,
+   0,
+   "INDEX 1"
+  ],
+  [
+   6264,
+   6245,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_source (source=?)"
+  ],
+  [
+   6270,
+   6244,
+   0,
+   "INDEX 2"
+  ],
+  [
+   6289,
+   6270,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_target (target=?)"
+  ],
+  [
+   6308,
+   6237,
+   0,
+   "CORRELATED SCALAR SUBQUERY 9"
+  ],
+  [
+   6312,
+   6308,
+   0,
+   "SEARCH knowledge USING COVERING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   6329,
+   6237,
+   0,
+   "CORRELATED SCALAR SUBQUERY 10"
+  ],
+  [
+   6334,
+   6329,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   6355,
+   6237,
+   0,
+   "CORRELATED SCALAR SUBQUERY 11"
+  ],
+  [
+   6360,
+   6355,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   6383,
+   6237,
+   0,
+   "CORRELATED SCALAR SUBQUERY 12"
+  ],
+  [
+   6387,
+   6383,
+   0,
+   "SEARCH knowledge USING COVERING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   6404,
+   6237,
+   0,
+   "CORRELATED SCALAR SUBQUERY 13"
+  ],
+  [
+   6409,
+   6404,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   6430,
+   6237,
+   0,
+   "CORRELATED SCALAR SUBQUERY 14"
+  ],
+  [
+   6435,
+   6430,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   6493,
+   5915,
+   0,
+   "LIST SUBQUERY 37"
+  ],
+  [
+   6495,
+   6493,
+   0,
+   "SCAN k"
+  ],
+  [
+   6499,
+   6493,
+   0,
+   "SCALAR SUBQUERY 16"
+  ],
+  [
+   6503,
+   6499,
+   0,
+   "SEARCH sessions USING COVERING INDEX sqlite_autoindex_sessions_1 (id=?)"
+  ],
+  [
+   6536,
+   6493,
+   0,
+   "CORRELATED SCALAR SUBQUERY 1"
+  ],
+  [
+   6544,
+   6536,
+   0,
+   "SEARCH messages USING INDEX sqlite_autoindex_messages_1 (id=?)"
+  ],
+  [
+   6571,
+   6493,
+   0,
+   "CORRELATED SCALAR SUBQUERY 2"
+  ],
+  [
+   6577,
+   6571,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   6596,
+   6493,
+   0,
+   "CORRELATED SCALAR SUBQUERY 3"
+  ],
+  [
+   6601,
+   6596,
+   0,
+   "SEARCH p USING COVERING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   6613,
+   6493,
+   0,
+   "CORRELATED SCALAR SUBQUERY 4"
+  ],
+  [
+   6620,
+   6613,
+   0,
+   "MULTI-INDEX OR"
+  ],
+  [
+   6621,
+   6620,
+   0,
+   "INDEX 1"
+  ],
+  [
+   6640,
+   6621,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_source (source=?)"
+  ],
+  [
+   6646,
+   6620,
+   0,
+   "INDEX 2"
+  ],
+  [
+   6665,
+   6646,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_target (target=?)"
+  ],
+  [
+   6688,
+   6493,
+   0,
+   "CORRELATED SCALAR SUBQUERY 5"
+  ],
+  [
+   6696,
+   6688,
+   0,
+   "SEARCH messages USING INDEX sqlite_autoindex_messages_1 (id=?)"
+  ],
+  [
+   6714,
+   6493,
+   0,
+   "CORRELATED SCALAR SUBQUERY 6"
+  ],
+  [
+   6720,
+   6714,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   6739,
+   6493,
+   0,
+   "CORRELATED SCALAR SUBQUERY 8"
+  ],
+  [
+   6745,
+   6739,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   6784,
+   6493,
+   0,
+   "CORRELATED SCALAR SUBQUERY 15"
+  ],
+  [
+   6791,
+   6784,
+   0,
+   "MULTI-INDEX OR"
+  ],
+  [
+   6792,
+   6791,
+   0,
+   "INDEX 1"
+  ],
+  [
+   6811,
+   6792,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_source (source=?)"
+  ],
+  [
+   6817,
+   6791,
+   0,
+   "INDEX 2"
+  ],
+  [
+   6836,
+   6817,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_target (target=?)"
+  ],
+  [
+   6855,
+   6784,
+   0,
+   "CORRELATED SCALAR SUBQUERY 9"
+  ],
+  [
+   6859,
+   6855,
+   0,
+   "SEARCH knowledge USING COVERING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   6876,
+   6784,
+   0,
+   "CORRELATED SCALAR SUBQUERY 10"
+  ],
+  [
+   6881,
+   6876,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   6902,
+   6784,
+   0,
+   "CORRELATED SCALAR SUBQUERY 11"
+  ],
+  [
+   6907,
+   6902,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   6930,
+   6784,
+   0,
+   "CORRELATED SCALAR SUBQUERY 12"
+  ],
+  [
+   6934,
+   6930,
+   0,
+   "SEARCH knowledge USING COVERING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   6951,
+   6784,
+   0,
+   "CORRELATED SCALAR SUBQUERY 13"
+  ],
+  [
+   6956,
+   6951,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   6977,
+   6784,
+   0,
+   "CORRELATED SCALAR SUBQUERY 14"
+  ],
+  [
+   6982,
+   6977,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   7044,
+   5863,
+   0,
+   "CORRELATED SCALAR SUBQUERY 47"
+  ],
+  [
+   7055,
+   7044,
+   0,
+   "BLOOM FILTER ON e (target_ref=?)"
+  ],
+  [
+   7066,
+   7044,
+   0,
+   "SEARCH e USING AUTOMATIC COVERING INDEX (target_ref=?)"
+  ],
+  [
+   7075,
+   7044,
+   0,
+   "LIST SUBQUERY 36"
+  ],
+  [
+   7077,
+   7075,
+   0,
+   "SCAN k"
+  ],
+  [
+   7081,
+   7075,
+   0,
+   "SCALAR SUBQUERY 16"
+  ],
+  [
+   7085,
+   7081,
+   0,
+   "SEARCH sessions USING COVERING INDEX sqlite_autoindex_sessions_1 (id=?)"
+  ],
+  [
+   7118,
+   7075,
+   0,
+   "CORRELATED SCALAR SUBQUERY 1"
+  ],
+  [
+   7126,
+   7118,
+   0,
+   "SEARCH messages USING INDEX sqlite_autoindex_messages_1 (id=?)"
+  ],
+  [
+   7153,
+   7075,
+   0,
+   "CORRELATED SCALAR SUBQUERY 2"
+  ],
+  [
+   7159,
+   7153,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   7178,
+   7075,
+   0,
+   "CORRELATED SCALAR SUBQUERY 3"
+  ],
+  [
+   7183,
+   7178,
+   0,
+   "SEARCH p USING COVERING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   7195,
+   7075,
+   0,
+   "CORRELATED SCALAR SUBQUERY 4"
+  ],
+  [
+   7202,
+   7195,
+   0,
+   "MULTI-INDEX OR"
+  ],
+  [
+   7203,
+   7202,
+   0,
+   "INDEX 1"
+  ],
+  [
+   7222,
+   7203,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_source (source=?)"
+  ],
+  [
+   7228,
+   7202,
+   0,
+   "INDEX 2"
+  ],
+  [
+   7247,
+   7228,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_target (target=?)"
+  ],
+  [
+   7270,
+   7075,
+   0,
+   "CORRELATED SCALAR SUBQUERY 5"
+  ],
+  [
+   7278,
+   7270,
+   0,
+   "SEARCH messages USING INDEX sqlite_autoindex_messages_1 (id=?)"
+  ],
+  [
+   7296,
+   7075,
+   0,
+   "CORRELATED SCALAR SUBQUERY 6"
+  ],
+  [
+   7302,
+   7296,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   7321,
+   7075,
+   0,
+   "CORRELATED SCALAR SUBQUERY 8"
+  ],
+  [
+   7327,
+   7321,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   7366,
+   7075,
+   0,
+   "CORRELATED SCALAR SUBQUERY 15"
+  ],
+  [
+   7373,
+   7366,
+   0,
+   "MULTI-INDEX OR"
+  ],
+  [
+   7374,
+   7373,
+   0,
+   "INDEX 1"
+  ],
+  [
+   7393,
+   7374,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_source (source=?)"
+  ],
+  [
+   7399,
+   7373,
+   0,
+   "INDEX 2"
+  ],
+  [
+   7418,
+   7399,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_target (target=?)"
+  ],
+  [
+   7437,
+   7366,
+   0,
+   "CORRELATED SCALAR SUBQUERY 9"
+  ],
+  [
+   7441,
+   7437,
+   0,
+   "SEARCH knowledge USING COVERING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   7458,
+   7366,
+   0,
+   "CORRELATED SCALAR SUBQUERY 10"
+  ],
+  [
+   7463,
+   7458,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   7484,
+   7366,
+   0,
+   "CORRELATED SCALAR SUBQUERY 11"
+  ],
+  [
+   7489,
+   7484,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   7512,
+   7366,
+   0,
+   "CORRELATED SCALAR SUBQUERY 12"
+  ],
+  [
+   7516,
+   7512,
+   0,
+   "SEARCH knowledge USING COVERING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   7533,
+   7366,
+   0,
+   "CORRELATED SCALAR SUBQUERY 13"
+  ],
+  [
+   7538,
+   7533,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   7559,
+   7366,
+   0,
+   "CORRELATED SCALAR SUBQUERY 14"
+  ],
+  [
+   7564,
+   7559,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   7622,
+   7044,
+   0,
+   "LIST SUBQUERY 37"
+  ],
+  [
+   7624,
+   7622,
+   0,
+   "SCAN k"
+  ],
+  [
+   7628,
+   7622,
+   0,
+   "SCALAR SUBQUERY 16"
+  ],
+  [
+   7632,
+   7628,
+   0,
+   "SEARCH sessions USING COVERING INDEX sqlite_autoindex_sessions_1 (id=?)"
+  ],
+  [
+   7665,
+   7622,
+   0,
+   "CORRELATED SCALAR SUBQUERY 1"
+  ],
+  [
+   7673,
+   7665,
+   0,
+   "SEARCH messages USING INDEX sqlite_autoindex_messages_1 (id=?)"
+  ],
+  [
+   7700,
+   7622,
+   0,
+   "CORRELATED SCALAR SUBQUERY 2"
+  ],
+  [
+   7706,
+   7700,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   7725,
+   7622,
+   0,
+   "CORRELATED SCALAR SUBQUERY 3"
+  ],
+  [
+   7730,
+   7725,
+   0,
+   "SEARCH p USING COVERING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   7742,
+   7622,
+   0,
+   "CORRELATED SCALAR SUBQUERY 4"
+  ],
+  [
+   7749,
+   7742,
+   0,
+   "MULTI-INDEX OR"
+  ],
+  [
+   7750,
+   7749,
+   0,
+   "INDEX 1"
+  ],
+  [
+   7769,
+   7750,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_source (source=?)"
+  ],
+  [
+   7775,
+   7749,
+   0,
+   "INDEX 2"
+  ],
+  [
+   7794,
+   7775,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_target (target=?)"
+  ],
+  [
+   7817,
+   7622,
+   0,
+   "CORRELATED SCALAR SUBQUERY 5"
+  ],
+  [
+   7825,
+   7817,
+   0,
+   "SEARCH messages USING INDEX sqlite_autoindex_messages_1 (id=?)"
+  ],
+  [
+   7843,
+   7622,
+   0,
+   "CORRELATED SCALAR SUBQUERY 6"
+  ],
+  [
+   7849,
+   7843,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   7868,
+   7622,
+   0,
+   "CORRELATED SCALAR SUBQUERY 8"
+  ],
+  [
+   7874,
+   7868,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   7913,
+   7622,
+   0,
+   "CORRELATED SCALAR SUBQUERY 15"
+  ],
+  [
+   7920,
+   7913,
+   0,
+   "MULTI-INDEX OR"
+  ],
+  [
+   7921,
+   7920,
+   0,
+   "INDEX 1"
+  ],
+  [
+   7940,
+   7921,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_source (source=?)"
+  ],
+  [
+   7946,
+   7920,
+   0,
+   "INDEX 2"
+  ],
+  [
+   7965,
+   7946,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_target (target=?)"
+  ],
+  [
+   7984,
+   7913,
+   0,
+   "CORRELATED SCALAR SUBQUERY 9"
+  ],
+  [
+   7988,
+   7984,
+   0,
+   "SEARCH knowledge USING COVERING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   8005,
+   7913,
+   0,
+   "CORRELATED SCALAR SUBQUERY 10"
+  ],
+  [
+   8010,
+   8005,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   8031,
+   7913,
+   0,
+   "CORRELATED SCALAR SUBQUERY 11"
+  ],
+  [
+   8036,
+   8031,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   8059,
+   7913,
+   0,
+   "CORRELATED SCALAR SUBQUERY 12"
+  ],
+  [
+   8063,
+   8059,
+   0,
+   "SEARCH knowledge USING COVERING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   8080,
+   7913,
+   0,
+   "CORRELATED SCALAR SUBQUERY 13"
+  ],
+  [
+   8085,
+   8080,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   8106,
+   7913,
+   0,
+   "CORRELATED SCALAR SUBQUERY 14"
+  ],
+  [
+   8111,
+   8106,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   8214,
+   0,
+   0,
+   "SCALAR SUBQUERY 51"
+  ],
+  [
+   8217,
+   8214,
+   0,
+   "CO-ROUTINE (subquery-50)"
+  ],
+  [
+   8220,
+   8217,
+   0,
+   "SCAN k"
+  ],
+  [
+   8224,
+   8217,
+   0,
+   "SCALAR SUBQUERY 16"
+  ],
+  [
+   8228,
+   8224,
+   0,
+   "SEARCH sessions USING COVERING INDEX sqlite_autoindex_sessions_1 (id=?)"
+  ],
+  [
+   8261,
+   8217,
+   0,
+   "CORRELATED SCALAR SUBQUERY 1"
+  ],
+  [
+   8269,
+   8261,
+   0,
+   "SEARCH messages USING INDEX sqlite_autoindex_messages_1 (id=?)"
+  ],
+  [
+   8296,
+   8217,
+   0,
+   "CORRELATED SCALAR SUBQUERY 2"
+  ],
+  [
+   8302,
+   8296,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   8321,
+   8217,
+   0,
+   "CORRELATED SCALAR SUBQUERY 3"
+  ],
+  [
+   8326,
+   8321,
+   0,
+   "SEARCH p USING COVERING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   8338,
+   8217,
+   0,
+   "CORRELATED SCALAR SUBQUERY 4"
+  ],
+  [
+   8345,
+   8338,
+   0,
+   "MULTI-INDEX OR"
+  ],
+  [
+   8346,
+   8345,
+   0,
+   "INDEX 1"
+  ],
+  [
+   8365,
+   8346,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_source (source=?)"
+  ],
+  [
+   8371,
+   8345,
+   0,
+   "INDEX 2"
+  ],
+  [
+   8390,
+   8371,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_target (target=?)"
+  ],
+  [
+   8413,
+   8217,
+   0,
+   "CORRELATED SCALAR SUBQUERY 5"
+  ],
+  [
+   8421,
+   8413,
+   0,
+   "SEARCH messages USING INDEX sqlite_autoindex_messages_1 (id=?)"
+  ],
+  [
+   8439,
+   8217,
+   0,
+   "CORRELATED SCALAR SUBQUERY 6"
+  ],
+  [
+   8445,
+   8439,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   8464,
+   8217,
+   0,
+   "CORRELATED SCALAR SUBQUERY 8"
+  ],
+  [
+   8470,
+   8464,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   8509,
+   8217,
+   0,
+   "CORRELATED SCALAR SUBQUERY 15"
+  ],
+  [
+   8516,
+   8509,
+   0,
+   "MULTI-INDEX OR"
+  ],
+  [
+   8517,
+   8516,
+   0,
+   "INDEX 1"
+  ],
+  [
+   8536,
+   8517,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_source (source=?)"
+  ],
+  [
+   8542,
+   8516,
+   0,
+   "INDEX 2"
+  ],
+  [
+   8561,
+   8542,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_target (target=?)"
+  ],
+  [
+   8580,
+   8509,
+   0,
+   "CORRELATED SCALAR SUBQUERY 9"
+  ],
+  [
+   8584,
+   8580,
+   0,
+   "SEARCH knowledge USING COVERING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   8601,
+   8509,
+   0,
+   "CORRELATED SCALAR SUBQUERY 10"
+  ],
+  [
+   8606,
+   8601,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   8627,
+   8509,
+   0,
+   "CORRELATED SCALAR SUBQUERY 11"
+  ],
+  [
+   8632,
+   8627,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   8655,
+   8509,
+   0,
+   "CORRELATED SCALAR SUBQUERY 12"
+  ],
+  [
+   8659,
+   8655,
+   0,
+   "SEARCH knowledge USING COVERING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   8676,
+   8509,
+   0,
+   "CORRELATED SCALAR SUBQUERY 13"
+  ],
+  [
+   8681,
+   8676,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   8702,
+   8509,
+   0,
+   "CORRELATED SCALAR SUBQUERY 14"
+  ],
+  [
+   8707,
+   8702,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   8760,
+   8217,
+   0,
+   "CORRELATED SCALAR SUBQUERY 1"
+  ],
+  [
+   8768,
+   8760,
+   0,
+   "SEARCH messages USING INDEX sqlite_autoindex_messages_1 (id=?)"
+  ],
+  [
+   8795,
+   8217,
+   0,
+   "CORRELATED SCALAR SUBQUERY 2"
+  ],
+  [
+   8801,
+   8795,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   8820,
+   8217,
+   0,
+   "CORRELATED SCALAR SUBQUERY 3"
+  ],
+  [
+   8825,
+   8820,
+   0,
+   "SEARCH p USING COVERING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   8837,
+   8217,
+   0,
+   "CORRELATED SCALAR SUBQUERY 4"
+  ],
+  [
+   8844,
+   8837,
+   0,
+   "MULTI-INDEX OR"
+  ],
+  [
+   8845,
+   8844,
+   0,
+   "INDEX 1"
+  ],
+  [
+   8864,
+   8845,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_source (source=?)"
+  ],
+  [
+   8870,
+   8844,
+   0,
+   "INDEX 2"
+  ],
+  [
+   8889,
+   8870,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_target (target=?)"
+  ],
+  [
+   8912,
+   8217,
+   0,
+   "CORRELATED SCALAR SUBQUERY 5"
+  ],
+  [
+   8920,
+   8912,
+   0,
+   "SEARCH messages USING INDEX sqlite_autoindex_messages_1 (id=?)"
+  ],
+  [
+   8938,
+   8217,
+   0,
+   "CORRELATED SCALAR SUBQUERY 6"
+  ],
+  [
+   8944,
+   8938,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   8963,
+   8217,
+   0,
+   "CORRELATED SCALAR SUBQUERY 8"
+  ],
+  [
+   8969,
+   8963,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   9008,
+   8217,
+   0,
+   "CORRELATED SCALAR SUBQUERY 15"
+  ],
+  [
+   9015,
+   9008,
+   0,
+   "MULTI-INDEX OR"
+  ],
+  [
+   9016,
+   9015,
+   0,
+   "INDEX 1"
+  ],
+  [
+   9035,
+   9016,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_source (source=?)"
+  ],
+  [
+   9041,
+   9015,
+   0,
+   "INDEX 2"
+  ],
+  [
+   9060,
+   9041,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_target (target=?)"
+  ],
+  [
+   9079,
+   9008,
+   0,
+   "CORRELATED SCALAR SUBQUERY 9"
+  ],
+  [
+   9083,
+   9079,
+   0,
+   "SEARCH knowledge USING COVERING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   9100,
+   9008,
+   0,
+   "CORRELATED SCALAR SUBQUERY 10"
+  ],
+  [
+   9105,
+   9100,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   9126,
+   9008,
+   0,
+   "CORRELATED SCALAR SUBQUERY 11"
+  ],
+  [
+   9131,
+   9126,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   9154,
+   9008,
+   0,
+   "CORRELATED SCALAR SUBQUERY 12"
+  ],
+  [
+   9158,
+   9154,
+   0,
+   "SEARCH knowledge USING COVERING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   9175,
+   9008,
+   0,
+   "CORRELATED SCALAR SUBQUERY 13"
+  ],
+  [
+   9180,
+   9175,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   9201,
+   9008,
+   0,
+   "CORRELATED SCALAR SUBQUERY 14"
+  ],
+  [
+   9206,
+   9201,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   9269,
+   8217,
+   0,
+   "CORRELATED SCALAR SUBQUERY 33"
+  ],
+  [
+   9275,
+   9269,
+   0,
+   "SCAN e"
+  ],
+  [
+   9297,
+   8217,
+   0,
+   "USE TEMP B-TREE FOR ORDER BY"
+  ],
+  [
+   9308,
+   8214,
+   0,
+   "SCAN (subquery-50)"
+  ]
+ ],
+ "traverse": [
+  [
+   1,
+   0,
+   0,
+   "SCAN CONSTANT ROW"
+  ],
+  [
+   10,
+   0,
+   0,
+   "SCALAR SUBQUERY 41"
+  ],
+  [
+   14,
+   10,
+   0,
+   "MATERIALIZE walk"
+  ],
+  [
+   16,
+   14,
+   0,
+   "SCAN CONSTANT ROW"
+  ],
+  [
+   27,
+   14,
+   0,
+   "SCALAR SUBQUERY 33"
+  ],
+  [
+   31,
+   27,
+   0,
+   "SEARCH knowledge USING COVERING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   50,
+   10,
+   0,
+   "SCAN walk"
+  ],
+  [
+   67,
+   0,
+   0,
+   "SCALAR SUBQUERY 43"
+  ],
+  [
+   72,
+   67,
+   0,
+   "SCAN k"
+  ],
+  [
+   76,
+   67,
+   0,
+   "SCALAR SUBQUERY 16"
+  ],
+  [
+   80,
+   76,
+   0,
+   "SEARCH sessions USING COVERING INDEX sqlite_autoindex_sessions_1 (id=?)"
+  ],
+  [
+   91,
+   67,
+   0,
+   "LIST SUBQUERY 42"
+  ],
+  [
+   94,
+   91,
+   0,
+   "MATERIALIZE references_in_view"
+  ],
+  [
+   97,
+   94,
+   0,
+   "COMPOUND QUERY"
+  ],
+  [
+   98,
+   97,
+   0,
+   "LEFT-MOST SUBQUERY"
+  ],
+  [
+   101,
+   98,
+   0,
+   "SCAN walk"
+  ],
+  [
+   107,
+   97,
+   0,
+   "UNION USING TEMP B-TREE"
+  ],
+  [
+   110,
+   107,
+   0,
+   "MATERIALIZE edges"
+  ],
+  [
+   112,
+   110,
+   0,
+   "COMPOUND QUERY"
+  ],
+  [
+   113,
+   112,
+   0,
+   "LEFT-MOST SUBQUERY"
+  ],
+  [
+   115,
+   113,
+   0,
+   "SCAN r"
+  ],
+  [
+   119,
+   113,
+   0,
+   "SCALAR SUBQUERY 28"
+  ],
+  [
+   123,
+   119,
+   0,
+   "SEARCH sessions USING COVERING INDEX sqlite_autoindex_sessions_1 (id=?)"
+  ],
+  [
+   144,
+   113,
+   0,
+   "CORRELATED SCALAR SUBQUERY 18"
+  ],
+  [
+   148,
+   144,
+   0,
+   "SEARCH knowledge USING COVERING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   169,
+   113,
+   0,
+   "CORRELATED SCALAR SUBQUERY 19"
+  ],
+  [
+   173,
+   169,
+   0,
+   "SEARCH knowledge USING COVERING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   197,
+   113,
+   0,
+   "CORRELATED SCALAR SUBQUERY 20"
+  ],
+  [
+   201,
+   197,
+   0,
+   "SEARCH knowledge USING COVERING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   217,
+   113,
+   0,
+   "CORRELATED SCALAR SUBQUERY 21"
+  ],
+  [
+   222,
+   217,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   243,
+   113,
+   0,
+   "CORRELATED SCALAR SUBQUERY 22"
+  ],
+  [
+   248,
+   243,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   270,
+   113,
+   0,
+   "CORRELATED SCALAR SUBQUERY 23"
+  ],
+  [
+   274,
+   270,
+   0,
+   "SEARCH knowledge USING COVERING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   290,
+   113,
+   0,
+   "CORRELATED SCALAR SUBQUERY 24"
+  ],
+  [
+   295,
+   290,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   316,
+   113,
+   0,
+   "CORRELATED SCALAR SUBQUERY 25"
+  ],
+  [
+   321,
+   316,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   342,
+   113,
+   0,
+   "CORRELATED SCALAR SUBQUERY 26"
+  ],
+  [
+   346,
+   342,
+   0,
+   "SEARCH knowledge USING COVERING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   367,
+   113,
+   0,
+   "CORRELATED SCALAR SUBQUERY 27"
+  ],
+  [
+   371,
+   367,
+   0,
+   "SEARCH knowledge USING COVERING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   389,
+   112,
+   0,
+   "UNION ALL"
+  ],
+  [
+   391,
+   389,
+   0,
+   "SCAN k"
+  ],
+  [
+   395,
+   389,
+   0,
+   "SCALAR SUBQUERY 16"
+  ],
+  [
+   399,
+   395,
+   0,
+   "SEARCH sessions USING COVERING INDEX sqlite_autoindex_sessions_1 (id=?)"
+  ],
+  [
+   449,
+   389,
+   0,
+   "CORRELATED SCALAR SUBQUERY 1"
+  ],
+  [
+   457,
+   449,
+   0,
+   "SEARCH messages USING INDEX sqlite_autoindex_messages_1 (id=?)"
+  ],
+  [
+   484,
+   389,
+   0,
+   "CORRELATED SCALAR SUBQUERY 2"
+  ],
+  [
+   490,
+   484,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   509,
+   389,
+   0,
+   "CORRELATED SCALAR SUBQUERY 3"
+  ],
+  [
+   514,
+   509,
+   0,
+   "SEARCH p USING COVERING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   526,
+   389,
+   0,
+   "CORRELATED SCALAR SUBQUERY 4"
+  ],
+  [
+   533,
+   526,
+   0,
+   "MULTI-INDEX OR"
+  ],
+  [
+   534,
+   533,
+   0,
+   "INDEX 1"
+  ],
+  [
+   553,
+   534,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_source (source=?)"
+  ],
+  [
+   559,
+   533,
+   0,
+   "INDEX 2"
+  ],
+  [
+   578,
+   559,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_target (target=?)"
+  ],
+  [
+   601,
+   389,
+   0,
+   "CORRELATED SCALAR SUBQUERY 5"
+  ],
+  [
+   609,
+   601,
+   0,
+   "SEARCH messages USING INDEX sqlite_autoindex_messages_1 (id=?)"
+  ],
+  [
+   627,
+   389,
+   0,
+   "CORRELATED SCALAR SUBQUERY 6"
+  ],
+  [
+   633,
+   627,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   652,
+   389,
+   0,
+   "CORRELATED SCALAR SUBQUERY 8"
+  ],
+  [
+   658,
+   652,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   697,
+   389,
+   0,
+   "CORRELATED SCALAR SUBQUERY 15"
+  ],
+  [
+   704,
+   697,
+   0,
+   "MULTI-INDEX OR"
+  ],
+  [
+   705,
+   704,
+   0,
+   "INDEX 1"
+  ],
+  [
+   724,
+   705,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_source (source=?)"
+  ],
+  [
+   730,
+   704,
+   0,
+   "INDEX 2"
+  ],
+  [
+   749,
+   730,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_target (target=?)"
+  ],
+  [
+   768,
+   697,
+   0,
+   "CORRELATED SCALAR SUBQUERY 9"
+  ],
+  [
+   772,
+   768,
+   0,
+   "SEARCH knowledge USING COVERING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   789,
+   697,
+   0,
+   "CORRELATED SCALAR SUBQUERY 10"
+  ],
+  [
+   794,
+   789,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   815,
+   697,
+   0,
+   "CORRELATED SCALAR SUBQUERY 11"
+  ],
+  [
+   820,
+   815,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   843,
+   697,
+   0,
+   "CORRELATED SCALAR SUBQUERY 12"
+  ],
+  [
+   847,
+   843,
+   0,
+   "SEARCH knowledge USING COVERING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   864,
+   697,
+   0,
+   "CORRELATED SCALAR SUBQUERY 13"
+  ],
+  [
+   869,
+   864,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   890,
+   697,
+   0,
+   "CORRELATED SCALAR SUBQUERY 14"
+  ],
+  [
+   895,
+   890,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   941,
+   389,
+   0,
+   "CORRELATED SCALAR SUBQUERY 30"
+  ],
+  [
+   946,
+   941,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   967,
+   389,
+   0,
+   "CORRELATED SCALAR SUBQUERY 31"
+  ],
+  [
+   972,
+   967,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   991,
+   107,
+   0,
+   "SCAN e"
+  ],
+  [
+   1009,
+   107,
+   0,
+   "CORRELATED SCALAR SUBQUERY 36"
+  ],
+  [
+   1016,
+   1009,
+   0,
+   "BLOOM FILTER ON w (reference=?)"
+  ],
+  [
+   1025,
+   1009,
+   0,
+   "SEARCH w USING AUTOMATIC COVERING INDEX (reference=?)"
+  ],
+  [
+   1040,
+   97,
+   0,
+   "UNION USING TEMP B-TREE"
+  ],
+  [
+   1043,
+   1040,
+   0,
+   "SCAN e"
+  ],
+  [
+   1061,
+   1040,
+   0,
+   "CORRELATED SCALAR SUBQUERY 36"
+  ],
+  [
+   1068,
+   1061,
+   0,
+   "BLOOM FILTER ON w (reference=?)"
+  ],
+  [
+   1077,
+   1061,
+   0,
+   "SEARCH w USING AUTOMATIC COVERING INDEX (reference=?)"
+  ],
+  [
+   1102,
+   91,
+   0,
+   "SCAN references_in_view"
+  ],
+  [
+   1127,
+   67,
+   0,
+   "CORRELATED SCALAR SUBQUERY 1"
+  ],
+  [
+   1135,
+   1127,
+   0,
+   "SEARCH messages USING INDEX sqlite_autoindex_messages_1 (id=?)"
+  ],
+  [
+   1162,
+   67,
+   0,
+   "CORRELATED SCALAR SUBQUERY 2"
+  ],
+  [
+   1168,
+   1162,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   1188,
+   67,
+   0,
+   "CORRELATED SCALAR SUBQUERY 3"
+  ],
+  [
+   1193,
+   1188,
+   0,
+   "SEARCH p USING COVERING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   1206,
+   67,
+   0,
+   "CORRELATED SCALAR SUBQUERY 4"
+  ],
+  [
+   1213,
+   1206,
+   0,
+   "MULTI-INDEX OR"
+  ],
+  [
+   1214,
+   1213,
+   0,
+   "INDEX 1"
+  ],
+  [
+   1233,
+   1214,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_source (source=?)"
+  ],
+  [
+   1239,
+   1213,
+   0,
+   "INDEX 2"
+  ],
+  [
+   1258,
+   1239,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_target (target=?)"
+  ],
+  [
+   1281,
+   67,
+   0,
+   "CORRELATED SCALAR SUBQUERY 5"
+  ],
+  [
+   1289,
+   1281,
+   0,
+   "SEARCH messages USING INDEX sqlite_autoindex_messages_1 (id=?)"
+  ],
+  [
+   1307,
+   67,
+   0,
+   "CORRELATED SCALAR SUBQUERY 6"
+  ],
+  [
+   1313,
+   1307,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   1333,
+   67,
+   0,
+   "CORRELATED SCALAR SUBQUERY 8"
+  ],
+  [
+   1339,
+   1333,
+   0,
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)"
+  ],
+  [
+   1379,
+   67,
+   0,
+   "CORRELATED SCALAR SUBQUERY 15"
+  ],
+  [
+   1386,
+   1379,
+   0,
+   "MULTI-INDEX OR"
+  ],
+  [
+   1387,
+   1386,
+   0,
+   "INDEX 1"
+  ],
+  [
+   1406,
+   1387,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_source (source=?)"
+  ],
+  [
+   1412,
+   1386,
+   0,
+   "INDEX 2"
+  ],
+  [
+   1431,
+   1412,
+   0,
+   "SEARCH r USING INDEX knowledge_relations_target (target=?)"
+  ],
+  [
+   1450,
+   1379,
+   0,
+   "CORRELATED SCALAR SUBQUERY 9"
+  ],
+  [
+   1454,
+   1450,
+   0,
+   "SEARCH knowledge USING COVERING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   1471,
+   1379,
+   0,
+   "CORRELATED SCALAR SUBQUERY 10"
+  ],
+  [
+   1476,
+   1471,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   1497,
+   1379,
+   0,
+   "CORRELATED SCALAR SUBQUERY 11"
+  ],
+  [
+   1502,
+   1497,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   1525,
+   1379,
+   0,
+   "CORRELATED SCALAR SUBQUERY 12"
+  ],
+  [
+   1529,
+   1525,
+   0,
+   "SEARCH knowledge USING COVERING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   1546,
+   1379,
+   0,
+   "CORRELATED SCALAR SUBQUERY 13"
+  ],
+  [
+   1551,
+   1546,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   1572,
+   1379,
+   0,
+   "CORRELATED SCALAR SUBQUERY 14"
+  ],
+  [
+   1577,
+   1572,
+   0,
+   "SEARCH knowledge USING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ],
+  [
+   1624,
+   0,
+   0,
+   "SCALAR SUBQUERY 44"
+  ],
+  [
+   1630,
+   1624,
+   0,
+   "SCAN e"
+  ],
+  [
+   1648,
+   1624,
+   0,
+   "CORRELATED SCALAR SUBQUERY 36"
+  ],
+  [
+   1655,
+   1648,
+   0,
+   "BLOOM FILTER ON w (reference=?)"
+  ],
+  [
+   1664,
+   1648,
+   0,
+   "SEARCH w USING AUTOMATIC COVERING INDEX (reference=?)"
+  ],
+  [
+   1691,
+   0,
+   0,
+   "SCALAR SUBQUERY 48"
+  ],
+  [
+   1697,
+   1691,
+   0,
+   "SCAN references_in_view"
+  ],
+  [
+   1702,
+   1691,
+   0,
+   "LIST SUBQUERY 47"
+  ],
+  [
+   1704,
+   1702,
+   0,
+   "SCAN k USING COVERING INDEX sqlite_autoindex_knowledge_1"
+  ],
+  [
+   1708,
+   1702,
+   0,
+   "SCALAR SUBQUERY 16"
+  ],
+  [
+   1712,
+   1708,
+   0,
+   "SEARCH sessions USING COVERING INDEX sqlite_autoindex_sessions_1 (id=?)"
+  ],
+  [
+   1743,
+   1691,
+   0,
+   "CORRELATED SCALAR SUBQUERY 45"
+  ],
+  [
+   1754,
+   1743,
+   0,
+   "BLOOM FILTER ON e (source_ref=?)"
+  ],
+  [
+   1780,
+   1743,
+   0,
+   "SEARCH e USING AUTOMATIC PARTIAL COVERING INDEX (source_ref=?)"
+  ],
+  [
+   1802,
+   1743,
+   0,
+   "CORRELATED SCALAR SUBQUERY 36"
+  ],
+  [
+   1809,
+   1802,
+   0,
+   "BLOOM FILTER ON w (reference=?)"
+  ],
+  [
+   1818,
+   1802,
+   0,
+   "SEARCH w USING AUTOMATIC COVERING INDEX (reference=?)"
+  ],
+  [
+   1837,
+   1691,
+   0,
+   "CORRELATED SCALAR SUBQUERY 46"
+  ],
+  [
+   1848,
+   1837,
+   0,
+   "BLOOM FILTER ON e (target_ref=?)"
+  ],
+  [
+   1875,
+   1837,
+   0,
+   "SEARCH e USING AUTOMATIC PARTIAL COVERING INDEX (target_ref=?)"
+  ],
+  [
+   1897,
+   1837,
+   0,
+   "CORRELATED SCALAR SUBQUERY 36"
+  ],
+  [
+   1904,
+   1897,
+   0,
+   "BLOOM FILTER ON w (reference=?)"
+  ],
+  [
+   1913,
+   1897,
+   0,
+   "SEARCH w USING AUTOMATIC COVERING INDEX (reference=?)"
+  ],
+  [
+   1981,
+   0,
+   0,
+   "SCALAR SUBQUERY 49"
+  ],
+  [
+   1985,
+   1981,
+   0,
+   "SEARCH knowledge USING COVERING INDEX sqlite_autoindex_knowledge_1 (id=?)"
+  ]
+ ]
+}

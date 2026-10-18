@@ -1,0 +1,84 @@
+{
+  "schema": "knowledge-storage-traversal-equivalence-v1",
+  "fixtures": {
+    "modern": "typed records, one group promotion, one root promotion, evidence message, authored cycle",
+    "empty": "modern fixture with knowledge, relation and promotion rows deleted",
+    "no-relations-legacy": "modern rows, knowledge_relations dropped, knowledge without kind",
+    "legacy": "modern rows with knowledge without kind and no knowledge_relations",
+    "no-groups": "modern rows with knowledge_promotions lacking source_kind and destination_kind"
+  },
+  "normalization": "array order only; match arrays by matchScore desc then id; item arrays by id or reference; all fields compared",
+  "results": {
+    "modern": {
+      "cases": 50,
+      "mismatches": 0,
+      "sharedErrors": 0,
+      "mismatchDetail": [],
+      "sharedErrorDetail": []
+    },
+    "empty": {
+      "cases": 50,
+      "mismatches": 0,
+      "sharedErrors": 0,
+      "mismatchDetail": [],
+      "sharedErrorDetail": []
+    },
+    "no-relations-legacy": {
+      "cases": 40,
+      "mismatches": 0,
+      "sharedErrors": 0,
+      "mismatchDetail": [],
+      "sharedErrorDetail": []
+    },
+    "legacy": {
+      "cases": 40,
+      "mismatches": 0,
+      "sharedErrors": 0,
+      "mismatchDetail": [],
+      "sharedErrorDetail": []
+    },
+    "no-groups": {
+      "cases": 50,
+      "mismatches": 0,
+      "sharedErrors": 40,
+      "mismatchDetail": [],
+      "sharedErrorDetail": [
+        [
+          "search",
+          "worker",
+          "grand",
+          "reconnect",
+          "no such column: p.destination_kind"
+        ],
+        [
+          "search",
+          "worker",
+          "grand",
+          "lambda",
+          "no such column: p.destination_kind"
+        ],
+        [
+          "search",
+          "worker",
+          "grand",
+          "nomatch",
+          "no such column: p.destination_kind"
+        ],
+        [
+          "search",
+          "worker",
+          "grand",
+          "decision",
+          "no such column: p.destination_kind"
+        ],
+        [
+          "traverse",
+          "worker",
+          "grand",
+          "out",
+          "no such column: p.destination_kind"
+        ]
+      ]
+    }
+  }
+}

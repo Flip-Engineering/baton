@@ -1,0 +1,116 @@
+{
+  "binary": "/run/baton2-native-homelab/retained/baton-knowledge-730-746-main9-20261016/knowledge-context/bin/baton2",
+  "binarySha256": "d91c9e40efa00ec812f67eec304f0269bd3e45f8c25e89cae421888322ef476d",
+  "main": {
+    "fixture": {
+      "findings": 10001,
+      "relations": 30000
+    },
+    "layer0": {
+      "complete read": {
+        "seconds": 160.466,
+        "peakRssKiB": 471312,
+        "stdoutBytes": 18282458
+      },
+      "index read": {
+        "seconds": 150.222,
+        "peakRssKiB": 77292,
+        "stdoutBytes": 2615700
+      },
+      "detail read": {
+        "seconds": 0.061,
+        "peakRssKiB": 16824,
+        "stdoutBytes": 1814
+      },
+      "relations read": {
+        "seconds": 1.003,
+        "peakRssKiB": 206896,
+        "stdoutBytes": 8034986
+      },
+      "recursive traversal": {
+        "seconds": 912.083,
+        "peakRssKiB": 736148,
+        "stdoutBytes": 28857312
+      },
+      "single-hop traversal": {
+        "seconds": 0.691,
+        "peakRssKiB": 18512,
+        "stdoutBytes": 4999
+      }
+    },
+    "layerA": {
+      "complete read": {
+        "seconds": 1.904,
+        "peakRssKiB": 475576,
+        "stdoutBytes": 18282458
+      },
+      "index read": {
+        "seconds": 0.343,
+        "peakRssKiB": 79108,
+        "stdoutBytes": 2615700
+      },
+      "detail read": {
+        "seconds": 0.034,
+        "peakRssKiB": 24228,
+        "stdoutBytes": 1814
+      },
+      "relations read": {
+        "seconds": 0.792,
+        "peakRssKiB": 208768,
+        "stdoutBytes": 8034986
+      },
+      "recursive traversal": {
+        "seconds": 4.24,
+        "peakRssKiB": 738932,
+        "stdoutBytes": 28857312
+      },
+      "single-hop traversal": {
+        "seconds": 0.682,
+        "peakRssKiB": 24228,
+        "stdoutBytes": 4999
+      }
+    }
+  },
+  "search": {
+    "fixture": {
+      "findings": 2001,
+      "relations": 6000
+    },
+    "layer0": {
+      "search group42": {
+        "seconds": 168.387,
+        "peakRssKiB": 28192,
+        "stdoutBytes": 204401
+      }
+    },
+    "layerA": {
+      "search group42": {
+        "seconds": 3.204,
+        "peakRssKiB": 29216,
+        "stdoutBytes": 204401
+      }
+    }
+  },
+  "indexBuild": {
+    "seconds": 0.248,
+    "plainBytes": 8552448,
+    "indexedBytes": 10948608
+  },
+  "writeCost": {
+    "plain": [
+      0.102,
+      0.133
+    ],
+    "indexed": [
+      0.058,
+      0.428
+    ]
+  },
+  "plans": {
+    "knowledge_author": "SEARCH knowledge USING INDEX knowledge_author (author=?)",
+    "knowledge_promotions_finding": "SEARCH knowledge_promotions USING INDEX knowledge_promotions_finding (finding=?)",
+    "knowledge_relations_source": "SEARCH knowledge_relations USING INDEX knowledge_relations_source (source=?)",
+    "knowledge_relations_target": "SEARCH knowledge_relations USING INDEX knowledge_relations_target (target=?)",
+    "knowledge_relations_author": "SEARCH knowledge_relations USING INDEX knowledge_relations_author (author=?)"
+  }
+}

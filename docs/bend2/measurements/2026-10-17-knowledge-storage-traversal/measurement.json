@@ -1,0 +1,229 @@
+{
+  "schema": "knowledge-storage-traversal-measurement-v1",
+  "date": "2026-10-17",
+  "source": {
+    "branch": "knowledge-storage-traversal-20261017",
+    "base": "2d03892",
+    "layerACommit": "824c3f0",
+    "layerBCommit": "second commit on the same branch",
+    "sourceReadPathsIdenticalToBinary": "dd62ce8, e5fcabf, 4b414dd and 2d03892 keep the read SQL unchanged; later commits change validation, refusal names and write-conflict checks."
+  },
+  "binary": {
+    "path": "/run/baton2-native-homelab/retained/baton-knowledge-730-746-main9-20261016/knowledge-context/bin/baton2",
+    "sha256": "d91c9e40efa00ec812f67eec304f0269bd3e45f8c25e89cae421888322ef476d"
+  },
+  "fixtures": {
+    "main": {
+      "findings": 10001,
+      "relations": 30000,
+      "notes": "one seed finding authored by root, 10000 findings and 30000 relations authored by worker"
+    },
+    "search": {
+      "findings": 2001,
+      "relations": 6000
+    }
+  },
+  "layer0": {
+    "completeRead": {
+      "seconds": 153.9,
+      "peakRssKiB": 484356,
+      "stdoutBytes": 18282458
+    },
+    "completeReadIndexedCopy": {
+      "seconds": 1.6,
+      "peakRssKiB": 487212,
+      "stdoutBytes": 18282458
+    },
+    "indexReadDirectSql": {
+      "seconds": 143.996,
+      "stdoutBytes": 2765714
+    },
+    "relationsReadDirectSql": {
+      "seconds": 0.615,
+      "stdoutBytes": 8034985
+    },
+    "recursiveTraversalUnindexed": {
+      "seconds": 465.2,
+      "peakRssKiB": 749616,
+      "stdoutBytes": 28857312
+    },
+    "recursiveTraversalIndexed": {
+      "seconds": 4.14,
+      "peakRssKiB": 757504,
+      "stdoutBytes": 28857312
+    },
+    "singleHopTraversalIndexed": {
+      "seconds": 0.58,
+      "peakRssKiB": 17628,
+      "stdoutBytes": 4999
+    },
+    "search2kUnindexed": {
+      "seconds": 161.4,
+      "peakRssKiB": 22254,
+      "stdoutBytes": 204401
+    },
+    "search2kIndexed": {
+      "seconds": 2.6,
+      "peakRssKiB": 23876,
+      "stdoutBytes": 204401
+    },
+    "search10kIndexed": {
+      "seconds": 14.52,
+      "peakRssKiB": 40412,
+      "stdoutBytes": 1002625
+    }
+  },
+  "layerA": {
+    "completeReadOrdered": {
+      "seconds": 1.1,
+      "stdoutBytes": 18282458,
+      "outputChanges": "relation arrays ordered by relation id; content unchanged"
+    },
+    "indexBuild": {
+      "seconds": 0.401,
+      "plainBytes": 8552448,
+      "indexedBytes": 10948608
+    },
+    "writeCost": {
+      "findingInserts": [
+        0.223,
+        0.204
+      ],
+      "relationInserts": [
+        0.351,
+        0.764
+      ],
+      "findingCount": 2000,
+      "relationCount": 6000
+    },
+    "workerScopeRead": {
+      "unindexedSeconds": 162.501,
+      "indexedSeconds": 1.779,
+      "stdoutBytes": 18282264
+    }
+  },
+  "layerB": {
+    "method": "generated candidate SQL executed through sqlite3 on the same 10k/30k indexed fixture; output compared with layer 0 after normalizing explicit array order",
+    "completeRead": {
+      "seconds": 1.01,
+      "stdoutBytes": 18282458
+    },
+    "search10kIndexed": {
+      "seconds": 0.98,
+      "stdoutBytes": 1002625
+    },
+    "search10kUnindexed": {
+      "seconds": 20.97,
+      "stdoutBytes": 1002625
+    },
+    "recursiveTraversalIndexed": {
+      "seconds": 2.39,
+      "stdoutBytes": 28857312
+    },
+    "singleHopTraversalIndexed": {
+      "seconds": 0.43,
+      "stdoutBytes": 4999
+    },
+    "ordering": "roots, nodes, edges and relation arrays ordered by identity"
+  },
+  "materialization": {
+    "observation": "complete read output 18282458 bytes with 484356 KiB peak RSS; recursive traversal output 28857312 bytes with 749616 KiB peak RSS",
+    "ratio": "about 26 times the result text at both scales",
+    "indexEffectOnMemory": "none; indexed and unindexed copies have the same output bytes and RSS within measurement noise"
+  },
+  "plans": {
+    "unindexed": "SCAN k with per-finding SCAN p, SCAN p, SCAN r; search repeats the scans per node and counts incident edges per node",
+    "indexed": "SEARCH p USING INDEX knowledge_promotions_finding; MULTI-INDEX OR with knowledge_relations_source and knowledge_relations_target; SEARCH r USING INDEX knowledge_relations_author for scoped relation reads"
+  },
+  "equivalence": {
+    "file": "equivalence.json",
+    "cases": 230,
+    "mismatches": 0,
+    "sharedErrors": 40,
+    "note": "the shared errors are the existing no-destination_kind behaviour for worker, group and universal scopes on a promotion table without the group columns"
+  },
+  "limitations": [
+    "No local compilation or candidate execution; the remote gate is the first compiled result.",
+    "Synthetic uniform graph; production fan-out and message bodies change constants.",
+    "RSS is process high-water including SQLite page cache and allocator retention.",
+    "Unindexed search at 10k findings was not run; the 2k measurement and the query plans are the evidence."
+  ],
+  "probeRun": {
+    "note": "same probe, same fixture, host under load from other Baton processes; direction and scale match the quiet run",
+    "completeReadLayer0": {
+      "seconds": 160.466,
+      "peakRssKiB": 471312,
+      "stdoutBytes": 18282458
+    },
+    "completeReadLayerA": {
+      "seconds": 1.904,
+      "peakRssKiB": 475576,
+      "stdoutBytes": 18282458
+    },
+    "indexReadLayer0": {
+      "seconds": 150.222,
+      "peakRssKiB": 77292,
+      "stdoutBytes": 2615700
+    },
+    "indexReadLayerA": {
+      "seconds": 0.343,
+      "peakRssKiB": 79108,
+      "stdoutBytes": 2615700
+    },
+    "recursiveTraversalLayer0": {
+      "seconds": 912.083,
+      "peakRssKiB": 736148,
+      "stdoutBytes": 28857312
+    },
+    "recursiveTraversalLayerA": {
+      "seconds": 4.24,
+      "peakRssKiB": 738932,
+      "stdoutBytes": 28857312
+    },
+    "singleHopTraversalLayer0": {
+      "seconds": 0.691,
+      "peakRssKiB": 18512,
+      "stdoutBytes": 4999
+    },
+    "singleHopTraversalLayerA": {
+      "seconds": 0.682,
+      "peakRssKiB": 24228,
+      "stdoutBytes": 4999
+    },
+    "relationsReadLayer0": {
+      "seconds": 1.003,
+      "peakRssKiB": 206896,
+      "stdoutBytes": 8034986
+    },
+    "relationsReadLayerA": {
+      "seconds": 0.792,
+      "peakRssKiB": 208768,
+      "stdoutBytes": 8034986
+    },
+    "search2kLayer0": {
+      "seconds": 168.387,
+      "peakRssKiB": 28192,
+      "stdoutBytes": 204401
+    },
+    "search2kLayerA": {
+      "seconds": 3.204,
+      "peakRssKiB": 29216,
+      "stdoutBytes": 204401
+    },
+    "indexBuild": {
+      "seconds": 0.248,
+      "plainBytes": 8552448,
+      "indexedBytes": 10948608
+    },
+    "writeCost": {
+      "plain": [
+        0.102,
+        0.133
+      ],
+      "indexed": [
+        0.058,
+        0.428
+      ]
+    }
+  }
+}

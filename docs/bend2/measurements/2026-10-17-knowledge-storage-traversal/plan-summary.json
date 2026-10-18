@@ -1,0 +1,109 @@
+{
+ "read": {
+  "unindexed_rows": 25,
+  "indexed_rows": 29,
+  "unindexed_lookups": [
+   "SCAN k",
+   "SCAN p",
+   "SCAN r"
+  ],
+  "indexed_lookups": [
+   "SCAN k",
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)",
+   "MULTI-INDEX OR",
+   "SEARCH r USING INDEX knowledge_relations_source (source=?)",
+   "SEARCH r USING INDEX knowledge_relations_target (target=?)"
+  ]
+ },
+ "index": {
+  "unindexed_rows": 13,
+  "indexed_rows": 17,
+  "unindexed_lookups": [
+   "SCAN k",
+   "SCAN p",
+   "SCAN r"
+  ],
+  "indexed_lookups": [
+   "SCAN k",
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)",
+   "SEARCH p USING COVERING INDEX knowledge_promotions_finding (finding=?)",
+   "MULTI-INDEX OR",
+   "SEARCH r USING INDEX knowledge_relations_source (source=?)",
+   "SEARCH r USING INDEX knowledge_relations_target (target=?)"
+  ]
+ },
+ "detail": {
+  "unindexed_rows": 25,
+  "indexed_rows": 29,
+  "unindexed_lookups": [
+   "SCAN p",
+   "SCAN r"
+  ],
+  "indexed_lookups": [
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)",
+   "MULTI-INDEX OR",
+   "SEARCH r USING INDEX knowledge_relations_source (source=?)",
+   "SEARCH r USING INDEX knowledge_relations_target (target=?)"
+  ]
+ },
+ "relations": {
+  "unindexed_rows": 17,
+  "indexed_rows": 17,
+  "unindexed_lookups": [
+   "SCAN r USING INDEX sqlite_autoindex_knowledge_relations_1"
+  ],
+  "indexed_lookups": [
+   "SCAN r USING INDEX sqlite_autoindex_knowledge_relations_1"
+  ]
+ },
+ "search": {
+  "unindexed_rows": 566,
+  "indexed_rows": 694,
+  "unindexed_lookups": [
+   "SCAN k",
+   "SCAN p",
+   "SCAN r",
+   "UNION USING TEMP B-TREE",
+   "SCAN references_in_view",
+   "SCAN k USING COVERING INDEX sqlite_autoindex_knowledge_1",
+   "USE TEMP B-TREE FOR ORDER BY"
+  ],
+  "indexed_lookups": [
+   "SCAN k",
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)",
+   "SEARCH p USING COVERING INDEX knowledge_promotions_finding (finding=?)",
+   "MULTI-INDEX OR",
+   "SEARCH r USING INDEX knowledge_relations_source (source=?)",
+   "SEARCH r USING INDEX knowledge_relations_target (target=?)",
+   "UNION USING TEMP B-TREE",
+   "SCAN r",
+   "SCAN references_in_view",
+   "SCAN k USING COVERING INDEX sqlite_autoindex_knowledge_1",
+   "USE TEMP B-TREE FOR ORDER BY"
+  ]
+ },
+ "traverse": {
+  "unindexed_rows": 142,
+  "indexed_rows": 158,
+  "unindexed_lookups": [
+   "SCAN k",
+   "UNION USING TEMP B-TREE",
+   "SCAN r",
+   "SCAN p",
+   "SCAN references_in_view",
+   "SCAN k USING COVERING INDEX sqlite_autoindex_knowledge_1"
+  ],
+  "indexed_lookups": [
+   "SCAN k",
+   "UNION USING TEMP B-TREE",
+   "SCAN r",
+   "SEARCH p USING INDEX knowledge_promotions_finding (finding=?)",
+   "SEARCH p USING COVERING INDEX knowledge_promotions_finding (finding=?)",
+   "MULTI-INDEX OR",
+   "SEARCH r USING INDEX knowledge_relations_source (source=?)",
+   "SEARCH r USING INDEX knowledge_relations_target (target=?)",
+   "SCAN references_in_view",
+   "SCAN k USING COVERING INDEX sqlite_autoindex_knowledge_1"
+  ]
+ }
+}
