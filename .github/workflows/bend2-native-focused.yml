@@ -56,10 +56,30 @@ jobs:
       BATON2_FOCUSED_TASKS_MAX: ${{ vars.BATON2_FOCUSED_TASKS_MAX }}
       BATON2_FOCUSED_RUNTIME_SECONDS: ${{ vars.BATON2_FOCUSED_RUNTIME_SECONDS }}
     steps:
-      - name: Validate dispatch pins and selected suite
+      - name: Initialize evidence and validate dispatch pins
         shell: bash
+        env:
+          BATON2_FOCUSED_MEMORY_MAX_BYTES: ${{ vars.BATON2_FOCUSED_MEMORY_MAX_BYTES }}
+          BATON2_FOCUSED_MEMORY_RESERVE_BYTES: ${{ vars.BATON2_FOCUSED_MEMORY_RESERVE_BYTES }}
+          BATON2_FOCUSED_TASKS_MAX: ${{ vars.BATON2_FOCUSED_TASKS_MAX }}
+          BATON2_FOCUSED_RUNTIME_SECONDS: ${{ vars.BATON2_FOCUSED_RUNTIME_SECONDS }}
         run: |
           set -euo pipefail
+          run="$RUNNER_TEMP/baton2-focused-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          test ! -e "$run"
+          mkdir -p "$run/toolchain-home" "$run/evidence" "$run/generated"
+          printf 'BATON2_FOCUSED_RUN=%s\n' "$run" >> "$GITHUB_ENV"
+          python3 - <<'PY'
+          import json, os, pathlib, time
+          run = pathlib.Path(os.environ['RUNNER_TEMP']) / ('baton2-focused-' + os.environ['GITHUB_RUN_ID'] + '-' + os.environ['GITHUB_RUN_ATTEMPT'])
+          (run / 'evidence' / 'dispatch.json').write_text(json.dumps({
+              'source_commit': os.environ['BATON2_SOURCE_SHA'],
+              'target_commit': os.environ['BATON2_TARGET_SHA'],
+              'suite': os.environ['BATON2_FOCUSED_SUITE'],
+              'actor': os.environ.get('GITHUB_ACTOR'),
+              'started_at': time.time()
+          }, indent=2) + '\n')
+          PY
           [[ "$BATON2_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$BATON2_TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$BATON2_FOCUSED_SUITE" = observer-recovery
@@ -81,9 +101,8 @@ jobs:
         run: |
           set -euo pipefail
           run="$RUNNER_TEMP/baton2-focused-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
-          test ! -e "$run"
-          mkdir -p "$run/toolchain-home" "$run/evidence" "$run/generated"
-          printf 'BATON2_FOCUSED_RUN=%s\n' "$run" >> "$GITHUB_ENV"
+          test -d "$run/toolchain-home"
+
           python3 .github/scripts/prepare-native-compiler.py --run "$run" \
             --archive "$BATON2_RETAINED_COMPILER_ARCHIVE" \
             --archive-sha256 "$BATON2_RETAINED_COMPILER_SHA256" \
@@ -109,6 +128,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          current_main=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)
+          test "$current_main" = "$BATON2_TARGET_SHA"
+          export BATON2_FOCUSED_CURRENT_MAIN="$current_main"
+          unset GH_TOKEN
           python3 .github/scripts/run-focused-native.py \
             --launch --run "$BATON2_FOCUSED_RUN" \
             --source "$BATON2_SOURCE_SHA" --target "$BATON2_TARGET_SHA" \
