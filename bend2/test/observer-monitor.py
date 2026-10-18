@@ -87,6 +87,7 @@ class ObserverMonitor(unittest.TestCase):
         self.workspace.mkdir()
         self.log = self.directory / 'native.log'
         self.uuid_marker = self.directory / 'native-uuid.txt'
+        self.release_marker = self.directory / 'release-later-output'
         self.native = self.directory / 'native.py'
         self.native.write_text(
             '#!' + sys.executable + '\n'
@@ -115,15 +116,21 @@ class ObserverMonitor(unittest.TestCase):
         return result
 
     def start_attempt(self, stderr_text='', native_uuid=NATIVE_UUID, attempt_id='attempt1',
-                      stdout_text='monitor-line\n', sleep_seconds=8):
+                      stdout_text='monitor-line\n', sleep_seconds=8,
+                      later_stdout_text=''):
         self.native.write_text(
-            '#!' + sys.executable + '\n'
-            'import pathlib,sys,time\n'
-            'pathlib.Path(sys.argv[2]).write_text(sys.argv[1])\n'
-            + ('sys.stderr.write(' + repr(stderr_text) + ')\n' if stderr_text else '')
-            + 'sys.stdout.write(' + repr(stdout_text) + ')\n'
-            'sys.stdout.flush()\n'
-            'time.sleep(' + repr(sleep_seconds) + ')\n')
+            '\n'.join([
+                '#!' + sys.executable,
+                'import pathlib,sys,time',
+                'pathlib.Path(sys.argv[2]).write_text(sys.argv[1])',
+                *(['sys.stderr.write(' + repr(stderr_text) + ')'] if stderr_text else []),
+                'sys.stdout.write(' + repr(stdout_text) + ')',
+                'sys.stdout.flush()',
+                *(['while not pathlib.Path(sys.argv[3]).exists(): time.sleep(0.02)',
+                   'sys.stdout.write(' + repr(later_stdout_text) + ')',
+                   'sys.stdout.flush()'] if later_stdout_text else []),
+                'time.sleep(' + repr(sleep_seconds) + ')',
+            ]) + '\n')
         self.native.chmod(0o700)
         self.attempt_id = attempt_id
         self.native_uuid = native_uuid
@@ -135,7 +142,8 @@ class ObserverMonitor(unittest.TestCase):
             [str(FIXTURE), 'start', str(self.db), attempt_id, str(self.attempt),
              str(self.workspace), str(self.log), native_uuid, 'codex',
              'controlled-model', 'low', sys.executable, str(self.native),
-             native_uuid, str(self.uuid_marker)],
+             native_uuid, str(self.uuid_marker),
+             *([str(self.release_marker)] if later_stdout_text else [])],
             text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             env=self.environment)
         stdout, stderr = start.communicate(timeout=30)
@@ -175,7 +183,11 @@ class ObserverMonitor(unittest.TestCase):
             return database.execute(sql, args).fetchone()
 
     def test_unknown_status_monitor_advances_once_and_keeps_owed_input(self):
-        observer, birth, manifest = self.start_attempt()
+        first_line = 'monitor-line\n'
+        second_line = 'monitor-line-after-log-removal\n'
+        observer, birth, manifest = self.start_attempt(
+            stdout_text=first_line, later_stdout_text=second_line,
+            sleep_seconds=12)
         first = self.recover(observer)
         self.assertNotEqual(first.returncode, 0, first.stdout + first.stderr)
         self.assertEqual((self.attempt / 'native.birth').read_bytes(), birth)
@@ -198,10 +210,20 @@ class ObserverMonitor(unittest.TestCase):
         # pending while it restores observer state from the attempt checkpoint.
         self.log.unlink(missing_ok=True)
         self.assertFalse(self.log.exists())
+        self.release_marker.touch()
+        expected_output = (first_line + second_line).encode()
+        deadline = time.monotonic() + 8
+        while time.monotonic() < deadline:
+            if (self.attempt / 'stdout').stat().st_size >= len(expected_output):
+                break
+            time.sleep(0.02)
+        self.assertEqual((self.attempt / 'stdout').read_bytes(), expected_output)
         second = self.recover(observer)
         self.assertNotEqual(second.returncode, 0, second.stdout + second.stderr)
-        self.assertEqual((self.attempt / 'checkpoint').read_bytes(), checkpoint)
-        self.assertEqual(checkpoint_offset(self.attempt), offset)
+        self.assertNotEqual((self.attempt / 'checkpoint').read_bytes(), checkpoint)
+        self.assertGreater(offset, 0)
+        self.assertEqual(checkpoint_offset(self.attempt), len(expected_output))
+        self.assertEqual(custody_offset(self.attempt), len(expected_output))
         self.assertFalse(self.log.exists())
         self.assertEqual(self.row('SELECT receipt FROM messages WHERE id=?', 'task'), (None,))
         status = self.row("SELECT status FROM executions WHERE session='parent' AND id=?", self.attempt_id)

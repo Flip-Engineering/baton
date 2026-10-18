@@ -40,6 +40,26 @@ static uint64_t checkpoint_offset(const char *directory) {
   if(error || memcmp(checkpoint.magic,BR_CHECKPOINT_MAGIC,8))return UINT64_MAX;
   return checkpoint.offset;
 }
+static int checkpoint_state_equals(const char *directory,const char *expected) {
+  char *path=br_path(directory,"checkpoint");
+  if(!path)return 0;
+  int fd=open(path,O_RDONLY|O_CLOEXEC);free(path);
+  if(fd<0)return 0;
+  BrCheckpoint checkpoint;
+  int error=br_read_all(fd,&checkpoint,sizeof(checkpoint));
+  size_t expected_length=strlen(expected);
+  char *state=NULL;
+  if(!error && checkpoint.length!=expected_length)error=EINVAL;
+  if(!error) {
+    state=malloc(expected_length?expected_length:1);
+    if(!state)error=ENOMEM;
+  }
+  if(!error && expected_length)error=br_read_all(fd,state,expected_length);
+  close(fd);
+  int equal=!error && (!expected_length || !memcmp(state,expected,expected_length));
+  free(state);
+  return equal;
+}
 int main(int argc,char **argv) {
   if(argc==2 && !strcmp(argv[1],"native-sleep")) {
     if(br_write_all(STDOUT_FILENO,"native-ready\n",13))return 1;
@@ -178,11 +198,20 @@ int main(int argc,char **argv) {
   retained->orphan=0;
   retained->error=0;
   retained->socket=owner_pair[0];
+  char *owner_state_text="{\"output\":\"13\",\"owner_monitor\":true}";
   BatonProcessCall owner_monitor={.kind=BP_INSTANCE_MONITOR_COMMIT,.child=&child,
-    .signal=1,.text=state_text,.length=(u32)strlen(state_text)};
+    .signal=1,.text=owner_state_text,.length=(u32)strlen(owner_state_text)};
   baton_retained_call(&owner_monitor);
   REQUIRE(owner_monitor.error==0);
   REQUIRE(checkpoint_offset(directory)==13);
+  REQUIRE(checkpoint_state_equals(directory,owner_state_text));
+  retained->error=EIO;
+  BatonProcessCall owner_error={.kind=BP_INSTANCE_MONITOR_COMMIT,.child=&child,
+    .signal=1,.text=state_text,.length=(u32)strlen(state_text)};
+  baton_retained_call(&owner_error);
+  REQUIRE(owner_error.error==EBUSY);
+  REQUIRE(checkpoint_state_equals(directory,owner_state_text));
+  retained->error=0;
   BatonProcessCall owner_ack={.kind=BP_ACK,.child=&child};
   baton_retained_call(&owner_ack);
   REQUIRE(owner_ack.error==EPERM);
