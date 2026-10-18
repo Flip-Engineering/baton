@@ -1723,7 +1723,9 @@ static int br_keeper_prepare(BrKeeper *keeper,const char *directory,int lock) {
   if((error=br_lifecycle_prepare_check(directory)))return error;
   /* Every current keeper, per-attempt or owner-managed, advertises the
      reconcile operation. A deployed e6 keeper has no capability file. */
-  int capability=br_file(keeper->directory?keeper->directory:directory,"capabilities","reconcile\n",10,1);
+  static const char capabilities[]="reconcile\nobserver-transfer-v1\n";
+  int capability=br_file(keeper->directory?keeper->directory:directory,
+                         "capabilities",capabilities,sizeof(capabilities)-1,1);
   if(capability && capability!=EEXIST)return capability;
   keeper->identity=br_manifest_digest(&keeper->manifest.header,keeper->manifest.field,keeper->manifest.count);
   if(lock>=0)fcntl(lock,F_SETFD,FD_CLOEXEC);
@@ -5691,6 +5693,24 @@ static int baton_observer_completed(BatonSessionLock *call) {
   return error;
 }
 
+static int baton_observer_transfer_supported(const char *directory) {
+  char *path=br_path(directory,"capabilities");
+  if(!path)return ENOMEM;
+  FILE *file=fopen(path,"r");
+  int error=file?0:errno;
+  free(path);
+  if(error)return error==ENOENT?ENOTSUP:error;
+  char line[128];int supported=0;
+  while(fgets(line,sizeof(line),file)) {
+    if(!strcmp(line,"observer-transfer-v1\n") || !strcmp(line,"observer-transfer-v1")) {
+      supported=1;break;
+    }
+  }
+  if(ferror(file))error=errno?errno:EIO;
+  fclose(file);
+  return error?error:supported?0:ENOTSUP;
+}
+
 static int baton_observer_retire(BatonSessionLock *call) {
   BatonRetained *retained=call->attempt.child?call->attempt.child->retained:NULL;
   if(!retained || !retained->observer_detached)return 0;
@@ -5718,6 +5738,22 @@ static int baton_observer_recover(BatonSessionLock *call) {
   if(error)return error;
   call->observer_life=br_process_lifetime((pid_t)call->observer,&call->observer_ended);
   if(call->observer_life<0 && !call->observer_ended)return errno;
+#if defined(__linux__) && defined(SYS_pidfd_send_signal)
+  if(!call->observer_ended &&
+     syscall(SYS_pidfd_send_signal,call->observer_life,0,NULL,0)<0) {
+    if(errno==ESRCH)call->observer_ended=1;
+    else return errno;
+  }
+#else
+  if(!call->observer_ended)return ENOTSUP;
+#endif
+  if(call->keeper && !call->observer_ended) {
+    error=baton_observer_transfer_supported(call->directory);
+    if(error) {
+      call->detail="The keeper cannot attest a live observer handoff.";
+      return error==ENOTSUP?EBUSY:error;
+    }
+  }
   call->attempt.database=call->database;
   call->attempt.directory=call->directory;
   call->attempt.lock=(u32)call->handle;
@@ -5736,9 +5772,8 @@ static int baton_observer_recover(BatonSessionLock *call) {
       }
     } else if(!error) {
       BatonRetained *retained=call->attempt.child?call->attempt.child->retained:NULL;
-      if(call->legacy_unknown && !call->observer_ended &&
-         (!retained || !retained->observer_detached)) {
-        call->detail="Legacy observer recovery cannot verify the live keeper connection.";
+      if(!call->observer_ended && (!retained || !retained->observer_detached)) {
+        call->detail="The keeper did not attest the live observer connection.";
         error=EBUSY;
       } else error=baton_observer_retire(call);
     }

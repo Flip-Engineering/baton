@@ -151,7 +151,7 @@ class Process(unittest.TestCase):
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             text=True, env=self.environment)
         unrelated = subprocess.Popen(
-            [sys.executable, '-c', 'import time; time.sleep(60)'],
+            [sys.executable, '-c', 'import time; time.sleep(180)'],
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL, env=self.environment)
         try:
@@ -190,6 +190,23 @@ class Process(unittest.TestCase):
             status_bytes = (attempt / 'status').read_bytes()
             capability_bytes = ((attempt / 'capabilities').read_bytes()
                                 if (attempt / 'capabilities').exists() else None)
+            if capability_bytes is not None:
+                (attempt / 'capabilities').write_text('reconcile\n')
+                old_capability_before = {name: (attempt / name).read_bytes()
+                                         for name in names if (attempt / name).exists()}
+                old_capability_refused = subprocess.run(
+                    [str(EXE), 'recover-observer', str(database), str(attempt),
+                     str(observer.pid)], text=True, capture_output=True,
+                    env=self.environment, timeout=20)
+                self.assertNotEqual(old_capability_refused.returncode, 0,
+                                    old_capability_refused.stdout)
+                self.assertIsNone(observer.poll(),
+                                  'an old keeper capability allowed an unattested transfer')
+                old_capability_after = {name: (attempt / name).read_bytes()
+                                        for name in names if (attempt / name).exists()}
+                self.assertEqual(old_capability_after, old_capability_before,
+                                 'old keeper refusal changed retained attempt custody')
+                (attempt / 'capabilities').write_bytes(capability_bytes)
             (attempt / 'status').unlink()
             if capability_bytes is not None:
                 (attempt / 'capabilities').unlink()
@@ -220,6 +237,10 @@ class Process(unittest.TestCase):
             self.assertEqual(observer.wait(timeout=10), -signal.SIGTERM)
         finally:
             if observer.poll() is None:
+                try:
+                    os.kill(observer.pid, signal.SIGCONT)
+                except ProcessLookupError:
+                    pass
                 observer.terminate()
                 observer.wait(timeout=10)
             if unrelated.poll() is None:
