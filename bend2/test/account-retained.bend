@@ -51,6 +51,11 @@ def run(args: List<String>) -> IO(Unit):
   match args:
     case "--instance-owner" <> +db <> Nil{}: IO.try(Unit,Custody.Instance.owner(db))
     case "--instance-shutdown" <> +db <> Nil{}: IO.try(Unit,Custody.Instance.shutdown(db))
+    case "--instance-witness" <> +db <> Nil{}: do IO<Unit>:
+      witness : Result<&1,&1,U32 & String,String> <- Custody.Instance.owner_witness(db)
+      match witness:
+        case Fail{error}: IO.die(Unit,2,"owner witness failed")
+        case Done{value}: IO.print(value)
     case +db <> +directory <> Nil{}: prepare(db,directory)
     case other: IO.die(Unit,2,"usage: account-retained DB DIRECTORY | --instance-owner DB | --instance-shutdown DB")
 
