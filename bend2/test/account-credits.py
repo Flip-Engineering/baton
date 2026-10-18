@@ -308,6 +308,27 @@ class AccountCredits(unittest.TestCase):
         self.assertIn('bound account=omp-next', handoff[0]['body'])
         self.assertIn(cause, handoff[0]['body'])
 
+    def test_the_last_account_exhaustion_records_the_fact_and_wakes_the_conductor(self):
+        self.root()
+        self.recruit('leaf')
+        self.call('message', 'retained-task', 'root', 'leaf', 'task', self.task.read_text())
+        self.record('omp-only', 'anthropic', 'omp', 'subscription', '/fixture/stores/omp-only')
+        self.send('bind', id='omp-only', session='leaf')
+        first, started = self.accept('leaf')
+        cause = "You've hit your session limit. Try again later."
+        self.action(first, fail=True, ack=False, fail_message=cause)
+        self.action(first, exit_fixture=True)
+        self.exited('leaf')
+        attempts = self.send('attempts', session='leaf')['attempts']
+        self.assertEqual([row['account'] for row in attempts], ['omp-only'], attempts)
+        exhausted = [row for row in self.rows(
+            "SELECT body FROM messages WHERE body LIKE 'accounts exhausted:%'")]
+        self.assertEqual(len(exhausted), 1, exhausted)
+        self.assertIn('account=omp-only', exhausted[0]['body'])
+        self.assertIn('was the last operator-recorded account', exhausted[0]['body'])
+        self.assertIn(cause, exhausted[0]['body'])
+
 
 if __name__ == '__main__':
     unittest.main()
+

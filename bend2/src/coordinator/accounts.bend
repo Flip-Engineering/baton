@@ -493,7 +493,7 @@ def attempts(+db: String, session: String) -> IO<Unit>:
 # --- organization credit observations ----------------------------------------
 
 def observe_fields_sql(+detail: String) -> String:
-  "SELECT (CASE WHEN json_valid(" ++ C.q(detail) ++ ") THEN 1 ELSE 0 END)||char(31)||coalesce(json_extract(" ++ C.q(detail) ++ ",'$.operation'),'')||char(31)||coalesce(json_extract(" ++ C.q(detail) ++ ",'$.state'),'');"
+  "SELECT (CASE WHEN json_valid(" ++ C.q(detail) ++ ") THEN 1 ELSE 0 END)||char(31)||coalesce(json_extract(" ++ C.q(detail) ++ ",'$.operation'),'')||char(31)||coalesce(json_extract(" ++ C.q(detail) ++ ",'$.state'),'')||char(31)||coalesce(json_extract(" ++ C.q(detail) ++ ",'$.document.id'),'');"
 
 def observe_observed_at(detail: String) -> String:
   "CASE WHEN json_type(" ++ C.q(detail) ++ ",'$.observedAt')='integer' THEN CAST(json_extract(" ++ C.q(detail) ++ ",'$.observedAt') AS TEXT) ELSE CAST(strftime('%s','now') AS INTEGER)*1000 END"
@@ -507,27 +507,28 @@ def observe_id_sql(+account: String, fact: String, +detail: String) -> String:
   C.q(account) ++ "||':observe:'||" ++ C.q(fact) ++ "||':'||" ++ observe_observed_at(detail)
 
 def observe_insert_sql(+account: String, +authority: String, fact: String, state: String, +detail: String) -> String:
-  "UPDATE accounts SET organization=CASE WHEN " ++ C.q(fact) ++ "='organization' AND " ++ C.q(state) ++ "='reported' THEN coalesce(json_extract(" ++ C.q(detail) ++ ",'$.document.id'),'') ELSE organization END,verified_at=CASE WHEN " ++ C.q(fact) ++ "='organization' AND " ++ C.q(state) ++ "='reported' AND length(coalesce(json_extract(" ++ C.q(detail) ++ ",'$.document.id'),''))>0 THEN " ++ observe_observed_at(detail) ++ " ELSE verified_at END WHERE id=" ++ C.q(account) ++ ";"
+  "UPDATE accounts SET organization=CASE WHEN " ++ C.q(fact) ++ "='organization' AND " ++ C.q(state) ++ "='reported' AND length(coalesce(json_extract(" ++ C.q(detail) ++ ",'$.document.id'),''))>0 THEN coalesce(json_extract(" ++ C.q(detail) ++ ",'$.document.id'),'') ELSE organization END,verified_at=CASE WHEN " ++ C.q(fact) ++ "='organization' AND " ++ C.q(state) ++ "='reported' AND length(coalesce(json_extract(" ++ C.q(detail) ++ ",'$.document.id'),''))>0 THEN " ++ observe_observed_at(detail) ++ " ELSE verified_at END WHERE id=" ++ C.q(account) ++ ";"
   ++ "INSERT OR IGNORE INTO credit_observations(id,organization,fact,state,balance,unit,expires,cycle,source,detail,observed_at,authority) SELECT " ++ observe_id_sql(account,fact,detail) ++ "," ++ observe_organization(detail,fact) ++ "," ++ C.q(fact) ++ "," ++ C.q(state) ++ ",'','',coalesce(json_extract(" ++ C.q(detail) ++ ",'$.expires'),''),coalesce(json_extract(" ++ C.q(detail) ++ ",'$.cycle'),''),coalesce(nullif(json_extract(" ++ C.q(detail) ++ ",'$.source'),''),'unsourcedObservation')," ++ C.q(detail) ++ "," ++ observe_observed_at(detail) ++ "," ++ C.q(authority) ++ " FROM accounts WHERE id=" ++ C.q(account) ++ ";"
   ++ "SELECT json_object('observation',(SELECT " ++ observation_object_sql("1") ++ " FROM credit_observations WHERE id=" ++ observe_id_sql(account,fact,detail) ++ "),'accounts',(SELECT coalesce(json_group_array(" ++ account_object_sql() ++ "),json('[]')) FROM accounts WHERE id=" ++ C.q(account) ++ "));"
 
 def observe_admitted(+db: String, +authority: String, account: String, detail: String, fact: String, state: String, present: Bool) -> IO<Unit>:
   match present:
-    case False{}: IO.die(Unit,2,"Account observation requires a recorded account, a JSON document, an operation of organization, cost or usage, and a state of reported or unavailable. No observation was recorded.")
+    case False{}: IO.die(Unit,2,"Account observation requires a recorded account, a JSON document, an operation of organization, cost or usage, a state of reported or unavailable, and for a reported organization observation a document id. No observation was recorded.")
     case True{}: do IO<Unit>:
       saved : String <- IO.try(String,commit_read(db,observe_insert_sql(account,authority,fact,state,detail)))
       IO.print(Tx.trim_nl(saved))
 
-def observe_selected(+db: String, +authority: String, +account: String, +detail: String, +state: String, fact: Maybe<String>) -> IO<Unit>:
+def observe_selected(+db: String, +authority: String, +account: String, +detail: String, +state: String, fact: Maybe<String>, +document_id: String, valid_json: Bool) -> IO<Unit>:
   match fact:
     case None{}: observe_admitted(db,authority,account,detail,"","",False{})
     case Some{+known}: do IO<Unit>:
       registered : String <- IO.try(String,DB.Sql.read(db,"SELECT EXISTS(SELECT 1 FROM accounts WHERE id=" ++ C.q(account) ++ ");"))
-      observe_admitted(db,authority,account,detail,known,state,Bool.and(String.eq(Tx.trim_nl(registered),"1"),state_known(state)))
+      verified_id : Bool = Bool.pick(Bool,Bool.and(String.eq(known,"organization"),String.eq(state,"reported")),Bool.not(String.is_empty(document_id)),True{})
+      observe_admitted(db,authority,account,detail,known,state,Bool.and(valid_json,Bool.and(String.eq(Tx.trim_nl(registered),"1"),Bool.and(state_known(state),verified_id))))
 
 def observe_fields(+db: String, +authority: String, +account: String, +detail: String, fields: List<String>) -> IO<Unit>:
   match fields:
-    case valid <> operation <> state <> rest: observe_selected(db,authority,account,detail,state,operation_fact(operation))
+    case valid <> operation <> state <> document_id <> rest: observe_selected(db,authority,account,detail,state,operation_fact(operation),document_id,String.eq(valid,"1"))
     case other: observe_admitted(db,authority,account,detail,"","",False{})
 
 def observe(+db: String, +authority: String, +account: String, +detail: String) -> IO<Unit>:
@@ -557,20 +558,20 @@ def import_insert_sql(+authority: String, +account: String, +organization: Strin
 
 def import_admitted(+db: String, +authority: String, +account: String, +organization: String, +detail: String, present: Bool) -> IO<Unit>:
   match present:
-    case False{}: IO.die(Unit,2,"A credit import requires a recorded account whose verified organization is the imported organization, a fact of promotional_credit or purchased_credit, a state of reported or unavailable, a named source, and for a reported amount a canonical decimal balance with a named unit. No reading was recorded.")
+    case False{}: IO.die(Unit,2,"A credit import requires a JSON document, a recorded account whose verified organization is the imported organization, a fact of promotional_credit or purchased_credit, a state of reported or unavailable, a named source, and for a reported amount a canonical decimal balance with a named unit. No reading was recorded.")
     case True{}: do IO<Unit>:
       saved : String <- IO.try(String,commit_read(db,import_insert_sql(authority,account,organization,detail)))
       IO.print(Tx.trim_nl(saved))
 
-def import_selected(+db: String, +authority: String, +account: String, +organization: String, +detail: String, fact: String, state: String, balance: String, unit: String, source: String) -> IO<Unit>:
+def import_selected(+db: String, +authority: String, +account: String, +organization: String, +detail: String, fact: String, state: String, balance: String, unit: String, source: String, valid_json: Bool) -> IO<Unit>:
   do IO<Unit>:
     verified : String <- IO.try(String,DB.Sql.read(db,"SELECT EXISTS(SELECT 1 FROM accounts WHERE id=" ++ C.q(account) ++ " AND organization=" ++ C.q(organization) ++ " AND organization<>'');"))
     reported : Bool <- IO.pure(Bool,Bool.and(decimal_text(balance),Bool.not(String.is_empty(unit))))
-    import_admitted(db,authority,account,organization,detail,Bool.and(String.eq(Tx.trim_nl(verified),"1"),Bool.and(credit_fact_known(fact),Bool.and(state_known(state),Bool.and(Bool.not(String.is_empty(source)),Bool.or(String.eq(state,"unavailable"),reported))))))
+    import_admitted(db,authority,account,organization,detail,Bool.and(valid_json,Bool.and(String.eq(Tx.trim_nl(verified),"1"),Bool.and(credit_fact_known(fact),Bool.and(state_known(state),Bool.and(Bool.not(String.is_empty(source)),Bool.or(String.eq(state,"unavailable"),reported)))))))
 
 def import_fields(+db: String, +authority: String, +account: String, +organization: String, +detail: String, fields: List<String>) -> IO<Unit>:
   match fields:
-    case valid <> fact <> state <> balance <> unit <> source <> rest: import_selected(db,authority,account,organization,detail,fact,state,balance,unit,source)
+    case valid <> fact <> state <> balance <> unit <> source <> rest: import_selected(db,authority,account,organization,detail,fact,state,balance,unit,source,String.eq(valid,"1"))
     case other: import_admitted(db,authority,account,organization,detail,False{})
 
 def import_credit(+db: String, +authority: String, +account: String, +organization: String, +detail: String) -> IO<Unit>:
