@@ -1,8 +1,14 @@
 #include <errno.h>
 #include <limits.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <spawn.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
+#include <unistd.h>
 
 extern char **environ;
 
@@ -22,7 +28,7 @@ typedef struct {
   u32 handle, signal, index;
   uint64_t owner_incarnation,owner_attempt;
   int kind, error, eof, unstarted, fresh, preserve_line;
-  char *directory, *initial, *recovery, *detail, *database, *artifact_name, *artifact, *identity, *owner_witness;
+  char *directory, *initial, *recovery, *detail, *database, *artifact_name, *artifact, *identity, *owner_witness, *spec;
   size_t initial_length, recovery_length, artifact_name_length, artifact_length, identity_length;
   u32 keep_stdin, lock;
   char *cursor, *generation;
@@ -57,7 +63,7 @@ enum { BP_SPAWN, BP_WRITE, BP_CLOSE, BP_READ, BP_READ_AWAKE, BP_WAIT, BP_SIGNAL,
        BP_INSTANCE_PREPARE_WITH_FILE, BP_INSTANCE_START, BP_INSTANCE_CANCEL,
        BP_INSTANCE_OWNER_WITNESS, BP_INSTANCE_ENSURE_OWNER_WITNESS,
        BP_INSTANCE_RECOVER, BP_INSTANCE_INPUT_WITNESS, BP_INSTANCE_INPUT_PROMPT,
-       BP_OBSERVER_RECOVERY };
+       BP_OBSERVER_RECOVERY, BP_SPAWN_ENV_FILE };
 
 static int baton_pipe(int fds[2]) {
   if (pipe(fds)) return errno;
@@ -116,7 +122,7 @@ static void baton_child_retire_slot(BatonProcessCall *call) {
   }
 }
 
-static void baton_child_spawn(BatonProcessCall *call) {
+static void baton_child_spawn_env(BatonProcessCall *call,char **envp) {
   if (!call->length || call->args[call->length-1] != 0 || !call->args[0]) {
     call->error=EINVAL; return;
   }
@@ -158,7 +164,7 @@ static void baton_child_spawn(BatonProcessCall *call) {
   BP_ACTION(posix_spawnattr_setsigdefault(&attr,&defaults));
   BP_ACTION(posix_spawnattr_setpgroup(&attr,0));
   BP_ACTION(posix_spawnattr_setflags(&attr,POSIX_SPAWN_SETPGROUP|POSIX_SPAWN_SETSIGDEF));
-  rc=posix_spawnp(&call->child->pid,argv[0],&actions,&attr,argv,environ);
+  rc=posix_spawnp(&call->child->pid,argv[0],&actions,&attr,argv,envp);
 actions_done:
 #undef BP_ACTION
   posix_spawnattr_destroy(&attr); posix_spawn_file_actions_destroy(&actions); close(log);
@@ -171,6 +177,158 @@ pipes:
   if(in[0]>=0)close(in[0]); if(in[1]>=0)close(in[1]);
   if(out[0]>=0)close(out[0]); if(out[1]>=0)close(out[1]);
   free(argv);
+}
+
+static void baton_child_spawn(BatonProcessCall *call) {
+  baton_child_spawn_env(call,environ);
+}
+
+/* The environment-spec launch is a transparent wrapper: the child inherits the
+   wrapper's stdin and stdout, and its stderr goes to the named log. The
+   credential reaches only the child environment. */
+static void baton_child_spawn_env_inherit(BatonProcessCall *call,char **envp) {
+  if (!call->length || call->args[call->length-1] != 0 || !call->args[0]) {
+    call->error=EINVAL; return;
+  }
+  size_t count=0;
+  for(size_t i=0;i<call->length;i++) if(!call->args[i]) count++;
+  char **argv=calloc(count+1,sizeof(char *));
+  if(!argv) { call->error=ENOMEM; return; }
+  size_t index=0, start=0;
+  for(size_t i=0;i<call->length;i++) if(!call->args[i]) {
+    argv[index++]=call->args+start; start=i+1;
+  }
+  int log=-1;
+  if(call->log && call->log[0]) {
+    log=open(call->log,O_WRONLY|O_CREAT|O_APPEND|O_CLOEXEC,0600);
+    if(log<0) { call->error=errno; free(argv); return; }
+  }
+  posix_spawn_file_actions_t actions;
+  posix_spawnattr_t attr;
+  int rc=posix_spawn_file_actions_init(&actions);
+  if(rc) { call->error=rc; if(log>=0)close(log); free(argv); return; }
+  rc=posix_spawnattr_init(&attr);
+  if(rc) { call->error=rc; posix_spawn_file_actions_destroy(&actions); if(log>=0)close(log); free(argv); return; }
+#define BP_ACTION(expr) do { rc=(expr); if(rc) goto actions_done; } while(0)
+  BP_ACTION(posix_spawn_file_actions_addchdir_np(&actions,call->cwd));
+  if(log>=0) {
+    BP_ACTION(posix_spawn_file_actions_adddup2(&actions,log,STDERR_FILENO));
+    BP_ACTION(posix_spawn_file_actions_addclose(&actions,log));
+  }
+  sigset_t defaults;
+  sigemptyset(&defaults); sigaddset(&defaults,SIGPIPE);
+  BP_ACTION(posix_spawnattr_setsigdefault(&attr,&defaults));
+  BP_ACTION(posix_spawnattr_setpgroup(&attr,0));
+  BP_ACTION(posix_spawnattr_setflags(&attr,POSIX_SPAWN_SETPGROUP|POSIX_SPAWN_SETSIGDEF));
+  rc=posix_spawnp(&call->child->pid,argv[0],&actions,&attr,argv,envp);
+actions_done:
+#undef BP_ACTION
+  posix_spawnattr_destroy(&attr); posix_spawn_file_actions_destroy(&actions); if(log>=0)close(log);
+  if(rc) call->error=rc; else { call->child->input=-1; call->child->output=NULL; }
+  free(argv);
+}
+
+static void br_spec_detail(BatonProcessCall *call,const char *detail) {
+  if(call->detail) return;
+  size_t length=strlen(detail);
+  call->detail=malloc(length+1);
+  if(call->detail) memcpy(call->detail,detail,length+1);
+}
+
+/* The small key-environment contract: one credential variable and a few
+   inherited overrides. A sparse or growing specification is refused before
+   allocation. */
+#define BR_ENV_SPEC_MAX 65536
+/* Reads a 0600 NAME=VALUE specification, builds an environment from the
+   inherited environment with those names replaced, unlinks the specification
+   before the child produces bytes, and spawns with that environment. */
+static void baton_child_spawn_env_file(BatonProcessCall *call) {
+  if(!call->spec || !call->length || call->args[call->length-1] != 0 || !call->args[0]) {
+    call->error=EINVAL; return;
+  }
+  int flags=O_RDONLY|O_CLOEXEC;
+#ifdef O_NOFOLLOW
+  flags|=O_NOFOLLOW;
+#endif
+  int fd=open(call->spec,flags);
+  if(fd<0) {call->error=errno;br_spec_detail(call,"specUnreadable: specification cannot be opened");return;}
+  struct stat info;
+  if(fstat(fd,&info)) {int error=errno;close(fd);call->error=error;br_spec_detail(call,"specUnreadable: specification cannot be inspected");return;}
+  if(!S_ISREG(info.st_mode) || (info.st_mode & 077) || info.st_uid!=geteuid()) {
+    close(fd);call->error=EACCES;br_spec_detail(call,"specUnreadable: specification is not an owner-only regular file");return;
+  }
+  if(info.st_size < 0 || (uint64_t)info.st_size > BR_ENV_SPEC_MAX) {
+    close(fd);call->error=E2BIG;br_spec_detail(call,"specUnreadable: specification exceeds the small key-environment bound");return;
+  }
+  size_t capacity=(size_t)info.st_size+1,length=0;
+  char *buffer=malloc(capacity);
+  if(!buffer) {close(fd);call->error=ENOMEM;return;}
+  while(length<capacity-1) {
+    ssize_t count=read(fd,buffer+length,capacity-1-length);
+    if(count>0) {length+=(size_t)count;continue;}
+    if(count<0 && errno==EINTR) continue;
+    if(count<0) {int error=errno;free(buffer);close(fd);call->error=error;br_spec_detail(call,"specUnreadable: specification cannot be read");return;}
+    break;
+  }
+  char extra;
+  ssize_t more=read(fd,&extra,1);
+  if(more<0) {int error=errno;free(buffer);close(fd);call->error=error;br_spec_detail(call,"specUnreadable: specification cannot be read");return;}
+  if(more>0) {free(buffer);close(fd);call->error=E2BIG;br_spec_detail(call,"specUnreadable: specification exceeds the small key-environment bound");return;}
+  close(fd);
+  if(memchr(buffer,0,length)) {free(buffer);call->error=EINVAL;br_spec_detail(call,"specLineMalformed: specification contains NUL");return;}
+  buffer[length]=0;
+  if(length && buffer[length-1]!='\n') {
+    char *grown=realloc(buffer,length+2);
+    if(!grown) {free(buffer);call->error=ENOMEM;return;}
+    buffer=grown;buffer[length++]='\n';buffer[length]=0;
+  }
+  size_t entries=0;
+  for(size_t i=0;i<length;i++) if(buffer[i]=='\n') {
+    size_t start=i;
+    while(start>0 && buffer[start-1]!='\n') start--;
+    size_t equals=start;
+    while(equals<i && buffer[equals]!='=') equals++;
+    if(equals==i) {free(buffer);call->error=EINVAL;br_spec_detail(call,"specLineMalformed: specification line has no '='");return;}
+    entries++;
+  }
+  size_t inherited=0;
+  if(environ) while(environ[inherited]) inherited++;
+  char **envp=calloc(inherited+entries+1,sizeof(*envp));
+  if(!envp) {free(buffer);call->error=ENOMEM;return;}
+  size_t kept=0,line=0;
+  for(size_t i=0;environ && environ[i];i++) {
+    const char *equals=strchr(environ[i],'=');
+    size_t name=equals?(size_t)(equals-environ[i]):strlen(environ[i]);
+    int replaced=0;
+    size_t start=0;
+    while(start<length && !replaced) {
+      size_t end=start;
+      while(end<length && buffer[end]!='\n') end++;
+      size_t spec_equals=start;
+      while(spec_equals<end && buffer[spec_equals]!='=') spec_equals++;
+      if(spec_equals-start==name && !strncmp(buffer+start,environ[i],name)) replaced=1;
+      start=end+1;
+    }
+    if(!replaced) envp[kept++]=environ[i];
+  }
+  size_t start=0;
+  while(start<length) {
+    size_t end=start;
+    while(end<length && buffer[end]!='\n') end++;
+    if(end>start) {
+      buffer[end]=0;
+      if(end>start && buffer[end-1]=='\r') buffer[end-1]=0;
+      envp[kept++]=buffer+start;
+    }
+    start=end+1;
+  }
+  envp[kept]=NULL;
+  if(unlink(call->spec)) {
+    int error=errno;free(envp);free(buffer);
+    call->error=error;br_spec_detail(call,"specUnreadable: specification could not be removed");return;
+  }
+  baton_child_spawn_env_inherit(call,envp);
+  free(envp);free(buffer);
 }
 
 #include <pthread.h>
@@ -4567,6 +4725,7 @@ static void baton_process_call(IoWork *w) {
   if(call->kind==BP_INSTANCE_RETIRE && child->retained &&
      child->retained->observer_only) { call->error=EPERM;return; }
   if(call->kind==BP_SPAWN) { baton_child_spawn(call);return; }
+  if(call->kind==BP_SPAWN_ENV_FILE) { baton_child_spawn_env_file(call);return; }
   if(call->kind==BP_INSTANCE_RECOVER) { call->error=br_instance_recover(call);return; }
   if(call->kind==BP_INSTANCE_INPUT_WITNESS) { call->error=br_instance_input_witness(call);return; }
   if(call->kind==BP_INSTANCE_INPUT_PROMPT) { call->error=br_instance_input_prompt(call);return; }
@@ -4638,7 +4797,7 @@ static Term baton_process_pack(Env e, IoWork *w) {
   BatonProcessCall *call=(BatonProcessCall *)w->data;
   Term value=term_pak(CID_UNIT,0);
   if(!call->error) {
-    if(call->kind==BP_SPAWN || call->kind==BP_ATTACH || call->kind==BP_ATTACH_OWNED ||
+    if(call->kind==BP_SPAWN || call->kind==BP_SPAWN_ENV_FILE || call->kind==BP_ATTACH || call->kind==BP_ATTACH_OWNED ||
        call->kind==BP_INSTANCE_ATTACH || call->kind==BP_INSTANCE_ATTACH_OWNED) value=(Term)call->handle;
     else if(call->kind==BP_INPUT_CLOSED) value=(Term)call->signal;
     else if(call->kind==BP_WAIT) value=io_str(e,call->text,call->length);
@@ -4701,7 +4860,7 @@ static Term baton_process_pack(Env e, IoWork *w) {
 #endif
   int preparation=call->kind==BP_INSTANCE_PREPARE || call->kind==BP_INSTANCE_PREPARE_WITH_FILE;
   Term result=call->error && (preparation || !call->unstarted) ? io_fail(e,call->error,call->detail) : io_done(e,value);
-  if((call->kind==BP_SPAWN || call->kind==BP_RETAIN || call->kind==BP_ATTACH || call->kind==BP_ATTACH_OWNED ||
+  if((call->kind==BP_SPAWN || call->kind==BP_SPAWN_ENV_FILE || call->kind==BP_RETAIN || call->kind==BP_ATTACH || call->kind==BP_ATTACH_OWNED ||
       call->kind==BP_INSTANCE_ADMIT || call->kind==BP_INSTANCE_PREPARE || call->kind==BP_INSTANCE_ATTACH || call->kind==BP_INSTANCE_ATTACH_OWNED ||
       call->kind==BP_RETAIN_WITH_FILE || call->kind==BP_INSTANCE_ADMIT_WITH_FILE || call->kind==BP_INSTANCE_PREPARE_WITH_FILE ||
       call->kind==BP_INSTANCE_SUBSCRIBE || call->kind==BP_INSTANCE_RECOVER) && call->error) {
@@ -4712,7 +4871,7 @@ static Term baton_process_pack(Env e, IoWork *w) {
   }
   free(call->args);free(call->cwd);free(call->log);free(call->text);
   free(call->directory);free(call->initial);free(call->recovery);free(call->detail);free(call->database);free(call->notice);
-  free(call->artifact_name);free(call->artifact);free(call->identity);free(call->owner_witness);free(call->cursor);free(call->generation);free(call);
+  free(call->artifact_name);free(call->artifact);free(call->identity);free(call->owner_witness);free(call->spec);free(call->cursor);free(call->generation);free(call);
   w->data=NULL;
   return result;
 }
@@ -4720,7 +4879,7 @@ static Term baton_process_pack(Env e, IoWork *w) {
 static Term baton_process_begin_mode(Env e, Term *f, IoWork *w, int kind, int preserve_line) {
   BatonProcessCall *call=calloc(1,sizeof(*call));
   if(!call) return io_fail(e,ENOMEM,NULL);
-  int acquire=kind==BP_SPAWN || kind==BP_RETAIN || kind==BP_ATTACH || kind==BP_ATTACH_OWNED ||
+  int acquire=kind==BP_SPAWN || kind==BP_SPAWN_ENV_FILE || kind==BP_RETAIN || kind==BP_ATTACH || kind==BP_ATTACH_OWNED ||
               kind==BP_INSTANCE_ADMIT || kind==BP_INSTANCE_PREPARE || kind==BP_INSTANCE_ATTACH || kind==BP_INSTANCE_ATTACH_OWNED || kind==BP_INSTANCE_RECOVER ||
               kind==BP_RETAIN_WITH_FILE || kind==BP_INSTANCE_ADMIT_WITH_FILE || kind==BP_INSTANCE_PREPARE_WITH_FILE ||
               kind==BP_INSTANCE_SUBSCRIBE;
@@ -4772,7 +4931,15 @@ static Term baton_process_begin_mode(Env e, Term *f, IoWork *w, int kind, int pr
       }
     }
   }
-  if(kind==BP_RETAIN || kind==BP_INSTANCE_ADMIT || kind==BP_INSTANCE_PREPARE) {
+  if(kind==BP_SPAWN_ENV_FILE) {
+    u64 spec_length=0,length=0,cwd_length=0,log_length=0;
+    call->spec=io_cstr(e,f[0],&spec_length);
+    call->args=io_cstr(e,f[1],&length);call->length=length;
+    call->cwd=io_cstr(e,f[2],&cwd_length);
+    call->log=io_cstr(e,f[3],&log_length);
+    if(!call->spec || strlen(call->spec)!=spec_length) call->error=EINVAL;
+    if(strlen(call->cwd)!=cwd_length || strlen(call->log)!=log_length) call->error=EINVAL;
+  } else if(kind==BP_RETAIN || kind==BP_INSTANCE_ADMIT || kind==BP_INSTANCE_PREPARE) {
     u64 length=0;call->directory=io_cstr(e,f[kind==BP_RETAIN?0:1],&length);
     if(strlen(call->directory)!=length)call->error=EINVAL;
   } else if(kind==BP_ATTACH || kind==BP_ATTACH_OWNED || kind==BP_RECOVERY || kind==BP_OBSERVER_RECOVERY || kind==BP_KEEPER ||
@@ -4844,11 +5011,26 @@ static Term baton_process_begin(Env e, Term *f, IoWork *w, int kind) {
   return baton_process_begin_mode(e,f,w,kind,0);
 }
 
+#ifdef CID_PROCESSCHILD_RERAISE
+static Term baton_process_reraise_run(Env e,Term *f,IoWork *w) {
+  int sig=(int)(u32)f[0];
+  signal(sig,SIG_DFL);
+  raise(sig);
+  return io_fail(e,errno?errno:EINVAL,"signal re-raise did not terminate");
+}
+static void __attribute__((constructor)) baton_process_reraise_use(void) {
+  io_eff(CID_PROCESSCHILD_RERAISE,baton_process_reraise_run,0);
+}
+#endif
+
 #define BP_EFFECT(name,ID,kind) \
   static Term name##_run(Env e,Term *f,IoWork *w){return baton_process_begin(e,f,w,kind);} \
   static void __attribute__((constructor)) name##_use(void){io_eff(ID,name##_run,0);}
 #ifdef CID_PROCESSCHILD_SPAWN
 BP_EFFECT(baton_process_spawn,CID_PROCESSCHILD_SPAWN,BP_SPAWN)
+#endif
+#ifdef CID_PROCESSCHILD_SPAWN_ENV_SPEC
+BP_EFFECT(baton_process_spawn_env_spec,CID_PROCESSCHILD_SPAWN_ENV_SPEC,BP_SPAWN_ENV_FILE)
 #endif
 #ifdef CID_PROCESSCHILD_WRITE
 BP_EFFECT(baton_process_write,CID_PROCESSCHILD_WRITE,BP_WRITE)

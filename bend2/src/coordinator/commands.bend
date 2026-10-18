@@ -62,6 +62,7 @@ type Command is Data:
   Push{repo: String, branch: String, remote: String}
   RemoteTip{repo: String, branch: String, remote: String}
   ObservedUsage{session: String}
+  Account{action: String, id: String, provider: String, harness: String, funding: String, secret_ref: String, organization: String, detail: String, session: String}
   Models{session: String}
   ModelsAll{session: String}
   HarnessInventory{}
@@ -625,6 +626,7 @@ def sql(command: Command) -> String:
     case Push{repo,branch,remote}: ""
     case RemoteTip{repo,branch,remote}: ""
     case ObservedUsage{session}: ""
+    case Account{action,id,provider,harness,funding,secret_ref,organization,detail,session}: ""
     case Models{session}: ""
     case ModelsAll{session}: ""
     case HarnessInventory{}: ""
@@ -846,6 +848,7 @@ def parse_receive(+verb: String, +session: String, +cmd: String, +model: String,
 def parse_verb_nine_args(+verb: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +session: String) -> Command:
   match verb:
     case "configure": Configure{player,id,cmd,model,effort,cwd,task,log,session}
+    case "account": Account{player,id,cmd,model,effort,cwd,task,log,session}
     case "start": Start{player,id,cmd,model,effort,cwd,task,log,session}
     case "turn": RunTurn{player,id,cmd,model,effort,cwd,task,log,session}
     case "recruit": Recruit{player,id,cmd,model,effort,cwd,task,log,session}
