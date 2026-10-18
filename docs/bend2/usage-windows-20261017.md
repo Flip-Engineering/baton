@@ -78,13 +78,15 @@ the latest provider row per window for exhaustion evidence:
 - None: no exhausted window. Partial reports stay visible in the query and do
   not hold.
 
-The continuation sleeps until the recorded reset and re-runs the wake through
-the existing dispatch entry (`--dispatch-message`) with no new input. The delay
-is capped at one day, so a far reset re-checks in bounded segments and a
-still-held gate schedules the next segment. It is one detached process, not a
-daemon, and it does not poll. Delivery stays receipt-gated, so a message that
-was handled before the reset keeps its receipt and gains no second delivery;
-two continuations for the same message leave one delivery and one held report.
+The continuation sleeps until the recorded reset and re-enters the wake driver
+(`--wake-message`, which calls `Wake.drive_id`) with no new input, so the gate
+is evaluated again when it fires. A still-held window reports and schedules the
+next segment; an elapsed one admits the owed input; a message that already has
+a receipt is a no-op. The delay is capped at one day, so a far reset re-checks
+in bounded segments. It is one detached process, not a daemon, and it does not
+poll. Delivery stays receipt-gated, so a handled message gains no second
+delivery; two continuations for the same message leave one delivery and one
+held report.
 
 ## Query
 
@@ -108,7 +110,10 @@ observed Kimi, ZAI, and Claude wordings. `bend2/test/usage-windows-store.bend`
 drives the store, gate, reports, refresh, and multiwindow state over a
 temporary database. `bend2/test/usage-windows-long.bend` bounds the reset scan
 on a long provider message. `bend2/test/usage-windows-wake.bend` proves the
-post-reset continuation, handled-message idempotence, duplicate continuations,
-and the one-day segment cap. `bend2/test/usage-windows.py` exercises the
+continuation argv, handled-message idempotence, duplicate continuations, and
+the one-day segment cap. `bend2/test/usage-windows-wake-path.bend` drives the
+production `Receive.wake_due` gate: a reset moved later does not deliver at the
+old time, one moved earlier delivers once, a handled message is a no-op, and a
+far window reports the 86400 s segment. `bend2/test/usage-windows.py` exercises the
 command surface against a recruited session fixture on remote validation
 runners.

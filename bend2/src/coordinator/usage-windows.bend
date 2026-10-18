@@ -153,6 +153,48 @@ def iso_token(tok: String) -> Bool:
       Bool.and(digit(a),Bool.and(digit(b),Bool.and(digit(c),Bool.and(digit(d),Bool.and(digit(m1),Bool.and(digit(m2),Bool.and(digit(d1),Bool.and(digit(d2),iso_time(rest)))))))))
     case other: False{}
 
+# Operator observations require a full date and clock with an explicit zone.
+# Provider-message extraction above intentionally keeps its broader token
+# rules so existing provider wording continues to be interpreted unchanged.
+def explicit_zone(rest: String) -> Bool:
+  match rest:
+    case SCon{'Z',SNil{}}: True{}
+    case SCon{'z',SNil{}}: True{}
+    case SCon{'+',SCon{+h1,SCon{+h2,SCon{':',SCon{+m1,SCon{+m2,SNil{}}}}}}}:
+      Bool.and(digit(h1),Bool.and(digit(h2),Bool.and(digit(m1),digit(m2))))
+    case SCon{'-',SCon{+h1,SCon{+h2,SCon{':',SCon{+m1,SCon{+m2,SNil{}}}}}}}:
+      Bool.and(digit(h1),Bool.and(digit(h2),Bool.and(digit(m1),digit(m2))))
+    case other: False{}
+
+def fractional_digits_zone(rest: String) -> Bool:
+  match rest:
+    case SCon{+head,+tail}:
+      Bool.pick(Bool,digit(head),Bool.pick(Bool,String.is_empty(tail),False{},fractional_digits_zone(tail)),explicit_zone(rest))
+    case other: False{}
+
+def fractional_zone(rest: String) -> Bool:
+  match rest:
+    case SCon{'.',SCon{+head,tail}}: Bool.and(digit(head),fractional_digits_zone(tail))
+    case other: explicit_zone(rest)
+
+def seconds_zone(rest: String) -> Bool:
+  match rest:
+    case SCon{':',SCon{+s1,SCon{+s2,tail}}}:
+      Bool.and(digit(s1),Bool.and(digit(s2),fractional_zone(tail)))
+    case other: fractional_zone(rest)
+
+def operator_time_zone(rest: String) -> Bool:
+  match rest:
+    case SCon{+h1,SCon{+h2,SCon{':',SCon{+m1,SCon{+m2,tail}}}}}:
+      Bool.and(digit(h1),Bool.and(digit(h2),Bool.and(digit(m1),Bool.and(digit(m2),seconds_zone(tail)))))
+    case other: False{}
+
+def operator_reset_token(tok: String) -> Bool:
+  match tok:
+    case SCon{+y1,SCon{+y2,SCon{+y3,SCon{+y4,SCon{'-',SCon{+m1,SCon{+m2,SCon{'-',SCon{+d1,SCon{+d2,SCon{'T',tail}}}}}}}}}}}:
+      Bool.and(digit(y1),Bool.and(digit(y2),Bool.and(digit(y3),Bool.and(digit(y4),Bool.and(digit(m1),Bool.and(digit(m2),Bool.and(digit(d1),Bool.and(digit(d2),operator_time_zone(tail)))))))))
+    case other: False{}
+
 # The first word whose timestamp-character run validates as an ISO-8601
 # date-time, verbatim, or "" when the text names none. Providers separate the
 # date and clock by a space ("reset at 2026-10-06 07:12:52"), so a date-only
@@ -271,6 +313,9 @@ def observe_reset_unknown(+resets: String) -> Bool:
 def observe_reset_sql(+resets: String) -> String:
   "SELECT CAST(strftime('%s'," ++ C.q(resets) ++ ") AS INTEGER)*1000;"
 
+def observe_reset_refused() -> IO(String):
+  IO.die(String,22,"The reset time did not parse; give ISO 8601 with an explicit offset (for example 2026-10-17T03:41:00Z) or 'unknown'.")
+
 def observe_reset_parsed(+resets: String, +parsed: String) -> IO(String):
   match parsed:
     case SNil{}: IO.die(String,22,"The reset time did not parse; give ISO 8601 with an explicit offset (for example 2026-10-17T03:41:00Z) or 'unknown'.")
@@ -279,10 +324,11 @@ def observe_reset_parsed(+resets: String, +parsed: String) -> IO(String):
 def observe_reset_value_known(+db: String, +resets: String, unknown: Bool) -> IO(String):
   match unknown:
     case True{}: IO.pure(String,"NULL")
-    case False{}: do IO<String>:
-      parsed : String <- IO.try(String,DB.Sql.read(db,observe_reset_sql(resets)))
-      value : String <- observe_reset_parsed(resets,parsed)
-      IO.pure(String,value)
+    case False{}:
+      Bool.pick(IO(String),operator_reset_token(resets),do IO<String>:
+        parsed : String <- IO.try(String,DB.Sql.read(db,observe_reset_sql(resets)))
+        value : String <- observe_reset_parsed(resets,parsed)
+        IO.pure(String,value),observe_reset_refused())
 
 def observe_reset_value(+db: String, +resets: String) -> IO(String):
   observe_reset_value_known(db,resets,observe_reset_unknown(resets))
@@ -479,7 +525,7 @@ def window_gate(+db: String, +session: String, +account: String) -> IO(Gate):
 # continuation is not a daemon and does not poll.
 
 def schedule_argv(+self: String, +db: String, +message: String, +delay_s: String) -> List<String>:
-  ["/bin/sh","-c","sleep \"$1\"; shift; exec \"$@\"","sh",delay_s,self,"--dispatch-message",db,message]
+  ["/bin/sh","-c","sleep \"$1\"; shift; exec \"$@\"","sh",delay_s,self,"--wake-message",db,message]
 
 def schedule_delay_sql(+resets_at: String) -> String:
   "SELECT CAST(max(1,min(86400,(" ++ resets_at ++ "-" ++ now_ms() ++ "+999)/1000)) AS TEXT);"

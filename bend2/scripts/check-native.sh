@@ -29,6 +29,9 @@ rm -f .scratch/bend2/usage-windows-store.db
 sh bend2/scripts/build-native.sh bend2/test/usage-windows-wake.bend .scratch/bend2/usage-windows-wake-test
 rm -f .scratch/bend2/usage-windows-wake.db
 .scratch/bend2/usage-windows-wake-test .scratch/bend2/usage-windows-wake.db bend2/test/fake-wake-marker
+sh bend2/scripts/build-native.sh bend2/test/usage-windows-wake-path.bend .scratch/bend2/usage-windows-wake-path-test
+rm -f .scratch/bend2/usage-windows-wake-path.db
+.scratch/bend2/usage-windows-wake-path-test .scratch/bend2/usage-windows-wake-path.db
 sh bend2/scripts/build-native.sh bend2/harness/api-key-exec.bend .scratch/bend2/api-key-exec
 sh bend2/scripts/build-native.sh bend2/test/api-key-spec.bend .scratch/bend2/api-key-spec
 BATON2_API_KEY_SPEC="$root/.scratch/bend2/api-key-spec" "$PYTHON3" bend2/test/api-key-spec.py

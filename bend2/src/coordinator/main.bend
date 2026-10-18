@@ -437,6 +437,8 @@ def legacy_cli_arity(args: List<String>) -> IO(Unit):
     case flag <> db <> owner <> query <> directory <> worktree <> bootstrap_file <> Nil{}:
       recover_context_query_cli(flag, db, owner, query, directory, worktree,
         bootstrap_file)
+    case "--wake-message" <> +db <> +id <> Nil{}:
+      Wake.message_cli(db,id)
     case +flag <> +directory <> +lock <> Nil{}:
       dispatch_cli(directory,lock,[flag,directory,lock],String.eq(flag,"--host-process-keeper"),String.eq(flag,"--dispatch-message"))
     case flag <> db <> player <> id <> cmd <> model <> effort <> cwd <> log <> harness <> directory <> native <> Nil{}:

@@ -71,6 +71,12 @@ def drive_id_found(+db: String, +id: String, empty: Bool) -> IO(Result<&1,&1,U32
 def drive_id(+db: String, +id: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   drive_id_found(db,id,String.is_empty(id))
 
+# A post-reset continuation re-enters this wake driver, so the usage gate is
+# evaluated again when it fires: a still-held window reports and reschedules,
+# an elapsed one admits the owed input, and a handled message is a no-op.
+def message_cli(+db: String, +id: String) -> IO(Unit):
+  IO.try(Unit,drive_id(db,id))
+
 # A committed answer with a message identity reaches the session driver.
 def drive_command(db: String, command: C.Command, answer: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match answer:
