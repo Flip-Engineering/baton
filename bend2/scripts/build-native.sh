@@ -5,10 +5,27 @@ cd "$root"
 entry=${1:-bend2/src/coordinator/main.bend}
 output=${2:-.scratch/bend2/baton2}
 mkdir -p "$(dirname -- "$output")"
-entry_path=$(CDPATH= cd -- "$(dirname -- "$entry")" && pwd -P)/$(basename -- "$entry")
+entry_path=$(readlink -f -- "$entry" 2>/dev/null || printf '%s' "$entry")
 compiler=${BEND:-"$root/.bend/bin/bend"}
 if [ ! -x "$compiler" ]; then
   compiler="$root/node_modules/.bend/bin/bend"
+fi
+if [ "$entry_path" = "$root/bend2/src/coordinator/main.bend" ] &&
+   { [ -z "${BATON2_ADMISSION_CGROUP:-}" ] || [ -z "${BATON2_ADMISSION_RECEIPT:-}" ]; }; then
+  printf '{"error":"build-admission-required","condition":"default-full-main-without-admission","entry":"%s","output":"%s","cgroup":"%s","receipt":"%s"}\n' \
+    "$entry_path" "$output" "${BATON2_ADMISSION_CGROUP:-}" "${BATON2_ADMISSION_RECEIPT:-}" >&2
+  exit 78
+fi
+if [ "$entry_path" = "$root/bend2/src/coordinator/main.bend" ]; then
+  compiler_path=$(readlink -f -- "$compiler" 2>/dev/null || printf '%s' "$compiler")
+  case "$compiler_path" in
+    */bin/bend) ;;
+    *) printf '{"error":"build-admission-required","condition":"compiler-not-guarded","compiler":"%s"}\n' "$compiler_path" >&2; exit 78 ;;
+  esac
+  grep -q 'build-admission-required' "$compiler_path" 2>/dev/null || {
+    printf '{"error":"build-admission-required","condition":"compiler-not-guarded","compiler":"%s"}\n' "$compiler_path" >&2
+    exit 78
+  }
 fi
 generated=${BEND_GENERATED_C:-}
 if [ -z "$generated" ] && [ -n "${BATON2_MAIN_GENERATED_C:-}" ] &&
