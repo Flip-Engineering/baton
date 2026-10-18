@@ -9,6 +9,8 @@ else
 fi
 sh bend2/scripts/build-native.sh
 sh bend2/scripts/build-native.sh bend2/test/process.bend .scratch/bend2/process-test
+"$PYTHON3" bend2/test/custody-adopt.py
+"$PYTHON3" bend2/test/observer-monitor.py
 sh bend2/scripts/build-native.sh bend2/test/instance.bend .scratch/bend2/instance-test
 sh bend2/scripts/build-native.sh bend2/tests/git.bend .scratch/bend2/git-test
 .scratch/bend2/git-test

@@ -239,7 +239,8 @@ def observed_dispatch(+db: String, +session: String, +id: String, +log: String, 
     exited : Unit <- Turn.record_exit(db,session,id,log,outcome)
     closed : Bool <- Stop.stopped(db,session)
     gone : Bool <- Turn.refusal(attempt ++ "/native", Bool.not(String.is_empty(native)), outcome)
-    Receive.complete_or_restart(db,session,id,log,attempt ++ "/native.stderr",cursor,native,cwd,handle,lock,outcome,deliveries,again,Bool.and(gone,Bool.not(closed)))
+    retained : Bool = Bool.and(Bool.not(Receive.native_observation_failed(outcome)),Bool.and(gone,Bool.not(closed)))
+    Receive.complete_or_restart(db,session,id,log,attempt ++ "/native.stderr",cursor,native,cwd,handle,lock,outcome,deliveries,again,retained)
 
 law m17_the_observed_dispatch_is_the_refusal_it_read:
   for +db: String
