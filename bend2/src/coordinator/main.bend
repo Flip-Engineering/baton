@@ -12,6 +12,7 @@ import ./project.bend as Project
 import ./ui-subscription.bend as UISubscription
 import ./instance.bend as Instance
 import ./usage.bend as Usage
+import ./usage-windows.bend as UsageWindows
 import ./../coordinator/logs.bend as Logs
 import ../coordinator/commands.bend as C
 import ../context/native.bend as ContextNative
@@ -163,6 +164,15 @@ def execute(+db: String, command: C.Command) -> IO(Unit):
       Usage.models_all(db,session)
     case C.HarnessInventory{}:
       Subscription.inventory(db)
+    case C.UsageWindows{+session}: do IO<Unit>:
+      label : String <- Subscription.profile_label_io(db,session)
+      UsageWindows.query(db,session,label)
+    case C.UsageWindowObserve{+session,window,resets,source}: do IO<Unit>:
+      label : String <- Subscription.profile_label_io(db,session)
+      UsageWindows.observe(db,session,window,resets,source,label)
+    case C.UsageWindowRefresh{+session}: do IO<Unit>:
+      label : String <- Subscription.profile_label_io(db,session)
+      UsageWindows.refresh(db,session,label)
     case C.Logs{session,level}: do IO<Unit>:
       saved : String <- Logs.apply(db,session,level)
       log_answer(saved)
@@ -440,6 +450,8 @@ def legacy_cli_arity(args: List<String>) -> IO(Unit):
     case flag <> db <> owner <> query <> directory <> worktree <> bootstrap_file <> Nil{}:
       recover_context_query_cli(flag, db, owner, query, directory, worktree,
         bootstrap_file)
+    case "--wake-message" <> +db <> +id <> Nil{}:
+      Wake.message_cli(db,id)
     case +flag <> +directory <> +lock <> Nil{}:
       dispatch_cli(directory,lock,[flag,directory,lock],String.eq(flag,"--host-process-keeper"),String.eq(flag,"--dispatch-message"))
     case flag <> db <> player <> id <> cmd <> model <> effort <> cwd <> log <> harness <> directory <> native <> Nil{}:

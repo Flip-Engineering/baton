@@ -10,6 +10,7 @@ import ../host/sqlite.bend as DB
 import ../host/text.bend as Text
 import ../host/session-lock.bend as Lock
 import ../host/control.bend as Host
+import ./usage-windows.bend as UW
 import ../git/process.bend as Proc
 import ../git/types.bend as T
 
@@ -334,6 +335,16 @@ def profile_record_path(+db: String, session: String) -> IO(String):
     saved : String <- IO.try(String,DB.Sql.query(db,profile_record_sql(db,session)))
     IO.pure(String,Tx.trim_nl(saved))
 
+# The profile label in force for the session's own harness, read for callers
+# outside this module (the usage window binding and gate). An empty label
+# means the account-wide default store for that harness.
+def profile_label_io(+db: String, +session: String) -> IO(String):
+  do IO<String>:
+    +record_path : String <- profile_record_path(db,session)
+    +current : String <- file_text(record_path)
+    +harness : String <- IO.try(String,DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
+    IO.pure(String,record_current(Tx.trim_nl(harness),last_line(Tx.split_lines(current))))
+
 # The named profile format comes from #703 candidate 25f29f0d. Task setup
 # binds it before admitting new work. A failed append retains its IO cause.
 def bind_profile_admitted(+db: String, +session: String, harness: String, label: String, store: String, present: Bool) -> IO(Unit):
@@ -545,9 +556,11 @@ def advance_profile(+db: String, +session: String, +id: String, cause: String, n
 # same actor; false when the list is exhausted, which terminates with the report. The
 # caller passes the terminal event text: the Outcome shutter stays in the calling
 # module, so this shared worker takes no provider-harness type.
-def profile_handoff(+db: String, session: String, id: String, +event: String, native: String, cmd: String, cwd: String) -> IO(Bool):
+def profile_handoff(+db: String, +session: String, +id: String, +event: String, native: String, cmd: String, cwd: String) -> IO(Bool):
   do IO<Bool>:
     +cause : String <- exhaustion_cause(db,event)
+    +label : String <- profile_label_io(db,session)
+    recorded : Unit <- Bool.pick(IO(Unit),String.is_empty(cause),IO.pure(Unit,Unit{}),UW.record_cause(db,session,id,label,cause))
     advanced : Bool <- Bool.pick(IO(Bool),String.is_empty(cause),IO.pure(Bool,False{}),advance_profile(db,session,id,cause,native,cmd,cwd))
     IO.pure(Bool,advanced)
 

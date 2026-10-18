@@ -66,6 +66,9 @@ type Command is Data:
   Models{session: String}
   ModelsAll{session: String}
   HarnessInventory{}
+  UsageWindows{session: String}
+  UsageWindowObserve{session: String, window: String, resets: String, source: String}
+  UsageWindowRefresh{session: String}
   Logs{session: String, level: String}
   LogsStorage{}
   LogsClean{session: String}
@@ -150,9 +153,18 @@ def wake_claim_schema() -> String:
 def task_input_schema() -> String:
   "CREATE TABLE IF NOT EXISTS task_input_requests (id TEXT PRIMARY KEY NOT NULL,request TEXT NOT NULL CHECK(json_valid(request) AND json_type(request)='object'),result TEXT CHECK(result IS NULL OR (json_valid(result) AND json_type(result)='object')));"
 
+# Usage window observations (#797): one row per observed provider window
+# event, bound to the session's harness, the provider prefix of its model, and
+# the subscription profile label in force (an empty label is account-wide).
+# resets_at NULL is the explicit unknown; the store never invents a reset.
+def usage_windows_schema() -> String:
+  "CREATE TABLE IF NOT EXISTS usage_windows (id INTEGER PRIMARY KEY AUTOINCREMENT, recorded_at INTEGER NOT NULL, harness TEXT NOT NULL, model TEXT NOT NULL DEFAULT '', provider TEXT NOT NULL DEFAULT '', account TEXT NOT NULL DEFAULT '', window TEXT NOT NULL, resets_at INTEGER, reset_source TEXT NOT NULL, used_fraction REAL, receipt TEXT NOT NULL, message TEXT NOT NULL DEFAULT '');"
+  ++ "CREATE INDEX IF NOT EXISTS idx_usage_windows_match ON usage_windows(harness, provider, account, recorded_at);"
+
 def schema() -> String:
   wake_claim_schema()
   ++ task_input_schema()
+  ++ usage_windows_schema()
   ++ "CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY NOT NULL, parent TEXT REFERENCES sessions(id), harness TEXT NOT NULL, model TEXT NOT NULL DEFAULT '', effort TEXT NOT NULL DEFAULT '', native TEXT NOT NULL DEFAULT '', observed_harness TEXT NOT NULL DEFAULT '', observed_model TEXT NOT NULL DEFAULT '', observed_effort TEXT NOT NULL DEFAULT '', endpoint TEXT NOT NULL DEFAULT '', workspace TEXT NOT NULL DEFAULT '', branch TEXT NOT NULL DEFAULT '', base TEXT NOT NULL DEFAULT '');"
   ++ "CREATE TABLE IF NOT EXISTS messages (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, sender TEXT NOT NULL REFERENCES sessions(id), recipient TEXT NOT NULL REFERENCES sessions(id), kind TEXT NOT NULL, body TEXT NOT NULL, receipt TEXT);"
   ++ "CREATE TABLE IF NOT EXISTS turns (id TEXT PRIMARY KEY NOT NULL REFERENCES messages(id), worker TEXT NOT NULL REFERENCES sessions(id), event TEXT NOT NULL);"
@@ -630,6 +642,9 @@ def sql(command: Command) -> String:
     case Models{session}: ""
     case ModelsAll{session}: ""
     case HarnessInventory{}: ""
+    case UsageWindows{session}: ""
+    case UsageWindowObserve{session,window,resets,source}: ""
+    case UsageWindowRefresh{session}: ""
     case Logs{session,level}: ""
     case LogsStorage{}: ""
     case LogsClean{session}: ""
@@ -716,6 +731,8 @@ def parse_verb_id(+verb: String, +id: String) -> Command:
     case "knowledge-relations": KnowledgeRelations{id,"worker",id}
     case "observed-usage": ObservedUsage{id}
     case "models": Models{id}
+    case "usage-windows": UsageWindows{id}
+    case "usage-window-refresh": UsageWindowRefresh{id}
     case "view": View{id,id,"7682"}
     case _: Invalid{}
 
@@ -804,6 +821,7 @@ def parse_verb_three_args(+verb: String, +id: String, +one: String, +two: String
 def parse_verb_four_args(+verb: String, +id: String, +one: String, +two: String, +three: String) -> Command:
   match verb:
     case "profile-bind": ProfileBind{id,one,two,three}
+    case "usage-window-observe": UsageWindowObserve{id,one,two,three}
     case "knowledge-search": KnowledgeSearch{id,one,two,three}
     case "knowledge":
       Bool.pick(Command,Bool.and(String.eq(one,"--id"),String.eq(three,"--pretty")),Pretty{KnowledgeDetail{id,two}},
