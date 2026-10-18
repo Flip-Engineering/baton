@@ -272,10 +272,12 @@ static void baton_sql_span_call(IoWork *w) {
       call->code = sqlite3_prepare_v2(db, tail, -1, &statement, &next);
       if (call->code != SQLITE_OK) break;
       if (!statement) { tail = next; continue; }
-      call->code = sqlite3_bind_text64(statement, 1, bytes, (sqlite3_uint64)call->span_length, SQLITE_STATIC, SQLITE_UTF8);
-      if (call->code == SQLITE_OK && call->params > 1)
+      int parameter_count = sqlite3_bind_parameter_count(statement);
+      if (parameter_count >= 1)
+        call->code = sqlite3_bind_text64(statement, 1, bytes, (sqlite3_uint64)call->span_length, SQLITE_STATIC, SQLITE_UTF8);
+      if (call->code == SQLITE_OK && call->params > 1 && parameter_count >= 2)
         call->code = sqlite3_bind_text64(statement, 2, call->text ? call->text : "", (sqlite3_uint64)call->text_length, SQLITE_STATIC, SQLITE_UTF8);
-      if (call->code == SQLITE_OK && call->params > 2)
+      if (call->code == SQLITE_OK && call->params > 2 && parameter_count >= 3)
         call->code = sqlite3_bind_text64(statement, 3, call->text2 ? call->text2 : "", (sqlite3_uint64)call->text2_length, SQLITE_STATIC, SQLITE_UTF8);
       while (call->code == SQLITE_OK) {
         int step = sqlite3_step(statement);

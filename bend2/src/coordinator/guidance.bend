@@ -59,14 +59,17 @@ def awake_pending(db: String, player: String, handle: U32, +cursor: String, woke
 def terminal_sql(+value: String) -> String:
   "SELECT CASE WHEN " ++ C.terminal(value) ++ " THEN 1 ELSE 0 END;"
 
+def terminal_span_sql(+value: String) -> String:
+  "SELECT CASE WHEN " ++ C.terminal_span(value) ++ " THEN 1 ELSE 0 END;"
+
 def observe_text(+db: String, +player: String, handle: U32, +line: String, +cursor: String) -> IO(String):
   do IO<String>:
-    ended : String <- IO.try(String,DB.Sql.query(db,terminal_sql(C.q(line))))
+    ended : String <- IO.try(String,DB.Sql.query(db,terminal_sql(line)))
     continued(db,player,handle,cursor,String.eq(ended,"1\n"))
 
 def observe_span(+db: String, +player: String, handle: U32, +spool: String, +offset: String, +length: String, +cursor: String) -> IO(String):
   do IO<String>:
-    ended : String <- IO.try(String,DB.Sql.query_span(db,spool,offset,length,terminal_sql("?1")))
+    ended : String <- IO.try(String,DB.Sql.query_span(db,spool,offset,length,terminal_span_sql("?1")))
     continued(db,player,handle,cursor,String.eq(ended,"1\n"))
 
 def observe_decoded(+db: String, +player: String, handle: U32, decoded: Frame.FrameDecoded, cursor: String) -> IO(String):

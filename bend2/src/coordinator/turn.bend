@@ -414,9 +414,14 @@ def omp_terminal_decoded(+db: String, decoded: Frame.FrameDecoded, +message: Str
     case Frame.TextFrame{line}: omp_terminal_text(db,line,message,activity)
     case Frame.SpanFrame{spool,offset,length}: omp_terminal_span(db,spool,offset,length,message,activity)
     case Frame.InvalidFrame{line}: IO.pure(String,"")
-def omp_terminal(+db: String, decoded: Frame.FrameDecoded, +message: String, +activity: String, enabled: Bool) -> IO(String):
+def observation_frame(decoded: Frame.FrameDecoded, relevant: Bool) -> IO(String):
+  match relevant:
+    case False{}: IO.pure(String,"")
+    case True{}: IO.try(String,Frame.text_result_decoded(decoded))
+
+def omp_terminal(+db: String, decoded: Frame.FrameDecoded, +message: String, +activity: String, enabled: Bool, relevant: Bool) -> IO(String):
   match enabled:
-    case False{}: IO.pure(String,Frame.text_value(decoded))
+    case False{}: observation_frame(decoded,relevant)
     case True{}: omp_terminal_decoded(db,decoded,message,activity)
 
 
@@ -859,12 +864,13 @@ def consume_frame(+db: String, +player: String, +id: String, +log: String, +poli
     +invalid : Bool <- IO.pure(Bool,Frame.is_invalid(decoded))
     +decode_error : String <- IO.pure(String,Bool.pick(String,invalid,Frame.invalid_error(),""))
     +kind : String <- frame_kind(db,decoded,line,harness)
-    +frame_key : String <- Logs.frame_identity(db,decoded,line,Tx.trim_nl(kind),String.eq(harness,"omp\n"))
+    +frame_key_raw : String <- Logs.frame_identity(db,decoded,line,Tx.trim_nl(kind),String.eq(harness,"omp\n"))
+    +frame_key : String <- IO.pure(String,Tx.trim_nl(frame_key_raw))
     +message_frame : Bool <- IO.pure(Bool,Bool.and(String.eq(harness,"omp\n"),String.eq(Tx.trim_nl(kind),"message_end")))
     +message : String <- omp_message(db,decoded,last_message,message_frame)
     +activity_frame : Bool <- IO.pure(Bool,Bool.and(String.eq(harness,"omp\n"),Bool.or(String.eq(Tx.trim_nl(kind),"message_start"),String.eq(Tx.trim_nl(kind),"message_end"))))
     +activity : String <- omp_activity(db,decoded,Observer.omp_activity(checkpoint_state),activity_frame)
-    +event : String <- omp_terminal(db,decoded,message,activity,Bool.and(String.eq(harness,"omp\n"),String.eq(Tx.trim_nl(kind),"agent_end")))
+    +event : String <- omp_terminal(db,decoded,message,activity,Bool.and(String.eq(harness,"omp\n"),String.eq(Tx.trim_nl(kind),"agent_end")),Guidance.relevant(kind,String.eq(harness,"omp\n")))
     +kept : String <- Logs.retained(db,policy,Tx.trim_nl(kind),decoded,event,log)
     step : List<String> & String <- IO.pure(List<String> & String,Logs.frame_step(policy,Tx.trim_nl(kind),frame_key,kept,held))
     with_frame_step(WakeRead,step,lines => next_held_value => do IO<WakeRead>:

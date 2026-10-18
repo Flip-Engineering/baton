@@ -855,14 +855,15 @@ static void br_read_line_span(BatonProcessCall *call) {
       continue;
     }
     pthread_mutex_lock(&retained->state);
+    int finished=retained->exited;
     if(retained->error) call->error=retained->error;
-    else if(retained->exited) call->eof=call->frame_length==0;
+    else if(finished) call->eof=call->frame_length==0;
     else {
       while(version==retained->version && !retained->exited && !retained->error)
         pthread_cond_wait(&retained->changed,&retained->state);
     }
     pthread_mutex_unlock(&retained->state);
-    if(call->error || call->eof) break;
+    if(call->error || finished) break;
   }
   if(!call->error && !call->eof) {
     char start[32],length[32];
