@@ -404,12 +404,12 @@ def settle_if(+db: String, session: String, attempt: String, success: Bool) -> I
     known : Bool <- present(db)
     settle_reads(db,session,attempt,success,known)
 
-# Completion consumes the admitted prompt and delivered guidance even when the
-# native observation cannot settle message_reads. A stopped session keeps its
-# owed input; consume_delivered_sql carries the same guard.
-def consume_delivered(+db: String, +session: String, +attempt: String, +initial_cursor: String, +delivered_cursor: String) -> IO(Unit):
+# Completion consumes the admitted prompt and forwarded guidance only while its
+# exited attempt and native identity remain current. The transaction records the
+# matching read rows as handled; a stop or identity change keeps input owed.
+def consume_delivered(+db: String, +session: String, +attempt: String, +native: String, +initial_cursor: String, +delivered_cursor: String) -> IO(Unit):
   do IO<Unit>:
-    stored : String <- IO.try(String,Store.transact_sql(db,Status.consume_delivered_sql(session,attempt,initial_cursor,delivered_cursor)))
+    stored : String <- IO.try(String,Store.transact_sql(db,Status.consume_delivered_sql(session,attempt,native,initial_cursor,delivered_cursor)))
     IO.pure(Unit,Unit{})
 
 def initial_observed(+db: String, +session: String, +attempt: String, +event: String) -> IO(Unit):
