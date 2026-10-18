@@ -258,11 +258,13 @@ if args[:1] in (['parent_endpoint'],['answering_parent']):
             with (home/'parent-answers.jsonl').open('a') as answered:
                 answered.write(json.dumps({'request':request,'code':result.returncode,'stdout':result.stdout,'stderr':result.stderr})+'\n')
             if result.returncode: sys.exit(result.returncode)
-            subprocess.run([config['exe'],config['db'],'ack',message['id'],'root','parent-received'],check=True,stdout=subprocess.DEVNULL)
+            if config.get('ack_root',True):
+                subprocess.run([config['exe'],config['db'],'ack',message['id'],'root','parent-received'],check=True,stdout=subprocess.DEVNULL)
             (home/'parent-awaiting-delivery').write_text(str(os.getpid()))
             while not (home/'parent-report-delivered').exists(): time.sleep(.01)
             (home/'parent-question-complete').write_text('report received\n')
-        subprocess.run([config['exe'],config['db'],'ack',message['id'],'root','parent-received'],check=True,stdout=subprocess.DEVNULL)
+        if config.get('ack_root',True):
+            subprocess.run([config['exe'],config['db'],'ack',message['id'],'root','parent-received'],check=True,stdout=subprocess.DEVNULL)
         if args[0]=='answering_parent' and message['kind']=='report':
             (home/'parent-report-delivered').write_text(json.dumps(message))
         with (home/'parent-deliveries.jsonl').open('a') as delivered:
@@ -480,12 +482,19 @@ while True:
         result=subprocess.run([config['exe'],config['db'],'promote',*action['promote']],capture_output=True,text=True)
         reply({'code':result.returncode,'stdout':result.stdout,'stderr':result.stderr})
         continue
+    reference_inputs=re.findall(r'^Message \(report\) from [^\n]* \[id: ([^\]]+)\] retained [0-9]+ bytes; read the complete body with baton read \1\.$',prompt,re.M)
+    read_inputs=action.get('read',reference_inputs)
+    for ident in dict.fromkeys(read_inputs):
+        read=coordinator('read',ident)
+        with (home/'native-reads.jsonl').open('a') as reads:
+            reads.write(json.dumps({'id':ident,'read':read})+ '\n')
     if action.get('ack',True):
         handled_inputs=re.findall(r'^Message \([^\n]*\) from [^\n]* \[id: (.*?)\]:$',prompt,re.M)+steered_inputs
         if action.get('ack_inbox'):
             handled_inputs += [message['id'] for message in coordinator('inbox',session)]
         for ident in dict.fromkeys(handled_inputs):
             subprocess.run([config['exe'],config['db'],'ack',ident,session,'native-reviewed'],check=True,stdout=subprocess.DEVNULL)
+        coordinator('acknowledge','--receipt','native-reviewed')
     failure=action.get('fail',False)
     body=action.get('body','native review complete')
     if not failure and 'fail_status' not in action and action.get('complete_task',True):
@@ -646,13 +655,17 @@ class Receive(unittest.TestCase):
             time.sleep(.01)
 
     def shutdown_idle_database_owner(self, description, reject_start=False):
-        expected = f'{EXE.resolve()} --instance-owner {self.db.resolve()}'
+        database = str(self.db.resolve())
         def idle_processes():
             if reject_start:
                 self.assert_no_start()
             processes = self.owned_processes()
-            if not processes or [process['command'] for process in processes] == [expected]:
+            if not processes:
                 return (processes,)
+            if len(processes) == 1:
+                command = processes[0]['command']
+                if ' --instance-owner ' in command and database in command:
+                    return (processes,)
             return None
         processes, = self.eventually(idle_processes, description)
         if processes:
@@ -934,6 +947,75 @@ class Receive(unittest.TestCase):
         self.assertEqual(json.loads((self.directory / 'parent-report-delivered').read_text())['body'], body)
         self.assertTrue((self.directory / 'parent-question-complete').exists())
 
+    def test_large_pending_reports_are_referenced_not_expanded(self):
+        config_path = self.directory / 'fixture.json'
+        config = json.loads(config_path.read_text())
+        config['ack_root'] = False
+        config_path.write_text(json.dumps(config))
+        self.coord('connect', 'root', 'native-root',
+                   json.dumps([str(self.fixture), 'parent_endpoint']))
+        self.player()
+        self.prepare_input('task-836', 'parent', 'Complete the assignment.', kind='task')
+        body = 'R' * 200_000
+        with sqlite3.connect(self.db) as database:
+            for index in range(12):
+                database.execute(
+                    'INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)',
+                    (f'report-{index}', 'root', 'parent', 'report',
+                     body + f' marker-{index}'))
+        self.connect('parent')
+        observer = self.spawn(*self.receive_args('parent'))
+        native, started = self.accept('parent')
+        prompt = started['prompt']
+        self.assertIn('[id: task-836]', prompt)
+        self.assertIn('Complete the assignment.', prompt)
+        for index in range(12):
+            self.assertIn(f'[id: report-{index}]', prompt)
+        self.assertIn('baton read report-0', prompt)
+        self.assertNotIn('marker-0', prompt)
+        self.assertNotIn('R' * 1000, prompt)
+        self.assertLess(len(prompt), 100_000,
+                        'pending report bodies were expanded into the prompt')
+        self.action(native, body='First turn complete.', read=[], complete_task=False)
+        self.assertEqual(native.readline(), b'')
+        pending = [row['id'] for row in self.coord('inbox', 'parent')]
+        self.assertIn('report-0', pending)
+        self.assertIn('report-1', pending)
+        self.assertNotIn('task-836', pending)
+        self.assertEqual(self.coord('delivery', 'task-836')['receipt'], 'native-reviewed')
+        self.assertIsNone(self.coord('delivery', 'report-0')['receipt'])
+
+        continuation, resumed = self.accept_child(observer, 'parent')
+        self.assertIn('baton read report-0', resumed['prompt'])
+        self.action(continuation, body='Read one report.', read=['report-0'], complete_task=False)
+        self.assertEqual(continuation.readline(), b'')
+        report0 = self.coord('delivery', 'report-0')
+        self.assertEqual(report0['receipt'], 'native-reviewed')
+        self.assertEqual(report0['nativeInputStatus']['read'], 'recorded')
+        self.assertEqual(report0['nativeInputStatus']['handled'], 'recorded')
+        report1 = self.coord('delivery', 'report-1')
+        self.assertIsNone(report1['receipt'])
+        self.assertNotEqual(report1['nativeInputStatus']['handled'], 'recorded')
+        self.assertEqual(self.coord('delivery', 'report-0')['body'], body + ' marker-0')
+        reads = [json.loads(line) for line in
+                 (self.directory / 'native-reads.jsonl').read_text().splitlines()]
+        self.assertIn('marker-0', json.dumps(reads))
+
+        last, final = self.accept_child(observer, 'parent')
+        self.assertIn('baton read report-1', final['prompt'])
+        self.action(last, body='Read the remaining reports.',
+                    read=[f'report-{index}' for index in range(1, 12)], complete_task=False)
+        self.assertEqual(last.readline(), b'')
+        self.finish(observer)
+        self.assertEqual([turn['reportBody'] for turn in self.coord('turns', 'parent')],
+                         ['First turn complete.', 'Read one report.',
+                          'Read the remaining reports.'])
+        self.assertEqual(self.coord('inbox', 'parent'), [])
+        report1 = self.coord('delivery', 'report-1')
+        self.assertEqual(report1['receipt'], 'native-reviewed')
+        self.assertEqual(report1['nativeInputStatus']['read'], 'recorded')
+        self.assertEqual(report1['nativeInputStatus']['handled'], 'recorded')
+
     def test_completed_attempt_acknowledged_while_continuation_live(self):
         self.player()
         self.prepare_input('first', 'parent', 'Complete the original input.', kind='task')
@@ -1079,7 +1161,13 @@ class Receive(unittest.TestCase):
                     self.assertEqual(self.coord('delivery', request)['receipt'], 'parent-received')
 
     def test_ready_request_preserves_new_input_reports_and_physical_failure(self):
+        config_path = self.directory / 'fixture.json'
+        config = json.loads(config_path.read_text())
+        config['ack_root'] = False
+        config_path.write_text(json.dumps(config))
         self.player()
+        self.coord('connect', 'root', 'native-root',
+                   json.dumps([str(self.fixture), 'parent_endpoint']))
         self.prepare_input('ready-input-task', 'parent', 'Complete this work.', kind='task')
         self.connect('parent')
         observer = self.spawn(*self.receive_args('parent'))
@@ -1099,7 +1187,7 @@ class Receive(unittest.TestCase):
         delivery = self.spawn('message', 'ready-input-review', 'root', 'parent', 'report', receipt)
         reviewed, incoming = self.accept_delivery(delivery, 'parent')
         self.assertIn('[id: ready-input-review]', incoming['prompt'])
-        self.assertIn(receipt, incoming['prompt'])
+        self.assertIn('baton read ready-input-review', incoming['prompt'])
         self.assertEqual(incoming['native'], started['native'])
         self.action(reviewed, body=text, complete_task=False)
         self.assertEqual(reviewed.readline(), b'')
@@ -1755,7 +1843,8 @@ class Receive(unittest.TestCase):
         self.assertIn('[id: second]', resumed['prompt'])
         self.assertIn('[id: third]', resumed['prompt'])
         self.assertNotIn('[id: first]', resumed['prompt'])
-        self.assertIn(original_body, notified['prompt'])
+        self.assertNotIn(original_body, notified['prompt'])
+        self.assertIn('baton read', notified['prompt'])
         evidence['parentNotified'] = True
         follow_up_body = 'Queued inputs completed after recovery: ' + harness
         self.action(continuation, body=follow_up_body)
@@ -1763,7 +1852,8 @@ class Receive(unittest.TestCase):
         self.action(parent)
         self.assertEqual(parent.readline(), b'')
         parent_again, next_notification = self.accept('root')
-        self.assertIn(follow_up_body, next_notification['prompt'])
+        self.assertNotIn(follow_up_body, next_notification['prompt'])
+        self.assertIn('baton read', next_notification['prompt'])
         self.action(parent_again)
         self.assertEqual(parent_again.readline(), b'')
         self.eventually(lambda: not self.coord('inbox', 'parent') and not self.coord('inbox', 'root'),
@@ -2085,7 +2175,7 @@ class Receive(unittest.TestCase):
             self.assertEqual(json.loads(pathlib.Path(resumed['resume']).read_text().splitlines()[0])['id'],
                              native_id)
         self.assertIn('[id: second]', resumed['prompt'])
-        self.assertIn('The exact queued input.', resumed['prompt'])
+        self.assertIn('baton read second', resumed['prompt'])
         self.assertNotIn('[id: first]', resumed['prompt'])
         pending_body = 'Pending result after keeper loss: ' + harness
         self.action(continuation, body=pending_body)
