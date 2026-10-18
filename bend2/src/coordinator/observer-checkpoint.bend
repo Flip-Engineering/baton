@@ -4,8 +4,8 @@ import ../host/sqlite.bend as DB
 import ../host/instance.bend as Custody
 import ../git/text.bend as Tx
 import ../context/text.bend as ContextText
-import ../context/request.bend as Request
 import ./../coordinator/logs.bend as Logs
+import ./checkpoint-codec.bend as CheckpointCodec
 
 # Reducer state committed with the host spool cursor for one retained native
 # attempt. The host binds the encoded value to its attempt identity and byte
@@ -171,26 +171,8 @@ def without_query_newline_reversed(+reversed: String, +raw: String) -> String:
 def without_query_newline(+raw: String) -> String:
   without_query_newline_reversed(Tx.str_rev(raw),raw)
 
-# Checkpoint fields retain NUL code points. Other bytes use the existing UTF-8
-# decoder, including its pending multi-byte state.
-def decode_byte(state: Request.DState, +byte: U32) -> Request.DState:
-  match state:
-    case Request.DStart{+acc}:
-      Bool.pick(Request.DState,U32.is_eq(byte,0),Request.DStart{SCon{Char.from_u32(0),acc}},Request.step_state(Request.DStart{acc},byte))
-    case other: Request.step_state(other,byte)
-
-def decode_bytes(bytes: String, +state: Request.DState) -> Request.DState:
-  match bytes:
-    case SNil{}: state
-    case SCon{+head,+tail}: decode_bytes(tail,decode_byte(state,Char.to_u32(head)))
-
-def decode_scalar(scalar: Request.Scalar) -> IO(String):
-  match scalar:
-    case Request.ScalarText{value}: IO.pure(String,value)
-    case other: IO.die(String,3,"Native observer checkpoint field decode failed: " ++ Request.scalar_reason(other))
-
 def decode_field(hex: String) -> IO(String):
-  decode_scalar(Request.state_scalar(decode_bytes(ContextText.hex_decode(hex),Request.DStart{SNil{}})))
+  CheckpointCodec.decode_field(hex)
 
 def decode_fields(fields: List<String>) -> IO(State):
   match fields:
