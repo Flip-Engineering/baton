@@ -100,16 +100,115 @@ def verify_repl(prefix, manifest):
 
 
 
+
+BINARY_LAYOUT = (
+    {'role': 'focused-facade', 'path': 'bin/baton', 'alias': 'bin/baton2',
+     'entry': 'bend2/src/coordinator/receive-focused.bend', 'build_mode': 'focused-native-entry'},
+    {'role': 'full-cli', 'path': 'bin/baton-full', 'alias': None,
+     'entry': 'bend2/src/coordinator/main.bend', 'build_mode': 'full-native-entry'},
+    {'role': 'receiver-register', 'path': 'bin/baton-register', 'alias': None,
+     'entry': 'bend2/src/coordinator/receiver-register-focused-direct.bend',
+     'build_mode': 'standalone-registrar'},
+)
+
+
+def verify_checksums(prefix):
+    path = prefix / 'SHA256SUMS'
+    require(path.is_file() and not path.is_symlink(), 'The installation is missing its SHA256SUMS file')
+    rows = {}
+    for line in path.read_text().splitlines():
+        match = re.fullmatch(r'([0-9a-f]{64})  (.+)', line)
+        require(match is not None, 'The installation checksum line is malformed: ' + line)
+        digest, name = match.groups()
+        relative = PurePosixPath(name)
+        require(not relative.is_absolute() and relative.parts and '..' not in relative.parts
+                and '\\' not in name and name not in rows,
+                'The installation checksum contains an unsafe or repeated path: ' + name)
+        rows[name] = digest
+    return rows
+
+
+def verify_binaries(prefix, manifest, checksums):
+    require(manifest.get('schema') == 'baton2-native-install-v2',
+            'The installation manifest does not declare the receiver layout')
+    binaries = manifest.get('binaries')
+    require(isinstance(binaries, list) and len(binaries) == len(BINARY_LAYOUT),
+            'The receiver layout requires exactly three installed binaries')
+    expected = {item['role']: item for item in BINARY_LAYOUT}
+    seen = set()
+    records = []
+    for record in binaries:
+        require(isinstance(record, dict) and record.get('role') in expected
+                and record['role'] not in seen,
+                'The installation manifest contains an unknown or repeated binary role')
+        seen.add(record['role'])
+        layout = expected[record['role']]
+        require(record.get('path') == layout['path'],
+                'The ' + record['role'] + ' binary is installed at an unexpected path')
+        path = prefix / layout['path']
+        require(path.is_file() and not path.is_symlink() and os.access(path, os.X_OK),
+                'The installed ' + record['role'] + ' binary is missing or not executable')
+        digest = archive_digest(path)
+        require(digest == record.get('sha256'),
+                'The installed ' + record['role'] + ' binary differs from its manifest hash')
+        require(checksums.get(layout['path']) == digest,
+                'The installed ' + record['role'] + ' binary is absent from SHA256SUMS')
+        require(record.get('entry') == layout['entry'] and record.get('build_mode') == layout['build_mode'],
+                'The installed ' + record['role'] + ' binary records another entry or build mode')
+        source = record.get('source')
+        require(isinstance(source, dict) and isinstance(source.get('commit'), str)
+                and re.fullmatch(r'[0-9a-f]{40}', source['commit']) is not None
+                and isinstance(source.get('status'), str)
+                and (isinstance(source.get('tree'), str)
+                     and re.fullmatch(r'[0-9a-f]{40}', source['tree']) is not None
+                     or isinstance(source.get('manifest_sha256'), str)
+                     and re.fullmatch(r'[0-9a-f]{64}', source['manifest_sha256']) is not None),
+                'The installed ' + record['role'] + ' binary lacks an exact source commit/tree or manifest pin')
+        if layout['alias']:
+            require(record.get('alias') == layout['alias'],
+                    'The focused facade must expose its baton2 alias')
+            alias = prefix / layout['alias']
+            require(alias.is_file() and not alias.is_symlink() and os.access(alias, os.X_OK),
+                    'The installed baton2 alias is missing or not executable')
+            require(archive_digest(alias) == digest,
+                    'The installed baton2 alias differs from the focused facade')
+            require(checksums.get(layout['alias']) == digest,
+                    'The installed baton2 alias is absent from SHA256SUMS')
+        else:
+            require(record.get('alias') is None,
+                    'The ' + record['role'] + ' binary has an unexpected alias')
+        records.append({'role': record['role'], 'path': layout['path'],
+                        'sha256': digest, 'source': source,
+                        'entry': layout['entry'], 'build_mode': layout['build_mode']})
+    require(seen == set(expected), 'The installation is missing the focused, full or registrar binary')
+    focused = next(record for record in records if record['role'] == 'focused-facade')
+    binary = manifest.get('binary')
+    require(isinstance(binary, dict) and binary.get('path') == focused['path']
+            and binary.get('alias') == 'bin/baton2' and binary.get('sha256') == focused['sha256'],
+            'The compatibility binary record does not match the focused facade')
+    receipt_path = prefix / 'install-receipt.json'
+    require(receipt_path.is_file() and not receipt_path.is_symlink(),
+            'The installation is missing its install receipt')
+    receipt = json.loads(receipt_path.read_text())
+    require(receipt.get('schema') == 'baton2-native-install-receipt-v1',
+            'The installation receipt schema is unsupported')
+    require(receipt.get('manifest', {}).get('sha256') == archive_digest(prefix / 'manifest.json'),
+            'The installation receipt differs from the manifest')
+    require(receipt.get('binaries') == manifest.get('binaries'),
+            'The installation receipt binary pins differ from the manifest')
+    require(receipt.get('source') == manifest.get('source'),
+            'The installation receipt source differs from the manifest')
+    require(checksums.get('manifest.json') == archive_digest(prefix / 'manifest.json')
+            and checksums.get('install-receipt.json') == archive_digest(receipt_path),
+            'The manifest or install receipt is absent from SHA256SUMS')
+    return records
+
 def check(prefix, output):
     manifest_path = prefix / 'manifest.json'
     manifest = json.loads(manifest_path.read_text())
+    checksums = verify_checksums(prefix)
+    binaries = verify_binaries(prefix, manifest, checksums)
     dependency = verify_repl(prefix, manifest)
-    binary = manifest['binary']
-    require(binary['path'] == 'bin/baton2' and binary['alias'] == 'bin/baton',
-            'The native installation must provide bin/baton2 and bin/baton')
-    require(all((prefix / binary[key]).is_file() and os.access(prefix / binary[key], os.X_OK)
-                and archive_digest(prefix / binary[key]) == binary.get('sha256') for key in ('path', 'alias')),
-            'The installed coordinator or alias differs from the package manifest')
     system = platform.system()
     require(manifest.get('required_system_dependencies') == system_dependencies(system),
             'The installation manifest must record its required C toolchain and SQLite development files')
@@ -133,6 +232,8 @@ def check(prefix, output):
         require(result.returncode == 0, 'Installation prerequisite command failed: ' + str(argv))
         return result.stdout.strip()
 
+    run([prefix / 'bin/baton', '--help'])
+    run([prefix / 'bin/baton-full', '--help'])
     runtime_version = run([prefix / dependency['path'] / 'bun', '--version'])
     require(re.fullmatch(r'\d+\.\d+\.\d+(?:[-+][\w.-]+)?', runtime_version) is not None,
             'The bundled Bun runtime did not report its version')
@@ -160,6 +261,9 @@ def check(prefix, output):
     run([compiler, '-std=c11', *flags, source, '-lsqlite3', '-o', program])
     sqlite_version = run([program])
     return {'status': 'ready', 'prefix': str(prefix), 'manifest_sha256': archive_digest(manifest_path),
+            'install_receipt_sha256': archive_digest(prefix / 'install-receipt.json'),
+            'checksums_sha256': archive_digest(prefix / 'SHA256SUMS'),
+            'binaries': binaries,
             'repl_manifest_sha256': dependency['sha256'], 'compiler': compiler,
             'runtime_version': runtime_version,
             'compiler_version': version, 'sdk': sdk, 'sqlite_version': sqlite_version,
