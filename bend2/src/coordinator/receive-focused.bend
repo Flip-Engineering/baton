@@ -118,7 +118,15 @@ def dispatch(args: List<String>) -> IO(Unit):
       dispatch_recover(String.eq(flag,"--recover-receive"),db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,inputs)
     case other: IO.die(Unit,2,"unsupported focused receive command")
 
+@unsafe
+def dispatch_entry(args: List<String>) -> IO(Unit):
+  match args:
+    case executable <> "--" <> rest: dispatch(rest)
+    case executable <> rest: dispatch(rest)
+    case other: dispatch(other)
+
+@unsafe
 def main() -> IO(Unit):
   do IO<Unit>:
     args : List<String> <- IO.args()
-    dispatch(args)
+    dispatch_entry(args)
