@@ -77,9 +77,12 @@ def decimal_tail(+text: String, seen_dot: Bool, seen_digit: Bool) -> Bool:
   match text:
     case SNil{}: seen_digit
     case SCon{head, tail}:
-      match String.eq(head,Char.from_u32(46)):
-        case True{}: Bool.pick(Bool,seen_dot,False{},decimal_tail(tail,True{},seen_digit))
-        case False{}: Bool.pick(Bool,digit_code(Char.to_u32(head)),decimal_tail(tail,seen_dot,True{}),False{})
+      decimal_tail_char(Char.to_u32(head),tail,seen_dot,seen_digit)
+
+def decimal_tail_char(+code: U32, +tail: String, seen_dot: Bool, seen_digit: Bool) -> Bool:
+  Bool.pick(Bool,Bool.eq(code,46),
+    Bool.pick(Bool,seen_dot,False{},decimal_tail(tail,True{},seen_digit)),
+    Bool.pick(Bool,digit_code(code),decimal_tail(tail,seen_dot,True{}),False{}))
 
 def decimal_text(+text: String) -> Bool:
   decimal_tail(text,False{},False{})
@@ -150,9 +153,12 @@ def organization_blocked(blocked: List<String>, +organization: String) -> Bool:
   match blocked:
     case Nil{}: False{}
     case head <> rest:
-      match String.is_empty(organization):
-        case True{}: False{}
-        case False{}: Bool.pick(Bool,String.eq(head,organization),True{},organization_blocked(rest,organization))
+      organization_blocked_head(head,rest,organization)
+
+def organization_blocked_head(+head: String, rest: List<String>, +organization: String) -> Bool:
+  Bool.pick(Bool,String.is_empty(organization),
+    organization_blocked(rest,organization),
+    Bool.pick(Bool,String.eq(head,organization),True{},organization_blocked_head(rest,organization)))
 
 def funding_matches(+required: String, +funding: String) -> Bool:
   Bool.or(String.is_empty(required),String.eq(required,funding))
@@ -180,7 +186,10 @@ def wrap_selected(account: Maybe<&2,AccountRecord>, preferred: Bool) -> Maybe<&2
 
 # Observed availability first; the operator's own order when it decides nothing.
 def select_account(accounts: List<&2,AccountRecord>, blocked: List<String>, +harness: String, +required_funding: String) -> Maybe<&2,Selected>:
-  match select_preferred(accounts,blocked,harness,required_funding):
+  select_account_decided(select_preferred(accounts,blocked,harness,required_funding),accounts,harness,required_funding)
+
+def select_account_decided(preferred: Maybe<&2,Selected>, accounts: List<&2,AccountRecord>, +harness: String, +required_funding: String) -> Maybe<&2,Selected>:
+  match preferred:
     case Some{+account}: Some{Sel{account,True{}}}
     case None{}: wrap_selected(select_matching(accounts,harness,required_funding),False{})
 

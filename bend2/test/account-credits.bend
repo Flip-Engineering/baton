@@ -51,12 +51,18 @@ def vocabulary_checks() -> IO(Unit):
     IO.pure(Unit,Unit{})
 
 def operation_is(operation: String, +expected: String, +label: String) -> IO(Unit):
-  match A.operation_fact(operation):
+  operation_is_fact(A.operation_fact(operation),expected,label)
+
+def operation_is_fact(fact: Maybe<String>, +expected: String, +label: String) -> IO(Unit):
+  match fact:
     case Some{+fact}: check(label,String.eq(fact,expected))
     case None{}: IO.die(Unit,1,"fixture-account " ++ label ++ ": no fact")
 
 def operation_none(operation: String, +label: String) -> IO(Unit):
-  match A.operation_fact(operation):
+  operation_none_fact(A.operation_fact(operation),label)
+
+def operation_none_fact(fact: Maybe<String>, +label: String) -> IO(Unit):
+  match fact:
     case None{}: check(label,True{})
     case Some{+fact}: IO.die(Unit,1,"fixture-account " ++ label ++ ": unexpected " ++ fact)
 

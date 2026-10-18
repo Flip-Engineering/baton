@@ -826,7 +826,7 @@ def select_route(+db: String, +session: String, id: String) -> IO(Maybe<&2,Route
 # a bound account that was the last recorded account for its harness. History
 # and lineage append IO failures write different reports, so they return false
 # here and never cause a cross-route switch.
-def exhausted_reported(db: String, id: String) -> IO(Bool):
+def exhausted_reported(+db: String, +id: String) -> IO(Bool):
   do IO<Bool>:
     found : String <- IO.try(String,DB.Sql.query(db,"SELECT EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(id ++ ":profile-exhausted") ++ " OR id=" ++ C.q(id ++ ":account-exhausted") ++ ");"))
     IO.pure(Bool,String.eq(found,"1\n"))
