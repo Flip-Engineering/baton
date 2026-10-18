@@ -984,6 +984,34 @@ def dsh_prepare_if(dsh: Bool, +directory: String, +model: String, +effort: Strin
     case True{}: Dsh.prepare(directory,model,effort)
     case False{}: IO.pure(Result<&1,&1,U32 & String,Dsh.Prepared>,Done{Dsh.Prepared{"",""}})
 
+type IdentityParts is Data:
+  IdParts{prefix: String, resolver: String}
+
+def maybe_text(value: Maybe<String>) -> String:
+  match value:
+    case None{}: ""
+    case Some{text}: text
+
+def text_maybe(text: String) -> Maybe<String>:
+  match text:
+    case "": None{}
+    case other: Some{other}
+
+def identity_prefix(parts: IdentityParts) -> String:
+  match parts:
+    case IdParts{prefix,resolver}: prefix
+
+def identity_resolver(parts: IdentityParts) -> Maybe<String>:
+  match parts:
+    case IdParts{prefix,resolver}: text_maybe(resolver)
+
+def identity_products(model: String, identity: String & String) -> IdentityParts:
+  (registry,+helper)=identity
+  +configured=registry
+  +prefix = P.argv(Bool.pick(List<String>,String.is_empty(configured),Nil{},["node",helper,"launch","--registry",configured,"--model-key",model,"--"]))
+  +resolver = maybe_text(Accounts.api_key_resolver_value(Accounts.api_key_helper(helper)))
+  IdParts{prefix,resolver}
+
 def retained_launch_checked(prepared: Result<&1,&1,U32 & String,Dsh.Prepared>, +dsh: Bool, +prefix: String, +home: String, +cmd: String, +model: String, +effort: String, +native: String, +muse: Bool, +muse_args: String, +args: String, +initial: String, +omp: Bool, +claude: Bool, +level: String, seal_prompt: Bool) -> IO(Result<&1,&1,U32 & String,RetainedLaunch>):
   match prepared:
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,RetainedLaunch>,Fail{error})
@@ -1014,9 +1042,9 @@ def retained_prepare_checked(+db: String, +player: String, +directory: String, +
       +prompt_file : String <- IO.pure(String,directory ++ "/prompt.txt")
       +executable : String <- IO.try(String,Lock.SessionLock.executable())
       identity : String & String <- IO.try(String & String,HostControl.Control.identity(executable))
-      identity_key : String & String <- IO.try(String & String,HostControl.Control.identity(executable))
       +absolute_db : String <- IO.try(String,Lock.SessionLock.canonical(db))
-      +prefix : String <- IO.pure(String,P.argv(["/usr/bin/env","BATON_DATABASE=" ++ absolute_db,"BATON_SESSION=" ++ player,"BATON_ATTEMPT_DIRECTORY=" ++ directory]) ++ retained_identity_prefix(model,identity))
+      +parts : IdentityParts <- IO.pure(IdentityParts,identity_products(model,identity))
+      +prefix : String <- IO.pure(String,P.argv(["/usr/bin/env","BATON_DATABASE=" ++ absolute_db,"BATON_SESSION=" ++ player,"BATON_ATTEMPT_DIRECTORY=" ++ directory]) ++ identity_prefix(parts))
       muse_args : String <- IO.pure(String,prefix ++ P.argv(muse_retained_arguments(cmd,model,effort,prompt_file,session)))
       +omp : Bool <- IO.pure(Bool,String.eq(harness,"omp\n"))
       +claude : Bool <- IO.pure(Bool,String.eq(harness,"claude-code\n"))
@@ -1024,14 +1052,12 @@ def retained_prepare_checked(+db: String, +player: String, +directory: String, +
       +muse : Bool <- IO.pure(Bool,String.eq(harness,"muse\n"))
       home : String <- dsh_home_if(dsh,db,absolute_db,player)
       prepared : Result<&1,&1,U32 & String,Dsh.Prepared> <- dsh_prepare_if(dsh,directory,model,effort)
-      account_binding_account : Maybe<&2,Accounts.AccountRecord> <- Accounts.current_account(db,player,harness)
-      account_launch_account : Maybe<&2,Accounts.AccountRecord> <- Accounts.current_account(db,player,harness)
-      account_record : Maybe<&2,Accounts.AccountRecord> <- Accounts.current_account(db,player,harness)
+      +account : Maybe<&2,Accounts.AccountRecord> <- Accounts.current_account(db,player,harness)
       store : String <- current_store(db,player,harness)
       history : String <- current_history(db,player)
-      binding : Maybe<List<String>> <- IO.pure(Maybe<List<String>>,Accounts.account_binding(Tx.trim_nl(harness),account_binding_account,Accounts.api_key_resolver(identity_key),store))
-      recorded : Unit <- Accounts.record_current_attempt(db,player,directory,predecessor,account_record)
-      +args : String <- IO.try(String,IO.pure(Result<&1,&1,U32 & String,String>,retained_launch_arguments(omp,claude,cmd,model,effort,sessions,native,prefix,history,Tx.trim_nl(harness),account_launch_account,binding)))
+      binding : Maybe<List<String>> <- IO.pure(Maybe<List<String>>,Accounts.account_binding(Tx.trim_nl(harness),account,identity_resolver(parts),store))
+      recorded : Unit <- Accounts.record_current_attempt(db,player,directory,predecessor,account)
+      +args : String <- IO.try(String,IO.pure(Result<&1,&1,U32 & String,String>,retained_launch_arguments(omp,claude,cmd,model,effort,sessions,native,prefix,history,Tx.trim_nl(harness),account,binding)))
       launch : Result<&1,&1,U32 & String,RetainedLaunch> <- retained_launch_checked(prepared,dsh,prefix,home,cmd,model,effort,native,muse,muse_args,args,initial,omp,claude,level,seal_prompt)
       IO.pure(Result<&1,&1,U32 & String,RetainedLaunch>,launch)
 
