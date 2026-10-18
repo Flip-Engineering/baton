@@ -274,10 +274,10 @@ def observe(+db: String, +session: String, +window: String, +resets: String, +so
     found : String <- IO.try(String,Store.read(db,C.Session{session}))
     present : Unit <- observe_registered(found)
     valid : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ C.q(window) ++ "<>'' AND instr(" ++ C.q(window) ++ ",char(10))=0 AND instr(" ++ C.q(window) ++ ",char(13))=0 AND length(" ++ C.q(source) ++ ")>0 AND instr(" ++ C.q(source) ++ ",char(10))=0 AND instr(" ++ C.q(source) ++ ",char(13))=0;"))
-    admitted : Unit <- Bool.pick(IO(Unit),String.eq(Tx.trim_nl(valid),"1\n"),IO.pure(Unit,Unit{}),IO.die(Unit,2,"A usage window observation requires a nonempty window label and source text without newlines."))
+    admitted : Unit <- Bool.pick(IO(Unit),String.eq(Tx.trim_nl(valid),"1"),IO.pure(Unit,Unit{}),IO.die(Unit,2,"A usage window observation requires a nonempty window label and source text without newlines."))
     +value : String <- observe_reset_value(db,resets)
     saved : String <- IO.try(String,DB.Sql.query(db,"INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) SELECT " ++ now_ms() ++ ",harness,model," ++ model_provider_sql("model") ++ "," ++ C.q(Tx.trim_nl(account)) ++ "," ++ C.q(window) ++ "," ++ value ++ ",'operator-observation',NULL," ++ C.q("operator-observation: " ++ source) ++ ",'' FROM sessions WHERE id=" ++ C.q(session) ++ ";" ++ "SELECT changes();"))
-    done : Unit <- Bool.pick(IO(Unit),String.eq(Tx.trim_nl(saved),"0\n"),IO.die(Unit,2,"The session has no recorded route; recruit or configure it before observing usage windows."),IO.pure(Unit,Unit{}))
+    done : Unit <- Bool.pick(IO(Unit),String.eq(Tx.trim_nl(saved),"0"),IO.die(Unit,2,"The session has no recorded route; recruit or configure it before observing usage windows."),IO.pure(Unit,Unit{}))
     observed : Unit <- observe_print(session,window,value)
     IO.pure(Unit,Unit{})
 
@@ -299,17 +299,24 @@ def refresh_absent(+session: String, +harness: String) -> IO(Unit):
   IO.print("{\"schema\":\"baton2-usage-window-refresh-v1\",\"session\":" ++ J.string_literal(session) ++ ",\"harness\":" ++ J.string_literal(harness) ++ ",\"state\":\"unknown\",\"condition\":\"noRecordedHarnessCommand\"}")
 
 def refresh_reported_sql(+session: String, +answer: String, +account: String, +receipt: String) -> String:
-  "INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) SELECT " ++ now_ms() ++ ",harness,model,json_extract(report.value,'$.provider')," ++ C.q(account) ++ ",CASE WHEN json_extract(limit.value,'$.window.id')='5h' THEN '5-hour' WHEN json_extract(limit.value,'$.window.id')='7d' THEN '7-day' ELSE coalesce(json_extract(limit.value,'$.window.id'),'') END,json_extract(limit.value,'$.window.resetsAt'),'provider-report',json_extract(limit.value,'$.amount.usedFraction')," ++ C.q(receipt) ++ ",'' FROM sessions, json_each(json_extract(" ++ C.q(answer) ++ ",'$.answer.reports')) AS report, json_each(json_extract(report.value,'$.limits')) AS limit WHERE sessions.id=" ++ C.q(session) ++ ";"
+  "INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) SELECT " ++ now_ms() ++ ",harness,model,json_extract(report.value,'$.provider')," ++ C.q(account) ++ ",CASE WHEN json_extract(lim.value,'$.window.id')='5h' THEN '5-hour' WHEN json_extract(lim.value,'$.window.id')='7d' THEN '7-day' ELSE coalesce(json_extract(lim.value,'$.window.id'),'') END,json_extract(lim.value,'$.window.resetsAt'),'provider-report',json_extract(lim.value,'$.amount.usedFraction')," ++ C.q(receipt) ++ ",'' FROM sessions, json_each(json_extract(" ++ C.q(answer) ++ ",'$.answer.reports')) AS report, json_each(json_extract(report.value,'$.limits')) AS lim WHERE sessions.id=" ++ C.q(session) ++ ";"
 
 def refresh_answer_sql(+session: String, +receipt: String) -> String:
   "SELECT json_object('schema','baton2-usage-window-refresh-v1','session'," ++ C.q(session) ++ ",'state','recorded','windows',(SELECT count(*) FROM usage_windows WHERE receipt=" ++ C.q(receipt) ++ "));"
+
+# A failed report insert names its own cause; a successful insert answers the
+# exact row count that the query reads back.
+def refresh_counted(+db: String, +session: String, +receipt: String, saved: Result<&1,&1,U32 & String,String>) -> IO(String):
+  match saved:
+    case Fail{(code,detail)}: IO.die(String,2,"The usage window report insert failed: " ++ U32.show(code) ++ ": " ++ detail)
+    case Done{ignored}: IO.try(String,DB.Sql.read(db,refresh_answer_sql(session,receipt)))
 
 def refresh_reported(+db: String, +session: String, +account: String, +answer: String) -> IO(Unit):
   do IO<Unit>:
     observed : String <- IO.try(String,DB.Sql.read(db,"SELECT CAST(strftime('%s','now') AS INTEGER)*1000;"))
     +receipt : String <- IO.pure(String,"provider-report: usage --json @" ++ Tx.trim_nl(observed))
     saved : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,refresh_reported_sql(session,answer,Tx.trim_nl(account),receipt))
-    counted : String <- IO.try(String,DB.Sql.read(db,refresh_answer_sql(session,receipt)))
+    counted : String <- refresh_counted(db,session,receipt,saved)
     printed : Unit <- IO.print(Tx.trim_nl(counted))
     IO.pure(Unit,Unit{})
 
@@ -443,7 +450,7 @@ def report_restored(+db: String, +session: String, +message: String, gate: Gate)
   match gate:
     case GateElapsed{+window,+resets_at,+source,+receipt}: do IO<Unit>:
       held : String <- IO.try(String,DB.Sql.query(db,"SELECT EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(message ++ ":usage-window-held") ++ ");"))
-      noted : Unit <- Bool.pick(IO(Unit),String.eq(Tx.trim_nl(held),"1\n"),report_restored_rows(db,session,message,window,resets_at,source,receipt),IO.pure(Unit,Unit{}))
+      noted : Unit <- Bool.pick(IO(Unit),String.eq(Tx.trim_nl(held),"1"),report_restored_rows(db,session,message,window,resets_at,source,receipt),IO.pure(Unit,Unit{}))
       IO.pure(Unit,Unit{})
     case other: IO.pure(Unit,Unit{})
 
