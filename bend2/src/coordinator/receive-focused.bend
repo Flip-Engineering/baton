@@ -6,7 +6,7 @@ import ../host/sqlite.bend as DB
 import ../host/session-lock.bend as Lock
 import ../host/control.bend as Host
 import ./control.bend as Control
-import ./commands.bend as C
+import ../coordinator/commands.bend as C
 import ./store.bend as Store
 import ../git/text.bend as Tx
 import ./turn.bend as Turn
