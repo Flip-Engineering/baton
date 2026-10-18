@@ -162,6 +162,42 @@ def recover_observer_cli(args: List<String>) -> IO(Unit):
       recover_observer_with_pid(database,directory,U32.read(observer))
     case _: IO.die(Unit,2,"recover-observer DATABASE ATTEMPT OBSERVER_PID")
 
+def observer_probe_line(line: Maybe<String>) -> IO(Unit):
+  match line:
+    case None{}: IO.print("probe-eof")
+    case Some{text}: IO.print("probe:" ++ text)
+
+def observer_probe_result(result: Result<&1,&1,U32 & String,U32 & U32>) -> IO(Unit):
+  match result:
+    case Fail{(code,text)}: IO.die(Unit,1,U32.show(code) ++ ": " ++ text)
+    case Done{(+lock,+handle)}: do IO<Unit>:
+      line : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.read_line(handle))
+      shown : Unit <- observer_probe_line(line)
+      unlocked : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
+      IO.print("probe-custody-open")
+
+def recover_observer_probe_with_pid(database: String, directory: String,
+                                    parsed: Maybe<&2,U32>) -> IO(Unit):
+  match parsed:
+    case None{}: IO.die(Unit,2,"invalid observer PID")
+    case Some{pid}: do IO<Unit>:
+      result : Result<&1,&1,U32 & String,U32 & U32> <- Lock.SessionLock.recover_observer(database,"fixture",directory,pid)
+      observer_probe_result(result)
+
+def recover_observer_probe_cli(args: List<String>) -> IO(Unit):
+  match args:
+    case database <> directory <> observer <> Nil{}:
+      recover_observer_probe_with_pid(database,directory,U32.read(observer))
+    case _: IO.die(Unit,2,"recover-probe DATABASE ATTEMPT OBSERVER_PID")
+
+def observer_hold_cli(args: List<String>) -> IO(Unit):
+  match args:
+    case directory <> Nil{}: do IO<Unit>:
+      +handle : U32 <- IO.try(U32,P.ProcessChild.attach(directory))
+      held : String <- IO.try(String,Text.Text.read("-"))
+      IO.print("observer-holder-released")
+    case _: IO.die(Unit,2,"observer-hold ATTEMPT")
+
 def write_cli(args: List<String>) -> IO(Unit):
   match args:
     case directory <> path <> Nil{}: do IO<Unit>:
@@ -212,7 +248,9 @@ def mode_number(+mode: String) -> U32:
   Bool.pick(U32,String.eq(mode,"lock-try"),4,
   Bool.pick(U32,String.eq(mode,"control-write"),5,
   Bool.pick(U32,String.eq(mode,"control-signal"),6,
-  Bool.pick(U32,String.eq(mode,"recover-observer"),7,0)))))))))
+  Bool.pick(U32,String.eq(mode,"recover-observer"),7,
+  Bool.pick(U32,String.eq(mode,"recover-probe"),10,
+  Bool.pick(U32,String.eq(mode,"observer-hold"),11,0)))))))))))
 
 def dispatch(mode: U32, original: String, rest: List<String>) -> IO(Unit):
   match mode:
@@ -225,6 +263,8 @@ def dispatch(mode: U32, original: String, rest: List<String>) -> IO(Unit):
     case 7: recover_observer_cli(rest)
     case 8: instance_owner_cli(rest)
     case 9: instance_shutdown_cli(rest)
+    case 10: recover_observer_probe_cli(rest)
+    case 11: observer_hold_cli(rest)
     case _: spawn_cli(original <> rest)
 
 def cli(args: List<String>) -> IO(Unit):
