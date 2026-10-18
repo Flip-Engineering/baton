@@ -72,6 +72,22 @@ class ApiKeySpec(unittest.TestCase):
         self.assertIn('specLineMalformed', completed.stderr)
         self.assertFalse(self.result().exists())
 
+    def test_nul_in_spec_is_refused(self):
+        spec = self.spec(text='BATON_SPEC_VALUE=before\x00after\n')
+        completed = run(str(spec), str(self.result()))
+        self.assertEqual(completed.returncode, 2, completed.stderr)
+        self.assertIn('specLineMalformed', completed.stderr)
+        self.assertFalse(self.result().exists())
+
+    def test_oversized_spec_is_refused_before_allocation(self):
+        spec = self.directory / 'oversized'
+        spec.write_bytes(b'A' * 65537)
+        spec.chmod(0o600)
+        completed = run(str(spec), str(self.result()))
+        self.assertEqual(completed.returncode, 2, completed.stderr)
+        self.assertIn('small key-environment bound', completed.stderr)
+        self.assertFalse(self.result().exists())
+
     def test_private_write_is_owner_only_and_refuses_existing_paths(self):
         path = self.directory / 'private'
         completed = run('write', str(path), 'value')

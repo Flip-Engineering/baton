@@ -3,7 +3,7 @@
 #
 # Run as root, from any directory:
 #   systemd-run --scope --slice=baton2-build.slice \
-#     -p MemoryMax=16G -p MemorySwapMax=0 -- \
+#     -p MemoryMax=8G -p MemorySwapMax=0 -- \
 #     /var/tmp/baton-account-main2af-20261018/bundle/account-credit-currentmain-2.0.25-check.sh
 #
 # The script refuses outside the baton2-build.slice scope or with a nonzero
@@ -38,7 +38,7 @@ maximum=$(cat "$cg/memory.max")
 swapmaximum=$(cat "$cg/memory.swap.max")
 [ "$maximum" != max ] || refuse "memory.max is unbounded"
 [ "$maximum" -gt 0 ] 2>/dev/null || refuse "memory.max is invalid: $maximum"
-[ "$maximum" -le 17179869184 ] 2>/dev/null || refuse "memory.max exceeds 16 GiB: $maximum"
+[ "$maximum" -le 8589934592 ] 2>/dev/null || refuse "memory.max exceeds 8 GiB: $maximum"
 [ "$swapmaximum" = 0 ] || refuse "memory.swap.max is not zero: $swapmaximum"
 ulimit -v unlimited || refuse "address-space limit could not be lifted"
 [ "$(ulimit -v)" = unlimited ] || refuse "address-space limit remains capped"

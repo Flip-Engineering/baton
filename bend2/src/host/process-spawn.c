@@ -235,6 +235,10 @@ static void br_spec_detail(BatonProcessCall *call,const char *detail) {
   if(call->detail) memcpy(call->detail,detail,length+1);
 }
 
+/* The small key-environment contract: one credential variable and a few
+   inherited overrides. A sparse or growing specification is refused before
+   allocation. */
+#define BR_ENV_SPEC_MAX 65536
 /* Reads a 0600 NAME=VALUE specification, builds an environment from the
    inherited environment with those names replaced, unlinks the specification
    before the child produces bytes, and spawns with that environment. */
@@ -253,6 +257,9 @@ static void baton_child_spawn_env_file(BatonProcessCall *call) {
   if(!S_ISREG(info.st_mode) || (info.st_mode & 077) || info.st_uid!=geteuid()) {
     close(fd);call->error=EACCES;br_spec_detail(call,"specUnreadable: specification is not an owner-only regular file");return;
   }
+  if(info.st_size < 0 || (uint64_t)info.st_size > BR_ENV_SPEC_MAX) {
+    close(fd);call->error=E2BIG;br_spec_detail(call,"specUnreadable: specification exceeds the small key-environment bound");return;
+  }
   size_t capacity=(size_t)info.st_size+1,length=0;
   char *buffer=malloc(capacity);
   if(!buffer) {close(fd);call->error=ENOMEM;return;}
@@ -263,7 +270,12 @@ static void baton_child_spawn_env_file(BatonProcessCall *call) {
     if(count<0) {int error=errno;free(buffer);close(fd);call->error=error;br_spec_detail(call,"specUnreadable: specification cannot be read");return;}
     break;
   }
+  char extra;
+  ssize_t more=read(fd,&extra,1);
+  if(more<0) {int error=errno;free(buffer);close(fd);call->error=error;br_spec_detail(call,"specUnreadable: specification cannot be read");return;}
+  if(more>0) {free(buffer);close(fd);call->error=E2BIG;br_spec_detail(call,"specUnreadable: specification exceeds the small key-environment bound");return;}
   close(fd);
+  if(memchr(buffer,0,length)) {free(buffer);call->error=EINVAL;br_spec_detail(call,"specLineMalformed: specification contains NUL");return;}
   buffer[length]=0;
   if(length && buffer[length-1]!='\n') {
     char *grown=realloc(buffer,length+2);
@@ -311,7 +323,10 @@ static void baton_child_spawn_env_file(BatonProcessCall *call) {
     start=end+1;
   }
   envp[kept]=NULL;
-  unlink(call->spec);
+  if(unlink(call->spec)) {
+    int error=errno;free(envp);free(buffer);
+    call->error=error;br_spec_detail(call,"specUnreadable: specification could not be removed");return;
+  }
   baton_child_spawn_env_inherit(call,envp);
   free(envp);free(buffer);
 }

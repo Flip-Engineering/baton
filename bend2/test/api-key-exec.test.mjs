@@ -6,10 +6,14 @@
 // process and the child's environment.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { execFileSync } from 'node:child_process';
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { execFile, execFileSync } from 'node:child_process';
+import { promisify } from 'node:util';
+import { chmod, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+
+const execFileAsync = promisify(execFile);
 
 function run(reference, commandArgs, options = {}) {
   const native = process.env.BATON2_API_KEY_EXEC;
@@ -101,6 +105,109 @@ test('a child signal is re-raised to the parent', async () => {
       assert.fail('the wrapper should have been killed by the signal');
     } catch (error) {
       assert.equal(error.signal, 'SIGTERM');
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('a forced existing spec path refuses before the child starts', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'api-key-exec-'));
+  try {
+    const reference = await withSecret(directory, 'secret', 'sk-fixture-forced-spec-value');
+    const spec = path.join(directory, 'forced-spec');
+    const marker = path.join(directory, 'started');
+    const probe = path.join(directory, 'marker.mjs');
+    await writeFile(probe, `import { writeFileSync } from 'node:fs'; writeFileSync(${JSON.stringify(marker)}, 'started')`);
+    await writeFile(spec, 'existing-bytes');
+    let stderr = '';
+    try {
+      run(reference, [process.execPath, probe], { env: { ...process.env, BATON2_API_KEY_SPEC_PATH: spec } });
+      assert.fail('the helper should refuse an existing spec path');
+    } catch (error) {
+      stderr = error.stderr;
+      assert.equal(error.status, 2);
+    }
+    assert.equal((await readFile(spec, 'utf8')), 'existing-bytes');
+    assert.equal(existsSync(marker), false);
+    assert.equal(stderr.includes('sk-fixture-forced-spec-value'), false);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('a forced symlink spec path preserves the target and refuses before the child starts', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'api-key-exec-'));
+  try {
+    const reference = await withSecret(directory, 'secret', 'sk-fixture-symlink-spec-value');
+    const target = path.join(directory, 'target');
+    const spec = path.join(directory, 'forced-link');
+    const marker = path.join(directory, 'started');
+    const probe = path.join(directory, 'marker.mjs');
+    await writeFile(probe, `import { writeFileSync } from 'node:fs'; writeFileSync(${JSON.stringify(marker)}, 'started')`);
+    await writeFile(target, 'target-bytes');
+    await symlink(target, spec);
+    let stderr = '';
+    try {
+      run(reference, [process.execPath, probe], { env: { ...process.env, BATON2_API_KEY_SPEC_PATH: spec } });
+      assert.fail('the helper should refuse a symlink spec path');
+    } catch (error) {
+      stderr = error.stderr;
+      assert.equal(error.status, 2);
+    }
+    assert.equal((await readFile(target, 'utf8')), 'target-bytes');
+    assert.equal(existsSync(marker), false);
+    assert.equal(stderr.includes('sk-fixture-symlink-spec-value'), false);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('a signaled child is re-raised by the helper', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'api-key-exec-'));
+  try {
+    const reference = await withSecret(directory, 'secret', 'sk-fixture-signal-value');
+    const probe = path.join(directory, 'signal.mjs');
+    await writeFile(probe, 'process.kill(process.pid, "SIGTERM")');
+    try {
+      run(reference, [process.execPath, probe]);
+      assert.fail('the helper should terminate by the child signal');
+    } catch (error) {
+      assert.equal(error.signal, 'SIGTERM');
+      assert.equal(error.status, null);
+    }
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('concurrent forced spec paths never disclose another secret', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'api-key-exec-'));
+  try {
+    const native = process.env.BATON2_API_KEY_EXEC;
+    const spec = path.join(directory, 'shared-spec');
+    const probe = path.join(directory, 'print.mjs');
+    await writeFile(probe, 'process.stdout.write(process.env.ANTHROPIC_API_KEY ?? "")');
+    const first = await withSecret(directory, 'first', 'sk-fixture-race-first');
+    const second = await withSecret(directory, 'second', 'sk-fixture-race-second');
+    const results = await Promise.allSettled([
+      execFileAsync(native, [first, process.execPath, probe], { encoding: 'utf8', env: { ...process.env, BATON2_API_KEY_SPEC_PATH: spec } }),
+      execFileAsync(native, [second, process.execPath, probe], { encoding: 'utf8', env: { ...process.env, BATON2_API_KEY_SPEC_PATH: spec } }),
+    ]);
+    const firstOk = results[0].status === 'fulfilled';
+    const secondOk = results[1].status === 'fulfilled';
+    assert.ok(firstOk || secondOk);
+    if (firstOk) assert.equal(results[0].value.stdout, 'sk-fixture-race-first');
+    else assert.equal(results[0].reason.status, 2);
+    if (secondOk) assert.equal(results[1].value.stdout, 'sk-fixture-race-second');
+    else assert.equal(results[1].reason.status, 2);
+    for (let index = 0; index < 2; index++) {
+      const result = results[index];
+      const text = result.status === 'fulfilled' ? result.value.stdout + result.value.stderr : (result.reason.stdout ?? '') + (result.reason.stderr ?? '');
+      const own = index === 0 ? 'sk-fixture-race-first' : 'sk-fixture-race-second';
+      const other = index === 0 ? 'sk-fixture-race-second' : 'sk-fixture-race-first';
+      assert.equal(text.includes(other), false);
+      if (!own.includes('none')) assert.equal(text.includes(own), result.status === 'fulfilled' ? true : false);
     }
   } finally {
     await rm(directory, { recursive: true, force: true });

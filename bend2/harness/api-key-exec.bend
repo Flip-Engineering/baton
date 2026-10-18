@@ -141,10 +141,20 @@ def random_path(random: Result<&1,&1,U32 & String,U32>) -> IO(String):
     case Done{value}: IO.pure(String,"/tmp/baton2-api-key-" ++ U32.show(value))
     case Fail{(code,detail)}: IO.pure(String,"/tmp/baton2-api-key-env")
 
-def spec_path() -> IO(String):
+def random_path_fresh() -> IO(String):
   do IO<String>:
     random : Result<&1,&1,U32 & String,U32> <- IO.random_u32()
     random_path(random)
+
+def env_path(config: Result<&1,&1,U32 & String,String>) -> IO(String):
+  match config:
+    case Fail{(code,detail)}: random_path_fresh()
+    case Done{+value}: Bool.pick(IO(String),String.is_empty(value),random_path_fresh(),IO.pure(String,value))
+
+def spec_path() -> IO(String):
+  do IO<String>:
+    configured : Result<&1,&1,U32 & String,String> <- IO.get_env("BATON2_API_KEY_SPEC_PATH")
+    env_path(configured)
 
 def digits(text: String, acc: U32) -> U32:
   match text:
@@ -181,7 +191,7 @@ def spawn_decided(spawned: Result<&1,&1,U32 & String,U32>, +reference: String, +
       waited : Result<&1,&1,U32 & String,String> <- P.ProcessChild.wait(handle)
       waited_decided(waited)
 
-def written_decided(written: Result<&1,&1,U32 & String,String>, +reference: String, +spec: String, +command: String, args: List<String>) -> IO(Unit):
+def written_decided(written: Result<&1,&1,U32 & String,Unit>, +reference: String, +spec: String, +command: String, args: List<String>) -> IO(Unit):
   match written:
     case Fail{(code,detail)}: IO.die(Unit,2,refusal_json(reference,"spawnFailed","environment specification could not be written: " ++ U32.show(code)))
     case Done{value}: do IO<Unit>:
@@ -191,7 +201,7 @@ def written_decided(written: Result<&1,&1,U32 & String,String>, +reference: Stri
 def spawn_with_secret(+reference: String, +secret: String, +command: String, args: List<String>) -> IO(Unit):
   do IO<Unit>:
     +spec : String <- spec_path()
-    written : Result<&1,&1,U32 & String,String> <- Text.Text.write_at(spec,"",env_spec_lines(credential_variable(),secret),1)
+    written : Result<&1,&1,U32 & String,Unit> <- Files.Files.write_private(spec,env_spec_lines(credential_variable(),secret))
     written_decided(written,reference,spec,command,args)
 
 def run_rejected(rejected: Refusal, +reference: String) -> IO(Unit):

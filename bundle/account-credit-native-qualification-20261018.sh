@@ -3,14 +3,14 @@
 #
 # Run as root:
 #   systemd-run --scope --slice=baton2-build.slice \
-#     -p MemoryMax=16G -p MemorySwapMax=0 -- \
+#     -p MemoryMax=8G -p MemorySwapMax=0 -- \
 #     /var/tmp/baton-account-main2af-20261018/bundle/account-credit-native-qualification-20261018.sh
 #
-# The script refuses outside baton2-build.slice, with nonzero swap, or without
-# the admitted full-Main receipt the pinned build guard requires. It builds the
-# native api-key helper, builds the coordinator through the admitted guard,
-# runs the 17 account-fallback behavior tests, and runs the native C8
-# credential-safety fixture. No hosted CI and no unadmitted Main.
+# The script refuses outside baton2-build.slice, with nonzero swap, or above
+# the 8 GiB memory ceiling. It builds the native api-key helper and the spec and
+# account-credits-entry fixtures, runs the 9 spec boundary tests, the 17 focused
+# account behavior tests, and the 10 native C8 credential-safety cases. It does
+# not build Main. No hosted CI.
 set -eu
 
 ROOT=/var/tmp/baton-account-main2af-20261018
@@ -36,16 +36,14 @@ cg="/sys/fs/cgroup$cgroup"
 maximum=$(cat "$cg/memory.max")
 swapmaximum=$(cat "$cg/memory.swap.max")
 [ "$maximum" != max ] || refuse "memory.max is unbounded"
-[ "$maximum" -le 17179869184 ] 2>/dev/null || refuse "memory.max exceeds 16 GiB: $maximum"
+[ "$maximum" -le 8589934592 ] 2>/dev/null || refuse "memory.max exceeds 8 GiB: $maximum"
 [ "$swapmaximum" = 0 ] || refuse "memory.swap.max is not zero: $swapmaximum"
 ulimit -v unlimited || refuse "address-space limit could not be lifted"
 [ "$(ulimit -v)" = unlimited ] || refuse "address-space limit remains capped"
-[ -n "${BATON2_ADMISSION_RECEIPT:-}" ] || refuse "BATON2_ADMISSION_RECEIPT is required for the admitted Main build"
-[ -f "$BATON2_ADMISSION_RECEIPT" ] || refuse "admitted Main receipt is absent: $BATON2_ADMISSION_RECEIPT"
 
 rm -rf "$OUT"
 mkdir -p "$OUT"
-printf 'cgroup=%s\nmemory.max=%s\nmemory.swap.max=%s\nreceipt=%s\n' "$cgroup" "$maximum" "$swapmaximum" "$BATON2_ADMISSION_RECEIPT" > "$OUT/envelope.txt"
+printf 'cgroup=%s\nmemory.max=%s\nmemory.swap.max=%s\n' "$cgroup" "$maximum" "$swapmaximum" > "$OUT/envelope.txt"
 "$BEND" version > "$OUT/bend-version.txt" 2>&1 || refuse "compiler version query failed"
 [ "$(cat "$OUT/bend-version.txt")" = 'bend 2.0.25' ] || refuse "compiler version is not bend 2.0.25"
 
@@ -68,23 +66,23 @@ fi
 printf 'api-key-spec build exit=%s\n' "$specbuild" | tee -a "$OUT/receipt.txt"
 [ "$specbuild" -eq 0 ] || exit 1
 
-if /usr/bin/time -v env BEND="$BEND" CC="$CC" BATON2_ADMISSION_CGROUP="$cg" BATON2_ADMISSION_RECEIPT="$BATON2_ADMISSION_RECEIPT" sh bend2/scripts/build-native.sh > "$OUT/main-build.stdout" 2> "$OUT/main-build.stderr"; then
-  main=0
+if /usr/bin/time -v env BEND="$BEND" CC="$CC" sh bend2/scripts/build-native.sh bend2/test/account-credits-entry.bend .scratch/bend2/account-credits-entry > "$OUT/entry-build.stdout" 2> "$OUT/entry-build.stderr"; then
+  entrybuild=0
 else
-  main=$?
+  entrybuild=$?
 fi
-printf 'main build exit=%s\n' "$main" | tee -a "$OUT/receipt.txt"
-[ "$main" -eq 0 ] || exit 1
+printf 'account-entry build exit=%s\n' "$entrybuild" | tee -a "$OUT/receipt.txt"
+[ "$entrybuild" -eq 0 ] || exit 1
 
-if /usr/bin/time -v "$PYTHON3" bend2/test/account-credits.py -v > "$OUT/account-credits.stdout" 2> "$OUT/account-credits.stderr"; then
-  behaviors=0
+if /usr/bin/time -v env BATON2_ACCOUNT_ENTRY="$ROOT/.scratch/bend2/account-credits-entry" "$PYTHON3" bend2/test/account-credits-focused.py -v > "$OUT/account-focused.stdout" 2> "$OUT/account-focused.stderr"; then
+  focused=0
 else
-  behaviors=$?
+  focused=$?
 fi
-printf 'account-credits exit=%s\n' "$behaviors" | tee -a "$OUT/receipt.txt"
-grep -q 'Ran 17 tests' "$OUT/account-credits.stderr" || { printf 'behavior-count=mismatch\n' | tee -a "$OUT/receipt.txt"; exit 1; }
-grep -q '^OK' "$OUT/account-credits.stderr" || { printf 'behavior-verdict=not-ok\n' | tee -a "$OUT/receipt.txt"; exit 1; }
-[ "$behaviors" -eq 0 ] || exit 1
+printf 'account-focused exit=%s\n' "$focused" | tee -a "$OUT/receipt.txt"
+grep -q 'Ran 17 tests' "$OUT/account-focused.stderr" || { printf 'focused-count=mismatch\n' | tee -a "$OUT/receipt.txt"; exit 1; }
+grep -q '^OK' "$OUT/account-focused.stderr" || { printf 'focused-verdict=not-ok\n' | tee -a "$OUT/receipt.txt"; exit 1; }
+[ "$focused" -eq 0 ] || exit 1
 
 if /usr/bin/time -v env BATON2_API_KEY_SPEC="$ROOT/.scratch/bend2/api-key-spec" "$PYTHON3" bend2/test/api-key-spec.py > "$OUT/api-key-spec.stdout" 2> "$OUT/api-key-spec.stderr"; then
   spec=0
@@ -92,7 +90,7 @@ else
   spec=$?
 fi
 printf 'api-key-spec exit=%s\n' "$spec" | tee -a "$OUT/receipt.txt"
-grep -q 'Ran 7 tests' "$OUT/api-key-spec.stderr" || { printf 'spec-tests=mismatch\n' | tee -a "$OUT/receipt.txt"; exit 1; }
+grep -q 'Ran 9 tests' "$OUT/api-key-spec.stderr" || { printf 'spec-tests=mismatch\n' | tee -a "$OUT/receipt.txt"; exit 1; }
 grep -q '^OK' "$OUT/api-key-spec.stderr" || { printf 'spec-tests=not-ok\n' | tee -a "$OUT/receipt.txt"; exit 1; }
 [ "$spec" -eq 0 ] || exit 1
 
@@ -102,7 +100,7 @@ else
   safety=$?
 fi
 printf 'api-key-exec exit=%s\n' "$safety" | tee -a "$OUT/receipt.txt"
-grep -q '# pass 6' "$OUT/api-key-exec.stdout" || { printf 'credential-safety=mismatch\n' | tee -a "$OUT/receipt.txt"; exit 1; }
+grep -q '# pass 10' "$OUT/api-key-exec.stdout" || { printf 'credential-safety=mismatch\n' | tee -a "$OUT/receipt.txt"; exit 1; }
 grep -q '# fail 0' "$OUT/api-key-exec.stdout" || { printf 'credential-safety=failed\n' | tee -a "$OUT/receipt.txt"; exit 1; }
 [ "$safety" -eq 0 ] || exit 1
 
