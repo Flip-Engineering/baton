@@ -168,7 +168,7 @@ def explicit_zone(rest: String) -> Bool:
 
 def fractional_zone(rest: String) -> Bool:
   match rest:
-    case SCon{'.',tail}: fractional_digits_zone(tail)
+    case SCon{'.',SCon{+head,tail}}: Bool.and(digit(head),fractional_digits_zone(tail))
     case other: explicit_zone(rest)
 
 def fractional_digits_zone(rest: String) -> Bool:
