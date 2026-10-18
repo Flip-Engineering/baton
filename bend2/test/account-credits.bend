@@ -49,7 +49,7 @@ def binding_checks() -> IO(Unit):
   do IO<Unit>:
     codex : Unit <- binding_is(A.launch_binding("codex","subscription","/fixture/stores/codex alt",None{}),"subscription-codex-store","CODEX_HOME=/fixture/stores/codex alt")
     claude : Unit <- binding_is(A.launch_binding("claude-code","subscription","/fixture/stores/claude",None{}),"subscription-claude-store","CLAUDE_CONFIG_DIR=/fixture/stores/claude")
-    resolver : Unit <- binding_is(A.launch_binding("claude-code","api_key","file:/fixture/secrets/api",Some{"/fixture/libexec/api-key-exec"}),"api-key-runs-the-resolver","node")
+    resolver : Unit <- binding_is(A.launch_binding("claude-code","api_key","file:/fixture/secrets/api",Some{"/fixture/libexec/api-key-exec"}),"api-key-runs-the-resolver","/fixture/libexec/api-key-exec")
     profile : Unit <- binding_is(A.account_binding("codex",None{},None{},"/fixture/stores/codex"),"no-account-keeps-the-profile-store","CODEX_HOME=/fixture/stores/codex")
     IO.pure(Unit,Unit{})
 

@@ -191,14 +191,14 @@ def select_account(accounts: List<&2,AccountRecord>, +blocked: String, +harness:
 
 # The funding route decides the launch binding. A subscription account binds the
 # credential directory the harness reads. An API-key account runs the packaged
-# resolver, which reads the reference and passes the credential to the harness in
-# its own environment, so the stored argv carries the reference and never a
-# value. A missing resolver leaves an API-key account unlaunchable, which the
-# caller reports as the actual cause.
+# native resolver as the launch head; the resolver path and the secret reference
+# are the binding, and the harness command follows it. The stored argv carries
+# the reference and never a value. A missing resolver leaves an API-key account
+# unlaunchable, which the caller reports as the actual cause.
 def api_key_binding(+secret_ref: String, helper: Maybe<String>) -> Maybe<List<String>>:
   match helper:
     case None{}: None{}
-    case Some{+script}: Some{Con{"node",Con{script,Con{secret_ref,Nil{}}}}}
+    case Some{+script}: Some{Con{script,Con{secret_ref,Nil{}}}}
 
 def launch_binding(+harness: String, +funding: String, +secret_ref: String, helper: Maybe<String>) -> Maybe<List<String>>:
   Bool.pick(Maybe<List<String>>,Bool.and(String.eq(funding,"api_key"),Bool.not(String.eq(harness,"claude-code"))),None{},Bool.pick(Maybe<List<String>>,String.eq(funding,"api_key"),api_key_binding(secret_ref,helper),Some{Subs.store_binding(harness,secret_ref)}))
