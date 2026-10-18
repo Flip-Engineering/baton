@@ -20,7 +20,8 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 FIXTURE = ROOT / '.scratch/bend2/monitor-fixture'
-COORDINATOR = ROOT / '.scratch/bend2/receive-focused'
+COORDINATOR = ROOT / '.scratch/bend2/observer-recovery'
+OBSERVER_ENTRY = ROOT / 'bend2/test/observer-recovery-entry.bend'
 NATIVE_UUID = '01a14948-63f9-7000-abc2-89573aa39352'
 
 
@@ -72,7 +73,7 @@ class ObserverMonitor(unittest.TestCase):
         if not FIXTURE.exists():
             build(ROOT / 'bend2/test/monitor-fixture.bend', FIXTURE)
         if not COORDINATOR.exists():
-            build(ROOT / 'bend2/src/coordinator/receive-focused.bend', COORDINATOR)
+            build(OBSERVER_ENTRY, COORDINATOR)
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='observer-monitor-', dir=ROOT / '.scratch/bend2')
