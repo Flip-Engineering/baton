@@ -153,3 +153,41 @@ BATON2_ADMISSION_CGROUP="$probe" BATON2_ADMISSION_RECEIPT="$temp/receipt.json" \
 [ "$status" = 78 ] || { echo "FAIL unguarded compiler status=$status"; cat "$temp/default-unbound.err"; exit 1; }
 grep -q 'compiler-not-guarded' "$temp/default-unbound.err" || { echo "FAIL unguarded compiler cause"; exit 1; }
 echo "PASS default_build_unguarded_compiler_refused"
+
+current_relative=$(sed -n 's/^0:://p' /proc/self/cgroup)
+current=/sys/fs/cgroup$current_relative
+current_max=$(cat "$current/memory.max" 2>/dev/null || true)
+current_swap=$(cat "$current/memory.swap.max" 2>/dev/null || true)
+case "$current_max" in
+  ''|max|*[!0-9]*) current= ;;
+esac
+if [ -n "$current" ] && [ "$current_swap" = 0 ]; then
+  before=$(calls)
+  BATON2_ADMISSION_CGROUP="$current" "$temp/bin/bend" bend2/test/tiny.bend -o out.c
+  [ "$(calls)" = "$((before + 1))" ] || { echo "FAIL admitted focused compiler call"; exit 1; }
+  echo "PASS focused_entry_allowed_in_own_bounded_cgroup"
+  cat > "$temp/current-receipt.json" <<RECEIPT
+{"decision": "admitted", "class": "full", "entry": "bend2/src/coordinator/main.bend", "output": "out.c", "cgroup": "$current"}
+RECEIPT
+  BATON2_ADMISSION_CGROUP="$current" BATON2_ADMISSION_RECEIPT="$temp/current-receipt.json" \
+    "$temp/bin/bend" bend2/src/coordinator/main.bend -o out.c
+  [ "$(calls)" = "$((before + 2))" ] || { echo "FAIL admitted Main compiler call"; exit 1; }
+  echo "PASS Main_entry_allowed_with_matching_receipt"
+  status=0
+  (
+    ulimit -v 262144
+    BATON2_ADMISSION_CGROUP="$current" "$temp/bin/bend" bend2/test/tiny.bend -o out.c
+  ) >"$temp/current-capped.out" 2>"$temp/current-capped.err" || status=$?
+  [ "$status" = 78 ] || { echo "FAIL focused capped rlimit status=$status"; exit 1; }
+  grep -q 'rlimit-as-capped' "$temp/current-capped.err" || { echo "FAIL focused capped rlimit cause"; exit 1; }
+  [ "$(calls)" = "$((before + 2))" ] || { echo "FAIL compiler ran with capped rlimit"; exit 1; }
+  echo "PASS focused_capped_rlimit_refused"
+else
+  echo "SKIP admitted cases require a bounded zero-swap test scope"
+fi
+
+before=$(calls)
+"$temp/bin/bend" version >"$temp/version.out"
+grep -q '^bend 2.0.25$' "$temp/version.out" || { echo "FAIL version output"; exit 1; }
+[ "$(calls)" = "$((before + 1))" ] || { echo "FAIL version compiler call"; exit 1; }
+echo "PASS version_query_allowed"
