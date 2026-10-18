@@ -392,21 +392,22 @@ def models_print(db: String, answer: String) -> IO(Unit):
     observed : String <- IO.try(String,DB.Sql.read(db,"SELECT json_set(" ++ C.q(answer) ++ ",'$.observedAt',CAST(strftime('%s','now') AS INTEGER)*1000);"))
     IO.print(observed)
 
-def models_query(+db: String, +session: String, +harness: String, +command: String, +model: String, +cwd: String) -> IO(Unit):
-  do IO<Unit>:
+def models_answer(+db: String, +session: String, +harness: String, +command: String, +model: String, +cwd: String) -> IO(String):
+  match models_supported(harness):
+    case False{}: IO.pure(String,models_unknown(session,harness,command,model,cwd,models_argv(harness,model),"unsupportedHarness"))
+    case True{}: Bool.pick(IO(String),String.is_empty(command),IO.pure(String,models_unknown(session,harness,command,model,cwd,models_argv(harness,model),"noRecordedHarnessCommand")),models_query_answer(db,session,harness,command,model,cwd))
+
+def models_query_answer(+db: String, +session: String, +harness: String, +command: String, +model: String, +cwd: String) -> IO(String):
+  do IO<String>:
     +argv : String <- IO.pure(String,models_argv(harness,model))
     args : List<String> <- IO.pure(List<String>,models_args(harness,command,model))
     run : Result<&1,&1,U32 & String,String> <- Process.Process.run(Tx.enc_argv(args),Bool.pick(String,String.is_empty(cwd),".",cwd))
-    answer : String <- models_result(db,session,harness,command,model,cwd,argv,run)
-    models_print(db,answer)
+    models_result(db,session,harness,command,model,cwd,argv,run)
 
 def models_command(+db: String, +session: String, +harness: String, +command: String, +model: String, +cwd: String) -> IO(Unit):
   do IO<Unit>:
-    +argv : String <- IO.pure(String,models_argv(harness,model))
-    +answer : String <- IO.pure(String,Bool.pick(String,models_supported(harness),
-      Bool.pick(String,String.is_empty(command),models_unknown(session,harness,command,model,cwd,argv,"noRecordedHarnessCommand"),""),
-      models_unknown(session,harness,command,model,cwd,argv,"unsupportedHarness")))
-    Bool.pick(IO(Unit),String.is_empty(answer),models_query(db,session,harness,command,model,cwd),models_print(db,answer))
+    answer : String <- models_answer(db,session,harness,command,model,cwd)
+    models_print(db,answer)
 
 # --- the command ------------------------------------------------------------
 
@@ -458,3 +459,77 @@ def models(+db: String, +session: String) -> IO(Unit):
     +cwd : String <- IO.try(String,DB.Sql.read(db,"SELECT coalesce(workspace,'') FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
     +command : String <- IO.try(String,DB.Sql.read(db,harness_command_sql(session)))
     models_command(db,session,Tx.trim_nl(harness),Tx.trim_nl(command),Tx.trim_nl(model),Tx.trim_nl(cwd))
+
+# --- the cross-source model discovery read ------------------------------------
+
+# One row per distinct harness, command and workspace among recorded
+# sessions, with the harness command its endpoint records: session, harness,
+# model, workspace and command, unit separated.
+def models_sources_sql() -> String:
+  "WITH sources AS (SELECT id,harness,model,coalesce(workspace,'') AS workspace,CASE WHEN json_valid(endpoint) THEN CASE json_array_length(endpoint) WHEN 9 THEN coalesce(json_extract(endpoint,'$[4]'),'') WHEN 17 THEN coalesce(json_extract(endpoint,'$[12]'),'') ELSE '' END ELSE '' END AS command FROM sessions), ranked AS (SELECT *,row_number() OVER (PARTITION BY harness,command,workspace,CASE WHEN harness='muse' THEN model ELSE '' END ORDER BY id) AS rank FROM sources) SELECT id||char(31)||harness||char(31)||model||char(31)||workspace||char(31)||command FROM ranked WHERE rank=1 ORDER BY harness,id;"
+
+def models_accounts_sql() -> String:
+  "SELECT coalesce(json_group_array(json_object('label',id,'provider',provider,'harness',harness,'funding',funding,'organization',organization,'organizationKnown',CASE WHEN organization='' THEN json('false') ELSE json('true') END)),json('[]')) FROM accounts;"
+
+def models_accounts_state_sql() -> String:
+  "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='accounts';"
+
+# Each distinct harness, command and workspace is queried once through the
+# per-session read. A source that fails or is unsupported keeps its unknown
+# answer in the set.
+def models_collect(+db: String, lines: List<String>, answers: List<String>) -> IO(List<String>):
+  match lines:
+    case Nil{}: IO.pure(List<String>,answers)
+    case line <> rest: do IO(List<String>):
+      fields : List<String> <- IO.pure(List<String>,String.split(Tx.trim_nl(line),Char.from_u32(31)))
+      models_collect_fields(db,fields,rest,answers)
+
+def models_collect_fields(+db: String, fields: List<String>, rest: List<String>, answers: List<String>) -> IO(List<String>):
+  match fields:
+    case session <> harness <> model <> cwd <> command <> tail: do IO(List<String>):
+      next_answers : List<String> <- models_collect_one(db,Tx.trim_nl(session),Tx.trim_nl(harness),Tx.trim_nl(command),Tx.trim_nl(model),Tx.trim_nl(cwd),answers)
+      models_collect(db,rest,next_answers)
+    case other: models_collect(db,rest,answers)
+
+def models_collect_one(+db: String, +session: String, +harness: String, +command: String, +model: String, +cwd: String, answers: List<String>) -> IO(List<String>):
+  do IO(List<String>):
+    answer : String <- models_answer(db,session,harness,command,model,cwd)
+    observed : String <- IO.try(String,DB.Sql.read(db,"SELECT json_set(" ++ C.q(answer) ++ ",'$.observedAt',CAST(strftime('%s','now') AS INTEGER)*1000);"))
+    IO.pure(List<String>,Tx.trim_nl(observed) <> answers)
+
+def models_reverse(lines: List<String>, tail: List<String>) -> List<String>:
+  match lines:
+    case Nil{}: tail
+    case head <> rest: models_reverse(rest,head <> tail)
+
+def models_accounts_json(+db: String, +count: String) -> IO(String):
+  Bool.pick(IO(String),String.eq(Tx.trim_nl(count),"0"),IO.pure(String,"{\"state\":\"unknown\",\"reason\":\"noRecordedAccounts\",\"accounts\":[]}"),models_accounts_present(db))
+
+def models_count(lines: List<String>) -> U32:
+  match lines:
+    case Nil{}: 0
+    case head <> rest: 1 + models_count(rest)
+
+def models_accounts_count(+db: String, +table_count: String) -> IO(String):
+  Bool.pick(IO(String),String.eq(Tx.trim_nl(table_count),"0"),IO.pure(String,"0"),IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM accounts;")))
+
+def models_accounts_present(+db: String) -> IO(String):
+  do IO<String>:
+    rows : String <- IO.try(String,DB.Sql.read(db,models_accounts_sql()))
+    IO.pure(String,"{\"state\":\"reported\",\"accounts\":" ++ Tx.trim_nl(rows) ++ "}")
+
+# The discovery set lists configured sessions and accounts as sources. Each
+# source answer carries its own state and observation time. Capability
+# assessments come from a recorded source with its date; no native source
+# records one, so the set names that absence.
+def models_all(+db: String) -> IO(Unit):
+  do IO<Unit>:
+    rows : String <- IO.try(String,DB.Sql.read(db,models_sources_sql()))
+    collected : List<String> <- models_collect(db,Tx.split_lines(rows),Nil{})
+    sources : List<String> <- IO.pure(List<String>,models_reverse(collected,Nil{}))
+    count : String <- IO.try(String,DB.Sql.read(db,models_accounts_state_sql()))
+    accounts : String <- models_accounts_json(db,Tx.trim_nl(count))
+    account_count : String <- models_accounts_count(db,Tx.trim_nl(count))
+    session_count : String <- IO.try(String,DB.Sql.read(db,"SELECT count(*) FROM sessions;"))
+    now : String <- IO.try(String,DB.Sql.read(db,"SELECT CAST(strftime('%s','now') AS INTEGER)*1000;"))
+    IO.print("{\"schema\":\"baton2-model-discovery-set-v1\",\"observedAt\":" ++ Tx.trim_nl(now) ++ ",\"enumerationBasis\":{\"recordedSessions\":" ++ Tx.trim_nl(session_count) ++ ",\"queriedSources\":" ++ U32.show(models_count(sources)) ++ ",\"recordedAccounts\":" ++ Tx.trim_nl(account_count) ++ ",\"routesListIncluded\":false},\"sources\":[" ++ Tx.join(",",sources) ++ "],\"accountsSection\":" ++ accounts ++ ",\"capabilityAssessments\":[],\"capabilityAssessmentReason\":\"noRecordedAssessmentSource\"}")
