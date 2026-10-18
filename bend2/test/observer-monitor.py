@@ -114,22 +114,28 @@ class ObserverMonitor(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return result
 
-    def start_attempt(self, stderr_text=''):
+    def start_attempt(self, stderr_text='', native_uuid=NATIVE_UUID, attempt_id='attempt1',
+                      stdout_text='monitor-line\n', sleep_seconds=8):
         self.native.write_text(
             '#!' + sys.executable + '\n'
             'import pathlib,sys,time\n'
             'pathlib.Path(sys.argv[2]).write_text(sys.argv[1])\n'
             + ('sys.stderr.write(' + repr(stderr_text) + ')\n' if stderr_text else '')
-            + 'sys.stdout.write("monitor-line\\n")\n'
+            + 'sys.stdout.write(' + repr(stdout_text) + ')\n'
             'sys.stdout.flush()\n'
-            'time.sleep(8)\n')
+            'time.sleep(' + repr(sleep_seconds) + ')\n')
         self.native.chmod(0o700)
+        self.attempt_id = attempt_id
+        self.native_uuid = native_uuid
+        self.stdout_text = stdout_text
         self.fixture('init', self.db)
+        with sqlite3.connect(self.db) as database:
+            database.execute("UPDATE sessions SET native=? WHERE id='parent'", (native_uuid,))
         start = subprocess.Popen(
-            [str(FIXTURE), 'start', str(self.db), 'attempt1', str(self.attempt),
-             str(self.workspace), str(self.log), 'native-uuid', 'codex',
+            [str(FIXTURE), 'start', str(self.db), attempt_id, str(self.attempt),
+             str(self.workspace), str(self.log), native_uuid, 'codex',
              'controlled-model', 'low', sys.executable, str(self.native),
-             NATIVE_UUID, str(self.uuid_marker)],
+             native_uuid, str(self.uuid_marker)],
             text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
             env=self.environment)
         stdout, stderr = start.communicate(timeout=30)
@@ -139,12 +145,12 @@ class ObserverMonitor(unittest.TestCase):
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
             if (self.attempt / 'native.pid').exists() and (self.attempt / 'stdout').exists():
-                if (self.attempt / 'stdout').stat().st_size >= len('monitor-line\n'):
+                if (self.attempt / 'stdout').stat().st_size >= len(stdout_text.encode()):
                     break
             time.sleep(0.02)
         self.assertTrue((self.attempt / 'native.pid').exists(), 'native.pid was not written')
         self.native_process = int((self.attempt / 'native.pid').read_text())
-        self.assertEqual(self.uuid_marker.read_text(), NATIVE_UUID)
+        self.assertEqual(self.uuid_marker.read_text(), native_uuid)
         birth = (self.attempt / 'native.birth').read_bytes()
         manifest = (self.attempt / 'manifest').read_bytes()
         self.assertTrue((self.attempt / 'capabilities').exists(),
@@ -181,7 +187,7 @@ class ObserverMonitor(unittest.TestCase):
         self.assertEqual(checkpoint_offset(self.attempt), len('monitor-line\n'))
         self.assertEqual(custody_offset(self.attempt), len('monitor-line\n'))
         self.assertEqual(self.row('SELECT receipt FROM messages WHERE id=?', 'task'), (None,))
-        status = self.row("SELECT status FROM executions WHERE session='parent' AND id='attempt1'")
+        status = self.row("SELECT status FROM executions WHERE session='parent' AND id=?", self.attempt_id)
         self.assertIsNotNone(status)
         self.assertTrue(status[0].startswith('unavailable'), status)
         self.assertNotIn('exit 0', status[0])
@@ -190,7 +196,7 @@ class ObserverMonitor(unittest.TestCase):
         self.assertNotEqual(second.returncode, 0, second.stdout + second.stderr)
         self.assertEqual(checkpoint_offset(self.attempt), offset)
         self.assertEqual(self.row('SELECT receipt FROM messages WHERE id=?', 'task'), (None,))
-        status = self.row("SELECT status FROM executions WHERE session='parent' AND id='attempt1'")
+        status = self.row("SELECT status FROM executions WHERE session='parent' AND id=?", self.attempt_id)
         self.assertTrue(status[0].startswith('unavailable'), status)
         self.assertFalse((self.attempt / 'acknowledged').exists())
         self.assertFalse((self.attempt / 'released').exists())
@@ -213,7 +219,7 @@ class ObserverMonitor(unittest.TestCase):
         self.assertEqual(checkpoint_offset(self.attempt), len('monitor-line\n'))
         self.assertEqual(custody_offset(self.attempt), len('monitor-line\n'))
         self.assertEqual(self.row('SELECT receipt FROM messages WHERE id=?', 'task'), (None,))
-        status = self.row("SELECT status FROM executions WHERE session='parent' AND id='attempt1'")
+        status = self.row("SELECT status FROM executions WHERE session='parent' AND id=?", self.attempt_id)
         self.assertTrue(status[0].startswith('unavailable'), status)
         self.assertFalse((self.attempt / 'acknowledged').exists())
         self.assertFalse((self.attempt / 'released').exists())
@@ -225,12 +231,50 @@ class ObserverMonitor(unittest.TestCase):
         self.assertEqual((self.attempt / 'native.birth').read_bytes(), birth)
         self.assertEqual((self.attempt / 'manifest').read_bytes(), manifest)
         self.assertEqual(self.row('SELECT receipt FROM messages WHERE id=?', 'task'), (None,))
-        self.assertEqual(self.row('SELECT native FROM sessions WHERE id=?', 'parent'), ('native-uuid',))
+        self.assertEqual(self.row('SELECT native FROM sessions WHERE id=?', 'parent'), (NATIVE_UUID,))
         self.assertEqual(self.row("SELECT count(*) FROM messages WHERE id LIKE 'attempt1:recovery%'"), (0,))
-        status = self.row("SELECT status FROM executions WHERE session='parent' AND id='attempt1'")
+        status = self.row("SELECT status FROM executions WHERE session='parent' AND id=?", self.attempt_id)
         self.assertTrue(status[0].startswith('unavailable'), status)
         self.assertFalse((self.attempt / 'acknowledged').exists())
         self.assertFalse((self.attempt / 'released').exists())
+
+    def test_fframes_absent_native_partial_output_preserves_unknown_custody(self):
+        uuid = '01a14c0e-db9f-7000-9e60-d47f6aed87d2'
+        partial = '{"type":"tool_call","delta":"partial'
+        observer, birth, manifest = self.start_attempt(
+            native_uuid=uuid, attempt_id='attempt-1714',
+            stdout_text=partial, sleep_seconds=1)
+        deadline = time.monotonic() + 6
+        while time.monotonic() < deadline:
+            state = subprocess.run(['ps', '-o', 'stat=', '-p', str(self.native_process)],
+                                   text=True, capture_output=True).stdout.strip()
+            if not state or state.startswith('Z'):
+                break
+            time.sleep(0.02)
+        result = self.recover(observer)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual((self.attempt / 'stdout').read_text(), partial)
+        self.assertEqual(int((self.attempt / 'native.pid').read_text()), self.native_process)
+        self.assertEqual((self.attempt / 'native.birth').read_bytes(), birth)
+        self.assertEqual((self.attempt / 'manifest').read_bytes(), manifest)
+        self.assertFalse((self.attempt / 'status').exists())
+        self.assertEqual(checkpoint_offset(self.attempt), len(partial.encode()))
+        self.assertEqual(custody_offset(self.attempt), len(partial.encode()))
+        self.assertEqual(self.row('SELECT native FROM sessions WHERE id=?', 'parent'), (uuid,))
+        self.assertEqual(self.row('SELECT receipt FROM messages WHERE id=?', 'task'), (None,))
+        status = self.row("SELECT status FROM executions WHERE session='parent' AND id=?", self.attempt_id)
+        self.assertTrue(status[0].startswith('unavailable'), status)
+        self.assertNotIn('exit 0', status[0])
+        self.assertFalse((self.attempt / 'acknowledged').exists())
+        self.assertFalse((self.attempt / 'released').exists())
+        duplicate = self.fixture(
+            'start', self.db, 'attempt-1714', str(self.attempt), str(self.workspace),
+            str(self.log), uuid, 'codex', 'controlled-model', 'low', sys.executable,
+            str(self.native), uuid, str(self.uuid_marker), ok=False)
+        self.assertNotEqual(duplicate.returncode, 0, duplicate.stdout + duplicate.stderr)
+        self.assertEqual(int((self.attempt / 'native.pid').read_text()), self.native_process)
+        self.assertEqual((self.attempt / 'manifest').read_bytes(), manifest)
+
 
 
 if __name__ == '__main__':
