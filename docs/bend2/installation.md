@@ -4,14 +4,14 @@ Baton is developed on `main`. The Darwin arm64 archive contains the native
 executable, packaged Conductor adapters, Git identity helper, required Bend2
 REPL compiler and Bun runtime, selected context providers, notices and
 source/build manifest. Build logs are retained in the package output directory.
-Hosted CI also retains the smoke logs.
+Self-hosted validation runners also retain the smoke logs.
 The [historical 1.0 scope](release-1.0.md)
 records the supported platform and qualifications of that archive.
 A source build produces a native executable and remains the procedure
 for other hosts and architectures. The original npm package and its smoke checks
 are retained with the original implementation in Git history.
 [Native development artifacts](native-artifacts.md) describe archive packaging,
-the extracted smoke procedure and hosted CI.
+the extracted smoke procedure and self-hosted validation.
 
 The standard archive carries one required `bend2-repl-compiler` dependency.
 `check-install.py` verifies its complete file inventory and recorded hashes,
