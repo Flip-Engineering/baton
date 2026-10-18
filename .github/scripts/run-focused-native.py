@@ -236,13 +236,33 @@ def inside(args):
         raise SystemExit('created cgroup pids.max differs from runner policy')
     if resource.getrlimit(resource.RLIMIT_AS)[0] != resource.RLIM_INFINITY:
         raise SystemExit('RLIMIT_AS is capped')
+    scope_current = read_int(cg / 'memory.current') or 0
+    ancestor_rows = []
+    ancestor = cg.parent
+    root_cgroup = pathlib.Path('/sys/fs/cgroup')
+    while ancestor == root_cgroup or root_cgroup in ancestor.parents:
+        limit = read_int(ancestor / 'memory.max')
+        usage = read_int(ancestor / 'memory.current')
+        if limit is not None and usage is not None:
+            headroom = max(0, limit - usage)
+            required = max(0, expected_memory - scope_current) + int(args.reserve)
+            ancestor_rows.append({'cgroup': str(ancestor), 'memory_max': limit,
+                                  'memory_current': usage, 'available': headroom,
+                                  'required_with_reserve': required})
+            if headroom < required:
+                raise SystemExit('scope would exceed finite ancestor headroom after reserve')
+        if ancestor == root_cgroup:
+            break
+        ancestor = ancestor.parent
     write_json(run / 'evidence' / 'scope.json', {
         'cgroup': str(cg), 'memory_max': expected_memory, 'memory_swap_max': 0,
         'driver_sha256': digest(pathlib.Path(__file__)),
         'tasks_max': expected_tasks, 'runtime_limit_seconds': int(args.runtime),
         'cgroup_membership': pathlib.Path('/proc/self/cgroup').read_text(),
+        'ancestor_cgroup_headroom': ancestor_rows,
+        'host_memory_pressure_before': pathlib.Path('/proc/pressure/memory').read_text(),
         'memory_events_before': pathlib.Path(cg / 'memory.events').read_text().splitlines(),
-        'memory_current_before': read_int(cg / 'memory.current'),
+        'memory_current_before': scope_current,
         'memory_swap_current_before': read_int(cg / 'memory.swap.current')})
     sampler = Sampler(cg)
     sampler.start()
@@ -275,6 +295,8 @@ def inside(args):
         subprocess.run(['git', 'worktree', 'remove', '--force', str(target_root)],
                        cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         metrics = sampler.finish()
+        metrics['host_memory_pressure_after'] = pathlib.Path('/proc/pressure/memory').read_text()
+        metrics['host_mem_available_after'] = mem_available()
         write_json(run / 'evidence' / 'scope-result.json', metrics)
         events = pathlib.Path(cg / 'memory.events').read_text().splitlines()
         if any(line.startswith('oom_kill ') and int(line.split()[1]) > 0 for line in events):
@@ -324,7 +346,8 @@ def launch(args):
             sys.executable, str(pathlib.Path(__file__).resolve()), '--inside',
             '--run', str(run), '--source', source, '--target', target,
             '--suite', args.suite, '--compiler', args.compiler,
-            '--memory', str(memory), '--tasks', str(tasks), '--runtime', str(runtime)]
+            '--memory', str(memory), '--tasks', str(tasks), '--runtime', str(runtime),
+            '--reserve', str(reserve)]
     stdout = (run / 'evidence' / 'scope.stdout').open('wb')
     stderr = (run / 'evidence' / 'scope.stderr').open('wb')
     process = subprocess.Popen(argv, stdout=stdout, stderr=stderr, start_new_session=True)
@@ -364,6 +387,7 @@ def main():
     parser.add_argument('--memory', default='0')
     parser.add_argument('--tasks', default='0')
     parser.add_argument('--runtime', default='0')
+    parser.add_argument('--reserve', default='0')
     args = parser.parse_args()
     if args.launch == args.inside:
         parser.error('select exactly one of --launch or --inside')
