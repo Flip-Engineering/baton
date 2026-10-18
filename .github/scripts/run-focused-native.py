@@ -263,7 +263,12 @@ def inside(args):
         'host_memory_pressure_before': pathlib.Path('/proc/pressure/memory').read_text(),
         'memory_events_before': pathlib.Path(cg / 'memory.events').read_text().splitlines(),
         'memory_current_before': scope_current,
-        'memory_swap_current_before': read_int(cg / 'memory.swap.current')})
+        'memory_swap_current_before': read_int(cg / 'memory.swap.current'),
+        'host_mem_available_before': mem_available()})
+    host_available_now = mem_available()
+    required_host_headroom = max(0, expected_memory - scope_current) + int(args.reserve)
+    if host_available_now < required_host_headroom:
+        raise SystemExit('measured host headroom fell below the scope limit plus reserve')
     sampler = Sampler(cg)
     sampler.start()
     deadline = time.monotonic() + int(args.runtime)
@@ -273,9 +278,11 @@ def inside(args):
     target = args.target
     verify_lineage(root, source, target)
     target_root = run / 'target-source'
-    subprocess.run(['git', 'worktree', 'add', '--detach', str(target_root), target],
-                   cwd=root, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    worktree_added = False
     try:
+        subprocess.run(['git', 'worktree', 'add', '--detach', str(target_root), target],
+                       cwd=root, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        worktree_added = True
         target_result = one_source(target_root, 'target', run, pathlib.Path(args.compiler), cg,
                                    deadline, records)
         candidate_result = one_source(root, 'candidate', run, pathlib.Path(args.compiler), cg,
@@ -292,8 +299,9 @@ def inside(args):
             'error_type': type(error).__name__, 'error': str(error), 'commands': records})
         raise
     finally:
-        subprocess.run(['git', 'worktree', 'remove', '--force', str(target_root)],
-                       cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        if worktree_added:
+            subprocess.run(['git', 'worktree', 'remove', '--force', str(target_root)],
+                           cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         metrics = sampler.finish()
         metrics['host_memory_pressure_after'] = pathlib.Path('/proc/pressure/memory').read_text()
         metrics['host_mem_available_after'] = mem_available()
