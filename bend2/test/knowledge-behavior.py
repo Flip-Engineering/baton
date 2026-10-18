@@ -21,7 +21,11 @@ class KnowledgeBehavior(unittest.TestCase):
         self.call('seed', self.db)
 
     def call(self, *args, ok=True):
-        result = subprocess.run([str(EXE), *map(str, args)], text=True,
+        if args and args[0] == 'seed':
+            argv = [str(EXE), *map(str, args)]
+        else:
+            argv = [str(EXE), str(self.db), *map(str, args)]
+        result = subprocess.run(argv, text=True,
                                 capture_output=True, timeout=60)
         if ok:
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -36,22 +40,22 @@ class KnowledgeBehavior(unittest.TestCase):
         self.call('record', 'finding-a', 'worker', 'observation', 'Alpha finding', 'run:a', '')
         self.call('record', 'finding-b', 'worker', 'hypothesis', 'Beta finding', 'run:b', '')
         self.call('relate', 'rel-a', 'worker', 'finding:finding-a', 'Supports', 'finding:finding-b')
-        graph = self.json_call('search', self.db, 'root', 'worker', 'worker', 'finding')
+        graph = self.json_call('search', 'root', 'worker', 'worker', 'finding')
         self.assertEqual(graph['scope'], {'kind': 'worker', 'id': 'worker'})
         self.assertIn('finding:finding-a', graph['roots'])
         edge = next(edge for edge in graph['edges'] if edge['id'] == 'rel-a')
         self.assertEqual(edge['relation'], 'Supports')
         self.assertEqual(edge['sourceKind'], 'observation')
         self.assertEqual(edge['targetKind'], 'hypothesis')
-        traversed = self.json_call('traverse', self.db, 'root', 'worker', 'worker',
+        traversed = self.json_call('traverse', 'root', 'worker', 'worker',
                                    'finding:finding-a', 'out', '', 'neighbors')
         self.assertEqual(traversed['roots'], ['finding:finding-a'])
         self.assertEqual(traversed['direction'], 'out')
         self.assertTrue(any(edge['id'] == 'rel-a' for edge in traversed['edges']))
         for command, error in (
-                (('search', self.db, 'root', 'wrker', 'worker', 'finding'), 'knowledge-scope-invalid'),
-                (('search', self.db, 'root', 'worker', '', 'finding'), 'knowledge-subject-required'),
-                (('traverse', self.db, 'root', 'worker', 'worker', 'finding:finding-a',
+                (('search', 'root', 'wrker', 'worker', 'finding'), 'knowledge-scope-invalid'),
+                (('search', 'root', 'worker', '', 'finding'), 'knowledge-subject-required'),
+                (('traverse', 'root', 'worker', 'worker', 'finding:finding-a',
                   'inout', '', 'neighbors'), 'knowledge-direction-invalid')):
             refused = self.call(*command, ok=False)
             self.assertEqual(json.loads(refused.stderr)['error'], error)
@@ -59,24 +63,24 @@ class KnowledgeBehavior(unittest.TestCase):
     def test_790_evidence_reference_resolution(self):
         self.call('record', 'pending-message', 'grand', 'observation',
                   'Pending citation', 'message:citation-message', '')
-        detail = self.json_call('detail', self.db, 'root', 'pending-message')
+        detail = self.json_call('detail', 'root', 'pending-message')
         self.assertEqual(detail[0]['evidenceReference'],
                          {'reference': 'message:citation-message', 'kind': 'message',
                           'resolution': 'missing'})
         self.call('report', 'citation-message', 'worker', 'Retained body')
-        detail = self.json_call('detail', self.db, 'root', 'pending-message')
+        detail = self.json_call('detail', 'root', 'pending-message')
         self.assertEqual(detail[0]['evidenceReference'],
                          {'reference': 'message:citation-message', 'kind': 'message',
                           'resolution': 'retained'})
         self.call('record', 'linked-finding', 'grand', 'finding',
                   'Linked citation', 'finding:source-finding', '')
-        detail = self.json_call('detail', self.db, 'root', 'linked-finding')
+        detail = self.json_call('detail', 'root', 'linked-finding')
         self.assertEqual(detail[0]['evidenceReference'],
                          {'reference': 'finding:source-finding', 'kind': 'finding',
                           'resolution': 'missing'})
         self.call('record', 'source-finding', 'grand', 'measurement',
                   'Source finding', 'run:source', '')
-        detail = self.json_call('detail', self.db, 'root', 'linked-finding')
+        detail = self.json_call('detail', 'root', 'linked-finding')
         self.assertEqual(detail[0]['evidenceReference'],
                          {'reference': 'finding:source-finding', 'kind': 'measurement',
                           'resolution': 'retained'})
@@ -103,30 +107,30 @@ class KnowledgeBehavior(unittest.TestCase):
                      'section-refused', 'ensemble-owner-conflict',
                      'ensemble-member-refused', 'report-recipient-missing'):
             body = '{"error":"%s"}' % term
-            self.assertEqual(self.call('refused', self.db, body).strip(), 'true', term)
-        self.assertEqual(self.call('refused', self.db, '{"error":"unknown"}').strip(), 'false')
+            self.assertEqual(self.call('refused', body).strip(), 'true', term)
+        self.assertEqual(self.call('refused', '{"error":"unknown"}').strip(), 'false')
 
     def test_791_relation_identity_notice_and_refusal_order(self):
-        stored = self.json_call('relate', self.db, 'rel-1', 'worker', 'file:source',
+        stored = self.json_call('relate', 'rel-1', 'worker', 'file:source',
                                 'Supports', 'finding:target')
         self.assertEqual(stored, {'id': 'rel-1', 'author': 'worker', 'source': 'file:source',
                                   'relation': 'Supports', 'target': 'finding:target'})
-        conflict = self.call('relate', self.db, 'rel-1', 'worker', 'file:source',
+        conflict = self.call('relate', 'rel-1', 'worker', 'file:source',
                              'Supersedes', 'finding:target', ok=False)
         self.assertEqual(json.loads(conflict.stderr)['error'], 'relation-id-conflict')
-        self.assertEqual(self.call('refused', self.db,
+        self.assertEqual(self.call('refused',
                                    '{"error":"relation-id-conflict"}').strip(), 'true')
-        self.assertEqual(self.call('refused', self.db,
+        self.assertEqual(self.call('refused',
                                    '{"error":"message-id-conflict"}').strip(), 'true')
-        self.assertEqual(self.call('refused', self.db,
+        self.assertEqual(self.call('refused',
                                    '{"error":"finding-id-conflict"}').strip(), 'true')
-        notice = self.call('notice', self.db, 'notice-finding', 'grand',
+        notice = self.call('notice', 'notice-finding', 'grand',
                            'Notice claim', 'run:notice', '')
         self.assertIn('INSERT INTO messages', notice)
         self.assertIn("json_object('finding'", notice)
         self.call('record', 'notice-finding', 'grand', 'observation',
                   'Notice claim', 'run:notice', '')
-        inbox = self.json_call('inbox', self.db, 'worker')
+        inbox = self.json_call('inbox', 'worker')
         self.assertEqual(inbox[0]['body'], {'finding': 'notice-finding', 'author': 'grand'})
 
 
