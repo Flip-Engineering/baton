@@ -13,9 +13,9 @@ import shutil
 
 ROOT = Path(__file__).resolve().parents[2]
 BINARY_LAYOUT = (
-    {'role': 'focused-facade', 'option': 'focused', 'name': 'baton', 'alias': 'baton2',
+    {'role': 'focused-facade', 'option': 'focused', 'name': 'baton', 'alias': None,
      'entry': 'bend2/src/coordinator/receive-focused.bend', 'build_mode': 'focused-native-entry'},
-    {'role': 'full-cli', 'option': 'full', 'name': 'baton-full', 'alias': None,
+    {'role': 'full-cli', 'option': 'full', 'name': 'baton2', 'alias': 'baton-full',
      'entry': 'bend2/src/coordinator/main.bend',
      'wrapper': True, 'build_mode': 'full-native-receiver-router'},
     {'role': 'recovery-helper', 'option': 'recovery', 'name': 'baton-recovery', 'alias': None,
@@ -202,9 +202,9 @@ def main():
     spec.loader.exec_module(package)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--focused-binary', type=Path, required=True,
-                        help='source-built focused receiver facade installed as bin/baton and bin/baton2')
+                        help='source-built focused receiver installed as bin/baton')
     parser.add_argument('--full-binary', type=Path, required=True,
-                        help='full CLI installed as bin/baton-full')
+                        help='full router installed as bin/baton2 with the bin/baton-full general CLI sibling')
     parser.add_argument('--recovery-binary', type=Path, required=True,
                         help='focused recovery helper installed as bin/baton-recovery')
     for role in ('focused', 'full', 'recovery'):

@@ -23,6 +23,7 @@ def load(name, path):
 PACKAGE = load('package_native', ROOT / 'bend2/scripts/package-native.py')
 STAGE = load('stage_native_install', ROOT / 'bend2/scripts/stage-native-install.py')
 CHECK = load('check_install', ROOT / 'bend2/scripts/check-install.py')
+VERIFY = load('verify_receiver_install', ROOT / 'bend2/scripts/verify-receiver-install.py')
 FINALIZE = load('finalize_native_payload', ROOT / 'bend2/scripts/finalize-native-payload.py')
 COMMIT = 'a' * 40
 
@@ -89,7 +90,7 @@ class ReceiverLayout(unittest.TestCase):
         manifest = {
             'schema': 'baton2-native-install-v2', 'source': {'commit': COMMIT, 'status': ''},
             'binaries': records, 'source_manifest': source_manifest,
-            'binary': {'path': focused['path'], 'alias': focused['alias'],
+            'binary': {'path': focused['path'], 'alias': focused.get('alias'),
                        'sha256': focused['sha256'], 'source': focused['source']},
         }
         PACKAGE.write_json(prefix / 'source-manifest.json', source_manifest)
@@ -190,8 +191,10 @@ class ReceiverLayout(unittest.TestCase):
         records = PACKAGE.stage_receiver_binaries(payload, specs, built)
         self.assertEqual([record['role'] for record in records],
                          ['focused-facade', 'full-cli', 'recovery-helper'])
-        self.assertEqual((payload / 'bin/baton').read_bytes(),
-                         (payload / 'bin/baton2').read_bytes())
+        self.assertEqual((payload / 'bin/baton2').read_bytes(),
+                         (payload / 'bin/baton-full').read_bytes())
+        self.assertNotEqual((payload / 'bin/baton').read_bytes(),
+                            (payload / 'bin/baton2').read_bytes())
         self.assertEqual([record['build_mode'] for record in records],
                          ['focused-native-entry', 'full-native-receiver-router',
                           'recovery-native-entry'])
@@ -269,10 +272,12 @@ class ReceiverLayout(unittest.TestCase):
         for name in ('baton', 'baton2', 'baton-full', 'baton-recovery'):
             path = prefix / 'bin' / name
             self.assertTrue(path.is_file() and os.access(path, os.X_OK), name)
-        self.assertEqual((prefix / 'bin/baton').read_bytes(),
-                         (prefix / 'bin/baton2').read_bytes())
+        self.assertEqual((prefix / 'bin/baton2').read_bytes(),
+                         (prefix / 'bin/baton-full').read_bytes())
+        self.assertNotEqual((prefix / 'bin/baton').read_bytes(),
+                            (prefix / 'bin/baton2').read_bytes())
         self.assertEqual(manifest['binary']['path'], 'bin/baton')
-        self.assertEqual(manifest['binary']['alias'], 'bin/baton2')
+        self.assertIsNone(manifest['binary']['alias'])
         self.assertEqual([record['source']['commit'] for record in records],
                          [COMMIT, COMMIT, COMMIT])
         self.assertEqual([record['source']['tree'] for record in records],
@@ -323,13 +328,15 @@ class ReceiverLayout(unittest.TestCase):
 
     def test_installed_check_refuses_missing_or_altered_sibling(self):
         prefix, manifest, records = self.staged()
-        full = prefix / 'bin/baton-full'
+        full = prefix / 'bin/baton2'
         full.unlink()
         with self.assertRaisesRegex(RuntimeError, 'full-cli binary is missing'):
             CHECK.verify_binaries(prefix, manifest, CHECK.verify_checksums(prefix))
-        full.write_bytes(b'changed\n')
-        full.chmod(0o755)
-        with self.assertRaisesRegex(RuntimeError, 'differs from its manifest hash'):
+        prefix, manifest, records = self.staged()
+        alias = prefix / 'bin/baton-full'
+        alias.write_bytes(b'changed\n')
+        alias.chmod(0o755)
+        with self.assertRaisesRegex(RuntimeError, 'full-cli alias differs'):
             CHECK.verify_binaries(prefix, manifest, CHECK.verify_checksums(prefix))
 
     def test_installed_check_refuses_missing_recovery_helper(self):
@@ -350,6 +357,40 @@ class ReceiverLayout(unittest.TestCase):
             if not line.endswith('  bin/baton-full')) + '\n')
         with self.assertRaisesRegex(RuntimeError, 'absent from SHA256SUMS'):
             CHECK.verify_binaries(prefix, manifest, CHECK.verify_checksums(prefix))
+
+
+    def test_missing_full_routes_hides_both_router_paths_then_restores(self):
+        prefix = self.home / 'route-prefix'
+        binary = prefix / 'bin'
+        binary.mkdir(parents=True)
+        (binary / 'baton').write_text(
+            '#!/bin/sh\nd=$(dirname "$0")\n'
+            '[ ! -e "$d/baton2" ] && [ ! -e "$d/baton-full" ] || exit 0\n'
+            'exit 78\n')
+        (binary / 'baton').chmod(0o755)
+        (binary / 'baton2').write_text('router\n')
+        (binary / 'baton-full').write_text('general\n')
+        operation = VERIFY.probe_missing_full_routes(prefix)
+        self.assertEqual(operation['returncode'], 78)
+        self.assertTrue((binary / 'baton2').is_file())
+        self.assertTrue((binary / 'baton-full').is_file())
+        self.assertFalse((binary / '.baton2.retained').exists())
+        self.assertFalse((binary / '.baton-full.retained').exists())
+
+    def test_missing_full_routes_restores_both_paths_after_refusal(self):
+        prefix = self.home / 'route-refusal-prefix'
+        binary = prefix / 'bin'
+        binary.mkdir(parents=True)
+        (binary / 'baton').write_text('#!/bin/sh\nexit 0\n')
+        (binary / 'baton').chmod(0o755)
+        (binary / 'baton2').write_text('router\n')
+        (binary / 'baton-full').write_text('general\n')
+        with self.assertRaisesRegex(RuntimeError, 'instead of 78'):
+            VERIFY.probe_missing_full_routes(prefix)
+        self.assertTrue((binary / 'baton2').is_file())
+        self.assertTrue((binary / 'baton-full').is_file())
+        self.assertFalse((binary / '.baton2.retained').exists())
+        self.assertFalse((binary / '.baton-full.retained').exists())
 
 
 if __name__ == '__main__':

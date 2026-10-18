@@ -31,6 +31,21 @@ def probe(prefix, expected, argv):
             'stdout': result.stdout, 'stderr': result.stderr}
 
 
+def probe_missing_full_routes(prefix):
+    """Both the full router and its general CLI copy must be absent for focused delegation to fail."""
+    full = prefix / 'bin/baton2'
+    alias = prefix / 'bin/baton-full'
+    hidden_full = prefix / 'bin/.baton2.retained'
+    hidden_alias = prefix / 'bin/.baton-full.retained'
+    full.rename(hidden_full)
+    alias.rename(hidden_alias)
+    try:
+        return probe(prefix, 78, [prefix / 'bin/baton', '--help'])
+    finally:
+        hidden_alias.rename(alias)
+        hidden_full.rename(full)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--source', type=Path, required=True)
@@ -90,13 +105,7 @@ def main():
     operations.append(probe(prefix, 0, [prefix / 'bin/baton-full', '--help']))
     operations.append(probe(prefix, 0, [prefix / 'bin/baton2', '--help']))
     operations.append(probe(prefix, 0, [prefix / 'bin/baton-recovery', '--help']))
-    full = prefix / 'bin/baton-full'
-    hidden_full = prefix / 'bin/.baton-full.retained'
-    full.rename(hidden_full)
-    try:
-        operations.append(probe(prefix, 78, [prefix / 'bin/baton', '--help']))
-    finally:
-        hidden_full.rename(full)
+    operations.append(probe_missing_full_routes(prefix))
     focused = prefix / 'bin/baton'
     hidden_focused = prefix / 'bin/.baton.retained'
     focused.rename(hidden_focused)
@@ -105,6 +114,7 @@ def main():
                                              'session', 'harness', 'output.jsonl']))
     finally:
         hidden_focused.rename(focused)
+    full = prefix / 'bin/baton2'
     recovery = prefix / 'bin/baton-recovery'
     hidden_recovery = prefix / 'bin/.baton-recovery.retained'
     recovery.rename(hidden_recovery)

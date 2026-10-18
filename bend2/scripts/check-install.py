@@ -102,9 +102,9 @@ def verify_repl(prefix, manifest):
 
 
 BINARY_LAYOUT = (
-    {'role': 'focused-facade', 'path': 'bin/baton', 'alias': 'bin/baton2',
+    {'role': 'focused-facade', 'path': 'bin/baton', 'alias': None,
      'entry': 'bend2/src/coordinator/receive-focused.bend', 'build_mode': 'focused-native-entry'},
-    {'role': 'full-cli', 'path': 'bin/baton-full', 'alias': None,
+    {'role': 'full-cli', 'path': 'bin/baton2', 'alias': 'bin/baton-full',
      'entry': 'bend2/src/coordinator/main.bend',
      'build_mode': 'full-native-receiver-router', 'wrapper': True},
     {'role': 'recovery-helper', 'path': 'bin/baton-recovery', 'alias': None,
@@ -197,9 +197,9 @@ def verify_binaries(prefix, manifest, checksums):
                     'The focused facade must expose its baton2 alias')
             alias = prefix / layout['alias']
             require(alias.is_file() and not alias.is_symlink() and os.access(alias, os.X_OK),
-                    'The installed baton2 alias is missing or not executable')
+                    'The installed ' + record['role'] + ' alias is missing or not executable')
             require(archive_digest(alias) == digest,
-                    'The installed baton2 alias differs from the focused facade')
+                    'The installed ' + record['role'] + ' alias differs from its binary')
             require(checksums.get(layout['alias']) == digest,
                     'The installed baton2 alias is absent from SHA256SUMS')
         else:
@@ -283,7 +283,7 @@ def verify_binaries(prefix, manifest, checksums):
             'The composite source manifest binary list differs')
     binary = manifest.get('binary')
     require(isinstance(binary, dict) and binary.get('path') == focused['path']
-            and binary.get('alias') == 'bin/baton2' and binary.get('sha256') == focused['sha256'],
+            and binary.get('alias') is None and binary.get('sha256') == focused['sha256'],
             'The compatibility binary record does not match the focused facade')
     receipt_path = prefix / 'install-receipt.json'
     require(receipt_path.is_file() and not receipt_path.is_symlink(),
