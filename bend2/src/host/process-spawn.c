@@ -5247,7 +5247,8 @@ static Term baton_session_lock_pack(Env e, IoWork *w) {
       baton_child_retire_slot(&call->attempt);
     }
   }
-  Term result=call->error ? io_fail(e,call->error,call->detail) : io_done(e,value);
+  const char *detail=call->detail ? call->detail : call->attempt.detail;
+  Term result=call->error ? io_fail(e,call->error,detail) : io_done(e,value);
   free(call->attempt.detail);free(call->database);free(call->session);free(call->path);free(call->directory);free(call);
   w->data=NULL;
   return result;
