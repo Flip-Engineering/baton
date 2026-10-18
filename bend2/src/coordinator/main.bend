@@ -21,6 +21,7 @@ import ./control.bend as Control
 import ./wake.bend as Wake
 import ./message-batch.bend as MessageBatch
 import ./subscription-fallback.bend as Subscription
+import ./accounts.bend as Accounts
 import ./agent-command.bend as AgentCommand
 import ./agent-route.bend as AgentRoute
 import ./agent-input.bend as AgentInput
@@ -82,6 +83,11 @@ def execute(+db: String, command: C.Command) -> IO(Unit):
         print_result(saved)
     case C.ProfileBind{session,harness,label,store}:
       Subscription.bind_profile(db,session,harness,label,store)
+    case C.Account{+action,+id,provider,harness,funding,secret_ref,organization,detail,+session}:
+      do IO<Unit>:
+        saved : Unit <- Accounts.run(db,action,id,provider,harness,funding,secret_ref,organization,detail,session)
+        woken : Unit <- Bool.pick(IO(Unit),String.eq(action,"bind"),IO.try(Unit,Receive.wake_due(db,session,"0",target => Receive.wake_launch(db,target))),IO.pure(Unit,Unit{}))
+        IO.pure(Unit,Unit{})
     case C.Start{session,harness,cmd,model,effort,cwd,log,id,task}:
       do IO<Unit>:
         saved : String <- Control.start(db,session,harness,cmd,model,effort,cwd,log,id,task)
