@@ -238,9 +238,13 @@ def held_after_checkpoint(enabled: Bool, +materialized: String, +pending: String
 def checkpoint_state(+spool: String, +state: State, enabled: Bool) -> IO(State):
   match enabled:
     case False{}: IO.pure(State,state)
-    case True{}: do IO<State>:
-      raw_held : String <- Logs.materialize_held(spool,held(state))
-      IO.pure(State,with_held(state,raw_held))
+    case True{}:
+      +final = Bool.or(output_done(state),Bool.not(String.is_empty(terminal(state))))
+      Bool.pick(IO(State),final,
+        (do IO<State>:
+          raw_held : String <- Logs.materialize_held(spool,held(state))
+          IO.pure(State,with_held(state,raw_held))),
+        IO.pure(State,state))
 
 def commit_with_held(+db: String, handle: U32, +spool: String, +state: State, enabled: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match enabled:
