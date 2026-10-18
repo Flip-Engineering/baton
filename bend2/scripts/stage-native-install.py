@@ -149,6 +149,27 @@ def stage_checksums(prefix, package, records):
     (prefix / 'SHA256SUMS').write_text('\n'.join(lines) + '\n')
 
 
+def stage_source_closures(prefix, args, package):
+    closures = {}
+    for role in ('focused', 'full', 'full-wrapper'):
+        source = getattr(args, role.replace('-', '_') + '_source_closure', None)
+        if source is None:
+            continue
+        source = Path(source).resolve()
+        require(source.is_file() and not source.is_symlink(),
+                'The source closure for ' + role + ' is unavailable')
+        data = json.loads(source.read_text())
+        require(isinstance(data, dict) and data.get('schema') == 'baton2-source-closure-v1'
+                and isinstance(data.get('files'), list) and data['files'],
+                'The source closure for ' + role + ' is not a complete closure manifest')
+        name = 'source-closure-' + role + '.json'
+        destination = prefix / name
+        shutil.copyfile(source, destination)
+        closures[role] = {'path': name, 'sha256': package.sha256(destination)}
+    return closures
+
+
+
 def main():
     spec = importlib.util.spec_from_file_location('package_native', Path(__file__).with_name('package-native.py'))
     package = importlib.util.module_from_spec(spec)
@@ -169,6 +190,9 @@ def main():
                             help='source directory for the ' + role + ' binary')
         parser.add_argument('--' + role + '-source-manifest-sha256',
                             help='complete source manifest SHA256 for the ' + role + ' binary')
+    for role in ('focused', 'full', 'full-wrapper'):
+        parser.add_argument('--' + role + '-source-closure', type=Path,
+                            help='complete source closure manifest for ' + role)
     parser.add_argument('--full-c-sha256', help='retained full generated-C SHA256')
     parser.add_argument('--full-wrapper-source-directory', help='current router wrapper source directory')
     parser.add_argument('--full-build-mode', choices=('full-native-receiver-router', 'retained-full-cli'),
@@ -192,6 +216,7 @@ def main():
     try:
         (prefix / 'bin').mkdir()
         records = stage_binaries(prefix, specs, package)
+        closures = stage_source_closures(prefix, args, package)
         package.stage_adapters(prefix)
         dependencies = package.stage_repl(prefix, args)
         modules = [package.stage_selected_context_payload(prefix), package.stage_runtime_context_module(prefix)]
@@ -228,6 +253,7 @@ def main():
             'binaries': [{'role': record['role'], 'path': record['path'],
                           'sha256': record['sha256'], 'build_mode': record['build_mode']}
                          for record in records],
+            'closures': closures,
         }
         if full_record.get('wrapper_source') is not None:
             source_manifest['full']['wrapper_source'] = full_record['wrapper_source']

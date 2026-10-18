@@ -576,7 +576,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import hashlib, json, os, pathlib, shutil, tarfile
+          import hashlib, importlib.util, json, os, pathlib, shutil, tarfile
           run = pathlib.Path(os.environ['BATON2_NATIVE_RUN'])
           package = run / 'package'
           manifest = json.loads((package / 'manifest.json').read_text())
@@ -610,6 +610,12 @@ jobs:
           manifest['build']['typescript_package_lock_sha256'] = hashlib.sha256((run / 'typescript-runtime/package-lock.json').read_bytes()).hexdigest()
           for path in (payload / 'manifest.json', package / 'manifest.json'):
               path.write_text(json.dumps(manifest, indent=2) + '\n')
+          finalize_spec = importlib.util.spec_from_file_location(
+              'finalize_native_payload', run / 'bend2/scripts/finalize-native-payload.py')
+          finalizer = importlib.util.module_from_spec(finalize_spec)
+          finalize_spec.loader.exec_module(finalizer)
+          finalize = finalizer.finalize(payload)
+          assert finalize['files'] > 0
           result = json.loads((package / 'result.json').read_text())
           archive = package / result['archive']['path']
           replacement = package / (archive.name + '.new')

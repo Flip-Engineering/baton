@@ -22,6 +22,7 @@ def load(name, path):
 PACKAGE = load('package_native', ROOT / 'bend2/scripts/package-native.py')
 STAGE = load('stage_native_install', ROOT / 'bend2/scripts/stage-native-install.py')
 CHECK = load('check_install', ROOT / 'bend2/scripts/check-install.py')
+FINALIZE = load('finalize_native_payload', ROOT / 'bend2/scripts/finalize-native-payload.py')
 COMMIT = 'a' * 40
 
 
@@ -97,6 +98,23 @@ class ReceiverLayout(unittest.TestCase):
 
 
 
+
+    def test_post_stage_provenance_refreshes_receipt_and_all_checksums(self):
+        prefix, manifest, records = self.staged()
+        manifest['build'] = {'generated_c_provenance': {'path': 'share/provenance', 'assets': []}}
+        PACKAGE.write_json(prefix / 'manifest.json', manifest)
+        provenance = prefix / 'share/provenance'
+        provenance.mkdir(parents=True)
+        (provenance / 'verification.json').write_text('{"status":"verified"}\n')
+        result = FINALIZE.finalize(prefix)
+        self.assertEqual(result['manifest_sha256'], PACKAGE.sha256(prefix / 'manifest.json'))
+        receipt = json.loads((prefix / 'install-receipt.json').read_text())
+        self.assertEqual(receipt['manifest']['sha256'], result['manifest_sha256'])
+        checksums = CHECK.verify_checksums(prefix)
+        CHECK.verify_payload_checksums(prefix, checksums)
+        self.assertIn('share/provenance/verification.json', checksums)
+        self.assertNotIn('SHA256SUMS', checksums)
+        CHECK.verify_binaries(prefix, manifest, checksums)
     def test_archive_manifest_uses_the_same_binary_contract(self):
         prefix, manifest, records = self.staged()
         manifest['schema'] = 'baton2-native-artifact-v2'

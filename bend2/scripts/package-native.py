@@ -573,6 +573,27 @@ def stage_notices(payload, compiler_notices, kind='development'):
     return terms
 
 
+def stage_source_closures(payload, args):
+    closures = {}
+    for role in ('focused', 'full', 'full-wrapper'):
+        source = getattr(args, role.replace('-', '_') + '_source_closure', None)
+        if source is None:
+            continue
+        source = Path(source).resolve()
+        require(source.is_file() and not source.is_symlink(),
+                'The source closure for ' + role + ' is unavailable')
+        data = json.loads(source.read_text())
+        require(isinstance(data, dict) and data.get('schema') == 'baton2-source-closure-v1'
+                and isinstance(data.get('files'), list) and data['files'],
+                'The source closure for ' + role + ' is not a complete closure manifest')
+        name = 'source-closure-' + role + '.json'
+        destination = payload / name
+        shutil.copyfile(source, destination)
+        closures[role] = {'path': name, 'sha256': sha256(destination)}
+    return closures
+
+
+
 def stage_receiver_binaries(payload, specs, built, c_hashes=None):
     (payload / 'bin').mkdir(parents=True)
     records = []
@@ -658,6 +679,7 @@ def package(args):
                   'tree': git('rev-parse', 'HEAD^{tree}')}
         payload = output / identity['archive_root']
         records = stage_receiver_binaries(payload, specs, built, c_hashes)
+        closures = stage_source_closures(payload, args)
         stage_adapters(payload)
         repl_compiler = stage_repl(payload, args)
         selected_context = [stage_selected_context_payload(payload), stage_runtime_context_module(payload)]
@@ -681,6 +703,7 @@ def package(args):
             'binaries': [{'role': record['role'], 'path': record['path'],
                           'sha256': record['sha256'], 'build_mode': record['build_mode']}
                          for record in records],
+            'closures': closures,
         }
         if full_record.get('wrapper_source') is not None:
             source_manifest['full']['wrapper_source'] = full_record['wrapper_source']
@@ -703,17 +726,11 @@ def package(args):
             'terms': terms,
         }
         write_json(payload / 'manifest.json', manifest)
-        receipt = {'schema': 'baton2-native-install-receipt-v1',
-                   'created_at': manifest['created_at'],
-                   'manifest': {'path': 'manifest.json', 'sha256': sha256(payload / 'manifest.json')},
-                   'source': source, 'source_manifest': source_manifest,
-                   'binaries': records}
-        write_json(payload / 'install-receipt.json', receipt)
-        checksum_paths = sorted(path.relative_to(payload).as_posix()
-                                for path in payload.rglob('*')
-                                if path.is_file() and path.name != 'SHA256SUMS')
-        (payload / 'SHA256SUMS').write_text('\n'.join(
-            sha256(payload / name) + '  ' + name for name in checksum_paths) + '\n')
+        spec = importlib.util.spec_from_file_location(
+            'finalize_native_payload', ROOT / 'bend2/scripts/finalize-native-payload.py')
+        finalizer = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(finalizer)
+        finalizer.finalize(payload)
         shutil.copyfile(payload / 'manifest.json', output / 'manifest.json')
         destination = output / (identity['archive_root'] + '-' + source['commit'] + '.tar.gz')
         with tarfile.open(destination, 'x:gz') as artifact:
@@ -747,6 +764,8 @@ def main():
         parser.add_argument('--' + role + '-source-status')
         parser.add_argument('--' + role + '-source-directory')
         parser.add_argument('--' + role + '-source-manifest-sha256')
+    for role in ('focused', 'full', 'full-wrapper'):
+        parser.add_argument('--' + role + '-source-closure', type=Path)
     parser.add_argument('--full-c-sha256', help='retained full generated-C SHA256')
     parser.add_argument('--full-wrapper-source-directory')
     parser.add_argument('--full-build-mode', choices=('full-native-receiver-router', 'retained-full-cli'),

@@ -238,6 +238,21 @@ def verify_binaries(prefix, manifest, checksums):
     if full.get('retained_c_sha256') is not None:
         require(source_manifest['full'].get('retained_c_sha256') == full['retained_c_sha256'],
                 'The composite source manifest lacks the retained full C hash')
+    closures = source_manifest.get('closures', {})
+    require(isinstance(closures, dict), 'The composite source manifest closures are malformed')
+    for role, closure in closures.items():
+        require(isinstance(closure, dict) and isinstance(closure.get('path'), str)
+                and isinstance(closure.get('sha256'), str)
+                and re.fullmatch(r'[0-9a-f]{64}', closure['sha256']) is not None,
+                'The composite source closure record is malformed: ' + str(role))
+        path = prefix / closure['path']
+        require(path.is_file() and not path.is_symlink()
+                and archive_digest(path) == closure['sha256'],
+                'The installed source closure differs: ' + closure['path'])
+        data = json.loads(path.read_text())
+        require(isinstance(data, dict) and data.get('schema') == 'baton2-source-closure-v1'
+                and isinstance(data.get('files'), list) and data['files'],
+                'The installed source closure manifest is incomplete: ' + closure['path'])
     repl_source = source_manifest.get('repl')
     require(isinstance(repl_source, dict)
             and isinstance(repl_source.get('compiler_source'), str) and repl_source['compiler_source']
