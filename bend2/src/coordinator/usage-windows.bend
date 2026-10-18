@@ -171,13 +171,32 @@ def joined_reset(word: String, +joined: String) -> String:
 # The scan carries a pending date-only word: when the next word is a clock,
 # the two read as one observation ("reset at 2026-10-06 07:12:52"); a pending
 # date with no clock beside it stands alone. Self-recursion only.
+def date_only_of(+word: String) -> Bool:
+  iso_date_only(take_ts(word))
+
+def clock_of(+word: String) -> Bool:
+  iso_hh(take_ts(word))
+
+# A reset named by this word under the carried pending date, or "" to keep
+# scanning. A date-only word with no clock beside it stands alone.
+def direct_reset(+pending: String, +word: String) -> String:
+  Bool.pick(String,String.is_empty(pending),
+    Bool.pick(String,date_only_of(word),"",word_reset(word)),
+    Bool.pick(String,clock_of(word),joined_reset(pending,take_ts(pending) ++ " " ++ take_ts(word)),word_reset(pending)))
+
+def next_pending(+pending: String, +word: String) -> String:
+  Bool.pick(String,date_only_of(word),take_ts(word),"")
+
+# The scan carries a pending date-only word. A found reset ends the scan; the
+# continuation makes one recursive call, so the work is linear in the words.
+# The earlier nested pick evaluated two recursions per word and grew
+# exponentially on long provider text.
 def reset_scan(words: List<&2,String>, +pending: String) -> String:
   match words:
     case Nil{}: word_reset(pending)
     case +word <> +rest:
-      Bool.pick(String,String.is_empty(pending),
-        Bool.pick(String,iso_date_only(take_ts(word)),reset_scan(rest,take_ts(word)),Bool.pick(String,String.is_empty(word_reset(word)),reset_scan(rest,""),word_reset(word))),
-        Bool.pick(String,iso_hh(take_ts(word)),joined_reset(pending,take_ts(pending) ++ " " ++ take_ts(word)),word_reset(pending)))
+      +direct = direct_reset(pending,word)
+      Bool.pick(String,String.is_empty(direct),reset_scan(rest,next_pending(pending,word)),direct)
 
 def reset_of_words(words: List<&2,String>) -> String:
   reset_scan(words,"")
@@ -299,7 +318,7 @@ def refresh_absent(+session: String, +harness: String) -> IO(Unit):
   IO.print("{\"schema\":\"baton2-usage-window-refresh-v1\",\"session\":" ++ J.string_literal(session) ++ ",\"harness\":" ++ J.string_literal(harness) ++ ",\"state\":\"unknown\",\"condition\":\"noRecordedHarnessCommand\"}")
 
 def refresh_reported_sql(+session: String, +answer: String, +account: String, +receipt: String) -> String:
-  "INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) SELECT " ++ now_ms() ++ ",harness,model,json_extract(report.value,'$.provider')," ++ C.q(account) ++ ",CASE WHEN json_extract(lim.value,'$.window.id')='5h' THEN '5-hour' WHEN json_extract(lim.value,'$.window.id')='7d' THEN '7-day' ELSE coalesce(json_extract(lim.value,'$.window.id'),'') END,json_extract(lim.value,'$.window.resetsAt'),'provider-report',json_extract(lim.value,'$.amount.usedFraction')," ++ C.q(receipt) ++ ",'' FROM sessions, json_each(json_extract(" ++ C.q(answer) ++ ",'$.answer.reports')) AS report, json_each(json_extract(report.value,'$.limits')) AS lim WHERE sessions.id=" ++ C.q(session) ++ ";"
+  "INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) SELECT " ++ now_ms() ++ ",harness,model,json_extract(report.value,'$.provider')," ++ C.q(account) ++ ",CASE WHEN json_extract(lim.value,'$.window.id')='5h' THEN '5-hour' WHEN json_extract(lim.value,'$.window.id')='7d' THEN '7-day' WHEN json_extract(lim.value,'$.window.id')='1w' THEN '7-day' WHEN json_extract(lim.value,'$.window.id')='1mo' THEN 'monthly' ELSE coalesce(json_extract(lim.value,'$.window.id'),'') END,json_extract(lim.value,'$.window.resetsAt'),'provider-report',json_extract(lim.value,'$.amount.usedFraction')," ++ C.q(receipt) ++ ",'' FROM sessions, json_each(json_extract(" ++ C.q(answer) ++ ",'$.answer.reports')) AS report, json_each(json_extract(report.value,'$.limits')) AS lim WHERE sessions.id=" ++ C.q(session) ++ ";"
 
 def refresh_answer_sql(+session: String, +receipt: String) -> String:
   "SELECT json_object('schema','baton2-usage-window-refresh-v1','session'," ++ C.q(session) ++ ",'state','recorded','windows',(SELECT count(*) FROM usage_windows WHERE receipt=" ++ C.q(receipt) ++ "));"
