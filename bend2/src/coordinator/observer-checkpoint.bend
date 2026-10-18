@@ -221,7 +221,7 @@ def commit(db: String, handle: U32, +state: State, enabled: Bool, monitor: Bool)
       saved : String <- IO.try(String,DB.Sql.query(db,encode_sql(state)))
       commit_with(monitor,handle,Tx.trim_nl(saved))
 
-def reset_empty_case(db: String, handle: U32, monitor: Bool) -> IO(State):
+def reset_empty_case(db: String, +handle: U32, monitor: Bool) -> IO(State):
   match monitor:
     case True{}: do IO<State>:
       committed : Unit <- IO.try(Unit,commit(db,handle,empty(),True{},True{}))
@@ -239,8 +239,13 @@ def decode_nonempty(+db: String, handle: U32, +value: String, monitor: Bool) -> 
     valid : String <- IO.try(String,DB.Sql.query(db,valid_sql(value)))
     Bool.pick(IO(State),String.eq(Tx.trim_nl(valid),"1"),decode_valid(db,value),reset_empty(db,handle,monitor))
 
+def decode_nonempty_choice(db: String, handle: U32, +value: String, monitor: Bool, empty_value: Bool) -> IO(State):
+  match empty_value:
+    case True{}: reset_empty(db,handle,monitor)
+    case False{}: decode_nonempty(db,handle,value,monitor)
+
 def decode(db: String, handle: U32, +value: String, monitor: Bool) -> IO(State):
-  Bool.pick(IO(State),String.is_empty(value),reset_empty(db,handle,monitor),decode_nonempty(db,handle,value,monitor))
+  decode_nonempty_choice(db,handle,value,monitor,String.is_empty(value))
 
 def restore(db: String, +handle: U32, monitor: Bool) -> IO(State):
   do IO<State>:

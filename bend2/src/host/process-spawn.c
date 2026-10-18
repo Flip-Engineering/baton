@@ -5454,9 +5454,22 @@ static int br_guard_lock(int fd) {
    The record is updated in the same step so a retry resumes from this floor. */
 static int br_monitor_checkpoint(BatonProcessCall *call,BatonRetained *retained) {
   if(!retained->observer_only)return EPERM;
-  if(retained->custody_lock<0)return EBUSY;
   if(retained->spool<0)return EBADF;
   if(call->length==0)return EINVAL;
+  /* An owner-managed monitor remains attached to its keeper. Its single
+     attached observer can persist the ordinary attempt-bound checkpoint.
+     Orphan-adopted monitors use the custody lock and stronger custody record
+     validation below. */
+  if(retained->custody_lock<0) {
+    if(retained->socket<0)return EBUSY;
+    pthread_mutex_lock(&retained->reader);
+    int error=br_checkpoint_store(retained->directory,retained->spool,
+      (uint32_t)call->signal,retained->incarnation,(uint64_t)retained->offset,
+      call->text,call->length);
+    if(!error)retained->offset_stored=(uint64_t)retained->offset;
+    pthread_mutex_unlock(&retained->reader);
+    return error;
+  }
   pthread_mutex_lock(&retained->reader);
   BrCustody custody={0};
   int error=br_custody_read(retained->directory,&custody);

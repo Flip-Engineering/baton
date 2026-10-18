@@ -21,6 +21,7 @@ import ../host/process.bend as P
 import ../host/instance.bend as Custody
 import ../host/session-lock.bend as Lock
 import ./turn.bend as Turn
+import ./control.bend as Control
 import ./delivery.bend as Delivery
 import ./native-requests.bend as NativeRequests
 import ../coordinator/commands.bend as C
@@ -41,12 +42,16 @@ law direct_replay_keeps_output_failure_for_completion:
   for log: String
   for session: String
   for harness: String
-  {Turn.choose(db,player,id,cmd,model,effort,cwd,task,log,session,harness,True{}) == (do IO<Result<&1,&1,U32 & String,Maybe<Turn.Outcome>>>:
+  for directory: String
+  for prompt: String
+  for +lock: U32
+  {Turn.choose(db,player,id,cmd,model,effort,cwd,task,log,session,harness,directory,prompt,lock,True{}) == (do IO<Unit>:
+    receiver : Unit <- Control.default_receiver(db,player,cmd,model,effort,cwd,log)
     +saved : String <- IO.try(String,Store.commit(db,C.Delivery{id}))
     written : Result<&1,&1,U32 & String,Unit> <- Text.Text.control_output(saved)
-    IO.pure(Result<&1,&1,U32 & String,Maybe<Turn.Outcome>>,Turn.replay_result(written))) : IO(Result<&1,&1,U32 & String,Maybe<Turn.Outcome>>)}
+    Turn.direct_replay_finished(db,player,lock,written)) : IO(Unit)}
 
-def direct_replay_keeps_output_failure_for_completion(db,player,id,cmd,model,effort,cwd,task,log,session,harness):
+def direct_replay_keeps_output_failure_for_completion(db,player,id,cmd,model,effort,cwd,task,log,session,harness,directory,prompt,lock):
   {==}
 
 law failed_replay_releases_and_wakes_before_reporting_output_error:
@@ -109,7 +114,7 @@ law completion_without_parent_returns_output_failure:
   for +event: String
   for error: String
   {Turn.finish_parent(db,player,id,log,Turn.Ended{status,event,error,False{}},False{}) == (do IO<Result<&1,&1,U32 & String,Unit>>:
-    output : String <- IO.try(String,DB.Sql.query(db,"SELECT json_object('session'," ++ C.q(player) ++ ",'status'," ++ C.q(status) ++ ",'event',CASE WHEN " ++ C.q(event) ++ "='' THEN NULL ELSE json(" ++ C.q(event) ++ ") END,'error'," ++ C.q(error) ++ ");"))
+    output : String <- IO.try(String,DB.Sql.query(db,"WITH frame(value) AS (VALUES(" ++ C.q(event) ++ ")) SELECT json_object('session'," ++ C.q(player) ++ ",'status'," ++ C.q(status) ++ ",'event',CASE WHEN value='' THEN NULL ELSE json(value) END,'error'," ++ C.q(error) ++ ") FROM frame;"))
     Text.Text.control_output(output)) : IO(Result<&1,&1,U32 & String,Unit>)}
 
 def completion_without_parent_returns_output_failure(db,player,id,log,status,event,error):
@@ -135,10 +140,11 @@ law busy_receive_only_reports_queued:
   for effort: String
   for cwd: String
   for log: String
-  for again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
-  {Receive.acquired(db,session,cmd,model,effort,cwd,log,None{},again) == Receive.receive_status(db,session,"queued") : IO(Result<&1,&1,U32 & String,Unit>)}
+  for again: String -> IO(Result<&1,&1,U32 & String,Unit>)
+  for predecessor: String
+  {Receive.acquired(db,session,cmd,model,effort,cwd,log,None{},again,predecessor) == Receive.receive_status(db,session,"queued") : IO(Result<&1,&1,U32 & String,Unit>)}
 
-def busy_receive_only_reports_queued(db,session,cmd,model,effort,cwd,log,again):
+def busy_receive_only_reports_queued(db,session,cmd,model,effort,cwd,log,again,predecessor):
   {==}
 
 # The recovery attachment boundary opens the supplied attempt directory and
@@ -193,6 +199,7 @@ law m17_not_refused_conversation_completes_the_attempt:
   for +id: String
   for +log: String
   for +stderr: String
+  for attempt: String
   for +cursor: String
   for native: String
   for cwd: String
@@ -200,10 +207,10 @@ law m17_not_refused_conversation_completes_the_attempt:
   for -lock: Maybe<U32>
   for +outcome: Turn.Outcome
   for -deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>
-  for -again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
-  {Receive.complete_or_restart(db,session,id,log,stderr,cursor,native,cwd,handle,lock,outcome,deliveries,again,False{}) == Receive.completed(db,session,id,log,stderr,cursor,handle,lock,outcome,deliveries,again) : IO(Result<&1,&1,U32 & String,Unit>)}
+  for -again: String -> IO(Result<&1,&1,U32 & String,Unit>)
+  {Receive.complete_or_restart(db,session,id,log,stderr,attempt,cursor,native,cwd,handle,lock,outcome,deliveries,again,False{},False{}) == Receive.completed(db,session,id,log,attempt,stderr,cursor,handle,lock,outcome,deliveries,again,False{}) : IO(Result<&1,&1,U32 & String,Unit>)}
 
-def m17_not_refused_conversation_completes_the_attempt(db,session,id,log,stderr,cursor,native,cwd,handle,lock,outcome,deliveries,again):
+def m17_not_refused_conversation_completes_the_attempt(db,session,id,log,stderr,attempt,cursor,native,cwd,handle,lock,outcome,deliveries,again):
   {==}
 
 # M-17: the branch taken when the recorded conversation is refused (gone =
@@ -214,6 +221,7 @@ law m17_refused_conversation_restarts_the_attempt:
   for +id: String
   for log: String
   for stderr: String
+  for attempt: String
   for +cursor: String
   for native: String
   for cwd: String
@@ -221,10 +229,10 @@ law m17_refused_conversation_restarts_the_attempt:
   for -lock: Maybe<U32>
   for outcome: Turn.Outcome
   for -deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>
-  for -again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
-  {Receive.complete_or_restart(db,session,id,log,stderr,cursor,native,cwd,handle,lock,outcome,deliveries,again,True{}) == Receive.restart_pending(db,session,id,cursor,native,cwd,handle,lock,deliveries,again) : IO(Result<&1,&1,U32 & String,Unit>)}
+  for -again: String -> IO(Result<&1,&1,U32 & String,Unit>)
+  {Receive.complete_or_restart(db,session,id,log,stderr,attempt,cursor,native,cwd,handle,lock,outcome,deliveries,again,True{},False{}) == Receive.restart_pending(db,session,id,attempt,cursor,native,cwd,handle,lock,deliveries,again) : IO(Result<&1,&1,U32 & String,Unit>)}
 
-def m17_refused_conversation_restarts_the_attempt(db,session,id,log,stderr,cursor,native,cwd,handle,lock,outcome,deliveries,again):
+def m17_refused_conversation_restarts_the_attempt(db,session,id,log,stderr,attempt,cursor,native,cwd,handle,lock,outcome,deliveries,again):
   {==}
 
 # M-17: the receive entry's own dispatch. The branch argument is the refusal
@@ -234,13 +242,13 @@ def m17_refused_conversation_restarts_the_attempt(db,session,id,log,stderr,curso
 # the branches is the derived attempt ++ "/native.stderr". The written-out
 # dispatch below is the whole obligation: reading a different predicate, or
 # passing the undecorated attempt, breaks this proof.
-def observed_dispatch(+db: String, +session: String, +id: String, +log: String, cursor: String, +native: String, cwd: String, +attempt: String, handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+def observed_dispatch(+db: String, +session: String, +id: String, +log: String, cursor: String, +native: String, cwd: String, +attempt: String, handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), superseded: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     exited : Unit <- Turn.record_exit(db,session,id,log,outcome)
     closed : Bool <- Stop.stopped(db,session)
-    gone : Bool <- Turn.refusal(attempt ++ "/native", Bool.not(String.is_empty(native)), outcome)
+    gone : Bool <- Turn.refusal(attempt ++ "/native.stderr", Bool.not(String.is_empty(native)), outcome)
     retained : Bool = Bool.and(Bool.not(Receive.native_observation_failed(outcome)),Bool.and(gone,Bool.not(closed)))
-    Receive.complete_or_restart(db,session,id,log,attempt ++ "/native.stderr",cursor,native,cwd,handle,lock,outcome,deliveries,again,retained)
+    Receive.complete_or_restart(db,session,id,log,attempt ++ "/native.stderr",attempt,cursor,native,cwd,handle,lock,outcome,deliveries,again,retained,superseded)
 
 law m17_the_observed_dispatch_is_the_refusal_it_read:
   for +db: String
@@ -255,10 +263,11 @@ law m17_the_observed_dispatch_is_the_refusal_it_read:
   for -lock: Maybe<U32>
   for +outcome: Turn.Outcome
   for -deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>
-  for -again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
-  {Receive.observed(db,session,id,log,cursor,native,cwd,attempt,handle,lock,outcome,deliveries,again) == observed_dispatch(db,session,id,log,cursor,native,cwd,attempt,handle,lock,outcome,deliveries,again) : IO(Result<&1,&1,U32 & String,Unit>)}
+  for -again: String -> IO(Result<&1,&1,U32 & String,Unit>)
+  for superseded: Bool
+  {Receive.observed(db,session,id,log,cursor,native,cwd,attempt,handle,lock,outcome,deliveries,again,superseded) == observed_dispatch(db,session,id,log,cursor,native,cwd,attempt,handle,lock,outcome,deliveries,again,superseded) : IO(Result<&1,&1,U32 & String,Unit>)}
 
-def m17_the_observed_dispatch_is_the_refusal_it_read(db,session,id,log,cursor,native,cwd,attempt,handle,lock,outcome,deliveries,again):
+def m17_the_observed_dispatch_is_the_refusal_it_read(db,session,id,log,cursor,native,cwd,attempt,handle,lock,outcome,deliveries,again,superseded):
   {==}
 
 # M-17: the restart reads the recovery-input row, records the recovery, and
@@ -570,7 +579,7 @@ def retained_observation_uses_the_reconciled_input_cursor(db,session,id,log,curs
 def guarded_attempt_observation(+db: String, +session: String, +id: String, cursor: String, cmd: String, model: String, effort: String, +cwd: String, +log: String, harness: String, +directory: String, native: String, +handle: U32, lock: Maybe<U32>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), adopted: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     reconciled : Unit <- Stop.reconcile(db,session,id,directory)
-    observation : Turn.Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- Turn.retained_output(db,session,id,log,harness,directory,handle,"unknown")
+    observation : Turn.Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- Turn.retained_output(db,session,id,log,harness,directory,directory,handle,"unknown")
     Receive.observed_output(db,session,id,log,cursor,native,cwd,directory,handle,lock,observation,again,adopted)
 
 law guarded_observation_preserves_its_adopted_origin:

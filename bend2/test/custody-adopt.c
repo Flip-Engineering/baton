@@ -166,6 +166,23 @@ int main(int argc,char **argv) {
     .signal=1,.text=state_text,.length=(u32)strlen(state_text)};
   baton_retained_call(&final);
   REQUIRE(final.error==0);
+  /* An owner-managed monitor arrives with a keeper socket and no adopted
+     monitor-lock descriptor. Its monitor checkpoint uses the normal
+     attempt-bound checkpoint record and leaves native-control operations
+     denied. */
+  int owner_socket=open("/dev/null",O_RDWR|O_CLOEXEC);
+  REQUIRE(owner_socket>=0);
+  int adopted_lock=retained->custody_lock;
+  retained->custody_lock=-1;
+  retained->socket=owner_socket;
+  BatonProcessCall owner_monitor={.kind=BP_INSTANCE_MONITOR_COMMIT,.child=&child,
+    .signal=1,.text=state_text,.length=(u32)strlen(state_text)};
+  baton_retained_call(&owner_monitor);
+  REQUIRE(owner_monitor.error==0);
+  REQUIRE(checkpoint_offset(directory)==13);
+  retained->socket=-1;
+  retained->custody_lock=adopted_lock;
+  close(owner_socket);
   retained->offset=0;
   BatonProcessCall backward={.kind=BP_INSTANCE_MONITOR_COMMIT,.child=&child,
     .signal=1,.text=state_text,.length=(u32)strlen(state_text)};
