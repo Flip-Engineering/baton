@@ -101,12 +101,20 @@ identities. They remain available for integrations and exact replay:
 .scratch/bend2/baton2 state.db push /path/to/repo target-branch origin
 .scratch/bend2/baton2 state.db remote-tip /path/to/repo target-branch origin
 .scratch/bend2/baton2 state.db status
+.scratch/bend2/baton2 state.db stall
+.scratch/bend2/baton2 state.db stall-wake
 ```
 
 Commands return JSON. `report` saves the full
 body and pending parent delivery in one SQLite transaction. A matching retry
 returns the stored message with its current delivery receipt. Conflicting reuse of
 an ID fails. The explicit `ack` form records the supplied recipient handling receipt.
+`stall` reports every pending-input candidate with its recorded state. `stall-wake`
+drives the oldest owed message for each candidate whose attempt exited, whose
+endpoint is present, and which has no explicit stop or existing wake claim. Both
+commands use the vocabulary of the coordinator database. A live attempt with
+owed input is reported as `active`; the wake command selects `stalled`
+candidates.
 
 `observe-file ID PLAYER PATH` consumes one
 native harness event. An initialization event (type `session`) updates the

@@ -1,16 +1,15 @@
-# CLAIM: a stalled player and its wake are derivable from the recorded database
-# alone. A player is stalled when it holds unacknowledged input, its recorded
-# attempt phase is not exited, and its stored endpoint names a runnable route.
-# The wake reuses the existing driver, addressed by the oldest owed message, so
-# there is one wake route and no second one.
+# CLAIM: a pending-input candidate is classified from recorded database state.
+# A candidate is active while its recorded attempt is not exited. An exited
+# attempt with a present endpoint is stalled; an exited attempt without one is
+# blocked. The report keeps an explicit stop or existing wake claim in its
+# recorded state. A stalled candidate is woken through the existing Wake.drive_id
+# route, addressed by its oldest owed message.
 #
-# No clock is consulted and none is reported: the database records no instant,
-# and the runtime clock's unit is not established anywhere this module can cite,
-# so an observedAt field would be a fact the module cannot support.
+# The module classifies from recorded database state; the database carries no
+# clock value, so no observed instant is reported.
 # Serves: docs/pure-bend2/pending-stall-bend2.md.
 # Fixture: bend2/src/coordinator/stall-laws.bend.
 import Base
-import ../coordinator/commands.bend as C
 import ../json/canonical.bend as J
 import ../host/sqlite.bend as DB
 import ../git/text.bend as Tx
@@ -24,43 +23,74 @@ def endpoint_present_expr(+column: String) -> String:
 def owed_expr(+session: String) -> String:
   "(SELECT count(*) FROM messages m WHERE m.recipient=" ++ session ++ " AND m.receipt IS NULL)"
 
-# One line per stalled player: session, pending count, attempt id, attempt phase,
-# endpoint presence, and the oldest owed message the wake addresses. Tabs between
-# fields, so the row transport is the coordinator's existing one.
-def stalled_rows_sql() -> String:
+# An explicit stop resolves the session's wake obligation.
+def stopped_expr(+session: String) -> String:
+  "EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ session ++ ")"
+
+# The claim state the coordinator records for one session. A database without
+# the claim table reports an empty state and classifies no candidate as claimed.
+def claim_state_expr(+session: String, +present: Bool) -> String:
+  Bool.pick(String, present, "coalesce((SELECT state FROM wake_claims WHERE session=" ++ session ++ "),'')", "''")
+
+# The candidate classification. The recorded attempt phase separates a live
+# attempt from a finished one; the endpoint decides whether a finished attempt
+# can be woken; the stop and claim checks take precedence over both.
+def state_expr(+session: String, +phase: String, +endpoint: String, +present: Bool) -> String:
+  "CASE WHEN " ++ stopped_expr(session) ++ " THEN 'stopped'"
+  ++ " WHEN " ++ claim_state_expr(session,present) ++ "='claimed' THEN 'claimed'"
+  ++ " WHEN " ++ phase ++ "='exited' AND (" ++ endpoint_present_expr(endpoint) ++ ")=0 THEN 'blocked'"
+  ++ " WHEN " ++ phase ++ "='exited' THEN 'stalled'"
+  ++ " ELSE 'active' END"
+
+# One line per pending-input candidate: session, pending count, attempt id,
+# attempt phase, endpoint presence, the oldest owed message, stopped flag,
+# claim state, and classification. Tabs between fields, so the row transport is
+# the coordinator's existing one.
+def stalled_rows_sql(+present: Bool) -> String:
   "SELECT s.id||char(9)||"
   ++ "CAST(" ++ owed_expr("s.id") ++ " AS TEXT)||char(9)||"
   ++ "coalesce(e.id,'')||char(9)||coalesce(e.phase,'')||char(9)||"
   ++ "CAST(" ++ endpoint_present_expr("s.endpoint") ++ " AS TEXT)||char(9)||"
-  ++ "coalesce((SELECT m.id FROM messages m WHERE m.recipient=s.id AND m.receipt IS NULL ORDER BY m.seq LIMIT 1),'')"
+  ++ "coalesce((SELECT m.id FROM messages m WHERE m.recipient=s.id AND m.receipt IS NULL ORDER BY m.seq LIMIT 1),'')||char(9)||"
+  ++ "CAST(" ++ stopped_expr("s.id") ++ " AS TEXT)||char(9)||"
+  ++ claim_state_expr("s.id",present) ++ "||char(9)||"
+  ++ state_expr("s.id","e.phase","s.endpoint",present)
   ++ " FROM sessions s JOIN executions e ON e.session=s.id"
-  ++ " WHERE e.phase<>'exited'"
-  ++ " AND " ++ owed_expr("s.id") ++ ">0"
-  ++ " AND " ++ endpoint_present_expr("s.endpoint") ++ "=1"
+  ++ " WHERE " ++ owed_expr("s.id") ++ ">0"
   ++ " ORDER BY s.id;"
+
+def claim_table_present_sql() -> String:
+  "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='wake_claims';"
+
+def claim_table_present(db: String) -> IO(Bool):
+  do IO<Bool>:
+    value : String <- IO.try(String,DB.Sql.query(db,claim_table_present_sql()))
+    IO.pure(Bool,Bool.not(String.eq(Tx.trim_nl(value),"0")))
 
 # The row's JSON object, over fields the caller has already split: a match
 # cannot scrutinise a computed value, so the split happens in the caller.
 def row_fields(fields: List<String>) -> String:
   match fields:
-    case session <> pending <> attempt <> phase <> present <> owed <> Nil{}:
+    case session <> pending <> attempt <> phase <> present <> owed <> stopped <> claim <> state <> Nil{}:
       "{\"id\":" ++ J.string_literal(session)
       ++ ",\"pending\":" ++ pending
       ++ ",\"attempt\":{\"id\":" ++ J.string_literal(attempt)
       ++ ",\"phase\":" ++ J.string_literal(phase) ++ "}"
       ++ ",\"endpointPresent\":" ++ present
-      ++ ",\"owedMessage\":" ++ J.string_literal(owed) ++ "}"
+      ++ ",\"owedMessage\":" ++ J.string_literal(owed)
+      ++ ",\"stopped\":" ++ stopped
+      ++ ",\"claim\":" ++ J.string_literal(claim)
+      ++ ",\"state\":" ++ J.string_literal(state) ++ "}"
     case other: ""
 
-# A line that does not carry six fields is not a row and is skipped rather than
-# reported as an empty one.
+# A line that does not carry nine fields is not a candidate and is skipped.
 def row_json(+line: String) -> String:
   row_fields(Tx.split_tabs(line))
 
 # The rendered rows are an accumulator, so each step consumes the tail once.
-# The row is rendered once; a line whose rendered row is empty (an empty line
-# or a malformed row) is skipped and keeps the first flag, and a rendered row
-# takes the comma prefix only when a row already precedes it.
+# The row is rendered once; a line whose rendered row is empty is skipped and
+# keeps the first flag, and a rendered row takes the comma prefix only when a
+# row already precedes it.
 def rows_json_go(lines: List<String>, +first: Bool, acc: String) -> String:
   match lines:
     case Nil{}: acc
@@ -76,27 +106,28 @@ def rows_json(lines: List<String>, +first: Bool) -> String:
   rows_json_go(lines, first, "")
 
 def report_text(+rows: String) -> String:
-  "{\"stalled\":[" ++ rows ++ "]}"
+  "{\"candidates\":[" ++ rows ++ "]}"
 
-# The report: facts only, and an empty array when nothing is stalled.
+# The report: every pending-input candidate with its recorded classification.
 def report(db: String) -> IO(Unit):
   do IO<Unit>:
-    found : String <- IO.try(String,DB.Sql.query(db,stalled_rows_sql()))
+    present : Bool <- claim_table_present(db)
+    found : String <- IO.try(String,DB.Sql.query(db,stalled_rows_sql(present)))
     IO.print(report_text(rows_json(Tx.split_lines(Tx.trim_nl(found)), True{})))
 
 def owed_fields(fields: List<String>) -> List<String>:
   match fields:
-    case session <> pending <> attempt <> phase <> present <> +owed <> Nil{}:
-      Bool.pick(List<String>, String.is_empty(owed), Nil{}, [owed])
+    case session <> pending <> attempt <> phase <> present <> +owed <> stopped <> claim <> +state <> Nil{}:
+      Bool.pick(List<String>, Bool.and(String.eq(state,"stalled"),Bool.not(String.is_empty(owed))), [owed], Nil{})
     case other: Nil{}
 
 def owed_of(+line: String) -> List<String>:
   owed_fields(Tx.split_tabs(line))
 
-# The wake side: one call per stalled session, addressed by its oldest owed
-# message, through the existing driver. A session with no owed id is skipped, and
-# a repeated invocation re-drives the same message, which the driver already
-# treats idempotently because the cursor is the message's own position.
+# The wake side drives only stalled candidates, one call per session through
+# the existing driver. The driver re-reads the pending count, takes the session
+# lock, observes the claim and host custody, and launches the oldest owed
+# message. The caller passes only stalled candidates here.
 def wake_rows(lines: List<String>) -> List<String>:
   match lines:
     case Nil{}: Nil{}
@@ -111,5 +142,6 @@ def wake_each(+db: String, ids: List<String>) -> IO(Unit):
 
 def wake_stalled(+db: String) -> IO(Unit):
   do IO<Unit>:
-    found : String <- IO.try(String,DB.Sql.query(db,stalled_rows_sql()))
+    present : Bool <- claim_table_present(db)
+    found : String <- IO.try(String,DB.Sql.query(db,stalled_rows_sql(present)))
     wake_each(db, wake_rows(Tx.split_lines(Tx.trim_nl(found))))

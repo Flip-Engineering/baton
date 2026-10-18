@@ -1,51 +1,94 @@
-# CLAIM: the stall report and its wake address are fixed values. Each law pins one
-# value the module must produce: the row query's exact text so a change to the
-# predicate is a deliberate edit, one row's JSON object, a malformed row being
-# skipped, an empty report being an empty array, empty lines and malformed rows
-# skipped with rows separated by commas, and the owed message each row
-# contributes to the wake.
+# CLAIM: the candidate report and its wake address are fixed values. Each law
+# pins one value the module must produce: the row query's exact text so a change
+# to the classification is a deliberate edit, one stalled row's JSON object, an
+# empty report being an empty array, empty and malformed lines being skipped
+# with rows separated by commas, and the owed message each stalled row
+# contributes to the wake. The non-stalled fixtures pin that active, stopped,
+# blocked and claimed candidates contribute no wake address.
 # Serves: docs/pure-bend2/pending-stall-bend2.md.
 import Base
 import ./stall.bend as Stall
 
 def row() -> String:
-  "worker\t18\tattempt-1\trunning\t1\tm7"
+  "worker\t18\tattempt-1\texited\t1\tm7\t0\t\tstalled"
+
+def active_row() -> String:
+  "worker\t18\tattempt-1\trunning\t1\tm7\t0\t\tactive"
+
+def stopped_row() -> String:
+  "worker\t18\tattempt-1\texited\t1\tm7\t1\t\tstopped"
+
+def blocked_row() -> String:
+  "worker\t18\tattempt-1\texited\t0\tm7\t0\t\tblocked"
+
+def claimed_row() -> String:
+  "worker\t18\tattempt-1\texited\t1\tm7\t0\tclaimed\tclaimed"
 
 def two_rows() -> List<String>:
   Con{"", Con{row(), Con{"", Con{row(), Nil{}}}}}
 
-law the_row_query_selects_live_attempts_with_owed_input_and_an_endpoint:
-  {Stall.stalled_rows_sql() == "SELECT s.id||char(9)||CAST((SELECT count(*) FROM messages m WHERE m.recipient=s.id AND m.receipt IS NULL) AS TEXT)||char(9)||coalesce(e.id,'')||char(9)||coalesce(e.phase,'')||char(9)||CAST(CASE WHEN json_valid(s.endpoint) THEN json_type(s.endpoint)='array' AND json_array_length(s.endpoint)>0 ELSE 0 END AS TEXT)||char(9)||coalesce((SELECT m.id FROM messages m WHERE m.recipient=s.id AND m.receipt IS NULL ORDER BY m.seq LIMIT 1),'') FROM sessions s JOIN executions e ON e.session=s.id WHERE e.phase<>'exited' AND (SELECT count(*) FROM messages m WHERE m.recipient=s.id AND m.receipt IS NULL)>0 AND CASE WHEN json_valid(s.endpoint) THEN json_type(s.endpoint)='array' AND json_array_length(s.endpoint)>0 ELSE 0 END=1 ORDER BY s.id;" : String}
+law the_row_query_selects_pending_candidates_and_classifies_them:
+  {Stall.stalled_rows_sql(True{}) == "SELECT s.id||char(9)||CAST((SELECT count(*) FROM messages m WHERE m.recipient=s.id AND m.receipt IS NULL) AS TEXT)||char(9)||coalesce(e.id,'')||char(9)||coalesce(e.phase,'')||char(9)||CAST(CASE WHEN json_valid(s.endpoint) THEN json_type(s.endpoint)='array' AND json_array_length(s.endpoint)>0 ELSE 0 END AS TEXT)||char(9)||coalesce((SELECT m.id FROM messages m WHERE m.recipient=s.id AND m.receipt IS NULL ORDER BY m.seq LIMIT 1),'')||char(9)||CAST(EXISTS(SELECT 1 FROM session_stops WHERE session=s.id) AS TEXT)||char(9)||coalesce((SELECT state FROM wake_claims WHERE session=s.id),'')||char(9)||CASE WHEN EXISTS(SELECT 1 FROM session_stops WHERE session=s.id) THEN 'stopped' WHEN coalesce((SELECT state FROM wake_claims WHERE session=s.id),'')='claimed' THEN 'claimed' WHEN e.phase='exited' AND (CASE WHEN json_valid(s.endpoint) THEN json_type(s.endpoint)='array' AND json_array_length(s.endpoint)>0 ELSE 0 END)=0 THEN 'blocked' WHEN e.phase='exited' THEN 'stalled' ELSE 'active' END FROM sessions s JOIN executions e ON e.session=s.id WHERE (SELECT count(*) FROM messages m WHERE m.recipient=s.id AND m.receipt IS NULL)>0 ORDER BY s.id;" : String}
 
-def the_row_query_selects_live_attempts_with_owed_input_and_an_endpoint():
+def the_row_query_selects_pending_candidates_and_classifies_them():
   {==}
 
-law a_row_becomes_the_fact_object:
-  {Stall.row_json(row()) == "{\"id\":\"worker\",\"pending\":18,\"attempt\":{\"id\":\"attempt-1\",\"phase\":\"running\"},\"endpointPresent\":1,\"owedMessage\":\"m7\"}" : String}
+law the_claimless_query_omits_the_claim_table:
+  {Bool.not(String.contains(Stall.stalled_rows_sql(False{}),"wake_claims")) : Bool}
 
-def a_row_becomes_the_fact_object():
+def the_claimless_query_omits_the_claim_table():
   {==}
 
-law a_row_without_six_fields_is_skipped:
+law a_stalled_row_becomes_the_fact_object:
+  {Stall.row_json(row()) == "{\"id\":\"worker\",\"pending\":18,\"attempt\":{\"id\":\"attempt-1\",\"phase\":\"exited\"},\"endpointPresent\":1,\"owedMessage\":\"m7\",\"stopped\":0,\"claim\":\"\",\"state\":\"stalled\"}" : String}
+
+def a_stalled_row_becomes_the_fact_object():
+  {==}
+
+law a_row_without_nine_fields_is_skipped:
   {Stall.row_json("worker\t18") == SNil{} : String}
 
-def a_row_without_six_fields_is_skipped():
+def a_row_without_nine_fields_is_skipped():
   {==}
 
 law an_empty_report_is_an_empty_array:
-  {Stall.report_text(Stall.rows_json(Nil{}, True{})) == "{\"stalled\":[]}" : String}
+  {Stall.report_text(Stall.rows_json(Nil{}, True{})) == "{\"candidates\":[]}" : String}
 
 def an_empty_report_is_an_empty_array():
   {==}
 
-law a_row_contributes_its_owed_message:
+law a_stalled_row_contributes_its_owed_message:
   {Stall.owed_of(row()) == ["m7"] : List<String>}
 
-def a_row_contributes_its_owed_message():
+def a_stalled_row_contributes_its_owed_message():
+  {==}
+
+law an_active_row_contributes_no_wake:
+  {Stall.owed_of(active_row()) == Nil{} : List<String>}
+
+def an_active_row_contributes_no_wake():
+  {==}
+
+law a_stopped_row_contributes_no_wake:
+  {Stall.owed_of(stopped_row()) == Nil{} : List<String>}
+
+def a_stopped_row_contributes_no_wake():
+  {==}
+
+law a_blocked_row_contributes_no_wake:
+  {Stall.owed_of(blocked_row()) == Nil{} : List<String>}
+
+def a_blocked_row_contributes_no_wake():
+  {==}
+
+law a_claimed_row_contributes_no_wake:
+  {Stall.owed_of(claimed_row()) == Nil{} : List<String>}
+
+def a_claimed_row_contributes_no_wake():
   {==}
 
 law a_row_without_an_owed_message_contributes_nothing:
-  {Stall.owed_of("worker\t18\tattempt-1\trunning\t1\t") == Nil{} : List<String>}
+  {Stall.owed_of("worker\t18\tattempt-1\texited\t1\t\t0\t\tstalled") == Nil{} : List<String>}
 
 def a_row_without_an_owed_message_contributes_nothing():
   {==}
