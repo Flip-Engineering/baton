@@ -143,6 +143,20 @@ static Term baton_file_mkdir_run(Env e,Term *f,IoWork *w) {
 static void __attribute__((constructor)) baton_file_mkdir_use(void) {io_eff(CID_FILES_MKDIR,baton_file_mkdir_run,0);}
 #endif
 
+#ifdef CID_FILES_WRITABLE
+static void baton_file_writable_call(IoWork *w) {
+  BatonFileOp *call=(BatonFileOp *)w->data;
+  if(access(call->path,W_OK)) call->error=errno;
+}
+static Term baton_file_writable_run(Env e,Term *f,IoWork *w) {
+  BatonFileOp *call=baton_file_op(e,f,w,1);
+  if(!call) return io_fail(e,ENOMEM,NULL);
+  if(call->error) return baton_file_unit_pack(e,w);
+  return io_work(w,baton_file_writable_call,baton_file_unit_pack);
+}
+static void __attribute__((constructor)) baton_file_writable_use(void) {io_eff(CID_FILES_WRITABLE,baton_file_writable_run,0);}
+#endif
+
 #ifdef CID_FILES_RENAME
 static Term baton_file_rename_run(Env e,Term *f,IoWork *w) {
   BatonFileOp *call=baton_file_op(e,f,w,2);

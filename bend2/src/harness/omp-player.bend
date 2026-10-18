@@ -2,6 +2,7 @@ import Base
 import ../host/process.bend as P
 import ../json/canonical.bend as J
 import ../host/files.bend as F
+import ../git/text.bend as Tx
 
 def select_file(directory: String, +session: String, +first: String, found: Bool) -> IO(String):
   match found:
@@ -28,6 +29,44 @@ def argv(cmd: String, model: String, effort: String, sessions: String, session: 
   match fresh:
     case True{}: P.argv(arguments(cmd,model,effort,sessions))
     case False{}: P.argv(List.append(&1,String,arguments(cmd,model,effort,sessions),["--resume",session]))
+
+def preflight_failure(home: String, detail: String) -> Result<&1,&1,U32 & String,Unit>:
+  Fail{(2, "native-environment-unwritable: HOME=" ++ home ++ " is not writable: " ++ detail ++ "; run the mutable Baton command as the recorded service account with its writable HOME")}
+
+def preflight_writable(home: String, writable: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match writable:
+    case Fail{(code,detail)}: IO.pure(Result<&1,&1,U32 & String,Unit>,preflight_failure(home,detail))
+    case Done{made}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
+
+# OMP extracts its native addon below HOME. Check that the recorded service
+# account can write HOME; this reads permission state and creates no file.
+def preflight_absolute(+home: String, absolute: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match absolute:
+    case False{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(2,"native-home-invalid: HOME=" ++ home ++ " is not absolute; run the mutable Baton command as the recorded service account with its writable HOME")})
+    case True{}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      writable : Result<&1,&1,U32 & String,Unit> <- F.Files.writable(home)
+      preflight_writable(home,writable)
+
+def preflight_empty(+home: String, empty: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match empty:
+    case True{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(2,"native-home-missing: HOME is empty; run the mutable Baton command as the recorded service account with its writable HOME")})
+    case False{}:
+      absolute = Tx.starts_with(home,"/")
+      preflight_absolute(home,absolute)
+
+def preflight_at(+home: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  empty = String.is_empty(home)
+  preflight_empty(home,empty)
+
+def preflight_home_checked(home: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match home:
+    case Fail{(code,detail)}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(2,"native-home-missing: HOME is unavailable: " ++ detail ++ "; run the mutable Baton command as the recorded service account with its writable HOME")})
+    case Done{value}: preflight_at(value)
+
+def preflight() -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    home : Result<&1,&1,U32 & String,String> <- IO.get_env("HOME")
+    preflight_home_checked(home)
 
 def start_player(cmd: String, model: String, effort: String, cwd: String, sessions: String, session: String, fresh: Bool, stderr: String) -> IO(Result<&1,&1,U32 & String,U32>):
   P.ProcessChild.spawn(argv(cmd,model,effort,sessions,session,fresh),cwd,stderr)
