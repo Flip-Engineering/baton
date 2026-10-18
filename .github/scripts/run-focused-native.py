@@ -156,35 +156,48 @@ def run_command(label, argv, cwd, env, evidence, deadline, records):
     return row
 
 
-def one_source(root, label, run, compiler, cgroup, deadline, records):
+def safe_environment():
+    names = ('PATH', 'HOME', 'USER', 'LOGNAME', 'SHELL', 'TMPDIR', 'LANG',
+             'LC_ALL', 'LC_CTYPE', 'XDG_RUNTIME_DIR', 'DBUS_SESSION_BUS_ADDRESS',
+             'GITHUB_WORKSPACE', 'GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT',
+             'GITHUB_REPOSITORY', 'RUNNER_TEMP')
+    env = {name: os.environ[name] for name in names if name in os.environ}
+    forbidden = ('GH_TOKEN', 'GITHUB_TOKEN', 'ACTIONS_RUNTIME_TOKEN')
+    if any(name in env for name in forbidden):
+        raise SystemExit('GitHub action credentials are prohibited in the admitted scope')
+    return env
+
+
+def one_source(root, label, run, compiler, cgroup, deadline, records, base_env):
     evidence = run / 'evidence' / label
     evidence.mkdir(parents=True, exist_ok=True)
     before = tracked_manifest(root)
-    output = run / 'generated' / label
-    output.mkdir(parents=True, exist_ok=True)
-    env = dict(os.environ)
+    scratch = root / '.scratch' / 'bend2'
+    scratch.mkdir(parents=True, exist_ok=True)
+    recovery = scratch / (label + '-baton-recovery')
+    fixture = scratch / 'monitor-fixture'
+    env = dict(base_env)
     env.update({'BEND': str(compiler), 'BATON2_ADMISSION_CGROUP': str(cgroup),
                 'BEND_NO_TELEMETRY': '1', 'CC': '/usr/bin/clang-19',
                 'BUN_JSC_maxPerThreadStackUsage': '67108864',
-                'OBSERVER_RECOVERY_BIN': str(output / 'baton-recovery'),
+                'OBSERVER_RECOVERY_BIN': str(recovery),
                 'KEEP_OBSERVER_FIXTURE': '1'})
-    env.pop('BATON2_ADMISSION_RECEIPT', None)
-    env.pop('BEND_GENERATED_C', None)
-    env.pop('BATON2_NATIVE_RECEIVER_ROUTER', None)
-    env.pop('BATON2_RECEIVE_FOCUSED', None)
+    for name in ('BATON2_ADMISSION_RECEIPT', 'BEND_GENERATED_C',
+                 'BATON2_NATIVE_RECEIVER_ROUTER', 'BATON2_RECEIVE_FOCUSED'):
+        env.pop(name, None)
     env['BATON2_RECOVERY_HELPER'] = '1'
     run_command(label + '-build-recovery', ['sh', 'bend2/scripts/build-native.sh',
                 'bend2/src/coordinator/receive-recovery-focused.bend',
-                str(output / 'baton-recovery')], root, env, evidence, deadline, records)
-    recovery_c = pathlib.Path(str(output / 'baton-recovery') + '.c')
+                str(recovery)], root, env, evidence, deadline, records)
+    recovery_c = pathlib.Path(str(recovery) + '.c')
     env.pop('BATON2_RECOVERY_HELPER', None)
     run_command(label + '-build-fixture', ['sh', 'bend2/scripts/build-native.sh',
-                'bend2/test/monitor-fixture.bend', str(output / 'monitor-fixture')],
+                'bend2/test/monitor-fixture.bend', str(fixture)],
                 root, env, evidence, deadline, records)
-    env['OBSERVER_RECOVERY_BIN'] = str(output / 'baton-recovery')
+    env['OBSERVER_RECOVERY_BIN'] = str(recovery)
     run_command(label + '-observer-monitor', [sys.executable,
                 'bend2/test/observer-monitor.py', '-v'], root, env, evidence, deadline, records)
-    fixture_output = evidence / 'observer-monitor.stdout'
+    fixture_output = evidence / (label + '-observer-monitor.stdout')
     retained = []
     if fixture_output.exists():
         for line in fixture_output.read_text(errors='replace').splitlines():
@@ -209,8 +222,6 @@ def one_source(root, label, run, compiler, cgroup, deadline, records):
 
 
 def inside(args):
-    if 'GH_TOKEN' in os.environ or 'GITHUB_TOKEN' in os.environ:
-        raise SystemExit('GitHub tokens must not enter the admitted compiler scope')
     run = pathlib.Path(args.run).resolve()
     cg = pathlib.Path('/sys/fs/cgroup') / unified_cgroup().lstrip('/')
     expected_memory = int(args.memory)
@@ -260,20 +271,18 @@ def inside(args):
     sampler.start()
     deadline = time.monotonic() + int(args.runtime)
     records = []
-    root = pathlib.Path(os.environ['GITHUB_WORKSPACE']).resolve()
+    target_root = pathlib.Path(os.environ['GITHUB_WORKSPACE']).resolve()
+    candidate_root = pathlib.Path(args.candidate).resolve()
     source = args.source
     target = args.target
-    verify_lineage(root, source, target)
-    target_root = run / 'target-source'
-    worktree_added = False
+    verify_lineage(target_root, target, target)
+    verify_lineage(candidate_root, source, target)
+    safe_env = safe_environment()
     try:
-        subprocess.run(['git', 'worktree', 'add', '--detach', str(target_root), target],
-                       cwd=root, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        worktree_added = True
         target_result = one_source(target_root, 'target', run, pathlib.Path(args.compiler), cg,
-                                   deadline, records)
-        candidate_result = one_source(root, 'candidate', run, pathlib.Path(args.compiler), cg,
-                                      deadline, records)
+                                   deadline, records, safe_env)
+        candidate_result = one_source(candidate_root, 'candidate', run, pathlib.Path(args.compiler), cg,
+                                      deadline, records, safe_env)
         outcome = {'result': 'pass', 'qualification': 'focused-observer-recovery-only',
                    'source': source, 'target': target, 'suite': args.suite,
                    'target_result': target_result, 'candidate_result': candidate_result,
@@ -286,9 +295,6 @@ def inside(args):
             'error_type': type(error).__name__, 'error': str(error), 'commands': records})
         raise
     finally:
-        if worktree_added:
-            subprocess.run(['git', 'worktree', 'remove', '--force', str(target_root)],
-                           cwd=root, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         metrics = sampler.finish()
         metrics['host_memory_pressure_after'] = pathlib.Path('/proc/pressure/memory').read_text()
         metrics['host_mem_available_after'] = mem_available()
@@ -301,10 +307,12 @@ def inside(args):
 def launch(args):
     run = pathlib.Path(args.run).resolve()
     run.mkdir(parents=True, exist_ok=True)
-    root = pathlib.Path(os.environ['GITHUB_WORKSPACE']).resolve()
+    target_root = pathlib.Path(os.environ['GITHUB_WORKSPACE']).resolve()
+    candidate_root = pathlib.Path(args.candidate).resolve()
     source = args.source
     target = args.target
-    verify_lineage(root, source, target)
+    verify_lineage(target_root, target, target)
+    verify_lineage(candidate_root, source, target)
     actual_main = os.environ.get('BATON2_FOCUSED_CURRENT_MAIN', '')
     if actual_main != target:
         raise SystemExit('preflight did not verify target_commit against current GitHub main')
@@ -340,12 +348,13 @@ def launch(args):
             '--property=TasksMax=' + str(tasks), '--',
             sys.executable, str(pathlib.Path(__file__).resolve()), '--inside',
             '--run', str(run), '--source', source, '--target', target,
-            '--suite', args.suite, '--compiler', args.compiler,
+            '--candidate', args.candidate, '--suite', args.suite, '--compiler', args.compiler,
             '--memory', str(memory), '--tasks', str(tasks), '--runtime', str(runtime),
             '--reserve', str(reserve)]
     stdout = (run / 'evidence' / 'scope.stdout').open('wb')
     stderr = (run / 'evidence' / 'scope.stderr').open('wb')
-    process = subprocess.Popen(argv, stdout=stdout, stderr=stderr, start_new_session=True)
+    process = subprocess.Popen(argv, stdout=stdout, stderr=stderr, env=safe_environment(),
+                               start_new_session=True)
     try:
         code = process.wait(timeout=runtime + 60)
     except subprocess.TimeoutExpired:
@@ -377,6 +386,7 @@ def main():
     parser.add_argument('--run', required=True)
     parser.add_argument('--source', required=True)
     parser.add_argument('--target', required=True)
+    parser.add_argument('--candidate', required=True)
     parser.add_argument('--suite', choices=['observer-recovery'], required=True)
     parser.add_argument('--compiler', required=True)
     parser.add_argument('--memory', default='0')

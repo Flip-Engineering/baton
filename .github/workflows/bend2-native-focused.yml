@@ -87,10 +87,17 @@ jobs:
           test -n "${BATON2_FOCUSED_MEMORY_RESERVE_BYTES:-}"
           test -n "${BATON2_FOCUSED_TASKS_MAX:-}"
           test -n "${BATON2_FOCUSED_RUNTIME_SECONDS:-}"
+      - name: Checkout exact trusted target source
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ inputs.target_commit }}
+          fetch-depth: 0
+          persist-credentials: false
       - name: Checkout exact candidate source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           ref: ${{ inputs.source_commit }}
+          path: candidate-source
           fetch-depth: 0
           persist-credentials: false
       - name: Prepare pinned Bend 2.0.25 toolchain
@@ -103,7 +110,7 @@ jobs:
           run="$RUNNER_TEMP/baton2-focused-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           test -d "$run/toolchain-home"
 
-          python3 .github/scripts/prepare-native-compiler.py --run "$run" \
+          python3 "$GITHUB_WORKSPACE/.github/scripts/prepare-native-compiler.py" --run "$run" \
             --archive "$BATON2_RETAINED_COMPILER_ARCHIVE" \
             --archive-sha256 "$BATON2_RETAINED_COMPILER_SHA256" \
             --github-env "$GITHUB_ENV" --runner homelab \
@@ -111,7 +118,7 @@ jobs:
             2> "$run/evidence/compiler-selection.stderr"
           raw="$run/toolchain-home/bin/bend"
           mv "$raw" "$raw.raw"
-          install -m 0755 bend2/scripts/bend-launch-guard.sh "$raw"
+          install -m 0755 "$GITHUB_WORKSPACE/bend2/scripts/bend-launch-guard.sh" "$raw"
           test -x "$run/toolchain-home/bin/bun"
           test -f "$run/toolchain-home/bend2/main.ts"
           printf 'BATON2_FOCUSED_COMPILER=%s\n' "$raw" >> "$GITHUB_ENV"
@@ -132,8 +139,9 @@ jobs:
           test "$current_main" = "$BATON2_TARGET_SHA"
           export BATON2_FOCUSED_CURRENT_MAIN="$current_main"
           unset GH_TOKEN
-          python3 .github/scripts/run-focused-native.py \
+          python3 "$GITHUB_WORKSPACE/.github/scripts/run-focused-native.py" \
             --launch --run "$BATON2_FOCUSED_RUN" \
+            --candidate "$GITHUB_WORKSPACE/candidate-source" \
             --source "$BATON2_SOURCE_SHA" --target "$BATON2_TARGET_SHA" \
             --suite "$BATON2_FOCUSED_SUITE" --compiler "$BATON2_FOCUSED_COMPILER"
       - name: Retain focused qualification evidence
