@@ -23,12 +23,16 @@ for arg in "$@"; do
   if [ "$prev" = -o ]; then out=$arg; fi
   prev=$arg
 done
-[ -z "$out" ] || printf '/* stub */\n' > "$out"
+if [ -n "$out" ]; then
+  printf '%s\n' "$*" >> "$CGEN_STUB_LOG"
+  printf '/* stub */\n' > "$out"
+fi
 exit 0
 STUB
 chmod 0755 "$temp/bin/bun"
 printf '// stub compiler entry\n' > "$temp/bend2/main.ts"
 export BUN_STUB_LOG="$temp/calls.log"
+export CGEN_STUB_LOG="$temp/cgen.log"
 
 probe=
 for candidate in /sys/fs/cgroup/*; do
@@ -97,6 +101,28 @@ status=0; BATON2_ADMISSION_CGROUP="$temp/not-a-cgroup" "$temp/bin/bend" bend2/te
 grep -q 'missing-cgroup-directory' "$temp/badcgroup.err" || { echo "FAIL bad cgroup cause"; exit 1; }
 [ "$(calls)" = 0 ] || { echo "FAIL bad cgroup stub_calls=$(calls)"; exit 1; }
 echo "PASS focused_missing_cgroup_directory_refused"
+
+mkdir -p "$temp/outside-cgroup"
+status=0
+BATON2_ADMISSION_CGROUP="$temp/outside-cgroup" "$temp/bin/bend" bend2/src/coordinator/main.bend -o out.c >"$temp/outside.out" 2>"$temp/outside.err" || status=$?
+[ "$status" = 78 ] || { echo "FAIL outside cgroup status=$status"; cat "$temp/outside.err"; exit 1; }
+grep -q 'cgroup-outside-canonical-root' "$temp/outside.err" || { echo "FAIL outside cgroup cause"; exit 1; }
+echo "PASS cgroup_outside_root_refused"
+
+missing_max=
+for candidate in /sys/fs/cgroup/*; do
+  [ -d "$candidate" ] || continue
+  if [ ! -e "$candidate/memory.max" ]; then missing_max=$candidate; break; fi
+done
+if [ -n "$missing_max" ]; then
+  status=0
+  BATON2_ADMISSION_CGROUP="$missing_max" "$temp/bin/bend" bend2/src/coordinator/main.bend -o out.c >"$temp/missing-max.out" 2>"$temp/missing-max.err" || status=$?
+  [ "$status" = 78 ] || { echo "FAIL missing memory.max status=$status"; cat "$temp/missing-max.err"; exit 1; }
+  grep -q 'missing-memory-max' "$temp/missing-max.err" || { echo "FAIL missing memory.max cause"; exit 1; }
+  echo "PASS missing_memory_max_refused"
+else
+  echo "SKIP missing memory.max fixture requires a cgroup directory without memory.max"
+fi
 
 if [ -n "$probe" ]; then
 cat > "$temp/receipt.json" <<RECEIPT
@@ -202,10 +228,36 @@ RECEIPT
     "$temp/bin/bend" bend2/src/coordinator/main.bend -o out.c
   [ "$(calls)" = "$((before + 2))" ] || { echo "FAIL admitted Main compiler call"; exit 1; }
   echo "PASS Main_entry_allowed_with_matching_receipt"
+  before_receipt=$(calls)
+  status=0
+  BATON2_ADMISSION_CGROUP="$current" "$temp/bin/bend" bend2/src/coordinator/main.bend -o out.c >"$temp/no-receipt.out" 2>"$temp/no-receipt.err" || status=$?
+  [ "$status" = 78 ] || { echo "FAIL missing receipt status=$status"; cat "$temp/no-receipt.err"; exit 1; }
+  grep -q 'missing-receipt' "$temp/no-receipt.err" || { echo "FAIL missing receipt cause"; exit 1; }
+  [ "$(calls)" = "$before_receipt" ] || { echo "FAIL missing receipt reached compiler"; exit 1; }
+  echo "PASS missing_receipt_refused"
+  for decision_case in denied focused; do
+    if [ "$decision_case" = denied ]; then
+      receipt_decision=denied; receipt_class=full
+    else
+      receipt_decision=admitted; receipt_class=focused
+    fi
+    cat > "$temp/$decision_case.json" <<RECEIPT
+{"decision": "$receipt_decision", "class": "$receipt_class", "entry": "bend2/src/coordinator/main.bend", "output": "out.c", "cgroup": "$current"}
+RECEIPT
+    status=0
+    BATON2_ADMISSION_CGROUP="$current" BATON2_ADMISSION_RECEIPT="$temp/$decision_case.json" \
+      "$temp/bin/bend" bend2/src/coordinator/main.bend -o out.c >"$temp/$decision_case.out" 2>"$temp/$decision_case.err" || status=$?
+    [ "$status" = 78 ] || { echo "FAIL $decision_case receipt status=$status"; cat "$temp/$decision_case.err"; exit 1; }
+    grep -q 'receipt-mismatch' "$temp/$decision_case.err" || { echo "FAIL $decision_case receipt cause"; exit 1; }
+    [ "$(calls)" = "$before_receipt" ] || { echo "FAIL $decision_case receipt reached compiler"; exit 1; }
+    echo "PASS $decision_case_receipt_refused"
+  done
   before_preflight=$(calls)
+  before_preflight_cgen=$(wc -l < "$CGEN_STUB_LOG")
   BATON2_ADMISSION_CHECK_ONLY=1 BATON2_ADMISSION_CGROUP="$current" BATON2_ADMISSION_RECEIPT="$temp/current-receipt.json" \
     "$temp/bin/bend" bend2/src/coordinator/main.bend -o out.c
   [ "$(calls)" = "$before_preflight" ] || { echo "FAIL check-only preflight invoked compiler"; exit 1; }
+  [ "$(wc -l < "$CGEN_STUB_LOG")" = "$before_preflight_cgen" ] || { echo "FAIL preflight generated C"; exit 1; }
   echo "PASS check_only_preflight_does_not_invoke_compiler"
   before_check=$(calls)
   BATON2_ADMISSION_CGROUP="$current" BATON2_ADMISSION_RECEIPT="$temp/current-receipt.json" \
@@ -251,13 +303,15 @@ RECEIPT
 {"decision": "admitted", "class": "full", "entry": "bend2/src/coordinator/main.bend", "output": "$temp/build-accepted.c", "cgroup": "$current"}
 RECEIPT
   before_accept=$(calls)
+  before_accept_cgen=$(wc -l < "$CGEN_STUB_LOG")
   status=0
   BATON2_ADMISSION_CGROUP="$current" BATON2_ADMISSION_RECEIPT="$temp/build-accepted.json" \
     BEND="$temp/bin/bend" CC="$temp/fake-cc" sh "$here/../scripts/build-native.sh" \
     bend2/src/coordinator/main.bend "$temp/build-accepted" >"$temp/build-accepted.out" 2>"$temp/build-accepted.err" || status=$?
   [ "$status" = 0 ] || { echo "FAIL accepted build status=$status"; cat "$temp/build-accepted.err"; exit 1; }
-  [ "$(calls)" = "$((before_accept + 1))" ] || { echo "FAIL accepted build compiler calls=$(calls)"; exit 1; }
-  grep -F -- "-o $temp/build-accepted.c" "$BUN_STUB_LOG" >/dev/null || { echo "FAIL accepted build output path"; exit 1; }
+  [ "$(calls)" = "$((before_accept + 2))" ] || { echo "FAIL accepted build wrapper calls=$(calls)"; exit 1; }
+  [ "$(wc -l < "$CGEN_STUB_LOG")" = "$((before_accept_cgen + 1))" ] || { echo "FAIL accepted build Cgen calls"; exit 1; }
+  tail -1 "$CGEN_STUB_LOG" | grep -F -- "-o $temp/build-accepted.c" >/dev/null || { echo "FAIL accepted build output path"; exit 1; }
   [ -f "$temp/build-accepted.c" ] || { echo "FAIL accepted build missing C output"; exit 1; }
   [ -f "$temp/build-accepted" ] || { echo "FAIL accepted build missing binary"; exit 1; }
   echo "PASS build_native_one_cgen_same_output_path"
