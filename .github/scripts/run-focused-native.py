@@ -6,6 +6,7 @@ import json
 import os
 import pathlib
 import resource
+import re
 import shutil
 import signal
 import subprocess
@@ -168,13 +169,33 @@ def safe_environment():
     return env
 
 
-def one_source(root, label, run, compiler, cgroup, deadline, records, base_env):
+def verify_full_runtime(path, expected):
+    if not re.fullmatch(r'[0-9a-f]{64}', expected):
+        raise SystemExit('full runtime SHA256 must contain 64 lowercase hex digits')
+    path = pathlib.Path(path).resolve(strict=True)
+    if not path.is_file() or not os.access(path, os.X_OK):
+        raise SystemExit('full runtime must be an executable regular file')
+    if digest(path) != expected:
+        raise SystemExit('full runtime SHA256 differs from the selected artifact')
+    return path
+
+
+def one_source(root, label, run, compiler, cgroup, deadline, records, base_env,
+               full_runtime, full_sha256):
     evidence = run / 'evidence' / label
     evidence.mkdir(parents=True, exist_ok=True)
     before = tracked_manifest(root)
     scratch = root / '.scratch' / 'bend2'
     scratch.mkdir(parents=True, exist_ok=True)
-    recovery = scratch / (label + '-baton-recovery')
+    runtime = scratch / (label + '-recovery-runtime')
+    runtime.mkdir(exist_ok=True)
+    recovery = runtime / 'baton'
+    full = runtime / 'baton-full'
+    selected = verify_full_runtime(full_runtime, full_sha256)
+    shutil.copyfile(selected, full)
+    full.chmod(0o755)
+    if digest(full) != full_sha256:
+        raise SystemExit('staged full runtime differs from the selected artifact')
     fixture = scratch / 'monitor-fixture'
     env = dict(base_env)
     env.update({'BEND': str(compiler), 'BATON2_ADMISSION_CGROUP': str(cgroup),
@@ -195,6 +216,15 @@ def one_source(root, label, run, compiler, cgroup, deadline, records, base_env):
                 'bend2/test/monitor-fixture.bend', str(fixture)],
                 root, env, evidence, deadline, records)
     env['OBSERVER_RECOVERY_BIN'] = str(recovery)
+    run_command(label + '-helper-help', [str(recovery), '--help'],
+                root, env, evidence, deadline, records)
+    run_command(label + '-full-help', [str(full), '--help'],
+                root, env, evidence, deadline, records)
+    for suffix in ('stdout', 'stderr'):
+        helper_help = evidence / (label + '-helper-help.' + suffix)
+        full_help = evidence / (label + '-full-help.' + suffix)
+        if helper_help.read_bytes() != full_help.read_bytes():
+            raise SystemExit(label + ' helper delegation differs from the full runtime')
     run_command(label + '-observer-monitor', [sys.executable,
                 'bend2/test/observer-monitor.py', '-v'], root, env, evidence, deadline, records)
     fixture_output = evidence / (label + '-observer-monitor.stdout')
@@ -213,10 +243,13 @@ def one_source(root, label, run, compiler, cgroup, deadline, records, base_env):
     manifest = {'commit': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=root, text=True).strip(),
                 'tree': subprocess.check_output(['git', 'rev-parse', 'HEAD^{tree}'], cwd=root, text=True).strip(),
                 'tracked_source': before, 'recovery_c_sha256': digest(recovery_c),
-                'recovery_binary_sha256': digest(output / 'baton-recovery'),
-                'fixture_c_sha256': digest(str(output / 'monitor-fixture') + '.c'),
-                'fixture_binary_sha256': digest(output / 'monitor-fixture'),
-                'retained_fixture_paths': retained}
+                'recovery_binary_sha256': digest(recovery),
+                'fixture_c_sha256': digest(str(fixture) + '.c'),
+                'fixture_binary_sha256': digest(fixture),
+                'retained_fixture_paths': retained,
+                'full_runtime': {'selected_path': str(selected), 'staged_path': str(full),
+                                 'sha256': digest(full),
+                                 'qualification': 'installed-artifact-delegation-compatibility'}}
     write_json(evidence / 'source-result.json', manifest)
     return manifest
 
@@ -278,11 +311,12 @@ def inside(args):
     verify_lineage(target_root, target, target)
     verify_lineage(candidate_root, source, target)
     safe_env = safe_environment()
+    full_runtime = verify_full_runtime(args.full_runtime, args.full_runtime_sha256)
     try:
         target_result = one_source(target_root, 'target', run, pathlib.Path(args.compiler), cg,
-                                   deadline, records, safe_env)
+                                   deadline, records, safe_env, full_runtime, args.full_runtime_sha256)
         candidate_result = one_source(candidate_root, 'candidate', run, pathlib.Path(args.compiler), cg,
-                                      deadline, records, safe_env)
+                                      deadline, records, safe_env, full_runtime, args.full_runtime_sha256)
         outcome = {'result': 'pass', 'qualification': 'focused-observer-recovery-only',
                    'source': source, 'target': target, 'suite': args.suite,
                    'target_result': target_result, 'candidate_result': candidate_result,
@@ -318,6 +352,7 @@ def launch(args):
         raise SystemExit('preflight did not verify target_commit against current GitHub main')
     if args.suite != 'observer-recovery':
         raise SystemExit('unsupported focused suite')
+    full_runtime = verify_full_runtime(args.full_runtime, args.full_runtime_sha256)
     configured_max = number_env('BATON2_FOCUSED_MEMORY_MAX_BYTES')
     reserve = number_env('BATON2_FOCUSED_MEMORY_RESERVE_BYTES')
     tasks = number_env('BATON2_FOCUSED_TASKS_MAX')
@@ -336,6 +371,7 @@ def launch(args):
     write_json(run / 'evidence' / 'admission.json', {
         'source': source, 'target': target, 'current_main': actual_main,
         'suite': args.suite, 'driver_sha256': digest(pathlib.Path(__file__)),
+        'full_runtime': {'path': str(full_runtime), 'sha256': args.full_runtime_sha256},
         'configured_memory_max': configured_max,
         'memory_limit': memory, 'memory_reserve': reserve,
         'mem_available_before': physical, 'parent_cgroup_available': parent_available,
@@ -350,7 +386,8 @@ def launch(args):
             '--run', str(run), '--source', source, '--target', target,
             '--candidate', args.candidate, '--suite', args.suite, '--compiler', args.compiler,
             '--memory', str(memory), '--tasks', str(tasks), '--runtime', str(runtime),
-            '--reserve', str(reserve)]
+            '--reserve', str(reserve), '--full-runtime', str(full_runtime),
+            '--full-runtime-sha256', args.full_runtime_sha256]
     stdout = (run / 'evidence' / 'scope.stdout').open('wb')
     stderr = (run / 'evidence' / 'scope.stderr').open('wb')
     process = subprocess.Popen(argv, stdout=stdout, stderr=stderr, env=safe_environment(),
@@ -389,6 +426,8 @@ def main():
     parser.add_argument('--candidate', required=True)
     parser.add_argument('--suite', choices=['observer-recovery'], required=True)
     parser.add_argument('--compiler', required=True)
+    parser.add_argument('--full-runtime', required=True)
+    parser.add_argument('--full-runtime-sha256', required=True)
     parser.add_argument('--memory', default='0')
     parser.add_argument('--tasks', default='0')
     parser.add_argument('--runtime', default='0')
