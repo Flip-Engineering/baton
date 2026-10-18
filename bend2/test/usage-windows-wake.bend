@@ -110,6 +110,7 @@ def far_case(+db: String, +self: String) -> IO(Unit):
     checked : Unit <- expect_read(db,"SELECT count(*) FROM wake_held_checks WHERE id='m-far2';","1\n","far-continuation-held-check")
     blocked : Unit <- expect_read(db,"SELECT count(*) FROM wake_deliveries WHERE message='m-far2';","0\n","far-continuation-no-delivery")
     next_segment : Unit <- expect_read(db,UW.schedule_delay_sql(Tx.trim_nl(far)),"86400\n","far-continuation-next-segment")
+    IO.pure(Unit,Unit{})
 
 def cap_case(+db: String) -> IO(Unit):
   do IO<Unit>:
