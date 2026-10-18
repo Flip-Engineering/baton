@@ -199,7 +199,8 @@ def start_player(home: String, cmd: String, model: String, effort: String, cwd: 
 def resume_player(home: String, cmd: String, model: String, effort: String, cwd: String, stderr: String, session: String, tools_patch: String, model_patch_path: String) -> IO(Result<&1,&1,U32 & String,U32>):
   P.ProcessChild.spawn(argv(home,cmd,model,effort,tools_patch,model_patch_path,session,False{}),cwd,stderr)
 
-# Headless mode reads the task from stdin; the caller closes it after the write.
+# Headless mode reads the task from stdin to EOF. The task carries no required
+# trailing newline and is not a JSON frame. The caller closes stdin after the write.
 def input(handle: U32, text: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   P.ProcessChild.write(handle,text)
 

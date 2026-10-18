@@ -12,7 +12,8 @@ Pinned package: `@deepseek-ai/dsh@0.2.1-rc.2`. Route: provider
 Verified against `@deepseek-ai/dsh@0.2.1-rc.2` installed from npm:
 
 - `dsh --profile headless --json [--session-id ID]` reads the task from stdin
-  when no positional task is supplied.
+  when no positional task is supplied. It reads to EOF; a trailing newline is
+  not required, and the bytes are the task text rather than a JSON frame.
 - The launcher parses `--profile` and `--patch` before the first app token.
   `--patch` is repeatable and is accepted before `--profile`.
 - A patch entry replaces the targeted row's whole `config` object. A row that
