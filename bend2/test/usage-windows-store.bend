@@ -14,6 +14,7 @@ import ../src/coordinator/commands.bend as C
 import ../src/coordinator/usage-windows.bend as UW
 import ../src/json/canonical.bend as J
 import ../src/host/sqlite.bend as DB
+import ../src/git/text.bend as Tx
 
 def expect(+label: String, is_ok: Bool) -> IO(Unit):
   Bool.pick(IO(Unit),is_ok,IO.print("fixture-window-store " ++ label ++ ": ok"),IO.die(Unit,1,"fixture-window-store " ++ label ++ ": refused"))
@@ -123,6 +124,31 @@ def limit_case(+db: String) -> IO(Unit):
     visible : Unit <- expect_read(db,state_sql("5-hour","limit"),"unknown\n","limit-row-visible-unknown")
     IO.pure(Unit,Unit{})
 
+def projection_field(+db: String, +session: String, +account: String, +window: String, +path: String) -> IO(String):
+  do IO<String>:
+    answer : String <- read(db,UW.query_answer_sql(session,"omp","kimi-code",account))
+    read(db,"SELECT json_extract(j.value," ++ C.q(path) ++ ") FROM json_each(json_extract(" ++ C.q(Tx.trim_nl(answer)) ++ ",'$.windows')) j WHERE json_extract(j.value,'$.window')=" ++ C.q(window) ++ ";")
+
+def expect_projection(+db: String, +session: String, +account: String, +window: String, +path: String, +expected: String, +label: String) -> IO(Unit):
+  do IO<Unit>:
+    value : String <- projection_field(db,session,account,window,path)
+    expect(label,String.eq(value,expected))
+
+def projection_cases(+db: String) -> IO(Unit):
+  do IO<Unit>:
+    created : Unit <- session(db,"proj")
+    UW.record_cause(db,"proj","m-proj","proj",kimi_cause())
+    observed : Unit <- UW.observe(db,"proj","5-hour","2999-01-01T00:00:00Z","kimi console web ui","proj")
+    held : Unit <- expect_gate(db,"proj","proj","held","projection-operator-future-held")
+    held_state : Unit <- expect_projection(db,"proj","proj","5-hour","$.state","held\n","projection-state-matches-gate")
+    held_source : Unit <- expect_projection(db,"proj","proj","5-hour","$.source","operator-observation\n","projection-reset-source-visible")
+    held_exhausted : Unit <- expect_projection(db,"proj","proj","5-hour","$.exhausted","1\n","projection-exhausted-from-provider")
+    held_provider : Unit <- expect_projection(db,"proj","proj","5-hour","$.exhaustionSource","provider-message\n","projection-exhaustion-source-visible")
+    elapsed : Unit <- UW.observe(db,"proj","5-hour","2020-01-01T00:00:00Z","kimi console web ui","proj")
+    elapsed_gate : Unit <- expect_gate(db,"proj","proj","elapsed","projection-operator-elapsed-gate")
+    elapsed_state : Unit <- expect_projection(db,"proj","proj","5-hour","$.state","elapsed\n","projection-elapsed-matches-gate")
+    IO.pure(Unit,Unit{})
+
 def main_args(args: List<String>) -> IO(Unit):
   match args:
     case +path <> script <> Nil{}: do IO<Unit>:
@@ -132,6 +158,7 @@ def main_args(args: List<String>) -> IO(Unit):
       report_cases(path)
       refresh_cases(path,script)
       multiwindow_cases(path)
+      projection_cases(path)
       IO.print("fixture-windows-store-ok")
     case other: IO.die(Unit,2,"usage: usage-windows-store DB HARNESS_SCRIPT")
 
