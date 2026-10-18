@@ -16,7 +16,7 @@ import ./text.bend as Tx
 # bare NAME removes, empty inherits all; an empty-name entry is
 # refused EINVAL.
 def Process.run(argv: String, cwd: String, env: String) -> IO(Result<&1, &1, U32 & String, String>):
-  Exec.run(argv, cwd, env)
+  Exec.Exec.run(argv, cwd, env)
 
 def runFull(args: List<String>, cwd: String) -> IO(T.RunRes):
   IO.bind(Result<&1, &1, U32 & String, String>, T.RunRes,
