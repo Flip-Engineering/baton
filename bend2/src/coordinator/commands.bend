@@ -361,6 +361,9 @@ def terminal_expr(+event: String) -> String:
 def terminal(+event: String) -> String:
   "(SELECT " ++ terminal_expr("native_frame.value") ++ " FROM (SELECT " ++ q(event) ++ " AS value) native_frame)"
 
+def terminal_span(+event: String) -> String:
+  "(SELECT " ++ terminal_expr("native_frame.value") ++ " FROM (SELECT " ++ event ++ " AS value) native_frame)"
+
 # A child reports to its recorded parent. A parentless Conductor reports to the
 # registered operator when that session has the explicit operator responsibility.
 def report_recipient(+session: String) -> String:

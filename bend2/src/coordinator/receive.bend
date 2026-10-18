@@ -12,6 +12,7 @@ import ./turn.bend as Turn
 import ./native-initial-input.bend as NativeInitialInput
 import ../json/canonical.bend as J
 import ./native-requests.bend as NativeRequests
+import ./observer-checkpoint.bend as Observer
 import ./delivery.bend as Delivery
 import ../host/sqlite.bend as DB
 import ../host/session-lock.bend as Lock
@@ -448,6 +449,13 @@ def wake_if_kept(db: String, session: String, cursor: String, superseded: Bool, 
 # Successful observations and complete recoverable provider errors resume all owed
 # input. Other failures retain the attempt cursor. A recorded profile advance runs
 # its own continuation, and completion operations preserve their results.
+# An adopted monitor handle refuses release; its custody stays open so a later
+# retry can restore the same attempt. Every other handle releases normally.
+def release_native(db: String, +handle: U32) -> IO(Unit):
+  do IO<Unit>:
+    +monitor : Bool <- Observer.monitor_handle(db,handle)
+    Bool.pick(IO(Unit),monitor,IO.pure(Unit,Unit{}),IO.try(Unit,P.ProcessChild.release(handle)))
+
 def completed(+db: String, +session: String, +id: String, +log: String, attempt: String, stderr: String, +cursor: String, +handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), +superseded: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     failed : Bool <- outcome_failed(db,outcome)
@@ -455,7 +463,7 @@ def completed(+db: String, +session: String, +id: String, +log: String, attempt:
     +pending_cursor : String <- IO.pure(String,Bool.pick(String,Bool.and(failed,Bool.not(Bool.and(transient,observation_clear(outcome)))),cursor,"0"))
     prepared : Unit <- Turn.prepare(db,session,id,log,stderr,outcome)
     observer_released : Unit <- release_observer(lock)
-    native_released : Unit <- IO.try(Unit,P.ProcessChild.release(handle))
+    native_released : Unit <- release_native(db,handle)
     finished : Result<&1,&1,U32 & String,Unit> <- finish_pending(db,session,id,attempt,log,pending_cursor,outcome,deliveries,again,u => ack_then_retire(handle),superseded)
     wake_if_kept(db,session,pending_cursor,superseded,finished)
 
@@ -481,7 +489,7 @@ def restart_pending(+db: String, +session: String, +id: String, attempt: String,
     recorded : String <- IO.try(String,DB.Sql.query(db,"SELECT EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(id ++ ":recovery-input") ++ ");"))
     saved : Unit <- record_recovery(db,session,id,native,cwd,String.eq(recorded,"1\n"))
     observer_released : Unit <- release_observer(lock)
-    native_released : Unit <- IO.try(Unit,P.ProcessChild.release(handle))
+    native_released : Unit <- release_native(db,handle)
     delivery_task : Chan(Result<&1,&1,U32 & String,String>) <- IO.fork(Result<&1,&1,U32 & String,String>,Delivery.deliver(db,id ++ ":recovery","1",""))
     next : Result<&1,&1,U32 & String,Unit> <- again(attempt)
     woken : Result<&1,&1,U32 & String,Unit> <- wake_due(db,session,cursor,launch => wake_launch(db,launch))
@@ -501,7 +509,8 @@ def observed(+db: String, +session: String, +id: String, +log: String, cursor: S
     exited : Unit <- Turn.record_exit(db,session,id,log,outcome)
     closed : Bool <- Stop.stopped(db,session)
     gone : Bool <- Turn.refusal(attempt ++ "/native.stderr",Bool.not(String.is_empty(native)),outcome)
-    complete_or_restart(db,session,id,log,attempt ++ "/native.stderr",attempt,cursor,native,cwd,handle,lock,outcome,deliveries,again,Bool.and(gone,Bool.not(closed)),superseded)
+    retained : Bool <- IO.pure(Bool,Bool.and(Bool.not(native_observation_failed(outcome)),Bool.and(gone,Bool.not(closed))))
+    complete_or_restart(db,session,id,log,attempt ++ "/native.stderr",attempt,cursor,native,cwd,handle,lock,outcome,deliveries,again,retained,superseded)
 
 def reconciled_cursor(cursor: String, adopted: Bool, outcome: Turn.Outcome) -> String:
   match adopted:
@@ -681,7 +690,7 @@ def started(+db: String, +session: String, +id: String, +log: String, cursor: St
   match start:
     case P.Retained{+handle}: do IO<Result<&1,&1,U32 & String,Unit>>:
       reconciled : Unit <- Stop.started(db,session,id,attempt)
-      observation : Turn.Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- Turn.retained_output(db,session,id,log,harness,attempt,handle,Omp.filter_events(level))
+      observation : Turn.Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- Turn.retained_output(db,session,id,log,harness,attempt,attempt,handle,Omp.filter_events(level))
       completed_observation(db,session,id,log,cursor,native,cwd,attempt,handle,Some{lock},observation,again,False{},cmd)
     case P.Unstarted{error}: do IO<Result<&1,&1,U32 & String,Unit>>:
       +outcome : Turn.Outcome <- IO.pure(Turn.Outcome,Turn.Ended{"start failed","","Player process could not start: " ++ error,True{}})
@@ -749,7 +758,7 @@ def acquired_pending(+db: String, +session: String, cmd: String, model: String, 
 def observe_guarded(+db: String, +session: String, +id: String, cursor: String, cmd: String, model: String, effort: String, +cwd: String, +log: String, harness: String, +directory: String, native: String, +handle: U32, lock: Maybe<U32>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), adopted: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     reconciled : Unit <- Stop.observing(db,session,id,directory)
-    observation : Turn.Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- Turn.retained_output(db,session,id,log,harness,directory,handle,"unknown")
+    observation : Turn.Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- Turn.retained_output(db,session,id,log,harness,directory,directory,handle,"unknown")
     completed_observation(db,session,id,log,cursor,native,cwd,directory,handle,lock,observation,again,adopted,cmd)
 
 def recovery_arguments(args: List<&2,String>) -> List<&2,String>:

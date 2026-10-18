@@ -7,6 +7,7 @@ import ../host/files.bend as F
 import ../git/text.bend as Tx
 import ../host/session-lock.bend as Lock
 import ../json/canonical.bend as J
+import ./../coordinator/frame-span.bend as Frame
 
 # Baton2-owned log classification, storage inspection and cleanup.
 #
@@ -187,6 +188,25 @@ def held_lines(held: String, +kind: String, +id: String) -> List<String>:
 def held_all(held: String) -> List<String>:
   all_walk(Tx.split_lines(held))
 
+def reverse_held_rows(rows: List<String>, tail: List<String>) -> List<String>:
+  match rows:
+    case Nil{}: tail
+    case Con{head, rest}: reverse_held_rows(rest,Con{head,tail})
+
+def materialize_held_rows(+expected: String, rows: List<String>, tail: List<String>) -> IO(List<String>):
+  match rows:
+    case Nil{}: IO.pure(List<String>,tail)
+    case Con{+row, rest}: do IO<List<String>>:
+      line : String <- Frame.materialize_checkpoint_text(expected,entry_line(row))
+      materialize_held_rows(expected,rest,Con{entry_of(entry_kind(row),entry_id(row),line),tail})
+
+def materialize_held(+expected: String, held: String) -> IO(String):
+  do IO<String>:
+    rows : List<String> <- materialize_held_rows(expected,Tx.split_lines(held),Nil{})
+    IO.pure(String,Tx.join("\n",reverse_held_rows(rows,Nil{})))
+
+# Everything still held when the turn ends without the frame that supersedes it.
+
 def prefix_kind(+kind: String) -> Bool:
   Bool.or(String.eq(kind,"tool_execution_update"),Bool.or(String.eq(kind,"message_start"),String.eq(kind,"message_update")))
 
@@ -196,31 +216,51 @@ def close_kind(+kind: String) -> Bool:
 def codex_kind(+kind: String) -> Bool:
   Bool.or(String.eq(kind,"codex_command_start"),String.eq(kind,"codex_command_end"))
 
-def frame_id_sql(+line: String) -> String:
-  "WITH frame(value) AS (VALUES(" ++ C.q(line) ++ ")) SELECT coalesce(json_extract(value,'$.toolCallId'),json_extract(value,'$.messageId'),json_extract(value,'$.message.id'),'') FROM frame;"
+def frame_id_sql_value(+value: String) -> String:
+  "WITH frame(value) AS (VALUES(" ++ value ++ ")) SELECT coalesce(json_extract(value,'$.toolCallId'),json_extract(value,'$.messageId'),json_extract(value,'$.message.id'),CASE WHEN json_extract(value,'$.type') IN ('message_start','message_update','message_end') THEN 'omp-open-message' END,json_extract(value,'$.message.responseId'),json_extract(value,'$.assistantMessageEvent.partial.responseId'),'') FROM frame;"
 
-def frame_id(db: String, line: String, omp: Bool) -> IO(String):
+def frame_id_sql(+line: String) -> String:
+  frame_id_sql_value(C.q(line))
+
+def frame_id_span_sql() -> String:
+  frame_id_sql_value("?1")
+
+def frame_id_decoded(db: String, decoded: Frame.FrameDecoded) -> IO(String):
+  match decoded:
+    case Frame.TextFrame{line}: IO.try(String,DB.Sql.query(db,frame_id_sql(line)))
+    case Frame.SpanFrame{spool,offset,length}: IO.try(String,DB.Sql.query_span(db,spool,offset,length,frame_id_span_sql()))
+    case Frame.InvalidFrame{line}: IO.pure(String,"")
+
+def frame_id(db: String, decoded: Frame.FrameDecoded, omp: Bool) -> IO(String):
   match omp:
     case False{}: IO.pure(String,"")
-    case True{}: do IO<String>:
-      found : String <- IO.try(String,DB.Sql.query(db,frame_id_sql(line)))
-      IO.pure(String,Tx.trim_nl(found))
+    case True{}: frame_id_decoded(db,decoded)
 
 # Codex command identities live in item.id; held entries use the separate
 # codex_command_start kind and persist through the existing checkpoint path.
-def codex_frame_id(db: String, line: String) -> IO(String):
-  do IO<String>:
-    found : String <- IO.try(String,DB.Sql.query(db,"WITH frame(value) AS (VALUES(" ++ C.q(line) ++ ")) SELECT json_extract(value,'$.item.id') FROM frame;"))
-    IO.pure(String,Tx.trim_nl(found))
+def codex_frame_id_sql_value(+value: String) -> String:
+  "WITH frame(value) AS (VALUES(" ++ value ++ ")) SELECT json_extract(value,'$.item.id') FROM frame;"
 
-def frame_identity_kind(db: String, line: String, +kind: String, omp: Bool, codex: Bool) -> IO(String):
+def codex_frame_id_sql(+line: String) -> String:
+  codex_frame_id_sql_value(C.q(line))
+
+def codex_frame_id_span_sql() -> String:
+  codex_frame_id_sql_value("?1")
+
+def codex_frame_id(db: String, decoded: Frame.FrameDecoded) -> IO(String):
+  match decoded:
+    case Frame.TextFrame{line}: IO.try(String,DB.Sql.query(db,codex_frame_id_sql(line)))
+    case Frame.SpanFrame{spool,offset,length}: IO.try(String,DB.Sql.query_span(db,spool,offset,length,codex_frame_id_span_sql()))
+    case Frame.InvalidFrame{line}: IO.pure(String,"")
+
+def frame_identity_kind(db: String, decoded: Frame.FrameDecoded, +kind: String, omp: Bool, codex: Bool) -> IO(String):
   match codex:
-    case True{}: codex_frame_id(db,line)
-    case False{}: frame_id(db,line,Bool.and(omp,Bool.or(prefix_kind(kind),close_kind(kind))))
+    case True{}: codex_frame_id(db,decoded)
+    case False{}: frame_id(db,decoded,Bool.and(omp,Bool.or(prefix_kind(kind),close_kind(kind))))
 
 # The identity is read only for a frame the policy holds or closes.
-def frame_identity(db: String, line: String, +kind: String, +omp: Bool) -> IO(String):
-  frame_identity_kind(db,line,kind,omp,codex_kind(kind))
+def frame_identity(db: String, decoded: Frame.FrameDecoded, line: String, +kind: String, +omp: Bool) -> IO(String):
+  frame_identity_kind(db,decoded,kind,omp,codex_kind(kind))
 
 # Public terminal projections retain identifiers, status, completion text and
 # raw size accounting. Turn supplies the normalized event and streamed-message
@@ -312,6 +352,34 @@ def terminal_object_sql(+line: String, +event: String, +log: String) -> String:
     ++ "r5(o5) AS (SELECT CASE WHEN json_extract(o4,'$.full.turnsRow')='' THEN json_remove(o4,'$.full.turnsRow') ELSE o4 END FROM r4)"
   "WITH frame(value,observed) AS (VALUES(" ++ C.q(line) ++ "," ++ C.q(event) ++ ")), " ++ calls ++ ", " ++ strip ++ " SELECT coalesce(o5,'') FROM r5;"
 
+
+def terminal_object_span_sql(event: String, +log: String) -> String:
+  +messages = terminal_messages_of("frame.value")
+  +results = terminal_results_of("frame.value")
+  +text = terminal_text_of("observed")
+  +object = "json_object("
+    ++ "'type',json_extract(value,'$.type'),'compacted',json('true'),"
+    ++ "'eventBytes',length(CAST(value AS BLOB)),"
+    ++ "'messageCount',(CASE WHEN json_type(value,'$.messages')='array' THEN (SELECT count(*) FROM json_each(frame.value,'$.messages') e WHERE e.type='object') ELSE 0 END)"
+    ++ "+(CASE WHEN json_type(value,'$.message')='object' THEN 1 ELSE 0 END)"
+    ++ "+(CASE WHEN json_type(value,'$.toolResults')='array' THEN (SELECT count(*) FROM json_each(frame.value,'$.toolResults') r WHERE r.type='object') ELSE 0 END),"
+    ++ "'textCharacters',coalesce(length(" ++ text ++ "),0),"
+    ++ "'text'," ++ text ++ ","
+    ++ "'error'," ++ C.omp_terminal_error_text_sql_expr("observed") ++ ","
+    ++ "'isTerminal',json(CASE WHEN json_extract(value,'$.isTerminal')=1 THEN 'true' WHEN json_extract(value,'$.isTerminal')=0 THEN 'false' END),"
+    ++ "'yielded',json(CASE WHEN json_extract(value,'$.yielded')=1 THEN 'true' WHEN json_extract(value,'$.yielded')=0 THEN 'false' END),"
+    ++ "'identifiers',json_object('responseIds'," ++ terminal_ids_of("observed") ++ ",'toolCallIds'," ++ terminal_calls_of() ++ "),"
+    ++ "'full',json_object('turnsRow'," ++ J.string_literal(attempt_of(log)) ++ ",'log'," ++ J.string_literal(log) ++ "))"
+  +calls = "calls(call_id) AS (SELECT json_extract(m.value,'$.toolCallId') FROM frame,json_each(" ++ messages ++ ") m WHERE CASE WHEN m.type='object' THEN json_type(m.value,'$.toolCallId') END='text'"
+    ++ " UNION ALL SELECT json_extract(t.value,'$.toolCallId') FROM frame,json_each(" ++ results ++ ") t WHERE CASE WHEN t.type='object' THEN json_type(t.value,'$.toolCallId') END='text')"
+  +strip = "base(o0) AS (SELECT " ++ object ++ " FROM frame), "
+    ++ "r1(o1) AS (SELECT CASE WHEN json_extract(o0,'$.text') IS NULL THEN json_remove(o0,'$.text') ELSE o0 END FROM base), "
+    ++ "r2(o2) AS (SELECT CASE WHEN json_extract(o1,'$.error') IS NULL THEN json_remove(o1,'$.error') ELSE o1 END FROM r1), "
+    ++ "r3(o3) AS (SELECT CASE WHEN json_extract(o2,'$.isTerminal') IS NULL THEN json_remove(o2,'$.isTerminal') ELSE o2 END FROM r2), "
+    ++ "r4(o4) AS (SELECT CASE WHEN json_extract(o3,'$.yielded') IS NULL THEN json_remove(o3,'$.yielded') ELSE o3 END FROM r3), "
+    ++ "r5(o5) AS (SELECT CASE WHEN json_extract(o4,'$.full.turnsRow')='' THEN json_remove(o4,'$.full.turnsRow') ELSE o4 END FROM r4)"
+  "WITH frame(value,observed) AS (VALUES(" ++ "?1" ++ "," ++ "?2" ++ ")), " ++ calls ++ ", " ++ strip ++ " SELECT coalesce(o5,'') FROM r5;"
+
 # The projection is not idempotent: projecting a compact line again zeroes the
 # counts and can embed the line as the error text, so a compact line is never
 # fed back as a frame. No replay path does that today.
@@ -319,6 +387,25 @@ def terminal_compact(db: String, +line: String, +event: String, +log: String) ->
   do IO<String>:
     projected : String <- IO.try(String,DB.Sql.query(db,terminal_object_sql(line,event,log)))
     IO.pure(String,Tx.trim_nl(projected))
+
+def frame_output_line(decoded: Frame.FrameDecoded) -> String:
+  match decoded:
+    case Frame.TextFrame{line}: line
+    case Frame.SpanFrame{spool,offset,length}: Frame.token_of(spool,offset,length)
+    case Frame.InvalidFrame{line}: line
+
+def terminal_compact_decoded(db: String, decoded: Frame.FrameDecoded, +event: String, +log: String) -> IO(String):
+  match decoded:
+    case Frame.TextFrame{line}: terminal_compact(db,line,event,log)
+    case Frame.SpanFrame{spool,offset,length}: do IO<String>:
+      projected : String <- IO.try(String,DB.Sql.query_span_text(db,spool,offset,length,terminal_object_span_sql(event,log),event))
+      IO.pure(String,Tx.trim_nl(projected))
+    case Frame.InvalidFrame{line}: IO.pure(String,"")
+
+def retained_decoded(compact: Bool, db: String, decoded: Frame.FrameDecoded, event: String, +log: String) -> IO(String):
+  match compact:
+    case True{}: terminal_compact_decoded(db,decoded,event,log)
+    case False{}: IO.pure(String,frame_output_line(decoded))
 
 def retained_from(compact: Bool, db: String, +line: String, event: String, +log: String) -> IO(String):
   match compact:
@@ -403,10 +490,10 @@ def frame_step(policy: Policy, +kind: String, +id: String, +line: String, held: 
 # written verbatim by intent. Every other frame is written as received, and the
 # held prefix frames keep the received line, so the checkpoint and the flush
 # paths are unchanged.
-def retained(db: String, policy: Policy, +kind: String, +line: String, event: String, +log: String) -> IO(String):
+def retained(db: String, policy: Policy, +kind: String, decoded: Frame.FrameDecoded, event: String, +log: String) -> IO(String):
   match policy:
     case Policy{+level}:
-      retained_from(Bool.and(terminal_kind(kind),Bool.not(String.eq(level,"diagnostic"))),db,line,event,log)
+      retained_decoded(Bool.and(terminal_kind(kind),Bool.not(String.eq(level,"diagnostic"))),db,decoded,event,log)
 
 def step_lines(step: List<String> & String) -> List<String>:
   (lines,held)=step
@@ -501,11 +588,39 @@ def position_write(log: String, written: Result<&1,&1,U32 & String,String>) -> R
 def write_positioned_retained(log: String, lines: List<String>, +position: String, finish: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   match lines:
     case Nil{}: Bool.pick(IO(Result<&1,&1,U32 & String,String>),finish,T.Text.write_at(log,position,"",1),IO.pure(Result<&1,&1,U32 & String,String>,Done{position}))
-    case other: T.Text.write_at(log,position,lines_text(other),Bool.pick(U32,finish,1,0))
+    case other: T.Text.write_batch_at(log,position,lines_text(other),Bool.pick(U32,finish,1,0))
 
 # Retained observers write each batch at the output cursor in their checkpoint.
 # Equal bytes already present stay in place, including a partial replayed batch.
 # Direct turns retain their existing append and incomplete-frame checkpoint.
+def output_parent_path(+prefix: String, +part: String) -> String:
+  Bool.pick(String,String.is_empty(prefix),Bool.pick(String,String.is_empty(part),"/",part),
+    Bool.pick(String,String.eq(prefix,"/"),prefix ++ part,prefix ++ "/" ++ part))
+
+def prepare_output_parents(parts: List<&2,String>, prefix: String) -> IO(Unit):
+  match parts:
+    case part <> next <> rest: do IO<Unit>:
+      +directory : String <- IO.pure(String,output_parent_path(prefix,part))
+      made : Unit <- IO.try(Unit,F.Files.mkdir(directory))
+      prepare_output_parents(Con{next,rest},directory)
+    case other: IO.pure(Unit,Unit{})
+
+# A missing generation is reconstructed from the retained native spool. Its
+# former output position belongs to the lost file, so the observer replays it.
+def prepare_retained_output_named(+log: String) -> IO(Bool):
+  do IO<Bool>:
+    present : String <- IO.try(String,F.Files.regular(log))
+    +exists : Bool <- IO.pure(Bool,String.eq(present,"1"))
+    prepared : Unit <- Bool.pick(IO(Unit),exists,IO.pure(Unit,Unit{}),prepare_output_parents(String.split(log,Char.from_u32(47)),""))
+    IO.pure(Bool,exists)
+
+def prepare_retained_output(+log: String) -> IO(Bool):
+  Bool.pick(IO(Bool),String.is_empty(log),IO.pure(Bool,True{}),prepare_retained_output_named(log))
+
+# Retained observers write each batch at the output cursor in their checkpoint.
+# Equal bytes already present stay in place, including a partial replayed batch.
+# Direct turns retain their existing append and incomplete-frame checkpoint.
+
 def write_positioned(log: String, lines: List<String>, position: String, stopped: Bool, retained: Bool, finish: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   match stopped:
     case True{}: IO.pure(Result<&1,&1,U32 & String,String>,Done{position})
