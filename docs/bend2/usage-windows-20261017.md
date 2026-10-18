@@ -110,7 +110,10 @@ observed Kimi, ZAI, and Claude wordings. `bend2/test/usage-windows-store.bend`
 drives the store, gate, reports, refresh, and multiwindow state over a
 temporary database. `bend2/test/usage-windows-long.bend` bounds the reset scan
 on a long provider message. `bend2/test/usage-windows-wake.bend` proves the
-post-reset continuation, handled-message idempotence, duplicate continuations,
-and the one-day segment cap. `bend2/test/usage-windows.py` exercises the
+continuation argv, handled-message idempotence, duplicate continuations, and
+the one-day segment cap. `bend2/test/usage-windows-wake-path.bend` drives the
+production `Receive.wake_due` gate: a reset moved later does not deliver at the
+old time, one moved earlier delivers once, a handled message is a no-op, and a
+far window reports the 86400 s segment. `bend2/test/usage-windows.py` exercises the
 command surface against a recruited session fixture on remote validation
 runners.
