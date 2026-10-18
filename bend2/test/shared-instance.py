@@ -244,8 +244,9 @@ class SharedInstance(unittest.TestCase):
                 f'expected exit status 0, got {child.returncode}'))
         return ''.join(child.output)
 
-    def command(self, *args):
-        return subprocess.run([str(EXE), *map(str, args)], capture_output=True, text=True)
+    def command(self, *args, timeout=30):
+        return subprocess.run([str(EXE), *map(str, args)], capture_output=True,
+                              text=True, timeout=timeout)
 
     def begin(self, label, session=None, mode='admit', payload='hello\n', cwd=None):
         directory = pathlib.Path(f'{self.db}.attempt-{label}')
@@ -375,6 +376,35 @@ class SharedInstance(unittest.TestCase):
         self.assertEqual(second.stdout.strip(), first_witness)
         self.assertEqual(self.owner_processes(), owners)
         print('evidence ensure-owner-witness no-owner/existing-owner', first_witness)
+
+    def test_owner_startup_binds_a_listener_and_returns_a_witness(self):
+        started = time.monotonic()
+        result = self.command('ensure-owner-witness', self.db)
+        elapsed = time.monotonic() - started
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertRegex(result.stdout.strip(), r'^[1-9][0-9]*:[1-9][0-9]*$')
+        self.assertLess(elapsed, 10, f'owner startup exceeded its bound: {elapsed}s')
+        owners = self.owner_processes()
+        self.assertEqual(len(owners), 1, owners)
+        print('evidence owner-startup success', result.stdout.strip(), f'{elapsed:.3f}s')
+
+    def test_owner_startup_reports_a_child_that_exits_before_binding(self):
+        database = self.home / 'not-a-database'
+        database.mkdir()
+        started = time.monotonic()
+        result = self.command('ensure-owner-witness', database)
+        elapsed = time.monotonic() - started
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertIn('exited with status', result.stderr)
+        self.assertIn('before binding a listener', result.stderr)
+        self.assertLess(elapsed, 10, f'failed owner startup exceeded its bound: {elapsed}s')
+        info = os.stat(database)
+        key = f'owner-{info.st_dev:x}-{info.st_ino:x}'
+        log = self.ipc_directory() / f'{key}.log'
+        self.addCleanup(log.unlink, missing_ok=True)
+        self.assertTrue(log.exists(), log)
+        self.assertIn(str(log), result.stderr)
+        print('evidence owner-startup child-exit', result.stderr.strip())
 
     def test_owner_refuses_attempt_directory_outside_database_parent(self):
         outside_parent = self.home / 'outside'

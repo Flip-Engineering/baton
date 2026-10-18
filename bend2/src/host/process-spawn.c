@@ -3,6 +3,7 @@
 #include <fcntl.h>
 #include <spawn.h>
 #include <sys/wait.h>
+#include <time.h>
 
 extern char **environ;
 
@@ -3345,14 +3346,10 @@ static int br_instance_spawn(const char *canonical,pid_t *pid,const char *log_pa
   int log=log_path?open(log_path,O_WRONLY|O_CREAT|O_APPEND|O_CLOEXEC,0600):-1;
   if(log<0)log=null;
   char *argv[]={self,"--instance-owner",(char *)canonical,NULL};
-  int error=self && null>=0?br_spawn(pid,argv,NULL,null,log,null,-1,-1):(errno?errno:ENOMEM);
+  int error=self && null>=0?br_spawn(pid,argv,NULL,null,log,log,-1,-1):(errno?errno:ENOMEM);
   if(null>=0)close(null);
   if(log>=0 && log!=null)close(log);
   free(self);
-  if(!error) {
-    pthread_t reaper;
-    if(!pthread_create(&reaper,NULL,br_reap_detached,(void *)(intptr_t)*pid))pthread_detach(reaper);
-  }
   return error;
 }
 /* The socket pathname a client would use for this database. A failure detail
@@ -3385,15 +3382,41 @@ static int br_instance_socket_for(const char *database,char **socket_out) {
   free(ipc);free(key);free(record_path);free(canonical);
   return error;
 }
+/* A client that starts an owner waits while that owner is alive. A child that
+   exits before it binds a listener is reported with its status so the actual
+   startup failure is visible instead of hung. A live owner is not refused by
+   an arbitrary lifetime bound. */
+static void br_instance_start_detail(pid_t pid,const int *status,const char *log,char **detail) {
+  if(!detail || *detail)return;
+  char text[512];
+  int length;
+  if(!status) length=snprintf(text,sizeof(text),
+    "owner process %ld exited before binding a listener%s%s",
+    (long)pid,log?"; owner log ":"",log?log:"");
+  else if(WIFEXITED(*status)) length=snprintf(text,sizeof(text),
+    "owner process %ld exited with status %d before binding a listener%s%s",
+    (long)pid,WEXITSTATUS(*status),log?"; owner log ":"",log?log:"");
+  else if(WIFSIGNALED(*status)) length=snprintf(text,sizeof(text),
+    "owner process %ld was killed by signal %d before binding a listener%s%s",
+    (long)pid,WTERMSIG(*status),log?"; owner log ":"",log?log:"");
+  else length=snprintf(text,sizeof(text),
+    "owner process %ld stopped before binding a listener%s%s",
+    (long)pid,log?"; owner log ":"",log?log:"");
+  if(length>0)*detail=strdup(text);
+}
 /* Connects to the database owner. The socket pathname comes from the published
    record, and the client validates the token and custody epoch it reads after
    connecting, so a socket left behind by an earlier owner incarnation is
    refused. When no listener answers and `spawn` is set, the client starts one
-   owner and waits for it, so adding a session adds no custody process. */
-static int br_instance_connect(const char *database,int spawn,BrOwnerRecord *record,int *socket_out) {
+   owner and waits while it is alive, so adding a session adds no custody
+   process and an early owner exit returns its actual failure. */
+static int br_instance_connect(const char *database,int spawn,BrOwnerRecord *record,int *socket_out,char **detail_out) {
+  if(detail_out)*detail_out=NULL;
   char *canonical=realpath(database,NULL);
   if(!canonical)return errno;
   int socket_fd=-1,started=0,error=0;
+  pid_t owner_pid=0;
+  int owner_reaped=0,owner_status=0;
   char *owner_log=NULL;
   for(;;) {
     char *ipc=NULL,*key=NULL,*record_path=NULL;
@@ -3426,13 +3449,31 @@ static int br_instance_connect(const char *database,int spawn,BrOwnerRecord *rec
     if(error!=ENOENT && error!=ECONNREFUSED)break;
     if(!spawn)break;
     if(!started) {
-      pid_t pid;
-      if((error=br_instance_spawn(canonical,&pid,owner_log)))break;
+      if((error=br_instance_spawn(canonical,&owner_pid,owner_log)))break;
       started=1;
+    } else if(!owner_reaped) {
+      pid_t reaped;
+      do {reaped=waitpid(owner_pid,&owner_status,WNOHANG);} while(reaped<0 && errno==EINTR);
+      if(reaped==owner_pid) {
+        owner_reaped=1;
+        /* A lost election leaves the winning owner to publish its listener. */
+        if(!(WIFEXITED(owner_status) && WEXITSTATUS(owner_status)==EBUSY)) {
+          br_instance_start_detail(owner_pid,&owner_status,owner_log,detail_out);
+          error=ECHILD;break;
+        }
+        /* Keep retrying: the winning owner publishes the listener. */
+      } else if(reaped<0 && errno==ECHILD) {
+        br_instance_start_detail(owner_pid,NULL,owner_log,detail_out);
+        owner_reaped=1;error=ECHILD;break;
+      }
     }
     error=0;
     struct timespec pause={0,20000000};
     nanosleep(&pause,NULL);
+  }
+  if(started && !owner_reaped && owner_pid>0) {
+    pthread_t reaper;
+    if(!pthread_create(&reaper,NULL,br_reap_detached,(void *)(intptr_t)owner_pid))pthread_detach(reaper);
   }
   free(canonical);
   free(owner_log);
@@ -3483,13 +3524,13 @@ static int br_owner_witness_parse(const char *text,uint64_t *token,uint64_t *epo
   if(!error && (!*token || !*epoch))error=EINVAL;
   return error;
 }
-static int br_instance_request_witness(const char *database,BrInstanceFrame frame,const char *payload,int rights,BrInstanceFrame *reply,uint64_t expected_token,uint64_t expected_epoch) {
+static int br_instance_request_witness(const char *database,BrInstanceFrame frame,const char *payload,int rights,BrInstanceFrame *reply,uint64_t expected_token,uint64_t expected_epoch,char **detail_out) {
   if((expected_token==0)!=(expected_epoch==0))return EINVAL;
   int first=1;
   for(;;) {
     BrOwnerRecord record={0};
     int socket_fd=-1;
-    int error=br_instance_connect(database,first,&record,&socket_fd);
+    int error=br_instance_connect(database,first,&record,&socket_fd,detail_out);
     first=0;
     if(error)return error;
     if(expected_token && (record.token!=expected_token || record.epoch!=expected_epoch)) {
@@ -3506,14 +3547,14 @@ static int br_instance_request_witness(const char *database,BrInstanceFrame fram
     nanosleep(&pause,NULL);
   }
 }
-static int br_instance_request(const char *database,BrInstanceFrame frame,const char *payload,int rights,BrInstanceFrame *reply) {
-  return br_instance_request_witness(database,frame,payload,rights,reply,0,0);
+static int br_instance_request(const char *database,BrInstanceFrame frame,const char *payload,int rights,BrInstanceFrame *reply,char **detail_out) {
+  return br_instance_request_witness(database,frame,payload,rights,reply,0,0,detail_out);
 }
 static void br_instance_owner_witness(BatonProcessCall *call,int spawn) {
   BrInstanceFrame reply={0};
   for(;;) {
     BrOwnerRecord record={0};int socket_fd=-1;
-    call->error=br_instance_connect(call->database,spawn,&record,&socket_fd);
+    call->error=br_instance_connect(call->database,spawn,&record,&socket_fd,&call->detail);
     spawn=0;
     if(!call->error) {
       reply=(BrInstanceFrame){0};
@@ -3568,7 +3609,7 @@ static int br_instance_decision(BatonProcessCall *call) {
   if(!error && expected_token &&
      (expected_token!=retained->owner_incarnation || expected_epoch!=retained->owner_epoch))error=ESTALE;
   if(!error)error=br_instance_request_witness(retained->database,
-    (BrInstanceFrame){.op=op,.length=payload_length},payload,-1,&reply,expected_token,expected_epoch);
+    (BrInstanceFrame){.op=op,.length=payload_length},payload,-1,&reply,expected_token,expected_epoch,&call->detail);
   free(payload);
   if(!error && (reply.op!=BI_HELLO || reply.length!=sizeof(BrOwnerState)))error=EPROTO;
   if(!error && call->kind==BP_INSTANCE_START) {
@@ -3676,7 +3717,7 @@ static int br_instance_admit(BatonProcessCall *call,int dormant) {
       error=br_owner_witness_parse(call->owner_witness,&expected_token,&expected_epoch);
     if(!error)error=br_instance_request_witness(call->database,
       (BrInstanceFrame){.op=dormant?BI_PREPARE:BI_ADMIT,.length=strlen(directory)+1},directory,
-      call->lock?(int)call->lock:-1,&reply,expected_token,expected_epoch);
+      call->lock?(int)call->lock:-1,&reply,expected_token,expected_epoch,&call->detail);
     if(!error)call->owner_attempt=reply.attempt;
     if(!error && reply.attempt)call->unstarted=0;
     if(error==EINVAL || error==ESTALE || error==ENOENT || error==ENOMEM) {
@@ -3702,7 +3743,7 @@ static int br_instance_attach_observer(BatonProcessCall *call,int64_t observer) 
   if(!directory)return errno;
   BrInstanceFrame reply={0};
   int error=br_instance_request(call->database,
-    (BrInstanceFrame){.op=BI_ATTACH,.length=strlen(directory)+1},directory,-1,&reply);
+    (BrInstanceFrame){.op=BI_ATTACH,.length=strlen(directory)+1},directory,-1,&reply,&call->detail);
   if(!error)error=br_instance_join(call,directory,reply.owner,reply.epoch,observer);
   else if(!observer && (error==ENOENT || error==ECONNREFUSED || error==EPIPE || error==ECONNRESET))
     error=br_instance_attach_legacy(call,directory);
@@ -3742,7 +3783,7 @@ static int br_instance_recover(BatonProcessCall *call) {
     memcpy(cursor,call->owner_witness,witness_length);
   }
   BrInstanceFrame reply={0};BrOwnerState state={0};BrOwnerRecord current={0};int socket_fd=-1;
-  if(!error)error=br_instance_connect(call->database,0,&current,&socket_fd);
+  if(!error)error=br_instance_connect(call->database,0,&current,&socket_fd,NULL);
   if(!error && (current.token!=expected_token || current.epoch!=expected_epoch))error=ESTALE;
   if(!error)error=br_instance_exchange(socket_fd,
     (BrInstanceFrame){.op=BI_RECOVER,.owner=current.token,.epoch=current.epoch,
@@ -3809,7 +3850,7 @@ static int br_instance_attach_owned(BatonProcessCall *call) {
   if(!directory)return errno;
   BrInstanceFrame reply={0};
   int error=br_instance_request(call->database,
-    (BrInstanceFrame){.op=BI_ATTACH,.length=strlen(directory)+1},directory,-1,&reply);
+    (BrInstanceFrame){.op=BI_ATTACH,.length=strlen(directory)+1},directory,-1,&reply,&call->detail);
   if(!error) {
     error=br_instance_join(call,directory,reply.owner,reply.epoch,0);
     if(error==ECONNREFUSED || error==ENOENT || error==EPIPE || error==ECONNRESET)
@@ -3837,7 +3878,7 @@ static int br_instance_job(BatonProcessCall *call) {
   BrInstanceFrame reply={0};
   BrOwnerState state={0};
   int owner_known=0,socket_fd=-1,absent=0;
-  int error=br_instance_connect(call->database,0,&record,&socket_fd);
+  int error=br_instance_connect(call->database,0,&record,&socket_fd,NULL);
   if(error==ENOENT || error==ECONNREFUSED || error==EINVAL) {absent=1;error=0;}
   if(!error && !absent) {
     BrInstanceFrame frame={.op=BI_ATTACH,.owner=record.token,.epoch=record.epoch,
@@ -4047,7 +4088,7 @@ static int br_instance_shutdown(BatonProcessCall *call) {
     BrOwnerRecord record={0};
     BrInstanceFrame reply={0};
     int socket_fd=-1;
-    int error=br_instance_connect(call->database,0,&record,&socket_fd);
+    int error=br_instance_connect(call->database,0,&record,&socket_fd,NULL);
     if(error==ENOENT || error==ECONNREFUSED || error==EINVAL)return 0;
     if(error)return error;
     error=br_instance_exchange(socket_fd,
@@ -4113,14 +4154,14 @@ static int br_parse_u64(const char *text,size_t length,uint64_t *value) {
    stays open as the notice channel, so the handle carries one notice per commit
    the owner publishes. */
 static int br_instance_subscription(const char *database,uint64_t generation,uint64_t after_cursor,
-                                    BrInstanceReady *ready,int *socket_out) {
+                                    BrInstanceReady *ready,int *socket_out,char **detail_out) {
   BrInstanceSubscribe request={.generation=generation,.after_cursor=after_cursor};
   int first=1;
   for(;;) {
     BrOwnerRecord record={0};
     int socket_fd=-1;
     BrInstanceFrame reply={0};
-    int error=br_instance_connect(database,first,&record,&socket_fd);
+    int error=br_instance_connect(database,first,&record,&socket_fd,detail_out);
     first=0;
     if(error)return error;
     BrInstanceFrame frame={.op=BI_SUBSCRIBE,.owner=record.token,.epoch=record.epoch,
@@ -4157,11 +4198,11 @@ static int br_instance_notice(int socket_fd,BrInstanceNotice *notice,uint64_t *g
 /* Publishes one committed change: the caller has already committed the
    transaction that produced this cursor. A commit that does not advance the
    high-water publishes nothing, and a rolled-back transaction never calls here. */
-static int br_instance_publish(const char *database,uint64_t cursor) {
+static int br_instance_publish(const char *database,uint64_t cursor,char **detail_out) {
   BrInstanceCommit commit={.cursor=cursor};
   BrInstanceFrame reply={0};
   return br_instance_request(database,(BrInstanceFrame){.op=BI_COMMIT,.length=sizeof(commit)},
-    (const char *)&commit,-1,&reply);
+    (const char *)&commit,-1,&reply,detail_out);
 }
 static void br_subscription_free(BatonRetained *retained) {
   if(!retained)return;
@@ -4347,7 +4388,7 @@ static void br_instance_subscribe_call(BatonProcessCall *call) {
   if(!error)error=br_parse_u64(call->cursor,call->cursor?strlen(call->cursor):0,&after_cursor);
   BrInstanceReady ready={0};
   int socket_fd=-1;
-  if(!error)error=br_instance_subscription(call->database,generation,after_cursor,&ready,&socket_fd);
+  if(!error)error=br_instance_subscription(call->database,generation,after_cursor,&ready,&socket_fd,&call->detail);
   BatonRetained *retained=error?NULL:calloc(1,sizeof(*retained));
   if(!error && !retained)error=ENOMEM;
   if(error) {
@@ -4406,7 +4447,7 @@ static void br_instance_unsubscribe_call(BatonProcessCall *call) {
 static void br_instance_publish_call(BatonProcessCall *call) {
   uint64_t cursor=0;
   int error=br_parse_u64(call->text,call->length,&cursor);
-  if(!error)error=br_instance_publish(call->database,cursor);
+  if(!error)error=br_instance_publish(call->database,cursor,&call->detail);
   call->error=error;
 }
 static void br_hex(const unsigned char *bytes,size_t length,char *out) {
@@ -4532,7 +4573,7 @@ static void baton_retained_begin_call(BatonProcessCall *call) {
       free(directory);
     }
   }
-  if(call->error) {
+  if(call->error && !call->detail) {
     const char *operation=call->kind==BP_RETAIN?"retain":call->kind==BP_ATTACH?"attach":
       call->kind==BP_CONTROL_WRITE?"control_write":call->kind==BP_CONTROL_SIGNAL?"control_signal":
       call->kind==BP_INSTANCE_OWNER?"owner":call->kind==BP_INSTANCE_ADMIT?"admit":
@@ -5052,7 +5093,7 @@ static int baton_observer_completed(BatonSessionLock *call) {
       }
     }
   }
-  if(error) {call->detail="Observer recovery requires the original keeper to verify and retain the native exit status.";return error;}
+  if(error) {call->detail=strdup("Observer recovery requires the original keeper to verify and retain the native exit status.");return error;}
   BrManifest manifest={0};
   if((error=br_manifest_read(call->directory,&manifest))) {
     br_manifest_free(&manifest);return error;
@@ -5102,7 +5143,7 @@ static int baton_observer_recover(BatonSessionLock *call) {
       error=baton_observer_retire(call);
       if(!error)error=br_instance_attach(&call->attempt);
     } else if(!error)error=baton_observer_retire(call);
-    if(error==EBUSY)call->detail="Another observer holds the retained attempt; inspect its current receive.";
+    if(error==EBUSY)call->detail=strdup("Another observer holds the retained attempt; inspect its current receive.");
     if(!error) {
       int guard=call->attempt.child->retained->guard;
       if(guard>=0) {

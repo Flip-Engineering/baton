@@ -6,7 +6,9 @@ provenance; only a registered destination owner may promote from the author or
 a destination recorded for that finding. Every call below is its own process.
 """
 import json
+import os
 import pathlib
+import signal
 import sqlite3
 import subprocess
 import sys
@@ -14,6 +16,7 @@ import tempfile
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
+CALL_TIMEOUT = 60
 EXE = ROOT / '.scratch/bend2/baton2'
 
 
@@ -45,7 +48,20 @@ class Knowledge(unittest.TestCase):
         self.temp.cleanup()
 
     def call(self, *args, success=True):
-        p = subprocess.run([str(EXE), str(self.db), *args], text=True, capture_output=True)
+        argv = [str(EXE), str(self.db), *map(str, args)]
+        p = subprocess.Popen(argv, text=True, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, start_new_session=True)
+        try:
+            stdout, stderr = p.communicate(timeout=CALL_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(p.pid, signal.SIGKILL)
+            except OSError:
+                pass
+            stdout, stderr = p.communicate()
+            self.fail(f'knowledge fixture call timed out after {CALL_TIMEOUT}s: '
+                      f'argv={argv!r}; stderr={stderr!r}')
+        p = subprocess.CompletedProcess(argv, p.returncode, stdout, stderr)
         if success:
             self.assertEqual(p.returncode, 0, p.stderr)
             return json.loads(p.stdout)
