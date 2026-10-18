@@ -1,6 +1,7 @@
 import json
 import os
 import select
+import shutil
 import subprocess
 import pathlib
 import sys
@@ -126,6 +127,13 @@ class MemoryGateTests(receive.Receive):
             self.assertGreaterEqual(state_at, 0, 'Checkpoint has no schema-1 observer state.')
             state = json.loads(record[state_at:])
             held = state['held']
+            evidence = os.environ.get('BATON_EVIDENCE_DIR')
+            if evidence:
+                evidence_path = pathlib.Path(evidence)
+                evidence_path.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(checkpoint, evidence_path / f'checkpoint-{index}.bin')
+                (evidence_path / f'held-{index}.txt').write_text(held)
+                shutil.copy2(raw_output, evidence_path / f'stdout-{index}.bin')
             self.assertIn('held-stream', held,
                           'Checkpoint omitted the latest open message frame.')
             rows = held.split('\n') if held else []
@@ -136,7 +144,7 @@ class MemoryGateTests(receive.Receive):
                                  f'Held checkpoint row is malformed: {row[:256]!r}')
                 parsed.append((fields[0], fields[1]))
             self.assertEqual(len(parsed), len(set(parsed)),
-                             'Held projection contains duplicate (kind,id) rows.')
+                             f'Held projection contains duplicate (kind,id) rows: {parsed!r}')
             self.assertEqual(parsed.count(('message_update', 'held-stream')), 1,
                              f'Expected exactly one latest message_update for held-stream; parsed={parsed!r}.')
             self.assertEqual(parsed.count(('message_start', 'held-stream')), 1,
