@@ -1,6 +1,6 @@
 --- a/bend2/src/coordinator/observer-checkpoint.bend
 +++ b/bend2/src/coordinator/observer-checkpoint.bend
-@@ -236,7 +236,12 @@
+@@ -238,9 +238,13 @@
  def checkpoint_state(+spool: String, +state: State, enabled: Bool) -> IO(State):
    match enabled:
      case False{}: IO.pure(State,state)
@@ -14,3 +14,6 @@
 +          raw_held : String <- Logs.materialize_held(spool,held(state))
 +          IO.pure(State,with_held(state,raw_held))),
 +        IO.pure(State,state))
+ 
+ def commit_with_held(+db: String, handle: U32, +spool: String, +state: State, enabled: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+   match enabled:

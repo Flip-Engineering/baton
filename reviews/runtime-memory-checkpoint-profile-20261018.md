@@ -97,3 +97,16 @@ until the arena reaches about 1.09 GB.
 The narrow patch in `reviews/runtime-memory-checkpoint-materialize.patch` implements step 1 and 2:
 materialize only when the state is final (`output_done` or non-empty `terminal`); intermediate
 checkpoints keep the range token.
+
+## Patch check and invariant references
+
+- Patch regenerated from the exact source and `git apply --check` passes (exit 0).
+- `finish_output` (observer-checkpoint.bend:44-47) clears `held` and sets `output_done`.
+- `consume_exhausted` (turn.bend:827-828) calls `commit_with_held` with `finish_output(...)`;
+  the final checkpoint therefore has no held range, and materialization is a no-op.
+- `consume_frame` (turn.bend:910-918) calls `checkpoint_state` on every due intermediate
+  checkpoint; with the patch those keep the range token, and `held_after_checkpoint` carries the
+  token state after a successful commit.
+- Restore decodes tokens; the final checkpoint or a span-copy flush consumes them. Incomplete
+  checkpoints suppress acknowledgement, so a token is not persisted past a successful final
+  checkpoint/ack.
