@@ -93,14 +93,17 @@ class ReplCritiqueFixtures(unittest.TestCase):
         self.db = self.directory / 'state.db'
         self.observer = None
         self.owner = None
+        self.runtime = pathlib.Path(tempfile.mkdtemp(prefix='repl-rt-', dir='/tmp'))
+        self.env = dict(os.environ, XDG_RUNTIME_DIR=str(self.runtime))
         if EXE.exists():
             self.owner = subprocess.Popen([str(EXE), '--instance-owner', str(self.db)],
-                                          cwd=self.directory,
+                                          cwd=self.directory, env=self.env,
                                           stdout=subprocess.DEVNULL,
                                           stderr=subprocess.DEVNULL)
             time.sleep(0.5)
 
     def tearDown(self):
+        shutil.rmtree(getattr(self, "runtime", ""), ignore_errors=True)
         if self.owner is not None and self.owner.poll() is None:
             subprocess.run([str(EXE), '--instance-shutdown', str(self.db)],
                            cwd=self.directory, capture_output=True, timeout=30)
@@ -116,8 +119,8 @@ class ReplCritiqueFixtures(unittest.TestCase):
 
     def invoke(self, *args, stdin=None):
         return subprocess.run([str(EXE), str(self.db), *map(str, args)],
-                              cwd=self.directory, capture_output=True, text=True,
-                              input=stdin, timeout=120)
+                              cwd=self.directory, env=self.env, capture_output=True,
+                              text=True, input=stdin, timeout=120)
 
     def require_coordinator(self):
         if not EXE.exists():
@@ -264,7 +267,7 @@ class ReplCritiqueFixtures(unittest.TestCase):
             return None
         suffix = '.lock-' + ('repl:' + row[0]).encode().hex()
         runtime = os.environ.get('XDG_RUNTIME_DIR') or ''
-        candidates = []
+        candidates = [self.runtime / 'baton2']
         if runtime:
             candidates.append(pathlib.Path(runtime) / 'baton2')
         candidates.append(pathlib.Path('/tmp/baton2-%u' % os.geteuid()))
@@ -279,6 +282,59 @@ class ReplCritiqueFixtures(unittest.TestCase):
             handle.close()
             return None
         return handle
+
+    def test_f2_line_refuses_embedded_nul_and_preserves_draft(self):
+        self.require_coordinator()
+        self.actors()
+        result = self.invoke('repl', 'interactive',
+                             stdin=':define\nU32.add(1,2)\x00\n:quit\n')
+        self.assertNotEqual(result.returncode, 0,
+                            'the NUL line was accepted: ' + result.stdout + result.stderr)
+        self.assertIn('NUL', result.stdout + result.stderr)
+        row = self.query("SELECT source FROM repl_drafts ORDER BY rowid DESC LIMIT 1")
+        self.assertEqual(row, ('',), 'the refused NUL line altered the draft source')
+        cells = self.query("SELECT count(*) FROM repl_cells")
+        self.assertEqual(cells, (0,), 'the refused NUL line created a cell')
+
+    def test_f2_line_refuses_invalid_utf8_and_preserves_draft(self):
+        self.require_coordinator()
+        self.actors()
+        result = subprocess.run([str(EXE), str(self.db), 'repl', 'interactive'],
+                                cwd=self.directory, env=self.env,
+                                input=b':define\n\xff\n:quit\n',
+                                capture_output=True, timeout=120)
+        out = (result.stdout + result.stderr).decode('utf-8', 'replace')
+        self.assertNotEqual(result.returncode, 0, 'the invalid UTF-8 line was accepted: ' + out)
+        self.assertIn('UTF-8', out)
+        row = self.query("SELECT source FROM repl_drafts ORDER BY rowid DESC LIMIT 1")
+        self.assertEqual(row, ('',), 'the refused invalid UTF-8 line altered the draft source')
+        cells = self.query("SELECT count(*) FROM repl_cells")
+        self.assertEqual(cells, (0,), 'the refused invalid UTF-8 line created a cell')
+
+    def test_f2_interactive_accepts_multiline_and_eof(self):
+        self.require_coordinator()
+        compiler = EXE.parent.parent / 'libexec/baton2/repl/compiler'
+        if not compiler.exists():
+            self.skipTest('staged REPL compiler absent beside the coordinator')
+        self.actors()
+        result = self.invoke('repl', 'interactive',
+                             stdin=':define\ndef answer() -> U32:\n  42\n:submit\n')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        row = self.query("SELECT wait_status,cause FROM repl_attempts "
+                         "ORDER BY rowid DESC LIMIT 1")
+        self.assertEqual(row[0], 'exit 0', 'multiline define did not complete: ' + repr(row))
+
+    def test_f2_native_eval_starts_and_returns_output(self):
+        self.require_coordinator()
+        compiler = EXE.parent.parent / 'libexec/baton2/repl/compiler'
+        if not compiler.exists():
+            self.skipTest('staged REPL compiler absent beside the coordinator; '
+                          'the installed homelab run owns this case')
+        self.actors()
+        result = self.invoke('repl', 'eval', 'IO.write("native-eval\\n")', '--type', 'IO(Unit)')
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('native-eval', result.stdout)
+        self.assertNotIn('unstarted', result.stdout + result.stderr)
 
     # --- F3: durable recorded success across recovery ----------------------
 
@@ -373,19 +429,35 @@ class ReplCritiqueFixtures(unittest.TestCase):
             self.observer.send_signal(signal.SIGCONT)
             self.observer.wait(timeout=120)
 
+    def fail_observer(self, cause):
+        stdout, stderr = ('', '')
+        if self.observer is not None:
+            try:
+                stdout, stderr = self.observer.communicate(timeout=30)
+            except subprocess.TimeoutExpired:
+                self.observer.kill()
+                stdout, stderr = self.observer.communicate(timeout=30)
+        row = self.query("SELECT cell,stage,wait_status,cause FROM repl_attempts "
+                         "ORDER BY rowid DESC LIMIT 1")
+        self.fail(cause + '\nstdout: ' + stdout + '\nstderr: ' + stderr
+                  + '\nlast attempt: ' + repr(row))
+
     def start_io_evaluation(self, index):
         program = 'IO.write("window-marker-' + str(index) + '\\n")'
         self.observer = subprocess.Popen(
             [str(EXE), str(self.db), 'repl', 'eval', program],
-            cwd=self.directory, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True)
-        return self.latest_native_cell(timeout=60)
+            cwd=self.directory, env=self.env, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, text=True)
+        cell = self.latest_native_cell(timeout=60)
+        if cell is None:
+            self.fail_observer('native eval observer exited before recording a native attempt')
+        return cell
 
     def latest_native_cell(self, timeout):
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             if self.observer.poll() is not None:
-                return None
+                self.fail_observer('native eval observer exited before the release window')
             row = self.query(
                 "SELECT c.id FROM repl_cells c JOIN repl_attempts a ON a.cell=c.id "
                 "WHERE c.operation='eval' AND a.stage='native' "

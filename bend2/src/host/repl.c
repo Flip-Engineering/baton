@@ -2,27 +2,67 @@
 #include <fcntl.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 
 #ifdef CID_REPLHOST_LINE
-typedef struct { char *line; size_t capacity; int eof; int error; } BatonReplLine;
+typedef struct { char *line; size_t capacity; ssize_t count; int eof; int error; int refusal; } BatonReplLine;
+
+/* Same RFC 3629 decision as the context raw reader. The C files are embedded
+   in one generated translation unit, so the validator is repeated here. */
+static int baton_repl_utf8_bad(const unsigned char *b, size_t n) {
+  size_t i = 0;
+  while (i < n) {
+    unsigned char c = b[i];
+    if (c < 0x80) { i += 1; continue; }
+    if (c < 0xC2) return 1;
+    if (c < 0xE0) {
+      if (i + 1 >= n || (b[i + 1] & 0xC0) != 0x80) return 1;
+      i += 2; continue;
+    }
+    if (c < 0xF0) {
+      if (i + 2 >= n) return 1;
+      unsigned char c1 = b[i + 1], c2 = b[i + 2];
+      if ((c1 & 0xC0) != 0x80 || (c2 & 0xC0) != 0x80) return 1;
+      if (c == 0xE0 && c1 < 0xA0) return 1;
+      if (c == 0xED && c1 > 0x9F) return 1;
+      i += 3; continue;
+    }
+    if (c < 0xF5) {
+      if (i + 3 >= n) return 1;
+      unsigned char c1 = b[i + 1], c2 = b[i + 2], c3 = b[i + 3];
+      if ((c1 & 0xC0) != 0x80 || (c2 & 0xC0) != 0x80 || (c3 & 0xC0) != 0x80) return 1;
+      if (c == 0xF0 && c1 < 0x90) return 1;
+      if (c == 0xF4 && c1 > 0x8F) return 1;
+      i += 4; continue;
+    }
+    return 1;
+  }
+  return 0;
+}
 
 static void baton_repl_line_call(IoWork *work) {
   BatonReplLine *call=(BatonReplLine *)work->data;
   errno=0;
-  if(getline(&call->line,&call->capacity,stdin)<0) {
+  call->count=getline(&call->line,&call->capacity,stdin);
+  if(call->count<0) {
     if(feof(stdin)) call->eof=1;
     else call->error=errno?errno:EIO;
+    return;
   }
+  if(memchr(call->line,'\0',(size_t)call->count)!=NULL) call->refusal=1;
+  else if(baton_repl_utf8_bad((const unsigned char *)call->line,(size_t)call->count)) call->refusal=2;
 }
 
 static Term baton_repl_line_pack(Env env,IoWork *work) {
   BatonReplLine *call=(BatonReplLine *)work->data;
   Term result;
   if(call->error) result=io_fail(env,call->error,"Reading a REPL input line failed.");
+  else if(call->refusal==1) result=io_fail(env,EINVAL,"The REPL input line contains a NUL byte.");
+  else if(call->refusal==2) result=io_fail(env,EILSEQ,"The REPL input line is not valid UTF-8.");
   else if(call->eof) result=io_done(env,term_pak(CID_NONE,0));
-  else result=io_done(env,io_box(env,CID_SOME,io_str(env,call->line,(u64)strlen(call->line))));
+  else result=io_done(env,io_box(env,CID_SOME,io_str(env,call->line,(u64)call->count)));
   free(call->line); free(call); work->data=NULL;
   return result;
 }
@@ -51,8 +91,16 @@ static void baton_repl_output_call(IoWork *work) {
   sprintf(target,"%s/stdout.saved",call->directory);
   input=open(source,O_RDONLY|O_CLOEXEC|O_NOFOLLOW);
   if(input<0) {call->error=errno;goto done;}
+  { struct stat st;
+    if(fstat(input,&st)) {call->error=errno;goto done;}
+    if(!S_ISREG(st.st_mode)) {call->error=EINVAL;goto done;}
+  }
   output=open(target,O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC|O_NOFOLLOW,0600);
   if(output<0) {call->error=errno;goto done;}
+  { struct stat st;
+    if(fstat(output,&st)) {call->error=errno;goto done;}
+    if(!S_ISREG(st.st_mode)) {call->error=EINVAL;goto done;}
+  }
   char bytes[65536];
   for(;;) {
     ssize_t count=read(input,bytes,sizeof(bytes));

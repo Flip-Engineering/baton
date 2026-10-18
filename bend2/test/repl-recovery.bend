@@ -42,9 +42,7 @@ def settled_compiler(+db: String, +root: String) -> IO(Unit):
   do IO<Unit>:
     +cell : String = "repl-cell:f3-compiler"
     +stdout : String = "{\"protocol\":1,\"kind\":\"definitions\"}\n"
-    +base : String = db ++ "." ++ cell
-    +directory : String = base ++ "/compiler"
-    base_created : Unit <- IO.try(Unit,Files.Files.mkdir(base))
+    +directory : String = db ++ "." ++ cell ++ ".compiler"
     created : Unit <- write_file(directory,stdout)
     inserted : Unit <- cell_sql(db,cell,"def fixture() -> U32:\n  1\n")
     attempt : Unit <- attempt_sql(db,cell,"compiler",directory,stdout)
@@ -57,10 +55,8 @@ def custody_window(+db: String, +root: String) -> IO(Unit):
     +cell : String = "repl-cell:f3-window"
     +compiler_stdout : String = "{\"protocol\":1,\"kind\":\"native\"}\n"
     +native_stdout : String = "{\"protocol\":1,\"kind\":\"native\",\"value\":\"window\"}\n"
-    +base : String = db ++ "." ++ cell
-    +compiler_dir : String = base ++ "/compiler"
-    +native_dir : String = base ++ "/native"
-    base_created : Unit <- IO.try(Unit,Files.Files.mkdir(base))
+    +compiler_dir : String = db ++ "." ++ cell ++ ".compiler"
+    +native_dir : String = db ++ "." ++ cell ++ ".native"
     compiler_file : Unit <- write_file(compiler_dir,compiler_stdout)
     native_file : Unit <- write_file(native_dir,native_stdout)
     launched : String <- IO.try(String,T.Text.write_at(native_dir ++ "/launch","0","native\n",1))

@@ -8,7 +8,9 @@ import ../host/instance.bend as Custody
 import ../host/session-lock.bend as Lock
 import ../host/files.bend as Files
 import ../host/repl.bend as Host
+import ./repl-source.bend as Source
 import ../host/text.bend as Text
+import ../git/text.bend as Tx
 import ../context/raw.bend as Raw
 
 def append_cause(+left: String, right: String) -> String:
@@ -166,15 +168,15 @@ def compiler_stage(+db: String, +notebook: String, +cell: String, +root: String,
     +source : String <- M.field(db,cell,"source")
     snapshot : String <- M.field(db,cell,"snapshot")
     expected : String <- M.field(db,cell,"expected_type")
-    +directory : String = root ++ "/compiler"
-    argv : List<&2,String> = D.shared_strings([compiler,operation,directory ++ "/source.bend",".",root ++ "/program",expected])
+    +directory : String = root ++ ".compiler"
+    argv : List<&2,String> = D.shared_strings([compiler,operation,directory ++ "/source.bend",".",root ++ ".program",expected])
     stage(db,cell,"compiler",workspace,directory,argv,snapshot,source,lock)
 
 def native_stage(+db: String, +notebook: String, +cell: String, +root: String, lock: U32) -> IO(Unit):
   do IO<Unit>:
     +workspace : String <- M.notebook_field(db,notebook,"workspace")
     source : String <- M.field(db,cell,"source")
-    stage(db,cell,"native",workspace,root ++ "/native",D.shared_strings([root ++ "/program"]),"",source,lock)
+    stage(db,cell,"native",workspace,root ++ ".native",D.shared_strings([root ++ ".program"]),"",source,lock)
 
 def native_ready(+db: String, +actor: String, +notebook: String, +cell: String, +root: String, lock: U32) -> IO(Unit):
   do IO<Unit>:
@@ -189,7 +191,6 @@ def after_compiler(+db: String, +actor: String, +notebook: String, +cell: String
 def execute_locked(+db: String, +actor: String, +notebook: String, +cell: String, +lock: U32) -> IO(Unit):
   do IO<Unit>:
     +root : String = db ++ "." ++ cell
-    directory : Unit <- IO.try(Unit,Files.Files.mkdir(root))
     checked : Unit <- compiler_stage(db,notebook,cell,root,lock)
     evaluated : Unit <- after_compiler(db,actor,notebook,cell,root,lock)
     released : Result<&1,&1,U32 & String,Unit> <- Lock.SessionLock.release(lock)
@@ -247,8 +248,11 @@ def recover_stage(+db: String, +notebook: String, +cell: String, +stage: String)
     Bool.pick(IO(Unit),Bool.or(Bool.not(present),settled),IO.pure(Unit,Unit{}),
       (do IO<Unit>:
         +directory : String <- M.attempt_field(db,cell,stage,"directory")
-        recovery : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.observer_recovery_argv(directory))
-        attach_original(db,notebook,cell,stage,directory,recovery)))
+        Bool.pick(IO(Unit),String.eq(Source.parent_reversed(Tx.str_rev(directory)),Source.parent_reversed(Tx.str_rev(db))),
+          (do IO<Unit>:
+            recovery : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.observer_recovery_argv(directory))
+            attach_original(db,notebook,cell,stage,directory,recovery)),
+          IO.die(Unit,2,"The retained REPL attempt uses the legacy nested directory layout. Its complete outcome remains recorded; start a new REPL cell."))))
 
 # Attachment carries the original physical guard. A new guard is acquired only
 # after that original stage has been completely observed and released.
