@@ -329,6 +329,36 @@ class AccountCredits(unittest.TestCase):
         self.assertIn(cause, exhausted[0]['body'])
 
 
+    def test_exhaustion_on_one_session_leaves_another_sessions_binding_untouched(self):
+        self.root()
+        self.recruit('leaf')
+        self.recruit('leaf2')
+        self.call('message', 'retained-task', 'root', 'leaf', 'task', self.task.read_text())
+        self.call('message', 'isolated-task', 'root', 'leaf2', 'task', self.task.read_text())
+        self.record('omp-main', 'anthropic', 'omp', 'subscription', '/fixture/stores/omp-a')
+        self.record('omp-next', 'anthropic', 'omp', 'subscription', '/fixture/stores/omp-b')
+        self.record('omp-two', 'anthropic', 'omp', 'subscription', '/fixture/stores/omp-c')
+        self.send('bind', id='omp-main', session='leaf')
+        self.send('bind', id='omp-two', session='leaf2')
+        first, started = self.accept('leaf')
+        cause = "You've hit your session limit. Try again later."
+        self.action(first, fail=True, ack=False, fail_message=cause)
+        self.action(first, exit_fixture=True)
+        second, resumed = self.accept('leaf')
+        self.assertEqual(resumed['native'], started['native'])
+        self.finish(second)
+        self.exited('leaf')
+        self.assertEqual([row['account'] for row in self.send('attempts', session='leaf')['attempts']],
+                         ['omp-main', 'omp-next'])
+        third, started2 = self.accept('leaf2')
+        self.finish(third)
+        self.exited('leaf2')
+        self.assertEqual([row['account'] for row in self.send('attempts', session='leaf2')['attempts']],
+                         ['omp-two'])
+        self.assertEqual(self.rows("SELECT account FROM account_attempts WHERE session='leaf2'"),
+                         [('omp-two',)])
+
+
 if __name__ == '__main__':
     unittest.main()
 

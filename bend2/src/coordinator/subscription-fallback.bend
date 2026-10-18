@@ -266,9 +266,13 @@ def exhausted_marker_sql(+text: String) -> String:
   "CASE WHEN (instr(lower(" ++ text ++ "),'hit your')>0 AND (instr(lower(" ++ text ++ "),'limit')>0 OR instr(lower(" ++ text ++ "),'budget')>0)) OR (instr(lower(" ++ text ++ "),'reached your')>0 AND (instr(lower(" ++ text ++ "),'limit')>0 OR instr(lower(" ++ text ++ "),'quota')>0)) OR instr(lower(" ++ text ++ "),'usage limit reached for ')>0 OR instr(lower(" ++ text ++ "),'out of credits')>0 OR instr(lower(" ++ text ++ "),'spend cap')>0 OR instr(lower(" ++ text ++ "),'quota exceeded')>0 OR instr(lower(" ++ text ++ "),'spend limit reached')>0 OR instr(lower(" ++ text ++ "),'spend limit unavailable')>0 OR instr(lower(" ++ text ++ "),'insufficient balance')>0 OR instr(lower(" ++ text ++ "),'credit balance is too low')>0 OR instr(lower(" ++ text ++ "),'credit balance too low')>0 THEN 1 ELSE 0 END"
 
 # Bind the complete terminal once and extract its diagnostic once for the
-# provider's subscription-limit wording and the returned cause.
+# provider's subscription-limit wording, the returned cause, and the Claude
+# result frame's API status. A failed Claude result carrying api_error_status
+# 402 (billing_error) classifies as exhaustion by status first: billing is a
+# funding fact for either route, and the documented tier-cap 429 and spend-limit
+# 400 shapes stay on wording until an observed fixture terminal names them.
 def exhausted_reason_sql(event: String) -> String:
-  "WITH frame(value) AS (VALUES(" ++ C.q(event) ++ ")), diagnostic(failed,text) AS MATERIALIZED (SELECT " ++ failed_terminal_sql_expr("frame.value") ++ "," ++ usage_text_sql_expr("frame.value") ++ " FROM frame) SELECT CASE WHEN diagnostic.failed=1 AND " ++ exhausted_marker_sql("diagnostic.text") ++ "=1 THEN 'provider-reported usage exhaustion: ' || diagnostic.text ELSE '' END FROM diagnostic;"
+  "WITH frame(value) AS (VALUES(" ++ C.q(event) ++ ")), diagnostic(failed,text,status_402) AS MATERIALIZED (SELECT " ++ failed_terminal_sql_expr("frame.value") ++ "," ++ usage_text_sql_expr("frame.value") ++ ",CASE WHEN json_extract(frame.value,'$.type')='result' AND json_extract(frame.value,'$.api_error_status')=402 THEN 1 ELSE 0 END FROM frame) SELECT CASE WHEN diagnostic.failed=0 THEN '' WHEN diagnostic.status_402=1 THEN 'provider-reported billing exhaustion (api_error_status 402): ' || diagnostic.text WHEN " ++ exhausted_marker_sql("diagnostic.text") ++ "=1 THEN 'provider-reported usage exhaustion: ' || diagnostic.text ELSE '' END FROM diagnostic;"
 
 # The operator list and the per-session record are plain files beside the database,
 # like the other coordinator sidecars: no schema, no daemon, no environment lookup.
@@ -816,13 +820,15 @@ def select_route(+db: String, +session: String, id: String) -> IO(Maybe<&2,Route
     recorded : Result<&1,&1,U32 & String,Unit> <- Text.Text.append(refused_path,Tx.trim_nl(marker) ++ " " ++ Tx.trim_nl(assignment) ++ " " ++ Tx.trim_nl(harness) ++ " " ++ Tx.trim_nl(model) ++ "\n")
     select_recorded(db,session,id,refused_path,chosen,recorded)
 
-# True only on the actual all-accounts-refused outcome: the terminal states
-# provider-reported usage exhaustion and this attempt recorded the exhausted report.
-# History and lineage append IO failures write different reports, so they return false
+# True on the actual all-accounts-refused outcome: the terminal states
+# provider-reported usage exhaustion and this attempt recorded the exhausted
+# report - the profile form for operator-listed profiles, the account form for
+# a bound account that was the last recorded account for its harness. History
+# and lineage append IO failures write different reports, so they return false
 # here and never cause a cross-route switch.
 def exhausted_reported(db: String, id: String) -> IO(Bool):
   do IO<Bool>:
-    found : String <- IO.try(String,DB.Sql.query(db,"SELECT EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(id ++ ":profile-exhausted") ++ ");"))
+    found : String <- IO.try(String,DB.Sql.query(db,"SELECT EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(id ++ ":profile-exhausted") ++ " OR id=" ++ C.q(id ++ ":account-exhausted") ++ ");"))
     IO.pure(Bool,String.eq(found,"1\n"))
 
 def route_trigger(+db: String, id: String, +event: String) -> IO(Bool):

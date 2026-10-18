@@ -247,7 +247,7 @@ def accounts_present(db: String) -> IO(Bool):
     IO.pure(Bool,String.eq(Tx.trim_nl(found),"1"))
 
 def ensure(+db: String) -> IO(Unit):
-  do IO<Unit>:
+  do IO(Unit):
     present : Bool <- accounts_present(db)
     made : Unit <- Bool.pick(IO(Unit),present,IO.pure(Unit,Unit{}),IO.try(Unit,DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ C.schema() ++ schema() ++ "COMMIT;")))
     IO.pure(Unit,Unit{})
@@ -293,10 +293,10 @@ def account_insert_sql(id: String, +provider: String, +harness: String, +funding
 
 # No supplied organization is recorded: the mapping is written only by an
 # observation that verified it.
-def record_admitted(+db: String, id: String, provider: String, harness: String, funding: String, secret_ref: String, present: Bool) -> IO<Unit>:
+def record_admitted(+db: String, id: String, provider: String, harness: String, funding: String, secret_ref: String, present: Bool) -> IO(Unit):
   match present:
     case False{}: IO.die(Unit,2,"Account recording requires a label without whitespace or control characters, a provider name, a launchable harness (codex, omp, muse or claude-code), a funding route of subscription or api_key (api_key launches only on claude-code), and a nonempty secret-store reference without control characters. No account was recorded.")
-    case True{}: do IO<Unit>:
+    case True{}: do IO(Unit):
       saved : String <- IO.try(String,commit_read(db,account_insert_sql(id,provider,harness,funding,secret_ref)))
       IO.print(Tx.trim_nl(saved))
 
@@ -306,32 +306,32 @@ def record_admitted(+db: String, id: String, provider: String, harness: String, 
 def record_state_sql(+id: String, +provider: String, +harness: String, +funding: String, +secret_ref: String) -> String:
   "SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM accounts WHERE id=" ++ C.q(id) ++ ") THEN 'new' WHEN EXISTS(SELECT 1 FROM accounts WHERE id=" ++ C.q(id) ++ " AND provider=" ++ C.q(provider) ++ " AND harness=" ++ C.q(harness) ++ " AND funding=" ++ C.q(funding) ++ " AND secret_ref=" ++ C.q(secret_ref) ++ ") THEN 'same' ELSE 'different' END;"
 
-def record_decided(+db: String, +id: String, provider: String, harness: String, funding: String, secret_ref: String, present: Bool, state: String) -> IO<Unit>:
+def record_decided(+db: String, +id: String, provider: String, harness: String, funding: String, secret_ref: String, present: Bool, state: String) -> IO(Unit):
   match present:
     case False{}: record_admitted(db,id,provider,harness,funding,secret_ref,False{})
     case True{}: Bool.pick(IO(Unit),String.eq(state,"different"),IO.die(Unit,2,"Account " ++ id ++ " is already recorded with a different provider, harness, funding route or secret-store reference; nothing was changed. Record the rotated credential under a new label."),record_admitted(db,id,provider,harness,funding,secret_ref,True{}))
 
-def record(+db: String, id: String, provider: String, harness: String, funding: String, secret_ref: String) -> IO<Unit>:
-  do IO<Unit>:
+def record(+db: String, id: String, provider: String, harness: String, funding: String, secret_ref: String) -> IO(Unit):
+  do IO(Unit):
     state : String <- IO.try(String,DB.Sql.read(db,record_state_sql(id,provider,harness,funding,secret_ref)))
     record_decided(db,id,provider,harness,funding,secret_ref,Bool.and(label_ok(id),Bool.and(Bool.not(String.is_empty(provider)),Bool.and(harness_launchable(harness),Bool.and(funding_known(funding),Bool.and(funding_route_ok(harness,funding),ref_ok(secret_ref)))))),Tx.trim_nl(state))
 
 # --- reading accounts --------------------------------------------------------
 
-def read_all(db: String) -> IO<Unit>:
+def read_all(db: String) -> IO(Unit):
   IO.print(Tx.trim_nl(IO.try(String,DB.Sql.read(db,accounts_answer_sql("1")))))
 
-def account_absent(id: String) -> IO<Unit>:
+def account_absent(id: String) -> IO(Unit):
   IO.die(Unit,2,"No recorded account matches " ++ id ++ "; record the account and retry.")
 
-def read_one(db: String, id: String) -> IO<Unit>:
-  do IO<Unit>:
+def read_one(db: String, id: String) -> IO(Unit):
+  do IO(Unit):
     +found : String <- IO.try(String,DB.Sql.read(db,"SELECT id FROM accounts WHERE id=" ++ C.q(id) ++ ";"))
     present : Unit <- Bool.pick(IO(Unit),String.is_empty(Tx.trim_nl(found)),account_absent(id),IO.pure(Unit,Unit{}))
     saved : String <- IO.try(String,DB.Sql.read(db,accounts_answer_sql("id=" ++ C.q(id))))
     IO.print(Tx.trim_nl(saved))
 
-def read(+db: String, id: String) -> IO<Unit>:
+def read(+db: String, id: String) -> IO(Unit):
   Bool.pick(IO(Unit),String.is_empty(id),read_all(db),read_one(db,id))
 
 # --- binding the account in force for a session ------------------------------
@@ -347,16 +347,16 @@ def file_text(path: String) -> IO(String):
     read : Result<&1,&1,U32 & String,String> <- Text.Text.read(path)
     IO.pass(String,Subs.optional_text(read))
 
-def bind_admitted(+db: String, id: String, session: String, present: Bool) -> IO<Unit>:
+def bind_admitted(+db: String, id: String, session: String, present: Bool) -> IO(Unit):
   match present:
     case False{}: IO.die(Unit,2,"Account binding requires a registered session and a recorded account with that session's harness. No binding was recorded.")
-    case True{}: do IO<Unit>:
+    case True{}: do IO(Unit):
       path : String <- account_sidecar(db,session)
       appended : Unit <- IO.try(Unit,Text.Text.append(Tx.trim_nl(path),id ++ "\n"))
       IO.print("{\"account\":\"bound\",\"session\":" ++ J.string_literal(session) ++ ",\"accountId\":" ++ J.string_literal(id) ++ "}")
 
-def bind(+db: String, id: String, session: String) -> IO<Unit>:
-  do IO<Unit>:
+def bind(+db: String, id: String, session: String) -> IO(Unit):
+  do IO(Unit):
     admitted : String <- IO.try(String,DB.Sql.query(db,"SELECT EXISTS(SELECT 1 FROM sessions s JOIN accounts a ON a.id=" ++ C.q(id) ++ " AND a.harness=s.harness WHERE s.id=" ++ C.q(session) ++ ");"))
     bind_admitted(db,id,session,String.eq(Tx.trim_nl(admitted),"1"))
 
@@ -474,12 +474,12 @@ def attempt_insert_sql(+session: String, +attempt: String, +predecessor: String,
 def attempt_recorded(+db: String, +session: String, +attempt: String, recorded: Result<&1,&1,U32 & String,String>) -> IO(Unit):
   match recorded:
     case Done{saved}: IO.pure(Unit,Unit{})
-    case Fail{(code,detail)}: do IO<Unit>:
+    case Fail{(code,detail)}: do IO(Unit):
       noted : Unit <- Subs.report_body(db,session,attempt ++ ":account-record","account-attempt-record-failed","The selected account record for this attempt failed at the database: " ++ U32.show(code) ++ ": " ++ detail ++ "; the attempt continues and its recorded account is missing.")
       IO.pure(Unit,Unit{})
 
-def record_attempt(+db: String, +session: String, +attempt: String, +predecessor: String, +account: AccountRecord) -> IO<Unit>:
-  do IO<Unit>:
+def record_attempt(+db: String, +session: String, +attempt: String, +predecessor: String, +account: AccountRecord) -> IO(Unit):
+  do IO(Unit):
     recorded : Result<&1,&1,U32 & String,String> <- commit_read(db,attempt_insert_sql(session,attempt,predecessor,account))
     noted : Unit <- attempt_recorded(db,session,attempt,recorded)
     IO.pure(Unit,Unit{})
@@ -487,7 +487,7 @@ def record_attempt(+db: String, +session: String, +attempt: String, +predecessor
 def attempts_answer_sql(session: String) -> String:
   "SELECT json_object('attempts',coalesce(json_group_array(json_object('attempt',attempt,'session',session,'turn',turn,'account',account,'organization',organization,'funding',funding,'secretRef',secret_ref,'predecessor',predecessor,'recorded',recorded)),json('[]'))) FROM (SELECT * FROM account_attempts WHERE session=" ++ C.q(session) ++ " ORDER BY recorded,rowid);"
 
-def attempts(+db: String, session: String) -> IO<Unit>:
+def attempts(+db: String, session: String) -> IO(Unit):
   IO.print(Tx.trim_nl(IO.try(String,DB.Sql.read(db,attempts_answer_sql(session)))))
 
 # --- organization credit observations ----------------------------------------
@@ -511,28 +511,28 @@ def observe_insert_sql(+account: String, +authority: String, fact: String, state
   ++ "INSERT OR IGNORE INTO credit_observations(id,organization,fact,state,balance,unit,expires,cycle,source,detail,observed_at,authority) SELECT " ++ observe_id_sql(account,fact,detail) ++ "," ++ observe_organization(detail,fact) ++ "," ++ C.q(fact) ++ "," ++ C.q(state) ++ ",'','',coalesce(json_extract(" ++ C.q(detail) ++ ",'$.expires'),''),coalesce(json_extract(" ++ C.q(detail) ++ ",'$.cycle'),''),coalesce(nullif(json_extract(" ++ C.q(detail) ++ ",'$.source'),''),'unsourcedObservation')," ++ C.q(detail) ++ "," ++ observe_observed_at(detail) ++ "," ++ C.q(authority) ++ " FROM accounts WHERE id=" ++ C.q(account) ++ ";"
   ++ "SELECT json_object('observation',(SELECT " ++ observation_object_sql("1") ++ " FROM credit_observations WHERE id=" ++ observe_id_sql(account,fact,detail) ++ "),'accounts',(SELECT coalesce(json_group_array(" ++ account_object_sql() ++ "),json('[]')) FROM accounts WHERE id=" ++ C.q(account) ++ "));"
 
-def observe_admitted(+db: String, +authority: String, account: String, detail: String, fact: String, state: String, present: Bool) -> IO<Unit>:
+def observe_admitted(+db: String, +authority: String, account: String, detail: String, fact: String, state: String, present: Bool) -> IO(Unit):
   match present:
     case False{}: IO.die(Unit,2,"Account observation requires a recorded account, a JSON document, an operation of organization, cost or usage, a state of reported or unavailable, and for a reported organization observation a document id. No observation was recorded.")
-    case True{}: do IO<Unit>:
+    case True{}: do IO(Unit):
       saved : String <- IO.try(String,commit_read(db,observe_insert_sql(account,authority,fact,state,detail)))
       IO.print(Tx.trim_nl(saved))
 
-def observe_selected(+db: String, +authority: String, +account: String, +detail: String, +state: String, fact: Maybe<String>, +document_id: String, valid_json: Bool) -> IO<Unit>:
+def observe_selected(+db: String, +authority: String, +account: String, +detail: String, +state: String, fact: Maybe<String>, +document_id: String, valid_json: Bool) -> IO(Unit):
   match fact:
     case None{}: observe_admitted(db,authority,account,detail,"","",False{})
-    case Some{+known}: do IO<Unit>:
+    case Some{+known}: do IO(Unit):
       registered : String <- IO.try(String,DB.Sql.read(db,"SELECT EXISTS(SELECT 1 FROM accounts WHERE id=" ++ C.q(account) ++ ");"))
       verified_id : Bool = Bool.pick(Bool,Bool.and(String.eq(known,"organization"),String.eq(state,"reported")),Bool.not(String.is_empty(document_id)),True{})
       observe_admitted(db,authority,account,detail,known,state,Bool.and(valid_json,Bool.and(String.eq(Tx.trim_nl(registered),"1"),Bool.and(state_known(state),verified_id))))
 
-def observe_fields(+db: String, +authority: String, +account: String, +detail: String, fields: List<String>) -> IO<Unit>:
+def observe_fields(+db: String, +authority: String, +account: String, +detail: String, fields: List<String>) -> IO(Unit):
   match fields:
     case valid <> operation <> state <> document_id <> rest: observe_selected(db,authority,account,detail,state,operation_fact(operation),document_id,String.eq(valid,"1"))
     case other: observe_admitted(db,authority,account,detail,"","",False{})
 
-def observe(+db: String, +authority: String, +account: String, +detail: String) -> IO<Unit>:
-  do IO<Unit>:
+def observe(+db: String, +authority: String, +account: String, +detail: String) -> IO(Unit):
+  do IO(Unit):
     +fields : String <- IO.try(String,DB.Sql.read(db,observe_fields_sql(detail)))
     returned : Unit <- observe_fields(db,authority,account,detail,String.split(Tx.trim_nl(fields),Char.from_u32(31)))
     IO.pure(Unit,Unit{})
@@ -556,26 +556,26 @@ def import_insert_sql(+authority: String, +account: String, +organization: Strin
   "INSERT OR IGNORE INTO credit_observations(id,organization,fact,state,balance,unit,expires,cycle,source,detail,observed_at,authority) SELECT " ++ import_id_sql(account,detail) ++ "," ++ C.q(organization) ++ ",coalesce(json_extract(" ++ C.q(detail) ++ ",'$.fact'),''),coalesce(json_extract(" ++ C.q(detail) ++ ",'$.state'),'reported'),coalesce(json_extract(" ++ C.q(detail) ++ ",'$.balance'),''),coalesce(json_extract(" ++ C.q(detail) ++ ",'$.unit'),''),coalesce(json_extract(" ++ C.q(detail) ++ ",'$.expires'),''),coalesce(json_extract(" ++ C.q(detail) ++ ",'$.cycle'),''),coalesce(json_extract(" ++ C.q(detail) ++ ",'$.source'),'')," ++ C.q(detail) ++ "," ++ observe_observed_at(detail) ++ "," ++ C.q(authority) ++ " FROM accounts WHERE id=" ++ C.q(account) ++ " AND organization=" ++ C.q(organization) ++ ";"
   ++ "SELECT json_object('observation',(SELECT " ++ observation_object_sql("1") ++ " FROM credit_observations WHERE id=" ++ import_id_sql(account,detail) ++ "),'accounts',(SELECT coalesce(json_group_array(" ++ account_object_sql() ++ "),json('[]')) FROM accounts WHERE id=" ++ C.q(account) ++ "));"
 
-def import_admitted(+db: String, +authority: String, +account: String, +organization: String, +detail: String, present: Bool) -> IO<Unit>:
+def import_admitted(+db: String, +authority: String, +account: String, +organization: String, +detail: String, present: Bool) -> IO(Unit):
   match present:
     case False{}: IO.die(Unit,2,"A credit import requires a JSON document, a recorded account whose verified organization is the imported organization, a fact of promotional_credit or purchased_credit, a state of reported or unavailable, a named source, and for a reported amount a canonical decimal balance with a named unit. No reading was recorded.")
-    case True{}: do IO<Unit>:
+    case True{}: do IO(Unit):
       saved : String <- IO.try(String,commit_read(db,import_insert_sql(authority,account,organization,detail)))
       IO.print(Tx.trim_nl(saved))
 
-def import_selected(+db: String, +authority: String, +account: String, +organization: String, +detail: String, fact: String, state: String, balance: String, unit: String, source: String, valid_json: Bool) -> IO<Unit>:
-  do IO<Unit>:
+def import_selected(+db: String, +authority: String, +account: String, +organization: String, +detail: String, fact: String, state: String, balance: String, unit: String, source: String, valid_json: Bool) -> IO(Unit):
+  do IO(Unit):
     verified : String <- IO.try(String,DB.Sql.read(db,"SELECT EXISTS(SELECT 1 FROM accounts WHERE id=" ++ C.q(account) ++ " AND organization=" ++ C.q(organization) ++ " AND organization<>'');"))
     reported : Bool <- IO.pure(Bool,Bool.and(decimal_text(balance),Bool.not(String.is_empty(unit))))
     import_admitted(db,authority,account,organization,detail,Bool.and(valid_json,Bool.and(String.eq(Tx.trim_nl(verified),"1"),Bool.and(credit_fact_known(fact),Bool.and(state_known(state),Bool.and(Bool.not(String.is_empty(source)),Bool.or(String.eq(state,"unavailable"),reported)))))))
 
-def import_fields(+db: String, +authority: String, +account: String, +organization: String, +detail: String, fields: List<String>) -> IO<Unit>:
+def import_fields(+db: String, +authority: String, +account: String, +organization: String, +detail: String, fields: List<String>) -> IO(Unit):
   match fields:
     case valid <> fact <> state <> balance <> unit <> source <> rest: import_selected(db,authority,account,organization,detail,fact,state,balance,unit,source,String.eq(valid,"1"))
     case other: import_admitted(db,authority,account,organization,detail,False{})
 
-def import_credit(+db: String, +authority: String, +account: String, +organization: String, +detail: String) -> IO<Unit>:
-  do IO<Unit>:
+def import_credit(+db: String, +authority: String, +account: String, +organization: String, +detail: String) -> IO(Unit):
+  do IO(Unit):
     +fields : String <- IO.try(String,DB.Sql.read(db,import_fields_sql(detail)))
     returned : Unit <- import_fields(db,authority,account,organization,detail,String.split(Tx.trim_nl(fields),Char.from_u32(31)))
     IO.pure(Unit,Unit{})
@@ -599,7 +599,7 @@ def pool_answer_sql(where: String) -> String:
 def pool_where(organization: String) -> String:
   Bool.pick(String,String.is_empty(organization),"1","organization=" ++ C.q(organization))
 
-def pool(+db: String, organization: String) -> IO<Unit>:
+def pool(+db: String, organization: String) -> IO(Unit):
   IO.print(Tx.trim_nl(IO.try(String,DB.Sql.read(db,pool_answer_sql(pool_where(organization))))))
 
 # --- the selection read ------------------------------------------------------
@@ -615,10 +615,10 @@ def org_observation_sql(+organization: String) -> String:
 def selection_json(selected: Selected, +state: String, +cycle: String) -> String:
   "{\"selected\":" ++ J.string_literal(account_id(selected_account(selected))) ++ ",\"preferredByObservation\":" ++ Bool.pick(String,selected_preferred(selected),"true","false") ++ ",\"harness\":" ++ J.string_literal(account_harness(selected_account(selected))) ++ ",\"funding\":" ++ J.string_literal(account_funding(selected_account(selected))) ++ ",\"organization\":" ++ J.string_literal(account_organization(selected_account(selected))) ++ ",\"creditEligible\":" ++ Bool.pick(String,Bool.and(String.eq(account_funding(selected_account(selected)),"api_key"),Bool.not(String.is_empty(account_organization(selected_account(selected))))),"true","false") ++ ",\"observationState\":" ++ J.string_literal(state) ++ ",\"creditCycle\":" ++ J.string_literal(cycle) ++ "}"
 
-def select_answer(db: String, harness: String, funding: String, chosen: Maybe<&2,Selected>) -> IO<Unit>:
+def select_answer(db: String, harness: String, funding: String, chosen: Maybe<&2,Selected>) -> IO(Unit):
   match chosen:
     case None{}: IO.die(Unit,2,"No recorded account matches harness " ++ harness ++ " and funding " ++ funding ++ "; record an account and retry.")
-    case Some{+selected}: do IO<Unit>:
+    case Some{+selected}: do IO(Unit):
       fields : String <- IO.try(String,DB.Sql.read(db,org_observation_sql(account_organization(selected_account(selected)))))
       IO.print(selection_fields_json(selected,String.split(Tx.trim_nl(fields),Char.from_u32(31))))
 
@@ -627,8 +627,8 @@ def selection_fields_json(selected: Selected, fields: List<String>) -> String:
     case state <> cycle <> rest: selection_json(selected,state,cycle)
     case other: selection_json(selected,"unknown","")
 
-def select(+db: String, harness: String, funding: String) -> IO<Unit>:
-  do IO<Unit>:
+def select(+db: String, harness: String, funding: String) -> IO(Unit):
+  do IO(Unit):
     rows : String <- IO.try(String,DB.Sql.read(db,account_row_sql()))
     +accounts : List<&2,AccountRecord> <- IO.pure(List<&2,AccountRecord>,account_lines(Tx.split_lines(rows),Nil{}))
     +blocked_text : String <- IO.try(String,DB.Sql.read(db,blocked_organizations_sql()))
@@ -638,14 +638,14 @@ def select(+db: String, harness: String, funding: String) -> IO<Unit>:
 
 # --- the command -------------------------------------------------------------
 
-def unknown_action(action: String) -> IO<Unit>:
+def unknown_action(action: String) -> IO(Unit):
   IO.die(Unit,2,"Unknown account action " ++ action ++ ". Use record, read, bind, attempts, select, pool, observe or import-credit.")
 
 # The verb's argv carries one action and the eight named options in a fixed
 # order: action, id, provider, harness, funding, secret-ref, organization,
 # detail, session. Each action reads the options it names.
-def run(+db: String, action: String, id: String, provider: String, harness: String, funding: String, secret_ref: String, organization: String, detail: String, session: String) -> IO<Unit>:
-  do IO<Unit>:
+def run(+db: String, action: String, id: String, provider: String, harness: String, funding: String, secret_ref: String, organization: String, detail: String, session: String) -> IO(Unit):
+  do IO(Unit):
     ready : Unit <- ensure(db)
     taken : Unit <- Bool.pick(IO(Unit),String.eq(action,"record"),record(db,id,provider,harness,funding,secret_ref),
       Bool.pick(IO(Unit),String.eq(action,"read"),read(db,id),
@@ -661,7 +661,7 @@ def run(+db: String, action: String, id: String, provider: String, harness: Stri
 # The launch path records the account and funding route for the attempt it is
 # about to start. A session with no account in force records nothing and keeps
 # its existing profile binding.
-def record_current_attempt(+db: String, +session: String, +attempt: String, +predecessor: String, chosen: Maybe<&2,AccountRecord>) -> IO<Unit>:
+def record_current_attempt(+db: String, +session: String, +attempt: String, +predecessor: String, chosen: Maybe<&2,AccountRecord>) -> IO(Unit):
   match chosen:
     case None{}: IO.pure(Unit,Unit{})
     case Some{+account}: record_attempt(db,session,attempt,predecessor,account)
