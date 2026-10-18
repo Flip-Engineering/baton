@@ -98,6 +98,19 @@ def stale_case(+db: String, +self: String) -> IO(Unit):
     receipt : Unit <- expect_read(db,"SELECT receipt FROM messages WHERE id='m-ws';","delivered\n","elapsed-sets-receipt")
     IO.pure(Unit,Unit{})
 
+def far_case(+db: String, +self: String) -> IO(Unit):
+  do IO<Unit>:
+    +far : String <- read(db,"SELECT CAST(CAST(strftime('%s','now') AS INTEGER)*1000+172800000 AS TEXT);")
+    created : Unit <- session(db,"far2")
+    window : Unit <- query(db,"INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) VALUES(CAST(strftime('%s','now') AS INTEGER)*1000,'omp','kimi-code/kimi-for-coding','kimi-code','far2','5-hour'," ++ Tx.trim_nl(far) ++ ",'provider-message',NULL,'far window','m-far2');")
+    owed : Unit <- message(db,"far2","m-far2","")
+    held : Unit <- expect_gate(db,"far2","far2","held","far-continuation-held")
+    +argv : String <- IO.pure(String,Tx.enc_argv(UW.schedule_argv(self,db,"m-far2","1")))
+    ran : Result<&1,&1,U32 & String,String> <- Proc.Process.run(argv,".")
+    checked : Unit <- expect_read(db,"SELECT count(*) FROM wake_held_checks WHERE id='m-far2';","1\n","far-continuation-held-check")
+    blocked : Unit <- expect_read(db,"SELECT count(*) FROM wake_deliveries WHERE message='m-far2';","0\n","far-continuation-no-delivery")
+    next_segment : Unit <- expect_read(db,UW.schedule_delay_sql(Tx.trim_nl(far)),"86400\n","far-continuation-next-segment")
+
 def cap_case(+db: String) -> IO(Unit):
   do IO<Unit>:
     +far : String <- read(db,"SELECT CAST(strftime('%s','now') AS INTEGER)*1000+172800000;")
@@ -119,6 +132,7 @@ def main_args(args: List<String>) -> IO(Unit):
       handled_case(path,self)
       duplicate_case(path,self)
       stale_case(path,self)
+      far_case(path,self)
       cap_case(path)
       waited : Result<&1,&1,U32 & String,String> <- Proc.Process.run(Tx.enc_argv(["/bin/sh","-c","sleep 5"]),".")
       handled_delivery : Unit <- expect_read(path,"SELECT count(*) FROM wake_deliveries WHERE message='m-wa';","0\n","handled-no-second-delivery")
