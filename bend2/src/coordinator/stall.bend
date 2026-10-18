@@ -109,7 +109,7 @@ def report_text(+rows: String) -> String:
   "{\"candidates\":[" ++ rows ++ "]}"
 
 # The report: every pending-input candidate with its recorded classification.
-def report(db: String) -> IO(Unit):
+def report(+db: String) -> IO(Unit):
   do IO<Unit>:
     present : Bool <- claim_table_present(db)
     found : String <- IO.try(String,DB.Sql.query(db,stalled_rows_sql(present)))
