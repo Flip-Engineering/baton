@@ -208,7 +208,7 @@ test('a signaled child is re-raised by the helper', async () => {
 test('concurrent forced spec paths never disclose another secret', async () => {
   const directory = await mkdtemp(path.join(tmpdir(), 'api-key-exec-'));
   try {
-    const native = process.env.BATON2_API_KEY_EXEC;
+    const native = process.env.BATON2_API_KEY_EXEC_TEST;
     const spec = path.join(directory, 'shared-spec');
     const probe = path.join(directory, 'print.mjs');
     await writeFile(probe, 'process.stdout.write(process.env.ANTHROPIC_API_KEY ?? "")');
