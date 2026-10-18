@@ -841,7 +841,7 @@ law m2_omp_launch_reaches_the_omp_adapter:
   for +stderr: String
   for +session: String
   for +task: String
-  {Turn.launch(sessions, cmd, model, effort, cwd, stderr, session, "omp\n", task) == Omp.start_player(cmd, model, effort, cwd, sessions, session, String.is_empty(session), stderr) : IO(Result<&1,&1,U32 & String,U32>)}
+  {Turn.launch(sessions, cmd, model, effort, cwd, stderr, session, "omp\n", task) == Turn.omp_launch(sessions, cmd, model, effort, cwd, stderr, session) : IO(Result<&1,&1,U32 & String,U32>)}
 
 def m2_omp_launch_reaches_the_omp_adapter(sessions, cmd, model, effort, cwd, stderr, session, task):
   {==}
