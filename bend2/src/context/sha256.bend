@@ -55,7 +55,7 @@ def small_s1(+x: U32) -> U32:
   U32.xor(U32.xor(rotr(x, 17n, 15n), rotr(x, 19n, 13n)), U32.shrn(x, 10n))
 
 # The 64 round constants of FIPS 180-4 section 4.2.2, as decimal U32.
-def k_constants() -> List<U32>:
+def k_constants() -> List<&2, U32>:
   [1116352408, 1899447441, 3049323471, 3921009573,
    961987163, 1508970993, 2453635748, 2870763221,
    3624381080, 310598401, 607225278, 1426881987,
@@ -80,19 +80,35 @@ def h_initial() -> ShaState:
 # Index into a list. The schedule recurrence only reads indices below the
 # accumulated length, so the empty case is unreachable; the laws below pin the
 # standard vectors end to end.
-def nth(+xs: List<U32>, n: Nat) -> U32:
-  match xs n:
-    case Nil{} _: 0
-    case h <> t 0n: h
-    case h <> t 1n+p: nth(t, p)
+def nth(+xs: List<&2, U32>, n: Nat) -> U32:
+  match xs:
+    case Nil{}: 0
+    case h <> t:
+      match n:
+        case 0n: h
+        case 1n+p: nth(t, p)
 
-def list_rev_go(xs: List<U32>, acc: List<U32>) -> List<U32>:
+def list_rev_go(xs: List<&2, U32>, acc: List<&2, U32>) -> List<&2, U32>:
   match xs:
     case Nil{}: acc
     case h <> t: list_rev_go(t, h <> acc)
 
-def list_rev(xs: List<U32>) -> List<U32>:
+def list_rev(xs: List<&2, U32>) -> List<&2, U32>:
   list_rev_go(xs, Nil{})
+
+# Copy a type-kind byte list into a data-kind list so a + binder may use it
+# more than once.
+def to_data(xs: List<U32>) -> List<&2, U32>:
+  match xs:
+    case Nil{}: Nil{}
+    case h <> t: h <> to_data(t)
+
+# Append two data-kind byte lists.
+def cat_bytes(xs: List<&2, U32>, ys: List<&2, U32>) -> List<&2, U32>:
+  match xs:
+    case Nil{}: ys
+    case h <> t: h <> cat_bytes(t, ys)
+
 
 # One big-endian word from four bytes.
 def word4(+b0: U32, +b1: U32, +b2: U32, +b3: U32) -> U32:
@@ -106,7 +122,7 @@ def word4(+b0: U32, +b1: U32, +b2: U32, +b3: U32) -> U32:
 # is one ordered head pattern, matching the run_res_more convention
 # (bend2/src/git/text.bend); a short tail drops its partial group, which
 # padded input never produces.
-def words_go(bs: List<U32>, acc: List<U32>) -> List<U32>:
+def words_go(bs: List<&2, U32>, acc: List<&2, U32>) -> List<&2, U32>:
   match bs:
     case Con{b0, Con{b1, Con{b2, Con{b3, t}}}}:
       words_go(t, word4(b0, b1, b2, b3) <> acc)
@@ -114,20 +130,20 @@ def words_go(bs: List<U32>, acc: List<U32>) -> List<U32>:
 
 # The next schedule word from the reversed accumulated schedule:
 # w[i] = w[i-16] + s0(w[i-15]) + w[i-7] + s1(w[i-2]).
-def next_word(+rev: List<U32>) -> U32:
+def next_word(+rev: List<&2, U32>) -> U32:
   U32.add(
     U32.add(nth(rev, 15n), small_s0(nth(rev, 14n))),
     U32.add(nth(rev, 6n), small_s1(nth(rev, 1n))))
 
 # Extend the reversed sixteen-word schedule to sixty-four words.
-def sched_go(+rev: List<U32>, n: Nat) -> List<U32>:
+def sched_go(n: Nat, +rev: List<&2, U32>) -> List<&2, U32>:
   match n:
     case 0n: rev
-    case 1n+p: sched_go(next_word(rev) <> rev, p)
+    case 1n+p: sched_go(p, next_word(rev) <> rev)
 
 # The 64-word schedule of one block, in round order.
-def sched(block: List<U32>) -> List<U32>:
-  list_rev(sched_go(words_go(block, Nil{}), 48n))
+def sched(block: List<&2, U32>) -> List<&2, U32>:
+  list_rev(sched_go(48n, words_go(block, Nil{})))
 
 # One compression round with schedule word w and constant k.
 def round(+s: ShaState, +w: U32, +k: U32) -> ShaState:
@@ -140,13 +156,13 @@ def round(+s: ShaState, +w: U32, +k: U32) -> ShaState:
 # All 64 rounds of one block, with both lists matched at the def head and
 # all four emptiness combinations enumerated (the str_eq_go convention).
 # ks always has 64 entries when ws does, so the mixed cases are unreachable.
-def rounds_go(+st: ShaState, ws: List<U32>, ks: List<U32>) -> ShaState:
-  match ws ks:
-    case Nil{} Nil{}: st
-    case Nil{} Con{k, kt}: st
-    case Con{w, wt} Nil{}: st
-    case Con{w, wt} Con{k, kt}:
-      rounds_go(round(st, w, k), wt, kt)
+def rounds_go(ws: List<&2, U32>, ks: List<&2, U32>, +st: ShaState) -> ShaState:
+  match ws:
+    case Nil{}: st
+    case w <> wt:
+      match ks:
+        case Nil{}: st
+        case k <> kt: rounds_go(wt, kt, round(st, w, k))
 
 # Fieldwise wrapping addition of two states: the feed-forward step of FIPS
 # 180-4 section 6.2.2.
@@ -162,24 +178,27 @@ def add_state(+x: ShaState, +y: ShaState) -> ShaState:
     case ShaState{+a, +b, +c, +d, +e, +f, +g, +h}:
       add_state_x(x, a, b, c, d, e, f, g, h)
 
-def compress(+st: ShaState, +block: List<U32>) -> ShaState:
-  add_state(st, rounds_go(st, sched(block), k_constants()))
+def compress(+st: ShaState, +block: List<&2, U32>) -> ShaState:
+  add_state(st, rounds_go(sched(block), k_constants(), st))
 
-# Split one 64-byte block off the head of a padded input. Both arguments
-# match at the def head; a short tail returns the reversed head with an
-# empty rest, which padded input never produces.
-def split_block(bs: List<U32>, n: Nat, acc: List<U32>) -> List<U32> & List<U32>:
-  match n bs:
-    case 0n rest: (list_rev(acc), rest)
-    case 1n+p Nil{}: (list_rev(acc), Nil{})
-    case 1n+p Con{h, t}: split_block(t, p, h <> acc)
+# Split one 64-byte block off the head of a padded input. Each match has
+# one subject, in binder order; a short tail returns the reversed head
+# with an empty rest, which padded input never produces.
+def split_block(bs: List<&2, U32>, n: Nat, acc: List<&2, U32>)
+    -> List<&2, U32> & List<&2, U32>:
+  match bs:
+    case Nil{}: (list_rev(acc), Nil{})
+    case h <> t:
+      match n:
+        case 0n: (list_rev(acc), h <> t)
+        case 1n+p: split_block(t, p, h <> acc)
 
-def len_bytes(bs: List<U32>) -> U32:
+def len_bytes(bs: List<&2, U32>) -> U32:
   match bs:
     case Nil{}: 0
     case h <> t: U32.add(1, len_bytes(t))
 
-def zeros(n: Nat) -> List<U32>:
+def zeros(n: Nat) -> List<&2, U32>:
   match n:
     case 0n: Nil{}
     case 1n+p: 0 <> zeros(p)
@@ -189,20 +208,20 @@ def zero_count(+n: U32) -> Nat:
   U32.to_nat(U32.mod(U32.sub(120, U32.mod(U32.add(n, 1), 64)), 64))
 
 # A word as four big-endian bytes.
-def word_bytes(+x: U32) -> List<U32>:
+def word_bytes(+x: U32) -> List<&2, U32>:
   [U32.and(U32.shrn(x, 24n), 255), U32.and(U32.shrn(x, 16n), 255),
    U32.and(U32.shrn(x, 8n), 255), U32.and(x, 255)]
 
 # The final state as 32 big-endian bytes.
-def state_bytes(+s: ShaState) -> List<U32>:
+def state_bytes(+s: ShaState) -> List<&2, U32>:
   match s:
     case ShaState{+a, +b, +c, +d, +e, +f, +g, +h}:
-      J.cat_bytes(word_bytes(a), J.cat_bytes(word_bytes(b),
-        J.cat_bytes(word_bytes(c), J.cat_bytes(word_bytes(d),
-          J.cat_bytes(word_bytes(e), J.cat_bytes(word_bytes(f),
-            J.cat_bytes(word_bytes(g), word_bytes(h))))))))
+      cat_bytes(word_bytes(a), cat_bytes(word_bytes(b),
+        cat_bytes(word_bytes(c), cat_bytes(word_bytes(d),
+          cat_bytes(word_bytes(e), cat_bytes(word_bytes(f),
+            cat_bytes(word_bytes(g), word_bytes(h))))))))
 
-def hex_go(bs: List<U32>, acc: String) -> String:
+def hex_go(bs: List<&2, U32>, acc: String) -> String:
   match bs:
     case Nil{}: acc
     case b <> t: hex_go(t, acc ++ J.hex_byte(b))
@@ -216,62 +235,68 @@ def hex_go(bs: List<U32>, acc: String) -> String:
 # with its byte count.
 
 type State is Data:
-  State{h: ShaState, bits_hi: U32, bits_lo: U32, block: List<U32>, used: U32}
+  State{h: ShaState, bits_hi: U32, bits_lo: U32, block: List<&2, U32>, used: U32}
 
-def init -> State:
-  State{h: h_initial(), bits_hi: 0, bits_lo: 0, block: Nil{}, used: 0}
+def init() -> State:
+  State{h_initial(), 0, 0, Nil{}, 0}
 
-def drop_bytes(bs: List<U32>, n: Nat) -> List<U32>:
-  match n bs:
-    case 0n rest: rest
-    case 1n+p Nil{}: Nil{}
-    case 1n+p Con{h, t}: drop_bytes(t, p)
-
-def last_bytes(bs: List<U32>, n: U32) -> List<U32>:
-  drop_bytes(bs, U32.to_nat(U32.sub(len_bytes(bs), n)))
-
-# Drain every complete 64-byte block.
-def drain_go(+h: ShaState, bs: List<U32>) -> ShaState:
-  match U32.is_lt(63, len_bytes(bs)):
-    case True{}:
-      (block, rest) = split_block(bs, 64n, Nil{})
-      drain_go(compress(h, block), rest)
-    case False{}: h
+def drain(bs: List<&2, U32>, full: Bool, left: U32, acc: List<&2, U32>,
+    st: ShaState) -> ShaState & List<&2, U32>:
+  match bs full:
+    case Nil{} True{}: (compress(st, list_rev(acc)), Nil{})
+    case Nil{} False{}: (st, list_rev(acc))
+    case Con{+b, +t} True{}:
+      drain(t, False{}, 63, Con{b, Nil{}}, compress(st, list_rev(acc)))
+    case Con{+b, +t} False{}:
+      +l2 = U32.sub(left, 1)
+      drain(t, U32.is_eq(l2, 0), l2, Con{b, acc}, st)
 
 # One update: bit counter with the general division-free carry - bits_lo
 # takes the U32-wrapped chunk bits and bits_hi rises by m>>29 plus one
 # when the lo word wrapped - then the block buffer joins, drains, and
 # keeps its remainder.
-def update(st: State, chunk: List<U32>) -> State:
+def update_finish(pair: ShaState & List<&2, U32>, bits_hi: U32, carry: U32,
+    bits_lo: U32, used: U32, m: U32) -> State:
+  match pair:
+    case (st2, rest):
+      State{st2, U32.add(bits_hi, carry), bits_lo, rest,
+            U32.mod(U32.add(used, m), 64)}
+
+def update_data(st: State, +chunk: List<&2, U32>) -> State:
   match st:
     case State{+h, +bits_hi, +bits_lo, +block, +used}:
       +m = len_bytes(chunk)
       +lo2 = U32.add(bits_lo, U32.shln(m, 3n))
       +carry = U32.add(U32.shrn(m, 29n),
         Bool.pick(U32, U32.is_lt(lo2, bits_lo), 1, 0))
-      +joined = J.cat_bytes(block, chunk)
-      +left = U32.mod(U32.add(used, m), 64)
-      State{h: drain_go(h, joined), bits_hi: U32.add(bits_hi, carry),
-            bits_lo: lo2, block: last_bytes(joined, left), used: left}
+      +joined = cat_bytes(block, chunk)
+      update_finish(drain(joined, False{}, 64, Nil{}, h),
+        bits_hi, carry, lo2, used, m)
+
+def update(st: State, chunk: List<U32>) -> State:
+  update_data(st, to_data(chunk))
+
+def final_finish(pair: ShaState & List<&2, U32>) -> List<&2, U32>:
+  match pair:
+    case (st2, rest): state_bytes(st2)
 
 # Padding of the partial block with the 64-bit big-endian bit counter.
-def final_pad(st: State) -> List<U32>:
+def final(st: State) -> List<&2, U32>:
   match st:
     case State{+h, +bits_hi, +bits_lo, +block, +used}:
-      J.cat_bytes(block, J.cat_bytes([128],
-        J.cat_bytes(zeros(zero_count(used)),
-          J.cat_bytes(word_bytes(bits_hi), word_bytes(bits_lo)))))
+      +tail = cat_bytes(block, cat_bytes([128],
+        cat_bytes(zeros(zero_count(used)),
+          cat_bytes(word_bytes(bits_hi), word_bytes(bits_lo)))))
+      final_finish(drain(tail, False{}, 64, Nil{}, h))
 
-def final(st: State) -> List<U32>:
-  match st:
-    case State{+h, +bits_hi, +bits_lo, +block, +used}:
-      state_bytes(drain_go(h, final_pad(st)))
-
-def hex(bytes: List<U32>) -> String:
+def hex(bytes: List<&2, U32>) -> String:
   hex_go(bytes, SNil{})
 
+def digest_data(bytes: List<&2, U32>) -> String:
+  hex(final(update_data(init, bytes)))
+
 def digest_bytes(bytes: List<U32>) -> String:
-  hex(final(update(init, bytes)))
+  digest_data(to_data(bytes))
 
 # The one-shot String digest, kept for the role identity consumers.
 def digest(+s: String) -> String:
@@ -282,29 +307,53 @@ def digest(+s: String) -> String:
 law sha256_bytes_empty:
   {digest_bytes(Nil{}) == "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" : String}
 
+def sha256_bytes_empty():
+  {==}
+
 law sha256_bytes_abc:
   {digest_bytes(J.utf8("abc")) == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" : String}
+
+def sha256_bytes_abc():
+  {==}
 
 # 55 bytes: the longest input that needs no second padding block.
 law sha256_bytes_55:
   {digest_bytes(J.utf8("abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklm")) == "4243974b4dd5dcbe9952db216e4e399d1d1a21d0bc15d6197aa93a12136cef55" : String}
 
+def sha256_bytes_55():
+  {==}
+
 # 56 bytes: exactly the two-block padding boundary.
 law sha256_bytes_56:
   {digest_bytes(J.utf8("abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq")) == "248d6a61d20638b8e5c026930c3e6039a33ce45964ff2167f6ecedd419db06c1" : String}
 
+def sha256_bytes_56():
+  {==}
+
 law sha256_bytes_63:
   {digest_bytes(J.utf8("abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmn")) == "6e406c4796591ba9868fe98f1c8201e06c6d8b55d273f17fdd957d1288a31d85" : String}
+
+def sha256_bytes_63():
+  {==}
 
 law sha256_bytes_64:
   {digest_bytes(J.utf8("abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmno")) == "2ff100b36c386c65a1afc462ad53e25479bec9498ed00aa5a04de584bc25301b" : String}
 
+def sha256_bytes_64():
+  {==}
+
 law sha256_bytes_65:
   {digest_bytes(J.utf8("abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnop")) == "ea860b59bf33885e1695de11dcb17331d24d8be83366e97dbfffd9e4c361f635" : String}
+
+def sha256_bytes_65():
+  {==}
 
 # Exact bytes: NUL and invalid UTF-8 sequences pass as plain numbers.
 law sha256_bytes_binary:
   {digest_bytes([0, 255, 192, 175, 65, 0, 128]) == "ee4863d37336f7d84618978356a04a7a7679958e8929845e48c045714c3113f2" : String}
+
+def sha256_bytes_binary():
+  {==}
 
 # Incremental splitting agrees with the one-shot digest on the same
 # bytes, split exactly at a block boundary.
@@ -313,10 +362,16 @@ law sha256_incremental_split:
      J.utf8("ijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu"))))
     == hex(final(update(init, J.utf8("abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu")))) : String}
 
+def sha256_incremental_split():
+  {==}
+
 # The role identity consumer path: the String digest over the exact
 # UTF-8 bytes.
 law sha256_digest_abc:
   {digest("abc") == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad" : String}
+
+def sha256_digest_abc():
+  {==}
 
 # Incremental splitting at a non-block-aligned boundary: the partial
 # block carries used != 0 into the completing update.
@@ -324,3 +379,6 @@ law sha256_incremental_nonmultiple:
   {hex(final(update(update(init, J.utf8("abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnop")),
      J.utf8("qrstnopqrstu"))))
     == hex(final(update(init, J.utf8("abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu")))) : String}
+
+def sha256_incremental_nonmultiple():
+  {==}
