@@ -23,7 +23,6 @@ import ../host/control.bend as Host
 import ../git/text.bend as Tx
 import ../host/text.bend as Text
 import ../context/request.bend as Req
-import ./observer-checkpoint.bend as Observer
 import ./agent-input.bend as AgentInput
 
 def field(+db: String, session: String, name: String, +supplied: String) -> IO(String):
