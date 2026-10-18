@@ -32,6 +32,7 @@ class DshRetained(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = pathlib.Path(self.temp.name)
         self.db = self.root / 'state.db'
+        self.link = self.root / 'link.db'
         self.attempt = self.root / 'attempt'
         self.attempt.mkdir()
         with sqlite3.connect(self.db) as database:
@@ -39,10 +40,11 @@ class DshRetained(unittest.TestCase):
             database.execute(
                 "INSERT INTO sessions(id,harness,model,effort) VALUES"
                 "('dsh-fixture','dsh','deepseek-flash','max')")
+        self.link.symlink_to(self.db)
 
     def run_fixture(self):
         result = subprocess.run(
-            [str(EXE), str(self.db), str(self.attempt), '/usr/bin/dsh',
+            [str(EXE), str(self.link), str(self.attempt), '/usr/bin/dsh',
              'deepseek/deepseek-flash', 'max', 'session-1'],
             text=True, capture_output=True)
         self.assertEqual(result.returncode, 0, result.stderr)

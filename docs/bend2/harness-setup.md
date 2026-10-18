@@ -225,6 +225,14 @@ it with `--session-id SESSION`. The launcher flags precede `--json`.
 it in argv and never writes it to a profile. `DEEPSEEK_BASE_URL` may select a
 Messages-compatible endpoint; without it the CLI uses the provider default.
 
+The OMP client catalog records `contextWindow: 1000000` for `deepseek-flash`;
+the provider `/models` reports `1,048,576` tokens. Baton sends no context budget
+and does not gate work on either value. Record the provider value as the route
+fact.
+
+This adapter is the official npm TypeScript harness. It is not the macOS `dsh`
+0.1 Python workflow DSL.
+
 The headless session store is `$DSH_HOME/sessions/WORKSPACE/SESSION_ID/`.
 Sessions are scoped to the workspace that recorded them. A `--session-id` from a
 different workspace is refused; Baton treats that refusal as a lost conversation

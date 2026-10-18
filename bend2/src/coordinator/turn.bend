@@ -1096,7 +1096,8 @@ def dsh_launch_prepared(prepared: Result<&1,&1,U32 & String,Dsh.Prepared>, +home
 
 def dsh_launch(+db: String, +player: String, +log: String, +cmd: String, +model: String, +effort: String, +cwd: String, +stderr: String, +session: String) -> IO(Result<&1,&1,U32 & String,U32>):
   do IO<Result<&1,&1,U32 & String,U32>>:
-    home : String <- dsh_home(db,db,player)
+    canonical : String <- IO.try(String,Lock.SessionLock.canonical(db))
+    home : String <- dsh_home(db,canonical,player)
     directory : String <- IO.pure(String,log ++ ".dsh")
     prepared : Result<&1,&1,U32 & String,Dsh.Prepared> <- Dsh.prepare(directory,model,effort)
     dsh_launch_prepared(prepared,home,cmd,model,effort,cwd,stderr,session)

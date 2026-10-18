@@ -5,7 +5,9 @@ headless profile. [Harness setup](harness-setup.md#deepseek-harness) describes
 installation, `DSH_HOME`, the launch environment and the two patch overlays.
 
 Pinned package: `@deepseek-ai/dsh@0.2.1-rc.2`. Route: provider
-`deepseek-official`, model `deepseek-flash`, `reasoningEffort: max`.
+`deepseek-official`, model `deepseek-flash`, `reasoningEffort: max`. This is
+the official npm TypeScript harness. It is not the macOS `dsh` 0.1 Python
+workflow DSL.
 
 ## Verified protocol facts
 
@@ -32,6 +34,14 @@ Verified against `@deepseek-ai/dsh@0.2.1-rc.2` installed from npm:
   `session-query-sqlite`, so `--session-id` adoption works.
 - The headless profile disables the managed credential store; API-key routes
   read the launch environment, then `.env` files.
+
+### Context window
+
+The OMP client catalog records `contextWindow: 1000000` for `deepseek-flash`.
+The provider `/models` reports `1,048,576` tokens. The values differ. The DSH
+request carries no Baton context budget, and Baton does not gate input or
+continuation on either number. The provider value is the route fact; the
+catalog value is a client declaration.
 
 ## Minimal tool roster
 

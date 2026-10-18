@@ -309,8 +309,8 @@ def provider_usage_query(+db: String, harness: String, command: String, cwd: Str
 def provider_usage_command(+db: String, +harness: String, +command: String, cwd: String) -> IO(Result<&1,&1,U32 & String,String>):
   Bool.pick(IO(Result<&1,&1,U32 & String,String>),String.is_empty(command),IO.pure(Result<&1,&1,U32 & String,String>,Done{provider_usage_absent(harness,command,"noRecordedHarnessCommand")}),provider_usage_query(db,harness,command,cwd))
 
-# TODO(DSH-USAGE-1): DSH reports usage in its status/step_end event and its
-# session store; docs/bend2/dsh-adapter.md records the open projection.
+# DSH usage is projected from status/step_end frames in the public log by
+# dsh_usage_projection below.
 def provider_usage(+db: String, +harness: String, +command: String, cwd: String) -> IO(Result<&1,&1,U32 & String,String>):
   Bool.pick(IO(Result<&1,&1,U32 & String,String>),String.eq(harness,"omp"),provider_usage_command(db,harness,command,cwd),IO.pure(Result<&1,&1,U32 & String,String>,Done{provider_usage_absent(harness,command,"unsupportedHarness")}))
 
