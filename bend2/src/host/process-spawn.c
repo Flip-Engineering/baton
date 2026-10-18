@@ -1249,8 +1249,13 @@ static int br_command(BrKeeper *keeper,BrFrame frame,const char *payload) {
     if(error)return br_reply(keeper,frame.serial,keeper->generation,error);
     keeper->ready=1;
     if((error=br_reply(keeper,frame.serial,keeper->generation,0)))return error;
-    /* The native exit is owned by the keeper waiter; reporting readiness must
-       not fail the keeper while the native is still running. */
+    /* A waiter can observe the native exit before readiness. Reap that exit now
+       that readiness is set; a running native returns without error. An error is
+       recorded without failing the keeper serving state. */
+    if(keeper->native_waiting) {
+      int exit_error=br_native_exited(keeper);
+      if(exit_error)br_note(keeper,"native-exit-error",exit_error);
+    }
     return 0;
   }
   if(frame.op==BR_SIGNAL) {
