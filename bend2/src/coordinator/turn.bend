@@ -996,7 +996,7 @@ def retained_output(+db: String, +player: String, +id: String, +log: String, +ha
     +policy : Logs.Policy <- Logs.open_attempt(db,player,log,id)
     sender : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}))
     output_present : Bool <- Logs.prepare_retained_output(generation)
-    +checkpoint_state : Observer.State <- Bool.pick(IO(Observer.State),output_present,Observer.restore(db,handle),Observer.reset_empty(db,handle))
+    +checkpoint_state : Observer.State <- Bool.pick(IO(Observer.State),output_present,Observer.restore(db,handle,monitor),Observer.reset_empty(db,handle,monitor))
     +resumed : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,Unit> <- shared_result_io(Unit,NativeRequests.resume(db,player,id,attempt,Bool.and(String.eq(harness,"omp\n"),Bool.and(Bool.not(String.is_empty(attempt)),String.is_empty(Observer.terminal(checkpoint_state))))))
     +resume_error : String <- IO.pure(String,append_write_error("",unshared_result(Unit,resumed)))
     +resume_failed : Bool <- IO.pure(Bool,checkpoint_write_failed(unshared_result(Unit,resumed)))

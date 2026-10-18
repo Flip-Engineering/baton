@@ -221,24 +221,31 @@ def commit(db: String, handle: U32, +state: State, enabled: Bool, monitor: Bool)
       saved : String <- IO.try(String,DB.Sql.query(db,encode_sql(state)))
       commit_with(monitor,handle,Tx.trim_nl(saved))
 
-def reset_empty(db: String, +handle: U32) -> IO(State):
-  do IO<State>:
-    reset : Unit <- IO.try(Unit,Custody.Instance.replay(handle))
-    committed : Unit <- IO.try(Unit,commit(db,handle,empty(),True{},False{}))
-    IO.pure(State,empty())
+def reset_empty_case(db: String, handle: U32, monitor: Bool) -> IO(State):
+  match monitor:
+    case True{}: do IO<State>:
+      committed : Unit <- IO.try(Unit,commit(db,handle,empty(),True{},True{}))
+      IO.pure(State,empty())
+    case False{}: do IO<State>:
+      reset : Unit <- IO.try(Unit,Custody.Instance.replay(handle))
+      committed : Unit <- IO.try(Unit,commit(db,handle,empty(),True{},False{}))
+      IO.pure(State,empty())
 
-def decode_nonempty(+db: String, handle: U32, +value: String) -> IO(State):
+def reset_empty(db: String, +handle: U32, monitor: Bool) -> IO(State):
+  reset_empty_case(db,handle,monitor)
+
+def decode_nonempty(+db: String, handle: U32, +value: String, monitor: Bool) -> IO(State):
   do IO<State>:
     valid : String <- IO.try(String,DB.Sql.query(db,valid_sql(value)))
-    Bool.pick(IO(State),String.eq(Tx.trim_nl(valid),"1"),decode_valid(db,value),reset_empty(db,handle))
+    Bool.pick(IO(State),String.eq(Tx.trim_nl(valid),"1"),decode_valid(db,value),reset_empty(db,handle,monitor))
 
-def decode(db: String, handle: U32, +value: String) -> IO(State):
-  Bool.pick(IO(State),String.is_empty(value),IO.pure(State,empty()),decode_nonempty(db,handle,value))
+def decode(db: String, handle: U32, +value: String, monitor: Bool) -> IO(State):
+  Bool.pick(IO(State),String.is_empty(value),reset_empty(db,handle,monitor),decode_nonempty(db,handle,value,monitor))
 
-def restore(db: String, +handle: U32) -> IO(State):
+def restore(db: String, +handle: U32, monitor: Bool) -> IO(State):
   do IO<State>:
     saved : String <- IO.try(String,Custody.Instance.restore(handle,schema_version()))
-    decode(db,handle,without_query_newline(saved))
+    decode(db,handle,without_query_newline(saved),monitor)
 
 # Keep the materialized held projection for the next iteration only after
 # its checkpoint is durable. A failed or skipped checkpoint retains the raw
