@@ -7,6 +7,7 @@ import ../host/session-lock.bend as Lock
 import ../host/control.bend as Host
 import ./control.bend as Control
 import ./commands.bend as C
+import ./store.bend as Store
 import ../git/text.bend as Tx
 import ./turn.bend as Turn
 
@@ -72,6 +73,7 @@ def dispatch_turn(selected: Bool, +db: String, +player: String, +id: String, +cm
 def dispatch_receiver(+db: String, +session: String, +cmd: String, +log: String, +cwd: String) -> IO(Unit):
   do IO<Unit>:
     canonical : String <- IO.try(String,Lock.SessionLock.canonical(db))
+    ensured : Unit <- Store.ensure_before_begin(canonical)
     model_line : String <- IO.try(String,DB.Sql.read(canonical,"SELECT model FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
     workspace : String <- Bool.pick(IO(String),String.is_empty(cwd),IO.pure(String,""),IO.try(String,Host.Control.workspace(cwd)))
     branch : Maybe<String> <- Control.receiver_branch(workspace)
