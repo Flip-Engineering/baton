@@ -55,18 +55,15 @@ An account stores a reference. The launch resolves it.
 A subscription account binds the credential directory the harness reads, through
 the existing `CODEX_HOME` or `CLAUDE_CONFIG_DIR` binding.
 
-An API-key account runs the packaged native resolver `api-key-exec`, built from
-`bend2/harness/api-key-exec.bend`, as the launch head. The resolver reads
-`file:PATH` or `keychain:SERVICE/ACCOUNT`, refuses a secret file that is
-readable beyond its owner, writes an owner-only environment specification,
-spawns the harness with the value only in the child's environment as
-`ANTHROPIC_API_KEY`, and removes the specification. The recorded argv carries
-the reference, so a stored endpoint, a log, a report and a task body hold no
-credential value.
+Anthropic API-key accounts remain recorded but their launch binding is held
+until request-level promotional-credit admission is installed. The coordinator
+refuses the attempt before spawn, and the packaged `api-key-exec` helper returns
+`creditAdmissionUnavailable` before resolving a secret or starting a child.
+The credit observations describe source readings; they do not authorize a spend.
 
-An API-key account whose resolver is absent yields no binding. The launch then
-refuses with that cause and keeps the attempt's input owed, rather than starting
-on another account's credential.
+An API-key account does not launch through the current package. Its input stays
+owed, and the attempt records the refusal. Subscription routes and other
+harnesses keep their existing bindings.
 
 ## Funded credit observations
 

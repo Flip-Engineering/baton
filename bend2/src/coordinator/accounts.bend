@@ -189,16 +189,23 @@ def select_account(accounts: List<&2,AccountRecord>, +blocked: String, +harness:
 
 # --- the launch binding ------------------------------------------------------
 
-# The funding route decides the launch binding. A subscription account binds the
-# credential directory the harness reads. An API-key account runs the packaged
-# native resolver as the launch head; the resolver path and the secret reference
-# are the binding, and the harness command follows it. The stored argv carries
-# the reference and never a value. A missing resolver leaves an API-key account
-# unlaunchable, which the caller reports as the actual cause.
+# A subscription account binds the credential directory the harness reads. The
+# API-key helper binding carries only a resolver path and secret reference. The
+# coordinator applies the credit-admission hold before returning that binding.
 def api_key_binding(+secret_ref: String, helper: Maybe<String>) -> Maybe<List<String>>:
   match helper:
     case None{}: None{}
     case Some{+script}: Some{Con{script,Con{secret_ref,Nil{}}}}
+
+# Anthropic Claude API-key funding is held until every request can reserve its
+# maximum charge before it reaches the provider. A CLI spend threshold does not
+# bound a request that is already in flight.
+def credit_api_key_refusal(account: AccountRecord) -> String:
+  match account:
+    case Ac{id,provider,harness,funding,secret_ref,organization,verified_at}:
+      match funding:
+        case "api_key": Bool.pick(String,Bool.and(String.eq(provider,"anthropic"),String.eq(harness,"claude-code")),"Anthropic API-key launches are held because request-level promotional-credit admission is unavailable; the attempt was not started and its input stays owed.","This API-key launch has no installed resolver beside the resolved identity helper; the attempt was not started and its input stays owed.")
+        case other: "The selected account has no available launch binding; the attempt was not started and its input stays owed."
 
 def launch_binding(+harness: String, +funding: String, +secret_ref: String, helper: Maybe<String>) -> Maybe<List<String>>:
   Bool.pick(Maybe<List<String>>,Bool.and(String.eq(funding,"api_key"),Bool.not(String.eq(harness,"claude-code"))),None{},Bool.pick(Maybe<List<String>>,String.eq(funding,"api_key"),api_key_binding(secret_ref,helper),Some{Subs.store_binding(harness,secret_ref)}))
@@ -223,7 +230,13 @@ def api_key_resolver(identity: String & String) -> Maybe<String>:
 def account_binding(+harness: String, chosen: Maybe<&2,AccountRecord>, helper: Maybe<String>, +profile_store: String) -> Maybe<List<String>>:
   match chosen:
     case None{}: Bool.pick(Maybe<List<String>>,String.is_empty(profile_store),None{},Some{Subs.store_binding(harness,profile_store)})
-    case Some{+account}: launch_binding(harness,account_funding(account),account_secret_ref(account),helper)
+    case Some{+account}:
+      match account:
+        case Ac{id,provider,account_harness,funding,secret_ref,organization,verified_at}:
+          match funding:
+            case "api_key": Bool.pick(Maybe<List<String>>,Bool.and(String.eq(provider,"anthropic"),String.eq(account_harness,"claude-code")),None{},launch_binding(harness,"api_key",secret_ref,helper))
+            case "subscription": Some{Subs.store_binding(harness,secret_ref)}
+            case other: None{}
 
 # --- the schema --------------------------------------------------------------
 

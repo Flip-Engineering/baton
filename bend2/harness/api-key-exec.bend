@@ -220,7 +220,7 @@ def run(+reference: String, +command: String, args: List<String>) -> IO(Unit):
 
 def main_arguments(arguments: List<String>) -> IO(Unit):
   match arguments:
-    case +reference <> +command <> rest: run(reference,command,rest)
+    case +reference <> +command <> rest: IO.die(Unit,2,refusal_json(reference,"creditAdmissionUnavailable","Anthropic API-key launches are disabled until request-level promotional-credit admission is installed."))
     case other: IO.die(Unit,2,refusal_json("","unsupportedSecretReference","expected SECRET_REF COMMAND [ARG...]"))
 
 def main() -> IO(Unit):
