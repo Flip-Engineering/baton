@@ -1,0 +1,171 @@
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
+#define main generated_main
+#include BATON2_PROCESS_SOURCE
+#undef main
+
+#define REQUIRE(test) do { if(!(test)) { fprintf(stderr,"fixture failure: %s (errno %d)\n",#test,errno); return 2; } } while(0)
+
+static char *encoded(char **items,int count) {
+  size_t total=0;
+  for(int i=0;i<count;i++) total+=strlen(items[i])+1;
+  char *buffer=calloc(1,total);
+  if(!buffer)return NULL;
+  size_t at=0;
+  for(int i=0;i<count;i++) {size_t n=strlen(items[i])+1;memcpy(buffer+at,items[i],n);at+=n;}
+  return buffer;
+}
+
+int main(int argc,char **argv) {
+  if(argc==2 && !strcmp(argv[1],"native-sleep")) {
+    if(br_write_all(STDOUT_FILENO,"native-ready\n",13))return 1;
+    sleep(30);
+    return 0;
+  }
+  if(argc==4 && !strcmp(argv[1],"--host-process-keeper"))
+    return br_keeper(argv[2],atoi(argv[3]));
+  REQUIRE(argc==2 || argc==3);
+  char *self=realpath(argv[0],NULL);
+  const char *keeper_exe=argc==3?argv[2]:self;
+  REQUIRE(self!=NULL);
+  char *native_items[]={self,"native-sleep"};
+  char *native_args=encoded(native_items,2);
+  REQUIRE(native_args!=NULL);
+  char *guard_path=malloc(strlen(argv[1])+sizeof(".guard"));
+  REQUIRE(guard_path!=NULL);sprintf(guard_path,"%s.guard",argv[1]);
+  int guard=open(guard_path,O_CREAT|O_RDWR|O_CLOEXEC,0600);free(guard_path);
+  REQUIRE(guard>0 && flock(guard,LOCK_EX|LOCK_NB)==0);
+  char *native_log=br_path(argv[1],"native.stderr");
+  REQUIRE(native_log!=NULL);
+  char recovery[]="/usr/bin/true";
+  BatonProcessCall call={.directory=argv[1],.args=native_args,.length=(u32)(strlen(self)+strlen("native-sleep")+2),
+    .cwd="/",.log=native_log,.initial="",.keep_stdin=0,.lock=(u32)guard,
+    .recovery=recovery,.recovery_length=sizeof(recovery)};
+  char *directory=NULL,*address=NULL;
+  REQUIRE(br_attempt_prepare(&call,&directory,&address,0)==0);
+  int sockets[2];REQUIRE(socketpair(AF_UNIX,SOCK_STREAM,0,sockets)==0);
+  int null=open("/dev/null",O_RDONLY|O_CLOEXEC);
+  char *keeper_log=br_path(directory,"keeper.log");
+  int log=keeper_log?open(keeper_log,O_CREAT|O_WRONLY|O_CLOEXEC,0600):-1;
+  REQUIRE(null>=0 && log>=0);
+  char *keeper_argv[]={(char *)keeper_exe,"--host-process-keeper",directory,"4",NULL};
+  pid_t keeper;
+  REQUIRE(br_spawn(&keeper,keeper_argv,NULL,null,log,log,sockets[1],guard)==0);
+  close(sockets[1]);close(null);close(log);
+  BrFrame hello;BrState state;int received_guard=-1;
+  REQUIRE(br_hello(sockets[0],&hello,&received_guard)==0);
+  REQUIRE(hello.op==BR_HELLO && !hello.error && hello.length==sizeof(state));
+  REQUIRE(br_read_all(sockets[0],&state,sizeof(state))==0 && state.pid>0);
+  if(received_guard>=0)close(received_guard);
+  close(sockets[0]);
+
+  /* A validated checkpoint is retained, not rewritten, by adoption. */
+  char *spool_path=br_path(directory,"stdout");
+  REQUIRE(spool_path!=NULL);
+  int spool=open(spool_path,O_RDONLY|O_CLOEXEC);
+  REQUIRE(spool>=0);
+  REQUIRE(br_checkpoint_store(directory,spool,1,0,0,"{}",2)==0);
+  close(spool);
+  char *checkpoint_path=br_path(directory,"checkpoint");
+  REQUIRE(checkpoint_path!=NULL);
+  struct stat checkpoint_before;
+  REQUIRE(stat(checkpoint_path,&checkpoint_before)==0);
+  /* No observer attaches. Adoption verifies the attempt and takes monitor-only
+     custody without connecting to the keeper. */
+  BatonChild child={0};
+  BatonProcessCall adopt={.directory=directory,.child=&child,.database=NULL};
+  int error=br_adopt_orphan(&adopt,directory,guard);
+  REQUIRE(error==0);
+  BatonRetained *retained=child.retained;
+  REQUIRE(retained!=NULL);
+  REQUIRE(retained->observer_only==1 && retained->unknown==1);
+  REQUIRE(retained->socket==-1);
+  struct stat checkpoint_after;
+  REQUIRE(stat(checkpoint_path,&checkpoint_after)==0);
+  REQUIRE(checkpoint_before.st_size==checkpoint_after.st_size);
+  REQUIRE(checkpoint_before.st_mtime==checkpoint_after.st_mtime);
+  free(checkpoint_path); free(spool_path);
+  long native_pid_before=state.pid;
+  char *pid_path=br_path(directory,"native.pid");
+  REQUIRE(pid_path!=NULL);
+  FILE *pid_file=fopen(pid_path,"r");REQUIRE(pid_file!=NULL);
+  long recorded_pid=0;REQUIRE(fscanf(pid_file,"%ld",&recorded_pid)==1);fclose(pid_file);
+  free(pid_path);
+  REQUIRE(recorded_pid==native_pid_before);
+  /* The adopted reader serves the retained spool. */
+  BrFrame ack={.op=BR_ACK};
+  BatonProcessCall command={.kind=BP_ACK,.child=&child};
+  baton_retained_call(&command);
+  REQUIRE(command.error==EPERM);
+  BatonProcessCall signal={.kind=BP_SIGNAL,.child=&child,.signal=SIGTERM};
+  baton_retained_call(&signal);
+  REQUIRE(signal.error==EPERM);
+  BatonProcessCall write={.kind=BP_WRITE,.child=&child,.text="x",.length=1};
+  baton_retained_call(&write);
+  REQUIRE(write.error==EPERM);
+  BatonProcessCall replay={.kind=BP_INSTANCE_REPLAY,.child=&child};
+  baton_retained_call(&replay);
+  REQUIRE(replay.error==EPERM);
+  REQUIRE(kill((pid_t)state.pid,0)==0);
+  char *custody=br_path(directory,"custody");
+  REQUIRE(custody!=NULL && access(custody,F_OK)==0);
+  BrCustody stored={0};
+  REQUIRE(br_read_file(directory,"custody",&stored,sizeof(stored))==0);
+  REQUIRE(!memcmp(stored.magic,BR_CUSTODY_MAGIC,8));
+  REQUIRE((stored.flags&BR_CUSTODY_UNKNOWN) && (stored.flags&BR_CUSTODY_INPUT_UNFINISHED));
+  REQUIRE(stored.birth.pid==state.pid);
+  free(custody);
+  /* A retry returns the same custody and does not start another native. */
+  BatonChild retry_child={0};
+  BatonProcessCall retry={.directory=directory,.child=&retry_child,.database=NULL};
+  REQUIRE(br_adopt_orphan(&retry,directory,guard)==0);
+  REQUIRE(retry_child.retained!=NULL);
+  /* A changed birth refuses adoption. */
+  BrBirth original={0};
+  REQUIRE(br_read_file(directory,"native.birth",&original,sizeof(original))==0);
+  BrBirth wrong=original; wrong.second++;
+  char *birth_path=br_path(directory,"native.birth");
+  REQUIRE(birth_path!=NULL);
+  REQUIRE(chmod(birth_path,0600)==0);
+  int fd=open(birth_path,O_WRONLY|O_TRUNC|O_CLOEXEC);REQUIRE(fd>=0);
+  REQUIRE(br_write_all(fd,&wrong,sizeof(wrong))==0);close(fd);
+  BatonChild bad_child={0};
+  BatonProcessCall bad={.directory=directory,.child=&bad_child,.database=NULL};
+  REQUIRE(br_adopt_orphan(&bad,directory,guard)==ESTALE);
+  fd=open(birth_path,O_WRONLY|O_TRUNC|O_CLOEXEC);REQUIRE(fd>=0);
+  REQUIRE(br_write_all(fd,&original,sizeof(original))==0);close(fd);
+  REQUIRE(chmod(birth_path,0400)==0);
+  free(birth_path);
+  /* A dead native with no status file also adopts unknown custody, and the
+     wait text is unavailable rather than a fabricated exit zero. */
+  kill(-state.pid,SIGKILL);
+  for(int i=0;i<50;i++) {if(br_exists(directory,"status"))break;usleep(10000);}
+  char *status_path=br_path(directory,"status");
+  REQUIRE(status_path!=NULL);
+  unlink(status_path);free(status_path);
+  BatonChild dead_child={0};
+  BatonProcessCall dead={.directory=directory,.child=&dead_child,.database=NULL};
+  REQUIRE(br_adopt_orphan(&dead,directory,guard)==0);
+  REQUIRE(dead_child.retained!=NULL && dead_child.retained->observer_only==1);
+  BatonProcessCall waited={.kind=BP_WAIT,.child=&dead_child};
+  baton_retained_call(&waited);
+  REQUIRE(waited.error==0 && waited.text && strstr(waited.text,"unavailable")!=NULL);
+  REQUIRE(strcmp(waited.text,"exit 0")!=0);
+  /* Relaunch remains blocked by the custody record. */
+  char *retry_args=br_path(directory,"native.stderr");
+  REQUIRE(retry_args!=NULL);
+  BatonProcessCall relaunch={.directory=directory,.args=native_args,
+    .length=(u32)(strlen(self)+strlen("native-sleep")+2),.cwd="/",.log=retry_args,
+    .initial="",.keep_stdin=0,.lock=(u32)guard,.recovery=recovery,
+    .recovery_length=sizeof(recovery)};
+  char *relaunch_dir=NULL,*relaunch_address=NULL;
+  REQUIRE(br_attempt_prepare(&relaunch,&relaunch_dir,&relaunch_address,1)==EBUSY);
+  free(retry_args);
+  /* Leave no fixture processes behind. */
+  kill(-state.pid,SIGKILL);
+  kill(keeper,SIGKILL);
+  waitpid(keeper,NULL,0);
+  printf("custody-adopt PASS\n");
+  return 0;
+}
