@@ -9,11 +9,16 @@ name: bend2-native-development
       - '.github/scripts/reuse-native-target.py'
       - '.github/scripts/reuse-native-main.py'
       - '.github/scripts/prepare-native-compiler.py'
+      - '.github/scripts/repl-package.py'
       - 'LICENSE'
       - 'NOTICE'
       - 'bend2/src/**'
       - 'bend2/scripts/build-native.sh'
       - 'bend2/scripts/package-native.py'
+      - 'bend2/scripts/stage-repl-compiler.py'
+      - 'bend2/scripts/check-install.py'
+      - 'bend2/scripts/stage-native-install.py'
+      - 'bend2/compiler/**'
       - 'bend2/scripts/smoke-native-artifact.py'
       - 'bend2/scripts/*.mjs'
       - 'bend2/harness/**'
@@ -213,6 +218,13 @@ jobs:
                      'checks': records, 'selected_results': selected_results, 'main_c_reuse': main_c_reuse}
           (run / 'generated/handoff-manifest.json').write_text(json.dumps(handoff, indent=2) + '\n')
           PY
+      - name: Retain required REPL compiler source inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 "$GITHUB_WORKSPACE/.github/scripts/repl-package.py" source \
+            --source "$GITHUB_WORKSPACE/bend2/compiler/upstream" \
+            --output "$BATON2_LINUX_RUN/generated/repl-source"
       - name: Retain native object cache statistics
         if: always() && env.BATON2_CCACHE != ''
         shell: bash
@@ -420,6 +432,13 @@ jobs:
           npm install --prefix "$run/typescript-runtime" --ignore-scripts --no-audit --no-fund \
             typescript@5.9.3 > "$run/typescript-install.stdout" 2> "$run/typescript-install.stderr"
 
+      - name: Prepare required Darwin REPL runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 "$GITHUB_WORKSPACE/.github/scripts/repl-package.py" runtime \
+            --output "$BATON2_NATIVE_RUN/repl-runtime"
+
       - name: Verify generated C against exact producer source and results
         shell: bash
         run: |
@@ -538,6 +557,13 @@ jobs:
             --generated-c "$RUNNER_TEMP/baton2-generated-c-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/generated/baton2.c"
             --context-typescript-package "$BATON2_NATIVE_RUN/typescript-runtime/node_modules/typescript"
           )
+          runtime_sha=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["binary"]["sha256"])' "$BATON2_NATIVE_RUN/repl-runtime/runtime.json")
+          package_args+=(
+            --repl-compiler-source "$RUNNER_TEMP/baton2-generated-c-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/generated/repl-source/source"
+            --repl-runtime "$BATON2_NATIVE_RUN/repl-runtime/bun"
+            --repl-runtime-sha256 "$runtime_sha"
+            --repl-runtime-notices "$BATON2_NATIVE_RUN/repl-runtime/Bun-NOTICES"
+          )
           if [[ -n "$BATON2_RELEASE_VERSION" ]]; then
             package_args+=(--release-version "$BATON2_RELEASE_VERSION")
           fi
@@ -558,6 +584,16 @@ jobs:
           assert not manifest['source']['status'], 'Package source is dirty'
           payload = package / manifest['archive_root']
           provenance = payload / 'share/baton2/generated-c-provenance'
+          selected_repl = [row for row in manifest.get('selected_dependencies', []) if row['id'] == 'bend2-repl-compiler']
+          assert len(selected_repl) == 1 and selected_repl[0]['required'] is True
+          shutil.copyfile(run / 'repl-runtime/runtime.json', provenance / 'repl-runtime.json')
+          runtime = json.loads((run / 'repl-runtime/runtime.json').read_text())
+          dependency = selected_repl[0]
+          compiler_manifest = payload / dependency['path'] / dependency['manifest']
+          assert hashlib.sha256(compiler_manifest.read_bytes()).hexdigest() == dependency['sha256']
+          compiler = json.loads(compiler_manifest.read_text())
+          assert compiler['runtimeSha256'] == runtime['binary']['sha256']
+          assert hashlib.sha256((payload / dependency['path'] / 'notices/Bun-NOTICES').read_bytes()).hexdigest() == runtime['notices']['sha256']
           transfer = pathlib.Path(os.environ['RUNNER_TEMP']) / ('baton2-generated-c-' + os.environ['GITHUB_RUN_ID'] + '-' + os.environ['GITHUB_RUN_ATTEMPT'])
           shutil.copytree(transfer / 'generated', provenance)
           shutil.copytree(transfer / 'evidence', provenance / 'producer-results')
@@ -609,6 +645,11 @@ jobs:
             --unavailable-source "$build" --output "$BATON2_NATIVE_RUN/smoke" \
             > "$BATON2_NATIVE_RUN/smoke-command.stdout" \
             2> "$BATON2_NATIVE_RUN/smoke-command.stderr"
+          installed_prefix=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["extracted_prefix"])' "$BATON2_NATIVE_RUN/smoke/summary.json")
+          python3 "$GITHUB_WORKSPACE/.github/scripts/repl-package.py" smoke \
+            --prefix "$installed_prefix" --output "$BATON2_NATIVE_RUN/repl-smoke" \
+            > "$BATON2_NATIVE_RUN/repl-smoke-command.stdout" \
+            2> "$BATON2_NATIVE_RUN/repl-smoke-command.stderr"
 
       - name: Retain native artifact and validation evidence
         if: always()
@@ -622,6 +663,9 @@ jobs:
             ${{ env.BATON2_NATIVE_RUN }}/build-settings/
             ${{ env.BATON2_NATIVE_RUN }}/generated-c-verification.json
             ${{ env.BATON2_NATIVE_RUN }}/selected-comparison.json
+            ${{ env.BATON2_NATIVE_RUN }}/repl-runtime/
+            ${{ env.BATON2_NATIVE_RUN }}/repl-smoke/
+            ${{ env.BATON2_NATIVE_RUN }}/repl-smoke-command.*
             ${{ env.BATON2_NATIVE_RUN }}/typescript-runtime/package-lock.json
             ${{ env.BATON2_NATIVE_RUN }}/typescript-install.stdout
             ${{ env.BATON2_NATIVE_RUN }}/typescript-install.stderr

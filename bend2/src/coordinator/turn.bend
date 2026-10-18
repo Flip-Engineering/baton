@@ -1089,23 +1089,31 @@ def retained_native(+db: String, +player: String, +sessions: String, +session: S
     legacy : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ C.q(db ++ ".session-") ++ " || lower(hex(id)) FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
     Omp.resume_file(Tx.trim_nl(legacy),sessions,selected,Bool.and(enabled,String.eq(selected,session)))
 
+def retained_prepare_checked(+db: String, +player: String, +directory: String, +cmd: String, +model: String, +effort: String, +session: String, +harness: String, +sessions: String, +prompt: String, +level: String, seal_prompt: Bool, predecessor: String, checked: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,RetainedLaunch>):
+  match checked:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,RetainedLaunch>,Fail{error})
+    case Done{made}: do IO<Result<&1,&1,U32 & String,RetainedLaunch>>:
+      +initial : String <- IO.try(String,NativeInitialInput.prepare(db,player,directory,prompt,predecessor))
+      +native : String <- retained_native(db,player,sessions,session,harness)
+      +prompt_file : String <- IO.pure(String,directory ++ "/prompt.txt")
+      +executable : String <- IO.try(String,Lock.SessionLock.executable())
+      identity : String & String <- IO.try(String & String,HostControl.Control.identity(executable))
+      absolute_db : String <- IO.try(String,Lock.SessionLock.canonical(db))
+      +prefix : String <- IO.pure(String,P.argv(["/usr/bin/env","BATON_DATABASE=" ++ absolute_db,"BATON_SESSION=" ++ player,"BATON_ATTEMPT_DIRECTORY=" ++ directory]) ++ retained_identity_prefix(model,identity))
+      muse_args : String <- IO.pure(String,prefix ++ P.argv(muse_retained_arguments(cmd,model,effort,prompt_file,session)))
+      +omp : Bool <- IO.pure(Bool,String.eq(harness,"omp\n"))
+      +claude : Bool <- IO.pure(Bool,String.eq(harness,"claude-code\n"))
+      +store : String <- current_store(db,player,harness)
+      history : String <- current_history(db,player)
+      +args : String <- IO.pure(String,prefix ++ Bool.pick(String,String.is_empty(store),retained_arguments(omp,claude,cmd,model,effort,sessions,native),retained_profile_arguments(omp,claude,Subs.store_binding(Tx.trim_nl(harness),store),Subs.history_override(Tx.trim_nl(harness),history),cmd,model,effort,sessions,native)))
+      +muse : Bool <- IO.pure(Bool,String.eq(harness,"muse\n"))
+      IO.pure(Result<&1,&1,U32 & String,RetainedLaunch>,Done{Prepared{Bool.pick(String,muse,muse_args,args),retained_input(muse,omp,claude,initial,level),initial,retained_keep_stdin(muse,omp,claude),Bool.or(muse,seal_prompt)}})
+
 def retained_prepare(+db: String, +player: String, +directory: String, +cmd: String, +model: String, +effort: String, +session: String, +harness: String, +sessions: String, +prompt: String, +level: String, seal_prompt: Bool, predecessor: String) -> IO(Result<&1,&1,U32 & String,RetainedLaunch>):
   do IO<Result<&1,&1,U32 & String,RetainedLaunch>>:
-    +initial : String <- IO.try(String,NativeInitialInput.prepare(db,player,directory,prompt,predecessor))
-    +native : String <- retained_native(db,player,sessions,session,harness)
-    +prompt_file : String <- IO.pure(String,directory ++ "/prompt.txt")
-    +executable : String <- IO.try(String,Lock.SessionLock.executable())
-    identity : String & String <- IO.try(String & String,HostControl.Control.identity(executable))
-    absolute_db : String <- IO.try(String,Lock.SessionLock.canonical(db))
-    +prefix : String <- IO.pure(String,P.argv(["/usr/bin/env","BATON_DATABASE=" ++ absolute_db,"BATON_SESSION=" ++ player,"BATON_ATTEMPT_DIRECTORY=" ++ directory]) ++ retained_identity_prefix(model,identity))
-    muse_args : String <- IO.pure(String,prefix ++ P.argv(muse_retained_arguments(cmd,model,effort,prompt_file,session)))
     +omp : Bool <- IO.pure(Bool,String.eq(harness,"omp\n"))
-    +claude : Bool <- IO.pure(Bool,String.eq(harness,"claude-code\n"))
-    +store : String <- current_store(db,player,harness)
-    history : String <- current_history(db,player)
-    +args : String <- IO.pure(String,prefix ++ Bool.pick(String,String.is_empty(store),retained_arguments(omp,claude,cmd,model,effort,sessions,native),retained_profile_arguments(omp,claude,Subs.store_binding(Tx.trim_nl(harness),store),Subs.history_override(Tx.trim_nl(harness),history),cmd,model,effort,sessions,native)))
-    +muse : Bool <- IO.pure(Bool,String.eq(harness,"muse\n"))
-    IO.pure(Result<&1,&1,U32 & String,RetainedLaunch>,Done{Prepared{Bool.pick(String,muse,muse_args,args),retained_input(muse,omp,claude,initial,level),initial,retained_keep_stdin(muse,omp,claude),Bool.or(muse,seal_prompt)}})
+    checked : Result<&1,&1,U32 & String,Unit> <- Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),omp,Omp.preflight(),IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}))
+    retained_prepare_checked(db,player,directory,cmd,model,effort,session,harness,sessions,prompt,level,seal_prompt,predecessor,checked)
 
 def retained_admit(+db: String, +directory: String, +cwd: String, +prompt: String, +lock: U32, +recovery: String, launch: RetainedLaunch) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
   match launch:
@@ -1159,9 +1167,19 @@ def muse_launch(cmd: String, model: String, effort: String, cwd: String, stderr:
     case True{}: Muse.start_player(cmd,model,effort,cwd,stderr,task)
     case False{}: Muse.resume_player(cmd,model,effort,cwd,stderr,session,task)
 
+def omp_launch_checked(sessions: String, cmd: String, model: String, effort: String, cwd: String, stderr: String, +session: String, checked: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,U32>):
+  match checked:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,U32>,Fail{error})
+    case Done{made}: Omp.start_player(cmd,model,effort,cwd,sessions,session,String.is_empty(session),stderr)
+
+def omp_launch(sessions: String, cmd: String, model: String, effort: String, cwd: String, stderr: String, session: String) -> IO(Result<&1,&1,U32 & String,U32>):
+  do IO<Result<&1,&1,U32 & String,U32>>:
+    checked : Result<&1,&1,U32 & String,Unit> <- Omp.preflight()
+    omp_launch_checked(sessions,cmd,model,effort,cwd,stderr,session,checked)
+
 def launch(sessions: String, +cmd: String, +model: String, +effort: String, +cwd: String, +stderr: String, +session: String, +harness: String, task: String) -> IO(Result<&1,&1,U32 & String,U32>):
   Bool.pick(IO(Result<&1,&1,U32 & String,U32>), String.eq(harness,"omp\n"),
-    Omp.start_player(cmd,model,effort,cwd,sessions,session,String.is_empty(session),stderr),
+    omp_launch(sessions,cmd,model,effort,cwd,stderr,session),
   Bool.pick(IO(Result<&1,&1,U32 & String,U32>), String.eq(harness,"muse\n"),
     muse_launch(cmd,model,effort,cwd,stderr,session,task,String.is_empty(session)),
   Bool.pick(IO(Result<&1,&1,U32 & String,U32>), String.eq(harness,"codex\n"),
