@@ -477,7 +477,7 @@ def models_all_answers(+db: String, routes: List<&2,Discovered>) -> IO(String):
       IO.pure(String,Bool.pick(String,String.is_empty(tail),answer,answer ++ "," ++ tail))
 
 def models_all_limits() -> String:
-  "Entries are one observation per recorded session with a harness, each carrying its source session and recorded workspace. A harness without a recorded session is unknown here, not absent. Sessions whose recorded route fields contain '|' are excluded. Account-wide usable models remain unknown. Muse entries show one recorded model's profile with its recorded effort; model existence stays unknown. Quota, budget, freshness and probe outcomes do not gate this read."
+  "Entries are one observation per recorded session with a harness, each carrying its source session and recorded workspace. A harness without a recorded session has no entry in this read. Sessions whose recorded route fields contain '|' are excluded. Account-wide usable models remain unknown. Muse entries show one recorded model's profile with its recorded effort; model existence stays unknown. Quota, budget, freshness and probe outcomes do not gate this read."
 
 def models_all_envelope(+session: String, +routes: String) -> String:
   "{\"schema\":\"baton2-model-discovery-v1\",\"state\":\"reported\",\"session\":" ++ J.string_literal(session) ++ ",\"scope\":\"recorded-harnesses\",\"routes\":[" ++ routes ++ "],\"limits\":" ++ J.string_literal(models_all_limits()) ++ "}"
