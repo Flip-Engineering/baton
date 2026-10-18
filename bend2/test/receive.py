@@ -4643,6 +4643,53 @@ class Receive(unittest.TestCase):
                 self.assertTrue((directory / 'acknowledged').exists())
                 self.assert_no_start()
 
+    def test_text_only_completion_consumes_delivered_guidance_and_delivers_follow_up(self):
+        """A completed text-only turn consumes the guidance it already received.
+        The first unread guidance is not replayed; the later distinct follow-up is
+        delivered next.
+        """
+        self.player(harness='omp')
+        self.prepare_input('original', 'parent', 'Original task.', kind='task')
+        observer = self.spawn(*self.receive_args('parent'))
+        control, started = self.accept('parent')
+        self.assertIn('[id: original]', started['prompt'])
+        with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
+            attempt, = database.execute(
+                "SELECT id FROM executions WHERE session='parent'").fetchone()
+        guidance = 'g' * 922
+        self.message('first-guidance', 'parent', guidance)
+        self.action(control, read_steer=True, complete_task=False, ack=False)
+        self.action(control, body='Text-only native stop.', complete_task=False, ack=False)
+        self.finish(observer)
+        self.assertEqual(self.coord('delivery', 'first-guidance')['receipt'],
+                         'native-turn:' + attempt)
+        self.message('follow-up', 'parent', 'The distinct follow-up after the text-only stop.')
+        second = self.spawn(*self.receive_args('parent'))
+        stream, resumed = self.accept('parent')
+        self.assertIn('[id: follow-up]', resumed['prompt'])
+        self.assertNotIn('[id: first-guidance]', resumed['prompt'])
+        self.assertIsNone(self.coord('delivery', 'follow-up')['receipt'])
+        self.action(stream, body='Follow-up complete.', complete_task=False)
+        self.finish(second)
+        self.assertEqual(self.coord('inbox', 'parent'), [])
+
+    def test_text_only_completion_preserves_owed_follow_up_when_stopped(self):
+        """A follow-up that arrives without being delivered remains owed when the
+        session stops; completion does not consume undelivered input.
+        """
+        self.player(harness='omp')
+        self.prepare_input('original', 'parent', 'Original task.', kind='task')
+        observer = self.spawn(*self.receive_args('parent'))
+        control, started = self.accept('parent')
+        self.message('first-guidance', 'parent', 'Delivered guidance.')
+        self.action(control, read_steer=True, complete_task=False, ack=False)
+        self.action(control, body='Text-only native stop.', complete_task=False, ack=False)
+        self.finish(observer)
+        self.message('follow-up', 'parent', 'Owed follow-up after the stop.')
+        self.coord('stop', 'parent', 'fframes-stop', 'Preserve the owed follow-up.')
+        self.assertIsNone(self.coord('delivery', 'follow-up')['receipt'])
+        self.assertIn('follow-up', [message['id'] for message in self.coord('inbox', 'parent')])
+
     def test_failed_continuation_retains_queued_guidance_for_retry(self):
         """Accepted steering remains owed through a provider failure, and the
         same actor handles it during an explicit retry.
