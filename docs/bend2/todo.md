@@ -4,6 +4,14 @@ The [open GitHub issues](https://github.com/Flip-Engineering/baton/issues?q=is%3
 retain findings, ownership and acceptance requirements. This page links current
 Baton follow-up work for contributors. Every open issue has a link on this page.
 
+- [#844: Native DeepSeek Harness support](https://github.com/Flip-Engineering/baton/issues/844).
+  Launch the official `@deepseek-ai/dsh` 0.2.1-rc.2 headless profile through
+  `--profile headless --json`, resume with `--session-id`, and keep the
+  credential in the launch environment. Compose the minimal roster (`bash`,
+  `read_image`, `working_directory`) and `reasoningEffort: max` in independent
+  patch overlays. The adapter, its tests and the open limitations are in
+  `bend2/src/harness/dsh-player.bend` and `docs/bend2/dsh-adapter.md`.
+
 - [#761: Move Codex inbox coordination decisions into Bend](https://github.com/Flip-Engineering/baton/issues/761).
   Move database claims, native and stop checks, input selection, failure
   retention, admission and continuation from `codex-inbox-wake.mjs` into Bend.

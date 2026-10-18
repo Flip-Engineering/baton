@@ -55,7 +55,7 @@ def result_sql(+session: String) -> String:
 
 # Legacy direct attempts have no keeper directory. Refusal preserves their rows.
 def supported_sql(+session: String) -> String:
-  "EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ " AND harness IN ('omp','codex','muse','claude-code')) AND NOT EXISTS(SELECT 1 FROM executions WHERE session=" ++ C.q(session) ++ " AND mode='direct' AND phase<>'exited' AND directory='')"
+  "EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ " AND harness IN ('omp','codex','muse','claude-code','dsh')) AND NOT EXISTS(SELECT 1 FROM executions WHERE session=" ++ C.q(session) ++ " AND mode='direct' AND phase<>'exited' AND directory='')"
 
 # The operator resolution of a stopped session's wake obligation: the admitted
 # stop clears the claim, so no driver hands the retained input on, and the input

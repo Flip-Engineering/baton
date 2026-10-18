@@ -121,6 +121,37 @@ class ObservedUsage(unittest.TestCase):
                              (str(workspace), session))
         return workspace, command
 
+    def test_dsh_usage_comes_from_status_step_end(self):
+        self.call('attach', 'dsh-reader', 'dsh', 'session-9', '')
+        log = self.directory / 'dsh-public.log'
+        log.write_text(''.join(json.dumps(entry) + '\n' for entry in [
+            {'type': 'session', 'sessionId': 'session-9', 'cwd': '/w'},
+            {'type': 'status', 'phase': 'step_end', 'turn': 1, 'step': 1,
+             'usage': {'inputTokens': 11, 'outputTokens': 7, 'totalTokens': 18}},
+            {'type': 'status', 'phase': 'step_end', 'turn': 1, 'step': 2,
+             'usage': {'inputTokens': 5, 'outputTokens': 3, 'cacheReadTokens': 2}},
+            {'type': 'status', 'phase': 'turn_end', 'turn': 1,
+             'reason': {'kind': 'completed'}},
+            {'type': 'final', 'text': 'ok'},
+        ]))
+        with sqlite3.connect(self.db) as database:
+            database.execute(
+                "INSERT OR REPLACE INTO log_files(session,log) VALUES(?,?)",
+                ('dsh-reader', str(log)))
+        result = self.call('observed-usage', 'dsh-reader')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, '')
+        answer = json.loads(result.stdout)
+        self.assertEqual(answer['harness'], 'dsh')
+        self.assertEqual(answer['source'], str(log))
+        self.assertEqual(answer['shape'], 'step-usage')
+        self.assertEqual(answer['records'], 2)
+        self.assertEqual(answer['observations'], 2)
+        self.assertEqual(answer['malformed'], 0)
+        self.assertEqual(answer['observed'],
+                         {'input': 16, 'output': 10, 'cacheRead': 2,
+                          'totalTokens': 18})
+
     def test_provider_query_preserves_opencode_go_facts_and_recorded_workspace(self):
         self.write([])
         observation = {'generatedAt': 1791442800000,

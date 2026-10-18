@@ -196,7 +196,7 @@ def omp_terminal_error_sql_expr(+event: String) -> String:
 
 def blocked_cause_sql(+session: String) -> String:
   "CASE WHEN " ++ stopped_session_sql(session) ++ " THEN 'terminal-stop'"
-  ++ " WHEN (SELECT route.harness FROM sessions AS route WHERE route.id=" ++ session ++ ") NOT IN ('codex','omp','muse','claude-code') THEN 'harness-unsupported'"
+  ++ " WHEN (SELECT route.harness FROM sessions AS route WHERE route.id=" ++ session ++ ") NOT IN ('codex','omp','muse','claude-code','dsh') THEN 'harness-unsupported'"
   ++ " WHEN " ++ blocked_endpoint_absent_sql(session) ++ " AND NOT " ++ direct_app_route_sql(session) ++ " THEN 'endpoint-absent'"
   ++ " WHEN EXISTS(SELECT 1 FROM executions e WHERE e.session=" ++ session ++ " AND e.phase='exited' AND (e.status<>'exit 0' OR EXISTS(SELECT 1 FROM turns t WHERE t.id=e.id AND t.worker=e.session AND (coalesce(json_extract(t.event,'$.is_error'),0)=1 OR " ++ omp_terminal_error_sql_expr("t.event") ++ " OR (json_extract(t.event,'$.payload.kind')='run_terminal' AND json_extract(t.event,'$.payload.terminal')<>'completed'))))) THEN 'provider-failure'"
   ++ " ELSE '' END"
@@ -301,7 +301,7 @@ def configure_matches(session: String, harness: String, model: String, effort: S
   "EXISTS(SELECT 1 FROM sessions WHERE id=" ++ q(session) ++ " AND harness=" ++ q(harness) ++ " AND model=" ++ q(model) ++ " AND effort=" ++ q(effort) ++ ")"
 
 def configure_admitted(+session: String, +harness: String, +model: String, +endpoint: String, +expected_harness: String, +expected_model: String, expected_effort: String) -> String:
-  "(" ++ q(harness) ++ " IN ('codex','omp','muse','claude-code') AND " ++ q(model) ++ "<>'' AND " ++ configure_matches(session,expected_harness,expected_model,expected_effort)
+  "(" ++ q(harness) ++ " IN ('codex','omp','muse','claude-code','dsh') AND " ++ q(model) ++ "<>'' AND " ++ configure_matches(session,expected_harness,expected_model,expected_effort)
   ++ " AND ((" ++ q(harness) ++ "=" ++ q(expected_harness) ++ " AND " ++ q(model) ++ "=" ++ q(expected_model) ++ ") OR (NOT " ++ stopped_session_sql(q(session))
   ++ " AND NOT EXISTS(SELECT 1 FROM executions WHERE session=" ++ q(session) ++ " AND phase<>'exited')"
   ++ " AND " ++ endpoint_admitted(endpoint) ++ ")))"
