@@ -30,6 +30,13 @@ describes native packaging and the extracted-artifact runtime smoke.
 Runtime fixtures are available in `bend2/test` and `bend2/tests`. Run checks for
 the affected commands and host behavior on remote validation runners.
 
+The focused knowledge check builds `bend2/test/focused-knowledge.bend` and runs
+the knowledge behavior fixture through that entry:
+
+```sh
+sh bend2/scripts/check-knowledge-focused.sh
+```
+
 `python3 bend2/scripts/compare-coordinators.py --help` describes a repeatable
 comparison of retained coordination operations with a pinned old Baton checkout.
 The [measurement report](../docs/bend2/comparison-2026-09-28.md) records its
