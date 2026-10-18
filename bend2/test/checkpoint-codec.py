@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import time
@@ -37,9 +38,17 @@ def require(condition: bool, message: str) -> None:
 
 
 def main() -> None:
-    if len(sys.argv) != 2:
-        raise SystemExit("usage: checkpoint-codec.py BINARY")
-    binary = Path(sys.argv[1]).resolve(strict=True)
+    if len(sys.argv) == 1 and not os.environ.get("BATON2_CHECKPOINT_CODEC"):
+        print(json.dumps({"skipped": True,
+                          "reason": "set BATON2_CHECKPOINT_CODEC to the compiled probe"}))
+        return
+    if len(sys.argv) == 2:
+        binary_arg = sys.argv[1]
+    elif len(sys.argv) == 1:
+        binary_arg = os.environ["BATON2_CHECKPOINT_CODEC"]
+    else:
+        raise SystemExit("usage: checkpoint-codec.py [BINARY]")
+    binary = Path(binary_arg).resolve(strict=True)
     small = {
         "empty": "",
         "ascii": "checkpoint",
