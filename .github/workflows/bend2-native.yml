@@ -576,7 +576,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import hashlib, json, os, pathlib, shutil, tarfile
+          import hashlib, importlib.util, json, os, pathlib, shutil, tarfile
           run = pathlib.Path(os.environ['BATON2_NATIVE_RUN'])
           package = run / 'package'
           manifest = json.loads((package / 'manifest.json').read_text())
@@ -604,10 +604,18 @@ jobs:
           assets = [{'path': str(path.relative_to(payload)), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest(),
                      'size': path.stat().st_size} for path in sorted(provenance.rglob('*')) if path.is_file()]
           manifest['build']['generated_c_provenance'] = {'path': str(provenance.relative_to(payload)), 'assets': assets}
-          manifest['binary']['sha256'] = hashlib.sha256((payload / 'bin/baton2').read_bytes()).hexdigest()
+          manifest['binary']['sha256'] = hashlib.sha256((payload / manifest['binary']['path']).read_bytes()).hexdigest()
+          for record in manifest['binaries']:
+              assert hashlib.sha256((payload / record['path']).read_bytes()).hexdigest() == record['sha256'], record
           manifest['build']['typescript_package_lock_sha256'] = hashlib.sha256((run / 'typescript-runtime/package-lock.json').read_bytes()).hexdigest()
           for path in (payload / 'manifest.json', package / 'manifest.json'):
               path.write_text(json.dumps(manifest, indent=2) + '\n')
+          finalize_spec = importlib.util.spec_from_file_location(
+              'finalize_native_payload', run / 'bend2/scripts/finalize-native-payload.py')
+          finalizer = importlib.util.module_from_spec(finalize_spec)
+          finalize_spec.loader.exec_module(finalizer)
+          finalize = finalizer.finalize(payload)
+          assert finalize['files'] > 0
           result = json.loads((package / 'result.json').read_text())
           archive = package / result['archive']['path']
           replacement = package / (archive.name + '.new')

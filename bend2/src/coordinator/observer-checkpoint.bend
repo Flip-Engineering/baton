@@ -5,6 +5,7 @@ import ../host/instance.bend as Custody
 import ../git/text.bend as Tx
 import ../context/text.bend as ContextText
 import ../context/request.bend as Request
+import ./../coordinator/logs.bend as Logs
 
 # Reducer state committed with the host spool cursor for one retained native
 # attempt. The host binds the encoded value to its attempt identity and byte
@@ -94,6 +95,12 @@ def codex_log(state: State) -> String:
 def held(state: State) -> String:
   match state:
     case State{guidance_cursor,last_message,muse_primary,muse_current,terminal,filter_mode,codex_log,held,omp_activity,output,output_done,episode}: held
+
+
+def with_held(state: State, held: String) -> State:
+  match state:
+    case State{guidance_cursor,last_message,muse_primary,muse_current,terminal,filter_mode,codex_log,previous,omp_activity,output,output_done,episode}:
+      State{guidance_cursor,last_message,muse_primary,muse_current,terminal,filter_mode,codex_log,held,omp_activity,output,output_done,episode}
 
 # Held OMP prefixes stay in memory while a message or tool call is active. They
 # are included in the next semantic checkpoint, but do not cause a disk write
@@ -194,32 +201,89 @@ def decode_valid(db: String, value: String) -> IO(State):
     row : String <- IO.try(String,DB.Sql.query(db,decode_fields_sql(value)))
     decode_fields(ContextText.split_tabs(without_query_newline(row)))
 
-def reset_empty(handle: U32) -> IO(State):
-  do IO<State>:
-    reset : Unit <- IO.try(Unit,Custody.Instance.replay(handle))
-    IO.pure(State,empty())
+# The host state names the custody held by this handle. Monitor custody writes
+# reducer state through its separately validated operation.
+def monitor_handle(db: String, handle: U32) -> IO(Bool):
+  do IO<Bool>:
+    facts : String <- IO.try(String,Custody.Instance.state(handle))
+    mode : String <- IO.try(String,DB.Sql.query(db,"SELECT json_extract(" ++ C.q(facts) ++ ",'$.observation');"))
+    IO.pure(Bool,String.eq(Tx.trim_nl(mode),"monitor"))
 
-def decode_nonempty(+db: String, handle: U32, +value: String) -> IO(State):
-  do IO<State>:
-    valid : String <- IO.try(String,DB.Sql.query(db,valid_sql(value)))
-    Bool.pick(IO(State),String.eq(Tx.trim_nl(valid),"1"),decode_valid(db,value),reset_empty(handle))
+def commit_with(monitor: Bool, handle: U32, +saved: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match monitor:
+    case True{}: Custody.Instance.monitor_commit(handle,schema_version(),saved)
+    case False{}: Custody.Instance.commit(handle,schema_version(),saved)
 
-def decode(db: String, handle: U32, +value: String) -> IO(State):
-  Bool.pick(IO(State),String.is_empty(value),IO.pure(State,empty()),decode_nonempty(db,handle,value))
-
-def restore(db: String, +handle: U32) -> IO(State):
-  do IO<State>:
-    saved : String <- IO.try(String,Custody.Instance.restore(handle,schema_version()))
-    decode(db,handle,without_query_newline(saved))
-
-def commit(db: String, handle: U32, +state: State, enabled: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+def commit(db: String, handle: U32, +state: State, enabled: Bool, monitor: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match enabled:
     case False{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
     case True{}: do IO<Result<&1,&1,U32 & String,Unit>>:
       saved : String <- IO.try(String,DB.Sql.query(db,encode_sql(state)))
-      Custody.Instance.commit(handle,schema_version(),Tx.trim_nl(saved))
+      commit_with(monitor,handle,saved)
 
-def after_observation(db: String, handle: U32, +state: State, enabled: Bool, observed: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,Unit>):
+def reset_empty_case(db: String, +handle: U32, monitor: Bool) -> IO(State):
+  match monitor:
+    case True{}: do IO<State>:
+      committed : Unit <- IO.try(Unit,commit(db,handle,empty(),True{},True{}))
+      IO.pure(State,empty())
+    case False{}: do IO<State>:
+      reset : Unit <- IO.try(Unit,Custody.Instance.replay(handle))
+      committed : Unit <- IO.try(Unit,commit(db,handle,empty(),True{},False{}))
+      IO.pure(State,empty())
+
+def reset_empty(db: String, +handle: U32, monitor: Bool) -> IO(State):
+  reset_empty_case(db,handle,monitor)
+
+def decode_nonempty(+db: String, handle: U32, +value: String, monitor: Bool) -> IO(State):
+  do IO<State>:
+    valid : String <- IO.try(String,DB.Sql.query(db,valid_sql(value)))
+    Bool.pick(IO(State),String.eq(Tx.trim_nl(valid),"1"),decode_valid(db,value),reset_empty(db,handle,monitor))
+
+def decode_nonempty_choice(db: String, handle: U32, +value: String, monitor: Bool, empty_value: Bool) -> IO(State):
+  match empty_value:
+    case True{}: reset_empty(db,handle,monitor)
+    case False{}: decode_nonempty(db,handle,value,monitor)
+
+def decode(db: String, handle: U32, +value: String, monitor: Bool) -> IO(State):
+  decode_nonempty_choice(db,handle,value,monitor,String.is_empty(value))
+
+def restore(db: String, +handle: U32, monitor: Bool) -> IO(State):
+  do IO<State>:
+    saved : String <- IO.try(String,Custody.Instance.restore(handle,schema_version()))
+    decode(db,handle,without_query_newline(saved),monitor)
+
+# Keep the materialized held projection for the next iteration only after
+# its checkpoint is durable. A failed or skipped checkpoint retains the raw
+# span tokens so replay starts from the prior durable cursor.
+def held_after_checkpoint(enabled: Bool, +materialized: String, +pending: String, result: Result<&1,&1,U32 & String,Unit>) -> String:
+  match result:
+    case Fail{error}: pending
+    case Done{unit}: Bool.pick(String,enabled,materialized,pending)
+
+def checkpoint_state(+spool: String, +state: State, enabled: Bool) -> IO(State):
+  match enabled:
+    case False{}: IO.pure(State,state)
+    case True{}:
+      +final = Bool.or(output_done(state),Bool.not(String.is_empty(terminal(state))))
+      Bool.pick(IO(State),final,
+        (do IO<State>:
+          raw_held : String <- Logs.materialize_held(spool,held(state))
+          IO.pure(State,with_held(state,raw_held))),
+        IO.pure(State,state))
+
+def commit_with_held(+db: String, handle: U32, +spool: String, +state: State, enabled: Bool, monitor: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match enabled:
+    case False{}: commit(db,handle,state,False{},monitor)
+    case True{}: do IO<Result<&1,&1,U32 & String,Unit>>:
+      prepared : State <- checkpoint_state(spool,state,True{})
+      commit(db,handle,prepared,True{},monitor)
+
+def after_materialized_observation(db: String, handle: U32, +state: State, enabled: Bool, monitor: Bool, observed: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match observed:
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error})
-    case Done{text}: commit(db,handle,state,enabled)
+    case Done{text}: commit(db,handle,state,enabled,monitor)
+
+def after_observation(db: String, handle: U32, +spool: String, +state: State, enabled: Bool, monitor: Bool, observed: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match observed:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error})
+    case Done{text}: commit_with_held(db,handle,spool,state,enabled,monitor)

@@ -418,10 +418,23 @@ while True:
         print(json.dumps({'type':'system','subtype':'init','session_id':native}),flush=True)
         reply({'initialized':native})
         continue
+    if action.get('emit_nul_tail'):
+        count=int(action['emit_nul_tail'])
+        os.write(1,b'\x00'*count)
+        sys.stdout.flush()
+        reply({'nul_tail_written':count})
+        if action.get('exit_after_nul_tail',False): break
+        continue
     if action.get('exit_fixture'):
         if action.get('complete_task',False):
             confirm_finished_fixture_task('Completed the controlled native observation task.')
         break
+    if action.get('emit_checkpoint_message'):
+        ident=action['emit_checkpoint_message']
+        frame={'type':'message_end','message':{'id':ident,'role':'assistant','content':[{'type':'text','text':'checkpoint '+ident}]}}
+        print(json.dumps(frame),flush=True)
+        reply({'checkpoint_message_written':ident})
+        continue
     if action.get('progress'):
         progress(action)
         continue
