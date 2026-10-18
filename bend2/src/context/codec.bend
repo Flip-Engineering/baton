@@ -232,11 +232,9 @@ def tool_present(m: Maybe<&2, Context.CodecTool>) -> Bool:
 # Neither the internal tool vocabulary nor the emitted tool names change, and the
 # original params.name bytes remain in the frame.
 def tool_input_name(+name: String) -> String:
-  match name:
-    case "baton2_context_query": "context-query"
-    case "baton2_context_result": "context-result"
-    case "baton2_context_engines": "context-engines"
-    case other: name
+  Bool.pick(String, String.eq(name, "baton2_context_query"), "context-query",
+    Bool.pick(String, String.eq(name, "baton2_context_result"), "context-result",
+      Bool.pick(String, String.eq(name, "baton2_context_engines"), "context-engines", name)))
 
 def env_tool_name(+env: Envelope) -> String:
   tool_input_name(env_tool_text(env))
