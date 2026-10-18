@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 import re
+import subprocess
 import sys
 import urllib.error
 import urllib.parse
@@ -27,8 +28,10 @@ def api_get(path, token):
             return json.load(response)
     except urllib.error.HTTPError as error:
         raise RuntimeError('GitHub API returned HTTP ' + str(error.code) + ' for ' + path) from None
-    except (urllib.error.URLError, TimeoutError) as error:
+    except urllib.error.URLError as error:
         raise RuntimeError('GitHub API request failed for ' + path + ': ' + str(error.reason)) from None
+    except TimeoutError:
+        raise RuntimeError('GitHub API request timed out for ' + path) from None
     except (json.JSONDecodeError, UnicodeDecodeError):
         raise RuntimeError('GitHub API returned invalid JSON for ' + path) from None
 
@@ -65,14 +68,24 @@ def list_group_repositories(org, group_id, token):
 
 
 def expected_workflow_ref(repository, workflow_path, branch):
-    if not re.fullmatch(r'[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*', branch):
+    if branch.startswith('refs/') or not re.fullmatch(r'[A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*', branch):
         raise ValueError('Workflow branch must be a branch name without refs/ or a pull-request ref')
     path = workflow_path.replace('\\', '/')
-    if path.startswith('/') or '..' in path.split('/') or not path.startswith('.github/workflows/'):
-        raise ValueError('Workflow path must be a repository workflow under .github/workflows/')
-    if not re.fullmatch(r'[^/]+\.ya?ml', path.rsplit('/', 1)[-1]):
-        raise ValueError('Workflow path must name a YAML workflow file')
+    if not re.fullmatch(r'\.github/workflows/[^/]+\.ya?ml', path):
+        raise ValueError('Workflow path must name a YAML file directly under .github/workflows/')
     return repository + '/' + path + '@refs/heads/' + branch
+
+
+def read_token():
+    token = os.environ.get('BATON2_RUNNER_GROUP_READ_TOKEN', '')
+    if token:
+        return token
+    try:
+        result = subprocess.run(['gh', 'auth', 'token', '--hostname', 'github.com'],
+                                capture_output=True, text=True, timeout=10, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return ''
+    return result.stdout.strip() if result.returncode == 0 else ''
 
 
 def main():
@@ -86,12 +99,12 @@ def main():
     parser.add_argument('--workflow-branch', required=True)
     args = parser.parse_args()
 
-    token = os.environ.get('BATON2_RUNNER_GROUP_READ_TOKEN', '')
+    token = read_token()
     if not token:
-        parser.error('set BATON2_RUNNER_GROUP_READ_TOKEN to a read-only organization runner token')
+        parser.error('authenticate gh or set BATON2_RUNNER_GROUP_READ_TOKEN with organization runner read access')
     if args.runner_group_id <= 0 or args.repository_id <= 0:
         parser.error('runner group and repository IDs must be positive')
-    if '/' not in args.repository or any(not part for part in args.repository.split('/')):
+    if not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', args.repository):
         parser.error('--repository must be owner/name')
     if args.repository.split('/', 1)[0].casefold() != args.org.casefold():
         parser.error('--repository owner must match --org')
@@ -112,12 +125,16 @@ def main():
             raise RuntimeError('Runner group does not authorize the exact direct branch workflow ref')
 
         repositories = list_group_repositories(args.org, args.runner_group_id, token)
-        repository_ids = sorted(row.get('id') for row in repositories)
-        if repository_ids != [args.repository_id]:
-            raise RuntimeError('Runner group must select only repository ID {}'.format(args.repository_id))
-        selected = repositories[0]
+        selected_rows = [row for row in repositories if row['id'] == args.repository_id]
+        if len(selected_rows) != 1:
+            raise RuntimeError('Runner group must select repository ID {}'.format(args.repository_id))
+        selected = selected_rows[0]
         if selected.get('full_name', '').casefold() != args.repository.casefold():
             raise RuntimeError('Selected repository ID resolves to a different repository')
+        if not isinstance(selected.get('private'), bool):
+            raise RuntimeError('Selected repository response has no public/private classification')
+        if not selected['private'] and group.get('allows_public_repositories') is not True:
+            raise RuntimeError('Runner group does not authorize this public repository')
     except (ValueError, RuntimeError) as error:
         print(json.dumps({'policy_ready': False, 'error': str(error)}, sort_keys=True), file=sys.stderr)
         return 1
