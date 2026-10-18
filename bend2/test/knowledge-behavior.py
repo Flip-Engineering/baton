@@ -128,8 +128,10 @@ class KnowledgeBehavior(unittest.TestCase):
                            'Notice claim', 'run:notice', '')
         self.assertIn('INSERT INTO messages', notice)
         self.assertIn("json_object('finding'", notice)
-        self.call('record', 'notice-finding', 'grand', 'observation',
-                  'Notice claim', 'run:notice', '')
+        stored = self.json_call('record', 'notice-finding', 'grand', 'observation',
+                                'Notice claim', 'run:notice', '')
+        self.assertEqual(stored['id'], 'notice-finding')
+        self.assertEqual(stored['author'], 'grand')
         inbox = self.json_call('inbox', 'worker')
         self.assertEqual(inbox[0]['body'], {'finding': 'notice-finding', 'author': 'grand'})
 

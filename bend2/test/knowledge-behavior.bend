@@ -27,15 +27,20 @@ def parsed_ok(args: List<String>) -> IO(Unit):
   action = A.parse(args)
   parsed_checked(action)
 
+def seed_result(result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
+  match result:
+    case Fail{(code,detail)}: IO.die(Unit,code,detail)
+    case Done{value}: IO.pure(Unit,Unit{})
+
 def seed_apply(+db: String, +command: C.Command) -> IO(Unit):
   do IO<Unit>:
     result : Result<&1,&1,U32 & String,String> <- Store.apply(db,command)
-    IO.pure(Unit,Unit{})
+    seed_result(result)
 
 def seed(+db: String) -> IO(Unit):
   do IO<Unit>:
     ensured : Unit <- Store.ensure_before_begin(db)
-    attached : Unit <- seed_apply(db,C.Attach{"root","requested-harness","native-test","native-endpoint"})
+    attached : Unit <- seed_apply(db,C.Attach{"root","requested-harness","native-test",""})
     worker : Unit <- seed_apply(db,C.Player{"worker","root","requested-harness","requested-model","high","/tmp/worker","worker-branch","base"})
     grand : Unit <- seed_apply(db,C.Player{"grand","worker","requested-harness","requested-model","high","/tmp/grand","grand-branch","base"})
     sibling : Unit <- seed_apply(db,C.Player{"sibling","root","requested-harness","requested-model","high","/tmp/sibling","sibling-branch","base"})
