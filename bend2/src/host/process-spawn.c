@@ -888,6 +888,7 @@ static int br_attach_socket(BatonChild *child,const char *directory,int socket,i
     if(!error && ready_ack)error=br_read_all(socket,&reply,sizeof(reply));
     if(!error && ready_ack && (reply.op!=BR_REPLY || reply.serial!=ready.serial || reply.length))error=EPROTO;
     if(!error && ready_ack)error=reply.error;
+    if(ready_ack)fprintf(stderr,"DBG ready reply op=%u serial=%llu len=%u error=%d\n",(unsigned)reply.op,(unsigned long long)reply.serial,(unsigned)reply.length,reply.error);
   }
   if(!error)error=pthread_create(&retained->receiver,NULL,br_receiver,retained);
   if(error){if(life>=0)close(life);if(guard>=0)close(guard);close(spool);close(socket);free(retained->directory);free(retained);return error;}
@@ -1249,7 +1250,9 @@ static int br_command(BrKeeper *keeper,BrFrame frame,const char *payload) {
     if(error)return br_reply(keeper,frame.serial,keeper->generation,error);
     keeper->ready=1;
     if((error=br_reply(keeper,frame.serial,keeper->generation,0)))return error;
-    return keeper->native_pid?br_native_exited(keeper):0;
+    /* The native exit is owned by the keeper waiter; reporting readiness must
+       not fail the keeper while the native is still running. */
+    return 0;
   }
   if(frame.op==BR_SIGNAL) {
     if(keeper->exited)error=ESRCH;
@@ -3799,6 +3802,7 @@ static int br_instance_join(BatonProcessCall *call,const char *directory,uint64_
     }
   }
   if(socket_fd>=0)close(socket_fd);
+  if(error)fprintf(stderr,"DBG join error=%d\n",error);
   return error;
 }
 /* Removes the attempt directory this call created when the owner refused and
@@ -3853,6 +3857,7 @@ static int br_instance_admit(BatonProcessCall *call,int dormant) {
     br_instance_state_call(call);
   }
   free(address);free(directory);
+  if(error)fprintf(stderr,"DBG admit error=%d\n",error);
   return error;
 }
 static int br_instance_attach_observer(BatonProcessCall *call,int64_t observer) {
@@ -4501,7 +4506,12 @@ static void br_read_awake(BatonProcessCall *call) {
 }
 static void br_instance_subscribe_call(BatonProcessCall *call) {
   uint64_t generation=0,after_cursor=0;
-  int error=br_parse_u64(call->generation,call->generation?strlen(call->generation):0,&generation);
+  /* An empty expected generation means the caller holds no incarnation and
+     accepts the owner's ready cursor or a gap snapshot; it is not a malformed
+     decimal. The after-cursor is still required to be decimal. */
+  int error=0;
+  if(call->generation && *call->generation)
+    error=br_parse_u64(call->generation,strlen(call->generation),&generation);
   if(!error)error=br_parse_u64(call->cursor,call->cursor?strlen(call->cursor):0,&after_cursor);
   BrInstanceReady ready={0};
   int socket_fd=-1;

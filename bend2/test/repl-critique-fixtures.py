@@ -112,9 +112,7 @@ class ReplCritiqueFixtures(unittest.TestCase):
             except subprocess.TimeoutExpired:
                 self.owner.kill()
                 self.owner.wait(timeout=30)
-        if self.observer is not None and self.observer.poll() is None:
-            self.observer.kill()
-            self.observer.wait(timeout=30)
+        self.close_observer()
         self.temp.cleanup()
 
     def invoke(self, *args, stdin=None):
@@ -442,8 +440,20 @@ class ReplCritiqueFixtures(unittest.TestCase):
         self.fail(cause + '\nstdout: ' + stdout + '\nstderr: ' + stderr
                   + '\nlast attempt: ' + repr(row))
 
+    def close_observer(self):
+        if self.observer is None:
+            return
+        if self.observer.poll() is None:
+            self.observer.kill()
+            self.observer.wait(timeout=30)
+        for stream in (self.observer.stdout, self.observer.stderr):
+            if stream is not None:
+                stream.close()
+        self.observer = None
+
     def start_io_evaluation(self, index):
         program = 'IO.write("window-marker-' + str(index) + '\\n")'
+        self.close_observer()
         self.observer = subprocess.Popen(
             [str(EXE), str(self.db), 'repl', 'eval', program],
             cwd=self.directory, env=self.env, stdout=subprocess.PIPE,
