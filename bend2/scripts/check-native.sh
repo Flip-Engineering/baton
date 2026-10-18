@@ -20,3 +20,5 @@ sh bend2/scripts/build-native.sh bend2/test/focused-reads.bend .scratch/bend2/fo
 BATON2_EXE="$root/.scratch/bend2/focused-reads" "$PYTHON3" bend2/test/observed-usage.py
 BATON2_EXE="$root/.scratch/bend2/focused-reads" "$PYTHON3" bend2/test/harness-inventory.py
 "$PYTHON3" bend2/scripts/check-native-parallel.py "$PYTHON3"
+sh bend2/scripts/build-native.sh bend2/test/omp-home-preflight.bend .scratch/bend2/omp-home-preflight-test
+BATON2_EXE="$root/.scratch/bend2/omp-home-preflight-test" "$PYTHON3" bend2/test/omp-home-preflight.py

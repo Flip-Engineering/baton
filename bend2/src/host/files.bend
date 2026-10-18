@@ -4,6 +4,11 @@ import Base
 def Files.mkdir(path: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   import "./files.c"
 
+# Reports whether this process can write the path. The check opens no file and
+# writes no probe, so it leaves existing contents and symlinks untouched.
+def Files.writable(path: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  import "./files.c"
+
 def Files.find_suffix(directory: String, suffix: String) -> IO(Result<&1,&1,U32 & String,String>):
   import "./files.c"
 
