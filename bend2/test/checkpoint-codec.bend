@@ -33,7 +33,7 @@ def report_both(+baseline: String, +fused: String) -> IO(Unit):
     IO.print("equal:" ++ U32.show(Request.length(fused))),
     IO.die(Unit,1,"baseline and fused checkpoint decoders differ"))
 
-def run_mode(mode: String, hex: String) -> IO(Unit):
+def run_mode(mode: String, +hex: String) -> IO(Unit):
   match mode:
     case "both": do IO<Unit>:
       baseline : String <- baseline_decode_field(hex)
@@ -57,11 +57,14 @@ def run_mode(mode: String, hex: String) -> IO(Unit):
       report_both(baseline,fused)
     case other: IO.die(Unit,2,"mode must be baseline, fused, both, raw-baseline, raw-fused, or raw-both")
 
+def run_args(args: List<String>) -> IO(Unit):
+  match args:
+    case +mode <> Nil{}: do IO<Unit>:
+      encoded : String <- IO.try(String,Text.Text.read("-"))
+      run_mode(mode,Tx.trim_nl(encoded))
+    case other: IO.die(Unit,2,"usage: checkpoint-codec MODE < hex-input")
+
 def main() -> IO(Unit):
   do IO<Unit>:
     args : List<String> <- IO.args()
-    match args:
-      case mode <> Nil{}:
-        encoded : String <- IO.try(String,Text.Text.read("-"))
-        run_mode(mode,Tx.trim_nl(encoded))
-      case other: IO.die(Unit,2,"usage: checkpoint-codec MODE < hex-input")
+    run_args(args)
