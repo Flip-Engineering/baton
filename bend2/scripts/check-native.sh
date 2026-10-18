@@ -34,11 +34,9 @@ sh bend2/scripts/build-native.sh bend2/test/usage-windows-long.bend .scratch/ben
 sh bend2/scripts/build-native.sh bend2/test/usage-windows-store.bend .scratch/bend2/usage-windows-store-test
 rm -f .scratch/bend2/usage-windows-store.db
 .scratch/bend2/usage-windows-store-test .scratch/bend2/usage-windows-store.db bend2/test/fake-omp-usage
-BATON2_API_KEY_EXEC="$root/.scratch/bend2/api-key-exec" "$PYTHON3" bend2/scripts/check-native-parallel.py "$PYTHON3"
 sh bend2/scripts/build-native.sh bend2/test/usage-windows-wake.bend .scratch/bend2/usage-windows-wake-test
 rm -f .scratch/bend2/usage-windows-wake.db
 .scratch/bend2/usage-windows-wake-test .scratch/bend2/usage-windows-wake.db bend2/test/fake-wake-marker
-BATON2_API_KEY_EXEC="$root/.scratch/bend2/api-key-exec" "$PYTHON3" bend2/scripts/check-native-parallel.py "$PYTHON3"
 sh bend2/scripts/build-native.sh bend2/test/usage-windows-wake-path.bend .scratch/bend2/usage-windows-wake-path-test
 rm -f .scratch/bend2/usage-windows-wake-path.db
 .scratch/bend2/usage-windows-wake-path-test .scratch/bend2/usage-windows-wake-path.db
