@@ -45,6 +45,12 @@ class Knowledge(unittest.TestCase):
         self.player('sibling')
 
     def tearDown(self):
+        if self.db.exists():
+            try:
+                subprocess.run([str(EXE), '--instance-shutdown', str(self.db)],
+                               capture_output=True, text=True, timeout=10)
+            except subprocess.TimeoutExpired:
+                pass
         self.temp.cleanup()
 
     def call(self, *args, success=True):
