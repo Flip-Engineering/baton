@@ -58,8 +58,9 @@ evidence.
 
 During the [#774](https://github.com/Flip-Engineering/baton/issues/774)
 delivery window, merges into the advertised target branch, issue closures,
-publication and installation follow independent review plus passing remote
-gates. The release conductor coordinates admission of full native builds; the
+publication and installation follow independent review plus passing
+validation gates on the self-hosted homelab runners.
+The release conductor coordinates admission of full native builds; the
 current gate evidence is
 [docs/bend2/release-gate-evidence-2026-10-17.md](docs/bend2/release-gate-evidence-2026-10-17.md).
 Prepare merge-ready evidence on the assigned branch and record the branch

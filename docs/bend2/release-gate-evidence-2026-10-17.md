@@ -114,6 +114,9 @@ Against those conditions in this forest:
 The Publication section of [CONTRIBUTING.md](../../../CONTRIBUTING.md) now
 states the delivery rule for this window: merges into the advertised target,
 issue closure, publication and installation follow independent review plus
-passing remote gates, and the release conductor coordinates admission of full
-Main builds. The rule operationalizes the [#774](https://github.com/Flip-Engineering/baton/issues/774)
+passing validation gates on the self-hosted homelab runners, and the release
+conductor coordinates admission of full native builds. No hosted aggregate
+result authorizes a gate in this window; recorded hosted runs, such as the
+Darwin dependency preflights, remain source and dependency evidence. The rule
+operationalizes the [#774](https://github.com/Flip-Engineering/baton/issues/774)
 entry in [`todo.md`](todo.md) for every agent in this delivery.
