@@ -54,3 +54,18 @@ this commit is the bundle tip.
   account identity, Max entitlement and monthly API-credit organization and balance remain
   UNVERIFIED for both accounts. Nothing in this bundle claims login setup, entitlement, or
   balance facts.
+
+## Pinned-compile receipt (for root execution)
+
+The landing's Bend sources need the pinned compiler under the stated budget; no bend
+toolchain is installed on this host, so the exact command is prepared for root:
+
+    systemd-run --scope -p MemoryMax=16G -p MemorySwapMax=0 \\
+      sh -c 'install docs/bend2/reference/toolchain/install-2.0.25.sh ... && \\
+      .bend/bin/bend --check-only bend2/src/coordinator/accounts.bend && \\
+      .bend/bin/bend --check-only bend2/src/coordinator/subscription-fallback.bend && \\
+      .bend/bin/bend --check-only bend2/test/account-credits.bend'
+
+Constraints honored: 16 GiB real memory, zero swap, unlimited virtual address space (no
+RLIMIT_AS is set), no full Main build. The native boundary specification for the runtime seat
+is `docs/bend2/api-key-exec-native-boundary.md`.
