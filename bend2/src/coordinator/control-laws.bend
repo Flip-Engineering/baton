@@ -42,7 +42,7 @@ law native_receiver_checks_harness_stop_and_endpoint_admission:
   for +session: String
   for +endpoint: String
   for +cwd: String
-  {Control.receiver_admitted(session,endpoint,cwd) == ("(EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ " AND harness IN ('codex','omp','muse','claude-code')) AND NOT " ++ C.stopped_session_sql(C.q(session)) ++ " AND " ++ C.endpoint_admitted(endpoint) ++ " AND " ++ Control.receiver_model(session) ++ " AND " ++ Control.receiver_directory(session,cwd) ++ ")") : String}
+  {Control.receiver_admitted(session,endpoint,cwd) == ("(EXISTS(SELECT 1 FROM sessions WHERE id=" ++ C.q(session) ++ " AND harness IN ('codex','omp','muse','claude-code')) AND " ++ C.endpoint_admitted(endpoint) ++ " AND " ++ Control.receiver_model(session) ++ " AND " ++ Control.receiver_directory(session,cwd) ++ ")") : String}
 
 def native_receiver_checks_harness_stop_and_endpoint_admission(session,endpoint,cwd):
   {==}
