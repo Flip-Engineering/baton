@@ -43,6 +43,14 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def toolchain_receipt(args: argparse.Namespace) -> dict:
+    compiler = Path(shutil.which(args.cc) or args.cc).resolve()
+    sharder = MODULE_DIR / "shard_emitted_c.py"
+    return {
+        "compiler_executable": {"path": str(compiler), "sha256": sha256_file(compiler)},
+        "sharder": {"path": str(sharder), "sha256": sha256_file(sharder)},
+    }
+
 def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
@@ -482,6 +490,7 @@ def main(argv: list[str]) -> int:
                 ).splitlines()[0],
                 "ccache": args.ccache,
             },
+            "toolchain": toolchain_receipt(args),
             "compile_flags": builder.compile_flags,
             "link_flags": builder.link_flags + link_extra,
             "shard_count": args.shards,
@@ -615,6 +624,7 @@ def main(argv: list[str]) -> int:
             "path": args.cc,
             "version": subprocess.check_output([args.cc, "--version"], text=True).splitlines()[0],
         },
+        "toolchain": toolchain_receipt(args),
         "flags": args.cflags,
         "shard_count": args.shards,
         "jobs": args.jobs,
