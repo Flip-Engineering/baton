@@ -49,6 +49,17 @@ def settle_sql(+session: String, +attempt: String, +identity: String) -> String:
   ++ " AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ q(session) ++ ");"
   ++ "UPDATE messages SET receipt=coalesce(receipt," ++ q(receipt) ++ ") WHERE recipient=" ++ q(session) ++ " AND id IN(SELECT r.message FROM message_reads r JOIN executions e ON e.id=r.attempt AND e.session=r.recipient JOIN sessions s ON s.id=r.recipient WHERE r.recipient=" ++ q(session) ++ " AND r.attempt=" ++ q(attempt) ++ " AND r.identity=" ++ q(identity) ++ " AND s.native=r.native AND r.handled IS NOT NULL) AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ q(session) ++ ");COMMIT;"
 
+# A successfully completed turn consumes every input carried by its admitted
+# prompt and every guidance frame forwarded to the native attempt before it
+# stopped. Input after the prompt that was not forwarded stays owed. The
+# initial cursor covers the prompt; the delivered cursor covers live guidance.
+def consume_delivered_sql(+session: String, +attempt: String, +initial_cursor: String, +delivered_cursor: String) -> String:
+  +receipt = "native-turn:" ++ attempt
+  "BEGIN IMMEDIATE;UPDATE messages SET receipt=coalesce(receipt," ++ q(receipt) ++ ") WHERE recipient=" ++ q(session)
+  ++ " AND receipt IS NULL AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ q(session) ++ ")"
+  ++ " AND (seq<=CAST(" ++ q(initial_cursor) ++ " AS INTEGER)"
+  ++ " OR (kind='guidance' AND seq<=CAST(" ++ q(delivered_cursor) ++ " AS INTEGER)));COMMIT;"
+
 # The admitted complete prompt supplies the exact stored header and body.
 def prompt_record_sql(+session: String, +attempt: String, +native: String, identity: String, +input: String) -> String:
   "BEGIN IMMEDIATE;INSERT INTO message_reads(attempt,message,recipient,native,identity) SELECT " ++ q(attempt) ++ ",m.id,m.recipient," ++ q(native) ++ "," ++ q(identity)

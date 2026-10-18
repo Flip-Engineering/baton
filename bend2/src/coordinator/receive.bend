@@ -22,6 +22,8 @@ import ../host/control.bend as Host
 import ../git/text.bend as Tx
 import ../host/text.bend as Text
 import ../context/request.bend as Req
+import ./observer-checkpoint.bend as Observer
+import ./agent-input.bend as AgentInput
 
 def field(+db: String, session: String, name: String, +supplied: String) -> IO(String):
   do IO<String>:
@@ -445,14 +447,31 @@ def wake_if_kept(db: String, session: String, cursor: String, superseded: Bool, 
     case True{}: IO.pure(Result<&1,&1,U32 & String,Unit>,finished)
     case False{}: completed_wake(db,session,cursor,finished)
 
+def completion_cursor(db: String, handle: U32) -> IO(String):
+  do IO<String>:
+    +checkpoint_state : Observer.State <- Observer.restore(db,handle)
+    value : String <- IO.pure(String,Observer.cursor(checkpoint_state))
+    +trimmed : String <- IO.pure(String,Tx.trim_nl(value))
+    IO.pure(String,Bool.pick(String,String.is_empty(trimmed),"0",trimmed))
+
+def consume_completed(+db: String, +session: String, +attempt: String, +initial_cursor: String, success: Bool, handle: U32) -> IO(Unit):
+  match success:
+    case False{}: IO.pure(Unit,Unit{})
+    case True{}: do IO<Unit>:
+      delivered : String <- completion_cursor(db,handle)
+      consumed : Unit <- AgentInput.consume_delivered(db,session,attempt,initial_cursor,delivered)
+      IO.pure(Unit,Unit{})
+
 # Successful observations and complete recoverable provider errors resume all owed
 # input. Other failures retain the attempt cursor. A recorded profile advance runs
 # its own continuation, and completion operations preserve their results.
-def completed(+db: String, +session: String, +id: String, +log: String, attempt: String, stderr: String, +cursor: String, +handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), +superseded: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+def completed(+db: String, +session: String, +id: String, +log: String, +attempt: String, stderr: String, +cursor: String, +handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), +superseded: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     failed : Bool <- outcome_failed(db,outcome)
     transient : Bool <- transient_provider_error(db,outcome)
     +pending_cursor : String <- IO.pure(String,Bool.pick(String,Bool.and(failed,Bool.not(Bool.and(transient,observation_clear(outcome)))),cursor,"0"))
+    success : Bool <- Turn.settlement_success(db,outcome)
+    consumed : Unit <- consume_completed(db,session,id,cursor,Bool.and(success,Bool.not(String.is_empty(attempt))),handle)
     prepared : Unit <- Turn.prepare(db,session,id,log,stderr,outcome)
     observer_released : Unit <- release_observer(lock)
     native_released : Unit <- IO.try(Unit,P.ProcessChild.release(handle))
