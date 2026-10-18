@@ -200,13 +200,6 @@ def api_key_binding(+secret_ref: String, helper: Maybe<String>) -> Maybe<List<St
 # Anthropic Claude API-key funding is held until every request can reserve its
 # maximum charge before it reaches the provider. A CLI spend threshold does not
 # bound a request that is already in flight.
-def credit_api_key_held(account: AccountRecord) -> Bool:
-  match account:
-    case Ac{id,provider,harness,funding,secret_ref,organization,verified_at}:
-      match funding:
-        case "api_key": Bool.and(String.eq(provider,"anthropic"),String.eq(harness,"claude-code"))
-        case other: False{}
-
 def credit_api_key_refusal(account: AccountRecord) -> String:
   match account:
     case Ac{id,provider,harness,funding,secret_ref,organization,verified_at}:
@@ -241,7 +234,7 @@ def account_binding(+harness: String, chosen: Maybe<&2,AccountRecord>, helper: M
       match account:
         case Ac{id,provider,account_harness,funding,secret_ref,organization,verified_at}:
           match funding:
-            case "api_key": Bool.pick(Maybe<List<String>>,Bool.and(String.eq(provider,"anthropic"),String.eq(account_harness,"claude-code")),None{},api_key_binding(secret_ref,helper))
+            case "api_key": Bool.pick(Maybe<List<String>>,Bool.and(String.eq(provider,"anthropic"),String.eq(account_harness,"claude-code")),None{},launch_binding(harness,"api_key",secret_ref,helper))
             case "subscription": Some{Subs.store_binding(harness,secret_ref)}
             case other: None{}
 

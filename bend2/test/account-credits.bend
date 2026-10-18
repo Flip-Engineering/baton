@@ -59,6 +59,8 @@ def binding_checks() -> IO(Unit):
     anthropic_api : Unit <- binding_refuses(A.account_binding("claude-code",Some{A.Ac{"claude-credit","anthropic","claude-code","api_key","file:/fixture/secrets/api","org-fixture","2026-10-18"}},Some{"/fixture/libexec/api-key-exec"},""),"anthropic-api-key-is-held-without-request-admission")
     anthropic_subscription : Unit <- binding_is(A.account_binding("claude-code",Some{A.Ac{"claude-max","anthropic","claude-code","subscription","/fixture/stores/claude","org-fixture","2026-10-18"}},None{},""),"anthropic-subscription-binding-is-preserved","CLAUDE_CONFIG_DIR=/fixture/stores/claude")
     other_provider : Unit <- binding_is(A.account_binding("codex",Some{A.Ac{"openai-codex","openai","codex","subscription","/fixture/stores/codex","org-openai","2026-10-18"}},None{},""),"other-provider-subscription-binding-is-unchanged","CODEX_HOME=/fixture/stores/codex")
+    unsupported_api : Unit <- binding_refuses(A.account_binding("codex",Some{A.Ac{"openai-api","openai","codex","api_key","file:/fixture/secrets/openai","org-openai","2026-10-18"}},Some{"/fixture/libexec/api-key-exec"},""),"unsupported-api-key-harness-remains-unbound")
+    unsupported_api : Unit <- binding_refuses(A.account_binding("codex",Some{A.Ac{"openai-api","openai","codex","api_key","file:/fixture/secrets/openai","org-openai","2026-10-18"}},Some{"/fixture/libexec/api-key-exec"},""),"unsupported-api-key-harness-remains-unbound")
     IO.pure(Unit,Unit{})
 
 def refusal_checks() -> IO(Unit):
