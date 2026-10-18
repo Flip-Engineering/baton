@@ -181,6 +181,9 @@ class ReceiverLayout(unittest.TestCase):
             full_wrapper_source_commit=COMMIT, full_wrapper_source_tree='e' * 40,
             full_wrapper_source_status='', full_wrapper_source_manifest_sha256=None)
         specs = PACKAGE.receiver_binaries(namespace)
+        recovery_spec = next(spec for spec in specs if spec['role'] == 'recovery-helper')
+        self.assertIs(recovery_spec['focused'], False)
+        self.assertIs(recovery_spec['recovery'], True)
         built = {spec['role']: Path(spec['supplied']) for spec in specs}
         payload = self.home / 'archive-payload'
         records = PACKAGE.stage_receiver_binaries(payload, specs, built)

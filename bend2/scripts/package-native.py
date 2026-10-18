@@ -109,7 +109,8 @@ BINARY_LAYOUT = (
     {'role': 'recovery-helper', 'option': 'recovery', 'label': 'baton-recovery',
      'installed': 'bin/baton-recovery', 'alias': None,
      'entry': 'bend2/src/coordinator/receive-recovery-focused.bend',
-     'build_mode': 'recovery-native-entry', 'recovery': True},
+     'build_mode': 'recovery-native-entry', 'focused': False,
+     'recovery': True},
 )
 
 
