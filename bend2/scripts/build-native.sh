@@ -43,7 +43,7 @@ if [ "$entry_path" = "$root/bend2/src/coordinator/main.bend" ]; then
     printf '{"error":"build-admission-required","condition":"compiler-not-guarded","compiler":"%s"}\n' "$compiler_path" >&2
     exit 78
   }
-  BATON2_ADMISSION_CHECK_ONLY=1 "$compiler" "$entry" -o "$output" >/dev/null || exit $?
+  BATON2_ADMISSION_CHECK_ONLY=1 "$compiler" "$entry" -o "$output.c" >/dev/null || exit $?
 fi
 generated=${BEND_GENERATED_C:-}
 if [ -z "$generated" ] && [ -n "${BATON2_MAIN_GENERATED_C:-}" ] &&

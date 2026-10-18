@@ -4,8 +4,8 @@
 # The product admission policy remains the native Bend2 design in
 # docs/bend2/build-admission.md. This wrapper requires an admitted bounded cgroup
 # for focused and coordinator Main C generation. A coordinator Main also
-# requires a matching decision receipt. Version queries and
-# --check-only calls pass through unchanged.
+# requires a matching decision receipt. Version queries pass through unchanged;
+# --check-only requires admission like C generation.
 #
 # The canonical path is a delegated cgroup under /sys/fs/cgroup with a finite
 # memory.max. There is no opt-out variable.

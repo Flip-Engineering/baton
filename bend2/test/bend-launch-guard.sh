@@ -16,9 +16,14 @@ chmod 0755 "$temp/bin/bend"
 cat > "$temp/bin/bun" <<'STUB'
 #!/bin/sh
 printf '%s\n' "$*" >> "$BUN_STUB_LOG"
+out=
+prev=
 for arg in "$@"; do
-  if [ "$arg" = version ]; then printf 'bend 2.0.25\n'; fi
+  if [ "$arg" = version ]; then printf 'bend 2.0.25\n'; exit 0; fi
+  if [ "$prev" = -o ]; then out=$arg; fi
+  prev=$arg
 done
+[ -z "$out" ] || printf '/* stub */\n' > "$out"
 exit 0
 STUB
 chmod 0755 "$temp/bin/bun"
@@ -197,6 +202,11 @@ RECEIPT
     "$temp/bin/bend" bend2/src/coordinator/main.bend -o out.c
   [ "$(calls)" = "$((before + 2))" ] || { echo "FAIL admitted Main compiler call"; exit 1; }
   echo "PASS Main_entry_allowed_with_matching_receipt"
+  before_preflight=$(calls)
+  BATON2_ADMISSION_CHECK_ONLY=1 BATON2_ADMISSION_CGROUP="$current" BATON2_ADMISSION_RECEIPT="$temp/current-receipt.json" \
+    "$temp/bin/bend" bend2/src/coordinator/main.bend -o out.c
+  [ "$(calls)" = "$before_preflight" ] || { echo "FAIL check-only preflight invoked compiler"; exit 1; }
+  echo "PASS check_only_preflight_does_not_invoke_compiler"
   before_check=$(calls)
   BATON2_ADMISSION_CGROUP="$current" BATON2_ADMISSION_RECEIPT="$temp/current-receipt.json" \
     "$temp/bin/bend" --check-only bend2/src/coordinator/main.bend
@@ -237,6 +247,34 @@ RECEIPT
   grep -q 'receipt-mismatch' "$temp/build-malformed.err" || { echo "FAIL build malformed receipt cause"; exit 1; }
   [ ! -f "$temp/build-refused" ] || { echo "FAIL build malformed receipt wrote output"; exit 1; }
   echo "PASS build_native_reuses_admission_validator"
+  cat > "$temp/build-accepted.json" <<RECEIPT
+{"decision": "admitted", "class": "full", "entry": "bend2/src/coordinator/main.bend", "output": "$temp/build-accepted.c", "cgroup": "$current"}
+RECEIPT
+  before_accept=$(calls)
+  status=0
+  BATON2_ADMISSION_CGROUP="$current" BATON2_ADMISSION_RECEIPT="$temp/build-accepted.json" \
+    BEND="$temp/bin/bend" CC="$temp/fake-cc" sh "$here/../scripts/build-native.sh" \
+    bend2/src/coordinator/main.bend "$temp/build-accepted" >"$temp/build-accepted.out" 2>"$temp/build-accepted.err" || status=$?
+  [ "$status" = 0 ] || { echo "FAIL accepted build status=$status"; cat "$temp/build-accepted.err"; exit 1; }
+  [ "$(calls)" = "$((before_accept + 1))" ] || { echo "FAIL accepted build compiler calls=$(calls)"; exit 1; }
+  grep -F -- "-o $temp/build-accepted.c" "$BUN_STUB_LOG" >/dev/null || { echo "FAIL accepted build output path"; exit 1; }
+  [ -f "$temp/build-accepted.c" ] || { echo "FAIL accepted build missing C output"; exit 1; }
+  [ -f "$temp/build-accepted" ] || { echo "FAIL accepted build missing binary"; exit 1; }
+  echo "PASS build_native_one_cgen_same_output_path"
+  cat > "$temp/build-wrong.json" <<RECEIPT
+{"decision": "admitted", "class": "full", "entry": "bend2/src/coordinator/main.bend", "output": "$temp/wrong.c", "cgroup": "$current"}
+RECEIPT
+  before_wrong=$(calls)
+  status=0
+  BATON2_ADMISSION_CGROUP="$current" BATON2_ADMISSION_RECEIPT="$temp/build-wrong.json" \
+    BEND="$temp/bin/bend" CC="$temp/fake-cc" sh "$here/../scripts/build-native.sh" \
+    bend2/src/coordinator/main.bend "$temp/build-wrong" >"$temp/build-wrong.out" 2>"$temp/build-wrong.err" || status=$?
+  [ "$status" = 78 ] || { echo "FAIL wrong build output status=$status"; cat "$temp/build-wrong.err"; exit 1; }
+  grep -q 'receipt-mismatch' "$temp/build-wrong.err" || { echo "FAIL wrong build output cause"; exit 1; }
+  [ "$(calls)" = "$before_wrong" ] || { echo "FAIL wrong build output reached compiler"; exit 1; }
+  [ ! -f "$temp/build-wrong" ] || { echo "FAIL wrong build output wrote binary"; exit 1; }
+  echo "PASS build_native_rejects_receipt_path_mismatch"
+  before_capped=$(calls)
   status=0
   (
     ulimit -v 262144
@@ -244,7 +282,7 @@ RECEIPT
   ) >"$temp/current-capped.out" 2>"$temp/current-capped.err" || status=$?
   [ "$status" = 78 ] || { echo "FAIL focused capped rlimit status=$status"; exit 1; }
   grep -q 'rlimit-as-capped' "$temp/current-capped.err" || { echo "FAIL focused capped rlimit cause"; exit 1; }
-  [ "$(calls)" = "$((before + 2))" ] || { echo "FAIL compiler ran with capped rlimit"; exit 1; }
+  [ "$(calls)" = "$before_capped" ] || { echo "FAIL compiler ran with capped rlimit"; exit 1; }
   echo "PASS focused_capped_rlimit_refused"
 else
   echo "SKIP admitted cases require a bounded zero-swap test scope"
