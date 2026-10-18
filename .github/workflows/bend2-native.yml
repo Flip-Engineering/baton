@@ -604,7 +604,9 @@ jobs:
           assets = [{'path': str(path.relative_to(payload)), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest(),
                      'size': path.stat().st_size} for path in sorted(provenance.rglob('*')) if path.is_file()]
           manifest['build']['generated_c_provenance'] = {'path': str(provenance.relative_to(payload)), 'assets': assets}
-          manifest['binary']['sha256'] = hashlib.sha256((payload / 'bin/baton2').read_bytes()).hexdigest()
+          manifest['binary']['sha256'] = hashlib.sha256((payload / manifest['binary']['path']).read_bytes()).hexdigest()
+          for record in manifest['binaries']:
+              assert hashlib.sha256((payload / record['path']).read_bytes()).hexdigest() == record['sha256'], record
           manifest['build']['typescript_package_lock_sha256'] = hashlib.sha256((run / 'typescript-runtime/package-lock.json').read_bytes()).hexdigest()
           for path in (payload / 'manifest.json', package / 'manifest.json'):
               path.write_text(json.dumps(manifest, indent=2) + '\n')
