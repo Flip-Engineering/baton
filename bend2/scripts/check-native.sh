@@ -20,3 +20,10 @@ sh bend2/scripts/build-native.sh bend2/test/focused-reads.bend .scratch/bend2/fo
 BATON2_EXE="$root/.scratch/bend2/focused-reads" "$PYTHON3" bend2/test/observed-usage.py
 BATON2_EXE="$root/.scratch/bend2/focused-reads" "$PYTHON3" bend2/test/harness-inventory.py
 "$PYTHON3" bend2/scripts/check-native-parallel.py "$PYTHON3"
+sh bend2/scripts/build-native.sh bend2/test/omp-home-preflight.bend .scratch/bend2/omp-home-preflight-test
+mkdir -p "$root/.scratch/bend2/omp-home-preflight-home"
+.scratch/bend2/omp-home-preflight-test "$root/.scratch/bend2/omp-home-preflight-home"
+if .scratch/bend2/omp-home-preflight-test /proc >/dev/null 2>&1; then
+  echo 'OMP preflight accepted a read-only home' >&2
+  exit 1
+fi

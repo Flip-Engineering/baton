@@ -999,9 +999,19 @@ def muse_launch(cmd: String, model: String, effort: String, cwd: String, stderr:
     case True{}: Muse.start_player(cmd,model,effort,cwd,stderr,task)
     case False{}: Muse.resume_player(cmd,model,effort,cwd,stderr,session,task)
 
+def omp_launch_checked(sessions: String, cmd: String, model: String, effort: String, cwd: String, stderr: String, +session: String, checked: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,U32>):
+  match checked:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,U32>,Fail{error})
+    case Done{made}: Omp.start_player(cmd,model,effort,cwd,sessions,session,String.is_empty(session),stderr)
+
+def omp_launch(sessions: String, cmd: String, model: String, effort: String, cwd: String, stderr: String, session: String) -> IO(Result<&1,&1,U32 & String,U32>):
+  do IO<Result<&1,&1,U32 & String,U32>>:
+    checked : Result<&1,&1,U32 & String,Unit> <- Omp.preflight()
+    omp_launch_checked(sessions,cmd,model,effort,cwd,stderr,session,checked)
+
 def launch(sessions: String, +cmd: String, +model: String, +effort: String, +cwd: String, +stderr: String, +session: String, +harness: String, task: String) -> IO(Result<&1,&1,U32 & String,U32>):
   Bool.pick(IO(Result<&1,&1,U32 & String,U32>), String.eq(harness,"omp\n"),
-    Omp.start_player(cmd,model,effort,cwd,sessions,session,String.is_empty(session),stderr),
+    omp_launch(sessions,cmd,model,effort,cwd,stderr,session),
   Bool.pick(IO(Result<&1,&1,U32 & String,U32>), String.eq(harness,"muse\n"),
     muse_launch(cmd,model,effort,cwd,stderr,session,task,String.is_empty(session)),
   Bool.pick(IO(Result<&1,&1,U32 & String,U32>), String.eq(harness,"codex\n"),
