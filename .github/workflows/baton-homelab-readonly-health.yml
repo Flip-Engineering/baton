@@ -14,7 +14,7 @@ concurrency:
 
 jobs:
   host-health:
-    timeout-minutes: 5
+    timeout-minutes: 10
     runs-on:
       group: baton2-native-homelab
       labels: [self-hosted, Linux, X64, baton2-native-linux-x64]
