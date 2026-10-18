@@ -1199,7 +1199,7 @@ def retained_launch_checked(prepared: Result<&1,&1,U32 & String,Dsh.Prepared>, +
 def retained_launch_plain(omp: Bool, claude: Bool, cmd: String, model: String, effort: String, sessions: String, +native: String, +prefix: String, account: Maybe<&2,Accounts.AccountRecord>) -> Result<&1,&1,U32 & String,String>:
   match account:
     case None{}: Done{prefix ++ retained_arguments(omp,claude,cmd,model,effort,sessions,native)}
-    case Some{+refused}: Fail{(2,Bool.pick(String,Accounts.credit_api_key_held(refused),"The account " ++ Accounts.account_id(refused) ++ " funds Anthropic API calls through an API key, but request-level promotional-credit admission is unavailable; the attempt was not started and its input stays owed.","The account " ++ Accounts.account_id(refused) ++ " funds its work through an API key and this deployment installs no api-key resolver beside the resolved identity helper; the attempt was not started and its input stays owed."))}
+    case Some{+refused}: Fail{(2,Accounts.credit_api_key_refusal(refused))}
 
 def retained_launch_arguments(omp: Bool, claude: Bool, cmd: String, model: String, effort: String, sessions: String, +native: String, +prefix: String, +history: String, harness: String, account: Maybe<&2,Accounts.AccountRecord>, binding: Maybe<List<String>>) -> Result<&1,&1,U32 & String,String>:
   match binding:
