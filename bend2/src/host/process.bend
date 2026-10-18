@@ -5,6 +5,17 @@ import Base
 def ProcessChild.spawn(argv: String, cwd: String, stderr: String) -> IO(Result<&1,&1,U32 & String,U32>):
   import "./process-spawn.c"
 
+# A spawn whose environment is the inherited environment with the entries from
+# one owner-only NAME=VALUE specification file applied. The host reads and
+# unlinks the specification before the child produces bytes.
+def ProcessChild.spawn_env_spec(spec_path: String, argv: String, cwd: String, stderr: String) -> IO(Result<&1,&1,U32 & String,U32>):
+  import "./process-spawn.c"
+
+# Re-raises one child signal so the parent observes the signal, not a
+# synthesized exit code.
+def ProcessChild.reraise(sig: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
+  import "./process-spawn.c"
+
 type RetainedStart is Data:
   Retained{handle: U32}
   Unstarted{error: String}
