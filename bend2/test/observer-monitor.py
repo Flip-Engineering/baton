@@ -277,6 +277,10 @@ class ObserverMonitor(unittest.TestCase):
             if first.poll() is not None:
                 break
             time.sleep(0.02)
+        if checkpoint_offset(self.attempt) != len(first_line.encode()):
+            if first.poll() is None: first.kill()
+            out, err = first.communicate(timeout=10)
+            self.fail("cursor not persisted; exit=%r stdout=%r stderr=%r" % (first.returncode, out, err))
         self.assertEqual(checkpoint_offset(self.attempt), len(first_line.encode()),
                          'first monitor recovery did not persist its cursor')
         self.assertEqual(custody_offset(self.attempt), len(first_line.encode()))
@@ -312,6 +316,7 @@ class ObserverMonitor(unittest.TestCase):
                 break
             time.sleep(0.02)
         self.assertEqual((self.attempt / 'stdout').read_bytes(), expected_output)
+        self.wait_native_exit(timeout=20)
         second = self.recover(observer)
         self.assertNotEqual(second.returncode, 0, second.stdout + second.stderr)
         self.assertNotEqual((self.attempt / 'checkpoint').read_bytes(), first_checkpoint)
@@ -325,25 +330,67 @@ class ObserverMonitor(unittest.TestCase):
         self.assertFalse((self.attempt / 'released').exists())
 
     def test_concurrent_observers_advance_the_cursor_once(self):
-        observer, birth, manifest = self.start_attempt()
+        observer, birth, manifest = self.start_attempt(sleep_seconds=30)
+        owner = subprocess.Popen([str(FIXTURE), '--instance-owner', str(self.db)],
+                                 text=True, stdout=subprocess.PIPE,
+                                 stderr=subprocess.PIPE, env=self.environment)
+        self.addCleanup(self.stop_owned_process, owner)
+        owner_deadline = time.monotonic() + 10
+        while time.monotonic() < owner_deadline and owner_pid(self.db) is None:
+            if owner.poll() is not None:
+                out, err = owner.communicate(timeout=10)
+                self.fail('fixture owner exited before recovery race: %r %r' % (out, err))
+            time.sleep(0.02)
+        self.assertIsNotNone(owner_pid(self.db), 'shared fixture owner did not become ready')
+        self.assertIsNone(owner.poll(), 'shared fixture owner must remain available')
         argv = [str(COORDINATOR), '--recover-observer', str(self.db), 'parent', str(observer)]
         first = subprocess.Popen(argv, text=True, stdout=subprocess.PIPE,
                                  stderr=subprocess.PIPE, env=self.environment)
+        self.addCleanup(self.stop_owned_process, first)
+        deadline = time.monotonic() + 20
+        expected_offset = len('monitor-line\n'.encode())
+        while time.monotonic() < deadline:
+            if (checkpoint_offset(self.attempt) == expected_offset and
+                    custody_offset(self.attempt) == expected_offset):
+                break
+            if first.poll() is not None:
+                out, err = first.communicate(timeout=10)
+                self.fail('first observer exited before durable cursor: %r %r' % (out, err))
+            time.sleep(0.02)
+        self.assertEqual(checkpoint_offset(self.attempt), expected_offset,
+                         'first observer did not durably advance the cursor')
+        self.assertEqual(custody_offset(self.attempt), expected_offset)
+        self.assertIsNone(first.poll(), 'first monitor must retain custody while the native is live')
+
         second = subprocess.Popen(argv, text=True, stdout=subprocess.PIPE,
                                   stderr=subprocess.PIPE, env=self.environment)
-        first_output = first.communicate(timeout=90)
-        second_output = second.communicate(timeout=90)
-        self.assertNotEqual(first.returncode, 0, ''.join(first_output))
-        self.assertNotEqual(second.returncode, 0, ''.join(second_output))
-        combined = ''.join(first_output) + ''.join(second_output)
-        self.assertIn('Another observer holds the retained attempt', combined)
+        self.addCleanup(self.stop_owned_process, second)
+        try:
+            second_out, second_err = second.communicate(timeout=20)
+        except subprocess.TimeoutExpired:
+            self.stop_owned_process(second)
+            self.fail('competing observer did not return a bounded refusal')
+        self.assertNotEqual(second.returncode, 0, second_out + second_err)
+        self.assertIn('Another observer holds the retained attempt', second_out + second_err)
+        self.assertIsNone(first.poll(), 'competing observer must leave the current monitor attached')
         self.assertEqual((self.attempt / 'native.birth').read_bytes(), birth)
         self.assertEqual((self.attempt / 'manifest').read_bytes(), manifest)
-        self.assertEqual(checkpoint_offset(self.attempt), len('monitor-line\n'))
-        self.assertEqual(custody_offset(self.attempt), len('monitor-line\n'))
+        self.assertEqual(int((self.attempt / 'native.pid').read_text()), self.native_process)
+        self.assertEqual(self.uuid_marker.read_text(), NATIVE_UUID)
+        self.assertEqual(checkpoint_offset(self.attempt), expected_offset)
+        self.assertEqual(custody_offset(self.attempt), expected_offset)
         self.assertEqual(self.row('SELECT receipt FROM messages WHERE id=?', 'task'), (None,))
-        self.wait_native_exit()
+        self.assert_unknown_pending()
+        self.assertFalse((self.attempt / 'acknowledged').exists())
+        self.assertFalse((self.attempt / 'released').exists())
+
+        self.wait_native_exit(timeout=35)
+        self.stop_owned_process(first)
+        terminal = self.recover(observer)
+        self.assertNotEqual(terminal.returncode, 0, terminal.stdout + terminal.stderr)
         self.assert_unknown_pending(native_exited=True)
+        self.assertEqual(checkpoint_offset(self.attempt), expected_offset)
+        self.assertEqual(custody_offset(self.attempt), expected_offset)
         self.assertFalse((self.attempt / 'acknowledged').exists())
         self.assertFalse((self.attempt / 'released').exists())
 
