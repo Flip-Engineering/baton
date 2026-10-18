@@ -83,7 +83,7 @@ def success_case(+db: String) -> IO(Unit):
 
 def report_case(+db: String) -> IO(Unit):
   do IO<Unit>:
-    descriptor : String <- IO.pure(String,"{\"session\":\"report-case\",\"attempt\":\"attempt-report\",\"direct\":false,\"cursor\":51,\"inputMessages\":[\"summary-report\",\"read-report\"],\"prompt\":\"Message (report) from root [id: summary-report] retained 40 bytes; read the complete body with baton read summary-report.\nMessage (report) from root [id: read-report] retained 32 bytes; read the complete body with baton read read-report.\"}")
+    descriptor : String <- IO.pure(String,"{\"session\":\"report-case\",\"attempt\":\"attempt-report\",\"direct\":false,\"cursor\":51,\"inputMessages\":[\"summary-report\",\"read-report\"],\"prompt\":\"Message (report) from root [id: summary-report] retained 44 bytes; read the complete body with baton read summary-report.\\nMessage (report) from root [id: read-report] retained 33 bytes; read the complete body with baton read read-report.\"}")
     summary_record : String <- IO.try(String,Store.transact_sql(db,Status.prompt_record_sql("report-case","attempt-report","native-report","summary-descriptor",descriptor)))
     summary_read : Unit <- expect_read(db,"SELECT count(*) FROM message_reads WHERE message='summary-report' AND attempt='attempt-report';","0\n","summary-is-not-a-full-body-read")
     settled : Unit <- AgentInput.consume_delivered(db,"report-case","attempt-report","native-report","51","51")
