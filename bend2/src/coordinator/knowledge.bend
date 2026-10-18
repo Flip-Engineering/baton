@@ -242,7 +242,7 @@ def graph_answer(+reader: String, +scope: String, +subject: String, +typed: Bool
   +nodes_in_view = "SELECT " ++ knowledge_node_item(reader,scope,subject,typed,groups) ++ " AS item FROM knowledge k WHERE k.id IN(SELECT substr(reference,9) FROM references_in_view WHERE substr(reference,1,8)='finding:') AND " ++ scope_findings_sql(scope,subject,groups) ++ " ORDER BY k.id"
   ", selected_edges AS (SELECT * FROM edges e WHERE " ++ edge_filter ++ "), references_in_view AS (SELECT reference FROM selected UNION SELECT source_ref FROM selected_edges UNION SELECT target_ref FROM selected_edges) SELECT json_object('scope',json_object('kind'," ++ C.q(scope) ++ ",'id'," ++ C.q(subject) ++ "),'roots',(SELECT coalesce(json_group_array(reference),json('[]')) FROM (SELECT reference FROM selected ORDER BY reference)),'nodes',(SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (" ++ nodes_in_view ++ ")),'edges',(SELECT coalesce(json_group_array(json(item)),json('[]')) FROM (SELECT item FROM selected_edges ORDER BY id)),'references',(SELECT coalesce(json_group_array(json_object('reference',reference,'kind',coalesce((SELECT json_extract(e.item,'$.sourceKind') FROM edges e WHERE e.source_ref=reference OR e.target_ref=reference LIMIT 1),CASE WHEN substr(reference,1,8)='finding:' THEN 'finding' ELSE 'external' END),'detailRead',CASE WHEN substr(reference,1,8)='finding:' THEN json_array('knowledge-scope'," ++ C.q(reader) ++ ",'all','','--id',substr(reference,9)) ELSE NULL END,'deliveryRead',CASE WHEN substr(reference,1,8)='message:' THEN json_array('delivery',substr(reference,9)) ELSE NULL END)),json('[]')) FROM (SELECT reference FROM references_in_view WHERE reference NOT IN(SELECT reference FROM nodes) ORDER BY reference))" ++ selected ++ ");"
 
-def search_sql(+reader: String, +scope: String, +subject: String, +query: String, +typed: Bool, groups: Bool, present: Bool) -> String:
+def search_sql(+reader: String, +scope: String, +subject: String, +query: String, +typed: Bool, +groups: Bool, present: Bool) -> String:
   graph_ctes(reader,scope,subject,typed,groups,present)
   ++ ", incident AS (SELECT reference,count(*) AS n FROM (SELECT DISTINCT id,reference FROM (SELECT id,source_ref AS reference FROM edges UNION ALL SELECT id,target_ref AS reference FROM edges)) GROUP BY reference)"
   ++ ", matches AS (SELECT reference,id," ++ search_score(query) ++ " AS score FROM nodes WHERE " ++ search_terms(String.split(query,Char.from_u32(32))) ++ "), selected AS (SELECT reference FROM matches)"
@@ -262,7 +262,7 @@ def traversal_filter(+direction: String, +relation: String) -> String:
   +joined = traversal_join(direction)
   "EXISTS(SELECT 1 FROM walk w WHERE " ++ joined ++ ") AND " ++ traversal_relation(relation)
 
-def traverse_sql(+reader: String, +scope: String, +subject: String, +reference: String, +direction: String, +relation: String, +recursive: Bool, typed: Bool, groups: Bool, present: Bool) -> String:
+def traverse_sql(+reader: String, +scope: String, +subject: String, +reference: String, +direction: String, +relation: String, +recursive: Bool, +typed: Bool, +groups: Bool, present: Bool) -> String:
   +seed = reference_sql(C.q(reference))
   graph_ctes(reader,scope,subject,typed,groups,present)
   ++ ", walk(reference) AS (SELECT " ++ seed ++ Bool.pick(String,recursive," UNION SELECT CASE WHEN e.source_ref=w.reference THEN e.target_ref ELSE e.source_ref END FROM edges e JOIN walk w ON " ++ traversal_join(direction) ++ " WHERE " ++ traversal_relation(relation),"") ++ "), selected AS (SELECT reference FROM walk)"
