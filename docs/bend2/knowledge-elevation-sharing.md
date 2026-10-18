@@ -337,12 +337,13 @@ repeats one destination. Repeated shares grow `knowledge_promotions` and
 `messages` linearly with no new provenance. The duplicate notice repeats an
 event the destination already received.
 
-Status: assigned, not applied. Finding f84a260a is accepted and the
-one-row-per-`(finding, source_kind, source, destination_kind, destination)`
-invariant is authoritative. Implementation is assigned to
-knowledge-storage-traversal-ds-20261017 as a separate
-promotion-coordinate-conflict candidate on its branch. It is not part of the
-current knowledge-deepseek-782-785 candidate and is not implemented here.
+Status: implemented on knowledge-storage-traversal-20261017 at `c2fe1af`,
+separate from `knowledge-deepseek-782-785`; qualification pending. Finding
+f84a260a is accepted and the one-row-per-`(finding, source_kind, source,
+destination_kind, destination)` invariant is authoritative. The implementation
+is the separate promotion-coordinate-conflict candidate on that branch; it is
+not part of the current `knowledge-deepseek-782-785` candidate.
+
 The candidate extends `promotion_statement` with a coordinate guard before the
 insert. If another stored row has the same finding, source endpoint, and
 destination endpoint, it refuses with a typed `promotion-coordinate-conflict`
