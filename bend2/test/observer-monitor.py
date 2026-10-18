@@ -426,7 +426,7 @@ class ObserverMonitor(unittest.TestCase):
         legacy = ('{"type":"item.completed","item":{"id":"legacy","type":"agent_message",'
                   '"text":"prior assistant result"}}\n')
         observer, birth, manifest = self.start_attempt(
-            stdout_text=legacy, later_stdout_file=output_file, sleep_seconds=45)
+            stdout_text=legacy, later_stdout_file=output_file, sleep_seconds=5)
         argv = [str(COORDINATOR), '--recover-observer', str(self.db),
                 'parent', str(observer)]
         monitor = subprocess.Popen(
