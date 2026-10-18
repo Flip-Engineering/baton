@@ -83,10 +83,11 @@ documented surfaces are:
   to. `account observe` with an `organization` document writes that mapping to
   the account and keeps the document as the observation's evidence.
 
-`bend2/harness/claude-credit-observe.mjs` performs the organization, usage and
-cost reads with a resolved secret reference and prints one JSON line carrying
-the operation, source, observed time, state, HTTP status, the whole parsed
-document and, on failure, the actual condition. `account observe` records that
+The packaged native helper `bend2/harness/claude-credit-observe.bend`, built as
+`claude-credit-observe`, performs the organization, usage and cost reads with a
+resolved secret reference and prints one JSON line carrying the operation,
+source, observed time, state, HTTP status, the whole parsed document and, on
+failure, the actual condition. `account observe` records that
 line.
 
 A balance is written only by an import whose amount is a canonical decimal and

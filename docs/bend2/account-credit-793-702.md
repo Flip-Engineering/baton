@@ -92,9 +92,10 @@ The product records balance from these source kinds only:
 | `provider-error` | unknown; records exhaustion cause | no | no |
 
 Credit refresh is an operator-run flow: the packaged helper
-`bend2/harness/claude-credit-observe.mjs` performs the organization, cost and
-usage reads against the documented endpoints, and the operator records each
-outcome through `account observe`; Console Billing readings are recorded
+The packaged native helper `bend2/harness/claude-credit-observe.bend`, built as
+`claude-credit-observe`, performs the organization, cost and usage reads against
+the documented endpoints; it links libcurl for the HTTPS request. The operator
+records each outcome through `account observe`; Console Billing readings are recorded
 through `account import-credit` with their source named. No command performs
 an implicit or scheduled refresh. An undocumented OAuth prepaid-credits
 endpoint appears in third-party tooling; it is not a source this product

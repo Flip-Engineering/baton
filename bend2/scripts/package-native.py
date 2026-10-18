@@ -107,7 +107,10 @@ def stage_adapters(payload):
     shutil.copyfile(ROOT / 'bend2/harness/git-series.mjs', directory / 'git-series.mjs')
     shutil.copyfile(ROOT / 'bend2/harness/native-history.mjs', directory / 'native-history.mjs')
     shutil.copyfile(ROOT / 'bend2/harness/project-settings.mjs', directory / 'project-settings.mjs')
-    shutil.copyfile(ROOT / 'bend2/harness/claude-credit-observe.mjs', directory / 'claude-credit-observe.mjs')
+    native_observe = ROOT / '.scratch/bend2/claude-credit-observe'
+    require(native_observe.is_file(), 'native claude-credit-observe helper is missing; build bend2/harness/claude-credit-observe.bend before packaging')
+    shutil.copyfile(native_observe, directory / 'claude-credit-observe')
+    (directory / 'claude-credit-observe').chmod(0o755)
     native_key_exec = ROOT / '.scratch/bend2/api-key-exec'
     require(native_key_exec.is_file(), 'native api-key-exec helper is missing; build bend2/harness/api-key-exec.bend before packaging')
     shutil.copyfile(native_key_exec, directory / 'api-key-exec')

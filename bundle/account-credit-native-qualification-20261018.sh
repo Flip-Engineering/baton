@@ -71,6 +71,38 @@ fi
 printf 'helper build exit=%s\n' "$helper" | tee -a "$OUT/receipt.txt"
 [ "$helper" -eq 0 ] || exit 1
 
+if /usr/bin/time -v env BEND="$BEND" CC="$CC" sh bend2/scripts/build-native.sh bend2/harness/claude-credit-observe.bend .scratch/bend2/claude-credit-observe > "$OUT/observe-build.stdout" 2> "$OUT/observe-build.stderr"; then
+  observebuild=0
+else
+  observebuild=$?
+fi
+printf 'observe build exit=%s\n' "$observebuild" | tee -a "$OUT/receipt.txt"
+[ "$observebuild" -eq 0 ] || exit 1
+
+if /usr/bin/time -v env BATON2_CREDIT_OBSERVE="$ROOT/.scratch/bend2/claude-credit-observe" "$PYTHON3" bend2/test/claude-credit-observe.py > "$OUT/observe.stdout" 2> "$OUT/observe.stderr"; then
+  observe=0
+else
+  observe=$?
+fi
+printf 'observe fixture exit=%s\n' "$observe" | tee -a "$OUT/receipt.txt"
+[ "$observe" -eq 0 ] || exit 1
+
+if /usr/bin/time -v env BEND="$BEND" CC="$CC" sh bend2/scripts/build-native.sh bend2/test/account-binding-smoke.bend .scratch/bend2/account-binding-smoke > "$OUT/binding-smoke-build.stdout" 2> "$OUT/binding-smoke-build.stderr"; then
+  bindingbuild=0
+else
+  bindingbuild=$?
+fi
+printf 'binding smoke build exit=%s\n' "$bindingbuild" | tee -a "$OUT/receipt.txt"
+[ "$bindingbuild" -eq 0 ] || exit 1
+
+if /usr/bin/time -v env BATON2_ACCOUNT_BINDING_SMOKE="$ROOT/.scratch/bend2/account-binding-smoke" BATON2_API_KEY_EXEC="$ROOT/.scratch/bend2/api-key-exec" "$PYTHON3" bend2/test/account-binding-smoke.py > "$OUT/binding-smoke.stdout" 2> "$OUT/binding-smoke.stderr"; then
+  bindingsmoke=0
+else
+  bindingsmoke=$?
+fi
+printf 'binding smoke exit=%s\n' "$bindingsmoke" | tee -a "$OUT/receipt.txt"
+[ "$bindingsmoke" -eq 0 ] || exit 1
+
 if /usr/bin/time -v env BEND="$BEND" CC="$CC" sh bend2/scripts/build-native.sh bend2/test/api-key-spec.bend .scratch/bend2/api-key-spec > "$OUT/spec-build.stdout" 2> "$OUT/spec-build.stderr"; then
   specbuild=0
 else
