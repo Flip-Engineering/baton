@@ -14,9 +14,9 @@ sh bend2/scripts/build-native.sh bend2/tests/git.bend .scratch/bend2/git-test
 .scratch/bend2/git-test
 sh bend2/scripts/build-native.sh bend2/tests/land.bend .scratch/bend2/land-test
 .scratch/bend2/land-test
-"$PYTHON3" bend2/scripts/capped-run.py --limit-bytes 8589934592 --timeout 240 -- sh bend2/scripts/build-native.sh bend2/test/focused-reads.bend .scratch/bend2/focused-reads
-BATON2_EXE=.scratch/bend2/focused-reads "$PYTHON3" bend2/test/observed-usage.py
-BATON2_EXE=.scratch/bend2/focused-reads "$PYTHON3" bend2/test/harness-inventory.py
+"$PYTHON3" bend2/scripts/capped-run.py --limit-bytes 9663676416 --timeout 240 -- sh bend2/scripts/build-native.sh bend2/test/focused-reads.bend .scratch/bend2/focused-reads
+BATON2_EXE="$root/.scratch/bend2/focused-reads" "$PYTHON3" bend2/test/observed-usage.py
+BATON2_EXE="$root/.scratch/bend2/focused-reads" "$PYTHON3" bend2/test/harness-inventory.py
 "$PYTHON3" bend2/scripts/capped-run.py --limit-bytes 8589934592 --timeout 180 -- sh bend2/scripts/build-native.sh bend2/test/subscription-profiles.bend .scratch/bend2/subscription-profiles
 .scratch/bend2/subscription-profiles
 "$PYTHON3" bend2/scripts/check-native-parallel.py "$PYTHON3"
