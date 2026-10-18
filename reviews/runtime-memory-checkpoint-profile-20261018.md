@@ -63,3 +63,37 @@ state (`output_done` or non-empty `terminal`); intermediate checkpoints keep the
   reported about 1.09 GB.
 - No cgroup 8 GiB/0-swap scope; no AS cap because the runtime reserves 10.6 GiB virtual.
 - The patch was not built or rerun; it is a review candidate.
+
+## Independent instrumented C counters
+
+The instrumented final2 C run at checkpoint cursor 20,973,556 (five updates) reported:
+
+- Observer RSS: 771,932 kB.
+- Heap allocated: 665,939,680 B; freed: 590,382,801 B; live delta: 75,556,879 B.
+- Maximum H_BUMP: 688,865 pages. With `PAGE_BITS=7` and `Loc=u64`, one page is 128 * 8 = 1024 B,
+  so the bump-arena high-water is 705,397,760 B (672.7 MiB).
+- `io_str` (generated C around 360864) allocates one SCon node per decoded scalar.
+
+This separates the two candidates: the live term delta is about 76 MB, while the arena high-water is
+about 673 MiB and RSS about 754 MiB. The gate is measuring allocator high-water from constructing the
+4.19 MB held frame as a Bend String at each checkpoint, not retained held/checkpoint storage. The
+freed bytes are not returned or reused promptly, so each 100 MB materialization raises the high-water
+until the arena reaches about 1.09 GB.
+
+## Safe streaming/range representation
+
+1. Intermediate checkpoints store the held entry as its existing range token
+   `(spool, offset, length)` plus the attempt/spool identity. No `Text.read_span`, no `io_str`,
+   no SCons, and no held-frame String on the checkpoint path.
+2. The final/terminal checkpoint must not carry a live range that cannot outlive its spool:
+   `finish_output` clears held after the flush; if held is still non-empty, materialize once or
+   stream the range through a native span copy. Ack stays suppressed on an incomplete checkpoint.
+3. Restore validates the range against the recorded spool identity (device/inode/path or attempt
+   id). A missing or mismatched spool is a restore error, not a silent drop.
+4. A checkpoint-owned sidecar file is only justified if a self-contained checkpoint is mandatory;
+   then write it by native streaming copy (never a Bend String) and clear it with the checkpoint.
+   Prefer the retained-spool range: a second durable store duplicates the existing spool source.
+
+The narrow patch in `reviews/runtime-memory-checkpoint-materialize.patch` implements step 1 and 2:
+materialize only when the state is final (`output_done` or non-empty `terminal`); intermediate
+checkpoints keep the range token.
