@@ -1,0 +1,97 @@
+{
+  "schema": "knowledge-candidate-qualification-v1",
+  "recorded": "2026-10-18T01:20Z",
+  "actor": "knowledge-glm",
+  "assignment": "message:knowledge-wonder:b9680e3d6e4b41e66f72b3cf3e0dd37a",
+  "toolchain": {
+    "bun_bend2": "/run/baton2-native-homelab/retained/baton2-compiler-741-20261015/postrelease-751-761-20261015-11/toolchain-home",
+    "native_bend_2025_pinned_782_sha256": "b929035652cba78ba1b034b7214a14bbc2f64f0e6c27265c64c53895d24890c0",
+    "clang": "/usr/bin/clang-19 (Ubuntu 19.1.1-1ubuntu1~24.04.2)",
+    "job_bound": "ulimit -v 31457280 KiB, timeout 900-1500s per phase"
+  },
+  "candidates": {
+    "command_branch_tip": "315b004",
+    "command_source": "69558f7",
+    "storage_branch_tip": "6a59ac3",
+    "storage_source": "c2fe1af"
+  },
+  "frozen_packets_reviewed": {
+    "knowledge-783-correction-20261016T2202Z": {
+      "arms": {"candidate": "93221d663 214/214", "receipt": "valid for 93221d663 only"},
+      "adoption": "rejected for 69558f7 and c2fe1af: knowledge.bend sha 674493287ab3ddfd (packet) differs from 10ffe0264b2b785a (69558f7) and a5f9e6e142dc39c1 (c2fe1af); fresh run on unmodified fixtures",
+      "fixtures": "packet fixtures.json unmodified, driver unmodified"
+    },
+    "knowledge-785-phase-headroom-v3-20261016T2305Z": {
+      "arms": {"candidate_f77cc16d": "36/36", "target": "17/36"},
+      "adoption": "rejected for current candidates, same hash divergence; fresh run on unmodified fixtures"
+    },
+    "knowledge-784-phase-headroom-v3-20261016T2330Z": {
+      "arms": {"candidate_6deeb70a": "87/101", "target_476c1fb": "3/101"},
+      "adoption": "adopted as retained: the 784 candidate source is on codex/knowledge-evidence-784, absent from 69558f7 and c2fe1af; nothing on this qualification line can alter that receipt, no rerun"
+    }
+  },
+  "runs": [
+    {
+      "label": "scoped-782-knowledge-laws-69558f7",
+      "entry": "kg-laws-scoped.bend importing bend2/src/coordinator/knowledge-laws.bend",
+      "command": "bun --smol bend2/main.ts kg-laws-scoped.bend --check-only",
+      "cwd_source": "69558f7",
+      "exit": 0,
+      "stdout_tail": "All terms check.",
+      "elapsed_seconds": 45.9
+    },
+    {
+      "label": "scoped-782-knowledge-laws-c2fe1af",
+      "command": "same entry on c2fe1af source",
+      "exit": 1,
+      "error": "affine violation: reader (consumed more than once) at bend2/src/coordinator/knowledge.graph_answer (knowledge.bend:241-246); graph_answer takes affine reader and consumes it in knowledge_node_item(reader,...) and again in the returned SQL template (5 textual uses in the body)",
+      "elapsed_seconds": 35.4
+    },
+    {
+      "label": "frozen-783-entry-check-69558f7",
+      "entry": "packet bend2/test/knowledge-783-io.bend unmodified",
+      "exit": 0,
+      "elapsed_seconds": 86.2
+    },
+    {
+      "label": "frozen-783-entry-check-c2fe1af",
+      "exit": 1,
+      "error": "same affine reader violation in knowledge.graph_answer; storage candidate is compile-blocked for every entry importing knowledge.bend"
+    },
+    {
+      "label": "frozen-783-fixtures-69558f7",
+      "driver": "packet fixture_driver.py, packet fixtures.json unmodified",
+      "result": {"cases": 214, "passed": 172, "failed": 42},
+      "failure_signature": "all 42 failures wrap the command in --pretty: 30 cases expect exit 2 refusal and 12 expect exit 0 output; every observed failure exits 1 with 'No matching session or message; inspect status and the requested ID.'",
+      "root_cause": "control.bend read_snapshot at 69558f7 has no C.KnowledgeSearch and no C.KnowledgeTraverse cases; the packet candidate 93221d663 routes them to Knowledge.graph_value (control.bend:359-362 of the packet source). Knowledge.graph_value still exists at 69558f7 knowledge.bend:264, so the two-case routing is the complete repair; knowledge.bend read path is otherwise byte-identical to the passing packet candidate",
+      "case_example": "case-009 knowledge-search worker wrker worker scope --pretty: frozen run exit 2 pass, this run exit 1 fail",
+      "binary_sha256_16": "ebc98724a563672a",
+      "elapsed_seconds": {"c_generation": 488.6, "clang": 98.9, "fixtures": 103.6}
+    },
+    {
+      "label": "frozen-785-fixtures-69558f7",
+      "entry": "packet bend2/test/knowledge-785-io.bend unmodified",
+      "result": {"cases": 36, "passed": 36, "failed": 0},
+      "binary_sha256_16": "124b12439853757f",
+      "elapsed_seconds": {"check": 55.1, "c_generation": 476.6, "fixtures": 95.0}
+    }
+  ],
+  "verdicts": {
+    "69558f7": {
+      "scoped_782_laws": "pass",
+      "preserved_785_acceptance": "pass 36/36",
+      "preserved_783_acceptance": "fail 172/214, single root cause: missing pretty routing for KnowledgeSearch/KnowledgeTraverse in control.bend read_snapshot; repair is restoring those two cases"
+    },
+    "c2fe1af": {
+      "scoped_782_laws": "fail (affine reader, knowledge.graph_answer)",
+      "focused_entries": "compile-blocked",
+      "note": "6a59ac3 adds only measurement/probe artifacts; bend2/src identical to c2fe1af"
+    },
+    "consolidation_789_791": "command candidate needs the two-case control.bend repair and a rerun of the frozen 783 packet; storage candidate needs the affine reader repair before any focused run is possible; 784 receipt adopted as retained"
+  },
+  "evidence_custody": {
+    "scratch": "/tmp/kg-qual (extracted trees src-695, src-c2f; generated C and binaries; results dirs)",
+    "hashes_recorded_here": true,
+    "packet_roots": "/run/baton2-native-homelab/retained/baton-knowledge-{783-correction-20261016T2202Z,785-phase-headroom-v3-20261016T2305Z,784-phase-headroom-v3-20261016T2330Z}"
+  }
+}
