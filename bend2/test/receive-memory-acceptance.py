@@ -39,6 +39,16 @@ def _checkpoint_covers_spool(checkpoint, minimum_spool_offset):
 
 
 class MemoryGateTests(receive.Receive):
+    def eventually(self, observation, description, timeout=30):
+        deadline = time.monotonic() + timeout
+        last = None
+        while time.monotonic() < deadline:
+            last = observation()
+            if last:
+                return last
+            time.sleep(.01)
+        self.fail(f'{description} (timed out after {timeout}s; last observation={last!r})')
+
     def finish_bounded(self, child, ok=True, timeout=60):
         try:
             stdout, stderr = child.communicate(timeout=timeout)
@@ -248,7 +258,7 @@ class MemoryGateTests(receive.Receive):
                 backup.rename(checkpoint)
 
 
-    def test_direct_omp_keeps_unit_separator_provider_line_raw(self):
+    def test_direct_omp_keeps_record_separator_provider_line_raw(self):
         self.player(harness='omp')
         provider = self.directory / 'us-provider.py'
         provider.write_text('#!' + sys.executable + '\n' + '''import json,sys
@@ -322,7 +332,7 @@ def _suite():
     suite.addTest(MemoryGateTests('test_repeated_semantic_checkpoints_keep_one_latest_open_frame'))
     suite.addTest(MemoryGateTests('test_valid_unterminated_agent_end_is_consumed_at_eof'))
     suite.addTest(MemoryGateTests('test_checkpoint_write_failure_stops_read_and_preserves_input'))
-    suite.addTest(MemoryGateTests('test_direct_omp_keeps_unit_separator_provider_line_raw'))
+    suite.addTest(MemoryGateTests('test_direct_omp_keeps_record_separator_provider_line_raw'))
     suite.addTest(MemoryGateTests('test_nul_span_refusal_preserves_checkpoint_spool_and_input'))
     return suite
 
