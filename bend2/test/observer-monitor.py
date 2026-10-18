@@ -178,6 +178,12 @@ class ObserverMonitor(unittest.TestCase):
             text=True, capture_output=True, env=self.environment, timeout=60)
         return result
 
+    @staticmethod
+    def stop_owned_process(process):
+        if process.poll() is None:
+            process.kill()
+            process.communicate(timeout=10)
+
     def row(self, sql, *args):
         with sqlite3.connect(self.db) as database:
             return database.execute(sql, args).fetchone()
@@ -188,8 +194,31 @@ class ObserverMonitor(unittest.TestCase):
         observer, birth, manifest = self.start_attempt(
             stdout_text=first_line, later_stdout_text=second_line,
             sleep_seconds=12)
-        first = self.recover(observer)
-        self.assertNotEqual(first.returncode, 0, first.stdout + first.stderr)
+        recover_argv = [str(COORDINATOR), '--recover-observer', str(self.db),
+                        'parent', str(observer)]
+        first = subprocess.Popen(
+            recover_argv, text=True, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, env=self.environment)
+        self.addCleanup(self.stop_owned_process, first)
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline:
+            if (checkpoint_offset(self.attempt) == len(first_line.encode()) and
+                    custody_offset(self.attempt) == len(first_line.encode())):
+                break
+            if first.poll() is not None:
+                break
+            time.sleep(0.02)
+        self.assertEqual(checkpoint_offset(self.attempt), len(first_line.encode()),
+                         'first monitor recovery did not persist its cursor')
+        self.assertEqual(custody_offset(self.attempt), len(first_line.encode()))
+        first_checkpoint = (self.attempt / 'checkpoint').read_bytes()
+        first_custody = (self.attempt / 'custody').read_bytes()
+        first_running = first.poll() is None
+        if first_running:
+            first.kill()
+        first_stdout, first_stderr = first.communicate(timeout=10)
+        if not first_running:
+            self.assertNotEqual(first.returncode, 0, first_stdout + first_stderr)
         self.assertEqual((self.attempt / 'native.birth').read_bytes(), birth)
         self.assertEqual((self.attempt / 'manifest').read_bytes(), manifest)
         self.assertEqual(int((self.attempt / 'native.pid').read_text()), self.native_process)
@@ -204,14 +233,13 @@ class ObserverMonitor(unittest.TestCase):
         self.assertTrue(status[0].startswith('unavailable'), status)
         self.assertNotIn('exit 0', status[0])
         offset = checkpoint_offset(self.attempt)
-        checkpoint = (self.attempt / 'checkpoint').read_bytes()
         # Reopen the same durable monitor checkpoint with its public output log
         # absent. Recovery must keep the retained cursor and the original task
         # pending while it restores observer state from the attempt checkpoint.
         self.log.unlink(missing_ok=True)
         self.assertFalse(self.log.exists())
-        self.release_marker.touch()
         expected_output = (first_line + second_line).encode()
+        self.release_marker.touch()
         deadline = time.monotonic() + 8
         while time.monotonic() < deadline:
             if (self.attempt / 'stdout').stat().st_size >= len(expected_output):
@@ -220,11 +248,11 @@ class ObserverMonitor(unittest.TestCase):
         self.assertEqual((self.attempt / 'stdout').read_bytes(), expected_output)
         second = self.recover(observer)
         self.assertNotEqual(second.returncode, 0, second.stdout + second.stderr)
-        self.assertNotEqual((self.attempt / 'checkpoint').read_bytes(), checkpoint)
-        self.assertGreater(offset, 0)
+        self.assertNotEqual((self.attempt / 'checkpoint').read_bytes(), first_checkpoint)
+        self.assertEqual(offset, len(first_line.encode()))
         self.assertEqual(checkpoint_offset(self.attempt), len(expected_output))
         self.assertEqual(custody_offset(self.attempt), len(expected_output))
-        self.assertFalse(self.log.exists())
+        self.assertNotEqual((self.attempt / 'custody').read_bytes(), first_custody)
         self.assertEqual(self.row('SELECT receipt FROM messages WHERE id=?', 'task'), (None,))
         status = self.row("SELECT status FROM executions WHERE session='parent' AND id=?", self.attempt_id)
         self.assertTrue(status[0].startswith('unavailable'), status)
