@@ -1249,7 +1249,14 @@ static int br_command(BrKeeper *keeper,BrFrame frame,const char *payload) {
     if(error)return br_reply(keeper,frame.serial,keeper->generation,error);
     keeper->ready=1;
     if((error=br_reply(keeper,frame.serial,keeper->generation,0)))return error;
-    return keeper->native_pid?br_native_exited(keeper):0;
+    /* A waiter can observe the native exit before readiness. Reap that exit now
+       that readiness is set; a running native returns without error. An error is
+       recorded without failing the keeper serving state. */
+    if(keeper->native_waiting) {
+      int exit_error=br_native_exited(keeper);
+      if(exit_error)br_note(keeper,"native-exit-error",exit_error);
+    }
+    return 0;
   }
   if(frame.op==BR_SIGNAL) {
     if(keeper->exited)error=ESRCH;
@@ -4501,7 +4508,12 @@ static void br_read_awake(BatonProcessCall *call) {
 }
 static void br_instance_subscribe_call(BatonProcessCall *call) {
   uint64_t generation=0,after_cursor=0;
-  int error=br_parse_u64(call->generation,call->generation?strlen(call->generation):0,&generation);
+  /* An empty expected generation means the caller holds no incarnation and
+     accepts the owner's ready cursor or a gap snapshot; it is not a malformed
+     decimal. The after-cursor is still required to be decimal. */
+  int error=0;
+  if(call->generation && *call->generation)
+    error=br_parse_u64(call->generation,strlen(call->generation),&generation);
   if(!error)error=br_parse_u64(call->cursor,call->cursor?strlen(call->cursor):0,&after_cursor);
   BrInstanceReady ready={0};
   int socket_fd=-1;

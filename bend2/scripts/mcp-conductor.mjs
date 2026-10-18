@@ -187,6 +187,7 @@ const commandSurface = coordinatorSurface();
 const batchMessaging = ['outbox', 'delivery-batch', 'message-batch'].every((name) => commandSurface.includes(name));
 const inputDetail = commandSurface.includes('input MESSAGE_ID');
 const contextualActions = /baton2? as SESSION ACTION/.test(commandSurface);
+const replInput = contextualActions && /^Actions:.*\brepl\b/m.test(commandSurface);
 const nativeAttachmentInput = commandSurface.includes('native-attachment-input');
 const dispatchInput = commandSurface.includes('dispatch --stdin');
 const taskInput = dispatchInput || commandSurface.includes('task --stdin');
@@ -201,11 +202,13 @@ const unavailableTools = new Set([
   ...(!dispatchInput ? ['baton2_dispatch'] : []),
   ...(!taskInput ? ['baton2_task'] : []),
   ...(!contextualActions ? ['baton2_action'] : []),
+  ...(!replInput ? ['baton2_repl'] : []),
 ]);
 
 function messageInstructions() {
   if (contextualActions) {
-    return `Use ${dispatchInput ? 'baton2_dispatch' : 'baton2_task'} for complete task text or a UTF-8 file, with to or session selecting an existing conversation. Baton preserves its current assignment automatically. Dispatch input and setup outcomes are stored in the database. Use baton2_action for the contextual native actions: inbox, read, send, completion-request, completion-confirmed, guide, acknowledge and domain help. The attached session supplies actor identity. Pass action and its named argument tokens; use action:help with the domain name for usage. Complete action argument strings travel directly through JSON standard input to native admission. Multi-message reads, independent sends and explicit acknowledgements return each item outcome. Successful recipient turns record handling of complete inputs; failed turns retain unfinished handling. Baton generates mutation identities and selects current owned input, receipts and completion requests. Use acknowledge without identifiers after handling input, and completion-confirmed with an optional recipient. Task completion and coordinator decisions remain separate recorded actions.`;
+    return `Use ${dispatchInput ? 'baton2_dispatch' : 'baton2_task'} for complete task text or a UTF-8 file, with to or session selecting an existing conversation. Baton preserves its current assignment automatically. Dispatch input and setup outcomes are stored in the database. Use baton2_action for the contextual native actions: inbox, read, send, completion-request, completion-confirmed, guide, acknowledge and domain help. The attached session supplies actor identity. Pass action and its named argument tokens; use action:help with the domain name for usage. Complete action argument strings travel directly through JSON standard input to native admission. Multi-message reads, independent sends and explicit acknowledgements return each item outcome. Successful recipient turns record handling of complete inputs; failed turns retain unfinished handling. Baton generates mutation identities and selects current owned input, receipts and completion requests. Use acknowledge without identifiers after handling input, and completion-confirmed with an optional recipient. Task completion and coordinator decisions remain separate recorded actions.` +
+      (replInput ? ' Use baton2_repl for Bend2 define, eval, bind, read, recover, share, import and interactive operations; the packaged compiler checks types and affine use and each result retains complete output and process outcomes.' : '');
   }
   const messaging = batchMessaging
     ? 'Use baton2_inbox or baton2_pending to see pending messages, and baton2_outbox to inspect authored messages and receipts. Their optional index:true argument returns metadata; baton2_delivery and baton2_delivery_batch read selected complete messages. Use baton2_ack to acknowledge your own fully read and handled input; retain unfinished work in your reports and project state. Use baton2_guide or baton2_message_batch to direct recipients. Each batch item keeps its own admission, wake, retained message and receipt facts.'
@@ -320,8 +323,21 @@ const dispatchInputSchema = { type: 'object', properties: {
 // Tool definitions exposed to the attached Conductor.
 const TOOLS = [
   {
+    name: 'baton2_repl',
+    description: 'Evaluate actual Bend2 source or retain checked definitions in the attached actor\'s notebook. The packaged canonical compiler infers types and checks affine use. IO runs in the recorded workspace through native custody. Read returns complete source, results, diagnostics and process outcomes; recover observes the original attempt. Bind checks a named definition from a pure result for later expressions. Labels select saved result records. Share sends a complete cell through ordinary message routing; import displays the complete received message through the owned-read path and checks its declaration snapshot. Standard installations include the Bend2 REPL compiler and runtime. Use baton2_action with action help and arguments ["repl"] for usage.',
+    inputSchema: { type: 'object', properties: {
+      operation: { enum: ['define', 'eval', 'bind', 'read', 'recover', 'share', 'import'] },
+      source: { type: 'string', description: 'Complete Bend2 declarations or expression for define or eval.' },
+      expectedType: { type: 'string', description: 'Optional expected Bend2 type for eval.' },
+      name: { type: 'string', description: 'Bend2 definition name for binding a selected pure result.' },
+      label: { type: 'string', description: 'Semantic label for the saved cell.' },
+      notebook: { type: 'string' }, cell: { type: 'string' }, to: { type: 'string' },
+      message: { type: 'string', description: 'Received message selected by import.' },
+    }, required: ['operation'], additionalProperties: false },
+  },
+  {
     name: 'baton2_action',
-    description: 'Run a contextual native action as the attached session. Use inbox, read, send, completion-request, completion-confirmed, guide, acknowledge or help with a command domain. Named arguments and independent batch clauses use the same native grammar as baton. Complete argument strings travel through JSON standard input. Each item retains its outcome and actual failure cause.',
+    description: 'Run a contextual native action as the attached session. Use inbox, read, send, completion-request, completion-confirmed, guide, acknowledge, repl or help with a command domain. Named arguments and independent batch clauses use the same native grammar as baton. Complete argument strings travel through JSON standard input. Each item retains its outcome and actual failure cause.',
     inputSchema: { type: 'object', properties: {
       action: { type: 'string' }, arguments: { type: 'array', items: { type: 'string' } },
     }, required: ['action'], additionalProperties: false },
@@ -975,6 +991,25 @@ function handleToolCall(msg) {
   try {
     let result;
     switch (name) {
+      case 'baton2_repl': {
+        const values = [args.operation];
+        if (['define', 'eval'].includes(args.operation)) {
+          if (typeof args.source !== 'string') throw new Error('Supply complete Bend2 source.');
+          values.push(args.source);
+        } else if (args.operation === 'bind') {
+          if (typeof args.name !== 'string') throw new Error('Supply the Bend2 definition name.');
+          values.push(args.name);
+        } else if (args.operation === 'import') {
+          if (typeof args.message !== 'string') throw new Error('Select a received declaration message.');
+          values.push(args.message);
+        }
+        for (const [field, flag] of [['expectedType', '--type'], ['label', '--label'],
+          ['notebook', '--notebook'], ['cell', '--cell'], ['to', '--to']]) {
+          if (args[field] !== undefined) values.push(flag, args[field]);
+        }
+        result = contextualAction('repl', values);
+        break;
+      }
       case 'baton2_action':
         result = contextualAction(args.action, args.arguments ?? []);
         break;
