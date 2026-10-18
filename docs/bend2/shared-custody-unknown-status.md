@@ -18,6 +18,9 @@ record binds the manifest digest, native birth, spool device and inode, and the
 checkpoint offset. Its flags name the status unknown and the input unfinished.
 A retry validates the same identity and returns the same custody.
 
+Recovery takes the session guard with a non-blocking exclusive lock. A live
+holder keeps the attempt and the caller receives `EBUSY`.
+
 The adopting process opens `monitor.lock` and holds an exclusive lock on it for
 the lifetime of the monitor handle. A second adoption of the same attempt
 returns `EBUSY`, so two observers cannot read the same spool and write the same
@@ -27,6 +30,11 @@ A legacy keeper reports `EBUSY` when another observer connection is still
 attached. The client adopts only after the recorded observer process has ended.
 A live observer keeps the attempt; the client returns `EBUSY` with a detail that
 names the current receive.
+
+When a keeper with a capability file cannot be reached for reconcile, the
+connection errors `ENOENT`, `ECONNREFUSED`, `EPIPE` and `ECONNRESET` mark the
+keeper as unavailable and take the same adoption path. This covers an owner
+process that ended after preparing an owner-managed attempt.
 
 New keepers write a `capabilities` file containing `reconcile`. The recovery
 client sends `BR_CONTROL_RECONCILE` only when that file is present. A deployed
@@ -63,9 +71,11 @@ after exit remains the path for settlement.
 `Turn.retained_output` reads the host observation mode. A monitor observation
 returns an `Ended` outcome with `incomplete` set, so the completion path records
 the observed status, keeps every owed message unread, and skips acknowledge and
-retire. `release_native` skips the handle release for a monitor handle because
-the host refuses it; the custody record, spool and checkpoint stay in place for
-a later recovery.
+retire. An incomplete observation also skips the refused-conversation restart,
+which would otherwise record recovery input and attempt acknowledgement.
+`release_native` skips the handle release for a monitor handle because the host
+refuses it; the custody record, spool and checkpoint stay in place for a later
+recovery.
 
 ## Tests
 

@@ -114,7 +114,16 @@ class ObserverMonitor(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         return result
 
-    def start_attempt(self):
+    def start_attempt(self, stderr_text=''):
+        self.native.write_text(
+            '#!' + sys.executable + '\n'
+            'import pathlib,sys,time\n'
+            'pathlib.Path(sys.argv[2]).write_text(sys.argv[1])\n'
+            + ('sys.stderr.write(' + repr(stderr_text) + ')\n' if stderr_text else '')
+            + 'sys.stdout.write("monitor-line\\n")\n'
+            'sys.stdout.flush()\n'
+            'time.sleep(8)\n')
+        self.native.chmod(0o700)
         self.fixture('init', self.db)
         start = subprocess.Popen(
             [str(FIXTURE), 'start', str(self.db), 'attempt1', str(self.attempt),
@@ -138,15 +147,14 @@ class ObserverMonitor(unittest.TestCase):
         self.assertEqual(self.uuid_marker.read_text(), NATIVE_UUID)
         birth = (self.attempt / 'native.birth').read_bytes()
         manifest = (self.attempt / 'manifest').read_bytes()
+        self.assertTrue((self.attempt / 'capabilities').exists(),
+                        'the owner keeper did not advertise reconcile')
         owner = owner_pid(self.db)
         self.assertIsNotNone(owner, 'database owner was not found')
         os.kill(owner, signal.SIGKILL)
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline and owner_pid(self.db) is not None:
             time.sleep(0.02)
-        capabilities = self.attempt / 'capabilities'
-        if capabilities.exists():
-            capabilities.unlink()
         os.kill(self.native_process, 0)
         return observer, birth, manifest
 
@@ -198,11 +206,27 @@ class ObserverMonitor(unittest.TestCase):
         second_output = second.communicate(timeout=90)
         self.assertNotEqual(first.returncode, 0, ''.join(first_output))
         self.assertNotEqual(second.returncode, 0, ''.join(second_output))
+        combined = ''.join(first_output) + ''.join(second_output)
+        self.assertIn('Another observer holds the retained attempt', combined)
         self.assertEqual((self.attempt / 'native.birth').read_bytes(), birth)
         self.assertEqual((self.attempt / 'manifest').read_bytes(), manifest)
         self.assertEqual(checkpoint_offset(self.attempt), len('monitor-line\n'))
         self.assertEqual(custody_offset(self.attempt), len('monitor-line\n'))
         self.assertEqual(self.row('SELECT receipt FROM messages WHERE id=?', 'task'), (None,))
+        status = self.row("SELECT status FROM executions WHERE session='parent' AND id='attempt1'")
+        self.assertTrue(status[0].startswith('unavailable'), status)
+        self.assertFalse((self.attempt / 'acknowledged').exists())
+        self.assertFalse((self.attempt / 'released').exists())
+
+    def test_refused_resume_text_stays_an_incomplete_observation(self):
+        observer, birth, manifest = self.start_attempt('Error: Session fixture not found\n')
+        result = self.recover(observer)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual((self.attempt / 'native.birth').read_bytes(), birth)
+        self.assertEqual((self.attempt / 'manifest').read_bytes(), manifest)
+        self.assertEqual(self.row('SELECT receipt FROM messages WHERE id=?', 'task'), (None,))
+        self.assertEqual(self.row('SELECT native FROM sessions WHERE id=?', 'parent'), ('native-uuid',))
+        self.assertEqual(self.row("SELECT count(*) FROM messages WHERE id LIKE 'attempt1:recovery%'"), (0,))
         status = self.row("SELECT status FROM executions WHERE session='parent' AND id='attempt1'")
         self.assertTrue(status[0].startswith('unavailable'), status)
         self.assertFalse((self.attempt / 'acknowledged').exists())

@@ -13,7 +13,7 @@ def init_cli(+db: String) -> IO(Unit):
   do IO<Unit>:
     ensured : Unit <- Store.ensure_before_begin(db)
     seeded : String <- IO.try(String,DB.Sql.query(db,
-      "INSERT INTO sessions(id,parent,harness,model,effort) VALUES('parent',NULL,'codex','controlled-model','low');"
+      "INSERT INTO sessions(id,parent,harness,model,effort,native) VALUES('parent',NULL,'codex','controlled-model','low','native-uuid');"
       ++ "INSERT INTO messages(id,sender,recipient,kind,body) VALUES('task','parent','parent','task','Monitor the retained attempt.');"))
     IO.pure(Unit,Unit{})
 

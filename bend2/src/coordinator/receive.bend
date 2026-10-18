@@ -479,7 +479,8 @@ def observed(+db: String, +session: String, +id: String, +log: String, cursor: S
     exited : Unit <- Turn.record_exit(db,session,id,log,outcome)
     closed : Bool <- Stop.stopped(db,session)
     gone : Bool <- Turn.refusal(attempt ++ "/native.stderr",Bool.not(String.is_empty(native)),outcome)
-    complete_or_restart(db,session,id,log,attempt ++ "/native.stderr",attempt,cursor,native,cwd,handle,lock,outcome,deliveries,again,Bool.and(gone,Bool.not(closed)),superseded)
+    retained : Bool <- IO.pure(Bool,Bool.and(Bool.not(native_observation_failed(outcome)),Bool.and(gone,Bool.not(closed))))
+    complete_or_restart(db,session,id,log,attempt ++ "/native.stderr",attempt,cursor,native,cwd,handle,lock,outcome,deliveries,again,retained,superseded)
 
 def reconciled_cursor(cursor: String, adopted: Bool, outcome: Turn.Outcome) -> String:
   match adopted:

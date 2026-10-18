@@ -5126,6 +5126,15 @@ static int br_process_dead(pid_t pid) {
   return ended;
 }
 
+/* The session guard serialises recovery. A live holder keeps the attempt; the
+   caller receives EBUSY instead of waiting or adopting a second reader. */
+static int br_guard_lock(int fd) {
+  int held;
+  do {held=flock(fd,LOCK_EX|LOCK_NB);} while(held<0 && errno==EINTR);
+  if(held==0)return 0;
+  return errno==EWOULDBLOCK||errno==EAGAIN?EBUSY:errno;
+}
+
 /* The only checkpoint an adopted monitor may write. It revalidates the exact
    custody record the adoption wrote: manifest digest, native birth, spool
    device and inode, a non-decreasing cursor within the current spool extent,
@@ -5277,7 +5286,8 @@ static int baton_observer_completed(BatonSessionLock *call) {
         fclose(file);
       }
     } else if(error==EPROTO || error==EPIPE || error==ECONNRESET ||
-              error==ENOSYS || error==EOPNOTSUPP) {
+              error==ENOSYS || error==EOPNOTSUPP ||
+              error==ENOENT || error==ECONNREFUSED) {
       call->legacy_unknown=1;
       error=0;
     }
@@ -5335,8 +5345,10 @@ static int baton_observer_recover(BatonSessionLock *call) {
          repeats the live observer's database writes. */
       if(!br_process_dead((pid_t)call->observer))
         error=EBUSY;
-      else
-        error=br_adopt_orphan(&call->attempt,call->directory,(int)call->handle);
+      else {
+        error=br_guard_lock((int)call->handle);
+        if(!error)error=br_adopt_orphan(&call->attempt,call->directory,(int)call->handle);
+      }
     } else if(error==EBUSY) {
       /* Current keepers use ordinary attachment after observer exit. */
       error=baton_observer_retire(call);
@@ -5360,8 +5372,11 @@ static int baton_observer_recover(BatonSessionLock *call) {
     } else if(error!=ENOENT && error!=ECONNREFUSED && error!=EPIPE && error!=ECONNRESET)return error;
   }
   if(!call->attempt.child->retained && (error=baton_observer_retire(call)))return error;
-  int held;do {held=flock(call->handle,LOCK_EX);}while(held<0 && errno==EINTR);
-  if(held<0)return errno;
+  int guard_error=br_guard_lock((int)call->handle);
+  if(guard_error) {
+    if(guard_error==EBUSY)call->detail="Another observer holds the retained attempt; inspect its current receive.";
+    return guard_error;
+  }
   if(call->attempt.child->retained)return 0;
   if(call->legacy_unknown) {
     if(!br_process_dead((pid_t)call->observer)) {
@@ -5457,6 +5472,8 @@ static Term baton_session_lock_pack(Env e, IoWork *w) {
         pthread_mutex_destroy(&retained->reader);pthread_cond_destroy(&retained->changed);
         free(retained->directory);free(retained->database);free(retained);
       }
+      call->attempt.child->retained=NULL;
+      baton_child_retire_slot(&call->attempt);
     }
   }
   Term result=call->error ? io_fail(e,call->error,call->detail) : io_done(e,value);
