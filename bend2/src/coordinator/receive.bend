@@ -480,7 +480,7 @@ def release_native(db: String, +handle: U32) -> IO(Unit):
     +monitor : Bool <- Observer.monitor_handle(db,handle)
     Bool.pick(IO(Unit),monitor,IO.pure(Unit,Unit{}),IO.try(Unit,P.ProcessChild.release(handle)))
 
-def completed(+db: String, +session: String, +id: String, +log: String, attempt: String, stderr: String, +cursor: String, +handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), +superseded: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+def completed(+db: String, +session: String, +id: String, +log: String, +attempt: String, stderr: String, +cursor: String, +handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), +superseded: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     failed : Bool <- outcome_failed(db,outcome)
     transient : Bool <- transient_provider_error(db,outcome)
