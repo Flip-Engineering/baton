@@ -136,7 +136,7 @@ def smoke(args):
     work.mkdir()
     commands = args.output / 'commands'
     commands.mkdir()
-    binary = prefix / 'bin/baton2'
+    binary = prefix / 'bin/baton'
     db = args.output / 'state.db'
     env = dict(os.environ, GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
     for key in ('BEND', 'BEND_HOME', 'BATON_DATABASE', 'BATON_SESSION', 'CODEX_THREAD_ID',

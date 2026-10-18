@@ -105,9 +105,11 @@ python3 - "$BATON2_PREFIX" <<'PY'
 import hashlib, json, pathlib, sys
 prefix = pathlib.Path(sys.argv[1])
 manifest = json.loads((prefix / 'manifest.json').read_text())
-assert hashlib.sha256((prefix / 'bin/baton2').read_bytes()).hexdigest() == manifest['binary']['sha256']
-assert manifest['binary']['alias'] == 'bin/baton'
+assert manifest['binary']['path'] == 'bin/baton'
+assert manifest['binary']['alias'] == 'bin/baton2'
 assert (prefix / 'bin/baton').read_bytes() == (prefix / 'bin/baton2').read_bytes()
+for record in manifest['binaries']:
+    assert hashlib.sha256((prefix / record['path']).read_bytes()).hexdigest() == record['sha256']
 PY
 python3 "$BATON2_PREFIX/libexec/baton2/check-install.py" \
   --output "$BATON2_DOWNLOAD/installation-check"

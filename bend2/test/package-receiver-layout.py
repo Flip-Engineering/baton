@@ -72,6 +72,28 @@ class ReceiverLayout(unittest.TestCase):
         return prefix, manifest, records
 
 
+
+    def test_archive_staging_uses_the_same_three_binary_layout(self):
+        namespace = argparse.Namespace(
+            focused_binary=self.binaries['focused'], full_binary=self.binaries['full'],
+            register_binary=self.binaries['register'],
+            focused_source_commit=COMMIT, focused_source_tree='c' * 40,
+            focused_source_status='', focused_source_manifest_sha256=None,
+            full_source_commit=COMMIT, full_source_tree='c' * 40,
+            full_source_status='', full_source_manifest_sha256=None,
+            register_source_commit=COMMIT, register_source_tree='c' * 40,
+            register_source_status='', register_source_manifest_sha256=None)
+        specs = PACKAGE.receiver_binaries(namespace)
+        built = {spec['role']: Path(spec['supplied']) for spec in specs}
+        payload = self.home / 'archive-payload'
+        records = PACKAGE.stage_receiver_binaries(payload, specs, built)
+        self.assertEqual([record['role'] for record in records],
+                         ['focused-facade', 'full-cli', 'receiver-register'])
+        self.assertEqual((payload / 'bin/baton').read_bytes(),
+                         (payload / 'bin/baton2').read_bytes())
+        self.assertEqual([record['build_mode'] for record in records],
+                         ['focused-native-entry', 'full-native-entry', 'standalone-registrar'])
+        self.assertEqual(records[0]['source']['tree'], 'c' * 40)
     def test_focused_build_mode_refuses_the_general_entry(self):
         environment = dict(os.environ, BATON2_RECEIVE_FOCUSED='1')
         result = subprocess.run(

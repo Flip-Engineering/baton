@@ -50,15 +50,37 @@ class PackageLicenses(unittest.TestCase):
         self.document('NOTICE', b'Project notice fixture\n')
         identity = PACKAGE.artifact_identity(release_version)
         terms = PACKAGE.stage_notices(self.payload, [], identity['kind'])
-        binary = self.payload / 'bin/baton2'
-        binary.parent.mkdir()
-        binary.write_bytes(b'File-only fixture; this executable is never run.\n')
-        binary.chmod(0o755)
-        shutil.copyfile(binary, self.payload / 'bin/baton')
-        (self.payload / 'bin/baton').chmod(0o755)
-        manifest = {'schema': 'baton2-native-artifact-v1', **identity,
-                    'source': {'directory': str(self.source)},
-                    'binary': {'path': 'bin/baton2', 'alias': 'bin/baton'},
+        (self.payload / 'bin').mkdir()
+        binaries = []
+        for role, name, alias, entry, mode in (
+                ('focused-facade', 'baton', 'baton2',
+                 'bend2/src/coordinator/receive-focused.bend', 'focused-native-entry'),
+                ('full-cli', 'baton-full', None,
+                 'bend2/src/coordinator/main.bend', 'full-native-entry'),
+                ('receiver-register', 'baton-register', None,
+                 'bend2/src/coordinator/receiver-register-focused-direct.bend',
+                 'standalone-registrar')):
+            path = self.payload / 'bin' / name
+            path.write_bytes(('File-only ' + role + ' fixture; never run.\n').encode())
+            path.chmod(0o755)
+            record = {'role': role, 'path': 'bin/' + name,
+                      'sha256': PACKAGE.sha256(path),
+                      'source': {'directory': str(self.source), 'commit': 'a' * 40,
+                                 'tree': 'b' * 40, 'status': ''},
+                      'entry': entry, 'build_mode': mode}
+            if alias:
+                alias_path = self.payload / 'bin' / alias
+                shutil.copyfile(path, alias_path)
+                alias_path.chmod(0o755)
+                record['alias'] = 'bin/' + alias
+            binaries.append(record)
+        focused = binaries[0]
+        manifest = {'schema': 'baton2-native-artifact-v2', **identity,
+                    'source': {'directory': str(self.source), 'commit': 'a' * 40,
+                               'tree': 'b' * 40, 'status': ''},
+                    'binaries': binaries,
+                    'binary': {'path': focused['path'], 'alias': focused['alias'],
+                               'sha256': focused['sha256'], 'source': focused['source']},
                     'terms': terms}
         provenance = self.home / 'manifest.json'
         provenance.write_text(json.dumps(manifest) + '\n')
@@ -130,7 +152,7 @@ class PackageLicenses(unittest.TestCase):
                  for harness in ('codex', 'omp', 'mcp') for suffix in ('conductor', 'root')]
         names.extend(('context-provider.mjs', 'context-project-policy.mjs',
                       'context-query-artifact.mjs', 'context-worktree-capture.mjs',
-                      'codex-inbox-wake.mjs'))
+                      'codex-inbox-wake.mjs', 'check-install.py'))
         for name in names:
             shutil.copyfile(ROOT / 'bend2/scripts' / name, scripts / name)
         harness = self.source / 'bend2/harness'

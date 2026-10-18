@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build and package the Darwin arm64 native artifact."""
+"""Build and package the Darwin arm64 receiver-layout native artifact."""
 import argparse
 import datetime
 import hashlib
@@ -61,23 +61,91 @@ def source_identity():
     return {'commit': git('rev-parse', 'HEAD'), 'status': git('status', '--porcelain=v1')}
 
 
-def build(env, directory):
+def build_binary(env, directory, label, entry=None, focused=False):
+    build_dir = directory / label
+    build_dir.mkdir()
+    output = ROOT / '.scratch/bend2/' + label
     argv = ['sh', 'bend2/scripts/build-native.sh']
-    stdout = directory / 'build.stdout'
-    stderr = directory / 'build.stderr'
+    if entry is not None:
+        argv.extend([entry, str(output.relative_to(ROOT))])
+    stdout = build_dir / 'build.stdout'
+    stderr = build_dir / 'build.stderr'
+    role_env = dict(env)
+    if focused or label != 'baton-full':
+        role_env.pop('BEND_GENERATED_C', None)
+    if focused:
+        role_env['BATON2_RECEIVE_FOCUSED'] = '1'
     started = time.monotonic()
     with stdout.open('wb') as out, stderr.open('wb') as err:
-        result = subprocess.run(argv, cwd=ROOT, env=env, stdin=subprocess.DEVNULL,
+        result = subprocess.run(argv, cwd=ROOT, env=role_env, stdin=subprocess.DEVNULL,
                                 stdout=out, stderr=err)
     record = {'argv': argv, 'cwd': str(ROOT), 'exit_code': result.returncode,
               'elapsed_seconds': time.monotonic() - started,
-              'stdout': {'path': output_path(stdout, directory)},
-              'stderr': {'path': output_path(stderr, directory)}}
-    if env.get('BEND_GENERATED_C'):
-        record['generated_c_input'] = env['BEND_GENERATED_C']
-    write_json(directory / 'build.json', record)
-    require(result.returncode == 0, 'Native build failed; full output is retained in ' + str(directory))
-    return record
+              'stdout': {'path': output_path(stdout, build_dir)},
+              'stderr': {'path': output_path(stderr, build_dir)}}
+    if role_env.get('BEND_GENERATED_C'):
+        record['generated_c_input'] = role_env['BEND_GENERATED_C']
+    write_json(build_dir / 'build.json', record)
+    require(result.returncode == 0, 'Native ' + label + ' build failed; full output is retained in ' + str(build_dir))
+    return output, record
+
+
+
+
+BINARY_LAYOUT = (
+    {'role': 'focused-facade', 'option': 'focused', 'label': 'baton-focused',
+     'installed': 'bin/baton', 'alias': 'bin/baton2',
+     'entry': 'bend2/src/coordinator/receive-focused.bend',
+     'build_mode': 'focused-native-entry', 'focused': True},
+    {'role': 'full-cli', 'option': 'full', 'label': 'baton-full',
+     'installed': 'bin/baton-full', 'alias': None,
+     'entry': 'bend2/src/coordinator/main.bend',
+     'build_mode': 'full-native-entry', 'focused': False},
+    {'role': 'receiver-register', 'option': 'register', 'label': 'baton-register',
+     'installed': 'bin/baton-register', 'alias': None,
+     'entry': 'bend2/src/coordinator/receiver-register-focused-direct.bend',
+     'build_mode': 'standalone-registrar', 'focused': False},
+)
+
+
+def source_pin(commit, tree, status, manifest_sha256, default):
+    commit = default['commit'] if commit is None else commit
+    require(re.fullmatch(r'[0-9a-f]{40}', commit) is not None,
+            'A receiver binary source commit must be a 40-character lowercase Git object name')
+    if status is None:
+        status = default['status'] if commit == default['commit'] else ''
+    require(isinstance(status, str), 'A receiver binary source status must be a string')
+    if tree is None:
+        try:
+            tree = git('rev-parse', commit + '^{tree}')
+        except Exception as error:
+            raise RuntimeError('A receiver binary source tree is missing; supply its tree or source manifest hash') from error
+    require(re.fullmatch(r'[0-9a-f]{40}', tree) is not None,
+            'A receiver binary source tree must be a 40-character lowercase Git object name')
+    if manifest_sha256 is not None:
+        require(re.fullmatch(r'[0-9a-f]{64}', manifest_sha256) is not None,
+                'A receiver binary source manifest must be a SHA256')
+    pin = {'directory': str(ROOT), 'commit': commit, 'tree': tree, 'status': status}
+    if manifest_sha256 is not None:
+        pin['manifest_sha256'] = manifest_sha256
+    return pin
+
+
+def receiver_binaries(args):
+    default = {'directory': str(ROOT), **source_identity()}
+    specs = []
+    for layout in BINARY_LAYOUT:
+        option = layout['option']
+        supplied = getattr(args, option + '_binary')
+        commit = getattr(args, option + '_source_commit')
+        require(supplied is None or commit is not None,
+                'A supplied ' + layout['role'] + ' binary requires its explicit source commit')
+        pin = source_pin(commit,
+                         getattr(args, option + '_source_tree'),
+                         getattr(args, option + '_source_status'),
+                         getattr(args, option + '_source_manifest_sha256'), default)
+        specs.append({**layout, 'supplied': supplied, 'source': pin})
+    return specs
 
 
 def archive_notices(archive):
@@ -480,6 +548,25 @@ def stage_notices(payload, compiler_notices, kind='development'):
     return terms
 
 
+def stage_receiver_binaries(payload, specs, built):
+    (payload / 'bin').mkdir(parents=True)
+    records = []
+    for spec in specs:
+        destination = payload / spec['installed']
+        shutil.copyfile(built[spec['role']], destination)
+        destination.chmod(0o755)
+        record = {'role': spec['role'], 'path': spec['installed'],
+                  'sha256': sha256(destination), 'source': spec['source'],
+                  'entry': spec['entry'], 'build_mode': spec['build_mode']}
+        if spec['alias']:
+            alias = payload / spec['alias']
+            shutil.copyfile(built[spec['role']], alias)
+            alias.chmod(0o755)
+            record['alias'] = spec['alias']
+        records.append(record)
+    return records
+
+
 def artifact_identity(release_version):
     if release_version is None:
         return {'archive_root': ARCHIVE_ROOT, 'kind': 'development'}
@@ -506,23 +593,35 @@ def package(args):
         env = dict(os.environ, BEND=str(compiler))
         if args.generated_c is not None:
             env['BEND_GENERATED_C'] = str(args.generated_c.resolve())
-        build_record = build(env, build_output)
+        specs = receiver_binaries(args)
+        built = {}
+        builds = {}
+        for spec in specs:
+            role = spec['role']
+            if spec['supplied'] is not None:
+                path = spec['supplied'].resolve()
+                require(path.is_file() and not path.is_symlink() and os.access(path, os.X_OK),
+                        'The supplied ' + role + ' binary is unavailable or not executable: ' + str(path))
+                built[role] = path
+                builds[role] = {'mode': 'supplied', 'path': str(path), 'sha256': sha256(path)}
+            else:
+                path, record = build_binary(env, build_output, spec['label'],
+                                            entry=spec['entry'], focused=spec['focused'])
+                require(path.is_file(), 'The production build did not create ' + str(path))
+                generated = path.with_name(path.name + '.c')
+                if generated.is_file():
+                    target = build_output / spec['label'] / (path.name + '.c')
+                    shutil.copyfile(generated, target)
+                    record['generated_c'] = {'path': target.relative_to(build_output).as_posix()}
+                    write_json(build_output / spec['label'] / 'build.json', record)
+                built[role] = path
+                builds[role] = {'mode': 'built', 'path': str(path), 'sha256': sha256(path)}
         archive = args.compiler_archive.resolve()
         compiler_notices = archive_notices(archive)
-        binary = ROOT / '.scratch/bend2/baton2'
-        require(binary.is_file(), 'The production build did not create .scratch/bend2/baton2')
-        generated = ROOT / '.scratch/bend2/baton2.c'
-        if generated.is_file():
-            shutil.copyfile(generated, build_output / 'baton2.c')
-            build_record['generated_c'] = {'path': 'baton2.c'}
-            write_json(build_output / 'build.json', build_record)
-        source = {'directory': str(ROOT), **source_identity()}
+        source = {'directory': str(ROOT), **source_identity(),
+                  'tree': git('rev-parse', 'HEAD^{tree}')}
         payload = output / identity['archive_root']
-        (payload / 'bin').mkdir(parents=True)
-        shutil.copyfile(binary, payload / 'bin/baton2')
-        (payload / 'bin/baton2').chmod(0o755)
-        shutil.copyfile(binary, payload / 'bin/baton')
-        (payload / 'bin/baton').chmod(0o755)
+        records = stage_receiver_binaries(payload, specs, built)
         stage_adapters(payload)
         repl_compiler = stage_repl(payload, args)
         selected_context = [stage_selected_context_payload(payload), stage_runtime_context_module(payload)]
@@ -530,20 +629,33 @@ def package(args):
         if args.context_typescript_package is not None:
             selected_context.append(stage_typescript_context_module(payload, args.context_typescript_package))
         terms = stage_notices(payload, compiler_notices, identity['kind'])
+        focused = next(record for record in records if record['role'] == 'focused-facade')
         manifest = {
-            'schema': 'baton2-native-artifact-v1', **identity,
+            'schema': 'baton2-native-artifact-v2', **identity,
             'created_at': datetime.datetime.now(datetime.timezone.utc).isoformat(),
             'platform': {'system': platform.system(), 'machine': platform.machine(), 'artifact': 'darwin-arm64'},
             'source': source,
-            'binary': {'path': 'bin/baton2', 'alias': 'bin/baton', 'sha256': sha256(payload / 'bin/baton2')},
+            'binaries': records,
+            'binary': {'path': focused['path'], 'alias': focused['alias'],
+                       'sha256': focused['sha256'], 'source': focused['source']},
             'selected_modules': selected_context,
             'selected_dependencies': repl_compiler,
             'required_system_dependencies': system_dependencies(platform.system()),
-            'build': {'command': build_record, 'compiler_archive': {
-                'url': COMPILER_ARCHIVE_URL, 'sha256': sha256(archive)}},
+            'build': {'command': builds['full-cli'], 'compiler_archive': {
+                'url': COMPILER_ARCHIVE_URL, 'sha256': sha256(archive)}, 'binaries': builds},
             'terms': terms,
         }
         write_json(payload / 'manifest.json', manifest)
+        receipt = {'schema': 'baton2-native-install-receipt-v1',
+                   'created_at': manifest['created_at'],
+                   'manifest': {'path': 'manifest.json', 'sha256': sha256(payload / 'manifest.json')},
+                   'source': source, 'binaries': records}
+        write_json(payload / 'install-receipt.json', receipt)
+        checksum_paths = [record['path'] for record in records]
+        checksum_paths.extend(record['alias'] for record in records if record.get('alias'))
+        checksum_paths.extend(['manifest.json', 'install-receipt.json'])
+        (payload / 'SHA256SUMS').write_text('\n'.join(
+            sha256(payload / name) + '  ' + name for name in checksum_paths) + '\n')
         shutil.copyfile(payload / 'manifest.json', output / 'manifest.json')
         destination = output / (identity['archive_root'] + '-' + source['commit'] + '.tar.gz')
         with tarfile.open(destination, 'x:gz') as artifact:
@@ -551,7 +663,7 @@ def package(args):
         archive_sha = sha256(destination)
         (output / 'SHA256SUMS').write_text(archive_sha + '  ' + destination.name + '\n')
         result.update(status='packaged', archive={'path': destination.name, 'sha256': archive_sha},
-                      manifest={'path': 'manifest.json'},
+                      manifest={'path': 'manifest.json'}, binaries=records,
                       source=source, build=str(build_output))
         write_json(output / 'result.json', result)
         print(json.dumps(result), flush=True)
@@ -569,6 +681,13 @@ def main():
                         help='verified official Bend 2.0.25 archive used for license notices')
     parser.add_argument('--generated-c', type=Path,
                         help='compile a generated production C file on the package host')
+    for role in ('focused', 'full', 'register'):
+        parser.add_argument('--' + role + '-binary', type=Path,
+                            help='prebuilt ' + role + ' binary; otherwise build from source')
+        parser.add_argument('--' + role + '-source-commit')
+        parser.add_argument('--' + role + '-source-tree')
+        parser.add_argument('--' + role + '-source-status')
+        parser.add_argument('--' + role + '-source-manifest-sha256')
     parser.add_argument('--context-clang-package', type=Path,
                         help='already-built context-clang-20 runtime package, including the executable and linked libraries')
     parser.add_argument('--context-typescript-package', type=Path,
