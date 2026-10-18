@@ -64,7 +64,7 @@ def source_identity():
 def build_binary(env, directory, label, entry=None, focused=False, router=False, recovery=False):
     build_dir = directory / label
     build_dir.mkdir()
-    output = ROOT / '.scratch/bend2/' + label
+    output = ROOT / '.scratch/bend2' / label
     argv = ['sh', 'bend2/scripts/build-native.sh']
     if entry is not None:
         argv.extend([entry, str(output.relative_to(ROOT))])

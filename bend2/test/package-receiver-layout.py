@@ -8,6 +8,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -196,6 +197,31 @@ class ReceiverLayout(unittest.TestCase):
                           'recovery-native-entry'])
         self.assertEqual(records[1]['wrapper_source']['tree'], 'e' * 40)
         self.assertEqual(records[0]['source']['tree'], 'c' * 40)
+
+    def test_recovery_role_dispatches_to_the_recovery_native_entry(self):
+        specs = PACKAGE.receiver_binaries(self.args())
+        recovery = next(spec for spec in specs if spec['role'] == 'recovery-helper')
+        captured = {}
+
+        def run(argv, cwd, env, stdin, stdout, stderr):
+            captured.update(argv=argv, cwd=cwd, env=env, stdin=stdin)
+            return subprocess.CompletedProcess(argv, 0)
+
+        build_root = self.home / 'build'
+        build_root.mkdir()
+        with mock.patch.object(PACKAGE.subprocess, 'run', side_effect=run):
+            _, record = PACKAGE.build_binary(
+                {}, build_root, recovery['label'], entry=recovery['entry'],
+                focused=recovery['focused'], router=recovery.get('router', False),
+                recovery=recovery.get('recovery', False))
+
+        self.assertEqual(captured['argv'], [
+            'sh', 'bend2/scripts/build-native.sh', recovery['entry'],
+            '.scratch/bend2/baton-recovery'])
+        self.assertEqual(captured['env'].get('BATON2_RECOVERY_HELPER'), '1')
+        self.assertNotIn('BATON2_RECEIVE_FOCUSED', captured['env'])
+        self.assertNotIn('BATON2_NATIVE_RECEIVER_ROUTER', captured['env'])
+        self.assertEqual(record['exit_code'], 0)
 
     def test_retained_full_requires_a_current_wrapper_pin(self):
         with self.assertRaisesRegex(RuntimeError, 'requires its current wrapper source commit'):
