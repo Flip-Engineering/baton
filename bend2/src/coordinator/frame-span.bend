@@ -171,7 +171,7 @@ def materialize_checkpoint(+expected: String, +line: String) -> IO(Result<&1,&1,
 
 def materialize_checkpoint_text_decoded(decoded: FrameDecoded) -> IO(String):
   match decoded:
-    case SpanFrame{spool,offset,length}: IO.pass(String,T.Text.read_span(spool,offset,length))
+    case SpanFrame{spool,offset,length}: IO.try(String,T.Text.read_span(spool,offset,length))
     case InvalidFrame{line}: IO.die(String,22,invalid_error())
     case TextFrame{line}: IO.pure(String,line)
 
