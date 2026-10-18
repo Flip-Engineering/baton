@@ -715,6 +715,7 @@ static int br_attach_socket(BatonChild *child,const char *directory,int socket,i
   if(!error && !retained)error=ENOMEM;
   if(error){if(life>=0)close(life);if(guard>=0)close(guard);if(spool>=0)close(spool);close(socket);return error;}
   retained->socket=socket;retained->spool=spool;retained->guard=guard;retained->life=life;retained->watch=-1;
+  retained->custody_lock=-1;
   retained->directory=strdup(directory);retained->exited=state.exited;retained->status=state.status;
   retained->input_closed=state.input_closed;retained->released=state.released;
   retained->observer_only=hello.value==4 || hello.value==5;

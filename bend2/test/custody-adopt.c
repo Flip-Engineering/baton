@@ -46,6 +46,10 @@ int main(int argc,char **argv) {
     sleep(30);
     return 0;
   }
+  if(argc==2 && !strcmp(argv[1],"native-exit")) {
+    if(br_write_all(STDOUT_FILENO,"normal-ready\n",13))return 1;
+    return 0;
+  }
   if(argc==4 && !strcmp(argv[1],"--host-process-keeper"))
     return br_keeper(argv[2],atoi(argv[3]));
   REQUIRE(argc==2 || argc==3);
@@ -246,6 +250,51 @@ int main(int argc,char **argv) {
   char *relaunch_dir=NULL,*relaunch_address=NULL;
   REQUIRE(br_attempt_prepare(&relaunch,&relaunch_dir,&relaunch_address,1)==EBUSY);
   free(retry_args);
+  /* A normal retained handle initializes its custody lock to -1, so release
+     and acknowledge do not close standard input. */
+  {
+    char *normal_dir=malloc(strlen(argv[1])+8);
+    REQUIRE(normal_dir!=NULL);sprintf(normal_dir,"%s-normal",argv[1]);
+    char *normal_items[]={self,"native-exit"};
+    char *normal_args=encoded(normal_items,2);
+    REQUIRE(normal_args!=NULL);
+    char *normal_log=br_path(normal_dir,"native.stderr");
+    REQUIRE(normal_log!=NULL);
+    BatonProcessCall normal_call={.directory=normal_dir,.args=normal_args,
+      .length=(u32)(strlen(self)+strlen("native-exit")+2),.cwd="/",.log=normal_log,
+      .initial="",.keep_stdin=0,.lock=(u32)guard,.recovery=recovery,
+      .recovery_length=sizeof(recovery)};
+    char *normal_path=NULL,*normal_address=NULL;
+    REQUIRE(br_attempt_prepare(&normal_call,&normal_path,&normal_address,0)==0);
+    int normal_sockets[2];REQUIRE(socketpair(AF_UNIX,SOCK_STREAM,0,normal_sockets)==0);
+    int normal_null=open("/dev/null",O_RDONLY|O_CLOEXEC);
+    char *normal_keeper_log=br_path(normal_path,"keeper.log");
+    int normal_log_fd=normal_keeper_log?open(normal_keeper_log,O_CREAT|O_WRONLY|O_CLOEXEC,0600):-1;
+    REQUIRE(normal_null>=0 && normal_log_fd>=0);
+    char *normal_keeper_argv[]={(char *)keeper_exe,"--host-process-keeper",normal_path,"4",NULL};
+    pid_t normal_keeper;
+    REQUIRE(br_spawn(&normal_keeper,normal_keeper_argv,NULL,normal_null,normal_log_fd,normal_log_fd,
+      normal_sockets[1],guard)==0);
+    close(normal_sockets[1]);close(normal_null);close(normal_log_fd);
+    BatonChild normal_child={0};
+    REQUIRE(br_attach_socket(&normal_child,normal_path,normal_sockets[0],NULL,0,1)==0);
+    REQUIRE(normal_child.retained!=NULL);
+    REQUIRE(normal_child.retained->custody_lock==-1);
+    BatonProcessCall normal_wait={.kind=BP_WAIT,.child=&normal_child};
+    baton_retained_call(&normal_wait);
+    REQUIRE(normal_wait.error==0 && normal_wait.text && !strcmp(normal_wait.text,"exit 0"));
+    BatonProcessCall normal_release={.kind=BP_RELEASE,.child=&normal_child};
+    baton_retained_call(&normal_release);
+    REQUIRE(normal_release.error==0);
+    BatonProcessCall normal_ack={.kind=BP_ACK,.child=&normal_child};
+    baton_retained_call(&normal_ack);
+    REQUIRE(normal_ack.error==0);
+    REQUIRE(fcntl(STDIN_FILENO,F_GETFD)!=-1);
+    kill(normal_keeper,SIGKILL);
+    waitpid(normal_keeper,NULL,0);
+    free(normal_dir);free(normal_args);free(normal_log);
+    free(normal_keeper_log);free(normal_address);free(normal_path);
+  }
   /* Leave no fixture processes behind. */
   kill(-state.pid,SIGKILL);
   kill(keeper,SIGKILL);
