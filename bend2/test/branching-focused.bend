@@ -187,7 +187,7 @@ def fixture(+db: String, +root: String) -> IO(Unit):
 
 def child(+db: String) -> IO(Unit):
   do IO<Unit>:
-    event : Unit <- query(db,"INSERT INTO flush_events(default) VALUES(default);")
+    event : Unit <- query(db,"INSERT INTO flush_events DEFAULT VALUES;")
     IO.pure(Unit,Unit{})
 
 def main_args(args: List<String>) -> IO(Unit):
