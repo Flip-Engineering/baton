@@ -219,7 +219,7 @@ def commit(db: String, handle: U32, +state: State, enabled: Bool, monitor: Bool)
     case False{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
     case True{}: do IO<Result<&1,&1,U32 & String,Unit>>:
       saved : String <- IO.try(String,DB.Sql.query(db,encode_sql(state)))
-      commit_with(monitor,handle,Tx.trim_nl(saved))
+      commit_with(monitor,handle,saved)
 
 def reset_empty_case(db: String, +handle: U32, monitor: Bool) -> IO(State):
   match monitor:
