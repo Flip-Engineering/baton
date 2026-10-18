@@ -5,6 +5,7 @@ sessions with operator account profiles and limits. It runs no harness
 command, writes nothing, and gates nothing (#792, #683, #598).
 """
 import json
+import os
 import pathlib
 import sqlite3
 import subprocess
@@ -13,7 +14,7 @@ import unittest
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-EXE = ROOT / '.scratch/bend2/baton2'
+EXE = pathlib.Path(os.environ.get('BATON2_EXE', ROOT / '.scratch/bend2/baton2'))
 
 
 class HarnessInventory(unittest.TestCase):
@@ -39,7 +40,7 @@ class HarnessInventory(unittest.TestCase):
         store.mkdir()
         (self.directory / 'state.db.profiles').write_text(
             f'omp main {store}\ncodex fallback {store}\n')
-        (self.directory / 'state.db.profile-' + 'reader'.encode().hex()).write_text(
+        (self.directory / ('state.db.profile-' + 'reader'.encode().hex())).write_text(
             f' omp main {store}\n')
 
     def call(self, *args):

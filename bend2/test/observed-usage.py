@@ -1,5 +1,6 @@
 """Check the observed-usage read over recorded OMP conversation fixtures."""
 import json
+import os
 import pathlib
 import sqlite3
 import subprocess
@@ -9,7 +10,7 @@ import unittest
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-EXE = ROOT / '.scratch/bend2/baton2'
+EXE = pathlib.Path(os.environ.get('BATON2_EXE', ROOT / '.scratch/bend2/baton2'))
 
 
 def header(native='native-1'):
