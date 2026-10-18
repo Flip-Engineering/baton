@@ -122,11 +122,17 @@ static int dispatch_entry(int argc,char **argv) {
   free(args);free(helper);free(executable);return 1;
 }
 
+#if defined(BATON2_RECEIVE_FOCUSED) || defined(BATON2_NATIVE_RECEIVER_ROUTER) || defined(BATON2_RECOVERY_HELPER)
+static int native_help_request(int argc,char **argv) {
+  return argc>1 && (!strcmp(argv[1],"help") || !strcmp(argv[1],"--help") || !strcmp(argv[1],"-h"));
+}
+#endif
+
 #ifdef BATON2_RECEIVE_FOCUSED
 /* The focused executable owns receiver operations and exposes the same path
    to native workers. All general Baton actions use the sibling full CLI. */
 static int focused_receiver_verb(int argc,char **argv) {
-  if(argc<2) return 0;
+  if(argc<2 || native_help_request(argc,argv)) return 0;
   const char *first=argv[1];
   if(!strcmp(first,"--dispatch-message") || !strcmp(first,"--host-process-keeper") ||
      !strcmp(first,"--instance-owner") || !strcmp(first,"--instance-shutdown")) return 1;
@@ -139,6 +145,7 @@ static int focused_receiver_verb(int argc,char **argv) {
 
 #ifdef BATON2_NATIVE_RECEIVER_ROUTER
 static int native_receiver_route(int argc, char **argv) {
+  if(native_help_request(argc,argv)) return -1;
   int native_input=argc>2 && !strcmp(argv[2],"agent-native-input");
   int recovery=(argc>1 && (!strcmp(argv[1],"--recover-observer") ||
                            !strcmp(argv[1],"--recover-receive"))) ||
@@ -218,7 +225,7 @@ static int delegate_full_cli(char **argv) {
 
 #ifdef BATON2_RECOVERY_HELPER
 static int recovery_helper_verb(int argc,char **argv) {
-  if(argc<2) return 0;
+  if(argc<2 || native_help_request(argc,argv)) return 0;
   if(!strcmp(argv[1],"--recover-observer") || !strcmp(argv[1],"--recover-receive")) return 1;
   return argc>2 && !strcmp(argv[2],"recover-observer");
 }
