@@ -28,6 +28,12 @@ import ../src/git/create-worktree.bend as CW
 import ../src/git/types.bend as G
 import ../src/git/text.bend as Tx
 
+def Instance.owner(database: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  import "../src/host/process-spawn.c"
+
+def Instance.shutdown(database: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  import "../src/host/process-spawn.c"
+
 def expect(+label: String, ok: Bool) -> IO(Unit):
   Bool.pick(IO(Unit),ok,IO.print("fixture-branching " ++ label ++ ": ok"),IO.die(Unit,1,"fixture-branching " ++ label ++ ": refused"))
 
@@ -183,6 +189,7 @@ def fixture(+db: String, +root: String) -> IO(Unit):
     candidate_case(db,src,root,snapshot)
     isolation_records(db,src,root,snapshot)
     winner_cases(db,src,root,snapshot)
+    stopped : Unit <- IO.try(Unit,Instance.shutdown(db))
     IO.print("fixture-branching-ok")
 
 def child(+db: String) -> IO(Unit):
@@ -192,6 +199,8 @@ def child(+db: String) -> IO(Unit):
 
 def main_args(args: List<String>) -> IO(Unit):
   match args:
+    case "--instance-owner" <> +db <> Nil{}: IO.try(Unit,Instance.owner(db))
+    case "--instance-shutdown" <> +db <> Nil{}: IO.try(Unit,Instance.shutdown(db))
     case +db <> "agent-native-input" <> Nil{}: child(db)
     case +db <> +root <> Nil{}: fixture(db,root)
     case other: IO.die(Unit,2,"usage: branching-focused DB ROOT")
