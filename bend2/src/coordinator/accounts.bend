@@ -189,20 +189,17 @@ def select_account(accounts: List<&2,AccountRecord>, +blocked: String, +harness:
 
 # --- the launch binding ------------------------------------------------------
 
-# The funding route decides the launch binding. A subscription account binds the
-# credential directory the harness reads. An API-key account runs the packaged
-# native resolver as the launch head; the resolver path and the secret reference
-# are the binding, and the harness command follows it. The stored argv carries
-# the reference and never a value. A missing resolver leaves an API-key account
-# unlaunchable, which the caller reports as the actual cause.
+# A subscription account binds the credential directory the harness reads. The
+# API-key helper binding carries only a resolver path and secret reference. The
+# coordinator applies the credit-admission hold before returning that binding.
 def api_key_binding(+secret_ref: String, helper: Maybe<String>) -> Maybe<List<String>>:
   match helper:
     case None{}: None{}
     case Some{+script}: Some{Con{script,Con{secret_ref,Nil{}}}}
 
-# Anthropic API-key funding is held until every request can reserve its maximum
-# charge before it reaches the provider. A CLI spend threshold is not sufficient
-# for this decision because a request already in flight can cross it.
+# Anthropic Claude API-key funding is held until every request can reserve its
+# maximum charge before it reaches the provider. A CLI spend threshold does not
+# bound a request that is already in flight.
 def credit_api_key_held(account: AccountRecord) -> Bool:
   Bool.and(String.eq(account_provider(account),"anthropic"),Bool.and(String.eq(account_harness(account),"claude-code"),String.eq(account_funding(account),"api_key")))
 
