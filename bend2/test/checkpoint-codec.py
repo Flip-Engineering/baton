@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import statistics
 import subprocess
 import sys
 import time
@@ -76,12 +77,15 @@ def main() -> None:
     require(rc == 0, f"large differential decoder refused valid input: {stderr[:300]}")
     require(output == f"equal:{len(large)}", f"large fixture mismatch: {output!r}")
 
-    timings = {}
-    for mode in ("baseline", "fused"):
-        rc, output, stderr, elapsed = run(binary, mode, large)
-        require(rc == 0, f"{mode} decoder refused large fixture: {stderr[:300]}")
-        require(output == str(len(large)), f"{mode} large count mismatch: {output!r}")
-        timings[mode] = round(elapsed, 3)
+    timings: dict[str, list[float]] = {"baseline": [], "fused": []}
+    for _ in range(3):
+        for mode in ("baseline", "fused"):
+            rc, output, stderr, elapsed = run(binary, mode, large)
+            require(rc == 0, f"{mode} decoder refused large fixture: {stderr[:300]}")
+            require(output == str(len(large)), f"{mode} large count mismatch: {output!r}")
+            timings[mode].append(round(elapsed, 3))
+    medians = {mode: round(statistics.median(samples), 3)
+               for mode, samples in timings.items()}
 
     # ContextText.hex_decode drops one unpaired trailing nibble; preserve that
     # current behavior in the fused scanner.
@@ -99,7 +103,9 @@ def main() -> None:
 
     print(json.dumps({"binary": str(binary), "smallCases": len(small),
                       "largeChars": len(large), "largeUtf8Bytes": len(large.encode("utf-8")),
-                      "largeSeconds": timings}, sort_keys=True))
+                      "largeSeconds": timings, "largeMedianSeconds": medians,
+                      "medianSpeedup": round(medians["baseline"] / medians["fused"], 3)},
+                     sort_keys=True))
 
 
 if __name__ == "__main__":
