@@ -486,9 +486,18 @@ class ReplCritiqueFixtures(unittest.TestCase):
                 "SELECT directory,wait_status FROM repl_attempts "
                 "WHERE cell=? AND stage='native'", (cell,))
             if row and row[1] is not None:
-                self.observer.send_signal(signal.SIGSTOP)
-                acknowledged = list(pathlib.Path(row[0]).glob('*acknowledged*'))
+                directory = pathlib.Path(row[0])
+                # The keeper writes released before the observer acknowledges.
+                # Stopping at wait_status alone leaves the notebook guard held
+                # and recovery reports an active observer.
+                if not (directory / 'released').exists():
+                    time.sleep(0.005)
+                    continue
+                acknowledged = list(directory.glob('*acknowledged*'))
                 if acknowledged:
+                    return None
+                self.observer.send_signal(signal.SIGSTOP)
+                if (directory / 'acknowledged').exists() or list(directory.glob('*acknowledged*')):
                     return None
                 return row[0], row[1]
             time.sleep(0.005)
