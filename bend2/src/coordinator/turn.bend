@@ -4,6 +4,7 @@ import ../coordinator/commands.bend as C
 import ./store.bend as Store
 import ./stop.bend as Stop
 import ./subscription-fallback.bend as Subs
+import ./accounts.bend as Accounts
 import ./delivery.bend as Delivery
 import ./control.bend as Control
 import ../host/session-lock.bend as Lock
@@ -929,7 +930,17 @@ def retained_native(+db: String, +player: String, +sessions: String, +session: S
     legacy : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ C.q(db ++ ".session-") ++ " || lower(hex(id)) FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
     Omp.resume_file(Tx.trim_nl(legacy),sessions,selected,Bool.and(enabled,String.eq(selected,session)))
 
-def retained_prepare_checked(+db: String, +player: String, +directory: String, +cmd: String, +model: String, +effort: String, +session: String, +harness: String, +sessions: String, +prompt: String, +level: String, seal_prompt: Bool, predecessor: String, checked: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,RetainedLaunch>):
+def retained_launch_plain(omp: Bool, claude: Bool, cmd: String, model: String, effort: String, sessions: String, +native: String, +prefix: String, account: Maybe<&2,Accounts.AccountRecord>) -> Result<&1,&1,U32 & String,String>:
+  match account:
+    case None{}: Done{prefix ++ retained_arguments(omp,claude,cmd,model,effort,sessions,native)}
+    case Some{+refused}: Fail{(2,"The account " ++ Accounts.account_id(refused) ++ " funds its work through an API key and this deployment installs no api-key resolver beside the resolved identity helper; the attempt was not started and its input stays owed.")}
+
+def retained_launch_arguments(omp: Bool, claude: Bool, cmd: String, model: String, effort: String, sessions: String, +native: String, +prefix: String, +history: String, harness: String, account: Maybe<&2,Accounts.AccountRecord>, binding: Maybe<List<String>>) -> Result<&1,&1,U32 & String,String>:
+  match binding:
+    case Some{bound}: Done{prefix ++ retained_profile_arguments(omp,claude,bound,Subs.history_override(Tx.trim_nl(harness),history),cmd,model,effort,sessions,native)}
+    case None{}: retained_launch_plain(omp,claude,cmd,model,effort,sessions,native,prefix,account)
+
+def retained_prepare_checked(+db: String, +player: String, +directory: String, +cmd: String, +model: String, +effort: String, +session: String, +harness: String, +sessions: String, +prompt: String, +level: String, seal_prompt: Bool, +predecessor: String, checked: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,RetainedLaunch>):
   match checked:
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,RetainedLaunch>,Fail{error})
     case Done{made}: do IO<Result<&1,&1,U32 & String,RetainedLaunch>>:
@@ -938,14 +949,20 @@ def retained_prepare_checked(+db: String, +player: String, +directory: String, +
       +prompt_file : String <- IO.pure(String,directory ++ "/prompt.txt")
       +executable : String <- IO.try(String,Lock.SessionLock.executable())
       identity : String & String <- IO.try(String & String,HostControl.Control.identity(executable))
+      identity_key : String & String <- IO.try(String & String,HostControl.Control.identity(executable))
       absolute_db : String <- IO.try(String,Lock.SessionLock.canonical(db))
       +prefix : String <- IO.pure(String,P.argv(["/usr/bin/env","BATON_DATABASE=" ++ absolute_db,"BATON_SESSION=" ++ player,"BATON_ATTEMPT_DIRECTORY=" ++ directory]) ++ retained_identity_prefix(model,identity))
       muse_args : String <- IO.pure(String,prefix ++ P.argv(muse_retained_arguments(cmd,model,effort,prompt_file,session)))
       +omp : Bool <- IO.pure(Bool,String.eq(harness,"omp\n"))
       +claude : Bool <- IO.pure(Bool,String.eq(harness,"claude-code\n"))
-      +store : String <- current_store(db,player,harness)
+      account_binding_account : Maybe<&2,Accounts.AccountRecord> <- Accounts.current_account(db,player,harness)
+      account_launch_account : Maybe<&2,Accounts.AccountRecord> <- Accounts.current_account(db,player,harness)
+      account_record : Maybe<&2,Accounts.AccountRecord> <- Accounts.current_account(db,player,harness)
+      store : String <- current_store(db,player,harness)
       history : String <- current_history(db,player)
-      +args : String <- IO.pure(String,prefix ++ Bool.pick(String,String.is_empty(store),retained_arguments(omp,claude,cmd,model,effort,sessions,native),retained_profile_arguments(omp,claude,Subs.store_binding(Tx.trim_nl(harness),store),Subs.history_override(Tx.trim_nl(harness),history),cmd,model,effort,sessions,native)))
+      binding : Maybe<List<String>> <- IO.pure(Maybe<List<String>>,Accounts.account_binding(Tx.trim_nl(harness),account_binding_account,Accounts.api_key_resolver(identity_key),store))
+      recorded : Unit <- Accounts.record_current_attempt(db,player,directory,predecessor,account_record)
+      +args : String <- IO.try(String,IO.pure(Result<&1,&1,U32 & String,String>,retained_launch_arguments(omp,claude,cmd,model,effort,sessions,native,prefix,history,Tx.trim_nl(harness),account_launch_account,binding)))
       +muse : Bool <- IO.pure(Bool,String.eq(harness,"muse\n"))
       IO.pure(Result<&1,&1,U32 & String,RetainedLaunch>,Done{Prepared{Bool.pick(String,muse,muse_args,args),retained_input(muse,omp,claude,initial,level),initial,retained_keep_stdin(muse,omp,claude),Bool.or(muse,seal_prompt)}})
 
@@ -1321,7 +1338,7 @@ def direct_second_started(+db: String, +player: String, +id: String, +log: Strin
         +outcome => deliveries => direct_completed(db,player,id,log,directory,handle,None{},(outcome,deliveries)),
         +held => status => +event => +error => +incomplete => deliveries => do IO<Unit>:
           +conversation : String <- direct_conversation(db,player,session)
-          advanced : Bool <- Subs.profile_handoff(db,player,id,event,conversation,cmd,cwd)
+          advanced : Bool <- Accounts.handoff(db,player,id,event,conversation,cmd,cwd)
           direct_handoff_decided(advanced, deliveries, Some{held},
             moved_deliveries => moved_lock => do IO<Unit>:
               transient : Bool <- Subs.transient_provider_error(db,event)
@@ -1434,7 +1451,7 @@ def direct_handoff_checked(+db: String, +player: String, +id: String, +cmd: Stri
   match outcome:
     case Ended{status,+event,+error,+incomplete}: do IO<Unit>:
       +conversation : String <- direct_conversation(db,player,session)
-      advanced : Bool <- Subs.profile_handoff(db,player,id,event,conversation,cmd,cwd)
+      advanced : Bool <- Accounts.handoff(db,player,id,event,conversation,cmd,cwd)
       direct_handoff_decided(advanced, deliveries, lock,
         moved_deliveries => moved_lock => do IO<Unit>:
           transient : Bool <- Subs.transient_provider_error(db,event)

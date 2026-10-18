@@ -58,7 +58,7 @@ static void __attribute__((constructor)) baton_find_file_use(void) {io_eff(CID_F
 /* Log inspection reads a file's size. Cleanup removes named Baton2-owned log
    artifacts. A missing path reports zero bytes, and removing a missing path
    succeeds. */
-typedef struct { char *path,*target; size_t size; int error; } BatonFileOp;
+typedef struct { char *path,*target; size_t size; u32 mode; int error; } BatonFileOp;
 
 static u32 baton_file_size(BatonFileOp *call) {
   return call->size > 0xffffffffu ? 0xffffffffu : (u32)call->size;
@@ -131,6 +131,70 @@ static Term baton_file_size_run(Env e,Term *f,IoWork *w) {
   return io_work(w,baton_file_size_call,baton_file_size_pack);
 }
 static void __attribute__((constructor)) baton_file_size_use(void) {io_eff(CID_FILES_SIZE,baton_file_size_run,0);}
+#endif
+
+#ifdef CID_FILES_MODE_OF
+static void baton_file_mode_call(IoWork *w) {
+  BatonFileOp *call=(BatonFileOp *)w->data;
+  struct stat info;
+  if(!stat(call->path,&info)) call->mode=(u32)(info.st_mode & 07777);
+  else call->error=errno;
+}
+static Term baton_file_mode_pack(Env e,IoWork *w) {
+  BatonFileOp *call=(BatonFileOp *)w->data;
+  Term result=call->error ? io_fail(e,call->error,NULL) : io_done(e,(Term)call->mode);
+  free(call->path);free(call->target);free(call);w->data=NULL;
+  return result;
+}
+static Term baton_file_mode_run(Env e,Term *f,IoWork *w) {
+  BatonFileOp *call=baton_file_op(e,f,w,1);
+  if(!call) return io_fail(e,ENOMEM,NULL);
+  if(call->error) return baton_file_mode_pack(e,w);
+  return io_work(w,baton_file_mode_call,baton_file_mode_pack);
+}
+static void __attribute__((constructor)) baton_file_mode_use(void) {io_eff(CID_FILES_MODE_OF,baton_file_mode_run,0);}
+#endif
+
+#ifdef CID_FILES_WRITE_PRIVATE
+typedef struct { char *path,*text; size_t length; int error; } BatonPrivateWrite;
+static void baton_private_write_call(IoWork *w) {
+  BatonPrivateWrite *call=(BatonPrivateWrite *)w->data;
+  int flags=O_WRONLY|O_CREAT|O_EXCL|O_CLOEXEC;
+#ifdef O_NOFOLLOW
+  flags|=O_NOFOLLOW;
+#endif
+  int fd=open(call->path,flags,0600);
+  if(fd<0) {call->error=errno;return;}
+  if(fchmod(fd,0600)) {call->error=errno;close(fd);return;}
+  size_t offset=0;
+  while(offset<call->length) {
+    ssize_t count=write(fd,call->text+offset,call->length-offset);
+    if(count>0) {offset+=(size_t)count;continue;}
+    if(count<0 && errno==EINTR) continue;
+    call->error=count<0?errno:EIO;
+    break;
+  }
+  if(close(fd) && !call->error) call->error=errno;
+}
+static Term baton_private_write_pack(Env e,IoWork *w) {
+  BatonPrivateWrite *call=(BatonPrivateWrite *)w->data;
+  Term result=call->error?io_fail(e,call->error,NULL):io_done(e,term_pak(CID_UNIT,0));
+  free(call->path);free(call->text);free(call);w->data=NULL;
+  return result;
+}
+static Term baton_private_write_run(Env e,Term *f,IoWork *w) {
+  BatonPrivateWrite *call=calloc(1,sizeof(*call));
+  if(!call) return io_fail(e,ENOMEM,NULL);
+  u64 path_length=0,text_length=0;
+  call->path=io_cstr(e,f[0],&path_length);
+  call->text=io_cstr(e,f[1],&text_length);
+  call->length=text_length;
+  if(!call->path || strlen(call->path)!=path_length) call->error=EINVAL;
+  w->data=(char *)call;
+  if(call->error) return baton_private_write_pack(e,w);
+  return io_work(w,baton_private_write_call,baton_private_write_pack);
+}
+static void __attribute__((constructor)) baton_private_write_use(void) {io_eff(CID_FILES_WRITE_PRIVATE,baton_private_write_run,0);}
 #endif
 
 #ifdef CID_FILES_MKDIR
