@@ -2,10 +2,9 @@
 # Narrow bootstrap launch guard for the packaged Bend compiler.
 #
 # The product admission policy remains the native Bend2 design in
-# docs/bend2/build-admission.md. This wrapper refuses a coordinator Main C
-# generation unless the invoking process carries an admitted bounded cgroup.
-# This applies to focused entries as well as the coordinator Main. A coordinator
-# Main also requires a matching decision receipt. Version queries and
+# docs/bend2/build-admission.md. This wrapper requires an admitted bounded cgroup
+# for focused and coordinator Main C generation. A coordinator Main also
+# requires a matching decision receipt. Version queries and
 # --check-only calls pass through unchanged.
 #
 # The canonical path is a delegated cgroup under /sys/fs/cgroup with a finite
@@ -57,8 +56,8 @@ case "$entry_path" in
     ;;
 esac
 
-# Every C-generation invocation consumes compiler memory. Focused entries are
-# not exempt; only version queries and --check-only skip the resource check.
+# C generation requires the resource check. Version queries and --check-only
+# pass through to the compiler.
 build=0
 if [ "$check_only" = 0 ] && [ "$query" = 0 ]; then
   build=1
