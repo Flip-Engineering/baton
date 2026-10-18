@@ -312,6 +312,7 @@ def wake_fenced_gate(+db: String, +session: String, +cursor: String, launch: Str
     case UW.GateHeld{+window,+resets_at,+source,+receipt}: do IO<Result<&1,&1,U32 & String,Unit>>:
       +found : String <- wake_found(db,session,cursor)
       held : Unit <- UW.report_held(db,session,Tx.trim_nl(found),UW.GateHeld{window,resets_at,source,receipt})
+      scheduled : Unit <- UW.schedule_held(db,Tx.trim_nl(found),resets_at)
       released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
       IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
     case other: wake_fenced_owed(db,session,cursor,launch,lock,gate)

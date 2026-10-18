@@ -1,8 +1,10 @@
 # Store and gate fixture for the #797 usage-window module. It drives the real
 # record_cause, observe, refresh, query and gate functions over a temporary
-# coordination database, so the extraction, the SQL store, the binding match
-# and the held/elapsed/unknown gate are exercised without a coordinator Main
-# generation.
+# coordination database. The gate holds only exhausted windows: a partial
+# provider report with a future reset is admitted and visible; exhaustion is a
+# provider limit message or a used fraction at or above 1; multiple windows are
+# evaluated per window; a limit message without a reset stays unknown and does
+# not hold.
 #
 # usage: usage-windows-store DB HARNESS_SCRIPT
 # HARNESS_SCRIPT is an executable that prints the OMP usage report JSON and
@@ -41,6 +43,9 @@ def expect_gate(+db: String, +session: String, +account: String, +expected: Stri
     gate : UW.Gate <- UW.window_gate(db,session,account)
     expect(label,String.eq(gate_class(gate),expected))
 
+def state_sql(+window: String, +account: String) -> String:
+  "SELECT CASE WHEN NOT ((used_fraction IS NOT NULL AND used_fraction >= 1) OR reset_source='provider-message') THEN 'open' WHEN resets_at IS NULL THEN 'unknown' WHEN resets_at > CAST(strftime('%s','now') AS INTEGER)*1000 THEN 'held' ELSE 'elapsed' END FROM usage_windows WHERE account=" ++ C.q(account) ++ " AND window=" ++ C.q(window) ++ " ORDER BY recorded_at DESC, id DESC LIMIT 1;"
+
 def kimi_cause() -> String:
   "You've reached your 5-hour usage limit. Your quota will reset when the current 5-hour window ends."
 
@@ -51,15 +56,19 @@ def setup(+db: String) -> IO(Unit):
     leaf : Unit <- query(db,"INSERT INTO sessions(id,parent,harness,model,effort,native,endpoint) VALUES('leaf','root','omp','kimi-code/kimi-for-coding','high','','');")
     IO.pure(Unit,Unit{})
 
+def session(+db: String, id: String) -> IO(Unit):
+  query(db,"INSERT INTO sessions(id,parent,harness,model,effort,native,endpoint) VALUES(" ++ C.q(id) ++ ",'root','omp','kimi-code/kimi-for-coding','high','','');")
+
 def observe_cases(+db: String) -> IO(Unit):
   do IO<Unit>:
+    UW.record_cause(db,"leaf","m-leaf","",kimi_cause())
     observed_unknown : Unit <- UW.observe(db,"leaf","5-hour","unknown","kimi console shows none","")
-    expect_gate(db,"leaf","","unknown","unknown-reset-gate")
+    expect_gate(db,"leaf","","unknown","limit-then-operator-unknown")
     observed_held : Unit <- UW.observe(db,"leaf","5-hour","2999-01-01T00:00:00Z","kimi console web ui","")
-    expect_gate(db,"leaf","","held","future-reset-gate")
+    expect_gate(db,"leaf","","held","operator-observed-reset-holds")
     held_row : Unit <- expect_read(db,"SELECT window || ':' || reset_source || ':' || (resets_at IS NOT NULL) FROM usage_windows ORDER BY id DESC LIMIT 1;","5-hour:operator-observation:1\n","operator-observation-row")
     observed_elapsed : Unit <- UW.observe(db,"leaf","5-hour","2020-01-01T00:00:00Z","kimi console web ui","")
-    expect_gate(db,"leaf","","elapsed","past-reset-gate")
+    expect_gate(db,"leaf","","elapsed","operator-observed-reset-elapsed")
     IO.pure(Unit,Unit{})
 
 def report_cases(+db: String) -> IO(Unit):
@@ -89,22 +98,40 @@ def refresh_cases(+db: String, script: String) -> IO(Unit):
     window : Unit <- expect_read(db,"SELECT window FROM usage_windows WHERE reset_source='provider-report';","5-hour\n","provider-report-window")
     reset : Unit <- expect_read(db,"SELECT CAST(resets_at AS TEXT) FROM usage_windows WHERE reset_source='provider-report';","1893456000000\n","provider-report-reset")
     fraction : Unit <- expect_read(db,"SELECT CAST(used_fraction AS TEXT) FROM usage_windows WHERE reset_source='provider-report';","0.42\n","provider-report-fraction")
-    expect_gate(db,"leaf","","held","provider-report-gate")
+    admitted : Unit <- expect_gate(db,"leaf","","none","partial-report-not-held")
+    visible : Unit <- expect_read(db,state_sql("5-hour",""),"open\n","partial-report-visible-open")
+    IO.pure(Unit,Unit{})
 
-def cause_case(+db: String) -> IO(Unit):
+def multiwindow_cases(+db: String) -> IO(Unit):
   do IO<Unit>:
-    UW.record_cause(db,"leaf","m2","",kimi_cause())
-    kimi_row : Unit <- expect_read(db,"SELECT window || ':' || provider || ':' || reset_source || ':' || coalesce(CAST(resets_at AS TEXT),'NULL') FROM usage_windows WHERE message='m2';","5-hour:kimi-code:provider-message:NULL\n","kimi-cause-row")
-    expect_gate(db,"leaf","","unknown","kimi-cause-gate")
+    created : Unit <- session(db,"multi")
+    five : Unit <- query(db,"INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) VALUES(CAST(strftime('%s','now') AS INTEGER)*1000,'omp','kimi-code/kimi-for-coding','kimi-code','multi','5-hour',CAST(strftime('%s','now') AS INTEGER)*1000+3600000,'provider-message',NULL,'a 5-hour message','');")
+    seven : Unit <- query(db,"INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) VALUES(CAST(strftime('%s','now') AS INTEGER)*1000,'omp','kimi-code/kimi-for-coding','kimi-code','multi','7-day',CAST(strftime('%s','now') AS INTEGER)*1000+7200000,'provider-report',0.5,'a 7-day report','');")
+    thirty : Unit <- query(db,"INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) VALUES(CAST(strftime('%s','now') AS INTEGER)*1000,'omp','kimi-code/kimi-for-coding','kimi-code','multi','30-day',CAST(strftime('%s','now') AS INTEGER)*1000+86400000,'provider-report',0.2,'a 30-day report','');")
+    held : Unit <- expect_gate(db,"multi","multi","held","multiwindow-held-by-5-hour")
+    held_window : Unit <- expect_read(db,"SELECT window FROM (SELECT * FROM usage_windows WHERE account='multi' AND resets_at > CAST(strftime('%s','now') AS INTEGER)*1000 AND ((used_fraction IS NOT NULL AND used_fraction >= 1) OR reset_source='provider-message') ORDER BY resets_at ASC LIMIT 1);","5-hour\n","held-window-is-5-hour")
+    passed : Unit <- query(db,"UPDATE usage_windows SET resets_at=CAST(strftime('%s','now') AS INTEGER)*1000-1000 WHERE account='multi' AND window='5-hour';")
+    elapsed : Unit <- expect_gate(db,"multi","multi","elapsed","multiwindow-elapsed-after-5-hour")
+    seven_open : Unit <- expect_read(db,"SELECT CASE WHEN ((used_fraction IS NOT NULL AND used_fraction >= 1) OR reset_source='provider-message') THEN 'exhausted' ELSE 'open' END FROM usage_windows WHERE account='multi' AND window='7-day';","open\n","partial-window-not-exhausted")
+    IO.pure(Unit,Unit{})
+
+def limit_case(+db: String) -> IO(Unit):
+  do IO<Unit>:
+    created : Unit <- session(db,"limit")
+    UW.record_cause(db,"limit","m-limit","limit",kimi_cause())
+    unknown : Unit <- expect_gate(db,"limit","limit","unknown","limit-without-reset-unknown")
+    visible : Unit <- expect_read(db,state_sql("5-hour","limit"),"unknown\n","limit-row-visible-unknown")
+    IO.pure(Unit,Unit{})
 
 def main_args(args: List<String>) -> IO(Unit):
   match args:
     case +path <> script <> Nil{}: do IO<Unit>:
       setup(path)
-      cause_case(path)
+      limit_case(path)
       observe_cases(path)
       report_cases(path)
       refresh_cases(path,script)
+      multiwindow_cases(path)
       IO.print("fixture-windows-store-ok")
     case other: IO.die(Unit,2,"usage: usage-windows-store DB HARNESS_SCRIPT")
 
