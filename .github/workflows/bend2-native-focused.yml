@@ -51,6 +51,10 @@ jobs:
       BATON2_SOURCE_SHA: ${{ inputs.source_commit }}
       BATON2_TARGET_SHA: ${{ inputs.target_commit }}
       BATON2_FOCUSED_SUITE: ${{ inputs.suite }}
+      BATON2_FOCUSED_MEMORY_MAX_BYTES: ${{ vars.BATON2_FOCUSED_MEMORY_MAX_BYTES }}
+      BATON2_FOCUSED_MEMORY_RESERVE_BYTES: ${{ vars.BATON2_FOCUSED_MEMORY_RESERVE_BYTES }}
+      BATON2_FOCUSED_TASKS_MAX: ${{ vars.BATON2_FOCUSED_TASKS_MAX }}
+      BATON2_FOCUSED_RUNTIME_SECONDS: ${{ vars.BATON2_FOCUSED_RUNTIME_SECONDS }}
     steps:
       - name: Validate dispatch pins and selected suite
         shell: bash

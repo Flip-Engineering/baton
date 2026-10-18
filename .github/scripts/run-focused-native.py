@@ -238,6 +238,7 @@ def inside(args):
         raise SystemExit('RLIMIT_AS is capped')
     write_json(run / 'evidence' / 'scope.json', {
         'cgroup': str(cg), 'memory_max': expected_memory, 'memory_swap_max': 0,
+        'driver_sha256': digest(pathlib.Path(__file__)),
         'tasks_max': expected_tasks, 'runtime_limit_seconds': int(args.runtime),
         'cgroup_membership': pathlib.Path('/proc/self/cgroup').read_text(),
         'memory_events_before': pathlib.Path(cg / 'memory.events').read_text().splitlines(),
@@ -309,7 +310,8 @@ def launch(args):
         raise SystemExit('runner policy did not produce a finite positive memory limit')
     write_json(run / 'evidence' / 'admission.json', {
         'source': source, 'target': target, 'current_main': actual_main,
-        'suite': args.suite, 'configured_memory_max': configured_max,
+        'suite': args.suite, 'driver_sha256': digest(pathlib.Path(__file__)),
+        'configured_memory_max': configured_max,
         'memory_limit': memory, 'memory_reserve': reserve,
         'mem_available_before': physical, 'parent_cgroup_available': parent_available,
         'ancestor_cgroup_limits': ancestor_limits,
