@@ -26,13 +26,14 @@ type TailVerb is Data:
   OtherVerb{}
 
 def contextual_verb(+verb: String) -> Bool:
-  Bool.or(String.eq(verb,"session"),
-    Bool.or(String.eq(verb,"player"),
-      Bool.or(String.eq(verb,"players"),
-        Bool.or(String.eq(verb,"assignment"),
-          Bool.or(String.eq(verb,"completion-request"),
-            Bool.or(String.eq(verb,"completion-confirmed"),
-              Bool.or(String.eq(verb,"repl"),Bool.or(String.eq(verb,"guide"),Domain.known(verb)))))))))
+  Bool.or(String.eq(verb,"branch"),
+    Bool.or(String.eq(verb,"session"),
+      Bool.or(String.eq(verb,"player"),
+        Bool.or(String.eq(verb,"players"),
+          Bool.or(String.eq(verb,"assignment"),
+            Bool.or(String.eq(verb,"completion-request"),
+              Bool.or(String.eq(verb,"completion-confirmed"),
+                Bool.or(String.eq(verb,"repl"),Bool.or(String.eq(verb,"guide"),Domain.known(verb))))))))))
 
 def action_verb(+verb: String, project: Bool) -> Bool:
   Bool.or(String.eq(verb,"read"),
