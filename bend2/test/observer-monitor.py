@@ -192,9 +192,17 @@ class ObserverMonitor(unittest.TestCase):
         self.assertTrue(status[0].startswith('unavailable'), status)
         self.assertNotIn('exit 0', status[0])
         offset = checkpoint_offset(self.attempt)
+        checkpoint = (self.attempt / 'checkpoint').read_bytes()
+        # Reopen the same durable monitor checkpoint with its public output log
+        # absent. Recovery must keep the retained cursor and the original task
+        # pending while it restores observer state from the attempt checkpoint.
+        self.log.unlink(missing_ok=True)
+        self.assertFalse(self.log.exists())
         second = self.recover(observer)
         self.assertNotEqual(second.returncode, 0, second.stdout + second.stderr)
+        self.assertEqual((self.attempt / 'checkpoint').read_bytes(), checkpoint)
         self.assertEqual(checkpoint_offset(self.attempt), offset)
+        self.assertFalse(self.log.exists())
         self.assertEqual(self.row('SELECT receipt FROM messages WHERE id=?', 'task'), (None,))
         status = self.row("SELECT status FROM executions WHERE session='parent' AND id=?", self.attempt_id)
         self.assertTrue(status[0].startswith('unavailable'), status)
