@@ -888,7 +888,6 @@ static int br_attach_socket(BatonChild *child,const char *directory,int socket,i
     if(!error && ready_ack)error=br_read_all(socket,&reply,sizeof(reply));
     if(!error && ready_ack && (reply.op!=BR_REPLY || reply.serial!=ready.serial || reply.length))error=EPROTO;
     if(!error && ready_ack)error=reply.error;
-    if(ready_ack)fprintf(stderr,"DBG ready reply op=%u serial=%llu len=%u error=%d\n",(unsigned)reply.op,(unsigned long long)reply.serial,(unsigned)reply.length,reply.error);
   }
   if(!error)error=pthread_create(&retained->receiver,NULL,br_receiver,retained);
   if(error){if(life>=0)close(life);if(guard>=0)close(guard);close(spool);close(socket);free(retained->directory);free(retained);return error;}
@@ -3802,7 +3801,6 @@ static int br_instance_join(BatonProcessCall *call,const char *directory,uint64_
     }
   }
   if(socket_fd>=0)close(socket_fd);
-  if(error)fprintf(stderr,"DBG join error=%d\n",error);
   return error;
 }
 /* Removes the attempt directory this call created when the owner refused and
@@ -3857,7 +3855,6 @@ static int br_instance_admit(BatonProcessCall *call,int dormant) {
     br_instance_state_call(call);
   }
   free(address);free(directory);
-  if(error)fprintf(stderr,"DBG admit error=%d\n",error);
   return error;
 }
 static int br_instance_attach_observer(BatonProcessCall *call,int64_t observer) {
