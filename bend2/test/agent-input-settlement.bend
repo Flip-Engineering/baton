@@ -1,6 +1,7 @@
 # Focused settlement fixture. It calls the production AgentInput function over a private database.
 import Base
 import ../src/coordinator/agent-input.bend as AgentInput
+import ../src/coordinator/message-status.bend as Status
 import ../src/coordinator/store.bend as Store
 import ../src/host/sqlite.bend as DB
 
@@ -24,12 +25,12 @@ def seed(+db: String) -> IO(Unit):
       ++ "('success',NULL,'omp','','','native-success'),"
       ++ "('native-mismatch',NULL,'omp','','','native-new'),"
       ++ "('running-attempt',NULL,'omp','','','native-running'),"
-      ++ "('stopped-session',NULL,'omp','','','native-stopped');"
+      ++ "('stopped-session',NULL,'omp','','','native-stopped'),('report-case',NULL,'omp','','','native-report');"
       ++ "INSERT INTO executions(session,id,mode,directory,phase,status) VALUES"
       ++ "('success','attempt-success','receive','/fixture/success','exited','exit 0'),"
       ++ "('native-mismatch','attempt-native-mismatch','receive','/fixture/native-mismatch','exited','exit 0'),"
       ++ "('running-attempt','attempt-running','receive','/fixture/running','running',''),"
-      ++ "('stopped-session','attempt-stopped','receive','/fixture/stopped','exited','exit 0');"
+      ++ "('stopped-session','attempt-stopped','receive','/fixture/stopped','exited','exit 0'),('report-case','attempt-report','receive','/fixture/report','exited','exit 0');"
       ++ "INSERT INTO messages(seq,id,sender,recipient,kind,body,receipt) VALUES"
       ++ "(1,'prior','root','success','task','prior prompt','prior-receipt'),"
       ++ "(2,'prompt','root','success','task','initial prompt',NULL),"
@@ -43,13 +44,12 @@ def seed(+db: String) -> IO(Unit):
       ++ "(30,'running-prompt','root','running-attempt','task','prompt',NULL),"
       ++ "(31,'running-guidance','root','running-attempt','guidance','guidance',NULL),"
       ++ "(40,'stopped-prompt','root','stopped-session','task','prompt',NULL),"
-      ++ "(41,'stopped-guidance','root','stopped-session','guidance','guidance',NULL);"
+      ++ "(41,'stopped-guidance','root','stopped-session','guidance','guidance',NULL),(50,'summary-report','root','report-case','report','full report body retained outside the prompt',NULL),(51,'read-report','root','report-case','report','complete report body already read',NULL);"
       ++ "INSERT INTO message_reads(attempt,message,recipient,native,identity) VALUES"
       ++ "('attempt-success','prior','success','native-success','fixture'),"
       ++ "('attempt-success','prompt','success','native-success','fixture'),"
       ++ "('attempt-success','guidance-1','success','native-success','fixture'),"
       ++ "('attempt-success','recovery-between','success','native-success','fixture'),"
-      ++ "('attempt-success','guidance-2','success','native-success','fixture'),"
       ++ "('attempt-success','guidance-later','success','native-success','fixture'),"
       ++ "('attempt-success','task-later','success','native-success','fixture'),"
       ++ "('attempt-native-mismatch','mismatch-prompt','native-mismatch','native-original','fixture'),"
@@ -57,7 +57,7 @@ def seed(+db: String) -> IO(Unit):
       ++ "('attempt-running','running-prompt','running-attempt','native-running','fixture'),"
       ++ "('attempt-running','running-guidance','running-attempt','native-running','fixture'),"
       ++ "('attempt-stopped','stopped-prompt','stopped-session','native-stopped','fixture'),"
-      ++ "('attempt-stopped','stopped-guidance','stopped-session','native-stopped','fixture');"
+      ++ "('attempt-stopped','stopped-guidance','stopped-session','native-stopped','fixture'),('attempt-report','read-report','report-case','native-report','full-read-action');"
       ++ "UPDATE message_reads SET handled='prior-handled' WHERE attempt='attempt-success' AND message='guidance-1';"
       ++ "INSERT INTO session_stops(session,id,reason,outcome) VALUES('stopped-session','stop-fixture','fixture stop','requested');"
       ++ "COMMIT;")
@@ -76,9 +76,20 @@ def success_case(+db: String) -> IO(Unit):
     later_guidance : Unit <- expect_read(db,"SELECT coalesce(receipt,'<null>') FROM messages WHERE id='guidance-later';","<null>\n","later-guidance-preserved")
     later_task : Unit <- expect_read(db,"SELECT coalesce(receipt,'<null>') FROM messages WHERE id='task-later';","<null>\n","later-task-preserved")
     prompt_read : Unit <- expect_read(db,"SELECT coalesce(handled,'<null>') FROM message_reads WHERE message='prompt';","native-turn:attempt-success\n","initial-read-handled")
-    guide_read : Unit <- expect_read(db,"SELECT coalesce(handled,'<null>') FROM message_reads WHERE message='guidance-2';","native-turn:attempt-success\n","forwarded-guidance-read-handled")
+    guide_read : Unit <- expect_read(db,"SELECT count(*) FROM message_reads WHERE message='guidance-2' AND attempt='attempt-success' AND native='native-success';","0\n","forwarded-guidance-without-read-row-still-settles")
     between_read : Unit <- expect_read(db,"SELECT coalesce(handled,'<null>') FROM message_reads WHERE message='recovery-between';","<null>\n","non-guidance-read-unhandled")
     later_read : Unit <- expect_read(db,"SELECT coalesce(handled,'<null>') FROM message_reads WHERE message='guidance-later';","<null>\n","later-guidance-read-unhandled")
+    IO.pure(Unit,Unit{})
+
+def report_case(+db: String) -> IO(Unit):
+  do IO<Unit>:
+    descriptor : String <- IO.pure(String,"{\"session\":\"report-case\",\"attempt\":\"attempt-report\",\"direct\":false,\"cursor\":51,\"inputMessages\":[\"summary-report\",\"read-report\"],\"prompt\":\"Message (report) from root [id: summary-report] retained 40 bytes; read the complete body with baton read summary-report.\nMessage (report) from root [id: read-report] retained 32 bytes; read the complete body with baton read read-report.\"}")
+    summary_record : String <- IO.try(String,Store.transact_sql(db,Status.prompt_record_sql("report-case","attempt-report","native-report","summary-descriptor",descriptor)))
+    summary_read : Unit <- expect_read(db,"SELECT count(*) FROM message_reads WHERE message='summary-report' AND attempt='attempt-report';","0\n","summary-is-not-a-full-body-read")
+    settled : Unit <- AgentInput.consume_delivered(db,"report-case","attempt-report","native-report","51","51")
+    summary_receipt : Unit <- expect_read(db,"SELECT coalesce(receipt,'<null>') FROM messages WHERE id='summary-report';","<null>\n","unread-summary-report-remains-owed")
+    full_receipt : Unit <- expect_read(db,"SELECT coalesce(receipt,'<null>') FROM messages WHERE id='read-report';","native-turn:attempt-report\n","fully-read-report-settles")
+    full_handled : Unit <- expect_read(db,"SELECT coalesce(handled,'<null>') FROM message_reads WHERE message='read-report';","native-turn:attempt-report\n","fully-read-report-handled")
     IO.pure(Unit,Unit{})
 
 def refusal_cases(+db: String) -> IO(Unit):
@@ -98,6 +109,7 @@ def run(+db: String) -> IO(Unit):
   do IO<Unit>:
     prepared : Unit <- seed(db)
     success : Unit <- success_case(db)
+    report : Unit <- report_case(db)
     refused : Unit <- refusal_cases(db)
     IO.print("fixture-agent-input-settlement-ok")
 def main_args(args: List<String>) -> IO(Unit):
