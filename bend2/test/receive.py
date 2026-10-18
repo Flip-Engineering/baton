@@ -4663,6 +4663,12 @@ class Receive(unittest.TestCase):
         self.finish(observer)
         self.assertEqual(self.coord('delivery', 'first-guidance')['receipt'],
                          'native-turn:' + attempt)
+        with sqlite3.connect(self.db.as_uri() + '?mode=ro', uri=True) as database:
+            reads = database.execute(
+                "SELECT handled FROM message_reads WHERE message='original' AND attempt=?",
+                (attempt,)).fetchall()
+        self.assertTrue(reads)
+        self.assertTrue(all(row[0] == 'native-turn:' + attempt for row in reads), reads)
         self.message('follow-up', 'parent', 'The distinct follow-up after the text-only stop.')
         second = self.spawn(*self.receive_args('parent'))
         stream, resumed = self.accept('parent')
@@ -4672,6 +4678,30 @@ class Receive(unittest.TestCase):
         self.action(stream, body='Follow-up complete.', complete_task=False)
         self.finish(second)
         self.assertEqual(self.coord('inbox', 'parent'), [])
+
+    def test_text_only_completion_does_not_consume_after_native_identity_changes(self):
+        """Completion from an old native cannot settle messages after handoff."""
+        self.player(harness='omp')
+        self.prepare_input('original', 'parent', 'Original task.', kind='task')
+        observer = self.spawn(*self.receive_args('parent'))
+        control, started = self.accept('parent')
+        self.message('first-guidance', 'parent', 'Guidance delivered to the original native.')
+        self.action(control, read_steer=True, complete_task=False, ack=False)
+        with sqlite3.connect(self.db) as database:
+            recorded_native, = database.execute(
+                "SELECT native FROM sessions WHERE id='parent'").fetchone()
+            database.execute(
+                "UPDATE sessions SET native='superseding-native' WHERE id='parent'")
+        self.action(control, body='Old native completed after handoff.', complete_task=False, ack=False)
+        self.finish(observer)
+        self.assertTrue(recorded_native)
+        self.assertIsNone(self.coord('delivery', 'first-guidance')['receipt'])
+        self.assertIn('first-guidance', [message['id'] for message in self.coord('inbox', 'parent')])
+        with sqlite3.connect(self.db.as_uri() + '?mode=ro', uri=True) as database:
+            reads = database.execute(
+                "SELECT handled FROM message_reads WHERE message='original'").fetchall()
+        self.assertTrue(reads)
+        self.assertTrue(all(row[0] is None for row in reads), reads)
 
     def test_text_only_completion_preserves_owed_follow_up_when_stopped(self):
         """A follow-up that arrives without being delivered remains owed when the
