@@ -82,14 +82,15 @@ grep -q 'missing-cgroup' "$temp/focused.err" || { echo "FAIL focused refusal cau
 echo "PASS focused_entry_refused_without_cgroup"
 
 status=0; "$temp/bin/bend" --check-only bend2/src/coordinator/main.bend >"$temp/check.out" 2>"$temp/check.err" || status=$?
-[ "${status:-0}" = 0 ] || { echo "FAIL check-only status=$status"; cat "$temp/check.err"; exit 1; }
-[ "$(calls)" = 1 ] || { echo "FAIL check-only stub_calls=$(calls)"; exit 1; }
-echo "PASS check_only_allowed"
+[ "$status" = 78 ] || { echo "FAIL check-only status=$status"; cat "$temp/check.err"; exit 1; }
+grep -q 'missing-cgroup' "$temp/check.err" || { echo "FAIL check-only refusal cause"; exit 1; }
+[ "$(calls)" = 0 ] || { echo "FAIL check-only stub_calls=$(calls)"; exit 1; }
+echo "PASS check_only_refused_without_admission"
 
 status=0; BATON2_ADMISSION_CGROUP="$temp/not-a-cgroup" "$temp/bin/bend" bend2/test/tiny.bend -o out.c >"$temp/badcgroup.out" 2>"$temp/badcgroup.err" || status=$?
 [ "$status" = 78 ] || { echo "FAIL bad cgroup status=$status"; cat "$temp/badcgroup.err"; exit 1; }
 grep -q 'missing-cgroup-directory' "$temp/badcgroup.err" || { echo "FAIL bad cgroup cause"; exit 1; }
-[ "$(calls)" = 1 ] || { echo "FAIL bad cgroup stub_calls=$(calls)"; exit 1; }
+[ "$(calls)" = 0 ] || { echo "FAIL bad cgroup stub_calls=$(calls)"; exit 1; }
 echo "PASS focused_missing_cgroup_directory_refused"
 
 if [ -n "$probe" ]; then
@@ -104,7 +105,7 @@ status=0
 ) || status=$?
 [ "$status" = 78 ] || { echo "FAIL capped rlimit status=$status"; cat "$temp/capped.err"; exit 1; }
 grep -q 'rlimit-as-capped' "$temp/capped.err" || { echo "FAIL capped cause"; exit 1; }
-[ "$(calls)" = 1 ] || { echo "FAIL capped stub_calls=$(calls)"; exit 1; }
+[ "$(calls)" = 0 ] || { echo "FAIL capped stub_calls=$(calls)"; exit 1; }
 echo "PASS capped_rlimit_refused"
 
 status=0
@@ -112,7 +113,7 @@ BATON2_ADMISSION_CGROUP="$probe" BATON2_ADMISSION_RECEIPT="$temp/receipt.json" \
   "$temp/bin/bend" bend2/src/coordinator/main.bend -o out.c >"$temp/member.out" 2>"$temp/member.err" || status=$?
 [ "$status" = 78 ] || { echo "FAIL membership status=$status"; cat "$temp/member.err"; exit 1; }
 grep -q 'cgroup-membership-mismatch' "$temp/member.err" || { echo "FAIL membership cause"; exit 1; }
-[ "$(calls)" = 1 ] || { echo "FAIL membership stub_calls=$(calls)"; exit 1; }
+[ "$(calls)" = 0 ] || { echo "FAIL membership stub_calls=$(calls)"; exit 1; }
 echo "PASS cgroup_membership_mismatch_refused"
 fi
 
@@ -136,9 +137,9 @@ for a in "$@"; do if [ "$prev" = -o ]; then out=$a; fi; prev=$a; done
 CC
 chmod 0755 "$temp/fake-bend" "$temp/fake-cc"
 status=0
-BEND="$temp/fake-bend" CC="$temp/fake-cc" sh "$here/../scripts/build-native.sh" >"$temp/default.out" 2>"$temp/default.err" || status=$?
+BEND="$temp/bin/bend" CC="$temp/fake-cc" sh "$here/../scripts/build-native.sh" >"$temp/default.out" 2>"$temp/default.err" || status=$?
 [ "$status" = 78 ] || { echo "FAIL default build status=$status"; cat "$temp/default.err"; exit 1; }
-grep -q 'default-full-main-without-admission' "$temp/default.err" || { echo "FAIL default refusal cause"; exit 1; }
+grep -q 'missing-cgroup' "$temp/default.err" || { echo "FAIL default refusal cause"; exit 1; }
 echo "PASS default_build_full_main_refused"
 status=0
 BEND="$temp/bin/bend" CC="$temp/fake-cc" sh "$here/../scripts/build-native.sh" bend2/tests/land.bend "$temp/focused-build" >"$temp/default-focused.out" 2>"$temp/default-focused.err" || status=$?
@@ -153,6 +154,29 @@ BATON2_ADMISSION_CGROUP="$probe" BATON2_ADMISSION_RECEIPT="$temp/receipt.json" \
 [ "$status" = 78 ] || { echo "FAIL unguarded compiler status=$status"; cat "$temp/default-unbound.err"; exit 1; }
 grep -q 'compiler-not-guarded' "$temp/default-unbound.err" || { echo "FAIL unguarded compiler cause"; exit 1; }
 echo "PASS default_build_unguarded_compiler_refused"
+
+swap_probe=
+for candidate in /sys/fs/cgroup/* /sys/fs/cgroup/*/*; do
+  [ -r "$candidate/memory.max" ] || continue
+  swap_maximum=$(cat "$candidate/memory.swap.max" 2>/dev/null || true)
+  maximum=$(cat "$candidate/memory.max" 2>/dev/null || true)
+  case "$maximum" in ''|max|*[!0-9]*) continue;; esac
+  [ "$maximum" -gt 0 ] || continue
+  if [ -n "$swap_maximum" ] && [ "$swap_maximum" != 0 ]; then swap_probe=$candidate; break; fi
+done
+if [ -n "$swap_probe" ]; then
+  cat > "$temp/swap-receipt.json" <<RECEIPT
+{"decision": "admitted", "class": "full", "entry": "bend2/src/coordinator/main.bend", "output": "out.c", "cgroup": "$swap_probe"}
+RECEIPT
+  status=0
+  BATON2_ADMISSION_CGROUP="$swap_probe" BATON2_ADMISSION_RECEIPT="$temp/swap-receipt.json" \
+    "$temp/bin/bend" bend2/src/coordinator/main.bend -o out.c >"$temp/swap.out" 2>"$temp/swap.err" || status=$?
+  [ "$status" = 78 ] || { echo "FAIL nonzero swap status=$status"; cat "$temp/swap.err"; exit 1; }
+  grep -q 'swap-not-disabled' "$temp/swap.err" || { echo "FAIL nonzero swap cause"; cat "$temp/swap.err"; exit 1; }
+  echo "PASS nonzero_swap_refused"
+else
+  echo "SKIP nonzero swap fixture requires a finite nonzero-swap cgroup"
+fi
 
 current_relative=$(sed -n 's/^0:://p' /proc/self/cgroup)
 current=/sys/fs/cgroup$current_relative
@@ -173,6 +197,46 @@ RECEIPT
     "$temp/bin/bend" bend2/src/coordinator/main.bend -o out.c
   [ "$(calls)" = "$((before + 2))" ] || { echo "FAIL admitted Main compiler call"; exit 1; }
   echo "PASS Main_entry_allowed_with_matching_receipt"
+  before_check=$(calls)
+  BATON2_ADMISSION_CGROUP="$current" BATON2_ADMISSION_RECEIPT="$temp/current-receipt.json" \
+    "$temp/bin/bend" --check-only bend2/src/coordinator/main.bend
+  [ "$(calls)" = "$((before_check + 1))" ] || { echo "FAIL admitted check-only compiler call"; exit 1; }
+  echo "PASS check_only_allowed_in_own_bounded_cgroup"
+  baseline=$(calls)
+  cat > "$temp/malformed.json" <<'RECEIPT'
+{
+RECEIPT
+  status=0
+  BATON2_ADMISSION_CGROUP="$current" BATON2_ADMISSION_RECEIPT="$temp/malformed.json" \
+    "$temp/bin/bend" bend2/src/coordinator/main.bend -o out.c >"$temp/malformed.out" 2>"$temp/malformed.err" || status=$?
+  [ "$status" = 78 ] || { echo "FAIL malformed receipt status=$status"; cat "$temp/malformed.err"; exit 1; }
+  grep -q 'receipt-mismatch' "$temp/malformed.err" || { echo "FAIL malformed receipt cause"; exit 1; }
+  [ "$(calls)" = "$baseline" ] || { echo "FAIL malformed receipt reached compiler"; exit 1; }
+  echo "PASS malformed_receipt_refused"
+  for case_name in entry output cgroup; do
+    case "$case_name" in
+      entry) receipt_entry=bend2/test/tiny.bend; receipt_output=out.c; receipt_cgroup="$current" ;;
+      output) receipt_entry=bend2/src/coordinator/main.bend; receipt_output=other.c; receipt_cgroup="$current" ;;
+      cgroup) receipt_entry=bend2/src/coordinator/main.bend; receipt_output=out.c; receipt_cgroup=/sys/fs/cgroup/other ;;
+    esac
+    cat > "$temp/mismatch-$case_name.json" <<RECEIPT
+{"decision": "admitted", "class": "full", "entry": "$receipt_entry", "output": "$receipt_output", "cgroup": "$receipt_cgroup"}
+RECEIPT
+    status=0
+    BATON2_ADMISSION_CGROUP="$current" BATON2_ADMISSION_RECEIPT="$temp/mismatch-$case_name.json" \
+      "$temp/bin/bend" bend2/src/coordinator/main.bend -o out.c >"$temp/mismatch-$case_name.out" 2>"$temp/mismatch-$case_name.err" || status=$?
+    [ "$status" = 78 ] || { echo "FAIL $case_name mismatch status=$status"; cat "$temp/mismatch-$case_name.err"; exit 1; }
+    grep -q 'receipt-mismatch' "$temp/mismatch-$case_name.err" || { echo "FAIL $case_name mismatch cause"; exit 1; }
+    [ "$(calls)" = "$baseline" ] || { echo "FAIL $case_name mismatch reached compiler"; exit 1; }
+    echo "PASS ${case_name}_mismatch_refused"
+  done
+  status=0
+  BATON2_ADMISSION_CGROUP="$current" BATON2_ADMISSION_RECEIPT="$temp/malformed.json" \
+    BEND="$temp/bin/bend" CC="$temp/fake-cc" sh "$here/../scripts/build-native.sh" bend2/src/coordinator/main.bend "$temp/build-refused" >"$temp/build-malformed.out" 2>"$temp/build-malformed.err" || status=$?
+  [ "$status" = 78 ] || { echo "FAIL build malformed receipt status=$status"; cat "$temp/build-malformed.err"; exit 1; }
+  grep -q 'receipt-mismatch' "$temp/build-malformed.err" || { echo "FAIL build malformed receipt cause"; exit 1; }
+  [ ! -f "$temp/build-refused" ] || { echo "FAIL build malformed receipt wrote output"; exit 1; }
+  echo "PASS build_native_reuses_admission_validator"
   status=0
   (
     ulimit -v 262144

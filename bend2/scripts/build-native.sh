@@ -33,12 +33,6 @@ if [ "$recovery" = 1 ] && { [ "$focused" = 1 ] || [ "$router" = 1 ]; }; then
   printf '{"error":"build-mode-conflict","condition":"recovery-helper-with-other-native-entry","entry":"%s"}\n' "$entry_path" >&2
   exit 78
 fi
-if [ "$entry_path" = "$root/bend2/src/coordinator/main.bend" ] &&
-   { [ -z "${BATON2_ADMISSION_CGROUP:-}" ] || [ -z "${BATON2_ADMISSION_RECEIPT:-}" ]; }; then
-  printf '{"error":"build-admission-required","condition":"default-full-main-without-admission","entry":"%s","output":"%s","cgroup":"%s","receipt":"%s"}\n' \
-    "$entry_path" "$output" "${BATON2_ADMISSION_CGROUP:-}" "${BATON2_ADMISSION_RECEIPT:-}" >&2
-  exit 78
-fi
 if [ "$entry_path" = "$root/bend2/src/coordinator/main.bend" ]; then
   compiler_path=$(readlink -f -- "$compiler" 2>/dev/null || printf '%s' "$compiler")
   case "$compiler_path" in
@@ -49,6 +43,7 @@ if [ "$entry_path" = "$root/bend2/src/coordinator/main.bend" ]; then
     printf '{"error":"build-admission-required","condition":"compiler-not-guarded","compiler":"%s"}\n' "$compiler_path" >&2
     exit 78
   }
+  BATON2_ADMISSION_CHECK_ONLY=1 "$compiler" "$entry" -o "$output" >/dev/null || exit $?
 fi
 generated=${BEND_GENERATED_C:-}
 if [ -z "$generated" ] && [ -n "${BATON2_MAIN_GENERATED_C:-}" ] &&

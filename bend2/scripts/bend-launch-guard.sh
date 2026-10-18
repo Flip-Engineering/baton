@@ -15,7 +15,6 @@ root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
 
 entry=
 output=
-check_only=0
 query=0
 expect_output=0
 for argument in "$@"; do
@@ -28,8 +27,8 @@ for argument in "$@"; do
     -o|--output)
       expect_output=1
       ;;
-    --check-only|version|--version)
-      check_only=1
+    version|--version)
+      query=1
       ;;
     -)
       ;;
@@ -56,11 +55,11 @@ case "$entry_path" in
     ;;
 esac
 
-# C generation requires the resource check. Version queries and --check-only
-# pass through to the compiler.
-build=0
-if [ "$check_only" = 0 ] && [ "$query" = 0 ]; then
-  build=1
+# Every compiler invocation, including --check-only, requires the resource
+# check. Version queries pass through without invoking the compiler.
+build=1
+if [ "$query" = 1 ]; then
+  build=0
 fi
 
 refuse() {
@@ -113,6 +112,10 @@ if [ "$build" = 1 ]; then
         "$receipt" >/dev/null 2>&1 || refuse "receipt-mismatch"
     fi
   fi
+fi
+
+if [ "${BATON2_ADMISSION_CHECK_ONLY:-}" = 1 ]; then
+  exit 0
 fi
 
 exec "$root/bin/bun" --smol "$root/bend2/main.ts" "$@"

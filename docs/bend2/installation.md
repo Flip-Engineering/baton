@@ -22,17 +22,18 @@ The check refuses before command links change.
 
 ## Stage a source installation
 
-A source installation from the receiver layout contains three executable paths.
-`bin/baton` is the focused receiver facade, `bin/baton2` is its alias, and
-`bin/baton-full` is the general CLI. The focused facade sends general actions
-to `bin/baton-full`. The full CLI is relinked with
-`BATON2_NATIVE_RECEIVER_ROUTER` and forwards internal receiver actions to the
-focused facade. A missing or non-executable sibling makes the operation refuse
-with exit status 78.
+A source installation from the receiver layout contains four executable paths
+across three roles. `bin/baton` is the focused receiver, `bin/baton2` is the
+full router, `bin/baton-full` is the general CLI sibling, and
+`bin/baton-recovery` is the recovery helper. The focused receiver sends
+general and help actions to `bin/baton-full`. The full router is relinked with
+`BATON2_NATIVE_RECEIVER_ROUTER` and forwards internal receiver actions to
+`bin/baton` and recovery actions to `bin/baton-recovery`. A missing or
+non-executable sibling makes the operation refuse with exit status 78.
 
-Stage the layout from two already-built binaries. Each binary needs its exact
+Stage the layout from three already-built binaries. Each binary needs its exact
 source commit and either its source tree object or a source manifest SHA256.
-The full CLI also records its current native-entry wrapper source separately
+The full router also records its current native-entry wrapper source separately
 from the retained full source or C identity. `bend2/scripts/stage-native-install.py` also requires the current REPL
 compiler source, Bun runtime, runtime SHA256 and complete runtime notices.
 
@@ -41,10 +42,13 @@ python3 "$BATON2_SOURCE/bend2/scripts/stage-native-install.py" \
   --prefix "$BATON2_PREFIX" \
   --focused-binary "$BATON2_FOCUSED" \
   --full-binary "$BATON2_FULL" \
+  --recovery-binary "$BATON2_RECOVERY" \
   --focused-source-commit "$BATON2_FOCUSED_COMMIT" \
   --focused-source-tree "$BATON2_FOCUSED_TREE" \
   --full-source-commit "$BATON2_FULL_COMMIT" \
   --full-source-tree "$BATON2_FULL_TREE" \
+  --recovery-source-commit "$BATON2_RECOVERY_COMMIT" \
+  --recovery-source-tree "$BATON2_RECOVERY_TREE" \
   --full-wrapper-source-commit "$BATON2_WRAPPER_COMMIT" \
   --full-wrapper-source-tree "$BATON2_WRAPPER_TREE" \
   --repl-compiler-source "$BATON2_SOURCE/bend2/compiler/upstream" \
@@ -53,19 +57,19 @@ python3 "$BATON2_SOURCE/bend2/scripts/stage-native-install.py" \
   --repl-runtime-notices "$BATON2_BUN_NOTICES"
 ```
 
-An emergency general CLI may retain an earlier installed `baton-full` binary.
+An emergency full router may retain an earlier installed `bin/baton2` binary.
 Pass its earlier retained source with `--full-source-commit` and
 `--full-source-tree`, its retained C with `--full-c-sha256`, and the current wrapper with
 `--full-wrapper-source-commit` and `--full-wrapper-source-tree`. The manifest
-and install receipt record both pins while the focused facade keeps its current
+and install receipt record both pins while the focused receiver keeps its current
 pin. The earlier binary's own features remain limited to its retained source pin.
 
 The staging manifest uses schema `baton2-native-install-v2` and records each
 binary's role, installed path, SHA256, source pin, entry and build mode.
-`SHA256SUMS` covers the three executable paths, the manifest and the install
+`SHA256SUMS` covers the four executable paths, the manifest and the install
 receipt. `install-receipt.json` binds the manifest hash and binary pins.
-`libexec/baton2/check-install.py` verifies those files, the focused alias and
-the required REPL payload. It refuses a missing, non-executable, altered or
+`libexec/baton2/check-install.py` verifies those files, the full general CLI
+sibling and all three role binaries, and the required REPL payload. It refuses a missing, non-executable, altered or
 unrecorded binary and reports the verified binary pins in its result.
 
 ## Install or update a published release
@@ -107,8 +111,9 @@ import hashlib, json, pathlib, sys
 prefix = pathlib.Path(sys.argv[1])
 manifest = json.loads((prefix / 'manifest.json').read_text())
 assert manifest['binary']['path'] == 'bin/baton'
-assert manifest['binary']['alias'] == 'bin/baton2'
-assert (prefix / 'bin/baton').read_bytes() == (prefix / 'bin/baton2').read_bytes()
+assert manifest['binary']['alias'] is None
+assert (prefix / 'bin/baton2').read_bytes() == (prefix / 'bin/baton-full').read_bytes()
+assert (prefix / 'bin/baton').read_bytes() != (prefix / 'bin/baton2').read_bytes()
 for record in manifest['binaries']:
     assert hashlib.sha256((prefix / record['path']).read_bytes()).hexdigest() == record['sha256']
 PY

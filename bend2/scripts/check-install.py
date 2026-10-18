@@ -194,14 +194,14 @@ def verify_binaries(prefix, manifest, checksums):
                     'The installed full CLI lacks an exact wrapper source pin')
         if layout['alias']:
             require(record.get('alias') == layout['alias'],
-                    'The focused facade must expose its baton2 alias')
+                    'The ' + record['role'] + ' must expose its ' + layout['alias'] + ' alias')
             alias = prefix / layout['alias']
             require(alias.is_file() and not alias.is_symlink() and os.access(alias, os.X_OK),
                     'The installed ' + record['role'] + ' alias is missing or not executable')
             require(archive_digest(alias) == digest,
                     'The installed ' + record['role'] + ' alias differs from its binary')
             require(checksums.get(layout['alias']) == digest,
-                    'The installed baton2 alias is absent from SHA256SUMS')
+                    'The installed ' + record['role'] + ' alias ' + layout['alias'] + ' is absent from SHA256SUMS')
         else:
             require(record.get('alias') is None,
                     'The ' + record['role'] + ' binary has an unexpected alias')
@@ -284,7 +284,7 @@ def verify_binaries(prefix, manifest, checksums):
     binary = manifest.get('binary')
     require(isinstance(binary, dict) and binary.get('path') == focused['path']
             and binary.get('alias') is None and binary.get('sha256') == focused['sha256'],
-            'The compatibility binary record does not match the focused facade')
+            'The compatibility binary record does not match the focused receiver')
     receipt_path = prefix / 'install-receipt.json'
     require(receipt_path.is_file() and not receipt_path.is_symlink(),
             'The installation is missing its install receipt')

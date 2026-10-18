@@ -196,10 +196,11 @@ def extract(archive, manifest_path, destination):
     require((prefix / 'manifest.json').read_bytes() == manifest_bytes,
             'Archive manifest differs from supplied manifest')
     binaries = manifest.get('binaries')
-    require(isinstance(binaries, list) and len(binaries) == 2,
-            'The receiver archive must declare the focused facade and full CLI')
-    expected = {'focused-facade': ('bin/baton', 'bin/baton2'),
-                'full-cli': ('bin/baton-full', None)}
+    require(isinstance(binaries, list) and len(binaries) == 3,
+            'The receiver archive must declare the focused receiver, full router and recovery helper')
+    expected = {'focused-facade': ('bin/baton', None),
+                'full-cli': ('bin/baton2', 'bin/baton-full'),
+                'recovery-helper': ('bin/baton-recovery', None)}
     seen = set()
     focused = None
     for record in binaries:
@@ -214,20 +215,21 @@ def extract(archive, manifest_path, destination):
         require(archive_digest(installed) == record.get('sha256'),
                 'Archive ' + role + ' binary differs from its manifest hash')
         if alias_name:
-            require(record.get('alias') == alias_name, 'Focused facade must declare its baton2 alias')
+            require(record.get('alias') == alias_name, record['role'] + ' must declare its ' + alias_name + ' alias')
             alias = prefix / alias_name
             require(alias.is_file() and not alias.is_symlink() and os.access(alias, os.X_OK),
-                    'Staged baton2 alias is not an executable regular file')
+                    'Staged ' + alias_name + ' alias is not an executable regular file')
             require(archive_digest(alias) == archive_digest(installed),
-                    'Staged baton2 alias differs from the focused facade')
-            focused = record
+                    'Staged ' + alias_name + ' alias differs from its binary')
         else:
             require(record.get('alias') is None, 'Unexpected binary alias in the archive')
-    require(seen == set(expected), 'Archive is missing the focused or full binary')
+        if role == 'focused-facade':
+            focused = record
+    require(seen == set(expected), 'Archive is missing a required package role')
     binary = manifest['binary']
     require(binary.get('path') == focused['path'] and binary.get('alias') == focused['alias']
             and binary.get('sha256') == focused['sha256'],
-            'Compatibility binary record does not match the focused facade')
+            'Compatibility binary record does not match the focused receiver')
     return prefix, manifest
 
 
