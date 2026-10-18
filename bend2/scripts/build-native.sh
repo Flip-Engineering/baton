@@ -60,6 +60,10 @@ if [ "$entry_path" = "$root/bend2/src/coordinator/main.bend" ]; then
   fi
   "${CC:-clang}" -O1 -pthread bend2/src/host/native-entry.c "$output.o" -lsqlite3 -lm -o "$output"
 else
-  "${CC:-clang}" -O1 -pthread "$output.c" -lsqlite3 -lm -o "$output"
+  extra_libs=
+  case "$entry_path" in
+    */bend2/harness/claude-credit-observe.bend) extra_libs=-lcurl ;;
+  esac
+  "${CC:-clang}" -O1 -pthread "$output.c" -lsqlite3 -lm $extra_libs -o "$output"
 fi
 printf '%s\n' "$output"
