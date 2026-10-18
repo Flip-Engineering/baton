@@ -16,6 +16,14 @@ name: bend2-native-focused-qualification
         required: true
         type: choice
         options: [observer-recovery]
+      full_runtime:
+        description: Existing executable full CLI used for recovery helper delegation
+        required: true
+        type: string
+      full_runtime_sha256:
+        description: SHA256 of the selected full CLI artifact
+        required: true
+        type: string
       retained_compiler_archive:
         description: Optional retained Bend 2.0.25 Linux archive path on the homelab runner
         required: false
@@ -51,6 +59,8 @@ jobs:
       BATON2_SOURCE_SHA: ${{ inputs.source_commit }}
       BATON2_TARGET_SHA: ${{ inputs.target_commit }}
       BATON2_FOCUSED_SUITE: ${{ inputs.suite }}
+      BATON2_FOCUSED_FULL_RUNTIME: ${{ inputs.full_runtime }}
+      BATON2_FOCUSED_FULL_RUNTIME_SHA256: ${{ inputs.full_runtime_sha256 }}
       BATON2_FOCUSED_MEMORY_MAX_BYTES: ${{ vars.BATON2_FOCUSED_MEMORY_MAX_BYTES }}
       BATON2_FOCUSED_MEMORY_RESERVE_BYTES: ${{ vars.BATON2_FOCUSED_MEMORY_RESERVE_BYTES }}
       BATON2_FOCUSED_TASKS_MAX: ${{ vars.BATON2_FOCUSED_TASKS_MAX }}
@@ -143,7 +153,9 @@ jobs:
             --launch --run "$BATON2_FOCUSED_RUN" \
             --candidate "$GITHUB_WORKSPACE/candidate-source" \
             --source "$BATON2_SOURCE_SHA" --target "$BATON2_TARGET_SHA" \
-            --suite "$BATON2_FOCUSED_SUITE" --compiler "$BATON2_FOCUSED_COMPILER"
+            --suite "$BATON2_FOCUSED_SUITE" --compiler "$BATON2_FOCUSED_COMPILER" \
+            --full-runtime "$BATON2_FOCUSED_FULL_RUNTIME" \
+            --full-runtime-sha256 "$BATON2_FOCUSED_FULL_RUNTIME_SHA256"
       - name: Retain focused qualification evidence
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
