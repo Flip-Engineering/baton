@@ -15,7 +15,11 @@ function fixtureCatalog() {
     { provider: 'zai', kind: 'chat', id: 'glm-5.3', selector: 'zai/glm-5.3', name: 'GLM-5.3' },
     { provider: 'zai', kind: 'chat', id: 'glm-5.3-flash', selector: 'zai/glm-5.3-flash', name: 'GLM-5.3-Flash' },
     { provider: 'kimi-code', kind: 'chat', id: 'k3', selector: 'kimi-code/k3', name: 'K3', thinking: ['low', 'high', 'max'] },
-    { provider: 'deepseek', kind: 'chat', id: 'deepseek-flash', selector: 'deepseek/deepseek-flash', name: 'DeepSeek V4.1 Flash' },
+    { provider: 'deepseek', kind: 'chat', id: 'deepseek-flash', selector: 'deepseek/deepseek-flash', name: 'DeepSeek V4.1 Flash',
+      context_window: 1000000, max_output_tokens: 393216,
+      input_modalities: ['text', 'image'], output_modalities: ['text'],
+      effort: { supported_levels: ['low', 'high', 'max'], default_level: 'max' },
+      api_capabilities: { anthropic_messages: { system_prompt_update: 'leading-only' } } },
     { provider: 'opencode-go', kind: 'chat', id: 'muse-spark-1.3-contributor', selector: 'opencode-go/muse-spark-1.3-contributor', name: 'Muse Spark 1.3 Contributor' },
     { provider: 'opencode-go', kind: 'chat', id: 'gpt-6-luna', selector: 'opencode-go/gpt-6-luna', name: 'GPT-6 Luna' },
   ] }));
@@ -90,4 +94,18 @@ test('modelIdOf keeps bare ids and strips one provider segment', () => {
 
 test('an unwritable report path throws instead of crashing the caller', () => {
   assert.throws(() => writeReport('{}', join(tmpdir(), 'no-such-dir-683', 'out.json')), /no such file|cannot|ENOENT/i);
+});
+
+test('a newly discovered exact id keeps its capability metadata', () => {
+  const catalog = fixtureCatalog();
+  const model = catalog.find((entry) => entry.selector === 'deepseek/deepseek-flash');
+  assert.equal(model.id, 'deepseek-flash');
+  assert.equal(model.name, 'DeepSeek V4.1 Flash');
+  assert.equal(model.contextWindow, 1000000);
+  assert.equal(model.maxOutputTokens, 393216);
+  assert.deepEqual(model.inputModalities, ['text', 'image']);
+  assert.deepEqual(model.outputModalities, ['text']);
+  assert.deepEqual(model.thinking, ['low', 'high', 'max']);
+  assert.equal(model.defaultEffort, 'max');
+  assert.deepEqual(model.apiCapabilities, { anthropic_messages: { system_prompt_update: 'leading-only' } });
 });
