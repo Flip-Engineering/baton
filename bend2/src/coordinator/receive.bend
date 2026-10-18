@@ -6,8 +6,8 @@ import ./control.bend as Control
 import ./store.bend as Store
 import ./stop.bend as Stop
 import ./subscription-fallback.bend as Subs
-import ./usage-windows.bend as UW
 import ./accounts.bend as Accounts
+import ./usage-windows.bend as UW
 import ./turn.bend as Turn
 import ./native-initial-input.bend as NativeInitialInput
 import ../json/canonical.bend as J
@@ -721,7 +721,7 @@ def selected(+db: String, +session: String, +cmd: String, +model: String, +effor
     case True{}: do IO<Result<&1,&1,U32 & String,Unit>>:
       +executable : String <- IO.try(String,Lock.SessionLock.executable())
       +harness : String <- IO.try(String,DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
-      supported : Unit <- Turn.supported_harness(Bool.or(String.eq(harness,"omp\n"),Bool.or(String.eq(harness,"codex\n"),Bool.or(String.eq(harness,"claude-code\n"),String.eq(harness,"muse\n")))))
+      supported : Unit <- Turn.supported_harness(Bool.or(String.eq(harness,"omp\n"),Bool.or(String.eq(harness,"codex\n"),Bool.or(String.eq(harness,"claude-code\n"),Bool.or(String.eq(harness,"muse\n"),String.eq(harness,"dsh\n"))))))
       +native : String <- field(db,session,"native","")
       +route : String <- field(db,session,"model",model)
       +thinking : String <- field(db,session,"effort",effort)
