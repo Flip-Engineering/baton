@@ -74,8 +74,8 @@ def dispatch_receiver(+db: String, +session: String, +cmd: String, +log: String,
   do IO<Unit>:
     canonical : String <- IO.try(String,Lock.SessionLock.canonical(db))
     ensured : Unit <- Store.ensure_before_begin(canonical)
-    found : String <- IO.try(String,DB.Sql.read(canonical,C.sql(C.Session{session})))
-    accepted : String <- Control.registered(found)
+    found : String <- IO.try(String,DB.Sql.read(canonical,"SELECT id FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
+    accepted : String <- Control.registered(Tx.trim_nl(found))
     model_line : String <- IO.try(String,DB.Sql.read(canonical,"SELECT model FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
     workspace : String <- Bool.pick(IO(String),String.is_empty(cwd),IO.pure(String,""),IO.try(String,Host.Control.workspace(cwd)))
     branch : Maybe<String> <- Control.receiver_branch(workspace)
