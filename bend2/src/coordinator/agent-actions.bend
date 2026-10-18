@@ -22,6 +22,7 @@ type Action is Type:
   Player{id: String}
   Players{}
   Assignment{id: String}
+  Branch{args: List<String>}
   Native{items: List<&2,Domain.Operation>}
   Repl{args: List<String>}
   Help{action: String}
@@ -36,6 +37,7 @@ type Verb is Data:
   AssignmentVerb{}
   CompletionRequestVerb{}
   CompletionConfirmedVerb{}
+  BranchVerb{}
   GuideVerb{}
   UnknownVerb{}
 
@@ -231,6 +233,7 @@ def parse_action(action: Verb, args: List<String>) -> Action:
     case CompletionRequestVerb{}: completion_request_options(args,"",Missing{})
     case CompletionConfirmedVerb{}: confirmation_args(args,"","","")
     case GuideVerb{}: decision_args("guide","guidance",args,"","","",Missing{})
+    case BranchVerb{}: Branch{args}
     case UnknownVerb{}: Invalid{"Choose inbox, read, session, player, players, assignment, send, completion-request, completion-confirmed, guide or acknowledge; use help ACTION for usage."}
 
 def classify_verb(+verb: String) -> Verb:
@@ -242,7 +245,7 @@ def classify_verb(+verb: String) -> Verb:
             Bool.pick(Verb,String.eq(verb,"assignment"),AssignmentVerb{},
               Bool.pick(Verb,String.eq(verb,"completion-request"),CompletionRequestVerb{},
                 Bool.pick(Verb,String.eq(verb,"completion-confirmed"),CompletionConfirmedVerb{},
-                  Bool.pick(Verb,String.eq(verb,"guide"),GuideVerb{},UnknownVerb{})))))))))
+                  Bool.pick(Verb,String.eq(verb,"guide"),GuideVerb{},Bool.pick(Verb,String.eq(verb,"branch"),BranchVerb{},UnknownVerb{}))))))))))
 
 def domain_action(parsed: Domain.Parsed) -> Action:
   match parsed:
@@ -331,6 +334,7 @@ def help(action: String) -> String:
     case "completion-confirmed": "completion-confirmed [--to PLAYER] [--request REQUEST_ID] [--id ID]\nResolve the selected Player's current completion request. Omitted --to selects the sole current request addressed to this coordinator. Baton generates the action identity and links the exact retained request. Explicit selectors retain their native authority checks. Supports mixed and or --and batches.\n"
     case "guide": "guide --to PLAYER (--text TEXT | --file PATH) [--id ID]\nSend guidance to a Player through the ordinary message admission path. Supports mixed and or --and batches.\n"
     case "send": "send RECIPIENT --kind KIND (--text TEXT | --file PATH) [--id ID] [and RECIPIENT ...]\nEach clause supplies its own recipient, kind, body and optional ID. Omitted IDs are generated and returned. Explicit IDs retain existing exact-retry behavior. Each message reports admission, wake and receipt. PATH - reads stdin.\n"
+    case "branch": "branch start|evaluate|select|continue|status|recover|stop [--ensemble NAME]\nUse help branch or branch --help for source defaults, workspace, evaluator, selection and continuation arguments.\n"
     case "acknowledge": "acknowledge [ID... | --message ID] [--receipt TEXT]\nRecord handling for the current native attempt's complete recipient-owned read inputs. Baton generates the native receipt. Explicit message selectors and receipts remain available; the first receipt remains retained. A standalone administrative command requires an explicit message selection.\n"
     case +other:
       +domain = Domain.help(other)
