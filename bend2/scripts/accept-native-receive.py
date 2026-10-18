@@ -45,71 +45,226 @@ def snapshot(db):
         return {table: [dict(row) for row in connection.execute(f'SELECT * FROM {table}')]
                 for table in ['sessions', 'messages', 'turns', 'executions']}
 
-
-def process_rows():
-    rows = []
-    for line in command(['ps', '-axo', 'pid=,ppid=,stat=,lstart=,command=']).splitlines():
-        fields = line.strip().split(None, 8)
-        if len(fields) == 9:
-            rows.append({'pid': int(fields[0]), 'ppid': int(fields[1]),
-                         'status': fields[2], 'started': ' '.join(fields[3:8]),
-                         'command': fields[8]})
-    return rows
+def read_rows(db, sql, parameters=()):
+    with sqlite3.connect(f'{db.as_uri()}?mode=ro', uri=True) as connection:
+        connection.row_factory = sqlite3.Row
+        return [dict(row) for row in connection.execute(sql, parameters)]
 
 
-def wait_for_work(out, binary, db, label):
-    """Observe owned native work through its actual process lifetimes."""
-    owner_command = f'{binary.resolve()} --instance-owner {db.resolve()}'
+def process_row(pid):
+    result = subprocess.run(['ps', '-p', str(pid), '-o', 'pid=,lstart=,stat=,command='],
+                            capture_output=True, text=True)
+    line = result.stdout.strip()
+    if result.returncode or not line:
+        return None
+    fields = line.split(None, 7)
+    if len(fields) != 8:
+        return None
+    return {'pid': int(fields[0]), 'started': ' '.join(fields[1:6]),
+            'status': fields[6], 'command': fields[7]}
+
+
+class ExitWatch:
+    """Wait for one exact process identity to exit. A pidfd pins the process;
+    the recorded start time refuses a reused pid before registration."""
+    def __init__(self, pid):
+        self.pid = pid
+        self.handle = None
+        self.backend = 'pidfd' if hasattr(os, 'pidfd_open') else 'kqueue'
+        self.registered_unix = time.time()
+        try:
+            if self.backend == 'pidfd':
+                self.handle = os.pidfd_open(pid)
+            else:
+                self.handle = select.kqueue()
+                event = select.kevent(pid, filter=select.KQ_FILTER_PROC,
+                                      flags=select.KQ_EV_ADD | select.KQ_EV_ONESHOT,
+                                      fflags=select.KQ_NOTE_EXIT)
+                self.handle.control([event], 0, 0)
+        except ProcessLookupError:
+            self.close()
+
+    def wait(self):
+        if self.handle is not None:
+            if self.backend == 'pidfd':
+                select.select([self.handle], [], [])
+            else:
+                self.handle.control(None, 1, None)
+
+    def close(self):
+        if self.handle is not None:
+            if self.backend == 'pidfd':
+                os.close(self.handle)
+            else:
+                self.handle.close()
+            self.handle = None
+
+
+def native_birth(directory):
+    birth = Path(directory) / 'native.birth'
+    if not birth.is_file():
+        return None
+    data = birth.read_bytes()
+    # struct BrBirth { int32_t pid; uint64_t first, second } with its aligned
+    # 8-byte fields. The first is the process start time; the second is btime.
+    if len(data) < 24:
+        return None
+    pid = int.from_bytes(data[0:4], 'little', signed=True)
+    first = int.from_bytes(data[8:16], 'little')
+    second = int.from_bytes(data[16:24], 'little')
+    return {'pid': pid, 'first': first, 'second': second} if pid > 0 else None
+
+
+def linux_start_time(pid):
+    try:
+        stat = Path(f'/proc/{pid}/stat').read_text()
+    except OSError:
+        return None
+    fields = stat[stat.rfind(')') + 2:].split()
+    try:
+        return int(fields[19])
+    except (IndexError, ValueError):
+        return None
+
+
+def birth_matches(birth, row):
+    """The recorded birth must name this live process, not a reused pid."""
+    if birth is None or row is None:
+        return False
+    if hasattr(os, 'pidfd_open'):
+        return linux_start_time(birth['pid']) == birth['first']
+    try:
+        started = time.mktime(time.strptime(' '.join(row['started'].split()),
+                                            '%a %b %d %H:%M:%S %Y'))
+    except ValueError:
+        return False
+    return int(started) == birth['first']
+
+
+def wait_native_exit(directory, observations, label):
+    """Observe the exact admitted native process until it exits."""
+    birth = native_birth(directory)
+    observation = {'observation': label, 'native_birth': birth}
+    observations.append(observation)
+    if birth is None:
+        return
+    before = process_row(birth['pid'])
+    observation['before_registration'] = before
+    if before is None:
+        return
+    observation['identity_matches'] = birth_matches(birth, before)
+    if not observation['identity_matches']:
+        observation['identity_changed'] = before
+        return
+    watch = ExitWatch(birth['pid'])
+    try:
+        current = process_row(birth['pid'])
+        observation.update(backend=watch.backend, registered_unix=watch.registered_unix,
+                           after_registration=current)
+        if current is not None and birth_matches(birth, current):
+            watch.wait()
+            observation['exit_observed_unix'] = time.time()
+            observation['after_exit'] = process_row(birth['pid'])
+        else:
+            observation['identity_changed'] = current
+    finally:
+        watch.close()
+
+
+def wait_settlement(db, session, message, label, out=None, previous_execution=None):
+    """Wait for the recipient's recorded execution and handling settlement.
+
+    A successful native turn records a recipient-owned receipt whose
+    `native-turn:` suffix names the exact admitted attempt. The predicate is
+    durable coordinator state: that attempt reached `exited` with `exit 0`, its
+    recorded native birth exited, the released and acknowledged custody markers
+    exist, and the task message carries the receipt. A new execution that
+    settled non-zero before writing a receipt is reported, never waited through.
+    There is no elapsed limit.
+    """
     observations = []
-    evidence = out / f'{label}.lifecycle.json'
     while True:
-        rows = process_rows()
-        by_pid = {row['pid']: row for row in rows}
-        ancestors = {os.getpid()}
-        parent = os.getppid()
-        while parent in by_pid and parent not in ancestors:
-            ancestors.add(parent)
-            parent = by_pid[parent]['ppid']
-        work = [row for row in rows if row['pid'] not in ancestors
-                and str(out) in row['command'] and row['command'] != owner_command
-                and not row['status'].startswith('Z')]
-        if not work:
-            observations.append({'observed_unix': time.time(), 'remaining': []})
-            save(evidence, observations)
-            return
-        for row in work:
-            handle = None
-            backend = 'pidfd' if hasattr(os, 'pidfd_open') else 'kqueue'
-            observation = {'process': row, 'backend': backend, 'registered_unix': time.time()}
-            observations.append(observation)
-            try:
-                if backend == 'pidfd':
-                    handle = os.pidfd_open(row['pid'])
+        messages = read_rows(db, 'SELECT id,recipient,receipt FROM messages WHERE id=?', (message,))
+        execution_rows = read_rows(db, 'SELECT * FROM executions WHERE session=?', (session,))
+        execution = execution_rows[0] if execution_rows else None
+        session_rows = read_rows(db, 'SELECT native FROM sessions WHERE id=?', (session,))
+        receipt = messages[0]['receipt'] if messages else None
+        attempt = (receipt[len('native-turn:'):]
+                   if receipt and receipt.startswith('native-turn:') else None)
+        new_execution = execution is not None and execution['id'] != previous_execution
+        if new_execution and execution['directory']:
+            start_error = Path(execution['directory']) / 'native-start-error'
+            if start_error.exists():
+                raise RuntimeError(f'{label}: native start failed: ' + start_error.read_text())
+        if attempt and execution and execution['id'] == attempt:
+            directory = Path(execution['directory']) if execution['directory'] else None
+            if execution['phase'] == 'exited':
+                if execution['status'] != 'exit 0':
+                    raise RuntimeError(f'{label}: recorded execution settled as '
+                                       f'{execution["status"]}: {execution}')
+                if directory is not None and directory.exists():
+                    wait_native_exit(directory, observations, label)
+                    while not ((directory / 'acknowledged').exists()
+                               and (directory / 'released').exists()):
+                        time.sleep(0.05)
                 else:
-                    handle = select.kqueue()
-                    event = select.kevent(row['pid'], filter=select.KQ_FILTER_PROC,
-                                          flags=select.KQ_EV_ADD | select.KQ_EV_ONESHOT,
-                                          fflags=select.KQ_NOTE_EXIT)
-                    handle.control([event], 0, 0)
-                current = next((item for item in process_rows() if item['pid'] == row['pid']), None)
-                observation['after_registration'] = current
-                save(evidence, observations)
-                if current is not None and all(current[key] == row[key]
-                                               for key in ['command', 'started']):
-                    if backend == 'pidfd':
-                        select.select([handle], [], [])
-                    else:
-                        handle.control(None, 1, None)
-                    observation['exit_observed_unix'] = time.time()
-            except ProcessLookupError:
-                observation['gone_before_registration_unix'] = time.time()
-            finally:
-                if handle is not None:
-                    if backend == 'pidfd':
-                        os.close(handle)
-                    else:
-                        handle.close()
-                save(evidence, observations)
+                    observations.append({'observation': label, 'directory': str(directory),
+                                         'absent': True})
+                native = session_rows[0]['native'] if session_rows else ''
+                if native:
+                    state = snapshot(db)
+                    if out is not None:
+                        save(out / f'{label}.settlement.json', {
+                            'message': message, 'receipt': receipt, 'execution': execution,
+                            'native': native, 'observations': observations})
+                    return {'execution': execution, 'state': state, 'receipt': receipt,
+                            'native': native, 'observations': observations}
+        elif (not receipt and new_execution and execution['phase'] == 'exited'
+              and execution['status'] != 'exit 0'):
+            raise RuntimeError(f'{label}: the new execution settled as '
+                               f'{execution["status"]} without a handling receipt: {execution}')
+        time.sleep(0.05)
+
+
+def dispatch_task(binary, db, repo, recipient, text, log_path, sender=None):
+    """Admit complete task input through the database dispatch operation.
+
+    Baton generates the message, request and session identities. The operation's
+    complete JSON result, argv, exit status and captured streams are retained.
+    """
+    argv = [str(binary), str(db), 'dispatch', '--project', str(repo),
+            '--to', recipient, '--stdin']
+    env = dict(os.environ)
+    env.pop('CODEX_THREAD_ID', None)
+    if sender:
+        env['BATON_SESSION'] = sender
+    else:
+        env.pop('BATON_SESSION', None)
+    started = time.time()
+    result = subprocess.run(argv, input=text, capture_output=True, text=True,
+                            cwd=repo, env=env)
+    ended = time.time()
+    with Path(log_path).open('w') as log:
+        log.write(json.dumps({'argv': argv, 'recipient': recipient, 'started_unix': started,
+                              'ended_unix': ended, 'exit': result.returncode,
+                              'input_sha256': hashlib.sha256(text.encode('utf-8')).hexdigest(),
+                              'stdout': result.stdout, 'stderr': result.stderr}, indent=2) + '\n')
+    try:
+        answer = json.loads(result.stdout)
+    except ValueError:
+        raise RuntimeError(f'dispatch to {recipient} did not return JSON: '
+                           f'{result.stdout}{result.stderr}')
+    record = {'label': Path(log_path).stem, 'recipient': recipient, 'argv': argv,
+              'started_unix': started, 'ended_unix': ended, 'exit': result.returncode,
+              'log': str(log_path), 'input_sha256': hashlib.sha256(text.encode('utf-8')).hexdigest(),
+              'result': answer, 'task': answer.get('task'), 'session': answer.get('session'),
+              'request': answer.get('requestId'), 'status': answer.get('status'),
+              'admission': answer.get('admission')}
+    if result.returncode:
+        raise RuntimeError(f'dispatch to {recipient} exited {result.returncode}: {record}')
+    if not record['task'] or not record['request']:
+        raise RuntimeError(f'dispatch to {recipient} did not derive task and request identities: {record}')
+    return record
 
 
 def public_logs(db, session):
@@ -270,17 +425,17 @@ def main():
         assert command(['git', '-C', repo, 'rev-parse', 'HEAD']) == base
         assert not command(['git', '-C', repo, 'status', '--porcelain'])
         initial = snapshot(db)
-        assert [(row['id'], row['sender'], row['recipient'], row['kind'])
-                for row in initial['messages'] if row['kind'] != 'report'] == [
-                    ('root-bootstrap', 'operator', 'root', 'task')], initial
-        processes = [(None, row) for row in json.loads((out / 'processes.json').read_text())]
-        assert len(processes) == 1 and processes[0][1]['message'] == 'root-bootstrap'
-        assert processes[0][1]['exit_code'] == 0, processes
+        admitted = [(row['id'], row['sender'], row['recipient'], row['kind'])
+                    for row in initial['messages'] if row['kind'] != 'report']
+        assert len(admitted) == 1 and admitted[0][1:] == ('operator', 'root', 'task'), initial
+        processes = json.loads((out / 'processes.json').read_text())
+        assert len(processes) == 1 and processes[0]['label'] == 'root-bootstrap'
+        assert processes[0]['task'] == admitted[0][0] and processes[0]['exit'] == 0, processes
         save(out / f'{resumed_label}.json', {
             'started_unix': time.time(), 'original_run': pin, 'original_state': initial,
             'original_failure_sha256': hashlib.sha256((out / 'failure-state.json').read_bytes()).hexdigest(),
             'driver_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
-            'original_processes': [row for _, row in processes]})
+            'original_processes': processes})
     else:
         out.mkdir(parents=True, exist_ok=False)
         command(['git', 'clone', '--shared', '--no-checkout', source, repo])
@@ -299,41 +454,22 @@ def main():
 
     def call(*argv):
         return json.loads(command([binary, db, *argv], cwd=repo))
+    def dispatch(recipient, text, label, sender=None):
+        previous = read_rows(db, 'SELECT id FROM executions WHERE session=?', (recipient,))
+        record = dispatch_task(binary, db, repo, recipient, text,
+                               out / f'{label}.dispatch.json', sender=sender)
+        record['previous_execution'] = previous[0]['id'] if previous else None
+        message = read_rows(db, 'SELECT * FROM messages WHERE id=?', (record['task'],))[0]
+        assert (message['sender'], message['recipient'], message['body']) == (
+            sender or 'operator', recipient, text), message
+        assert message['kind'] in ('task', 'task-continuation'), message
+        processes.append(record)
+        save(out / 'processes.json', processes)
+        return record
 
-    def start_message(ident, recipient, task):
-        sender = 'operator' if recipient == 'root' else 'root'
-        argv = list(map(str, [binary, db, 'agent-native-input']))
-        native_args = ['message', ident, sender, recipient, 'task', task]
-        body = json.dumps(native_args, ensure_ascii=False).encode('utf-8')
-        with (out / f'{ident}.command.log').open('w') as log:
-            process = subprocess.Popen(argv, stdout=log, stderr=subprocess.STDOUT,
-                                       stdin=subprocess.PIPE, cwd=repo, start_new_session=True)
-        record = {'message': ident, 'sender': sender, 'recipient': recipient,
-                  'dispatch_origin': 'acceptance-driver', 'pid': process.pid,
-                  'started_unix': time.time(), 'command': argv,
-                  'input_sha256': hashlib.sha256(task.encode('utf-8')).hexdigest()}
-        processes.append((process, record))
-        save(out / 'processes.json', [row for _, row in processes])
-        process.stdin.write(body)
-        process.stdin.close()
-        return process
-
-    def finish_all(selected):
-        for process in selected:
-            code = process.wait()
-            record = next(row for child, row in processes if child is process)
-            record.update(ended_unix=time.time(), exit_code=code)
-            save(out / 'processes.json', [row for _, row in processes])
-        failed = [row['message'] for child, row in processes if child in selected and row['exit_code']]
-        if failed:
-            raise RuntimeError(f'Native delivery failed for {failed}; inspect retained command logs')
-        label = '-'.join(next(row['message'] for child, row in processes if child is process)
-                         for process in selected)
-        wait_for_work(out, binary, db, label)
-        state = snapshot(db)
-        save_state(f'{label}.settled-state.json', state)
-        for row in state['executions']:
-            assert row['phase'] == 'exited' and row['status'] == 'exit 0', row
+    def settle(record):
+        return wait_settlement(db, record['session'], record['task'], record['label'], out,
+                               previous_execution=record.get('previous_execution'))
 
     coordinator_cli = ' '.join(shlex.quote(str(value)) for value in [binary, db])
     common = f"""Review source revision {base}, compared with {review_base}.
@@ -379,15 +515,20 @@ The reviewers may receive a second task in their existing native sessions.
 Do not edit code, run tests or delegate further work. On root-followup, check all
 retained reports and receipts, summarize the findings and finish the follow-up turn.
 """
-    endpoint = [str(binary), str(db), 'receive', 'root', routes['codex']['executable'],
-                routes['codex']['model'], routes['codex']['effort'], str(repo), str(out / 'root.jsonl')]
     if not args.resume:
         call('attach', 'operator', 'terminal', '', '')
         call('role', 'operator', 'operator')
-        call('attach', 'root', 'codex', '', json.dumps(endpoint))
+        call('start-setup', 'root', 'codex', routes['codex']['executable'],
+             routes['codex']['model'], routes['codex']['effort'], str(repo),
+             str(out / 'root.jsonl'))
         call('role', 'root', 'principal-conductor')
     else:
-        bootstrap = next(row for row in initial['messages'] if row['id'] == 'root-bootstrap')
+        root_session = next(row for row in initial['sessions'] if row['id'] == 'root')
+        for key, expected in {'harness': 'codex', 'model': routes['codex']['model'],
+                              'effort': routes['codex']['effort'],
+                              'workspace': str(repo)}.items():
+            assert root_session[key] == expected, (key, root_session)
+        bootstrap = next(row for row in initial['messages'] if row['id'] == processes[0]['task'])
         assert bootstrap['body'] == root_task, bootstrap
     tasks = {}
 
@@ -420,25 +561,26 @@ retained reports and receipts, summarize the findings and finish the follow-up t
     try:
         print(f'Native receive acceptance: {out}', flush=True)
         if args.resume:
-            wait_for_work(out, binary, db, resumed_label + '-bootstrap')
-            assert all(row['phase'] == 'exited' and row['status'] == 'exit 0'
-                       for row in snapshot(db)['executions']), snapshot(db)
+            wait_settlement(db, 'root', processes[0]['task'], resumed_label + '-bootstrap',
+                            out, previous_execution=processes[0].get('previous_execution'))
         else:
-            finish_all([start_message('root-bootstrap', 'root', root_task)])
+            settle(dispatch('root', root_task, 'root-bootstrap'))
         initial = snapshot(db)
         save_state('bootstrap-state.json', initial)
         root_native = next(row['native'] for row in initial['sessions'] if row['id'] == 'root')
         assert root_native
-        assert next(row for row in initial['messages'] if row['id'] == 'root-bootstrap')['receipt']
-        children = [start_message(f'task-{player}', player, tasks[player]) for player, _, _ in players]
-        finish_all(children)
+        assert next(row for row in initial['messages'] if row['id'] == processes[0]['task'])['receipt']
+        task_records = {player: dispatch(player, tasks[player], f'task-{player}', sender='root')
+                        for player, _, _ in players}
+        for record in task_records.values():
+            settle(record)
         reviewed = snapshot(db)
         save_state('review-state.json', reviewed)
         assert next(row['native'] for row in reviewed['sessions'] if row['id'] == 'root') == root_native
         player_natives = {player: next(row['native'] for row in reviewed['sessions'] if row['id'] == player)
                           for player, _, _ in players}
 
-        def check_reports(state, count):
+        def check_reports(state, count, records):
             for player, marker, _ in players:
                 session = next(row for row in state['sessions'] if row['id'] == player)
                 assert session['parent'] == 'root' and session['native'] == player_natives[player]
@@ -455,25 +597,30 @@ retained reports and receipts, summarize the findings and finish the follow-up t
                     assert report['recipient'] == 'root' and report['receipt']
                     assert marker in report['body'] and base in report['body']
                     assert report['body'] == text
-                for prefix in ['task', 'followup'][:count]:
-                    assert next(row for row in state['messages'] if row['id'] == f'{prefix}-{player}')['receipt']
+                assert len(records[player]) == count, records[player]
+                for record in records[player]:
+                    message = next(row for row in state['messages'] if row['id'] == record['task'])
+                    assert message['receipt'] and message['recipient'] == player, message
 
-        check_reports(reviewed, 1)
+        check_reports(reviewed, 1, {player: [record] for player, record in task_records.items()})
         if has_followups:
-            followups = [start_message(f'followup-{player}', player,
-                         player_task(marker, custom_tasks[player]['followup']))
-                         for player, marker, _ in players]
-            finish_all(followups)
+            followup_records = {player: dispatch(
+                player, player_task(marker, custom_tasks[player]['followup']),
+                f'followup-{player}', sender='root') for player, marker, _ in players}
+            for record in followup_records.values():
+                settle(record)
             resumed = snapshot(db)
             save_state('worker-followup-state.json', resumed)
-            check_reports(resumed, 2)
+            check_reports(resumed, 2, {player: [*task_records[player], followup_records[player]]
+                                       for player, _, _ in players})
         followup = (common + '\nRead all retained reviewer reports and their handling state. '
                     'Summarize what should be addressed next, then finish your native turn. '
                     'Baton automatically records complete input handling.\n')
-        finish_all([start_message('root-followup', 'root', followup)])
+        root_followup = dispatch('root', followup, 'root-followup')
+        settle(root_followup)
         final = snapshot(db)
         assert next(row['native'] for row in final['sessions'] if row['id'] == 'root') == root_native
-        assert next(row for row in final['messages'] if row['id'] == 'root-followup')['receipt']
+        assert next(row for row in final['messages'] if row['id'] == root_followup['task'])['receipt']
         root_generations = public_logs(db, 'root')
         root_events = [frame for generation in root_generations
                        for frame in frames(generation['path'])]
@@ -497,7 +644,7 @@ retained reports and receipts, summarize the findings and finish the follow-up t
             assert command(['git', '-C', workspace, 'rev-parse', 'HEAD']) == base
         save(out / 'evidence.json', {
             **pin, 'ended_unix': time.time(), 'state': final,
-            'processes': [row for _, row in processes], 'root_native_threads': native_threads,
+            'processes': processes, 'root_native_threads': native_threads,
             'resumption': resumed_label,
             'public_log_generations': {session: public_logs(db, session)
                                        for session in ['root', *(p for p, _, _ in players)]},

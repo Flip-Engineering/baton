@@ -199,10 +199,13 @@ End your turn. No push, no changes outside the scratch directory.
     run('node', SOURCE / 'bend2/scripts/codex-conductor.mjs', db, coord, wrappers['codex'],
         '--attach', env={**env, 'CODEX_CONDUCTOR_MODEL': routes['codex']['model']})
     with (out / 'seed.log').open('w') as log:
-        seed = subprocess.Popen([str(coord), str(db), 'agent-native-input'], stdin=subprocess.PIPE,
-                                env=env, stdout=log, stderr=subprocess.STDOUT)
-        seed.stdin.write(json.dumps(['message', 'hierarchy-task', 'operator', 'root',
-                                    'task', root_task], ensure_ascii=False).encode('utf-8'))
+        seed_env = {key: value for key, value in env.items()
+                    if key not in ('BATON_SESSION', 'CODEX_THREAD_ID')}
+        seed = subprocess.Popen([str(coord), str(db), 'dispatch', '--project', str(repo),
+                                 '--to', 'root', '--stdin'],
+                                stdin=subprocess.PIPE,
+                                env=seed_env, stdout=log, stderr=subprocess.STDOUT)
+        seed.stdin.write(root_task.encode('utf-8'))
         seed.stdin.close()
         print(f'Hierarchy started: {out}', flush=True)
         while True:

@@ -243,7 +243,7 @@ Do not edit or commit tracked files in this producer task.
 '''
     target = '.scratch/knowledge-fresh.json' if phase == 'fresh-consumer' else '.scratch/knowledge-read.json'
     retrieval = f'''
-Retrieve current visible findings with `{cli} knowledge read --scope universal --subject root` and retain
+Retrieve current visible findings with `{cli} knowledge-scope consumer universal root` and retain
 the complete JSON answer in {target}. The finding ID to use is {FINDING};
 {LOCAL_FINDING} is a local control and must be absent from your scoped answer.
 Read the finding and its evidenceMessage through that answer. Verify its author,
@@ -288,6 +288,20 @@ def visible_finding(out, reader):
     return rows
 
 
+
+_NATIVE_HELPERS = {}
+
+
+def native_helper(out):
+    """Load the settlement helper from the prepared source clone."""
+    path = out / 'repo/bend2/scripts/accept-native-receive.py'
+    if path not in _NATIVE_HELPERS:
+        spec = importlib.util.spec_from_file_location('knowledge_settlement_driver', path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _NATIVE_HELPERS[path] = module
+    return _NATIVE_HELPERS[path]
+
 def wait_native_processes(out, phase):
     owner = f'{(out / "bin/baton2").resolve()} --instance-owner {(out / "state.db").resolve()}'
     while True:
@@ -308,7 +322,7 @@ def wait_native_processes(out, phase):
                 watch.close()
 
 
-def verify_phase(out, phase, run, before):
+def verify_phase(out, phase, run, before, message_id):
     wait_native_processes(out, phase)
     owner_lifecycle = quiet(out, phase + '-after')
     session = 'producer' if phase == 'produce' else 'consumer'
@@ -317,7 +331,14 @@ def verify_phase(out, phase, run, before):
     assert call(out, 'inbox', session) == []
     new = [row for row in records(out) if row['wrapper_pid'] not in before]
     assert len(new) == 1 and new[0]['native_exit_code'] == 0, new
-    messages = state(out / 'state.db')['messages']
+    current_state = state(out / 'state.db')
+    messages = current_state['messages']
+    task = next(row for row in messages if row['id'] == message_id)
+    assert task['recipient'] == session and task['receipt'], task
+    attempt = task['receipt'].split('native-turn:', 1)[1]
+    execution = next(row for row in current_state['executions'] if row['session'] == session)
+    assert (execution['id'], execution['phase'], execution['status']) == (
+        attempt, 'exited', 'exit 0'), execution
     seen = visible_finding(out, 'root' if phase == 'produce' else 'consumer')
     evidence_ids = {row['evidenceMessage']['id'] for row in seen
                     if row['id'] in (FINDING, LOCAL_FINDING)}
@@ -389,24 +410,19 @@ def run_phase(out, phase):
             visible_finding(out, 'consumer')
         task = task_text(out, phase)
         session = 'producer' if phase == 'produce' else 'consumer'
-        argv = [str(out / 'baton2'), str(out / 'state.db'), 'agent-native-input']
-        body = json.dumps(['message', f'{phase}-task', 'root', session, 'task', task],
-                          ensure_ascii=False).encode('utf-8')
-        entry = {'argv': argv, 'started_unix': time.time(),
-                 'task_sha256': hashlib.sha256(task.encode('utf-8')).hexdigest()}
-        with (out / f'{phase}.stdout').open('wb') as stdout, \
-                (out / f'{phase}.stderr').open('wb') as stderr:
-            child = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=stdout, stderr=stderr, cwd=out / 'repo',
-                                     start_new_session=True)
-            entry['pid'] = child.pid
-            save(out / f'{phase}-command.json', entry)
-            child.stdin.write(body)
-            child.stdin.close()
-            entry.update(exit=child.wait(), ended_unix=time.time())
-        save(out / f'{phase}-command.json', entry)
-        if entry['exit']:
-            raise RuntimeError(f'Phase {phase} delivery exited {entry["exit"]}; read retained output')
-        verify_phase(out, phase, run, before)
+        helper = native_helper(out)
+        current_state = state(out / 'state.db') or {}
+        previous = [row for row in current_state.get('executions', [])
+                    if row['session'] == session]
+        previous_id = previous[0]['id'] if previous else None
+        record = helper.dispatch_task(out / 'baton2', out / 'state.db', out / 'repo',
+                                      session, task, out / f'{phase}.dispatch.json', sender='root')
+        save(out / f'{phase}-command.json', {
+            **record, 'task_sha256': hashlib.sha256(task.encode('utf-8')).hexdigest(),
+            'previous_execution': previous_id})
+        helper.wait_settlement(out / 'state.db', session, record['task'],
+                               phase + '-settlement', out, previous_execution=previous_id)
+        verify_phase(out, phase, run, before, record['task'])
     except BaseException as error:
         save(out / f'{phase}-failure.json', {'error': repr(error), **inspect_run(out)})
         raise

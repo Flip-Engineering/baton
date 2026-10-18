@@ -36,7 +36,6 @@ import time
 SOURCE = Path(__file__).resolve().parents[2]
 DOCUMENT = 'docs/bend2/receive-recovery-example.md'
 INITIAL = 'recovery-initial'
-FOLLOWUP = 'recovery-followup'
 
 
 def save(path, value):
@@ -516,9 +515,11 @@ both your previous commit hash and the new one. Do not repeat the checkpoint too
                             os.kill(observer.pid, signal.SIGKILL)
                             code = observer.wait()
                             assert code == -signal.SIGKILL, code
-                            followup = checkpoint_command('followup-message-queued', 'agent-native-input',
-                                input=json.dumps(['message', FOLLOWUP, 'root', 'worker', 'task',
-                                                  followup_task], ensure_ascii=False))
+                            followup = checkpoint_command('followup-message-queued',
+                                'as', 'root', 'send', 'worker', '--kind', 'task',
+                                '--text', followup_task)
+                            followup_result = json.loads(followup)[0]
+                            assert followup_result['status'] == 'admitted', followup_result
                             retry = json.loads(checkpoint_command('normal-receive-retry', *receive, INITIAL))
                             assert retry == {'session': 'worker', 'status': 'queued'}, retry
                             assert len(json_lines(out / 'launches.jsonl')) == 1
@@ -601,6 +602,15 @@ both your previous commit hash and the new one. Do not repeat the checkpoint too
             assert len(launches) == len(reports) == len(terminal) == len(texts) == 2
             assert all(frame['type'] == 'turn.completed' for frame in terminal), terminal
             assert native_ids and set(native_ids) == {first_native}, native_ids
+            tasks = [row for row in final['messages'] if row['recipient'] == 'worker'
+                     and row['kind'] == 'task']
+            followup_message = next(row for row in tasks if row['id'] != INITIAL)
+            assert followup_message['id'] == followup_result['id'], followup_message
+            assert followup_message['body'] == followup_task and followup_message['receipt'], followup_message
+            attempt = followup_message['receipt'].split('native-turn:', 1)[1]
+            execution = next(row for row in final['executions'] if row['session'] == 'worker')
+            assert (execution['id'], execution['phase'], execution['status']) == (
+                attempt, 'exited', 'exit 0'), execution
             assert [row['body'] for row in reports] == texts
             assert all(row['receipt'] for row in final['messages']), final
             assert [row['body'].startswith(marker) for row, marker in zip(
@@ -623,6 +633,7 @@ both your previous commit hash and the new one. Do not repeat the checkpoint too
                 'native_session': first_native, 'launches': launches, 'native_thread_ids': native_ids,
                 'native_terminal_frames': terminal, 'native_logs': logs,
                 'state': final, 'parent_receipts': receipts, 'timeline': timeline,
+                'followup_message': followup_message, 'followup_result': followup_result,
                 'repository_commits': commits, 'document_sha256': digest(repo / DOCUMENT),
                 'owner_shutdown': shutdown, 'owner_exit_observations': owner_exits,
                 'process_exit_observations': ended_processes,

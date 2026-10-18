@@ -211,6 +211,28 @@ class Case:
                 raise RuntimeError(f'{self.path.name}/{ident} native start failed: {state}')
             time.sleep(0.05)
 
+    def wait_native_exit(self, ident, player='w1'):
+        """Await the exact native birth recorded for an admitted attempt."""
+        with sqlite3.connect(self.db) as db:
+            db.row_factory = sqlite3.Row
+            request = db.execute('SELECT * FROM direct_turn_requests WHERE id=?',
+                                 (ident,)).fetchone()
+            execution = db.execute('SELECT * FROM executions WHERE session=?',
+                                   (player,)).fetchone()
+        selected = dict(execution) if execution and execution['id'] == ident else (
+            dict(request) if request else None)
+        if (selected is None or not selected['directory']) and execution \
+                and execution['phase'] != 'exited' and execution['directory']:
+            selected = dict(execution)
+        if selected is None or not selected['directory']:
+            save(self.path / (ident + '.native-exit.json'),
+                 {'observation': 'no admitted attempt directory'})
+            return
+        observations = []
+        self.a.native.wait_native_exit(Path(selected['directory']), observations,
+                                       self.path.name + '/' + ident)
+        save(self.path / (ident + '.native-exit.json'), observations)
+
     def evidence(self, value):
         save(self.path / 'evidence.json', value)
         print(f'PASS {self.path.name}: {self.path / "evidence.json"}', flush=True)
@@ -237,6 +259,7 @@ class Acceptance:
         spec = importlib.util.spec_from_file_location('root_day_native_acceptance', helper_path)
         helper = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(helper)
+        self.native = helper
         if not args.coordinator:
             print('Building native coordinator', flush=True)
         self.coordinator, coordinator_provenance = helper.prepare_coordinator(
@@ -258,8 +281,8 @@ class Acceptance:
         for kind in ['omp', 'codex', 'claude-code', 'muse']:
             c = self.case('worker-' + kind)
             c.coord('attach', 'root', 'external', '', '')
-            c.recruit(kind)
             label = self.ident + '-' + kind
+            c.recruit(kind)
             p = c.turn(kind, f'Remember review label {label}. Read bend2/README.md, '
                        'bend2/src/coordinator/turn.bend and bend2/src/coordinator/commands.bend. '
                        'Explain native-session recovery with source references. Read the files '
@@ -270,6 +293,7 @@ class Acceptance:
             before = c.coord('player', 'w1')
             kill_tree(p, c.path / 'crash.json')
             recovered = c.completed_attempt('interrupted')
+            c.wait_native_exit('interrupted')
             assert c.coord('player', 'w1')['native'] == before['native'], before
             p = c.turn(kind, 'Continue the interrupted review. Begin your final report with the '
                        'exact review label from the earlier task, using your native conversation. '
@@ -364,6 +388,7 @@ sys.exit(p.wait())
             kill_tree(p, c.path / 'crash.json')
             pending = c.coord('delivery', 'root-interrupted')
             assert pending['receipt'] is None, pending
+            c.wait_native_exit('root-interrupted', 'root')
             resumed = run(attach, env=self.env)
             (c.path / 'resumed.out').write_text(resumed)
             report = c.coord('delivery', 'root-interrupted')
