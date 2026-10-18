@@ -132,8 +132,51 @@ static int focused_receiver_verb(int argc,char **argv) {
      !strcmp(first,"--instance-owner") || !strcmp(first,"--instance-shutdown") ||
      !strcmp(first,"--recover-observer") || !strcmp(first,"--recover-receive")) return 1;
   if(argc>2 && (!strcmp(argv[2],"receive") || !strcmp(argv[2],"turn") ||
-                !strcmp(argv[2],"receiver") || !strcmp(argv[2],"recover-observer"))) return 1;
-  return argc>3 && !strcmp(first,"--database") && !strcmp(argv[3],"receiver");
+                !strcmp(argv[2],"recover-observer"))) return 1;
+  return 0;
+}
+
+static int focused_receiver_registration(int argc,char **argv) {
+  if(argc>2 && !strcmp(argv[2],"receiver")) return 1;
+  return argc>3 && !strcmp(argv[1],"--database") && !strcmp(argv[3],"receiver");
+}
+
+static int delegate_receiver_registration(int argc,char **argv) {
+  char *facade=application_executable();
+  char *directory=facade?strdup(facade):NULL;
+  char *slash=directory?strrchr(directory,'/'):NULL;
+  if(!slash) {
+    free(directory);free(facade);
+    fputs("baton: cannot locate the focused installation directory.\n",stderr);
+    return 78;
+  }
+  *slash=0;
+  size_t size=strlen(directory)+sizeof("/baton-register");
+  char *candidate=malloc(size);
+  if(!candidate) {
+    free(directory);free(facade);
+    perror("baton: receiver registrar path");
+    return 1;
+  }
+  snprintf(candidate,size,"%s/baton-register",directory);
+  char *registrar=realpath(candidate,NULL);
+  free(candidate);free(directory);
+  if(!registrar || access(registrar,X_OK)) {
+    fputs("baton: sibling receiver registrar is missing or not executable. Install the complete Baton package.\n",stderr);
+    free(registrar);free(facade);return 78;
+  }
+  char **next=calloc((size_t)argc+2,sizeof(*next));
+  if(!next) {
+    free(registrar);free(facade);
+    perror("baton: receiver registrar arguments");
+    return 1;
+  }
+  next[0]=registrar;
+  next[1]=facade;
+  for(int i=1;i<argc;i++) next[i+1]=argv[i];
+  execv(registrar,next);
+  perror("baton: receiver registrar could not execute");
+  free(next);free(registrar);free(facade);return 1;
 }
 
 static int delegate_full_cli(char **argv) {
@@ -179,6 +222,7 @@ int main(int argc, char **argv) {
   int dispatch=dispatch_entry(argc,argv);
   if(dispatch>=0) return dispatch;
 #ifdef BATON2_RECEIVE_FOCUSED
+  if(focused_receiver_registration(argc,argv)) return delegate_receiver_registration(argc,argv);
   if(!focused_receiver_verb(argc,argv)) return delegate_full_cli(argv);
 #endif
   char **application = calloc((size_t)argc + 2, sizeof(*application));
