@@ -101,7 +101,7 @@ def stale_case(+db: String, +self: String) -> IO(Unit):
 def far_case(+db: String, +self: String) -> IO(Unit):
   do IO<Unit>:
     +far : String <- read(db,"SELECT CAST(CAST(strftime('%s','now') AS INTEGER)*1000+172800000 AS TEXT);")
-    created : Unit <- session(db,"far2")
+    created : Unit <- query(db,"INSERT INTO sessions(id,parent,harness,model,effort,native,endpoint) VALUES('far2','root','omp','kimi-code/kimi-for-coding','high','','');")
     window : Unit <- query(db,"INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) VALUES(CAST(strftime('%s','now') AS INTEGER)*1000,'omp','kimi-code/kimi-for-coding','kimi-code','far2','5-hour'," ++ Tx.trim_nl(far) ++ ",'provider-message',NULL,'far window','m-far2');")
     owed : Unit <- message(db,"far2","m-far2","")
     held : Unit <- expect_gate(db,"far2","far2","held","far-continuation-held")
