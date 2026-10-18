@@ -73,10 +73,23 @@ class UsageWindows(unittest.TestCase):
     def windows(self):
         return self.call('usage-windows', 'leaf')
 
+    def limit(self, window='5-hour'):
+        with closing(sqlite3.connect(self.db)) as db:
+            db.execute("INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) "
+                       "VALUES(CAST(strftime('%s','now') AS INTEGER)*1000,'omp','kimi-code/kimi-for-coding','kimi-code','',?,NULL,'provider-message',NULL,'limit message','')",
+                       (window,))
+
+    def reported(self, window='5-hour', used=0.42, ms=1893456000000):
+        with closing(sqlite3.connect(self.db)) as db:
+            db.execute("INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) "
+                       "VALUES(CAST(strftime('%s','now') AS INTEGER)*1000,'omp','kimi-code/kimi-for-coding','kimi-code','',?,?,'provider-report',?,'report','')",
+                       (window, ms, used))
+
     def test_observed_reset_holds_and_latest_observation_wins(self):
         self.recruit()
+        self.limit()
         held = self.observe('5-hour', '2999-01-01T00:00:00Z', 'kimi console web ui')
-        self.assertEqual(held['state'], 'recorded')
+        self.assertEqual(held['resetsAt'], 32472144000000)
         answer = self.windows()
         rows = {row['window']: row for row in answer['windows']}
         self.assertEqual(rows['5-hour']['state'], 'held')
@@ -84,17 +97,35 @@ class UsageWindows(unittest.TestCase):
         self.assertEqual(rows['5-hour']['resetsAtText'], '2999-01-01T00:00:00Z')
         self.assertIn('kimi console web ui', rows['5-hour']['receipt'])
         elapsed = self.observe('5-hour', '2020-01-01T00:00:00Z', 'kimi console web ui')
-        self.assertEqual(elapsed['state'], 'recorded')
+        self.assertEqual(elapsed['resetsAt'], 1577836800000)
         rows = {row['window']: row for row in self.windows()['windows']}
         self.assertEqual(rows['5-hour']['state'], 'elapsed')
 
     def test_unknown_reset_stays_explicit(self):
         self.recruit()
+        self.limit()
         observed = self.observe('5-hour', 'unknown', 'kimi console shows none')
-        self.assertEqual(observed['state'], 'recorded')
+        self.assertIsNone(observed['resetsAt'])
         rows = {row['window']: row for row in self.windows()['windows']}
         self.assertEqual(rows['5-hour']['state'], 'unknown')
         self.assertIsNone(rows['5-hour']['resetsAt'])
+
+    def test_partial_provider_report_is_open_and_not_held(self):
+        self.recruit()
+        self.reported()
+        rows = {row['window']: row for row in self.windows()['windows']}
+        self.assertEqual(rows['5-hour']['state'], 'open')
+        self.assertEqual(rows['5-hour']['usedFraction'], 0.42)
+
+    def test_multiwindow_gate_uses_the_exhausted_window(self):
+        self.recruit()
+        self.limit()
+        self.reported('7-day', used=0.5, ms=1893456000000 + 3600000)
+        self.reported('monthly', used=0.2, ms=1893456000000 + 7200000)
+        rows = {row['window']: row for row in self.windows()['windows']}
+        self.assertEqual(rows['5-hour']['state'], 'unknown')
+        self.assertEqual(rows['7-day']['state'], 'open')
+        self.assertEqual(rows['monthly']['state'], 'open')
 
     def test_unparseable_reset_refuses_without_recording(self):
         self.recruit()

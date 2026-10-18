@@ -55,34 +55,54 @@ Three sources write observations:
 
 ## The wake gate
 
-The wake driver (`wake_fenced` in `bend2/src/coordinator/receive.bend`) asks
-for the newest observation matching the session's harness, provider, and
-account label (an empty label also matches account-wide rows):
+The wake driver asks the gate for the session's harness, provider prefix, and
+account label. The gate reads the latest row per window for state and reset and
+the latest provider row per window for exhaustion evidence:
 
-- No row, or a NULL reset: the wake proceeds. An unknown reset never blocks.
-- A future reset: the wake reports `usage-window-held` to the session and its
-  conductor with the window, reset time, source, and receipt, releases the
-  lock, and leaves the input owed. Eligible work routes to an available
-  configured account or model through the existing handoff and route
-  machinery.
-- A past reset after a hold: the wake reports `usage-window-restored` once per
-  message and admits the owed input on the retained assignment and account.
+- A window is exhausted when its latest provider row is a limit message or
+  reports `usedFraction` at or above 1. A partial provider report with a
+  future reset is not exhaustion.
+- An operator-observed reset keeps the window's provider exhaustion and
+  supplies the reset time; this is the Kimi Code Console path.
+- Held: an exhausted window's reset is in the future. The wake reports
+  `usage-window-held` to the session and its conductor with the window, reset
+  time, source, and receipt, releases the lock, leaves the input owed, and
+  schedules one detached single-shot continuation at the earliest held reset.
+  Eligible work routes to an available configured account or model through the
+  existing handoff and route machinery.
+- Elapsed: no window is held and an exhausted window's reset has passed. The
+  wake reports `usage-window-restored` once per message and admits the owed
+  input on the retained assignment and account.
+- Unknown: the only exhausted evidence is a limit message with no reset. The
+  wake proceeds; an unknown reset never blocks.
+- None: no exhausted window. Partial reports stay visible in the query and do
+  not hold.
 
-Restoration needs no timer: the next wake after the reset admits the work
-automatically, and the held report tells the conductor exactly when that is.
+The continuation sleeps until the recorded reset and re-runs the wake through
+the existing dispatch entry (`--dispatch-message`) with no new input. The delay
+is capped at one day, so a far reset re-checks in bounded segments and a
+still-held gate schedules the next segment. It is one detached process, not a
+daemon, and it does not poll. Delivery stays receipt-gated, so a message that
+was handled before the reset keeps its receipt and gains no second delivery;
+two continuations for the same message leave one delivery and one held report.
 
 ## Query
 
 `usage-windows SESSION` prints the newest observation per window with its
-current state (`held`, `elapsed`, `unknown`), the reset time in milliseconds
-and as UTC text, the source, and the receipt. No matching row reads back
-`none recorded`; a model without a provider prefix reports
-`noProviderQualifiedModel`.
+current state: `held`, `elapsed`, and `unknown` for exhausted windows, and
+`open` for a row without exhaustion evidence (a partial report or an
+operator-only record). The reset time is printed in milliseconds and UTC text
+with its source and receipt. No matching row reads back `none recorded`; a
+model without a provider prefix reports `noProviderQualifiedModel`.
 
 ## Verification
 
 `bend2/test/usage-windows.bend` drives the real extraction functions over the
-observed Kimi, ZAI, and Claude wordings. `bend2/test/usage-windows.py`
-exercises the command surface against a recruited session fixture. The wake
-gate's held and restored branches run in the receive integration fixtures on
-remote validation runners.
+observed Kimi, ZAI, and Claude wordings. `bend2/test/usage-windows-store.bend`
+drives the store, gate, reports, refresh, and multiwindow state over a
+temporary database. `bend2/test/usage-windows-long.bend` bounds the reset scan
+on a long provider message. `bend2/test/usage-windows-wake.bend` proves the
+post-reset continuation, handled-message idempotence, duplicate continuations,
+and the one-day segment cap. `bend2/test/usage-windows.py` exercises the
+command surface against a recruited session fixture on remote validation
+runners.

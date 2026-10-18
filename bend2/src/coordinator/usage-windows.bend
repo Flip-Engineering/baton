@@ -17,6 +17,8 @@ import ./usage.bend as Usage
 import ../json/canonical.bend as J
 import ../git/text.bend as Tx
 import ../host/sqlite.bend as DB
+import ../host/control.bend as Host
+import ../host/session-lock.bend as Lock
 import ./store.bend as Store
 
 type Gate is Data:
@@ -376,7 +378,7 @@ def query_none(+session: String, +account: String) -> String:
   "{\"schema\":\"baton2-usage-windows-v1\",\"session\":" ++ J.string_literal(session) ++ ",\"account\":" ++ J.string_literal(account) ++ ",\"windows\":\"none recorded\",\"condition\":\"noProviderQualifiedModel\"}"
 
 def query_answer_sql(+session: String, +harness: String, +provider: String, +account: String) -> String:
-  "SELECT json_object('schema','baton2-usage-windows-v1','session'," ++ C.q(session) ++ ",'account'," ++ C.q(account) ++ ",'windows',coalesce(nullif((SELECT json_group_array(json(item)) FROM (SELECT json_object('window',w.window,'state',CASE WHEN w.resets_at IS NULL THEN 'unknown' WHEN w.resets_at > " ++ now_ms() ++ " THEN 'held' ELSE 'elapsed' END,'resetsAt',w.resets_at,'resetsAtText',CASE WHEN w.resets_at IS NULL THEN NULL ELSE strftime('%Y-%m-%dT%H:%M:%SZ',w.resets_at/1000,'unixepoch') END,'usedFraction',w.used_fraction,'source',w.reset_source,'receipt',w.receipt,'recordedAt',w.recorded_at,'message',nullif(w.message,'')) AS item FROM usage_windows w WHERE " ++ window_match_sql(harness,provider,account) ++ " AND w.id=(SELECT w2.id FROM usage_windows w2 WHERE " ++ window_match_sql(harness,provider,account) ++ " AND w2.window=w.window ORDER BY w2.recorded_at DESC, w2.id DESC LIMIT 1) ORDER BY w.window)),'[]'),'none recorded')) FROM sessions WHERE id=" ++ C.q(session) ++ ";"
+  "SELECT json_object('schema','baton2-usage-windows-v1','session'," ++ C.q(session) ++ ",'account'," ++ C.q(account) ++ ",'windows',coalesce(nullif((SELECT json_group_array(json(item)) FROM (SELECT json_object('window',w.window,'state',CASE WHEN NOT ((w.used_fraction IS NOT NULL AND w.used_fraction >= 1) OR w.reset_source='provider-message') THEN 'open' WHEN w.resets_at IS NULL THEN 'unknown' WHEN w.resets_at > " ++ now_ms() ++ " THEN 'held' ELSE 'elapsed' END,'resetsAt',w.resets_at,'resetsAtText',CASE WHEN w.resets_at IS NULL THEN NULL ELSE strftime('%Y-%m-%dT%H:%M:%SZ',w.resets_at/1000,'unixepoch') END,'usedFraction',w.used_fraction,'source',w.reset_source,'receipt',w.receipt,'recordedAt',w.recorded_at,'message',nullif(w.message,'')) AS item FROM usage_windows w WHERE " ++ window_match_sql(harness,provider,account) ++ " AND w.id=(SELECT w2.id FROM usage_windows w2 WHERE " ++ window_match_sql(harness,provider,account) ++ " AND w2.window=w.window ORDER BY w2.recorded_at DESC, w2.id DESC LIMIT 1) ORDER BY w.window)),'[]'),'none recorded')) FROM sessions WHERE id=" ++ C.q(session) ++ ";"
 
 def query_bound(+db: String, +session: String, +harness: String, +provider: String, +account: String) -> IO(Unit):
   do IO<Unit>:
@@ -395,23 +397,58 @@ def query(+db: String, +session: String, +account: String) -> IO(Unit):
 
 # --- the wake gate -----------------------------------------------------------
 #
-# One verdict query reads the newest matching observation: no row admits
-# (GateNone), a NULL reset admits with its source kept visible (GateUnknown),
-# a future reset holds the wake (GateHeld), and a past reset admits with
-# restoration evidence (GateElapsed). The gate never blocks on an unknown.
+# Each window is represented by its latest row for state and reset, and by its
+# latest provider row for exhaustion evidence. A window is exhausted when the
+# provider said so: the latest provider row is a limit message or reports a used
+# fraction at or above 1. A partial provider report with a future reset is not
+# exhaustion and does not hold. An operator-observed reset keeps the window's
+# provider exhaustion and supplies the reset time. The gate holds when any
+# exhausted window's reset is still in the future, is elapsed when one has
+# passed, is unknown when the only exhausted evidence carries no reset, and is
+# none otherwise.
+
+def exhausted_sql(+alias: String) -> String:
+  "((" ++ alias ++ ".used_fraction IS NOT NULL AND " ++ alias ++ ".used_fraction >= 1) OR " ++ alias ++ ".reset_source='provider-message')"
+
+def latest_rows_sql(+harness: String, +provider: String, +account: String) -> String:
+  "SELECT w.* FROM usage_windows w WHERE " ++ window_match_sql(harness,provider,account) ++ " AND w.id=(SELECT w2.id FROM usage_windows w2 WHERE " ++ window_match_sql(harness,provider,account) ++ " AND w2.window=w.window ORDER BY w2.recorded_at DESC, w2.id DESC LIMIT 1)"
+
+def latest_provider_rows_sql(+harness: String, +provider: String, +account: String) -> String:
+  "SELECT p.* FROM usage_windows p WHERE " ++ window_match_sql(harness,provider,account) ++ " AND p.reset_source IN ('provider-message','provider-report') AND p.id=(SELECT p2.id FROM usage_windows p2 WHERE " ++ window_match_sql(harness,provider,account) ++ " AND p2.reset_source IN ('provider-message','provider-report') AND p2.window=p.window ORDER BY p2.recorded_at DESC, p2.id DESC LIMIT 1)"
+
+def exhausted_windows_sql(+harness: String, +provider: String, +account: String) -> String:
+  "SELECT p.window FROM (" ++ latest_provider_rows_sql(harness,provider,account) ++ ") p WHERE " ++ exhausted_sql("p")
+
+def window_state_rows_sql(+harness: String, +provider: String, +account: String) -> String:
+  latest_rows_sql(harness,provider,account) ++ " AND w.window IN (" ++ exhausted_windows_sql(harness,provider,account) ++ ")"
+
+def held_rows_sql(+harness: String, +provider: String, +account: String) -> String:
+  window_state_rows_sql(harness,provider,account) ++ " AND w.resets_at IS NOT NULL AND w.resets_at > " ++ now_ms()
+
+def elapsed_rows_sql(+harness: String, +provider: String, +account: String) -> String:
+  window_state_rows_sql(harness,provider,account) ++ " AND w.resets_at IS NOT NULL AND w.resets_at <= " ++ now_ms()
+
+def unknown_rows_sql(+harness: String, +provider: String, +account: String) -> String:
+  window_state_rows_sql(harness,provider,account) ++ " AND w.resets_at IS NULL"
 
 def gate_verdict_sql(+session: String, +harness: String, +provider: String, +account: String) -> String:
-  "SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM usage_windows WHERE " ++ window_match_sql(harness,provider,account) ++ ") THEN 'none' ELSE (SELECT CASE WHEN w.resets_at IS NULL THEN 'unknown' WHEN w.resets_at > " ++ now_ms() ++ " THEN 'held' ELSE 'elapsed' END FROM usage_windows w WHERE " ++ window_match_sql(harness,provider,account) ++ " ORDER BY w.recorded_at DESC, w.id DESC LIMIT 1) END FROM sessions WHERE id=" ++ C.q(session) ++ ";"
+  "SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM (" ++ exhausted_windows_sql(harness,provider,account) ++ ")) THEN 'none' WHEN EXISTS(SELECT 1 FROM (" ++ held_rows_sql(harness,provider,account) ++ ")) THEN 'held' WHEN EXISTS(SELECT 1 FROM (" ++ elapsed_rows_sql(harness,provider,account) ++ ")) THEN 'elapsed' WHEN EXISTS(SELECT 1 FROM (" ++ unknown_rows_sql(harness,provider,account) ++ ")) THEN 'unknown' ELSE 'none' END FROM sessions WHERE id=" ++ C.q(session) ++ ";"
 
-def gate_detail_sql(+harness: String, +provider: String, +account: String, +field: String) -> String:
-  "SELECT " ++ field ++ " FROM usage_windows w WHERE " ++ window_match_sql(harness,provider,account) ++ " ORDER BY w.recorded_at DESC, w.id DESC LIMIT 1;"
+def gate_detail_rows_sql(+harness: String, +provider: String, +account: String, +verdict: String) -> String:
+  match verdict:
+    case "held": "SELECT * FROM (" ++ held_rows_sql(harness,provider,account) ++ ") ORDER BY resets_at ASC, recorded_at DESC, id DESC LIMIT 1"
+    case "elapsed": "SELECT * FROM (" ++ elapsed_rows_sql(harness,provider,account) ++ ") ORDER BY recorded_at DESC, id DESC LIMIT 1"
+    case _: "SELECT * FROM (" ++ unknown_rows_sql(harness,provider,account) ++ ") ORDER BY recorded_at DESC, id DESC LIMIT 1"
+
+def gate_detail_sql(+harness: String, +provider: String, +account: String, +verdict: String, +field: String) -> String:
+  "SELECT " ++ field ++ " FROM (" ++ gate_detail_rows_sql(harness,provider,account,verdict) ++ ");"
 
 def gate_details(+db: String, +harness: String, +provider: String, +account: String, +verdict: String) -> IO(Gate):
   do IO<Gate>:
-    +window : String <- IO.try(String,DB.Sql.read(db,gate_detail_sql(harness,provider,account,"w.window")))
-    +source : String <- IO.try(String,DB.Sql.read(db,gate_detail_sql(harness,provider,account,"w.reset_source")))
-    +receipt : String <- IO.try(String,DB.Sql.read(db,gate_detail_sql(harness,provider,account,"w.receipt")))
-    +resets : String <- IO.try(String,DB.Sql.read(db,gate_detail_sql(harness,provider,account,"coalesce(CAST(w.resets_at AS TEXT),'-')")))
+    +window : String <- IO.try(String,DB.Sql.read(db,gate_detail_sql(harness,provider,account,verdict,"window")))
+    +source : String <- IO.try(String,DB.Sql.read(db,gate_detail_sql(harness,provider,account,verdict,"reset_source")))
+    +receipt : String <- IO.try(String,DB.Sql.read(db,gate_detail_sql(harness,provider,account,verdict,"receipt")))
+    +resets : String <- IO.try(String,DB.Sql.read(db,gate_detail_sql(harness,provider,account,verdict,"coalesce(CAST(resets_at AS TEXT),'-')")))
     IO.pure(Gate,Bool.pick(Gate,String.eq(verdict,"unknown"),GateUnknown{Tx.trim_nl(window),Tx.trim_nl(source),Tx.trim_nl(receipt)},Bool.pick(Gate,String.eq(verdict,"held"),GateHeld{Tx.trim_nl(window),Tx.trim_nl(resets),Tx.trim_nl(source),Tx.trim_nl(receipt)},GateElapsed{Tx.trim_nl(window),Tx.trim_nl(resets),Tx.trim_nl(source),Tx.trim_nl(receipt)})))
 
 def gate_verdicted(+db: String, +session: String, +harness: String, +provider: String, +account: String) -> IO(Gate):
@@ -429,6 +466,39 @@ def window_gate(+db: String, +session: String, +account: String) -> IO(Gate):
     +model : String <- IO.try(String,DB.Sql.read(db,"SELECT model FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
     gate : Gate <- window_gate_model(db,session,Tx.trim_nl(harness),Tx.trim_nl(model),Tx.trim_nl(account))
     IO.pure(Gate,gate)
+
+# --- the post-reset continuation ---------------------------------------------
+#
+# A held wake leaves the input owed and launches one detached single-shot
+# continuation. It sleeps until the earliest held reset and re-runs the wake
+# through the existing dispatch entry, which drives the retained input with no
+# new message. The delay is capped at one day, so a far reset re-checks in
+# bounded segments and the still-held gate schedules the next segment. The
+# continuation is not a daemon and does not poll.
+
+def schedule_argv(+self: String, +db: String, +message: String, +delay_s: String) -> List<String>:
+  ["/bin/sh","-c","sleep \"$1\"; shift; exec \"$@\"","sh",delay_s,self,"--dispatch-message",db,message]
+
+def schedule_delay_sql(+resets_at: String) -> String:
+  "SELECT CAST(max(1,min(86400,(" ++ resets_at ++ "-" ++ now_ms() ++ "+999)/1000)) AS TEXT);"
+
+def schedule_launch(+db: String, +message: String, +delay_s: String, +self: String) -> IO(Unit):
+  do IO<Unit>:
+    launched : String <- IO.try(String,Host.Control.launch(Tx.enc_argv(schedule_argv(self,db,message,delay_s)),db,message ++ ":usage-window-wake"))
+    IO.pure(Unit,Unit{})
+
+def schedule_wake(+db: String, +message: String, +resets_at: String, +self: String) -> IO(Unit):
+  do IO<Unit>:
+    delay : String <- IO.try(String,DB.Sql.read(db,schedule_delay_sql(resets_at)))
+    launch : Unit <- schedule_launch(db,message,Tx.trim_nl(delay),self)
+    IO.pure(Unit,Unit{})
+
+def schedule_held(+db: String, +message: String, +resets_at: String) -> IO(Unit):
+  do IO<Unit>:
+    +self : String <- IO.try(String,Lock.SessionLock.executable())
+    +canonical : String <- IO.try(String,Lock.SessionLock.canonical(db))
+    scheduled : Unit <- schedule_wake(canonical,message,resets_at,self)
+    IO.pure(Unit,Unit{})
 
 # --- held and restored reports ------------------------------------------------
 #
