@@ -11,6 +11,12 @@ Baton follow-up work for contributors. Every open issue has a link on this page.
   `read_image`, `working_directory`) and `reasoningEffort: max` in independent
   patch overlays. The adapter, its tests and the open limitations are in
   `bend2/src/harness/dsh-player.bend` and `docs/bend2/dsh-adapter.md`.
+- [#848: Repair NUL refusal during retained account conductor resume](https://github.com/Flip-Engineering/baton/issues/848).
+  Identify the SQL or database-path producer, preserve the original conversation
+  and queued inputs, and verify native continuation after deployment. Related:
+  [#834](https://github.com/Flip-Engineering/baton/issues/834),
+  [#825](https://github.com/Flip-Engineering/baton/issues/825), and
+  [#835](https://github.com/Flip-Engineering/baton/pull/835).
 
 - [#761: Move Codex inbox coordination decisions into Bend](https://github.com/Flip-Engineering/baton/issues/761).
   Move database claims, native and stop checks, input selection, failure

@@ -167,7 +167,7 @@ def fixture(kind, config_path, arguments):
 def extract(archive, manifest_path, destination):
     manifest_bytes = manifest_path.read_bytes()
     manifest = json.loads(manifest_bytes)
-    require(manifest.get('schema') == 'baton2-native-artifact-v1', 'Unsupported artifact manifest schema')
+    require(manifest.get('schema') == 'baton2-native-artifact-v2', 'Unsupported artifact manifest schema')
     name = manifest['archive_root']
     require(PurePosixPath(name).parts == (name,) and name not in ('', '.', '..') and '\\' not in name,
             'Archive root must be one directory name')
@@ -195,15 +195,41 @@ def extract(archive, manifest_path, destination):
     prefix = destination / name
     require((prefix / 'manifest.json').read_bytes() == manifest_bytes,
             'Archive manifest differs from supplied manifest')
+    binaries = manifest.get('binaries')
+    require(isinstance(binaries, list) and len(binaries) == 3,
+            'The receiver archive must declare the focused receiver, full router and recovery helper')
+    expected = {'focused-facade': ('bin/baton', None),
+                'full-cli': ('bin/baton2', 'bin/baton-full'),
+                'recovery-helper': ('bin/baton-recovery', None)}
+    seen = set()
+    focused = None
+    for record in binaries:
+        role = record.get('role')
+        require(role in expected and role not in seen, 'Archive binary role is unknown or repeated')
+        seen.add(role)
+        path, alias_name = expected[role]
+        require(record.get('path') == path, 'Archive binary is installed at an unexpected path')
+        installed = prefix / path
+        require(installed.is_file() and not installed.is_symlink() and os.access(installed, os.X_OK),
+                'Archive ' + role + ' binary is missing or not executable')
+        require(archive_digest(installed) == record.get('sha256'),
+                'Archive ' + role + ' binary differs from its manifest hash')
+        if alias_name:
+            require(record.get('alias') == alias_name, record['role'] + ' must declare its ' + alias_name + ' alias')
+            alias = prefix / alias_name
+            require(alias.is_file() and not alias.is_symlink() and os.access(alias, os.X_OK),
+                    'Staged ' + alias_name + ' alias is not an executable regular file')
+            require(archive_digest(alias) == archive_digest(installed),
+                    'Staged ' + alias_name + ' alias differs from its binary')
+        else:
+            require(record.get('alias') is None, 'Unexpected binary alias in the archive')
+        if role == 'focused-facade':
+            focused = record
+    require(seen == set(expected), 'Archive is missing a required package role')
     binary = manifest['binary']
-    require(binary['path'] == 'bin/baton2', 'Manifest must name the installed bin/baton2 entry')
-    require(os.access(prefix / binary['path'], os.X_OK), 'Staged coordinator is not executable')
-    require(binary.get('alias') == 'bin/baton', 'Manifest must name the installed bin/baton alias')
-    alias = prefix / binary['alias']
-    require(alias.is_file() and not alias.is_symlink() and os.access(alias, os.X_OK),
-            'Staged baton alias is not an executable regular file')
-    require(archive_digest(alias) == archive_digest(prefix / binary['path']),
-            'Staged baton alias differs from the coordinator binary')
+    require(binary.get('path') == focused['path'] and binary.get('alias') == focused['alias']
+            and binary.get('sha256') == focused['sha256'],
+            'Compatibility binary record does not match the focused receiver')
     return prefix, manifest
 
 
@@ -257,7 +283,7 @@ def main():
         prefix, manifest = extract(args.archive, args.manifest, output / 'extracted')
         require(Path(manifest['source']['directory']).resolve() == unavailable,
                 'Unavailable source path differs from recorded build source')
-        binary = prefix / 'bin/baton2'
+        binary = prefix / 'bin/baton'
         working = output / 'separate working directory λ'
         working.mkdir()
         repo, db = working / 'repository', working / 'state.db'

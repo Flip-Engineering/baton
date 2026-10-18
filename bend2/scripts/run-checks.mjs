@@ -3,6 +3,9 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { basename, join, relative, resolve } from 'node:path';
 
+// Issue #677 exemption: this legacy module-fixture runner uses the
+// preinstalled Bend toolchain for source fixtures. It is not part of the
+// package build or deploy and does not produce coordinator artifacts.
 const ROOT = resolve(import.meta.dirname, '..', '..');
 const BEND_INSTALLED = join(ROOT, 'node_modules', '.bend', 'bin', 'bend');
 const BEND_FALLBACK = join(ROOT, '.bend', 'bin', 'bend');
