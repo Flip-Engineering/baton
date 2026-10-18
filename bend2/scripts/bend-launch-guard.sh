@@ -2,9 +2,9 @@
 # Narrow bootstrap launch guard for the packaged Bend compiler.
 #
 # The product admission policy remains the native Bend2 design in
-# docs/bend2/build-admission.md. This wrapper refuses a coordinator Main C
-# generation unless the invoking process carries an admitted bounded cgroup and
-# a matching decision receipt. Focused entries, version queries and
+# docs/bend2/build-admission.md. This wrapper requires an admitted bounded cgroup
+# for focused and coordinator Main C generation. A coordinator Main also
+# requires a matching decision receipt. Version queries and
 # --check-only calls pass through unchanged.
 #
 # The canonical path is a delegated cgroup under /sys/fs/cgroup with a finite
@@ -56,13 +56,20 @@ case "$entry_path" in
     ;;
 esac
 
+# C generation requires the resource check. Version queries and --check-only
+# pass through to the compiler.
+build=0
+if [ "$check_only" = 0 ] && [ "$query" = 0 ]; then
+  build=1
+fi
+
 refuse() {
-  printf '{"error":"build-admission-required","condition":"%s","entry":"%s","output":"%s","cgroup":"%s","receipt":"%s","next":"Run the build through the admitted cgroup and receipt, or use a focused entry."}\n' \
+  printf '{"error":"build-admission-required","condition":"%s","entry":"%s","output":"%s","cgroup":"%s","receipt":"%s","next":"Run the build through an admitted bounded cgroup; a coordinator Main also needs its decision receipt."}\n' \
     "$1" "$entry" "$output" "${BATON2_ADMISSION_CGROUP:-}" "${BATON2_ADMISSION_RECEIPT:-}" >&2
   exit 78
 }
 
-if [ "$full" = 1 ] && [ "$check_only" = 0 ]; then
+if [ "$build" = 1 ]; then
   cgroup=${BATON2_ADMISSION_CGROUP:-}
   receipt=${BATON2_ADMISSION_RECEIPT:-}
   [ -n "$cgroup" ] || refuse "missing-cgroup"
@@ -91,18 +98,20 @@ if [ "$full" = 1 ] && [ "$check_only" = 0 ]; then
   [ "$(ulimit -v)" = unlimited ] || refuse "rlimit-as-capped"
   relative_cgroup=${cgroup_path#/sys/fs/cgroup}
   grep -Fxq "0::$relative_cgroup" /proc/self/cgroup || refuse "cgroup-membership-mismatch"
-  [ -f "$receipt" ] || refuse "missing-receipt"
-  command -v jq >/dev/null 2>&1 || refuse "receipt-parser-unavailable"
-  if [ -n "$output" ]; then
-    jq -e --arg entry "$entry" --arg output "$output" --arg cgroup "$cgroup_path" \
-      'type=="object" and .decision=="admitted" and .class=="full" and
-       .entry==$entry and .output==$output and .cgroup==$cgroup' \
-      "$receipt" >/dev/null 2>&1 || refuse "receipt-mismatch"
-  else
-    jq -e --arg entry "$entry" --arg cgroup "$cgroup_path" \
-      'type=="object" and .decision=="admitted" and .class=="full" and
-       .entry==$entry and .cgroup==$cgroup' \
-      "$receipt" >/dev/null 2>&1 || refuse "receipt-mismatch"
+  if [ "$full" = 1 ]; then
+    [ -f "$receipt" ] || refuse "missing-receipt"
+    command -v jq >/dev/null 2>&1 || refuse "receipt-parser-unavailable"
+    if [ -n "$output" ]; then
+      jq -e --arg entry "$entry" --arg output "$output" --arg cgroup "$cgroup_path" \
+        'type=="object" and .decision=="admitted" and .class=="full" and
+         .entry==$entry and .output==$output and .cgroup==$cgroup' \
+        "$receipt" >/dev/null 2>&1 || refuse "receipt-mismatch"
+    else
+      jq -e --arg entry "$entry" --arg cgroup "$cgroup_path" \
+        'type=="object" and .decision=="admitted" and .class=="full" and
+         .entry==$entry and .cgroup==$cgroup' \
+        "$receipt" >/dev/null 2>&1 || refuse "receipt-mismatch"
+    fi
   fi
 fi
 
