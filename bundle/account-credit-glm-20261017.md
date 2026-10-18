@@ -69,3 +69,36 @@ toolchain is installed on this host, so the exact command is prepared for root:
 Constraints honored: 16 GiB real memory, zero swap, unlimited virtual address space (no
 RLIMIT_AS is set), no full Main build. The native boundary specification for the runtime seat
 is `docs/bend2/api-key-exec-native-boundary.md`.
+
+## Native module status (2026-10-18)
+
+`bend2/harness/api-key-exec.bend` is source-ready: the full product policy
+(reference parsing for `file:` and `keychain:` with typed
+`unsupportedSecretReference` refusals carrying the scheme only, the
+credential variable constant, and the env-spec assembly) in proven Bend2
+constructs, outside every check gate until the boundary lands. The boundary
+integration facts for the runtime seat are recorded in
+`docs/bend2/api-key-exec-native-boundary.md`: the host C layer registers
+effects with `BP_EFFECT(name, CID, kind)` where CIDs arrive as `-D` compile
+definitions and kinds dispatch through `baton_process_begin_mode` - the new
+env-spec spawn effect is one kind there plus one `ProcessChild` wrapper, and
+the Bend compiler side of the marshalling is the compiler seat's part.
+Source-ready is not runtime-qualified: the module has no compiler check and
+no execution until the effect lands and a build runs.
+
+## Coordinated completion hook (for the runtime seat)
+
+The one-line integration the attempt facts need, to land inside the
+receive/turn completion paths the runtime seat owns:
+
+- receive path, in `completed_observation` after the outcome is known:
+  `Accounts.attempt_completed(db,attempt,outcome_text,error_text)` where
+  `outcome_text` is the terminal classification and `error_text` the
+  provider's original error text (empty when none).
+- direct-turn path, at the same point in `direct_handoff_checked` /
+  `direct_second_started` completion: the same call with the direct attempt
+  identity.
+
+`attempt_completed` is `INSERT`-free (an UPDATE by attempt directory): a
+completion call for an attempt that never recorded still updates nothing and
+reports through the ordinary result.
