@@ -211,8 +211,8 @@ def credit_api_key_refusal(account: AccountRecord) -> String:
   match account:
     case Ac{id,provider,harness,funding,secret_ref,organization,verified_at}:
       match funding:
-        case "api_key": Bool.pick(String,Bool.and(String.eq(provider,"anthropic"),String.eq(harness,"claude-code")),"The account " ++ id ++ " funds Anthropic API calls through an API key, but request-level promotional-credit admission is unavailable; the attempt was not started and its input stays owed.","The account " ++ id ++ " funds its work through an API key and this deployment installs no api-key resolver beside the resolved identity helper; the attempt was not started and its input stays owed.")
-        case other: "The account " ++ id ++ " has no available launch binding; the attempt was not started and its input stays owed."
+        case "api_key": Bool.pick(String,Bool.and(String.eq(provider,"anthropic"),String.eq(harness,"claude-code")),"Anthropic API-key launches are held because request-level promotional-credit admission is unavailable; the attempt was not started and its input stays owed.","This API-key launch has no installed resolver beside the resolved identity helper; the attempt was not started and its input stays owed.")
+        case other: "The selected account has no available launch binding; the attempt was not started and its input stays owed."
 
 def launch_binding(+harness: String, +funding: String, +secret_ref: String, helper: Maybe<String>) -> Maybe<List<String>>:
   Bool.pick(Maybe<List<String>>,Bool.and(String.eq(funding,"api_key"),Bool.not(String.eq(harness,"claude-code"))),None{},Bool.pick(Maybe<List<String>>,String.eq(funding,"api_key"),api_key_binding(secret_ref,helper),Some{Subs.store_binding(harness,secret_ref)}))
