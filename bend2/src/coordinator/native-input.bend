@@ -48,4 +48,3 @@ def input(+db: String) -> IO(List<String>):
         rows : String <- IO.try(String,DB.Sql.read(db,"SELECT hex(value)||char(9)||'end' FROM json_each(" ++ C.q(body) ++ ") ORDER BY CAST(key AS INTEGER);"))
         input_fields(Tx.split_lines(rows))),
       IO.die(List<String>,2,"agent-native-input requires a complete JSON array of UTF-8 strings without NUL."))
-
