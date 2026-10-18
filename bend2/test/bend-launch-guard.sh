@@ -250,7 +250,7 @@ RECEIPT
     [ "$status" = 78 ] || { echo "FAIL $decision_case receipt status=$status"; cat "$temp/$decision_case.err"; exit 1; }
     grep -q 'receipt-mismatch' "$temp/$decision_case.err" || { echo "FAIL $decision_case receipt cause"; exit 1; }
     [ "$(calls)" = "$before_receipt" ] || { echo "FAIL $decision_case receipt reached compiler"; exit 1; }
-    echo "PASS $decision_case_receipt_refused"
+    echo "PASS ${decision_case}_receipt_refused"
   done
   before_preflight=$(calls)
   before_preflight_cgen=$(wc -l < "$CGEN_STUB_LOG")
