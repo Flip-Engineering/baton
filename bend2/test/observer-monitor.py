@@ -20,7 +20,7 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 FIXTURE = ROOT / '.scratch/bend2/monitor-fixture'
-COORDINATOR = ROOT / '.scratch/bend2/observer-recovery'
+COORDINATOR = pathlib.Path(os.getenv('OBSERVER_RECOVERY_BIN', ROOT / '.scratch/bend2/observer-recovery'))
 OBSERVER_ENTRY = ROOT / 'bend2/test/observer-recovery-entry.bend'
 NATIVE_UUID = '01a14948-63f9-7000-abc2-89573aa39352'
 
@@ -43,6 +43,16 @@ def checkpoint_offset(directory):
     return struct.unpack_from('=Q', data, 56)[0]
 
 
+def custody_flags(directory):
+    path = pathlib.Path(directory) / 'custody'
+    if not path.exists():
+        return None
+    data = path.read_bytes()
+    if data[:8] != b'BATONCUS':
+        return None
+    return struct.unpack_from('=I', data, 12)[0]
+
+
 def custody_offset(directory):
     path = pathlib.Path(directory) / 'custody'
     if not path.exists():
@@ -51,6 +61,20 @@ def custody_offset(directory):
     if data[:8] != b'BATONCUS':
         return None
     return struct.unpack_from('=Q', data, 40)[0]
+
+
+def receive_pid(database, session, attempt):
+    for entry in pathlib.Path('/proc').iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            argv = [part.decode(errors='replace') for part in (entry / 'cmdline').read_bytes().split(bytes([0])) if part]
+        except OSError:
+            continue
+        if (len(argv) >= 5 and argv[1] == '--recover-receive' and
+                argv[2] == str(database) and argv[3] == session and argv[4] == attempt):
+            return int(entry.name), argv
+    return None, None
 
 
 def owner_pid(database):
@@ -77,7 +101,11 @@ class ObserverMonitor(unittest.TestCase):
 
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='observer-monitor-', dir=ROOT / '.scratch/bend2')
-        self.addCleanup(self.temp.cleanup)
+        if os.environ.get('KEEP_OBSERVER_FIXTURE'):
+            print('fixture_directory=' + self.temp.name, flush=True)
+            self.temp._finalizer.detach()
+        else:
+            self.addCleanup(self.temp.cleanup)
         self.directory = pathlib.Path(self.temp.name)
         self.runtime = pathlib.Path(tempfile.mkdtemp(prefix='br-'))
         self.addCleanup(shutil.rmtree, str(self.runtime), True)
@@ -141,7 +169,7 @@ class ObserverMonitor(unittest.TestCase):
             database.execute("UPDATE sessions SET native=? WHERE id='parent'", (native_uuid,))
         start = subprocess.Popen(
             [str(FIXTURE), 'start', str(self.db), attempt_id, str(self.attempt),
-             str(self.workspace), str(self.log), native_uuid, 'codex',
+             str(self.workspace), str(self.log), native_uuid, str(COORDINATOR), 'codex',
              'controlled-model', 'low', sys.executable, str(self.native),
              native_uuid, str(self.uuid_marker),
              *([str(self.release_marker)] if later_stdout_text else [])],
@@ -150,7 +178,6 @@ class ObserverMonitor(unittest.TestCase):
         stdout, stderr = start.communicate(timeout=30)
         self.assertEqual(start.returncode, 0, stdout + stderr)
         self.assertIn('started', stdout)
-        observer = start.pid
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
             if (self.attempt / 'native.pid').exists() and (self.attempt / 'stdout').exists():
@@ -166,10 +193,25 @@ class ObserverMonitor(unittest.TestCase):
                         'the owner keeper did not advertise reconcile')
         owner = owner_pid(self.db)
         self.assertIsNotNone(owner, 'database owner was not found')
+        observer, observer_argv = receive_pid(self.db, 'parent', self.attempt_id)
+        self.assertIsNotNone(observer, 'fixture receive child was not found by exact DB/session/attempt argv')
         os.kill(owner, signal.SIGKILL)
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline and owner_pid(self.db) is not None:
             time.sleep(0.02)
+        os.kill(observer, signal.SIGKILL)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            try:
+                stat = (pathlib.Path('/proc') / str(observer) / 'stat').read_text()
+                state = stat.rsplit(')', 1)[1].strip().split()[0]
+            except (OSError, IndexError):
+                break
+            if state == 'Z':
+                break
+            time.sleep(0.02)
+        else:
+            self.fail('fixture receiver did not exit after owned SIGKILL')
         os.kill(self.native_process, 0)
         return observer, birth, manifest
 
@@ -188,6 +230,32 @@ class ObserverMonitor(unittest.TestCase):
     def row(self, sql, *args):
         with sqlite3.connect(self.db) as database:
             return database.execute(sql, args).fetchone()
+
+    def wait_native_exit(self, timeout=10):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                stat = (pathlib.Path('/proc') / str(self.native_process) / 'stat').read_text()
+                state = stat.rsplit(')', 1)[1].strip().split()[0]
+            except (OSError, IndexError):
+                return
+            if state == 'Z':
+                return
+            time.sleep(0.02)
+        self.fail('fixture native child did not exit before terminal-status assertion')
+
+    def assert_unknown_pending(self, native_exited=False):
+        flags = custody_flags(self.attempt)
+        self.assertIsNotNone(flags)
+        self.assertEqual(flags & 3, 3, 'monitor custody must retain unknown status and unfinished input')
+        execution = self.row("SELECT phase,status FROM executions WHERE session='parent' AND id=?", self.attempt_id)
+        if native_exited:
+            self.assertEqual(execution, ('exited', 'unavailable: native exit status was not retained'),
+                             'terminal observer must preserve unknown native status')
+            self.assertFalse((self.attempt / 'status').exists(),
+                             'unknown native status must not be synthesized')
+        else:
+            self.assertEqual(execution, ('running', ''), 'live native status must remain pending')
 
     def test_unknown_status_monitor_advances_once_and_keeps_owed_input(self):
         first_line = 'monitor-line\n'
@@ -229,10 +297,7 @@ class ObserverMonitor(unittest.TestCase):
         self.assertEqual(checkpoint_offset(self.attempt), len('monitor-line\n'))
         self.assertEqual(custody_offset(self.attempt), len('monitor-line\n'))
         self.assertEqual(self.row('SELECT receipt FROM messages WHERE id=?', 'task'), (None,))
-        status = self.row("SELECT status FROM executions WHERE session='parent' AND id=?", self.attempt_id)
-        self.assertIsNotNone(status)
-        self.assertTrue(status[0].startswith('unavailable'), status)
-        self.assertNotIn('exit 0', status[0])
+        self.assert_unknown_pending()
         offset = checkpoint_offset(self.attempt)
         # Reopen the same durable monitor checkpoint with its public output log
         # absent. Recovery must keep the retained cursor and the original task
@@ -255,8 +320,7 @@ class ObserverMonitor(unittest.TestCase):
         self.assertEqual(custody_offset(self.attempt), len(expected_output))
         self.assertNotEqual((self.attempt / 'custody').read_bytes(), first_custody)
         self.assertEqual(self.row('SELECT receipt FROM messages WHERE id=?', 'task'), (None,))
-        status = self.row("SELECT status FROM executions WHERE session='parent' AND id=?", self.attempt_id)
-        self.assertTrue(status[0].startswith('unavailable'), status)
+        self.assert_unknown_pending(native_exited=True)
         self.assertFalse((self.attempt / 'acknowledged').exists())
         self.assertFalse((self.attempt / 'released').exists())
 
@@ -278,8 +342,8 @@ class ObserverMonitor(unittest.TestCase):
         self.assertEqual(checkpoint_offset(self.attempt), len('monitor-line\n'))
         self.assertEqual(custody_offset(self.attempt), len('monitor-line\n'))
         self.assertEqual(self.row('SELECT receipt FROM messages WHERE id=?', 'task'), (None,))
-        status = self.row("SELECT status FROM executions WHERE session='parent' AND id=?", self.attempt_id)
-        self.assertTrue(status[0].startswith('unavailable'), status)
+        self.wait_native_exit()
+        self.assert_unknown_pending(native_exited=True)
         self.assertFalse((self.attempt / 'acknowledged').exists())
         self.assertFalse((self.attempt / 'released').exists())
 
@@ -292,8 +356,8 @@ class ObserverMonitor(unittest.TestCase):
         self.assertEqual(self.row('SELECT receipt FROM messages WHERE id=?', 'task'), (None,))
         self.assertEqual(self.row('SELECT native FROM sessions WHERE id=?', 'parent'), (NATIVE_UUID,))
         self.assertEqual(self.row("SELECT count(*) FROM messages WHERE id LIKE 'attempt1:recovery%'"), (0,))
-        status = self.row("SELECT status FROM executions WHERE session='parent' AND id=?", self.attempt_id)
-        self.assertTrue(status[0].startswith('unavailable'), status)
+        self.wait_native_exit()
+        self.assert_unknown_pending(native_exited=True)
         self.assertFalse((self.attempt / 'acknowledged').exists())
         self.assertFalse((self.attempt / 'released').exists())
 
@@ -321,9 +385,7 @@ class ObserverMonitor(unittest.TestCase):
         self.assertEqual(custody_offset(self.attempt), len(partial.encode()))
         self.assertEqual(self.row('SELECT native FROM sessions WHERE id=?', 'parent'), (uuid,))
         self.assertEqual(self.row('SELECT receipt FROM messages WHERE id=?', 'task'), (None,))
-        status = self.row("SELECT status FROM executions WHERE session='parent' AND id=?", self.attempt_id)
-        self.assertTrue(status[0].startswith('unavailable'), status)
-        self.assertNotIn('exit 0', status[0])
+        self.assert_unknown_pending(native_exited=True)
         self.assertFalse((self.attempt / 'acknowledged').exists())
         self.assertFalse((self.attempt / 'released').exists())
         duplicate = self.fixture(

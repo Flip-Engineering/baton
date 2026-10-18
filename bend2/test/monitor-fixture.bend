@@ -35,7 +35,7 @@ def start_locked(lock: Maybe<U32>, +db: String, +directory: String, +cwd: String
       started(start)
 
 def start_cli(+db: String, +attempt: String, +directory: String, +cwd: String, +log: String,
-              +native: String, +harness: String, +model: String, +effort: String,
+              +native: String, +recovery_executable: String, +harness: String, +model: String, +effort: String,
               program: List<String>) -> IO(Unit):
   do IO<Unit>:
     ensured : Unit <- Store.ensure_before_begin(db)
@@ -43,8 +43,8 @@ def start_cli(+db: String, +attempt: String, +directory: String, +cwd: String, +
       "INSERT OR REPLACE INTO executions(session,id,mode,directory,phase) VALUES('parent',"
       ++ C.q(attempt) ++ ",'retained'," ++ C.q(directory) ++ ",'running');"))
     executable : String <- IO.try(String,Lock.SessionLock.executable())
-    recovery : String <- IO.pure(String,P.argv([executable,"--recover-receive",db,"parent",attempt,"1",
-      "controlled","controlled-model","low",cwd,log,harness,directory,native,"[]"]))
+    recovery : String <- IO.pure(String,P.argv([recovery_executable,"--recover-receive",db,"parent",attempt,"1",
+      "controlled","controlled-model","low",cwd,log,harness,directory,native]))
     Lock.SessionLock.acquire_session(Unit,db,"parent",
       canonical => lock => start_locked(lock,db,directory,cwd,recovery,program))
 
@@ -79,9 +79,9 @@ def dispatch_number(number: U32, rest: List<String>) -> IO(Unit):
       case db <> Nil{}: init_cli(db)
       case other: IO.die(Unit,2,"monitor-fixture init DB")
     case 2: match rest:
-      case db <> attempt <> directory <> cwd <> log <> native <> harness <> model <> effort <> program:
-        start_cli(db,attempt,directory,cwd,log,native,harness,model,effort,program)
-      case other: IO.die(Unit,2,"monitor-fixture start DB ATTEMPT DIR CWD LOG NATIVE HARNESS MODEL EFFORT PROGRAM...")
+      case db <> attempt <> directory <> cwd <> log <> native <> recovery_executable <> harness <> model <> effort <> program:
+        start_cli(db,attempt,directory,cwd,log,native,recovery_executable,harness,model,effort,program)
+      case other: IO.die(Unit,2,"monitor-fixture start DB ATTEMPT DIR CWD LOG NATIVE RECOVERY HARNESS MODEL EFFORT PROGRAM...")
     case 3: match rest:
       case db <> Nil{}: shutdown_cli(db)
       case other: IO.die(Unit,2,"monitor-fixture shutdown DB")
