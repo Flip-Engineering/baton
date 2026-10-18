@@ -275,14 +275,14 @@ def m17_the_observed_dispatch_is_the_refusal_it_read(db,session,id,log,cursor,na
 # and settles question deliveries before acknowledging and retiring it. The
 # written-out order is the whole obligation: a reordering of any two steps
 # breaks this proof.
-def restart_records_before_releasing_and_waking(+db: String, +session: String, +id: String, +cursor: String, native: String, cwd: String, +handle: U32, lock: Maybe<U32>, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+def restart_records_before_releasing_and_waking(+db: String, +session: String, +id: String, attempt: String, +cursor: String, native: String, cwd: String, +handle: U32, lock: Maybe<U32>, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: String -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     recorded : String <- IO.try(String,DB.Sql.query(db,"SELECT EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(id ++ ":recovery-input") ++ ");"))
     saved : Unit <- Receive.record_recovery(db,session,id,native,cwd,String.eq(recorded,"1\n"))
     observer_released : Unit <- Receive.release_observer(lock)
-    native_released : Unit <- IO.try(Unit,P.ProcessChild.release(handle))
+    native_released : Unit <- Receive.release_native(db,handle)
     delivery_task : Chan(Result<&1,&1,U32 & String,String>) <- IO.fork(Result<&1,&1,U32 & String,String>,Delivery.deliver(db,id ++ ":recovery","1",""))
-    next : Result<&1,&1,U32 & String,Unit> <- again(Unit{})
+    next : Result<&1,&1,U32 & String,Unit> <- again(attempt)
     woken : Result<&1,&1,U32 & String,Unit> <- Receive.wake_due(db,session,cursor,launch => Receive.wake_launch(db,launch))
     delivered : Result<&1,&1,U32 & String,String> <- IO.join(Result<&1,&1,U32 & String,String>,delivery_task)
     questions : Result<&1,&1,U32 & String,Unit> <- NativeRequests.settle(deliveries)
@@ -294,16 +294,17 @@ law m17_restart_records_before_releasing_and_waking:
   for +db: String
   for +session: String
   for +id: String
+  for attempt: String
   for +cursor: String
   for +native: String
   for +cwd: String
   for +handle: U32
   for -lock: Maybe<U32>
   for -deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>
-  for -again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
-  {Receive.restart_pending(db,session,id,cursor,native,cwd,handle,lock,deliveries,again) == restart_records_before_releasing_and_waking(db,session,id,cursor,native,cwd,handle,lock,deliveries,again) : IO(Result<&1,&1,U32 & String,Unit>)}
+  for -again: String -> IO(Result<&1,&1,U32 & String,Unit>)
+  {Receive.restart_pending(db,session,id,attempt,cursor,native,cwd,handle,lock,deliveries,again) == restart_records_before_releasing_and_waking(db,session,id,attempt,cursor,native,cwd,handle,lock,deliveries,again) : IO(Result<&1,&1,U32 & String,Unit>)}
 
-def m17_restart_records_before_releasing_and_waking(db,session,id,cursor,native,cwd,handle,lock,deliveries,again):
+def m17_restart_records_before_releasing_and_waking(db,session,id,attempt,cursor,native,cwd,handle,lock,deliveries,again):
   {==}
 
 
@@ -423,7 +424,7 @@ def completion_prepares_before_owner_release(+db: String, +session: String, +id:
   do IO<Result<&1,&1,U32 & String,Unit>>:
     prepared : Unit <- Turn.prepare(db,session,id,log,stderr,outcome)
     observer_released : Unit <- Receive.release_observer(lock)
-    native_released : Unit <- IO.try(Unit,P.ProcessChild.release(handle))
+    native_released : Unit <- Receive.release_native(db,handle)
     finished : Result<&1,&1,U32 & String,Unit> <- Receive.finish_pending(db,session,id,log,cursor,outcome,deliveries,again,u => Receive.ack_then_retire(handle))
     woken : Result<&1,&1,U32 & String,Unit> <- Receive.wake_due(db,session,cursor,target => Receive.wake_launch(db,target))
     IO.pure(Result<&1,&1,U32 & String,Unit>,Turn.combine(finished,woken))

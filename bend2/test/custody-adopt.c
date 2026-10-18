@@ -170,19 +170,41 @@ int main(int argc,char **argv) {
      monitor-lock descriptor. Its monitor checkpoint uses the normal
      attempt-bound checkpoint record and leaves native-control operations
      denied. */
-  int owner_socket=open("/dev/null",O_RDWR|O_CLOEXEC);
-  REQUIRE(owner_socket>=0);
+  int owner_pair[2];
+  REQUIRE(socketpair(AF_UNIX,SOCK_SEQPACKET|SOCK_CLOEXEC,0,owner_pair)==0);
   int adopted_lock=retained->custody_lock;
+  int adopted_orphan=retained->orphan;
   retained->custody_lock=-1;
-  retained->socket=owner_socket;
+  retained->orphan=0;
+  retained->error=0;
+  retained->socket=owner_pair[0];
   BatonProcessCall owner_monitor={.kind=BP_INSTANCE_MONITOR_COMMIT,.child=&child,
     .signal=1,.text=state_text,.length=(u32)strlen(state_text)};
   baton_retained_call(&owner_monitor);
   REQUIRE(owner_monitor.error==0);
   REQUIRE(checkpoint_offset(directory)==13);
+  BatonProcessCall owner_ack={.kind=BP_ACK,.child=&child};
+  baton_retained_call(&owner_ack);
+  REQUIRE(owner_ack.error==EPERM);
+  BatonProcessCall owner_signal={.kind=BP_SIGNAL,.child=&child,.signal=9};
+  baton_retained_call(&owner_signal);
+  REQUIRE(owner_signal.error==EPERM);
+  retained->offset=0;
+  BatonProcessCall restore={.kind=BP_INSTANCE_RESTORE,.child=&child,.signal=1};
+  baton_retained_call(&restore);
+  REQUIRE(restore.error==0 && retained->offset==13);
+  /* A disconnected/orphaned keeper can retain the socket descriptor. It must
+     not use the owner-managed checkpoint path based on socket presence alone. */
+  retained->orphan=1;
+  BatonProcessCall orphan_monitor={.kind=BP_INSTANCE_MONITOR_COMMIT,.child=&child,
+    .signal=1,.text=state_text,.length=(u32)strlen(state_text)};
+  baton_retained_call(&orphan_monitor);
+  REQUIRE(orphan_monitor.error==EBUSY);
+  REQUIRE(checkpoint_offset(directory)==13);
+  retained->orphan=adopted_orphan;
   retained->socket=-1;
   retained->custody_lock=adopted_lock;
-  close(owner_socket);
+  close(owner_pair[0]);close(owner_pair[1]);
   retained->offset=0;
   BatonProcessCall backward={.kind=BP_INSTANCE_MONITOR_COMMIT,.child=&child,
     .signal=1,.text=state_text,.length=(u32)strlen(state_text)};

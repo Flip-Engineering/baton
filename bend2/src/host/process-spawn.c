@@ -5461,12 +5461,18 @@ static int br_monitor_checkpoint(BatonProcessCall *call,BatonRetained *retained)
      Orphan-adopted monitors use the custody lock and stronger custody record
      validation below. */
   if(retained->custody_lock<0) {
-    if(retained->socket<0)return EBUSY;
     pthread_mutex_lock(&retained->reader);
+    pthread_mutex_lock(&retained->state);
+    if(retained->socket<0 || retained->orphan || retained->error) {
+      pthread_mutex_unlock(&retained->state);
+      pthread_mutex_unlock(&retained->reader);
+      return EBUSY;
+    }
     int error=br_checkpoint_store(retained->directory,retained->spool,
       (uint32_t)call->signal,retained->incarnation,(uint64_t)retained->offset,
       call->text,call->length);
     if(!error)retained->offset_stored=(uint64_t)retained->offset;
+    pthread_mutex_unlock(&retained->state);
     pthread_mutex_unlock(&retained->reader);
     return error;
   }
