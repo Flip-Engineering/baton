@@ -166,16 +166,16 @@ def explicit_zone(rest: String) -> Bool:
       Bool.and(digit(h1),Bool.and(digit(h2),Bool.and(digit(m1),digit(m2))))
     case other: False{}
 
+def fractional_digits_zone(rest: String) -> Bool:
+  match rest:
+    case SCon{+head,+tail}:
+      Bool.pick(Bool,digit(head),Bool.pick(Bool,String.is_empty(tail),False{},fractional_digits_zone(tail)),explicit_zone(rest))
+    case other: False{}
+
 def fractional_zone(rest: String) -> Bool:
   match rest:
     case SCon{'.',SCon{+head,tail}}: Bool.and(digit(head),fractional_digits_zone(tail))
     case other: explicit_zone(rest)
-
-def fractional_digits_zone(rest: String) -> Bool:
-  match rest:
-    case SCon{+head,tail}:
-      Bool.pick(Bool,digit(head),Bool.pick(Bool,String.is_empty(tail),False{},fractional_digits_zone(tail)),explicit_zone(rest))
-    case other: False{}
 
 def seconds_zone(rest: String) -> Bool:
   match rest:
