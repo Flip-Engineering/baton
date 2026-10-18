@@ -1,4 +1,4 @@
-"""The source installation carries the focused facade and full receiver router with exact pins."""
+"""The source installation carries the focused facade, full router, and recovery helper."""
 import argparse
 import importlib.util
 import json
@@ -31,7 +31,7 @@ class ReceiverLayout(unittest.TestCase):
         self.home = Path(tempfile.mkdtemp(prefix='baton2-receiver-layout-'))
         self.addCleanup(shutil.rmtree, self.home)
         self.binaries = {}
-        for role, name in (('focused', 'focused'), ('full', 'full'), ('register', 'register')):
+        for role, name in (('focused', 'focused'), ('full', 'full'), ('recovery', 'recovery')):
             path = self.home / name
             path.write_bytes(role.encode() + b'\n')
             path.chmod(0o755)
@@ -40,10 +40,13 @@ class ReceiverLayout(unittest.TestCase):
     def args(self, **changes):
         value = argparse.Namespace(
             focused_binary=self.binaries['focused'], full_binary=self.binaries['full'],
+            recovery_binary=self.binaries['recovery'],
             focused_source_commit=COMMIT, focused_source_status='',
             focused_source_tree='c' * 40, focused_source_manifest_sha256=None,
             full_source_commit=COMMIT, full_source_status='',
             full_source_tree='c' * 40, full_source_manifest_sha256=None,
+            recovery_source_commit=COMMIT, recovery_source_status='',
+            recovery_source_tree='d' * 40, recovery_source_manifest_sha256=None,
             full_wrapper_source_commit=COMMIT, full_wrapper_source_status='',
             full_wrapper_source_tree='e' * 40, full_wrapper_source_manifest_sha256=None)
         for name, item in changes.items():
@@ -54,12 +57,16 @@ class ReceiverLayout(unittest.TestCase):
     def source_manifest(self, records):
         focused = next(record for record in records if record['role'] == 'focused-facade')
         full = next(record for record in records if record['role'] == 'full-cli')
+        recovery = next(record for record in records if record['role'] == 'recovery-helper')
         value = {'schema': 'baton2-source-manifest-v1',
                  'focused': {'path': focused['path'], 'sha256': focused['sha256'],
                              'entry': focused['entry'], 'source': focused['source']},
                  'full': {'path': full['path'], 'sha256': full['sha256'],
                           'entry': full['entry'], 'source': full['source'],
                           'build_mode': full['build_mode']},
+                 'recovery': {'path': recovery['path'], 'sha256': recovery['sha256'],
+                              'entry': recovery['entry'], 'source': recovery['source'],
+                              'build_mode': recovery['build_mode']},
                  'repl': {'compiler_source': 'bend2/compiler/upstream',
                           'runtime': '/absolute/bun', 'runtime_sha256': 'a' * 64,
                           'notices': '/absolute/Bun-NOTICES'},
@@ -164,8 +171,11 @@ class ReceiverLayout(unittest.TestCase):
     def test_archive_staging_uses_the_same_three_binary_layout(self):
         namespace = argparse.Namespace(
             focused_binary=self.binaries['focused'], full_binary=self.binaries['full'],
+            recovery_binary=self.binaries['recovery'],
             focused_source_commit=COMMIT, focused_source_tree='c' * 40,
             focused_source_status='', focused_source_manifest_sha256=None,
+            recovery_source_commit=COMMIT, recovery_source_tree='d' * 40,
+            recovery_source_status='', recovery_source_manifest_sha256=None,
             full_source_commit=COMMIT, full_source_tree='c' * 40,
             full_source_status='', full_source_manifest_sha256=None,
             full_wrapper_source_commit=COMMIT, full_wrapper_source_tree='e' * 40,
@@ -175,11 +185,12 @@ class ReceiverLayout(unittest.TestCase):
         payload = self.home / 'archive-payload'
         records = PACKAGE.stage_receiver_binaries(payload, specs, built)
         self.assertEqual([record['role'] for record in records],
-                         ['focused-facade', 'full-cli'])
+                         ['focused-facade', 'full-cli', 'recovery-helper'])
         self.assertEqual((payload / 'bin/baton').read_bytes(),
                          (payload / 'bin/baton2').read_bytes())
         self.assertEqual([record['build_mode'] for record in records],
-                         ['focused-native-entry', 'full-native-receiver-router'])
+                         ['focused-native-entry', 'full-native-receiver-router',
+                          'recovery-native-entry'])
         self.assertEqual(records[1]['wrapper_source']['tree'], 'e' * 40)
         self.assertEqual(records[0]['source']['tree'], 'c' * 40)
 
@@ -208,6 +219,16 @@ class ReceiverLayout(unittest.TestCase):
             env=environment, capture_output=True, text=True)
         self.assertEqual(result.returncode, 78, result.stderr)
         self.assertIn('receiver-router-without-main', result.stderr)
+
+    def test_recovery_helper_build_mode_refuses_another_entry(self):
+        environment = dict(os.environ, BATON2_RECOVERY_HELPER='1')
+        result = subprocess.run(
+            ['sh', str(ROOT / 'bend2/scripts/build-native.sh'),
+             str(ROOT / 'bend2/src/coordinator/receive-focused.bend'),
+             str(self.home / 'recovery-output')],
+            env=environment, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 78, result.stderr)
+        self.assertIn('recovery-helper-without-recovery-entry', result.stderr)
     def test_source_pin_needs_a_tree_or_manifest_when_commit_is_absent(self):
         with self.assertRaisesRegex(RuntimeError, 'source tree .* is missing'):
             STAGE.binary_specs(self.args(focused_source_commit='b' * 40,
@@ -215,18 +236,21 @@ class ReceiverLayout(unittest.TestCase):
     def test_stages_three_executables_alias_and_exact_pins(self):
         prefix, manifest, records = self.staged()
         self.assertEqual([record['role'] for record in records],
-                         ['focused-facade', 'full-cli'])
-        for name in ('baton', 'baton2', 'baton-full'):
+                         ['focused-facade', 'full-cli', 'recovery-helper'])
+        for name in ('baton', 'baton2', 'baton-full', 'baton-recovery'):
             path = prefix / 'bin' / name
             self.assertTrue(path.is_file() and os.access(path, os.X_OK), name)
         self.assertEqual((prefix / 'bin/baton').read_bytes(),
                          (prefix / 'bin/baton2').read_bytes())
         self.assertEqual(manifest['binary']['path'], 'bin/baton')
         self.assertEqual(manifest['binary']['alias'], 'bin/baton2')
-        self.assertTrue(all(record['source']['commit'] == COMMIT
-                            and record['source']['tree'] == 'c' * 40 for record in records))
+        self.assertEqual([record['source']['commit'] for record in records],
+                         [COMMIT, COMMIT, COMMIT])
+        self.assertEqual([record['source']['tree'] for record in records],
+                         ['c' * 40, 'c' * 40, 'd' * 40])
         self.assertEqual([record['build_mode'] for record in records],
-                         ['focused-native-entry', 'full-native-receiver-router'])
+                         ['focused-native-entry', 'full-native-receiver-router',
+                          'recovery-native-entry'])
         self.assertEqual(records[1]['wrapper_source']['tree'], 'e' * 40)
         self.assertGreaterEqual(prefix.joinpath('SHA256SUMS').read_text().count('\n'), 6)
         checked = CHECK.verify_binaries(prefix, manifest, CHECK.verify_checksums(prefix))
@@ -244,7 +268,7 @@ class ReceiverLayout(unittest.TestCase):
         prefix = self.home / 'prefix-role'
         (prefix / 'bin').mkdir(parents=True)
         specs = STAGE.binary_specs(self.args(), PACKAGE)
-        with self.assertRaisesRegex(RuntimeError, 'requires exactly two binaries'):
+        with self.assertRaisesRegex(RuntimeError, 'requires exactly three binaries'):
             STAGE.stage_binaries(prefix, specs[:1], PACKAGE)
 
 
@@ -277,6 +301,12 @@ class ReceiverLayout(unittest.TestCase):
         full.write_bytes(b'changed\n')
         full.chmod(0o755)
         with self.assertRaisesRegex(RuntimeError, 'differs from its manifest hash'):
+            CHECK.verify_binaries(prefix, manifest, CHECK.verify_checksums(prefix))
+
+    def test_installed_check_refuses_missing_recovery_helper(self):
+        prefix, manifest, records = self.staged()
+        (prefix / 'bin/baton-recovery').unlink()
+        with self.assertRaisesRegex(RuntimeError, 'recovery-helper binary is missing'):
             CHECK.verify_binaries(prefix, manifest, CHECK.verify_checksums(prefix))
 
     def test_installed_check_refuses_missing_install_receipt_or_checksum_entry(self):

@@ -129,11 +129,9 @@ static int focused_receiver_verb(int argc,char **argv) {
   if(argc<2) return 0;
   const char *first=argv[1];
   if(!strcmp(first,"--dispatch-message") || !strcmp(first,"--host-process-keeper") ||
-     !strcmp(first,"--instance-owner") || !strcmp(first,"--instance-shutdown") ||
-     !strcmp(first,"--recover-observer") || !strcmp(first,"--recover-receive")) return 1;
+     !strcmp(first,"--instance-owner") || !strcmp(first,"--instance-shutdown")) return 1;
   if(argc>2 && (!strcmp(argv[2],"receive") || !strcmp(argv[2],"turn") ||
-                !strcmp(argv[2],"turn-text") || !strcmp(argv[2],"recover-observer") ||
-                !strcmp(argv[2],"agent-native-input"))) return 1;
+                !strcmp(argv[2],"turn-text") || !strcmp(argv[2],"agent-native-input"))) return 1;
   return 0;
 }
 
@@ -142,10 +140,12 @@ static int focused_receiver_verb(int argc,char **argv) {
 #ifdef BATON2_NATIVE_RECEIVER_ROUTER
 static int native_receiver_route(int argc, char **argv) {
   int native_input=argc>2 && !strcmp(argv[2],"agent-native-input");
+  int recovery=(argc>1 && (!strcmp(argv[1],"--recover-observer") ||
+                           !strcmp(argv[1],"--recover-receive"))) ||
+               (argc>2 && !strcmp(argv[2],"recover-observer"));
   int focused_verb=argc>1 && (!strcmp(argv[1],"--dispatch-message") ||
     !strcmp(argv[1],"--host-process-keeper") || !strcmp(argv[1],"--instance-owner") ||
-    !strcmp(argv[1],"--instance-shutdown") || !strcmp(argv[1],"--recover-observer") ||
-    !strcmp(argv[1],"--recover-receive"));
+    !strcmp(argv[1],"--instance-shutdown") || recovery);
   if(argc>2 && (!strcmp(argv[2],"receive") || !strcmp(argv[2],"turn") ||
       !strcmp(argv[2],"turn-text") || !strcmp(argv[2],"recover-observer"))) focused_verb=1;
   if(!native_input && !focused_verb) return -1;
@@ -154,14 +154,16 @@ static int native_receiver_route(int argc, char **argv) {
   char *slash=directory?strrchr(directory,'/'):NULL;
   if(!slash) {free(directory);free(full);perror("baton receiver router");return 78;}
   *slash=0;
-  size_t size=strlen(directory)+sizeof("/baton");
+  const char *name=recovery?"/baton-recovery":"/baton";
+  size_t size=strlen(directory)+strlen(name)+1;
   char *candidate=malloc(size);
   if(!candidate) {free(directory);free(full);perror("baton receiver path");return 1;}
-  snprintf(candidate,size,"%s/baton",directory);
+  snprintf(candidate,size,"%s%s",directory,name);
   char *focused=realpath(candidate,NULL);
   free(candidate);free(directory);
   if(!focused || access(focused,X_OK)) {
-    fputs("baton: focused receiver is missing or not executable. Install the complete Baton package.\n",stderr);
+    fputs(recovery ? "baton: recovery helper is missing or not executable. Install the complete Baton package.\n"
+                    : "baton: focused receiver is missing or not executable. Install the complete Baton package.\n",stderr);
     free(focused);free(full);return 78;
   }
   char **next=calloc((size_t)argc+2,sizeof(*next));
@@ -182,7 +184,7 @@ static int native_receiver_route(int argc, char **argv) {
 }
 #endif
 
-#ifdef BATON2_RECEIVE_FOCUSED
+#if defined(BATON2_RECEIVE_FOCUSED) || defined(BATON2_RECOVERY_HELPER)
 static int delegate_full_cli(char **argv) {
   char *executable=application_executable();
   char *directory=executable?strdup(executable):NULL;
@@ -214,6 +216,14 @@ static int delegate_full_cli(char **argv) {
 }
 #endif
 
+#ifdef BATON2_RECOVERY_HELPER
+static int recovery_helper_verb(int argc,char **argv) {
+  if(argc<2) return 0;
+  if(!strcmp(argv[1],"--recover-observer") || !strcmp(argv[1],"--recover-receive")) return 1;
+  return argc>2 && !strcmp(argv[2],"recover-observer");
+}
+#endif
+
 /* Pass the complete application argv through the runtime's argument boundary. */
 int main(int argc, char **argv) {
   if (argc < 1 || argc == INT_MAX ||
@@ -221,6 +231,10 @@ int main(int argc, char **argv) {
     fputs("baton2: invalid native argument count.\n", stderr);
     return 1;
   }
+#ifdef BATON2_RECOVERY_HELPER
+  /* Keep this executable limited to retained-receive recovery. */
+  if(!recovery_helper_verb(argc,argv)) return delegate_full_cli(argv);
+#endif
   int settings=settings_entry(argc,argv);
   if(settings>=0) return settings;
   int dispatch=dispatch_entry(argc,argv);

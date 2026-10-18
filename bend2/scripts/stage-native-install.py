@@ -18,6 +18,9 @@ BINARY_LAYOUT = (
     {'role': 'full-cli', 'option': 'full', 'name': 'baton-full', 'alias': None,
      'entry': 'bend2/src/coordinator/main.bend',
      'wrapper': True, 'build_mode': 'full-native-receiver-router'},
+    {'role': 'recovery-helper', 'option': 'recovery', 'name': 'baton-recovery', 'alias': None,
+     'entry': 'bend2/src/coordinator/receive-recovery-focused.bend',
+     'build_mode': 'recovery-native-entry'},
 )
 
 
@@ -104,9 +107,9 @@ def binary_specs(args, package):
 
 
 def stage_binaries(prefix, specs, package):
-    require(len(specs) == len(BINARY_LAYOUT), 'The receiver layout requires exactly two binaries')
+    require(len(specs) == len(BINARY_LAYOUT), 'The receiver layout requires exactly three binaries')
     require({spec['role'] for spec in specs} == {item['role'] for item in BINARY_LAYOUT},
-            'The receiver layout requires focused-facade and full-cli binaries')
+            'The receiver layout requires focused-facade, full-cli, and recovery-helper binaries')
     paths = set()
     records = []
     for spec in specs:
@@ -147,7 +150,7 @@ def stage_checksums(prefix, package, records):
 
 def stage_source_closures(prefix, args, package):
     closures = {}
-    for role in ('focused', 'full', 'full-wrapper'):
+    for role in ('focused', 'full', 'recovery', 'full-wrapper'):
         source = getattr(args, role.replace('-', '_') + '_source_closure', None)
         if source is None:
             continue
@@ -178,7 +181,8 @@ def stage_source_closures(prefix, args, package):
 
 def require_manifest_closures(specs, closures):
     for spec in specs:
-        role = 'focused' if spec['role'] == 'focused-facade' else 'full'
+        role = {'focused-facade': 'focused', 'full-cli': 'full',
+                'recovery-helper': 'recovery'}[spec['role']]
         source = spec['source']
         if 'commit' not in source or 'tree' not in source:
             require(role in closures and closures[role]['sha256'] == source.get('manifest_sha256'),
@@ -201,7 +205,9 @@ def main():
                         help='source-built focused receiver facade installed as bin/baton and bin/baton2')
     parser.add_argument('--full-binary', type=Path, required=True,
                         help='full CLI installed as bin/baton-full')
-    for role in ('focused', 'full'):
+    parser.add_argument('--recovery-binary', type=Path, required=True,
+                        help='focused recovery helper installed as bin/baton-recovery')
+    for role in ('focused', 'full', 'recovery'):
         parser.add_argument('--' + role + '-source-commit',
                             help='exact Git commit that produced the ' + role + ' binary; defaults to this source tree')
         parser.add_argument('--' + role + '-source-status',
@@ -212,7 +218,7 @@ def main():
                             help='source directory for the ' + role + ' binary')
         parser.add_argument('--' + role + '-source-manifest-sha256',
                             help='complete source manifest SHA256 for the ' + role + ' binary')
-    for role in ('focused', 'full', 'full-wrapper'):
+    for role in ('focused', 'full', 'recovery', 'full-wrapper'):
         parser.add_argument('--' + role + '-source-closure', type=Path,
                             help='complete source closure manifest for ' + role)
     parser.add_argument('--full-c-sha256', help='retained full generated-C SHA256')
@@ -260,6 +266,7 @@ def main():
         }
         focused_record = next(record for record in records if record['role'] == 'focused-facade')
         full_record = next(record for record in records if record['role'] == 'full-cli')
+        recovery_record = next(record for record in records if record['role'] == 'recovery-helper')
         source_manifest = {
             'schema': 'baton2-source-manifest-v1',
             'focused': {'path': focused_record['path'], 'sha256': focused_record['sha256'],
@@ -267,6 +274,9 @@ def main():
             'full': {'path': full_record['path'], 'sha256': full_record['sha256'],
                      'entry': full_record['entry'], 'source': full_record['source'],
                      'build_mode': full_record['build_mode']},
+            'recovery': {'path': recovery_record['path'], 'sha256': recovery_record['sha256'],
+                         'entry': recovery_record['entry'], 'source': recovery_record['source'],
+                         'build_mode': recovery_record['build_mode']},
             'repl': {'compiler_source': str(args.repl_compiler_source),
                      'runtime': str(args.repl_runtime),
                      'runtime_sha256': args.repl_runtime_sha256,

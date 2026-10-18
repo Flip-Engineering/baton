@@ -107,6 +107,9 @@ BINARY_LAYOUT = (
     {'role': 'full-cli', 'path': 'bin/baton-full', 'alias': None,
      'entry': 'bend2/src/coordinator/main.bend',
      'build_mode': 'full-native-receiver-router', 'wrapper': True},
+    {'role': 'recovery-helper', 'path': 'bin/baton-recovery', 'alias': None,
+     'entry': 'bend2/src/coordinator/receive-recovery-focused.bend',
+     'build_mode': 'recovery-native-entry'},
 )
 
 
@@ -139,7 +142,7 @@ def verify_binaries(prefix, manifest, checksums):
             'The installation manifest does not declare the receiver layout')
     binaries = manifest.get('binaries')
     require(isinstance(binaries, list) and len(binaries) == len(BINARY_LAYOUT),
-            'The receiver layout requires exactly two installed binaries')
+            'The receiver layout requires exactly three installed binaries')
     expected = {item['role']: item for item in BINARY_LAYOUT}
     seen = set()
     records = []
@@ -211,7 +214,7 @@ def verify_binaries(prefix, manifest, checksums):
         if layout.get('wrapper'):
             checked['wrapper_source'] = record['wrapper_source']
         records.append(checked)
-    require(seen == set(expected), 'The installation is missing the focused or full binary')
+    require(seen == set(expected), 'The installation is missing a focused, full, or recovery binary')
     source_manifest = manifest.get('source_manifest')
     require(isinstance(source_manifest, dict)
             and source_manifest.get('schema') == 'baton2-source-manifest-v1',
@@ -222,7 +225,8 @@ def verify_binaries(prefix, manifest, checksums):
             'The installed source-manifest.json differs from the manifest')
     focused = next(record for record in records if record['role'] == 'focused-facade')
     full = next(record for record in records if record['role'] == 'full-cli')
-    for role, record in (('focused', focused), ('full', full)):
+    recovery = next(record for record in records if record['role'] == 'recovery-helper')
+    for role, record in (('focused', focused), ('full', full), ('recovery', recovery)):
         entry = source_manifest.get(role)
         require(isinstance(entry, dict) and entry.get('path') == record['path']
                 and entry.get('sha256') == record['sha256']
@@ -236,6 +240,8 @@ def verify_binaries(prefix, manifest, checksums):
     if full.get('retained_c_sha256') is not None:
         require(source_manifest['full'].get('retained_c_sha256') == full['retained_c_sha256'],
                 'The composite source manifest lacks the retained full C hash')
+    require(source_manifest['recovery'].get('build_mode') == recovery['build_mode'],
+            'The composite source manifest recovery build mode differs')
     closures = source_manifest.get('closures', {})
     require(isinstance(closures, dict), 'The composite source manifest closures are malformed')
     for role, closure in closures.items():
@@ -251,7 +257,7 @@ def verify_binaries(prefix, manifest, checksums):
         require(isinstance(data, dict) and data.get('schema') == 'baton2-source-closure-v1'
                 and isinstance(data.get('files'), list) and data['files'],
                 'The installed source closure manifest is incomplete: ' + closure['path'])
-    for role, record in (('focused', focused), ('full', full)):
+    for role, record in (('focused', focused), ('full', full), ('recovery', recovery)):
         if 'commit' not in record['source'] or 'tree' not in record['source']:
             closure = closures.get(role)
             require(isinstance(closure, dict)

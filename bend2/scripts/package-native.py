@@ -61,7 +61,7 @@ def source_identity():
     return {'commit': git('rev-parse', 'HEAD'), 'status': git('status', '--porcelain=v1')}
 
 
-def build_binary(env, directory, label, entry=None, focused=False, router=False):
+def build_binary(env, directory, label, entry=None, focused=False, router=False, recovery=False):
     build_dir = directory / label
     build_dir.mkdir()
     output = ROOT / '.scratch/bend2/' + label
@@ -77,6 +77,8 @@ def build_binary(env, directory, label, entry=None, focused=False, router=False)
         role_env['BATON2_RECEIVE_FOCUSED'] = '1'
     if router:
         role_env['BATON2_NATIVE_RECEIVER_ROUTER'] = '1'
+    if recovery:
+        role_env['BATON2_RECOVERY_HELPER'] = '1'
     started = time.monotonic()
     with stdout.open('wb') as out, stderr.open('wb') as err:
         result = subprocess.run(argv, cwd=ROOT, env=role_env, stdin=subprocess.DEVNULL,
@@ -104,6 +106,10 @@ BINARY_LAYOUT = (
      'entry': 'bend2/src/coordinator/main.bend',
      'build_mode': 'full-native-receiver-router',
      'focused': False, 'router': True, 'wrapper': True},
+    {'role': 'recovery-helper', 'option': 'recovery', 'label': 'baton-recovery',
+     'installed': 'bin/baton-recovery', 'alias': None,
+     'entry': 'bend2/src/coordinator/receive-recovery-focused.bend',
+     'build_mode': 'recovery-native-entry', 'recovery': True},
 )
 
 
@@ -576,7 +582,7 @@ def stage_notices(payload, compiler_notices, kind='development'):
 
 def stage_source_closures(payload, args):
     closures = {}
-    for role in ('focused', 'full', 'full-wrapper'):
+    for role in ('focused', 'full', 'recovery', 'full-wrapper'):
         source = getattr(args, role.replace('-', '_') + '_source_closure', None)
         if source is None:
             continue
@@ -607,7 +613,8 @@ def stage_source_closures(payload, args):
 
 def require_manifest_closures(specs, closures):
     for spec in specs:
-        role = 'focused' if spec['role'] == 'focused-facade' else 'full'
+        role = {'focused-facade': 'focused', 'full-cli': 'full',
+                'recovery-helper': 'recovery'}[spec['role']]
         source = spec['source']
         if 'commit' not in source or 'tree' not in source:
             require(role in closures and closures[role]['sha256'] == source.get('manifest_sha256'),
@@ -687,7 +694,8 @@ def package(args):
             else:
                 path, record = build_binary(env, build_output, spec['label'],
                                             entry=spec['entry'], focused=spec['focused'],
-                                            router=spec.get('router', False))
+                                            router=spec.get('router', False),
+                                            recovery=spec.get('recovery', False))
                 require(path.is_file(), 'The production build did not create ' + str(path))
                 generated = path.with_name(path.name + '.c')
                 if generated.is_file():
@@ -717,6 +725,7 @@ def package(args):
         terms = stage_notices(payload, compiler_notices, identity['kind'])
         focused = next(record for record in records if record['role'] == 'focused-facade')
         full_record = next(record for record in records if record['role'] == 'full-cli')
+        recovery_record = next(record for record in records if record['role'] == 'recovery-helper')
         source_manifest = {
             'schema': 'baton2-source-manifest-v1',
             'focused': {'path': focused['path'], 'sha256': focused['sha256'],
@@ -724,6 +733,9 @@ def package(args):
             'full': {'path': full_record['path'], 'sha256': full_record['sha256'],
                      'entry': full_record['entry'], 'source': full_record['source'],
                      'build_mode': full_record['build_mode']},
+            'recovery': {'path': recovery_record['path'], 'sha256': recovery_record['sha256'],
+                         'entry': recovery_record['entry'], 'source': recovery_record['source'],
+                         'build_mode': recovery_record['build_mode']},
             'repl': {'compiler_source': str(args.repl_compiler_source),
                      'runtime': str(args.repl_runtime),
                      'runtime_sha256': args.repl_runtime_sha256,
@@ -784,7 +796,7 @@ def main():
                         help='verified official Bend 2.0.25 archive used for license notices')
     parser.add_argument('--generated-c', type=Path,
                         help='compile a generated production C file on the package host')
-    for role in ('focused', 'full', 'register'):
+    for role in ('focused', 'full', 'recovery'):
         parser.add_argument('--' + role + '-binary', type=Path,
                             help='prebuilt ' + role + ' binary; otherwise build from source')
         parser.add_argument('--' + role + '-source-commit')
@@ -792,7 +804,7 @@ def main():
         parser.add_argument('--' + role + '-source-status')
         parser.add_argument('--' + role + '-source-directory')
         parser.add_argument('--' + role + '-source-manifest-sha256')
-    for role in ('focused', 'full', 'full-wrapper'):
+    for role in ('focused', 'full', 'recovery', 'full-wrapper'):
         parser.add_argument('--' + role + '-source-closure', type=Path)
     parser.add_argument('--full-c-sha256', help='retained full generated-C SHA256')
     parser.add_argument('--full-wrapper-source-directory')

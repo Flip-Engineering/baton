@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Stage and verify the focused facade and full receiver-router installation layout."""
+"""Stage and verify the focused facade, full router and recovery helper installation."""
 import argparse
 import json
 import os
@@ -37,7 +37,8 @@ def main():
     parser.add_argument('--prefix', type=Path, required=True)
     parser.add_argument('--focused-binary', type=Path, required=True)
     parser.add_argument('--full-binary', type=Path, required=True)
-    for role in ('focused', 'full'):
+    parser.add_argument('--recovery-binary', type=Path, required=True)
+    for role in ('focused', 'full', 'recovery'):
         parser.add_argument('--' + role + '-source-commit', required=True)
         parser.add_argument('--' + role + '-source-tree', required=True)
         parser.add_argument('--' + role + '-source-status', default='')
@@ -56,11 +57,12 @@ def main():
     stage = [sys.executable, source / 'bend2/scripts/stage-native-install.py',
              '--prefix', args.prefix, '--focused-binary', args.focused_binary,
              '--full-binary', args.full_binary,
+             '--recovery-binary', args.recovery_binary,
              '--repl-compiler-source', args.repl_compiler_source,
              '--repl-runtime', args.repl_runtime,
              '--repl-runtime-sha256', args.repl_runtime_sha256,
              '--repl-runtime-notices', args.repl_runtime_notices]
-    for role in ('focused', 'full'):
+    for role in ('focused', 'full', 'recovery'):
         stage += ['--' + role + '-source-commit', getattr(args, role + '_source_commit'),
                   '--' + role + '-source-tree', getattr(args, role + '_source_tree'),
                   '--' + role + '-source-status', getattr(args, role + '_source_status')]
@@ -87,6 +89,7 @@ def main():
     operations.append(probe(prefix, 0, [prefix / 'bin/baton', '--help']))
     operations.append(probe(prefix, 0, [prefix / 'bin/baton-full', '--help']))
     operations.append(probe(prefix, 0, [prefix / 'bin/baton2', '--help']))
+    operations.append(probe(prefix, 0, [prefix / 'bin/baton-recovery', '--help']))
     full = prefix / 'bin/baton-full'
     hidden_full = prefix / 'bin/.baton-full.retained'
     full.rename(hidden_full)
@@ -102,6 +105,14 @@ def main():
                                              'session', 'harness', 'output.jsonl']))
     finally:
         hidden_focused.rename(focused)
+    recovery = prefix / 'bin/baton-recovery'
+    hidden_recovery = prefix / 'bin/.baton-recovery.retained'
+    recovery.rename(hidden_recovery)
+    try:
+        operations.append(probe(prefix, 78, [full, '--recover-observer',
+                                             'state.db', 'session', '12345']))
+    finally:
+        hidden_recovery.rename(recovery)
     print(json.dumps({'status': 'verified', 'stage': json.loads(staged.stdout),
                       'check': json.loads(checked.stdout), 'operations': operations}))
 
