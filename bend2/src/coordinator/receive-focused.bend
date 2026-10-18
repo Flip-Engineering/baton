@@ -2,7 +2,12 @@ import Base
 import ./receive.bend as Receive
 import ../host/instance.bend as Custody
 import ../host/process.bend as P
+import ../host/sqlite.bend as DB
+import ../host/session-lock.bend as Lock
+import ../host/control.bend as Host
 import ./control.bend as Control
+import ./commands.bend as C
+import ../git/text.bend as Tx
 import ./turn.bend as Turn
 
 def dispatch_receive(selected: Bool, +db: String, +session: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, +message: String) -> IO(Unit):
@@ -66,8 +71,14 @@ def dispatch_turn(selected: Bool, +db: String, +player: String, +id: String, +cm
 
 def dispatch_receiver(+db: String, +session: String, +cmd: String, +log: String, +cwd: String) -> IO(Unit):
   do IO<Unit>:
-    saved : String <- IO.try(String,Control.receiver(db,session,cmd,log,cwd))
-    IO.write(saved)
+    canonical : String <- IO.try(String,Lock.SessionLock.canonical(db))
+    model_line : String <- IO.try(String,DB.Sql.read(canonical,"SELECT model FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
+    workspace : String <- Bool.pick(IO(String),String.is_empty(cwd),IO.pure(String,""),IO.try(String,Host.Control.workspace(cwd)))
+    branch : Maybe<String> <- Control.receiver_branch(workspace)
+    endpoint : String <- Control.configured_endpoint(canonical,session,cmd,log,Tx.trim_nl(model_line))
+    saved : String <- IO.try(String,DB.Sql.query(canonical,"BEGIN IMMEDIATE;" ++ Control.receiver_branch_sql(session,endpoint,workspace,branch) ++ Control.receiver_sql(session,endpoint,workspace) ++ "COMMIT;"))
+    answer : String <- Control.receiver_result(saved,Tx.starts_with(saved,"{\"error\":\"receiver-refused\""))
+    IO.write(answer)
 
 def dispatch(args: List<String>) -> IO(Unit):
   match args:
