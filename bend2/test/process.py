@@ -8,7 +8,20 @@ import unittest
 import os
 import signal
 import shutil
+import stat
 import time
+
+def write_fixture_bytes(path, data, mode):
+    current_mode = stat.S_IMODE(path.stat().st_mode) if path.exists() else mode
+    if path.exists():
+        path.chmod(current_mode | stat.S_IWUSR)
+    try:
+        path.write_bytes(data)
+    finally:
+        path.chmod(current_mode)
+    if stat.S_IMODE(path.stat().st_mode) != mode:
+        raise AssertionError(f"fixture mode changed for {path.name}")
+
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 EXE = ROOT / '.scratch/bend2/process-test'
@@ -187,11 +200,16 @@ class Process(unittest.TestCase):
             self.assertEqual(after_ended, before,
                              'an already-ended observer PID changed retained custody')
 
-            status_bytes = (attempt / 'status').read_bytes()
-            capability_bytes = ((attempt / 'capabilities').read_bytes()
-                                if (attempt / 'capabilities').exists() else None)
+            status_path = attempt / 'status'
+            status_bytes = status_path.read_bytes()
+            status_mode = stat.S_IMODE(status_path.stat().st_mode)
+            capability_path = attempt / 'capabilities'
+            capability_bytes = (capability_path.read_bytes()
+                                if capability_path.exists() else None)
+            capability_mode = (stat.S_IMODE(capability_path.stat().st_mode)
+                               if capability_bytes is not None else None)
             if capability_bytes is not None:
-                (attempt / 'capabilities').write_text('reconcile\n')
+                write_fixture_bytes(capability_path, b'reconcile\n', capability_mode)
                 old_capability_before = {name: (attempt / name).read_bytes()
                                          for name in names if (attempt / name).exists()}
                 old_capability_refused = subprocess.run(
@@ -206,10 +224,10 @@ class Process(unittest.TestCase):
                                         for name in names if (attempt / name).exists()}
                 self.assertEqual(old_capability_after, old_capability_before,
                                  'old keeper refusal changed retained attempt custody')
-                (attempt / 'capabilities').write_bytes(capability_bytes)
-            (attempt / 'status').unlink()
+                write_fixture_bytes(capability_path, capability_bytes, capability_mode)
+            status_path.unlink()
             if capability_bytes is not None:
-                (attempt / 'capabilities').unlink()
+                capability_path.unlink()
             legacy_before = {name: (attempt / name).read_bytes() for name in names
                              if (attempt / name).exists()}
             legacy_refused = subprocess.run(
@@ -223,9 +241,9 @@ class Process(unittest.TestCase):
                             if (attempt / name).exists()}
             self.assertEqual(legacy_after, legacy_before,
                              'legacy refusal changed retained attempt custody')
-            (attempt / 'status').write_bytes(status_bytes)
+            write_fixture_bytes(status_path, status_bytes, status_mode)
             if capability_bytes is not None:
-                (attempt / 'capabilities').write_bytes(capability_bytes)
+                write_fixture_bytes(capability_path, capability_bytes, capability_mode)
 
             os.kill(observer.pid, signal.SIGSTOP)
             recovered = subprocess.run(
