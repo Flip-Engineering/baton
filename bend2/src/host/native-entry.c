@@ -249,15 +249,24 @@ int main(int argc, char **argv) {
   if(argc==3 && !strcmp(argv[2],"agent-native-input")) return delegate_full_cli(argv);
   if(!focused_receiver_verb(argc,argv)) return delegate_full_cli(argv);
 #endif
-  char **application = calloc((size_t)argc + 2, sizeof(*application));
+#ifdef BATON2_RECOVERY_HELPER_LEGACY_13_ARG
+  /* The retained recovery C predates the optional input-tail argument. The
+     recovery function reads owed inputs from the session database, so omit
+     only that final host ABI value when reusing this exact 13-argument C. */
+  int runtime_argc=argc;
+  if(argc==15 && !strcmp(argv[1],"--recover-receive")) runtime_argc=14;
+#else
+  int runtime_argc=argc;
+#endif
+  char **application = calloc((size_t)runtime_argc + 2, sizeof(*application));
   if (!application) {
     fputs("baton2: cannot allocate native arguments.\n", stderr);
     return 1;
   }
   application[0] = argv[0];
   application[1] = "--";
-  for (int i = 1; i < argc; i++) application[i + 1] = argv[i];
-  int status = baton2_runtime_main(argc + 1, application);
+  for (int i = 1; i < runtime_argc; i++) application[i + 1] = argv[i];
+  int status = baton2_runtime_main(runtime_argc + 1, application);
   free(application);
   return status;
 }
