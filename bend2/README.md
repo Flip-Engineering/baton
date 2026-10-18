@@ -74,8 +74,9 @@ independent batches, explicit selected-message reads and context overrides.
 ## Low-level coordinator storage
 
 The executable stores sessions and messages and supervises foreground Claude
-Code, Codex, OMP and Muse turns. Recruitment creates a Git worktree and records its resolved base. Native parent
-delivery through Claude Code Channels MCP is connected to this interface. Git
+Code, Codex, DeepSeek Harness, OMP and Muse turns. Recruitment creates a Git
+worktree and records its resolved base. Native parent delivery through Claude
+Code Channels MCP is connected to this interface. Git
 landing advances a target branch to include a Player's committed tip, and the
 checked landing (bend2/src/git/land_checked in bend2/src/git/land.bend)
 prepares a squashed candidate in a scratch worktree, runs the selected checks

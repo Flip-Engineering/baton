@@ -22,3 +22,9 @@ BATON2_EXE="$root/.scratch/bend2/focused-reads" "$PYTHON3" bend2/test/harness-in
 "$PYTHON3" bend2/scripts/check-native-parallel.py "$PYTHON3"
 sh bend2/scripts/build-native.sh bend2/test/omp-home-preflight.bend .scratch/bend2/omp-home-preflight-test
 BATON2_EXE="$root/.scratch/bend2/omp-home-preflight-test" "$PYTHON3" bend2/test/omp-home-preflight.py
+sh bend2/scripts/build-native.sh bend2/test/dsh-player.bend .scratch/bend2/dsh-player-test
+BATON2_EXE="$root/.scratch/bend2/dsh-player-test" "$PYTHON3" bend2/test/dsh-player.py
+sh bend2/scripts/build-native.sh bend2/test/dsh-retained.bend .scratch/bend2/dsh-retained-test
+BATON2_EXE="$root/.scratch/bend2/dsh-retained-test" "$PYTHON3" bend2/test/dsh-retained.py
+sh bend2/scripts/build-native.sh bend2/test/dsh-turn.bend .scratch/bend2/dsh-turn-test
+BATON2_EXE="$root/.scratch/bend2/dsh-turn-test" "$PYTHON3" bend2/test/dsh-turn.py

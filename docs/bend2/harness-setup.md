@@ -199,6 +199,49 @@ native receiver or detached turn. The coordinator selects the packaged
 configured identity route. See [series Git identities](git-series-identities.md)
 for registry configuration and publication authority.
 
+## DeepSeek Harness
+
+The official DeepSeek Harness CLI is `@deepseek-ai/dsh` version `0.2.1-rc.2`.
+Install it once into a directory the service account can read, so a launch
+needs no network:
+
+```sh
+npm install --prefix /absolute/path/dsh @deepseek-ai/dsh@0.2.1-rc.2
+```
+
+Use `/absolute/path/dsh/node_modules/.bin/dsh` as the recorded harness command.
+
+The adapter launches the headless profile:
+
+```sh
+DSH_HOME=/absolute/path/DATABASE.dsh-home-SESSION_HEX   dsh --profile headless --patch ATTEMPT/dsh-tools.patch.yml   --patch ATTEMPT/dsh-model.patch.yml --json
+```
+
+The task is written to stdin and the positional task argument is omitted. A
+recorded `session` frame supplies the native identity, and a later turn resumes
+it with `--session-id SESSION`. The launcher flags precede `--json`.
+
+`DEEPSEEK_API_KEY` is read from the launch environment. The adapter never places
+it in argv and never writes it to a profile. `DEEPSEEK_BASE_URL` may select a
+Messages-compatible endpoint; without it the CLI uses the provider default.
+
+The headless session store is `$DSH_HOME/sessions/WORKSPACE/SESSION_ID/`.
+Sessions are scoped to the workspace that recorded them. A `--session-id` from a
+different workspace is refused; Baton treats that refusal as a lost conversation
+and starts a fresh turn that names the workspace state.
+
+Provider usage for a completed step rides the `status` frame whose `phase` is
+`step_end`, in its `usage` object. The `--json` stream has no usage on the
+`final` frame.
+
+The two patch overlays are independent. `dsh-tools.patch.yml` disables every
+other model-facing tool plugin, keeps only `read_image` from `dsh-tool-fs`, and
+inserts one persistent shell group. The composed request carries `bash`,
+`read_image` and `working_directory`. `dsh-model.patch.yml` restates the
+provider and model and sets `reasoningEffort`. Inspect the composed tree with
+`--dump-config`; the model row, the tool-fs switches and the inserted shell
+rows are visible there.
+
 ## Status and report inspection
 
 A worker's assignment remains open across successful native turns. When its
@@ -211,8 +254,8 @@ tasks and guidance begin further work. Message receipts record the worker's
 handling of retained input. Explicit operator stops remain effective.
 Parentless Principal Conductors follow their operator input.
 
-Codex, OMP, Muse and Claude native receivers preserve the recorded conversation
-when further input arrives. Native settlement delivers the turn report to the
+Codex, OMP, Muse, DeepSeek Harness and Claude native receivers preserve the
+recorded conversation when further input arrives. Native settlement delivers the turn report to the
 recorded coordinator, which decides whether further work is needed. The
 managed Codex App watcher observes public turn settlement and delivers owed
 input through the public turn interface. `continue-task --session PLAYER`

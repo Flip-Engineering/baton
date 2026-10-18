@@ -23,6 +23,7 @@ import ../harness/claude-player.bend as Claude
 import ../harness/omp-player.bend as Omp
 import ../harness/muse-player.bend as Muse
 import ../harness/codex-player.bend as Codex
+import ../harness/dsh-player.bend as Dsh
 import ../git/process.bend as GitProc
 import ../git/types.bend as G
 import ../context/request.bend as Req
@@ -249,13 +250,17 @@ def input(+handle: U32, +prompt: String, +harness: String, level: String) -> IO(
     Muse.input(handle,prompt),
   Bool.pick(IO(Result<&1,&1,U32 & String,Unit>), String.eq(harness,"codex\n"),
     Codex.input(handle,prompt),
-    Claude.input(handle,prompt))))
+  Bool.pick(IO(Result<&1,&1,U32 & String,Unit>), String.eq(harness,"dsh\n"),
+    Dsh.input(handle,prompt),
+    Claude.input(handle,prompt)))))
 
 def close_input(handle: U32, open: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match open:
     case True{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
     case False{}: P.ProcessChild.close_stdin(handle)
 
+# close_input reads a "keep open" flag: OMP stays open for steer frames; every
+# other harness, including DSH, writes one prompt and receives EOF.
 def send_prompt(+handle: U32,prompt: String,+harness: String,level: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     sent : Result<&1,&1,U32 & String,Unit> <- input(handle,prompt,harness,level)
@@ -361,6 +366,13 @@ def omp_terminal_messages_sql(+source: String, +message: String, +activity: Stri
 def omp_terminal_sql(+event: String, +message: String, +activity: String) -> String:
   +messages = omp_terminal_messages_sql("frame.value","frame.message","frame.activity")
   "WITH frame(value,message,activity) AS (VALUES(" ++ C.q(event) ++ "," ++ C.q(message) ++ "," ++ C.q(activity) ++ ")) SELECT CASE WHEN json_valid(value) THEN CASE WHEN json_extract(value,'$.type')='agent_end' AND coalesce(json_extract(value,'$.isTerminal'),1)=1 THEN CASE WHEN json_type(value,'$.messages')='array' THEN json_set(value,'$.messages',json(" ++ messages ++ ")) WHEN " ++ omp_retained_answer_sql("frame.message","frame.activity") ++ " THEN json_set(value,'$.messages',json_array(json(frame.message))) ELSE value END ELSE value END ELSE value END FROM frame;"
+
+# DSH frames that carry identity or terminal state are projected through the
+# player; text, thinking and tool frames stay as received.
+def dsh_event(+db: String, +line: String, enabled: Bool, event: String) -> IO(String):
+  match enabled:
+    case True{}: Dsh.event(db,line)
+    case False{}: IO.pure(String,event)
 
 def omp_terminal(db: String, +event: String, +message: String, activity: String, enabled: Bool) -> IO(String):
   match enabled:
@@ -554,10 +566,19 @@ def omp_frame_kind(db: String, line: String, omp: Bool) -> IO(String):
 def codex_frame_kind(db: String, line: String) -> IO(String):
   IO.try(String,DB.Sql.query(db,"WITH frame(value) AS (VALUES(" ++ C.q(line) ++ ")) SELECT CASE WHEN json_valid(value) THEN CASE WHEN json_extract(value,'$.item.type')='command_execution' AND json_type(value,'$.item.id')='text' AND json_extract(value,'$.item.id')<>'' THEN CASE json_extract(value,'$.type') WHEN 'item.started' THEN 'codex_command_start' WHEN 'item.completed' THEN 'codex_command_end' ELSE '' END ELSE '' END ELSE '' END FROM frame;"))
 
-def frame_kind_selected(db: String, line: String, harness: String, codex: Bool) -> IO(String):
+def dsh_frame_kind(line: String) -> IO(String):
+  IO.pure(String,Dsh.kind(line))
+
+def frame_kind_other(+db: String, +line: String, +harness: String) -> IO(String):
+  match harness:
+    case "dsh\n": dsh_frame_kind(line)
+    case "omp\n": omp_frame_kind(db,line,True{})
+    case other: IO.pure(String,"")
+
+def frame_kind_selected(+db: String, +line: String, +harness: String, codex: Bool) -> IO(String):
   match codex:
     case True{}: codex_frame_kind(db,line)
-    case False{}: omp_frame_kind(db,line,String.eq(harness,"omp\n"))
+    case False{}: frame_kind_other(db,line,harness)
 
 def frame_kind(db: String, line: String, +harness: String) -> IO(String):
   frame_kind_selected(db,line,harness,String.eq(harness,"codex\n"))
@@ -752,7 +773,9 @@ def consume(+db: String, +player: String, +id: String, +log: String, +policy: Lo
         +message : String <- omp_message(db,line,last_message,message_frame)
         +activity_frame : Bool <- IO.pure(Bool,Bool.and(String.eq(harness,"omp\n"),Bool.or(String.eq(Tx.trim_nl(kind),"message_start"),String.eq(Tx.trim_nl(kind),"message_end"))))
         +activity : String <- omp_activity(db,line,Observer.omp_activity(checkpoint_state),activity_frame)
-        +event : String <- omp_terminal(db,line,message,activity,Bool.and(String.eq(harness,"omp\n"),String.eq(Tx.trim_nl(kind),"agent_end")))
+        +raw_event : String <- omp_terminal(db,line,message,activity,Bool.and(String.eq(harness,"omp\n"),String.eq(Tx.trim_nl(kind),"agent_end")))
+        +dsh : Bool <- IO.pure(Bool,String.eq(harness,"dsh\n"))
+        +event : String <- dsh_event(db,line,Bool.and(dsh,Dsh.admitted(Tx.trim_nl(kind))),raw_event)
         +kept : String <- Logs.retained(db,current_policy,Tx.trim_nl(kind),line,event,log)
         step : List<String> & String <- IO.pure(List<String> & String,Logs.frame_step(current_policy,Tx.trim_nl(kind),frame_key,kept,held))
         with_frame_step(Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>,step,lines => next_held_value => do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
@@ -920,6 +943,24 @@ def retained_input(muse: Bool, omp: Bool, claude: Bool, +prompt: String, level: 
 def retained_keep_stdin(muse: Bool, omp: Bool, claude: Bool) -> U32:
   Bool.pick(U32,muse,0,Bool.pick(U32,claude,0,Bool.pick(U32,omp,1,0)))
 
+# DSH persists sessions under DSH_HOME. One home per seat keeps two sessions
+# from sharing a conversation store. The database directory holds it so the
+# seat's existing mutable area needs no extra installation step.
+def dsh_home_text(+base: String, value: String) -> String:
+  match value:
+    case "": base ++ ".dsh-home"
+    case other: other
+
+def dsh_home_value(+base: String, result: Result<&1,&1,U32 & String,String>) -> String:
+  match result:
+    case Fail{error}: base ++ ".dsh-home"
+    case Done{value}: dsh_home_text(base,Tx.trim_nl(value))
+
+def dsh_home(+db: String, +base: String, +player: String) -> IO(String):
+  do IO<String>:
+    found : Result<&1,&1,U32 & String,String> <- DB.Sql.read(db,"SELECT " ++ C.q(base ++ ".dsh-home-") ++ " || lower(hex(id)) FROM sessions WHERE id=" ++ C.q(player) ++ ";")
+    IO.pure(String,dsh_home_value(base,found))
+
 # Legacy Node OMP adapters stored custom parentless IDs in the per-session directory.
 def retained_native(+db: String, +player: String, +sessions: String, +session: String, +harness: String) -> IO(String):
   do IO<String>:
@@ -928,6 +969,27 @@ def retained_native(+db: String, +player: String, +sessions: String, +session: S
     +selected : String <- Omp.resume_file(sessions,Tx.trim_nl(alternate),session,enabled)
     legacy : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ C.q(db ++ ".session-") ++ " || lower(hex(id)) FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
     Omp.resume_file(Tx.trim_nl(legacy),sessions,selected,Bool.and(enabled,String.eq(selected,session)))
+
+def dsh_home_if(dsh: Bool, +db: String, +base: String, +player: String) -> IO(String):
+  match dsh:
+    case True{}: dsh_home(db,base,player)
+    case False{}: IO.pure(String,"")
+
+def dsh_prepare_if(dsh: Bool, +directory: String, +model: String, +effort: String) -> IO(Result<&1,&1,U32 & String,Dsh.Prepared>):
+  match dsh:
+    case True{}: Dsh.prepare(directory,model,effort)
+    case False{}: IO.pure(Result<&1,&1,U32 & String,Dsh.Prepared>,Done{Dsh.Prepared{"",""}})
+
+def retained_launch_checked(prepared: Result<&1,&1,U32 & String,Dsh.Prepared>, +dsh: Bool, +prefix: String, +home: String, +cmd: String, +model: String, +effort: String, +native: String, +muse: Bool, +muse_args: String, +args: String, +initial: String, +omp: Bool, +claude: Bool, +level: String, seal_prompt: Bool) -> IO(Result<&1,&1,U32 & String,RetainedLaunch>):
+  match prepared:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,RetainedLaunch>,Fail{error})
+    case Done{Dsh.Prepared{tools, model_patch}}:
+      IO.pure(Result<&1,&1,U32 & String,RetainedLaunch>,Done{Prepared{
+        Bool.pick(String,dsh,prefix ++ Dsh.argv(home,cmd,model,effort,tools,model_patch,native,String.is_empty(native)),Bool.pick(String,muse,muse_args,args)),
+        retained_input(muse,omp,claude,initial,level),
+        initial,
+        retained_keep_stdin(muse,omp,claude),
+        Bool.or(muse,seal_prompt)}})
 
 def retained_prepare_checked(+db: String, +player: String, +directory: String, +cmd: String, +model: String, +effort: String, +session: String, +harness: String, +sessions: String, +prompt: String, +level: String, seal_prompt: Bool, predecessor: String, checked: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,RetainedLaunch>):
   match checked:
@@ -938,16 +1000,20 @@ def retained_prepare_checked(+db: String, +player: String, +directory: String, +
       +prompt_file : String <- IO.pure(String,directory ++ "/prompt.txt")
       +executable : String <- IO.try(String,Lock.SessionLock.executable())
       identity : String & String <- IO.try(String & String,HostControl.Control.identity(executable))
-      absolute_db : String <- IO.try(String,Lock.SessionLock.canonical(db))
+      +absolute_db : String <- IO.try(String,Lock.SessionLock.canonical(db))
       +prefix : String <- IO.pure(String,P.argv(["/usr/bin/env","BATON_DATABASE=" ++ absolute_db,"BATON_SESSION=" ++ player,"BATON_ATTEMPT_DIRECTORY=" ++ directory]) ++ retained_identity_prefix(model,identity))
       muse_args : String <- IO.pure(String,prefix ++ P.argv(muse_retained_arguments(cmd,model,effort,prompt_file,session)))
       +omp : Bool <- IO.pure(Bool,String.eq(harness,"omp\n"))
       +claude : Bool <- IO.pure(Bool,String.eq(harness,"claude-code\n"))
+      +dsh : Bool <- IO.pure(Bool,String.eq(harness,"dsh\n"))
+      +muse : Bool <- IO.pure(Bool,String.eq(harness,"muse\n"))
+      home : String <- dsh_home_if(dsh,db,absolute_db,player)
+      prepared : Result<&1,&1,U32 & String,Dsh.Prepared> <- dsh_prepare_if(dsh,directory,model,effort)
       +store : String <- current_store(db,player,harness)
       history : String <- current_history(db,player)
       +args : String <- IO.pure(String,prefix ++ Bool.pick(String,String.is_empty(store),retained_arguments(omp,claude,cmd,model,effort,sessions,native),retained_profile_arguments(omp,claude,Subs.store_binding(Tx.trim_nl(harness),store),Subs.history_override(Tx.trim_nl(harness),history),cmd,model,effort,sessions,native)))
-      +muse : Bool <- IO.pure(Bool,String.eq(harness,"muse\n"))
-      IO.pure(Result<&1,&1,U32 & String,RetainedLaunch>,Done{Prepared{Bool.pick(String,muse,muse_args,args),retained_input(muse,omp,claude,initial,level),initial,retained_keep_stdin(muse,omp,claude),Bool.or(muse,seal_prompt)}})
+      launch : Result<&1,&1,U32 & String,RetainedLaunch> <- retained_launch_checked(prepared,dsh,prefix,home,cmd,model,effort,native,muse,muse_args,args,initial,omp,claude,level,seal_prompt)
+      IO.pure(Result<&1,&1,U32 & String,RetainedLaunch>,launch)
 
 def retained_prepare(+db: String, +player: String, +directory: String, +cmd: String, +model: String, +effort: String, +session: String, +harness: String, +sessions: String, +prompt: String, +level: String, seal_prompt: Bool, predecessor: String) -> IO(Result<&1,&1,U32 & String,RetainedLaunch>):
   do IO<Result<&1,&1,U32 & String,RetainedLaunch>>:
@@ -1017,14 +1083,31 @@ def omp_launch(sessions: String, cmd: String, model: String, effort: String, cwd
     checked : Result<&1,&1,U32 & String,Unit> <- Omp.preflight()
     omp_launch_checked(sessions,cmd,model,effort,cwd,stderr,session,checked)
 
-def launch(sessions: String, +cmd: String, +model: String, +effort: String, +cwd: String, +stderr: String, +session: String, +harness: String, task: String) -> IO(Result<&1,&1,U32 & String,U32>):
+def dsh_launch_prepared(prepared: Result<&1,&1,U32 & String,Dsh.Prepared>, +home: String, +cmd: String, +model: String, +effort: String, +cwd: String, +stderr: String, +session: String) -> IO(Result<&1,&1,U32 & String,U32>):
+  match prepared:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,U32>,Fail{error})
+    case Done{Dsh.Prepared{tools, model_patch}}:
+      match session:
+        case "": Dsh.start_player(home,cmd,model,effort,cwd,stderr,tools,model_patch)
+        case other: Dsh.resume_player(home,cmd,model,effort,cwd,stderr,other,tools,model_patch)
+
+def dsh_launch(+db: String, +player: String, +log: String, +cmd: String, +model: String, +effort: String, +cwd: String, +stderr: String, +session: String) -> IO(Result<&1,&1,U32 & String,U32>):
+  do IO<Result<&1,&1,U32 & String,U32>>:
+    home : String <- dsh_home(db,db,player)
+    directory : String <- IO.pure(String,log ++ ".dsh")
+    prepared : Result<&1,&1,U32 & String,Dsh.Prepared> <- Dsh.prepare(directory,model,effort)
+    dsh_launch_prepared(prepared,home,cmd,model,effort,cwd,stderr,session)
+
+def launch(+db: String, +player: String, sessions: String, +cmd: String, +model: String, +effort: String, +cwd: String, +stderr: String, +session: String, +harness: String, +log: String, task: String) -> IO(Result<&1,&1,U32 & String,U32>):
   Bool.pick(IO(Result<&1,&1,U32 & String,U32>), String.eq(harness,"omp\n"),
     omp_launch(sessions,cmd,model,effort,cwd,stderr,session),
   Bool.pick(IO(Result<&1,&1,U32 & String,U32>), String.eq(harness,"muse\n"),
     muse_launch(cmd,model,effort,cwd,stderr,session,task,String.is_empty(session)),
+  Bool.pick(IO(Result<&1,&1,U32 & String,U32>), String.eq(harness,"dsh\n"),
+    dsh_launch(db,player,log,cmd,model,effort,cwd,stderr,session),
   Bool.pick(IO(Result<&1,&1,U32 & String,U32>), String.eq(harness,"codex\n"),
     Codex.start_player(cmd,model,effort,cwd,stderr,session,String.is_empty(session)),
-    claude_launch(cmd,model,effort,cwd,stderr,session,String.is_empty(session)))))
+    claude_launch(cmd,model,effort,cwd,stderr,session,String.is_empty(session))))))
 
 # The state the workspace holds when a turn restarts: the work an interrupted
 # turn had already written.
@@ -1050,11 +1133,23 @@ def refused_note(cwd: String, prompt: String) -> IO(String):
     note : String <- state_note(cwd)
     IO.pure(String, prompt ++ "\n\nThe conversation this session had before was not saved, so this is a fresh conversation. " ++ note ++ "\nContinue the task and keep the work the workspace already holds.")
 
+# DSH refuses an unknown or moved session before the task runs and names the
+# refusal on stderr, even when its --json stream also carries an error line.
+def refusal_kind(+text: String) -> String:
+  Bool.pick(String, Tx.starts_with(Tx.trim_nl(text), "dsh: session "), "dsh",
+  Bool.pick(String, Tx.starts_with(Tx.trim_nl(text), "Error: Session"), "codex", ""))
+
+def refusal_kind_decision(kind: String, event: String) -> Bool:
+  match kind:
+    case "dsh": True{}
+    case "codex": String.is_empty(event)
+    case other: False{}
+
 # A resume value this host no longer holds: the harness refuses the identity
 # before any turn runs, and its stderr says so.
 def refusal_body(resumable: Bool, event: String, text: String) -> Bool:
-  Bool.and(resumable,
-    Bool.and(String.is_empty(event), Tx.starts_with(Tx.trim_nl(text), "Error: Session")))
+  kind = refusal_kind(text)
+  Bool.and(resumable,refusal_kind_decision(kind,event))
 
 def refusal_read(resumable: Bool, event: String, text: Result<&1,&1,U32 & String,String>) -> IO(Bool):
   match text:
@@ -1081,7 +1176,7 @@ def supervise_gone(+db: String, +player: String, +id: String, +cmd: String, +mod
     case True{}: do IO<Outcome>:
       note : String <- refused_note(cwd,prompt)
       stderr : String <- Logs.open_stderr_run(db,player,id,generation_log(log,id))
-      child : Result<&1,&1,U32 & String,U32> <- launch(sessions,cmd,model,effort,cwd,stderr,"",harness,task)
+      child : Result<&1,&1,U32 & String,U32> <- launch(db,player,sessions,cmd,model,effort,cwd,stderr,"",harness,log,task)
       restart(db,player,id,log,note,harness,child)
 
 def supervise_retry(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +harness: String, +sessions: String, +native: String, +stderr: String, +prompt: String, +first: Outcome) -> IO(Outcome):
@@ -1095,7 +1190,7 @@ def supervise(+db: String, +player: String, +id: String, +cmd: String, +model: S
     alternate : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN " ++ C.q(sessions) ++ "=" ++ C.q(db ++ ".sessions") ++ " THEN CASE WHEN parent IS NULL THEN " ++ C.q(db ++ ".root-sessions") ++ " ELSE " ++ C.q(db ++ ".session-") ++ " || lower(hex(id)) END ELSE " ++ C.q(db ++ ".sessions") ++ " END FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
     +native : String <- Omp.resume_file(sessions,Tx.trim_nl(alternate),session,Bool.and(String.eq(harness,"omp\n"),Bool.not(String.is_empty(session))))
     +stderr : String <- Logs.open_stderr_run(db,player,id,generation_log(log,id))
-    child : Result<&1,&1,U32 & String,U32> <- launch(sessions,cmd,model,effort,cwd,stderr,native,harness,task)
+    child : Result<&1,&1,U32 & String,U32> <- launch(db,player,sessions,cmd,model,effort,cwd,stderr,native,harness,log,task)
     first : Outcome <- started(db,player,id,log,prompt,harness,child)
     supervise_retry(db,player,id,cmd,model,effort,cwd,task,log,harness,sessions,native,stderr,prompt,first)
 
@@ -1534,7 +1629,7 @@ def player_checked(+db: String, +player: String, +id: String, +cmd: String, +mod
     case True{}: IO.die(Unit,2,"Player is not registered; register it before starting a turn.")
     case False{}:
       do IO<Unit>:
-        supported : Unit <- supported_harness(Bool.or(String.eq(harness,"omp\n"),Bool.or(String.eq(harness,"codex\n"),Bool.or(String.eq(harness,"claude-code\n"),String.eq(harness,"muse\n")))))
+        supported : Unit <- supported_harness(Bool.or(String.eq(harness,"omp\n"),Bool.or(String.eq(harness,"codex\n"),Bool.or(String.eq(harness,"claude-code\n"),Bool.or(String.eq(harness,"muse\n"),String.eq(harness,"dsh\n"))))))
         foreign : String <- IO.try(String,DB.Sql.query(db,id_owner_sql(id,player)))
         identity : Unit <- matching_turn(String.eq(foreign,"0\n"))
         +prompt : String <- supplied_task(task,supplied)

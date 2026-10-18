@@ -13,6 +13,7 @@ import ../json/canonical.bend as J
 import ../harness/codex-player.bend as Codex
 import ../harness/omp-player.bend as Omp
 import ../harness/muse-player.bend as Muse
+import ../harness/dsh-player.bend as Dsh
 
 # --- the recorded source ----------------------------------------------------
 
@@ -308,6 +309,8 @@ def provider_usage_query(+db: String, harness: String, command: String, cwd: Str
 def provider_usage_command(+db: String, +harness: String, +command: String, cwd: String) -> IO(Result<&1,&1,U32 & String,String>):
   Bool.pick(IO(Result<&1,&1,U32 & String,String>),String.is_empty(command),IO.pure(Result<&1,&1,U32 & String,String>,Done{provider_usage_absent(harness,command,"noRecordedHarnessCommand")}),provider_usage_query(db,harness,command,cwd))
 
+# TODO(DSH-USAGE-1): DSH reports usage in its status/step_end event and its
+# session store; docs/bend2/dsh-adapter.md records the open projection.
 def provider_usage(+db: String, +harness: String, +command: String, cwd: String) -> IO(Result<&1,&1,U32 & String,String>):
   Bool.pick(IO(Result<&1,&1,U32 & String,String>),String.eq(harness,"omp"),provider_usage_command(db,harness,command,cwd),IO.pure(Result<&1,&1,U32 & String,String>,Done{provider_usage_absent(harness,command,"unsupportedHarness")}))
 
@@ -384,6 +387,7 @@ def models_result(+db: String, +session: String, +harness: String, +command: Str
       IO.pure(String,"{\"schema\":\"baton2-model-discovery-v1\",\"state\":\"unknown\",\"session\":" ++ J.string_literal(session) ++ ",\"harness\":" ++ J.string_literal(harness) ++ ",\"command\":" ++ J.string_literal(command) ++ ",\"argv\":" ++ argv ++ ",\"workspace\":" ++ J.string_literal(cwd) ++ ",\"requestedModel\":" ++ J.string_literal(model) ++ ",\"reason\":\"providerCommandHostFailure\",\"code\":" ++ U32.show(code) ++ ",\"detail\":" ++ J.string_literal(detail) ++ "}")
     case Done{raw}: models_outcome(db,session,harness,command,model,effort,cwd,argv,Tx.run_res(Done{raw}))
 
+# TODO(DSH-MODELS-1): the official DSH CLI has no models command.
 def models_supported(+harness: String) -> Bool:
   Bool.or(String.eq(harness,"codex"),Bool.or(String.eq(harness,"omp"),String.eq(harness,"muse")))
 
@@ -520,16 +524,78 @@ def usage_selected(+db: String, +session: String, +native: String, harness: Stri
     projection : String <- IO.try(String,DB.Sql.read(db,project_sql(Tx.trim_nl(malformed),entries,session,Tx.trim_nl(harness),native,file)))
     IO.pure(String,projection)
 
+# --- the DSH step-usage projection -------------------------------------------
+
+# The public log keeps each DSH `status` frame as received. A step-end frame
+# carries the provider usage sample for that step. Dsh.usage extracts the
+# sample; this read sums the samples the log actually records.
+def usage_cons(value: String, acc: List<String>) -> List<String>:
+  match value:
+    case "": acc
+    case other: Con{other,acc}
+
+def dsh_usage_collect(+db: String, lines: List<String>, acc: List<String>) -> IO(List<String>):
+  match lines:
+    case Nil{}: IO.pure(List<String>,acc)
+    case line <> rest: do IO<List<String>>:
+      value : String <- Dsh.usage(db,line)
+      dsh_usage_collect(db,rest,usage_cons(value,acc))
+
+def objects_array_tail(xs: List<String>) -> String:
+  match xs:
+    case Nil{}: "]"
+    case head <> rest: "," ++ head ++ objects_array_tail(rest)
+
+def objects_array(xs: List<String>) -> String:
+  match xs:
+    case Nil{}: "[]"
+    case head <> rest: "[" ++ head ++ objects_array_tail(rest)
+
+def dsh_usage_sql(usages_json: String, session: String, native: String, source: String, malformed: String, model: String) -> String:
+  "WITH u(value) AS (SELECT value FROM json_each(" ++ C.q(usages_json) ++ ")), counts AS (SELECT count(*) AS n FROM u) "
+  ++ "SELECT json_object('session'," ++ C.q(session) ++ ",'harness','dsh','native'," ++ C.q(native) ++ ",'source'," ++ C.q(source) ++ ","
+  ++ "'shape','step-usage','records',(SELECT n FROM counts),'observations',(SELECT n FROM counts),'duplicates',0,'conflicts',0,"
+  ++ "'malformed',CAST(" ++ C.q(malformed) ++ " AS INTEGER),"
+  ++ "'routes',json_array(json_object('provider','deepseek-official','model'," ++ C.q(model) ++ ",'api','messages','observations',(SELECT n FROM counts))),"
+  ++ "'observed',(SELECT json_group_object(name,value) FROM ("
+  ++ " SELECT 'input' AS name,sum(json_extract(value,'$.inputTokens')) AS value FROM u"
+  ++ " UNION ALL SELECT 'output',sum(json_extract(value,'$.outputTokens')) FROM u"
+  ++ " UNION ALL SELECT 'cacheRead',sum(json_extract(value,'$.cacheReadTokens')) FROM u"
+  ++ " UNION ALL SELECT 'cacheWrite',sum(json_extract(value,'$.cacheWriteTokens')) FROM u"
+  ++ " UNION ALL SELECT 'totalTokens',sum(json_extract(value,'$.totalTokens')) FROM u"
+  ++ " UNION ALL SELECT 'reasoningTokens',sum(json_extract(value,'$.reasoningTokens')) FROM u) WHERE value IS NOT NULL),"
+  ++ "'absent',json_array(),'invalid',json_array());"
+
+def dsh_usage_projection(+db: String, +session: String, +harness: String, +native: String, model: String) -> IO(String):
+  do IO<String>:
+    +log : String <- IO.try(String,DB.Sql.read(db,"SELECT log FROM log_files WHERE session=" ++ C.q(session) ++ " ORDER BY rowid DESC LIMIT 1;"))
+    text : String <- IO.try(String,Text.Text.read(Tx.trim_nl(log)))
+    lines : List<String> <- IO.pure(List<String>,Tx.split_lines(text))
+    lines_json : String <- IO.pure(String,lines_array(lines))
+    malformed : String <- IO.try(String,DB.Sql.read(db,malformed_sql(lines_json)))
+    usage_text : String <- IO.try(String,Text.Text.read(Tx.trim_nl(log)))
+    values : List<String> <- dsh_usage_collect(db,Tx.split_lines(usage_text),Nil{})
+    IO.try(String,DB.Sql.read(db,dsh_usage_sql(objects_array(values),session,native,Tx.trim_nl(log),Tx.trim_nl(malformed),model)))
+
+# The OMP path reads the native conversation file. DSH reads the public log.
+def conversation_for(dsh: Bool, +db: String, +session: String, +harness: String, +native: String) -> IO(String):
+  match dsh:
+    case True{}: do IO<String>:
+      model : String <- IO.try(String,DB.Sql.read(db,"SELECT model FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
+      dsh_usage_projection(db,session,harness,native,Tx.trim_nl(model))
+    case False{}: do IO<String>:
+      storage : String <- IO.try(String,DB.Sql.read(db,storage_sql(db,session)))
+      +file : String <- usage_source(Tx.trim_nl(storage),db ++ ".sessions",native)
+      empty : Bool <- IO.pure(Bool,String.is_empty(file))
+      Bool.pick(IO(String),empty,usage_unavailable(db,session,native,harness),usage_selected(db,session,native,harness,file))
+
 def observed_usage(+db: String, +session: String) -> IO(Unit):
   do IO<Unit>:
     found : String <- IO.try(String,Store.read(db,C.Session{session}))
     present : Unit <- usage_registered(found)
     +harness : String <- IO.try(String,DB.Sql.read(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
     +native : String <- IO.try(String,DB.Sql.read(db,"SELECT native FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
-    storage : String <- IO.try(String,DB.Sql.read(db,storage_sql(db,session)))
-    +file : String <- usage_source(Tx.trim_nl(storage),db ++ ".sessions",Tx.trim_nl(native))
-    empty : Bool <- IO.pure(Bool,String.is_empty(file))
-    conversation : String <- Bool.pick(IO(String),empty,usage_unavailable(db,session,Tx.trim_nl(native),Tx.trim_nl(harness)),usage_selected(db,session,Tx.trim_nl(native),Tx.trim_nl(harness),file))
+    conversation : String <- conversation_for(String.eq(Tx.trim_nl(harness),"dsh"),db,session,Tx.trim_nl(harness),Tx.trim_nl(native))
     usage_with_provider(db,session,Tx.trim_nl(harness),conversation)
 
 def models(+db: String, +session: String) -> IO(Unit):
