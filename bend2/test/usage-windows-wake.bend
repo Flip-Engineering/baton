@@ -83,6 +83,7 @@ def cap_case(+db: String, +self: String) -> IO(Unit):
     delay : Unit <- expect_read(db,UW.schedule_delay_sql(Tx.trim_nl(far)),"86400\n","far-reset-segment-capped")
     window : Unit <- query(db,"INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) VALUES(CAST(strftime('%s','now') AS INTEGER)*1000,'omp','kimi-code/kimi-for-coding','kimi-code','wc','5-hour'," ++ Tx.trim_nl(far) ++ ",'provider-message',NULL,'far reset window','m-wc');")
     held : Unit <- expect_gate(db,"wc","wc","held","far-reset-held")
+    next_segment : Unit <- expect_read(db,UW.schedule_delay_sql(Tx.trim_nl(far)),"86400\n","next-segment-still-86400")
     passed : Unit <- query(db,"UPDATE usage_windows SET resets_at=CAST(strftime('%s','now') AS INTEGER)*1000-1000 WHERE message='m-wc';")
     elapsed : Unit <- expect_gate(db,"wc","wc","elapsed","far-reset-elapsed")
     IO.pure(Unit,Unit{})
