@@ -32,7 +32,7 @@ def contextual_verb(+verb: String) -> Bool:
         Bool.or(String.eq(verb,"assignment"),
           Bool.or(String.eq(verb,"completion-request"),
             Bool.or(String.eq(verb,"completion-confirmed"),
-              Bool.or(String.eq(verb,"guide"),Domain.known(verb))))))))
+              Bool.or(String.eq(verb,"repl"),Bool.or(String.eq(verb,"guide"),Domain.known(verb)))))))))
 
 def action_verb(+verb: String, project: Bool) -> Bool:
   Bool.or(String.eq(verb,"read"),
@@ -85,7 +85,7 @@ def database_named(+verb: String, +args: List<&2,String>) -> Bool:
           True{}))
 
 def database_other(+db: String, +verb: String, +args: List<&2,String>) -> Route:
-  Bool.pick(Route,Bool.or(Domain.member(verb,["help","--help","-h"]),database_named(verb,args)),
+  Bool.pick(Route,Bool.or(Domain.member(verb,["repl","help","--help","-h"]),database_named(verb,args)),
     Action{InDatabase{db,A.parse(Con{verb,Domain.affine_strings(args)})}},
     Legacy{Con{db,Con{verb,Domain.affine_strings(args)}}})
 

@@ -27,6 +27,7 @@ import ./agent-command.bend as AgentCommand
 import ./agent-route.bend as AgentRoute
 import ./agent-input.bend as AgentInput
 import ./agent-native.bend as AgentNative
+import ./repl.bend as Repl
 import ./task-input.bend as TaskInput
 import ../host/text.bend as T
 import ../host/process.bend as P
@@ -275,9 +276,10 @@ type NormalCliKind is Data:
   TaskReadInput{}
   AgentCurrentInput{}
   NativeAttachmentInput{}
+  ReplObserverInput{}
   OrdinaryInput{}
 
-def normal_cli_kind(+head: String) -> NormalCliKind:
+def normal_cli_kind_existing(+head: String) -> NormalCliKind:
   Bool.pick(NormalCliKind,String.eq(head,"agent-native-input"),NativeInput{},
     Bool.pick(NormalCliKind,String.eq(head,"agent-contextual-input"),ContextualInput{},
       Bool.pick(NormalCliKind,String.eq(head,"settle-agent-input"),SettleInput{},
@@ -286,6 +288,11 @@ def normal_cli_kind(+head: String) -> NormalCliKind:
             Bool.pick(NormalCliKind,String.eq(head,"task-input-read"),TaskReadInput{},
               Bool.pick(NormalCliKind,String.eq(head,"agent-current-session"),AgentCurrentInput{},
                 Bool.pick(NormalCliKind,String.eq(head,"native-attachment-input"),NativeAttachmentInput{},OrdinaryInput{}))))))))
+
+def normal_cli_kind(+head: String) -> NormalCliKind:
+  match head:
+    case "repl-observe": ReplObserverInput{}
+    case other: normal_cli_kind_existing(other)
 
 def normal_cli_fallback_if(project: Bool, db: String, head: String, tail: List<String>) -> IO(Unit):
   match project:
@@ -350,6 +357,11 @@ def normal_cli_native_attachment(args: List<String>, db: String, head: String) -
     case session <> component <> Nil{}: NativeInitialInput.attachment(db,session,component)
     case other: normal_cli_fallback(db,head,other)
 
+def normal_cli_repl_observer(db: String, args: List<String>) -> IO(Unit):
+  match args:
+    case cell <> Nil{}: Repl.observe(db,cell)
+    case other: IO.die(Unit,2,"repl-observe requires its retained cell identity.")
+
 def normal_cli_selected(kind: NormalCliKind, db: String, head: String, args: List<String>) -> IO(Unit):
   match kind:
     case NativeInput{}: normal_cli_native(args,db,head)
@@ -360,6 +372,7 @@ def normal_cli_selected(kind: NormalCliKind, db: String, head: String, args: Lis
     case TaskReadInput{}: normal_cli_task_read(args,db,head)
     case AgentCurrentInput{}: normal_cli_agent_current(args,db,head)
     case NativeAttachmentInput{}: normal_cli_native_attachment(args,db,head)
+    case ReplObserverInput{}: normal_cli_repl_observer(db,args)
     case OrdinaryInput{}: normal_cli_fallback(db,head,args)
 
 def normal_cli_tail(args: List<String>, +db: String) -> IO(Unit):
