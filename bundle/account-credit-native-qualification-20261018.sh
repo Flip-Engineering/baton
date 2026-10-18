@@ -11,13 +11,19 @@
 # account-credits-entry fixtures, runs the 9 spec boundary tests, the 17 focused
 # account behavior tests, and the 10 native C8 credential-safety cases. It does
 # not build Main. No hosted CI.
+#
+# NODE names the native Node executable. The default is the installed native
+# path below; a bare name is resolved through PATH. A missing or non-executable
+# Node fails admission before any build. The default output directory is unique
+# per run, so earlier receipts stay at their original paths.
 set -eu
 
 ROOT=/var/tmp/baton-account-main2af-20261018
 BEND=/run/baton2-native-homelab/home/.local/share/bend2/releases/2.0.25-27629713-20261018/bin/bend
 CC=clang-19
+NODE=${NODE:-/run/baton2-native-homelab/home/.local/bin/node}
 PYTHON3=${PYTHON3:-python3}
-OUT="$ROOT/.scratch/account-credit-native-root-check"
+OUT=${OUT:-"$ROOT/.scratch/account-credit-native-root-check-$(date -u +%Y%m%dT%H%M%SZ)"}
 
 refuse() {
   printf 'refused: %s\n' "$1" >&2
@@ -25,6 +31,12 @@ refuse() {
 }
 
 [ -x "$BEND" ] || refuse "compiler is not executable: $BEND"
+case "$NODE" in
+  */*) ;;
+  *) resolved=$(command -v "$NODE" 2>/dev/null || true); [ -n "$resolved" ] || refuse "node not found: $NODE"; NODE=$resolved ;;
+esac
+[ -x "$NODE" ] || refuse "node is not executable: $NODE"
+"$NODE" --version >/dev/null 2>&1 || refuse "node version query failed: $NODE"
 cgroup=$(sed -n 's/^0:://p' /proc/self/cgroup)
 case "$cgroup" in
   */baton2-build.slice/*) ;;
@@ -41,14 +53,15 @@ swapmaximum=$(cat "$cg/memory.swap.max")
 ulimit -v unlimited || refuse "address-space limit could not be lifted"
 [ "$(ulimit -v)" = unlimited ] || refuse "address-space limit remains capped"
 
-rm -rf "$OUT"
+[ ! -e "$OUT" ] || refuse "output directory already exists: $OUT"
 mkdir -p "$OUT"
 printf 'cgroup=%s\nmemory.max=%s\nmemory.swap.max=%s\n' "$cgroup" "$maximum" "$swapmaximum" > "$OUT/envelope.txt"
 "$BEND" version > "$OUT/bend-version.txt" 2>&1 || refuse "compiler version query failed"
 [ "$(cat "$OUT/bend-version.txt")" = 'bend 2.0.25' ] || refuse "compiler version is not bend 2.0.25"
 
 cd "$ROOT"
-printf 'root=%s\nbend=%s\ncc=%s\n' "$ROOT" "$BEND" "$CC" > "$OUT/receipt.txt"
+printf 'out=%s\nroot=%s\nbend=%s\ncc=%s\nnode=%s\n' "$OUT" "$ROOT" "$BEND" "$CC" "$NODE" > "$OUT/receipt.txt"
+"$NODE" --version > "$OUT/node-version.txt" 2>&1 || refuse "node version query failed: $NODE"
 
 if /usr/bin/time -v env BEND="$BEND" CC="$CC" sh bend2/scripts/build-native.sh bend2/harness/api-key-exec.bend .scratch/bend2/api-key-exec > "$OUT/helper-build.stdout" 2> "$OUT/helper-build.stderr"; then
   helper=0
@@ -94,7 +107,9 @@ grep -q 'Ran 9 tests' "$OUT/api-key-spec.stderr" || { printf 'spec-tests=mismatc
 grep -q '^OK' "$OUT/api-key-spec.stderr" || { printf 'spec-tests=not-ok\n' | tee -a "$OUT/receipt.txt"; exit 1; }
 [ "$spec" -eq 0 ] || exit 1
 
-if /usr/bin/time -v env BATON2_API_KEY_EXEC="$ROOT/.scratch/bend2/api-key-exec" node --test bend2/test/api-key-exec.test.mjs > "$OUT/api-key-exec.stdout" 2> "$OUT/api-key-exec.stderr"; then
+# The TAP reporter keeps the count assertions stable across the pinned Node
+# versions; the default reporter changes their spelling.
+if /usr/bin/time -v env BATON2_API_KEY_EXEC="$ROOT/.scratch/bend2/api-key-exec" "$NODE" --test --test-reporter=tap bend2/test/api-key-exec.test.mjs > "$OUT/api-key-exec.stdout" 2> "$OUT/api-key-exec.stderr"; then
   safety=0
 else
   safety=$?
