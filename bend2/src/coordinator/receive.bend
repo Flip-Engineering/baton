@@ -527,7 +527,7 @@ def restart_pending(+db: String, +session: String, +id: String, attempt: String,
 
 def complete_or_restart(db: String, session: String, id: String, log: String, stderr: String, attempt: String, cursor: String, native: String, cwd: String, handle: U32, lock: Maybe<U32>, outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), gone: Bool, superseded: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match gone:
-    case False{}: completed(db,session,id,log,attempt,stderr,cursor,handle,lock,outcome,deliveries,again,superseded)
+    case False{}: completed(db,session,id,log,attempt,native,stderr,cursor,handle,lock,outcome,deliveries,again,superseded)
     case True{}: restart_pending(db,session,id,attempt,cursor,native,cwd,handle,lock,deliveries,again)
 
 def observed(+db: String, +session: String, +id: String, +log: String, cursor: String, +native: String, cwd: String, +attempt: String, handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), superseded: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
