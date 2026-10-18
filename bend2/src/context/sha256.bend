@@ -181,18 +181,6 @@ def add_state(+x: ShaState, +y: ShaState) -> ShaState:
 def compress(+st: ShaState, +block: List<&2, U32>) -> ShaState:
   add_state(st, rounds_go(sched(block), k_constants(), st))
 
-# Split one 64-byte block off the head of a padded input. Each match has
-# one subject, in binder order; a short tail returns the reversed head
-# with an empty rest, which padded input never produces.
-def split_block(bs: List<&2, U32>, n: Nat, acc: List<&2, U32>)
-    -> List<&2, U32> & List<&2, U32>:
-  match bs:
-    case Nil{}: (list_rev(acc), Nil{})
-    case h <> t:
-      match n:
-        case 0n: (list_rev(acc), h <> t)
-        case 1n+p: split_block(t, p, h <> acc)
-
 def len_bytes(bs: List<&2, U32>) -> U32:
   match bs:
     case Nil{}: 0

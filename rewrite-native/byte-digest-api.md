@@ -39,11 +39,11 @@ the reason it cannot serve files:
 
     type Sha256.State is Data:
       State{s0,s1,s2,s3,s4,s5,s6,s7: U32, bits_hi: U32, bits_lo: U32,
-            block: List<U32>, used: U32}
-    def Sha256.init -> State
+            block: List<&2, U32>, used: U32}
+    def Sha256.init() -> State
     def Sha256.update(state: State, chunk: List<U32>) -> State
-    def Sha256.final(state: State) -> List<U32>  # 32 bytes, values 0..255
-    def Sha256.hex(bytes: List<U32>) -> String   # 64 lowercase hex digits
+    def Sha256.final(state: State) -> List<&2, U32>  # 32 bytes, values 0..255
+    def Sha256.hex(bytes: List<&2, U32>) -> String   # 64 lowercase hex digits
     def Sha256.digest(bytes: List<U32>) -> String # one-shot convenience
 
 Grounded types per the review: the byte element is `U32` carrying
