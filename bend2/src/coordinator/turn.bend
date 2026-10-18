@@ -929,7 +929,7 @@ def consume_frame(+db: String, +player: String, +id: String, +log: String, +poli
       questions : List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool <- NativeRequests.observe(db,player,id,attempt,question_frame,deliveries,question_needed)
       +mode : String <- filter_mode(db,decoded,Bool.and(String.eq(harness,"omp\n"),String.eq(Tx.trim_nl(kind),"response")),requested)
       +next_filter : String <- IO.pure(String,Omp.filter_next(filter,Tx.trim_nl(mode)))
-      +next_checkpoint : Observer.State <- IO.pure(Observer.State,Observer.with_episode(Observer.with_output(Observer.with_omp_activity(Observer.make(next_cursor,message,next_primary,next_current,ended,next_filter,codex_state,next_held),activity),Logs.position(Observer.output(checkpoint_state),unshared_result(String,positioned))),episode))
+      +next_checkpoint : Observer.State <- IO.pure(Observer.State,Observer.make_full(next_cursor,message,next_primary,next_current,ended,next_filter,codex_state,next_held,activity,Logs.position(Observer.output(checkpoint_state),unshared_result(String,positioned)),episode))
       NativeRequests.with_observation(WakeRead,questions,wakes => question_error => question_incomplete => do IO<WakeRead>:
         +question_text : String <- IO.pure(String,question_error)
         +request_incomplete : Bool <- IO.pure(Bool,question_incomplete)

@@ -22,6 +22,12 @@ def empty() -> State:
 def make(guidance_cursor: String, last_message: String, muse_primary: String, muse_current: String, terminal: String, filter_mode: String, codex_log: String, held: String) -> State:
   State{guidance_cursor,last_message,muse_primary,muse_current,terminal,filter_mode,codex_log,held,"","0",False{},"0"}
 
+# Construct the reducer state once with the frame's full payload. The chained
+# with_* helpers each rebuilt the whole state, copying the large terminal and
+# message fields on every frame.
+def make_full(guidance_cursor: String, last_message: String, muse_primary: String, muse_current: String, terminal: String, filter_mode: String, codex_log: String, held: String, omp_activity: String, output: String, episode: String) -> State:
+  State{guidance_cursor,last_message,muse_primary,muse_current,terminal,filter_mode,codex_log,held,omp_activity,output,False{},episode}
+
 # The optional schema-1 field records the assistant activity and completed error
 # identities needed to recognize an elided terminal repeating an observed error.
 def with_omp_activity(state: State, omp_activity: String) -> State:
@@ -112,18 +118,27 @@ def changed_when(enabled: Bool, previous: String, next: String) -> Bool:
 
 # Turn supplies the payload fields its reducer can change on this frame.
 # Cursor, command and filter changes always participate in the decision.
+def checkpoint_due_next(+previous_episode: String, +previous_cursor: String, +previous_message: String, +previous_output: String, +previous_activity: String, +previous_primary: String, +previous_current: String, +previous_terminal: String, +previous_filter: String, +previous_codex: String, next: State, message_enabled: Bool, terminal_enabled: Bool, codex_enabled: Bool) -> Bool:
+  match next:
+    case State{guidance_cursor,last_message,muse_primary,muse_current,terminal,filter_mode,codex_log,held,omp_activity,output,output_done,episode}:
+      +episode_changed = Bool.not(String.eq(previous_episode,episode))
+      +guidance_changed = Bool.not(String.eq(previous_cursor,guidance_cursor))
+      +message_changed = changed_when(message_enabled,previous_message,last_message)
+      +output_changed = Bool.not(String.eq(previous_output,output))
+      +activity_changed = Bool.not(String.eq(previous_activity,omp_activity))
+      +primary_changed = Bool.not(String.eq(previous_primary,muse_primary))
+      +current_changed = Bool.not(String.eq(previous_current,muse_current))
+      +terminal_changed = changed_when(terminal_enabled,previous_terminal,terminal)
+      +filter_changed = Bool.not(String.eq(previous_filter,filter_mode))
+      +codex_changed = changed_when(codex_enabled,previous_codex,codex_log)
+      Bool.or(episode_changed,Bool.or(output_changed,Bool.or(activity_changed,Bool.or(guidance_changed,Bool.or(message_changed,Bool.or(primary_changed,Bool.or(current_changed,Bool.or(terminal_changed,Bool.or(filter_changed,codex_changed)))))))))
+
+# Destructure each state once. The previous accessor chain matched the whole
+# state for every field, copying the terminal and message strings repeatedly.
 def checkpoint_due_fields(+previous: State, +next: State, message_enabled: Bool, terminal_enabled: Bool, codex_enabled: Bool) -> Bool:
-  +episode_changed = Bool.not(String.eq(episode(previous),episode(next)))
-  +guidance_changed = Bool.not(String.eq(cursor(previous),cursor(next)))
-  +message_changed = changed_when(message_enabled,last_message(previous),last_message(next))
-  +output_changed = Bool.not(String.eq(output(previous),output(next)))
-  +activity_changed = Bool.not(String.eq(omp_activity(previous),omp_activity(next)))
-  +primary_changed = Bool.not(String.eq(muse_primary(previous),muse_primary(next)))
-  +current_changed = Bool.not(String.eq(muse_current(previous),muse_current(next)))
-  +terminal_changed = changed_when(terminal_enabled,terminal(previous),terminal(next))
-  +filter_changed = Bool.not(String.eq(filter_mode(previous),filter_mode(next)))
-  +codex_changed = changed_when(codex_enabled,codex_log(previous),codex_log(next))
-  Bool.or(episode_changed,Bool.or(output_changed,Bool.or(activity_changed,Bool.or(guidance_changed,Bool.or(message_changed,Bool.or(primary_changed,Bool.or(current_changed,Bool.or(terminal_changed,Bool.or(filter_changed,codex_changed)))))))))
+  match previous:
+    case State{guidance_cursor,last_message,muse_primary,muse_current,terminal,filter_mode,codex_log,held,omp_activity,output,output_done,episode}:
+      checkpoint_due_next(episode,guidance_cursor,last_message,output,omp_activity,muse_primary,muse_current,terminal,filter_mode,codex_log,next,message_enabled,terminal_enabled,codex_enabled)
 
 def checkpoint_due(previous: State, next: State) -> Bool:
   checkpoint_due_fields(previous,next,True{},True{},True{})
