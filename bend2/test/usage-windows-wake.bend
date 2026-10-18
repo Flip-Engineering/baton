@@ -1,11 +1,11 @@
 # Post-reset continuation fixture for the #797 usage-window gate. A held gate
 # schedules one detached single-shot continuation that sleeps until the
-# recorded reset and then re-runs the wake through the existing dispatch entry.
-# The fixture proves: the gate holds a short reset and admits after it; a
-# scheduled dispatch of an already handled message adds no second delivery and
-# keeps the existing receipt; two continuations for the same message leave one
-# delivery and one held report; and the continuation delay is capped so a far
-# reset re-checks in bounded segments.
+# recorded reset and then re-enters the wake driver, which re-checks the gate.
+# The fixture proves: the continuation names the wake entry, not the direct
+# delivery entry; a handled message is a no-op; a still-held window records a
+# check and delivers nothing; an admitted window delivers once; duplicate
+# continuations leave one delivery and one held report; and the delay is
+# capped at one day with the next segment still capped while held.
 #
 # usage: usage-windows-wake DB SELF_SCRIPT
 import Base
@@ -50,38 +50,59 @@ def setup(+db: String) -> IO(Unit):
     one : Unit <- query(db,"INSERT INTO sessions(id,parent,harness,model,effort,native,endpoint) VALUES('wa','root','omp','kimi-code/kimi-for-coding','high','','');")
     two : Unit <- query(db,"INSERT INTO sessions(id,parent,harness,model,effort,native,endpoint) VALUES('wb','root','omp','kimi-code/kimi-for-coding','high','','');")
     three : Unit <- query(db,"INSERT INTO sessions(id,parent,harness,model,effort,native,endpoint) VALUES('wc','root','omp','kimi-code/kimi-for-coding','high','','');")
+    four : Unit <- query(db,"INSERT INTO sessions(id,parent,harness,model,effort,native,endpoint) VALUES('ws','root','omp','kimi-code/kimi-for-coding','high','','');")
     deliveries : Unit <- query(db,"CREATE TABLE IF NOT EXISTS wake_deliveries(message TEXT PRIMARY KEY NOT NULL, receipt TEXT NOT NULL);")
     reports : Unit <- query(db,"CREATE TABLE IF NOT EXISTS wake_reports(id TEXT PRIMARY KEY NOT NULL);")
+    checks : Unit <- query(db,"CREATE TABLE IF NOT EXISTS wake_held_checks(id TEXT PRIMARY KEY NOT NULL);")
     IO.pure(Unit,Unit{})
 
-def short_window(+db: String, +session: String, +message: String) -> IO(String):
+def window(+db: String, +session: String, +message: String, +ms_offset: String) -> IO(String):
   do IO<String>:
-    +reset : String <- read(db,"SELECT CAST(strftime('%s','now') AS INTEGER)*1000+2000;")
-    window : Unit <- query(db,"INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) VALUES(CAST(strftime('%s','now') AS INTEGER)*1000,'omp','kimi-code/kimi-for-coding','kimi-code'," ++ C.q(session) ++ ",'5-hour'," ++ Tx.trim_nl(reset) ++ ",'provider-message',NULL,'short reset window'," ++ C.q(message) ++ ");")
+    +reset : String <- read(db,"SELECT CAST(strftime('%s','now') AS INTEGER)*1000+" ++ ms_offset ++ ";")
+    window : Unit <- query(db,"INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) VALUES(CAST(strftime('%s','now') AS INTEGER)*1000,'omp','kimi-code/kimi-for-coding','kimi-code'," ++ C.q(session) ++ ",'5-hour'," ++ Tx.trim_nl(reset) ++ ",'provider-message',NULL,'window'," ++ C.q(message) ++ ");")
     IO.pure(String,Tx.trim_nl(reset))
+
+def message(+db: String, +session: String, +message: String, +receipt: String) -> IO(Unit):
+  query(db,"INSERT INTO messages(id,sender,recipient,kind,body,receipt) VALUES(" ++ C.q(message) ++ ",'root'," ++ C.q(session) ++ ",'guidance','owed',nullif(" ++ C.q(receipt) ++ ",''));")
 
 def handled_case(+db: String, +self: String) -> IO(Unit):
   do IO<Unit>:
-    +reset : String <- short_window(db,"wa","m-wa")
-    handled : Unit <- query(db,"INSERT INTO wake_deliveries(message,receipt) VALUES('m-wa','handled-first');")
+    +reset : String <- window(db,"wa","m-wa","2000")
+    handled : Unit <- message(db,"wa","m-wa","handled-first")
     held : Unit <- expect_gate(db,"wa","wa","held","handled-case-held")
     UW.schedule_wake(db,"m-wa",reset,self)
     IO.pure(Unit,Unit{})
 
 def duplicate_case(+db: String, +self: String) -> IO(Unit):
   do IO<Unit>:
-    +reset : String <- short_window(db,"wb","m-wb")
-    report : Unit <- query(db,"INSERT INTO wake_reports(id) VALUES('m-wb:usage-window-held-report');")
+    +reset : String <- window(db,"wb","m-wb","2000")
+    owed : Unit <- message(db,"wb","m-wb","")
     held : Unit <- expect_gate(db,"wb","wb","held","duplicate-case-held")
     UW.schedule_wake(db,"m-wb",reset,self)
     UW.schedule_wake(db,"m-wb",reset,self)
     IO.pure(Unit,Unit{})
 
-def cap_case(+db: String, +self: String) -> IO(Unit):
+def stale_case(+db: String, +self: String) -> IO(Unit):
+  do IO<Unit>:
+    +reset : String <- window(db,"ws","m-ws","3600000")
+    owed : Unit <- message(db,"ws","m-ws","")
+    held : Unit <- expect_gate(db,"ws","ws","held","stale-case-held")
+    before : Unit <- expect_read(db,"SELECT count(*) FROM wake_deliveries WHERE message='m-ws';","0\n","stale-held-no-delivery-before")
+    ran : Result<&1,&1,U32 & String,String> <- Proc.Process.run(Tx.enc_argv([self,"--wake-message",db,"m-ws"]),".")
+    checked : Unit <- expect_read(db,"SELECT count(*) FROM wake_held_checks WHERE id='m-ws';","1\n","stale-held-check-recorded")
+    blocked : Unit <- expect_read(db,"SELECT count(*) FROM wake_deliveries WHERE message='m-ws';","0\n","stale-held-no-delivery")
+    passed : Unit <- query(db,"UPDATE usage_windows SET resets_at=CAST(strftime('%s','now') AS INTEGER)*1000-1000 WHERE message='m-ws';")
+    admitted : Unit <- expect_gate(db,"ws","ws","elapsed","stale-case-elapsed")
+    rerun : Result<&1,&1,U32 & String,String> <- Proc.Process.run(Tx.enc_argv([self,"--wake-message",db,"m-ws"]),".")
+    delivered : Unit <- expect_read(db,"SELECT count(*) FROM wake_deliveries WHERE message='m-ws';","1\n","elapsed-delivery-once")
+    receipt : Unit <- expect_read(db,"SELECT receipt FROM messages WHERE id='m-ws';","delivered\n","elapsed-sets-receipt")
+    IO.pure(Unit,Unit{})
+
+def cap_case(+db: String) -> IO(Unit):
   do IO<Unit>:
     +far : String <- read(db,"SELECT CAST(strftime('%s','now') AS INTEGER)*1000+172800000;")
     delay : Unit <- expect_read(db,UW.schedule_delay_sql(Tx.trim_nl(far)),"86400\n","far-reset-segment-capped")
-    window : Unit <- query(db,"INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) VALUES(CAST(strftime('%s','now') AS INTEGER)*1000,'omp','kimi-code/kimi-for-coding','kimi-code','wc','5-hour'," ++ Tx.trim_nl(far) ++ ",'provider-message',NULL,'far reset window','m-wc');")
+    window : Unit <- query(db,"INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) VALUES(CAST(strftime('%s','now') AS INTEGER)*1000,'omp','kimi-code/kimi-for-coding','kimi-code','wc','5-hour'," ++ Tx.trim_nl(far) ++ ",'provider-message',NULL,'far window','m-wc');")
     held : Unit <- expect_gate(db,"wc","wc","held","far-reset-held")
     next_segment : Unit <- expect_read(db,UW.schedule_delay_sql(Tx.trim_nl(far)),"86400\n","next-segment-still-86400")
     passed : Unit <- query(db,"UPDATE usage_windows SET resets_at=CAST(strftime('%s','now') AS INTEGER)*1000-1000 WHERE message='m-wc';")
@@ -92,12 +113,16 @@ def main_args(args: List<String>) -> IO(Unit):
   match args:
     case +path <> +self <> Nil{}: do IO<Unit>:
       setup(path)
+      +argv_enc : String <- IO.pure(String,Tx.enc_argv(UW.schedule_argv(self,path,"m","1")))
+      argv_wake : Unit <- expect_read(path,"SELECT instr(" ++ C.q(argv_enc) ++ ",'--wake-message')>0;","1\n","schedule-uses-wake-entry")
+      argv_direct : Unit <- expect_read(path,"SELECT instr(" ++ C.q(argv_enc) ++ ",'--dispatch-message')=0;","1\n","schedule-not-direct-delivery")
       handled_case(path,self)
       duplicate_case(path,self)
-      cap_case(path,self)
+      stale_case(path,self)
+      cap_case(path)
       waited : Result<&1,&1,U32 & String,String> <- Proc.Process.run(Tx.enc_argv(["/bin/sh","-c","sleep 5"]),".")
-      handled_delivery : Unit <- expect_read(path,"SELECT count(*) FROM wake_deliveries WHERE message='m-wa';","1\n","handled-single-delivery")
-      kept_receipt : Unit <- expect_read(path,"SELECT receipt FROM wake_deliveries WHERE message='m-wa';","handled-first\n","handled-keeps-receipt")
+      handled_delivery : Unit <- expect_read(path,"SELECT count(*) FROM wake_deliveries WHERE message='m-wa';","0\n","handled-no-second-delivery")
+      kept_receipt : Unit <- expect_read(path,"SELECT receipt FROM messages WHERE id='m-wa';","handled-first\n","handled-keeps-receipt")
       duplicate_delivery : Unit <- expect_read(path,"SELECT count(*) FROM wake_deliveries WHERE message='m-wb';","1\n","duplicate-single-delivery")
       duplicate_report : Unit <- expect_read(path,"SELECT count(*) FROM wake_reports WHERE id='m-wb:usage-window-held-report';","1\n","duplicate-single-held-report")
       IO.print("fixture-windows-wake-ok")
