@@ -21,30 +21,17 @@ name: bend2-native-development
       - 'bend2/context/**'
       - 'docs/bend2/reference/toolchain/install-2.0.25.sh'
       - 'docs/bend2/reference/upstream/LICENSE'
-  push:
-    branches: [bend2-rewrite, main]
-    paths:
-      - '.github/workflows/bend2-native.yml'
-      - '.github/scripts/record-native-checks.py'
-      - '.github/scripts/reuse-native-target.py'
-      - '.github/scripts/reuse-native-main.py'
-      - '.github/scripts/prepare-native-compiler.py'
-      - 'LICENSE'
-      - 'NOTICE'
-      - 'bend2/src/**'
-      - 'bend2/scripts/build-native.sh'
-      - 'bend2/scripts/package-native.py'
-      - 'bend2/scripts/smoke-native-artifact.py'
-      - 'bend2/scripts/*.mjs'
-      - 'bend2/harness/**'
-      - 'bend2/ui/**'
-      - 'bend2/context/**'
-      - 'docs/bend2/reference/toolchain/install-2.0.25.sh'
-      - 'docs/bend2/reference/upstream/LICENSE'
+# Push-triggered automatic validation stays disabled until the shared host
+# admission from #677/#819 is installed. Dispatch an exact source commit.
   workflow_dispatch:
     inputs:
       release_version:
         description: 'Release archive version; leave blank for a development archive'
+        required: false
+        default: ''
+        type: string
+      source_commit:
+        description: 'Exact candidate source commit; leave blank for the dispatched ref'
         required: false
         default: ''
         type: string
@@ -86,7 +73,7 @@ permissions:
   contents: read
 
 env:
-  BATON2_SOURCE_SHA: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || github.sha }}
+  BATON2_SOURCE_SHA: ${{ inputs.source_commit || (github.event_name == 'pull_request' && github.event.pull_request.head.sha) || github.sha }}
 
 jobs:
   linux-candidate:
@@ -98,6 +85,9 @@ jobs:
       BEND_NO_TELEMETRY: '1'
       BUN_JSC_maxPerThreadStackUsage: '67108864'
     steps:
+      - name: Validate exact source commit
+        shell: bash
+        run: '[[ "$BATON2_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]'
       - name: Checkout exact candidate
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -267,9 +257,12 @@ jobs:
       CC: /usr/bin/clang-19
       BEND_NO_TELEMETRY: '1'
       BUN_JSC_maxPerThreadStackUsage: '67108864'
-      BATON2_TARGET_COMMIT: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event_name == 'push' && github.event.before || inputs.target_commit }}
+      BATON2_TARGET_COMMIT: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || inputs.target_commit }}
       BATON2_TARGET_BUILD_RUN: ${{ inputs.target_build_run }}
     steps:
+      - name: Validate exact source commit
+        shell: bash
+        run: '[[ "$BATON2_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]'
       - name: Checkout candidate test contracts and target history
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
