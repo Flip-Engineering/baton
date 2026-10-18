@@ -122,6 +122,51 @@ static int dispatch_entry(int argc,char **argv) {
   free(args);free(helper);free(executable);return 1;
 }
 
+#ifdef BATON2_RECEIVE_FOCUSED
+/* The focused executable owns receiver operations and exposes the same path
+   to native workers. All general Baton actions use the sibling full CLI. */
+static int focused_receiver_verb(int argc,char **argv) {
+  if(argc<2) return 0;
+  const char *first=argv[1];
+  if(!strcmp(first,"--dispatch-message") || !strcmp(first,"--host-process-keeper") ||
+     !strcmp(first,"--instance-owner") || !strcmp(first,"--instance-shutdown") ||
+     !strcmp(first,"--recover-observer") || !strcmp(first,"--recover-receive")) return 1;
+  if(argc>2 && (!strcmp(argv[2],"receive") || !strcmp(argv[2],"turn") ||
+                !strcmp(argv[2],"receiver") || !strcmp(argv[2],"recover-observer"))) return 1;
+  return argc>3 && !strcmp(first,"--database") && !strcmp(argv[3],"receiver");
+}
+
+static int delegate_full_cli(char **argv) {
+  char *executable=application_executable();
+  char *directory=executable?strdup(executable):NULL;
+  char *slash=directory?strrchr(directory,'/'):NULL;
+  if(!slash) {
+    free(directory);free(executable);
+    fputs("baton: cannot locate the focused installation directory.\n",stderr);
+    return 78;
+  }
+  *slash=0;
+  size_t size=strlen(directory)+sizeof("/baton-full");
+  char *candidate=malloc(size);
+  if(!candidate) {
+    free(directory);free(executable);
+    perror("baton: full CLI path");
+    return 1;
+  }
+  snprintf(candidate,size,"%s/baton-full",directory);
+  char *full=realpath(candidate,NULL);
+  free(candidate);free(directory);free(executable);
+  if(!full || access(full,X_OK)) {
+    fputs("baton: sibling baton-full is missing or not executable. Install the complete Baton package.\n",stderr);
+    free(full);return 78;
+  }
+  argv[0]=full;
+  execv(full,argv);
+  perror("baton: full CLI could not execute");
+  free(full);return 1;
+}
+#endif
+
 /* Pass the complete application argv through the runtime's argument boundary. */
 int main(int argc, char **argv) {
   if (argc < 1 || argc == INT_MAX ||
@@ -133,6 +178,9 @@ int main(int argc, char **argv) {
   if(settings>=0) return settings;
   int dispatch=dispatch_entry(argc,argv);
   if(dispatch>=0) return dispatch;
+#ifdef BATON2_RECEIVE_FOCUSED
+  if(!focused_receiver_verb(argc,argv)) return delegate_full_cli(argv);
+#endif
   char **application = calloc((size_t)argc + 2, sizeof(*application));
   if (!application) {
     fputs("baton2: cannot allocate native arguments.\n", stderr);

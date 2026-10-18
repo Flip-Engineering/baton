@@ -64,22 +64,35 @@ def dispatch_turn(selected: Bool, +db: String, +player: String, +id: String, +cm
     case True{}: Turn.run(db,player,id,cmd,model,effort,cwd,task,log,session)
     case False{}: IO.die(Unit,2,"expected turn")
 
+def dispatch_receiver(+db: String, +session: String, +cmd: String, +log: String, +cwd: String) -> IO(Unit):
+  do IO<Unit>:
+    saved : String <- IO.try(String,Control.receiver(db,session,cmd,log,cwd))
+    IO.write(saved)
+
 def dispatch(args: List<String>) -> IO(Unit):
   match args:
-    case executable <> +db <> +verb <> +session <> +cmd <> +model <> +effort <> +cwd <> +log <> +message <> Nil{}:
+    case +db <> +verb <> +session <> +cmd <> +model <> +effort <> +cwd <> +log <> +message <> Nil{}:
       dispatch_receive(String.eq(verb,"receive"),db,session,cmd,model,effort,cwd,log,message)
-    case executable <> +db <> +verb <> +player <> +id <> +cmd <> +model <> +effort <> +cwd <> +task <> +log <> +session <> Nil{}:
+    case +db <> +verb <> +player <> +id <> +cmd <> +model <> +effort <> +cwd <> +task <> +log <> +session <> Nil{}:
       dispatch_turn(String.eq(verb,"turn"),db,player,id,cmd,model,effort,cwd,task,log,session)
-    case executable <> +flag <> +db <> Nil{}:
+    case +flag <> +db <> Nil{}:
       dispatch_instance(String.eq(flag,"--instance-owner"),String.eq(flag,"--instance-shutdown"),db)
-    case executable <> +flag <> +first <> +second <> Nil{}:
+    case +flag <> +first <> +second <> Nil{}:
       dispatch_three(flag,first,second)
-    case executable <> +first <> +second <> +session <> +observer <> Nil{}:
+    case +first <> +second <> +session <> +observer <> Nil{}:
       dispatch_observer_argv(String.eq(first,"--recover-observer"),first,second,session,observer)
-    case executable <> +flag <> +db <> +session <> +id <> +cursor <> +cmd <> +model <> +effort <> +cwd <> +log <> +harness <> +directory <> +native <> Nil{}:
+    case +flag <> +db <> +session <> +id <> +cursor <> +cmd <> +model <> +effort <> +cwd <> +log <> +harness <> +directory <> +native <> Nil{}:
       dispatch_recover(String.eq(flag,"--recover-receive"),db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,"")
-    case executable <> +flag <> +db <> +session <> +id <> +cursor <> +cmd <> +model <> +effort <> +cwd <> +log <> +harness <> +directory <> +native <> +inputs <> Nil{}:
+    case +flag <> +db <> +session <> +id <> +cursor <> +cmd <> +model <> +effort <> +cwd <> +log <> +harness <> +directory <> +native <> +inputs <> Nil{}:
       dispatch_recover(String.eq(flag,"--recover-receive"),db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,inputs)
+    case +db <> "receiver" <> +session <> +cmd <> +log <> Nil{}:
+      dispatch_receiver(db,session,cmd,log,"")
+    case +db <> "receiver" <> +session <> +cmd <> +log <> +cwd <> Nil{}:
+      dispatch_receiver(db,session,cmd,log,cwd)
+    case "--database" <> +db <> "receiver" <> +session <> +cmd <> +log <> Nil{}:
+      dispatch_receiver(db,session,cmd,log,"")
+    case "--database" <> +db <> "receiver" <> +session <> +cmd <> +log <> +cwd <> Nil{}:
+      dispatch_receiver(db,session,cmd,log,cwd)
     case other: IO.die(Unit,2,"unsupported focused receive command")
 
 def main() -> IO(Unit):
