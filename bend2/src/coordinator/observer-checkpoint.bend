@@ -212,14 +212,28 @@ def restore(db: String, +handle: U32) -> IO(State):
     saved : String <- IO.try(String,Custody.Instance.restore(handle,schema_version()))
     decode(db,handle,without_query_newline(saved))
 
-def commit(db: String, handle: U32, +state: State, enabled: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+# The host state names the custody the handle holds. An adopted monitor refuses
+# the ordinary checkpoint; its own operation revalidates the custody record and
+# cursor before writing the reducer snapshot.
+def monitor_handle(db: String, handle: U32) -> IO(Bool):
+  do IO<Bool>:
+    facts : String <- IO.try(String,Custody.Instance.state(handle))
+    mode : String <- IO.try(String,DB.Sql.query(db,"SELECT json_extract(" ++ C.q(facts) ++ ",'$.observation');"))
+    IO.pure(Bool,String.eq(Tx.trim_nl(mode),"monitor"))
+
+def commit_with(monitor: Bool, handle: U32, +saved: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match monitor:
+    case True{}: Custody.Instance.monitor_commit(handle,schema_version(),saved)
+    case False{}: Custody.Instance.commit(handle,schema_version(),saved)
+
+def commit(db: String, handle: U32, +state: State, enabled: Bool, monitor: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match enabled:
     case False{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
     case True{}: do IO<Result<&1,&1,U32 & String,Unit>>:
       saved : String <- IO.try(String,DB.Sql.query(db,encode_sql(state)))
-      Custody.Instance.commit(handle,schema_version(),Tx.trim_nl(saved))
+      commit_with(monitor,handle,Tx.trim_nl(saved))
 
-def after_observation(db: String, handle: U32, +state: State, enabled: Bool, observed: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,Unit>):
+def after_observation(db: String, handle: U32, +state: State, enabled: Bool, monitor: Bool, observed: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match observed:
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error})
-    case Done{text}: commit(db,handle,state,enabled)
+    case Done{text}: commit(db,handle,state,enabled,monitor)

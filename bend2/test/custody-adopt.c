@@ -17,6 +17,29 @@ static char *encoded(char **items,int count) {
   return buffer;
 }
 
+static int custody_rewrite(const char *directory,BrCustody *record) {
+  record->check=br_custody_check(record);
+  char *path=br_path(directory,"custody");
+  if(!path)return ENOMEM;
+  int fd=open(path,O_WRONLY|O_TRUNC|O_CLOEXEC);
+  free(path);
+  if(fd<0)return errno;
+  int error=br_write_all(fd,record,sizeof(*record));
+  close(fd);
+  return error;
+}
+
+static uint64_t checkpoint_offset(const char *directory) {
+  char *path=br_path(directory,"checkpoint");
+  if(!path)return UINT64_MAX;
+  int fd=open(path,O_RDONLY|O_CLOEXEC);free(path);
+  if(fd<0)return UINT64_MAX;
+  BrCheckpoint checkpoint;
+  int error=br_read_all(fd,&checkpoint,sizeof(checkpoint));
+  close(fd);
+  if(error || memcmp(checkpoint.magic,BR_CHECKPOINT_MAGIC,8))return UINT64_MAX;
+  return checkpoint.offset;
+}
 int main(int argc,char **argv) {
   if(argc==2 && !strcmp(argv[1],"native-sleep")) {
     if(br_write_all(STDOUT_FILENO,"native-ready\n",13))return 1;
@@ -116,11 +139,72 @@ int main(int argc,char **argv) {
   REQUIRE((stored.flags&BR_CUSTODY_UNKNOWN) && (stored.flags&BR_CUSTODY_INPUT_UNFINISHED));
   REQUIRE(stored.birth.pid==state.pid);
   free(custody);
-  /* A retry returns the same custody and does not start another native. */
+  /* The ordinary checkpoint stays refused on an adopted monitor. */
+  BatonProcessCall commit={.kind=BP_INSTANCE_COMMIT,.child=&child,.signal=1,.text="{}",.length=2};
+  baton_retained_call(&commit);
+  REQUIRE(commit.error==EPERM);
+  /* One observed line advances the monitor cursor once, and the reducer
+     snapshot is stored with the same offset. */
+  BatonProcessCall line={.kind=BP_READ,.child=&child};
+  baton_retained_call(&line);
+  REQUIRE(line.error==0 && line.length==12 && !memcmp(line.text,"native-ready",12));
+  char *state_text="{\"output\":\"13\"}";
+  BatonProcessCall monitor={.kind=BP_INSTANCE_MONITOR_COMMIT,.child=&child,
+    .signal=1,.text=state_text,.length=(u32)strlen(state_text)};
+  baton_retained_call(&monitor);
+  REQUIRE(monitor.error==0);
+  REQUIRE(checkpoint_offset(directory)==13);
+  REQUIRE(br_read_file(directory,"custody",&stored,sizeof(stored))==0);
+  REQUIRE(stored.offset==13);
+  /* A state-only checkpoint at the same offset is allowed; a rewound cursor
+     is not, and neither is an empty reducer snapshot. */
+  BatonProcessCall final={.kind=BP_INSTANCE_MONITOR_COMMIT,.child=&child,
+    .signal=1,.text=state_text,.length=(u32)strlen(state_text)};
+  baton_retained_call(&final);
+  REQUIRE(final.error==0);
+  retained->offset=0;
+  BatonProcessCall backward={.kind=BP_INSTANCE_MONITOR_COMMIT,.child=&child,
+    .signal=1,.text=state_text,.length=(u32)strlen(state_text)};
+  baton_retained_call(&backward);
+  REQUIRE(backward.error==ESTALE);
+  retained->offset=13;
+  BatonProcessCall empty={.kind=BP_INSTANCE_MONITOR_COMMIT,.child=&child,.signal=1};
+  baton_retained_call(&empty);
+  REQUIRE(empty.error==EINVAL);
+  /* A changed custody identity refuses the checkpoint: manifest digest,
+     native birth and spool inode each bind the record. */
+  BrCustody original_custody=stored;
+  stored.manifest^=1;
+  REQUIRE(custody_rewrite(directory,&stored)==0);
+  BatonProcessCall manifest_mismatch={.kind=BP_INSTANCE_MONITOR_COMMIT,.child=&child,
+    .signal=1,.text=state_text,.length=(u32)strlen(state_text)};
+  baton_retained_call(&manifest_mismatch);
+  REQUIRE(manifest_mismatch.error==ESTALE);
+  stored=original_custody; stored.birth.second^=1;
+  REQUIRE(custody_rewrite(directory,&stored)==0);
+  BatonProcessCall birth_mismatch={.kind=BP_INSTANCE_MONITOR_COMMIT,.child=&child,
+    .signal=1,.text=state_text,.length=(u32)strlen(state_text)};
+  baton_retained_call(&birth_mismatch);
+  REQUIRE(birth_mismatch.error==ESTALE);
+  stored=original_custody; stored.spool_inode^=1;
+  REQUIRE(custody_rewrite(directory,&stored)==0);
+  BatonProcessCall spool_mismatch={.kind=BP_INSTANCE_MONITOR_COMMIT,.child=&child,
+    .signal=1,.text=state_text,.length=(u32)strlen(state_text)};
+  baton_retained_call(&spool_mismatch);
+  REQUIRE(spool_mismatch.error==ESTALE);
+  REQUIRE(custody_rewrite(directory,&original_custody)==0);
+  /* A second adoption while this monitor is live is refused; the durable
+     cursor cannot be advanced by two readers. */
+  BatonChild second_child={0};
+  BatonProcessCall second={.directory=directory,.child=&second_child,.database=NULL};
+  REQUIRE(br_adopt_orphan(&second,directory,guard)==EBUSY);
+  /* Once the monitor ends, a retry validates the same custody and resumes. */
+  close(retained->custody_lock);retained->custody_lock=-1;
   BatonChild retry_child={0};
   BatonProcessCall retry={.directory=directory,.child=&retry_child,.database=NULL};
   REQUIRE(br_adopt_orphan(&retry,directory,guard)==0);
   REQUIRE(retry_child.retained!=NULL);
+  close(retry_child.retained->custody_lock);retry_child.retained->custody_lock=-1;
   /* A changed birth refuses adoption. */
   BrBirth original={0};
   REQUIRE(br_read_file(directory,"native.birth",&original,sizeof(original))==0);

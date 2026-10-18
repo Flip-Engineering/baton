@@ -57,6 +57,7 @@ enum { BP_SPAWN, BP_WRITE, BP_CLOSE, BP_READ, BP_READ_AWAKE, BP_WAIT, BP_SIGNAL,
        BP_INSTANCE_PREPARE_WITH_FILE, BP_INSTANCE_START, BP_INSTANCE_CANCEL,
        BP_INSTANCE_OWNER_WITNESS, BP_INSTANCE_ENSURE_OWNER_WITNESS,
        BP_INSTANCE_RECOVER, BP_INSTANCE_INPUT_WITNESS, BP_INSTANCE_INPUT_PROMPT,
+       BP_INSTANCE_MONITOR_COMMIT,
        BP_OBSERVER_RECOVERY };
 
 static int baton_pipe(int fds[2]) {
@@ -225,7 +226,7 @@ typedef struct {
 } BrInputDelivery;
 typedef struct BatonRetained {
   int socket,spool,error,exited,status,input_closed;
-  int guard,watch,life,orphan,unknown,released,acknowledged,observer_only;
+  int guard,watch,life,orphan,unknown,released,acknowledged,observer_only,custody_lock;
   char *directory,*database;
   uint64_t version,serial,reply_serial,owner_attempt,owner_incarnation,owner_epoch;
   int reply_error;
@@ -237,6 +238,7 @@ typedef struct BatonRetained {
   pthread_mutex_t state,command,reader;
   pthread_cond_t changed;
 } BatonRetained;
+static int br_monitor_checkpoint(BatonProcessCall *call,BatonRetained *retained);
 typedef struct BrKeeper {
   struct BrKeeper *next;
   uint32_t id;
@@ -738,7 +740,7 @@ static int br_attach_socket(BatonChild *child,const char *directory,int socket,i
 }
 static int br_attach_orphan(BatonChild *child,const char *directory,int guard) {
   BatonRetained *retained=calloc(1,sizeof(*retained));if(!retained)return ENOMEM;
-  retained->socket=-1;retained->spool=-1;retained->watch=-1;retained->life=-1;
+  retained->socket=-1;retained->spool=-1;retained->watch=-1;retained->life=-1;retained->custody_lock=-1;
   /* No owner serves this attempt, so no incarnation is bound and a checkpoint
      carrying one is unreadable; the native identity still binds. */
   retained->guard=fcntl(guard,F_DUPFD_CLOEXEC,10);retained->directory=strdup(directory);
@@ -843,6 +845,10 @@ static void baton_retained_call(BatonProcessCall *call) {
     call->error=br_instance_decision(call);
     return;
   }
+  if(call->kind==BP_INSTANCE_MONITOR_COMMIT) {
+    call->error=br_monitor_checkpoint(call,retained);
+    return;
+  }
   if(call->kind==BP_READ) {br_read_line(call);return;}
   if(call->kind==BP_INSTANCE_COMMIT) {
     /* One atomic record: the consumed offset and the reducer state the caller
@@ -937,6 +943,7 @@ static void baton_retained_call(BatonProcessCall *call) {
     close(retained->spool);retained->spool=-1;
     if(retained->life>=0)close(retained->life);retained->life=-1;
     if(retained->watch>=0)close(retained->watch);retained->watch=-1;
+    if(retained->custody_lock>=0)close(retained->custody_lock);retained->custody_lock=-1;
   }
 }
 
@@ -1465,6 +1472,10 @@ static int br_keeper_prepare(BrKeeper *keeper,const char *directory,int lock) {
   if((error=br_attempt_manifest_verify(directory)))return error;
   if((error=br_admission_verify(directory,NULL,lock)))return error;
   if((error=br_lifecycle_prepare_check(directory)))return error;
+  /* Every current keeper, per-attempt or owner-managed, advertises the
+     reconcile operation. A deployed e6 keeper has no capability file. */
+  int capability=br_file(keeper->directory?keeper->directory:directory,"capabilities","reconcile\n",10,1);
+  if(capability && capability!=EEXIST)return capability;
   keeper->identity=br_manifest_digest(&keeper->manifest.header,keeper->manifest.field,keeper->manifest.count);
   if(lock>=0)fcntl(lock,F_SETFD,FD_CLOEXEC);
   struct sockaddr_un address;
@@ -2551,10 +2562,6 @@ static int br_keeper(const char *directory,int lock) {
   fcntl(keeper.client,F_SETFD,FD_CLOEXEC);
   if((error=br_nonblock(keeper.client)))goto done;
   if((error=br_keeper_start(&keeper,directory,lock)))goto done;
-  /* A deployed e6 keeper has no capability file and no reconcile operation.
-     New keepers advertise the operations the client may safely send. */
-  int capability=br_file(keeper.directory,"capabilities","reconcile\n",10,1);
-  if(capability && capability!=EEXIST) {error=capability;goto done;}
   keeper.ready=0;
   state=(BrState){keeper.native_pid,0,0,0,keeper.input_closed};
   if((error=br_send(&keeper,(BrFrame){.op=BR_HELLO,.length=sizeof(state),.value=2},&state)))goto done;
@@ -4080,6 +4087,7 @@ static int br_instance_retire(BatonProcessCall *call) {
   if(retained->spool>=0)close(retained->spool);
   if(retained->life>=0)close(retained->life);
   if(retained->watch>=0)close(retained->watch);
+  if(retained->custody_lock>=0)close(retained->custody_lock);
   pthread_mutex_destroy(&retained->state);pthread_mutex_destroy(&retained->command);
   pthread_mutex_destroy(&retained->reader);pthread_cond_destroy(&retained->changed);
   free(retained->directory);free(retained->database);free(retained);
@@ -4175,6 +4183,7 @@ static void br_subscription_free(BatonRetained *retained) {
   if(!retained)return;
   if(retained->socket>=0)close(retained->socket);
   retained->socket=-1;
+  if(retained->custody_lock>=0)close(retained->custody_lock);
   free(retained->directory);free(retained->database);
   free(retained);
 }
@@ -4364,7 +4373,7 @@ static void br_instance_subscribe_call(BatonProcessCall *call) {
     return;
   }
   retained->socket=socket_fd;
-  retained->spool=-1;retained->guard=-1;retained->watch=-1;retained->life=-1;
+  retained->spool=-1;retained->guard=-1;retained->watch=-1;retained->life=-1;retained->custody_lock=-1;
   retained->directory=strdup(call->database?call->database:"");
   retained->subscribe_generation=ready.generation;
   retained->subscribe_cursor=ready.cursor;
@@ -4463,13 +4472,13 @@ static void br_instance_state_call(BatonProcessCall *call) {
   char *directory=br_json_escape(retained->directory);
   if(!directory){call->error=ENOMEM;return;}
   const char *format=
-    "{\"schema\":\"baton2-host-ready-v1\",\"state\":\"%s\",\"handle\":%u,\"directory\":\"%s\","
+    "{\"schema\":\"baton2-host-ready-v1\",\"state\":\"%s\",\"observation\":\"%s\",\"handle\":%u,\"directory\":\"%s\","
     "\"ownerIncarnation\":%llu,\"ownerEpoch\":%llu,\"ownerAttempt\":%llu,\"guardDevice\":%llu,\"guardInode\":%llu,\"guard\":\"%llu:%llu\","
     "\"observer_ready\":%s,\"native_pid\":%llu,\"status_known\":%s,\"status\":%d,"
     "\"spawn_latched\":%s,\"cancelled\":%s,\"identity\":\"%s\",\"expectedBinding\":\"%s\","
     "\"grant\":\"%s\",\"rejection\":\"%s\"}";
   int needed=snprintf(NULL,0,format,
-    state,(unsigned)call->handle,directory,
+    state,retained->observer_only?"monitor":"observer",(unsigned)call->handle,directory,
     (unsigned long long)retained->owner_incarnation,(unsigned long long)retained->owner_epoch,
     (unsigned long long)retained->owner_attempt,
     (unsigned long long)guard_device,(unsigned long long)guard_inode,
@@ -4484,7 +4493,7 @@ static void br_instance_state_call(BatonProcessCall *call) {
   call->text=malloc(capacity);
   if(!call->text) {free(directory);call->error=ENOMEM;return;}
   int written=snprintf(call->text,capacity,format,
-    state,(unsigned)call->handle,directory,
+    state,retained->observer_only?"monitor":"observer",(unsigned)call->handle,directory,
     (unsigned long long)retained->owner_incarnation,(unsigned long long)retained->owner_epoch,
     (unsigned long long)retained->owner_attempt,
     (unsigned long long)guard_device,(unsigned long long)guard_inode,
@@ -4826,7 +4835,7 @@ static Term baton_process_begin_mode(Env e, Term *f, IoWork *w, int kind, int pr
     if(call->child->reaped && !call->child->retained && kind!=BP_WRITE && kind!=BP_INPUT_CLOSED) {free(call);return io_fail(e,ECHILD,NULL);}
     if(kind==BP_PID) {Term pid=io_done(e,(Term)call->child->pid);free(call);return pid;}
     if(kind==BP_WRITE) {u64 length=0;call->text=io_cstr(e,f[1],&length);call->length=length;}
-    if(kind==BP_INSTANCE_COMMIT) {
+    if(kind==BP_INSTANCE_COMMIT || kind==BP_INSTANCE_MONITOR_COMMIT) {
       call->signal=(u32)f[1];
       u64 length=0;call->text=io_cstr(e,f[2],&length);call->length=length;
     }
@@ -4967,6 +4976,9 @@ BP_EFFECT(baton_instance_retire,CID_INSTANCE_RETIRE,BP_INSTANCE_RETIRE)
 #ifdef CID_INSTANCE_COMMIT
 BP_EFFECT(baton_instance_commit,CID_INSTANCE_COMMIT,BP_INSTANCE_COMMIT)
 #endif
+#ifdef CID_INSTANCE_MONITOR_COMMIT
+BP_EFFECT(baton_instance_monitor_commit,CID_INSTANCE_MONITOR_COMMIT,BP_INSTANCE_MONITOR_COMMIT)
+#endif
 #ifdef CID_INSTANCE_RESTORE
 BP_EFFECT(baton_instance_restore,CID_INSTANCE_RESTORE,BP_INSTANCE_RESTORE)
 #endif
@@ -5024,7 +5036,7 @@ typedef struct {
   uint64_t manifest,spool_device,spool_inode,offset,length,check;
   BrBirth birth;
 } BrCustody;
-#define BR_CUSTODY_MAGIC "BATONCUST1"
+#define BR_CUSTODY_MAGIC "BATONCUS"
 #define BR_CUSTODY_SCHEMA 1
 #define BR_CUSTODY_UNKNOWN 1
 #define BR_CUSTODY_INPUT_UNFINISHED 2
@@ -5077,6 +5089,84 @@ static int br_custody_write(const char *directory,BatonRetained *retained) {
   return 0;
 }
 
+static int br_custody_read(const char *directory,BrCustody *record) {
+  int error=br_read_file(directory,"custody",record,sizeof(*record));
+  if(error)return error;
+  if(memcmp(record->magic,BR_CUSTODY_MAGIC,8) || record->schema!=BR_CUSTODY_SCHEMA)
+    return EINVAL;
+  return record->check==br_custody_check(record)?0:EINVAL;
+}
+
+/* The monitor lock is a separate file because the custody record is replaced
+   atomically on every checkpoint. One live adopted reader holds it; a second
+   observer that would read the same spool and write the same database is
+   refused instead of duplicating reducer effects. */
+static int br_monitor_lock(BatonRetained *retained) {
+  char *path=br_path(retained->directory,"monitor.lock");
+  if(!path)return ENOMEM;
+  int fd=open(path,O_CREAT|O_RDWR|O_CLOEXEC,0600);
+  free(path);
+  if(fd<0)return errno;
+  int held;
+  do {held=flock(fd,LOCK_EX|LOCK_NB);} while(held<0 && errno==EINTR);
+  if(held<0) {
+    int error=errno;close(fd);
+    return error==EWOULDBLOCK||error==EAGAIN?EBUSY:error;
+  }
+  retained->custody_lock=fd;
+  return 0;
+}
+
+/* True only when the recorded observer process has ended. A live observer still
+   owns the attempt; a second reader must not adopt beside it. */
+static int br_process_dead(pid_t pid) {
+  int ended=0;
+  int life=br_process_lifetime(pid,&ended);
+  if(life>=0){close(life);return 0;}
+  return ended;
+}
+
+/* The only checkpoint an adopted monitor may write. It revalidates the exact
+   custody record the adoption wrote: manifest digest, native birth, spool
+   device and inode, a non-decreasing cursor within the current spool extent,
+   and a reducer snapshot committed after the caller wrote that frame's output.
+   The record is updated in the same step so a retry resumes from this floor. */
+static int br_monitor_checkpoint(BatonProcessCall *call,BatonRetained *retained) {
+  if(!retained->observer_only)return EPERM;
+  if(retained->custody_lock<0)return EBUSY;
+  if(retained->spool<0)return EBADF;
+  if(call->length==0)return EINVAL;
+  pthread_mutex_lock(&retained->reader);
+  BrCustody custody={0};
+  int error=br_custody_read(retained->directory,&custody);
+  struct stat info={0};
+  if(!error && fstat(retained->spool,&info))error=errno;
+  if(!error && (!S_ISREG(info.st_mode) ||
+      (uint64_t)info.st_dev!=custody.spool_device ||
+      (uint64_t)info.st_ino!=custody.spool_inode))error=ESTALE;
+  uint64_t manifest=0;
+  if(!error)error=br_manifest_digest_file(retained->directory,&manifest);
+  if(!error && manifest!=custody.manifest)error=ESTALE;
+  BrBirth birth={0};
+  if(!error)error=br_read_file(retained->directory,"native.birth",&birth,sizeof(birth));
+  if(!error && !br_same_birth(birth,custody.birth))error=ESTALE;
+  uint64_t offset=(uint64_t)retained->offset;
+  if(!error && (offset<custody.offset || offset>(uint64_t)info.st_size))error=ESTALE;
+  if(!error)error=br_checkpoint_store(retained->directory,retained->spool,
+    (uint32_t)call->signal,retained->incarnation,offset,call->text,call->length);
+  if(!error) {
+    retained->offset_stored=offset;
+    custody.offset=offset;
+    custody.length=(uint64_t)info.st_size;
+    custody.check=br_custody_check(&custody);
+    char *path=br_path(retained->directory,"custody");
+    if(!path)error=ENOMEM;
+    else {error=br_replace(retained->directory,path,&custody,sizeof(custody),1);free(path);}
+  }
+  pthread_mutex_unlock(&retained->reader);
+  return error;
+}
+
 static int br_adopt_orphan(BatonProcessCall *call,const char *directory,int lock) {
   int error=br_admission_verify(directory,call->database,-1);
   BrManifest manifest={0};
@@ -5126,7 +5216,11 @@ static int br_adopt_orphan(BatonProcessCall *call,const char *directory,int lock
     retained->unknown=1;
     retained->input_closed=1;
     pthread_mutex_unlock(&retained->state);
-    error=br_custody_write(directory,retained);
+    error=br_monitor_lock(retained);
+    if(!error)error=br_custody_write(directory,retained);
+    if(error && retained->custody_lock>=0) {
+      close(retained->custody_lock);retained->custody_lock=-1;
+    }
   }
   br_manifest_free(&manifest);
   return error;
@@ -5235,10 +5329,14 @@ static int baton_observer_recover(BatonSessionLock *call) {
   if(call->keeper) {
     error=br_instance_attach_observer(&call->attempt,call->observer);
     if(error==EBUSY && call->legacy_unknown) {
-      /* A legacy keeper cannot transfer a live or unknown attempt. Adopt
-         monitor-only custody without retiring the observer or closing its
-         connection, so the keeper's replay path is not entered. */
-      error=br_adopt_orphan(&call->attempt,call->directory,(int)call->handle);
+      /* A legacy keeper cannot transfer an unknown attempt and its EBUSY may
+         mean another live observer still holds the connection. Adopt only
+         after the recorded observer has ended, so a second reader never
+         repeats the live observer's database writes. */
+      if(!br_process_dead((pid_t)call->observer))
+        error=EBUSY;
+      else
+        error=br_adopt_orphan(&call->attempt,call->directory,(int)call->handle);
     } else if(error==EBUSY) {
       /* Current keepers use ordinary attachment after observer exit. */
       error=baton_observer_retire(call);
@@ -5247,7 +5345,8 @@ static int baton_observer_recover(BatonSessionLock *call) {
     else if(call->legacy_unknown &&
             (error==EPROTO || error==EPIPE || error==ECONNRESET ||
              error==ENOENT || error==ECONNREFUSED)) {
-      error=br_adopt_orphan(&call->attempt,call->directory,(int)call->handle);
+      error=br_process_dead((pid_t)call->observer)?
+        br_adopt_orphan(&call->attempt,call->directory,(int)call->handle):EBUSY;
     }
     if(error==EBUSY)call->detail="Another observer holds the retained attempt; inspect its current receive.";
     if(!error) {
@@ -5264,7 +5363,13 @@ static int baton_observer_recover(BatonSessionLock *call) {
   int held;do {held=flock(call->handle,LOCK_EX);}while(held<0 && errno==EINTR);
   if(held<0)return errno;
   if(call->attempt.child->retained)return 0;
-  if(call->legacy_unknown)return br_adopt_orphan(&call->attempt,call->directory,(int)call->handle);
+  if(call->legacy_unknown) {
+    if(!br_process_dead((pid_t)call->observer)) {
+      call->detail="Another observer holds the retained attempt; inspect its current receive.";
+      return EBUSY;
+    }
+    return br_adopt_orphan(&call->attempt,call->directory,(int)call->handle);
+  }
   return br_instance_attach_owned(&call->attempt);
 }
 
@@ -5346,13 +5451,12 @@ static Term baton_session_lock_pack(Env e, IoWork *w) {
         if(retained->guard>=0)close(retained->guard);
         if(retained->spool>=0)close(retained->spool);
         if(retained->life>=0)close(retained->life);
+        if(retained->custody_lock>=0)close(retained->custody_lock);
         if(retained->watch>=0)close(retained->watch);
         pthread_mutex_destroy(&retained->state);pthread_mutex_destroy(&retained->command);
         pthread_mutex_destroy(&retained->reader);pthread_cond_destroy(&retained->changed);
         free(retained->directory);free(retained->database);free(retained);
       }
-      call->attempt.child->retained=NULL;
-      baton_child_retire_slot(&call->attempt);
     }
   }
   Term result=call->error ? io_fail(e,call->error,call->detail) : io_done(e,value);

@@ -7,20 +7,20 @@ law failed_store_observation_does_not_advance_the_native_cursor:
   for +state: Observer.State
   for +code: U32
   for +text: String
-  {Observer.after_observation(db,handle,state,True{},Fail{(code,text)}) == IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(code,text)}) : IO(Result<&1,&1,U32 & String,Unit>)}
+  {Observer.after_observation(db,handle,state,True{},False{},Fail{(code,text)}) == IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(code,text)}) : IO(Result<&1,&1,U32 & String,Unit>)}
 
 law disabled_checkpoint_does_not_write_native_state:
   for +db: String
   for +handle: U32
   for +state: Observer.State
-  {Observer.after_observation(db,handle,state,False{},Done{"observed"}) == IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}) : IO(Result<&1,&1,U32 & String,Unit>)}
+  {Observer.after_observation(db,handle,state,False{},False{},Done{"observed"}) == IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}) : IO(Result<&1,&1,U32 & String,Unit>)}
 
 law successful_observation_commits_the_reducer_snapshot:
   for +db: String
   for +handle: U32
   for +state: Observer.State
   for +body: String
-  {Observer.after_observation(db,handle,state,True{},Done{body}) == Observer.commit(db,handle,state,True{}) : IO(Result<&1,&1,U32 & String,Unit>)}
+  {Observer.after_observation(db,handle,state,True{},False{},Done{body}) == Observer.commit(db,handle,state,True{},False{}) : IO(Result<&1,&1,U32 & String,Unit>)}
 
 law reducer_schema_version_is_explicit:
   {Observer.schema_version() == 1 : U32}
