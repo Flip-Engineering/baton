@@ -208,7 +208,7 @@ law m17_not_refused_conversation_completes_the_attempt:
   for +outcome: Turn.Outcome
   for -deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>
   for -again: String -> IO(Result<&1,&1,U32 & String,Unit>)
-  {Receive.complete_or_restart(db,session,id,log,stderr,attempt,cursor,native,cwd,handle,lock,outcome,deliveries,again,False{},False{}) == Receive.completed(db,session,id,log,attempt,stderr,cursor,handle,lock,outcome,deliveries,again,False{}) : IO(Result<&1,&1,U32 & String,Unit>)}
+  {Receive.complete_or_restart(db,session,id,log,stderr,attempt,cursor,native,cwd,handle,lock,outcome,deliveries,again,False{},False{}) == Receive.completed(db,session,id,log,attempt,native,stderr,cursor,handle,lock,outcome,deliveries,again,False{}) : IO(Result<&1,&1,U32 & String,Unit>)}
 
 def m17_not_refused_conversation_completes_the_attempt(db,session,id,log,stderr,attempt,cursor,native,cwd,handle,lock,outcome,deliveries,again):
   {==}
