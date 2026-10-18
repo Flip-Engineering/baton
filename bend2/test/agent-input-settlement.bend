@@ -58,6 +58,7 @@ def seed(+db: String) -> IO(Unit):
       ++ "('attempt-running','running-guidance','running-attempt','native-running','fixture'),"
       ++ "('attempt-stopped','stopped-prompt','stopped-session','native-stopped','fixture'),"
       ++ "('attempt-stopped','stopped-guidance','stopped-session','native-stopped','fixture');"
+      ++ "UPDATE message_reads SET handled='prior-handled' WHERE attempt='attempt-success' AND message='guidance-1';"
       ++ "INSERT INTO session_stops(session,id,reason,outcome) VALUES('stopped-session','stop-fixture','fixture stop','requested');"
       ++ "COMMIT;")
     IO.pure(Unit,Unit{})
@@ -65,9 +66,11 @@ def seed(+db: String) -> IO(Unit):
 def success_case(+db: String) -> IO(Unit):
   do IO<Unit>:
     settled : Unit <- AgentInput.consume_delivered(db,"success","attempt-success","native-success","2","5")
+    settled_again : Unit <- AgentInput.consume_delivered(db,"success","attempt-success","native-success","2","5")
     prior_receipt : Unit <- expect_read(db,"SELECT coalesce(receipt,'<null>') FROM messages WHERE id='prior';","prior-receipt\n","existing-receipt-preserved")
     prompt_receipt : Unit <- expect_read(db,"SELECT coalesce(receipt,'<null>') FROM messages WHERE id='prompt';","native-turn:attempt-success\n","initial-prompt-consumed")
     first_receipt : Unit <- expect_read(db,"SELECT coalesce(receipt,'<null>') FROM messages WHERE id='guidance-1';","native-turn:attempt-success\n","first-guidance-consumed")
+    prior_handled : Unit <- expect_read(db,"SELECT coalesce(handled,'<null>') FROM message_reads WHERE message='guidance-1';","prior-handled\n","existing-handled-preserved")
     between_receipt : Unit <- expect_read(db,"SELECT coalesce(receipt,'<null>') FROM messages WHERE id='recovery-between';","<null>\n","non-guidance-between-cursors-preserved")
     second_receipt : Unit <- expect_read(db,"SELECT coalesce(receipt,'<null>') FROM messages WHERE id='guidance-2';","native-turn:attempt-success\n","last-forwarded-guidance-consumed")
     later_guidance : Unit <- expect_read(db,"SELECT coalesce(receipt,'<null>') FROM messages WHERE id='guidance-later';","<null>\n","later-guidance-preserved")
