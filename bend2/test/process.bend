@@ -76,7 +76,9 @@ def observer_close(handle: U32, close: Bool) -> IO(Unit):
 
 def observe_retained(+handle: U32, lock: Maybe<U32>, payload: String, close: Bool) -> IO(Unit):
   do IO<Unit>:
+    ready : Unit <- IO.print("observer-write-start")
     written : Unit <- IO.try(Unit,P.ProcessChild.write(handle,payload))
+    printed : Unit <- IO.print("observer-write-complete")
     closed : Unit <- observer_close(handle,close)
     sender : Chan(Unit) <- IO.fork(Unit,IO.pure(Unit,Unit{}))
     first : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.read_line(handle))
