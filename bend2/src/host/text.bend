@@ -13,5 +13,23 @@ def Text.append(path: String, text: String) -> IO(Result<&1, &1, U32 & String, U
 def Text.write_at(path: String, position: String, text: String, finish: U32) -> IO(Result<&1, &1, U32 & String, String>):
   import "./text.c"
 
+# Reads exactly `length` bytes at `offset` as one String. Embedded NUL bytes
+# are retained; the caller asks only for a range whose content it needs.
+def Text.read_span(path: String, offset: String, length: String) -> IO(Result<&1, &1, U32 & String, String>):
+  import "./text.c"
+
+# Copies `length` bytes at `offset` from `spool` into `path` at a decimal file
+# position and returns the next position. Existing equal bytes are retained.
+# The range never becomes a Bend String.
+def Text.write_span_at(path: String, spool: String, position: String, offset: String, length: String, finish: U32) -> IO(Result<&1, &1, U32 & String, String>):
+  import "./text.c"
+
+# Writes a whole retained batch in one call. Every plan record is one line with
+# its newline supplied; a record that names a spool byte range copies that range
+# without a Bend String. Equal bytes already present are retained and finish=1
+# truncates after the last line.
+def Text.write_batch_at(path: String, position: String, plan: String, finish: U32) -> IO(Result<&1, &1, U32 & String, String>):
+  import "./text.c"
+
 def Text.control_output(text: String) -> IO(Result<&1, &1, U32 & String, Unit>):
   import "./text.c"
