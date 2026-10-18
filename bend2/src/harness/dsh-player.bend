@@ -183,14 +183,18 @@ def prepared_result(+directory: String, first: Result<&1,&1,U32 & String,Unit>, 
     model_path : String <- IO.pure(String,directory ++ "/dsh-model.patch.yml")
     IO.pure(Result<&1,&1,U32 & String,Prepared>,patch_result(tools_path,model_path,first,second))
 
-def write_patch(path: String, text: String) -> IO(Result<&1,&1,U32 & String,Unit>):
-  T.Text.append(path,text)
+# Replace the attempt's patch file. The remove makes a repeated prepare
+# idempotent: the direct retry path can reuse the same attempt directory.
+def write_patch(remove_path: String, append_path: String, text: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    removed : Result<&1,&1,U32 & String,Unit> <- F.Files.remove(remove_path)
+    T.Text.append(append_path,text)
 
 def prepare(+directory: String, model: String, effort: String) -> IO(Result<&1,&1,U32 & String,Prepared>):
   do IO<Result<&1,&1,U32 & String,Prepared>>:
     made : Result<&1,&1,U32 & String,Unit> <- F.Files.mkdir(directory)
-    wrote_tools : Result<&1,&1,U32 & String,Unit> <- write_patch(directory ++ "/dsh-tools.patch.yml",tool_patch())
-    wrote_model : Result<&1,&1,U32 & String,Unit> <- write_patch(directory ++ "/dsh-model.patch.yml",model_patch(model,effort))
+    wrote_tools : Result<&1,&1,U32 & String,Unit> <- write_patch(directory ++ "/dsh-tools.patch.yml",directory ++ "/dsh-tools.patch.yml",tool_patch())
+    wrote_model : Result<&1,&1,U32 & String,Unit> <- write_patch(directory ++ "/dsh-model.patch.yml",directory ++ "/dsh-model.patch.yml",model_patch(model,effort))
     prepared_result(directory,wrote_tools,wrote_model)
 
 def start_player(home: String, cmd: String, model: String, effort: String, cwd: String, stderr: String, tools_patch: String, model_patch_path: String) -> IO(Result<&1,&1,U32 & String,U32>):
@@ -199,7 +203,8 @@ def start_player(home: String, cmd: String, model: String, effort: String, cwd: 
 def resume_player(home: String, cmd: String, model: String, effort: String, cwd: String, stderr: String, session: String, tools_patch: String, model_patch_path: String) -> IO(Result<&1,&1,U32 & String,U32>):
   P.ProcessChild.spawn(argv(home,cmd,model,effort,tools_patch,model_patch_path,session,False{}),cwd,stderr)
 
-# Headless mode reads the task from stdin; the caller closes it after the write.
+# Headless mode reads the task from stdin to EOF. The task carries no required
+# trailing newline and is not a JSON frame. The caller closes stdin after the write.
 def input(handle: U32, text: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   P.ProcessChild.write(handle,text)
 
@@ -251,7 +256,7 @@ def event(+db: String, +line: String) -> IO(String):
 def admitted(+kind: String) -> Bool:
   Bool.or(String.eq(kind,"session"),Bool.or(String.eq(kind,"status"),Bool.or(String.eq(kind,"final"),String.eq(kind,"error"))))
 
-# TODO(DSH-USAGE-1): observed-usage does not yet read this sample.
+# observed-usage reads this sample from the public log (usage.bend).
 # A provider usage sample rides the `status` frame whose phase is `step_end`.
 def usage_sql(line: String) -> String:
   "WITH frame(value) AS (VALUES(" ++ sql_quote(line) ++ ")) SELECT CASE WHEN json_valid(value) THEN coalesce(json_extract(value,'$.usage'),'') ELSE '' END FROM frame;"

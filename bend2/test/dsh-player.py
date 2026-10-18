@@ -148,6 +148,17 @@ class DshPlayer(unittest.TestCase):
         self.assertIn('    edit: false', text)
         self.assertIn("name: '@deepseek-ai/dsh-tool-bash-persistent'", text)
 
+    def test_prepare_is_idempotent_for_a_reused_attempt_directory(self):
+        directory = self.directory / 'reused'
+        for _ in range(2):
+            self.out('prepare', directory, 'deepseek/deepseek-flash', 'max')
+        tools = (directory / 'dsh-tools.patch.yml').read_text()
+        model = (directory / 'dsh-model.patch.yml').read_text()
+        self.assertEqual(tools.count('- id: tool-jobs'), 1)
+        self.assertEqual(tools.count("name: '@deepseek-ai/dsh-tool-bash-persistent'"), 1)
+        self.assertEqual(model.count('provider: deepseek-official'), 1)
+        self.assertEqual(model.count('reasoningEffort:'), 1)
+
     def test_model_patch_carries_route_and_effort_independently(self):
         directory = self.directory / 'model'
         self.out('prepare', directory, 'deepseek/deepseek-flash', 'max')

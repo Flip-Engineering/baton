@@ -255,17 +255,20 @@ def input(+handle: U32, +prompt: String, +harness: String, level: String) -> IO(
     Dsh.input(handle,prompt),
     Claude.input(handle,prompt)))))
 
-def close_input(handle: U32, open: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
-  match open:
-    case True{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
-    case False{}: P.ProcessChild.close_stdin(handle)
+def stdin_kept_open(+harness: String) -> Bool:
+  String.eq(harness,"omp\n")
 
-# close_input reads a "keep open" flag: OMP stays open for steer frames; every
-# other harness, including DSH, writes one prompt and receives EOF.
+def close_input(handle: U32, close: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match close:
+    case True{}: P.ProcessChild.close_stdin(handle)
+    case False{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
+
+# OMP keeps stdin open for steer frames. Every other harness, including DSH,
+# writes one prompt and receives EOF at the same point.
 def send_prompt(+handle: U32,prompt: String,+harness: String,level: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     sent : Result<&1,&1,U32 & String,Unit> <- input(handle,prompt,harness,level)
-    closed : Result<&1,&1,U32 & String,Unit> <- close_input(handle,String.eq(harness,"omp\n"))
+    closed : Result<&1,&1,U32 & String,Unit> <- close_input(handle,Bool.not(stdin_kept_open(harness)))
     IO.pure(Result<&1,&1,U32 & String,Unit>,send_result(sent,closed))
 
 # An EOF projection preserves the terminal report already bound to this player.
@@ -800,7 +803,7 @@ def consume(+db: String, +player: String, +id: String, +log: String, +policy: Lo
           +observed : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,String> <- shared_result_io(String,observe_event(db,player,id,event,relevant,Bool.or(observation_sealed,failed)))
           +terminal_selected : Bool <- IO.pure(Bool,Bool.and(relevant,Bool.and(admitted,Bool.not(sealed))))
           +ended : String <- terminal_event(event,terminal,terminal_selected)
-          +closed_input : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,Unit> <- shared_result_io(Unit,close_input(handle,Bool.not(Bool.and(String.eq(harness,"omp\n"),Bool.and(String.is_empty(terminal),Bool.not(String.is_empty(ended)))))))
+          +closed_input : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,Unit> <- shared_result_io(Unit,close_input(handle,Bool.and(String.eq(harness,"omp\n"),Bool.and(String.is_empty(terminal),Bool.not(String.is_empty(ended))))))
           +codex_frame : Bool <- IO.pure(Bool,String.eq(harness,"codex\n"))
           +codex_state : String <- codex_frames(db,codex_log,line,codex_frame)
           questions : List<Chan(Result<&1,&1,U32 & String,String>)> & String & Bool <- NativeRequests.observe(db,player,id,attempt,line,deliveries,Bool.and(Bool.not(String.is_empty(attempt)),String.eq(kind,"extension_ui_request\n")))
@@ -1110,7 +1113,8 @@ def dsh_launch_prepared(prepared: Result<&1,&1,U32 & String,Dsh.Prepared>, +home
 
 def dsh_launch(+db: String, +player: String, +log: String, +cmd: String, +model: String, +effort: String, +cwd: String, +stderr: String, +session: String) -> IO(Result<&1,&1,U32 & String,U32>):
   do IO<Result<&1,&1,U32 & String,U32>>:
-    home : String <- dsh_home(db,db,player)
+    canonical : String <- IO.try(String,Lock.SessionLock.canonical(db))
+    home : String <- dsh_home(db,canonical,player)
     directory : String <- IO.pure(String,log ++ ".dsh")
     prepared : Result<&1,&1,U32 & String,Dsh.Prepared> <- Dsh.prepare(directory,model,effort)
     dsh_launch_prepared(prepared,home,cmd,model,effort,cwd,stderr,session)

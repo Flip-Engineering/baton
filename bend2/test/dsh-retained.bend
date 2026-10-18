@@ -5,6 +5,7 @@ import Base
 import ../src/coordinator/turn.bend as Turn
 import ../src/harness/dsh-player.bend as Dsh
 import ../src/host/process.bend as P
+import ../src/host/session-lock.bend as Lock
 import ../src/git/text.bend as Tx
 
 def print_arg_list(+label: String, xs: List<String>) -> IO(Unit):
@@ -30,7 +31,8 @@ def launch_value(result: Result<&1,&1,U32 & String,Turn.RetainedLaunch>) -> IO(U
 def run(args: List<String>) -> IO(Unit):
   match args:
     case +db <> +directory <> +cmd <> +model <> +effort <> +native <> Nil{}: do IO<Unit>:
-      home : String <- Turn.dsh_home(db,db,"dsh-fixture")
+      canonical : String <- IO.try(String,Lock.SessionLock.canonical(db))
+      home : String <- Turn.dsh_home(db,canonical,"dsh-fixture")
       prepared : Result<&1,&1,U32 & String,Dsh.Prepared> <- Dsh.prepare(directory,model,effort)
       prefix : String <- IO.pure(String,P.argv(["/usr/bin/env","BATON_SESSION=dsh-fixture"]))
       launch : Result<&1,&1,U32 & String,Turn.RetainedLaunch> <- Turn.retained_launch_checked(prepared,True{},prefix,home,cmd,model,effort,native,False{},"","","fixture task",False{},False{},"default",False{})
