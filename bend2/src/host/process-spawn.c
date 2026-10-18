@@ -3436,7 +3436,7 @@ static int br_instance_connect(const char *database,int spawn,BrOwnerRecord *rec
       char *log_path=br_ipc_path(directory,key,".log");
       if(log_path){if(!owner_log)owner_log=log_path;else free(log_path);}
       free(directory);
-    }
+    } else if(!owner_log) owner_log=br_ipc_path(ipc,key,".log");
     struct sockaddr_un address;
     int address_error=br_socket_address(&address,record->socket);
     free(ipc);free(key);free(record_path);
@@ -5093,7 +5093,7 @@ static int baton_observer_completed(BatonSessionLock *call) {
       }
     }
   }
-  if(error) {call->detail=strdup("Observer recovery requires the original keeper to verify and retain the native exit status.");return error;}
+  if(error) {call->detail="Observer recovery requires the original keeper to verify and retain the native exit status.";return error;}
   BrManifest manifest={0};
   if((error=br_manifest_read(call->directory,&manifest))) {
     br_manifest_free(&manifest);return error;
@@ -5143,7 +5143,7 @@ static int baton_observer_recover(BatonSessionLock *call) {
       error=baton_observer_retire(call);
       if(!error)error=br_instance_attach(&call->attempt);
     } else if(!error)error=baton_observer_retire(call);
-    if(error==EBUSY)call->detail=strdup("Another observer holds the retained attempt; inspect its current receive.");
+    if(error==EBUSY)call->detail="Another observer holds the retained attempt; inspect its current receive.";
     if(!error) {
       int guard=call->attempt.child->retained->guard;
       if(guard>=0) {
@@ -5248,7 +5248,7 @@ static Term baton_session_lock_pack(Env e, IoWork *w) {
     }
   }
   Term result=call->error ? io_fail(e,call->error,call->detail) : io_done(e,value);
-  free(call->database);free(call->session);free(call->path);free(call->directory);free(call);
+  free(call->attempt.detail);free(call->database);free(call->session);free(call->path);free(call->directory);free(call);
   w->data=NULL;
   return result;
 }

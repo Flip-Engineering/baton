@@ -65,6 +65,18 @@ def knowledge_command(+db: String, +command: C.Command) -> IO(Unit):
       Knowledge.read_index(db,reader,scope,subject,True{})
     case C.KnowledgeScopeDetail{reader,scope,subject,id}:
       Knowledge.read_detail(db,reader,scope,subject,id)
+    case C.RoleRead{session}: read_command(db,C.RoleRead{session})
+    case C.EnsembleRead{id}: read_command(db,C.EnsembleRead{id})
+    case C.Session{id}: read_command(db,C.Session{id})
+    case C.Delivery{id}: read_command(db,C.Delivery{id})
+    case C.InputDetail{id}: read_command(db,C.InputDetail{id})
+    case C.Pending{}: read_command(db,C.Pending{})
+    case C.PendingIndex{}: read_command(db,C.PendingIndex{})
+    case C.Inbox{id}: read_command(db,C.Inbox{id})
+    case C.InboxIndex{id}: read_command(db,C.InboxIndex{id})
+    case C.Outbox{id}: read_command(db,C.Outbox{id})
+    case C.MessageIndex{inbox,condition,state}: read_command(db,C.MessageIndex{inbox,condition,state})
+    case C.Status{}: read_command(db,C.Status{})
     case other: Bool.pick(IO(Unit),String.is_empty(C.sql(other)),read_command(db,other),write_command(db,other))
 
 def dispatch(+db: String, +command: C.Command) -> IO(Unit):

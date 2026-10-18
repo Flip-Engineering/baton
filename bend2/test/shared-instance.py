@@ -392,7 +392,7 @@ class SharedInstance(unittest.TestCase):
         result = self.command('ensure-owner-witness', database)
         elapsed = time.monotonic() - started
         self.assertNotEqual(result.returncode, 0, result.stdout)
-        self.assertIn('exited with status', result.stderr)
+        self.assertIn('exited with status 22', result.stderr)
         self.assertIn('before binding a listener', result.stderr)
         self.assertLess(elapsed, 10, f'fixture wait exceeded 10s: {elapsed}s')
         info = os.stat(database)
@@ -400,6 +400,7 @@ class SharedInstance(unittest.TestCase):
         log = self.ipc_directory() / f'{key}.log'
         self.addCleanup(log.unlink, missing_ok=True)
         self.assertTrue(log.exists(), log)
+        self.assertTrue(log.stat().st_size, log)
         self.assertIn(str(log), result.stderr)
         print('evidence owner-startup child-exit', result.stderr.strip())
 

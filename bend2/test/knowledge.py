@@ -17,7 +17,7 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 CALL_TIMEOUT = 60
-EXE = ROOT / '.scratch/bend2/baton2'
+EXE = pathlib.Path(os.environ.get('BATON2_EXE', str(ROOT / '.scratch/bend2/baton2')))
 
 
 class Knowledge(unittest.TestCase):
