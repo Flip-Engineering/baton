@@ -1,5 +1,6 @@
 """Check the observed-usage read over recorded OMP conversation fixtures."""
 import json
+import os
 import pathlib
 import sqlite3
 import subprocess
@@ -9,7 +10,7 @@ import unittest
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-EXE = ROOT / '.scratch/bend2/baton2'
+EXE = pathlib.Path(os.environ.get('BATON2_EXE', ROOT / '.scratch/bend2/baton2'))
 
 
 def header(native='native-1'):
@@ -64,6 +65,12 @@ class ObservedUsage(unittest.TestCase):
         self.assertEqual(result.stderr, '')
         return json.loads(result.stdout)
 
+    def models_all(self, session='reader'):
+        result = self.call('models', session, '--all')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, '')
+        return json.loads(result.stdout)
+
     def read(self, session='reader'):
         result = self.call('observed-usage', session)
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -88,8 +95,9 @@ class ObservedUsage(unittest.TestCase):
         answer.update(values)
         return answer
 
-    def provider_command(self, body, exit_code=0, identity_prefix=False, remove_database=False):
-        workspace = self.directory / 'provider workspace'
+    def provider_command(self, body, exit_code=0, identity_prefix=False, remove_database=False,
+                         session='reader', native='native-1'):
+        workspace = self.directory / ('provider workspace ' + session)
         workspace.mkdir()
         program = workspace / 'provider fixture'
         program.write_text('#!' + sys.executable + '\n'
@@ -101,16 +109,16 @@ class ObservedUsage(unittest.TestCase):
                            + 'sys.exit(' + repr(exit_code) + ')\n')
         program.chmod(0o755)
         command = './provider fixture'
-        endpoint = [str(EXE), str(self.db), 'receive', 'reader', command,
+        endpoint = [str(EXE), str(self.db), 'receive', session, command,
                     '', '', '', str(self.directory / 'native.jsonl')]
         if identity_prefix:
             endpoint = ['node', 'identity.mjs', 'launch', '--registry', 'series.json',
                         '--model-key', 'fixture', '--', *endpoint]
-        connected = self.call('connect', 'reader', 'native-1', json.dumps(endpoint))
+        connected = self.call('connect', session, native, json.dumps(endpoint))
         self.assertEqual(connected.returncode, 0, connected.stderr)
         with sqlite3.connect(self.db) as database:
             database.execute('UPDATE sessions SET workspace=? WHERE id=?',
-                             (str(workspace), 'reader'))
+                             (str(workspace), session))
         return workspace, command
 
     def test_provider_query_preserves_opencode_go_facts_and_recorded_workspace(self):
@@ -227,13 +235,14 @@ class ObservedUsage(unittest.TestCase):
         profile = 'model: requested-but-unverified\nprovider: fixture\nprofile: retained text'
         workspace, command = self.provider_command(profile)
         with sqlite3.connect(self.db) as database:
-            database.execute("UPDATE sessions SET harness='muse', model='requested-but-unverified' WHERE id='reader'")
+            database.execute("UPDATE sessions SET harness='muse', model='requested-but-unverified', effort='high' WHERE id='reader'")
         answer = self.models()
         self.assertEqual(answer['state'], 'reported')
         self.assertEqual(answer['harness'], 'muse')
         self.assertEqual(answer['command'], command)
         self.assertEqual(answer['argv'], ['model-profile', 'show', 'requested-but-unverified'])
         self.assertEqual(answer['requestedModel'], 'requested-but-unverified')
+        self.assertEqual(answer['requestedEffort'], 'high')
         self.assertEqual(answer['modelExistence'], 'unknown')
         self.assertEqual(answer['profileText'], profile + '\n')
         self.assertEqual(json.loads((workspace / 'queried.json').read_text()),
@@ -266,6 +275,87 @@ class ObservedUsage(unittest.TestCase):
         missing = self.models()
         self.assertEqual(missing['state'], 'unknown')
         self.assertEqual(missing['reason'], 'noRecordedHarnessCommand')
+
+    def test_models_all_reports_each_recorded_session_with_its_own_observation(self):
+        omp_catalog = {'models': [{'selector': 'fixture/omp-model'}]}
+        omp_workspace, omp_command = self.provider_command(json.dumps(omp_catalog),
+                                                           identity_prefix=True)
+        codex_catalog = {'models': [{'slug': 'fixture-codex-model'}]}
+        attached = self.call('attach', 'second', 'codex', 'native-2', '')
+        self.assertEqual(attached.returncode, 0, attached.stderr)
+        codex_workspace, _ = self.provider_command(json.dumps(codex_catalog),
+                                                   session='second', native='native-2')
+        profile = 'model: fixture-muse-model\nprovider: fixture\nprofile: retained text'
+        attached = self.call('attach', 'third', 'muse', 'native-3', '')
+        self.assertEqual(attached.returncode, 0, attached.stderr)
+        muse_workspace, _ = self.provider_command(profile, session='third', native='native-3')
+        with sqlite3.connect(self.db) as database:
+            database.execute("UPDATE sessions SET model='fixture-muse-model', effort='high'"
+                             " WHERE id='third'")
+        answer = self.models_all()
+        self.assertEqual(answer['state'], 'reported')
+        self.assertEqual(answer['session'], 'reader')
+        self.assertEqual(answer['scope'], 'recorded-harnesses')
+        self.assertGreater(answer['observedAt'], 0)
+        self.assertTrue(answer['limits'])
+        by_harness = {route['harness']: route for route in answer['routes']}
+        self.assertEqual(set(by_harness), {'omp', 'codex', 'muse'})
+        self.assertEqual(by_harness['omp']['session'], 'reader')
+        self.assertEqual(by_harness['omp']['response'], omp_catalog)
+        self.assertEqual(by_harness['omp']['command'], omp_command)
+        self.assertEqual(by_harness['omp']['workspace'], str(omp_workspace))
+        self.assertEqual(by_harness['codex']['session'], 'second')
+        self.assertEqual(by_harness['codex']['response'], codex_catalog)
+        self.assertEqual(by_harness['codex']['workspace'], str(codex_workspace))
+        self.assertEqual(json.loads((codex_workspace / 'queried.json').read_text()),
+                         {'argv': ['debug', 'models'], 'cwd': str(codex_workspace)})
+        self.assertEqual(by_harness['muse']['session'], 'third')
+        self.assertEqual(by_harness['muse']['requestedModel'], 'fixture-muse-model')
+        self.assertEqual(by_harness['muse']['requestedEffort'], 'high')
+        self.assertEqual(by_harness['muse']['modelExistence'], 'unknown')
+        self.assertEqual(by_harness['muse']['profileText'], profile + '\n')
+        self.assertEqual(by_harness['muse']['workspace'], str(muse_workspace))
+        self.assertEqual(json.loads((muse_workspace / 'queried.json').read_text()),
+                         {'argv': ['model-profile', 'show', 'fixture-muse-model'],
+                          'cwd': str(muse_workspace)})
+
+    def test_models_all_reports_empty_routes_when_no_harness_recorded(self):
+        with sqlite3.connect(self.db) as database:
+            database.execute("UPDATE sessions SET harness='' WHERE id='reader'")
+        answer = self.models_all()
+        self.assertEqual(answer['state'], 'reported')
+        self.assertEqual(answer['session'], 'reader')
+        self.assertEqual(answer['routes'], [])
+        self.assertTrue(answer['limits'])
+
+    def test_models_all_keeps_unknown_routes_without_gating(self):
+        self.provider_command('{}')
+        attached = self.call('attach', 'second', 'codex', 'native-2', '')
+        self.assertEqual(attached.returncode, 0, attached.stderr)
+        attached = self.call('attach', 'third', 'omp', 'native-3', '')
+        self.assertEqual(attached.returncode, 0, attached.stderr)
+        with sqlite3.connect(self.db) as database:
+            database.execute("UPDATE sessions SET harness='claude-code' WHERE id='second'")
+            database.execute("UPDATE sessions SET endpoint='[]' WHERE id='third'")
+        answer = self.models_all()
+        self.assertEqual(answer['state'], 'reported')
+        by_route = {(route['harness'], route['command']): route
+                    for route in answer['routes']}
+        self.assertEqual(len(by_route), 3)
+        reported = [route for route in answer['routes']
+                    if route['harness'] == 'omp' and route['command'] != '']
+        self.assertEqual(len(reported), 1)
+        self.assertEqual(reported[0]['state'], 'reported')
+        unsupported = [route for route in answer['routes']
+                       if route['harness'] == 'claude-code']
+        self.assertEqual(len(unsupported), 1)
+        self.assertEqual(unsupported[0]['state'], 'unknown')
+        self.assertEqual(unsupported[0]['reason'], 'unsupportedHarness')
+        missing = [route for route in answer['routes']
+                   if route['harness'] == 'omp' and route['command'] == '']
+        self.assertEqual(len(missing), 1)
+        self.assertEqual(missing[0]['state'], 'unknown')
+        self.assertEqual(missing[0]['reason'], 'noRecordedHarnessCommand')
 
     def test_unsupported_provider_harness_does_not_run_a_usage_command(self):
         self.write([])

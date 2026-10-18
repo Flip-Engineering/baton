@@ -40,7 +40,7 @@ def member(+value: String, values: List<String>) -> Bool:
     case +head <> rest: Bool.or(String.eq(value,head),member(value,rest))
 
 def known(verb: String) -> Bool:
-  member(verb,Tx.split_spaces("session player players assignment completion-request completion-confirmed guide acknowledge status pending orchestra role ensemble ensemble-member section section-member attempt attempts outbox receiver configure resume stop force-stop recover-observer continue-task turn receive profile-bind connect bind report ask native-reply dispatch recruit join worktree land push remote-tip knowledge project context models observed-usage logs"))
+  member(verb,Tx.split_spaces("session player players assignment completion-request completion-confirmed guide acknowledge status pending orchestra role ensemble ensemble-member section section-member attempt attempts outbox receiver configure resume stop force-stop recover-observer continue-task turn receive profile-bind connect bind report ask native-reply dispatch recruit join worktree land push remote-tip knowledge project context models observed-usage logs harness-inventory"))
 
 def names_lookup(entries: List<NameSet>, +verb: String) -> List<String>:
   match entries:
@@ -105,8 +105,9 @@ def names(verb: String) -> List<String>:
     Names{"context-install","--module --path"},
     Names{"context-query","--owner --id --file"},
     Names{"context-result","--id"},
-    Names{"models","--session"},
+    Names{"models","--session --all"},
     Names{"observed-usage","--session"},
+    Names{"harness-inventory",""},
     Names{"logs","--session --level"}
   ],verb)
 
@@ -312,7 +313,8 @@ def help(action: String) -> String:
     case "context-query": "context query --file PATH [--id QUERY] [--owner SESSION]\nSubmit the complete request file to the existing native context operation.\n"
     case "context-result": "context result [--id QUERY]\nRead the latest query owned by the current actor when its ID is omitted, or the explicitly selected retained query.\n"
     case "context": "context engines|install|query|result NAMED_ARGS\nUse help with the corresponding context action name.\n"
-    case "models": "models [--session SESSION]\nRead observed model capability information for the selected session.\n"
+    case "models": "models [--session SESSION] [--all]\nRead observed model capability information for the selected session. --all reads every recorded harness route.\n"
+    case "harness-inventory": "harness-inventory\nRead recorded harness/model/effort identities across sessions with operator account profiles and limits. Runs no harness command and decides nothing.\n"
     case "observed-usage": "observed-usage [--session SESSION]\nRead the selected session's actual usage observations.\n"
     case "logs": "logs [--session SESSION] [--level LEVEL]\nInspect or configure existing native log capture through its ordinary operation.\n"
     case other: ""
