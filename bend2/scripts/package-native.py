@@ -102,7 +102,7 @@ BINARY_LAYOUT = (
     {'role': 'full-cli', 'option': 'full', 'label': 'baton-full',
      'installed': 'bin/baton-full', 'alias': None,
      'entry': 'bend2/src/coordinator/main.bend',
-     'build_modes': ('full-native-receiver-router', 'retained-full-cli'),
+     'build_mode': 'full-native-receiver-router',
      'focused': False, 'router': True, 'wrapper': True},
 )
 
@@ -145,30 +145,23 @@ def receiver_binaries(args):
                          getattr(args, option + '_source_status'),
                          getattr(args, option + '_source_manifest_sha256'), default,
                          getattr(args, option + '_source_directory', None))
-        build_mode = layout['build_mode'] if 'build_mode' in layout else layout['build_modes'][0]
-        if layout.get('build_modes'):
-            build_mode = getattr(args, 'full_build_mode', 'full-native-receiver-router')
-            require(build_mode in layout['build_modes'], 'Unsupported full build mode')
-            if supplied is None and build_mode != 'full-native-receiver-router':
-                raise RuntimeError('The retained full CLI mode requires a supplied full binary')
-        spec = {**layout, 'supplied': supplied, 'source': pin, 'build_mode': build_mode}
+        spec = {**layout, 'supplied': supplied, 'source': pin}
         if layout.get('wrapper'):
             c_sha = getattr(args, 'full_c_sha256', None)
             if c_sha is not None:
                 require(re.fullmatch(r'[0-9a-f]{64}', c_sha) is not None,
                         'The retained full C hash must be a SHA256')
                 spec['retained_c_sha256'] = c_sha
-            if build_mode == 'full-native-receiver-router':
-                wrapper_commit = getattr(args, 'full_wrapper_source_commit')
-                require(supplied is None or wrapper_commit is not None,
-                        'A supplied full CLI requires its explicit current wrapper source commit')
-                require(commit is None or commit == default['commit'] or wrapper_commit is not None,
-                        'A retained earlier full CLI requires its current wrapper source commit')
-                spec['wrapper_source'] = source_pin(
-                    wrapper_commit, getattr(args, 'full_wrapper_source_tree'),
-                    getattr(args, 'full_wrapper_source_status'),
-                    getattr(args, 'full_wrapper_source_manifest_sha256'), default,
-                    getattr(args, 'full_wrapper_source_directory', None))
+            wrapper_commit = getattr(args, 'full_wrapper_source_commit')
+            require(supplied is None or wrapper_commit is not None,
+                    'A supplied full CLI requires its explicit current wrapper source commit')
+            require(commit is None or commit == default['commit'] or wrapper_commit is not None,
+                    'A retained earlier full CLI requires its current wrapper source commit')
+            spec['wrapper_source'] = source_pin(
+                wrapper_commit, getattr(args, 'full_wrapper_source_tree'),
+                getattr(args, 'full_wrapper_source_status'),
+                getattr(args, 'full_wrapper_source_manifest_sha256'), default,
+                getattr(args, 'full_wrapper_source_directory', None))
         specs.append(spec)
     return specs
 
@@ -586,11 +579,37 @@ def stage_source_closures(payload, args):
         require(isinstance(data, dict) and data.get('schema') == 'baton2-source-closure-v1'
                 and isinstance(data.get('files'), list) and data['files'],
                 'The source closure for ' + role + ' is not a complete closure manifest')
+        seen = set()
+        for entry in data['files']:
+            require(isinstance(entry, dict) and isinstance(entry.get('path'), str) and entry['path']
+                    and entry['path'] not in seen and isinstance(entry.get('bytes'), int)
+                    and entry['bytes'] >= 0 and isinstance(entry.get('sha256'), str)
+                    and re.fullmatch(r'[0-9a-f]{64}', entry['sha256']) is not None,
+                    'The source closure for ' + role + ' has an invalid file record')
+            seen.add(entry['path'])
+        require(isinstance(data.get('diff_sha256'), str)
+                and re.fullmatch(r'[0-9a-f]{64}', data['diff_sha256']) is not None,
+                'The source closure for ' + role + ' has no source diff pin')
         name = 'source-closure-' + role + '.json'
         destination = payload / name
         shutil.copyfile(source, destination)
         closures[role] = {'path': name, 'sha256': sha256(destination)}
     return closures
+
+
+def require_manifest_closures(specs, closures):
+    for spec in specs:
+        role = 'focused' if spec['role'] == 'focused-facade' else 'full'
+        source = spec['source']
+        if 'commit' not in source or 'tree' not in source:
+            require(role in closures and closures[role]['sha256'] == source.get('manifest_sha256'),
+                    'The ' + role + ' manifest-only source pin requires its bound complete source closure')
+        if spec.get('wrapper_source'):
+            wrapper = spec['wrapper_source']
+            if 'commit' not in wrapper or 'tree' not in wrapper:
+                require('full-wrapper' in closures
+                        and closures['full-wrapper']['sha256'] == wrapper.get('manifest_sha256'),
+                        'The full wrapper manifest-only source pin requires its bound complete source closure')
 
 
 
@@ -660,7 +679,7 @@ def package(args):
             else:
                 path, record = build_binary(env, build_output, spec['label'],
                                             entry=spec['entry'], focused=spec['focused'],
-                                            router=spec.get('router', False) and spec['build_mode'] == 'full-native-receiver-router')
+                                            router=spec.get('router', False))
                 require(path.is_file(), 'The production build did not create ' + str(path))
                 generated = path.with_name(path.name + '.c')
                 if generated.is_file():
@@ -680,6 +699,7 @@ def package(args):
         payload = output / identity['archive_root']
         records = stage_receiver_binaries(payload, specs, built, c_hashes)
         closures = stage_source_closures(payload, args)
+        require_manifest_closures(specs, closures)
         stage_adapters(payload)
         repl_compiler = stage_repl(payload, args)
         selected_context = [stage_selected_context_payload(payload), stage_runtime_context_module(payload)]
@@ -768,8 +788,6 @@ def main():
         parser.add_argument('--' + role + '-source-closure', type=Path)
     parser.add_argument('--full-c-sha256', help='retained full generated-C SHA256')
     parser.add_argument('--full-wrapper-source-directory')
-    parser.add_argument('--full-build-mode', choices=('full-native-receiver-router', 'retained-full-cli'),
-                        default='full-native-receiver-router')
     for name in ('commit', 'tree', 'status', 'manifest_sha256'):
         parser.add_argument('--full-wrapper-source-' + name.replace('_', '-'))
     parser.add_argument('--context-clang-package', type=Path,

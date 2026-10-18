@@ -106,6 +106,9 @@ class ReceiverLayout(unittest.TestCase):
         provenance = prefix / 'share/provenance'
         provenance.mkdir(parents=True)
         (provenance / 'verification.json').write_text('{"status":"verified"}\n')
+        nested = prefix / 'libexec/dependency/SHA256SUMS'
+        nested.parent.mkdir(parents=True)
+        nested.write_text('nested dependency checksums\n')
         result = FINALIZE.finalize(prefix)
         self.assertEqual(result['manifest_sha256'], PACKAGE.sha256(prefix / 'manifest.json'))
         receipt = json.loads((prefix / 'install-receipt.json').read_text())
@@ -113,8 +116,38 @@ class ReceiverLayout(unittest.TestCase):
         checksums = CHECK.verify_checksums(prefix)
         CHECK.verify_payload_checksums(prefix, checksums)
         self.assertIn('share/provenance/verification.json', checksums)
+        self.assertIn('libexec/dependency/SHA256SUMS', checksums)
         self.assertNotIn('SHA256SUMS', checksums)
         CHECK.verify_binaries(prefix, manifest, checksums)
+
+    def test_nested_checksum_file_is_covered(self):
+        prefix, manifest, records = self.staged()
+        nested = prefix / 'libexec/dependency/SHA256SUMS'
+        nested.parent.mkdir(parents=True)
+        nested.write_text('dependency checksums\n')
+        STAGE.stage_checksums(prefix, PACKAGE, records)
+        checksums = CHECK.verify_checksums(prefix)
+        CHECK.verify_payload_checksums(prefix, checksums)
+        self.assertIn('libexec/dependency/SHA256SUMS', checksums)
+        self.assertNotIn('SHA256SUMS', checksums)
+
+    def test_manifest_only_pin_requires_bound_complete_closure(self):
+        closure_path = self.home / 'closure.json'
+        closure = {'schema': 'baton2-source-closure-v1', 'source': str(self.home),
+                   'commit': COMMIT, 'status': 'dirty',
+                   'diff_sha256': 'f' * 64,
+                   'files': [{'path': 'bend2/src/coordinator/receive-focused.bend',
+                              'bytes': 1, 'sha256': 'e' * 64}]}
+        PACKAGE.write_json(closure_path, closure)
+        closure_sha = PACKAGE.sha256(closure_path)
+        spec = {'role': 'focused-facade',
+                'source': {'directory': str(self.home), 'status': '',
+                           'manifest_sha256': closure_sha}}
+        STAGE.require_manifest_closures([spec], {'focused': {'sha256': closure_sha}})
+        with self.assertRaisesRegex(RuntimeError, 'manifest-only source pin requires'):
+            STAGE.require_manifest_closures([spec], {})
+        with self.assertRaisesRegex(RuntimeError, 'manifest-only source pin requires'):
+            STAGE.require_manifest_closures([spec], {'focused': {'sha256': '0' * 64}})
     def test_archive_manifest_uses_the_same_binary_contract(self):
         prefix, manifest, records = self.staged()
         manifest['schema'] = 'baton2-native-artifact-v2'

@@ -39,7 +39,7 @@ def finalize(prefix):
     }
     receipt.write_text(json.dumps(receipt_value, indent=2) + '\n')
     files = sorted(path.relative_to(prefix).as_posix() for path in prefix.rglob('*')
-                   if path.is_file() and path.name != 'SHA256SUMS')
+                   if path.is_file() and path.relative_to(prefix).as_posix() != 'SHA256SUMS')
     (prefix / 'SHA256SUMS').write_text('\n'.join(
         sha256(prefix / name) + '  ' + name for name in files) + '\n')
     return {'manifest_sha256': sha256(manifest_path),
