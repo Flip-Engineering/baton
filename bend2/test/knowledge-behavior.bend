@@ -52,9 +52,14 @@ def search(+db: String, reader: String, +scope: String, +subject: String, +query
     checked : Unit <- parsed_ok(["knowledge","search","--scope",scope,"--subject",subject,"--query",query])
     Knowledge.graph_read(db,reader,scope,subject,query,True{},"both","",False{})
 
+def parsed_traverse(scope: String, subject: String, reference: String, direction: String, relation: String, recursive: String) -> IO(Unit):
+  match recursive:
+    case "recursive": parsed_ok(["knowledge","traverse","--scope",scope,"--subject",subject,"--reference",reference,"--direction",direction,"--relation",relation,"--recursive"])
+    case _: parsed_ok(["knowledge","traverse","--scope",scope,"--subject",subject,"--reference",reference,"--direction",direction,"--relation",relation])
+
 def traverse(+db: String, reader: String, +scope: String, +subject: String, +reference: String, +direction: String, +relation: String, +recursive: String) -> IO(Unit):
   do IO<Unit>:
-    checked : Unit <- parsed_ok(["knowledge","traverse","--scope",scope,"--subject",subject,"--reference",reference,"--direction",direction,"--relation",relation,"--recursive"])
+    checked : Unit <- parsed_traverse(scope,subject,reference,direction,relation,recursive)
     Knowledge.graph_read(db,reader,scope,subject,reference,False{},direction,relation,String.eq(recursive,"recursive"))
 
 def detail(+db: String, reader: String, id: String) -> IO(Unit):

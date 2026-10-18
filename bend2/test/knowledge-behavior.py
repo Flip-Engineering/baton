@@ -60,6 +60,26 @@ class KnowledgeBehavior(unittest.TestCase):
             refused = self.call(*command, ok=False)
             self.assertEqual(json.loads(refused.stderr)['error'], error)
 
+    def test_traversal_recursive_flag_matches_the_requested_walk(self):
+        for identity, claim in (('walk-a', 'A'), ('walk-b', 'B'), ('walk-c', 'C')):
+            self.call('record', identity, 'worker', 'observation', claim, 'run:' + identity, '')
+        self.call('relate', 'walk-ab', 'worker', 'finding:walk-a', 'Supports', 'finding:walk-b')
+        self.call('relate', 'walk-bc', 'worker', 'finding:walk-b', 'Supports', 'finding:walk-c')
+
+        neighbors = self.json_call('traverse', 'root', 'worker', 'worker',
+                                   'finding:walk-a', 'out', '', 'neighbors')
+        self.assertEqual(neighbors['roots'], ['finding:walk-a'])
+        self.assertEqual({edge['id'] for edge in neighbors['edges']}, {'walk-ab'})
+        self.assertEqual({node['id'] for node in neighbors['nodes']}, {'walk-a', 'walk-b'})
+        self.assertNotIn('finding:walk-c', neighbors['roots'])
+
+        recursive = self.json_call('traverse', 'root', 'worker', 'worker',
+                                   'finding:walk-a', 'out', '', 'recursive')
+        self.assertEqual(set(recursive['roots']),
+                         {'finding:walk-a', 'finding:walk-b', 'finding:walk-c'})
+        self.assertEqual({edge['id'] for edge in recursive['edges']}, {'walk-ab', 'walk-bc'})
+        self.assertEqual({node['id'] for node in recursive['nodes']}, {'walk-a', 'walk-b', 'walk-c'})
+
     def test_790_evidence_reference_resolution(self):
         self.call('record', 'pending-message', 'grand', 'observation',
                   'Pending citation', 'message:citation-message', '')
