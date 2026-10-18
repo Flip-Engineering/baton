@@ -5341,7 +5341,6 @@ BP_EFFECT(baton_instance_publish_commit,CID_INSTANCE_PUBLISH_COMMIT,BP_INSTANCE_
 static void __attribute__((constructor)) baton_process_signals(void){signal(SIGPIPE,SIG_IGN);}
 
 /* Session locks use the physical database key and the owner IPC namespace. */
-#if defined(CID_SESSIONLOCK_CANONICAL) || defined(CID_SESSIONLOCK_TRY_ACQUIRE) || defined(CID_SESSIONLOCK_WAIT_ACQUIRE) || defined(CID_SESSIONLOCK_RELEASE) || defined(CID_SESSIONLOCK_EXECUTABLE) || defined(CID_SESSIONLOCK_RECOVER_OBSERVER)
 typedef struct {
   char *database, *session, *path, *directory;
   const char *detail;
@@ -5519,6 +5518,7 @@ static int br_monitor_checkpoint(BatonProcessCall *call,BatonRetained *retained)
   return error;
 }
 
+#if defined(CID_SESSIONLOCK_CANONICAL) || defined(CID_SESSIONLOCK_TRY_ACQUIRE) || defined(CID_SESSIONLOCK_WAIT_ACQUIRE) || defined(CID_SESSIONLOCK_RELEASE) || defined(CID_SESSIONLOCK_EXECUTABLE) || defined(CID_SESSIONLOCK_RECOVER_OBSERVER)
 static int br_adopt_orphan(BatonProcessCall *call,const char *directory,int lock) {
   int error=br_admission_verify(directory,call->database,-1);
   BrManifest manifest={0};
