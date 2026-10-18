@@ -86,13 +86,20 @@ The product records balance from these source kinds only:
 
 | Source kind | Balance | Spend | Expiry |
 | --- | --- | --- | --- |
-| `console-observed` | operator read from Console Billing page | no | yes, as displayed |
+| `console-billing-display` | operator read from Console Billing page, imported with source and verbatim text | no | yes, as displayed |
 | `operator-imported` | operator supplied value with source text | optional | optional |
-| `usage-cost-api` | unknown | yes | no |
+| `anthropic-admin-api` | unknown; usage and cost reports only | yes (cost_report) | no |
 | `provider-error` | unknown; records exhaustion cause | no | no |
 
-An undocumented OAuth prepaid-credits endpoint appears in third-party tooling.
-The standard route records balance only from the source kinds in the table above.
+Credit refresh is an operator-run flow: the packaged helper
+`bend2/harness/claude-credit-observe.mjs` performs the organization, cost and
+usage reads against the documented endpoints, and the operator records each
+outcome through `account observe`; Console Billing readings are recorded
+through `account import-credit` with their source named. No command performs
+an implicit or scheduled refresh. An undocumented OAuth prepaid-credits
+endpoint appears in third-party tooling; it is not a source this product
+reads, and the standard route records balance only from the source kinds
+above.
 
 ## Data model
 
@@ -101,21 +108,23 @@ This preserves authored precision from #711.
 
 ### Account record
 
-Fields:
+Implemented in [accounts.bend](bend2/src/coordinator/accounts.bend) as the `accounts` table
+and the `record`/`read` output:
 
-- `account`: operator label for the account. Labels contain no whitespace.
+- `id`: operator label for the account; the primary key, so one label is one account.
+  Labels contain no whitespace or control characters.
 - `provider`: provider name, for example `anthropic`.
-- `account_id`: provider account identity, or empty when unknown.
-- `auth_kind`: `subscription` or `api-key`.
-- `secret_ref`: secret-store reference. The record stores the reference only.
-  The record never stores a secret value.
-- `credential_label`: label for the credential inside the secret store.
+- `harness`: the launchable harness (`codex`, `omp`, `muse` or `claude-code`).
+  API-key funding launches only on `claude-code`.
+- `funding`: `subscription` or `api_key`.
+- `secret_ref`: secret-store reference (`file:PATH` or `keychain:SERVICE/ACCOUNT`),
+  or the credential directory for subscription profiles. The record stores the
+  reference only and never a secret value. A label re-recorded with different
+  fields is refused, so a rotated credential cannot silently stay in force.
 - `organization`: verified Console organization id, or empty when unverified.
-- `organization_source`: source that verified the organization, for example
-  `organizations-me` with its observation time, or empty when unverified.
-- `store`: credential store path for subscription profiles.
-  This field extends the profile record in
-  [subscription-fallback.bend](bend2/src/coordinator/subscription-fallback.bend:16).
+  Written only by a `reported` organization observation; the record verb cannot
+  state it.
+- `verified_at`: observation time of the verification, or empty when unverified.
 
 A browser sign-in does not verify an organization.
 The two operator Chrome sign-ins stay unmapped until root verifies each
@@ -126,73 +135,81 @@ account-to-organization mapping and places credentials in the native secret stor
 One observation belongs to one organization. Accounts that share an organization
 share one observation. The organization id is the deduplication key.
 
-Fields:
+Implemented in [accounts.bend](bend2/src/coordinator/accounts.bend) as the
+`credit_observations` table. Fields:
 
-- `organization`: Console organization id.
-- `balance`: decimal string, or empty when unknown.
-- `currency`: ISO currency code reported by the source, or empty when unknown.
-- `unit`: unit text reported by the source, or empty when unknown.
-- `granted`: decimal string for the cycle grant, or empty when unknown.
-- `external_spend`: decimal string for spend outside Baton in the observation
-  window, or empty when unknown.
-- `baton_spend`: decimal string for spend recorded by Baton attempts, or empty
-  when no attempt recorded cost.
-- `expires_at`: expiry timestamp from the source, or empty when unknown.
-- `cycle_start` and `cycle_end`: billing cycle bounds, or empty when unknown.
-- `observed_at`: observation time in milliseconds since the epoch.
-- `source_kind`: one of the source kinds in the table above.
-- `source_identity`: text that identifies the source record, page or request.
-- `state`: `reported`, `unknown` or `unavailable`.
-  `reported` requires a non-empty balance from a listed source kind.
-  Age is reported as data beside the state.
+- `organization`: verified Console organization id; the pool key. An
+  unverified account pools nothing.
+- `fact`: `promotional_credit`, `purchased_credit`, `external_spend` or
+  `subscription_usage`. Monthly API credits and subscription usage are
+  separate facts and never reinterpret one another.
+- `state`: `reported` or `unavailable`. An unavailable newest reading carries
+  the last reported value beside it as `previous`, with the cycle it was
+  observed in.
+- `balance`: decimal string exactly as the source reported it, or empty.
+  Reported balances require a canonical decimal and a named unit.
+- `unit`: unit text from the source, or empty.
+- `expires` and `cycle`: expiry instant and billing-cycle anchor from the
+  source, or empty when unknown. Age is data beside the state; no wall-clock
+  deadline decides anything.
+- `source`: the named source, for example `console-billing-display` for an
+  operator import or `anthropic-admin-api:/v1/organizations/cost_report` for
+  an Admin API read. A named source is required for every import.
+- `detail`: the verbatim observation document, so every reading carries its
+  own raw evidence beside the parsed fields.
+- `observed_at` and `authority`: observation time in milliseconds and the
+  recording actor.
+
+Conflicting same-organization readings are named: when more than one distinct
+reported balance exists for the newest cycle, the pool view flags the conflict
+and lists every reading with its source.
 
 Code derives a display age from `observed_at` and the current time.
-Selection reads the state and age as recorded facts.
-
 ### Attempt funding record
 
-Each attempt records:
+Implemented in [accounts.bend](bend2/src/coordinator/accounts.bend) as the
+`account_attempts` table, written at admit time before the spawn and read by
+`account attempts`:
 
-- session, player, task input id and native conversation id;
-- attempt id from the existing execution record;
-- account label, auth kind and funding route;
-- organization id, or empty when unverified;
-- workload kind: `claude-code`, `agent-sdk`, `api` or `subscription`;
-- provider outcome and the provider's original error text;
-- start and end times.
+- `attempt`: the attempt directory the retained launch records; the primary key.
+- `session` and `turn`: the session and its execution row.
+- `account`, `organization`, `funding`, `secret_ref`: the selected account, its
+  verified organization, its funding route (`subscription` or `api_key`) and its
+  credential reference at the moment of selection.
+- `workload`: `agent-sdk` for API-key funding (self-run `claude --print` with the
+  organization's key is billed as Agent SDK usage), `subscription` for a
+  subscription-bound claude-code launch, and the harness name otherwise.
+- `outcome` and `error_text`: written once per finished attempt by
+  `Accounts.attempt_completed`, the single coordinated hook called from the
+  receive and turn completion paths (runtime seat owns the call).
+- `started_at` and `ended_at`: admit time and completion time.
+- `predecessor` and `recorded`: the advance chain and the record time.
 
-Funding route values:
+Selection-time availability facts ride beside the route, never inside it:
+`select` reports `preferredByObservation`, `creditEligible`,
+`observationState` and `creditCycle`, and an exhausted or unknown balance is
+a preference and reporting fact, never an admission gate.
+Monthly API credits and subscription usage stay separate facts: credit
+observations record `promotional_credit`, `purchased_credit`,
+`external_spend` and `subscription_usage` as distinct facts against the
+verified organization, and a funding route never reinterprets one as the other.
 
-- `subscription`: subscription authentication draws from subscription usage.
-- `api-credit`: API-key authentication against a verified organization with a
-  `reported` credit observation.
-- `api-purchased`: API-key authentication where promotional balance is unknown
-  or exhausted and purchased credit may apply. The record states which fact
-  was known at selection time.
-- `api-unknown`: API-key authentication where organization or balance is unknown.
-  Selection requires an explicit conductor decision. Code does not present
-  unknown balance as available credit.
 
 ## Route selection
 
-Input: workload kind, configured accounts in operator order, credit observations.
+Input: the session's harness, the configured accounts in operator recording
+order, and the newest promotional-credit observation per organization.
 
-Rules:
-
-1. A self-run headless workload (`claude --print`, Agent SDK or API) with
-   `auth_kind` equal to `api-key` from a verified linked organization may select
-   `api-credit`. The attempt records `credit_eligible` as true.
-   Interactive, IDE, desktop and GitHub Action launches do not select
-   `api-credit`. Baton does not spawn those launch origins.
-2. A subscription-authenticated workload selects a subscription route and
-   records `credit_eligible` as false.
-3. Unknown organization or unknown balance produces `api-unknown`.
-   The conductor decides. The state stays visible in the attempt record.
-4. Subscription exhaustion and API-credit exhaustion are distinct causes.
-   Each advances selection only within routes that match that cause.
-5. Selection reads observations as facts. Selection adds no cost estimate,
-   no token budget and no admission refusal based on amount.
-
+The first account whose harness and funding match and whose organization's
+newest promotional observation is not `unavailable` is preferred by
+observation. When every matching account is preferred-against, the operator's
+order decides and the answer records `preferredByObservation` as false. An
+organization with no observation is never preferred against. No observation
+refuses work: an exhausted or invalid credential produces the actual provider
+failure and the fallback path.
+Selection reads the observation state and cycle as recorded facts, so an
+unknown or aged balance stays visible to the conductor without gating
+anything.
 ## Fallback
 
 Fallback follows #702 and #681.

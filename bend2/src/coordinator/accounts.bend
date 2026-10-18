@@ -225,7 +225,7 @@ def account_binding(+harness: String, chosen: Maybe<&2,AccountRecord>, helper: M
 # an account row joins that attempt's own seed, execution and terminal rows.
 def schema() -> String:
   "CREATE TABLE IF NOT EXISTS accounts (id TEXT PRIMARY KEY NOT NULL,provider TEXT NOT NULL,harness TEXT NOT NULL,funding TEXT NOT NULL CHECK(funding IN ('subscription','api_key')),secret_ref TEXT NOT NULL,organization TEXT NOT NULL DEFAULT '',verified_at TEXT NOT NULL DEFAULT '');"
-  ++ "CREATE TABLE IF NOT EXISTS account_attempts (attempt TEXT PRIMARY KEY NOT NULL,session TEXT NOT NULL REFERENCES sessions(id),turn TEXT NOT NULL DEFAULT '',account TEXT NOT NULL REFERENCES accounts(id),organization TEXT NOT NULL DEFAULT '',funding TEXT NOT NULL,secret_ref TEXT NOT NULL,predecessor TEXT NOT NULL DEFAULT '',recorded TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);"
+  ++ "CREATE TABLE IF NOT EXISTS account_attempts (attempt TEXT PRIMARY KEY NOT NULL,session TEXT NOT NULL REFERENCES sessions(id),turn TEXT NOT NULL DEFAULT '',account TEXT NOT NULL REFERENCES accounts(id),organization TEXT NOT NULL DEFAULT '',funding TEXT NOT NULL,secret_ref TEXT NOT NULL,workload TEXT NOT NULL DEFAULT '',outcome TEXT NOT NULL DEFAULT '',error_text TEXT NOT NULL DEFAULT '',started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,ended_at TEXT NOT NULL DEFAULT '',predecessor TEXT NOT NULL DEFAULT '',recorded TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);"
   ++ "CREATE TABLE IF NOT EXISTS credit_observations (id TEXT PRIMARY KEY NOT NULL,organization TEXT NOT NULL DEFAULT '',fact TEXT NOT NULL,state TEXT NOT NULL CHECK(state IN ('reported','unavailable')),balance TEXT NOT NULL DEFAULT '',unit TEXT NOT NULL DEFAULT '',expires TEXT NOT NULL DEFAULT '',cycle TEXT NOT NULL DEFAULT '',source TEXT NOT NULL,detail TEXT NOT NULL DEFAULT '',observed_at TEXT NOT NULL,authority TEXT NOT NULL);"
   ++ "CREATE INDEX IF NOT EXISTS credit_observations_pool ON credit_observations(organization,fact);"
   ++ "CREATE INDEX IF NOT EXISTS account_attempts_session ON account_attempts(session,recorded);"
@@ -250,7 +250,40 @@ def ensure(+db: String) -> IO(Unit):
   do IO(Unit):
     present : Bool <- accounts_present(db)
     made : Unit <- Bool.pick(IO(Unit),present,IO.pure(Unit,Unit{}),IO.try(Unit,DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ C.schema() ++ schema() ++ "COMMIT;")))
+    columns : Unit <- attempt_columns_ensured(db)
     IO.pure(Unit,Unit{})
+
+# Attempt fact columns added after the first landing: a database whose
+# account_attempts table predates them gains the columns here, once per
+# process, driven by the table's own column list.
+def attempt_columns() -> List<String>:
+  ["workload","outcome","error_text","started_at","ended_at"]
+
+def attempt_columns_missing(db: String, columns: List<String>) -> IO(List<String>):
+  match columns:
+    case Nil{}: IO.pure(List<String>,Nil{})
+    case +column <> rest: do IO<List<String>>:
+      found : String <- IO.try(String,DB.Sql.read(db,"SELECT EXISTS(SELECT 1 FROM pragma_table_info('account_attempts') WHERE name=" ++ C.q(column) ++ ");"))
+      missing : List<String> <- attempt_columns_missing(db,rest)
+      IO.pure(List<String>,Bool.pick(List<String>,String.eq(Tx.trim_nl(found),"0"),Con{column,missing},missing))
+
+def attempt_columns_installed(db: String, columns: List<String>) -> IO(Unit):
+  match columns:
+    case Nil{}: IO.pure(Unit,Unit{})
+    case +column <> rest: do IO(Unit):
+      added : Unit <- IO.try(Unit,DB.Sql.query(db,"ALTER TABLE account_attempts ADD COLUMN " ++ column ++ " TEXT NOT NULL DEFAULT '';"))
+      attempt_columns_installed(db,rest)
+
+def attempt_columns_ensured(db: String) -> IO(Unit):
+  do IO(Unit):
+    present : Bool <- accounts_present(db)
+    columns : Unit <- Bool.pick(IO(Unit),present,attempt_columns_ensured_present(db),IO.pure(Unit,Unit{}))
+    IO.pure(Unit,Unit{})
+
+def attempt_columns_ensured_present(db: String) -> IO(Unit):
+  do IO(Unit):
+    missing : List<String> <- attempt_columns_missing(db,attempt_columns())
+    attempt_columns_installed(db,missing)
 
 # One row per account, fields separated by the ASCII unit separator, in operator
 # recording order.
@@ -465,8 +498,21 @@ def handoff(+db: String, +session: String, +id: String, +event: String, native: 
 # --- the account selected for each attempt -----------------------------------
 
 def attempt_insert_sql(+session: String, +attempt: String, +predecessor: String, +account: AccountRecord) -> String:
-  "INSERT OR REPLACE INTO account_attempts(attempt,session,turn,account,organization,funding,secret_ref,predecessor) SELECT " ++ C.q(attempt) ++ "," ++ C.q(session) ++ ",coalesce((SELECT id FROM executions WHERE session=" ++ C.q(session) ++ " AND directory=" ++ C.q(attempt) ++ "),'')," ++ C.q(account_id(account)) ++ "," ++ C.q(account_organization(account)) ++ "," ++ C.q(account_funding(account)) ++ "," ++ C.q(account_secret_ref(account)) ++ "," ++ C.q(predecessor) ++ ";"
-  ++ "SELECT json_object('attempt',attempt,'session',session,'turn',turn,'account',account,'organization',organization,'funding',funding,'secretRef',secret_ref,'predecessor',predecessor,'recorded',recorded) FROM account_attempts WHERE attempt=" ++ C.q(attempt) ++ ";"
+  "INSERT OR REPLACE INTO account_attempts(attempt,session,turn,account,organization,funding,secret_ref,workload,started_at,predecessor) SELECT " ++ C.q(attempt) ++ "," ++ C.q(session) ++ ",coalesce((SELECT id FROM executions WHERE session=" ++ C.q(session) ++ " AND directory=" ++ C.q(attempt) ++ "),'')," ++ C.q(account_id(account)) ++ "," ++ C.q(account_organization(account)) ++ "," ++ C.q(account_funding(account)) ++ "," ++ C.q(account_secret_ref(account)) ++ ",CASE WHEN " ++ C.q(account_funding(account)) ++ "='api_key' THEN 'agent-sdk' WHEN " ++ C.q(account_harness(account)) ++ "='claude-code' THEN 'subscription' ELSE " ++ C.q(account_harness(account)) ++ " END,CAST(strftime('%s','now') AS INTEGER),CURRENT_TIMESTAMP," ++ C.q(predecessor) ++ ";"
+  ++ "SELECT json_object('attempt',attempt,'session',session,'turn',turn,'account',account,'organization',organization,'funding',funding,'secretRef',secret_ref,'workload',workload,'outcome',outcome,'errorText',error_text,'startedAt',started_at,'endedAt',ended_at,'predecessor',predecessor,'recorded',recorded) FROM account_attempts WHERE attempt=" ++ C.q(attempt) ++ ";"
+
+# The completion facts of one attempt: the provider outcome, the provider's
+# original error text and the end time. The receive and turn completion paths
+# call this once per finished attempt - the single coordinated hook, owned by
+# the runtime seat, so no completion fact is assembled anywhere else.
+def attempt_completed_sql(+attempt: String, +outcome: String, +error_text: String) -> String:
+  "UPDATE account_attempts SET outcome=" ++ C.q(outcome) ++ ",error_text=" ++ C.q(error_text) ++ ",ended_at=CURRENT_TIMESTAMP WHERE attempt=" ++ C.q(attempt) ++ ";"
+  ++ "SELECT json_object('attempt',attempt,'account',account,'funding',funding,'workload',workload,'outcome',outcome,'errorText',error_text,'startedAt',started_at,'endedAt',ended_at) FROM account_attempts WHERE attempt=" ++ C.q(attempt) ++ ";"
+
+def attempt_completed(+db: String, +attempt: String, +outcome: String, +error_text: String) -> IO(Unit):
+  do IO(Unit):
+    saved : String <- IO.try(String,commit_read(db,attempt_completed_sql(attempt,outcome,error_text)))
+    IO.print(Tx.trim_nl(saved))
 
 # The launch records the selected account beside the attempt. A failed record
 # reports its own cause to the session's coordinator and leaves the launch to
@@ -485,7 +531,7 @@ def record_attempt(+db: String, +session: String, +attempt: String, +predecessor
     IO.pure(Unit,Unit{})
 
 def attempts_answer_sql(session: String) -> String:
-  "SELECT json_object('attempts',coalesce(json_group_array(json_object('attempt',attempt,'session',session,'turn',turn,'account',account,'organization',organization,'funding',funding,'secretRef',secret_ref,'predecessor',predecessor,'recorded',recorded)),json('[]'))) FROM (SELECT * FROM account_attempts WHERE session=" ++ C.q(session) ++ " ORDER BY recorded,rowid);"
+  "SELECT json_object('attempts',coalesce(json_group_array(json_object('attempt',attempt,'session',session,'turn',turn,'account',account,'organization',organization,'funding',funding,'secretRef',secret_ref,'workload',workload,'outcome',outcome,'errorText',error_text,'startedAt',started_at,'endedAt',ended_at,'predecessor',predecessor,'recorded',recorded)),json('[]'))) FROM (SELECT * FROM account_attempts WHERE session=" ++ C.q(session) ++ " ORDER BY recorded,rowid);"
 
 def attempts(+db: String, session: String) -> IO(Unit):
   IO.print(Tx.trim_nl(IO.try(String,DB.Sql.read(db,attempts_answer_sql(session)))))

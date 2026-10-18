@@ -359,6 +359,40 @@ class AccountCredits(unittest.TestCase):
                          [('omp-two',)])
 
 
+    def test_exhaustion_delivers_owed_input_to_the_continuation_without_guidance(self):
+        self.root()
+        self.recruit('leaf')
+        self.call('message', 'retained-task', 'root', 'leaf', 'task', self.task.read_text())
+        owed = 'Second retained task: finish the λ review before the handoff report.'
+        self.record('omp-main', 'anthropic', 'omp', 'subscription', '/fixture/stores/omp-a')
+        self.record('omp-next', 'anthropic', 'omp', 'subscription', '/fixture/stores/omp-b')
+        self.send('bind', id='omp-main', session='leaf')
+        first, started = self.accept('leaf')
+        self.assertIn(self.task.read_text(), started['prompt'])
+        self.call('message', 'owed-task', 'root', 'leaf', 'task', owed)
+        cause = "You've hit your session limit. Try again later."
+        self.action(first, fail=True, ack=False, fail_message=cause)
+        self.action(first, exit_fixture=True)
+        second, resumed = self.accept('leaf')
+        self.assertEqual(resumed['native'], started['native'])
+        self.assertIn(owed, resumed['prompt'])
+        self.assertNotIn(self.task.read_text(), resumed['prompt'])
+        guidance = [row for row in self.rows(
+            "SELECT body FROM messages WHERE recipient='leaf' AND kind='guidance'")]
+        self.assertEqual(guidance, [], guidance)
+        handoff = [row for row in self.rows(
+            "SELECT body FROM messages WHERE body LIKE 'account handoff:%'")]
+        self.assertEqual(len(handoff), 1, handoff)
+        owed_rows = self.rows(
+            "SELECT receipt IS NOT NULL AS acknowledged FROM messages "
+            "WHERE recipient='leaf' AND kind='task' AND body LIKE '%λ review%'")
+        self.assertEqual([row['acknowledged'] for row in owed_rows], [1])
+        self.finish(second)
+        self.exited('leaf')
+        self.assertEqual([row['account'] for row in self.send('attempts', session='leaf')['attempts']],
+                         ['omp-main', 'omp-next'])
+
+
 if __name__ == '__main__':
     unittest.main()
 

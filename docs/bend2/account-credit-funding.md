@@ -30,6 +30,9 @@ attempt:
 | `attempt` | The attempt directory the retained launch records. The same value `native_initial_inputs.attempt` carries. |
 | `session` | The Player. |
 | `turn` | `executions.id` for that attempt, empty when the execution row is absent. |
+| `workload` | The execution class of the launch: `agent-sdk` for API-key funding, `subscription` for a subscription-bound claude-code launch, the harness name otherwise. Written at admit. |
+| `outcome`, `error_text`, `ended_at` | Written once per finished attempt by `Accounts.attempt_completed`, the coordinated hook the receive and turn completion paths call. Empty until that call, by design: an unfinished attempt carries no outcome. |
+| `started_at` | Admit time, written before the spawn, so an unstarted or failed launch keeps its attribution. |
 | `account`, `organization`, `funding`, `secret_ref` | The selection in force for the attempt. |
 | `predecessor` | The attempt this one continues, so an account change keeps its lineage. |
 
