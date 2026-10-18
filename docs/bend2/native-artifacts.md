@@ -79,6 +79,32 @@ Packaging copies the project LICENSE and NOTICE when present, and retains the pi
 
 The Darwin job verifies the generated C checksum, producer source tree and every tracked source file against its package checkout. It compiles that C with Darwin clang, includes TypeScript 5.9.3, and packages the complete producer results and target comparison under `share/baton2/generated-c-provenance`. The extracted-artifact smoke runs on `macos-15` with the owned build path unavailable. Each job retains complete command streams and actual results.
 
+### Homelab runner-group preflight
+
+Run the read-only runner-group check before dispatching a homelab validation:
+
+~~~sh
+python3 bend2/scripts/check-runner-group-readiness.py \
+  --workflow-branch '<trusted-validation-branch>'
+~~~
+
+The command reads `BATON2_RUNNER_GROUP_READ_TOKEN` from the environment. Use a
+short-lived or fine-grained token with the organization's `Self-hosted runners`
+read permission. The check verifies that runner group 4 is named
+`baton2-native-homelab`, is restricted to selected repositories and workflows,
+selects only repository ID `1296997100` (`Flip-Engineering/baton`), and permits
+the exact direct workflow ref
+`Flip-Engineering/baton/.github/workflows/bend2-native.yml@refs/heads/<trusted-validation-branch>`.
+The token is not written to a file or included in command arguments.
+
+Use a direct workflow branch ref for the runner-group pin. Pull-request merge
+refs are not supported by this group policy. Dispatch the trusted workflow
+branch and pass candidate and target commits as full commit IDs; this keeps the
+workflow authorization ref separate from the source commits being compared.
+The preflight records policy readiness at the time of its API reads. It does not
+prove that a runner is online or that a later job was assigned. Retain the
+workflow run's actual runner assignment as the scheduling result.
+
 Pushes and pull requests produce development artifacts. To qualify an immutable candidate for Baton 2.0.0, supply its branch and the exact target commit:
 
 ~~~sh
