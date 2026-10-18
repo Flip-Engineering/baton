@@ -132,53 +132,57 @@ static int focused_receiver_verb(int argc,char **argv) {
      !strcmp(first,"--instance-owner") || !strcmp(first,"--instance-shutdown") ||
      !strcmp(first,"--recover-observer") || !strcmp(first,"--recover-receive")) return 1;
   if(argc>2 && (!strcmp(argv[2],"receive") || !strcmp(argv[2],"turn") ||
-                !strcmp(argv[2],"recover-observer"))) return 1;
+                !strcmp(argv[2],"turn-text") || !strcmp(argv[2],"recover-observer") ||
+                !strcmp(argv[2],"agent-native-input"))) return 1;
   return 0;
 }
 
-static int focused_receiver_registration(int argc,char **argv) {
-  if(argc>2 && !strcmp(argv[2],"receiver")) return 1;
-  return argc>3 && !strcmp(argv[1],"--database") && !strcmp(argv[3],"receiver");
-}
+#endif
 
-static int delegate_receiver_registration(int argc,char **argv) {
-  char *facade=application_executable();
-  char *directory=facade?strdup(facade):NULL;
+#ifdef BATON2_NATIVE_RECEIVER_ROUTER
+static int native_receiver_route(int argc, char **argv) {
+  int native_input=argc>2 && !strcmp(argv[2],"agent-native-input");
+  int focused_verb=argc>1 && (!strcmp(argv[1],"--dispatch-message") ||
+    !strcmp(argv[1],"--host-process-keeper") || !strcmp(argv[1],"--instance-owner") ||
+    !strcmp(argv[1],"--instance-shutdown") || !strcmp(argv[1],"--recover-observer") ||
+    !strcmp(argv[1],"--recover-receive"));
+  if(argc>2 && (!strcmp(argv[2],"receive") || !strcmp(argv[2],"turn") ||
+      !strcmp(argv[2],"turn-text") || !strcmp(argv[2],"recover-observer"))) focused_verb=1;
+  if(!native_input && !focused_verb) return -1;
+  char *full=application_executable();
+  char *directory=full?strdup(full):NULL;
   char *slash=directory?strrchr(directory,'/'):NULL;
-  if(!slash) {
-    free(directory);free(facade);
-    fputs("baton: cannot locate the focused installation directory.\n",stderr);
-    return 78;
-  }
+  if(!slash) {free(directory);free(full);perror("baton receiver router");return 78;}
   *slash=0;
-  size_t size=strlen(directory)+sizeof("/baton-register");
+  size_t size=strlen(directory)+sizeof("/baton");
   char *candidate=malloc(size);
-  if(!candidate) {
-    free(directory);free(facade);
-    perror("baton: receiver registrar path");
-    return 1;
-  }
-  snprintf(candidate,size,"%s/baton-register",directory);
-  char *registrar=realpath(candidate,NULL);
+  if(!candidate) {free(directory);free(full);perror("baton receiver path");return 1;}
+  snprintf(candidate,size,"%s/baton",directory);
+  char *focused=realpath(candidate,NULL);
   free(candidate);free(directory);
-  if(!registrar || access(registrar,X_OK)) {
-    fputs("baton: sibling receiver registrar is missing or not executable. Install the complete Baton package.\n",stderr);
-    free(registrar);free(facade);return 78;
+  if(!focused || access(focused,X_OK)) {
+    fputs("baton: focused receiver is missing or not executable. Install the complete Baton package.\n",stderr);
+    free(focused);free(full);return 78;
   }
   char **next=calloc((size_t)argc+2,sizeof(*next));
-  if(!next) {
-    free(registrar);free(facade);
-    perror("baton: receiver registrar arguments");
-    return 1;
+  if(!next) {free(focused);free(full);perror("baton receiver arguments");return 1;}
+  next[0]=focused;
+  int count=1;
+  if(native_input) {
+    next[count++]=argv[1];
+    next[count++]=argv[2];
+    next[count++]=full;
+    for(int i=3;i<argc;i++) next[count++]=argv[i];
+  } else {
+    for(int i=1;i<argc;i++) next[count++]=argv[i];
   }
-  next[0]=registrar;
-  next[1]=facade;
-  for(int i=1;i<argc;i++) next[i+1]=argv[i];
-  execv(registrar,next);
-  perror("baton: receiver registrar could not execute");
-  free(next);free(registrar);free(facade);return 1;
+  execv(focused,next);
+  perror("baton: focused receiver could not execute");
+  free(next);free(focused);free(full);return 1;
 }
+#endif
 
+#ifdef BATON2_RECEIVE_FOCUSED
 static int delegate_full_cli(char **argv) {
   char *executable=application_executable();
   char *directory=executable?strdup(executable):NULL;
@@ -221,8 +225,14 @@ int main(int argc, char **argv) {
   if(settings>=0) return settings;
   int dispatch=dispatch_entry(argc,argv);
   if(dispatch>=0) return dispatch;
+#ifdef BATON2_NATIVE_RECEIVER_ROUTER
+  int receiver_route=native_receiver_route(argc,argv);
+  if(receiver_route>=0) return receiver_route;
+#endif
 #ifdef BATON2_RECEIVE_FOCUSED
-  if(focused_receiver_registration(argc,argv)) return delegate_receiver_registration(argc,argv);
+  /* Native task bootstrap enters through the canonical full CLI once so its
+     router can append the trusted executable identity expected by Bend. */
+  if(argc==3 && !strcmp(argv[2],"agent-native-input")) return delegate_full_cli(argv);
   if(!focused_receiver_verb(argc,argv)) return delegate_full_cli(argv);
 #endif
   char **application = calloc((size_t)argc + 2, sizeof(*application));

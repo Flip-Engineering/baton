@@ -4,6 +4,10 @@ import ../host/instance.bend as Custody
 import ../host/process.bend as P
 import ./control.bend as Control
 import ./turn.bend as Turn
+import ./native-input.bend as NativeInput
+import ../git/process.bend as GitProcess
+import ../git/text.bend as Tx
+import ../git/types.bend as T
 
 def dispatch_receive(selected: Bool, +db: String, +session: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, +message: String) -> IO(Unit):
   match selected:
@@ -64,10 +68,42 @@ def dispatch_turn(selected: Bool, +db: String, +player: String, +id: String, +cm
     case True{}: Turn.run(db,player,id,cmd,model,effort,cwd,task,log,session)
     case False{}: IO.die(Unit,2,"expected turn")
 
+def focused_fallback_result(result: T.RunRes) -> IO(Unit):
+  match result:
+    case T.RRun{T.SExit{+code},out}: do IO<Unit>:
+      IO.write(out)
+      Bool.pick(IO(Unit),U32.is_eq(code,0),IO.pure(Unit,Unit{}),IO.die(Unit,code,"focused native action failed"))
+    case T.RRun{T.SSignal{num},out}: do IO<Unit>:
+      IO.write(out)
+      IO.die(Unit,U32.add(128,num),"focused native action ended by signal")
+    case T.RSpawn{detail}: IO.die(Unit,127,detail)
+
+def focused_native_args(+full: String, +db: String, args: List<String>) -> IO(Unit):
+  match args:
+    case "receive" <> +session <> +cmd <> +model <> +effort <> +cwd <> +log <> +message <> Nil{}:
+      dispatch_receive(True{},db,session,cmd,model,effort,cwd,log,message)
+    case "turn" <> +player <> +id <> +cmd <> +model <> +effort <> +cwd <> +task <> +log <> +session <> Nil{}:
+      dispatch_turn(True{},db,player,id,cmd,model,effort,cwd,task,log,session)
+    case "turn-text" <> +player <> +id <> +cmd <> +model <> +effort <> +cwd <> +body <> +log <> +session <> Nil{}:
+      Turn.run_text(db,player,id,cmd,model,effort,cwd,body,log,session)
+    case "recover-observer" <> +session <> +observer <> Nil{}:
+      dispatch_observer(True{},db,session,observer)
+    case other: do IO<Unit>:
+      result : Result<&1,&1,U32 & String,String> <- GitProcess.Process.run(Tx.enc_argv(Con{full,Con{db,other}}),".")
+      focused_fallback_result(Tx.run_res(result))
+
+def focused_native_input(+db: String, +full: String) -> IO(Unit):
+  do IO<Unit>:
+    args : List<String> <- NativeInput.input(db)
+    focused_native_args(full,db,args)
+
 def dispatch(args: List<String>) -> IO(Unit):
   match args:
+    case +db <> "agent-native-input" <> +full <> Nil{}: focused_native_input(db,full)
     case +db <> +verb <> +session <> +cmd <> +model <> +effort <> +cwd <> +log <> +message <> Nil{}:
       dispatch_receive(String.eq(verb,"receive"),db,session,cmd,model,effort,cwd,log,message)
+    case +db <> "turn-text" <> +player <> +id <> +cmd <> +model <> +effort <> +cwd <> +body <> +log <> +session <> Nil{}:
+      Turn.run_text(db,player,id,cmd,model,effort,cwd,body,log,session)
     case +db <> +verb <> +player <> +id <> +cmd <> +model <> +effort <> +cwd <> +task <> +log <> +session <> Nil{}:
       dispatch_turn(String.eq(verb,"turn"),db,player,id,cmd,model,effort,cwd,task,log,session)
     case +flag <> +db <> Nil{}:

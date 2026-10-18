@@ -87,20 +87,16 @@ def command_present(empty: Bool) -> IO(Unit):
     case True{}: IO.die(Unit,2,"The native harness command is empty; select its executable before startup.")
     case False{}: IO.pure(Unit,Unit{})
 
-def configured_endpoint_using(+db: String, session: String, +cmd: String, log: String, +model: String, +executable: String) -> IO(String):
+def configured_endpoint(+db: String, session: String, +cmd: String, log: String, +model: String) -> IO(String):
   do IO<String>:
     present : Unit <- command_present(String.is_empty(cmd))
     native : String <- IO.try(String,Host.Control.command(cmd))
+    +executable : String <- IO.try(String,Lock.SessionLock.executable())
     database : String <- IO.try(String,Lock.SessionLock.canonical(db))
     output : String <- IO.try(String,Host.Control.output(log))
     identity : String & String <- IO.try(String & String,Host.Control.identity(executable))
     checked : String & String <- identity_checked(identity,model)
     IO.pure(String,identity_endpoint(executable,database,session,native,output,model,checked))
-
-def configured_endpoint(+db: String, session: String, +cmd: String, log: String, +model: String) -> IO(String):
-  do IO<String>:
-    executable : String <- IO.try(String,Lock.SessionLock.executable())
-    configured_endpoint_using(db,session,cmd,log,model,executable)
 
 # A receiver records the adapter argv and working directory for later delivery.
 # A supplied directory updates the assignment; an empty value keeps the recorded one.
@@ -156,17 +152,6 @@ def receiver(+db: String, +session: String, cmd: String, log: String, +cwd: Stri
     +workspace : String <- Bool.pick(IO(String),String.is_empty(cwd),IO.pure(String,""),IO.try(String,Host.Control.workspace(cwd)))
     branch : Maybe<String> <- receiver_branch(workspace)
     +endpoint : String <- configured_endpoint(db,session,cmd,log,Tx.trim_nl(model))
-    +saved : String <- IO.try(String,DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ receiver_branch_sql(session,endpoint,workspace,branch) ++ receiver_sql(session,endpoint,workspace) ++ "COMMIT;"))
-    receiver_result(saved,Tx.starts_with(saved,"{\"error\":\"receiver-refused\""))
-
-def receiver_using(+db: String, +session: String, cmd: String, log: String, +cwd: String, +executable: String) -> IO(String):
-  do IO<String>:
-    found : String <- IO.try(String,Store.apply(db,C.Session{session}))
-    accepted : String <- registered(found)
-    model : String <- IO.try(String,DB.Sql.read(db,"SELECT model FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
-    +workspace : String <- Bool.pick(IO(String),String.is_empty(cwd),IO.pure(String,""),IO.try(String,Host.Control.workspace(cwd)))
-    branch : Maybe<String> <- receiver_branch(workspace)
-    +endpoint : String <- configured_endpoint_using(db,session,cmd,log,Tx.trim_nl(model),executable)
     +saved : String <- IO.try(String,DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ receiver_branch_sql(session,endpoint,workspace,branch) ++ receiver_sql(session,endpoint,workspace) ++ "COMMIT;"))
     receiver_result(saved,Tx.starts_with(saved,"{\"error\":\"receiver-refused\""))
 
