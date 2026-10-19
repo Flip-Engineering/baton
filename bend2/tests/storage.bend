@@ -483,18 +483,6 @@ def deep_marker_path(remaining: Nat, +prefix: String) -> String:
     case 0n: prefix ++ "/marker.txt"
     case 1n+rest: deep_marker_path(rest, prefix ++ "/n")
 
-def removal_detail(entries: List<T.Removal>, +path: String) -> String:
-  match entries:
-    case Nil{}: ""
-    case Con{head, tail}:
-      match head:
-        case T.Removal{entry_path, class, owner_proof, reason, bytes, +outcome}:
-          Bool.pick(String, String.eq(entry_path, path), P.outcome_detail(outcome), removal_detail(tail, path))
-
-def receipt_detail(receipt: T.Receipt, +path: String) -> String:
-  match receipt:
-    case T.Receipt{plan, root, mount, entries, reclaimed, complete}: removal_detail(entries, path)
-
 def removal_refused_check(+db: String, +root: String) -> IO(Unit):
   do IO<Unit>:
     +dir : String = root ++ "/interrupted"
@@ -506,9 +494,9 @@ def removal_refused_check(+db: String, +root: String) -> IO(Unit):
     +marker : String = deep_marker_path(130n, deep)
     +candidate : T.Candidate <- candidate_for(dir, T.Scratch{}, clear_facts())
     receipt : T.Receipt <- one_apply(db, root, candidate)
-    a : Unit <- check_receipt("interrupted-refused", receipt, dir, "refused")
-    +detail : String = receipt_detail(receipt, dir)
-    b : Unit <- check("interrupted-refused-detail", Bool.and(String.contains(detail, "partial"), String.contains(detail, "error=")), detail)
+    +report : String = receipt_outcome(receipt, dir)
+    a : Unit <- check("interrupted-refused", String.starts_with(report, "refused"), report)
+    b : Unit <- check("interrupted-refused-detail", Bool.and(String.contains(report, "partial"), String.contains(report, "error=")), report)
     kept : O.Observation <- O.observe(leaf)
     c : Unit <- check("interrupted-leaf-preserved", O.observation_is_found(kept), "deep leaf removed")
     kept_marker : O.Observation <- O.observe(marker)
