@@ -55,15 +55,17 @@ An account stores a reference. The launch resolves it.
 A subscription account binds the credential directory the harness reads, through
 the existing `CODEX_HOME` or `CLAUDE_CONFIG_DIR` binding.
 
-Anthropic API-key accounts remain recorded but their launch binding is held
-until request-level promotional-credit admission is installed. The coordinator
-refuses the attempt before spawn, and the packaged `api-key-exec` helper returns
-`creditAdmissionUnavailable` before resolving a secret or starting a child.
-The credit observations describe source readings; they do not authorize a spend.
-
-An API-key account does not launch through the current package. Its input stays
-owed, and the attempt records the refusal. Subscription routes and other
-harnesses keep their existing bindings.
+An Anthropic API-key launch passes through `credit_launch_binding` in
+`bend2/src/coordinator/accounts.bend`. That function builds the meter from the
+recorded observations and reservations, runs the admission decision in the next
+section, and records a `credit_reservations` row for the attempt when the
+decision admits. The packaged `api-key-exec` helper reads `BATON_DATABASE` and
+`BATON_ATTEMPT_DIRECTORY` from its environment and runs only when a `reserved`
+reservation row exists for that attempt; it returns
+`creditAdmissionUnavailable` before resolving a secret or starting a child in
+every other case. A refused decision records no reservation, the attempt is not
+started, and its input stays owed. Subscription routes and other harnesses keep
+their existing bindings.
 
 ## Request-level metering and admission
 
@@ -85,11 +87,19 @@ plus the maximum charge exceeds the monthly cap. An admitted decision carries
 the organization, cycle, new reserved total, balance after the reserve and cap
 room after the reserve.
 
-`account_binding`, `turn.bend` and `api-key-exec` keep the launch hold in the
-previous section. The remaining steps before an API-key launch is enabled are:
-wire the decision into the request path, record a reservation beside the
-attempt, settle the reservation from the provider outcome, and qualify that
-wiring on a remote runner.
+The database meter uses the newest `promotional_credit` observation for the
+verified organization, the sum of `reserved` reservation amounts for that
+cycle, and the sum of `settled` reservation amounts for the current
+calendar-month cap period. The monthly cap is 200 in the meter unit per
+organization, the single-account bound for the pooled balance. One retained
+launch reserves 20 in the meter unit. `attempt_completed` settles the
+attempt's reservation at the reserved amount and records the provider outcome
+beside it. A provider cost observation for an attempt is the record that can
+replace the reserved amount as the settled charge for that attempt.
+
+Deployment requires a package built from this source and the coordinator
+qualification the release process runs. A deployment built from earlier source
+keeps the previous hold behavior.
 
 ## Funded credit observations
 

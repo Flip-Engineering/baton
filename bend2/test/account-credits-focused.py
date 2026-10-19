@@ -231,6 +231,59 @@ class FocusedAccountCredits(unittest.TestCase):
                            'source': 'anthropic-admin-api:/v1/organizations/me',
                            'document': {'type': 'organization', 'id': organization, 'name': 'Fixture'}})
 
+    def gate(self, attempt, session='leaf'):
+        completed = self.entry('gate', session, 'claude-code', attempt)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        return completed.stdout.strip()
+
+    def complete(self, attempt, outcome='completed'):
+        completed = self.entry('complete', attempt, outcome, '')
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+
+    def credit_account(self, balance='200.00'):
+        self.record('claude-api', funding='api_key', secret='file:/fixture/api')
+        self.bind('claude-api', 'leaf')
+        self.observe('claude-api', 'org-fixture')
+        if balance is not None:
+            self.import_credit('claude-api', 'org-fixture', balance)
+
+    def reservations(self):
+        return self.query("SELECT attempt,state,max_charge,organization,cycle FROM credit_reservations ORDER BY attempt")
+
+    def test_gate_admits_reserves_and_settles_one_launch(self):
+        self.credit_account()
+        self.assertEqual(self.gate('attempt-1'), '/fixture/api-key-exec')
+        self.assertEqual(self.reservations(), [('attempt-1', 'reserved', '20', 'org-fixture', '2026-10')])
+        self.complete('attempt-1')
+        self.assertEqual(self.reservations(), [('attempt-1', 'settled', '20', 'org-fixture', '2026-10')])
+        self.assertEqual(self.gate('attempt-2'), '/fixture/api-key-exec')
+
+    def test_gate_refuses_an_unverified_organization_and_records_no_reservation(self):
+        self.record('claude-api', funding='api_key', secret='file:/fixture/api')
+        self.bind('claude-api', 'leaf')
+        self.assertIn('organizationUnverified', self.gate('attempt-1'))
+        self.assertEqual(self.reservations(), [])
+
+    def test_gate_refuses_without_a_reported_credit_observation(self):
+        self.credit_account(balance=None)
+        self.assertIn('creditObservationUnavailable', self.gate('attempt-1'))
+        self.assertEqual(self.reservations(), [])
+
+    def test_gate_refuses_when_reserved_launches_reach_the_balance(self):
+        self.credit_account(balance='30.00')
+        self.assertEqual(self.gate('attempt-1'), '/fixture/api-key-exec')
+        self.assertIn('promotionalCreditInsufficient', self.gate('attempt-2'))
+        self.assertEqual([row[0] for row in self.reservations()], ['attempt-1'])
+
+    def test_gate_refuses_when_settled_launches_reach_the_monthly_cap(self):
+        self.credit_account()
+        for index in range(10):
+            attempt = 'attempt-%d' % index
+            self.assertEqual(self.gate(attempt), '/fixture/api-key-exec')
+            self.complete(attempt)
+        self.assertIn('monthlyCapInsufficient', self.gate('attempt-10'))
+        self.assertEqual(len(self.reservations()), 10)
+
     def observe(self, label, organization, observed_at=1760000000000):
         return self.observe_detail(label, self.observation_document(organization, observed_at))
 
