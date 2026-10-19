@@ -7,23 +7,12 @@ if python3 --version 2>/dev/null; then
 else
   PYTHON3=/usr/bin/python3
 fi
-# The native keeper requires a writable bounded cgroup. Tests exercise the
-# exact create/attach path against a disposable hierarchy; the real delegated
-# scope run is bend2/test/cgroup-confinement-real.py.
-cgroup_fixture="$root/.scratch/bend2/cgroup-fixture"
-rm -rf "$cgroup_fixture"
-mkdir -p "$cgroup_fixture/receiver"
-printf '17179869184\n' > "$cgroup_fixture/receiver/memory.max"
-printf 'memory\n' > "$cgroup_fixture/receiver/cgroup.subtree_control"
-printf '0\n' > "$cgroup_fixture/receiver/memory.swap.max"
-export BATON2_CGROUP_ROOT="$cgroup_fixture"
-export BATON2_CGROUP_PARENT="/receiver"
 sh bend2/scripts/build-native.sh
 "$PYTHON3" bend2/test/package-receiver-layout.py
 sh bend2/test/bend-launch-guard.sh
 sh bend2/scripts/build-native.sh bend2/test/process.bend .scratch/bend2/process-test
 "$PYTHON3" bend2/test/custody-adopt.py
-"$PYTHON3" bend2/test/cgroup-confinement.py
+"$PYTHON3" bend2/test/start-gate.py
 "$PYTHON3" bend2/test/observer-monitor.py
 sh bend2/scripts/build-native.sh bend2/test/instance.bend .scratch/bend2/instance-test
 sh bend2/scripts/build-native.sh bend2/tests/git.bend .scratch/bend2/git-test
