@@ -74,7 +74,7 @@ separate 30,001-row size fixture, the partial index used 8,232,960 bytes
 synthetic SQLite measurements, not end-to-end replay timings.
 
 The trace ratio was 2,787 database bytes per stdout byte. The long observation
-transaction contributed about 22.3 MB of the 159.8 MB. Replacing that scan
+transactions contributed about 156 MB of the 159.8 MB. Replacing that scan
 with the partial index reduces the measured query work, while the trace also
 shows per-frame read-call setup.
 
