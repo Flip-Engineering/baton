@@ -1243,29 +1243,50 @@ def attempt_cleanup_files(+db: String, +directory: String) -> IO(String):
     keeper : String <- attempt_cleanup_file(db,directory,"keeper.log")
     IO.pure(String,items_join(stdout,items_join(stderr,items_join(stderr_full,items_join(stderr_meta,items_join(stderr_error,items_join(observer,keeper)))))) )
 
+def attempt_cleanup_inaccessible(session: String, attempt: String, code: U32, detail: String) -> String:
+  "{\"session\":" ++ J.string_literal(session) ++ ",\"attempt\":" ++ J.string_literal(attempt) ++ ",\"skipped\":\"attempt-artifacts-inaccessible\",\"error\":" ++ J.string_literal(U32.show(code) ++ ": " ++ detail) ++ "}"
+
+def attempt_cleanup_accessible(+db: String, +session: String, +attempt: String, +mode: String, +phase: String, +status: String, +directory: String, +pending: String, +level: String, +reported: String, +path: String, released_file: String, acknowledged_file: String) -> IO(String):
+  do IO<String>:
+    stdout : U32 <- IO.try(U32,F.Files.size(directory ++ "/stdout"))
+    stderr : U32 <- IO.try(U32,F.Files.size(directory ++ "/native.stderr"))
+    stderr_full : U32 <- IO.try(U32,F.Files.size(directory ++ "/stderr.full"))
+    stderr_meta : U32 <- IO.try(U32,F.Files.size(directory ++ "/stderr.meta"))
+    metadata : String <- stderr_meta_json(db,directory)
+    health : String <- stderr_health(db,directory,metadata)
+    observer : U32 <- IO.try(U32,F.Files.size(directory ++ "/observer.log"))
+    keeper : U32 <- IO.try(U32,F.Files.size(directory ++ "/keeper.log"))
+    released : String = Bool.pick(String,String.eq(released_file,"1"),"1","0")
+    acknowledged : String = Bool.pick(String,String.eq(acknowledged_file,"1"),"1","0")
+    error_bytes : U32 <- IO.try(U32,F.Files.size(directory ++ "/stderr-processing-error"))
+    bytes : U32 = U32.add(stdout,U32.add(stderr,U32.add(stderr_full,U32.add(stderr_meta,U32.add(error_bytes,U32.add(observer,keeper)))) ))
+    eligible : Bool = attempt_decision_eligible(attempt_decision(health,phase,status,released,acknowledged,reported,pending,level,path,bytes))
+    files : String <- Bool.pick(IO(String),eligible,do IO<String>:
+      attempt_files : String <- attempt_cleanup_files(db,directory)
+      stderr_runs : String <- clean_stderr_run_rows(db,session,attempt)
+      IO.pure(String,items_join(attempt_files,stderr_runs)),IO.pure(String,""))
+    IO.pure(String,files)
+
+def attempt_cleanup_acknowledged_result(+db: String, +session: String, +attempt: String, +mode: String, +phase: String, +status: String, +directory: String, +pending: String, +level: String, +reported: String, +path: String, released_file: String, result: Result<&1,&1,U32 & String,String>) -> IO(String):
+  match result:
+    case Fail{(code,detail)}: IO.pure(String,attempt_cleanup_inaccessible(session,attempt,code,detail))
+    case Done{acknowledged_file}: attempt_cleanup_accessible(db,session,attempt,mode,phase,status,directory,pending,level,reported,path,released_file,acknowledged_file)
+
+def attempt_cleanup_acknowledged(+db: String, +session: String, +attempt: String, +mode: String, +phase: String, +status: String, +directory: String, +pending: String, +level: String, +reported: String, +path: String, released_file: String) -> IO(String):
+  do IO<String>:
+    acknowledged_result : Result<&1,&1,U32 & String,String> <- F.Files.regular(directory ++ "/acknowledged")
+    attempt_cleanup_acknowledged_result(db,session,attempt,mode,phase,status,directory,pending,level,reported,path,released_file,acknowledged_result)
+
+def attempt_cleanup_released_result(+db: String, +session: String, +attempt: String, +mode: String, +phase: String, +status: String, +directory: String, +pending: String, +level: String, +reported: String, +path: String, result: Result<&1,&1,U32 & String,String>) -> IO(String):
+  match result:
+    case Fail{(code,detail)}: IO.pure(String,attempt_cleanup_inaccessible(session,attempt,code,detail))
+    case Done{released_file}: attempt_cleanup_acknowledged(db,session,attempt,mode,phase,status,directory,pending,level,reported,path,released_file)
+
 def attempt_cleanup_fields(+db: String, fields: List<String>) -> IO(String):
   match fields:
     case session <> attempt <> mode <> phase <> status <> +directory <> pending <> level <> reported <> path <> rest: do IO<String>:
-      released_file : String <- IO.try(String,F.Files.regular(directory ++ "/released"))
-      acknowledged_file : String <- IO.try(String,F.Files.regular(directory ++ "/acknowledged"))
-      stdout : U32 <- IO.try(U32,F.Files.size(directory ++ "/stdout"))
-      stderr : U32 <- IO.try(U32,F.Files.size(directory ++ "/native.stderr"))
-      stderr_full : U32 <- IO.try(U32,F.Files.size(directory ++ "/stderr.full"))
-      stderr_meta : U32 <- IO.try(U32,F.Files.size(directory ++ "/stderr.meta"))
-      metadata : String <- stderr_meta_json(db,directory)
-      health : String <- stderr_health(db,directory,metadata)
-      observer : U32 <- IO.try(U32,F.Files.size(directory ++ "/observer.log"))
-      keeper : U32 <- IO.try(U32,F.Files.size(directory ++ "/keeper.log"))
-      released : String = Bool.pick(String,String.eq(released_file,"1"),"1","0")
-      acknowledged : String = Bool.pick(String,String.eq(acknowledged_file,"1"),"1","0")
-      error_bytes : U32 <- IO.try(U32,F.Files.size(directory ++ "/stderr-processing-error"))
-      bytes : U32 = U32.add(stdout,U32.add(stderr,U32.add(stderr_full,U32.add(stderr_meta,U32.add(error_bytes,U32.add(observer,keeper)))) ))
-      eligible : Bool = attempt_decision_eligible(attempt_decision(health,phase,status,released,acknowledged,reported,pending,level,path,bytes))
-      files : String <- Bool.pick(IO(String),eligible,do IO<String>:
-        attempt_files : String <- attempt_cleanup_files(db,directory)
-        stderr_runs : String <- clean_stderr_run_rows(db,session,attempt)
-        IO.pure(String,items_join(attempt_files,stderr_runs)),IO.pure(String,""))
-      IO.pure(String,files)
+      released_result : Result<&1,&1,U32 & String,String> <- F.Files.regular(directory ++ "/released")
+      attempt_cleanup_released_result(db,session,attempt,mode,phase,status,directory,pending,level,reported,path,released_result)
     case other: IO.pure(String,"")
 
 def attempt_cleanup_row(db: String, row: String) -> IO(String):
