@@ -10,10 +10,10 @@ import ../git/text.bend as Tx
 import ../git/types.bend as T
 import ../storage/lifecycle.bend as StoragePolicy
 
-def dispatch_receive(selected: Bool, +db: String, +session: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, +message: String) -> IO(Unit):
+def dispatch_receive(selected: Bool, fresh: Bool, +db: String, +session: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, +message: String) -> IO(Unit):
   match selected:
     case True{}: do IO<Unit>:
-      result : Result<&1,&1,U32 & String,Unit> & String <- Receive.run(db,session,cmd,model,effort,cwd,log,message)
+      result : Result<&1,&1,U32 & String,Unit> & String <- Receive.run(db,session,cmd,model,effort,cwd,log,message,fresh)
       Receive.report_result(db,session,message,result)
     case False{}: IO.die(Unit,2,"expected receive")
 
@@ -86,9 +86,9 @@ def focused_fallback(+full: String, +db: String, args: List<String>) -> IO(Unit)
     result : Result<&1,&1,U32 & String,String> <- GitProcess.Process.run(Tx.enc_argv(Con{full,Con{db,args}}),".")
     focused_fallback_result(Tx.run_res(result))
 
-def focused_native_receive(selected: Bool, +full: String, +db: String, +verb: String, +session: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, +message: String) -> IO(Unit):
+def focused_native_receive(selected: Bool, fresh: Bool, +full: String, +db: String, +verb: String, +session: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, +message: String) -> IO<Unit>:
   match selected:
-    case True{}: dispatch_receive(True{},db,session,cmd,model,effort,cwd,log,message)
+    case True{}: dispatch_receive(True{},fresh,db,session,cmd,model,effort,cwd,log,message)
     case False{}: focused_fallback(full,db,Con{verb,Con{session,Con{cmd,Con{model,Con{effort,Con{cwd,Con{log,Con{message,Nil{}}}}}}}}})
 
 def focused_native_turn(turn_text: Bool, turn: Bool, +full: String, +db: String, +verb: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +session: String) -> IO(Unit):
@@ -108,7 +108,7 @@ def focused_native_observer(selected: Bool, +full: String, +db: String, +verb: S
 def focused_native_args(+full: String, +db: String, args: List<String>) -> IO(Unit):
   match args:
     case +verb <> +session <> +cmd <> +model <> +effort <> +cwd <> +log <> +message <> Nil{}:
-      focused_native_receive(String.eq(verb,"receive"),full,db,verb,session,cmd,model,effort,cwd,log,message)
+      focused_native_receive(Bool.or(String.eq(verb,"receive"),String.eq(verb,"receive-fresh")),String.eq(verb,"receive-fresh"),full,db,verb,session,cmd,model,effort,cwd,log,message)
     case +verb <> +player <> +id <> +cmd <> +model <> +effort <> +cwd <> +task <> +log <> +session <> Nil{}:
       focused_native_turn(String.eq(verb,"turn-text"),String.eq(verb,"turn"),full,db,verb,player,id,cmd,model,effort,cwd,task,log,session)
     case +verb <> +session <> +observer <> Nil{}:
@@ -158,7 +158,7 @@ def dispatch(args: List<String>) -> IO(Unit):
     case +db <> +route <> +session <> +cmd <> +log <> +cwd <> Nil{}:
       register_receiver_cwd(String.eq(route,"register-receiver"),db,session,cmd,log,cwd)
     case +db <> +verb <> +session <> +cmd <> +model <> +effort <> +cwd <> +log <> +message <> Nil{}:
-      dispatch_receive(String.eq(verb,"receive"),db,session,cmd,model,effort,cwd,log,message)
+      dispatch_receive(Bool.or(String.eq(verb,"receive"),String.eq(verb,"receive-fresh")),String.eq(verb,"receive-fresh"),db,session,cmd,model,effort,cwd,log,message)
     case +db <> +verb <> +player <> +id <> +cmd <> +model <> +effort <> +cwd <> +task <> +log <> +session <> Nil{}:
       Bool.pick(IO(Unit),String.eq(verb,"turn-text"),Turn.run_text(db,player,id,cmd,model,effort,cwd,task,log,session),dispatch_turn(String.eq(verb,"turn"),db,player,id,cmd,model,effort,cwd,task,log,session))
     case +first <> +second <> +session <> +observer <> Nil{}:
