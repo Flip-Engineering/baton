@@ -105,6 +105,7 @@ def names(verb: String) -> List<String>:
     Names{"context-engines","--session"},
     Names{"context-install","--module --path"},
     Names{"context-query","--owner --id --file"},
+    Names{"context-eval","--owner --id --session --expression --frame --cwd"},
     Names{"context-result","--id"},
     Names{"models","--session --all"},
     Names{"observed-usage","--session"},
@@ -149,6 +150,7 @@ def required(verb: String) -> List<String>:
     case "project-register": Tx.split_spaces("--path")
     case "context-install": Tx.split_spaces("--module --path")
     case "context-query": Tx.split_spaces("--file")
+    case "context-eval": Tx.split_spaces("--session --expression")
     case other: Nil{}
 
 def missing(+options: List<&2,Option>, fields: List<String>) -> String:
@@ -198,7 +200,7 @@ def subverb(+head: String, +sub: String) -> String:
     Bool.pick(String,member(sub,Tx.split_spaces("read record relate promote search traverse relations")),"knowledge-" ++ sub,""),
     Bool.pick(String,String.eq(head,"project"),
       Bool.pick(String,member(sub,Tx.split_spaces("register sessions settings")),"project-" ++ sub,""),
-      Bool.pick(String,Bool.and(String.eq(head,"context"),member(sub,Tx.split_spaces("engines install query result"))),"context-" ++ sub,"")))
+      Bool.pick(String,Bool.and(String.eq(head,"context"),member(sub,Tx.split_spaces("engines install query eval result"))),"context-" ++ sub,"")))
 
 def finish_values(+verb: String, +options: List<&2,Option>, items: List<&2,Operation>) -> Parsed:
   +cause = option_cause(verb,options)
@@ -314,8 +316,9 @@ def help(action: String) -> String:
     case "context-engines": "context engines [--session SESSION]\nInspect selected native context modules and readiness.\n"
     case "context-install": "context install --module ID --path PATH\nInstall an existing built module through the native operation.\n"
     case "context-query": "context query --file PATH [--id QUERY] [--owner SESSION]\nSubmit the complete request file to the existing native context operation.\n"
+    case "context-eval": "context eval --session SESSION --expression EXPR [--frame HANDLE] [--id QUERY] [--owner SESSION] [--cwd PATH]\nEvaluate one expression in an already launched runtime session through the existing native runtime operation and retain the complete result. Omitted cwd uses the owner's recorded workspace.\n"
     case "context-result": "context result [--id QUERY]\nRead the latest query owned by the current actor when its ID is omitted, or the explicitly selected retained query.\n"
-    case "context": "context engines|install|query|result NAMED_ARGS\nUse help with the corresponding context action name.\n"
+    case "context": "context engines|install|query|eval|result NAMED_ARGS\nUse help with the corresponding context action name.\n"
     case "models": "models [--session SESSION] [--all]\nRead observed model capability information for the selected session. --all reads every recorded harness route.\n"
     case "harness-inventory": "harness-inventory\nRead recorded harness/model/effort identities across sessions with operator account profiles and limits. Runs no harness command and decides nothing.\n"
     case "observed-usage": "observed-usage [--session SESSION]\nRead the selected session's actual usage observations.\n"

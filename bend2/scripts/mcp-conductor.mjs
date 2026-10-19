@@ -188,6 +188,7 @@ const batchMessaging = ['outbox', 'delivery-batch', 'message-batch'].every((name
 const inputDetail = commandSurface.includes('input MESSAGE_ID');
 const contextualActions = /baton2? as SESSION ACTION/.test(commandSurface);
 const replInput = contextualActions && /^Actions:.*\brepl\b/m.test(commandSurface);
+const contextEval = contextualActions && commandSurface.includes('context engines|install|query|eval|result');
 const nativeAttachmentInput = commandSurface.includes('native-attachment-input');
 const dispatchInput = commandSurface.includes('dispatch --stdin');
 const taskInput = dispatchInput || commandSurface.includes('task --stdin');
@@ -203,12 +204,13 @@ const unavailableTools = new Set([
   ...(!taskInput ? ['baton2_task'] : []),
   ...(!contextualActions ? ['baton2_action'] : []),
   ...(!replInput ? ['baton2_repl'] : []),
+  ...(!contextEval ? ['baton2_context_eval'] : []),
 ]);
 
 function messageInstructions() {
   if (contextualActions) {
     return `Use ${dispatchInput ? 'baton2_dispatch' : 'baton2_task'} for complete task text or a UTF-8 file, with to or session selecting an existing conversation. Baton preserves its current assignment automatically. Dispatch input and setup outcomes are stored in the database. Use baton2_action for the contextual native actions: inbox, read, send, completion-request, completion-confirmed, guide, acknowledge and domain help. The attached session supplies actor identity. Pass action and its named argument tokens; use action:help with the domain name for usage. Complete action argument strings travel directly through JSON standard input to native admission. Multi-message reads, independent sends and explicit acknowledgements return each item outcome. Successful recipient turns record handling of complete inputs; failed turns retain unfinished handling. Baton generates mutation identities and selects current owned input, receipts and completion requests. Use acknowledge without identifiers after handling input, and completion-confirmed with an optional recipient. Task completion and coordinator decisions remain separate recorded actions.` +
-      (replInput ? ' Use baton2_repl for Bend2 define, eval, bind, read, recover, share, import and interactive operations; the packaged compiler checks types and affine use and each result retains complete output and process outcomes.' : '');
+      (replInput ? ' Use baton2_repl for Bend2 define, eval, bind, read, recover, share and import operations; the packaged compiler checks types and affine use and each result retains complete output and process outcomes.' : '');
   }
   const messaging = batchMessaging
     ? 'Use baton2_inbox or baton2_pending to see pending messages, and baton2_outbox to inspect authored messages and receipts. Their optional index:true argument returns metadata; baton2_delivery and baton2_delivery_batch read selected complete messages. Use baton2_ack to acknowledge your own fully read and handled input; retain unfinished work in your reports and project state. Use baton2_guide or baton2_message_batch to direct recipients. Each batch item keeps its own admission, wake, retained message and receipt facts.'
@@ -392,6 +394,16 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: {
       query: { type: 'string' }, path: { type: 'string', description: 'Path to the query request JSON file' },
     }, required: ['path'], additionalProperties: false },
+  },
+  {
+    name: 'baton2_context_eval',
+    description: 'Evaluate one expression in an already launched native runtime session as the attached session and retain the complete result in this database. Baton submits the existing runtime evaluate request with its control and evaluation effects; no second evaluator exists. Omitted query identity is generated; omitted cwd uses the owner recorded workspace.',
+    inputSchema: { type: 'object', properties: {
+      session: { type: 'string', description: 'Launched runtime session identity' },
+      expression: { type: 'string', description: 'Expression to evaluate in the selected runtime session' },
+      frame: { type: 'string', description: 'Optional admitted frame handle' },
+      query: { type: 'string' }, owner: { type: 'string' }, cwd: { type: 'string' },
+    }, required: ['session', 'expression'], additionalProperties: false },
   },
   {
     name: 'baton2_context_result',
@@ -1053,6 +1065,16 @@ function handleToolCall(msg) {
       case 'baton2_context_query_file':
         result = args.query !== undefined ? coord('context-query-file', sessionId, args.query, args.path)
           : contextualAction('context', ['query', '--file', args.path]);
+        break;
+      case 'baton2_context_eval':
+        result = args.query !== undefined
+          ? coord('context-eval', args.owner ?? sessionId, args.query, args.session,
+                  args.expression, args.frame ?? '', args.cwd ?? '')
+          : contextualAction('context', ['eval', '--session', args.session,
+              '--expression', args.expression,
+              ...(args.frame !== undefined ? ['--frame', args.frame] : []),
+              ...(args.cwd !== undefined ? ['--cwd', args.cwd] : []),
+              ...(args.owner !== undefined ? ['--owner', args.owner] : [])]);
         break;
       case 'baton2_context_result':
         result = args.query !== undefined ? coord('context-result', args.query)
