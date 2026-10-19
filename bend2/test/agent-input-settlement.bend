@@ -4,6 +4,8 @@ import ../src/coordinator/agent-input.bend as AgentInput
 import ../src/coordinator/message-status.bend as Status
 import ../src/coordinator/store.bend as Store
 import ../src/host/sqlite.bend as DB
+import ../src/host/session-lock.bend as Lock
+import ../src/host/instance.bend as Custody
 
 def expect(+name: String, ok: Bool) -> IO(Unit):
   Bool.pick(IO(Unit),ok,IO.pure(Unit,Unit{}),IO.die(Unit,1,"fixture-agent-input-settlement " ++ name ++ ": failed"))
@@ -105,15 +107,36 @@ def refusal_cases(+db: String) -> IO(Unit):
     stopped_read : Unit <- expect_read(db,"SELECT coalesce(handled,'<null>') FROM message_reads WHERE message='stopped-guidance';","<null>\n","stopped-session-keeps-read-unhandled")
     IO.pure(Unit,Unit{})
 
+# The retained host defines br_monitor_checkpoint inside its session-lock effect
+# closure. Reaching one effect keeps that closure in the generated program.
+def link_session_lock() -> IO(Unit):
+  do IO<Unit>:
+    +selected : String <- IO.try(String,Lock.SessionLock.executable())
+    IO.pure(Unit,Unit{})
+# Store commits publish to the database owner. The focused fixture starts one
+# for its private database so the production settlement transaction completes.
+def owner_started(+db: String) -> IO(Unit):
+  do IO<Unit>:
+    ensured : Unit <- Store.ensure_before_begin(db)
+    +witness : String <- IO.try(String,Custody.Instance.ensure_owner_witness(db))
+    IO.pure(Unit,Unit{})
+def owner_stopped(+db: String) -> IO(Unit):
+  do IO<Unit>:
+    +stopped : Unit <- IO.try(Unit,Custody.Instance.shutdown(db))
+    IO.pure(Unit,Unit{})
 def run(+db: String) -> IO(Unit):
   do IO<Unit>:
+    linked : Unit <- link_session_lock()
+    owner : Unit <- owner_started(db)
     prepared : Unit <- seed(db)
     success : Unit <- success_case(db)
     report : Unit <- report_case(db)
     refused : Unit <- refusal_cases(db)
+    stopped : Unit <- owner_stopped(db)
     IO.print("fixture-agent-input-settlement-ok")
 def main_args(args: List<String>) -> IO(Unit):
   match args:
+    case "--instance-owner" <> +db <> Nil{}: IO.try(Unit,Custody.Instance.owner(db))
     case +db <> Nil{}: run(db)
     case other: IO.die(Unit,2,"usage: agent-input-settlement DB")
 def main() -> IO(Unit):
