@@ -20,3 +20,11 @@ corrected + collapsed hint: same outputs
 corrected repro argv: 18 cases, 0 diffs
 canonical upstream comp.ts b68bfe1a306c1d89d12b07cbd86012cea873c06986cf191270e65941bae4efda (unchanged)
 provenance 46bf9b44e257d9a73976b51aeac30405265dc4991f8a632ac027293ec1160ad4 (pins b68bfe1a)
+
+Final pin: HEAD 82d97dbaa0762c348dad588d0c03a65abaff9692; repair 3a39ad5476; comp.ts a72cf3afe49d77892ebe4abf061cdbe2542ce7a9f68c46bb740629d0a37d32d1 (217355 B)
+quant_ann_match argv --host/a b/x: base 2/7/9 final 2/7/9
+quant_ann_collision argv --host/a b/x: base 3/7/9 final 3/7/9
+gates final: minimal 513186, pr890 528767, control-two-long 103698, control-literal-two 150092 (all OK)
+protected final: nat 306n, u32 2496 2397, word exact, match_default 0n
+pin/closure hashes match candidate files (six core + bin/bun)
+canonical upstream comp.ts still b68bfe1a; upstream-port.diff unpushed; port blocker documented in 82d97dbaa0

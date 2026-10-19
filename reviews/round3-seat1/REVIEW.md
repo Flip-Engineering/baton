@@ -195,3 +195,44 @@ absent.
 
 The rejected round-2 findings and the negative commits remain in place; this
 section adds the corrected-candidate evidence and the two open items.
+
+## Final corrected candidate
+
+Exact pin: HEAD `82d97dbaa0762c348dad588d0c03a65abaff9692`; the repair commit
+is `3a39ad5476951f01b1e8b00b470875c7daba4ba1`; `round2/compiler-src/bend2/comp.ts`
+sha256 `a72cf3afe49d77892ebe4abf061cdbe2542ce7a9f68c46bb740629d0a37d32d1`
+(217,355 bytes); `bend.ts` and `main.ts` remain `93c2a43d…` and `53ce8e48…`.
+
+`arm_eq` now compares `Lam.q`, every `Let.q` element, and `Ann.T` in addition
+to the total `Sub`/`All` cases and the `default:false` fallback. Verified by
+execution with `clang-19 -std=c11 -O0`:
+
+| fixture | argv | baseline | final |
+| --- | --- | --- | --- |
+| `round3/fixtures/quant_ann_match.bend` | `--host-process-keeper a b` / `a b` / `x` | 2 / 7 / 9 | 2 / 7 / 9 |
+| `round3/fixtures/quant_ann_collision.bend` | same | 3 / 7 / 9 | 3 / 7 / 9 |
+
+The repro gates still pass with the final compiler: minimal 513,186 B,
+pr890-shaped 528,767 B, control-two-long 103,698 B, control-literal-two
+150,092 B. The four protected fixtures execute `306n`, `2496 2397`, the word
+match output, and `0n`. `round3/baton-pin.json` and `round3/closure.json`
+hashes match the candidate files on disk (comp.ts 217,355 bytes, all six core
+files and `bin/bun`).
+
+### Canonical upstream status
+
+The delivery was not made; it is documented as blocked in `82d97dbaa0`.
+`bend2/compiler/upstream/comp.ts` is still
+`b68bfe1a306c1d89d12b07cbd86012cea873c06986cf191270e65941bae4efda`, and the
+provenance still pins it. `round3/upstream-port.diff` is an unpushed forward
+port; the report records that upstream `v2.0.25` differs in `comp.ts` and
+leaves free probes in all 14,168 arm bodies, so the closed-arm gate does not
+fire and the port stays at the unmodified size (5,215,717 B minimal,
+31,392,801 B pr890-shaped). `round3/baton-pin.json` proposes restaging the fork
+package with the candidate `comp.ts` (source commit `3a39ad5476`); it is a pin
+proposal, not a canonical upstream change. Root must choose between the fork
+pin change and a capture-aware upstream port; the review does not treat the
+blocker as a completed delivery.
+
+The earlier open item on `Lam.q`/`Let.q`/`Ann.T` is now closed by `3a39ad5476`.
+The rejected round-2 findings and negative commits remain in place.
