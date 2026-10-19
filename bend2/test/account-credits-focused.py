@@ -43,7 +43,8 @@ class FocusedAccountCredits(unittest.TestCase):
             return database.execute(sql, parameters).fetchall()
 
     def entry(self, *arguments):
-        return subprocess.run([str(ENTRY), str(self.db), *arguments], capture_output=True, text=True)
+        return subprocess.run([str(ENTRY), str(self.db), *arguments], capture_output=True, text=True,
+                              env={**os.environ, 'BATON2_CREDIT_INTERMEDIARY_URL': 'http://127.0.0.1:9'})
 
     def account(self, action, label='', provider='', harness='', funding='', secret='', organization='', detail='', session=''):
         completed = self.entry('account', action, label, provider, harness, funding, secret, organization, detail, session)
@@ -250,12 +251,6 @@ class FocusedAccountCredits(unittest.TestCase):
     def reservation_tables(self):
         return self.query("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='credit_reservations'")[0][0]
 
-    def test_gate_refuses_until_an_observed_cost_bound_exists(self):
-        self.credit_account()
-        self.assertIn('chargeBoundUnavailable', self.gate('attempt-1'))
-        self.assertEqual(self.reservation_tables(), 1)
-        self.assertEqual(self.query("SELECT count(*) FROM credit_reservations"), [(0,)])
-
     def seed_cost(self, account='claude-api', organization='org-fixture', amount='0.50', attempt='seed-cost'):
         cap_period = self.query("SELECT strftime('%Y-%m','now')")[0][0]
         cycle = self.query("SELECT cycle FROM credit_observations WHERE organization=? AND fact='promotional_credit' "
@@ -264,133 +259,6 @@ class FocusedAccountCredits(unittest.TestCase):
                      "VALUES(?,?,?,?,?,?,'USD','settled',?,'result-total')",
                      (attempt, account, organization, cycle, cap_period, amount, amount))
         return cap_period, cycle
-
-    def test_gate_reserves_the_observed_worst_case_charge(self):
-        self.credit_account()
-        self.seed_cost()
-        self.assertEqual(self.gate('attempt-1'), 'BATON2_CREDIT_RESERVATION=attempt-1')
-        self.assertEqual(self.query("SELECT amount,state FROM credit_reservations WHERE attempt='attempt-1'"),
-                         [('0.50', 'reserved')])
-        self.assertEqual(self.query("SELECT count(*) FROM credit_authorizations WHERE attempt='attempt-1'"), [(1,)])
-
-    def complete_with_event(self, event, bound='0.50'):
-        self.credit_account()
-        self.seed_cost(amount=bound)
-        self.assertEqual(self.gate('attempt-1'), 'BATON2_CREDIT_RESERVATION=attempt-1')
-        self.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('turn-1','root','leaf','report','done')")
-        self.execute("INSERT INTO turns(id,worker,event) VALUES('turn-1','leaf',?)", (json.dumps(event),))
-        self.execute("INSERT INTO executions(session,id,mode,directory,phase,status) "
-                     "VALUES('leaf','turn-1','retained','attempt-1','exited','exit 0')")
-        self.assertEqual(self.entry('attempt', 'leaf', 'claude-code', 'attempt-1', '').returncode, 0)
-        self.complete('attempt-1')
-
-    def test_settlement_records_the_provider_total(self):
-        self.complete_with_event({'total_cost_usd': 0.4875489,
-                                  'modelUsage': {'claude-sonnet-5-5': {'costUSD': 0.4875489}}})
-        self.assertEqual(self.query("SELECT state,settled,cost_source FROM credit_reservations WHERE attempt='attempt-1'"),
-                         [('settled', '0.4875489', 'result-total')])
-
-    def test_settlement_records_an_exceeded_reservation(self):
-        self.complete_with_event({'total_cost_usd': 0.4875489,
-                                  'modelUsage': {'claude-sonnet-5-5': {'costUSD': 0.4875489}}},
-                                 bound='0.10')
-        self.assertEqual(self.query("SELECT state,settled,reason FROM credit_reservations WHERE attempt='attempt-1'"),
-                         [('settled', '0.4875489', 'reservationExceeded')])
-
-    def test_settlement_refuses_conflicting_amounts(self):
-        self.complete_with_event({'total_cost_usd': 0.50,
-                                  'modelUsage': {'claude-sonnet-5-5': {'costUSD': 0.60}}})
-        self.assertEqual(self.query("SELECT state,settled,reason FROM credit_reservations WHERE attempt='attempt-1'"),
-                         [('unknown', '', 'costAmountsConflict')])
-
-    def test_settlement_records_missing_cost_as_unknown(self):
-        self.complete_with_event({'type': 'result', 'is_error': False})
-        self.assertEqual(self.query("SELECT state,settled,reason FROM credit_reservations WHERE attempt='attempt-1'"),
-                         [('unknown', '', 'costAmountMissing')])
-
-    def test_replay_after_settlement_keeps_the_cost_and_a_foreign_marker_refuses(self):
-        helper = os.environ.get('BATON2_API_KEY_EXEC')
-        if not helper:
-            self.skipTest('BATON2_API_KEY_EXEC not set')
-        directory = self.directory
-        secret = directory / 'secret'
-        secret.write_text('fixture-secret\n')
-        secret.chmod(0o600)
-        self.record('claude-api', funding='api_key', secret='file:' + str(secret))
-        self.bind('claude-api', 'leaf')
-        self.observe('claude-api', 'org-fixture')
-        self.import_credit('claude-api', 'org-fixture', '200.00')
-        self.seed_cost()
-        self.assertEqual(self.gate('attempt-1'), 'BATON2_CREDIT_RESERVATION=attempt-1')
-        child = directory / 'child.sh'
-        child.write_text('#!/bin/sh\nexit 0\n')
-        child.chmod(0o755)
-        environment = {'BATON2_CREDIT_RESERVATION': 'attempt-1', 'BATON2_CREDIT_ACCOUNT': 'claude-api',
-                       'BATON2_CREDIT_SESSION': 'leaf', 'BATON_ATTEMPT_DIRECTORY': 'attempt-1',
-                       'BATON_DATABASE': str(self.db), 'PATH': os.environ['PATH']}
-        commands = [helper, 'file:' + str(secret), str(child)]
-        first = subprocess.run(commands, capture_output=True, text=True, env=environment)
-        self.assertEqual(first.returncode, 0, first.stderr)
-        self.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('turn-1','root','leaf','report','done')")
-        self.execute("INSERT INTO turns(id,worker,event) VALUES('turn-1','leaf',?)",
-                     (json.dumps({'total_cost_usd': 0.4875489,
-                                  'modelUsage': {'claude-sonnet-5-5': {'costUSD': 0.4875489}}}),))
-        self.execute("INSERT INTO executions(session,id,mode,directory,phase,status) "
-                     "VALUES('leaf','turn-1','retained','attempt-1','exited','exit 0')")
-        self.assertEqual(self.entry('attempt', 'leaf', 'claude-code', 'attempt-1', '').returncode, 0)
-        self.complete('attempt-1')
-        settled = self.query("SELECT state,settled FROM credit_reservations WHERE attempt='attempt-1'")
-        self.assertEqual(settled, [('settled', '0.4875489')])
-        replay = subprocess.run(commands, capture_output=True, text=True, env=environment)
-        self.assertEqual(replay.returncode, 2, replay.stdout)
-        self.assertIn('creditAuthorizationConsumed', replay.stderr)
-        foreign = subprocess.run(commands, capture_output=True, text=True,
-                                 env={**environment, 'BATON2_CREDIT_ACCOUNT': 'other-account'})
-        self.assertEqual(foreign.returncode, 2, foreign.stdout)
-        self.assertIn('creditAccountMismatch', foreign.stderr)
-        self.assertEqual(self.query("SELECT state,settled FROM credit_reservations WHERE attempt='attempt-1'"), settled)
-
-    def test_a_final_reservation_refuses_a_retry_before_a_child_starts(self):
-        helper = os.environ.get('BATON2_API_KEY_EXEC')
-        if not helper:
-            self.skipTest('BATON2_API_KEY_EXEC not set')
-        self.credit_account()
-        cap_period = self.query("SELECT strftime('%Y-%m','now')")[0][0]
-        cycle = self.query("SELECT cycle FROM credit_observations WHERE organization='org-fixture' "
-                           "AND fact='promotional_credit' ORDER BY observed_at DESC, rowid DESC LIMIT 1")[0][0]
-        self.execute("INSERT INTO credit_reservations(attempt,session,account,organization,cycle,cap_period,amount,unit,state,settled,cost_source) "
-                     "VALUES('attempt-1','leaf','claude-api','org-fixture',?,?,'0.50','USD','settled','0.50','result-total')",
-                     (cycle, cap_period))
-        self.assertEqual(self.authorize('attempt-1'), 'authorized')
-        marker = self.directory / 'child-started'
-        child = self.directory / 'child.sh'
-        child.write_text('#!/bin/sh\nprintf started > "' + str(marker) + '"\n')
-        child.chmod(0o755)
-        refused = subprocess.run([helper, 'file:/fixture/api', str(child)],
-                                 capture_output=True, text=True,
-                                 env={'BATON2_CREDIT_RESERVATION': 'attempt-1', 'BATON2_CREDIT_ACCOUNT': 'claude-api',
-                                      'BATON2_CREDIT_SESSION': 'leaf', 'BATON_ATTEMPT_DIRECTORY': 'attempt-1',
-                                      'BATON_DATABASE': str(self.db), 'PATH': os.environ['PATH']})
-        self.assertEqual(refused.returncode, 2, refused.stdout)
-        self.assertIn('creditReservationFinal', refused.stderr)
-        self.assertFalse(marker.exists())
-        self.assertEqual(self.query("SELECT state,settled FROM credit_reservations WHERE attempt='attempt-1'"),
-                         [('settled', '0.50')])
-        self.assertEqual(self.query("SELECT state FROM credit_authorizations WHERE attempt='attempt-1'"),
-                         [('authorized',)])
-
-    def test_gate_refuses_when_the_bound_exceeds_the_balance(self):
-        self.credit_account(balance='0.20')
-        self.seed_cost(amount='0.50')
-        self.assertIn('promotionalCreditInsufficient', self.gate('attempt-1'))
-
-    def test_gate_refuses_when_the_monthly_cap_is_spent(self):
-        self.credit_account(balance='500.00')
-        cap_period, cycle = self.seed_cost(amount='0.50')
-        self.execute("INSERT INTO credit_reservations(attempt,account,organization,cycle,cap_period,amount,unit,state,settled,cost_source) "
-                     "VALUES('spent','claude-api','org-fixture',?,?,'200','USD','settled','200','result-total')",
-                     (cycle, cap_period))
-        self.assertIn('monthlyCapInsufficient', self.gate('attempt-1'))
 
     def test_gate_refuses_a_reported_zero_balance(self):
         self.credit_account(balance='0.00')
@@ -404,6 +272,21 @@ class FocusedAccountCredits(unittest.TestCase):
     def test_gate_refuses_without_a_reported_credit_observation(self):
         self.credit_account(balance=None)
         self.assertIn('creditObservationUnavailable', self.gate('attempt-1'))
+
+    def test_gate_requires_the_intermediary_url(self):
+        self.credit_account()
+        completed = subprocess.run([str(ENTRY), str(self.db), 'gate', 'leaf', 'claude-code', 'attempt-1'],
+                                   capture_output=True, text=True,
+                                   env={key: value for key, value in os.environ.items()
+                                        if key != 'BATON2_CREDIT_INTERMEDIARY_URL'})
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn('creditIntermediaryUnavailable', completed.stdout)
+
+    def test_gate_returns_the_intermediary_binding(self):
+        self.credit_account()
+        self.assertEqual(self.gate('attempt-1'), 'BATON2_CREDIT_RESERVATION=attempt-1')
+        self.assertEqual(self.query("SELECT count(*) FROM credit_reservations"), [(0,)])
+        self.assertEqual(self.query("SELECT count(*) FROM credit_authorizations WHERE attempt='attempt-1'"), [(1,)])
 
     def authorize(self, attempt, session='leaf'):
         completed = self.entry('authorize', session, 'claude-code', attempt)

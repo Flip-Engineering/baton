@@ -7,7 +7,6 @@ import ../src/host/process.bend as P
 import ../src/host/text.bend as Text
 import ../src/host/sqlite.bend as DB
 import ../src/json/canonical.bend as J
-import ../src/coordinator/accounts.bend as A
 
 # Native API-credit launch boundary. Product policy resolves one secret
 # reference, writes an owner-only environment specification, and asks the host
@@ -285,26 +284,11 @@ def admitted_decided(state: String, +reference: String, +command: String, args: 
     case "mismatch": IO.die(Unit,2,refusal_json(reference,"creditAuthorizationMismatch","The recorded authorization for this attempt names a different secret reference."))
     case other: IO.die(Unit,2,refusal_json(reference,"creditAdmissionUnavailable","Anthropic API-key launches require a recorded promotional-credit authorization for this attempt."))
 
-def credit_request_decided(+db: String, +attempt: String, +reference: String, +command: String, args: List<String>, refusal: String) -> IO(Unit):
-  match String.is_empty(refusal):
+def marker_matches_decided(matches: Bool, +db: String, +attempt: String, +reference: String, +command: String, args: List<String>) -> IO<Unit>:
+  match matches:
     case True{}: do IO<Unit>:
       state : String <- authorization_consume(db,attempt,reference)
       admitted_decided(state,reference,command,args)
-    case False{}: IO.die(Unit,2,refusal_json(reference,"creditAdmissionUnavailable",refusal))
-
-def credit_request_admitted(+db: String, +attempt: String, +reference: String, +command: String, args: List<String>) -> IO(Unit):
-  do IO<Unit>:
-    account_value : Result<&1,&1,U32 & String,String> <- IO.get_env("BATON2_CREDIT_ACCOUNT")
-    session_value : Result<&1,&1,U32 & String,String> <- IO.get_env("BATON2_CREDIT_SESSION")
-    match account_value session_value:
-      case Done{+account} Done{+session}: do IO<Unit>:
-        refusal : String <- A.credit_admit_request(db,session,attempt,account)
-        credit_request_decided(db,attempt,reference,command,args,refusal)
-      case other_account other_session: IO.die(Unit,2,refusal_json(reference,"creditAdmissionUnavailable","The request path has no bound account and session; no provider process was started."))
-
-def marker_matches_decided(matches: Bool, +db: String, +attempt: String, +reference: String, +command: String, args: List<String>) -> IO<Unit>:
-  match matches:
-    case True{}: credit_request_admitted(db,attempt,reference,command,args)
     case False{}: admitted_decided("absent",reference,command,args)
 
 def admitted_marker_matches(+db: String, +marker: String, +attempt: String, +reference: String, +command: String, args: List<String>) -> IO(Unit):
