@@ -27,12 +27,15 @@ def configured_result(+configured: String, found: Result<&1,&1,U32 & String,Stri
     case Done{value}: IO.pure(Result<&1,&1,U32 & String,String>,Done{configured})
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,"BATON2_NODE is set to " ++ configured ++ ", but that path is not an executable Node runtime. Point it at an absolute executable path or unset it to use the packaged runtime.")})
 
-def configured_runtime(+configured: String) -> IO(Result<&1,&1,U32 & String,String>):
-  match is_absolute(configured):
+def configured_absolute(+configured: String, absolute: Bool) -> IO(Result<&1,&1,U32 & String,String>):
+  match absolute:
     case False{}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,"BATON2_NODE must be an absolute executable path; unset it to use the packaged runtime or set it to a Node executable.")})
     case True{}: do IO<Result<&1,&1,U32 & String,String>>:
       found : Result<&1,&1,U32 & String,String> <- Host.Control.command(configured)
       configured_result(configured,found)
+
+def configured_runtime(+configured: String) -> IO(Result<&1,&1,U32 & String,String>):
+  configured_absolute(configured,is_absolute(configured))
 
 def candidate_result(rest: List<String>, +executable: String, found: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String>):
   match found:
@@ -56,12 +59,14 @@ def path_runtime(executable: String) -> IO(Result<&1,&1,U32 & String,String>):
     found : Result<&1,&1,U32 & String,String> <- Host.Control.command("node")
     path_result(executable,found)
 
+def environment_value(+executable: String, +value: String, empty: Bool) -> IO(Result<&1,&1,U32 & String,String>):
+  match empty:
+    case True{}: installed_runtime(executable)
+    case False{}: configured_runtime(value)
+
 def environment_result(+executable: String, configured: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String>):
   match configured:
-    case Done{+value}:
-      match String.is_empty(value):
-        case True{}: installed_runtime(executable)
-        case False{}: configured_runtime(value)
+    case Done{+value}: environment_value(executable,value,String.is_empty(value))
     case Fail{error}: installed_runtime(executable)
 
 def resolve(+executable: String) -> IO(Result<&1,&1,U32 & String,String>):

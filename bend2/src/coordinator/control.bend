@@ -75,13 +75,16 @@ def identity_runtime_result(resolved: Result<&1,&1,U32 & String,String>) -> IO(S
     case Done{value}: IO.pure(String,value)
     case Fail{(code,detail)}: IO.die(String,code,detail)
 
-def identity_runtime(executable: String, identity: String & String) -> IO(String):
-  (registry,helper)=identity
-  match String.is_empty(registry):
+def identity_runtime_present(present: Bool, executable: String) -> IO(String):
+  match present:
     case True{}: IO.pure(String,"")
     case False{}: do IO<String>:
       resolved : Result<&1,&1,U32 & String,String> <- NodeRuntime.resolve(executable)
       identity_runtime_result(resolved)
+
+def identity_runtime(executable: String, identity: String & String) -> IO(String):
+  (registry,helper)=identity
+  identity_runtime_present(String.is_empty(registry),executable)
 
 law native_receiver_leaves_the_wake_argument_to_delivery:
   for executable: String
