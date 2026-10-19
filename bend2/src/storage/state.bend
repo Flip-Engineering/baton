@@ -9,6 +9,7 @@ import Base
 import ./types.bend as T
 import ./observe.bend as O
 import ../host/sqlite.bend as DB
+import ../host/session-lock.bend as Lock
 import ../git/process.bend as Git
 import ../git/status.bend as WS
 import ../git/types.bend as G
@@ -267,17 +268,47 @@ def database_path_hit(rows: List<&2,String>, +path: String) -> Bool:
     case Nil{}: False{}
     case Con{head, tail}: Bool.or(path_under(head, path), database_path_hit(tail, path))
 
+def database_canonical_decided(result: Result<&1,&1,U32 & String,String>, +canonical_path: String, unknown: Bool, next: Bool -> IO(T.Presence)) -> IO(T.Presence):
+  match result:
+    case Fail{error}: next(True{})
+    case Done{+value}:
+      Bool.pick(IO(T.Presence), Bool.or(path_under(value, canonical_path), path_under(canonical_path, value)),
+        IO.pure(T.Presence, T.Present{"database-path"}), next(unknown))
+
+def database_paths_resolved(rows: List<&2,String>, +raw_path: String, +canonical_path: String, unknown: Bool) -> IO(T.Presence):
+  match rows:
+    case Nil{}: IO.pure(T.Presence, Bool.pick(T.Presence, unknown, T.Unknown{}, T.Absent{}))
+    case Con{head, tail}:
+      do IO<T.Presence>:
+        resolved : Result<&1,&1,U32 & String,String> <- Lock.SessionLock.canonical(head)
+        database_canonical_decided(resolved, canonical_path, unknown,
+          next_unknown => database_paths_resolved(tail, raw_path, canonical_path, next_unknown))
+
+def database_candidate_step(result: Result<&1,&1,U32 & String,String>, +databases: List<&2,String>, +path: String) -> IO(T.Presence):
+  match result:
+    case Fail{error}:
+      IO.pure(T.Presence, Bool.pick(T.Presence, database_path_hit(databases, path), T.Present{"database-path"}, T.Unknown{}))
+    case Done{+canonical_path}:
+      Bool.pick(IO(T.Presence), Bool.or(database_path_hit(databases, path), database_path_hit(databases, canonical_path)),
+        IO.pure(T.Presence, T.Present{"database-path"}),
+        database_paths_resolved(databases, path, canonical_path, False{}))
+
+def database_fact_valid(databases: List<&2,String>, +path: String) -> IO(T.Presence):
+  do IO<T.Presence>:
+    canonical : Result<&1,&1,U32 & String,String> <- Lock.SessionLock.canonical(path)
+    database_candidate_step(canonical, databases, path)
+
 # A candidate that is an active coordinator database path, or an ancestor of
-# one, is preserved. The comparison uses recorded path strings, so an owner
-# that holds a database descriptor after the directory entry is unlinked is
-# still protected. Invalid or incomplete endpoint evidence answers Unknown.
-def database_fact(+state: State, +path: String) -> T.Presence:
+# one, is preserved. Recorded endpoints and candidates are resolved through the
+# coordinator's canonical-path host call before comparison. If a recorded
+# endpoint no longer resolves, its original spelling still protects a lexical
+# match; otherwise that unresolved endpoint makes the result Unknown.
+def database_fact(+state: State, +path: String) -> IO(T.Presence):
   match state:
     case State{sessions, executions, logs, pending, databases, valid}:
-      Bool.pick(T.Presence, valid,
-        Bool.pick(T.Presence, String.is_empty(path), T.Unknown{},
-          Bool.pick(T.Presence, database_path_hit(databases, path), T.Present{"database-path"}, T.Absent{})),
-        T.Unknown{})
+      Bool.pick(IO(T.Presence), Bool.and(valid, Bool.not(String.is_empty(path))),
+        database_fact_valid(databases, path),
+        IO.pure(T.Presence, T.Unknown{}))
 
 def session_match(rows: List<&2,SessionRow>, +session: String) -> Bool:
   match rows:
@@ -429,7 +460,7 @@ def facts_choice(+cls: T.StorageClass, +source: String, +path: String, +state: S
         dirty : T.Presence <- dirty_fact(cls, path)
         unpublished : T.Presence <- unpublished_fact(cls, path, state, owner)
         ref : T.Presence <- ref_fact(cls, source, path)
-        +database : T.Presence = database_fact(state, path)
+        database : T.Presence <- database_fact(state, path)
         lease : T.Presence = lease_fact(state, path)
         pending_input : T.Presence = pending_fact(state, owner)
         IO.pure(T.Facts, T.Facts{fact, database, lease, process, dirty, unpublished, runtime, ref, pending_input})

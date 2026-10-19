@@ -272,6 +272,25 @@ def database_checks(+db: String, +root: String) -> IO(Unit):
     wrote : Unit <- write_file(database, "payload")
     seeded : Unit <- db_endpoint_setup(db, root, database)
     +state : S.State <- S.load(db)
+    +link : String = root ++ "/database-link"
+    linked : Unit <- run_cmd(["/bin/ln", "-s", "database-protected", link])
+    alias_seeded : Unit <- db_endpoint_setup(db, root, link ++ "/orchestra.db")
+    alias_state : S.State <- S.load(db)
+    alias_facts : T.Facts <- S.facts_for(T.Scratch{}, "", dir, alias_state)
+    +alias_reason : String = decision_text(P.decide(T.Scratch{}, "owner", alias_facts))
+    alias_check : Unit <- check("database-symlink-alias-preserved", String.eq(alias_reason, "database-path"), alias_reason)
+    nested : Unit <- run_cmd(["/bin/mkdir", dir ++ "/nested"])
+    dotted_seeded : Unit <- db_endpoint_setup(db, root, dir ++ "/nested/../orchestra.db")
+    dotted_state : S.State <- S.load(db)
+    dotted_facts : T.Facts <- S.facts_for(T.Scratch{}, "", dir, dotted_state)
+    +dotted_reason : String = decision_text(P.decide(T.Scratch{}, "owner", dotted_facts))
+    dotted_check : Unit <- check("database-dot-segment-alias-preserved", String.eq(dotted_reason, "database-path"), dotted_reason)
+    unresolved_seeded : Unit <- db_endpoint_setup(db, root, root ++ "/missing-db-dir/orchestra.db")
+    unresolved_state : S.State <- S.load(db)
+    unresolved_facts : T.Facts <- S.facts_for(T.Scratch{}, "", dir, unresolved_state)
+    +unresolved_presence : T.Presence = facts_database_or_unknown(unresolved_facts)
+    unresolved_check : Unit <- check("database-unresolved-alias-unknown", presence_unknown(unresolved_presence), presence_detail(unresolved_presence))
+    reset_seeded : Unit <- db_endpoint_setup(db, root, database)
     +facts_dir : T.Facts <- S.facts_for(T.Scratch{}, "", dir, state)
     +dir_reason : String = decision_text(P.decide(T.Scratch{}, "owner", facts_dir))
     a : Unit <- check("database-ancestor-preserved", String.eq(dir_reason, "database-path"), dir_reason)
@@ -288,6 +307,7 @@ def database_checks(+db: String, +root: String) -> IO(Unit):
     facts_unlinked : T.Facts <- S.facts_for(T.Scratch{}, "", dir, state2)
     +unlinked_reason : String = decision_text(P.decide(T.Scratch{}, "owner", facts_unlinked))
     e : Unit <- check("database-unlinked-ancestor-preserved", String.eq(unlinked_reason, "database-path"), unlinked_reason)
+    restored : Unit <- db_endpoint_setup(db, root, db)
     IO.pure(Unit, Unit{})
 
 def database_malformed_check(+db: String, +root: String) -> IO(Unit):
@@ -388,7 +408,7 @@ def apply_checks(+db: String, +root: String) -> IO(Unit):
     +victim : String = root ++ "/victim.txt"
     wrote_victim : Unit <- write_file(victim, "keep")
     +link : String = root ++ "/link"
-    linked : Unit <- run_cmd(["/bin/ln", "-s", victim, link])
+    linked : Unit <- run_cmd(["/bin/ln", "-s", "victim.txt", link])
     +link_candidate : T.Candidate <- candidate_for(link, T.Scratch{}, clear_facts())
     link_receipt : T.Receipt <- one_apply(db, root, link_candidate)
     c : Unit <- check_receipt("symlink-removed", link_receipt, link, "removed")
