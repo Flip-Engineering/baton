@@ -28,6 +28,7 @@ import ../coordinator/commands.bend as C
 import ../host/sqlite.bend as DB
 import ../git/text.bend as Tx
 import ../host/text.bend as Text
+import ../storage/lifecycle.bend as Storage
 import ./store.bend as Store
 
 law direct_replay_keeps_output_failure_for_completion:
@@ -150,18 +151,21 @@ def busy_receive_only_reports_queued(db,session,cmd,model,effort,cwd,log,again,p
 # The recovery attachment boundary opens the supplied attempt directory and
 # passes the returned handle to its continuation. Receive.recover supplies its
 # retained-output observation continuation.
-def attached_recovery(+db: String, directory: String, next: @+handle: U32 -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
-  do IO<Result<&1,&1,U32 & String,Unit>>:
-    handle : U32 <- IO.try(U32,Custody.Instance.attach(db,directory))
-    next(handle)
+def attached_recovery(+db: String, +directory: String, +log: String, next: @+handle: U32 -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+  Storage.with_writer_leases(Result<&1,&1,U32 & String,Unit>, log, directory,
+    error => IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error}),
+    unit => do IO<Result<&1,&1,U32 & String,Unit>>:
+      handle : U32 <- IO.try(U32,Custody.Instance.attach(db,directory))
+      next(handle))
 
 law recovery_attaches_recorded_attempt:
   for +db: String
   for +directory: String
+  for +log: String
   for -next: @+handle: U32 -> IO(Result<&1,&1,U32 & String,Unit>)
-  {Receive.attach_recorded(db,directory,next) == attached_recovery(db,directory,next) : IO(Result<&1,&1,U32 & String,Unit>)}
+  {Receive.attach_recorded(db,directory,log,next) == attached_recovery(db,directory,log,next) : IO(Result<&1,&1,U32 & String,Unit>)}
 
-def recovery_attaches_recorded_attempt(db,directory,next):
+def recovery_attaches_recorded_attempt(db,directory,log,next):
   {==}
 
 # Both native entry paths use this acquisition helper. Its continuation receives
@@ -584,10 +588,12 @@ def retained_observation_uses_the_reconciled_input_cursor(db,session,id,log,curs
   {==}
 
 def guarded_attempt_observation(+db: String, +session: String, +id: String, cursor: String, cmd: String, model: String, effort: String, +cwd: String, +log: String, harness: String, +directory: String, native: String, +handle: U32, lock: Maybe<U32>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), adopted: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
-  do IO<Result<&1,&1,U32 & String,Unit>>:
-    reconciled : Unit <- Stop.reconcile(db,session,id,directory)
-    observation : Turn.Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- Turn.retained_output(db,session,id,log,harness,directory,directory,handle,"unknown")
-    Receive.observed_output(db,session,id,log,cursor,native,cwd,directory,handle,lock,observation,again,adopted)
+  Storage.with_writer_leases(Result<&1,&1,U32 & String,Unit>, log, directory,
+    error => IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error}),
+    unit => do IO<Result<&1,&1,U32 & String,Unit>>:
+      reconciled : Unit <- Stop.reconcile(db,session,id,directory)
+      observation : Turn.Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- Turn.retained_output(db,session,id,log,harness,directory,directory,handle,"unknown")
+      Receive.observed_output(db,session,id,log,cursor,native,cwd,directory,handle,lock,observation,again,adopted))
 
 law guarded_observation_preserves_its_adopted_origin:
   for +db: String

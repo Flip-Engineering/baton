@@ -96,10 +96,15 @@ def roots_walk(lines: List<String>, acc: List<&2,RootSpec>) -> List<&2,RootSpec>
 def parse_roots(+text: String) -> List<&2,RootSpec>:
   roots_walk(Tx.split_lines(text), Nil{})
 
+def env_text(result: Result<&1,&1,U32 & String,String>) -> String:
+  match result:
+    case Done{value}: value
+    case Fail{error}: ""
+
 def configured_roots() -> IO(List<&2,RootSpec>):
   do IO<List<&2,RootSpec>>:
-    text : String <- IO.try(String, IO.get_env("BATON_STORAGE_ROOTS"))
-    IO.pure(List<&2,RootSpec>, parse_roots(text))
+    result : Result<&1,&1,U32 & String,String> <- IO.get_env("BATON_STORAGE_ROOTS")
+    IO.pure(List<&2,RootSpec>, parse_roots(env_text(result)))
 
 def exclusive_add_line(+line: String, acc: List<&2,String>, empty: Bool, comment: Bool) -> List<&2,String>:
   match empty:
@@ -121,8 +126,8 @@ def parse_exclusive(+text: String) -> List<&2,String>:
 
 def configured_exclusive() -> IO(List<&2,String>):
   do IO<List<&2,String>>:
-    text : String <- IO.try(String, IO.get_env("BATON_STORAGE_EXCLUSIVE_ROOTS"))
-    IO.pure(List<&2,String>, parse_exclusive(text))
+    result : Result<&1,&1,U32 & String,String> <- IO.get_env("BATON_STORAGE_EXCLUSIVE_ROOTS")
+    IO.pure(List<&2,String>, parse_exclusive(env_text(result)))
 
 def exclusive_member(+path: String, rows: List<&2,String>) -> Bool:
   match rows:
@@ -138,6 +143,115 @@ def unproven_roots(specs: List<&2,RootSpec>, +exclusive: List<&2,String>, +acc: 
       +path = root_path_of(head)
       Bool.pick(String, exclusive_member(path, exclusive), unproven_roots(tail, exclusive, acc),
         Bool.pick(String, String.is_empty(acc), path, acc))
+
+# Storage cleanup is admitted only for roots whose managed writer paths hold
+# the cooperative lease. The managed writer paths are retained output and its
+# attempt spool/checkpoint, so the covered class is `log-evidence`. Absolute
+# configuration is required because the recorded writer paths are canonical.
+def covered_class(+cls: T.StorageClass) -> Bool:
+  match cls:
+    case T.LogEvidence{}: True{}
+    case other: False{}
+
+def covered_root(+spec: RootSpec) -> Bool:
+  match spec:
+    case RootSpec{cls, path, source}:
+      Bool.and(covered_class(cls), String.starts_with(path, "/"))
+
+# The first configured root without a participating managed writer. Apply
+# refuses while this answer names a root.
+def uncovered_roots(specs: List<&2,RootSpec>, +acc: String) -> String:
+  match specs:
+    case Nil{}: acc
+    case Con{+head, tail}:
+      +path : String = root_path_of(head)
+      Bool.pick(String, covered_root(head), uncovered_roots(tail, acc),
+        Bool.pick(String, String.is_empty(acc), path, acc))
+
+def log_rows_under(rows: List<&2,S.LogRow>, +root: String) -> Bool:
+  match rows:
+    case Nil{}: False{}
+    case Con{head, tail}:
+      match head:
+        case S.LogRow{session, log}: Bool.or(S.path_under(log, root), log_rows_under(tail, root))
+
+def execution_rows_under(rows: List<&2,S.ExecutionRow>, +root: String) -> Bool:
+  match rows:
+    case Nil{}: False{}
+    case Con{head, tail}:
+      match head:
+        case S.ExecutionRow{session, id, directory, phase, status}: Bool.or(S.path_under(directory, root), execution_rows_under(tail, root))
+
+def retained_rows_under(rows: List<&2,String>, +root: String) -> Bool:
+  match rows:
+    case Nil{}: False{}
+    case Con{+head, tail}: Bool.or(S.path_under(head, root), retained_rows_under(tail, root))
+
+# A covered root is admitted only when the database still references a
+# registered log, a retained generation (log or base), or an execution
+# directory under it. The class marker and an absolute path alone do not admit
+# an arbitrary root.
+def referenced_root(+spec: RootSpec, +state: S.State) -> Bool:
+  match spec:
+    case RootSpec{cls, path, source}:
+      match state:
+        case S.State{sessions, executions, logs, pending, databases, retained, valid}:
+          Bool.and(covered_root(spec),
+            Bool.or(log_rows_under(logs, path),
+              Bool.or(execution_rows_under(executions, path), retained_rows_under(retained, path))))
+
+def uncovered_roots_state(specs: List<&2,RootSpec>, +state: S.State, +acc: String) -> String:
+  match specs:
+    case Nil{}: acc
+    case Con{+head, tail}:
+      +path : String = root_path_of(head)
+      Bool.pick(String, referenced_root(head, state), uncovered_roots_state(tail, state, acc),
+        Bool.pick(String, String.is_empty(acc), path, acc))
+
+def canonical_equal(root: String, result: Result<&1,&1,U32 & String,String>) -> Bool:
+  match result:
+    case Done{value}: String.eq(value, root)
+    case Fail{error}: False{}
+
+def canonical_root_equal(+root: String) -> IO(Bool):
+  do IO<Bool>:
+    result : Result<&1,&1,U32 & String,String> <- Lock.SessionLock.canonical(root)
+    IO.pure(Bool, canonical_equal(root, result))
+
+def canonical_roots_check(specs: List<&2,RootSpec>, +bad: String) -> IO(String):
+  match specs:
+    case Nil{}: IO.pure(String, bad)
+    case Con{head, tail}:
+      do IO<String>:
+        +root : String = root_path_of(head)
+        ok : Bool <- canonical_root_equal(root)
+        +next : String = Bool.pick(String, Bool.and(String.is_empty(bad), Bool.not(ok)), root, bad)
+        answer : String <- canonical_roots_check(tail, next)
+        IO.pure(String, answer)
+
+def better_root(+candidate: String, +current: String) -> String:
+  Bool.pick(String, String.is_empty(current), candidate,
+    Bool.pick(String, String.is_empty(candidate), current,
+      Bool.pick(String, Nat.is_gt(String.length(candidate), String.length(current)), candidate, current)))
+
+# The most specific covered configured root containing PATH. Writer output
+# paths are canonical absolute paths produced by Control.output and the
+# canonical database directory, so the comparison uses the configured root
+# spelling apply scans.
+def root_for_output(specs: List<&2,RootSpec>, +path: String, +current: String) -> String:
+  match specs:
+    case Nil{}: current
+    case Con{+head, tail}:
+      +root : String = root_path_of(head)
+      +inside : Bool = Bool.and(covered_root(head), S.path_under(path, root))
+      +next : String = Bool.pick(String, inside, better_root(root, current), current)
+      root_for_output(tail, path, next)
+
+def writer_paths(+log: String, +directory: String) -> List<&2,String>:
+  Bool.pick(List<&2,String>, String.is_empty(log),
+    Bool.pick(List<&2,String>, String.is_empty(directory), Nil{}, Con{directory, Nil{}}),
+    Bool.pick(List<&2,String>, Bool.or(String.is_empty(directory), String.eq(log, directory)),
+      Con{log, Nil{}}, Con{log, Con{directory, Nil{}}}))
 
 def join_path(+root: String, +name: String) -> String:
   Bool.pick(String, String.ends_with(root, "/"), root ++ name, root ++ "/" ++ name)
@@ -194,14 +308,19 @@ def candidate_observed(+session: String, +spec: RootSpec, +state: S.State, +chil
         IO.pure(Maybe<T.Candidate>, answer)
     case other: IO.pure(Maybe<T.Candidate>, None{})
 
+def lease_file_name() -> String:
+  ".baton-writer-lease"
+
 def candidate_of(+session: String, +spec: RootSpec, state: S.State, +child: O.Child) -> IO(Maybe<T.Candidate>):
   match child:
     case O.Child{kind, name}:
-      +path = join_path(root_path_of(spec), name)
-      do IO<Maybe<T.Candidate>>:
-        observed : O.Observation <- O.observe(path)
-        answer : Maybe<T.Candidate> <- candidate_observed(session, spec, state, child, observed)
-        IO.pure(Maybe<T.Candidate>, answer)
+      Bool.pick(IO(Maybe<T.Candidate>), String.eq(name, lease_file_name()),
+        IO.pure(Maybe<T.Candidate>, None{}),
+        do IO<Maybe<T.Candidate>>:
+          +path : String = join_path(root_path_of(spec), name)
+          observed : O.Observation <- O.observe(path)
+          answer : Maybe<T.Candidate> <- candidate_observed(session, spec, state, child, observed)
+          IO.pure(Maybe<T.Candidate>, answer))
 
 def candidate_list(candidate: Maybe<T.Candidate>) -> List<T.Candidate>:
   match candidate:
@@ -339,26 +458,189 @@ def roots_overlap(specs: List<&2,RootSpec>) -> Bool:
     case Nil{}: False{}
     case Con{head, tail}: root_overlap(head, tail)
 
-def apply_locked(+session: String, +db: String, specs: List<&2,RootSpec>, lock: Maybe<U32>) -> IO(Result<&1,&1,U32 & String,List<T.Receipt>>):
-  match lock:
-    case None{}: IO.pure(Result<&1,&1,U32 & String,List<T.Receipt>>, Fail{(4, "storage cleanup busy")})
-    case Some{handle}:
-      do IO<Result<&1,&1,U32 & String,List<T.Receipt>>>:
-        receipts : List<T.Receipt> <- apply_roots(session, db, specs, Nil{})
-        released : Unit <- IO.try(Unit, Lock.SessionLock.release(handle))
-        IO.pure(Result<&1,&1,U32 & String,List<T.Receipt>>, Done{receipts})
+# Cooperative writer lease API. Baton-owned writers take the shared lease and
+# hold it for the duration of their writes.
+def acquire_writer_lease(+root: String) -> IO(Maybe<U32>):
+  do IO<Maybe<U32>>:
+    handle : Maybe<U32> <- O.acquire_writer_lease(root)
+    IO.pure(Maybe<U32>, handle)
+
+def acquire_cleanup_lease(+root: String) -> IO(Maybe<U32>):
+  do IO<Maybe<U32>>:
+    handle : Maybe<U32> <- O.acquire_cleanup_lease(root)
+    IO.pure(Maybe<U32>, handle)
+
+def release_lease(handle: U32) -> IO(Unit):
+  do IO<Unit>:
+    released : Unit <- O.release_lease(handle)
+    IO.pure(Unit, released)
 
 def roots_empty(specs: List<&2,RootSpec>) -> Bool:
   match specs:
     case Nil{}: True{}
     case Con{head, tail}: False{}
 
+def release_leases(handles: List<&2,U32>) -> IO(Unit):
+  match handles:
+    case Nil{}: IO.pure(Unit, Unit{})
+    case Con{head, tail}:
+      do IO<Unit>:
+        first : Unit <- release_lease(head)
+        rest : Unit <- release_leases(tail)
+        IO.pure(Unit, rest)
+
+type WriterStep is Data:
+  WriterStep{failed: String, held: List<&2,U32>}
+
+def writer_step(handle: Maybe<U32>, held: List<&2,U32>, +failed: String, +root: String) -> WriterStep:
+  match handle:
+    case None{}: WriterStep{Bool.pick(String, String.is_empty(failed), root, failed), held}
+    case Some{value}: WriterStep{failed, Con{value, held}}
+
+def writer_step_failed(+step: WriterStep) -> String:
+  match step:
+    case WriterStep{failed, held}: failed
+
+def writer_step_held(+step: WriterStep) -> List<&2,U32>:
+  match step:
+    case WriterStep{failed, held}: held
+
+def finish_writer_leases(held: List<&2,U32>, failed: String, ok: Bool) -> IO(Result<&1,&1,U32 & String,List<&2,U32>>):
+  match ok:
+    case True{}: IO.pure(Result<&1,&1,U32 & String,List<&2,U32>>, Done{held})
+    case False{}:
+      do IO<Result<&1,&1,U32 & String,List<&2,U32>>>:
+        released : Unit <- release_leases(held)
+        IO.pure(Result<&1,&1,U32 & String,List<&2,U32>>, Fail{(3, "storage writer lease unavailable or held for root " ++ failed)})
+
+# A managed writer holds a shared lease on every covered root that contains its
+# output log or attempt directory. A path under no covered root contributes no
+# lease. One unavailable root releases the leases already held.
+def acquire_writer_paths(paths: List<&2,String>, +specs: List<&2,RootSpec>, +held: List<&2,U32>, +failed: String) -> IO(Result<&1,&1,U32 & String,List<&2,U32>>):
+  match paths:
+    case Nil{}: finish_writer_leases(held, failed, String.is_empty(failed))
+    case Con{path, +tail}:
+      do IO<Result<&1,&1,U32 & String,List<&2,U32>>>:
+        +root : String = root_for_output(specs, path, "")
+        answer : Result<&1,&1,U32 & String,List<&2,U32>> <- Bool.pick(IO(Result<&1,&1,U32 & String,List<&2,U32>>), String.is_empty(root),
+          acquire_writer_paths(tail, specs, held, failed),
+          do IO<Result<&1,&1,U32 & String,List<&2,U32>>>:
+            handle : Maybe<U32> <- acquire_writer_lease(root)
+            +step : WriterStep <- IO.pure(WriterStep, writer_step(handle, held, failed, root))
+            acquire_writer_paths(tail, specs, writer_step_held(step), writer_step_failed(step)))
+        IO.pure(Result<&1,&1,U32 & String,List<&2,U32>>, answer)
+
+def with_writer_result(-A: Type, leases: Result<&1,&1,U32 & String,List<&2,U32>>, refused: U32 & String -> IO(A), next: Unit -> IO(A)) -> IO(A):
+  match leases:
+    case Fail{error}: refused(error)
+    case Done{handles}:
+      do IO<A>:
+        answer : A <- next(Unit{})
+        released : Unit <- release_leases(handles)
+        IO.pure(A, answer)
+
+# Hold shared writer leases for the output log and attempt directory across the
+# caller's native spawn and retained output lifetime. The writer refuses without
+# spawning when a covered root is unavailable.
+def with_writer_leases(-A: Type, +log: String, +directory: String, refused: U32 & String -> IO(A), next: Unit -> IO(A)) -> IO(A):
+  do IO<A>:
+    specs : List<&2,RootSpec> <- configured_roots()
+    +paths : List<&2,String> = writer_paths(log, directory)
+    leases : Result<&1,&1,U32 & String,List<&2,U32>> <- acquire_writer_paths(paths, specs, Nil{}, "")
+    with_writer_result(A, leases, refused, next)
+
+type LeaseStep is Data:
+  LeaseStep{missing: String, held: List<&2,U32>}
+
+def lease_step(handle: Maybe<U32>, held: List<&2,U32>, +missing: String, +root: String) -> LeaseStep:
+  match handle:
+    case None{}:
+      +next : String = Bool.pick(String, String.is_empty(missing), root, missing)
+      LeaseStep{next, held}
+    case Some{value}: LeaseStep{missing, Con{value, held}}
+
+def step_missing(+step: LeaseStep) -> String:
+  match step:
+    case LeaseStep{missing, held}: missing
+
+def step_held(+step: LeaseStep) -> List<&2,U32>:
+  match step:
+    case LeaseStep{missing, held}: held
+
+def finish_lease_failure(held: List<&2,U32>, +root: String) -> IO(Result<&1,&1,U32 & String,List<&2,U32>>):
+  do IO<Result<&1,&1,U32 & String,List<&2,U32>>>:
+    released : Unit <- release_leases(held)
+    IO.pure(Result<&1,&1,U32 & String,List<&2,U32>>, Fail{(3, "storage apply refused: cooperative root writer lease unavailable or held for root " ++ root)})
+
+# Every configured root acquires its exclusive cleanup lease before any
+# removal. One unavailable root releases the leases already acquired and
+# refuses the apply with that root's path.
+def finish_leases(held: List<&2,U32>, missing: String, ok: Bool) -> IO(Result<&1,&1,U32 & String,List<&2,U32>>):
+  match ok:
+    case True{}: IO.pure(Result<&1,&1,U32 & String,List<&2,U32>>, Done{held})
+    case False{}: finish_lease_failure(held, missing)
+
+def acquire_cleanup_leases(specs: List<&2,RootSpec>, held: List<&2,U32>, +missing: String) -> IO(Result<&1,&1,U32 & String,List<&2,U32>>):
+  match specs:
+    case Nil{}: finish_leases(held, missing, String.is_empty(missing))
+    case Con{head, tail}:
+      do IO<Result<&1,&1,U32 & String,List<&2,U32>>>:
+        +root : String = root_path_of(head)
+        handle : Maybe<U32> <- acquire_cleanup_lease(root)
+        +step : LeaseStep <- IO.pure(LeaseStep, lease_step(handle, held, missing, root))
+        answer : Result<&1,&1,U32 & String,List<&2,U32>> <- acquire_cleanup_leases(tail, step_held(step), step_missing(step))
+        IO.pure(Result<&1,&1,U32 & String,List<&2,U32>>, answer)
+
+def apply_leases(+session: String, +db: String, +specs: List<&2,RootSpec>, leases: Result<&1,&1,U32 & String,List<&2,U32>>) -> IO(Result<&1,&1,U32 & String,List<T.Receipt>>):
+  match leases:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,List<T.Receipt>>, Fail{error})
+    case Done{handles}:
+      do IO<Result<&1,&1,U32 & String,List<T.Receipt>>>:
+        receipts : List<T.Receipt> <- apply_roots(session, db, specs, Nil{})
+        released : Unit <- release_leases(handles)
+        IO.pure(Result<&1,&1,U32 & String,List<T.Receipt>>, Done{receipts})
+
+def apply_locked(+session: String, +db: String, +specs: List<&2,RootSpec>, lock: Maybe<U32>) -> IO(Result<&1,&1,U32 & String,List<T.Receipt>>):
+  match lock:
+    case None{}: IO.pure(Result<&1,&1,U32 & String,List<T.Receipt>>, Fail{(4, "storage cleanup busy")})
+    case Some{handle}:
+      do IO<Result<&1,&1,U32 & String,List<T.Receipt>>>:
+        leases : Result<&1,&1,U32 & String,List<&2,U32>> <- acquire_cleanup_leases(specs, Nil{}, "")
+        answer : Result<&1,&1,U32 & String,List<T.Receipt>> <- apply_leases(session, db, specs, leases)
+        released : Unit <- IO.try(Unit, Lock.SessionLock.release(handle))
+        IO.pure(Result<&1,&1,U32 & String,List<T.Receipt>>, answer)
+
+def apply_canonical(+db: String, +session: String, +specs: List<&2,RootSpec>) -> IO(Result<&1,&1,U32 & String,List<T.Receipt>>):
+  do IO<Result<&1,&1,U32 & String,List<T.Receipt>>>:
+    +bad : String <- canonical_roots_check(specs, "")
+    Bool.pick(IO(Result<&1,&1,U32 & String,List<T.Receipt>>), String.is_empty(bad),
+      do IO<Result<&1,&1,U32 & String,List<T.Receipt>>>:
+        lock : Maybe<U32> <- IO.try(Maybe<U32>, Lock.SessionLock.try_acquire(db, "storage-cleanup"))
+        result : Result<&1,&1,U32 & String,List<T.Receipt>> <- apply_locked(session, db, specs, lock)
+        IO.pure(Result<&1,&1,U32 & String,List<T.Receipt>>, result),
+      IO.pure(Result<&1,&1,U32 & String,List<T.Receipt>>, Fail{(3, "storage apply refused: configured root is not a canonical directory: " ++ bad)}))
+
+def apply_covered(+db: String, +session: String, +specs: List<&2,RootSpec>) -> IO(Result<&1,&1,U32 & String,List<T.Receipt>>):
+  do IO<Result<&1,&1,U32 & String,List<T.Receipt>>>:
+    state : S.State <- S.load(db)
+    +uncovered : String = uncovered_roots_state(specs, state, "")
+    Bool.pick(IO(Result<&1,&1,U32 & String,List<T.Receipt>>), String.is_empty(uncovered),
+      apply_canonical(db, session, specs),
+      IO.pure(Result<&1,&1,U32 & String,List<T.Receipt>>, Fail{(3, "storage apply refused: no participating writer covers root " ++ uncovered)}))
+
+def apply_session_roots(+db: String, +session: String, +specs: List<&2,RootSpec>) -> IO(Result<&1,&1,U32 & String,List<T.Receipt>>):
+  do IO<Result<&1,&1,U32 & String,List<T.Receipt>>>:
+    Bool.pick(IO(Result<&1,&1,U32 & String,List<T.Receipt>>), roots_empty(specs),
+      IO.pure(Result<&1,&1,U32 & String,List<T.Receipt>>, Done{Nil{}}),
+      Bool.pick(IO(Result<&1,&1,U32 & String,List<T.Receipt>>), roots_overlap(specs),
+        IO.pure(Result<&1,&1,U32 & String,List<T.Receipt>>, Fail{(3, "storage apply refused: configured storage roots overlap")}),
+        apply_covered(db, session, specs)))
+
 def apply_session(+db: String, +session: String) -> IO(Result<&1,&1,U32 & String,List<T.Receipt>>):
   do IO<Result<&1,&1,U32 & String,List<T.Receipt>>>:
     specs : List<&2,RootSpec> <- configured_roots()
-    Bool.pick(IO(Result<&1,&1,U32 & String,List<T.Receipt>>), roots_empty(specs),
-      IO.pure(Result<&1,&1,U32 & String,List<T.Receipt>>, Done{Nil{}}),
-      IO.pure(Result<&1,&1,U32 & String,List<T.Receipt>>, Fail{(3, "storage apply refused: cooperative root writer lease protocol is unavailable")}))
+    result : Result<&1,&1,U32 & String,List<T.Receipt>> <- apply_session_roots(db, session, specs)
+    IO.pure(Result<&1,&1,U32 & String,List<T.Receipt>>, result)
 
 def receipt_append_choice(empty: Bool, +acc: String, head: T.Receipt) -> String:
   match empty:
@@ -400,30 +682,36 @@ def run_apply(+db: String, +session: String) -> IO(Unit):
 def bool_json(+value: Bool) -> String:
   Bool.pick(String, value, "true", "false")
 
-def policy_root_json(+spec: RootSpec, +exclusive: List<&2,String>) -> String:
+def policy_root_json(+spec: RootSpec, +exclusive: List<&2,String>, +state: S.State) -> String:
   match spec:
     case RootSpec{cls, path, source}:
       "{\"root\":" ++ J.string_literal(path)
       ++ ",\"class\":" ++ J.string_literal(P.class_name(cls))
       ++ ",\"source\":" ++ J.string_literal(source)
-      ++ ",\"exclusive\":" ++ bool_json(exclusive_member(path, exclusive)) ++ "}"
+      ++ ",\"exclusive\":" ++ bool_json(exclusive_member(path, exclusive))
+      ++ ",\"covered\":" ++ bool_json(referenced_root(spec, state)) ++ "}"
 
-def policy_root_items(specs: List<&2,RootSpec>, +exclusive: List<&2,String>, +acc: String) -> String:
+def policy_root_items(specs: List<&2,RootSpec>, +exclusive: List<&2,String>, +state: S.State, +acc: String) -> String:
   match specs:
     case Nil{}: acc
     case Con{head, tail}:
-      +item = policy_root_json(head, exclusive)
+      +item = policy_root_json(head, exclusive, state)
       +next = Bool.pick(String, String.is_empty(acc), item, acc ++ "," ++ item)
-      policy_root_items(tail, exclusive, next)
+      policy_root_items(tail, exclusive, state, next)
 
-def policy_json(+specs: List<&2,RootSpec>, +exclusive: List<&2,String>) -> String:
+def policy_json(+specs: List<&2,RootSpec>, +exclusive: List<&2,String>, +state: S.State) -> String:
   +unproven : String = unproven_roots(specs, exclusive, "")
-  "{\"ageOnlyDeletion\":false,\"apply\":" ++ J.string_literal(Bool.pick(String, String.is_empty(unproven), "ready", "refused"))
+  +uncovered : String = uncovered_roots_state(specs, state, "")
+  +apply_state : String = Bool.pick(String, roots_empty(specs), "ready",
+    Bool.pick(String, String.is_empty(uncovered), "lease-gated", "refused"))
+  "{\"ageOnlyDeletion\":false,\"apply\":" ++ J.string_literal(apply_state)
   ++ ",\"unprovenRoot\":" ++ J.string_literal(unproven)
-  ++ ",\"roots\":[" ++ policy_root_items(specs, exclusive, "") ++ "]}"
+  ++ ",\"uncoveredRoot\":" ++ J.string_literal(uncovered)
+  ++ ",\"roots\":[" ++ policy_root_items(specs, exclusive, state, "") ++ "]}"
 
 def run_policy(+db: String) -> IO(Unit):
   do IO<Unit>:
     specs : List<&2,RootSpec> <- configured_roots()
     exclusive : List<&2,String> <- configured_exclusive()
-    IO.write(policy_json(specs, exclusive))
+    state : S.State <- S.load(db)
+    IO.write(policy_json(specs, exclusive, state))
