@@ -1750,12 +1750,13 @@ static void br_watch_remove(BrWatcher *watchers,int token) {
   if(!watchers->count) {close(watchers->fd);watchers->fd=-1;}
 }
 /* One dropped inotify event stands for an unknown number of spool changes.
-   Every observer that can receive a notice rereads its spool to the current
-   end, so one coalesced mark is enough; br_attempt_ready keeps the existing
-   change_queued behavior. */
+   Every connected observer keeps one coalesced dirty mark, including while it
+   is completing its readiness exchange; br_attempt_ready sends the notice
+   when that observer is ready. Attempts without a connected observer have no
+   notice recipient. */
 static void br_spool_watch_overflow(BrKeeper *attempts) {
   for(BrKeeper *keeper=attempts;keeper;keeper=keeper->next)
-    if(keeper->client>=0 && keeper->ready) keeper->spool_changed=1;
+    if(keeper->client>=0) keeper->spool_changed=1;
 }
 #ifndef __APPLE__
 /* Applies one inotify event to the registered attempts. Linux reports queue

@@ -42,7 +42,7 @@ class SpoolWatchOverflow(unittest.TestCase):
     def test_overflow_notifies_every_ready_keeper(self):
         result = subprocess.run([str(FIXTURE)], capture_output=True, text=True, timeout=60)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn('spool-watch-overflow PASS', result.stdout)
+        self.assertIn('spool-watch-overflow PASS ready=2 coalesced=1 unready-deferred=1 detached=0 final=a,b,u', result.stdout)
         print('evidence', result.stdout.strip())
 
 

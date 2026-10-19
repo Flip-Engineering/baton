@@ -1163,6 +1163,12 @@ class SharedInstance(unittest.TestCase):
         self.assertEqual(state['native_pid'], pid, state)
         self.assertEqual(transition['nativePid'], pid, transition)
         self.assertEqual((directory / 'native.birth').read_bytes(), old_birth)
+        replacement_owner = self.owner_pid()
+        self.assertNotEqual(replacement_owner, int(old_owner_pid))
+        self.eventually(lambda: len(self.inotify_instances(replacement_owner) or []) == 1,
+                        'the recovered attempt did not reopen the replacement owner watcher')
+        self.assertGreater(self.inotify_watches(replacement_owner), 0,
+                           'the replacement owner watcher has no recovered spool watch')
         write_line = self.next_line(recovered)
         self.assertTrue(write_line.startswith('recovery-write-failed:'), write_line)
         self.assertRegex(write_line, r'^recovery-write-failed:1:')

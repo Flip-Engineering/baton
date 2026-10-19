@@ -80,13 +80,14 @@ int main(void) {
   ready_a.next=&ready_b;ready_b.next=&unready;unready.next=&detached;
   REQUIRE(fixture_append(directory,"a.stdout","a-final\n")==0);
   REQUIRE(fixture_append(directory,"b.stdout","b-final\n")==0);
+  REQUIRE(fixture_append(directory,"unready.stdout","u-final\n")==0);
 
-  /* The kernel dropped the individual spool events and reports only overflow.
-     Every ready observer must still be told to reread its spool. */
+  /* The kernel dropped individual spool events. Connected observers retain a
+     dirty mark until ready, while an attempt without a client needs no notice. */
   br_spool_watch_event(&ready_a,IN_Q_OVERFLOW,-1);
   REQUIRE(ready_a.spool_changed==1);
   REQUIRE(ready_b.spool_changed==1);
-  REQUIRE(unready.spool_changed==0);
+  REQUIRE(unready.spool_changed==1);
   REQUIRE(detached.spool_changed==0);
 
   struct pollfd no_events[5];memset(no_events,0,sizeof(no_events));
@@ -96,6 +97,10 @@ int main(void) {
   REQUIRE(br_attempt_ready(&detached,no_events,NULL,0)==0);
   REQUIRE(ready_a.change_queued==1 && ready_b.change_queued==1);
   REQUIRE(unready.change_queued==0 && detached.change_queued==0);
+  REQUIRE(unready.spool_changed==1);
+  unready.ready=1;
+  REQUIRE(br_attempt_ready(&unready,no_events,NULL,0)==0);
+  REQUIRE(unready.spool_changed==0 && unready.change_queued==1);
 
   /* A second overflow while the notice is still queued must not add one. */
   BrBuffer *first=ready_a.outgoing;
@@ -116,8 +121,14 @@ int main(void) {
   REQUIRE(frame.op==BR_CHANGE && frame.length==0);
   REQUIRE(fixture_final(&ready_b,"b-final\n"));
 
-  REQUIRE(unready.outgoing==NULL && detached.outgoing==NULL);
-  printf("spool-watch-overflow PASS ready=2 coalesced=1 unready=0 detached=0 final=a,b\n");
+  REQUIRE(unready.outgoing!=NULL && detached.outgoing==NULL);
+  REQUIRE(br_flush_responses(&unready)==0);
+  REQUIRE(unready.change_queued==0);
+  REQUIRE(br_read_all(unready_peer,&frame,sizeof(frame))==0);
+  REQUIRE(frame.op==BR_CHANGE && frame.length==0);
+  REQUIRE(fixture_final(&unready,"u-final\n"));
+
+  printf("spool-watch-overflow PASS ready=2 coalesced=1 unready-deferred=1 detached=0 final=a,b,u\n");
   fixture_close(&ready_a,a_peer);fixture_close(&ready_b,b_peer);
   fixture_close(&unready,unready_peer);fixture_close(&detached,-1);
   char *a=br_path(directory,"a.stdout"),*b=br_path(directory,"b.stdout");
