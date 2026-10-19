@@ -50,6 +50,9 @@
 #define BATON_STORAGE_DEPTH 128
 #define BATON_STORAGE_PID_LIMIT 65536
 #define BATON_STORAGE_REF_LIMIT 4096
+/* A process may map or open many entries. Inspect up to this many; the
+   matched-reference limit bounds the answer and the PID limit bounds the walk. */
+#define BATON_STORAGE_SCAN_LIMIT 65536
 
 typedef unsigned long long baton_u64;
 
@@ -699,7 +702,7 @@ static int baton_storage_pid_hit(pid_t pid, baton_u64 device, baton_u64 inode, c
       entry = readdir(fds);
       if (!entry) break;
       if (!baton_storage_numeric(entry->d_name)) continue;
-      if (++seen > BATON_STORAGE_REF_LIMIT) { *truncated = 1; break; }
+      if (++seen > BATON_STORAGE_SCAN_LIMIT) { *truncated = 1; break; }
       char target_path[128];
       snprintf(target_path, sizeof(target_path), "/proc/%ld/fd/%s", (long)pid, entry->d_name);
       if (baton_storage_path_hit(target_path, device, inode, unknown)) { closedir(fds); return 1; }
@@ -718,7 +721,7 @@ static int baton_storage_pid_hit(pid_t pid, baton_u64 device, baton_u64 inode, c
     size_t capacity = 0;
     size_t seen = 0;
     while (getline(&line, &capacity, maps) >= 0) {
-      if (++seen > BATON_STORAGE_REF_LIMIT) { *truncated = 1; break; }
+      if (++seen > BATON_STORAGE_SCAN_LIMIT) { *truncated = 1; break; }
       char *mapped = baton_storage_maps_path(line);
       if (!mapped || mapped[0] != '/') continue;
       if (baton_storage_path_hit(mapped, device, inode, unknown)) { free(line); fclose(maps); return 1; }
@@ -799,7 +802,8 @@ static void baton_storage_refs_call(IoWork *w) {
       if (baton_storage_pid_push(&pids, pid)) { call->error = ENOMEM; break; }
       if (pids.count >= BATON_STORAGE_REF_LIMIT) { truncated = 1; break; }
     }
-    if (truncated) break;
+    /* A process over the per-process inspection limit leaves the scan
+       unknown, but later processes can still hold a reference. */
   }
   closedir(proc);
   free(root);
