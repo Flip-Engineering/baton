@@ -755,10 +755,15 @@ def acquired_pending(+db: String, +session: String, cmd: String, model: String, 
     +cursor : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce(max(seq),0) FROM messages WHERE recipient=" ++ C.q(session) ++ " AND receipt IS NULL;"))
     selected(db,session,cmd,model,effort,cwd,log,lock,cursor,Bool.not(String.eq(cursor,"0\n")),again,predecessor)
 
+# Recovery arguments store harness names as raw argv fields. Recovery consumers use the newline-terminated form returned by SQLite.
+def recovered_harness(+harness: String) -> String:
+  Tx.trim_nl(harness) ++ "\n"
+
 def observe_guarded(+db: String, +session: String, +id: String, cursor: String, cmd: String, model: String, effort: String, +cwd: String, +log: String, harness: String, +directory: String, native: String, +handle: U32, lock: Maybe<U32>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), adopted: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
+    +normalized_harness : String <- IO.pure(String,recovered_harness(harness))
     reconciled : Unit <- Stop.observing(db,session,id,directory)
-    observation : Turn.Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- Turn.retained_output(db,session,id,log,harness,directory,directory,handle,"unknown")
+    observation : Turn.Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- Turn.retained_output(db,session,id,log,normalized_harness,directory,directory,handle,"unknown")
     completed_observation(db,session,id,log,cursor,native,cwd,directory,handle,lock,observation,again,adopted,cmd)
 
 def recovery_arguments(args: List<&2,String>) -> List<&2,String>:

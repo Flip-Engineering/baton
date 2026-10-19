@@ -661,12 +661,12 @@ def frame_kind_selected(+db: String, decoded: Frame.FrameDecoded, +line: String,
 def frame_kind(+db: String, decoded: Frame.FrameDecoded, +line: String, +harness: String) -> IO(String):
   frame_kind_selected(db,decoded,line,harness,String.eq(harness,"codex\n"))
 
-def filter_mode_sql(+value: String, +requested: String) -> String:
-  "SELECT CASE WHEN json_valid(" ++ value ++ ") THEN CASE WHEN json_extract(" ++ value ++ ",'$.type')='response' AND json_extract(" ++ value ++ ",'$.command')='set_event_filter' AND coalesce(json_extract(" ++ value ++ ",'$.success'),1)=0 THEN 'refused' WHEN json_extract(" ++ value ++ ",'$.type')='response' AND json_extract(" ++ value ++ ",'$.id')='baton:filter' AND json_extract(" ++ value ++ ",'$.command')='set_event_filter' THEN CASE WHEN json_extract(" ++ value ++ ",'$.success')=1 THEN CASE WHEN CASE WHEN " ++ C.q(requested) ++ "='unknown' THEN 0 WHEN " ++ C.q(requested) ++ "='null' THEN json_type(" ++ value ++ ",'$.data.events')='null' AND json_extract(" ++ value ++ ",'$.data.messageUpdates')='full' ELSE CASE WHEN json_type(" ++ value ++ ",'$.data.events')='array' THEN json(json_extract(" ++ value ++ ",'$.data.events'))=json(" ++ C.q(requested) ++ ") AND json_extract(" ++ value ++ ",'$.data.messageUpdates')='delta' ELSE 0 END END THEN CASE WHEN " ++ C.q(requested) ++ "='null' THEN 'null+full' ELSE 'array+delta' END ELSE 'unconfirmed' END ELSE 'refused' END ELSE '' END ELSE '' END;"
+def filter_mode_sql(+value: String, +requested_sql: String) -> String:
+  "SELECT CASE WHEN json_valid(" ++ value ++ ") THEN CASE WHEN json_extract(" ++ value ++ ",'$.type')='response' AND json_extract(" ++ value ++ ",'$.command')='set_event_filter' AND coalesce(json_extract(" ++ value ++ ",'$.success'),1)=0 THEN 'refused' WHEN json_extract(" ++ value ++ ",'$.type')='response' AND json_extract(" ++ value ++ ",'$.id')='baton:filter' AND json_extract(" ++ value ++ ",'$.command')='set_event_filter' THEN CASE WHEN json_extract(" ++ value ++ ",'$.success')=1 THEN CASE WHEN CASE WHEN " ++ requested_sql ++ "='unknown' THEN 0 WHEN " ++ requested_sql ++ "='null' THEN json_type(" ++ value ++ ",'$.data.events')='null' AND json_extract(" ++ value ++ ",'$.data.messageUpdates')='full' ELSE CASE WHEN json_type(" ++ value ++ ",'$.data.events')='array' THEN json(json_extract(" ++ value ++ ",'$.data.events'))=json(" ++ requested_sql ++ ") AND json_extract(" ++ value ++ ",'$.data.messageUpdates')='delta' ELSE 0 END END THEN CASE WHEN " ++ requested_sql ++ "='null' THEN 'null+full' ELSE 'array+delta' END ELSE 'unconfirmed' END ELSE 'refused' END ELSE '' END ELSE '' END;"
 
 def filter_mode_decoded(+db: String, decoded: Frame.FrameDecoded, +requested: String) -> IO(String):
   match decoded:
-    case Frame.TextFrame{line}: IO.try(String,DB.Sql.query(db,filter_mode_sql(C.q(line),requested)))
+    case Frame.TextFrame{line}: IO.try(String,DB.Sql.query(db,filter_mode_sql(C.q(line),C.q(requested))))
     case Frame.SpanFrame{spool,offset,length}: IO.try(String,DB.Sql.query_span_text(db,spool,offset,length,filter_mode_sql("?1","?2"),requested))
     case Frame.InvalidFrame{line}: IO.pure(String,"")
 
@@ -948,7 +948,7 @@ def consume(+db: String, +player: String, +id: String, +log: String, +policy: Lo
   match result:
     case Fail{error}: do IO<Outcome & List<Chan(Result<&1,&1,U32 & String,String>)>>:
       wake_closed : Result<&1,&1,U32 & String,Unit> <- wake_close(wake_sub,wake_on)
-      closed : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.close_stdin(handle)
+      closed : Result<&1,&1,U32 & String,Unit> <- close_input(handle,Bool.not(monitor))
       sent : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,sender)
       +waited : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,String> <- shared_result_io(String,P.ProcessChild.wait(handle))
       +positioned : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,String> <- shared_result_io(String,Logs.write_positioned(log,Logs.flush(held),Observer.output(checkpoint_state),log_failed,Bool.not(String.is_empty(attempt)),False{}))

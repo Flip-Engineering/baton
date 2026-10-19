@@ -5273,7 +5273,7 @@ static Term baton_process_begin_mode(Env e, Term *f, IoWork *w, int kind, int pr
     }
     if(kind==BP_INSTANCE_RESTORE) call->signal=(u32)f[1];
     if(kind==BP_SIGNAL) call->signal=(u32)f[1];
-    if(kind==BP_READ_AWAKE) call->signal=(u32)f[1];
+    if(kind==BP_READ_AWAKE || kind==BP_READ_AWAKE_SPAN) call->signal=(u32)f[1];
   }
   w->data=(char *)call;
   if(call->error) return baton_process_pack(e,w);

@@ -266,7 +266,7 @@ def frame_identity(db: String, decoded: Frame.FrameDecoded, line: String, +kind:
 # raw size accounting. Turn supplies the normalized event and streamed-message
 # fallback. Retained stdout and the provider journal keep the native frame.
 def terminal_messages_of(+source: String) -> String:
-  "CASE WHEN json_type(" ++ source ++ ",'$.messages')='array' THEN json_extract(" ++ source ++ ",'$.messages') WHEN json_type(" ++ source ++ ",'$.message')='object' THEN json_array(json_extract(" ++ source ++ ",'$.message')) ELSE '[]' END"
+  "CASE WHEN json_valid(" ++ source ++ ") THEN CASE WHEN json_type(" ++ source ++ ",'$.messages')='array' THEN json_extract(" ++ source ++ ",'$.messages') WHEN json_type(" ++ source ++ ",'$.message')='object' THEN json_array(json_extract(" ++ source ++ ",'$.message')) ELSE '[]' END ELSE '[]' END"
 
 def terminal_results_of(+source: String) -> String:
   "CASE WHEN json_type(" ++ source ++ ",'$.toolResults')='array' THEN json_extract(" ++ source ++ ",'$.toolResults') ELSE '[]' END"
