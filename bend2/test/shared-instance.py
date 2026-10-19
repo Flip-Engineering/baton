@@ -469,6 +469,37 @@ class SharedInstance(unittest.TestCase):
         self.assertEqual((directory / 'stdout').stat().st_size, 0)
         print('evidence inotify-failure refusal', stderr.strip().replace('\n', '|'))
 
+    @unittest.skipUnless(sys.platform.startswith('linux'), 'inotify accounting requires /proc')
+    def test_shared_watcher_closes_after_recovered_output(self):
+        directory, child = self.begin('recovered-watch', mode='hold', payload='one\n')
+        self.line(child, 'admitted')
+        spool = directory / 'stdout'
+        self.hold(spool, 'echo:one', child=child)
+        native = self.native(spool.read_text(errors='replace'))
+        child.kill()
+        child.wait()
+        log = directory / 'observer.log'
+        self.hold(log, 'echo:one')
+        self.write(directory, 'two\n')
+        self.hold(log, 'echo:two')
+        owner = self.owner_pid()
+        self.assertGreaterEqual(len(self.inotify_instances(owner) or []), 1)
+        self.write(directory, 'exit\n')
+        self.hold(log, 'native-exit 0')
+        completed = None
+
+        def attach():
+            nonlocal completed
+            completed = self.command('attach-complete', self.db, directory)
+            return completed.returncode == 0
+
+        self.eventually(attach, 'the recovery observer did not release the attempt')
+        self.assertIn('attempt-complete', completed.stdout)
+        self.eventually(lambda: self.inotify_instances(owner) == [],
+                        'the shared watcher stayed open after the recovered attempt retired')
+        print('evidence recovered-watch native', native['pid'], 'later-output', 'echo:two',
+              'retired', 'instance-closed')
+
     def test_second_owner_for_one_database_is_refused(self):
         directory, child = self.begin('a0')
         self.line(child, 'admitted')

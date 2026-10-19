@@ -406,6 +406,7 @@ static int br_custody_write(const char *directory,BatonRetained *retained);
 typedef struct {
   int fd;
   size_t count;
+  struct BrKeeper **attempts;
 } BrWatcher;
 typedef struct BrKeeper {
   struct BrKeeper *next;
@@ -1708,6 +1709,8 @@ static void br_watch_drain(int fd) {
    returned token identifies this watch in collected events. The instance is
    created on first use and closed when its last watch is removed. */
 static int br_watch_add(BrWatcher *watchers,int spool,const char *path) {
+  if(watchers->fd>=0 && watchers->attempts)
+    br_spool_watch_dispatch(watchers,*watchers->attempts);
   if(watchers->fd<0) {
 #ifdef __APPLE__
     (void)path;
@@ -2955,6 +2958,7 @@ static int br_owner_bind(BrOwner *owner,const char *database) {
 }
 static int br_owner_serve(const char *database) {
   BrOwner owner={.listener=-1,.lock=-1,.database_fd=-1,.watcher={.fd=-1}};
+  owner.watcher.attempts=&owner.attempts;
   int error=br_owner_bind(&owner,database);
   /* The elected owner resumes publications retained for this database birth. */
   if(!error)br_owner_cursor_load(&owner);
@@ -2982,6 +2986,7 @@ static int br_owner_serve(const char *database) {
 static int br_keeper(const char *directory,int lock) {
   BrKeeper keeper={.listener=-1,.client=3,.input=-1,.lock=lock,.watch=-1,.wake={-1,-1},.spool=-1,.native_life=-1,.generation=1};
   BrOwner owner={.listener=-1,.lock=-1,.single=1,.watcher={.fd=-1}};
+  owner.watcher.attempts=&owner.attempts;
   BrState state={0,0,0,0,0};
   int error=0;
   keeper.directory=realpath(directory,NULL);
