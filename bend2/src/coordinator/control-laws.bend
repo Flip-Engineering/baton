@@ -131,8 +131,8 @@ law detached_turn_uses_the_recorded_assignment_and_native_identity:
   effort : String <- Control.recorded_field(db,player,"effort")
   cwd : String <- Control.recorded_field(db,player,"workspace")
   native : String <- Control.recorded_field(db,player,"native")
-  identity : String & String <- IO.try(String & String,Host.Control.identity(executable))
-  runtime : String <- Control.identity_runtime(executable,identity)
+  +identity : String & String <- IO.try(String & String,Host.Control.identity(executable))
+  +runtime : String <- Control.identity_runtime(executable,identity)
   checked : String & String <- Control.identity_checked(runtime,identity,model)
   IO.try(String,Host.Control.launch(Tx.enc_argv(Control.identity_args(runtime,[executable,database,"turn",player,id,harness_cmd,model,effort,cwd,path,output,native],model,checked)),database,id))) : IO(String)}
 
@@ -254,7 +254,7 @@ def receiver_update_enforces_actual_receiver_admission(session,endpoint,cwd):
   {==}
 
 law configured_identity_wraps_the_actual_receiver_arguments:
-  for runtime: String
+  for +runtime: String
   for executable: String
   for db: String
   for session: String
@@ -371,8 +371,8 @@ law receiver_setup_resolves_native_paths_and_model_identity:
   +executable : String <- IO.try(String,Lock.SessionLock.executable())
   database : String <- IO.try(String,Lock.SessionLock.canonical(db))
   output : String <- IO.try(String,Host.Control.output(log))
-  identity : String & String <- IO.try(String & String,Host.Control.identity(executable))
-  runtime : String <- Control.identity_runtime(executable,identity)
+  +identity : String & String <- IO.try(String & String,Host.Control.identity(executable))
+  +runtime : String <- Control.identity_runtime(executable,identity)
   checked : String & String <- Control.identity_checked(runtime,identity,model)
   IO.pure(String,Control.identity_endpoint(runtime,executable,database,session,native,output,model,checked))) : IO(String)}
 
