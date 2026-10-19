@@ -1,0 +1,7 @@
+{
+  "before_c_bytes": 5215600,
+  "after_c_bytes": 500203,
+  "check_only_pass": true,
+  "compiler_tests_pass": true,
+  "focused_entry_check": true
+}
