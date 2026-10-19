@@ -268,6 +268,46 @@ class FocusedAccountCredits(unittest.TestCase):
         self.credit_account(balance=None)
         self.assertIn('creditObservationUnavailable', self.gate('attempt-1'))
 
+    def authorize(self, attempt, session='leaf'):
+        completed = self.entry('authorize', session, 'claude-code', attempt)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        return completed.stdout.strip()
+
+    def test_authorization_records_actual_reported_balance_only_when_eligible(self):
+        self.credit_account()
+        self.assertEqual(self.authorize('attempt-1'), 'authorized')
+        rows = self.query("SELECT attempt,account,organization,balance,unit FROM credit_authorizations")
+        self.assertEqual(rows, [('attempt-1', 'claude-api', 'org-fixture', '200.00', 'USD')])
+
+    def test_authorization_records_nothing_for_an_exhausted_balance(self):
+        self.credit_account(balance='0.00')
+        self.assertEqual(self.authorize('attempt-1'), 'not-authorized')
+        self.assertEqual(self.query("SELECT count(*) FROM credit_authorizations"), [(0,)])
+
+    def test_helper_runs_only_with_marker_and_durable_authorization(self):
+        helper = os.environ.get('BATON2_API_KEY_EXEC')
+        if not helper:
+            self.skipTest('BATON2_API_KEY_EXEC not set')
+        self.credit_account()
+        self.assertEqual(self.authorize('attempt-1'), 'authorized')
+        directory = self.directory
+        secret = directory / 'secret'
+        secret.write_text('fixture-secret\n')
+        secret.chmod(0o600)
+        child = directory / 'child.sh'
+        child.write_text('#!/bin/sh\nprintf "KEY=${ANTHROPIC_API_KEY:+set}\n"\n')
+        child.chmod(0o755)
+        base = {'BATON2_CREDIT_RESERVATION': 'attempt-1', 'BATON_ATTEMPT_DIRECTORY': 'attempt-1',
+                'BATON_DATABASE': str(self.db), 'PATH': os.environ['PATH']}
+        admitted = subprocess.run([helper, 'file:' + str(secret), str(child)],
+                                  capture_output=True, text=True, env=base)
+        self.assertEqual((admitted.returncode, admitted.stdout.strip()), (0, 'KEY=set'), admitted.stderr)
+        refused = subprocess.run([helper, 'file:' + str(secret), str(child)],
+                                 capture_output=True, text=True,
+                                 env={**base, 'BATON_ATTEMPT_DIRECTORY': 'attempt-2'})
+        self.assertEqual(refused.returncode, 2, refused.stdout)
+        self.assertIn('creditAdmissionUnavailable', refused.stderr)
+
     def test_gate_keeps_the_subscription_binding(self):
         self.record('claude-max')
         self.bind('claude-max', 'leaf')

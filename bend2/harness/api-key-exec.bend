@@ -5,6 +5,7 @@ import ../src/git/types.bend as T
 import ../src/host/files.bend as Files
 import ../src/host/process.bend as P
 import ../src/host/text.bend as Text
+import ../src/host/sqlite.bend as DB
 import ../src/json/canonical.bend as J
 
 # Native API-credit launch boundary. Product policy resolves one secret
@@ -218,17 +219,39 @@ def run(+reference: String, +command: String, args: List<String>) -> IO(Unit):
     resolved : Result<&1,&1,Refusal,String> <- resolve(reference)
     run_resolved(resolved,reference,command,args)
 
-def admitted_marker(marker_value: Result<&1,&1,U32 & String,String>, attempt_value: Result<&1,&1,U32 & String,String>, +reference: String, +command: String, args: List<String>) -> IO(Unit):
-  match marker_value attempt_value:
-    case Done{+marker} Done{+attempt}: Bool.pick(IO(Unit),Bool.and(Bool.not(String.is_empty(marker)),Bool.or(String.is_empty(attempt),String.eq(marker,attempt))),run(reference,command,args),IO.die(Unit,2,refusal_json(reference,"creditAdmissionUnavailable","Anthropic API-key launches require a recorded promotional-credit reservation for this attempt.")))
-    case Done{+marker} other_attempt: Bool.pick(IO(Unit),Bool.not(String.is_empty(marker)),run(reference,command,args),IO.die(Unit,2,refusal_json(reference,"creditAdmissionUnavailable","Anthropic API-key launches require a recorded promotional-credit reservation for this attempt.")))
-    case other_marker other_attempt: IO.die(Unit,2,refusal_json(reference,"creditAdmissionUnavailable","Anthropic API-key launches require a recorded promotional-credit reservation for this attempt."))
+def sql_escaped(+text: String) -> String:
+  match text:
+    case SNil{}: ""
+    case SCon{head,tail}: Bool.pick(String,U32.is_eq(Char.to_u32(head),39),"''" ++ sql_escaped(tail),SCon{head,sql_escaped(tail)})
+
+def authorization_read(found: Result<&1,&1,U32 & String,String>) -> Bool:
+  match found:
+    case Fail{(code,detail)}: False{}
+    case Done{+value}: String.eq(Tx.trim_nl(value),"1")
+
+def authorization_recorded(+db: String, +attempt: String) -> IO(Bool):
+  do IO<Bool>:
+    found : Result<&1,&1,U32 & String,String> <- DB.Sql.read(db,"SELECT EXISTS(SELECT 1 FROM credit_authorizations WHERE attempt='" ++ sql_escaped(attempt) ++ "');")
+    IO.pure(Bool,authorization_read(found))
+
+def admitted_decided(recorded: Bool, +reference: String, +command: String, args: List<String>) -> IO(Unit):
+  match recorded:
+    case True{}: run(reference,command,args)
+    case False{}: IO.die(Unit,2,refusal_json(reference,"creditAdmissionUnavailable","Anthropic API-key launches require a recorded promotional-credit authorization for this attempt."))
+
+def admitted_marker(marker_value: Result<&1,&1,U32 & String,String>, attempt_value: Result<&1,&1,U32 & String,String>, db_value: Result<&1,&1,U32 & String,String>, +reference: String, +command: String, args: List<String>) -> IO(Unit):
+  match marker_value attempt_value db_value:
+    case Done{+marker} Done{+attempt} Done{+db}: do IO<Unit>:
+      recorded : Bool <- Bool.pick(IO(Bool),Bool.and(Bool.not(String.is_empty(marker)),String.eq(marker,attempt)),authorization_recorded(db,attempt),IO.pure(Bool,False{}))
+      admitted_decided(recorded,reference,command,args)
+    case other_marker other_attempt other_db: IO.die(Unit,2,refusal_json(reference,"creditAdmissionUnavailable","Anthropic API-key launches require a recorded promotional-credit authorization for this attempt."))
 
 def run_admitted(+reference: String, +command: String, args: List<String>) -> IO(Unit):
   do IO<Unit>:
     marker_value : Result<&1,&1,U32 & String,String> <- IO.get_env("BATON2_CREDIT_RESERVATION")
     attempt_value : Result<&1,&1,U32 & String,String> <- IO.get_env("BATON_ATTEMPT_DIRECTORY")
-    admitted_marker(marker_value,attempt_value,reference,command,args)
+    db_value : Result<&1,&1,U32 & String,String> <- IO.get_env("BATON_DATABASE")
+    admitted_marker(marker_value,attempt_value,db_value,reference,command,args)
 
 def main_arguments(arguments: List<String>) -> IO(Unit):
   match arguments:
