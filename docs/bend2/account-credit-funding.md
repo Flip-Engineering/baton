@@ -55,15 +55,29 @@ An account stores a reference. The launch resolves it.
 A subscription account binds the credential directory the harness reads, through
 the existing `CODEX_HOME` or `CLAUDE_CONFIG_DIR` binding.
 
-Anthropic API-key accounts remain recorded but their launch binding is held
-until request-level promotional-credit admission is installed. The coordinator
-refuses the attempt before spawn, and the packaged `api-key-exec` helper returns
-`creditAdmissionUnavailable` before resolving a secret or starting a child.
-The credit observations describe source readings; they do not authorize a spend.
-
-An API-key account does not launch through the current package. Its input stays
-owed, and the attempt records the refusal. Subscription routes and other
-harnesses keep their existing bindings.
+An Anthropic API-key launch passes through `credit_launch_binding` in
+`bend2/src/coordinator/accounts.bend`. That function reads the route status
+from the recorded observations and returns no binding for the API-key route.
+The status is one of the eligibility results below. The packaged
+`api-key-exec` helper runs only when a `BATON2_CREDIT_RESERVATION` environment
+marker naming the attempt is present and matches `BATON_ATTEMPT_DIRECTORY`;
+no current binding sets that marker, and the helper also requires a
+`credit_authorizations` row for the attempt in `BATON_DATABASE`, so the helper
+returns `creditAdmissionUnavailable` before resolving a secret or starting a
+child. A marker by itself is not authorization. `credit_record_authorization`
+writes that row only for an eligible route status, in one transaction that
+selects the newest reported promotional observation, and the row records the
+actual reported balance, unit, cycle and the account secret reference. The
+helper binds the row to the reference the account names and consumes it in one
+guarded `UPDATE` restricted to the attempt, that reference and the `authorized`
+state. The caller is admitted only when the statement changes exactly one row.
+A later caller is refused with `creditAuthorizationConsumed`, a different
+reference with `creditAuthorizationMismatch`, and an unreadable database, a
+busy database or a zero-change update with `creditAdmissionUnavailable`. The
+SQLite busy handler in `bend2/src/host/sqlite.c` waits at most 3000 retries of
+10ms for one lock and then returns `SQLITE_BUSY` to the caller.
+The attempt is not started and its input stays owed. Subscription routes and
+other harnesses keep their existing bindings.
 
 ## Request-level metering and admission
 
@@ -83,13 +97,31 @@ empty, the stated maximum charge is zero, the reserved total plus the maximum
 charge exceeds the reported balance, or the cycle spend plus the reserved total
 plus the maximum charge exceeds the monthly cap. An admitted decision carries
 the organization, cycle, new reserved total, balance after the reserve and cap
-room after the reserve.
+room after the reserve. The stated maximum charge is an input to this
+decision. Current source has no per-request caller for it, and a retained
+launch is not one provider request.
 
-`account_binding`, `turn.bend` and `api-key-exec` keep the launch hold in the
-previous section. The remaining steps before an API-key launch is enabled are:
-wire the decision into the request path, record a reservation beside the
-attempt, settle the reservation from the provider outcome, and qualify that
-wiring on a remote runner.
+Route eligibility reads actual recorded facts: the Anthropic `claude-code`
+`api_key` route, a verified organization, and the newest `promotional_credit`
+observation for that organization with its reported balance and unit. A
+reported zero balance reads `promotionalCreditExhausted`. Subscription quota
+and promotional credit are separate facts; a subscription account reads
+`notPromotionalCreditRoute` from this check and keeps its own route.
+
+A reported promotional balance does not prove that the provider will refuse
+usage that incurs billing. A retained launch contains an unbounded number of
+provider requests, and Baton has no
+point that sees each request the Claude CLI makes. Current source records no
+per-request charge and no launch charge. Actual provider cost enters the
+record as `external_spend` observations from the Admin cost report, at
+organization scope. The Claude result frame cost field is not parsed by
+current source. These are the missing data points for per-request accounting:
+a per-request interception point, per-request or per-launch actual cost
+parsing, and a live verified organization with a placed credential.
+
+Credit-only routing stays held until those data points exist and a route
+using them is qualified. Deployment requires a package built from this source
+and the coordinator qualification the release process runs.
 
 ## Funded credit observations
 
