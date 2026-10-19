@@ -39,10 +39,14 @@ type Owner is Data:
   OwnerUnknown{}
 
 # The evidence a preview and an apply re-check for one candidate. Callers fill
-# facts from their durable source and from the host primitives.
+# facts from their durable source and from the host primitives. The database
+# fact protects an active coordinator database path and every ancestor of it;
+# it is independent of the path owner because a coordinator database must
+# survive any cleanup run.
 type Facts is Data:
   Facts{
     owner: Owner,
+    database: Presence,
     lease: Presence,
     process: Presence,
     dirty: Presence,

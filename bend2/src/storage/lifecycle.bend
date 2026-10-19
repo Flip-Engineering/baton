@@ -101,6 +101,44 @@ def configured_roots() -> IO(List<&2,RootSpec>):
     text : String <- IO.try(String, IO.get_env("BATON_STORAGE_ROOTS"))
     IO.pure(List<&2,RootSpec>, parse_roots(text))
 
+def exclusive_add_line(+line: String, acc: List<&2,String>, empty: Bool, comment: Bool) -> List<&2,String>:
+  match empty:
+    case True{}: acc
+    case False{}:
+      match comment:
+        case True{}: acc
+        case False{}: Con{normalize_root(line), acc}
+
+def exclusive_walk(lines: List<String>, acc: List<&2,String>) -> List<&2,String>:
+  match lines:
+    case Nil{}: List.reverse(&2, String, acc)
+    case Con{+head, tail}:
+      next = exclusive_add_line(head, acc, String.is_empty(head), String.starts_with(head, "#"))
+      exclusive_walk(tail, next)
+
+def parse_exclusive(+text: String) -> List<&2,String>:
+  exclusive_walk(Tx.split_lines(text), Nil{})
+
+def configured_exclusive() -> IO(List<&2,String>):
+  do IO<List<&2,String>>:
+    text : String <- IO.try(String, IO.get_env("BATON_STORAGE_EXCLUSIVE_ROOTS"))
+    IO.pure(List<&2,String>, parse_exclusive(text))
+
+def exclusive_member(+path: String, rows: List<&2,String>) -> Bool:
+  match rows:
+    case Nil{}: False{}
+    case Con{head, tail}: Bool.or(String.eq(path, head), exclusive_member(path, tail))
+
+# The first configured root the operator has not declared exclusive to storage
+# cleanup. Apply refuses while this answer names a root.
+def unproven_roots(specs: List<&2,RootSpec>, +exclusive: List<&2,String>, +acc: String) -> String:
+  match specs:
+    case Nil{}: acc
+    case Con{head, tail}:
+      +path = root_path_of(head)
+      Bool.pick(String, exclusive_member(path, exclusive), unproven_roots(tail, exclusive, acc),
+        Bool.pick(String, String.is_empty(acc), path, acc))
+
 def join_path(+root: String, +name: String) -> String:
   Bool.pick(String, String.ends_with(root, "/"), root ++ name, root ++ "/" ++ name)
 
@@ -127,38 +165,42 @@ def candidate_member(+path: String, candidates: List<T.Candidate>) -> Bool:
 def add_candidate(+candidate: T.Candidate, candidates: List<T.Candidate>) -> List<T.Candidate>:
   Con{candidate, candidates}
 
-def candidate_choice(+cls: T.StorageClass, +path: String, +identity: String, +bytes: Nat, +facts: T.Facts, +choice: S.OwnerChoice) -> IO(Maybe<T.Candidate>):
+def candidate_choice(+session: String, +cls: T.StorageClass, +path: String, +identity: String, +bytes: Nat, +facts: T.Facts, +choice: S.OwnerChoice) -> IO(Maybe<T.Candidate>):
   match choice:
     case S.OwnerChoice{owner, fact}:
-      proof : String = "owner:" ++ owner
-      candidate : T.Candidate = T.Candidate{path, cls, owner, proof, bytes, identity, facts}
-      IO.pure(Maybe<T.Candidate>, Some{candidate})
+      +selected = Bool.or(String.is_empty(session), String.eq(owner, session))
+      Bool.pick(IO(Maybe<T.Candidate>), selected,
+        do IO<Maybe<T.Candidate>>:
+          proof : String = "owner:" ++ owner
+          candidate : T.Candidate = T.Candidate{path, cls, owner, proof, bytes, identity, facts}
+          IO.pure(Maybe<T.Candidate>, Some{candidate}),
+        IO.pure(Maybe<T.Candidate>, None{}))
 
-def candidate_total(+spec: RootSpec, +state: S.State, +child: O.Child, +observed: O.Observation, +path: String, total: Maybe<Nat>) -> IO(Maybe<T.Candidate>):
+def candidate_total(+session: String, +spec: RootSpec, +state: S.State, +child: O.Child, +observed: O.Observation, +path: String, total: Maybe<Nat>) -> IO(Maybe<T.Candidate>):
   match total:
     case None{}: IO.pure(Maybe<T.Candidate>, None{})
     case Some{+bytes}:
       do IO<Maybe<T.Candidate>>:
         facts : T.Facts <- S.facts_for(child_class(spec, child), root_source_of(spec), path, state)
-        answer : Maybe<T.Candidate> <- candidate_choice(child_class(spec, child), path, O.observation_identity(observed), bytes, facts, S.owner_choice(state, path))
+        answer : Maybe<T.Candidate> <- candidate_choice(session, child_class(spec, child), path, O.observation_identity(observed), bytes, facts, S.owner_choice(state, path))
         IO.pure(Maybe<T.Candidate>, answer)
 
-def candidate_observed(+spec: RootSpec, +state: S.State, +child: O.Child, +observed: O.Observation) -> IO(Maybe<T.Candidate>):
+def candidate_observed(+session: String, +spec: RootSpec, +state: S.State, +child: O.Child, +observed: O.Observation) -> IO(Maybe<T.Candidate>):
   match observed:
     case O.Found{+path, kind, device, inode, bytes}:
       do IO<Maybe<T.Candidate>>:
         total : Maybe<Nat> <- Bool.pick(IO(Maybe<Nat>), String.eq(kind, "file"), IO.pure(Maybe<Nat>, Some{bytes}), O.measure(path))
-        answer : Maybe<T.Candidate> <- candidate_total(spec, state, child, observed, path, total)
+        answer : Maybe<T.Candidate> <- candidate_total(session, spec, state, child, observed, path, total)
         IO.pure(Maybe<T.Candidate>, answer)
     case other: IO.pure(Maybe<T.Candidate>, None{})
 
-def candidate_of(+spec: RootSpec, state: S.State, +child: O.Child) -> IO(Maybe<T.Candidate>):
+def candidate_of(+session: String, +spec: RootSpec, state: S.State, +child: O.Child) -> IO(Maybe<T.Candidate>):
   match child:
     case O.Child{kind, name}:
       +path = join_path(root_path_of(spec), name)
       do IO<Maybe<T.Candidate>>:
         observed : O.Observation <- O.observe(path)
-        answer : Maybe<T.Candidate> <- candidate_observed(spec, state, child, observed)
+        answer : Maybe<T.Candidate> <- candidate_observed(session, spec, state, child, observed)
         IO.pure(Maybe<T.Candidate>, answer)
 
 def candidate_list(candidate: Maybe<T.Candidate>) -> List<T.Candidate>:
@@ -166,13 +208,13 @@ def candidate_list(candidate: Maybe<T.Candidate>) -> List<T.Candidate>:
     case None{}: Nil{}
     case Some{value}: Con{value, Nil{}}
 
-def children_candidates(+spec: RootSpec, +state: S.State, children: List<&2,O.Child>, acc: List<T.Candidate>) -> IO(List<T.Candidate>):
+def children_candidates(+session: String, +spec: RootSpec, +state: S.State, children: List<&2,O.Child>, acc: List<T.Candidate>) -> IO(List<T.Candidate>):
   match children:
     case Nil{}: IO.pure(List<T.Candidate>, List.reverse(&1, T.Candidate, acc))
     case Con{head, tail}:
       do IO<List<T.Candidate>>:
-        candidate : Maybe<T.Candidate> <- candidate_of(spec, state, head)
-        next : List<T.Candidate> <- children_candidates(spec, state, tail, List.append(&1, T.Candidate, acc, candidate_list(candidate)))
+        candidate : Maybe<T.Candidate> <- candidate_of(session, spec, state, head)
+        next : List<T.Candidate> <- children_candidates(session, spec, state, tail, List.append(&1, T.Candidate, acc, candidate_list(candidate)))
         IO.pure(List<T.Candidate>, next)
 
 def mount_of(+observed: O.Observation) -> String:
@@ -188,30 +230,30 @@ def preview_valid(+spec: RootSpec, +observed: O.Observation, valid: Bool, candid
     planned : T.Preview = P.preview(root, mount, identity, valid, candidates)
     IO.pure(RootPreview, RootPreview{root, mount, identity, planned})
 
-def preview_scan(+spec: RootSpec, +state: S.State, +observed: O.Observation, scan: O.Scan) -> IO(RootPreview):
+def preview_scan(+session: String, +spec: RootSpec, +state: S.State, +observed: O.Observation, scan: O.Scan) -> IO(RootPreview):
   match scan:
     case O.Scan{ok, items}:
       Bool.pick(IO(RootPreview), ok,
         do IO<RootPreview>:
-          candidates : List<T.Candidate> <- children_candidates(spec, state, items, Nil{})
+          candidates : List<T.Candidate> <- children_candidates(session, spec, state, items, Nil{})
           current : RootPreview <- preview_valid(spec, observed, True{}, candidates)
           IO.pure(RootPreview, current),
         preview_valid(spec, observed, False{}, Nil{}))
 
-def preview_root(+spec: RootSpec, +state: S.State) -> IO(RootPreview):
+def preview_root(+session: String, +spec: RootSpec, +state: S.State) -> IO(RootPreview):
   do IO<RootPreview>:
     observed : O.Observation <- O.observe(root_path_of(spec))
     scan : O.Scan <- O.children(root_path_of(spec))
-    current : RootPreview <- preview_scan(spec, state, observed, scan)
+    current : RootPreview <- preview_scan(session, spec, state, observed, scan)
     IO.pure(RootPreview, current)
 
-def preview_roots(specs: List<&2,RootSpec>, +state: S.State, acc: List<RootPreview>) -> IO(List<RootPreview>):
+def preview_roots(+session: String, specs: List<&2,RootSpec>, +state: S.State, acc: List<RootPreview>) -> IO(List<RootPreview>):
   match specs:
     case Nil{}: IO.pure(List<RootPreview>, List.reverse(&1, RootPreview, acc))
     case Con{head, tail}:
       do IO<List<RootPreview>>:
-        current : RootPreview <- preview_root(head, state)
-        deeper : List<RootPreview> <- preview_roots(tail, state, Con{current, acc})
+        current : RootPreview <- preview_root(session, head, state)
+        deeper : List<RootPreview> <- preview_roots(session, tail, state, Con{current, acc})
         IO.pure(List<RootPreview>, deeper)
 
 def entry_class(+entry: T.Entry) -> T.StorageClass:
@@ -235,38 +277,32 @@ def apply_preview(+db: String, +spec: RootSpec, preview: RootPreview) -> IO(T.Re
     case RootPreview{root, mount, identity, planned}:
       A.apply(planned, A.Refresh{db, root_source_of(spec), root, identity})
 
-def apply_root(+db: String, +spec: RootSpec) -> IO(T.Receipt):
+def apply_root(+session: String, +db: String, +spec: RootSpec) -> IO(T.Receipt):
   do IO<T.Receipt>:
     state : S.State <- S.load(db)
-    preview : RootPreview <- preview_root(spec, state)
+    preview : RootPreview <- preview_root(session, spec, state)
     receipt : T.Receipt <- apply_preview(db, spec, preview)
     IO.pure(T.Receipt, receipt)
 
-def apply_roots(+db: String, specs: List<&2,RootSpec>, acc: List<T.Receipt>) -> IO(List<T.Receipt>):
+def apply_roots(+session: String, +db: String, specs: List<&2,RootSpec>, acc: List<T.Receipt>) -> IO(List<T.Receipt>):
   match specs:
     case Nil{}: IO.pure(List<T.Receipt>, List.reverse(&1, T.Receipt, acc))
     case Con{head, tail}:
       do IO<List<T.Receipt>>:
-        receipt : T.Receipt <- apply_root(db, head)
-        deeper : List<T.Receipt> <- apply_roots(db, tail, Con{receipt, acc})
+        receipt : T.Receipt <- apply_root(session, db, head)
+        deeper : List<T.Receipt> <- apply_roots(session, db, tail, Con{receipt, acc})
         IO.pure(List<T.Receipt>, deeper)
 
-def run_preview(+db: String) -> IO(List<RootPreview>):
-  do IO<List<RootPreview>>:
+def run_preview(+db: String, +session: String) -> IO(Unit):
+  do IO<Unit>:
     specs : List<&2,RootSpec> <- configured_roots()
-    state : S.State <- S.load(db)
-    answer : List<RootPreview> <- preview_roots(specs, state, Nil{})
-    IO.pure(List<RootPreview>, answer)
+    +state : S.State <- S.load(db)
+    Bool.pick(IO(Unit), S.session_known(state, session),
+      do IO<Unit>:
+        previews : List<RootPreview> <- preview_roots(session, specs, state, Nil{})
+        IO.write(previews_json(previews)),
+      IO.die(Unit, 2, "unknown session: " ++ session))
 
-def locked_apply(+db: String, specs: List<&2,RootSpec>, lock: Maybe<U32>) -> IO(List<T.Receipt>):
-  match lock:
-    case None{}:
-      IO.pure(List<T.Receipt>, Nil{})
-    case Some{handle}:
-      do IO<List<T.Receipt>>:
-        receipts : List<T.Receipt> <- apply_roots(db, specs, Nil{})
-        released : Unit <- IO.try(Unit, Lock.SessionLock.release(handle))
-        IO.pure(List<T.Receipt>, receipts)
 
 def root_overlap(+spec: RootSpec, rest: List<&2,RootSpec>) -> Bool:
   match rest:
@@ -280,26 +316,51 @@ def roots_overlap(specs: List<&2,RootSpec>) -> Bool:
     case Nil{}: False{}
     case Con{head, tail}: root_overlap(head, tail)
 
-def apply_locked(+db: String, specs: List<&2,RootSpec>, lock: Maybe<U32>) -> IO(Result<&1,&1,U32 & String,List<T.Receipt>>):
+def apply_locked(+session: String, +db: String, specs: List<&2,RootSpec>, lock: Maybe<U32>) -> IO(Result<&1,&1,U32 & String,List<T.Receipt>>):
   match lock:
     case None{}: IO.pure(Result<&1,&1,U32 & String,List<T.Receipt>>, Fail{(4, "storage cleanup busy")})
     case Some{handle}:
       do IO<Result<&1,&1,U32 & String,List<T.Receipt>>>:
-        receipts : List<T.Receipt> <- apply_roots(db, specs, Nil{})
+        receipts : List<T.Receipt> <- apply_roots(session, db, specs, Nil{})
         released : Unit <- IO.try(Unit, Lock.SessionLock.release(handle))
         IO.pure(Result<&1,&1,U32 & String,List<T.Receipt>>, Done{receipts})
 
-def run_apply(+db: String) -> IO(Result<&1,&1,U32 & String,List<T.Receipt>>):
+def apply_session(+db: String, +session: String) -> IO(Result<&1,&1,U32 & String,List<T.Receipt>>):
   do IO<Result<&1,&1,U32 & String,List<T.Receipt>>>:
     +specs : List<&2,RootSpec> <- configured_roots()
-    overlap : Bool = roots_overlap(specs)
-    answer : Result<&1,&1,U32 & String,List<T.Receipt>> <- Bool.pick(IO(Result<&1,&1,U32 & String,List<T.Receipt>>), overlap,
-      IO.pure(Result<&1,&1,U32 & String,List<T.Receipt>>, Fail{(3, "storage roots overlap")}),
+    exclusive : List<&2,String> <- configured_exclusive()
+    +unproven : String = unproven_roots(specs, exclusive, "")
+    answer : Result<&1,&1,U32 & String,List<T.Receipt>> <- Bool.pick(IO(Result<&1,&1,U32 & String,List<T.Receipt>>), Bool.not(String.is_empty(unproven)),
+      IO.pure(Result<&1,&1,U32 & String,List<T.Receipt>>, Fail{(3, "storage apply refused: no exclusive writer coordination for " ++ unproven)}),
       do IO<Result<&1,&1,U32 & String,List<T.Receipt>>>:
-        lock : Maybe<U32> <- IO.try(Maybe<U32>, Lock.SessionLock.try_acquire(db, "storage-cleanup"))
-        result : Result<&1,&1,U32 & String,List<T.Receipt>> <- apply_locked(db, specs, lock)
-        IO.pure(Result<&1,&1,U32 & String,List<T.Receipt>>, result))
+        overlap : Bool = roots_overlap(specs)
+        Bool.pick(IO(Result<&1,&1,U32 & String,List<T.Receipt>>), overlap,
+          IO.pure(Result<&1,&1,U32 & String,List<T.Receipt>>, Fail{(3, "storage roots overlap")}),
+          do IO<Result<&1,&1,U32 & String,List<T.Receipt>>>:
+            lock : Maybe<U32> <- IO.try(Maybe<U32>, Lock.SessionLock.try_acquire(db, "storage-cleanup"))
+            result : Result<&1,&1,U32 & String,List<T.Receipt>> <- apply_locked(session, db, specs, lock)
+            IO.pure(Result<&1,&1,U32 & String,List<T.Receipt>>, result)))
     IO.pure(Result<&1,&1,U32 & String,List<T.Receipt>>, answer)
+
+def run_apply_known(+db: String, +session: String) -> IO(Unit):
+  do IO<Unit>:
+    canonical : String <- IO.try(String, Lock.SessionLock.canonical(db))
+    lock : Maybe<U32> <- IO.try(Maybe<U32>, Lock.SessionLock.try_acquire(canonical, session))
+    match lock:
+      case None{}: IO.die(Unit, 4, "storage cleanup busy: session lock held")
+      case Some{handle}:
+        do IO<Unit>:
+          result : Result<&1,&1,U32 & String,List<T.Receipt>> <- apply_session(db, session)
+          released : Unit <- IO.try(Unit, Lock.SessionLock.release(handle))
+          answer : Unit <- run_apply_result(result)
+          IO.pure(Unit, answer)
+
+def run_apply(+db: String, +session: String) -> IO(Unit):
+  do IO<Unit>:
+    state : S.State <- S.load(db)
+    Bool.pick(IO(Unit), S.session_known(state, session),
+      run_apply_known(db, session),
+      IO.die(Unit, 2, "unknown session: " ++ session))
 
 def root_preview_json(item: RootPreview) -> String:
   match item:
@@ -349,14 +410,33 @@ def run_apply_result(result: Result<&1,&1,U32 & String,List<T.Receipt>>) -> IO(U
       (code, detail) = error
       IO.die(Unit, code, detail)
 
-def run(+db: String, +action: String) -> IO(Unit):
-  Bool.pick(IO(Unit), String.eq(action, "preview"),
-    do IO<Unit>:
-      previews : List<RootPreview> <- run_preview(db)
-      IO.write(previews_json(previews)),
-  Bool.pick(IO(Unit), String.eq(action, "apply"),
-    do IO<Unit>:
-      result : Result<&1,&1,U32 & String,List<T.Receipt>> <- run_apply(db)
-      answer : Unit <- run_apply_result(result)
-      IO.pure(Unit, answer),
-    IO.die(Unit, 2, "usage: storage-policy preview|apply")))
+def bool_json(+value: Bool) -> String:
+  Bool.pick(String, value, "true", "false")
+
+def policy_root_json(+spec: RootSpec, +exclusive: List<&2,String>) -> String:
+  match spec:
+    case RootSpec{cls, path, source}:
+      "{\"root\":" ++ J.string_literal(path)
+      ++ ",\"class\":" ++ J.string_literal(P.class_name(cls))
+      ++ ",\"source\":" ++ J.string_literal(source)
+      ++ ",\"exclusive\":" ++ bool_json(exclusive_member(path, exclusive)) ++ "}"
+
+def policy_root_items(specs: List<&2,RootSpec>, +exclusive: List<&2,String>, +acc: String) -> String:
+  match specs:
+    case Nil{}: acc
+    case Con{head, tail}:
+      +item = policy_root_json(head, exclusive)
+      +next = Bool.pick(String, String.is_empty(acc), item, acc ++ "," ++ item)
+      policy_root_items(tail, exclusive, next)
+
+def policy_json(+specs: List<&2,RootSpec>, +exclusive: List<&2,String>) -> String:
+  +unproven : String = unproven_roots(specs, exclusive, "")
+  "{\"ageOnlyDeletion\":false,\"apply\":" ++ J.string_literal(Bool.pick(String, String.is_empty(unproven), "ready", "refused"))
+  ++ ",\"unprovenRoot\":" ++ J.string_literal(unproven)
+  ++ ",\"roots\":[" ++ policy_root_items(specs, exclusive, "") ++ "]}"
+
+def run_policy(+db: String) -> IO(Unit):
+  do IO<Unit>:
+    specs : List<&2,RootSpec> <- configured_roots()
+    exclusive : List<&2,String> <- configured_exclusive()
+    IO.write(policy_json(specs, exclusive))
