@@ -390,6 +390,10 @@ typedef struct BatonRetained {
   uint64_t version,serial,reply_serial,owner_attempt,owner_incarnation,owner_epoch;
   int reply_error;
   off_t offset;
+  char spool_tail[8192];
+  size_t spool_tail_length;
+  uint64_t spool_partial;
+  off_t spool_state_offset;
   uint64_t offset_stored,incarnation;
   uint64_t subscribe_generation,subscribe_cursor;
   int subscribe_gap;
@@ -5350,41 +5354,80 @@ static int br_spool_try_line(BatonRetained *retained,BatonProcessCall *call) {
    br_spool_try_line. A silent or failed probe commits nothing. */
 static int br_spool_try_line_span(BatonRetained *retained,BatonProcessCall *call) {
   uint64_t start=(uint64_t)retained->offset;
-  uint64_t staged=0;
+  if(retained->spool_state_offset!=retained->offset) {
+    retained->spool_tail_length=0;
+    retained->spool_partial=0;
+    retained->spool_state_offset=retained->offset;
+  }
+  uint64_t line=retained->spool_partial;
+  if(retained->spool_tail_length) {
+    char *newline=memchr(retained->spool_tail,'\n',retained->spool_tail_length);
+    if(newline) {
+      size_t content=(size_t)(newline-retained->spool_tail);
+      if(line>UINT64_MAX-content) {call->error=EOVERFLOW;return -1;}
+      line+=content;
+      if(line>(uint64_t)LLONG_MAX-1 || retained->offset>LLONG_MAX-1-(off_t)line) {call->error=EOVERFLOW;return -1;}
+      size_t consumed=content+1;
+      size_t remaining=retained->spool_tail_length-consumed;
+      if(remaining) memmove(retained->spool_tail,newline+1,remaining);
+      retained->spool_tail_length=remaining;
+      retained->offset+=(off_t)(line+1);
+      retained->spool_partial=0;
+      retained->spool_state_offset=retained->offset;
+      call->frame_start=start;
+      call->frame_length=line;
+      return 1;
+    }
+    if(line>UINT64_MAX-retained->spool_tail_length) {call->error=EOVERFLOW;return -1;}
+    line+=retained->spool_tail_length;
+    retained->spool_tail_length=0;
+    retained->spool_partial=line;
+  }
   for(;;) {
     pthread_mutex_lock(&retained->state);
     int exited=retained->exited;
     call->error=retained->error;pthread_mutex_unlock(&retained->state);
     if(call->error) break;
-    char chunk[8192];
-    ssize_t n=pread(retained->spool,chunk,sizeof(chunk),retained->offset+(off_t)staged);
+    if(line>(uint64_t)LLONG_MAX || retained->offset>LLONG_MAX-(off_t)line) {call->error=EOVERFLOW;break;}
+    char chunk[8192];ssize_t n=pread(retained->spool,chunk,sizeof(chunk),retained->offset+(off_t)line);
     if(n<0 && errno==EINTR) continue;
     if(n<0) {call->error=errno;break;}
     if(n==0) {
       pthread_mutex_lock(&retained->state);
       if(retained->error) call->error=retained->error;
       else if(exited) {
-        if(staged>(uint64_t)LLONG_MAX || retained->offset>LLONG_MAX-(off_t)staged) call->error=EOVERFLOW;
-        else retained->offset+=(off_t)staged;
-        call->eof=staged==0;
-        if(!call->error && staged) {call->frame_start=start;call->frame_length=staged;}
+        if(line>(uint64_t)LLONG_MAX || retained->offset>LLONG_MAX-(off_t)line) call->error=EOVERFLOW;
+        else retained->offset+=(off_t)line;
+        call->eof=line==0;
+        if(!call->error && line) {call->frame_start=start;call->frame_length=line;}
+        retained->spool_partial=0;
+        retained->spool_state_offset=retained->offset;
       }
       pthread_mutex_unlock(&retained->state);
       if(call->error || exited) return -1;
       break;
     }
     char *newline=memchr(chunk,'\n',(size_t)n);
-    size_t consumed=newline?(size_t)(newline-chunk)+1:(size_t)n;
-    if(consumed>UINT64_MAX-staged) {call->error=EOVERFLOW;break;}
-    staged+=consumed;
+    size_t content=newline?(size_t)(newline-chunk):(size_t)n;
+    if(line>UINT64_MAX-content) {call->error=EOVERFLOW;break;}
+    line+=content;
     if(newline) {
-      if(staged>(uint64_t)LLONG_MAX || retained->offset>LLONG_MAX-(off_t)staged) {call->error=EOVERFLOW;break;}
-      retained->offset+=(off_t)staged;
+      if(line>(uint64_t)LLONG_MAX-1 || retained->offset>LLONG_MAX-1-(off_t)line) {call->error=EOVERFLOW;break;}
+      size_t consumed=content+1;
+      size_t remaining=(size_t)n-consumed;
+      if(remaining>sizeof(retained->spool_tail)) {call->error=EOVERFLOW;break;}
+      if(remaining) memcpy(retained->spool_tail,chunk+consumed,remaining);
+      retained->spool_tail_length=remaining;
+      retained->offset+=(off_t)(line+1);
+      retained->spool_partial=0;
+      retained->spool_state_offset=retained->offset;
       call->frame_start=start;
-      call->frame_length=staged-1;
+      call->frame_length=line;
       return 1;
     }
+    retained->spool_partial=line;
   }
+  if(!call->error) retained->spool_partial=line;
   return call->error?-1:0;
 }
 typedef struct { BatonRetained *retained;uint64_t version;int wake;int done; } BrAwakeWatch;
