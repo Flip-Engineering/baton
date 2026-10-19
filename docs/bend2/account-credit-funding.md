@@ -68,12 +68,14 @@ child. A marker by itself is not authorization. `credit_record_authorization`
 writes that row only for an eligible route status, in one transaction that
 selects the newest reported promotional observation, and the row records the
 actual reported balance, unit, cycle and the account secret reference. The
-helper check binds the row to the reference the account names. The host
-write query spins in the helper binary, so the helper performs this check on
-the read connection; consumption of the row after a successful launch is a
-remaining step for the proven route. The SQLite busy
-handler in `bend2/src/host/sqlite.c` waits at most 3000 retries of 10ms for
-one lock and then returns `SQLITE_BUSY` to the caller.
+helper binds the row to the reference the account names and consumes it in one
+guarded `UPDATE` restricted to the attempt, that reference and the `authorized`
+state. The caller is admitted only when the statement changes exactly one row.
+A later caller is refused with `creditAuthorizationConsumed`, a different
+reference with `creditAuthorizationMismatch`, and an unreadable database, a
+busy database or a zero-change update with `creditAdmissionUnavailable`. The
+SQLite busy handler in `bend2/src/host/sqlite.c` waits at most 3000 retries of
+10ms for one lock and then returns `SQLITE_BUSY` to the caller.
 The attempt is not started and its input stays owed. Subscription routes and
 other harnesses keep their existing bindings.
 

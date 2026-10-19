@@ -243,16 +243,18 @@ def state_read(read: Result<&1,&1,U32 & String,String>) -> String:
     case Fail{(code,detail)}: "absent"
     case Done{+value}: Tx.trim_nl(value)
 
-# A failed consume never dies: an unreadable or busy database classifies as
-# absent, which the caller reports as creditAdmissionUnavailable and leaves the
-# owed input for a later attempt.
+# Admission requires the guarded UPDATE to change exactly one row. A failed or
+# zero-change consume never admits: when the row is still authorized, the
+# transition did not happen, so the caller reports creditAdmissionUnavailable
+# and leaves the owed input for a later attempt. Consumed and mismatched rows
+# keep their named causes.
 def refused_state(+db: String, +attempt: String, +reference: String, changed: Bool) -> IO(String):
   match changed:
     case True{}: IO.pure(String,"authorized")
     case False{}: do IO<String>:
       read : Result<&1,&1,U32 & String,String> <- DB.Sql.read(db,authorization_state_sql(attempt,reference))
-      state : String <- IO.pure(String,state_read(read))
-      IO.pure(String,state)
+      observed : String <- IO.pure(String,state_read(read))
+      IO.pure(String,Bool.pick(String,String.eq(observed,"authorized"),"unavailable",observed))
 
 def authorization_consume(+db: String, +attempt: String, +reference: String) -> IO(String):
   do IO<String>:
