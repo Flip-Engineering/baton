@@ -1,0 +1,15 @@
+seat1 commit 1e5eb5b09f, comp.ts 3891083b818c42c2ed1aaa6544ee3651a7228615bbbf0b0608a88b4308e74853
+baseline pinned comp.ts a2a949ae7f1c8520d8a112aa505b4c5440baad861dc912e410bfb501369112bc
+
+Executed generated C (clang-19 -std=c11 -O0), committed seat1 vs baseline:
+nat_pattern_deep base=306n | seat1_committed=306n
+u32_table_bitvar base=2496 2397 | seat1_committed=2496 2397
+word_match_cover_key base=2139095040 2143289344 0 0 2139095040 2143289344  | seat1_committed=2139095040 2143289344 0 0 2139095040 2143289344 
+match_default base=0n | seat1_committed=0n
+
+Maximal hint collision (collapse-arm-hint.patch), committed seat1 compiler:
+nat_pattern_deep 306n
+u32_table_bitvar 2496 2397
+word_match_cover_key 2139095040 2143289344 0 0 2139095040 2143289344 
+match_default 0n
+minimal host

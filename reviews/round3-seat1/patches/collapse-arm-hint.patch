@@ -1,0 +1,37 @@
+--- reviews/round3-seat1/committed-src/bend2/comp.ts	2026-10-19 05:53:19.630702421 -0700
++++ reviews/round3-seat1/committed-collapse/bend2/comp.ts	2026-10-19 05:53:33.292350126 -0700
+@@ -3130,33 +3130,7 @@
+ // and kinds, the innermost body's span, and the argument/result layouts) only
+ // narrows the candidate list; structural alpha-equality decides every reuse.
+ function arm_hint(h: HTerm): string {
+-  let t = term_force(h);
+-  let out = "";
+-  for (let i = 0; i < 3; i++) {
+-    const sp: any = (t as any).s;
+-    out += (sp !== undefined && sp.beg !== undefined
+-      ? sp.beg + ":" + sp.end : "?") + ":" + t.$ + ";";
+-    if (t.$ === "Ann") {
+-      t = term_force(t.x);
+-    } else if (t.$ === "Lam") {
+-      t = term_force(term_open(t).b);
+-    } else {
+-      break;
+-    }
+-  }
+-  let b = term_force(h);
+-  for (let i = 0; i < 100000; i++) {
+-    if (b.$ === "Ann") {
+-      b = term_force(b.x);
+-    } else if (b.$ === "Lam") {
+-      b = term_force(term_open(b).b);
+-    } else {
+-      break;
+-    }
+-  }
+-  const sp: any = (b as any).s;
+-  return out + "|" + (sp !== undefined && sp.beg !== undefined
+-    ? sp.beg + ":" + sp.end : "?") + ":" + b.$;
++  return "COLLAPSE";
+ }
+ 
+ function arm_eq(a: HTerm, b: HTerm): boolean {

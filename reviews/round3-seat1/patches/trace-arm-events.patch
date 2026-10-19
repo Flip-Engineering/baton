@@ -1,0 +1,23 @@
+--- reviews/round3-seat1/committed-src/bend2/comp.ts	2026-10-19 05:53:19.630702421 -0700
++++ reviews/round3-seat1/committed-trace/bend2/comp.ts	2026-10-19 05:53:33.290020340 -0700
+@@ -3241,12 +3241,19 @@
+   const hint = arm_hint(h) + "|" + base;
+   const reps = fl.armHints.get(hint) ?? [];
+   for (const rep of reps) {
+-    if (!fl.armBusy.has(rep.name) && arm_eq(rep.term, h)) {
++    if (fl.armBusy.has(rep.name)) {
++      console.error(arm_eq(rep.term, h) ? "TRACE_BUSY_EQ" : "TRACE_BUSY_UNEQ", rep.name);
++      continue;
++    }
++    if (arm_eq(rep.term, h)) {
++      console.error("TRACE_HIT", rep.name);
+       emit_arm_call(fl, rep, av, dst);
+       return true;
+     }
++    console.error("TRACE_UNEQ", rep.name);
+   }
+   const name = seg_ref(fl, `arm_${fl.armSeq++}`);
++  console.error("TRACE_NEW", name, "bucket", reps.length);
+   const rec = { term: h, name, lay, ks };
+   reps.push(rec);
+   fl.armHints.set(hint, reps);

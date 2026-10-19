@@ -1,0 +1,8 @@
+committed seat1 minimal.bend arm trace: HIT=1458 UNEQ=0 BUSY_EQ=0 BUSY_UNEQ=2184 NEW=214 OPEN=0
+prior working-tree minimal trace: HIT=1458 BUSY_EQ=0 BUSY_UNEQ=2184 NEW=214 (same)
+nat_pattern_deep: HIT=0 UNEQ=0 BUSY=1 NEW=2
+u32_table_bitvar: HIT=10 NEW=14
+word_match_cover_key: HIT=10 NEW=12
+match_default: HIT=4 NEW=4
+max prior bucket in minimal: 41
+prototypes 107, definitions 107, missing 0, later-defined calls 766, self calls 0
