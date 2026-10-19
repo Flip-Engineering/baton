@@ -55,13 +55,13 @@ def dispatch_message(selected: Bool, +db: String, +id: String) -> IO(Unit):
 def dispatch_three_route(host_keeper: Bool, message: Bool, +first: String, +second: String) -> IO(Unit):
   match host_keeper:
     case True{}: dispatch_host_keeper(True{},first,second)
-    case False{}: dispatch_message(message,first,second)
+    case False{}:
+      match message:
+        case True{}: dispatch_message(True{},first,second)
+        case False{}: IO.die(Unit,2,"unsupported focused receive command")
 
-def dispatch_three(flag: String, +first: String, +second: String) -> IO(Unit):
-  match flag:
-    case "--host-process-keeper": dispatch_host_keeper(True{},first,second)
-    case "--dispatch-message": dispatch_message(True{},first,second)
-    case other: IO.die(Unit,2,"unsupported focused receive command")
+def dispatch_three(+flag: String, +first: String, +second: String) -> IO(Unit):
+  dispatch_three_route(String.eq(flag,"--host-process-keeper"),String.eq(flag,"--dispatch-message"),first,second)
 
 def dispatch_turn(selected: Bool, +db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +session: String) -> IO(Unit):
   match selected:
@@ -78,19 +78,38 @@ def focused_fallback_result(result: T.RunRes) -> IO(Unit):
       IO.die(Unit,U32.add(128,num),"focused native action ended by signal")
     case T.RSpawn{detail}: IO.die(Unit,127,detail)
 
+def focused_fallback(+full: String, +db: String, args: List<String>) -> IO(Unit):
+  do IO<Unit>:
+    result : Result<&1,&1,U32 & String,String> <- GitProcess.Process.run(Tx.enc_argv(Con{full,Con{db,args}}),".")
+    focused_fallback_result(Tx.run_res(result))
+
+def focused_native_receive(selected: Bool, +full: String, +db: String, +verb: String, +session: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, +message: String) -> IO(Unit):
+  match selected:
+    case True{}: dispatch_receive(True{},db,session,cmd,model,effort,cwd,log,message)
+    case False{}: focused_fallback(full,db,Con{verb,Con{session,Con{cmd,Con{model,Con{effort,Con{cwd,Con{log,Con{message,Nil{}}}}}}}}})
+
+def focused_native_turn(turn_text: Bool, turn: Bool, +full: String, +db: String, +verb: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +session: String) -> IO(Unit):
+  match turn_text:
+    case True{}: Turn.run_text(db,player,id,cmd,model,effort,cwd,task,log,session)
+    case False{}:
+      match turn:
+        case True{}: dispatch_turn(True{},db,player,id,cmd,model,effort,cwd,task,log,session)
+        case False{}: focused_fallback(full,db,Con{verb,Con{player,Con{id,Con{cmd,Con{model,Con{effort,Con{cwd,Con{task,Con{log,Con{session,Nil{}}}}}}}}}}})
+
+def focused_native_observer(selected: Bool, +full: String, +db: String, +verb: String, +session: String, +observer: String) -> IO(Unit):
+  match selected:
+    case True{}: dispatch_observer(True{},db,session,observer)
+    case False{}: focused_fallback(full,db,Con{verb,Con{session,Con{observer,Nil{}}}})
+
 def focused_native_args(+full: String, +db: String, args: List<String>) -> IO(Unit):
   match args:
-    case "receive" <> +session <> +cmd <> +model <> +effort <> +cwd <> +log <> +message <> Nil{}:
-      dispatch_receive(True{},db,session,cmd,model,effort,cwd,log,message)
-    case "turn" <> +player <> +id <> +cmd <> +model <> +effort <> +cwd <> +task <> +log <> +session <> Nil{}:
-      dispatch_turn(True{},db,player,id,cmd,model,effort,cwd,task,log,session)
-    case "turn-text" <> +player <> +id <> +cmd <> +model <> +effort <> +cwd <> +body <> +log <> +session <> Nil{}:
-      Turn.run_text(db,player,id,cmd,model,effort,cwd,body,log,session)
-    case "recover-observer" <> +session <> +observer <> Nil{}:
-      dispatch_observer(True{},db,session,observer)
-    case other: do IO<Unit>:
-      result : Result<&1,&1,U32 & String,String> <- GitProcess.Process.run(Tx.enc_argv(Con{full,Con{db,other}}),".")
-      focused_fallback_result(Tx.run_res(result))
+    case +verb <> +session <> +cmd <> +model <> +effort <> +cwd <> +log <> +message <> Nil{}:
+      focused_native_receive(String.eq(verb,"receive"),full,db,verb,session,cmd,model,effort,cwd,log,message)
+    case +verb <> +player <> +id <> +cmd <> +model <> +effort <> +cwd <> +task <> +log <> +session <> Nil{}:
+      focused_native_turn(String.eq(verb,"turn-text"),String.eq(verb,"turn"),full,db,verb,player,id,cmd,model,effort,cwd,task,log,session)
+    case +verb <> +session <> +observer <> Nil{}:
+      focused_native_observer(String.eq(verb,"recover-observer"),full,db,verb,session,observer)
+    case other: focused_fallback(full,db,other)
 
 def focused_native_input(+db: String, +full: String) -> IO(Unit):
   do IO<Unit>:
@@ -99,13 +118,12 @@ def focused_native_input(+db: String, +full: String) -> IO(Unit):
 
 def dispatch(args: List<String>) -> IO(Unit):
   match args:
-    case +db <> "agent-native-input" <> +full <> Nil{}: focused_native_input(db,full)
+    case +db <> +verb <> +full <> Nil{}:
+      Bool.pick(IO(Unit),String.eq(verb,"agent-native-input"),focused_native_input(db,full),dispatch_three(db,verb,full))
     case +db <> +verb <> +session <> +cmd <> +model <> +effort <> +cwd <> +log <> +message <> Nil{}:
       dispatch_receive(String.eq(verb,"receive"),db,session,cmd,model,effort,cwd,log,message)
-    case +db <> "turn-text" <> +player <> +id <> +cmd <> +model <> +effort <> +cwd <> +body <> +log <> +session <> Nil{}:
-      Turn.run_text(db,player,id,cmd,model,effort,cwd,body,log,session)
     case +db <> +verb <> +player <> +id <> +cmd <> +model <> +effort <> +cwd <> +task <> +log <> +session <> Nil{}:
-      dispatch_turn(String.eq(verb,"turn"),db,player,id,cmd,model,effort,cwd,task,log,session)
+      Bool.pick(IO(Unit),String.eq(verb,"turn-text"),Turn.run_text(db,player,id,cmd,model,effort,cwd,task,log,session),dispatch_turn(String.eq(verb,"turn"),db,player,id,cmd,model,effort,cwd,task,log,session))
     case +flag <> +db <> Nil{}:
       dispatch_instance(String.eq(flag,"--instance-owner"),String.eq(flag,"--instance-shutdown"),db)
     case +flag <> +first <> +second <> Nil{}:
