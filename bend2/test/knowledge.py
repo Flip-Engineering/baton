@@ -45,7 +45,12 @@ class Knowledge(unittest.TestCase):
         self.temp.cleanup()
 
     def call(self, *args, success=True):
-        p = subprocess.run([str(EXE), str(self.db), *args], text=True, capture_output=True)
+        argv = [str(EXE), str(self.db), *args]
+        try:
+            p = subprocess.run(argv, text=True, capture_output=True, timeout=60)
+        except subprocess.TimeoutExpired as expired:
+            self.fail('command timed out after 60s: %r stdout=%r stderr=%r'
+                      % (argv, expired.stdout, expired.stderr))
         if success:
             self.assertEqual(p.returncode, 0, p.stderr)
             return json.loads(p.stdout)

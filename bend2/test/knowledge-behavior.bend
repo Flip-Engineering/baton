@@ -1,7 +1,10 @@
 # Focused behavioral entry for knowledge PRs. The production AgentActions
 # parser validates every command; Store seeds the fixture and Knowledge
-# executes the read/write. No native attach, owner socket or Main entry is
-# involved, so the entry cannot wait on an absent owner.
+# executes the read/write. Store commits publish through the database
+# owner. The host starts that owner by re-executing this executable with
+# --instance-owner, so main_args serves that flag through
+# Custody.Instance.owner and --instance-shutdown through
+# Custody.Instance.shutdown.
 #
 # usage: knowledge-behavior seed DB
 #        knowledge-behavior DB search READER SCOPE SUBJECT QUERY
@@ -17,6 +20,7 @@ import ../src/coordinator/agent-actions.bend as A
 import ../src/coordinator/commands.bend as C
 import ../src/coordinator/store.bend as Store
 import ../src/coordinator/knowledge.bend as Knowledge
+import ../src/host/instance.bend as Custody
 
 def parsed_checked(action: A.Action) -> IO(Unit):
   match action:
@@ -118,6 +122,8 @@ def dispatch(+db: String, args: List<String>) -> IO(Unit):
 
 def main_args(args: List<String>) -> IO(Unit):
   match args:
+    case "--instance-owner" <> db <> Nil{}: IO.try(Unit,Custody.Instance.owner(db))
+    case "--instance-shutdown" <> db <> Nil{}: IO.try(Unit,Custody.Instance.shutdown(db))
     case "seed" <> db <> Nil{}: seed(db)
     case db <> rest: dispatch(db,rest)
     case other: IO.die(Unit,2,"usage: knowledge-behavior seed DB | DB COMMAND...")
