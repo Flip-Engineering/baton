@@ -238,13 +238,14 @@ def all_refused_body(harness: String, refused: String, cause: String) -> String:
 #           api_error_status; the CLI emits api_error_status since v2.1.110)
 #   Muse   {"payload_type":"run.terminal.failed",
 #           "payload":{"kind":"run_terminal","terminal":"failed","reason":"..."}}
-#          A compaction failure that ends the run carries the summarizer and quota
+#          The diagnostic is in payload.reason; a fixture or adapter may carry the same
+#          text in payload.text. A compaction failure that ends the run carries the summarizer and quota
 #          diagnostic in the same reason, so it classifies by that text too.
 def usage_text_sql_expr(+event: String) -> String:
   "CASE WHEN json_extract(" ++ event ++ ",'$.type')='agent_end' THEN coalesce(json_extract((SELECT " ++ C.last_assistant_sql_expr(event) ++ "),'$.errorMessage'),'')"
   ++ " WHEN json_extract(" ++ event ++ ",'$.type')='turn.failed' THEN coalesce(json_extract(" ++ event ++ ",'$.error.message'),'')"
   ++ " WHEN json_extract(" ++ event ++ ",'$.type')='result' THEN coalesce(json_extract(" ++ event ++ ",'$.result'),'') || ' ' || coalesce((SELECT group_concat(value,' ') FROM json_each(CASE WHEN json_type(" ++ event ++ ",'$.errors')='array' THEN json_extract(" ++ event ++ ",'$.errors') ELSE '[]' END)),'')"
-  ++ " WHEN json_extract(" ++ event ++ ",'$.payload.kind')='run_terminal' OR json_extract(" ++ event ++ ",'$.payload_type')='run.terminal.failed' THEN coalesce(json_extract(" ++ event ++ ",'$.payload.reason'),'')"
+  ++ " WHEN json_extract(" ++ event ++ ",'$.payload.kind')='run_terminal' OR json_extract(" ++ event ++ ",'$.payload_type')='run.terminal.failed' THEN coalesce(nullif(json_extract(" ++ event ++ ",'$.payload.reason'),''),json_extract(" ++ event ++ ",'$.payload.text'),'')"
   ++ " ELSE '' END"
 
 # A genuinely failed provider terminal only:

@@ -51,6 +51,9 @@ def muse_frame() -> String:
 def future_frame() -> String:
   "{\"payload_type\":\"run.terminal.failed\",\"payload\":{\"kind\":\"run_terminal\",\"terminal\":\"failed\",\"reason\":\"" ++ future_reason() ++ "\"}}"
 
+def muse_text_frame() -> String:
+  "{\"payload_type\":\"run.terminal.failed\",\"payload\":{\"kind\":\"run_terminal\",\"terminal\":\"failed\",\"text\":\"" ++ muse_reason() ++ "\"}}"
+
 def compaction_without_quota() -> String:
   "{\"payload_type\":\"run.terminal.failed\",\"payload\":{\"kind\":\"run_terminal\",\"terminal\":\"failed\",\"reason\":\"context compaction failed at the hard threshold; summarizer API 429\"}}"
 
@@ -84,6 +87,8 @@ def classification_cases(+db: String) -> IO(Unit):
     +cause : String <- Subs.exhaustion_cause(db,muse_frame())
     expect("muse-hard-quota-classified",Bool.and(Bool.not(String.is_empty(cause)),String.contains(cause,"provider-reported usage exhaustion: ")))
     expect("muse-reason-retained",String.contains(cause,muse_reason()))
+    +text_cause : String <- Subs.exhaustion_cause(db,muse_text_frame())
+    expect("muse-payload-text-classified",String.contains(text_cause,muse_reason()))
     other : String <- Subs.exhaustion_cause(db,compaction_without_quota())
     expect("compaction-without-quota-not-exhaustion",String.is_empty(other))
     completed : String <- Subs.exhaustion_cause(db,completed_frame())
