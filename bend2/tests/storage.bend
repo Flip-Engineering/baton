@@ -473,28 +473,39 @@ def unknown_peer_script() -> String:
 # Unknown runtime evidence preserves the candidate before removal is attempted.
 # The locked-tree check drives the removal primitive directly so preservation
 # from unknown facts and refusal from an inaccessible child stay separate.
+def deep_leaf_path(+prefix: String, remaining: Nat) -> String:
+  match remaining:
+    case 0n: prefix ++ "/leaf.txt"
+    case 1n+rest: deep_leaf_path(prefix ++ "/n", rest)
+
+def removal_detail(entries: List<T.Removal>, +path: String) -> String:
+  match entries:
+    case Nil{}: ""
+    case Con{head, tail}:
+      match head:
+        case T.Removal{entry_path, class, owner_proof, reason, bytes, +outcome}:
+          Bool.pick(String, String.eq(entry_path, path), P.outcome_detail(outcome), removal_detail(tail, path))
+
+def receipt_detail(receipt: T.Receipt, +path: String) -> String:
+  match receipt:
+    case T.Receipt{plan, root, mount, entries, reclaimed, complete}: removal_detail(entries, path)
+
 def removal_refused_check(+db: String, +root: String) -> IO(Unit):
   do IO<Unit>:
     +dir : String = root ++ "/interrupted"
     made : Unit <- IO.try(Unit, F.Files.mkdir(dir))
-    +file : String = dir ++ "/first"
-    wrote : Unit <- write_file(file, "payload")
-    +locked : String = dir ++ "/locked"
-    made_locked : Unit <- IO.try(Unit, F.Files.mkdir(locked))
-    +held : String = locked ++ "/held"
-    wrote_held : Unit <- write_file(held, "payload")
-    chmod : Unit <- run_cmd(["/usr/bin/chmod", "000", locked])
-    observed : O.Observation <- O.observe(dir)
-    +root_identity : String <- preview_root(root)
-    +entry : T.Entry = T.Entry{dir, T.Scratch{}, "owner", "proof", 0n, O.observation_identity(observed), T.Remove{"scratch-settled"}}
-    refresh : A.Refresh = A.Refresh{db, "", root, root_identity}
-    first : T.Removal <- A.apply_remove(entry, refresh)
-    +first_outcome : T.Outcome = A.removal_outcome_of(first)
-    a : Unit <- check("interrupted-refused", String.eq(P.outcome_name(first_outcome), "refused"), P.outcome_name(first_outcome))
-    chmod2 : Unit <- run_cmd(["/usr/bin/chmod", "700", locked])
-    second : T.Removal <- A.apply_remove(entry, refresh)
-    +second_outcome : T.Outcome = A.removal_outcome_of(second)
-    b : Unit <- check("interrupted-replay", String.eq(P.outcome_name(second_outcome), "removed"), P.outcome_name(second_outcome))
+    +deep : String = dir ++ "/deep"
+    +script : String = "d=" ++ deep ++ "; mkdir -p \"$d\" || exit 1; cd \"$d\" || exit 1; i=0; while [ $i -lt 130 ]; do mkdir n || exit 1; cd n || exit 1; i=$((i+1)); done; printf leaf > leaf.txt"
+    built : Unit <- run_cmd(["/bin/sh", "-c", script])
+    +leaf : String = deep_leaf_path(deep, 130n)
+    +candidate : T.Candidate <- candidate_for(dir, T.Scratch{}, clear_facts())
+    receipt : T.Receipt <- one_apply(db, root, candidate)
+    a : Unit <- check_receipt("interrupted-refused", receipt, dir, "refused")
+    +detail : String = receipt_detail(receipt, dir)
+    b : Unit <- check("interrupted-refused-detail", Bool.and(String.contains(detail, "partial"), String.contains(detail, "error=")), detail)
+    kept : O.Observation <- O.observe(leaf)
+    c : Unit <- check("interrupted-leaf-preserved", O.observation_is_found(kept), "deep leaf removed")
+    cleaned : Unit <- run_cmd(["/bin/rm", "-rf", dir])
     IO.pure(Unit, Unit{})
 
 def unknown_runtime_spawned(result: Result<&1,&1,U32 & String,U32>, +db: String, +root: String, +file: String) -> IO(Unit):
