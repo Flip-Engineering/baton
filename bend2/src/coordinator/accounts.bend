@@ -460,8 +460,6 @@ def schema() -> String:
   ++ "CREATE TABLE IF NOT EXISTS account_attempts (attempt TEXT PRIMARY KEY NOT NULL,session TEXT NOT NULL REFERENCES sessions(id),turn TEXT NOT NULL DEFAULT '',account TEXT NOT NULL REFERENCES accounts(id),organization TEXT NOT NULL DEFAULT '',funding TEXT NOT NULL,secret_ref TEXT NOT NULL,workload TEXT NOT NULL DEFAULT '',outcome TEXT NOT NULL DEFAULT '',error_text TEXT NOT NULL DEFAULT '',started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,ended_at TEXT NOT NULL DEFAULT '',predecessor TEXT NOT NULL DEFAULT '',recorded TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);"
   ++ "CREATE TABLE IF NOT EXISTS credit_observations (id TEXT PRIMARY KEY NOT NULL,organization TEXT NOT NULL DEFAULT '',fact TEXT NOT NULL,state TEXT NOT NULL CHECK(state IN ('reported','unavailable')),balance TEXT NOT NULL DEFAULT '',unit TEXT NOT NULL DEFAULT '',expires TEXT NOT NULL DEFAULT '',cycle TEXT NOT NULL DEFAULT '',source TEXT NOT NULL,detail TEXT NOT NULL DEFAULT '',observed_at TEXT NOT NULL,authority TEXT NOT NULL);"
   ++ "CREATE INDEX IF NOT EXISTS credit_observations_pool ON credit_observations(organization,fact);"
-  ++ "CREATE TABLE IF NOT EXISTS credit_reservations (attempt TEXT PRIMARY KEY NOT NULL,session TEXT NOT NULL DEFAULT '',account TEXT NOT NULL DEFAULT '',organization TEXT NOT NULL DEFAULT '',cycle TEXT NOT NULL DEFAULT '',cap_period TEXT NOT NULL DEFAULT '',max_charge TEXT NOT NULL DEFAULT '',unit TEXT NOT NULL DEFAULT '',state TEXT NOT NULL DEFAULT 'reserved' CHECK(state IN ('reserved','settled')),outcome TEXT NOT NULL DEFAULT '',created TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,settled_at TEXT NOT NULL DEFAULT '');"
-  ++ "CREATE INDEX IF NOT EXISTS credit_reservations_pool ON credit_reservations(organization,cycle,state);"
   ++ "CREATE INDEX IF NOT EXISTS account_attempts_session ON account_attempts(session,recorded);"
 
 # One transaction that installs the collaboration schema and this module's tables
@@ -747,7 +745,6 @@ def attempt_insert_sql(+session: String, +attempt: String, +predecessor: String,
 # the runtime seat, so no completion fact is assembled anywhere else.
 def attempt_completed_sql(+attempt: String, +outcome: String, +error_text: String) -> String:
   "UPDATE account_attempts SET outcome=" ++ C.q(outcome) ++ ",error_text=" ++ C.q(error_text) ++ ",ended_at=CURRENT_TIMESTAMP WHERE attempt=" ++ C.q(attempt) ++ ";"
-  ++ "UPDATE credit_reservations SET state='settled',outcome=" ++ C.q(outcome) ++ ",settled_at=CURRENT_TIMESTAMP WHERE attempt=" ++ C.q(attempt) ++ " AND state='reserved';"
   ++ "SELECT json_object('attempt',attempt,'account',account,'funding',funding,'workload',workload,'outcome',outcome,'errorText',error_text,'startedAt',started_at,'endedAt',ended_at) FROM account_attempts WHERE attempt=" ++ C.q(attempt) ++ ";"
 
 def attempt_completed(+db: String, +attempt: String, +outcome: String, +error_text: String) -> IO(Unit):
@@ -956,97 +953,55 @@ def record_current_attempt(+db: String, +session: String, +attempt: String, +pre
     case None{}: IO.pure(Unit,Unit{})
     case Some{+account}: record_attempt(db,session,attempt,predecessor,account)
 
-# --- the meter reading recorded in the database ------------------------------
-# The authorized bound for this route is the existing promotional credit, up to
-# 200 in the meter unit per account per month, with no top-up, purchase or
-# subscription spill. The meter applies that bound per organization, which is
-# the single-account bound for the pooled balance. One retained launch reserves
-# 20 in the meter unit. Settlement keeps the reserved amount as the settled
-# charge for the attempt until a provider cost observation records the actual
-# cost for that attempt; the reservation amount is a bound, not a price.
-def credit_monthly_cap() -> String:
-  "200"
-
-def credit_launch_reservation() -> String:
-  "20"
-
+# --- the credit-only route status recorded in the database -------------------
+# Eligibility reads actual recorded facts: the Anthropic claude-code api_key
+# route, a verified organization, and the newest promotional_credit
+# observation for that organization with its reported balance and unit. A
+# reported zero balance is the provider-reported exhausted state. The provider
+# enforces the balance on each request; a retained launch contains an
+# unbounded number of provider requests, so no launch-level charge bound is
+# derived and no reservation or settled amount is recorded from a launch.
+# Actual provider cost enters through external_spend observations from the
+# Admin cost report. Credit-only routing stays held until a per-request
+# accounting route is proven; the status names the actual reason.
 def credit_meter_sql(+organization: String) -> String:
   "SELECT state||char(31)||balance||char(31)||unit||char(31)||cycle FROM credit_observations WHERE organization=" ++ C.q(organization) ++ " AND fact='promotional_credit' ORDER BY observed_at DESC,rowid DESC LIMIT 1;"
 
-def credit_reserved_sql(+organization: String, +cycle: String) -> String:
-  "SELECT max_charge FROM credit_reservations WHERE organization=" ++ C.q(organization) ++ " AND cycle=" ++ C.q(cycle) ++ " AND state='reserved';"
-
-def credit_settled_sql(+organization: String, +cap_period: String) -> String:
-  "SELECT max_charge FROM credit_reservations WHERE organization=" ++ C.q(organization) ++ " AND cap_period=" ++ C.q(cap_period) ++ " AND state='settled';"
-
-def credit_amount_sum(lines: List<String>, +total: String) -> String:
-  match lines:
-    case Nil{}: total
-    case +line <> rest: credit_amount_sum(rest,Bool.pick(String,decimal_text(Tx.trim_nl(line)),decimal_add(total,Tx.trim_nl(line)),total))
-
-def credit_meter_fields(+organization: String, +cap_period: String, +reserved: String, +settled: String, fields: List<&2,String>) -> CreditMeter:
+def credit_meter_fields(+organization: String, fields: List<&2,String>) -> CreditMeter:
   match fields:
-    case state <> balance <> unit <> cycle <> rest: CMeter{organization,state,cycle,balance,unit,credit_monthly_cap(),cap_period,settled,reserved}
-    case other: CMeter{organization,"unavailable","","","","",cap_period,settled,reserved}
+    case state <> balance <> unit <> cycle <> rest: CMeter{organization,state,cycle,balance,unit,"","","",""}
+    case other: CMeter{organization,"unavailable","","","","","","",""}
 
-def credit_decision_for(+db: String, +account: AccountRecord) -> IO(CreditAdmission):
-  do IO<CreditAdmission>:
-    +organization : String <- IO.pure(String,account_organization(account))
-    period_rows : String <- IO.try(String,DB.Sql.read(db,"SELECT strftime('%Y-%m','now');"))
-    +cap_period : String <- IO.pure(String,Tx.trim_nl(period_rows))
-    meter_rows : String <- IO.try(String,DB.Sql.read(db,credit_meter_sql(organization)))
-    +fields : List<&2,String> <- IO.pure(List<&2,String>,String.split(Tx.trim_nl(meter_rows),Char.from_u32(31)))
-    +base : CreditMeter <- IO.pure(CreditMeter,credit_meter_fields(organization,cap_period,"0","0",fields))
-    reserved_rows : String <- IO.try(String,DB.Sql.read(db,credit_reserved_sql(organization,meter_cycle(base))))
-    settled_rows : String <- IO.try(String,DB.Sql.read(db,credit_settled_sql(organization,cap_period)))
-    +meter : CreditMeter <- IO.pure(CreditMeter,credit_meter_fields(organization,cap_period,credit_amount_sum(Tx.split_lines(reserved_rows),"0"),credit_amount_sum(Tx.split_lines(settled_rows),"0"),fields))
-    IO.pure(CreditAdmission,credit_request_admission(account,meter,meter_cycle(meter),cap_period,credit_launch_reservation()))
+def credit_route_eligibility(+account: AccountRecord, +meter: CreditMeter) -> String:
+  Bool.pick(String,Bool.not(Bool.and(String.eq(account_provider(account),"anthropic"),Bool.and(String.eq(account_harness(account),"claude-code"),String.eq(account_funding(account),"api_key")))),"notPromotionalCreditRoute",
+  Bool.pick(String,Bool.or(String.is_empty(account_organization(account)),Bool.not(String.eq(account_organization(account),meter_organization(meter)))),"organizationUnverified",
+  Bool.pick(String,Bool.not(String.eq(meter_state(meter),"reported")),"creditObservationUnavailable",
+  Bool.pick(String,Bool.or(Bool.not(decimal_text(meter_balance(meter))),String.is_empty(meter_unit(meter))),"creditAmountMalformed",
+  Bool.pick(String,decimal_is_zero(meter_balance(meter)),"promotionalCreditExhausted","eligible")))))
 
-def credit_reservation_sql(+session: String, +attempt: String, +account: AccountRecord, admission: CreditAdmission) -> String:
-  "INSERT OR IGNORE INTO credit_reservations(attempt,session,account,organization,cycle,cap_period,max_charge,unit,state) SELECT " ++ C.q(attempt) ++ "," ++ C.q(session) ++ "," ++ C.q(account_id(account)) ++ "," ++ C.q(account_organization(account)) ++ ",cycle,strftime('%Y-%m','now')," ++ C.q(credit_launch_reservation()) ++ ",unit,'reserved' FROM credit_observations WHERE organization=" ++ C.q(account_organization(account)) ++ " AND fact='promotional_credit' ORDER BY observed_at DESC,rowid DESC LIMIT 1;"
+def credit_status_fields(+db: String, +account: AccountRecord, meter_rows: String) -> IO(String):
+  IO.pure(String,credit_route_eligibility(account,credit_meter_fields(account_organization(account),String.split(Tx.trim_nl(meter_rows),Char.from_u32(31)))))
 
-def credit_record_reservation_decided(+db: String, +session: String, +attempt: String, +account: AccountRecord, +admission: CreditAdmission, admitted: Bool) -> IO(Unit):
-  match admitted:
-    case False{}: IO.pure(Unit,Unit{})
-    case True{}: do IO<Unit>:
-      saved : String <- IO.try(String,commit_read(db,credit_reservation_sql(session,attempt,account,admission)))
-      IO.pure(Unit,Unit{})
-def credit_record_reservation(+db: String, +session: String, +attempt: String, +account: AccountRecord, +admission: CreditAdmission) -> IO(Unit):
-  credit_record_reservation_decided(db,session,attempt,account,admission,credit_admission_admitted(admission))
+def credit_status_for(+db: String, +account: AccountRecord) -> IO(String):
+  do IO<String>:
+    meter_rows : String <- IO.try(String,DB.Sql.read(db,credit_meter_sql(account_organization(account))))
+    credit_status_fields(db,account,meter_rows)
 
+def credit_launch_refusal_status(+status: String) -> String:
+  Bool.pick(String,String.eq(status,"eligible"),"Anthropic API-key launches are held because credit-only routing is not proven for this deployment; the attempt was not started and its input stays owed.","Anthropic API-key launch refused by promotional-credit eligibility (" ++ status ++ "); the attempt was not started and its input stays owed.")
 
-def credit_launch_refusal_decided(+admission: CreditAdmission) -> String:
-  Bool.pick(String,credit_admission_admitted(admission),"","Anthropic API-key launch refused by promotional-credit admission (" ++ credit_admission_reason(admission) ++ "); the attempt was not started and its input stays owed.")
+def credit_launch_refusal_decided(+account: AccountRecord, +status: String) -> String:
+  Bool.pick(String,Bool.and(String.eq(account_provider(account),"anthropic"),Bool.and(String.eq(account_harness(account),"claude-code"),String.eq(account_funding(account),"api_key"))),credit_launch_refusal_status(status),"")
 
 def credit_launch_refusal_for(+db: String, chosen: Maybe<&2,AccountRecord>) -> IO(String):
   match chosen:
     case None{}: IO.pure(String,"")
     case Some{+account}: do IO<String>:
-      admission : CreditAdmission <- credit_decision_for(db,account)
-      IO.pure(String,credit_launch_refusal_decided(admission))
+      status : String <- credit_status_for(db,account)
+      IO.pure(String,credit_launch_refusal_decided(account,status))
 
-def credit_admitted_binding_decided(+attempt: String, binding: Maybe<List<String>>) -> Maybe<List<String>>:
-  match binding:
-    case None{}: None{}
-    case Some{values}: Some{Con{"BATON2_CREDIT_RESERVATION=" ++ attempt,values}}
-
-def credit_admitted_binding(+attempt: String, +secret_ref: String, helper: Maybe<String>) -> Maybe<List<String>>:
-  credit_admitted_binding_decided(attempt,api_key_binding(secret_ref,helper))
-
-def credit_launch_binding_decided(+db: String, +session: String, +attempt: String, +harness: String, +account: AccountRecord, helper: Maybe<String>, +admission: CreditAdmission) -> IO(Maybe<List<String>>):
-  do IO<Maybe<List<String>>>:
-    recorded : Unit <- credit_record_reservation(db,session,attempt,account,admission)
-    IO.pure(Maybe<List<String>>,Bool.pick(Maybe<List<String>>,credit_admission_admitted(admission),credit_admitted_binding(attempt,account_secret_ref(account),helper),None{}))
-
-def credit_launch_binding_routed(+db: String, +session: String, +attempt: String, +harness: String, +account: AccountRecord, helper: Maybe<String>, +profile_store: String, route: Bool) -> IO(Maybe<List<String>>):
-  match route:
-    case False{}: IO.pure(Maybe<List<String>>,account_binding(harness,Some{account},helper,profile_store))
-    case True{}: do IO<Maybe<List<String>>>:
-      admission : CreditAdmission <- credit_decision_for(db,account)
-      credit_launch_binding_decided(db,session,attempt,harness,account,helper,admission)
 def credit_launch_binding_account(+db: String, +session: String, +attempt: String, +harness: String, +account: AccountRecord, helper: Maybe<String>, +profile_store: String) -> IO(Maybe<List<String>>):
-  credit_launch_binding_routed(db,session,attempt,harness,account,helper,profile_store,Bool.and(String.eq(account_provider(account),"anthropic"),Bool.and(String.eq(account_harness(account),"claude-code"),String.eq(account_funding(account),"api_key"))))
-
+  Bool.pick(IO(Maybe<List<String>>),Bool.and(String.eq(account_provider(account),"anthropic"),Bool.and(String.eq(account_harness(account),"claude-code"),String.eq(account_funding(account),"api_key"))),IO.pure(Maybe<List<String>>,None{}),IO.pure(Maybe<List<String>>,account_binding(harness,Some{account},helper,profile_store)))
 
 def credit_launch_binding(+db: String, +session: String, +attempt: String, +harness: String, chosen: Maybe<&2,AccountRecord>, helper: Maybe<String>, +profile_store: String) -> IO(Maybe<List<String>>):
   match chosen:
