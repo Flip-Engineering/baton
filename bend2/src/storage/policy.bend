@@ -5,9 +5,10 @@
 # preservation reason, and renders the preview and receipt data the product
 # surface exposes. Timestamps are absent from every input.
 #
-# Preservation order is fixed so a receipt reason is reproducible:
-# owner, lease, process, runtime input, dirty worktree, unpublished commits,
-# live ref, pending attempt, class. The first present or unknown fact wins.
+# Preservation order is fixed so a receipt reason is reproducible: database
+# path, owner, lease, process, runtime input, dirty worktree, unpublished
+# commits, live ref, pending attempt, class. The first present or unknown fact
+# wins.
 
 import Base
 import ./types.bend as T
@@ -69,8 +70,9 @@ def class_reason(+c: T.StorageClass) -> String:
 
 def preserve_reason(+cls: T.StorageClass, +owner: String, +facts: T.Facts) -> String:
   match facts:
-    case T.Facts{o, lease, process, dirty, unpublished, runtime_input, ref, pending_attempt}:
+    case T.Facts{o, database, lease, process, dirty, unpublished, runtime_input, ref, pending_attempt}:
       first_reason([
+        presence_reason(database, "database-path", "database-path-unknown"),
         owner_reason(owner, o),
         presence_reason(lease, "lease-live", "lease-unknown"),
         presence_reason(process, "process-live", "process-unknown"),

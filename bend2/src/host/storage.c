@@ -10,8 +10,12 @@
  * and never followed. A replaced path answers "changed" instead of removing
  * something the preview did not observe.
  *
- * process_refs and runtime_refs compare /proc cwd and descriptor targets by
- * device and inode. /proc is Linux-only; other hosts answer an empty list.
+ * process_refs and runtime_refs compare cwd, executable, descriptor and
+ * mapped-file targets for every process of the current user by device and
+ * inode. A descriptor whose directory entry is unlinked still matches its
+ * recorded path after the " (deleted)" suffix is removed. /proc is
+ * Linux-only; other hosts answer an unknown result so cleanup preserves the
+ * candidate.
  */
 
 #include <dirent.h>
@@ -611,25 +615,6 @@ static int baton_storage_pid_push(BatonStoragePids *pids, pid_t pid) {
   return 0;
 }
 
-static pid_t baton_storage_ppid(pid_t pid) {
-  char path[64], line[512];
-  snprintf(path, sizeof(path), "/proc/%ld/stat", (long)pid);
-  FILE *file = fopen(path, "r");
-  if (!file) return -1;
-  if (!fgets(line, sizeof(line), file)) { fclose(file); return -1; }
-  fclose(file);
-  char *close = strrchr(line, ')');
-  if (!close) return -1;
-  int ppid = -1;
-  if (sscanf(close + 2, "%*c %d", &ppid) != 1) return -1;
-  return (pid_t)ppid;
-}
-
-static int baton_storage_in_tree(pid_t pid) {
-  pid_t self = getpid();
-  if (pid == self) return 1;
-  return baton_storage_ppid(pid) == self;
-}
 
 static int baton_storage_numeric(const char *text) {
   if (!*text) return 0;
@@ -807,7 +792,6 @@ static void baton_storage_refs_call(IoWork *w) {
     struct stat process_info;
     if (stat(process_path, &process_info)) continue;
     if (process_info.st_uid != geteuid()) continue;
-    if (!baton_storage_in_tree(pid)) continue;
     if (baton_storage_pid_hit(pid, device, inode, root, is_dir, &unknown, &truncated)) {
       if (baton_storage_pid_push(&pids, pid)) { call->error = ENOMEM; break; }
       if (pids.count >= BATON_STORAGE_REF_LIMIT) { truncated = 1; break; }

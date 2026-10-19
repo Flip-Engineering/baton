@@ -27,7 +27,7 @@ type PendingRow is Data:
   PendingRow{session: String, count: U32}
 
 type State is Data:
-  State{sessions: List<&2,SessionRow>, executions: List<&2,ExecutionRow>, logs: List<&2,LogRow>, pending: List<&2,PendingRow>, valid: Bool}
+  State{sessions: List<&2,SessionRow>, executions: List<&2,ExecutionRow>, logs: List<&2,LogRow>, pending: List<&2,PendingRow>, databases: List<&2,String>, valid: Bool}
 
 type OwnerChoice is Data:
   OwnerChoice{owner: String, fact: T.Owner}
@@ -100,6 +100,33 @@ def pending_walk(rows: List<String>, acc: List<&2,PendingRow>) -> List<&2,Pendin
     case Nil{}: List.reverse(&2, PendingRow, acc)
     case Con{head, tail}: pending_walk(tail, Con{pending_row(head), acc})
 
+# Session endpoints record the coordinator argv as a JSON array. Element two
+# is the database path the session was launched with. An empty endpoint is a
+# session with no recorded launch; a non-empty endpoint that is not an array
+# with a text second element makes the database evidence incomplete.
+def database_value(+text: String) -> String:
+  match text:
+    case "~invalid": "~invalid"
+    case "~missing": "~missing"
+    case other: decode_field(other)
+
+def database_lines_walk(rows: List<String>, acc: List<&2,String>, invalid: Bool) -> List<&2,String> & Bool:
+  match rows:
+    case Nil{}: (List.reverse(&2, String, acc), invalid)
+    case Con{head, tail}:
+      match String.is_empty(head):
+        case True{}: database_lines_walk(tail, acc, invalid)
+        case False{}:
+          +value = database_value(head)
+          match Bool.or(String.eq(value, "~invalid"), String.eq(value, "~missing")):
+            case True{}: database_lines_walk(tail, acc, True{})
+            case False{}: database_lines_walk(tail, Con{value, acc}, invalid)
+
+def database_entries(+db: String, +text: String) -> List<&2,String> & Bool:
+  +pair = database_lines_walk(Tx.split_lines(text), Nil{}, False{})
+  (rows, invalid) = pair
+  Bool.pick(List<&2,String> & Bool, String.is_empty(db), (rows, invalid), (Con{db, rows}, invalid))
+
 def sessions_ok(rows: List<&2,SessionRow>) -> Bool:
   match rows:
     case Nil{}: True{}
@@ -130,7 +157,7 @@ def pending_ok(rows: List<&2,PendingRow>) -> Bool:
 
 def valid_of(state: State) -> Bool:
   match state:
-    case State{sessions, executions, logs, pending, valid}: valid
+    case State{sessions, executions, logs, pending, databases, valid}: valid
 
 def load(+db: String) -> IO(State):
   do IO<State>:
@@ -142,8 +169,11 @@ def load(+db: String) -> IO(State):
     +executions : List<&2,ExecutionRow> = executions_walk(Tx.split_lines(executions_text), Nil{})
     +logs : List<&2,LogRow> = logs_walk(Tx.split_lines(logs_text), Nil{})
     +pending : List<&2,PendingRow> = pending_walk(Tx.split_lines(pending_text), Nil{})
-    valid : Bool = Bool.and(sessions_ok(sessions), Bool.and(executions_ok(executions), Bool.and(logs_ok(logs), pending_ok(pending))))
-    IO.pure(State, State{sessions, executions, logs, pending, valid})
+    database_text : String <- IO.try(String, DB.Sql.read(db, "SELECT CASE WHEN endpoint='' THEN '' WHEN json_valid(endpoint)=0 THEN '~invalid' ELSE CASE WHEN json_type(endpoint)!='array' THEN '~invalid' WHEN json_extract(endpoint,'$[1]') IS NULL OR json_type(endpoint,'$[1]')!='text' OR json_extract(endpoint,'$[1]')='' THEN '~missing' ELSE hex(json_extract(endpoint,'$[1]')) END END FROM sessions ORDER BY id;"))
+    +database_pair = database_entries(db, database_text)
+    (databases, database_invalid) = database_pair
+    valid : Bool = Bool.and(Bool.not(database_invalid), Bool.and(sessions_ok(sessions), Bool.and(executions_ok(executions), Bool.and(logs_ok(logs), pending_ok(pending)))))
+    IO.pure(State, State{sessions, executions, logs, pending, databases, valid})
 
 def path_under(+path: String, +parent: String) -> Bool:
   Bool.pick(Bool, String.is_empty(parent), False{},
@@ -198,7 +228,7 @@ def owner_choice_lists(owners: List<String>) -> OwnerChoice:
     case other: OwnerChoice{"", T.OwnerUnknown{}}
 def owner_choice(+state: State, +path: String) -> OwnerChoice:
   match state:
-    case State{sessions, executions, logs, pending, valid}:
+    case State{sessions, executions, logs, pending, databases, valid}:
       owner_choice_lists(execution_owners(executions, path, workspace_owners(sessions, path, log_owners(logs, path, Nil{}))))
 
 def active_execution(rows: List<&2,ExecutionRow>, +path: String) -> String:
@@ -213,7 +243,7 @@ def active_execution(rows: List<&2,ExecutionRow>, +path: String) -> String:
 
 def lease_fact(+state: State, +path: String) -> T.Presence:
   match state:
-    case State{sessions, executions, logs, pending, valid}:
+    case State{sessions, executions, logs, pending, databases, valid}:
       +active = active_execution(executions, path)
       Bool.pick(T.Presence, String.is_empty(active), T.Absent{}, T.Present{active})
 
@@ -226,9 +256,37 @@ def pending_count(rows: List<&2,PendingRow>, +owner: String) -> U32:
 
 def pending_fact(+state: State, +owner: String) -> T.Presence:
   match state:
-    case State{sessions, executions, logs, pending, valid}:
+    case State{sessions, executions, logs, pending, databases, valid}:
       +count = pending_count(pending, owner)
       Bool.pick(T.Presence, U32.is_eq(count, 0), T.Absent{}, T.Present{U32.show(count)})
+
+def database_path_hit(rows: List<&2,String>, +path: String) -> Bool:
+  match rows:
+    case Nil{}: False{}
+    case Con{head, tail}: Bool.or(path_under(head, path), database_path_hit(tail, path))
+
+# A candidate that is an active coordinator database path, or an ancestor of
+# one, is preserved. The comparison uses recorded path strings, so an owner
+# that holds a database descriptor after the directory entry is unlinked is
+# still protected. Invalid or incomplete endpoint evidence answers Unknown.
+def database_fact(+state: State, +path: String) -> T.Presence:
+  match state:
+    case State{sessions, executions, logs, pending, databases, valid}:
+      Bool.pick(T.Presence, valid,
+        Bool.pick(T.Presence, String.is_empty(path), T.Unknown{},
+          Bool.pick(T.Presence, database_path_hit(databases, path), T.Present{"database-path"}, T.Absent{})),
+        T.Unknown{})
+
+def session_match(rows: List<&2,SessionRow>, +session: String) -> Bool:
+  match rows:
+    case Nil{}: False{}
+    case Con{head, tail}:
+      match head:
+        case SessionRow{id, workspace, branch, base}: Bool.or(String.eq(id, session), session_match(tail, session))
+
+def session_known(+state: State, +session: String) -> Bool:
+  match state:
+    case State{sessions, executions, logs, pending, databases, valid}: session_match(sessions, session)
 
 def dirty_result(status: Result<&1, &1, G.GitFail, G.WtStatus>) -> T.Presence:
   match status:
@@ -282,7 +340,7 @@ def unpublished_fact(+cls: T.StorageClass, +path: String, +state: State, +owner:
   match cls:
     case T.Checkout{}:
       match state:
-        case State{sessions, executions, logs, pending, valid}:
+        case State{sessions, executions, logs, pending, databases, valid}:
           +base = session_base(sessions, owner)
           unpublished_command(base, path)
     case other:
@@ -369,12 +427,13 @@ def facts_choice(+cls: T.StorageClass, +source: String, +path: String, +state: S
         dirty : T.Presence <- dirty_fact(cls, path)
         unpublished : T.Presence <- unpublished_fact(cls, path, state, owner)
         ref : T.Presence <- ref_fact(cls, source, path)
+        +database : T.Presence = database_fact(state, path)
         lease : T.Presence = lease_fact(state, path)
         pending_input : T.Presence = pending_fact(state, owner)
-        IO.pure(T.Facts, T.Facts{fact, lease, process, dirty, unpublished, runtime, ref, pending_input})
+        IO.pure(T.Facts, T.Facts{fact, database, lease, process, dirty, unpublished, runtime, ref, pending_input})
 
 def invalid_facts() -> T.Facts:
-  T.Facts{T.OwnerUnknown{}, T.Unknown{}, T.Unknown{}, T.Unknown{}, T.Unknown{}, T.Unknown{}, T.Unknown{}, T.Unknown{}}
+  T.Facts{T.OwnerUnknown{}, T.Unknown{}, T.Unknown{}, T.Unknown{}, T.Unknown{}, T.Unknown{}, T.Unknown{}, T.Unknown{}, T.Unknown{}}
 
 def facts_valid(valid: Bool, +cls: T.StorageClass, +source: String, +path: String, +state: State) -> IO(T.Facts):
   match valid:
@@ -383,5 +442,5 @@ def facts_valid(valid: Bool, +cls: T.StorageClass, +source: String, +path: Strin
 
 def facts_for(+cls: T.StorageClass, +source: String, +path: String, +state: State) -> IO(T.Facts):
   match state:
-    case State{sessions, executions, logs, pending, valid}:
+    case State{sessions, executions, logs, pending, databases, valid}:
       facts_valid(valid, cls, source, path, state)

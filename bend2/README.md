@@ -471,9 +471,11 @@ provider resends while a message or a tool call is running, and holds the newest
 `message_end` arrives. The coordinator appends complete retained frames to a
 per-turn log and writes native stderr to a separate per-run file. `logs` reads
 and sets the concise level, `logs-storage` reports registered files, and
-`logs-clean` removes eligible completed attempt artifacts. `storage-policy preview`
-and `storage-policy apply` classify configured storage roots and produce cleanup
-previews and receipts. `BATON_STORAGE_ROOTS` names each root and class.
+`logs-clean` removes eligible completed attempt artifacts. `storage-policy`
+reports the configured root classes, `storage-preview SESSION` names one
+session's cleanup candidates, and `storage-apply SESSION` runs the locked
+apply for that session. `BATON_STORAGE_ROOTS` names each root and class;
+`BATON_STORAGE_EXCLUSIVE_ROOTS` names the roots dedicated to cleanup.
 [The log policy](../docs/bend2/logging.md) describes the levels and file ownership,
 and [the storage policy](../docs/bend2/storage-policy-core.md) describes the
 classes, preservation evidence and approved-root contract.
