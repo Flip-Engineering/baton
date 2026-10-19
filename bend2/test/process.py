@@ -7,6 +7,11 @@ import tempfile
 import unittest
 import os
 import signal
+import array
+import fcntl
+import socket
+import struct
+import threading
 import shutil
 import stat
 import time
@@ -270,6 +275,403 @@ class Process(unittest.TestCase):
                 observer.stdout.close()
             if observer.stderr:
                 observer.stderr.close()
+
+    def test_legacy_unknown_observer_transfer_reopens_spool_without_ack(self):
+        (self.runtime / 'baton2').mkdir(parents=True, mode=0o700)
+        database = self.cwd / 'state.db'
+        database.touch()
+        attempt = self.cwd / 'legacy-attempt'
+        attempt.mkdir(mode=0o700)
+        (attempt / 'stdout').write_bytes(b'legacy-output\n')
+        control_dir = pathlib.Path(tempfile.mkdtemp(prefix='br-legacy-'))
+        control = control_dir / 'keeper.sock'
+        guard_path = attempt / 'guard'
+        guard_fd = os.open(guard_path, os.O_CREAT | os.O_RDWR, 0o600)
+        fcntl.flock(guard_fd, fcntl.LOCK_EX)
+        observer = None
+        observer_image = self.cwd / 'legacy-observer-bin'
+        shutil.copy2(EXE, observer_image)
+        observer_image.chmod(0o700)
+        native = subprocess.Popen([sys.executable, '-c', 'pass'],
+                                  stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                  stderr=subprocess.DEVNULL, env=self.environment)
+        proc_stat = pathlib.Path('/proc', str(native.pid), 'stat').read_text()
+        ticks = int(proc_stat.rsplit(')', 1)[1].split()[19])
+        boot = next(int(line.split()[1]) for line in pathlib.Path('/proc/stat').read_text().splitlines()
+                    if line.startswith('btime '))
+        native.wait(timeout=10)
+        (attempt / 'native.pid').write_text(f'{native.pid}\n')
+        (attempt / 'native.birth').write_bytes(
+            struct.pack('=i4xQQ', native.pid, ticks, boot))
+
+        fields = [
+            b'/bin/true\0',
+            os.fsencode(self.cwd),
+            os.fsencode(attempt / 'native.stderr'),
+            b'',
+            os.fsencode(observer_image) + b'\0',
+            os.fsencode(control),
+        ]
+        header = struct.pack('=8s6Q2I', b'BATONRP1',
+                             *(len(value) for value in fields), 0, 0)
+        manifest_bytes = header + b''.join(fields)
+        (attempt / 'manifest').write_bytes(manifest_bytes)
+        canonical = os.fsencode(attempt.resolve())
+        info = attempt.stat()
+        db_info = database.stat()
+        prefix = struct.pack('=8sII7Q', b'BATONAD1', 1, 0,
+                             db_info.st_dev, db_info.st_ino, 0, 0,
+                             info.st_dev, info.st_ino, len(canonical))
+        digest = 0xcbf29ce484222325
+        for byte in prefix + canonical:
+            digest = ((digest ^ byte) * 0x100000001b3) & 0xffffffffffffffff
+        (attempt / 'admission').write_bytes(prefix + struct.pack('=Q', digest) + canonical)
+
+        frame = struct.Struct('=IiQQq')
+        server_errors = []
+        server_events = []
+        initial_ready = threading.Event()
+        native_exited = True
+        listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        listener.bind(str(control))
+        listener.listen(2)
+        listener.settimeout(8)
+
+        def exact(connection, count):
+            parts = []
+            remaining = count
+            while remaining:
+                part = connection.recv(remaining)
+                if not part:
+                    raise EOFError('legacy recovery socket closed early')
+                parts.append(part)
+                remaining -= len(part)
+            return b''.join(parts)
+
+        def serve_legacy_keeper():
+            old_connection = None
+            try:
+                old_connection, _ = listener.accept()
+                first = exact(old_connection, frame.size)
+                op, error, serial, length, value = frame.unpack(first)
+                payload = exact(old_connection, length)
+                peer_pid = struct.unpack('3i', old_connection.getsockopt(
+                    socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize('3i')))[0]
+                assert (op, error, serial, value) == (11, 0, 0, 0)
+                assert payload == os.fsencode(attempt.resolve()) + b'\0'
+                server_events.append(('initial-peer', peer_pid))
+                state = struct.pack('=5i', native.pid, int(native_exited), 0, 0,
+                                    int(native_exited))
+                hello = frame.pack(1, 0, 0, len(state), 2)
+                old_connection.sendmsg([hello], [
+                    (socket.SOL_SOCKET, socket.SCM_RIGHTS, array.array('i', [guard_fd]))])
+                old_connection.sendall(state)
+                ready = frame.unpack(exact(old_connection, frame.size))
+                assert ready == (14, 0, 1, 0, 0), ready
+                old_connection.sendall(frame.pack(4, 0, 1, 0, 0))
+                initial_ready.set()
+
+                while True:
+                    replacement, _ = listener.accept()
+                    first = replacement.recv(1)
+                    if not first:
+                        replacement.close()  # recovery liveness probe
+                        continue
+                    break
+                with replacement:
+                    op, error, serial, length, value = frame.unpack(
+                        first + exact(replacement, frame.size - 1))
+                    payload = exact(replacement, length)
+                    assert (op, error, serial, value) == (11, 0, 0, peer_pid)
+                    assert payload == os.fsencode(attempt.resolve()) + b'\0'
+                    state = struct.pack('=5i', native.pid, int(native_exited), 0, 0,
+                                        int(native_exited))
+                    hello = frame.pack(1, 0, 0, len(state), 2)
+                    replacement.sendmsg([hello], [
+                        (socket.SOL_SOCKET, socket.SCM_RIGHTS, array.array('i', [guard_fd]))])
+                    replacement.sendall(state)
+                    if not native_exited:
+                        try:
+                            exact(replacement, frame.size)
+                        except EOFError:
+                            server_events.append('refused-before-ready')
+                            old_connection.settimeout(10)
+                            try:
+                                while old_connection.recv(64):
+                                    pass
+                            except ConnectionResetError:
+                                pass
+                            return
+                        raise AssertionError('recovery accepted a keeper reporting a live native')
+                    old_connection.close()
+                    old_connection = None
+                    ready = frame.unpack(exact(replacement, frame.size))
+                    assert ready == (14, 0, 0, 0, 0), ready
+                    server_events.append('legacy-transfer-ready')
+                    replacement.sendall(frame.pack(2, 0, 0, 0, 0))
+                    replacement.settimeout(5)
+                    try:
+                        while replacement.recv(64):
+                            pass
+                    except ConnectionResetError:
+                        pass
+            except BaseException as error:
+                server_errors.append(error)
+            finally:
+                if old_connection is not None:
+                    old_connection.close()
+                listener.close()
+
+        server = threading.Thread(target=serve_legacy_keeper, daemon=True)
+        server.start()
+        observer = subprocess.Popen([str(observer_image), 'observer-hold', str(attempt)],
+                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE, env=self.environment)
+        try:
+            if not initial_ready.wait(timeout=5):
+                if observer.poll() is not None:
+                    observer_out, observer_err = observer.communicate(timeout=2)
+                else:
+                    observer_out, observer_err = '<still-running>', '<no stderr>'
+                server.join(timeout=1)
+                self.fail(f'legacy observer did not attach: rc={observer.returncode}; '
+                          f'out={observer_out!r}; err={observer_err!r}; '
+                          f'server={server_errors!r}')
+            wrong_fields = fields.copy()
+            wrong_fields[4] = b'/bin/true' + bytes((0,))
+            (attempt / 'manifest').write_bytes(
+                struct.pack('=8s6Q2I', b'BATONRP1',
+                            *(len(value) for value in wrong_fields), 0, 0) +
+                b''.join(wrong_fields))
+            mismatch = subprocess.run(
+                [str(EXE), 'recover-probe', str(database), str(attempt), str(observer.pid)],
+                text=True, capture_output=True, env=self.environment, timeout=20)
+            self.assertNotEqual(mismatch.returncode, 0, mismatch.stdout)
+            self.assertIn('116:', mismatch.stderr)
+            self.assertIsNone(observer.poll(), 'wrong executable binding retired the observer')
+            self.assertEqual(server_events, [('initial-peer', observer.pid)])
+            (attempt / 'manifest').write_bytes(manifest_bytes)
+            recovery = subprocess.run(
+                [str(EXE), 'recover-probe', str(database), str(attempt), str(observer.pid)],
+                text=True, capture_output=True, env=self.environment, timeout=20)
+            self.assertEqual(recovery.returncode, 0, recovery.stderr)
+            self.assertIn('probe:legacy-output', recovery.stdout)
+            self.assertIn('probe-custody-open', recovery.stdout)
+            self.assertEqual(observer.wait(timeout=10), -signal.SIGTERM)
+            server.join(timeout=6)
+            self.assertFalse(server.is_alive(), 'legacy keeper fixture did not close')
+            self.assertEqual(server_errors, [])
+            self.assertEqual(server_events, [('initial-peer', observer.pid), 'legacy-transfer-ready'])
+            self.assertTrue((attempt / 'custody').is_file())
+            self.assertFalse((attempt / 'status').exists())
+            self.assertFalse((attempt / 'released').exists())
+            self.assertFalse((attempt / 'acknowledged').exists())
+        finally:
+            if observer.poll() is None:
+                observer.terminate()
+                observer.wait(timeout=10)
+            if observer.stdin:
+                observer.stdin.close()
+            if observer.stdout:
+                observer.stdout.close()
+            if observer.stderr:
+                observer.stderr.close()
+            os.close(guard_fd)
+            shutil.rmtree(control_dir, ignore_errors=True)
+
+    def test_legacy_unknown_observer_refuses_live_native_without_retiring_observer(self):
+        (self.runtime / 'baton2').mkdir(parents=True, mode=0o700)
+        database = self.cwd / 'state.db'
+        database.touch()
+        attempt = self.cwd / 'legacy-attempt'
+        attempt.mkdir(mode=0o700)
+        (attempt / 'stdout').write_bytes(b'legacy-output\n')
+        control_dir = pathlib.Path(tempfile.mkdtemp(prefix='br-legacy-'))
+        control = control_dir / 'keeper.sock'
+        guard_path = attempt / 'guard'
+        guard_fd = os.open(guard_path, os.O_CREAT | os.O_RDWR, 0o600)
+        fcntl.flock(guard_fd, fcntl.LOCK_EX)
+        observer = None
+        observer_image = self.cwd / 'legacy-observer-bin'
+        shutil.copy2(EXE, observer_image)
+        observer_image.chmod(0o700)
+        native = subprocess.Popen(['/bin/sleep', '30'], stdin=subprocess.DEVNULL,
+                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                  env=self.environment)
+        proc_stat = pathlib.Path('/proc', str(native.pid), 'stat').read_text()
+        ticks = int(proc_stat.rsplit(')', 1)[1].split()[19])
+        boot = next(int(line.split()[1]) for line in pathlib.Path('/proc/stat').read_text().splitlines()
+                    if line.startswith('btime '))
+        (attempt / 'native.pid').write_text(f'{native.pid}\n')
+        (attempt / 'native.birth').write_bytes(
+            struct.pack('=i4xQQ', native.pid, ticks, boot))
+
+        fields = [
+            b'/bin/true\0',
+            os.fsencode(self.cwd),
+            os.fsencode(attempt / 'native.stderr'),
+            b'',
+            os.fsencode(observer_image) + b'\0',
+            os.fsencode(control),
+        ]
+        header = struct.pack('=8s6Q2I', b'BATONRP1',
+                             *(len(value) for value in fields), 0, 0)
+        manifest_bytes = header + b''.join(fields)
+        (attempt / 'manifest').write_bytes(manifest_bytes)
+        canonical = os.fsencode(attempt.resolve())
+        info = attempt.stat()
+        db_info = database.stat()
+        prefix = struct.pack('=8sII7Q', b'BATONAD1', 1, 0,
+                             db_info.st_dev, db_info.st_ino, 0, 0,
+                             info.st_dev, info.st_ino, len(canonical))
+        digest = 0xcbf29ce484222325
+        for byte in prefix + canonical:
+            digest = ((digest ^ byte) * 0x100000001b3) & 0xffffffffffffffff
+        (attempt / 'admission').write_bytes(prefix + struct.pack('=Q', digest) + canonical)
+
+        frame = struct.Struct('=IiQQq')
+        server_errors = []
+        server_events = []
+        initial_ready = threading.Event()
+        native_exited = False
+        server_events = []
+        listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        listener.bind(str(control))
+        listener.listen(2)
+        listener.settimeout(8)
+
+        def exact(connection, count):
+            parts = []
+            remaining = count
+            while remaining:
+                part = connection.recv(remaining)
+                if not part:
+                    raise EOFError('legacy recovery socket closed early')
+                parts.append(part)
+                remaining -= len(part)
+            return b''.join(parts)
+
+        def serve_legacy_keeper():
+            old_connection = None
+            try:
+                old_connection, _ = listener.accept()
+                first = exact(old_connection, frame.size)
+                op, error, serial, length, value = frame.unpack(first)
+                payload = exact(old_connection, length)
+                peer_pid = struct.unpack('3i', old_connection.getsockopt(
+                    socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize('3i')))[0]
+                assert (op, error, serial, value) == (11, 0, 0, 0)
+                assert payload == os.fsencode(attempt.resolve()) + b'\0'
+                server_events.append(('initial-peer', peer_pid))
+                state = struct.pack('=5i', native.pid, int(native_exited), 0, 0,
+                                    int(native_exited))
+                hello = frame.pack(1, 0, 0, len(state), 2)
+                old_connection.sendmsg([hello], [
+                    (socket.SOL_SOCKET, socket.SCM_RIGHTS, array.array('i', [guard_fd]))])
+                old_connection.sendall(state)
+                ready = frame.unpack(exact(old_connection, frame.size))
+                assert ready == (14, 0, 1, 0, 0), ready
+                old_connection.sendall(frame.pack(4, 0, 1, 0, 0))
+                initial_ready.set()
+
+                while True:
+                    replacement, _ = listener.accept()
+                    first = replacement.recv(1)
+                    if not first:
+                        replacement.close()  # recovery liveness probe
+                        continue
+                    break
+                with replacement:
+                    op, error, serial, length, value = frame.unpack(
+                        first + exact(replacement, frame.size - 1))
+                    payload = exact(replacement, length)
+                    assert (op, error, serial, value) == (11, 0, 0, peer_pid)
+                    assert payload == os.fsencode(attempt.resolve()) + b'\0'
+                    state = struct.pack('=5i', native.pid, int(native_exited), 0, 0,
+                                        int(native_exited))
+                    hello = frame.pack(1, 0, 0, len(state), 2)
+                    replacement.sendmsg([hello], [
+                        (socket.SOL_SOCKET, socket.SCM_RIGHTS, array.array('i', [guard_fd]))])
+                    replacement.sendall(state)
+                    if not native_exited:
+                        try:
+                            exact(replacement, frame.size)
+                        except EOFError:
+                            server_events.append('refused-before-ready')
+                            old_connection.settimeout(10)
+                            try:
+                                while old_connection.recv(64):
+                                    pass
+                            except ConnectionResetError:
+                                pass
+                            return
+                        raise AssertionError('recovery accepted a keeper reporting a live native')
+                    old_connection.close()
+                    old_connection = None
+                    ready = frame.unpack(exact(replacement, frame.size))
+                    assert ready == (14, 0, 0, 0, 0), ready
+                    server_events.append('legacy-transfer-ready')
+                    replacement.sendall(frame.pack(2, 0, 0, 0, 0))
+                    replacement.settimeout(5)
+                    try:
+                        while replacement.recv(64):
+                            pass
+                    except ConnectionResetError:
+                        pass
+            except BaseException as error:
+                server_errors.append(error)
+            finally:
+                if old_connection is not None:
+                    old_connection.close()
+                listener.close()
+
+        server = threading.Thread(target=serve_legacy_keeper, daemon=True)
+        server.start()
+        observer = subprocess.Popen([str(observer_image), 'observer-hold', str(attempt)],
+                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE, env=self.environment)
+        try:
+            if not initial_ready.wait(timeout=5):
+                if observer.poll() is not None:
+                    observer_out, observer_err = observer.communicate(timeout=2)
+                else:
+                    observer_out, observer_err = '<still-running>', '<no stderr>'
+                server.join(timeout=1)
+                self.fail(f'legacy observer did not attach: rc={observer.returncode}; '
+                          f'out={observer_out!r}; err={observer_err!r}; '
+                          f'server={server_errors!r}')
+            recovery = subprocess.run(
+                [str(EXE), 'recover-probe', str(database), str(attempt), str(observer.pid)],
+                text=True, capture_output=True, env=self.environment, timeout=20)
+            self.assertNotEqual(recovery.returncode, 0, recovery.stdout)
+            self.assertIn('16:', recovery.stderr)
+            self.assertIsNone(observer.poll(), 'live-native refusal retired the old observer')
+            self.assertIsNone(native.poll(), 'live-native refusal changed native process state')
+            observer.terminate()
+            self.assertEqual(observer.wait(timeout=10), -signal.SIGTERM)
+            server.join(timeout=6)
+            self.assertFalse(server.is_alive(), 'legacy keeper fixture did not close')
+            self.assertEqual(server_errors, [])
+            self.assertEqual(server_events, [('initial-peer', observer.pid), 'refused-before-ready'])
+            self.assertFalse((attempt / 'custody').exists())
+            self.assertFalse((attempt / 'status').exists())
+            self.assertFalse((attempt / 'released').exists())
+            self.assertFalse((attempt / 'acknowledged').exists())
+        finally:
+            if observer.poll() is None:
+                observer.terminate()
+                observer.wait(timeout=10)
+            if observer.stdin:
+                observer.stdin.close()
+            if observer.stdout:
+                observer.stdout.close()
+            if observer.stderr:
+                observer.stderr.close()
+            if native.poll() is None:
+                native.terminate()
+                native.wait(timeout=10)
+            os.close(guard_fd)
+            shutil.rmtree(control_dir, ignore_errors=True)
 
     def test_observer_recovery_rejects_reused_pid_start_identity(self):
         runtime = self.runtime
