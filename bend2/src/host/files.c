@@ -330,11 +330,11 @@ static Term baton_attempt_file_run(Env e,Term *f,IoWork *w) {
 static void __attribute__((constructor)) baton_attempt_file_use(void) {io_eff(CID_FILES_REMOVE_ATTEMPT_FILE,baton_attempt_file_run,0);}
 #endif
 
-typedef struct { char *path; char answer[2]; int error,exists; } BatonRegularFile;
+typedef struct { char *path; char answer[2]; int error; } BatonRegularFile;
 static void baton_regular_file_call(IoWork *w) {
   BatonRegularFile *call=(BatonRegularFile *)w->data;
   struct stat info;
-  if(!lstat(call->path,&info))call->answer[0]=call->exists||S_ISREG(info.st_mode)?'1':'0';
+  if(!lstat(call->path,&info))call->answer[0]=S_ISREG(info.st_mode)?'1':'0';
   else if(errno==ENOENT)call->answer[0]='0';
   else call->error=errno;
   call->answer[1]=0;
@@ -344,21 +344,15 @@ static Term baton_regular_file_pack(Env e,IoWork *w) {
   Term result=call->error?io_fail(e,call->error,NULL):io_done(e,io_str(e,call->answer,1));
   free(call->path);free(call);w->data=NULL;return result;
 }
-static Term baton_path_stat_run(Env e,Term *f,IoWork *w,int exists) {
+#ifdef CID_FILES_REGULAR
+static Term baton_regular_file_run(Env e,Term *f,IoWork *w) {
   BatonRegularFile *call=calloc(1,sizeof(*call));
   if(!call)return io_fail(e,ENOMEM,NULL);
-  call->exists=exists;
   u64 length=0;call->path=io_cstr(e,f[0],&length);
   if(!call->path || strlen(call->path)!=length) {free(call->path);free(call);return io_fail(e,EINVAL,"path contains NUL");}
   w->data=(char *)call;return io_work(w,baton_regular_file_call,baton_regular_file_pack);
 }
-#ifdef CID_FILES_REGULAR
-static Term baton_regular_file_run(Env e,Term *f,IoWork *w) {return baton_path_stat_run(e,f,w,0);}
 static void __attribute__((constructor)) baton_regular_file_use(void) {io_eff(CID_FILES_REGULAR,baton_regular_file_run,0);}
-#endif
-#ifdef CID_FILES_EXISTS
-static Term baton_path_exists_run(Env e,Term *f,IoWork *w) {return baton_path_stat_run(e,f,w,1);}
-static void __attribute__((constructor)) baton_path_exists_use(void) {io_eff(CID_FILES_EXISTS,baton_path_exists_run,0);}
 #endif
 
 /* The numbered segments beside one log: directory entries whose name is the
