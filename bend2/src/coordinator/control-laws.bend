@@ -132,8 +132,9 @@ law detached_turn_uses_the_recorded_assignment_and_native_identity:
   cwd : String <- Control.recorded_field(db,player,"workspace")
   native : String <- Control.recorded_field(db,player,"native")
   identity : String & String <- IO.try(String & String,Host.Control.identity(executable))
-  checked : String & String <- Control.identity_checked(identity,model)
-  IO.try(String,Host.Control.launch(Tx.enc_argv(Control.identity_args([executable,database,"turn",player,id,harness_cmd,model,effort,cwd,path,output,native],model,checked)),database,id))) : IO(String)}
+  runtime : String <- Control.identity_runtime(executable,identity)
+  checked : String & String <- Control.identity_checked(runtime,identity,model)
+  IO.try(String,Host.Control.launch(Tx.enc_argv(Control.identity_args(runtime,[executable,database,"turn",player,id,harness_cmd,model,effort,cwd,path,output,native],model,checked)),database,id))) : IO(String)}
 
 def detached_turn_uses_the_recorded_assignment_and_native_identity(db,player,id,cmd,log,task):
   {==}
@@ -253,6 +254,7 @@ def receiver_update_enforces_actual_receiver_admission(session,endpoint,cwd):
   {==}
 
 law configured_identity_wraps_the_actual_receiver_arguments:
+  for runtime: String
   for executable: String
   for db: String
   for session: String
@@ -260,28 +262,30 @@ law configured_identity_wraps_the_actual_receiver_arguments:
   for log: String
   for model: String
   for identity: String & String
-  {Control.identity_endpoint(executable,db,session,cmd,log,model,identity) == "[" ++ Control.strings(Control.identity_args(Control.receiver_args(executable,db,session,cmd,log),model,identity)) ++ "]" : String}
+  {Control.identity_endpoint(runtime,executable,db,session,cmd,log,model,identity) == "[" ++ Control.strings(Control.identity_args(runtime,Control.receiver_args(executable,db,session,cmd,log),model,identity)) ++ "]" : String}
 
-def configured_identity_wraps_the_actual_receiver_arguments(executable,db,session,cmd,log,model,identity):
+def configured_identity_wraps_the_actual_receiver_arguments(runtime,executable,db,session,cmd,log,model,identity):
   {==}
 
 law absent_identity_registry_preserves_the_native_argv:
+  for runtime: String
   for args: List<String>
   for model: String
   for helper: String
-  {Control.identity_args(args,model,("",helper)) == args : List<String>}
+  {Control.identity_args(runtime,args,model,("",helper)) == args : List<String>}
 
-def absent_identity_registry_preserves_the_native_argv(args,model,helper):
+def absent_identity_registry_preserves_the_native_argv(runtime,args,model,helper):
   {==}
 
 law configured_model_identity_precedes_the_native_command:
+  for +runtime: String
   for args: List<String>
   for +model: String
   for +registry: String
   for +helper: String
-  {Control.identity_args(args,model,(registry,helper)) == List.append(&1,String,Bool.pick(List<String>,String.is_empty(registry),Nil{},["node",helper,"launch","--registry",registry,"--model-key",model,"--"]),args) : List<String>}
+  {Control.identity_args(runtime,args,model,(registry,helper)) == List.append(&1,String,Bool.pick(List<String>,String.is_empty(registry),Nil{},[runtime,helper,"launch","--registry",registry,"--model-key",model,"--"]),args) : List<String>}
 
-def configured_model_identity_precedes_the_native_command(args,model,registry,helper):
+def configured_model_identity_precedes_the_native_command(runtime,args,model,registry,helper):
   {==}
 
 law readable_snapshot_formats_all_stored_fields:
@@ -368,8 +372,9 @@ law receiver_setup_resolves_native_paths_and_model_identity:
   database : String <- IO.try(String,Lock.SessionLock.canonical(db))
   output : String <- IO.try(String,Host.Control.output(log))
   identity : String & String <- IO.try(String & String,Host.Control.identity(executable))
-  checked : String & String <- Control.identity_checked(identity,model)
-  IO.pure(String,Control.identity_endpoint(executable,database,session,native,output,model,checked))) : IO(String)}
+  runtime : String <- Control.identity_runtime(executable,identity)
+  checked : String & String <- Control.identity_checked(runtime,identity,model)
+  IO.pure(String,Control.identity_endpoint(runtime,executable,database,session,native,output,model,checked))) : IO(String)}
 
 def receiver_setup_resolves_native_paths_and_model_identity(db,session,cmd,log,model):
   {==}
@@ -516,43 +521,47 @@ def ordinary_worktree_output_prints_the_same_inspection_result(db,id):
   {==}
 
 law configured_identity_check_runs_the_installed_helper:
+  for +runtime: String
   for +registry: String
   for +helper: String
   for +model: String
-  {Control.identity_check_args(registry,helper,model) == ["node",helper,"check","--registry",registry,"--model-key",model] : List<String>}
+  {Control.identity_check_args(runtime,registry,helper,model) == [runtime,helper,"check","--registry",registry,"--model-key",model] : List<String>}
 
-def configured_identity_check_runs_the_installed_helper(registry,helper,model):
+def configured_identity_check_runs_the_installed_helper(runtime,registry,helper,model):
   {==}
 
 law configured_model_identity_is_checked_before_the_endpoint_is_built:
+  for +runtime: String
   for +registry: String
   for +helper: String
   for +model: String
-  {Control.identity_checked((registry,helper),model) == (do IO<String & String>:
-    checked : Unit <- Control.identity_check_body(registry,helper,model,String.is_empty(registry))
+  {Control.identity_checked(runtime,(registry,helper),model) == (do IO<String & String>:
+    checked : Unit <- Control.identity_check_body(runtime,registry,helper,model,String.is_empty(registry))
     IO.pure(String & String,(registry,helper))) : IO(String & String)}
 
-def configured_model_identity_is_checked_before_the_endpoint_is_built(registry,helper,model):
+def configured_model_identity_is_checked_before_the_endpoint_is_built(runtime,registry,helper,model):
   {==}
 
 law an_absent_registry_leaves_the_identity_unchecked:
+  for +runtime: String
   for +registry: String
   for +helper: String
   for +model: String
-  {Control.identity_check_body(registry,helper,model,True{}) == IO.pure(Unit,Unit{}) : IO(Unit)}
+  {Control.identity_check_body(runtime,registry,helper,model,True{}) == IO.pure(Unit,Unit{}) : IO(Unit)}
 
-def an_absent_registry_leaves_the_identity_unchecked(registry,helper,model):
+def an_absent_registry_leaves_the_identity_unchecked(runtime,registry,helper,model):
   {==}
 
 law a_present_registry_resolves_the_recorded_model:
+  for +runtime: String
   for +registry: String
   for +helper: String
   for +model: String
-  {Control.identity_check_body(registry,helper,model,False{}) == (do IO<Unit>:
-  run : Result<&1,&1,U32 & String,String> <- Process.Process.run(Tx.enc_argv(Control.identity_check_args(registry,helper,model)),".")
+  {Control.identity_check_body(runtime,registry,helper,model,False{}) == (do IO<Unit>:
+  run : Result<&1,&1,U32 & String,String> <- Process.Process.run(Tx.enc_argv(Control.identity_check_args(runtime,registry,helper,model)),".")
   Control.identity_check_refusal(model,Tx.run_res(run))) : IO(Unit)}
 
-def a_present_registry_resolves_the_recorded_model(registry,helper,model):
+def a_present_registry_resolves_the_recorded_model(runtime,registry,helper,model):
   {==}
 
 law a_resolved_configured_identity_passes_the_configuration:

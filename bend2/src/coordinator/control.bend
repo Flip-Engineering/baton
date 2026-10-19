@@ -10,7 +10,7 @@ import ../host/session-lock.bend as Lock
 import ../host/control.bend as Host
 import ../json/canonical.bend as J
 import ../git/text.bend as Tx
-import ../git/process.bend as Process
+import ../host/node-runtime.bend as NodeRuntime
 import ../git/types.bend as T
 
 def string_tail(args: List<String>) -> String:
@@ -29,42 +29,55 @@ def receiver_args(executable: String, db: String, session: String, cmd: String, 
 def receiver_endpoint(executable: String, db: String, session: String, cmd: String, log: String) -> String:
   "[" ++ strings(receiver_args(executable,db,session,cmd,log)) ++ "]"
 
-def identity_args(args: List<String>, model: String, identity: String & String) -> List<String>:
+def identity_args(runtime: String, args: List<String>, model: String, identity: String & String) -> List<String>:
   (registry,helper)=identity
   +configured=registry
-  List.append(&1,String,Bool.pick(List<String>,String.is_empty(configured),Nil{},["node",helper,"launch","--registry",configured,"--model-key",model,"--"]),args)
+  List.append(&1,String,Bool.pick(List<String>,String.is_empty(configured),Nil{},[runtime,helper,"launch","--registry",configured,"--model-key",model,"--"]),args)
 
-def identity_endpoint(executable: String, db: String, session: String, cmd: String, log: String, model: String, identity: String & String) -> String:
-  "[" ++ strings(identity_args(receiver_args(executable,db,session,cmd,log),model,identity)) ++ "]"
+def identity_endpoint(runtime: String, executable: String, db: String, session: String, cmd: String, log: String, model: String, identity: String & String) -> String:
+  "[" ++ strings(identity_args(runtime,receiver_args(executable,db,session,cmd,log),model,identity)) ++ "]"
 
 # A configured registry maps the recipient's recorded model key to a series
 # identity. An endpoint and a native turn embed that key, and the helper refuses
 # an unmapped one at delivery, so resolve the key while the operator is present
 # and report its refusal at the configuration command.
-def identity_check_args(+registry: String, +helper: String, +model: String) -> List<String>:
-  ["node", helper, "check", "--registry", registry, "--model-key", model]
+def identity_check_args(runtime: String, +registry: String, +helper: String, +model: String) -> List<String>:
+  [runtime, helper, "check", "--registry", registry, "--model-key", model]
 
 def identity_check_refusal(+model: String, result: T.RunRes) -> IO(Unit):
   match result:
     case T.RRun{T.SExit{0}, out}: IO.pure(Unit,Unit{})
     case other: IO.die(Unit,2,"The configured series registry does not resolve the recorded model " ++ model ++ "; the endpoint would refuse at delivery. Correct the registry mapping or record a mapped model, then retry.")
 
-def identity_check_body(+registry: String, +helper: String, +model: String, absent: Bool) -> IO(Unit):
+def identity_check_body(runtime: String, +registry: String, +helper: String, +model: String, absent: Bool) -> IO(Unit):
   match absent:
     case True{}: IO.pure(Unit,Unit{})
     case False{}: do IO<Unit>:
-      run : Result<&1,&1,U32 & String,String> <- Process.Process.run(Tx.enc_argv(identity_check_args(registry,helper,model)),".")
+      run : Result<&1,&1,U32 & String,String> <- Process.Process.run(Tx.enc_argv(identity_check_args(runtime,registry,helper,model)),".")
       identity_check_refusal(model,Tx.run_res(run))
 
 # The helper is consulted only when the host resolved a registry for the
 # executable; an absent registry embeds no identity and needs no model mapping.
-def identity_checked(identity: String & String, model: String) -> IO(String & String):
+def identity_checked(runtime: String, identity: String & String, model: String) -> IO(String & String):
   (registry,helper)=identity
   +configured=registry
   +kept=helper
   do IO<String & String>:
-    checked : Unit <- identity_check_body(configured,kept,model,String.is_empty(configured))
+    checked : Unit <- identity_check_body(runtime,configured,kept,model,String.is_empty(configured))
     IO.pure(String & String,(configured,kept))
+
+# A configured identity embeds a Node helper in the endpoint, so resolve the
+# runtime only when the registry is present. An absent identity keeps the
+# native command exactly as recorded and needs no Node executable.
+def identity_runtime(executable: String, identity: String & String) -> IO(String):
+  (registry,helper)=identity
+  match String.is_empty(registry):
+    case True{}: IO.pure(String,"")
+    case False{}: do IO<String>:
+      resolved : Result<&1,&1,U32 & String,String> <- NodeRuntime.resolve(executable)
+      match resolved:
+        case Done{value}: IO.pure(String,value)
+        case Fail{(code,detail)}: IO.die(String,code,detail)
 
 law native_receiver_leaves_the_wake_argument_to_delivery:
   for executable: String
@@ -95,8 +108,9 @@ def configured_endpoint(+db: String, session: String, +cmd: String, log: String,
     database : String <- IO.try(String,Lock.SessionLock.canonical(db))
     output : String <- IO.try(String,Host.Control.output(log))
     identity : String & String <- IO.try(String & String,Host.Control.identity(executable))
-    checked : String & String <- identity_checked(identity,model)
-    IO.pure(String,identity_endpoint(executable,database,session,native,output,model,checked))
+    runtime : String <- identity_runtime(executable,identity)
+    checked : String & String <- identity_checked(runtime,identity,model)
+    IO.pure(String,identity_endpoint(runtime,executable,database,session,native,output,model,checked))
 
 # A receiver records the adapter argv and working directory for later delivery.
 # A supplied directory updates the assignment; an empty value keeps the recorded one.
@@ -291,7 +305,8 @@ def default_receiver_absent(+db: String, +player: String, cmd: String, +model: S
       database : String <- IO.try(String,Lock.SessionLock.canonical(db))
       output : String <- IO.try(String,Host.Control.output(log))
       identity : String & String <- IO.try(String & String,Host.Control.identity(executable))
-      endpoint : String <- IO.pure(String,"[" ++ strings(identity_args([executable,database,"receive",player,cmd,model,effort,cwd,output],model,identity)) ++ "]")
+      runtime : String <- identity_runtime(executable,identity)
+      endpoint : String <- IO.pure(String,"[" ++ strings(identity_args(runtime,[executable,database,"receive",player,cmd,model,effort,cwd,output],model,identity)) ++ "]")
       saved : String <- IO.try(String,DB.Sql.query(db,"UPDATE sessions SET endpoint=" ++ C.q(endpoint) ++ " WHERE id=" ++ C.q(player) ++ " AND coalesce(endpoint,'')='' AND NOT " ++ C.stopped_session_sql(C.q(player)) ++ ";"))
       IO.pure(Unit,Unit{})
 
@@ -318,8 +333,9 @@ def dispatch_turn(+db: String, +player: String, +id: String, +cmd: String, log: 
     cwd : String <- recorded_field(db,player,"workspace")
     native : String <- recorded_field(db,player,"native")
     identity : String & String <- IO.try(String & String,Host.Control.identity(executable))
-    checked : String & String <- identity_checked(identity,model)
-    IO.try(String,Host.Control.launch(Tx.enc_argv(identity_args([executable,database,"turn",player,id,harness_cmd,model,effort,cwd,path,output,native],model,checked)),database,id))
+    runtime : String <- identity_runtime(executable,identity)
+    checked : String & String <- identity_checked(runtime,identity,model)
+    IO.try(String,Host.Control.launch(Tx.enc_argv(identity_args(runtime,[executable,database,"turn",player,id,harness_cmd,model,effort,cwd,path,output,native],model,checked)),database,id))
 
 def status_pretty(+db: String) -> IO(String):
   do IO<String>:

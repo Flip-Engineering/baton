@@ -1,6 +1,6 @@
 import Base
 import ../host/process.bend as P
-import ../host/session-lock.bend as Lock
+import ../host/node-runtime.bend as NodeRuntime
 import ../json/canonical.bend as J
 import ../git/process.bend as Process
 import ../git/text.bend as Tx
@@ -51,29 +51,35 @@ def wake_path(+executable: String) -> IO(Result<&1,&1,U32 & String,String>):
     installed : Result<&1,&1,U32 & String,String> <- Lock.SessionLock.canonical(directory ++ "../libexec/baton2/codex-inbox-wake.mjs")
     wake_source_path(installed,directory ++ "../../bend2/scripts/codex-inbox-wake.mjs")
 
-def wake_start(path: Result<&1,&1,U32 & String,String>, thread: String, pointer: String, stderr: String) -> IO(Result<&1,&1,U32 & String,U32>):
+def wake_start(runtime: String, path: Result<&1,&1,U32 & String,String>, thread: String, pointer: String, stderr: String) -> IO(Result<&1,&1,U32 & String,U32>):
   match path:
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,U32>,Fail{error})
-    case Done{script}: P.ProcessChild.spawn(P.argv(["node",script,thread,pointer]),".",stderr)
+    case Done{script}: P.ProcessChild.spawn(P.argv([runtime,script,thread,pointer]),".",stderr)
 
 def inbox_admission(executable: Result<&1,&1,U32 & String,String>, thread: String, pointer: String, stderr: String) -> IO(Result<&1,&1,U32 & String,U32>):
   match executable:
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,U32>,Fail{error})
     case Done{path}: do IO<Result<&1,&1,U32 & String,U32>>:
       script : Result<&1,&1,U32 & String,String> <- wake_path(path)
-      wake_start(script,thread,pointer,stderr)
+      runtime : Result<&1,&1,U32 & String,String> <- NodeRuntime.resolve(path)
+      match runtime:
+        case Fail{error}: IO.pure(Result<&1,&1,U32 & String,U32>,Fail{error})
+        case Done{command}: wake_start(command,script,thread,pointer,stderr)
 
-def inbox_follow_source(executable: String, db: String, session: String, native: String, source: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String>):
+def inbox_follow_source(runtime: String, executable: String, db: String, session: String, native: String, source: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String>):
   match source:
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
-    case Done{script}: Process.Process.run(Tx.enc_argv(["node",script,"--follow",executable,db,session,native]),".")
+    case Done{script}: Process.Process.run(Tx.enc_argv([runtime,script,"--follow",executable,db,session,native]),".")
 
 def inbox_follow(executable: Result<&1,&1,U32 & String,String>, db: String, session: String, native: String) -> IO(Result<&1,&1,U32 & String,String>):
   match executable:
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
     case Done{+path}: do IO<Result<&1,&1,U32 & String,String>>:
       source : Result<&1,&1,U32 & String,String> <- wake_path(path)
-      inbox_follow_source(path,db,session,native,source)
+      runtime : Result<&1,&1,U32 & String,String> <- NodeRuntime.resolve(path)
+      match runtime:
+        case Fail{error}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{error})
+        case Done{command}: inbox_follow_source(command,path,db,session,native,source)
 
 # The profile variant keeps the existing key unbinds first, then the profile's store
 # assignment, then the command: env parses its options before its operands, so a

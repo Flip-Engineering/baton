@@ -130,6 +130,55 @@ class ControlIdentity(unittest.TestCase):
             self.assertEqual(hashlib.sha256(pathlib.Path(pin['copy']).read_bytes()).hexdigest(), pin['sha256'])
         self.assertEqual(list(self.home.rglob('private-key.pem')), [])
 
+    def test_packaged_runtime_selection_prefers_sibling_and_bundled_runtimes(self):
+        self.root()
+        self.call('recruit', 'runtime-receiver', 'root', 'omp', 'kimi-code/k3', 'low',
+                  self.repo, 'runtime-receiver-branch', self.checkouts / 'runtime-receiver', self.base)
+        log = self.directory / 'runtime-receiver.jsonl'
+        bundled = self.prefix / 'libexec/baton2/repl/bun'
+        bundled.parent.mkdir(parents=True, exist_ok=True)
+        script = '#!/bin/sh\nprintf "runtime\\n" >> ' + json.dumps(str(self.directory / 'runtimes')) + '\nexit 0\n'
+        bundled.write_text(script)
+        bundled.chmod(0o755)
+        empty_path = self.directory / 'empty-path'
+        empty_path.mkdir()
+        original_path = self.environment['PATH']
+        self.environment['PATH'] = str(empty_path)
+        try:
+            configured = self.call('receiver', 'runtime-receiver', self.fixture, log)
+            self.assertEqual(configured['endpoint'][0], str(bundled.resolve()))
+            self.assertEqual(configured['endpoint'][1], str(self.helper.resolve()))
+            sibling = self.prefix / 'bin/node'
+            sibling.write_text(script)
+            sibling.chmod(0o755)
+            configured = self.call('receiver', 'runtime-receiver', self.fixture, log)
+            self.assertEqual(configured['endpoint'][0], str(sibling.resolve()))
+            selected = self.directory / 'selected-node'
+            selected.write_text(script)
+            selected.chmod(0o755)
+            self.environment['BATON2_NODE'] = str(selected)
+            configured = self.call('receiver', 'runtime-receiver', self.fixture, log)
+            self.assertEqual(configured['endpoint'][0], str(selected))
+        finally:
+            self.environment['PATH'] = original_path
+            self.environment.pop('BATON2_NODE', None)
+
+    def test_invalid_explicit_runtime_is_actionable(self):
+        self.root()
+        self.call('recruit', 'invalid-runtime', 'root', 'omp', 'kimi-code/k3', 'low',
+                  self.repo, 'invalid-runtime-branch', self.checkouts / 'invalid-runtime', self.base)
+        missing = self.directory / 'missing-node'
+        self.environment['BATON2_NODE'] = str(missing)
+        try:
+            refused = self.call('receiver', 'invalid-runtime', self.fixture,
+                                self.directory / 'invalid-runtime.jsonl', ok=False)
+        finally:
+            self.environment.pop('BATON2_NODE', None)
+        self.assertEqual(refused['code'], 2)
+        self.assertIn('BATON2_NODE is set to ' + str(missing), refused['stderr'])
+        self.assertIn('not an executable Node runtime', refused['stderr'])
+        self.assertEqual(self.call('session', 'invalid-runtime')['endpoint'], '')
+
 
     def test_unmapped_recorded_model_refuses_configuration_before_launch(self):
         self.root()
