@@ -259,10 +259,10 @@ class ObserverMonitor(unittest.TestCase):
         else:
             self.assertEqual(execution, ('running', ''), 'live native status must remain pending')
 
-    def test_spanned_turn_end_without_observation_keeps_unknown_custody(self):
-        frame = ('{"type":"turn_end","message":{"role":"assistant",'
-                 '"content":[{"type":"text","text":"terminal"}]},'
-                 '"toolResults":[],"padding":"' + ('x' * 8192) + '"}\n')
+    def test_spanned_agent_end_monitor_keeps_unknown_custody(self):
+        frame = ('{"type":"agent_end","isTerminal":true,"messages":[{"role":"assistant",'
+                 '"content":[{"type":"text","text":"terminal"}]}],"padding":"'
+                 + ('x' * 8192) + '"}\n')
         observer, birth, manifest = self.start_attempt(
             stdout_text=frame, sleep_seconds=3, harness='omp')
         self.assertEqual(self.observer_argv[11], 'omp',
@@ -271,6 +271,8 @@ class ObserverMonitor(unittest.TestCase):
         recovered = self.recover(observer)
         self.assertNotEqual(recovered.returncode, 0,
                             recovered.stdout + recovered.stderr)
+        self.assertNotIn('Operation not permitted', recovered.stdout + recovered.stderr,
+                         'monitor frame handling attempted a forbidden stdin close')
         self.assertEqual((self.attempt / 'native.birth').read_bytes(), birth)
         self.assertEqual((self.attempt / 'manifest').read_bytes(), manifest)
         self.assertEqual(checkpoint_offset(self.attempt), len(frame.encode()),
