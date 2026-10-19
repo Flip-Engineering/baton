@@ -241,8 +241,9 @@ def execute(+db: String, command: C.Command) -> IO(Unit):
       IO.try(Unit,Instance.serve(db))
     case C.OwnerStatus{}:
       IO.try(Unit,Instance.owner_status(db))
-    case C.Receive{session,cmd,model,effort,cwd,log,message}:
-      IO.try(Unit,Receive.run(db,session,cmd,model,effort,cwd,log,message))
+    case C.Receive{+session,cmd,model,effort,cwd,log,+message}: do IO<Unit>:
+      result : Result<&1,&1,U32 & String,Unit> & String <- Receive.run(db,session,cmd,model,effort,cwd,log,message)
+      Receive.report_result(db,session,message,result)
     case C.RecoverObserver{session,observer}:
       IO.try(Unit,Receive.recover_observer(db,session,observer))
     case C.RunTurn{player,id,cmd,model,effort,cwd,task,log,session}:

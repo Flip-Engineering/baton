@@ -137,6 +137,9 @@ class SqliteProjection(unittest.TestCase):
         self.assertEqual(
             self.query('SELECT schema_version FROM baton_projection_state WHERE id=1'),
             self.query('PRAGMA schema_version'))
+        self.assertEqual(self.query(
+            "SELECT count(*) FROM sqlite_master WHERE type='index' "
+            "AND name='messages_pending'"), 1)
         state = self.install('state')
         self.assertEqual(state.returncode, 0, state.stdout + state.stderr)
         self.assertIn('current=1', state.stdout)

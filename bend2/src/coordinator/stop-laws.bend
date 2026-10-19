@@ -18,10 +18,11 @@ law stopped_receive_cannot_acquire_an_owner:
   for effort: String
   for cwd: String
   for log: String
-  for again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
-  {Receive.available(db,session,cmd,model,effort,cwd,log,again,True{}) == IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(2,"Session is terminally stopped; queued input will not execute. Read its session and retained inbox.")}) : IO(Result<&1,&1,U32 & String,Unit>)}
+  for again: String -> IO(Result<&1,&1,U32 & String,Unit>)
+  for -updates: Chan(String)
+  {Receive.available(db,session,cmd,model,effort,cwd,log,again,True{},"",updates) == IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(2,"Session is terminally stopped; queued input will not execute. Read its session and retained inbox.")}) : IO(Result<&1,&1,U32 & String,Unit>)}
 
-def stopped_receive_cannot_acquire_an_owner(db,session,cmd,model,effort,cwd,log,again):
+def stopped_receive_cannot_acquire_an_owner(db,session,cmd,model,effort,cwd,log,again,updates):
   {==}
 
 def refused_admission_releases(lock: U32) -> IO(Result<&1,&1,U32 & String,Unit>):

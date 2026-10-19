@@ -230,29 +230,32 @@ def record_exit(db: String, player: String, +id: String, log: String, outcome: O
   match outcome:
     case Ended{status,event,error,incomplete}: Stop.exited(db,player,id,status,event,error,generation_log(log,id))
 
-def player_finished(+db: String, player: String, +id: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+def player_finished(+db: String, player: String, +id: String, quiet: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     +saved : String <- IO.try(String,Store.commit(db,C.Delivery{id}))
     diagnostic_delivery : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,id ++ ":observation","1","")
     delivered : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,id,"1",saved)
     exit_delivery : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,id ++ ":exit","1","")
     stopped : Result<&1,&1,U32 & String,Unit> <- Stop.deliver(db,player,id)
-    written : Result<&1,&1,U32 & String,Unit> <- T.Text.control_output(saved)
+    written : Result<&1,&1,U32 & String,Unit> <- Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),quiet,
+      IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),T.Text.control_output(saved))
     IO.pure(Result<&1,&1,U32 & String,Unit>,combine(delivery_result(remember(remember(remember("",diagnostic_delivery),delivered),exit_delivery)),combine(stopped,written)))
 
-def finish_parent(db: String, player: String, id: String, log: String, outcome: Outcome, parent: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+def finish_parent(db: String, player: String, id: String, log: String, outcome: Outcome, parent: Bool, quiet: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match outcome:
     case Ended{+status,+event,error,incomplete}:
       match parent:
-        case True{}: player_finished(db,player,id)
-        case False{}: do IO<Result<&1,&1,U32 & String,Unit>>:
-          output : String <- IO.try(String,DB.Sql.query(db,"WITH frame(value) AS (VALUES(" ++ C.q(event) ++ ")) SELECT json_object('session'," ++ C.q(player) ++ ",'status'," ++ C.q(status) ++ ",'event',CASE WHEN value='' THEN NULL ELSE json(value) END,'error'," ++ C.q(error) ++ ") FROM frame;"))
-          T.Text.control_output(output)
+        case True{}: player_finished(db,player,id,quiet)
+        case False{}: Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),quiet,
+          IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),
+          do IO<Result<&1,&1,U32 & String,Unit>>:
+            output : String <- IO.try(String,DB.Sql.query(db,"WITH frame(value) AS (VALUES(" ++ C.q(event) ++ ")) SELECT json_object('session'," ++ C.q(player) ++ ",'status'," ++ C.q(status) ++ ",'event',CASE WHEN value='' THEN NULL ELSE json(value) END,'error'," ++ C.q(error) ++ ") FROM frame;"))
+            T.Text.control_output(output))
 
-def finish(+db: String, +player: String, id: String, log: String, outcome: Outcome) -> IO(Result<&1,&1,U32 & String,Unit>):
+def finish(+db: String, +player: String, id: String, log: String, outcome: Outcome, quiet: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     recipient : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ C.report_recipient(C.q(player)) ++ " IS NOT NULL;"))
-    finish_parent(db,player,id,log,outcome,String.eq(recipient,"1\n"))
+    finish_parent(db,player,id,log,outcome,String.eq(recipient,"1\n"),quiet)
 
 def status_text(result: Result<&1,&1,U32 & String,String>) -> String:
   match result:
@@ -1639,7 +1642,7 @@ def direct_completed(+db: String, +player: String, +id: String, +log: String, +d
     prepared : Unit <- prepare(db,player,id,log,directory ++ "/native.stderr",outcome)
     observer_released : Unit <- direct_release_lock(lock)
     native_released : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.release(handle)
-    finished : Result<&1,&1,U32 & String,Unit> <- finish(db,player,id,log,outcome)
+    finished : Result<&1,&1,U32 & String,Unit> <- finish(db,player,id,log,outcome,False{})
     questions : Result<&1,&1,U32 & String,Unit> <- NativeRequests.settle(deliveries)
     acknowledged : Result<&1,&1,U32 & String,Unit> <- direct_acknowledge(handle)
     settled : Result<&1,&1,U32 & String,Unit> <- IO.pure(Result<&1,&1,U32 & String,Unit>,combine(native_released,combine(finished,combine(questions,acknowledged))))
@@ -1652,7 +1655,7 @@ def direct_unstarted(+db: String, +player: String, +id: String, +log: String, +d
     exited : Unit <- record_exit(db,player,id,log,outcome)
     prepared : Unit <- prepare(db,player,id,log,directory ++ "/native.stderr",outcome)
     released : Unit <- direct_release_lock(lock)
-    finished : Result<&1,&1,U32 & String,Unit> <- finish(db,player,id,log,outcome)
+    finished : Result<&1,&1,U32 & String,Unit> <- finish(db,player,id,log,outcome,False{})
     wake : Result<&1,&1,U32 & String,Unit> <- direct_wake(db,player,id,outcome)
     IO.pass(Unit,combine(finished,wake))
 
@@ -1924,7 +1927,7 @@ def complete_outcome_locked(+db: String, +player: String, +id: String, +log: Str
       exited : Unit <- record_exit(db,player,id,log,outcome)
       prepared : Unit <- prepare(db,player,id,log,log ++ ".stderr",outcome)
       released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
-      delivery_task : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,finish(db,player,id,log,outcome))
+      delivery_task : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,finish(db,player,id,log,outcome,False{}))
       wake : Result<&1,&1,U32 & String,Unit> <- direct_wake(db,player,id,outcome)
       finished : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,delivery_task)
       IO.pass(Unit,combine(finished,wake))
