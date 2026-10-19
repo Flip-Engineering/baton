@@ -284,9 +284,15 @@ class FocusedAccountCredits(unittest.TestCase):
 
     def test_gate_returns_the_intermediary_binding(self):
         self.credit_account()
-        self.assertEqual(self.gate('attempt-1'), 'BATON2_CREDIT_RESERVATION=attempt-1')
+        output = self.gate('attempt-1')
+        self.assertIn('BATON2_CREDIT_RESERVATION=attempt-1', output)
         self.assertEqual(self.query("SELECT count(*) FROM credit_reservations"), [(0,)])
         self.assertEqual(self.query("SELECT count(*) FROM credit_authorizations WHERE attempt='attempt-1'"), [(1,)])
+        tokens = self.query("SELECT token,attempt,account,session FROM credit_launch_tokens WHERE attempt='attempt-1'")
+        self.assertEqual(len(tokens), 1)
+        token, attempt, account, session = tokens[0]
+        self.assertEqual((attempt, account, session), ('attempt-1', 'claude-api', 'leaf'))
+        self.assertIn('ANTHROPIC_BASE_URL=http://127.0.0.1:9/' + token, output)
 
     def authorize(self, attempt, session='leaf'):
         completed = self.entry('authorize', session, 'claude-code', attempt)

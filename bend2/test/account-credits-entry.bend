@@ -9,11 +9,6 @@ import ../src/coordinator/accounts.bend as A
 #   account-credits-entry DB current SESSION HARNESS
 #   account-credits-entry DB attempt SESSION HARNESS ATTEMPT PREDECESSOR
 
-def gate_head(head: Maybe<&1,String>) -> IO(Unit):
-  match head:
-    case None{}: IO.print("refused empty-binding")
-    case Some{+value}: IO.print(value)
-
 def authorize_decided(+db: String, +session: String, +attempt: String, account: Maybe<&2,A.AccountRecord>) -> IO(Bool):
   match account:
     case None{}: IO.pure(Bool,False{})
@@ -22,7 +17,7 @@ def authorize_decided(+db: String, +session: String, +attempt: String, account: 
 def gate_decided(binding: Maybe<List<String>>, +refusal: String) -> IO(Unit):
   match binding:
     case None{}: IO.print("refused " ++ refusal)
-    case Some{values}: gate_head(List.head(&1,String,values))
+    case Some{values}: IO.print(Tx.join("\n",values))
 
 def current_decided(account: Maybe<&2,A.AccountRecord>) -> IO(Unit):
   match account:

@@ -25,6 +25,7 @@ NODE = os.environ.get('BATON2_NODE', 'node')
 class Upstream(BaseHTTPRequestHandler):
     hits = []
     mode = 'cost'
+    cost = 0.05
     lock = threading.Lock()
 
     def log_message(self, *args):
@@ -45,7 +46,7 @@ class Upstream(BaseHTTPRequestHandler):
         self.send_header('content-type', 'application/json')
         body = {'usage': {'input_tokens': 10, 'output_tokens': 5}}
         if mode == 'cost':
-            body['total_cost_usd'] = 0.05
+            body['total_cost_usd'] = Upstream.cost
         payload = json.dumps(body).encode()
         self.send_header('content-length', str(len(payload)))
         self.end_headers()
@@ -66,8 +67,14 @@ class CreditIntermediary(unittest.TestCase):
                                     '', '', '', '', '', '', ''], capture_output=True, text=True)
         self.assertEqual(installed.returncode, 0, installed.stderr)
         self.seed()
+        self.token = 'a' * 32
+        self.execute("INSERT INTO credit_launch_tokens(token,attempt,session,account,organization) "
+                     "VALUES(?,'attempt-1','leaf','claude-api','org-fixture')", (self.token,))
+        self.execute("INSERT INTO credit_launch_tokens(token,attempt,session,account,organization) "
+                     "VALUES(?,'attempt-2','leaf','claude-api','org-fixture')", ('b' * 32,))
         Upstream.hits = []
         Upstream.mode = 'cost'
+        Upstream.cost = 0.05
         self.upstream = ThreadingHTTPServer(('127.0.0.1', 0), Upstream)
         self.upstream_thread = threading.Thread(target=self.upstream.serve_forever, daemon=True)
         self.upstream_thread.start()
@@ -119,13 +126,14 @@ class CreditIntermediary(unittest.TestCase):
         with closing(sqlite3.connect(self.db)) as database:
             return database.execute(sql, parameters).fetchall()
 
-    def request(self, request_id=None):
+    def request(self, request_id=None, token=None):
         import http.client
+        token = token or self.token
         target = http.client.HTTPConnection(self.url.split('//', 1)[1])
         headers = {'content-type': 'application/json', 'x-api-key': 'fixture-key'}
         if request_id:
             headers['x-baton-request-id'] = request_id
-        target.request('POST', '/v1/messages', body=b'{"model":"claude-sonnet-5-5"}', headers=headers)
+        target.request('POST', '/' + token + '/v1/messages', body=b'{"model":"claude-sonnet-5-5"}', headers=headers)
         response = target.getresponse()
         body = response.read()
         target.close()
@@ -188,6 +196,30 @@ class CreditIntermediary(unittest.TestCase):
         replay, body = self.request('request-fixed')
         self.assertEqual(replay, 402, body)
         self.assertIn(b'creditRequestReplay', body)
+        self.assertEqual(len(Upstream.hits), 1)
+
+    def test_replay_is_bound_to_the_launch_token(self):
+        status, _ = self.request('request-fixed')
+        self.assertEqual(status, 200)
+        replay, body = self.request('request-fixed', token='b' * 32)
+        self.assertEqual(replay, 402, body)
+        self.assertIn(b'creditRequestReplay', body)
+        self.assertEqual(len(Upstream.hits), 1)
+
+    def test_unknown_token_is_refused(self):
+        status, body = self.request(token='c' * 32)
+        self.assertEqual(status, 402, body)
+        self.assertIn(b'creditTokenUnknown', body)
+        self.assertEqual(Upstream.hits, [])
+
+    def test_settled_cost_reduces_the_promotional_balance(self):
+        Upstream.cost = 0.10
+        self.execute("UPDATE credit_observations SET balance='0.10'")
+        first, body = self.request()
+        self.assertEqual(first, 200, body)
+        second, body = self.request()
+        self.assertEqual(second, 402, body)
+        self.assertIn(b'chargeBoundUnavailable', body)
         self.assertEqual(len(Upstream.hits), 1)
 
     def test_reconciliation_settles_an_unreconciled_request(self):

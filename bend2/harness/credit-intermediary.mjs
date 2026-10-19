@@ -34,9 +34,6 @@ function fail(message) {
 }
 
 if (!database) fail('BATON_DATABASE is required');
-if (!attempt) fail('BATON_CREDIT_ATTEMPT is required');
-if (!account) fail('BATON_CREDIT_ACCOUNT is required');
-if (!session) fail('BATON_CREDIT_SESSION is required');
 if (!entry) fail('BATON_CREDIT_ENTRY is required');
 if (!Number.isInteger(listen) || listen < 0 || listen > 65535) fail('BATON_CREDIT_LISTEN is invalid');
 
@@ -54,8 +51,20 @@ function decide(operation, args) {
   }).trim();
 }
 
-function admit(requestId) {
-  return decide('admit', [requestId, attempt, account, session]);
+function admit(requestId, token) {
+  return token ? decide('admit-token', [requestId, token])
+               : decide('admit', [requestId, attempt, account, session]);
+}
+
+// The launch binding appends a per-attempt token to the base URL. The SDK
+// appends its own path after that, so the token is the first path segment and
+// the remainder is forwarded upstream unchanged.
+const TOKEN = /^[0-9a-f]{32}$/;
+function splitPath(raw) {
+  const parts = raw.split('/');
+  const candidate = parts.length > 1 ? parts[1] : '';
+  if (TOKEN.test(candidate)) return { token: candidate, path: '/' + parts.slice(2).join('/') };
+  return { token: '', path: raw };
 }
 
 function settle(requestId, amount, source, condition) {
@@ -119,12 +128,17 @@ const server = http.createServer((req, res) => {
   });
   req.on('end', () => {
     const body = Buffer.concat(chunks);
+    // The launch token binds the request to its attempt, account and session.
+    // A client that retries a logical request supplies x-baton-request-id so a
+    // repeated id is recognised; the harness does not send it, so its requests
+    // take a fresh id and replay detection does not apply to them.
     const header = req.headers['x-baton-request-id'];
     const requestId = typeof header === 'string' && header.length > 0 && header.length <= 200
       ? header : randomUUID();
+    const targetPath = splitPath(req.url || '/');
     let verdict;
     try {
-      verdict = admit(requestId);
+      verdict = admit(requestId, targetPath.token);
     } catch (error) {
       respond(res, 502, { 'content-type': 'application/json' },
               Buffer.from(JSON.stringify({ error: { type: 'credit_admission_host_failure',
@@ -136,7 +150,7 @@ const server = http.createServer((req, res) => {
       return;
     }
     const transport = target.protocol === 'https:' ? https : http;
-    const path = req.url || '/';
+    const path = targetPath.path;
     const headers = {};
     for (const [key, value] of Object.entries(req.headers)) {
       if (!HOP.has(key.toLowerCase())) headers[key] = value;

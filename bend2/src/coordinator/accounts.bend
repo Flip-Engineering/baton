@@ -547,8 +547,9 @@ def schema() -> String:
   ++ "CREATE TABLE IF NOT EXISTS credit_authorizations (attempt TEXT PRIMARY KEY NOT NULL,session TEXT NOT NULL DEFAULT '',account TEXT NOT NULL DEFAULT '',organization TEXT NOT NULL DEFAULT '',cycle TEXT NOT NULL DEFAULT '',balance TEXT NOT NULL DEFAULT '',unit TEXT NOT NULL DEFAULT '',secret_ref TEXT NOT NULL DEFAULT '',state TEXT NOT NULL DEFAULT 'authorized',consumed TEXT NOT NULL DEFAULT '',created TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);"
   ++ "CREATE TABLE IF NOT EXISTS credit_reservations (attempt TEXT PRIMARY KEY NOT NULL,session TEXT NOT NULL DEFAULT '',account TEXT NOT NULL DEFAULT '',organization TEXT NOT NULL DEFAULT '',cycle TEXT NOT NULL DEFAULT '',cap_period TEXT NOT NULL DEFAULT '',amount TEXT NOT NULL DEFAULT '',unit TEXT NOT NULL DEFAULT '',state TEXT NOT NULL DEFAULT 'reserved',settled TEXT NOT NULL DEFAULT '',cost_source TEXT NOT NULL DEFAULT '',reason TEXT NOT NULL DEFAULT '',created TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,settled_at TEXT NOT NULL DEFAULT '');"
   ++ "CREATE INDEX IF NOT EXISTS credit_reservations_pool ON credit_reservations(organization,cycle,state);"
-  ++ "CREATE TABLE IF NOT EXISTS credit_request_reservations (request TEXT PRIMARY KEY NOT NULL,attempt TEXT NOT NULL DEFAULT '',session TEXT NOT NULL DEFAULT '',account TEXT NOT NULL DEFAULT '',organization TEXT NOT NULL DEFAULT '',cycle TEXT NOT NULL DEFAULT '',cap_period TEXT NOT NULL DEFAULT '',amount TEXT NOT NULL DEFAULT '',unit TEXT NOT NULL DEFAULT '',state TEXT NOT NULL DEFAULT 'reserved',settled TEXT NOT NULL DEFAULT '',cost_source TEXT NOT NULL DEFAULT '',reason TEXT NOT NULL DEFAULT '',created TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,settled_at TEXT NOT NULL DEFAULT '');"
+  ++ "CREATE TABLE IF NOT EXISTS credit_request_reservations (request TEXT PRIMARY KEY NOT NULL,attempt TEXT NOT NULL DEFAULT '',session TEXT NOT NULL DEFAULT '',account TEXT NOT NULL DEFAULT '',organization TEXT NOT NULL DEFAULT '',cycle TEXT NOT NULL DEFAULT '',cap_period TEXT NOT NULL DEFAULT '',amount TEXT NOT NULL DEFAULT '',unit TEXT NOT NULL DEFAULT '',state TEXT NOT NULL DEFAULT 'reserved',settled TEXT NOT NULL DEFAULT '',cost_source TEXT NOT NULL DEFAULT '',reason TEXT NOT NULL DEFAULT '',settled_ms TEXT NOT NULL DEFAULT '',created TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,settled_at TEXT NOT NULL DEFAULT '');"
   ++ "CREATE UNIQUE INDEX IF NOT EXISTS credit_request_active ON credit_request_reservations(organization,cycle) WHERE state IN ('reserved','unreconciled');"
+  ++ "CREATE TABLE IF NOT EXISTS credit_launch_tokens (token TEXT PRIMARY KEY NOT NULL,attempt TEXT NOT NULL DEFAULT '',session TEXT NOT NULL DEFAULT '',account TEXT NOT NULL DEFAULT '',organization TEXT NOT NULL DEFAULT '',created TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);"
   ++ "CREATE INDEX IF NOT EXISTS account_attempts_session ON account_attempts(session,recorded);"
 
 # One transaction that installs the collaboration schema and this module's tables
@@ -666,6 +667,65 @@ def auth_columns_ensured(+db: String) -> IO(Unit):
   do IO<Unit>:
     missing : List<String> <- auth_columns_missing(db,["secret_ref","state","consumed"])
     auth_columns_installed(db,missing)
+
+def request_table_present(db: String) -> IO(Bool):
+  do IO<Bool>:
+    found : String <- IO.try(String,DB.Sql.read(db,"SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='credit_request_reservations');"))
+    IO.pure(Bool,String.eq(Tx.trim_nl(found),"1"))
+
+def request_table_ensured(+db: String) -> IO(Unit):
+  do IO<Unit>:
+    present : Bool <- request_table_present(db)
+    made : Unit <- Bool.pick(IO(Unit),present,IO.pure(Unit,Unit{}),IO.try(Unit,commit_read(db,"")))
+    IO.pure(Unit,Unit{})
+
+def request_columns_missing(+db: String, columns: List<String>) -> IO(List<String>):
+  match columns:
+    case Nil{}: IO.pure(List<String>,Nil{})
+    case +column <> rest: do IO<List<String>>:
+      found : String <- IO.try(String,DB.Sql.read(db,"SELECT EXISTS(SELECT 1 FROM pragma_table_info('credit_request_reservations') WHERE name=" ++ C.q(column) ++ ");"))
+      missing : List<String> <- request_columns_missing(db,rest)
+      IO.pure(List<String>,attempt_columns_missing_kept(String.eq(Tx.trim_nl(found),"0"),column,missing))
+
+def request_columns_installed(+db: String, columns: List<String>) -> IO(Unit):
+  match columns:
+    case Nil{}: IO.pure(Unit,Unit{})
+    case +column <> rest: do IO<Unit>:
+      added : String <- IO.try(String,DB.Sql.query(db,"ALTER TABLE credit_request_reservations ADD COLUMN " ++ column ++ " TEXT NOT NULL DEFAULT '';"))
+      request_columns_installed(db,rest)
+
+def request_columns_ensured(+db: String) -> IO(Unit):
+  do IO<Unit>:
+    missing : List<String> <- request_columns_missing(db,["settled_ms"])
+    request_columns_installed(db,missing)
+
+def launch_token_insert_sql(+attempt: String, +session: String, +account: AccountRecord) -> String:
+  "INSERT INTO credit_launch_tokens(token,attempt,session,account,organization) SELECT lower(hex(randomblob(16)))," ++ C.q(attempt) ++ "," ++ C.q(session) ++ "," ++ C.q(account_id(account)) ++ "," ++ C.q(account_organization(account)) ++ ";SELECT token FROM credit_launch_tokens WHERE rowid=last_insert_rowid();"
+
+def credit_launch_token(db: String, +attempt: String, +session: String, +account: AccountRecord) -> IO(String):
+  do IO<String>:
+    token : String <- IO.try(String,commit_read(db,launch_token_insert_sql(attempt,session,account)))
+    IO.pure(String,Tx.trim_nl(token))
+
+def launch_token_row_sql(token: String) -> String:
+  "SELECT coalesce((SELECT attempt||char(31)||account||char(31)||session||char(31)||organization FROM credit_launch_tokens WHERE token=" ++ C.q(token) ++ "),'');"
+
+def credit_admit_http_request_token(db: String, +token: String, +request: String) -> IO(String):
+  do IO<String>:
+    ensured : Unit <- request_table_ensured(db)
+    migrated : Unit <- request_columns_ensured(db)
+    +row : String <- IO.try(String,DB.Sql.read(db,launch_token_row_sql(token)))
+    match String.is_empty(Tx.trim_nl(row)):
+      case True{}: IO.pure(String,"refused creditTokenUnknown")
+      case False{}: match String.split(Tx.trim_nl(row),Char.from_u32(31)):
+        case attempt <> account <> session <> organization <> rest: credit_admit_http_request(db,attempt,account,session,request)
+        case other: IO.pure(String,"refused creditTokenUnknown")
+
+def observation_time_sql(organization: String) -> String:
+  "SELECT coalesce(observed_at,'') FROM credit_observations WHERE organization=" ++ C.q(organization) ++ " AND fact='promotional_credit' ORDER BY observed_at DESC,rowid DESC LIMIT 1;"
+
+def request_spent_since_sql(organization: String, cycle: String, observed_at: String) -> String:
+  "SELECT coalesce(group_concat(settled,char(10)),'') FROM credit_request_reservations WHERE organization=" ++ C.q(organization) ++ " AND cycle=" ++ C.q(cycle) ++ " AND state='settled' AND settled<>'' AND CAST(settled_ms AS INTEGER)>=CAST(" ++ C.q(observed_at) ++ " AS INTEGER);"
 
 def attempt_columns_ensured(+db: String) -> IO(Unit):
   do IO<Unit>:
@@ -1310,7 +1370,7 @@ def request_state_at(fields: List<String>) -> String:
     case other: ""
 
 def request_row_sql(request: String) -> String:
-  "SELECT coalesce((SELECT state||char(31)||amount||char(31)||unit||char(31)||organization||char(31)||cycle FROM credit_request_reservations WHERE request=" ++ C.q(request) ++ "),'');"
+  "SELECT coalesce((SELECT state||char(31)||amount||char(31)||unit||char(31)||organization||char(31)||cycle||char(31)||attempt||char(31)||account||char(31)||session FROM credit_request_reservations WHERE request=" ++ C.q(request) ++ "),'');"
 
 def request_active_sql(organization: String, cycle: String) -> String:
   "SELECT coalesce(group_concat(amount,char(10)),'') FROM credit_request_reservations WHERE organization=" ++ C.q(organization) ++ " AND cycle=" ++ C.q(cycle) ++ " AND state IN ('reserved','unreconciled');"
@@ -1339,31 +1399,60 @@ def request_insert_sql(+request: String, +attempt: String, +session: String, +ac
 def request_admitted_answer(+bound: String, +unit: String) -> String:
   "admitted " ++ bound ++ " " ++ unit
 
-def request_existing_answer(fields: List<String>) -> String:
-  Bool.pick(String,String.eq(request_state_at(fields),"reserved"),request_admitted_answer(request_amount_at(fields),request_unit_at(fields)),"refused creditRequestReplay")
+def request_attempt_at(fields: List<String>) -> String:
+  match fields:
+    case state <> amount <> unit <> organization <> cycle <> attempt <> account <> session <> rest: attempt
+    case other: ""
+
+def request_account_at(fields: List<String>) -> String:
+  match fields:
+    case state <> amount <> unit <> organization <> cycle <> attempt <> account <> session <> rest: account
+    case other: ""
+
+def request_session_at(fields: List<String>) -> String:
+  match fields:
+    case state <> amount <> unit <> organization <> cycle <> attempt <> account <> session <> rest: session
+    case other: ""
+
+def request_row_matches(fields: List<String>, +attempt: String, +account: String, +session: String) -> Bool:
+  Bool.and(String.eq(request_attempt_at(fields),attempt),Bool.and(String.eq(request_account_at(fields),account),String.eq(request_session_at(fields),session)))
+
+def request_existing_answer(fields: List<String>, +attempt: String, +account: String, +session: String) -> String:
+  Bool.pick(String,Bool.not(request_row_matches(fields,attempt,account,session)),"refused creditRequestReplay",
+  Bool.pick(String,String.eq(request_state_at(fields),"reserved"),request_admitted_answer(request_amount_at(fields),request_unit_at(fields)),"refused creditRequestReplay"))
 
 def request_insert_changed(db: String, +request: String, +attempt: String, +session: String, +account: AccountRecord, +meter: CreditMeter, +bound: String, changed: String) -> IO(String):
   match String.eq(Tx.trim_nl(changed),"1"):
     case True{}: IO.pure(String,request_admitted_answer(bound,meter_unit(meter)))
     case False{}: do IO<String>:
       +again : String <- IO.try(String,DB.Sql.read(db,request_row_sql(request)))
-      IO.pure(String,Bool.pick(String,String.is_empty(Tx.trim_nl(again)),"refused creditRequestInFlight",request_existing_answer(String.split(Tx.trim_nl(again),Char.from_u32(31)))))
+      IO.pure(String,Bool.pick(String,String.is_empty(Tx.trim_nl(again)),"refused creditRequestInFlight",request_existing_answer(String.split(Tx.trim_nl(again),Char.from_u32(31)),attempt,account_id(account),session)))
 
-def request_admit_new(db: String, +request: String, +attempt: String, +session: String, +account: AccountRecord) -> IO(String):
+def request_admit_again(db: String, +request: String, +attempt: String, +session: String, +account: AccountRecord, +meter_rows: String, +cap_period: String, +reserved: String, +spent: String, +observed_at: String) -> IO(String):
   do IO<String>:
-    +meter_rows : String <- IO.try(String,DB.Sql.read(db,credit_meter_sql(account_organization(account))))
-    +meter : CreditMeter <- IO.pure(CreditMeter,credit_meter_fields(account_organization(account),String.split(Tx.trim_nl(meter_rows),Char.from_u32(31))))
-    +cap_period : String <- cap_period_now(db)
-    reserved : String <- decimals_total(db,request_active_sql(meter_organization(meter),meter_cycle(meter)))
-    spent : String <- decimals_total(db,request_settled_sql(account_id(account),cap_period))
-    +remaining : String <- IO.pure(String,decimal_remaining(meter_balance(meter),reserved))
+    settled_since : String <- decimals_total(db,request_spent_since_sql(account_organization(account),meter_cycle(credit_meter_fields(account_organization(account),String.split(Tx.trim_nl(meter_rows),Char.from_u32(31)))),observed_at))
+    +remaining : String <- IO.pure(String,decimal_remaining(meter_balance(credit_meter_fields(account_organization(account),String.split(Tx.trim_nl(meter_rows),Char.from_u32(31)))),decimal_add(reserved,settled_since)))
     +cap_remaining : String <- IO.pure(String,decimal_remaining(monthly_cap(),decimal_add(spent,reserved)))
-    +bound : String <- IO.pure(String,request_bound_value(launch_meter(meter_organization(meter),meter_rows,cap_period,spent,reserved),remaining,cap_remaining))
+    +meter : CreditMeter <- IO.pure(CreditMeter,credit_meter_fields(account_organization(account),String.split(Tx.trim_nl(meter_rows),Char.from_u32(31))))
+    +bound : String <- IO.pure(String,request_bound_value(launch_meter(account_organization(account),meter_rows,cap_period,spent,reserved),remaining,cap_remaining))
     match String.is_empty(bound):
       case True{}: IO.pure(String,"refused chargeBoundUnavailable")
       case False{}: do IO<String>:
         changed : String <- IO.try(String,commit_read(db,request_insert_sql(request,attempt,session,account,meter,bound)))
         request_insert_changed(db,request,attempt,session,account,meter,bound,changed)
+
+def request_admit_new(db: String, +request: String, +attempt: String, +session: String, +account: AccountRecord) -> IO(String):
+  do IO<String>:
+    ensured : Unit <- request_table_ensured(db)
+    migrated : Unit <- request_columns_ensured(db)
+    +meter_rows : String <- IO.try(String,DB.Sql.read(db,credit_meter_sql(account_organization(account))))
+    +cap_period : String <- cap_period_now(db)
+    +observed_at : String <- IO.try(String,DB.Sql.read(db,observation_time_sql(account_organization(account))))
+    +reserved : String <- decimals_total(db,request_active_sql(account_organization(account),meter_cycle_from(account_organization(account),meter_rows)))
+    +spent : String <- decimals_total(db,request_settled_sql(account_id(account),cap_period))
+    match String.is_empty(Tx.trim_nl(observed_at)):
+      case True{}: IO.pure(String,"refused chargeBoundUnavailable")
+      case False{}: request_admit_again(db,request,attempt,session,account,meter_rows,cap_period,reserved,spent,Tx.trim_nl(observed_at))
 
 # One provider request: admit and reserve the observed remaining bound, or
 # refuse before anything is forwarded. A repeated request id is idempotent only
@@ -1371,9 +1460,11 @@ def request_admit_new(db: String, +request: String, +attempt: String, +session: 
 # replay and refuses.
 def credit_admit_http_request(db: String, +attempt: String, +account_label: String, +session: String, +request: String) -> IO(String):
   do IO<String>:
+    ensured : Unit <- request_table_ensured(db)
+    migrated : Unit <- request_columns_ensured(db)
     +existing : String <- IO.try(String,DB.Sql.read(db,request_row_sql(request)))
     match String.is_empty(Tx.trim_nl(existing)):
-      case False{}: IO.pure(String,request_existing_answer(String.split(Tx.trim_nl(existing),Char.from_u32(31))))
+      case False{}: IO.pure(String,request_existing_answer(String.split(Tx.trim_nl(existing),Char.from_u32(31)),attempt,account_label,session))
       case True{}: do IO<String>:
         found : Maybe<&2,AccountRecord> <- account_by_id(db,account_label)
         match found:
@@ -1382,7 +1473,7 @@ def credit_admit_http_request(db: String, +attempt: String, +account_label: Stri
 
 def request_settle_sql(+request: String, +amount: String, +source: String, +condition: String, settled: Bool) -> String:
   Bool.pick(String,settled,
-    "UPDATE credit_request_reservations SET state='settled',settled=" ++ C.q(amount) ++ ",cost_source=" ++ C.q(source) ++ ",reason='',settled_at=CURRENT_TIMESTAMP WHERE request=" ++ C.q(request) ++ " AND state='reserved';SELECT changes();",
+    "UPDATE credit_request_reservations SET state='settled',settled=" ++ C.q(amount) ++ ",cost_source=" ++ C.q(source) ++ ",reason='',settled_ms=CAST(strftime('%s','now') AS INTEGER)*1000,settled_at=CURRENT_TIMESTAMP WHERE request=" ++ C.q(request) ++ " AND state IN ('reserved','unreconciled');SELECT changes();",
     "UPDATE credit_request_reservations SET state='unreconciled',settled='',cost_source='',reason=" ++ C.q(condition) ++ ",settled_at=CURRENT_TIMESTAMP WHERE request=" ++ C.q(request) ++ " AND state='reserved';SELECT changes();")
 
 # A request settles only from a provider cost. Without one the reservation is
@@ -1390,6 +1481,8 @@ def request_settle_sql(+request: String, +amount: String, +source: String, +cond
 # reconciliation supplies the amount.
 def credit_settle_http_request(db: String, +request: String, +amount: String, +source: String, +condition: String) -> IO(String):
   do IO<String>:
+    ensured : Unit <- request_table_ensured(db)
+    migrated : Unit <- request_columns_ensured(db)
     +settled : Bool <- IO.pure(Bool,decimal_text(amount))
     changed : String <- IO.try(String,commit_read(db,request_settle_sql(request,amount,source,condition,settled)))
     match String.eq(Tx.trim_nl(changed),"1"):
@@ -1422,8 +1515,10 @@ def intermediary_binding(harness: String, db: String, session: String, attempt: 
     case Done{+url}: match String.is_empty(url):
       case True{}: IO.pure(Maybe<List<String>>,None{})
       case False{}: do IO<Maybe<List<String>>>:
+        +token : String <- credit_launch_token(db,attempt,session,account)
         authorized : Bool <- credit_record_authorization(db,session,attempt,account)
-        IO.pure(Maybe<List<String>>,Bool.pick(Maybe<List<String>>,authorized,marked_binding(attempt,account_id(account),session,url,launch_binding(harness,"api_key",account_secret_ref(account),helper)),None{}))
+        +ready : Bool = Bool.and(authorized,Bool.not(String.is_empty(token)))
+        IO.pure(Maybe<List<String>>,Bool.pick(Maybe<List<String>>,ready,marked_binding(attempt,account_id(account),session,url ++ "/" ++ token,launch_binding(harness,"api_key",account_secret_ref(account),helper)),None{}))
 def credit_launch_binding_account(+db: String, +session: String, +attempt: String, +harness: String, +account: AccountRecord, helper: Maybe<String>, +profile_store: String) -> IO(Maybe<List<String>>):
   match Bool.and(String.eq(account_provider(account),"anthropic"),Bool.and(String.eq(account_harness(account),"claude-code"),String.eq(account_funding(account),"api_key"))):
     case False{}: IO.pure(Maybe<List<String>>,account_binding(harness,Some{account},helper,profile_store))
