@@ -846,6 +846,7 @@ law m2_omp_launch_reaches_the_omp_adapter:
   for +model: String
   for +effort: String
   for +cwd: String
+  for +log: String
   for +stderr: String
   for +session: String
   for +task: String
