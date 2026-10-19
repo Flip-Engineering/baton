@@ -488,7 +488,7 @@ def m5_owed_input_is_counted_after_the_cursor(session, cursor):
 # session. The store's own schema declares that reference, so the database
 # refuses a message from an unknown sender.
 law m7_the_store_validates_the_sender_it_records:
-  {C.schema() == C.wake_claim_schema() ++ "CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY NOT NULL, parent TEXT REFERENCES sessions(id), harness TEXT NOT NULL, model TEXT NOT NULL DEFAULT '', effort TEXT NOT NULL DEFAULT '', native TEXT NOT NULL DEFAULT '', observed_harness TEXT NOT NULL DEFAULT '', observed_model TEXT NOT NULL DEFAULT '', observed_effort TEXT NOT NULL DEFAULT '', endpoint TEXT NOT NULL DEFAULT '', workspace TEXT NOT NULL DEFAULT '', branch TEXT NOT NULL DEFAULT '', base TEXT NOT NULL DEFAULT '');" ++ "CREATE TABLE IF NOT EXISTS messages (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, sender TEXT NOT NULL REFERENCES sessions(id), recipient TEXT NOT NULL REFERENCES sessions(id), kind TEXT NOT NULL, body TEXT NOT NULL, receipt TEXT);" ++ "CREATE TABLE IF NOT EXISTS turns (id TEXT PRIMARY KEY NOT NULL REFERENCES messages(id), worker TEXT NOT NULL REFERENCES sessions(id), event TEXT NOT NULL);" ++ "CREATE TABLE IF NOT EXISTS executions (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), id TEXT NOT NULL, mode TEXT NOT NULL, directory TEXT NOT NULL, phase TEXT NOT NULL, status TEXT NOT NULL DEFAULT '');"
+  {C.schema() == C.wake_claim_schema() ++ "CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY NOT NULL, parent TEXT REFERENCES sessions(id), harness TEXT NOT NULL, model TEXT NOT NULL DEFAULT '', effort TEXT NOT NULL DEFAULT '', native TEXT NOT NULL DEFAULT '', observed_harness TEXT NOT NULL DEFAULT '', observed_model TEXT NOT NULL DEFAULT '', observed_effort TEXT NOT NULL DEFAULT '', endpoint TEXT NOT NULL DEFAULT '', workspace TEXT NOT NULL DEFAULT '', branch TEXT NOT NULL DEFAULT '', base TEXT NOT NULL DEFAULT '');" ++ "CREATE TABLE IF NOT EXISTS messages (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, sender TEXT NOT NULL REFERENCES sessions(id), recipient TEXT NOT NULL REFERENCES sessions(id), kind TEXT NOT NULL, body TEXT NOT NULL, receipt TEXT);" ++ "CREATE INDEX IF NOT EXISTS messages_pending ON messages(recipient,seq) WHERE receipt IS NULL;" ++ "CREATE TABLE IF NOT EXISTS turns (id TEXT PRIMARY KEY NOT NULL REFERENCES messages(id), worker TEXT NOT NULL REFERENCES sessions(id), event TEXT NOT NULL);" ++ "CREATE TABLE IF NOT EXISTS executions (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), id TEXT NOT NULL, mode TEXT NOT NULL, directory TEXT NOT NULL, phase TEXT NOT NULL, status TEXT NOT NULL DEFAULT '');"
   ++ "CREATE TABLE IF NOT EXISTS session_stops (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), id TEXT UNIQUE NOT NULL, reason TEXT NOT NULL, attempt TEXT NOT NULL DEFAULT '', directory TEXT NOT NULL DEFAULT '', signal INTEGER NOT NULL DEFAULT 15, applied_signal INTEGER NOT NULL DEFAULT 0, control_error TEXT NOT NULL DEFAULT '', outcome TEXT NOT NULL, native_status TEXT NOT NULL DEFAULT '', report_id TEXT NOT NULL DEFAULT '');" ++ C.messaging_schema() ++ C.log_schema() : String}
 
 def m7_the_store_validates_the_sender_it_records():
@@ -832,6 +832,8 @@ def m11_any_other_harness_input_reaches_the_claude_adapter(handle, prompt, level
   {==}
 
 law m2_omp_launch_reaches_the_omp_adapter:
+  for +db: String
+  for +player: String
   for +sessions: String
   for +cmd: String
   for +model: String
@@ -841,51 +843,60 @@ law m2_omp_launch_reaches_the_omp_adapter:
   for +stderr: String
   for +session: String
   for +task: String
-  {Turn.launch(sessions, cmd, model, effort, cwd, stderr, session, "omp\n", task) == Turn.omp_launch(sessions, cmd, model, effort, cwd, stderr, session) : IO(Result<&1,&1,U32 & String,U32>)}
+  {Turn.launch(db, player, sessions, cmd, model, effort, cwd, stderr, session, "omp\n", log, task) == Turn.omp_launch_configured(db, player, sessions, cmd, model, effort, cwd, stderr, session) : IO(Result<&1,&1,U32 & String,U32>)}
 
-def m2_omp_launch_reaches_the_omp_adapter(sessions, cmd, model, effort, cwd, stderr, session, task):
+def m2_omp_launch_reaches_the_omp_adapter(db, player, sessions, cmd, model, effort, cwd, stderr, session, log, task):
   {==}
 
 law m2_muse_launch_reaches_the_muse_adapter:
+  for +db: String
+  for +player: String
   for +sessions: String
   for +cmd: String
   for +model: String
   for +effort: String
   for +cwd: String
+  for +log: String
   for +stderr: String
   for +session: String
   for +task: String
-  {Turn.launch(sessions, cmd, model, effort, cwd, stderr, session, "muse\n", task) == Turn.muse_launch(cmd, model, effort, cwd, stderr, session, task, String.is_empty(session)) : IO(Result<&1,&1,U32 & String,U32>)}
+  {Turn.launch(db, player, sessions, cmd, model, effort, cwd, stderr, session, "muse\n", log, task) == Turn.muse_launch_configured(db, player, cmd, model, effort, cwd, stderr, session, task) : IO(Result<&1,&1,U32 & String,U32>)}
 
-def m2_muse_launch_reaches_the_muse_adapter(sessions, cmd, model, effort, cwd, stderr, session, task):
+def m2_muse_launch_reaches_the_muse_adapter(db, player, sessions, cmd, model, effort, cwd, stderr, session, log, task):
   {==}
 
 law m2_codex_launch_reaches_the_codex_adapter:
+  for +db: String
+  for +player: String
   for +sessions: String
   for +cmd: String
   for +model: String
   for +effort: String
   for +cwd: String
+  for +log: String
   for +stderr: String
   for +session: String
   for +task: String
-  {Turn.launch(sessions, cmd, model, effort, cwd, stderr, session, "codex\n", task) == Codex.start_player(cmd, model, effort, cwd, stderr, session, String.is_empty(session)) : IO(Result<&1,&1,U32 & String,U32>)}
+  {Turn.launch(db, player, sessions, cmd, model, effort, cwd, stderr, session, "codex\n", log, task) == Codex.start_player(cmd, model, effort, cwd, stderr, session, String.is_empty(session)) : IO(Result<&1,&1,U32 & String,U32>)}
 
-def m2_codex_launch_reaches_the_codex_adapter(sessions, cmd, model, effort, cwd, stderr, session, task):
+def m2_codex_launch_reaches_the_codex_adapter(db, player, sessions, cmd, model, effort, cwd, stderr, session, log, task):
   {==}
 
 law m2_any_other_harness_launch_reaches_the_claude_adapter:
+  for +db: String
+  for +player: String
   for +sessions: String
   for +cmd: String
   for +model: String
   for +effort: String
   for +cwd: String
+  for +log: String
   for +stderr: String
   for +session: String
   for +task: String
-  {Turn.launch(sessions, cmd, model, effort, cwd, stderr, session, "claude-code\n", task) == Turn.claude_launch(cmd, model, effort, cwd, stderr, session, String.is_empty(session)) : IO(Result<&1,&1,U32 & String,U32>)}
+  {Turn.launch(db, player, sessions, cmd, model, effort, cwd, stderr, session, "claude-code\n", log, task) == Turn.claude_launch(cmd, model, effort, cwd, stderr, session, String.is_empty(session)) : IO(Result<&1,&1,U32 & String,U32>)}
 
-def m2_any_other_harness_launch_reaches_the_claude_adapter(sessions, cmd, model, effort, cwd, stderr, session, task):
+def m2_any_other_harness_launch_reaches_the_claude_adapter(db, player, sessions, cmd, model, effort, cwd, stderr, session, log, task):
   {==}
 
 law m5_a_fresh_claude_turn_starts_a_session:
@@ -1115,9 +1126,9 @@ law completion_delivery_checks_the_upstream_recipient:
   for id: String
   for log: String
   for outcome: Turn.Outcome
-  {Turn.finish(db,player,id,log,outcome) == (do IO<Result<&1,&1,U32 & String,Unit>>:
+  {Turn.finish(db,player,id,log,outcome,False{}) == (do IO<Result<&1,&1,U32 & String,Unit>>:
     recipient : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ C.report_recipient(C.q(player)) ++ " IS NOT NULL;"))
-    Turn.finish_parent(db,player,id,log,outcome,String.eq(recipient,"1\n"))) : IO(Result<&1,&1,U32 & String,Unit>)}
+    Turn.finish_parent(db,player,id,log,outcome,String.eq(recipient,"1\n"),False{})) : IO(Result<&1,&1,U32 & String,Unit>)}
 
 def completion_delivery_checks_the_upstream_recipient(db,player,id,log,outcome):
   {==}

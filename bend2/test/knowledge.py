@@ -45,7 +45,12 @@ class Knowledge(unittest.TestCase):
         self.temp.cleanup()
 
     def call(self, *args, success=True):
-        p = subprocess.run([str(EXE), str(self.db), *args], text=True, capture_output=True)
+        argv = [str(EXE), str(self.db), *args]
+        try:
+            p = subprocess.run(argv, text=True, capture_output=True, timeout=60)
+        except subprocess.TimeoutExpired as expired:
+            self.fail('command timed out after 60s: %r stdout=%r stderr=%r'
+                      % (argv, expired.stdout, expired.stderr))
         if success:
             self.assertEqual(p.returncode, 0, p.stderr)
             return json.loads(p.stdout)
@@ -69,6 +74,85 @@ class Knowledge(unittest.TestCase):
 
     def scoped(self, scope, subject=''):
         return self.call('knowledge-scope', 'root', scope, subject)
+
+    def discovery_commands(self, scope, subject):
+        commands = (
+            ('knowledge-scope', 'root', scope, subject),
+            ('knowledge-relations', 'root', scope, subject),
+            ('knowledge-scope', 'root', scope, subject, '--index'),
+            ('knowledge-scope', 'root', scope, subject, '--id', 'scope-finding'),
+            ('knowledge-search', 'root', scope, subject, 'scope'),
+            ('knowledge-traverse', 'root', scope, subject,
+             'finding:scope-finding', 'both', '', 'neighbors'),
+        )
+        return tuple(variant for command in commands
+                     for variant in (command, (*command, '--pretty')))
+
+    def test_unknown_scope_refuses_every_discovery_read(self):
+        self.call('record', 'scope-finding', 'worker', 'scope finding', 'run:scope', '')
+        for scope in ('wrker', '', 'ALL'):
+            for command in self.discovery_commands(scope, 'worker'):
+                with self.subTest(command=command):
+                    result = self.call(*command, success=False)
+                    self.assertEqual(result.returncode, 2)
+                    self.assertEqual(result.stdout, '')
+                    self.assertEqual(json.loads(result.stderr)['error'],
+                                     'knowledge-scope-invalid')
+
+    def test_worker_and_group_scopes_require_subjects_on_every_discovery_read(self):
+        for scope in ('worker', 'group'):
+            for command in self.discovery_commands(scope, ''):
+                with self.subTest(command=command):
+                    result = self.call(*command, success=False)
+                    self.assertEqual(result.returncode, 2)
+                    self.assertEqual(result.stdout, '')
+                    self.assertEqual(json.loads(result.stderr)['error'],
+                                     'knowledge-subject-required')
+        self.assertEqual(self.scoped('universal'), [])
+        self.assertEqual(self.scoped('all'), [])
+
+    def test_unknown_traversal_direction_refuses_neighbors_and_recursive_reads(self):
+        self.call('record', 'scope-finding', 'worker', 'scope finding', 'run:scope', '')
+        for direction in ('inout', '', 'OUT'):
+            for mode in ('neighbors', 'recursive'):
+                for flags in ((), ('--pretty',)):
+                    with self.subTest(direction=direction, mode=mode, flags=flags):
+                        result = self.call('knowledge-traverse', 'root', 'worker', 'worker',
+                                           'finding:scope-finding', direction, '', mode,
+                                           *flags, success=False)
+                        self.assertEqual(result.returncode, 2)
+                        self.assertEqual(result.stdout, '')
+                        self.assertEqual(json.loads(result.stderr)['error'],
+                                         'knowledge-direction-invalid')
+
+    def test_pretty_graph_reads_keep_the_selected_scope_and_direction(self):
+        self.call('record', 'scope-finding', 'worker', 'scope finding', 'run:scope', '')
+        for command in (
+                ('knowledge-search', 'root', 'worker', 'worker', 'scope'),
+                ('knowledge-traverse', 'root', 'worker', 'worker',
+                 'finding:scope-finding', 'out', '', 'neighbors')):
+            with self.subTest(command=command):
+                plain = self.call(*command)
+                self.assertEqual(self.call(*command, '--pretty'), plain)
+                self.assertEqual(plain['scope'], {'kind': 'worker', 'id': 'worker'})
+                self.assertEqual(plain['roots'], ['finding:scope-finding'])
+
+    def test_contextual_knowledge_commands_report_the_same_validation_errors(self):
+        for command, error in (
+                (('read', '--scope', 'wrker'), 'knowledge-scope-invalid'),
+                (('search', '--query', 'scope', '--scope', 'wrker'),
+                 'knowledge-scope-invalid'),
+                (('traverse', '--reference', 'finding:scope-finding',
+                  '--direction', 'inout'), 'knowledge-direction-invalid'),
+                (('read', '--scope', 'worker', '--subject', ''),
+                 'knowledge-subject-required')):
+            with self.subTest(command=command):
+                rows = self.call('as', 'root', 'knowledge', *command)
+                self.assertEqual(len(rows), 1)
+                self.assertEqual(rows[0]['status'], 'failed')
+                self.assertEqual(rows[0]['waitStatus'], 'exit 2')
+                self.assertEqual(rows[0]['stdout'], '')
+                self.assertEqual(json.loads(rows[0]['stderr'])['error'], error)
 
     def test_typed_evidence_and_corrections_follow_explicit_shared_holdings(self):
         self.call('role', 'worker', 'associate-conductor')
@@ -218,6 +302,155 @@ class Knowledge(unittest.TestCase):
                   'run:observation', 'Not evaluated', json.dumps(malformed), success=False)
         self.assertEqual(self.read('root'), [])
         self.assertEqual(self.call('knowledge-relations', 'root', 'all', ''), [])
+        self.assertEqual(self.call('inbox', 'worker'), [])
+
+    def relation_rows(self):
+        return self.call('knowledge-relations', 'root', 'all', '')
+
+    def test_identical_relation_retry_preserves_its_identity(self):
+        args = ('relate', 'relation-λ', 'grand', 'file:source λ', 'Supports',
+                'finding:target')
+        stored = self.call(*args)
+        self.assertEqual(self.call(*args), stored)
+        self.assertEqual(len(self.relation_rows()), 1)
+
+    def test_relation_identity_conflicts_preserve_every_stored_coordinate(self):
+        original = ('grand', 'file:source λ', 'Supports', 'finding:target')
+        stored = self.call('relate', 'fixed-relation', *original)
+        before = self.relation_rows()
+        for index, replacement in enumerate(('sibling', 'file:changed', 'Supersedes',
+                                             'finding:changed')):
+            changed = list(original)
+            changed[index] = replacement
+            with self.subTest(index=index):
+                refused = self.call('relate', 'fixed-relation', *changed, success=False)
+                self.assertEqual(refused.returncode, 2)
+                self.assertEqual(refused.stdout, '')
+                error = json.loads(refused.stderr)
+                self.assertEqual(error['error'], 'relation-id-conflict')
+                self.assertEqual(error['id'], 'fixed-relation')
+                self.assertEqual(error['stored'], {key: stored[key] for key in
+                                                   ('author', 'source', 'relation', 'target')})
+                self.assertEqual(self.relation_rows(), before)
+
+    def test_relation_author_must_be_registered(self):
+        refused = self.call('relate', 'unregistered-relation', 'absent',
+                            'file:source', 'Supports', 'finding:target', success=False)
+        self.assertEqual(refused.stdout, '')
+        self.assertEqual(self.relation_rows(), [])
+
+    def test_linked_relation_collision_preserves_record_links_and_notice_tables(self):
+        self.call('relate', 'occupied', 'worker', 'file:original', 'Supports',
+                  'finding:original')
+        before = self.relation_rows()
+        occupied = {'id': 'occupied', 'source': 'finding:new',
+                    'relation': 'Supersedes', 'target': 'finding:original'}
+        fresh = {'id': 'fresh', 'source': 'finding:new',
+                 'relation': 'Supports', 'target': 'file:other'}
+        for links in ([fresh, occupied], [occupied, fresh]):
+            with self.subTest(links=links):
+                refused = self.call('record-linked', 'new', 'grand', 'hypothesis',
+                                    'Proposed explanation', 'run:observation', '',
+                                    json.dumps(links), success=False)
+                self.assertEqual(refused.returncode, 2)
+                self.assertEqual(refused.stdout, '')
+                self.assertEqual(json.loads(refused.stderr)['error'], 'relation-id-conflict')
+                self.assertEqual(self.read('root'), [])
+                self.assertEqual(self.relation_rows(), before)
+                self.assertEqual(self.call('inbox', 'worker'), [])
+
+    def test_linked_collision_preserves_an_existing_records_kind_and_notice(self):
+        evidence = self.evidence('kind-evidence', 'grand')
+        self.call('record-typed', 'existing', 'grand', 'observation',
+                  'Existing claim', evidence, '')
+        self.call('relate', 'occupied', 'worker', 'file:original', 'Supports',
+                  'finding:original')
+        before = (self.read('root'), self.relation_rows(), self.call('inbox', 'worker'))
+        links = [{'id': 'occupied', 'source': 'finding:existing',
+                  'relation': 'Supersedes', 'target': 'finding:original'}]
+        refused = self.call('record-linked', 'existing', 'grand', 'decision',
+                            'Existing claim', evidence, '', json.dumps(links), success=False)
+        self.assertEqual(refused.returncode, 2)
+        self.assertEqual(refused.stdout, '')
+        self.assertEqual(json.loads(refused.stderr)['error'], 'relation-id-conflict')
+        self.assertEqual((self.read('root'), self.relation_rows(),
+                          self.call('inbox', 'worker')), before)
+
+    def test_conflicting_duplicate_link_ids_refuse_the_complete_record(self):
+        first = {'id': 'duplicate', 'source': 'finding:new',
+                 'relation': 'Supports', 'target': 'file:first'}
+        for coordinate, value in (('source', 'finding:other'),
+                                  ('relation', 'Supersedes'), ('target', 'file:second')):
+            with self.subTest(coordinate=coordinate):
+                second = {**first, coordinate: value}
+                refused = self.call('record-linked', 'new', 'grand', 'hypothesis',
+                                    'Proposed explanation', 'run:observation', '',
+                                    json.dumps([first, second]), success=False)
+                self.assertEqual(refused.returncode, 2)
+                self.assertEqual(refused.stdout, '')
+                self.assertEqual(json.loads(refused.stderr)['error'], 'relation-id-conflict')
+                self.assertEqual(self.read('root'), [])
+                self.assertEqual(self.relation_rows(), [])
+                self.assertEqual(self.call('inbox', 'worker'), [])
+
+    def test_identical_link_duplicates_and_record_retries_are_idempotent(self):
+        link = {'id': 'duplicate', 'source': 'finding:new',
+                'relation': 'Supports', 'target': 'file:source'}
+        args = ('record-linked', 'new', 'grand', 'hypothesis', 'Proposed explanation',
+                'run:observation', '', json.dumps([link, link]))
+        stored = self.call(*args)
+        before = (self.read('root'), self.relation_rows(), self.call('inbox', 'worker'))
+        self.assertEqual(self.call(*args), stored)
+        self.assertEqual((self.read('root'), self.relation_rows(),
+                          self.call('inbox', 'worker')), before)
+        self.assertEqual(len(before[1]), 1)
+        self.assertEqual([row['id'] for row in before[2]], ['new:notice'])
+
+    def test_link_id_text_affinity_detects_conflicting_payload_duplicates(self):
+        first = {'id': 1, 'source': 'finding:new',
+                 'relation': 'Supports', 'target': 'file:first'}
+        second = {**first, 'id': '1', 'target': 'file:second'}
+        for links in ([first, second], [second, first]):
+            with self.subTest(links=links):
+                refused = self.call('record-linked', 'new', 'grand', 'hypothesis',
+                                    'Proposed explanation', 'run:observation', '',
+                                    json.dumps(links), success=False)
+                self.assertEqual(refused.returncode, 2)
+                self.assertEqual(refused.stdout, '')
+                self.assertEqual(json.loads(refused.stderr)['error'], 'relation-id-conflict')
+                self.assertEqual(self.read('root'), [])
+                self.assertEqual(self.relation_rows(), [])
+                self.assertEqual(self.call('inbox', 'worker'), [])
+
+    def test_link_coordinates_use_the_stored_text_affinity_for_retries(self):
+        stored = self.call('relate', '1', 'grand', '2', '3', '4')
+        relations = self.relation_rows()
+        numeric = {'id': 1, 'source': 2, 'relation': 3, 'target': 4}
+        text = {key: str(value) for key, value in numeric.items()}
+        args = ('record-linked', 'new', 'grand', 'hypothesis', 'Proposed explanation',
+                'run:observation', '', json.dumps([numeric, text]))
+        record = self.call(*args)
+        before = (self.read('root'), self.relation_rows(), self.call('inbox', 'worker'))
+        self.assertEqual(self.call(*args), record)
+        self.assertEqual((self.read('root'), self.relation_rows(),
+                          self.call('inbox', 'worker')), before)
+        self.assertEqual(before[1], relations)
+        self.assertEqual({key: relations[0][key] for key in stored}, stored)
+        self.assertEqual([row['id'] for row in before[2]], ['new:notice'])
+
+    def test_numeric_link_id_conflict_preserves_a_stored_text_identity(self):
+        self.call('relate', '1', 'grand', 'file:original', 'Supports', 'file:target')
+        before = self.relation_rows()
+        changed = {'id': 1, 'source': 'file:original',
+                   'relation': 'Supports', 'target': 'file:changed'}
+        refused = self.call('record-linked', 'new', 'grand', 'hypothesis',
+                            'Proposed explanation', 'run:observation', '',
+                            json.dumps([changed]), success=False)
+        self.assertEqual(refused.returncode, 2)
+        self.assertEqual(refused.stdout, '')
+        self.assertEqual(json.loads(refused.stderr)['error'], 'relation-id-conflict')
+        self.assertEqual(self.read('root'), [])
+        self.assertEqual(self.relation_rows(), before)
         self.assertEqual(self.call('inbox', 'worker'), [])
 
     def test_legacy_promotions_remain_session_holdings_before_and_after_migration(self):
@@ -434,6 +667,135 @@ class Knowledge(unittest.TestCase):
         fabricated = self.call('promote', 'promotion-7', 'sibling', 'root', 'sibling', 'finding-4',
                                success=False)
         self.assertIn('No knowledge row was written', fabricated.stderr)
+
+    def test_missing_message_citation_resolves_when_the_message_is_retained(self):
+        message = "evidence λ ' pending"
+        reference = 'message:' + message
+        self.call('record-typed', 'pending-message', 'grand', 'observation',
+                  'Pending citation', reference, 'Before the report is stored')
+        missing = {'reference': reference, 'kind': 'message', 'resolution': 'missing'}
+        complete = self.call('knowledge', 'root', '--id', 'pending-message')[0]
+        index = self.call('knowledge', 'root', '--index')[0]
+        self.assertEqual(complete['evidenceReference'], missing)
+        self.assertIsNone(complete['evidenceMessage'])
+        self.assertEqual(index['evidenceReference'], missing)
+        graph = self.call('knowledge-traverse', 'root', 'all', '',
+                          'finding:pending-message', 'out', '', 'neighbors')
+        citation = next(edge for edge in graph['edges'] if edge['id'] == 'citation:pending-message')
+        self.assertEqual((citation['target'], citation['targetResolution']),
+                         (reference, 'missing'))
+        target = next(row for row in graph['references'] if row['reference'] == reference)
+        self.assertEqual(target['resolution'], 'missing')
+        self.assertEqual(target['deliveryRead'], ['delivery', message])
+        self.call('report', message, 'worker', 'Retained after the finding')
+        complete = self.call('knowledge', 'root', '--id', 'pending-message')[0]
+        self.assertEqual(complete['evidenceReference'], {**missing, 'resolution': 'retained'})
+        self.assertEqual(complete['evidenceMessage']['body'], 'Retained after the finding')
+        self.assertEqual(complete['evidence'], reference)
+        index = self.call('knowledge', 'root', '--index')[0]
+        self.assertEqual(index['evidenceReference'], complete['evidenceReference'])
+        graph = self.call('knowledge-traverse', 'root', 'all', '',
+                          'finding:pending-message', 'out', '', 'neighbors')
+        self.assertEqual(graph['edges'][0]['targetResolution'], 'retained')
+        self.assertEqual(graph['references'][0]['resolution'], 'retained')
+
+    def test_finding_citation_resolution_uses_the_retained_row_outside_the_scope(self):
+        self.call('record', 'citing', 'grand', 'Cites another finding',
+                  'finding:source', 'Before the source is stored')
+        self.call('promote', 'share-citing', 'root', 'grand', 'root', 'citing')
+        before = self.call('knowledge-search', 'root', 'universal', '', 'another finding')
+        target = next(row for row in before['references'] if row['reference'] == 'finding:source')
+        self.assertEqual(target['resolution'], 'missing')
+        self.call('record-typed', 'source', 'grand', 'measurement',
+                  'Retained source', 'run:source', 'One run')
+        after = self.call('knowledge-search', 'root', 'universal', '', 'another finding')
+        self.assertEqual(self.ids(after['nodes']), ['citing'])
+        target = next(row for row in after['references'] if row['reference'] == 'finding:source')
+        self.assertEqual((target['kind'], target['resolution']), ('measurement', 'retained'))
+        self.assertEqual(self.call(*target['detailRead'])[0]['id'], 'source')
+        self.assertEqual(after['nodes'][0]['evidenceReference'], {
+            'reference': 'finding:source', 'kind': 'measurement', 'resolution': 'retained'})
+
+    def test_legacy_citations_resolve_without_migrating_the_knowledge_table(self):
+        self.call('report', 'legacy-message', 'worker', 'Retained message body')
+        with sqlite3.connect(self.db) as db:
+            db.execute('DROP TABLE knowledge')
+            db.execute('DROP TABLE knowledge_relations')
+            db.execute('CREATE TABLE knowledge (id TEXT UNIQUE NOT NULL,author TEXT NOT NULL,'
+                       'claim TEXT NOT NULL,evidence TEXT NOT NULL,limits TEXT NOT NULL)')
+            db.executemany('INSERT INTO knowledge VALUES (?, ?, ?, ?, ?)', [
+                ('message-citation', 'root', 'Message citation', 'message:legacy-message', ''),
+                ('finding-citation', 'root', 'Finding citation', 'finding:message-citation', ''),
+                ('missing-citation', 'root', 'Missing citation', 'finding:absent', '')])
+        expected = {
+            'message-citation': {'reference': 'message:legacy-message', 'kind': 'message',
+                                 'resolution': 'retained'},
+            'finding-citation': {'reference': 'finding:message-citation', 'kind': 'finding',
+                                 'resolution': 'retained'},
+            'missing-citation': {'reference': 'finding:absent', 'kind': 'finding',
+                                 'resolution': 'missing'}}
+        complete = {row['id']: row for row in self.read('root')}
+        index = {row['id']: row for row in self.call('knowledge', 'root', '--index')}
+        for identity, reference in expected.items():
+            self.assertEqual(complete[identity]['evidenceReference'], reference)
+            self.assertEqual(index[identity]['evidenceReference'], reference)
+        graph = self.call('knowledge-search', 'root', 'all', '', 'citation')
+        self.assertEqual({edge['id']: edge['targetResolution'] for edge in graph['edges']},
+                         {'citation:' + identity: reference['resolution']
+                          for identity, reference in expected.items()})
+        with sqlite3.connect(self.db) as db:
+            self.assertNotIn('kind', {row[1] for row in db.execute('PRAGMA table_info(knowledge)')})
+            self.assertIsNone(db.execute(
+                "SELECT name FROM sqlite_master WHERE name='knowledge_relations'").fetchone())
+
+    def test_external_citation_prefixes_and_opaque_evidence_have_explicit_metadata(self):
+        external = ['file:source λ', 'http://example.invalid/source',
+                    'https://example.invalid/source', 'external:archive']
+        opaque = ['run:probe', 'git:' + self.base, 'the run said so', 'Message:absent', '']
+        for number, reference in enumerate(external + opaque):
+            with self.subTest(reference=reference):
+                identity = 'citation-' + str(number)
+                if reference in external:
+                    self.call('record-typed', reference, 'grand', 'measurement',
+                              'A finding with the same literal ID', 'run:collision', '')
+                self.call('record', identity, 'grand', identity, reference, 'Recorded text')
+                complete = self.call('knowledge', 'root', '--id', identity)[0]
+                index = next(row for row in self.call('knowledge', 'root', '--index')
+                             if row['id'] == identity)
+                graph = self.call('knowledge-traverse', 'root', 'all', '',
+                                  'finding:' + identity, 'out', '', 'neighbors')
+                if reference in external:
+                    expected = {'reference': reference, 'kind': 'external',
+                                'resolution': 'external'}
+                    self.assertEqual(complete['evidenceReference'], expected)
+                    self.assertEqual(index['evidenceReference'], expected)
+                    self.assertEqual(len(graph['edges']), 1)
+                    self.assertEqual(graph['edges'][0]['targetKind'], 'external')
+                    self.assertEqual(graph['edges'][0]['targetResolution'], 'external')
+                    target = next(row for row in graph['references'] if row['reference'] == reference)
+                    self.assertEqual((target['kind'], target['resolution']), ('external', 'external'))
+                else:
+                    self.assertIsNone(complete['evidenceReference'])
+                    self.assertIsNone(index['evidenceReference'])
+                    self.assertEqual(graph['edges'], [])
+                    self.assertEqual(graph['references'], [])
+                node = next(row for row in graph['nodes'] if row['id'] == identity)
+                self.assertEqual(node['evidenceReference'], complete['evidenceReference'])
+                search = self.call('knowledge-search', 'root', 'all', '', identity)
+                match = next(row for row in search['matches'] if row['id'] == identity)
+                self.assertEqual(match['evidenceReference'], complete['evidenceReference'])
+                self.assertEqual(complete['evidence'], reference)
+
+    def test_opaque_evidence_can_be_connected_by_an_authored_relation(self):
+        self.call('record', 'run-observation', 'grand', 'Observed a run', 'run:probe', '')
+        self.call('relate', 'run-link', 'grand', 'finding:run-observation', 'DerivedFrom',
+                  'run:probe')
+        graph = self.call('knowledge-traverse', 'root', 'all', '',
+                          'finding:run-observation', 'out', '', 'neighbors')
+        self.assertEqual([row['id'] for row in graph['edges']], ['run-link'])
+        self.assertEqual(graph['edges'][0]['provenance'], 'authored')
+        target = next(row for row in graph['references'] if row['reference'] == 'run:probe')
+        self.assertEqual((target['kind'], target['resolution']), ('external', 'external'))
 
     def test_findings_accept_source_references_and_include_message_content(self):
         shared = self.evidence('shared-report', 'sibling')

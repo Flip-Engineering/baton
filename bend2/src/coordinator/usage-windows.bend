@@ -199,9 +199,21 @@ def operator_reset_token(tok: String) -> Bool:
 # date-time, verbatim, or "" when the text names none. Providers separate the
 # date and clock by a space ("reset at 2026-10-06 07:12:52"), so a date-only
 # word followed by a clock-only word reads as one observation; the date alone
-# is never used when a clock word stands beside it.
+# is never used when a clock word stands beside it. A sentence-ending period
+# follows the timestamp in the Muse wording ("resets at 2026-10-19T06:38:50Z."),
+# so one final '.' is removed before the second validation.
+def token_without_final_dot(tok: String) -> String:
+  match tok:
+    case SNil{}: ""
+    case SCon{+head,SNil{}}: Bool.pick(String,Char.is_eq(head,Char.from_u32(46)),"",SCon{head,SNil{}})
+    case SCon{+head,+tail}: SCon{head,token_without_final_dot(tail)}
+
+def word_reset_stripped(+stripped: String) -> String:
+  Bool.pick(String,iso_token(stripped),stripped,"")
+
 def word_reset(+word: String) -> String:
-  Bool.pick(String,iso_token(take_ts(word)),take_ts(word),"")
+  +tok = take_ts(word)
+  Bool.pick(String,iso_token(tok),tok,word_reset_stripped(token_without_final_dot(tok)))
 
 def iso_date_only(tok: String) -> Bool:
   match tok:

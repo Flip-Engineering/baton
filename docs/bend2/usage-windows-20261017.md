@@ -36,12 +36,22 @@ databases self-upgrade on the next commit). Each row records:
 
 Three sources write observations:
 
-1. Exhaustion handoff: `advance_profile` in
-   `bend2/src/coordinator/subscription-fallback.bend` inserts one observation
-   from the provider's exhaustion cause before any account advance, so the
-   refusal fact survives even when the advance itself fails. The window kind
-   is extracted from the cause text; an embedded ISO-8601 reset time is
-   converted to milliseconds, and a missing one stays NULL.
+1. Exhaustion handoff: `Accounts.handoff` records one observation from the
+   provider's exhaustion cause before any account advance, so the refusal fact
+   survives even when the advance itself fails. Both the account binding and
+   the operator's profile list use this path, and the observation names the
+   account label the wake gate later reads. The window kind is extracted from
+   the cause text; an embedded ISO-8601 reset time is converted to
+   milliseconds, and a missing one stays NULL. A sentence-ending period after
+   the timestamp is removed before parsing.
+
+   The classification covers the Muse run terminal
+   (`payload_type=run.terminal.failed`, `payload.kind=run_terminal`,
+   `payload.terminal=failed`, diagnostic in `payload.reason`) and the observed
+   wordings `Subscription quota exhausted` and `Weekly/Monthly Limit
+   Exhausted`. A context compaction failure that ends the run carries the
+   summarizer and quota diagnostic in the same reason, so it holds the account
+   like a model-call refusal.
 2. Operator observation: `usage-window-observe SESSION WINDOW RESETS_AT
    SOURCE` records a reset time read from the provider's own console (for
    Kimi Code, the Console web UI, as in the #797 observation "Resets 10-16
@@ -77,6 +87,11 @@ the latest provider row per window for exhaustion evidence:
   wake proceeds; an unknown reset never blocks.
 - None: no exhausted window. Partial reports stay visible in the query and do
   not hold.
+
+The receiver checks the same gate under its admission lock before it starts a
+native process. A retained endpoint that invokes `receive` directly therefore
+reports the hold, schedules the reset continuation, releases the lock and
+leaves the input owed; it does not start the native.
 
 The continuation sleeps until the recorded reset and re-enters the wake driver
 (`--wake-message`, which calls `Wake.drive_id`) with no new input, so the gate
@@ -114,6 +129,8 @@ continuation argv, handled-message idempotence, duplicate continuations, and
 the one-day segment cap. `bend2/test/usage-windows-wake-path.bend` drives the
 production `Receive.wake_due` gate: a reset moved later does not deliver at the
 old time, one moved earlier delivers once, a handled message is a no-op, and a
-far window reports the 86400 s segment. `bend2/test/usage-windows.py` exercises the
-command surface against a recruited session fixture on remote validation
-runners.
+far window reports the 86400 s segment. `bend2/test/quota-exhaustion-reset.bend`
+drives the #907 classification, reset extraction, two-attempt hold and account
+handoff recording over a temporary database. `bend2/test/usage-windows.py`
+exercises the command surface against a recruited session fixture on remote
+validation runners.
