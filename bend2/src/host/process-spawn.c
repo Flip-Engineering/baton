@@ -426,6 +426,8 @@ typedef struct BrKeeper {
   /* Recovery observers are owner-managed continuation work. An acknowledged
      attempt remains live until every child launched for it has been reaped. */
   size_t recovery_pending;
+  /* A recovery child gets one attach attempt; readiness enables a later retry. */
+  int recovery_attempted;
   struct BrWaiter *unwatched_recovery;
   char *directory,*incoming;
   size_t incoming_size,incoming_capacity;
@@ -1342,16 +1344,23 @@ static int br_recovery_reap_unwatched(BrKeeper *keeper) {
   return 0;
 }
 static void br_recover(BrKeeper *keeper) {
+  if(keeper->recovery_attempted)return;
+  keeper->recovery_attempted=1;
   char **argv=br_argv(keeper->manifest.field[4],(size_t)keeper->manifest.header.lengths[4]);
   char *path=br_path(keeper->directory,"observer.log");
   int null=open("/dev/null",O_RDONLY|O_CLOEXEC),log=path?open(path,O_WRONLY|O_CREAT|O_APPEND|O_CLOEXEC,0600):-1;
   BrWaiter *waiter=argv&&path&&null>=0&&log>=0?br_waiter_prepare(keeper,'R'):NULL;
+  int launched=0;
   int error=argv&&path&&null>=0&&log>=0&&waiter?
     br_spawn(&keeper->recovery_pid,argv,keeper->manifest.field[1],null,log,log,-1,-1):errno?errno:ENOMEM;
+  if(!error)launched=1;
   if(null>=0)close(null);if(log>=0)close(log);free(path);free(argv);
   if(!error)error=br_waiter_submit(keeper,waiter,keeper->recovery_pid);
   else br_waiter_discard(waiter);
-  if(error) br_note(keeper,"observer-error",error);
+  if(error) {
+    if(!launched)keeper->recovery_attempted=0;
+    br_note(keeper,"observer-error",error);
+  }
 }
 static void br_detach_observer(BrKeeper *keeper) {
   if(keeper->client>=0) close(keeper->client);
@@ -1362,7 +1371,7 @@ static void br_detach_observer(BrKeeper *keeper) {
 }
 static void br_disconnected(BrKeeper *keeper) {
   br_detach_observer(keeper);
-  if(!keeper->finishing && keeper->native_pid) br_recover(keeper);
+  if(!keeper->finishing && keeper->native_pid && !keeper->recovery_attempted) br_recover(keeper);
 }
 static int br_record_native_exit(BrKeeper *keeper) {
   if(!keeper->native_waiting || !keeper->native_pid)return 0;
@@ -1402,6 +1411,7 @@ static int br_command(BrKeeper *keeper,BrFrame frame,const char *payload) {
     int error=br_lifecycle_ready(keeper->directory);
     if(error)return br_reply(keeper,frame.serial,keeper->generation,error);
     keeper->ready=1;
+    keeper->recovery_attempted=0;
     if((error=br_reply(keeper,frame.serial,keeper->generation,0)))return error;
     /* A waiter can observe the native exit before readiness. Reap that exit now
        that readiness is set; a running native returns without error. An error is
