@@ -108,9 +108,29 @@ static int baton_sql_scalar_int(sqlite3 *db, const char *sql, sqlite3_int64 *val
   return code;
 }
 
+/* Copies the name from a CREATE TRIGGER statement. Projection statements use
+   plain identifiers; any other form fails the check and runs the installer. */
+static int baton_sql_trigger_name(const char *statement, char *out, size_t size) {
+  if (strncmp(statement, "CREATE TRIGGER ", 15) != 0) return 0;
+  const char *at = statement + 15;
+  if (strncmp(at, "IF NOT EXISTS ", 14) == 0) at += 14;
+  size_t n = 0;
+  while (at[n] && at[n] != ' ' && at[n] != '\t' && at[n] != '\n') {
+    char c = at[n];
+    if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+          || (c >= '0' && c <= '9') || c == '_')
+        || n + 1 >= size)
+      return 0;
+    out[n++] = c;
+  }
+  out[n] = 0;
+  return n > 0;
+}
+
 /* Cheap read-only completeness check against durable in-database state:
    the marker fingerprint and schema version, the projection tables, the
-   migrated columns and the native_changes triggers recorded in sqlite_master.
+   migrated columns and the exact projection trigger names recorded in
+   sqlite_master. Triggers owned by other modules are outside this check.
    Returns 1 only on a positive match; any missing object or read failure
    returns 0 and the caller runs the full installer, which surfaces the real
    error. */
@@ -128,11 +148,34 @@ static int baton_sql_projection_is_current(sqlite3 *db, const char *schema,
   sqlite3_int64 tables = 0;
   if (baton_sql_scalar_int(db, "SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('native_changes','knowledge','knowledge_promotions','knowledge_relations','baton_projection_state');", &tables) != SQLITE_OK || tables != 5)
     return 0;
+  char trigger_query[4096];
+  int used = snprintf(trigger_query, sizeof trigger_query,
+                      "SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name IN (");
   int expected_triggers = 0;
-  for (size_t i = 0; baton_change_schema[i]; i++)
-    if (strncmp(baton_change_schema[i], "CREATE TRIGGER", 14) == 0) expected_triggers++;
+  if (used < 0 || (size_t)used >= sizeof trigger_query)
+    return 0;
+  for (size_t i = 0; baton_change_schema[i]; i++) {
+    if (strncmp(baton_change_schema[i], "CREATE TRIGGER", 14) != 0)
+      continue;
+    char name[64];
+    if (!baton_sql_trigger_name(baton_change_schema[i], name, sizeof name))
+      return 0;
+    int written = snprintf(trigger_query + used,
+                           sizeof trigger_query - (size_t)used,
+                           "%s'%s'", expected_triggers ? "," : "", name);
+    if (written < 0 || (size_t)written >= sizeof trigger_query - (size_t)used)
+      return 0;
+    used += written;
+    expected_triggers++;
+  }
+  if (expected_triggers == 0)
+    return 0;
+  int closing = snprintf(trigger_query + used,
+                         sizeof trigger_query - (size_t)used, ");");
+  if (closing < 0 || (size_t)closing >= sizeof trigger_query - (size_t)used)
+    return 0;
   sqlite3_int64 triggers = 0;
-  if (baton_sql_scalar_int(db, "SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name LIKE 'native_changes_%';", &triggers) != SQLITE_OK || triggers != expected_triggers)
+  if (baton_sql_scalar_int(db, trigger_query, &triggers) != SQLITE_OK || triggers != expected_triggers)
     return 0;
   sqlite3_int64 schema_version = 0;
   if (baton_sql_scalar_int(db, "PRAGMA schema_version;", &schema_version) != SQLITE_OK)

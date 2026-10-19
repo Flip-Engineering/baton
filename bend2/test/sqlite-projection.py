@@ -179,6 +179,31 @@ class SqliteProjection(unittest.TestCase):
         finally:
             self.stop(holder)
 
+    def test_module_native_change_trigger_does_not_force_reinstall(self):
+        self.assertEqual(self.install().returncode, 0)
+        conn = sqlite3.connect(self.db)
+        try:
+            conn.execute(
+                "CREATE TRIGGER native_changes_requests_insert "
+                "AFTER INSERT ON messages BEGIN SELECT 1; END")
+            conn.commit()
+        finally:
+            conn.close()
+        # The external DDL invalidates the marker; the next install refreshes it.
+        self.assertEqual(self.install().returncode, 0)
+        self.assertEqual(self.query(
+            "SELECT count(*) FROM sqlite_master WHERE type='trigger' "
+            "AND name='native_changes_requests_insert'"), 1)
+        state = self.install('state')
+        self.assertIn('current=1', state.stdout)
+        holder = self.hold('hold')
+        try:
+            result = self.install('install-busy', timeout=5)
+            self.assertEqual(result.returncode, 0,
+                             result.stdout + result.stderr)
+        finally:
+            self.stop(holder)
+
     def test_lock_lifecycle_reserved_reads_commit_conflict(self):
         self.assertEqual(self.install().returncode, 0)
         writer = sqlite3.connect(self.db, timeout=0, isolation_level=None)
