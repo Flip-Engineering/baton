@@ -264,6 +264,40 @@ def facts_database_or_unknown(+facts: T.Facts) -> T.Presence:
   match facts:
     case T.Facts{owner, database, lease, process, dirty, unpublished, runtime_input, ref, pending_attempt}: database
 
+def storage_apply_refused(result: Result<&1,&1,U32 & String,List<T.Receipt>>) -> Bool:
+  match result:
+    case Fail{error}:
+      (code, detail) = error
+      String.starts_with(detail, "storage apply refused: cooperative root writer lease protocol is unavailable")
+    case Done{receipts}: False{}
+
+def spawned_writer_apply_refusal(result: Result<&1,&1,U32 & String,U32>, +db: String, +dir: String, +file: String) -> IO(Unit):
+  match result:
+    case Fail{error}: IO.die(Unit, 1, "writer fixture spawn failed")
+    case Done{+handle}:
+      do IO<Unit>:
+        slept : Unit <- IO.sleep(100)
+        +specs : List<&2,L.RootSpec> <- L.configured_roots()
+        +exclusive : List<&2,String> <- L.configured_exclusive()
+        +unproven : String = L.unproven_roots(specs, exclusive, "")
+        config : Unit <- check("writer-root-declared", String.is_empty(unproven), unproven)
+        applied : Result<&1,&1,U32 & String,List<T.Receipt>> <- L.apply_session(db, "owner")
+        refused : Unit <- check("apply-refuses-with-writer", storage_apply_refused(applied), "writer lease refusal missing")
+        observed : O.Observation <- O.observe(file)
+        kept : Unit <- check("writer-target-preserved", O.observation_is_found(observed), "writer target was removed")
+        signaled : Unit <- IO.try(Unit, Proc.ProcessChild.signal(handle, 15))
+        waited : String <- IO.try(String, Proc.ProcessChild.wait(handle))
+        IO.pure(Unit, Unit{})
+
+def writer_lease_check(+db: String, +root: String) -> IO(Unit):
+  do IO<Unit>:
+    +dir : String = root ++ "/storage-lease"
+    made : Unit <- IO.try(Unit, F.Files.mkdir(dir))
+    +file : String = dir ++ "/writer-owned.txt"
+    wrote : Unit <- write_file(file, "keep")
+    spawned : Result<&1,&1,U32 & String,U32> <- Proc.ProcessChild.spawn(Proc.argv(["/bin/sh", "-c", held_file_script(file), "sh", file]), ".", dir ++ "/writer.stderr")
+    spawned_writer_apply_refusal(spawned, db, dir, file)
+
 def database_checks(+db: String, +root: String) -> IO(Unit):
   do IO<Unit>:
     +dir : String = root ++ "/database-protected"
@@ -543,6 +577,7 @@ def main() -> IO(Unit):
     +db : String = ".scratch/bend2-storage-test.db"
     setup : Unit <- setup_root(root)
     database : Unit <- db_setup(db, root)
+    writer_lease : Unit <- writer_lease_check(db, root)
     pure : Unit <- pure_checks()
     process : Unit <- process_checks(root)
     dbpaths : Unit <- database_checks(db, root)

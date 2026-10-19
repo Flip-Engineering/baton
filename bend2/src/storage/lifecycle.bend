@@ -349,22 +349,17 @@ def apply_locked(+session: String, +db: String, specs: List<&2,RootSpec>, lock: 
         released : Unit <- IO.try(Unit, Lock.SessionLock.release(handle))
         IO.pure(Result<&1,&1,U32 & String,List<T.Receipt>>, Done{receipts})
 
+def roots_empty(specs: List<&2,RootSpec>) -> Bool:
+  match specs:
+    case Nil{}: True{}
+    case Con{head, tail}: False{}
+
 def apply_session(+db: String, +session: String) -> IO(Result<&1,&1,U32 & String,List<T.Receipt>>):
   do IO<Result<&1,&1,U32 & String,List<T.Receipt>>>:
-    +specs : List<&2,RootSpec> <- configured_roots()
-    exclusive : List<&2,String> <- configured_exclusive()
-    +unproven : String = unproven_roots(specs, exclusive, "")
-    answer : Result<&1,&1,U32 & String,List<T.Receipt>> <- Bool.pick(IO(Result<&1,&1,U32 & String,List<T.Receipt>>), Bool.not(String.is_empty(unproven)),
-      IO.pure(Result<&1,&1,U32 & String,List<T.Receipt>>, Fail{(3, "storage apply refused: no exclusive writer coordination for " ++ unproven)}),
-      do IO<Result<&1,&1,U32 & String,List<T.Receipt>>>:
-        overlap : Bool = roots_overlap(specs)
-        Bool.pick(IO(Result<&1,&1,U32 & String,List<T.Receipt>>), overlap,
-          IO.pure(Result<&1,&1,U32 & String,List<T.Receipt>>, Fail{(3, "storage roots overlap")}),
-          do IO<Result<&1,&1,U32 & String,List<T.Receipt>>>:
-            lock : Maybe<U32> <- IO.try(Maybe<U32>, Lock.SessionLock.try_acquire(db, "storage-cleanup"))
-            result : Result<&1,&1,U32 & String,List<T.Receipt>> <- apply_locked(session, db, specs, lock)
-            IO.pure(Result<&1,&1,U32 & String,List<T.Receipt>>, result)))
-    IO.pure(Result<&1,&1,U32 & String,List<T.Receipt>>, answer)
+    specs : List<&2,RootSpec> <- configured_roots()
+    Bool.pick(IO(Result<&1,&1,U32 & String,List<T.Receipt>>), roots_empty(specs),
+      IO.pure(Result<&1,&1,U32 & String,List<T.Receipt>>, Done{Nil{}}),
+      IO.pure(Result<&1,&1,U32 & String,List<T.Receipt>>, Fail{(3, "storage apply refused: cooperative root writer lease protocol is unavailable")}))
 
 def receipt_append_choice(empty: Bool, +acc: String, head: T.Receipt) -> String:
   match empty:
