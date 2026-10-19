@@ -73,6 +73,7 @@ class NativeSuiteCleanupTest(unittest.TestCase):
     def make_repository(self, root):
         (root / 'bend2/test').mkdir(parents=True)
         (root / '.scratch/bend2').mkdir(parents=True)
+        (root / '.gitignore').write_text('.scratch/\n')
         (root / 'bend2/test/one.py').write_text('print("fixture")\n')
         for name in ('baton2', 'process-test', 'process-test.c', 'instance-test',
                      'git-test', 'land-test'):
@@ -81,7 +82,7 @@ class NativeSuiteCleanupTest(unittest.TestCase):
         subprocess.run(['git', '-C', str(root), 'config', 'user.name', 'Fixture'], check=True)
         subprocess.run(['git', '-C', str(root), 'config', 'user.email',
                         'fixture@example.invalid'], check=True)
-        subprocess.run(['git', '-C', str(root), 'add', 'bend2'], check=True)
+        subprocess.run(['git', '-C', str(root), 'add', '.gitignore', 'bend2'], check=True)
         subprocess.run(['git', '-C', str(root), 'commit', '-q', '-m', 'fixture'], check=True)
 
     def run_main_fixture(self, root, environment, return_code, remaining_process_group=False):
