@@ -1123,6 +1123,10 @@ class SharedInstance(unittest.TestCase):
         old_birth = (directory / 'native.birth').read_bytes()
         owners = self.owner_processes()
         self.assertEqual(len(owners), 1, owners)
+        old_owner = int(owners[0].split()[0])
+        if sys.platform.startswith('linux'):
+            self.assertEqual(len(self.inotify_instances(old_owner) or []), 1)
+        ticks_before = (directory / 'stdout').read_text(errors='replace').count('tick:')
 
         original.send_signal(signal.SIGTERM)
         original.wait()
@@ -1135,6 +1139,8 @@ class SharedInstance(unittest.TestCase):
         current_witness = self.command('ensure-owner-witness', self.db).stdout.strip()
         self.assertRegex(current_witness, r'^\d+:\d+$')
         self.assertNotEqual(current_witness, old_witness)
+        new_owner = self.owner_pid()
+        self.assertNotEqual(new_owner, old_owner)
         nested = self.home / 'wrong-parent'
         nested.mkdir()
         misplaced = nested / 'managed-owner-recovery'
@@ -1171,6 +1177,12 @@ class SharedInstance(unittest.TestCase):
         self.assertEqual(json.loads(native_line[len('recovery-line:'):])['pid'], pid)
         self.assertEqual((directory / 'stdout').read_text(errors='replace').count('"role": "native"'),
                          1, 'recovery launched a second native process')
+        if sys.platform.startswith('linux'):
+            self.eventually(lambda: len(self.inotify_instances(new_owner) or []) == 1,
+                            'the replacement owner did not open one shared inotify instance')
+        self.eventually(
+            lambda: (directory / 'stdout').read_text(errors='replace').count('tick:') > ticks_before,
+            'the recovered attempt did not emit later output')
 
         rebound_owners = self.owner_processes()
         self.assertEqual(len(rebound_owners), 1, rebound_owners)
