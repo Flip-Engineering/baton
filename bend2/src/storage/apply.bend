@@ -118,11 +118,20 @@ def refresh_facts(refresh: Refresh, +entry: T.Entry) -> IO(T.Facts):
         facts : T.Facts <- S.facts_for(entry_class(entry), source, entry_path(entry), state)
         IO.pure(T.Facts, facts)
 
+def apply_observed_admitted(+entry: T.Entry, +refresh: Refresh, +observed: O.Observation) -> IO(T.Removal):
+  match observed:
+    case O.Missing{path}: IO.pure(T.Removal, removal(entry, T.AlreadyAbsent{}))
+    case O.Unreadable{path, detail}: IO.pure(T.Removal, removal(entry, T.Refused{detail}))
+    case O.Found{path, kind, device, inode, bytes}:
+      do IO<T.Removal>:
+        facts : T.Facts <- refresh_facts(refresh, entry)
+        answer : T.Removal <- fresh_apply(entry, facts, refresh)
+        IO.pure(T.Removal, answer)
+
 def apply_admitted(+entry: T.Entry, +refresh: Refresh) -> IO(T.Removal):
   do IO<T.Removal>:
-    facts : T.Facts <- refresh_facts(refresh, entry)
-    answer : T.Removal <- fresh_apply(entry, facts, refresh)
-    IO.pure(T.Removal, answer)
+    observed : O.Observation <- O.observe(entry_path(entry))
+    apply_observed_admitted(entry, refresh, observed)
 
 def path_under(+path: String, +parent: String) -> Bool:
   Bool.pick(Bool, String.is_empty(parent), False{}, Bool.or(String.eq(path, parent), String.starts_with(path, parent ++ "/")))
