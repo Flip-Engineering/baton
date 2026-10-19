@@ -276,7 +276,8 @@ class Process(unittest.TestCase):
             if observer.stderr:
                 observer.stderr.close()
 
-    def test_legacy_unknown_observer_transfer_reopens_spool_without_ack(self):
+    @unittest.skipUnless(sys.platform.startswith('linux'), 'Linux pidfd zombie lifetime')
+    def test_legacy_unknown_observer_zombie_transfer_reopens_spool_without_ack(self):
         (self.runtime / 'baton2').mkdir(parents=True, mode=0o700)
         database = self.cwd / 'state.db'
         database.touch()
@@ -451,13 +452,25 @@ class Process(unittest.TestCase):
             self.assertIsNone(observer.poll(), 'wrong executable binding retired the observer')
             self.assertEqual(server_events, [('initial-peer', observer.pid)])
             (attempt / 'manifest').write_bytes(manifest_bytes)
+            os.kill(observer.pid, signal.SIGKILL)
+            deadline = time.monotonic() + 5
+            state = ''
+            while time.monotonic() < deadline:
+                stat_path = pathlib.Path('/proc', str(observer.pid), 'stat')
+                if not stat_path.exists():
+                    break
+                state = stat_path.read_text().rsplit(')', 1)[1].split()[0]
+                if state == 'Z':
+                    break
+                time.sleep(0.01)
+            self.assertEqual(state, 'Z', 'observer did not remain an unreaped zombie')
             recovery = subprocess.run(
                 [str(EXE), 'recover-probe', str(database), str(attempt), str(observer.pid)],
                 text=True, capture_output=True, env=self.environment, timeout=20)
             self.assertEqual(recovery.returncode, 0, recovery.stderr)
             self.assertIn('probe:legacy-output', recovery.stdout)
             self.assertIn('probe-custody-open', recovery.stdout)
-            self.assertEqual(observer.wait(timeout=10), -signal.SIGTERM)
+            self.assertEqual(observer.wait(timeout=10), -signal.SIGKILL)
             server.join(timeout=6)
             self.assertFalse(server.is_alive(), 'legacy keeper fixture did not close')
             self.assertEqual(server_errors, [])

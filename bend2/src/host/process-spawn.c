@@ -685,16 +685,23 @@ static int br_process_lifetime(pid_t pid,int *ended) {
   int fd=(int)syscall(SYS_pidfd_open,pid,0);
   if(fd<0){if(errno==ESRCH)*ended=1;return -1;}
   fcntl(fd,F_SETFD,FD_CLOEXEC);
+  struct pollfd observed={fd,POLLIN,0};
+  int ready;do {ready=poll(&observed,1,0);}while(ready<0 && errno==EINTR);
+  if(ready<0){int error=errno;close(fd);errno=error;return -1;}
+  if(ready && (observed.revents&(POLLIN|POLLHUP|POLLERR))) {
+    close(fd);*ended=1;errno=ESRCH;return -1;
+  }
 #endif
   return fd;
 }
 /* A live observer must match the executable recorded in this attempt's
    recovery argv. The keeper separately binds its PID to the connected peer birth. */
-static int br_process_matches_executable(pid_t pid,const char *expected) {
+static int br_process_matches_executable(pid_t pid,const char *expected,int life,int *ended) {
   if(!expected || !*expected || expected[0]!='/')return EINVAL;
   char *recorded=realpath(expected,NULL);
   if(!recorded)return errno;
 #ifdef __APPLE__
+  (void)life;(void)ended;
   char target[PROC_PIDPATHINFO_MAXSIZE];
   int length=proc_pidpath(pid,target,sizeof(target));
   if(length<=0){int error=errno?errno:ESRCH;free(recorded);return error;}
@@ -713,6 +720,14 @@ static int br_process_matches_executable(pid_t pid,const char *expected) {
   else if(stat(target,&observed_info))error=errno;
   else if(expected_info.st_dev!=observed_info.st_dev ||
           expected_info.st_ino!=observed_info.st_ino)error=ESTALE;
+  if(error==ENOENT || error==ESRCH) {
+    struct pollfd observed={life,POLLIN,0};
+    int ready;do {ready=poll(&observed,1,0);}while(ready<0 && errno==EINTR);
+    if(ready<0)error=errno;
+    else if(ready && (observed.revents&(POLLIN|POLLHUP|POLLERR))) {
+      *ended=1;error=0;
+    }
+  }
   free(recorded);return error;
 #endif
 }
@@ -5748,8 +5763,13 @@ static int baton_observer_completed(BatonSessionLock *call) {
   }
   char **recovery=br_argv(manifest.field[4],(size_t)manifest.header.lengths[4]);
   if(!error && !recovery)error=EINVAL;
+  if(!error && !call->observer_ended && call->observer_life<0) {
+    call->observer_life=br_process_lifetime((pid_t)call->observer,&call->observer_ended);
+    if(call->observer_life<0 && !call->observer_ended)error=errno;
+  }
   if(!error && !call->observer_ended)
-    error=br_process_matches_executable((pid_t)call->observer,recovery[0]);
+    error=br_process_matches_executable((pid_t)call->observer,recovery[0],
+                                        call->observer_life,&call->observer_ended);
   free(recovery);
   struct sockaddr_un address;
   if(!error)error=br_socket_address(&address,manifest.field[5]);
@@ -5811,8 +5831,10 @@ static int baton_observer_retire(BatonSessionLock *call) {
 static int baton_observer_recover(BatonSessionLock *call) {
   int error=baton_observer_completed(call);
   if(error)return error;
-  call->observer_life=br_process_lifetime((pid_t)call->observer,&call->observer_ended);
-  if(call->observer_life<0 && !call->observer_ended)return errno;
+  if(call->observer_life<0 && !call->observer_ended) {
+    call->observer_life=br_process_lifetime((pid_t)call->observer,&call->observer_ended);
+    if(call->observer_life<0 && !call->observer_ended)return errno;
+  }
 #if defined(__linux__) && defined(SYS_pidfd_send_signal)
   if(!call->observer_ended &&
      syscall(SYS_pidfd_send_signal,call->observer_life,0,NULL,0)<0) {
@@ -5839,7 +5861,7 @@ static int baton_observer_recover(BatonSessionLock *call) {
          mean another live observer still holds the connection. Adopt only
          after the recorded observer has ended, so a second reader never
          repeats the live observer's database writes. */
-      if(!br_process_dead((pid_t)call->observer))
+      if(!call->observer_ended)
         error=EBUSY;
       else {
         error=br_guard_lock((int)call->handle);
@@ -5858,7 +5880,7 @@ static int baton_observer_recover(BatonSessionLock *call) {
     else if(call->legacy_unknown &&
             (error==EPROTO || error==EPIPE || error==ECONNRESET ||
              error==ENOENT || error==ECONNREFUSED)) {
-      error=br_process_dead((pid_t)call->observer)?
+      error=call->observer_ended?
         br_adopt_orphan(&call->attempt,call->directory,(int)call->handle):EBUSY;
     }
     if(error==EBUSY)call->detail="Another observer holds the retained attempt; inspect its current receive.";
@@ -5886,7 +5908,7 @@ static int baton_observer_recover(BatonSessionLock *call) {
   }
   if(call->attempt.child->retained)return 0;
   if(call->legacy_unknown) {
-    if(!br_process_dead((pid_t)call->observer)) {
+    if(!call->observer_ended) {
       call->detail="Another observer holds the retained attempt; inspect its current receive.";
       return EBUSY;
     }
