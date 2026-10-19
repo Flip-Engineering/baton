@@ -556,6 +556,13 @@ def reset_exhausted_sql(+session: String, +harness: String, +provider: String, +
 def reset_answer_sql(+session: String, +account: String, +count: String, +value: String, +source: String) -> String:
   "SELECT json_object('schema','baton2-usage-window-reset-v1','session'," ++ C.q(session) ++ ",'account'," ++ C.q(account) ++ ",'recorded',CAST(" ++ C.q(count) ++ " AS INTEGER),'resetsAt'," ++ value ++ ",'source'," ++ C.q(source) ++ ");"
 
+def reset_exhausted_after_count(+db: String, +session: String, +account: String, +value: String, +source: String, count: String) -> IO(Unit):
+  match count:
+    case "0": IO.die(Unit,2,"No exhausted usage window is recorded for this session's route and account; read usage-windows before recording a reset.")
+    case other: do IO<Unit>:
+      +answer : String <- IO.try(String,DB.Sql.read(db,reset_answer_sql(session,account,other,value,source)))
+      IO.print(Tx.trim_nl(answer))
+
 def reset_exhausted(+db: String, +session: String, +resets: String, +source: String, +account: String) -> IO(Unit):
   do IO<Unit>:
     +found : String <- IO.try(String,Store.read(db,C.Session{session}))
@@ -567,11 +574,7 @@ def reset_exhausted(+db: String, +session: String, +resets: String, +source: Str
     +model : String <- IO.try(String,DB.Sql.read(db,"SELECT model FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
     +saved : String <- IO.try(String,DB.Sql.query(db,reset_exhausted_sql(session,Tx.trim_nl(harness),provider_of(Tx.trim_nl(model)),account,value,source)))
     +count : String <- IO.pure(String,Tx.trim_nl(saved))
-    match count:
-      case "0": IO.die(Unit,2,"No exhausted usage window is recorded for this session's route and account; read usage-windows before recording a reset.")
-      case other: do IO<Unit>:
-        +answer : String <- IO.try(String,DB.Sql.read(db,reset_answer_sql(session,account,other,value,source)))
-        IO.print(Tx.trim_nl(answer))
+    reset_exhausted_after_count(db,session,account,value,source,count)
 
 # --- the post-reset continuation ---------------------------------------------
 #
