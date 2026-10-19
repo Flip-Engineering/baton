@@ -287,6 +287,10 @@ def launch(args):
         stdout.close()
         stderr.close()
         stop_process_group(process.pid)
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pass
     launcher = {'process_group': process.pid, 'argv': argv, 'exit_code': code,
                 'stdout_sha256': digest(run / 'evidence' / 'scope.stdout'),
                 'stderr_sha256': digest(run / 'evidence' / 'scope.stderr')}
