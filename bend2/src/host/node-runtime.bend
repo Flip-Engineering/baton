@@ -52,7 +52,7 @@ def bundled_result(executable: String, found: Result<&1,&1,U32 & String,String>)
     case Done{value}: IO.pure(Result<&1,&1,U32 & String,String>,Done{value})
     case Fail{error}: path_runtime(executable)
 
-def bundled_runtime(executable: String) -> IO(Result<&1,&1,U32 & String,String>):
+def bundled_runtime(+executable: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
     found : Result<&1,&1,U32 & String,String> <- Host.Control.command(directory(executable) ++ "../libexec/baton2/repl/bun")
     bundled_result(executable,found)
@@ -62,7 +62,7 @@ def sibling_result(executable: String, found: Result<&1,&1,U32 & String,String>)
     case Done{value}: IO.pure(Result<&1,&1,U32 & String,String>,Done{value})
     case Fail{error}: bundled_runtime(executable)
 
-def sibling_runtime(executable: String) -> IO(Result<&1,&1,U32 & String,String>):
+def sibling_runtime(+executable: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
     found : Result<&1,&1,U32 & String,String> <- Host.Control.command(directory(executable) ++ "node")
     sibling_result(executable,found)

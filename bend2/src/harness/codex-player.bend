@@ -1,5 +1,6 @@
 import Base
 import ../host/process.bend as P
+import ../host/session-lock.bend as Lock
 import ../host/node-runtime.bend as NodeRuntime
 import ../json/canonical.bend as J
 import ../git/process.bend as Process
