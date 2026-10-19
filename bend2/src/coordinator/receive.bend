@@ -465,7 +465,7 @@ def consume_completed(+db: String, session: String, attempt: String, native: Str
   match success:
     case False{}: IO.pure(Unit,Unit{})
     case True{}: do IO<Unit>:
-      delivered : String <- completion_cursor(db,handle,initial_cursor)
+      delivered : String <- completion_cursor(db,handle,"0")
       consumed : Unit <- AgentInput.consume_delivered(db,session,attempt,native,initial_cursor,delivered)
       IO.pure(Unit,Unit{})
 
