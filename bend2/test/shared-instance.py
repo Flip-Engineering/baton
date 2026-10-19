@@ -54,17 +54,22 @@ print("terminal",flush=True)
 
 
 SURVIVOR = r'''import json,os,sys,threading,time
-print(json.dumps({"role":"native","pid":os.getpid(),"ppid":os.getppid()}),flush=True)
+lock=threading.Lock()
+def emit(text):
+    with lock:
+        sys.stdout.write(text+"\n")
+        sys.stdout.flush()
+emit(json.dumps({"role":"native","pid":os.getpid(),"ppid":os.getppid()}))
 def drain():
     try:
         for line in sys.stdin:
-            print("echo:"+line.rstrip("\n"),flush=True)
+            emit("echo:"+line.rstrip("\n"))
     except Exception:
         pass
 threading.Thread(target=drain,daemon=True).start()
 count=0
 while True:
-    print("tick:%d"%count,flush=True)
+    emit("tick:%d"%count)
     count+=1
     time.sleep(1)
 '''
@@ -265,6 +270,17 @@ class SharedInstance(unittest.TestCase):
         return [line for line in result.stdout.splitlines()
                 if '--instance-owner' in line and str(self.home) in line]
 
+    def inotify_instances(self, pid):
+        descriptors = pathlib.Path('/proc') / str(pid) / 'fd'
+        count = 0
+        for entry in descriptors.iterdir():
+            try:
+                if os.readlink(entry).startswith('anon_inode:inotify'):
+                    count += 1
+            except OSError:
+                continue
+        return count
+
     def write(self, directory, text):
         path = self.home / 'control.payload'
         path.write_text(text)
@@ -351,6 +367,56 @@ class SharedInstance(unittest.TestCase):
         self.assertEqual(parents, {owner_pid}, (owners, summaries))
         print('evidence owner', owners[0].strip())
         print('evidence natives', [summary['pid'] for summary in summaries])
+
+    def test_many_attempts_share_one_spool_watch_instance(self):
+        attempts = 12
+        runs = []
+        for index in range(attempts):
+            directory = pathlib.Path(f'{self.db}.attempt-watch-{index}')
+            child = self.spawn('admit', self.db, f'watch-{index}', directory, self.home,
+                               f'hello-{index}\n', sys.executable, self.survivor)
+            runs.append((directory, child))
+        summaries = []
+        for index, (directory, child) in enumerate(runs):
+            seen = set()
+            summary = None
+            while ('admitted' not in seen or f'echo:hello-{index}' not in seen or
+                   not any(value.startswith('tick:') for value in seen)):
+                value = self.next_line(child)
+                seen.add(value)
+                if value.startswith('{'):
+                    summary = json.loads(value)
+            self.assertIsNotNone(summary, seen)
+            summaries.append(summary)
+            self.assertFalse((directory / 'status').exists(),
+                             'a live attempt must not synthesize a status')
+            self.assertFalse((directory / 'acknowledged').exists(),
+                             'a live attempt must not synthesize an acknowledgment')
+            self.assertFalse((directory / 'released').exists(),
+                             'a live attempt must not synthesize a release')
+        def stop_natives():
+            for summary in summaries:
+                try:
+                    os.kill(summary['pid'], signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+        self.addCleanup(stop_natives)
+        owners = self.owner_processes()
+        self.assertEqual(len(owners), 1, owners)
+        owner_pid = int(owners[0].split()[0])
+        instances = self.inotify_instances(owner_pid)
+        print('evidence spool-watch', json.dumps({
+            'attempts': attempts, 'owner_pid': owner_pid,
+            'inotify_instances': instances,
+            'native_ppids': sorted({summary['ppid'] for summary in summaries})}))
+        self.assertEqual(instances, 1,
+                         f'{attempts} live attempts kept {instances} inotify instances')
+        self.assertEqual({summary['ppid'] for summary in summaries}, {owner_pid})
+        for index, (_, child) in enumerate(runs):
+            lines = {line.strip() for line in child.output}
+            for other in range(attempts):
+                if other != index:
+                    self.assertNotIn(f'echo:hello-{other}', lines)
 
     def test_second_owner_for_one_database_is_refused(self):
         directory, child = self.begin('a0')

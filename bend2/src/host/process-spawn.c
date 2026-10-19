@@ -404,7 +404,7 @@ typedef struct BrKeeper {
   struct BrKeeper *next;
   uint32_t id;
   uint64_t identity;
-  int listener,client,input,lock,watch,wake[2],spool,native_life,finishing,change_queued;
+  int listener,client,input,lock,watch,watch_wd,wake[2],spool,native_life,finishing,change_queued;
   pid_t client_pid;
   BrBirth client_birth;
   int client_birth_set;
@@ -1687,13 +1687,77 @@ static void br_watch_drain(int fd) {
   char events[4096];while(read(fd,events,sizeof(events))>0) {}
 #endif
 }
+#ifndef __APPLE__
+/* One inotify instance serves every spool watch in this process, so the per-UID
+   instance limit scales with processes instead of retained attempts. Each
+   attempt adds one watch descriptor to the shared instance. */
+static int br_spool_watch_fd=-1;
+static size_t br_spool_watch_users=0;
+
+static int br_spool_watch_open(const char *path,int *descriptor) {
+  if(br_spool_watch_fd<0) {
+    br_spool_watch_fd=inotify_init1(IN_NONBLOCK|IN_CLOEXEC);
+    if(br_spool_watch_fd<0)return errno;
+  }
+  int added=inotify_add_watch(br_spool_watch_fd,path,IN_MODIFY|IN_CLOSE_WRITE);
+  if(added<0) {
+    int error=errno;
+    if(!br_spool_watch_users){close(br_spool_watch_fd);br_spool_watch_fd=-1;}
+    return error;
+  }
+  *descriptor=added;br_spool_watch_users++;
+  return 0;
+}
+static void br_spool_watch_close(int *descriptor) {
+  if(*descriptor<0)return;
+  if(br_spool_watch_fd>=0)inotify_rm_watch(br_spool_watch_fd,*descriptor);
+  *descriptor=-1;
+  if(br_spool_watch_users && !--br_spool_watch_users) {
+    close(br_spool_watch_fd);br_spool_watch_fd=-1;
+  }
+}
+/* Queues one coalesced change for the attempt whose watch descriptor the shared
+   instance reports. The remaining attempts on the instance stay untouched. */
+static int br_spool_watch_dispatch(BrOwner *owner) {
+  union {struct inotify_event event;char bytes[8192];} buffer;
+  for(;;) {
+    ssize_t length=read(br_spool_watch_fd,buffer.bytes,sizeof(buffer.bytes));
+    if(length<0 && errno==EINTR)continue;
+    if(length<0 && errno==EAGAIN)return 0;
+    if(length<=0)return length<0?errno:0;
+    size_t offset=0;
+    while(offset+sizeof(struct inotify_event)<=(size_t)length) {
+      struct inotify_event *event=(struct inotify_event *)(buffer.bytes+offset);
+      size_t next=sizeof(*event)+(size_t)event->len;
+      if(next>(size_t)length-offset)break;
+      if(event->mask&(IN_MODIFY|IN_CLOSE_WRITE)) {
+        for(BrKeeper *keeper=owner->attempts;keeper;keeper=keeper->next) {
+          if(keeper->watch_wd!=event->wd)continue;
+          if(!keeper->change_queued && keeper->client>=0 && keeper->ready) {
+            int error=br_send(keeper,(BrFrame){.op=BR_CHANGE},NULL);
+            if(error)return error;
+            keeper->outgoing_tail->change=1;keeper->change_queued=1;
+          }
+          break;
+        }
+      }
+      offset+=next;
+    }
+  }
+}
+#endif
 /* Releases one attempt's descriptors, buffers and record. It runs after the
    attempt's last observer and control connection has finished, and never
    touches another attempt's state. */
 static void br_keeper_stop(BrKeeper *keeper) {
   if(keeper->client>=0)close(keeper->client);if(keeper->listener>=0)close(keeper->listener);
   if(keeper->input>=0)close(keeper->input);if(keeper->lock>=0)close(keeper->lock);
-  if(keeper->watch>=0)close(keeper->watch);if(keeper->spool>=0)close(keeper->spool);
+#ifdef __APPLE__
+  if(keeper->watch>=0)close(keeper->watch);
+#else
+  br_spool_watch_close(&keeper->watch_wd);
+#endif
+  if(keeper->spool>=0)close(keeper->spool);
   if(keeper->native_life>=0)close(keeper->native_life);
   if(keeper->wake[0]>=0)close(keeper->wake[0]);if(keeper->wake[1]>=0)close(keeper->wake[1]);
   while(keeper->controls) {
@@ -1810,8 +1874,13 @@ static int br_keeper_prepare(BrKeeper *keeper,const char *directory,int lock) {
     }
   }
   if(keeper->spool<0){error=path?errno:ENOMEM;free(path);return error;}
+#ifdef __APPLE__
   keeper->watch=br_watch_file(keeper->spool,path);free(path);
   if(keeper->watch<0)return errno;
+#else
+  error=br_spool_watch_open(path,&keeper->watch_wd);free(path);
+  if(error)return error;
+#endif
   if((error=baton_pipe(keeper->wake)))return error;
   keeper->prepared=1;
   return 0;
@@ -2341,7 +2410,7 @@ static int br_owner_admit(BrOwner *owner,const char *directory,int lock,int *exi
     BrKeeper *keeper=calloc(1,sizeof(*keeper));
     if(!keeper)error=ENOMEM;
     else {
-      *keeper=(BrKeeper){.listener=-1,.client=-1,.input=-1,.lock=lock,.watch=-1,
+      *keeper=(BrKeeper){.listener=-1,.client=-1,.input=-1,.lock=lock,.watch=-1,.watch_wd=-1,
         .wake={-1,-1},.spool=-1,.native_life=-1,.generation=1,.id=++owner->next_id};
       keeper->directory=resolved;resolved=NULL;
       error=start_now?br_keeper_start(keeper,directory,lock):br_keeper_prepare(keeper,directory,lock);
@@ -2704,7 +2773,11 @@ static int br_owner_loop(BrOwner *owner) {
       slots++;link=&keeper->next;
     }
     if(owner->finishing && !owner->attempts)return 0;
-    size_t head=owner->listener>=0?1:0,total=head+owner_controls+slots*6+attempt_controls;
+    size_t shared=0;
+#ifndef __APPLE__
+    if(br_spool_watch_fd>=0)shared=1;
+#endif
+    size_t head=owner->listener>=0?1:0,total=head+owner_controls+slots*6+attempt_controls+shared;
     struct pollfd *fds=calloc(total?total:1,sizeof(*fds));
     BrOwnerControl **owner_clients=calloc(owner_controls?owner_controls:1,sizeof(*owner_clients));
     BrKeeper **keepers=calloc(slots?slots:1,sizeof(*keepers));
@@ -2714,7 +2787,7 @@ static int br_owner_loop(BrOwner *owner) {
     if(!fds || !owner_clients || !keepers || !clients || !bases || !apart) {
       free(fds);free(owner_clients);free(keepers);free(clients);free(bases);free(apart);return ENOMEM;
     }
-    size_t index=0;
+    size_t index=0,shared_index=0;
     if(head)fds[index++]=(struct pollfd){owner->listener,POLLIN,0};
     size_t owner_first=index;
     size_t owner_bound=0;
@@ -2736,6 +2809,9 @@ static int br_owner_loop(BrOwner *owner) {
         clients[bound++]=control,fds[index]=(struct pollfd){control->socket,POLLIN|(control->answered?POLLOUT:0),0};
     }
     apart[slots]=bound;
+#ifndef __APPLE__
+    if(shared){shared_index=index;fds[index++]=(struct pollfd){br_spool_watch_fd,POLLIN,0};}
+#endif
     int poll_timeout=-1;
     for(BrKeeper *keeper=owner->attempts;keeper;keeper=keeper->next)
       if(keeper->unwatched_recovery) {poll_timeout=100;break;}
@@ -2751,6 +2827,11 @@ static int br_owner_loop(BrOwner *owner) {
         control->next=owner->controls;owner->controls=control;
       } else if(errno!=EINTR && errno!=EAGAIN) {error=errno;goto polled;}
     }
+#ifndef __APPLE__
+    if(shared && fds[shared_index].revents&POLLIN) {
+      if((error=br_spool_watch_dispatch(owner)))goto polled;
+    }
+#endif
     for(size_t i=0;i<owner_bound;i++) {
       BrOwnerControl *control=owner_clients[i];
       size_t fd_index=owner_first+i;
@@ -2869,7 +2950,7 @@ static int br_owner_serve(const char *database) {
   return error;
 }
 static int br_keeper(const char *directory,int lock) {
-  BrKeeper keeper={.listener=-1,.client=3,.input=-1,.lock=lock,.watch=-1,.wake={-1,-1},.spool=-1,.native_life=-1,.generation=1};
+  BrKeeper keeper={.listener=-1,.client=3,.input=-1,.lock=lock,.watch=-1,.watch_wd=-1,.wake={-1,-1},.spool=-1,.native_life=-1,.generation=1};
   BrOwner owner={.listener=-1,.lock=-1,.single=1};
   BrState state={0,0,0,0,0};
   int error=0;
@@ -3476,7 +3557,7 @@ static int br_owner_recover(BrOwner *owner,const char *directory,const char *boo
     BrKeeper *keeper=calloc(1,sizeof(*keeper));
     if(!keeper)error=ENOMEM;
     else {
-      *keeper=(BrKeeper){.listener=-1,.client=-1,.input=-1,.lock=-1,.watch=-1,
+      *keeper=(BrKeeper){.listener=-1,.client=-1,.input=-1,.lock=-1,.watch=-1,.watch_wd=-1,
         .wake={-1,-1},.spool=-1,.native_life=life,.generation=1,
         .id=++owner->next_id,.native_pid=saved.pid,.exited=terminal,
         .status=terminal_status,.input_closed=1,.ready=1,.prepared=1,
@@ -3495,8 +3576,12 @@ static int br_owner_recover(BrOwner *owner,const char *directory,const char *boo
       struct stat spool_info;
       if(!error && fstat(keeper->spool,&spool_info))error=errno;
       if(!error && (!S_ISREG(spool_info.st_mode) || spool_info.st_uid!=geteuid()))error=EPERM;
+#ifdef __APPLE__
       if(!error)keeper->watch=br_watch_file(keeper->spool,spool);
       if(!error && keeper->watch<0)error=errno;
+#else
+      if(!error)error=br_spool_watch_open(spool,&keeper->watch_wd);
+#endif
       free(spool);
       if(!error)error=baton_pipe(keeper->wake);
       if(error)br_keeper_stop(keeper);
