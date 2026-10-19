@@ -1115,9 +1115,9 @@ law completion_delivery_checks_the_upstream_recipient:
   for id: String
   for log: String
   for outcome: Turn.Outcome
-  {Turn.finish(db,player,id,log,outcome) == (do IO<Result<&1,&1,U32 & String,Unit>>:
+  {Turn.finish(db,player,id,log,outcome,False{}) == (do IO<Result<&1,&1,U32 & String,Unit>>:
     recipient : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ C.report_recipient(C.q(player)) ++ " IS NOT NULL;"))
-    Turn.finish_parent(db,player,id,log,outcome,String.eq(recipient,"1\n"))) : IO(Result<&1,&1,U32 & String,Unit>)}
+    Turn.finish_parent(db,player,id,log,outcome,String.eq(recipient,"1\n"),False{})) : IO(Result<&1,&1,U32 & String,Unit>)}
 
 def completion_delivery_checks_the_upstream_recipient(db,player,id,log,outcome):
   {==}

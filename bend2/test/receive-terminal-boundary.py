@@ -127,7 +127,7 @@ class ReceiveTerminalBoundary(RECEIVE.Receive):
         # admission first, and the same invocation then finds no pending input.
         self.action(original, body=report, hold_exit=True)
         self.assertEqual(json.loads(original.readline()), {'terminal_written': True})
-        self.assertEqual(self.coord(*self.receive_args('parent'))['status'], 'queued')
+        self.assertEqual(self.coord(*self.receive_args('parent'))['receive'], 'none')
         self.action(original, exit_fixture=True)
         arrivals = [self.accept('root'), *self.arrivals()]
         self.assertEqual(len(arrivals), 1, 'one root report produced one native call')

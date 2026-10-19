@@ -195,7 +195,11 @@ The receiver reads pending messages under session ownership and supervises the
 native turn through the Player harness code. The recipient reviews the input
 and acknowledges it with coordinator commands.
 
-A receiver that finds an active turn returns `queued`. The active supervisor
+The receive command prints one JSON object with the `receive` classification
+(`accepted`, `none` or `refused`), the session, the attempt admitted by this
+invocation, its recorded state, the selected receipt, the pending count and the
+error text. A refused admission prints the same object and exits nonzero. A
+receiver that finds an active turn reports `none`. The active supervisor
 releases ownership after native exit, then checks for newly pending input and
 invokes the receiver again. Reading after release covers messages committed
 while the previous turn was ending. Pending messages remain in the existing
