@@ -832,6 +832,8 @@ def m11_any_other_harness_input_reaches_the_claude_adapter(handle, prompt, level
   {==}
 
 law m2_omp_launch_reaches_the_omp_adapter:
+  for +db: String
+  for +player: String
   for +sessions: String
   for +cmd: String
   for +model: String
@@ -841,51 +843,60 @@ law m2_omp_launch_reaches_the_omp_adapter:
   for +stderr: String
   for +session: String
   for +task: String
-  {Turn.launch(sessions, cmd, model, effort, cwd, stderr, session, "omp\n", task) == Turn.omp_launch(sessions, cmd, model, effort, cwd, stderr, session) : IO(Result<&1,&1,U32 & String,U32>)}
+  {Turn.launch(db, player, sessions, cmd, model, effort, cwd, stderr, session, "omp\n", log, task) == Turn.omp_launch_configured(db, player, sessions, cmd, model, effort, cwd, stderr, session) : IO(Result<&1,&1,U32 & String,U32>)}
 
-def m2_omp_launch_reaches_the_omp_adapter(sessions, cmd, model, effort, cwd, stderr, session, task):
+def m2_omp_launch_reaches_the_omp_adapter(db, player, sessions, cmd, model, effort, cwd, stderr, session, log, task):
   {==}
 
 law m2_muse_launch_reaches_the_muse_adapter:
+  for +db: String
+  for +player: String
   for +sessions: String
   for +cmd: String
   for +model: String
   for +effort: String
   for +cwd: String
+  for +log: String
   for +stderr: String
   for +session: String
   for +task: String
-  {Turn.launch(sessions, cmd, model, effort, cwd, stderr, session, "muse\n", task) == Turn.muse_launch(cmd, model, effort, cwd, stderr, session, task, String.is_empty(session)) : IO(Result<&1,&1,U32 & String,U32>)}
+  {Turn.launch(db, player, sessions, cmd, model, effort, cwd, stderr, session, "muse\n", log, task) == Turn.muse_launch_configured(db, player, cmd, model, effort, cwd, stderr, session, task) : IO(Result<&1,&1,U32 & String,U32>)}
 
-def m2_muse_launch_reaches_the_muse_adapter(sessions, cmd, model, effort, cwd, stderr, session, task):
+def m2_muse_launch_reaches_the_muse_adapter(db, player, sessions, cmd, model, effort, cwd, stderr, session, log, task):
   {==}
 
 law m2_codex_launch_reaches_the_codex_adapter:
+  for +db: String
+  for +player: String
   for +sessions: String
   for +cmd: String
   for +model: String
   for +effort: String
   for +cwd: String
+  for +log: String
   for +stderr: String
   for +session: String
   for +task: String
-  {Turn.launch(sessions, cmd, model, effort, cwd, stderr, session, "codex\n", task) == Codex.start_player(cmd, model, effort, cwd, stderr, session, String.is_empty(session)) : IO(Result<&1,&1,U32 & String,U32>)}
+  {Turn.launch(db, player, sessions, cmd, model, effort, cwd, stderr, session, "codex\n", log, task) == Codex.start_player(cmd, model, effort, cwd, stderr, session, String.is_empty(session)) : IO(Result<&1,&1,U32 & String,U32>)}
 
-def m2_codex_launch_reaches_the_codex_adapter(sessions, cmd, model, effort, cwd, stderr, session, task):
+def m2_codex_launch_reaches_the_codex_adapter(db, player, sessions, cmd, model, effort, cwd, stderr, session, log, task):
   {==}
 
 law m2_any_other_harness_launch_reaches_the_claude_adapter:
+  for +db: String
+  for +player: String
   for +sessions: String
   for +cmd: String
   for +model: String
   for +effort: String
   for +cwd: String
+  for +log: String
   for +stderr: String
   for +session: String
   for +task: String
-  {Turn.launch(sessions, cmd, model, effort, cwd, stderr, session, "claude-code\n", task) == Turn.claude_launch(cmd, model, effort, cwd, stderr, session, String.is_empty(session)) : IO(Result<&1,&1,U32 & String,U32>)}
+  {Turn.launch(db, player, sessions, cmd, model, effort, cwd, stderr, session, "claude-code\n", log, task) == Turn.claude_launch(cmd, model, effort, cwd, stderr, session, String.is_empty(session)) : IO(Result<&1,&1,U32 & String,U32>)}
 
-def m2_any_other_harness_launch_reaches_the_claude_adapter(sessions, cmd, model, effort, cwd, stderr, session, task):
+def m2_any_other_harness_launch_reaches_the_claude_adapter(db, player, sessions, cmd, model, effort, cwd, stderr, session, log, task):
   {==}
 
 law m5_a_fresh_claude_turn_starts_a_session:

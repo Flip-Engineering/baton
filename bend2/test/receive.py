@@ -314,7 +314,7 @@ resume=(args[args.index('--session-id')+1] if '--session-id' in args else
         native_args[2] if native_args[:2]==['exec','resume'] else '')
 if config.get('record_launches'):
     with (home/'native-launches.jsonl').open('a') as launches:
-        launches.write(json.dumps({'pid':os.getpid(),'ppid':os.getppid(),'resume':resume,'args':args})+'\n')
+        launches.write(json.dumps({'pid':os.getpid(),'ppid':os.getppid(),'resume':resume,'args':args,'home':os.environ.get('HOME',''),'piAgentDir':os.environ.get('PI_CODING_AGENT_DIR',''),'xdgConfigHome':os.environ.get('XDG_CONFIG_HOME','')})+'\n')
 if omp and resume and resume==config.get('missing_resume'):
     print('Error: Session '+resume+' not found',file=sys.stderr,flush=True)
     sys.exit(1)
@@ -3744,6 +3744,54 @@ class Receive(unittest.TestCase):
         self.assertIn('provider-reported usage exhaustion: ' + cause, account_reports[0]['body'])
         self.assertEqual(self.coord('delivery', 'input')['receipt'], 'native-reviewed')
         self.assertEqual(self.coord('inbox', 'parent'), [])
+
+    def test_omp_profile_handoff_skips_the_unsupported_history_helper(self):
+        self.player('parent', harness='omp')
+        store_a = self.directory / 'omp-a'
+        store_b = self.directory / 'omp-b'
+        store_a.mkdir()
+        store_b.mkdir()
+        record = self.directory / ('state.db.profile-' + 'parent'.encode().hex())
+        (self.directory / 'state.db.profiles').write_text(
+            'omp A ' + str(store_a) + '\nomp B ' + str(store_b) + '\n')
+        record.write_text(' omp A ' + str(store_a) + '\n')
+        config_path = self.directory / 'fixture.json'
+        config = json.loads(config_path.read_text())
+        config['record_launches'] = True
+        config_path.write_text(json.dumps(config))
+        self.message('input', 'parent')
+        cause = ("You've reached your 5-hour usage limit. Your quota will reset when "
+                 "the current 5-hour window ends.")
+        failed = self.spawn(*self.receive_args('parent'))
+        control, original = self.accept('parent')
+        launches = [json.loads(line) for line in
+                    (self.directory / 'native-launches.jsonl').read_text().splitlines()]
+        self.assertEqual(launches[0]['piAgentDir'], str(store_a))
+        self.assertEqual(launches[0]['home'], os.environ.get('HOME', ''))
+        self.assertFalse([arg for arg in launches[0]['args'] if arg.startswith('HOME=')])
+        self.action(control, fail_status=429, fail_message=cause)
+        self.action(control, exit_fixture=True)
+        second, resumed = self.accept_or_child_exit(
+            failed, 'OMP profile handoff did not relaunch')
+        launches = [json.loads(line) for line in
+                    (self.directory / 'native-launches.jsonl').read_text().splitlines()]
+        self.assertEqual(len(launches), 2)
+        self.assertEqual(launches[1]['piAgentDir'], str(store_b))
+        self.assertEqual(launches[1]['home'], os.environ.get('HOME', ''))
+        resume_path = pathlib.Path(launches[1]['resume'])
+        self.assertTrue(resume_path.is_file())
+        self.assertIn(original['native'], resume_path.name)
+        self.assertEqual(resumed['native'], original['native'])
+        self.assertFalse((self.directory / 'native-history.jsonl').exists())
+        self.assertEqual(record.read_text().splitlines()[-1], ' omp B ' + str(store_b))
+        self.action(second, body="Continued under the selected OMP profile.",
+                    exit_after_terminal=True, read=['input'], ack_inbox=True)
+        self.finish(failed)
+        self.assertEqual(self.coord('delivery', 'input')['receipt'], 'native-reviewed')
+        handoff = [message for message in self.coord('inbox', 'root')
+                   if 'subscription profile handoff' in message['body']]
+        self.assertEqual(len(handoff), 1)
+        self.assertIn(cause, handoff[0]['body'])
 
     def test_omp_exhaustion_continues_on_operator_listed_route(self):
         """All accounts refused with no .profiles file: the :profile-exhausted report is
