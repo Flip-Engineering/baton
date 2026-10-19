@@ -575,19 +575,24 @@ def observed_max_charge(db: String, +account: AccountRecord) -> IO(String):
     +lines : List<String> <- lines_text(db,observed_costs_sql(account_id(account)))
     IO.pure(String,max_lines(lines,""))
 
-def settlement_update_sql(+attempt: String, +reading: CostReading) -> String:
+def settlement_reason(+amount: String, +reserved: String) -> String:
+  Bool.pick(String,Bool.and(decimal_text(amount),decimal_text(reserved)),Bool.pick(String,decimal_is_gt(amount,reserved),"reservationExceeded",""),"")
+
+def settlement_update_sql(+attempt: String, +reading: CostReading, +reason: String) -> String:
   Bool.pick(String,String.is_empty(cost_condition(reading)),
-    "UPDATE credit_reservations SET state='settled',settled=" ++ C.q(cost_amount(reading)) ++ ",cost_source=" ++ C.q(cost_source(reading)) ++ ",reason='',settled_at=CURRENT_TIMESTAMP WHERE attempt=" ++ C.q(attempt) ++ " AND state='reserved';",
+    "UPDATE credit_reservations SET state='settled',settled=" ++ C.q(cost_amount(reading)) ++ ",cost_source=" ++ C.q(cost_source(reading)) ++ ",reason=" ++ C.q(reason) ++ ",settled_at=CURRENT_TIMESTAMP WHERE attempt=" ++ C.q(attempt) ++ " AND state='reserved';",
     "UPDATE credit_reservations SET state='unknown',settled='',cost_source='',reason=" ++ C.q(cost_condition(reading)) ++ ",settled_at=CURRENT_TIMESTAMP WHERE attempt=" ++ C.q(attempt) ++ " AND state='reserved';")
 
 def settle_reserved(db: String, +attempt: String) -> IO(Unit):
   do IO<Unit>:
+    +reserved : String <- IO.try(String,DB.Sql.read(db,"SELECT coalesce((SELECT amount FROM credit_reservations WHERE attempt=" ++ C.q(attempt) ++ " AND state='reserved'),'');"))
     +total : String <- IO.try(String,DB.Sql.read(db,cost_total_sql(attempt)))
     +models_text : String <- IO.try(String,DB.Sql.read(db,cost_models_sql(attempt)))
     +lines : List<String> <- IO.pure(List<String>,Tx.split_lines(Tx.trim_nl(models_text)))
     +models_sum : String <- IO.pure(String,sum_lines(lines,"0"))
     +reading : CostReading <- IO.pure(CostReading,cost_reading(Tx.trim_nl(total),Bool.not(String.is_empty(Tx.trim_nl(models_text))),models_sum))
-    saved : String <- IO.try(String,commit_read(db,settlement_update_sql(attempt,reading)))
+    +reason : String <- IO.pure(String,settlement_reason(cost_amount(reading),Tx.trim_nl(reserved)))
+    saved : String <- IO.try(String,commit_read(db,settlement_update_sql(attempt,reading,reason)))
     IO.pure(Unit,Unit{})
 
 # A reservation settles only after the attempt completes, and only from the
@@ -1223,40 +1228,48 @@ def credit_authorization_sql(+session: String, +attempt: String, +account: Accou
   ++ "SELECT count(*) FROM credit_authorizations WHERE attempt=" ++ C.q(attempt) ++ " AND account=" ++ C.q(account_id(account)) ++ " AND organization=" ++ C.q(account_organization(account)) ++ " AND secret_ref=" ++ C.q(account_secret_ref(account)) ++ " AND state='authorized';"
 
 def reservation_insert_sql(+session: String, +attempt: String, +account: AccountRecord, +meter: CreditMeter, +bound: String) -> String:
-  "INSERT OR REPLACE INTO credit_reservations(attempt,session,account,organization,cycle,cap_period,amount,unit,state) VALUES(" ++ C.q(attempt) ++ "," ++ C.q(session) ++ "," ++ C.q(account_id(account)) ++ "," ++ C.q(meter_organization(meter)) ++ "," ++ C.q(meter_cycle(meter)) ++ "," ++ C.q(meter_cap_period(meter)) ++ "," ++ C.q(bound) ++ "," ++ C.q(meter_unit(meter)) ++ ",'reserved');"
+  "INSERT OR IGNORE INTO credit_reservations(attempt,session,account,organization,cycle,cap_period,amount,unit,state) VALUES(" ++ C.q(attempt) ++ "," ++ C.q(session) ++ "," ++ C.q(account_id(account)) ++ "," ++ C.q(meter_organization(meter)) ++ "," ++ C.q(meter_cycle(meter)) ++ "," ++ C.q(meter_cap_period(meter)) ++ "," ++ C.q(bound) ++ "," ++ C.q(meter_unit(meter)) ++ ",'reserved');"
   ++ credit_authorization_sql(session,attempt,account)
 
-# The request-path caller. It reserves the observed worst-case request charge
-# against the account's monthly cap and the organization's promotional balance
-# before the launch proceeds, and refuses with the admission reason otherwise.
-# No reservation exists without a settled per-request cost to bound it.
+def reservation_any_sql(attempt: String) -> String:
+  "SELECT coalesce((SELECT state FROM credit_reservations WHERE attempt=" ++ C.q(attempt) ++ "),'');"
+
+# The caller admits one launch. Any reservation already recorded for the attempt
+# is final for admission: a settled or unknown row is never overwritten, and a
+# replay is refused later by the one-use authorization.
 def credit_admit_launch(db: String, +session: String, +attempt: String, +account: AccountRecord) -> IO(String):
   do IO<String>:
-    +meter : CreditMeter <- credit_launch_meter(db,account)
-    +bound : String <- observed_max_charge(db,account)
-    +admission : CreditAdmission <- IO.pure(CreditAdmission,admission_after_bound(account,meter,bound))
-    match credit_admission_admitted(admission):
+    existing : String <- IO.try(String,DB.Sql.read(db,reservation_any_sql(attempt)))
+    match String.is_empty(Tx.trim_nl(existing)):
+      case False{}: IO.pure(String,"")
       case True{}: do IO<String>:
-        saved : String <- IO.try(String,commit_read(db,reservation_insert_sql(session,attempt,account,meter,bound)))
-        IO.pure(String,"")
-      case False{}: IO.pure(String,credit_admission_reason(admission))
+        +meter : CreditMeter <- credit_launch_meter(db,account)
+        +bound : String <- observed_max_charge(db,account)
+        +admission : CreditAdmission <- IO.pure(CreditAdmission,admission_after_bound(account,meter,bound))
+        match credit_admission_admitted(admission):
+          case True{}: do IO<String>:
+            saved : String <- IO.try(String,commit_read(db,reservation_insert_sql(session,attempt,account,meter,bound)))
+            IO.pure(String,"")
+          case False{}: IO.pure(String,credit_admission_reason(admission))
 
-def request_reserved_sql(attempt: String) -> String:
-  "SELECT EXISTS(SELECT 1 FROM credit_reservations WHERE attempt=" ++ C.q(attempt) ++ " AND state='reserved');"
+def request_reservation_sql(attempt: String, account: String, session: String) -> String:
+  "SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM credit_reservations WHERE attempt=" ++ C.q(attempt) ++ ") THEN 'absent' WHEN EXISTS(SELECT 1 FROM credit_reservations WHERE attempt=" ++ C.q(attempt) ++ " AND account=" ++ C.q(account) ++ " AND session=" ++ C.q(session) ++ ") THEN 'match' ELSE 'mismatch' END;"
 
 # The request path asks again immediately before the provider process starts.
-# A reservation recorded by the coordinator makes the answer idempotent; an
-# unbound account refuses before any secret is used.
+# An existing reservation is idempotent only for the same account and session;
+# a different marker refuses, and an unbound account refuses before any secret
+# is used.
 def credit_admit_request(db: String, +session: String, +attempt: String, +account_label: String) -> IO(String):
   do IO<String>:
-    reserved : String <- IO.try(String,DB.Sql.read(db,request_reserved_sql(attempt)))
-    match String.eq(Tx.trim_nl(reserved),"1"):
-      case True{}: IO.pure(String,"")
-      case False{}: do IO<String>:
+    reservation : String <- IO.try(String,DB.Sql.read(db,request_reservation_sql(attempt,account_label,session)))
+    match Tx.trim_nl(reservation):
+      case "absent": do IO<String>:
         found : Maybe<&2,AccountRecord> <- account_by_id(db,account_label)
         match found:
           case None{}: IO.pure(String,"creditAccountUnbound")
           case Some{+account}: credit_admit_launch(db,session,attempt,account)
+      case "match": IO.pure(String,"")
+      case other: IO.pure(String,"creditAccountMismatch")
 
 def credit_record_authorization_decided(+db: String, +session: String, +attempt: String, +account: AccountRecord, +status: String) -> IO(Bool):
   match status:

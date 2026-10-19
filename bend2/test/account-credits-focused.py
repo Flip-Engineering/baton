@@ -273,9 +273,9 @@ class FocusedAccountCredits(unittest.TestCase):
                          [('0.50', 'reserved')])
         self.assertEqual(self.query("SELECT count(*) FROM credit_authorizations WHERE attempt='attempt-1'"), [(1,)])
 
-    def complete_with_event(self, event):
+    def complete_with_event(self, event, bound='0.50'):
         self.credit_account()
-        self.seed_cost()
+        self.seed_cost(amount=bound)
         self.assertEqual(self.gate('attempt-1'), 'BATON2_CREDIT_RESERVATION=attempt-1')
         self.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('turn-1','root','leaf','report','done')")
         self.execute("INSERT INTO turns(id,worker,event) VALUES('turn-1','leaf',?)", (json.dumps(event),))
@@ -290,6 +290,13 @@ class FocusedAccountCredits(unittest.TestCase):
         self.assertEqual(self.query("SELECT state,settled,cost_source FROM credit_reservations WHERE attempt='attempt-1'"),
                          [('settled', '0.4875489', 'result-total')])
 
+    def test_settlement_records_an_exceeded_reservation(self):
+        self.complete_with_event({'total_cost_usd': 0.4875489,
+                                  'modelUsage': {'claude-sonnet-5-5': {'costUSD': 0.4875489}}},
+                                 bound='0.10')
+        self.assertEqual(self.query("SELECT state,settled,reason FROM credit_reservations WHERE attempt='attempt-1'"),
+                         [('settled', '0.4875489', 'reservationExceeded')])
+
     def test_settlement_refuses_conflicting_amounts(self):
         self.complete_with_event({'total_cost_usd': 0.50,
                                   'modelUsage': {'claude-sonnet-5-5': {'costUSD': 0.60}}})
@@ -300,6 +307,48 @@ class FocusedAccountCredits(unittest.TestCase):
         self.complete_with_event({'type': 'result', 'is_error': False})
         self.assertEqual(self.query("SELECT state,settled,reason FROM credit_reservations WHERE attempt='attempt-1'"),
                          [('unknown', '', 'costAmountMissing')])
+
+    def test_replay_after_settlement_keeps_the_cost_and_a_foreign_marker_refuses(self):
+        helper = os.environ.get('BATON2_API_KEY_EXEC')
+        if not helper:
+            self.skipTest('BATON2_API_KEY_EXEC not set')
+        directory = self.directory
+        secret = directory / 'secret'
+        secret.write_text('fixture-secret\n')
+        secret.chmod(0o600)
+        self.record('claude-api', funding='api_key', secret='file:' + str(secret))
+        self.bind('claude-api', 'leaf')
+        self.observe('claude-api', 'org-fixture')
+        self.import_credit('claude-api', 'org-fixture', '200.00')
+        self.seed_cost()
+        self.assertEqual(self.gate('attempt-1'), 'BATON2_CREDIT_RESERVATION=attempt-1')
+        child = directory / 'child.sh'
+        child.write_text('#!/bin/sh\nexit 0\n')
+        child.chmod(0o755)
+        environment = {'BATON2_CREDIT_RESERVATION': 'attempt-1', 'BATON2_CREDIT_ACCOUNT': 'claude-api',
+                       'BATON2_CREDIT_SESSION': 'leaf', 'BATON_ATTEMPT_DIRECTORY': 'attempt-1',
+                       'BATON_DATABASE': str(self.db), 'PATH': os.environ['PATH']}
+        commands = [helper, 'file:' + str(secret), str(child)]
+        first = subprocess.run(commands, capture_output=True, text=True, env=environment)
+        self.assertEqual(first.returncode, 0, first.stderr)
+        self.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('turn-1','root','leaf','report','done')")
+        self.execute("INSERT INTO turns(id,worker,event) VALUES('turn-1','leaf',?)",
+                     (json.dumps({'total_cost_usd': 0.4875489,
+                                  'modelUsage': {'claude-sonnet-5-5': {'costUSD': 0.4875489}}}),))
+        self.execute("INSERT INTO executions(session,id,mode,directory,phase,status) "
+                     "VALUES('leaf','turn-1','retained','attempt-1','exited','exit 0')")
+        self.assertEqual(self.entry('attempt', 'leaf', 'claude-code', 'attempt-1', '').returncode, 0)
+        self.complete('attempt-1')
+        settled = self.query("SELECT state,settled FROM credit_reservations WHERE attempt='attempt-1'")
+        self.assertEqual(settled, [('settled', '0.4875489')])
+        replay = subprocess.run(commands, capture_output=True, text=True, env=environment)
+        self.assertEqual(replay.returncode, 2, replay.stdout)
+        self.assertIn('creditAuthorizationConsumed', replay.stderr)
+        foreign = subprocess.run(commands, capture_output=True, text=True,
+                                 env={**environment, 'BATON2_CREDIT_ACCOUNT': 'other-account'})
+        self.assertEqual(foreign.returncode, 2, foreign.stdout)
+        self.assertIn('creditAccountMismatch', foreign.stderr)
+        self.assertEqual(self.query("SELECT state,settled FROM credit_reservations WHERE attempt='attempt-1'"), settled)
 
     def test_gate_refuses_when_the_bound_exceeds_the_balance(self):
         self.credit_account(balance='0.20')
