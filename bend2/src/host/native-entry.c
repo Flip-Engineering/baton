@@ -81,6 +81,8 @@ static int dispatch_entry(int argc,char **argv) {
   int first=0;
   const char *verb=NULL;
   const char *database="",*project=NULL;
+  if(argc>1 && (!strcmp(argv[1],"help") || !strcmp(argv[1],"--help") ||
+                !strcmp(argv[1],"-h"))) return -1;
   if(argc>1 && dispatch_verb(argv[1])) {verb=argv[1];first=2;}
   else if(argc>3 && !strcmp(argv[1],"--project") && dispatch_verb(argv[3])) {
     verb=argv[3];project=argv[2];first=4;
