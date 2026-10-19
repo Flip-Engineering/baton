@@ -54,6 +54,10 @@ rm -f .scratch/bend2/quota-exhaustion-reset.db
 BATON2_API_KEY_EXEC="$root/.scratch/bend2/api-key-exec" "$PYTHON3" bend2/scripts/check-native-parallel.py "$PYTHON3"
 sh bend2/scripts/build-native.sh bend2/test/omp-home-preflight.bend .scratch/bend2/omp-home-preflight-test
 BATON2_EXE="$root/.scratch/bend2/omp-home-preflight-test" "$PYTHON3" bend2/test/omp-home-preflight.py
+sh bend2/scripts/build-native.sh bend2/test/launch-store.bend .scratch/bend2/launch-store-test
+BATON2_EXE="$root/.scratch/bend2/launch-store-test" "$PYTHON3" bend2/test/launch-store.py
+sh bend2/scripts/build-native.sh bend2/test/launch-store-retained.bend .scratch/bend2/launch-store-retained-test
+BATON2_EXE="$root/.scratch/bend2/launch-store-retained-test" "$PYTHON3" bend2/test/launch-store-retained.py
 sh bend2/scripts/build-native.sh bend2/test/dsh-player.bend .scratch/bend2/dsh-player-test
 BATON2_EXE="$root/.scratch/bend2/dsh-player-test" "$PYTHON3" bend2/test/dsh-player.py
 sh bend2/scripts/build-native.sh bend2/test/dsh-retained.bend .scratch/bend2/dsh-retained-test
