@@ -172,6 +172,37 @@ int baton2_runtime_main(int argc, char **argv) {
         expected = [str(binary), '--', *arguments]
         self.assertEqual(result.stdout.splitlines(), [arg.encode().hex() for arg in expected])
 
+    def test_help_before_dispatch_reaches_the_cli_not_the_dispatch_frontend(self):
+        runtime = self.directory / 'runtime.c'
+        runtime.write_text(r'''
+#include <stdio.h>
+int baton2_runtime_main(int argc, char **argv) {
+  if (argv[argc] != NULL) return 1;
+  for (int i = 0; i < argc; i++) {
+    for (const unsigned char *p = (const unsigned char *)argv[i]; *p; p++)
+      printf("%02x", *p);
+    putchar('\n');
+  }
+  return 23;
+}
+''')
+        binary = self.directory / 'baton-entry'
+        compiled = subprocess.run([os.environ.get('CC', 'clang'), '-std=gnu11',
+                                   '-Wall', '-Wextra', '-Werror',
+                                   str(ROOT / 'bend2/src/host/native-entry.c'),
+                                   str(runtime), '-o', str(binary)], capture_output=True, text=True)
+        self.assertEqual(compiled.returncode, 0, compiled.stdout + compiled.stderr)
+        for arguments in (['help', 'dispatch'], ['help', 'task'],
+                          ['--help', 'dispatch'], ['-h', 'dispatch']):
+            with self.subTest(arguments=arguments):
+                result = subprocess.run([str(binary), *arguments], cwd=self.directory,
+                                        capture_output=True, text=True)
+                self.assertEqual(result.returncode, 23, result.stdout + result.stderr)
+                self.assertEqual(result.stderr, '')
+                expected = [str(binary), '--', *arguments]
+                self.assertEqual(result.stdout.splitlines(),
+                                 [arg.encode().hex() for arg in expected])
+
 
 if __name__ == '__main__':
     unittest.main()
