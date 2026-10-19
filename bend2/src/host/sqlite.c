@@ -1,5 +1,6 @@
 #include <sqlite3.h>
 #include <stdint.h>
+#include <inttypes.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <errno.h>
@@ -63,8 +64,151 @@ static const char *const baton_change_schema[] = {
   NULL
 };
 
+/* Durable install marker. The fingerprint covers the exact caller schema
+   text and every baton_change_schema entry, so a schema or projection change
+   in a new binary changes the fingerprint and forces a reinstall. The stored
+   schema_version changes on any later DDL by any process, so dropping an
+   application table or trigger also forces the full installer and repairs it.
+   The marker row is written in the same BEGIN IMMEDIATE..COMMIT transaction
+   as the DDL it certifies, so it is visible only when the whole projection
+   committed. A database created or replaced by another process carries no
+   matching marker and is installed again. */
+static void baton_sql_projection_fingerprint(const char *schema, char out[17]) {
+  uint64_t hash = 14695981039346656037ULL;
+  const unsigned char *at;
+  for (at = (const unsigned char *)(schema ? schema : ""); *at; at++) {
+    hash ^= *at;
+    hash *= 1099511628211ULL;
+  }
+  hash ^= 0xffU;
+  hash *= 1099511628211ULL;
+  for (size_t i = 0; baton_change_schema[i]; i++) {
+    for (at = (const unsigned char *)baton_change_schema[i]; *at; at++) {
+      hash ^= *at;
+      hash *= 1099511628211ULL;
+    }
+    hash ^= 0xffU;
+    hash *= 1099511628211ULL;
+  }
+  snprintf(out, 17, "%016" PRIx64, hash);
+}
+
+static int baton_sql_scalar_int(sqlite3 *db, const char *sql, sqlite3_int64 *value) {
+  sqlite3_stmt *stmt = NULL;
+  int code = sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
+  if (code != SQLITE_OK) return code;
+  code = sqlite3_step(stmt);
+  if (code == SQLITE_ROW) {
+    *value = sqlite3_column_int64(stmt, 0);
+    code = SQLITE_OK;
+  } else if (code == SQLITE_DONE) {
+    code = SQLITE_MISUSE;
+  }
+  sqlite3_finalize(stmt);
+  return code;
+}
+
+/* Copies the name from a CREATE TRIGGER statement. Projection statements use
+   plain identifiers; any other form fails the check and runs the installer. */
+static int baton_sql_trigger_name(const char *statement, char *out, size_t size) {
+  if (strncmp(statement, "CREATE TRIGGER ", 15) != 0) return 0;
+  const char *at = statement + 15;
+  if (strncmp(at, "IF NOT EXISTS ", 14) == 0) at += 14;
+  size_t n = 0;
+  while (at[n] && at[n] != ' ' && at[n] != '\t' && at[n] != '\n') {
+    char c = at[n];
+    if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+          || (c >= '0' && c <= '9') || c == '_')
+        || n + 1 >= size)
+      return 0;
+    out[n++] = c;
+  }
+  out[n] = 0;
+  return n > 0;
+}
+
+/* Cheap read-only completeness check against durable in-database state:
+   the marker fingerprint and schema version, the projection tables, the
+   migrated columns and the exact projection trigger names recorded in
+   sqlite_master. Triggers owned by other modules are outside this check.
+   Returns 1 only on a positive match; any missing object or read failure
+   returns 0 and the caller runs the full installer, which surfaces the real
+   error. */
+static int baton_sql_projection_is_current(sqlite3 *db, const char *schema,
+                                           const char fingerprint[17]) {
+  (void)schema;
+  if (sqlite3_table_column_metadata(db, NULL, "knowledge", "kind", NULL, NULL, NULL, NULL, NULL) != SQLITE_OK)
+    return 0;
+  if (sqlite3_table_column_metadata(db, NULL, "knowledge_promotions", "source_kind", NULL, NULL, NULL, NULL, NULL) != SQLITE_OK)
+    return 0;
+  if (sqlite3_table_column_metadata(db, NULL, "knowledge_promotions", "destination_kind", NULL, NULL, NULL, NULL, NULL) != SQLITE_OK)
+    return 0;
+  if (sqlite3_table_column_metadata(db, NULL, "baton_projection_state", "schema_version", NULL, NULL, NULL, NULL, NULL) != SQLITE_OK)
+    return 0;
+  sqlite3_int64 tables = 0;
+  if (baton_sql_scalar_int(db, "SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('native_changes','knowledge','knowledge_promotions','knowledge_relations','baton_projection_state');", &tables) != SQLITE_OK || tables != 5)
+    return 0;
+  char trigger_query[4096];
+  int used = snprintf(trigger_query, sizeof trigger_query,
+                      "SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name IN (");
+  int expected_triggers = 0;
+  if (used < 0 || (size_t)used >= sizeof trigger_query)
+    return 0;
+  for (size_t i = 0; baton_change_schema[i]; i++) {
+    if (strncmp(baton_change_schema[i], "CREATE TRIGGER", 14) != 0)
+      continue;
+    char name[64];
+    if (!baton_sql_trigger_name(baton_change_schema[i], name, sizeof name))
+      return 0;
+    int written = snprintf(trigger_query + used,
+                           sizeof trigger_query - (size_t)used,
+                           "%s'%s'", expected_triggers ? "," : "", name);
+    if (written < 0 || (size_t)written >= sizeof trigger_query - (size_t)used)
+      return 0;
+    used += written;
+    expected_triggers++;
+  }
+  if (expected_triggers == 0)
+    return 0;
+  int closing = snprintf(trigger_query + used,
+                         sizeof trigger_query - (size_t)used, ");");
+  if (closing < 0 || (size_t)closing >= sizeof trigger_query - (size_t)used)
+    return 0;
+  sqlite3_int64 triggers = 0;
+  if (baton_sql_scalar_int(db, trigger_query, &triggers) != SQLITE_OK || triggers != expected_triggers)
+    return 0;
+  sqlite3_int64 schema_version = 0;
+  if (baton_sql_scalar_int(db, "PRAGMA schema_version;", &schema_version) != SQLITE_OK)
+    return 0;
+  sqlite3_stmt *stmt = NULL;
+  if (sqlite3_prepare_v2(db, "SELECT fingerprint, schema_version FROM baton_projection_state WHERE id=1;", -1, &stmt, NULL) != SQLITE_OK)
+    return 0;
+  int current = 0;
+  if (sqlite3_step(stmt) == SQLITE_ROW) {
+    const unsigned char *stored = sqlite3_column_text(stmt, 0);
+    current = stored && strcmp((const char *)stored, fingerprint) == 0
+              && sqlite3_column_int64(stmt, 1) == schema_version;
+  }
+  sqlite3_finalize(stmt);
+  return current;
+}
+
 static int baton_sql_install_projection(sqlite3 *db, const char *schema, char **error) {
+  char fingerprint[17];
+  baton_sql_projection_fingerprint(schema, fingerprint);
+  /* Steady state: a previous install committed the marker, so this call
+     takes no write transaction and no write lock. */
+  if (baton_sql_projection_is_current(db, schema, fingerprint))
+    return SQLITE_OK;
   int code = sqlite3_exec(db, "BEGIN IMMEDIATE", NULL, NULL, error);
+  /* A concurrent first installer may have committed while this call waited
+     for the write lock; re-check under the lock and skip the DDL then. */
+  if (code == SQLITE_OK && baton_sql_projection_is_current(db, schema, fingerprint)) {
+    code = sqlite3_exec(db, "COMMIT", NULL, NULL, error);
+    if (code != SQLITE_OK)
+      sqlite3_exec(db, "ROLLBACK", NULL, NULL, NULL);
+    return code;
+  }
   if (code == SQLITE_OK)
     code = sqlite3_exec(db, schema, NULL, NULL, error);
   if (code == SQLITE_OK)
@@ -79,6 +223,20 @@ static int baton_sql_install_projection(sqlite3 *db, const char *schema, char **
     code = sqlite3_exec(db, "ALTER TABLE knowledge_promotions ADD COLUMN destination_kind TEXT NOT NULL DEFAULT 'session';", NULL, NULL, error);
   for (size_t i = 0; code == SQLITE_OK && baton_change_schema[i]; i++)
     code = sqlite3_exec(db, baton_change_schema[i], NULL, NULL, error);
+  if (code == SQLITE_OK)
+    code = sqlite3_exec(db, "CREATE TABLE IF NOT EXISTS baton_projection_state (id INTEGER PRIMARY KEY CHECK(id=1), fingerprint TEXT NOT NULL, schema_version INTEGER NOT NULL DEFAULT 0);", NULL, NULL, error);
+  /* A marker table written before schema_version existed is migrated in the
+     same transaction; the next check then compares the durable version. */
+  if (code == SQLITE_OK && sqlite3_table_column_metadata(db, NULL, "baton_projection_state", "schema_version", NULL, NULL, NULL, NULL, NULL) != SQLITE_OK)
+    code = sqlite3_exec(db, "ALTER TABLE baton_projection_state ADD COLUMN schema_version INTEGER NOT NULL DEFAULT 0;", NULL, NULL, error);
+  sqlite3_int64 schema_version = 0;
+  if (code == SQLITE_OK)
+    code = baton_sql_scalar_int(db, "PRAGMA schema_version;", &schema_version);
+  if (code == SQLITE_OK) {
+    char marker_sql[160];
+    snprintf(marker_sql, sizeof(marker_sql), "INSERT OR REPLACE INTO baton_projection_state(id,fingerprint,schema_version) VALUES(1,'%s',%lld);", fingerprint, (long long)schema_version);
+    code = sqlite3_exec(db, marker_sql, NULL, NULL, error);
+  }
   if (code == SQLITE_OK)
     code = sqlite3_exec(db, "COMMIT", NULL, NULL, error);
   if (code != SQLITE_OK)
