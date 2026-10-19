@@ -145,10 +145,10 @@ with tempfile.TemporaryDirectory(prefix="laws-check-", dir=DOCS / "examples") as
 
     # The entry must reject changes to the production ownership dispatch.
     application_mutations = [
-        ("busy receive runs its continuation", "coordinator/receive.bend",
+        ("busy receive prints an old status", "coordinator/receive.bend",
+         'case None{}: receive_silent("queued")',
          'case None{}: receive_status(db,session,"queued")',
-         'case None{}: again(Unit{})',
-         "busy_receive_only_reports_queued"),
+         "busy_receive_defers_to_the_invocation_result"),
         ("receive recovery starts another process", "coordinator/receive.bend",
          "P.ProcessChild.attach(directory)",
          'P.ProcessChild.spawn(directory,".","")',
