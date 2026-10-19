@@ -461,6 +461,7 @@ def schema() -> String:
   ++ "CREATE TABLE IF NOT EXISTS account_attempts (attempt TEXT PRIMARY KEY NOT NULL,session TEXT NOT NULL REFERENCES sessions(id),turn TEXT NOT NULL DEFAULT '',account TEXT NOT NULL REFERENCES accounts(id),organization TEXT NOT NULL DEFAULT '',funding TEXT NOT NULL,secret_ref TEXT NOT NULL,workload TEXT NOT NULL DEFAULT '',outcome TEXT NOT NULL DEFAULT '',error_text TEXT NOT NULL DEFAULT '',started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,ended_at TEXT NOT NULL DEFAULT '',predecessor TEXT NOT NULL DEFAULT '',recorded TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);"
   ++ "CREATE TABLE IF NOT EXISTS credit_observations (id TEXT PRIMARY KEY NOT NULL,organization TEXT NOT NULL DEFAULT '',fact TEXT NOT NULL,state TEXT NOT NULL CHECK(state IN ('reported','unavailable')),balance TEXT NOT NULL DEFAULT '',unit TEXT NOT NULL DEFAULT '',expires TEXT NOT NULL DEFAULT '',cycle TEXT NOT NULL DEFAULT '',source TEXT NOT NULL,detail TEXT NOT NULL DEFAULT '',observed_at TEXT NOT NULL,authority TEXT NOT NULL);"
   ++ "CREATE INDEX IF NOT EXISTS credit_observations_pool ON credit_observations(organization,fact);"
+  ++ "CREATE TABLE IF NOT EXISTS credit_authorizations (attempt TEXT PRIMARY KEY NOT NULL,session TEXT NOT NULL DEFAULT '',account TEXT NOT NULL DEFAULT '',organization TEXT NOT NULL DEFAULT '',cycle TEXT NOT NULL DEFAULT '',balance TEXT NOT NULL DEFAULT '',unit TEXT NOT NULL DEFAULT '',secret_ref TEXT NOT NULL DEFAULT '',state TEXT NOT NULL DEFAULT 'authorized',consumed TEXT NOT NULL DEFAULT '',created TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);"
   ++ "CREATE INDEX IF NOT EXISTS account_attempts_session ON account_attempts(session,recorded);"
 
 # One transaction that installs the collaboration schema and this module's tables
@@ -509,6 +510,26 @@ def attempt_columns_ensured_present(+db: String) -> IO(Unit):
   do IO<Unit>:
     missing : List<String> <- attempt_columns_missing(db,attempt_columns())
     attempt_columns_installed(db,missing)
+
+def auth_columns_missing(+db: String, columns: List<String>) -> IO(List<String>):
+  match columns:
+    case Nil{}: IO.pure(List<String>,Nil{})
+    case +column <> rest: do IO<List<String>>:
+      found : String <- IO.try(String,DB.Sql.read(db,"SELECT EXISTS(SELECT 1 FROM pragma_table_info('credit_authorizations') WHERE name=" ++ C.q(column) ++ ");"))
+      missing : List<String> <- auth_columns_missing(db,rest)
+      IO.pure(List<String>,attempt_columns_missing_kept(String.eq(Tx.trim_nl(found),"0"),column,missing))
+
+def auth_columns_installed(+db: String, columns: List<String>) -> IO(Unit):
+  match columns:
+    case Nil{}: IO.pure(Unit,Unit{})
+    case +column <> rest: do IO<Unit>:
+      added : String <- IO.try(String,DB.Sql.query(db,"ALTER TABLE credit_authorizations ADD COLUMN " ++ column ++ " TEXT NOT NULL DEFAULT '';"))
+      auth_columns_installed(db,rest)
+
+def auth_columns_ensured(+db: String) -> IO(Unit):
+  do IO<Unit>:
+    missing : List<String> <- auth_columns_missing(db,["secret_ref","state","consumed"])
+    auth_columns_installed(db,missing)
 
 def attempt_columns_ensured(+db: String) -> IO(Unit):
   do IO<Unit>:
@@ -974,3 +995,75 @@ def record_current_attempt(+db: String, +session: String, +attempt: String, +pre
   match chosen:
     case None{}: IO.pure(Unit,Unit{})
     case Some{+account}: record_attempt(db,session,attempt,predecessor,account)
+
+# --- the credit-only route status recorded in the database -------------------
+# Eligibility reads actual recorded facts: the Anthropic claude-code api_key
+# route, a verified organization, and the newest promotional_credit
+# observation for that organization with its reported balance and unit. A
+# reported zero balance is the provider-reported exhausted state. The provider
+# enforces the balance on each request; a retained launch contains an
+# unbounded number of provider requests, so no launch-level charge bound is
+# derived and no reservation or settled amount is recorded from a launch.
+# Actual provider cost enters through external_spend observations from the
+# Admin cost report. Credit-only routing stays held until a per-request
+# accounting route is proven; the status names the actual reason.
+def credit_meter_sql(+organization: String) -> String:
+  "SELECT state||char(31)||balance||char(31)||unit||char(31)||cycle FROM credit_observations WHERE organization=" ++ C.q(organization) ++ " AND fact='promotional_credit' ORDER BY observed_at DESC,rowid DESC LIMIT 1;"
+
+def credit_meter_fields(+organization: String, fields: List<&2,String>) -> CreditMeter:
+  match fields:
+    case state <> balance <> unit <> cycle <> rest: CMeter{organization,state,cycle,balance,unit,"","","",""}
+    case other: CMeter{organization,"unavailable","","","","","","",""}
+
+def credit_route_eligibility(+account: AccountRecord, +meter: CreditMeter) -> String:
+  Bool.pick(String,Bool.not(Bool.and(String.eq(account_provider(account),"anthropic"),Bool.and(String.eq(account_harness(account),"claude-code"),String.eq(account_funding(account),"api_key")))),"notPromotionalCreditRoute",
+  Bool.pick(String,Bool.or(String.is_empty(account_organization(account)),Bool.not(String.eq(account_organization(account),meter_organization(meter)))),"organizationUnverified",
+  Bool.pick(String,Bool.not(String.eq(meter_state(meter),"reported")),"creditObservationUnavailable",
+  Bool.pick(String,Bool.or(Bool.not(decimal_text(meter_balance(meter))),String.is_empty(meter_unit(meter))),"creditAmountMalformed",
+  Bool.pick(String,decimal_is_zero(meter_balance(meter)),"promotionalCreditExhausted","eligible")))))
+
+def credit_status_fields(+db: String, +account: AccountRecord, meter_rows: String) -> IO(String):
+  IO.pure(String,credit_route_eligibility(account,credit_meter_fields(account_organization(account),String.split(Tx.trim_nl(meter_rows),Char.from_u32(31)))))
+
+def credit_status_for(+db: String, +account: AccountRecord) -> IO(String):
+  do IO<String>:
+    meter_rows : String <- IO.try(String,DB.Sql.read(db,credit_meter_sql(account_organization(account))))
+    credit_status_fields(db,account,meter_rows)
+
+def credit_launch_refusal_status(+status: String) -> String:
+  Bool.pick(String,String.eq(status,"eligible"),"Anthropic API-key launches are held because credit-only routing is not proven for this deployment; the attempt was not started and its input stays owed.","Anthropic API-key launch refused by promotional-credit eligibility (" ++ status ++ "); the attempt was not started and its input stays owed.")
+
+def credit_launch_refusal_decided(+account: AccountRecord, +status: String) -> String:
+  Bool.pick(String,Bool.and(String.eq(account_provider(account),"anthropic"),Bool.and(String.eq(account_harness(account),"claude-code"),String.eq(account_funding(account),"api_key"))),credit_launch_refusal_status(status),"")
+
+def credit_launch_refusal_for(+db: String, chosen: Maybe<&2,AccountRecord>) -> IO(String):
+  match chosen:
+    case None{}: IO.pure(String,"")
+    case Some{+account}: do IO<String>:
+      status : String <- credit_status_for(db,account)
+      IO.pure(String,credit_launch_refusal_decided(account,status))
+
+def credit_authorization_sql(+session: String, +attempt: String, +account: AccountRecord) -> String:
+  "INSERT OR IGNORE INTO credit_authorizations(attempt,session,account,organization,cycle,balance,unit,secret_ref,state) SELECT " ++ C.q(attempt) ++ "," ++ C.q(session) ++ "," ++ C.q(account_id(account)) ++ "," ++ C.q(account_organization(account)) ++ ",cycle,balance,unit," ++ C.q(account_secret_ref(account)) ++ ",'authorized' FROM credit_observations WHERE organization=" ++ C.q(account_organization(account)) ++ " AND fact='promotional_credit' AND state='reported' ORDER BY observed_at DESC,rowid DESC LIMIT 1;"
+  ++ "SELECT count(*) FROM credit_authorizations WHERE attempt=" ++ C.q(attempt) ++ " AND account=" ++ C.q(account_id(account)) ++ " AND organization=" ++ C.q(account_organization(account)) ++ " AND secret_ref=" ++ C.q(account_secret_ref(account)) ++ " AND state='authorized';"
+
+def credit_record_authorization_decided(+db: String, +session: String, +attempt: String, +account: AccountRecord, +status: String) -> IO(Bool):
+  match status:
+    case "eligible": do IO<Bool>:
+      migrated : Unit <- auth_columns_ensured(db)
+      saved : String <- IO.try(String,commit_read(db,credit_authorization_sql(session,attempt,account)))
+      IO.pure(Bool,String.eq(Tx.trim_nl(saved),"1"))
+    case other: IO.pure(Bool,False{})
+
+def credit_record_authorization(+db: String, +session: String, +attempt: String, +account: AccountRecord) -> IO(Bool):
+  do IO<Bool>:
+    status : String <- credit_status_for(db,account)
+    credit_record_authorization_decided(db,session,attempt,account,status)
+
+def credit_launch_binding_account(+db: String, +session: String, +attempt: String, +harness: String, +account: AccountRecord, helper: Maybe<String>, +profile_store: String) -> IO(Maybe<List<String>>):
+  Bool.pick(IO(Maybe<List<String>>),Bool.and(String.eq(account_provider(account),"anthropic"),Bool.and(String.eq(account_harness(account),"claude-code"),String.eq(account_funding(account),"api_key"))),IO.pure(Maybe<List<String>>,None{}),IO.pure(Maybe<List<String>>,account_binding(harness,Some{account},helper,profile_store)))
+
+def credit_launch_binding(+db: String, +session: String, +attempt: String, +harness: String, chosen: Maybe<&2,AccountRecord>, helper: Maybe<String>, +profile_store: String) -> IO(Maybe<List<String>>):
+  match chosen:
+    case None{}: IO.pure(Maybe<List<String>>,account_binding(harness,None{},helper,profile_store))
+    case Some{+account}: credit_launch_binding_account(db,session,attempt,harness,account,helper,profile_store)
