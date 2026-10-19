@@ -81,19 +81,36 @@ on base `50e84c98` and this head: 4,871,155 B and 4,871,103 B, outputs
 `x`. Command:
 
 ```
-bin/bun --smol bend2/main.ts round3/fixtures/quant_ann_match.bend -o out.c
+COMPILER_DIR/bin/bun --smol COMPILER_DIR/bend2/main.ts round3/fixtures/quant_ann_match.bend -o out.c
 clang-19 -std=c11 -O1 -w out.c -lm -lpthread -o out
 ./out --host-process-keeper a b   # 2 (collision: 3)
 ./out a b                         # 7
 ./out x                           # 9
 ```
 
-Limit: no source program in this checkout changes emitted output between base
-and head. The base review reports 168 `Ann.T`-divergent true hits; on the
-fixtures available here every such hit is shadowed by an earlier
-representative whose annotation object matches, so the C is unchanged. The
-fixtures exercise the carriers and the sharing decision; they are not a
-wrong-output counterexample.
+Protected test: `round3/tests/arm_eq_ann_share.ts` loads
+`round3/fixtures/arm_eq_ann_share.bend` twice, changes one duplicated Mat
+arm's `Ann.T` quantity from Lone to Many in the second load, and compares the
+emitted C. The change is layout-neutral. Base `50e84c98` exits 1: every
+mutation compiles to the same 511,757 B, because base `arm_eq` ignores
+`Ann.T`. This head exits 0: the plain C is 511,757 B and the mutated C is
+512,918 B, a separate spin. The mutated C builds with clang-19 and prints
+`host`/`two`/`other` for the three argv cases. Command:
+
+```
+COMPILER_DIR/bin/bun --smol round3/tests/arm_eq_ann_share.ts COMPILER_DIR
+```
+
+`COMPILER_DIR` holds `bend2/comp.ts`, `bend2/bend.ts`, `bend2/base.bend` and
+`bend2/effs`. The script imports the repository `bend.ts` (byte-identical to
+the pinned file) for terms and loads only `comp.ts` from `COMPILER_DIR`.
+
+Limit: no source program in this checkout changes runtime output between base
+and head. The new test changes the emitted C on this head because the two
+copies carry different annotation quantities; on fixtures that do not mutate
+the term, the base review's 168 `Ann.T`-divergent true hits are shadowed by
+earlier representatives and the C is unchanged. The `quant_ann` fixtures
+guard the carriers; the `ann_share` test fails on base.
 
 ## What changed from 178f01fbba
 
