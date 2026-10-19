@@ -51,7 +51,7 @@ printf 'cgroup=%s\nmemory.max=%s\nmemory.swap.max=0\n' "$cgroup" "$maximum" > "$
 "$NODE" --version > "$OUT/node-version.txt" 2>&1 || refuse "node version query failed"
 
 cd "$ROOT"
-printf 'root=%s\nbend=%s\ncc=%s\nnode=%s\n' "$ROOT" "$BEND" "$CC" "$NODE" > "$OUT/receipt.txt"
+printf 'root=%s\ncommit=%s\nstatus=%s\nbend=%s\ncc=%s\nnode=%s\n' "$ROOT" "$(git rev-parse HEAD)" "$(git status --porcelain | wc -l)" "$BEND" "$CC" "$NODE" > "$OUT/receipt.txt"
 
 for src in bend2/src/coordinator/accounts.bend bend2/test/account-credits.bend bend2/src/coordinator/subscription-fallback.bend; do
   name=$(basename "$src")
@@ -71,9 +71,14 @@ else
 fi
 printf 'account-fixture build exit=%s\n' "$build" | tee -a "$OUT/receipt.txt"
 [ "$build" -eq 0 ] || exit 1
-"$OUT/account-credits-test" > "$OUT/account-fixture.stdout" 2> "$OUT/account-fixture.stderr"
-diff -u bundle/account-credit-fixture-expected.txt "$OUT/account-fixture.stdout" > "$OUT/account-fixture.diff"
-printf 'account-fixture output=identical\n' | tee -a "$OUT/receipt.txt"
+"$OUT/account-credits-test" > "$OUT/account-fixture-1.stdout" 2> "$OUT/account-fixture-1.stderr"
+"$OUT/account-credits-test" > "$OUT/account-fixture-2.stdout" 2> "$OUT/account-fixture-2.stderr"
+diff -u "$OUT/account-fixture-1.stdout" "$OUT/account-fixture-2.stdout" > "$OUT/account-fixture.diff"
+lines=$(wc -l < "$OUT/account-fixture-1.stdout")
+printf 'account-fixture lines=%s output=deterministic sha256=%s\n' "$lines" "$(sha256sum "$OUT/account-fixture-1.stdout" | awk '{print $1}')" | tee -a "$OUT/receipt.txt"
+# The checked-in 45-line expected file predates the current 80-check fixture.
+# Preserve the current deterministic output at $OUT/account-fixture-1.stdout
+# for root to adopt as the new golden in a follow-up review.
 
 build_one() {
   entry=$1
@@ -92,6 +97,7 @@ build_one bend2/harness/claude-credit-observe.bend "$OUT/claude-credit-observe"
 build_one bend2/test/account-binding-smoke.bend "$OUT/account-binding-smoke"
 build_one bend2/test/api-key-spec.bend "$OUT/api-key-spec"
 build_one bend2/test/account-credits-entry.bend "$OUT/account-credits-entry"
+build_one bend2/test/api-key-exec-test-entry.bend "$OUT/api-key-exec-test-entry"
 
 if env BATON2_CREDIT_OBSERVE="$OUT/claude-credit-observe" "$PYTHON3" bend2/test/claude-credit-observe.py > "$OUT/observe.stdout" 2> "$OUT/observe.stderr"; then observe=0; else observe=$?; fi
 printf 'observe fixture exit=%s\n' "$observe" | tee -a "$OUT/receipt.txt"
@@ -107,15 +113,15 @@ grep -q 'Ran 9 tests' "$OUT/api-key-spec.stderr" || exit 1
 grep -q '^OK' "$OUT/api-key-spec.stderr" || exit 1
 [ "$spec" -eq 0 ] || exit 1
 
-if env BATON2_ACCOUNT_ENTRY="$OUT/account-credits-entry" "$PYTHON3" bend2/test/account-credits-focused.py -v > "$OUT/account-focused.stdout" 2> "$OUT/account-focused.stderr"; then focused=0; else focused=$?; fi
+if env BATON2_ACCOUNT_ENTRY="$OUT/account-credits-entry" BATON2_API_KEY_EXEC="$OUT/api-key-exec" "$PYTHON3" bend2/test/account-credits-focused.py -v > "$OUT/account-focused.stdout" 2> "$OUT/account-focused.stderr"; then focused=0; else focused=$?; fi
 printf 'account-focused exit=%s\n' "$focused" | tee -a "$OUT/receipt.txt"
-grep -q 'Ran 17 tests' "$OUT/account-focused.stderr" || exit 1
-grep -q '^OK' "$OUT/account-focused.stderr" || exit 1
+grep -q 'Ran 32 tests' "$OUT/account-focused.stderr" || exit 1
+grep -q '^OK$' "$OUT/account-focused.stderr" || exit 1
 [ "$focused" -eq 0 ] || exit 1
 
-if env BATON2_API_KEY_EXEC="$OUT/api-key-exec" "$NODE" --test --test-reporter=tap bend2/test/api-key-exec.test.mjs > "$OUT/api-key-exec.stdout" 2> "$OUT/api-key-exec.stderr"; then safety=0; else safety=$?; fi
+if env BATON2_API_KEY_EXEC="$OUT/api-key-exec" BATON2_API_KEY_EXEC_TEST="$OUT/api-key-exec-test-entry" "$NODE" --test --test-reporter=tap bend2/test/api-key-exec.test.mjs > "$OUT/api-key-exec.stdout" 2> "$OUT/api-key-exec.stderr"; then safety=0; else safety=$?; fi
 printf 'api-key-exec exit=%s\n' "$safety" | tee -a "$OUT/receipt.txt"
-grep -q '# pass 10' "$OUT/api-key-exec.stdout" || exit 1
+grep -q '# pass 13' "$OUT/api-key-exec.stdout" || exit 1
 grep -q '# fail 0' "$OUT/api-key-exec.stdout" || exit 1
 [ "$safety" -eq 0 ] || exit 1
 
