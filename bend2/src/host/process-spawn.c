@@ -1113,22 +1113,22 @@ static int br_cgroup_write_limit(const char *root,const char *placement,const ch
    first unit component and never climbs into a higher slice. */
 static char *br_cgroup_unit_root(const char *cgroup) {
   const char *at=cgroup;
+  size_t best=0;
   while(*at) {
     while(*at=='/')at++;
     const char *end=strchr(at,'/');
     size_t length=end?(size_t)(end-at):strlen(at);
     if((length>=8 && !strncmp(at+length-8,".service",8)) ||
-       (length>=6 && !strncmp(at+length-6,".scope",6))) {
-      size_t prefix=(size_t)(at-cgroup)+length;
-      char *root=malloc(prefix+1);
-      if(!root)return NULL;
-      memcpy(root,cgroup,prefix);root[prefix]=0;
-      return root;
-    }
+       (length>=6 && !strncmp(at+length-6,".scope",6)))
+      best=(size_t)(at-cgroup)+length;
     if(!end)break;
     at=end+1;
   }
-  return strdup(cgroup);
+  if(!best)return strdup(cgroup);
+  char *root=malloc(best+1);
+  if(!root)return NULL;
+  memcpy(root,cgroup,best);root[best]=0;
+  return root;
 }
 
 /* Creates the per-native child below the nearest delegated ancestor of the
@@ -4767,10 +4767,15 @@ static int br_instance_admit(BatonProcessCall *call,int dormant) {
     if(!error)error=br_instance_request_witness(call->database,
       (BrInstanceFrame){.op=dormant?BI_PREPARE:BI_ADMIT,.length=strlen(directory)+1},directory,
       call->lock?(int)call->lock:-1,&reply,expected_token,expected_epoch,1);
+    if(error==ENOPROTOOPT && !dormant) {
+      /* The owner refused before the request exchange: it has no custody of
+         this attempt and started nothing. Use the per-attempt keeper for this
+         new attempt and leave the live owner and its children untouched. */
+      free(address);free(directory);
+      return br_retain(call);
+    }
     if(error==ENOPROTOOPT)
-      br_spec_detail(call,"database owner lacks native-cgroup confinement; new admissions use the per-attempt keeper fallback; do not stop or restart the owner");
-    if(!error)call->owner_attempt=reply.attempt;
-    if(!error && reply.attempt)call->unstarted=0;
+      br_spec_detail(call,"database owner lacks native-cgroup confinement; dormant preparation refuses without starting a native");
     if(error==EINVAL || error==ESTALE || error==ENOENT || error==ENOMEM) {
       /* Only an attempt this call created, that never reached custody, is
          discarded: the owner writes `launch` as its first custody step, so its
@@ -4781,6 +4786,8 @@ static int br_instance_admit(BatonProcessCall *call,int dormant) {
       return error;
     }
   }
+  if(!error)call->owner_attempt=reply.attempt;
+  if(!error && reply.attempt)call->unstarted=0;
   if(!error)error=br_instance_join(call,directory,reply.owner,reply.epoch,0,0);
   if(!error && dormant) {
     call->unstarted=0;

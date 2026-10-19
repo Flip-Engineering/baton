@@ -220,7 +220,7 @@ class CgroupConfinement(unittest.TestCase):
                                    stderr=subprocess.DEVNULL, timeout=10)
                 runtime_directory.cleanup()
 
-    def test_old_owner_without_capability_is_refused(self):
+    def test_old_owner_falls_back_to_per_attempt_keeper(self):
         with tempfile.TemporaryDirectory(prefix='cgroup-old-owner-',
                                          dir=ROOT / '.scratch/bend2') as name:
             base = pathlib.Path(name)
@@ -238,35 +238,75 @@ class CgroupConfinement(unittest.TestCase):
             database.touch()
             info = database.stat()
             key = f'owner-{info.st_dev:x}-{info.st_ino:x}'
+            record_path = runtime / 'baton2' / (key + '.record')
             socket_path = runtime / 'baton2' / 'old-owner.sock'
             listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             listener.bind(str(socket_path))
             listener.listen(1)
+            listener.settimeout(15)
             encoded = str(socket_path).encode()
             self.assertLess(len(encoded), 104)
             record = struct.pack('<QQQQii104s', 1, 1, info.st_dev, info.st_ino,
                                  os.getpid(), 0, encoded)
-            (runtime / 'baton2' / (key + '.record')).write_bytes(record)
+            record_path.write_bytes(record)
+            record_before = record_path.read_bytes()
             payload = base / 'old.payload'
             payload.write_text('fixture\n')
             attempt = base / 'old-attempt'
             environment = dict(os.environ, BATON2_CGROUP_ROOT=str(root),
                                BATON2_CGROUP_PARENT='/receiver',
                                XDG_RUNTIME_DIR=str(runtime))
+            sibling = subprocess.Popen(['/bin/sleep', '30'])
+            time.sleep(0.1)
+            sibling_before = (self.proc_cgroup(sibling.pid),
+                              self.identity(sibling.pid),
+                              self.cmdline(sibling.pid))
+            process = None
             try:
-                result = subprocess.run(
+                process = subprocess.Popen(
                     [str(EXE), 'retain', str(database), str(attempt), str(cwd),
                      str(payload), 'close', str(FIXTURE), '--sibling-keeper'],
-                    capture_output=True, text=True, env=environment, timeout=30)
-                self.assertNotEqual(result.returncode, 0)
-                output = result.stdout + result.stderr
-                self.assertIn('native-cgroup confinement', output)
-                self.assertIn('per-attempt keeper fallback', output)
-                self.assertNotIn('cgroupUnbounded', output)
-                self.assertFalse((attempt / 'native.pid').exists())
-                self.assertFalse((attempt / 'launch').exists())
+                    stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL, text=True, env=environment)
+                connection, _ = listener.accept()
+                received = connection.recv(4096)
+                connection.close()
+                self.assertEqual(received, b'')
+                fallback = self.wait_for(lambda: self.attempt_info(attempt),
+                                         'automatic per-attempt keeper custody', 30)
+                self.assertTrue(fallback['cgroup'].startswith('/receiver/'))
+                self.assertEqual(fallback['memoryMax'], '17179869184')
+                self.assertEqual(fallback['memorySwapMax'], '0')
+                child_dir = root / fallback['cgroup'].lstrip('/')
+                self.assertIn(f"{fallback['pid']}\n",
+                              (child_dir / 'cgroup.procs').read_text())
+                self.assertEqual(record_path.read_bytes(), record_before)
+                self.assertEqual((self.proc_cgroup(sibling.pid),
+                                  self.identity(sibling.pid),
+                                  self.cmdline(sibling.pid)), sibling_before)
+                os.kill(sibling.pid, 0)
+                self.assertEqual(len(list(receiver.glob('baton-native-*'))), 1)
             finally:
+                if process is not None:
+                    info = self.attempt_info(attempt)
+                    if info:
+                        try:
+                            os.killpg(info['pid'], signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                    if process.stdin:
+                        try:
+                            process.stdin.close()
+                        except OSError:
+                            pass
+                    try:
+                        process.wait(timeout=15)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait(timeout=5)
                 listener.close()
+                sibling.kill()
+                sibling.wait(timeout=5)
                 shutil.rmtree(runtime, ignore_errors=True)
 
     def test_unbounded_receiver_retry_is_typed_and_idempotent(self):

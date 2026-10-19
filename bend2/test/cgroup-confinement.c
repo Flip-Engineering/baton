@@ -352,6 +352,87 @@ int main(int argc,char **argv) {
   REQUIRE(chmod(user_scope,0700)==0);
   free(user_slice);free(user_scope);
 
+  /* The deepest execution unit is the boundary: a worker scope inside a user
+     manager must not let the walk place a child above it. */
+  char *nested=br_path(root,"nested.slice");
+  char *manager=br_path(root,"nested.slice/user@1000.service");
+  char *app=br_path(root,"nested.slice/user@1000.service/app.slice");
+  char *worker=br_path(root,"nested.slice/user@1000.service/app.slice/worker.scope");
+  char *delegated=br_path(root,"nested.slice/user@1000.service/app.slice/worker.scope/delegated");
+  REQUIRE(nested && manager && app && worker && delegated);
+  REQUIRE(mkdir(nested,0700)==0);
+  REQUIRE(mkdir(manager,0700)==0);
+  REQUIRE(mkdir(app,0700)==0);
+  REQUIRE(mkdir(worker,0700)==0);
+  REQUIRE(mkdir(delegated,0700)==0);
+  path=br_path(nested,"memory.max");
+  REQUIRE(path && write_text(path,"17179869184\n")==0);free(path);
+  path=br_path(nested,"memory.swap.max");
+  REQUIRE(path && write_text(path,"0\n")==0);free(path);
+  path=br_path(nested,"cgroup.subtree_control");
+  REQUIRE(path && write_text(path,"memory\n")==0);free(path);
+  path=br_path(manager,"memory.max");
+  REQUIRE(path && write_text(path,"17179869184\n")==0);free(path);
+  path=br_path(manager,"memory.swap.max");
+  REQUIRE(path && write_text(path,"0\n")==0);free(path);
+  path=br_path(manager,"cgroup.subtree_control");
+  REQUIRE(path && write_text(path,"memory\n")==0);free(path);
+  path=br_path(worker,"memory.max");
+  REQUIRE(path && write_text(path,"max\n")==0);free(path);
+  path=br_path(worker,"memory.swap.max");
+  REQUIRE(path && write_text(path,"max\n")==0);free(path);
+  path=br_path(delegated,"memory.max");
+  REQUIRE(path && write_text(path,"max\n")==0);free(path);
+  path=br_path(delegated,"memory.swap.max");
+  REQUIRE(path && write_text(path,"max\n")==0);free(path);
+  REQUIRE(chmod(worker,0500)==0);
+  REQUIRE(chmod(delegated,0500)==0);
+  char *nested_refused=NULL,*nested_refused_relative=NULL;
+  condition=NULL;
+  error=br_native_cgroup_create("/nested.slice/user@1000.service/app.slice/worker.scope/delegated",
+    "baton-native-nested",&nested_refused,&nested_refused_relative,&tight_memory,&tight_swap,&condition);
+  REQUIRE(error==EOPNOTSUPP);
+  REQUIRE(nested_refused==NULL && nested_refused_relative==NULL);
+  REQUIRE(condition!=NULL && !strcmp(condition,"cgroupUnbounded"));
+  char *above_worker=br_path(manager,"baton-native-nested");
+  char *above_scope=br_path(worker,"baton-native-nested");
+  REQUIRE(above_worker && above_scope);
+  REQUIRE(access(above_worker,F_OK)!=0 && errno==ENOENT);
+  REQUIRE(access(above_scope,F_OK)!=0 && errno==ENOENT);
+  free(above_worker);free(above_scope);
+  REQUIRE(chmod(worker,0700)==0);
+  REQUIRE(chmod(delegated,0700)==0);
+  path=br_path(worker,"memory.max");
+  REQUIRE(path && write_text(path,"8589934592\n")==0);free(path);
+  path=br_path(worker,"memory.swap.max");
+  REQUIRE(path && write_text(path,"0\n")==0);free(path);
+  path=br_path(worker,"cgroup.subtree_control");
+  REQUIRE(path && write_text(path,"memory\n")==0);free(path);
+  path=br_path(delegated,"memory.max");
+  REQUIRE(path && write_text(path,"4294967296\n")==0);free(path);
+  path=br_path(delegated,"memory.swap.max");
+  REQUIRE(path && write_text(path,"0\n")==0);free(path);
+  REQUIRE(chmod(delegated,0500)==0);
+  char *nested_cgroup=NULL,*nested_relative=NULL;
+  condition=NULL;
+  error=br_native_cgroup_create("/nested.slice/user@1000.service/app.slice/worker.scope/delegated",
+    "baton-native-nested-ok",&nested_cgroup,&nested_relative,&tight_memory,&tight_swap,&condition);
+  REQUIRE(error==0);
+  REQUIRE(tight_memory==4294967296ULL);
+  REQUIRE(tight_swap==0);
+  REQUIRE(!strcmp(nested_relative,
+    "/nested.slice/user@1000.service/app.slice/worker.scope/baton-native-nested-ok"));
+  char *nested_memory_path=br_path(nested_cgroup,"memory.max");
+  char *nested_swap_path=br_path(nested_cgroup,"memory.swap.max");
+  char nested_memory_text[64],nested_swap_text[64];
+  REQUIRE(read_text(nested_memory_path,nested_memory_text,sizeof(nested_memory_text))==0);
+  REQUIRE(read_text(nested_swap_path,nested_swap_text,sizeof(nested_swap_text))==0);
+  REQUIRE(!strcmp(nested_memory_text,"4294967296\n"));
+  REQUIRE(!strcmp(nested_swap_text,"0\n"));
+  REQUIRE(chmod(delegated,0700)==0);
+  free(nested_cgroup);free(nested_relative);free(nested_memory_path);free(nested_swap_path);
+  free(nested);free(manager);free(app);free(worker);free(delegated);
+
   /* A repeated admission reuses the stored control path; field 5 is not part
      of the manifest identity. */
   char *manifest_directory=br_path(root,"manifest-control");
@@ -500,6 +581,8 @@ int main(int argc,char **argv) {
          "\"tightReceiverMax\":8589934592,"
          "\"tightReceiverRelative\":\"/cluster.service/baton-native-tight\","
          "\"noClimbRefused\":true,\"manifestControlPathReuse\":true,"
+         "\"nestedUnitRefused\":true,\"nestedUnitMax\":4294967296,"
+         "\"nestedUnitRelative\":\"/nested.slice/user@1000.service/app.slice/worker.scope/baton-native-nested-ok\","
          "\"ownerBinding\":true,\"realCgroup\":false,"
          "\"limitation\":\"fixture uid has no writable delegated cgroup; "
          "the exact create/attach writer ran against a disposable directory hierarchy\"}\n",
