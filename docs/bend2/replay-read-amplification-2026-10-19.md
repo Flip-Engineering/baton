@@ -48,8 +48,12 @@ lifetime.
 `C.schema()` now creates the partial index `messages_pending` on
 `messages(recipient,seq) WHERE receipt IS NULL`. The pending count and the
 oldest-pending read search the pending entries directly. The index is part of
-the caller schema, so the projection installer creates it on the first stale
-install after deployment and the schema-version marker records the new state.
+the caller schema. A database with no index, including the live database, gets
+the partial index on the first install or repair. A database that already
+carries the earlier same-name full index keeps that full index because
+CREATE INDEX IF NOT EXISTS does not replace it. No release was cut in the
+intermediate full-index window, so no deployed database has this state. Fresh
+and current-main databases create the partial index.
 
 The law literal in `bend2/src/coordinator/laws.bend` includes the same index
 text. The focused projection fixture uses the index in its representative
@@ -61,7 +65,7 @@ A disposable accounts-like database of 30,000 messages and a 158-byte terminal
 event was measured with `/proc/self/io` `rchar` for the exact
 `completion_sql_expr` shape: two pending counts and one oldest-pending read.
 
-| Plan | Bytes | Database bytes per spool byte |
+| Plan | Process rchar | Process rchar per spool byte |
 | --- | ---: | ---: |
 | `SCAN messages` three times | 23,101,575 | 146,212.5 |
 | full `messages_pending(recipient,receipt,seq)` | 37,002 | 234.2 |
@@ -77,18 +81,32 @@ read-write connections contributed about 156 MB of the 159.8 MB. Replacing
 those scans with the index leaves the per-frame read-call setup as the next
 term.
 
+## Index cost
+
+On the 30,000-row fixture the partial index occupies 4,096 bytes and the full
+index occupies 831,488 bytes. Inserts on the partial-index database took
+0.768 s versus 0.967 s on the full-index database. Building the index on
+pre-existing rows took 82.2 ms.
+
 ## Read-call setup
 
 Ten fresh read-only connections that ran `PRAGMA foreign_keys=ON`,
-`PRAGMA encoding` and `SELECT 1` read 43,180 bytes. Ten repetitions on one
-connection read 4,218 bytes. A bounded per-thread read-only connection reuse
-would remove most of this setup. The 35 read-only opens account for about
-0.085% of the traced bytes; connection reuse saves that portion. Most of the
-residual after the index is the per-frame read-write span and query setup.
-That change needs per-thread ownership, path and file-replacement
-invalidation, fork reset, autocommit checks, UTF-8 refusal, statement
-finalization and teardown. It is a separate change; this fix does not alter
-connection lifetime.
+`PRAGMA encoding` and `SELECT 1` reported 43,180 bytes of process `rchar`.
+Ten repetitions on one connection reported 4,218 bytes. The trace's 35
+read-only opens at 11-18 pages of 4096 bytes account for 1.577-2.580 MB, or
+0.99-1.62% of the 159,828,580 traced bytes. The ten-connection process
+`rchar` measurement scales to 151,130 bytes for 35 opens, or 0.095%. The
+trace range is the traced-byte share; the benchmark value is the read-call
+setup estimate. Most of the residual after the index is the per-frame
+read-write span and query setup.
+
+The cached read-only connection in commit `6f219c0a` implements the read-call
+reduction: one connection per IO helper thread, keyed by path, device and
+inode, with per-call busy and foreign-keys, autocommit rollback, path and
+file-replacement invalidation, fork reset, UTF-8 refusal, error close and
+thread-exit cleanup. `bend2/test/sqlite-read-reuse.py` covers the lifecycle,
+visibility, busy, fork and teardown cases. The per-frame read-write span and
+query setup remain a separate residual.
 
 ## Invariants
 
@@ -105,6 +123,6 @@ replay and makes no cursor, EOF or custody claim.
 The counters use a synthetic accounts-like database, not the live accounts
 database. The live database and worker were not touched. No full native build
 ran. The projection fixture checks the index in its representative schema; the
-law literal records the same text. The partial-index counter above is 28,806
-bytes; root measured 24,899 bytes against 33,091 bytes for the full index on
-its fixture.
+law literal records the same text. The partial-index process `rchar` above is
+28,806 bytes; root measured 24,899 bytes against 33,091 bytes for the full
+index on its fixture.
