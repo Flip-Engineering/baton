@@ -1196,15 +1196,15 @@ def retained_launch_checked(prepared: Result<&1,&1,U32 & String,Dsh.Prepared>, +
         retained_keep_stdin(muse,omp,claude),
         Bool.or(muse,seal_prompt)}})
 
-def retained_launch_plain(omp: Bool, claude: Bool, cmd: String, model: String, effort: String, sessions: String, +native: String, +prefix: String, account: Maybe<&2,Accounts.AccountRecord>) -> Result<&1,&1,U32 & String,String>:
+def retained_launch_plain(omp: Bool, claude: Bool, cmd: String, model: String, effort: String, sessions: String, +native: String, +prefix: String, account: Maybe<&2,Accounts.AccountRecord>, +credit_refusal: String) -> Result<&1,&1,U32 & String,String>:
   match account:
     case None{}: Done{prefix ++ retained_arguments(omp,claude,cmd,model,effort,sessions,native)}
-    case Some{+refused}: Fail{(2,Accounts.credit_api_key_refusal(refused))}
+    case Some{+refused}: Fail{(2,Bool.pick(String,String.is_empty(credit_refusal),Accounts.credit_api_key_refusal(refused),credit_refusal))}
 
-def retained_launch_arguments(omp: Bool, claude: Bool, cmd: String, model: String, effort: String, sessions: String, +native: String, +prefix: String, +history: String, harness: String, account: Maybe<&2,Accounts.AccountRecord>, binding: Maybe<List<String>>) -> Result<&1,&1,U32 & String,String>:
+def retained_launch_arguments(omp: Bool, claude: Bool, cmd: String, model: String, effort: String, sessions: String, +native: String, +prefix: String, +history: String, harness: String, account: Maybe<&2,Accounts.AccountRecord>, binding: Maybe<List<String>>, +credit_refusal: String) -> Result<&1,&1,U32 & String,String>:
   match binding:
     case Some{bound}: Done{prefix ++ retained_profile_arguments(omp,claude,bound,Subs.history_override(Tx.trim_nl(harness),history),cmd,model,effort,sessions,native)}
-    case None{}: retained_launch_plain(omp,claude,cmd,model,effort,sessions,native,prefix,account)
+    case None{}: retained_launch_plain(omp,claude,cmd,model,effort,sessions,native,prefix,account,credit_refusal)
 
 def retained_prepare_checked(+db: String, +player: String, +directory: String, +cmd: String, +model: String, +effort: String, +session: String, +harness: String, +sessions: String, +prompt: String, +level: String, seal_prompt: Bool, +predecessor: String, checked: Result<&1,&1,U32 & String,Unit>) -> IO(Result<&1,&1,U32 & String,RetainedLaunch>):
   match checked:
@@ -1228,9 +1228,10 @@ def retained_prepare_checked(+db: String, +player: String, +directory: String, +
       +account : Maybe<&2,Accounts.AccountRecord> <- Accounts.current_account(db,player,harness)
       store : String <- current_store(db,player,harness)
       history : String <- current_history(db,player)
-      binding : Maybe<List<String>> <- IO.pure(Maybe<List<String>>,Accounts.account_binding(Tx.trim_nl(harness),account,identity_resolver(parts),store))
+      credit_refusal : String <- Accounts.credit_launch_refusal_for(db,account)
+      binding : Maybe<List<String>> <- Accounts.credit_launch_binding(db,player,directory,Tx.trim_nl(harness),account,identity_resolver(parts),store)
       recorded : Unit <- Accounts.record_current_attempt(db,player,directory,predecessor,account)
-      +args : String <- IO.try(String,IO.pure(Result<&1,&1,U32 & String,String>,retained_launch_arguments(omp,claude,cmd,model,effort,sessions,native,prefix,history,Tx.trim_nl(harness),account,binding)))
+      +args : String <- IO.try(String,IO.pure(Result<&1,&1,U32 & String,String>,retained_launch_arguments(omp,claude,cmd,model,effort,sessions,native,prefix,history,Tx.trim_nl(harness),account,binding,credit_refusal)))
       launch : Result<&1,&1,U32 & String,RetainedLaunch> <- retained_launch_checked(prepared,dsh,prefix,home,cmd,model,effort,native,muse,muse_args,args,initial,omp,claude,level,seal_prompt)
       IO.pure(Result<&1,&1,U32 & String,RetainedLaunch>,launch)
 
