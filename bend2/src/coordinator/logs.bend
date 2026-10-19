@@ -1332,3 +1332,21 @@ def clean(+db: String, +session: String) -> IO(String):
     +present : String <- IO.try(String,DB.Sql.query(db,schema() ++ "SELECT count(*) FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
     answer : String <- Bool.pick(IO(String),String.eq(Tx.trim_nl(present),"1"),clean_started(db,session),IO.pure(String,unknown_session(session)))
     IO.pure(String,answer)
+
+def clean_all_rows(+db: String, rows: List<String>, acc: String) -> IO(String):
+  match rows:
+    case Nil{}: IO.pure(String,acc)
+    case +head <> tail: do IO<String>:
+      session : String = Tx.hex_decode(head)
+      answer : String <- clean(db,session)
+      rest : String <- clean_all_rows(db,tail,items_join(acc,answer))
+      IO.pure(String,rest)
+
+# Clean only sessions registered in this database. Each session is revalidated
+# and cleaned under its own lock by clean(), which preserves pending sessions.
+def clean_all(+db: String) -> IO(String):
+  do IO<String>:
+    ensured : Unit <- Schema.ensure(db)
+    rows : String <- IO.try(String,DB.Sql.read(db,"SELECT hex(id) FROM sessions ORDER BY id;"))
+    results : String <- clean_all_rows(db,Tx.split_lines(rows),"")
+    IO.pure(String,"{\"results\":[" ++ results ++ "]}")

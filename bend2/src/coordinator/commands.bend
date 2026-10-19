@@ -72,6 +72,7 @@ type Command is Data:
   Logs{session: String, level: String}
   LogsStorage{}
   LogsClean{session: String}
+  LogsCleanAll{}
   Status{}
   Players{}
   LegacySubordinates{}
@@ -651,6 +652,7 @@ def sql(command: Command) -> String:
     case Logs{session,level}: ""
     case LogsStorage{}: ""
     case LogsClean{session}: ""
+    case LogsCleanAll{}: ""
     case Recruit{id,parent,harness,model,effort,repo,branch,path,base}: ""
     case Join{id,parent,harness,model,effort,path}: ""
     case Worktree{id}: ""
@@ -684,6 +686,7 @@ def parse_verb_only(+verb: String) -> Command:
   match verb:
     case "context-engines": ContextEngines{""}
     case "logs-storage": LogsStorage{}
+    case "logs-clean-all": LogsCleanAll{}
     case "help": Help{}
     case "--help": Help{}
     case "status": Status{}
