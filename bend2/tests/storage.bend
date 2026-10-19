@@ -471,8 +471,9 @@ def unknown_peer_script() -> String:
   "import ctypes,time; getattr(ctypes.CDLL(None),'prctl',lambda *args: 0)(4,0,0,0,0); time.sleep(30)"
 
 # Unknown runtime evidence preserves the candidate before removal is attempted.
-# The locked-tree check drives the removal primitive directly so preservation
-# from unknown facts and refusal from an inaccessible child stay separate.
+# The removal check uses a readable 130-deep chain through the full apply and
+# receipt path so the depth refusal is UID-independent and preservation stays
+# separate from unknown-fact preservation.
 def deep_leaf_path(+prefix: String, remaining: Nat) -> String:
   match remaining:
     case 0n: prefix ++ "/leaf.txt"
