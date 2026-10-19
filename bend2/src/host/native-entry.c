@@ -198,7 +198,7 @@ static int native_receiver_route(int argc, char **argv) {
 #endif
 
 #if defined(BATON2_RECEIVE_FOCUSED) || defined(BATON2_RECOVERY_HELPER)
-static int delegate_full_cli(char **argv) {
+static int delegate_sibling_cli(char **argv,const char *name,const char *role) {
   char *executable=application_executable();
   char *directory=executable?strdup(executable):NULL;
   char *slash=directory?strrchr(directory,'/'):NULL;
@@ -208,24 +208,42 @@ static int delegate_full_cli(char **argv) {
     return 78;
   }
   *slash=0;
-  size_t size=strlen(directory)+sizeof("/baton-full");
+  size_t size=strlen(directory)+strlen(name)+2;
   char *candidate=malloc(size);
   if(!candidate) {
     free(directory);free(executable);
     perror("baton: full CLI path");
     return 1;
   }
-  snprintf(candidate,size,"%s/baton-full",directory);
+  snprintf(candidate,size,"%s/%s",directory,name);
   char *full=realpath(candidate,NULL);
   free(candidate);free(directory);free(executable);
   if(!full || access(full,X_OK)) {
-    fputs("baton: sibling baton-full is missing or not executable. Install the complete Baton package.\n",stderr);
+    if(!strcmp(role,"full CLI"))
+      fputs("baton: sibling baton-full is missing or not executable. Install the complete Baton package.\n",stderr);
+    else
+      fputs("baton: sibling baton-recovery is missing or not executable. Install the complete Baton package.\n",stderr);
     free(full);return 78;
   }
   argv[0]=full;
   execv(full,argv);
-  perror("baton: full CLI could not execute");
+  if(!strcmp(role,"full CLI"))perror("baton: full CLI could not execute");
+  else perror("baton: recovery helper could not execute");
   free(full);return 1;
+}
+
+static int delegate_full_cli(char **argv) {
+  return delegate_sibling_cli(argv,"baton-full","full CLI");
+}
+#endif
+
+#ifdef BATON2_RECEIVE_FOCUSED
+static int focused_recovery_route(int argc,char **argv) {
+  int recovery=(argc>1 && (!strcmp(argv[1],"--recover-observer") ||
+                           !strcmp(argv[1],"--recover-receive"))) ||
+               (argc>2 && !strcmp(argv[2],"recover-observer"));
+  if(!recovery) return -1;
+  return delegate_sibling_cli(argv,"baton-recovery","recovery helper");
 }
 #endif
 
@@ -252,6 +270,10 @@ int main(int argc, char **argv) {
 #endif
   int settings=settings_entry(argc,argv);
   if(settings>=0) return settings;
+#ifdef BATON2_RECEIVE_FOCUSED
+  int recovery_route=focused_recovery_route(argc,argv);
+  if(recovery_route>=0) return recovery_route;
+#endif
   int dispatch=dispatch_entry(argc,argv);
   if(dispatch>=0) return dispatch;
 #ifdef BATON2_NATIVE_RECEIVER_ROUTER
