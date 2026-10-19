@@ -108,6 +108,21 @@ class CgroupConfinement(unittest.TestCase):
             return None
 
     @staticmethod
+    def keeper_pids(attempt):
+        found = []
+        marker = str(attempt).encode()
+        for entry in pathlib.Path('/proc').iterdir():
+            if not entry.name.isdigit():
+                continue
+            try:
+                argv = (entry / 'cmdline').read_bytes().split(b'\0')
+            except OSError:
+                continue
+            if b'--host-process-keeper' in argv and marker in argv:
+                found.append(int(entry.name))
+        return found
+
+    @staticmethod
     def lines(attempt):
         try:
             text = (attempt / 'stdout').read_text()
@@ -304,6 +319,22 @@ class CgroupConfinement(unittest.TestCase):
                     except subprocess.TimeoutExpired:
                         process.kill()
                         process.wait(timeout=5)
+                for _ in range(100):
+                    keepers = self.keeper_pids(attempt)
+                    if not keepers:
+                        break
+                    for pid in keepers:
+                        try:
+                            os.kill(pid, signal.SIGTERM)
+                        except ProcessLookupError:
+                            pass
+                    time.sleep(0.02)
+                for pid in self.keeper_pids(attempt):
+                    try:
+                        os.kill(pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                time.sleep(0.05)
                 listener.close()
                 sibling.kill()
                 sibling.wait(timeout=5)

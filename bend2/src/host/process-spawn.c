@@ -1108,9 +1108,11 @@ static int br_cgroup_write_limit(const char *root,const char *placement,const ch
   return error;
 }
 
-/* The receiver unit is the delegation boundary. A placement above a .service
-   or .scope unit would lose the receiver's budget, so the walk stops at the
-   first unit component and never climbs into a higher slice. */
+/* The receiver unit is the delegation boundary. A placement above an admitted
+   unit would lose the receiver's budget, so the walk stops at the deepest
+   .service or .scope component and never climbs into a higher slice. A user
+   manager such as user@1000.service therefore does not outrank a nested
+   worker.scope. */
 static char *br_cgroup_unit_root(const char *cgroup) {
   const char *at=cgroup;
   size_t best=0;
