@@ -268,7 +268,7 @@ class FocusedAccountCredits(unittest.TestCase):
     def test_gate_reserves_the_observed_worst_case_charge(self):
         self.credit_account()
         self.seed_cost()
-        self.assertEqual(self.gate('attempt-1'), 'node')
+        self.assertEqual(self.gate('attempt-1'), 'BATON2_CREDIT_RESERVATION=attempt-1')
         self.assertEqual(self.query("SELECT amount,state FROM credit_reservations WHERE attempt='attempt-1'"),
                          [('0.50', 'reserved')])
         self.assertEqual(self.query("SELECT count(*) FROM credit_authorizations WHERE attempt='attempt-1'"), [(1,)])
@@ -276,7 +276,7 @@ class FocusedAccountCredits(unittest.TestCase):
     def complete_with_event(self, event):
         self.credit_account()
         self.seed_cost()
-        self.assertEqual(self.gate('attempt-1'), 'node')
+        self.assertEqual(self.gate('attempt-1'), 'BATON2_CREDIT_RESERVATION=attempt-1')
         self.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('turn-1','root','leaf','report','done')")
         self.execute("INSERT INTO turns(id,worker,event) VALUES('turn-1','leaf',?)", (json.dumps(event),))
         self.execute("INSERT INTO executions(session,id,mode,directory,phase,status) "
