@@ -252,11 +252,11 @@ class FocusedAccountCredits(unittest.TestCase):
 
     def test_gate_admits_reserves_and_settles_one_launch(self):
         self.credit_account()
-        self.assertEqual(self.gate('attempt-1'), '/fixture/api-key-exec')
+        self.assertEqual(self.gate('attempt-1'), 'BATON2_CREDIT_RESERVATION=attempt-1')
         self.assertEqual(self.reservations(), [('attempt-1', 'reserved', '20', 'org-fixture', '2026-10')])
         self.complete('attempt-1')
         self.assertEqual(self.reservations(), [('attempt-1', 'settled', '20', 'org-fixture', '2026-10')])
-        self.assertEqual(self.gate('attempt-2'), '/fixture/api-key-exec')
+        self.assertEqual(self.gate('attempt-2'), 'BATON2_CREDIT_RESERVATION=attempt-2')
 
     def test_gate_refuses_an_unverified_organization_and_records_no_reservation(self):
         self.record('claude-api', funding='api_key', secret='file:/fixture/api')
@@ -271,7 +271,7 @@ class FocusedAccountCredits(unittest.TestCase):
 
     def test_gate_refuses_when_reserved_launches_reach_the_balance(self):
         self.credit_account(balance='30.00')
-        self.assertEqual(self.gate('attempt-1'), '/fixture/api-key-exec')
+        self.assertEqual(self.gate('attempt-1'), 'BATON2_CREDIT_RESERVATION=attempt-1')
         self.assertIn('promotionalCreditInsufficient', self.gate('attempt-2'))
         self.assertEqual([row[0] for row in self.reservations()], ['attempt-1'])
 
@@ -279,7 +279,7 @@ class FocusedAccountCredits(unittest.TestCase):
         self.credit_account()
         for index in range(10):
             attempt = 'attempt-%d' % index
-            self.assertEqual(self.gate(attempt), '/fixture/api-key-exec')
+            self.assertTrue(self.gate(attempt).startswith('BATON2_CREDIT_RESERVATION='))
             self.complete(attempt)
         self.assertIn('monthlyCapInsufficient', self.gate('attempt-10'))
         self.assertEqual(len(self.reservations()), 10)

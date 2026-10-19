@@ -59,11 +59,12 @@ An Anthropic API-key launch passes through `credit_launch_binding` in
 `bend2/src/coordinator/accounts.bend`. That function builds the meter from the
 recorded observations and reservations, runs the admission decision in the next
 section, and records a `credit_reservations` row for the attempt when the
-decision admits. The packaged `api-key-exec` helper reads `BATON_DATABASE` and
-`BATON_ATTEMPT_DIRECTORY` from its environment and runs only when a `reserved`
-reservation row exists for that attempt; it returns
-`creditAdmissionUnavailable` before resolving a secret or starting a child in
-every other case. A refused decision records no reservation, the attempt is not
+decision admits. The admitted binding carries a `BATON2_CREDIT_RESERVATION` environment
+assignment naming the attempt, placed before the helper path so the launch
+environment sets it for the helper. The packaged `api-key-exec` helper runs
+only when that marker is present and matches `BATON_ATTEMPT_DIRECTORY` when
+that variable is set; it returns `creditAdmissionUnavailable` before resolving
+a secret or starting a child in every other case. A refused decision records no reservation, the attempt is not
 started, and its input stays owed. Subscription routes and other harnesses keep
 their existing bindings.
 

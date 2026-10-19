@@ -1025,10 +1025,18 @@ def credit_launch_refusal_for(+db: String, chosen: Maybe<&2,AccountRecord>) -> I
       admission : CreditAdmission <- credit_decision_for(db,account)
       IO.pure(String,credit_launch_refusal_decided(admission))
 
+def credit_admitted_binding_decided(+attempt: String, binding: Maybe<List<String>>) -> Maybe<List<String>>:
+  match binding:
+    case None{}: None{}
+    case Some{values}: Some{Con{"BATON2_CREDIT_RESERVATION=" ++ attempt,values}}
+
+def credit_admitted_binding(+attempt: String, +secret_ref: String, helper: Maybe<String>) -> Maybe<List<String>>:
+  credit_admitted_binding_decided(attempt,api_key_binding(secret_ref,helper))
+
 def credit_launch_binding_decided(+db: String, +session: String, +attempt: String, +harness: String, +account: AccountRecord, helper: Maybe<String>, +admission: CreditAdmission) -> IO(Maybe<List<String>>):
   do IO<Maybe<List<String>>>:
     recorded : Unit <- credit_record_reservation(db,session,attempt,account,admission)
-    IO.pure(Maybe<List<String>>,Bool.pick(Maybe<List<String>>,credit_admission_admitted(admission),api_key_binding(account_secret_ref(account),helper),None{}))
+    IO.pure(Maybe<List<String>>,Bool.pick(Maybe<List<String>>,credit_admission_admitted(admission),credit_admitted_binding(attempt,account_secret_ref(account),helper),None{}))
 
 def credit_launch_binding_routed(+db: String, +session: String, +attempt: String, +harness: String, +account: AccountRecord, helper: Maybe<String>, +profile_store: String, route: Bool) -> IO(Maybe<List<String>>):
   match route:
