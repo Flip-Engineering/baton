@@ -49,7 +49,7 @@ and `bin/bun`.
 
 ## Execution
 
-A request opens `$state/keys/<key>/lock` and takes an exclusive `flock`. With the
+A request opens `$state/keys/<key>/lock` and takes an exclusive record lock. With the
 lock held it reads `completed/result`; a valid completed result is copied to the
 caller's artifact paths. Without a completed result, the requester writes one
 attempt directory, copies the declared inputs, normalizes output paths into the
@@ -134,9 +134,11 @@ is installed, the wrapper exits 2 with the missing path and build entry. The
 reference shell implementation is retained at commit 97a95949 for the current
 operator hold.
 
-The launcher requires `flock`, a detached-session spawn and SHA-256. On hosts
-without those tools, `bend2/scripts/build-native.sh` keeps the direct compile
-path and prints a warning.
+The lifecycle boundary uses portable host primitives: `fcntl` record locks and
+`setsid(2)` in the C binding, and SHA-256 in the digest binding. Every supported
+host requires queue coordination; `bend2/scripts/build-native.sh` has no
+un-queued compile path. The reference shell is Linux-only bootstrap evidence for
+the current hold and is not the permanent implementation.
 
 ## Qualification
 
@@ -174,5 +176,5 @@ artifact is reused only for that source identity.
   qualified. Root owns consolidation and deployment.
 - C-generation qualification and the ordinary `build-native.sh` main build run
   after the operator hold permits compilation.
-- macOS CI does not provide `flock` or `setsid`; those jobs keep the direct
-  compile path until a portable host primitive exists.
+- macOS provides `fcntl` locks and `setsid(2)` through its POSIX host boundary.
+  The Bend2 lifecycle uses those primitives, so macOS jobs use the queue.
