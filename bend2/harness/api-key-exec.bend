@@ -219,10 +219,18 @@ def run(+reference: String, +command: String, args: List<String>) -> IO(Unit):
     resolved : Result<&1,&1,Refusal,String> <- resolve(reference)
     run_resolved(resolved,reference,command,args)
 
+# Bool.pick evaluates both of its value arguments, so calling sql_escaped on
+# the tail inside each branch escapes every tail twice and grows exponentially
+# with the string length. Escape the tail once and choose the head here.
+def sql_escape_char(head: Char, tail: String, quote: Bool) -> String:
+  match quote:
+    case True{}: "''" ++ tail
+    case False{}: SCon{head,tail}
+
 def sql_escaped(+text: String) -> String:
   match text:
     case SNil{}: ""
-    case SCon{head,tail}: Bool.pick(String,U32.is_eq(Char.to_u32(head),39),"''" ++ sql_escaped(tail),SCon{head,sql_escaped(tail)})
+    case SCon{+head,tail}: sql_escape_char(head,sql_escaped(tail),U32.is_eq(Char.to_u32(head),39))
 
 # One authorization admits one launch. The guarded transition is the lock: a
 # single UPDATE returns changes()=1 to exactly one caller, and every later
