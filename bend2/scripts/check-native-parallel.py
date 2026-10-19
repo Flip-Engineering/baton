@@ -33,11 +33,22 @@ def copy_tree(source, destination, log):
                        stdout=log, stderr=log, check=True)
 
 
+def cleanup_successful_run(work, ipc, successful):
+    """Remove only this run's copies after every test child has exited cleanly."""
+    if not successful:
+        return False
+    shutil.rmtree(work)
+    shutil.rmtree(ipc)
+    return True
+
+
 def main():
     work = pathlib.Path(tempfile.mkdtemp(prefix='native-suites-', dir=ROOT / '.scratch'))
-    ipc = pathlib.Path(tempfile.mkdtemp(prefix='b2-native-', dir='/tmp'))
+    ipc = pathlib.Path(tempfile.mkdtemp(prefix='b2-native-'))
     run = os.environ.get('BATON2_LINUX_RUN')
-    output = (pathlib.Path(run) / 'evidence/native-suites') if run else work / 'results'
+    output = ((pathlib.Path(run) / 'evidence/native-suites') if run else
+              pathlib.Path(tempfile.mkdtemp(prefix='native-suites-results-',
+                                            dir=ROOT / '.scratch/bend2')))
     output.mkdir(parents=True)
     seed = work / 'seed'
     commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
@@ -107,15 +118,16 @@ def main():
                 copy_tree(seed, source, log)
             for name in ('tmp', 'runtime'):
                 (runtime / name).mkdir(mode=0o700)
-            (directory / 'native-evidence').mkdir(mode=0o700)
+            native_evidence = evidence / 'native-context'
+            native_evidence.mkdir(mode=0o700)
             environment = dict(os.environ, TMPDIR=str(runtime / 'tmp'),
                                XDG_RUNTIME_DIR=str(runtime / 'runtime'),
-                               FINAL_NATIVE_CONTEXT_EVIDENCE=str(directory / 'native-evidence'))
+                               FINAL_NATIVE_CONTEXT_EVIDENCE=str(native_evidence))
             # The inherited Python shim records each selected suite in its original output directory.
             with (evidence / 'stdout').open('wb') as stdout, (evidence / 'stderr').open('wb') as stderr:
                 child = subprocess.Popen(spec['argv'], cwd=source, env=environment,
                                          stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr)
-                row.update(pid=child.pid, native_evidence=str(directory / 'native-evidence'))
+                row.update(pid=child.pid, native_evidence=str(native_evidence))
                 write(evidence / 'execution.json', row)
                 with lock:
                     print(json.dumps({'started': spec['label'], 'pid': child.pid,
@@ -137,8 +149,14 @@ def main():
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
         codes = list(pool.map(run_suite, enumerate(queue)))
+    cleaned = cleanup_successful_run(work, ipc, not any(codes))
+    if not cleaned:
+        print(json.dumps({'preserved_work': str(work), 'preserved_runtime_root': str(ipc),
+                          'reason': 'one or more suites failed; retain isolated trees for review'}),
+              flush=True)
     print(json.dumps({'suites': len(codes), 'failures': sum(code != 0 for code in codes),
-                      'results': str(output / 'results.json'), 'work': str(work)}), flush=True)
+                      'results': str(output / 'results.json'), 'work': str(work),
+                      'scratch_cleanup': 'removed' if cleaned else 'preserved'}), flush=True)
     return int(any(code != 0 for code in codes))
 
 
