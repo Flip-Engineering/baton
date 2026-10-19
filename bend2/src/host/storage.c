@@ -741,19 +741,22 @@ static char *baton_storage_refs_answer(BatonStoragePids *pids, const char *unkno
   char *answer = malloc(length + 8);
   if (!answer) return NULL;
   answer[0] = 0;
+  if (pids->count) {
+    strcpy(answer, "present:");
+    for (size_t i = 0; i < pids->count; i++) {
+      if (i) strcat(answer, ",");
+      char number[32];
+      snprintf(number, sizeof(number), "%ld", (long)pids->items[i]);
+      strcat(answer, number);
+    }
+    return answer;
+  }
   if (unknown[0]) {
     strcpy(answer, "unknown:");
     strcat(answer, unknown);
     return answer;
   }
-  if (!pids->count) { strcpy(answer, "absent"); return answer; }
-  strcpy(answer, "present:");
-  for (size_t i = 0; i < pids->count; i++) {
-    if (i) strcat(answer, ",");
-    char number[32];
-    snprintf(number, sizeof(number), "%ld", (long)pids->items[i]);
-    strcat(answer, number);
-  }
+  strcpy(answer, "absent");
   return answer;
 }
 
@@ -796,7 +799,7 @@ static void baton_storage_refs_call(IoWork *w) {
       if (baton_storage_pid_push(&pids, pid)) { call->error = ENOMEM; break; }
       if (pids.count >= BATON_STORAGE_REF_LIMIT) { truncated = 1; break; }
     }
-    if (unknown || truncated) break;
+    if (truncated) break;
   }
   closedir(proc);
   free(root);

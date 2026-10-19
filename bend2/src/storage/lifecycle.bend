@@ -293,6 +293,29 @@ def apply_roots(+session: String, +db: String, specs: List<&2,RootSpec>, acc: Li
         deeper : List<T.Receipt> <- apply_roots(session, db, tail, Con{receipt, acc})
         IO.pure(List<T.Receipt>, deeper)
 
+def root_preview_json(item: RootPreview) -> String:
+  match item:
+    case RootPreview{root, mount, identity, planned}:
+      "{\"root\":" ++ J.string_literal(root) ++ ",\"mount\":" ++ J.string_literal(mount) ++ ",\"identity\":" ++ J.string_literal(identity) ++ ",\"preview\":" ++ P.preview_json(planned) ++ "}"
+
+def root_preview_append_choice(empty: Bool, +acc: String, head: RootPreview) -> String:
+  match empty:
+    case True{}: root_preview_json(head)
+    case False{}: acc ++ "," ++ root_preview_json(head)
+
+def root_preview_append(+acc: String, head: RootPreview) -> String:
+  root_preview_append_choice(String.is_empty(acc), acc, head)
+
+def root_preview_items(items: List<RootPreview>, +acc: String) -> String:
+  match items:
+    case Nil{}: acc
+    case Con{head, tail}:
+      +next = root_preview_append(acc, head)
+      root_preview_items(tail, next)
+
+def previews_json(items: List<RootPreview>) -> String:
+  "{\"roots\":[" ++ root_preview_items(items, "") ++ "]}"
+
 def run_preview(+db: String, +session: String) -> IO(Unit):
   do IO<Unit>:
     specs : List<&2,RootSpec> <- configured_roots()
@@ -337,46 +360,6 @@ def apply_session(+db: String, +session: String) -> IO(Result<&1,&1,U32 & String
       IO.pure(Result<&1,&1,U32 & String,List<T.Receipt>>, Done{Nil{}}),
       IO.pure(Result<&1,&1,U32 & String,List<T.Receipt>>, Fail{(3, "storage apply refused: cooperative root writer lease protocol is unavailable")}))
 
-def run_apply_known(+db: String, +session: String) -> IO(Unit):
-  do IO<Unit>:
-    canonical : String <- IO.try(String, Lock.SessionLock.canonical(db))
-    lock : Maybe<U32> <- IO.try(Maybe<U32>, Lock.SessionLock.try_acquire(canonical, session))
-    match lock:
-      case None{}: IO.die(Unit, 4, "storage cleanup busy: session lock held")
-      case Some{handle}:
-        do IO<Unit>:
-          result : Result<&1,&1,U32 & String,List<T.Receipt>> <- apply_session(db, session)
-          released : Unit <- IO.try(Unit, Lock.SessionLock.release(handle))
-          answer : Unit <- run_apply_result(result)
-          IO.pure(Unit, answer)
-
-def run_apply(+db: String, +session: String) -> IO(Unit):
-  do IO<Unit>:
-    state : S.State <- S.load(db)
-    Bool.pick(IO(Unit), S.session_known(state, session),
-      run_apply_known(db, session),
-      IO.die(Unit, 2, "unknown session: " ++ session))
-
-def root_preview_json(item: RootPreview) -> String:
-  match item:
-    case RootPreview{root, mount, identity, planned}:
-      "{\"root\":" ++ J.string_literal(root) ++ ",\"mount\":" ++ J.string_literal(mount) ++ ",\"identity\":" ++ J.string_literal(identity) ++ ",\"preview\":" ++ P.preview_json(planned) ++ "}"
-
-def root_preview_append_choice(empty: Bool, +acc: String, head: RootPreview) -> String:
-  match empty:
-    case True{}: root_preview_json(head)
-    case False{}: acc ++ "," ++ root_preview_json(head)
-
-def root_preview_append(+acc: String, head: RootPreview) -> String:
-  root_preview_append_choice(String.is_empty(acc), acc, head)
-
-def root_preview_items(items: List<RootPreview>, +acc: String) -> String:
-  match items:
-    case Nil{}: acc
-    case Con{head, tail}:
-      +next = root_preview_append(acc, head)
-      root_preview_items(tail, next)
-
 def receipt_append_choice(empty: Bool, +acc: String, head: T.Receipt) -> String:
   match empty:
     case True{}: P.receipt_json(head)
@@ -392,9 +375,6 @@ def receipt_json_list(items: List<T.Receipt>, +acc: String) -> String:
       +next = receipt_append(acc, head)
       receipt_json_list(tail, next)
 
-def previews_json(items: List<RootPreview>) -> String:
-  "{\"roots\":[" ++ root_preview_items(items, "") ++ "]}"
-
 def receipts_json(items: List<T.Receipt>) -> String:
   "{\"receipts\":[" ++ receipt_json_list(items, "") ++ "]}"
 
@@ -404,6 +384,18 @@ def run_apply_result(result: Result<&1,&1,U32 & String,List<T.Receipt>>) -> IO(U
     case Fail{error}:
       (code, detail) = error
       IO.die(Unit, code, detail)
+
+def run_apply_known(+db: String, +session: String) -> IO(Unit):
+  do IO<Unit>:
+    result : Result<&1,&1,U32 & String,List<T.Receipt>> <- apply_session(db, session)
+    run_apply_result(result)
+
+def run_apply(+db: String, +session: String) -> IO(Unit):
+  do IO<Unit>:
+    state : S.State <- S.load(db)
+    Bool.pick(IO(Unit), S.session_known(state, session),
+      run_apply_known(db, session),
+      IO.die(Unit, 2, "unknown session: " ++ session))
 
 def bool_json(+value: Bool) -> String:
   Bool.pick(String, value, "true", "false")
