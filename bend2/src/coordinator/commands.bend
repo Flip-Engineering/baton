@@ -379,7 +379,7 @@ def omp_terminal_error_sql(+event: String) -> String:
 # The report carries the observed provider status and diagnostic. The native
 # log retains the complete terminal frame.
 def omp_terminal_error_text_sql_expr(+event: String) -> String:
-  "CASE WHEN json_extract(" ++ event ++ ",'$.type')='agent_end' THEN (SELECT 'OMP provider failure: stopReason=error, errorStatus=' || coalesce(CAST(json_extract(m.value,'$.errorStatus') AS TEXT),'unknown') || '; ' || coalesce(json_extract(m.value,'$.errorMessage'),'the retained frame carries no provider diagnostic') FROM (SELECT " ++ last_assistant_sql_expr(event) ++ " AS value) m WHERE json_extract(m.value,'$.stopReason')='error') END"
+  "CASE WHEN json_valid(" ++ event ++ ") THEN CASE WHEN json_extract(" ++ event ++ ",'$.type')='agent_end' THEN (SELECT 'OMP provider failure: stopReason=error, errorStatus=' || coalesce(CAST(json_extract(m.value,'$.errorStatus') AS TEXT),'unknown') || '; ' || coalesce(json_extract(m.value,'$.errorMessage'),'the retained frame carries no provider diagnostic') FROM (SELECT " ++ last_assistant_sql_expr(event) ++ " AS value) m WHERE json_extract(m.value,'$.stopReason')='error') END END"
 
 def omp_terminal_error_text_sql(+event: String) -> String:
   "(SELECT " ++ omp_terminal_error_text_sql_expr("native_frame.value") ++ " FROM (SELECT " ++ q(event) ++ " AS value) native_frame)"

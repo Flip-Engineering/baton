@@ -37,11 +37,13 @@ def pending_live(db: String, player: String, handle: U32, cursor: String, closed
     case 0: pending(db,player,handle,cursor)
     case other: IO.pure(String,cursor)
 
-def continued(db: String, player: String, +handle: U32, cursor: String, ended: Bool) -> IO(String):
+def continued(db: String, player: String, +handle: U32, cursor: String, ended: Bool, monitor: Bool) -> IO(String):
   match ended:
-    case True{}: do IO<String>:
-      closed : Unit <- IO.try(Unit,P.ProcessChild.close_stdin(handle))
-      IO.pure(String,cursor)
+    case True{}: match monitor:
+      case True{}: IO.pure(String,cursor)
+      case False{}: do IO<String>:
+        closed : Unit <- IO.try(Unit,P.ProcessChild.close_stdin(handle))
+        IO.pure(String,cursor)
     case False{}: do IO<String>:
       closed : U32 <- IO.try(U32,P.ProcessChild.input_closed(handle))
       pending_live(db,player,handle,cursor,closed)
@@ -50,7 +52,7 @@ def continued(db: String, player: String, +handle: U32, cursor: String, ended: B
 @unsafe
 def drain_pending(+db: String, +player: String, +handle: U32, +cursor: String) -> IO(String):
   do IO<String>:
-    +next : String <- continued(db,player,handle,cursor,False{})
+    +next : String <- continued(db,player,handle,cursor,False{},False{})
     Bool.pick(IO(String),String.eq(next,cursor),IO.pure(String,cursor),drain_pending(db,player,handle,next))
 
 def awake_pending(db: String, player: String, handle: U32, +cursor: String, woke: Bool) -> IO(String):
@@ -62,25 +64,25 @@ def terminal_sql(+value: String) -> String:
 def terminal_span_sql(+value: String) -> String:
   "SELECT CASE WHEN " ++ C.terminal_span(value) ++ " THEN 1 ELSE 0 END;"
 
-def observe_text(+db: String, +player: String, handle: U32, +line: String, +cursor: String) -> IO(String):
+def observe_text(+db: String, +player: String, handle: U32, +line: String, +cursor: String, monitor: Bool) -> IO(String):
   do IO<String>:
     ended : String <- IO.try(String,DB.Sql.query(db,terminal_sql(line)))
-    continued(db,player,handle,cursor,String.eq(ended,"1\n"))
+    continued(db,player,handle,cursor,String.eq(ended,"1\n"),monitor)
 
-def observe_span(+db: String, +player: String, handle: U32, +spool: String, +offset: String, +length: String, +cursor: String) -> IO(String):
+def observe_span(+db: String, +player: String, handle: U32, +spool: String, +offset: String, +length: String, +cursor: String, monitor: Bool) -> IO(String):
   do IO<String>:
     ended : String <- IO.try(String,DB.Sql.query_span(db,spool,offset,length,terminal_span_sql("?1")))
-    continued(db,player,handle,cursor,String.eq(ended,"1\n"))
+    continued(db,player,handle,cursor,String.eq(ended,"1\n"),monitor)
 
-def observe_decoded(+db: String, +player: String, handle: U32, decoded: Frame.FrameDecoded, cursor: String) -> IO(String):
+def observe_decoded(+db: String, +player: String, handle: U32, decoded: Frame.FrameDecoded, cursor: String, monitor: Bool) -> IO(String):
   match decoded:
-    case Frame.TextFrame{line}: observe_text(db,player,handle,line,cursor)
-    case Frame.SpanFrame{spool,offset,length}: observe_span(db,player,handle,spool,offset,length,cursor)
+    case Frame.TextFrame{line}: observe_text(db,player,handle,line,cursor,monitor)
+    case Frame.SpanFrame{spool,offset,length}: observe_span(db,player,handle,spool,offset,length,cursor,monitor)
     case Frame.InvalidFrame{line}: IO.pure(String,cursor)
 
-# Native responses remain in the observed stream. The recipient's ack records
-# handled guidance; this observer only forwards input and closes it at terminal.
-def observe(+db: String, +player: String, handle: U32, decoded: Frame.FrameDecoded, +line: String, cursor: String, enabled: Bool) -> IO(String):
+# Native responses remain in the observed stream. Terminal frames close stdin
+# for the process owner; monitor observers preserve input ownership.
+def observe(+db: String, +player: String, handle: U32, decoded: Frame.FrameDecoded, +line: String, cursor: String, enabled: Bool, monitor: Bool) -> IO(String):
   match enabled:
     case False{}: IO.pure(String,cursor)
-    case True{}: observe_decoded(db,player,handle,decoded,cursor)
+    case True{}: observe_decoded(db,player,handle,decoded,cursor,monitor)
