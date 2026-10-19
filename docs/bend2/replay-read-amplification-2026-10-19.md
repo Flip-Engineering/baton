@@ -45,12 +45,11 @@ lifetime.
 
 ## Fix
 
-`C.schema()` now creates `messages_pending` on
-`messages(recipient,receipt,seq)`. The pending count becomes a covering index
-search and the oldest-pending read becomes an ordered index search. The index
-is part of the caller schema, so the projection installer creates it on the
-first stale install after deployment and the schema-version marker records the
-new state.
+`C.schema()` now creates the partial index `messages_pending` on
+`messages(recipient,seq) WHERE receipt IS NULL`. The pending count and the
+oldest-pending read search the pending entries directly. The index is part of
+the caller schema, so the projection installer creates it on the first stale
+install after deployment and the schema-version marker records the new state.
 
 The law literal in `bend2/src/coordinator/laws.bend` includes the same index
 text. The focused projection fixture uses the index in its representative
@@ -59,42 +58,53 @@ caller schema.
 ## Counters
 
 A disposable accounts-like database of 30,000 messages and a 158-byte terminal
-spool event was measured with `/proc/self/io` `rchar` for the exact
+event was measured with `/proc/self/io` `rchar` for the exact
 `completion_sql_expr` shape: two pending counts and one oldest-pending read.
 
 | Plan | Bytes | Database bytes per spool byte |
 | --- | ---: | ---: |
 | `SCAN messages` three times | 23,101,575 | 146,212.5 |
-| `messages_pending` searches | 37,002 | 234.2 |
+| full `messages_pending(recipient,receipt,seq)` | 37,002 | 234.2 |
+| partial `messages_pending(recipient,seq) WHERE receipt IS NULL` | 28,806 | 182.3 |
 
-The indexed result was 624 times smaller. The reconciliation value was
-identical: `pendingCount` 30 and `oldestPendingId` `m029970`.
+The partial index result was 802 times smaller than the scan. Root measured
+24,899 bytes for the partial index against 33,091 bytes for the full index on
+its fixture. The reconciliation value was identical: `pendingCount` 30 and
+`oldestPendingId` `m029970`.
 
-The trace ratio was 2,787 database bytes per stdout byte. The long observation
-transaction contributed about 22.3 MB of the 159.8 MB. Replacing that scan
-with the index leaves the per-frame read-call setup as the next term.
+The trace ratio was 2,787 database bytes per stdout byte. The seven long
+read-write connections contributed about 156 MB of the 159.8 MB. Replacing
+those scans with the index leaves the per-frame read-call setup as the next
+term.
 
 ## Read-call setup
 
 Ten fresh read-only connections that ran `PRAGMA foreign_keys=ON`,
 `PRAGMA encoding` and `SELECT 1` read 43,180 bytes. Ten repetitions on one
 connection read 4,218 bytes. A bounded per-thread read-only connection reuse
-would remove most of this setup, approximately 1% of the traced bytes before
-the index and most of the residual after the index. That change needs
-per-thread ownership, path and file-replacement invalidation, fork reset,
-autocommit checks, UTF-8 refusal, statement finalization and teardown. It is a
-separate change; this fix does not alter connection lifetime.
+would remove most of this setup. The 35 read-only opens account for about
+0.085% of the traced bytes; connection reuse saves that portion. Most of the
+residual after the index is the per-frame read-write span and query setup.
+That change needs per-thread ownership, path and file-replacement
+invalidation, fork reset, autocommit checks, UTF-8 refusal, statement
+finalization and teardown. It is a separate change; this fix does not alter
+connection lifetime.
 
 ## Invariants
 
 The index is a schema object. It does not change replay cursor, EOF, spool
 contents, message rows, session state, checkpoints, custody or process
-ownership. `bend2/test/replay-read-amplification.py` holds the spool cursor,
-EOF, message count and database inode fixed across the before and after runs.
+ownership. `bend2/test/replay-read-amplification.py` is an SQL microbenchmark
+for the production query shape. It asserts the production
+`completion_pending_sql` and `completion_oldest_sql` fragments and the partial
+index predicate, then measures the plan and database reads. It does not drive
+replay and makes no cursor, EOF or custody claim.
 
 ## Limits
 
 The counters use a synthetic accounts-like database, not the live accounts
 database. The live database and worker were not touched. No full native build
 ran. The projection fixture checks the index in its representative schema; the
-law literal records the same text.
+law literal records the same text. The partial-index counter above is 28,806
+bytes; root measured 24,899 bytes against 33,091 bytes for the full index on
+its fixture.

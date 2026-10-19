@@ -1,18 +1,15 @@
-"""Focused replay read-amplification checks for issue #943.
+"""SQL microbenchmark for the production pending-input query (issue #943).
 
 The fixture builds a disposable accounts-like database from the schema
-literals in bend2/src/coordinator/commands.bend, writes a two-frame replay
-spool, and runs the terminal observation query that reads pending input. The
-query is the same shape as completion_sql_expr: two pending counts and one
-oldest-pending read. Before the messages_pending index the plan scans messages
-three times; after the index it searches the covering index. The test also
-holds the replay cursor, EOF and row results fixed across both runs.
+literals in bend2/src/coordinator/commands.bend, asserts the production
+completion_pending_sql, completion_oldest_sql and messages_pending fragments
+are present, and measures the plan and database reads for that query shape.
+It does not drive replay and makes no cursor, EOF or custody claim. The
+158-byte value is a reference payload size for the bytes-per-byte ratio.
 """
 import json
-import os
 import pathlib
 import re
-import shutil
 import sqlite3
 import tempfile
 import unittest
@@ -24,8 +21,7 @@ PENDING = 30
 INDEX_NAME = 'messages_pending'
 
 
-def source_literal(name):
-    text = COMMANDS.read_text()
+def source_literal(text, name):
     match = re.search(r'"(' + re.escape(name) + r'[^"]*)"', text)
     if not match:
         raise AssertionError(f'schema literal not found in {COMMANDS}: {name}')
@@ -43,23 +39,36 @@ def rchar():
     return None
 
 
-class ReplayReadAmplification(unittest.TestCase):
+class PendingInputQueryPlan(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
+        cls.source = COMMANDS.read_text()
         cls.tables = {
-            'sessions': source_literal('CREATE TABLE IF NOT EXISTS sessions'),
-            'messages': source_literal('CREATE TABLE IF NOT EXISTS messages'),
-            'turns': source_literal('CREATE TABLE IF NOT EXISTS turns'),
-            'session_stops': source_literal('CREATE TABLE IF NOT EXISTS session_stops'),
+            'sessions': source_literal(cls.source, 'CREATE TABLE IF NOT EXISTS sessions'),
+            'messages': source_literal(cls.source, 'CREATE TABLE IF NOT EXISTS messages'),
+            'turns': source_literal(cls.source, 'CREATE TABLE IF NOT EXISTS turns'),
+            'session_stops': source_literal(cls.source,
+                                            'CREATE TABLE IF NOT EXISTS session_stops'),
         }
         cls.index = source_literal(
-            'CREATE INDEX IF NOT EXISTS ' + INDEX_NAME)
+            cls.source, 'CREATE INDEX IF NOT EXISTS ' + INDEX_NAME)
+        for fragment in (
+                'SELECT count(*) FROM messages WHERE recipient=',
+                'AND receipt IS NULL AND NOT ',
+                'ORDER BY seq LIMIT 1',
+                'completion_pending_sql',
+                'completion_oldest_sql'):
+            if fragment not in cls.source:
+                raise AssertionError(
+                    f'production query fragment missing: {fragment}')
+        if 'WHERE receipt IS NULL' not in cls.index:
+            raise AssertionError(
+                f'{INDEX_NAME} is not the partial pending index: {cls.index}')
 
     def setUp(self):
-        self.temp = tempfile.TemporaryDirectory(prefix='replay-amplification-')
+        self.temp = tempfile.TemporaryDirectory(prefix='pending-query-plan-')
         self.addCleanup(self.temp.cleanup)
         self.db = pathlib.Path(self.temp.name) / 'accounts-like.db'
-        self.spool = pathlib.Path(self.temp.name) / 'stdout.spool'
         self.connection = sqlite3.connect(self.db)
         for sql in self.tables.values():
             self.connection.execute(sql)
@@ -72,17 +81,11 @@ class ReplayReadAmplification(unittest.TestCase):
             'INSERT INTO messages(id,sender,recipient,kind,body,receipt) '
             'VALUES(?,?,?,?,?,?)', rows)
         self.connection.commit()
-        self.frames = [
-            json.dumps({'type': 'message_start', 'id': 'frame-1'}),
-            json.dumps({'type': 'agent_end', 'isTerminal': True,
-                        'session_id': 'root',
-                        'messages': [{'role': 'assistant',
-                                      'content': [{'type': 'text',
-                                                   'text': 'terminal output'}]}]}),
-        ]
-        self.spool.write_text('\n'.join(self.frames) + '\n')
-        self.spool_bytes = self.spool.stat().st_size
-        self.cursor = len(self.frames[0]) + 1
+        self.terminal_event = json.dumps(
+            {'type': 'agent_end', 'isTerminal': True, 'session_id': 'root',
+             'messages': [{'role': 'assistant',
+                           'content': [{'type': 'text',
+                                        'text': 'terminal output'}]}]})
 
     def tearDown(self):
         self.connection.close()
@@ -107,23 +110,27 @@ class ReplayReadAmplification(unittest.TestCase):
         connection.execute(
             "INSERT INTO temp.baton_observation_frame(value) "
             "SELECT value FROM (SELECT ? AS value) WHERE json_valid(value)",
-            (self.frames[1],))
+            (self.terminal_event,))
         row = connection.execute(sql).fetchone()
         connection.execute('DROP TABLE temp.baton_observation_frame')
         connection.execute('COMMIT')
         after = rchar()
         plan = [row[3] for row in connection.execute('EXPLAIN QUERY PLAN ' + sql)]
         connection.close()
-        return row[0] if row else None, plan, (after - before if before is not None and after is not None else None)
+        return (row[0] if row else None, plan,
+                after - before if before is not None and after is not None else None)
 
-    def test_terminal_pending_query_uses_covering_index(self):
-        before_row, before_plan, before_bytes = self.measure(self.observe_sql())
+    def test_terminal_pending_query_uses_partial_index(self):
+        sql = self.observe_sql()
+        self.assertIn('receipt IS NULL', sql)
+        self.assertIn('ORDER BY seq LIMIT 1', sql)
+        before_row, before_plan, before_bytes = self.measure(sql)
         self.assertIn('SCAN messages', before_plan)
         self.connection.execute(self.index)
         self.connection.commit()
-        after_row, after_plan, after_bytes = self.measure(self.observe_sql())
-        self.assertTrue(any(INDEX_NAME in step for step in after_plan),
-                        after_plan)
+        after_row, after_plan, after_bytes = self.measure(sql)
+        self.assertGreaterEqual(
+            sum(1 for step in after_plan if INDEX_NAME in step), 3, after_plan)
         self.assertFalse(any('SCAN messages' in step for step in after_plan),
                          after_plan)
         self.assertEqual(before_row, after_row)
@@ -135,18 +142,6 @@ class ReplayReadAmplification(unittest.TestCase):
             self.assertGreater(before_bytes, 1000000)
             self.assertLess(after_bytes, 1000000)
             self.assertLess(after_bytes * 10, before_bytes)
-        # The observation does not move the replay cursor, EOF or spool.
-        self.assertEqual(self.spool.stat().st_size, self.spool_bytes)
-        self.assertEqual(self.spool.read_text(),
-                         '\n'.join(self.frames) + '\n')
-        self.assertEqual(self.cursor, len(self.frames[0]) + 1)
-        # The index changes no row or custody identity.
-        messages = self.connection.execute(
-            'SELECT count(*), min(id), max(id) FROM messages').fetchone()
-        self.assertEqual(messages, (ROWS, 'm000000', 'm029999'))
-        inode = self.db.stat().st_ino
-        self.connection.execute('SELECT 1').fetchone()
-        self.assertEqual(self.db.stat().st_ino, inode)
 
 
 if __name__ == '__main__':
