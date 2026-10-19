@@ -1,5 +1,6 @@
 """Log levels, event preservation, storage inspection and cleanup checks."""
 import json
+import os
 import pathlib
 import sqlite3
 import subprocess
@@ -9,7 +10,8 @@ import time
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-EXE = ROOT / '.scratch/bend2/baton2'
+EXE = pathlib.Path(os.environ.get('BATON2_TEST_EXE', ROOT / '.scratch/bend2/baton2'))
+BULK_EXE = os.environ.get('BATON2_LOGS_CLEAN_ALL')
 
 class Logs(unittest.TestCase):
     def setUp(self):
@@ -71,7 +73,11 @@ class Logs(unittest.TestCase):
         self.temp.cleanup()
 
     def call(self, *args):
-        p = subprocess.run([str(EXE), str(self.db), *args], text=True, capture_output=True)
+        if args == ('logs-clean-all',) and BULK_EXE:
+            argv = [BULK_EXE, str(self.db)]
+        else:
+            argv = [str(EXE), str(self.db), *args]
+        p = subprocess.run(argv, text=True, capture_output=True)
         self.assertEqual(p.returncode, 0, p.stderr)
         return p.stdout
 
