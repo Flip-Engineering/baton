@@ -1,11 +1,24 @@
 {
   "schema": "baton2-match-default-sharing-round2-v1",
+  "status": "negative",
+  "accepted": false,
   "before_c_bytes": 33992046,
   "after_c_bytes": 493026,
   "check_only_pass": true,
-  "compiler_tests_pass": true,
+  "compiler_tests_pass": false,
   "focused_entry_check": true,
   "focused_entry": "round2/fixtures/five-overlap.bend",
+  "rejection": {
+    "reason": "generated C is wrong on the protected U32/Nat path; the shared-default key omits the lowered default term / literal depth",
+    "reproduced": true,
+    "toolchain": "clang-19 -std=c11 -O0, same source"
+  },
+  "generated_c": {
+    "nat_pattern_deep.bend": {"base": "306n", "rejected_candidate": "8n", "corrected_attempt_full_term_key": "306n"},
+    "u32_table_bitvar.bend": {"base": "2496 2397", "rejected_candidate": "hang (timeout 20 s, no output)", "corrected_attempt_full_term_key": "hang (timeout 30 s, no output)"},
+    "word_match_cover_key.bend": {"base": "2139095040 2143289344 0 0 2139095040 2143289344", "rejected_candidate": "build failed: redefinition of mdflt_2", "corrected_attempt_full_term_key": "build ok, run memory fault"},
+    "match_default.bend": {"base": "0n", "rejected_candidate": "0", "corrected_attempt_full_term_key": "0"}
+  },
   "compiler": {
     "pinned": {
       "bend_ts_sha256": "93c2a43deeb82c15683e4e25bbc5dec5ac3edff9f54e09acc0975e290fcaeb85",
@@ -13,10 +26,10 @@
       "main_ts_sha256": "53ce8e48c7540db6c3e66133a7c7eb270d6f64813fe10a631fd50d22112eb07d",
       "base_bend_sha256": "e5639663177f2de93ef34867c029698aa4e68a98d46629f0b15452b67b99d798"
     },
-    "candidate": {
+    "rejected_candidate": {
       "bend_ts_sha256": "a25abe9d0d1afca31dbcad8dc58761adf6ab45dbad76421904edaa45ffade98e",
       "comp_ts_sha256": "8cfacdb8d7c3adb0570c3a54a1a2d75046f7ab8cc1ed1b40d30ab5163acb979c",
-      "main_ts_sha256": "53ce8e48c7540db6c3e66133a7c7eb270d6f64813fe10a631fd50d22112eb07d"
+      "commit": "8283eb80ac657fc8daf6bd5d150b61abf7f0a1be"
     }
   },
   "fixture_sha256": {
@@ -41,7 +54,8 @@
     },
     "control-two-long": {
       "before": {"bytes": 102122, "lines": 3769, "wall_s": 0.45, "max_rss_kib": 108644, "wl_case": 27},
-      "after": {"bytes": 109402, "lines": 3824, "wall_s": 0.45, "max_rss_kib": 101456, "wl_case": 16}
+      "after": {"bytes": 109402, "lines": 3824, "wall_s": 0.45, "max_rss_kib": 101456, "wl_case": 16},
+      "note": "above its own baseline; shared-default result; under the 300000 gate"
     },
     "control-literal-two": {
       "before": {"bytes": 170585, "lines": 5971, "wall_s": 0.92, "max_rss_kib": 144200, "wl_case": 84},
@@ -55,7 +69,8 @@
     "minimal_pass": true,
     "pr890_shaped_pass": true,
     "controls_pass": true,
-    "all_pass": true
+    "all_pass": true,
+    "qualifying": false
   },
   "check_only": {
     "fixtures": [
@@ -70,33 +85,12 @@
     "pass": true,
     "candidate_baseline_output_identical": true
   },
-  "five_overlap_fixture": {
-    "path": "round2/fixtures/five-overlap.bend",
-    "sha256": "e7b0ee7b178e8d82b3cd0e2989e963eede07ab75b0c6fafd5a30adc3aa4ef971",
-    "own_baseline_bytes": 33992046,
-    "own_baseline_lines": 432223,
-    "note": "IO.write/IO.die leaves, shape order literal-3,2,13,14,4,error; the root-reported 54730033 B / 600231 lines fixture has different bodies and is not compared directly"
-  },
-  "control_two_long": {
-    "before_bytes": 102122,
-    "after_bytes": 109402,
-    "within_gate": true,
-    "note": "above its own baseline; this is the shared-default result and stays under 300000"
-  },
-  "sharing_key": "fallback origin | term_key(term_lower(default type)) | ordered capture layouts | ordered argument layouts",
-  "invariants": [
-    "first-row-wins order",
-    "guard and literal exclusions",
-    "binder quantities (patt_mark, xq, xs joins)",
-    "match arity and scrutinee slicing",
-    "emit_lits/lits_rows/emit_nats table behavior",
-    "character literal semantics (flat SCon matching, IO.args dispatch)"
-  ],
   "runtime_argv": {
     "ran": true,
     "method": "both compilers interpreted the same fixture with the same argv (no clang)",
     "cases": 18,
     "diffs": 0,
-    "c_executed": false
+    "c_executed": true,
+    "c_executed_result": "wrong on the protected U32/Nat fixtures; interpreter equivalence is not sufficient"
   }
 }

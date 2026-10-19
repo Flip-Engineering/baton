@@ -1,12 +1,38 @@
 # Match-default sharing, round 2
 
+## Status: negative
+
+This candidate is a negative record. The co-coordinator rejected commit
+`8283eb80ac657fc8daf6bd5d150b61abf7f0a1be` after executing generated C with
+`clang-19 -std=c11 -O0` on the protected U32/Nat fixtures:
+
+| fixture | base C | rejected candidate C |
+| --- | --- | --- |
+| `tests/compile/nat_pattern_deep.bend` | `306n` | `8n` |
+| `tests/compile/u32_table_bitvar.bend` | `2496 2397` | hang, no output |
+| `tests/compile/word_match_cover_key.bend` | `2139095040 2143289344 0 0 2139095040 2143289344` | build failed: redefinition of `mdflt_2` |
+| `tests/compile/match_default.bend` | `0n` | `0` |
+
+The key omitted the lowered default term, so Nat/U32 defaults at different
+literal depths shared one segment with the wrong constant. A corrected attempt
+added `term_key(term_lower(default))` to the key and a process-wide spin
+counter: `nat_pattern_deep` then printed `306n`, but `u32_table_bitvar` still
+hung, `word_match_cover_key` built and then faulted, and `match_default` printed
+`0` instead of `0n`. The emitter spin remains unsound on this path, so this
+candidate is not qualified and must not be selected.
+
+The interpreter argv comparison (18 cases, 0 diffs) did not exercise the
+emitter and did not catch these failures. Generated-C execution is required for
+this work.
+
+
 Pinned compiler: bend.ts `93c2a43deeb82c15683e4e25bbc5dec5ac3edff9f54e09acc0975e290fcaeb85`,
 comp.ts `a2a949ae7f1c8520d8a112aa505b4c5440baad861dc912e410bfb501369112bc`,
 main.ts `53ce8e48c7540db6c3e66133a7c7eb270d6f64813fe10a631fd50d22112eb07d`,
 base.bend `e5639663177f2de93ef34867c029698aa4e68a98d46629f0b15452b67b99d798`.
 Reproducer commit `87703d2df22780f46cf16756ce2c24c3fe4b9f78`.
 
-The candidate changes only `bend.ts` and `comp.ts` under `round2/compiler-src/bend2/`;
+The rejected candidate changes only `bend.ts` and `comp.ts` under `round2/compiler-src/bend2/`;
 `main.ts`, `base.bend`, `effs/` and the bun binary are the pinned inputs.
 No trace or diagnostic code remains.
 
@@ -116,14 +142,13 @@ fixtures produced identical stdout and exit status in every case, including the
 literal host-keeper case, the 13- and 14-element cases, the 4-element case in
 five-overlap, and the refusal path.
 
-The emitted C itself was not executed. Runtime equivalence was run through both
-compilers' interpreters on the same sources: 18 cases, 0 stdout or exit-status
-differences.
+Generated C was executed for the rejection evidence above (clang-19 `-O0` on
+the four protected fixtures). The repro fixtures' emitted C was not executed;
+their runtime comparison used both compilers' interpreters on the same sources
+(18 cases, 0 differences).
 
 ## Limits
-
-The emitted C was not compiled; no clang was available for this bounded round.
-The runtime comparison is the pinned compiler's interpreter on the same sources.
-The sharing rule keys on origin, type and layouts, and was exercised on the
-reproducer shapes and the two canonical fixtures above. A default whose body
-changes without a change in those keys would not be shared by this rule.
+The emitted C is not semantically correct on the protected U32/Nat path, so
+this candidate is not qualified. The sharing rule keys on origin, type and
+layouts; it does not distinguish defaults whose lowered bodies differ at the
+same origin/type/layout, which is the rejection cause.
