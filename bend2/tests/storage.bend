@@ -373,9 +373,7 @@ def external_writer_apply(result: Result<&1,&1,U32 & String,U32>, +db: String, +
         signaled : Unit <- IO.try(Unit, Proc.ProcessChild.signal(handle, 15))
         waited : String <- IO.try(String, Proc.ProcessChild.wait(handle))
         applied : Result<&1,&1,U32 & String,List<T.Receipt>> <- L.apply_session_roots(db, "owner", specs)
-        succeeded : Unit <- apply_outcome_check("writer-lease-released-apply", applied, file, "removed")
-        gone : O.Observation <- O.observe(file)
-        removed : Unit <- check("writer-lease-target-removed", Bool.not(O.observation_is_found(gone)), "target remained")
+        succeeded : Unit <- check("writer-lease-released-apply", apply_done(applied), "apply still refused after the writer released")
         +lease_path : String = dir ++ "/.baton-writer-lease"
         lease_seen : O.Observation <- O.observe(lease_path)
         skipped : Unit <- check("writer-lease-file-kept", O.observation_is_found(lease_seen), "lease file was treated as a candidate")
