@@ -1,9 +1,50 @@
 # Round 3: shared-term key cost reduction (issue #776)
 
-Status: gates pass, compile wall is now at or below the pinned baseline, and the
-whole-term equality semantics that fixed the seat0 Nat/U32 regression are
-preserved. Candidate `round2/compiler-src/bend2/comp.ts` sha256
-`3891083b818c42c2ed1aaa6544ee3651a7228615bbbf0b0608a88b4308e74853`.
+Status: gates pass, compile wall is now at or below the pinned baseline, and
+`arm_eq` is a total structural equality. Candidate
+`round2/compiler-src/bend2/comp.ts` sha256
+`7cc3394b45f6139011bf8141eff917497cbd5991171ca87ec449d66cf1894ba6`.
+
+## Equality totality fix (evaluator review of 1e5eb5b09f)
+
+`arm_eq` previously ended in `default: return true`, so `Sub` and `All` terms
+were accepted as equal without comparison; `match_flatten`/`body_sub` can
+leave `Sub` in an arm body, and a hint collision could then share a
+value-distinct arm. `arm_eq` is now total:
+
+- `Sub{i,v,f}` compares `v` (a pattern through `patt_eq` with the same
+  bound/free-variable discipline, or a term through `go`), binds `i` on both
+  sides at the current depth, compares `f` at depth + 1, and unbinds.
+- `All{q,k,i,A,B}` compares the quantity, `A`, and the two bodies applied to
+  a binder `Var` at the current depth, at depth + 1.
+- `Qnt`, `Rfl` and `Efq` compare equal (no fields); every other unknown kind
+  returns false. No reuse is authorized by the hint.
+- A representative that matches but is being emitted returns false (inline
+  fallback) instead of creating another spin, so reentrant generation stays
+  bounded, as in the round-2 path.
+
+Re-verified after the fix: the four repro gates and the five-overlap C are
+byte-identical to the values below (hashes unchanged); `nat_pattern_deep`
+emits 110,771 B and executes `306n` with clang-19; `u32_table_bitvar`
+`2496 2397`, `word_match_cover_key` and `match_default` unchanged; repro argv
+outputs unchanged. Gate C hashes: minimal
+`06a5ad6eafeeb49ffde3d52a4229a942d754bedca880d8fbe10c606ed11ceb30`,
+pr890-shaped
+`f411f8c4dbb3db3a07878ffe0d7a562a36951d89ed3f1200d23826367bb8fd6b`,
+five-overlap
+`b7b0b85b08e3f44d8bb2dd2309b35dacfeb616a57ae19168a4812d57d3384316`,
+control-two-long
+`fa56e094194d4ab26c1a098addaec301c8ba964643cf8c5ba50cf254f41e11cf`,
+control-literal-two
+`03256cfa0d1b510fbb8e3edf19ebbe9742d45c8de94be8e2e60dd4e72ceb3d64`; Nat
+fixtures: nat_pattern_deep
+`1333cb537122c753028f86cd366e5a063ed06812b7c30b23d5bd8b7ce935fe85`,
+u32_table_bitvar
+`a94a327ba27ec2c6ddd756b940c4d52b5e49c0755d84391a2264b84a9e57cf81`,
+word_match_cover_key
+`a07e5b0a1da29a8edfc2e370b034f85bd9764880dd05f14054cb4170f5692785`,
+match_default
+`d5a4b87bca0fb04b31e3da5c6032909250ec5dbd18451f148c355d1522cbef5f`.
 
 Pinned compiler: `bend.ts 93c2a43d...fcaeb85`, `comp.ts a2a949ae...69112bc`,
 `main.ts 53ce8e48...12eb07d`, `base.bend e5639663...b99d798`. Round 2 commit

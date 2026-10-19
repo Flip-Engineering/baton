@@ -3162,6 +3162,26 @@ function arm_hint(h: HTerm): string {
 function arm_eq(a: HTerm, b: HTerm): boolean {
   const ba = new Map<number, number>(), bb = new Map<number, number>();
   const fa = new Map<number, number>(), fb = new Map<number, number>();
+  const bind = (i: number, j: number, d: number): void => {
+    ba.set(i, d); bb.set(j, d);
+  };
+  const unbind = (i: number, j: number): void => {
+    ba.delete(i); bb.delete(j);
+  };
+  const same_var = (i: number, j: number, d: number): boolean => {
+    const xb = ba.has(i), yb = bb.has(j);
+    if (xb !== yb) return false;
+    if (xb) return d - ba.get(i)! === d - bb.get(j)!;
+    const xf = fa.get(i) ?? (fa.set(i, fa.size), fa.size - 1);
+    const yf = fb.get(j) ?? (fb.set(j, fb.size), fb.size - 1);
+    return xf === yf;
+  };
+  const patt_eq = (pa: any, pb: any, d: number): boolean => {
+    if (pa.$ !== pb.$) return false;
+    if (pa.$ === "PVar") return same_var(pa.i, pb.i, d);
+    return pa.$ === "PCtr" && pa.k === pb.k && pa.x.length === pb.x.length
+      && pa.x.every((z: any, i: number) => patt_eq(z, pb.x[i], d));
+  };
   const go = (u: HTerm, v: HTerm, d: number): boolean => {
     const x = term_force(u), y = term_force(v);
     if (x.$ !== y.$) {
@@ -3169,20 +3189,14 @@ function arm_eq(a: HTerm, b: HTerm): boolean {
     }
     switch (x.$) {
       case "Var": {
-        const yv = y as Of<"Var">;
-        const xb = ba.has(x.i), yb = bb.has(yv.i);
-        if (xb !== yb) return false;
-        if (xb) return d - ba.get(x.i)! === d - bb.get(yv.i)!;
-        const xf = fa.get(x.i) ?? (fa.set(x.i, fa.size), fa.size - 1);
-        const yf = fb.get(yv.i) ?? (fb.set(yv.i, fb.size), fb.size - 1);
-        return xf === yf;
+        return same_var(x.i, (y as Of<"Var">).i, d);
       }
       case "Ref": return x.k === (y as Of<"Ref">).k;
       case "Lam": {
         const oa = term_open(x), ob = term_open(y as Of<"Lam">);
-        ba.set(oa.ps[0].i, d); bb.set(ob.ps[0].i, d);
+        bind(oa.ps[0].i, ob.ps[0].i, d);
         const r = go(oa.b, ob.b, d + 1);
-        ba.delete(oa.ps[0].i); bb.delete(ob.ps[0].i);
+        unbind(oa.ps[0].i, ob.ps[0].i);
         return r;
       }
       case "Let": {
@@ -3190,9 +3204,9 @@ function arm_eq(a: HTerm, b: HTerm): boolean {
         const oa = term_open(x), ob = term_open(ya);
         if (x.v.length !== ya.v.length) return false;
         for (let i = 0; i < x.v.length; i++) if (!go(x.v[i], ya.v[i], d)) return false;
-        oa.ps.forEach((p, j) => { ba.set(p.i, d + j); bb.set(ob.ps[j].i, d + j); });
+        oa.ps.forEach((p, j) => bind(p.i, ob.ps[j].i, d + j));
         const r = go(oa.b, ob.b, d + oa.ps.length);
-        oa.ps.forEach((p) => { ba.delete(p.i); bb.delete(p.i); });
+        oa.ps.forEach((p, j) => unbind(p.i, ob.ps[j].i));
         return r;
       }
       case "App": return go(x.f, (y as Of<"App">).f, d) && go(x.x, (y as Of<"App">).x, d);
@@ -3224,7 +3238,32 @@ function arm_eq(a: HTerm, b: HTerm): boolean {
       case "Typ": return go(x.g, (y as Of<"Typ">).g, d);
       case "Qua": return (x.q as any).$ === ((y as Of<"Qua">).q as any).$;
       case "Hol": return x.k === (y as Of<"Hol">).k;
-      default: return true;
+      case "Sub": {
+        const ys = y as Of<"Sub">;
+        const xv: any = x.v, yv: any = ys.v;
+        const xp = xv.$ === "PVar" || xv.$ === "PCtr";
+        const yp = yv.$ === "PVar" || yv.$ === "PCtr";
+        if (xp !== yp) return false;
+        if (xp ? !patt_eq(xv, yv, d) : !go(xv, yv, d)) return false;
+        bind(x.i, ys.i, d);
+        const r = go(x.f, ys.f, d + 1);
+        unbind(x.i, ys.i);
+        return r;
+      }
+      case "All": {
+        const ya = y as Of<"All">;
+        if (JSON.stringify(x.q) !== JSON.stringify(ya.q)) return false;
+        if (!go(x.A, ya.A, d)) return false;
+        const va = Bend.Var(x.k, d), vb = Bend.Var(ya.k, d);
+        bind(d, d, d);
+        const r = go(x.B(va), ya.B(vb), d + 1);
+        unbind(d, d);
+        return r;
+      }
+      case "Qnt":
+      case "Rfl":
+      case "Efq": return true;
+      default: return false;
     }
   };
   return go(a, b, 0);
@@ -3241,7 +3280,10 @@ function emit_arm_shared(fl: File, h: HTerm, av: Val[], dst: Dst): boolean {
   const hint = arm_hint(h) + "|" + base;
   const reps = fl.armHints.get(hint) ?? [];
   for (const rep of reps) {
-    if (!fl.armBusy.has(rep.name) && arm_eq(rep.term, h)) {
+    if (arm_eq(rep.term, h)) {
+      if (fl.armBusy.has(rep.name)) {
+        return false;
+      }
       emit_arm_call(fl, rep, av, dst);
       return true;
     }
