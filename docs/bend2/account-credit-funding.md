@@ -61,8 +61,14 @@ from the recorded observations and returns no binding for the API-key route.
 The status is one of the eligibility results below. The packaged
 `api-key-exec` helper runs only when a `BATON2_CREDIT_RESERVATION` environment
 marker naming the attempt is present and matches `BATON_ATTEMPT_DIRECTORY`;
-no current binding sets that marker, so the helper returns
-`creditAdmissionUnavailable` before resolving a secret or starting a child.
+no current binding sets that marker, and the helper also requires a
+`credit_authorizations` row for the attempt in `BATON_DATABASE`, so the helper
+returns `creditAdmissionUnavailable` before resolving a secret or starting a
+child. A marker by itself is not authorization. `credit_record_authorization`
+writes that row only for an eligible route status, with the actual reported
+balance and unit from the newest promotional observation. The SQLite busy
+handler in `bend2/src/host/sqlite.c` waits at most 3000 retries of 10ms for
+one lock and then returns `SQLITE_BUSY` to the caller.
 The attempt is not started and its input stays owed. Subscription routes and
 other harnesses keep their existing bindings.
 

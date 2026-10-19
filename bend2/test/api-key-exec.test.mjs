@@ -271,22 +271,25 @@ test('the production helper refuses before reading a secret or starting a child'
   }
 });
 
-test('the production helper runs a child for a matching reservation marker', async () => {
-  const directory = await mkdtemp(path.join(tmpdir(), 'api-key-admitted-'));
+test('the production helper refuses a marker without a durable authorization source', async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), 'api-key-marker-only-'));
   try {
     const reference = await withSecret(directory, 'secret', '[REDACTED]');
-    const child = path.join(directory, 'child.mjs');
-    await writeFile(child, 'process.stdout.write(process.env.ANTHROPIC_API_KEY ? "key-set" : "key-missing")');
     const attempt = path.join(directory, 'attempt-1');
-    const output = runProduction(reference, [process.execPath, child], {
-      ...process.env, BATON2_CREDIT_RESERVATION: attempt, BATON_ATTEMPT_DIRECTORY: attempt,
-    });
-    assert.equal(output, 'key-set');
     try {
-      runProduction(reference, [process.execPath, child], {
-        ...process.env, BATON2_CREDIT_RESERVATION: path.join(directory, 'other'), BATON_ATTEMPT_DIRECTORY: attempt,
+      runProduction(reference, [process.execPath, path.join(directory, 'child.mjs')], {
+        PATH: process.env.PATH, BATON2_CREDIT_RESERVATION: attempt, BATON_ATTEMPT_DIRECTORY: attempt,
       });
-      assert.fail('a mismatched reservation marker must refuse');
+      assert.fail('a marker without a database must refuse');
+    } catch (error) {
+      assert.equal(error.status, 2);
+      assert.equal(JSON.parse(error.stderr.trim()).condition, 'creditAdmissionUnavailable');
+    }
+    try {
+      runProduction(reference, [process.execPath, path.join(directory, 'child.mjs')], {
+        PATH: process.env.PATH, BATON2_CREDIT_RESERVATION: path.join(directory, 'other'), BATON_ATTEMPT_DIRECTORY: attempt,
+      });
+      assert.fail('a mismatched marker must refuse');
     } catch (error) {
       assert.equal(error.status, 2);
       assert.equal(JSON.parse(error.stderr.trim()).condition, 'creditAdmissionUnavailable');

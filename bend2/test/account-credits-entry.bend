@@ -14,6 +14,11 @@ def gate_head(head: Maybe<&1,String>) -> IO(Unit):
     case None{}: IO.print("refused empty-binding")
     case Some{+value}: IO.print(value)
 
+def authorize_decided(+db: String, +session: String, +attempt: String, account: Maybe<&2,A.AccountRecord>) -> IO(Bool):
+  match account:
+    case None{}: IO.pure(Bool,False{})
+    case Some{+chosen}: A.credit_record_authorization(db,session,attempt,chosen)
+
 def gate_decided(binding: Maybe<List<String>>, +refusal: String) -> IO(Unit):
   match binding:
     case None{}: IO.print("refused " ++ refusal)
@@ -38,6 +43,11 @@ def dispatch(arguments: List<String>) -> IO(Unit):
         refusal : String <- A.credit_launch_refusal_for(db,account)
         binding : Maybe<List<String>> <- A.credit_launch_binding(db,session,attempt,harness,account,Some{"/fixture/api-key-exec"},"")
         gate_decided(binding,refusal)
+    case +db <> "authorize" <> +session <> +harness <> +attempt <> Nil{}:
+      do IO<Unit>:
+        +account : Maybe<&2,A.AccountRecord> <- A.current_account(db,session,harness)
+        recorded : Bool <- authorize_decided(db,session,attempt,account)
+        IO.print(Bool.pick(String,recorded,"authorized","not-authorized"))
     case +db <> "complete" <> +attempt <> +outcome <> +detail <> Nil{}:
       do IO<Unit>:
         completed : Unit <- A.attempt_completed(db,attempt,outcome,detail)
