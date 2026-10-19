@@ -1264,10 +1264,35 @@ def retained_prepare(+db: String, +player: String, +directory: String, +cmd: Str
     checked : Result<&1,&1,U32 & String,Unit> <- Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),omp,Omp.preflight(),IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}))
     retained_prepare_checked(db,player,directory,cmd,model,effort,session,harness,sessions,prompt,level,seal_prompt,predecessor,checked)
 
-def retained_admit(+db: String, +directory: String, +cwd: String, +prompt: String, +lock: U32, +recovery: String, launch: RetainedLaunch) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
+def retained_owner(+db: String, +directory: String, +cwd: String, +lock: U32, +recovery: String, launch: RetainedLaunch) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
   match launch:
     case Prepared{+arguments,+input,+initial,+keep_stdin,file_input}:
       Bool.pick(IO(Result<&1,&1,U32 & String,P.RetainedStart>),file_input,Custody.Instance.admit_with_file(db,directory,arguments,cwd,directory ++ "/native.stderr","prompt.txt",initial,input,keep_stdin,Some{lock},recovery),Custody.Instance.admit(db,directory,arguments,cwd,directory ++ "/native.stderr",input,keep_stdin,Some{lock},recovery))
+
+def retained_keeper(+directory: String, +cwd: String, +lock: U32, +recovery: String, launch: RetainedLaunch) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
+  match launch:
+    case Prepared{+arguments,+input,+initial,+keep_stdin,file_input}:
+      Bool.pick(IO(Result<&1,&1,U32 & String,P.RetainedStart>),file_input,P.ProcessChild.retain_with_file(directory,arguments,cwd,directory ++ "/native.stderr","prompt.txt",initial,input,keep_stdin,lock,recovery),P.ProcessChild.retain(directory,arguments,cwd,directory ++ "/native.stderr",input,keep_stdin,lock,recovery))
+
+def per_attempt_mode(result: Result<&1,&1,U32 & String,String>) -> Bool:
+  match result:
+    case Done{value}: String.eq(value,"per-attempt")
+    case Fail{error}: False{}
+
+def per_attempt_keeper() -> IO(Bool):
+  do IO<Bool>:
+    result : Result<&1,&1,U32 & String,String> <- IO.get_env("BATON2_NATIVE_KEEPER")
+    IO.pure(Bool,per_attempt_mode(result))
+
+def retained_selected(mode: Bool, +db: String, +directory: String, +cwd: String, +lock: U32, +recovery: String, launch: RetainedLaunch) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
+  match mode:
+    case True{}: retained_keeper(directory,cwd,lock,recovery,launch)
+    case False{}: retained_owner(db,directory,cwd,lock,recovery,launch)
+
+def retained_admit(+db: String, +directory: String, +cwd: String, +prompt: String, +lock: U32, +recovery: String, launch: RetainedLaunch) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
+  do IO<Result<&1,&1,U32 & String,P.RetainedStart>>:
+    mode : Bool <- per_attempt_keeper()
+    retained_selected(mode,db,directory,cwd,lock,recovery,launch)
 
 def retained_mode(+db: String, player: String, +directory: String, cmd: String, model: String, effort: String, cwd: String, session: String, harness: String, sessions: String, +prompt: String, lock: U32, recovery: String, level: String, seal_prompt: Bool, predecessor: String) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
   do IO<Result<&1,&1,U32 & String,P.RetainedStart>>:

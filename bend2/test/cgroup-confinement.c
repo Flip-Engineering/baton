@@ -2,6 +2,9 @@
 #define _GNU_SOURCE
 #endif
 #include <dirent.h>
+#include <poll.h>
+#include <sys/socket.h>
+#include <sys/un.h>
 #define main generated_main
 #include BATON2_PROCESS_SOURCE
 #undef main
@@ -125,6 +128,85 @@ static int remove_tree(const char *path) {
   return error;
 }
 
+/* The request must bind the published owner incarnation into the frame. The
+   listener replies only when it receives the record's token and epoch; a
+   missing or wrong binding makes the request fail instead of succeeding. */
+static int owner_binding_control(void) {
+  char template[]="/tmp/baton-owner-binding-XXXXXX";
+  char *directory=mkdtemp(template);
+  if(!directory)return 1;
+  char *runtime=br_path(directory,"baton2");
+  char *database=br_path(directory,"owner.db");
+  char *socket_path=br_path(directory,"owner.sock");
+  if(!runtime || !database || !socket_path)return 1;
+  if(mkdir(runtime,0700))return 1;
+  if(setenv("XDG_RUNTIME_DIR",directory,1))return 1;
+  int db=open(database,O_CREAT|O_WRONLY|O_CLOEXEC,0600);
+  if(db<0)return 1;
+  struct stat info;
+  if(fstat(db,&info))return 1;
+  close(db);
+  struct sockaddr_un address;
+  memset(&address,0,sizeof(address));
+  address.sun_family=AF_UNIX;
+  if(strlen(socket_path)>=sizeof(address.sun_path))return 1;
+  strcpy(address.sun_path,socket_path);
+  int listener=socket(AF_UNIX,SOCK_STREAM,0);
+  if(listener<0)return 1;
+  if(bind(listener,(struct sockaddr *)&address,sizeof(address)))return 1;
+  if(listen(listener,1))return 1;
+  BrOwnerRecord record={0};
+  record.token=7;record.epoch=9;
+  record.device=(uint64_t)info.st_dev;record.inode=(uint64_t)info.st_ino;
+  record.pid=(int32_t)getpid();
+  record.reserved=(int32_t)BR_OWNER_CAP_NATIVE_CGROUP;
+  if(strlen(socket_path)>=sizeof(record.socket))return 1;
+  strcpy(record.socket,socket_path);
+  char *key=br_owner_key((uint64_t)info.st_dev,(uint64_t)info.st_ino);
+  char *record_path=key?br_ipc_path(runtime,key,".record"):NULL;
+  if(!record_path)return 1;
+  int stored=open(record_path,O_CREAT|O_TRUNC|O_WRONLY|O_CLOEXEC,0600);
+  if(stored<0)return 1;
+  int write_error=br_write_all(stored,&record,sizeof(record));
+  close(stored);
+  if(write_error)return 1;
+  pid_t child=fork();
+  if(child<0)return 1;
+  if(!child) {
+    BrInstanceFrame frame={.op=BI_ENSURE},reply={0};
+    int error=br_instance_request_witness(database,frame,NULL,-1,&reply,0,0,1);
+    _exit(error?1:0);
+  }
+  struct pollfd wait={.fd=listener,.events=POLLIN};
+  int ready;
+  do {ready=poll(&wait,1,5000);} while(ready<0 && errno==EINTR);
+  int client=ready==1?accept(listener,NULL,NULL):-1;
+  BrInstanceFrame sent={0};
+  int binding=0;
+  if(client>=0 && !br_read_all(client,&sent,sizeof(sent))) {
+    binding=sent.op==BI_ENSURE && sent.owner==7 && sent.epoch==9;
+    if(binding) {
+      BrInstanceFrame reply={.op=BI_HELLO,.owner=7,.epoch=9};
+      br_write_all(client,&reply,sizeof(reply));
+    }
+  }
+  if(client>=0)close(client);
+  close(listener);
+  int status=0,reaped=0;
+  for(int i=0;i<500;i++) {
+    pid_t result=waitpid(child,&status,WNOHANG);
+    if(result==child){reaped=1;break;}
+    if(result<0 && errno!=EINTR)break;
+    struct timespec pause={0,10000000};
+    nanosleep(&pause,NULL);
+  }
+  if(!reaped)kill(child,SIGKILL);
+  unlink(socket_path);unlink(record_path);unlink(database);
+  rmdir(runtime);rmdir(directory);
+  free(runtime);free(database);free(socket_path);free(key);free(record_path);
+  return binding && reaped && WIFEXITED(status) && WEXITSTATUS(status)==0 ? 0 : 1;
+}
+
 int main(int argc,char **argv) {
   if(argc==2 && !strcmp(argv[1],"--native-descendant"))return run_native_descendant();
   if(argc==2 && !strcmp(argv[1],"--sibling-keeper")) {
@@ -205,6 +287,95 @@ int main(int argc,char **argv) {
   REQUIRE(!strcmp(child_memory_text,"17179869184\n"));
   REQUIRE(!strcmp(child_swap_text,"0\n"));
   free(session_prefix);free(receiver_prefix);
+
+  /* A tighter receiver bound under a larger delegated unit is preserved. */
+  char *cluster=br_path(root,"cluster.service");
+  char *cluster_receiver=br_path(root,"cluster.service/receiver");
+  REQUIRE(cluster && cluster_receiver);
+  REQUIRE(mkdir(cluster,0700)==0);
+  REQUIRE(mkdir(cluster_receiver,0700)==0);
+  path=br_path(cluster,"memory.max");
+  REQUIRE(path && write_text(path,"17179869184\n")==0);free(path);
+  path=br_path(cluster,"memory.swap.max");
+  REQUIRE(path && write_text(path,"0\n")==0);free(path);
+  path=br_path(cluster,"cgroup.subtree_control");
+  REQUIRE(path && write_text(path,"memory\n")==0);free(path);
+  path=br_path(cluster_receiver,"memory.max");
+  REQUIRE(path && write_text(path,"8589934592\n")==0);free(path);
+  path=br_path(cluster_receiver,"memory.swap.max");
+  REQUIRE(path && write_text(path,"0\n")==0);free(path);
+  REQUIRE(chmod(cluster_receiver,0500)==0);
+  char *tight_cgroup=NULL,*tight_relative=NULL;
+  unsigned long long tight_memory=0,tight_swap=0;
+  condition=NULL;
+  error=br_native_cgroup_create("/cluster.service/receiver","baton-native-tight",
+    &tight_cgroup,&tight_relative,&tight_memory,&tight_swap,&condition);
+  REQUIRE(error==0);
+  REQUIRE(tight_memory==8589934592ULL);
+  REQUIRE(tight_swap==0);
+  REQUIRE(!strcmp(tight_relative,"/cluster.service/baton-native-tight"));
+  char *tight_memory_path=br_path(tight_cgroup,"memory.max");
+  char *tight_swap_path=br_path(tight_cgroup,"memory.swap.max");
+  char tight_memory_text[64],tight_swap_text[64];
+  REQUIRE(read_text(tight_memory_path,tight_memory_text,sizeof(tight_memory_text))==0);
+  REQUIRE(read_text(tight_swap_path,tight_swap_text,sizeof(tight_swap_text))==0);
+  REQUIRE(!strcmp(tight_memory_text,"8589934592\n"));
+  REQUIRE(!strcmp(tight_swap_text,"0\n"));
+  REQUIRE(chmod(cluster_receiver,0700)==0);
+  free(tight_cgroup);free(tight_relative);free(tight_memory_path);free(tight_swap_path);
+
+  /* The walk stops at the receiver unit and does not climb into a bounded
+     higher slice when the unit itself cannot delegate a placement. */
+  char *user_slice=br_path(root,"user.slice");
+  char *user_scope=br_path(root,"user.slice/session-6448.scope");
+  REQUIRE(user_slice && user_scope);
+  REQUIRE(mkdir(user_slice,0700)==0);
+  REQUIRE(mkdir(user_scope,0700)==0);
+  path=br_path(user_slice,"memory.max");
+  REQUIRE(path && write_text(path,"4294967296\n")==0);free(path);
+  path=br_path(user_slice,"memory.swap.max");
+  REQUIRE(path && write_text(path,"0\n")==0);free(path);
+  path=br_path(user_slice,"cgroup.subtree_control");
+  REQUIRE(path && write_text(path,"memory\n")==0);free(path);
+  path=br_path(user_scope,"memory.max");
+  REQUIRE(path && write_text(path,"max\n")==0);free(path);
+  path=br_path(user_scope,"memory.swap.max");
+  REQUIRE(path && write_text(path,"max\n")==0);free(path);
+  REQUIRE(chmod(user_scope,0500)==0);
+  char *no_climb=NULL,*no_climb_relative=NULL;
+  condition=NULL;
+  error=br_native_cgroup_create("/user.slice/session-6448.scope","baton-native-climb",
+    &no_climb,&no_climb_relative,&tight_memory,&tight_swap,&condition);
+  REQUIRE(error==EOPNOTSUPP);
+  REQUIRE(no_climb==NULL && no_climb_relative==NULL);
+  REQUIRE(condition!=NULL && !strcmp(condition,"cgroupUnbounded"));
+  REQUIRE(chmod(user_scope,0700)==0);
+  free(user_slice);free(user_scope);
+
+  /* A repeated admission reuses the stored control path; field 5 is not part
+     of the manifest identity. */
+  char *manifest_directory=br_path(root,"manifest-control");
+  REQUIRE(manifest_directory && mkdir(manifest_directory,0700)==0);
+  char manifest_argv[]="/bin/true";
+  char manifest_recovery[]="/bin/true";
+  char control_a[]="/tmp/control-a";
+  char control_b[]="/tmp/control-b";
+  char *manifest_fields[6]={manifest_argv,"/","/tmp/log","",manifest_recovery,control_a};
+  size_t manifest_lengths[6]={sizeof(manifest_argv),1,8,0,sizeof(manifest_recovery),strlen(control_a)};
+  BrManifestHeader manifest_header={.keep_stdin=1};
+  memcpy(manifest_header.magic,"BATONRP1",8);
+  for(int i=0;i<6;i++)manifest_header.lengths[i]=manifest_lengths[i];
+  char *manifest_path=br_path(manifest_directory,"manifest");
+  REQUIRE(manifest_path!=NULL);
+  error=br_manifest_store(manifest_directory,manifest_path,&manifest_header,manifest_fields,manifest_lengths,6);
+  REQUIRE(error==0);
+  manifest_fields[5]=control_b;
+  manifest_header.lengths[5]=strlen(control_b);
+  REQUIRE(br_manifest_same(manifest_directory,&manifest_header,manifest_fields,6)==0);
+  free(manifest_directory);free(manifest_path);
+
+  /* The owner incarnation is bound into the request frame. */
+  REQUIRE(owner_binding_control()==0);
 
   char *spool_path=br_path(root,"native.stdout");
   char *log_path=br_path(root,"native.stderr");
@@ -326,17 +497,20 @@ int main(int argc,char **argv) {
          "\"descendantParent\":%d,\"attachBeforeExec\":true,"
          "\"siblingUnchanged\":true,\"unboundedRefused\":true,"
          "\"unwritableRefused\":true,\"attachFailureRefused\":true,"
-         "\"realCgroup\":false,"
+         "\"tightReceiverMax\":8589934592,"
+         "\"tightReceiverRelative\":\"/cluster.service/baton-native-tight\","
+         "\"noClimbRefused\":true,\"manifestControlPathReuse\":true,"
+         "\"ownerBinding\":true,\"realCgroup\":false,"
          "\"limitation\":\"fixture uid has no writable delegated cgroup; "
          "the exact create/attach writer ran against a disposable directory hierarchy\"}\n",
     cgroup,relative,memory,swap,(int)native,reported_descendant,(int)native);
   puts("cgroup-confinement PASS");
 
   free(procs);free(spool_path);free(log_path);free(self);
-  free(sibling_memory);free(sibling_swap);free(sibling_procs);
+  free(cgroup);free(relative);free(receiver);free(shared);free(sibling_cgroup);
+  free(cluster);free(cluster_receiver);
   free(shared_child);free(readonly);free(attach_failure);free(blocked_procs);
   free(child_memory);free(child_swap);
-  free(cgroup);free(relative);free(receiver);free(shared);free(sibling_cgroup);
   remove_tree(root);
   free(root);
   return 0;

@@ -259,12 +259,61 @@ class CgroupConfinement(unittest.TestCase):
                      str(payload), 'close', str(FIXTURE), '--sibling-keeper'],
                     capture_output=True, text=True, env=environment, timeout=30)
                 self.assertNotEqual(result.returncode, 0)
-                self.assertIn('native-cgroup confinement',
-                              result.stdout + result.stderr)
+                output = result.stdout + result.stderr
+                self.assertIn('native-cgroup confinement', output)
+                self.assertIn('per-attempt keeper fallback', output)
+                self.assertNotIn('cgroupUnbounded', output)
                 self.assertFalse((attempt / 'native.pid').exists())
                 self.assertFalse((attempt / 'launch').exists())
             finally:
                 listener.close()
+                shutil.rmtree(runtime, ignore_errors=True)
+
+    def test_unbounded_receiver_retry_is_typed_and_idempotent(self):
+        with tempfile.TemporaryDirectory(prefix='cgroup-retry-',
+                                         dir=ROOT / '.scratch/bend2') as name:
+            base = pathlib.Path(name)
+            root = base / 'cgroup'
+            scope = root / 'session-6448.scope'
+            scope.mkdir(parents=True)
+            (scope / 'memory.max').write_text('max\n')
+            (scope / 'memory.swap.max').write_text('max\n')
+            runtime = pathlib.Path(tempfile.mkdtemp(prefix='baton-cgroup-runtime-'))
+            (runtime / 'baton2').mkdir(mode=0o700)
+            cwd = base / 'cwd'
+            cwd.mkdir()
+            database = base / 'retry.db'
+            database.touch()
+            payload = base / 'retry.payload'
+            payload.write_text('fixture\n')
+            attempt = base / 'retry-attempt'
+            environment = dict(os.environ, BATON2_CGROUP_ROOT=str(root),
+                               BATON2_CGROUP_PARENT='/session-6448.scope',
+                               XDG_RUNTIME_DIR=str(runtime))
+            command = [str(EXE), 'retain', str(database), str(attempt), str(cwd),
+                       str(payload), 'close', str(FIXTURE), '--sibling-keeper']
+            try:
+                first = subprocess.run(command, capture_output=True, text=True,
+                                       env=environment, timeout=30)
+                self.assertNotEqual(first.returncode, 0)
+                self.assertIn('cgroupUnbounded',
+                              (attempt / 'native-start-error').read_text())
+                self.assertFalse((attempt / 'launch').exists())
+                self.assertFalse((attempt / 'native.pid').exists())
+                second = subprocess.run(command, capture_output=True, text=True,
+                                        env=environment, timeout=30)
+                self.assertNotEqual(second.returncode, 0)
+                output = second.stdout + second.stderr
+                self.assertNotIn('File exists', output)
+                self.assertNotIn('per-attempt keeper fallback', output)
+                self.assertIn('cgroupUnbounded',
+                              (attempt / 'native-start-error').read_text())
+                self.assertFalse((attempt / 'launch').exists())
+                self.assertFalse((attempt / 'native.pid').exists())
+            finally:
+                subprocess.run([str(EXE), 'shutdown', str(database)],
+                               env=environment, stdout=subprocess.DEVNULL,
+                               stderr=subprocess.DEVNULL, timeout=10)
                 shutil.rmtree(runtime, ignore_errors=True)
 
 

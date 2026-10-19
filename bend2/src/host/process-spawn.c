@@ -1108,6 +1108,29 @@ static int br_cgroup_write_limit(const char *root,const char *placement,const ch
   return error;
 }
 
+/* The receiver unit is the delegation boundary. A placement above a .service
+   or .scope unit would lose the receiver's budget, so the walk stops at the
+   first unit component and never climbs into a higher slice. */
+static char *br_cgroup_unit_root(const char *cgroup) {
+  const char *at=cgroup;
+  while(*at) {
+    while(*at=='/')at++;
+    const char *end=strchr(at,'/');
+    size_t length=end?(size_t)(end-at):strlen(at);
+    if((length>=8 && !strncmp(at+length-8,".service",8)) ||
+       (length>=6 && !strncmp(at+length-6,".scope",6))) {
+      size_t prefix=(size_t)(at-cgroup)+length;
+      char *root=malloc(prefix+1);
+      if(!root)return NULL;
+      memcpy(root,cgroup,prefix);root[prefix]=0;
+      return root;
+    }
+    if(!end)break;
+    at=end+1;
+  }
+  return strdup(cgroup);
+}
+
 /* Creates the per-native child below the nearest delegated ancestor of the
    receiver that both carries a finite effective bound and distributes the
    memory controller. The child receives its own memory.max and
@@ -1121,8 +1144,17 @@ static int br_native_cgroup_create(const char *receiver,const char *name,
   *condition="cgroupParent";
   if(br_cgroup_relative_ok(receiver))return EINVAL;
   const char *root=br_cgroup_root();
+  unsigned long long receiver_memory=ULLONG_MAX,receiver_swap=ULLONG_MAX;
+  int receiver_limit=br_cgroup_limit(root,receiver,"memory.max",&receiver_memory);
+  if(receiver_limit==ENODATA)receiver_memory=ULLONG_MAX;
+  else if(receiver_limit){*condition="cgroupUnbounded";return receiver_limit;}
+  receiver_limit=br_cgroup_limit(root,receiver,"memory.swap.max",&receiver_swap);
+  if(receiver_limit==ENODATA)receiver_swap=ULLONG_MAX;
+  else if(receiver_limit){*condition="cgroupSwapUnbounded";return receiver_limit;}
   char *current=strdup(receiver);
   if(!current)return ENOMEM;
+  char *unit=br_cgroup_unit_root(receiver);
+  if(!unit){free(current);return ENOMEM;}
   char *placement=NULL;
   int error=0;
   for(;;) {
@@ -1137,23 +1169,28 @@ static int br_native_cgroup_create(const char *receiver,const char *name,
         if(enabled==1) {placement=strdup(current);if(!placement)error=ENOMEM;break;}
       }
     }
+    if(!strcmp(current,unit))break;
     if(!strcmp(current,"/"))break;
     char *slash=strrchr(current,'/');
     if(!slash){error=EINVAL;break;}
     if(slash==current)current[1]=0;
     else *slash=0;
   }
-  free(current);
+  free(current);free(unit);
   if(error){free(placement);*condition="cgroupController";return error;}
   if(!placement){*condition="cgroupUnbounded";return EOPNOTSUPP;}
-  unsigned long long memory=0,swap=0;
-  if((error=br_cgroup_limit(root,placement,"memory.max",&memory))) {
+  unsigned long long placement_memory=0,placement_swap=0;
+  if((error=br_cgroup_limit(root,placement,"memory.max",&placement_memory))) {
     *condition="cgroupUnbounded";free(placement);return error==ENODATA?EOPNOTSUPP:error;
   }
-  if((error=br_cgroup_limit(root,placement,"memory.swap.max",&swap))) {
-    *condition="cgroupSwapUnbounded";free(placement);return error==ENODATA?EOPNOTSUPP:error;
+  int placement_swap_error=br_cgroup_limit(root,placement,"memory.swap.max",&placement_swap);
+  if(placement_swap_error && placement_swap_error!=ENODATA) {
+    *condition="cgroupSwapUnbounded";free(placement);return placement_swap_error;
   }
-  if(swap){*condition="cgroupSwapUnbounded";free(placement);return EOPNOTSUPP;}
+  if(placement_swap_error==ENODATA)placement_swap=ULLONG_MAX;
+  unsigned long long memory=receiver_memory<placement_memory?receiver_memory:placement_memory;
+  unsigned long long swap=receiver_swap<placement_swap?receiver_swap:placement_swap;
+  if(swap!=0){*condition="cgroupSwapUnbounded";free(placement);return EOPNOTSUPP;}
   char *path=br_cgroup_path(root,placement,name);
   if(!path){*condition="cgroupCreate";free(placement);return ENOMEM;}
   if(mkdir(path,0700)) {
@@ -3753,14 +3790,16 @@ static int br_artifact_same(const char *directory,const char *name,size_t name_l
   return error;
 }
 /* Exact comparison of the stored manifest with a requested one: the same field
-   count, the same lengths and the same bytes in every field. */
+   count, the same lengths and bytes in every identity field. Field 5 is the
+   per-attempt control socket path; it is not part of the manifest identity and
+   is reused from custody on a repeated admission. */
 static int br_manifest_same(const char *directory,const BrManifestHeader *header,char *const *fields,int count) {
   BrManifest stored={0};
   int error=br_manifest_read(directory,&stored);
   if(!error && (stored.count!=count || stored.header.keep_stdin!=header->keep_stdin))error=EEXIST;
   for(int i=0;!error && i<count;i++)
-    if(stored.header.lengths[i]!=header->lengths[i] ||
-       memcmp(stored.field[i],fields[i],(size_t)header->lengths[i]))error=EEXIST;
+    if(i!=5 && (stored.header.lengths[i]!=header->lengths[i] ||
+       memcmp(stored.field[i],fields[i],(size_t)header->lengths[i])))error=EEXIST;
   br_manifest_free(&stored);
   return error;
 }
@@ -4241,6 +4280,7 @@ static int br_attempt_prepare(BatonProcessCall *call,char **directory_out,char *
   if(mkdir(call->directory,0700)) {
     int error=errno;
     if(error!=EEXIST || !idempotent)return error;
+    error=0;
     /* The directory exists. The same admission identity reuses it, so a repeated
        admission is idempotent; a different identity is conflicting reuse. */
     char *existing=realpath(call->directory,NULL);
@@ -4269,7 +4309,8 @@ static int br_attempt_prepare(BatonProcessCall *call,char **directory_out,char *
       }
     } else memcpy(header.magic,"BATONRP1",8);
     for(int i=0;i<count;i++)header.lengths[i]=lengths[i];
-    /* The stored manifest must describe exactly this request, field by field. */
+    /* The stored manifest must describe this request in every identity field;
+       the control socket path is reused from custody. */
     if(!error)error=br_manifest_same(existing,&header,fields,count);
     if(!error)error=br_admission_verify(existing,call->database,(int)call->lock);
     if(!error)error=br_lifecycle_expectation(existing,expected);
@@ -4327,7 +4368,7 @@ static int br_attempt_prepare(BatonProcessCall *call,char **directory_out,char *
 }
 static int br_retain(BatonProcessCall *call) {
   char *directory=NULL,*address=NULL;
-  int error=br_attempt_prepare(call,&directory,&address,0);
+  int error=br_attempt_prepare(call,&directory,&address,1);
   int sockets[2]={-1,-1},null=-1,log=-1;
   char *self=NULL,*log_path=NULL;
   if(!error && socketpair(AF_UNIX,SOCK_STREAM,0,sockets))error=errno;
@@ -4539,9 +4580,12 @@ static int br_instance_request_witness(const char *database,BrInstanceFrame fram
       continue;
     }
     if(require_cgroup && !(record.reserved & BR_OWNER_CAP_NATIVE_CGROUP)) {
-      close(socket_fd);return EOPNOTSUPP;
+      /* Distinct from an unavailable cgroup in the owner: this is an owner
+         that cannot confine natives at all. */
+      close(socket_fd);return ENOPROTOOPT;
     }
 #endif
+    frame.owner=record.token;frame.epoch=record.epoch;
     error=br_instance_exchange(socket_fd,frame,payload,rights,reply);
     close(socket_fd);
     if(error)return error;
@@ -4723,8 +4767,8 @@ static int br_instance_admit(BatonProcessCall *call,int dormant) {
     if(!error)error=br_instance_request_witness(call->database,
       (BrInstanceFrame){.op=dormant?BI_PREPARE:BI_ADMIT,.length=strlen(directory)+1},directory,
       call->lock?(int)call->lock:-1,&reply,expected_token,expected_epoch,1);
-    if(error==EOPNOTSUPP)
-      br_spec_detail(call,"database owner lacks native-cgroup confinement; restart the owner under this release");
+    if(error==ENOPROTOOPT)
+      br_spec_detail(call,"database owner lacks native-cgroup confinement; new admissions use the per-attempt keeper fallback; do not stop or restart the owner");
     if(!error)call->owner_attempt=reply.attempt;
     if(!error && reply.attempt)call->unstarted=0;
     if(error==EINVAL || error==ESTALE || error==ENOENT || error==ENOMEM) {
