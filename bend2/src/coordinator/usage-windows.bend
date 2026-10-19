@@ -558,20 +558,20 @@ def reset_answer_sql(+session: String, +account: String, +count: String, +value:
 
 def reset_exhausted(+db: String, +session: String, +resets: String, +source: String, +account: String) -> IO(Unit):
   do IO<Unit>:
-    found : String <- IO.try(String,Store.read(db,C.Session{session}))
+    +found : String <- IO.try(String,Store.read(db,C.Session{session}))
     present : Unit <- observe_registered(found)
-    valid : String <- IO.try(String,DB.Sql.query(db,"SELECT length(" ++ C.q(source) ++ ")>0 AND instr(" ++ C.q(source) ++ ",char(10))=0 AND instr(" ++ C.q(source) ++ ",char(13))=0;"))
+    +valid : String <- IO.try(String,DB.Sql.query(db,"SELECT length(" ++ C.q(source) ++ ")>0 AND instr(" ++ C.q(source) ++ ",char(10))=0 AND instr(" ++ C.q(source) ++ ",char(13))=0;"))
     admitted : Unit <- Bool.pick(IO(Unit),String.eq(Tx.trim_nl(valid),"1"),IO.pure(Unit,Unit{}),IO.die(Unit,2,"A usage window reset requires nonempty source text without newlines."))
     +value : String <- observe_reset_value(db,resets)
     +harness : String <- IO.try(String,DB.Sql.read(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
     +model : String <- IO.try(String,DB.Sql.read(db,"SELECT model FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
-    saved : String <- IO.try(String,DB.Sql.query(db,reset_exhausted_sql(session,Tx.trim_nl(harness),provider_of(Tx.trim_nl(model)),account,value,source)))
-    +count = Tx.trim_nl(saved)
-    Bool.pick(IO(Unit),String.eq(count,"0"),
-      IO.die(Unit,2,"No exhausted usage window is recorded for this session's route and account; read usage-windows before recording a reset."),
-      do IO<Unit>:
-        answer : String <- IO.try(String,DB.Sql.read(db,reset_answer_sql(session,account,count,value,source)))
-        IO.print(Tx.trim_nl(answer)))
+    +saved : String <- IO.try(String,DB.Sql.query(db,reset_exhausted_sql(session,Tx.trim_nl(harness),provider_of(Tx.trim_nl(model)),account,value,source)))
+    +count : String <- IO.pure(String,Tx.trim_nl(saved))
+    match count:
+      case "0": IO.die(Unit,2,"No exhausted usage window is recorded for this session's route and account; read usage-windows before recording a reset.")
+      case other: do IO<Unit>:
+        +answer : String <- IO.try(String,DB.Sql.read(db,reset_answer_sql(session,account,other,value,source)))
+        IO.print(Tx.trim_nl(answer))
 
 # --- the post-reset continuation ---------------------------------------------
 #

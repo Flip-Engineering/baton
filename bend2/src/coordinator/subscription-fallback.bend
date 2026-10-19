@@ -477,18 +477,24 @@ def result_text(result: Result<&1,&1,U32 & String,String>) -> String:
 # repeated attempts on the same exhausted route. A missing exhausted row or an
 # older database without usage windows keeps the attempt identity, so ordinary
 # failures retain their per-attempt reports.
-def refusal_report_id(db: String, session: String, id: String, kind: String) -> IO(String):
+def refusal_base_id(db: String, session: String, id: String) -> IO(String):
   do IO<String>:
     harness : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";")
     model : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"SELECT model FROM sessions WHERE id=" ++ C.q(session) ++ ";")
-    +harness_text = result_text(harness)
-    +model_text = result_text(model)
+    +harness_text : String <- IO.pure(String,result_text(harness))
+    +model_text : String <- IO.pure(String,result_text(model))
     identity : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,UW.refusal_identity_sql(session,harness_text,UW.provider_of(model_text)))
-    +trimmed = result_text(identity)
-    Bool.pick(String,String.is_empty(trimmed),id ++ ":" ++ kind,
-      do IO<String>:
-        encoded : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"SELECT lower(hex(" ++ C.q(trimmed) ++ "));")
-        IO.pure(String,"refusal:" ++ result_text(encoded) ++ ":" ++ kind))
+    +trimmed : String <- IO.pure(String,result_text(identity))
+    match trimmed:
+      case SNil{}: IO.pure(String,id)
+      case other: do IO<String>:
+        encoded : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"SELECT lower(hex(" ++ C.q(other) ++ "));")
+        IO.pure(String,"refusal:" ++ result_text(encoded))
+
+def refusal_report_id(db: String, session: String, id: String, kind: String) -> IO(String):
+  do IO<String>:
+    +base : String <- refusal_base_id(db,session,id)
+    IO.pure(String,base ++ ":" ++ kind)
 
 # The exit identity comes from the session and the provider cause, so the first
 # failed attempt has the same identity before its usage row is recorded. The
@@ -496,24 +502,25 @@ def refusal_report_id(db: String, session: String, id: String, kind: String) -> 
 def exit_report_id(db: String, session: String, id: String, event: String) -> IO(String):
   do IO<String>:
     +cause : String <- exhaustion_cause(db,event)
-    Bool.pick(IO(String),String.is_empty(cause),IO.pure(String,id ++ ":exit"),
-      do IO<String>:
+    match cause:
+      case SNil{}: IO.pure(String,id ++ ":exit")
+      case other: do IO<String>:
         harness : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";")
         model : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"SELECT model FROM sessions WHERE id=" ++ C.q(session) ++ ";")
-        +harness_text = result_text(harness)
-        +model_text = result_text(model)
-        +window = UW.window_label_of(UW.lower_ascii(cause))
-        +reset = UW.reset_text_of(cause)
-        identity : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"SELECT " ++ C.q(session) ++ " || char(31) || " ++ C.q(harness_text) ++ " || char(31) || " ++ C.q(UW.provider_of(model_text)) ++ " || char(31) || " ++ C.q(window) ++ " || char(31) || " ++ C.q(reset) ++ ";")
-        +trimmed = result_text(identity)
-        Bool.pick(IO(String),String.is_empty(trimmed),IO.pure(String,id ++ ":exit"),
-          do IO<String>:
-            encoded : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"SELECT lower(hex(" ++ C.q(trimmed) ++ "));")
-            IO.pure(String,"refusal:" ++ result_text(encoded) ++ ":exit"))
+        +harness_text : String <- IO.pure(String,result_text(harness))
+        +model_text : String <- IO.pure(String,result_text(model))
+        +reset : String <- IO.pure(String,UW.reset_text_of(other))
+        identity : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"SELECT " ++ C.q(session) ++ " || char(31) || " ++ C.q(harness_text) ++ " || char(31) || " ++ C.q(UW.provider_of(model_text)) ++ " || char(31) || " ++ C.q(reset) ++ ";")
+        +trimmed : String <- IO.pure(String,result_text(identity))
+        match trimmed:
+          case SNil{}: IO.pure(String,id ++ ":exit")
+          case tail: do IO<String>:
+            encoded : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"SELECT lower(hex(" ++ C.q(tail) ++ "));")
+            IO.pure(String,"refusal:" ++ result_text(encoded) ++ ":exit")
 
 def report_account_exhausted(db: String, session: String, id: String, body: String) -> IO(Unit):
   do IO<Unit>:
-    +message_id <- refusal_report_id(db,session,id,"account-exhausted")
+    +message_id : String <- refusal_report_id(db,session,id,"account-exhausted")
     report_message(db,session,message_id,body)
 
 # The verdict of the sidecar write, at the head of the definition so the caller's do block
@@ -611,7 +618,7 @@ def record_and_report(+db: String, +session: String, +id: String, +record_path: 
 
 def report_all_refused(db: String, session: String, id: String, harness: String, from_label: String, cause: String) -> IO(Bool):
   do IO<Bool>:
-    +message_id <- refusal_report_id(db,session,id,"profile-exhausted")
+    +message_id : String <- refusal_report_id(db,session,id,"profile-exhausted")
     noted : Unit <- report_message(db,session,message_id,all_refused_body(harness,from_label,cause))
     IO.pure(Bool,False{})
 
@@ -949,7 +956,7 @@ def report_route_chosen(db: String, session: String, id: String, +route: Route, 
 
 def report_route_unavailable(db: String, session: String, id: String, harness: String, cause: String) -> IO(Unit):
   do IO<Unit>:
-    +message_id <- refusal_report_id(db,session,id,"route-unavailable")
+    +message_id : String <- refusal_report_id(db,session,id,"route-unavailable")
     report_message(db,session,message_id,route_unavailable_body(harness,cause))
 
 # A cross-harness route change drops only the incompatible native binding; the same
