@@ -116,8 +116,28 @@ def focused_native_input(+db: String, +full: String) -> IO(Unit):
     args : List<String> <- NativeInput.input(db)
     focused_native_args(full,db,args)
 
+# Rebind a stored receiver through the same validation path as Control.receiver.
+# The empty cwd keeps the recorded workspace and does not launch a wake.
+def register_receiver(selected: Bool, +db: String, +session: String, +cmd: String, +log: String) -> IO(Unit):
+  match selected:
+    case True{}: do IO<Unit>:
+      saved : String <- Control.receiver(db,session,cmd,log,"")
+      IO.print(saved)
+    case False{}: IO.die(Unit,2,"unsupported focused receive command")
+
+def register_receiver_cwd(selected: Bool, +db: String, +session: String, +cmd: String, +log: String, +cwd: String) -> IO(Unit):
+  match selected:
+    case True{}: do IO<Unit>:
+      saved : String <- Control.receiver(db,session,cmd,log,cwd)
+      IO.print(saved)
+    case False{}: IO.die(Unit,2,"unsupported focused receive command")
+
 def dispatch(args: List<String>) -> IO(Unit):
   match args:
+    case +db <> +route <> +session <> +cmd <> +log <> Nil{}:
+      register_receiver(String.eq(route,"register-receiver"),db,session,cmd,log)
+    case +db <> +route <> +session <> +cmd <> +log <> +cwd <> Nil{}:
+      register_receiver_cwd(String.eq(route,"register-receiver"),db,session,cmd,log,cwd)
     case +db <> +verb <> +full <> Nil{}:
       Bool.pick(IO(Unit),String.eq(verb,"agent-native-input"),focused_native_input(db,full),dispatch_three(db,verb,full))
     case +db <> +verb <> +session <> +cmd <> +model <> +effort <> +cwd <> +log <> +message <> Nil{}:
