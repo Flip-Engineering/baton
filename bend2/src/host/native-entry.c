@@ -226,7 +226,9 @@ static int delegate_full_cli(char **argv) {
 #ifdef BATON2_RECOVERY_HELPER
 static int recovery_helper_verb(int argc,char **argv) {
   if(argc<2 || native_help_request(argc,argv)) return 0;
-  if(!strcmp(argv[1],"--recover-observer") || !strcmp(argv[1],"--recover-receive")) return 1;
+  if(!strcmp(argv[1],"--recover-observer") || !strcmp(argv[1],"--recover-receive") ||
+     !strcmp(argv[1],"--host-process-keeper") || !strcmp(argv[1],"--instance-owner") ||
+     !strcmp(argv[1],"--instance-shutdown")) return 1;
   return argc>2 && !strcmp(argv[2],"recover-observer");
 }
 #endif
