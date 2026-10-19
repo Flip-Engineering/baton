@@ -1318,8 +1318,8 @@ def direct_setup_failure(-A: Type, +db: String, +player: String, +id: String, lo
 def direct_retained_prepared(+db: String, +player: String, +directory: String, +cwd: String, +prompt: String, +lock: U32, +recovery: String, prepared: Result<&1,&1,U32 & String,RetainedLaunch>) -> IO(Result<&1,&1,U32 & String,P.RetainedStart>):
   match prepared:
     case Done{launch}: do IO<Result<&1,&1,U32 & String,P.RetainedStart>>:
-      gate : UW.Gate <- direct_window_gate(db,player)
-      Bool.pick(IO<Result<&1,&1,U32 & String,P.RetainedStart>>,direct_gate_held(gate),
+      +gate : UW.Gate <- direct_window_gate(db,player)
+      Bool.pick(IO(Result<&1,&1,U32 & String,P.RetainedStart>),direct_gate_held(gate),
         IO.pure(Result<&1,&1,U32 & String,P.RetainedStart>,Done{P.Unstarted{direct_gate_refusal(gate)}}),
         retained_admit(db,directory,cwd,prompt,lock,recovery,launch))
     case Fail{error}: do IO<Result<&1,&1,U32 & String,P.RetainedStart>>:
@@ -1853,7 +1853,7 @@ def direct_setup_result(+db: String, +player: String, +id: String, +cmd: String,
   match setup:
     case Fail{error}: direct_setup_failure(Unit,db,player,id,log,lock,error)
     case Done{Ready{launch,recovery,+level}}: do IO<Unit>:
-      gate : UW.Gate <- direct_window_gate(db,player)
+      +gate : UW.Gate <- direct_window_gate(db,player)
       Bool.pick(IO(Unit),direct_gate_held(gate),
         direct_unstarted(db,player,id,log,directory,Some{lock},direct_gate_refusal(gate)),
         do IO<Unit>:

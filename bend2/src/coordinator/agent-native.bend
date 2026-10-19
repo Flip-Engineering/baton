@@ -194,7 +194,7 @@ def prepare_identity(+db: String, +session: String, +verb: String, +options: Lis
     select_identity(db,reply_identity_sql(session,options),"--request",options,"Select --to WORKER for exactly one pending unanswered native request addressed to this actor."),
     Bool.pick(IO(Result<&1,&1,U32 & String,List<&2,D.Option>>),Bool.and(String.eq(verb,"context-result"),Bool.not(D.present(options,"--id"))),
       select_identity(db,query_identity_sql(session),"--id",options,"This actor has no retained context query."),
-      Bool.pick(IO<Result<&1,&1,U32 & String,List<&2,D.Option>>),Bool.and(D.member(verb,["stop","force-stop"]),Bool.and(Bool.not(D.present(options,"--id")),Bool.not(D.present(options,"--clear")))),
+      Bool.pick(IO(Result<&1,&1,U32 & String,List<&2,D.Option>>),Bool.and(D.member(verb,["stop","force-stop"]),Bool.and(Bool.not(D.present(options,"--id")),Bool.not(D.present(options,"--clear")))),
         select_identity(db,stop_identity_sql(D.value(options,"--session",session),String.eq(verb,"force-stop")),"--id",options,"The selected session has no existing stop to force."),
         Bool.pick(IO(Result<&1,&1,U32 & String,List<&2,D.Option>>),Bool.and(D.member(verb,Tx.split_spaces("continue-task turn report ask dispatch knowledge-record knowledge-relate knowledge-promote context-query")),Bool.not(D.present(options,"--id"))),
           select_identity(db,new_identity_sql(verb),"--id",options,"The native operation identity could not be generated."),
