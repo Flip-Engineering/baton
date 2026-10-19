@@ -14,7 +14,7 @@ import urllib.request
 import zipfile
 
 HERE = Path(__file__).resolve().parent
-NAME = 'bend-2.0.25-baton741-pure-memo'
+NAME = 'bend-2.0.25-baton741-cgen-cache'
 
 
 def sha(path):
@@ -57,6 +57,11 @@ def main():
     pins = json.loads((HERE / 'pins.json').read_text())
     if sha(HERE / 'memo.patch') != pins['patch_sha256']:
         raise ValueError('The compiler patch differs from its pin.')
+    fixpoint = pins['fixpoint_patch']['filename']
+    if sha(HERE / 'cache.patch') != pins['cache_patch']['sha256']:
+        raise ValueError('The Cgen cache patch differs from its pin.')
+    if sha(HERE / fixpoint) != pins['fixpoint_patch']['sha256']:
+        raise ValueError('The emit-lits fixpoint patch differs from its pin.')
     archive = output / 'upstream.tar.gz'
     fetch(pins['upstream_archive']['url'], archive, pins['upstream_archive']['sha256'])
     unpacked = output / 'upstream'
@@ -76,12 +81,21 @@ def main():
         fetch(pins['source_url_prefix'] + name, path, expected)
         shutil.copy2(path, prefix / 'bend2' / name)
     shutil.copy2(HERE / 'memo.patch', evidence / 'memo.patch')
+    shutil.copy2(HERE / 'cache.patch', evidence / 'cache.patch')
+    shutil.copy2(HERE / fixpoint, evidence / fixpoint)
     shutil.copy2(HERE / 'pins.json', evidence / 'pins.json')
     shutil.copy2(Path(__file__), evidence / 'build-fork.py')
     run('patch', ['patch', '--batch', '--forward', '-p0', '-i',
                   str(evidence / 'memo.patch')], prefix / 'bend2', evidence)
     if sha(prefix / 'bend2/comp.ts') != pins['patched_comp_sha256']:
         raise ValueError('The patched backend differs from its pin.')
+    run('cache-patch', ['patch', '--batch', '--forward', '-p1', '-i',
+                        str(evidence / 'cache.patch')], prefix, evidence)
+    run('fixpoint-patch', ['patch', '--batch', '--forward', '-p1', '-i',
+                           str(evidence / fixpoint)], prefix, evidence)
+    for name, expected in pins['patched_sources'].items():
+        if sha(prefix / 'bend2' / name) != expected:
+            raise ValueError('The cached-source input differs from its pin: ' + name)
     bun_archive = evidence / 'bun-linux-x64.zip'
     fetch(pins['bun']['url'], bun_archive, pins['bun']['archive_sha256'])
     bun = output / 'bun'
