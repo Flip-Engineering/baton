@@ -3176,12 +3176,6 @@ function arm_eq(a: HTerm, b: HTerm): boolean {
     const yf = fb.get(j) ?? (fb.set(j, fb.size), fb.size - 1);
     return xf === yf;
   };
-  const patt_eq = (pa: any, pb: any, d: number): boolean => {
-    if (pa.$ !== pb.$) return false;
-    if (pa.$ === "PVar") return same_var(pa.i, pb.i, d);
-    return pa.$ === "PCtr" && pa.k === pb.k && pa.x.length === pb.x.length
-      && pa.x.every((z: any, i: number) => patt_eq(z, pb.x[i], d));
-  };
   // A quantity compares by tag. A lambda's quantity is optional: absent
   // (no annotation) is not the same term as an explicit erased binder.
   const q_eq = (qa: Bend.Quant | undefined, qb: Bend.Quant | undefined): boolean =>
@@ -3259,28 +3253,25 @@ function arm_eq(a: HTerm, b: HTerm): boolean {
       }
       case "Min": { const ym = y as Of<"Min">; return go(x.a, ym.a, d) && go(x.b, ym.b, d); }
       case "Typ": return go(x.g, (y as Of<"Typ">).g, d);
-      case "Qua": return (x.q as any).$ === ((y as Of<"Qua">).q as any).$;
+      case "Qua": return x.q.$ === (y as Of<"Qua">).q.$;
       case "Hol": return x.k === (y as Of<"Hol">).k;
-      case "Sub": {
-        const ys = y as Of<"Sub">;
-        const xv: any = x.v, yv: any = ys.v;
-        const xp = xv.$ === "PVar" || xv.$ === "PCtr";
-        const yp = yv.$ === "PVar" || yv.$ === "PCtr";
-        if (xp !== yp) return false;
-        if (xp ? !patt_eq(xv, yv, d) : !go(xv, yv, d)) return false;
-        bind(x.i, ys.i, d);
-        const r = go(x.f, ys.f, d + 1);
-        unbind(x.i, ys.i);
-        return r;
-      }
+      // A Sub's i is a substitution index, not a de Bruijn binder. Binding
+      // it can alias a probe or a binder with the same number, and the body
+      // cannot be renamed without rebuilding higher-order terms. Reuse is
+      // refused for an arm that carries one.
+      case "Sub": return false;
       case "All": {
         const ya = y as Of<"All">;
         if (JSON.stringify(x.q) !== JSON.stringify(ya.q)) return false;
         if (!go(x.A, ya.A, d)) return false;
-        const va = Bend.Var(x.k, d), vb = Bend.Var(ya.k, d);
-        bind(d, d, d);
+        // The synthetic binder key stays below every real index (probes are
+        // non-negative and term_force resolves the -1 cells). Keying on d
+        // aliases a probe whose index equals the comparison depth.
+        const key = -2 - d;
+        const va = Bend.Var(x.k, key), vb = Bend.Var(ya.k, key);
+        bind(key, key, d);
         const r = go(x.B(va), ya.B(vb), d + 1);
-        unbind(d, d);
+        unbind(key, key);
         return r;
       }
       case "Qnt":

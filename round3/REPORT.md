@@ -1,9 +1,9 @@
 # Round 3: shared-term key cost reduction (issue #776)
 
-Status: gates pass, compile wall is now at or below the pinned baseline, and
-`arm_eq` is a total structural equality. Candidate
-`round2/compiler-src/bend2/comp.ts` sha256
-`7fa4c9d3a83c7d32ba701939af82f631657d0c31b3b38a61febc96e517af3d28`.
+Status: the round-3 gates passed on candidate `3a39ad5476`. This head adds
+the quantity, annotation and binder-key corrections and the protected tests
+below. Candidate `round2/compiler-src/bend2/comp.ts` sha256
+`9cdce0df770b3a2c547b20e8d0a34b1196a1915a9ffdd73d49cb818dda6fb7ce`.
 
 ## Equality totality fix (evaluator review of 1e5eb5b09f)
 
@@ -12,22 +12,19 @@ were accepted as equal without comparison; `match_flatten`/`body_sub` can
 leave `Sub` in an arm body, and a hint collision could then share a
 value-distinct arm. `arm_eq` is now total:
 
-- `Sub{i,v,f}` compares `v` (a pattern through `patt_eq` with the same
-  bound/free-variable discipline, or a term through `go`), binds `i` on both
-  sides at the current depth, compares `f` at depth + 1, and unbinds.
+- `Sub{i,v,f}` is rejected: its `i` is a substitution index, not a de Bruijn
+  binder, and binding it can alias a probe or a binder with the same number.
 - `All{q,k,i,A,B}` compares the quantity, `A`, and the two bodies applied to
-  a binder `Var` at the current depth, at depth + 1.
+  a `Var` with a synthetic key below every real index (`-2 - d`), at
+  depth + 1.
 - `Qnt`, `Rfl` and `Efq` compare equal (no fields); every other unknown kind
   returns false. No reuse is authorized by the hint.
 - A representative that matches but is being emitted returns false (inline
   fallback) instead of creating another spin, so reentrant generation stays
   bounded, as in the round-2 path.
 
-Re-verified after the fix: the four repro gates and the five-overlap C are
-byte-identical to the values below (hashes unchanged); `nat_pattern_deep`
-emits 110,771 B and executes `306n` with clang-19; `u32_table_bitvar`
-`2496 2397`, `word_match_cover_key` and `match_default` unchanged; repro argv
-outputs unchanged. Gate C hashes: minimal
+Round-3 gate values, measured on `3a39ad5476` (the repro sources are not in
+this checkout, so they were not re-run at this head): minimal
 `06a5ad6eafeeb49ffde3d52a4229a942d754bedca880d8fbe10c606ed11ceb30`,
 pr890-shaped
 `f411f8c4dbb3db3a07878ffe0d7a562a36951d89ed3f1200d23826367bb8fd6b`,
@@ -36,33 +33,46 @@ five-overlap
 control-two-long
 `fa56e094194d4ab26c1a098addaec301c8ba964643cf8c5ba50cf254f41e11cf`,
 control-literal-two
-`03256cfa0d1b510fbb8e3edf19ebbe9742d45c8de94be8e2e60dd4e72ceb3d64`; Nat
-fixtures: nat_pattern_deep
-`1333cb537122c753028f86cd366e5a063ed06812b7c30b23d5bd8b7ce935fe85`,
-u32_table_bitvar
-`a94a327ba27ec2c6ddd756b940c4d52b5e49c0755d84391a2264b84a9e57cf81`,
-word_match_cover_key
-`a07e5b0a1da29a8edfc2e370b034f85bd9764880dd05f14054cb4170f5692785`,
-match_default
-`d5a4b87bca0fb04b31e3da5c6032909250ec5dbd18451f148c355d1522cbef5f`.
+`03256cfa0d1b510fbb8e3edf19ebbe9742d45c8de94be8e2e60dd4e72ceb3d64`.
+Measured at this head: the four protected Nat/U32 fixtures emit
+byte-identical C to base and execute `306n`, `2496 2397`, the word match
+output and `0n`; the carrier, annotation-sharing and binder-key tests are in
+the next section.
 
 Pinned compiler: `bend.ts 93c2a43d...fcaeb85`, `comp.ts a2a949ae...69112bc`,
 `main.ts 53ce8e48...12eb07d`, `base.bend e5639663...b99d798`. Round 2 commit
 `178f01fbba` is the previous candidate (full `arm_hash` + `arm_eq` at every
 site).
 
-## Quantity and annotation equality (issue #776 follow-up)
+## Quantity, annotation and binder-key equality (issue #776 follow-up)
 
-`arm_eq` compares `Lam.q`, every element of `Let.q`, and `Ann.T`. The `Lam`
-quantity is optional, so an absent quantity compares only with absent; the
-`Let` quantities compare by tag; `Ann.T` compares through `go` under the same
-binder discipline. `Ref.b` compares too: the bang marker selects the offload
-call form in `term_spine` and `emit_body`, so two arms that differ only in it
-must not share. `ADT.r` stays out of the equality: it is the checker's
-remaining-constructor refinement, the emitter reads it only through
-`book_adt`'s constructor filter for whether a default arm exists, and layouts
-and calls key on `k` and the type arguments. Comparing it changed the
-five-overlap C from 528,878 to 540,581 bytes with identical outputs.
+`arm_eq` compares `Lam.q`, every element of `Let.q`, `Ann.T` and `Ref.b`. The
+reasons differ by field:
+
+- `Ann.T` is read by emission: `ty_peel` carries it into `emit_body`,
+  `ty_ann` reads it for a call spine, and `ty_all` opens its binders. Two
+  arms with different annotations can emit different code.
+- `Ref.b` is the bang marker. `term_spine` records it as `bang`,
+  `emit_body` uses it to refuse a fused call, and `emit_jump` emits the
+  offload task path. The two fixtures below emit different C with and
+  without the marker.
+- `Lam.q` is not read by the emitter; emission takes the binder quantity
+  from the type through `ty_all`. It is compared because it is part of the
+  term and the equality is total over the term.
+- `let_live` reads only `Let.q.length`: it iterates `t.q` to index the bound
+  values and does not read the tags. The element comparison keeps the
+  equality total and the lengths aligned.
+- `All` uses a synthetic binder key below every real index (`-2 - d`) and
+  applies both bodies to a `Var` with that key. Keying on `d` aliased a
+  probe whose index equals the comparison depth. `Sub` is rejected: its `i`
+  is a substitution index, not a de Bruijn binder, and the body cannot be
+  renamed without rebuilding higher-order terms. An arm carrying a `Sub`
+  does not share.
+- `ADT.r` stays out: it is the checker's remaining-constructor refinement.
+  `book_adt` reads it to filter the constructor list used for default-arm
+  existence; layouts (`lay_of`, `lay_node`) and calls key on `k` and the
+  type arguments. Comparing it changed the five-overlap C from 528,878 to
+  540,581 bytes with identical outputs.
 
 A repeated copy keeps the same annotation object. `arm_eq` skips the type
 traversal when `x.T === ya.T`: in an instrumented five-overlap run 1,526,534
@@ -88,7 +98,7 @@ clang-19 -std=c11 -O1 -w out.c -lm -lpthread -o out
 ./out x                           # 9
 ```
 
-Protected test: `round3/tests/arm_eq_ann_share.ts` loads
+Protected annotation-sharing test: `round3/tests/arm_eq_ann_share.ts` loads
 `round3/fixtures/arm_eq_ann_share.bend` twice, changes one duplicated Mat
 arm's `Ann.T` quantity from Lone to Many in the second load, and compares the
 emitted C. The change is layout-neutral. Base `50e84c98` exits 1: every
@@ -101,16 +111,37 @@ mutation compiles to the same 511,757 B, because base `arm_eq` ignores
 COMPILER_DIR/bin/bun --smol round3/tests/arm_eq_ann_share.ts COMPILER_DIR
 ```
 
-`COMPILER_DIR` holds `bend2/comp.ts`, `bend2/bend.ts`, `bend2/base.bend` and
-`bend2/effs`. The script imports the repository `bend.ts` (byte-identical to
-the pinned file) for terms and loads only `comp.ts` from `COMPILER_DIR`.
+Binder-key test: `round3/tests/arm_eq_binder_key.ts` appends a temporary
+`export { arm_eq }` to a copy of `COMPILER_DIR/bend2/comp.ts`, builds
+`Lam z. All k. z` and `Lam z. All k. k`, and runs each case in a fresh
+process so the Lam binder takes probe index 1. No other probe allocation
+precedes it. The same script checks the `Ann.T` analogue and a same-term
+control. On `119a3076` the All case and the Ann.T analogue compare equal and
+the test exits 1; on this head both compare unequal and the control compares
+equal. Command:
+
+```
+COMPILER_DIR/bin/bun --smol round3/tests/arm_eq_binder_key.ts COMPILER_DIR
+```
+
+`COMPILER_DIR` must be writable: the test writes and removes
+`bend2/comp.arm_eq_test.ts`. It imports the repository `bend.ts`
+(byte-identical to the pinned file) for terms and loads only `comp.ts` from
+`COMPILER_DIR`.
+
+Ref.b end-to-end: `round3/fixtures/ref_bang_plain.bend` and
+`round3/fixtures/ref_bang_marked.bend` are the same program except for
+`deep(5n)` and `deep!(5n)`. The plain C is 84,810 B (hash
+`877f8e3b7fb15995...`) and the marked C is 84,739 B (hash
+`185329de2742e9b8...`); both execute `5`. Base `50e84c98` and this head emit
+identical C for each variant. The marker changes the emitted program, so two
+arms that differ in it must not share.
 
 Limit: no source program in this checkout changes runtime output between base
-and head. The new test changes the emitted C on this head because the two
-copies carry different annotation quantities; on fixtures that do not mutate
-the term, the base review's 168 `Ann.T`-divergent true hits are shadowed by
-earlier representatives and the C is unchanged. The `quant_ann` fixtures
-guard the carriers; the `ann_share` test fails on base.
+and head. The emitted C changes under the `ann_share` mutation and between
+the `Ref.b` variants. The base review's 168 `Ann.T`-divergent hits are not
+explained here; on the unmutated fixtures in this checkout base and head emit
+identical C.
 
 ## What changed from 178f01fbba
 
