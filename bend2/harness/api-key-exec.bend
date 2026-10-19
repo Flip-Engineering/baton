@@ -243,6 +243,13 @@ def state_read(read: Result<&1,&1,U32 & String,String>) -> String:
     case Fail{(code,detail)}: "absent"
     case Done{+value}: Tx.trim_nl(value)
 
+# A zero-change consume that still reads authorized did not transition, so it
+# refuses through the unavailable cause. The state is matched once.
+def zero_change_state(state: String) -> String:
+  match state:
+    case "authorized": "unavailable"
+    case other: other
+
 # Admission requires the guarded UPDATE to change exactly one row. A failed or
 # zero-change consume never admits: when the row is still authorized, the
 # transition did not happen, so the caller reports creditAdmissionUnavailable
@@ -254,7 +261,7 @@ def refused_state(+db: String, +attempt: String, +reference: String, changed: Bo
     case False{}: do IO<String>:
       read : Result<&1,&1,U32 & String,String> <- DB.Sql.read(db,authorization_state_sql(attempt,reference))
       observed : String <- IO.pure(String,state_read(read))
-      IO.pure(String,Bool.pick(String,String.eq(observed,"authorized"),"unavailable",observed))
+      IO.pure(String,zero_change_state(observed))
 
 def authorization_consume(+db: String, +attempt: String, +reference: String) -> IO(String):
   do IO<String>:
