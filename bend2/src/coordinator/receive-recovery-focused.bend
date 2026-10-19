@@ -44,6 +44,12 @@ def dispatch_host_keeper(+directory: String, +lock: String) -> IO(Unit):
   run_host_keeper(directory,U32.read(lock))
 
 @unsafe
+def dispatch_host_keeper_command(selected: Bool, +directory: String, +lock: String) -> IO(Unit):
+  match selected:
+    case True{}: dispatch_host_keeper(directory,lock)
+    case False{}: IO.die(Unit,2,"observer recovery entry expects a recovery command")
+
+@unsafe
 def dispatch_instance(owner: Bool, shutdown: Bool, +db: String) -> IO(Unit):
   match owner:
     case True{}: IO.try(Unit,Custody.Instance.owner(db))
@@ -55,8 +61,8 @@ def dispatch_instance(owner: Bool, shutdown: Bool, +db: String) -> IO(Unit):
 @unsafe
 def dispatch(args: List<String>) -> IO(Unit):
   match args:
-    case "--host-process-keeper" <> +directory <> +lock <> Nil{}:
-      dispatch_host_keeper(directory,lock)
+    case +flag <> +directory <> +lock <> Nil{}:
+      dispatch_host_keeper_command(String.eq(flag,"--host-process-keeper"),directory,lock)
     case +flag <> +db <> Nil{}:
       dispatch_instance(String.eq(flag,"--instance-owner"),String.eq(flag,"--instance-shutdown"),db)
     case +flag <> +db <> +session <> +id <> +cursor <> +cmd <> +model <> +effort <> +cwd <> +log <> +harness <> +directory <> +native <> Nil{}:
