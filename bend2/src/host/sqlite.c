@@ -66,11 +66,13 @@ static const char *const baton_change_schema[] = {
 
 /* Durable install marker. The fingerprint covers the exact caller schema
    text and every baton_change_schema entry, so a schema or projection change
-   in a new binary changes the fingerprint and forces a reinstall. The marker
-   row is written in the same BEGIN IMMEDIATE..COMMIT transaction as the DDL
-   it certifies, so it is visible only when the whole projection committed.
-   A database created or replaced by another process carries no matching
-   marker and is installed again. */
+   in a new binary changes the fingerprint and forces a reinstall. The stored
+   schema_version changes on any later DDL by any process, so dropping an
+   application table or trigger also forces the full installer and repairs it.
+   The marker row is written in the same BEGIN IMMEDIATE..COMMIT transaction
+   as the DDL it certifies, so it is visible only when the whole projection
+   committed. A database created or replaced by another process carries no
+   matching marker and is installed again. */
 static void baton_sql_projection_fingerprint(const char *schema, char out[17]) {
   uint64_t hash = 14695981039346656037ULL;
   const unsigned char *at;
@@ -107,10 +109,11 @@ static int baton_sql_scalar_int(sqlite3 *db, const char *sql, sqlite3_int64 *val
 }
 
 /* Cheap read-only completeness check against durable in-database state:
-   the marker fingerprint, the projection tables, the migrated columns and
-   the native_changes triggers recorded in sqlite_master. Returns 1 only on
-   a positive match; any missing object or read failure returns 0 and the
-   caller runs the full installer, which surfaces the real error. */
+   the marker fingerprint and schema version, the projection tables, the
+   migrated columns and the native_changes triggers recorded in sqlite_master.
+   Returns 1 only on a positive match; any missing object or read failure
+   returns 0 and the caller runs the full installer, which surfaces the real
+   error. */
 static int baton_sql_projection_is_current(sqlite3 *db, const char *schema,
                                            const char fingerprint[17]) {
   (void)schema;
@@ -119,6 +122,8 @@ static int baton_sql_projection_is_current(sqlite3 *db, const char *schema,
   if (sqlite3_table_column_metadata(db, NULL, "knowledge_promotions", "source_kind", NULL, NULL, NULL, NULL, NULL) != SQLITE_OK)
     return 0;
   if (sqlite3_table_column_metadata(db, NULL, "knowledge_promotions", "destination_kind", NULL, NULL, NULL, NULL, NULL) != SQLITE_OK)
+    return 0;
+  if (sqlite3_table_column_metadata(db, NULL, "baton_projection_state", "schema_version", NULL, NULL, NULL, NULL, NULL) != SQLITE_OK)
     return 0;
   sqlite3_int64 tables = 0;
   if (baton_sql_scalar_int(db, "SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('native_changes','knowledge','knowledge_promotions','knowledge_relations','baton_projection_state');", &tables) != SQLITE_OK || tables != 5)
@@ -129,13 +134,17 @@ static int baton_sql_projection_is_current(sqlite3 *db, const char *schema,
   sqlite3_int64 triggers = 0;
   if (baton_sql_scalar_int(db, "SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name LIKE 'native_changes_%';", &triggers) != SQLITE_OK || triggers != expected_triggers)
     return 0;
+  sqlite3_int64 schema_version = 0;
+  if (baton_sql_scalar_int(db, "PRAGMA schema_version;", &schema_version) != SQLITE_OK)
+    return 0;
   sqlite3_stmt *stmt = NULL;
-  if (sqlite3_prepare_v2(db, "SELECT fingerprint FROM baton_projection_state WHERE id=1;", -1, &stmt, NULL) != SQLITE_OK)
+  if (sqlite3_prepare_v2(db, "SELECT fingerprint, schema_version FROM baton_projection_state WHERE id=1;", -1, &stmt, NULL) != SQLITE_OK)
     return 0;
   int current = 0;
   if (sqlite3_step(stmt) == SQLITE_ROW) {
     const unsigned char *stored = sqlite3_column_text(stmt, 0);
-    current = stored && strcmp((const char *)stored, fingerprint) == 0;
+    current = stored && strcmp((const char *)stored, fingerprint) == 0
+              && sqlite3_column_int64(stmt, 1) == schema_version;
   }
   sqlite3_finalize(stmt);
   return current;
@@ -172,10 +181,17 @@ static int baton_sql_install_projection(sqlite3 *db, const char *schema, char **
   for (size_t i = 0; code == SQLITE_OK && baton_change_schema[i]; i++)
     code = sqlite3_exec(db, baton_change_schema[i], NULL, NULL, error);
   if (code == SQLITE_OK)
-    code = sqlite3_exec(db, "CREATE TABLE IF NOT EXISTS baton_projection_state (id INTEGER PRIMARY KEY CHECK(id=1), fingerprint TEXT NOT NULL);", NULL, NULL, error);
+    code = sqlite3_exec(db, "CREATE TABLE IF NOT EXISTS baton_projection_state (id INTEGER PRIMARY KEY CHECK(id=1), fingerprint TEXT NOT NULL, schema_version INTEGER NOT NULL DEFAULT 0);", NULL, NULL, error);
+  /* A marker table written before schema_version existed is migrated in the
+     same transaction; the next check then compares the durable version. */
+  if (code == SQLITE_OK && sqlite3_table_column_metadata(db, NULL, "baton_projection_state", "schema_version", NULL, NULL, NULL, NULL, NULL) != SQLITE_OK)
+    code = sqlite3_exec(db, "ALTER TABLE baton_projection_state ADD COLUMN schema_version INTEGER NOT NULL DEFAULT 0;", NULL, NULL, error);
+  sqlite3_int64 schema_version = 0;
+  if (code == SQLITE_OK)
+    code = baton_sql_scalar_int(db, "PRAGMA schema_version;", &schema_version);
   if (code == SQLITE_OK) {
-    char marker_sql[128];
-    snprintf(marker_sql, sizeof(marker_sql), "INSERT OR REPLACE INTO baton_projection_state(id,fingerprint) VALUES(1,'%s');", fingerprint);
+    char marker_sql[160];
+    snprintf(marker_sql, sizeof(marker_sql), "INSERT OR REPLACE INTO baton_projection_state(id,fingerprint,schema_version) VALUES(1,'%s',%lld);", fingerprint, (long long)schema_version);
     code = sqlite3_exec(db, marker_sql, NULL, NULL, error);
   }
   if (code == SQLITE_OK)
