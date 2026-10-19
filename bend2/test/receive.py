@@ -1656,6 +1656,39 @@ class Receive(unittest.TestCase):
         self.action(continuation)
         self.finish(first)
 
+    def test_admitted_receiver_keeps_its_attempt_after_row_replacement(self):
+        self.player('parent', harness='omp')
+        self.prepare_input('initial-task', 'parent', 'Complete the controlled task.', kind='task')
+        receiver = self.spawn(*self.receive_args('parent'))
+        stream, started = self.accept_child(receiver, 'parent')
+        replacement = 'receive:parent:replacement:second-admission'
+        with sqlite3.connect(self.db) as database:
+            admitted = database.execute(
+                "SELECT id FROM executions WHERE session='parent'").fetchone()[0]
+            database.execute(
+                "INSERT INTO messages(id,sender,recipient,kind,body,receipt) "
+                "VALUES(?,?,?,?,?,?)",
+                ('other-admission', 'root', 'parent', 'guidance', 'another receiver input',
+                 'native-turn:' + replacement))
+            database.execute(
+                "INSERT INTO message_reads(attempt,message,recipient,native,identity,handled) "
+                "VALUES(?,?,?,?,?,?)",
+                (replacement, 'other-admission', 'parent', 'other-native',
+                 'other-identity', 'native-turn:' + replacement))
+            database.execute("UPDATE executions SET id=? WHERE session='parent'",
+                             (replacement,))
+        self.action(stream, exit_fixture=True, complete_task=True)
+        stdout, stderr = self.finish(receiver, ok=False)
+        lines = [line for line in stdout.splitlines() if line.strip()]
+        self.assertTrue(lines, stdout + stderr)
+        answer = self.receive_answers(lines[-1], stderr)
+        self.assertEqual(answer['receive'], 'accepted')
+        self.assertEqual(answer['attempt'], admitted)
+        self.assertNotEqual(answer['attempt'], replacement)
+        self.assertNotEqual(answer['receipt'], 'native-turn:' + replacement)
+        self.assertIn(answer['receipt'], ('', 'native-reviewed', 'native-turn:' + admitted))
+        self.assertTrue(answer['error'])
+
     def initial_inputs(self, session):
         with sqlite3.connect(f'{self.db.as_uri()}?mode=ro', uri=True) as database:
             database.row_factory = sqlite3.Row
