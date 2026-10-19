@@ -14,6 +14,7 @@
 import Base
 import ../coordinator/commands.bend as C
 import ./subscription-fallback.bend as Subs
+import ./usage-windows.bend as UW
 import ../json/canonical.bend as J
 import ../git/text.bend as Tx
 import ../host/sqlite.bend as DB
@@ -720,16 +721,37 @@ def handoff_decided(+db: String, +session: String, +id: String, +event: String, 
     case None{}: Subs.profile_handoff(db,session,id,event,native,cmd,cwd)
     case Some{+refused}: Bool.pick(IO(Bool),String.is_empty(cause),IO.pure(Bool,False{}),advance_account(db,session,id,harness,refused,cause))
 
+# The account label in force: the bound account's own label, or the operator's
+# profile label when no account record exists. The handoff's usage-window record
+# and the wake gate both read this one value, so the reported reset and the
+# refusal to retry before it name the same account.
+def label_for_bound(+db: String, +session: String, +bound: Maybe<&2,AccountRecord>) -> IO(String):
+  match bound:
+    case Some{+account}: IO.pure(String,account_id(account))
+    case None{}: Subs.profile_label_io(db,session)
+
+def handoff_label_io(+db: String, +session: String) -> IO(String):
+  do IO<String>:
+    +harness_text : String <- IO.try(String,DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
+    +harness : String <- IO.pure(String,Tx.trim_nl(harness_text))
+    bound : Maybe<&2,AccountRecord> <- bound_account(db,session,harness)
+    label : String <- label_for_bound(db,session,bound)
+    IO.pure(String,label)
+
 # Provider-reported exhaustion advances the account in force when a binding
-# put one in force, and the operator's profile list otherwise. The advance is
+# put one in force, and the operator's profile list otherwise. The usage-window
+# observation is recorded before any advance, under the refused account label,
+# so the provider reset survives even when the advance fails; the advance is
 # recorded before the caller relaunches, so the next attempt records the next
-# account beside its own attempt identity.
+# account beside its own attempt identity. An empty cause records nothing.
 def handoff(+db: String, +session: String, +id: String, +event: String, native: String, cmd: String, cwd: String) -> IO(Bool):
   do IO<Bool>:
     +cause : String <- Subs.exhaustion_cause(db,event)
     +harness_text : String <- IO.try(String,DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
     +harness : String <- IO.pure(String,Tx.trim_nl(harness_text))
-    bound : Maybe<&2,AccountRecord> <- bound_account(db,session,harness)
+    +bound : Maybe<&2,AccountRecord> <- bound_account(db,session,harness)
+    +label : String <- label_for_bound(db,session,bound)
+    recorded : Unit <- Bool.pick(IO(Unit),String.is_empty(cause),IO.pure(Unit,Unit{}),UW.record_cause(db,session,id,label,cause))
     advanced : Bool <- handoff_decided(db,session,id,event,native,cmd,cwd,cause,harness,bound)
     IO.pure(Bool,advanced)
 

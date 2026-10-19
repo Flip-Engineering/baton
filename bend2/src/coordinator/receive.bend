@@ -321,7 +321,7 @@ def wake_fenced_gate(+db: String, +session: String, +cursor: String, launch: Str
 
 def wake_fenced_gated(+db: String, +session: String, +cursor: String, launch: String -> IO(Result<&1,&1,U32 & String,Unit>), lock: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
-    +label : String <- Subs.profile_label_io(db,session)
+    +label : String <- Accounts.handoff_label_io(db,session)
     gate : UW.Gate <- UW.window_gate(db,session,Tx.trim_nl(label))
     next : Result<&1,&1,U32 & String,Unit> <- wake_fenced_gate(db,session,cursor,launch,lock,gate)
     IO.pure(Result<&1,&1,U32 & String,Unit>,next)
@@ -415,8 +415,10 @@ def finish_pending(+db: String, +session: String, id: String, attempt: String, l
     +failed : Bool <- outcome_failed(db,outcome)
     owed : Bool <- wake_owed(db,session,cursor)
     +transient : Bool <- transient_provider_error(db,outcome)
+    +exhaustion : String <- Subs.exhaustion_cause(db,terminal_event(outcome))
+    +exhausted : Bool = Bool.not(String.is_empty(exhaustion))
     delivery_task : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,Turn.finish(db,session,id,log,outcome))
-    continued_task : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),superseded,IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),continue_pending(db,session,cursor,previous => again(Bool.pick(String,Bool.and(failed,transient),attempt,previous)))))
+    continued_task : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),Bool.or(superseded,exhausted),IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),continue_pending(db,session,cursor,previous => again(Bool.pick(String,Bool.and(failed,transient),attempt,previous)))))
     finished : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,delivery_task)
     questions : Result<&1,&1,U32 & String,Unit> <- NativeRequests.settle(deliveries)
     stopped : Bool <- Stop.stopped(db,session)
@@ -703,18 +705,42 @@ def started(+db: String, +session: String, +id: String, +log: String, cursor: St
 # native process exists: the claim names the head unacknowledged message as
 # owner and fences the generation past any stale row, so a driver that dies
 # before launch never suppresses the next wake.
+#
+# The receiver endpoint is also entered directly by retained endpoints, so the
+# usage gate is checked under this admission's held session lock before any
+# native process exists: a held window reports the hold, schedules the reset
+# continuation, releases the lock and leaves the input owed. The message is not
+# claimed, so the next wake still owns it.
+def window_held_start(+db: String, +session: String, +head: String, +lock: U32, gate: UW.Gate) -> IO(Bool):
+  match gate:
+    case UW.GateHeld{+window,+resets_at,+source,+receipt}:
+      Bool.pick(IO(Bool),String.is_empty(head),
+        IO.pure(Bool,False{}),
+        do IO<Bool>:
+          held : Unit <- UW.report_held(db,session,head,UW.GateHeld{window,resets_at,source,receipt})
+          scheduled : Unit <- UW.schedule_held(db,head,resets_at)
+          released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
+          IO.pure(Bool,True{}))
+    case other: IO.pure(Bool,False{})
+
 def start_admitted(+db: String, +session: String, +id: String, +cmd: String, route: String, thinking: String, +workspace: String, +log: String, +lock: U32, cursor: String, +native: String, +attempt: String, +harness: String, storage: String, prompt: String, recovery: String, predecessor: String, again: String -> IO(Result<&1,&1,U32 & String,Unit>), allowed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match allowed:
     case False{}: do IO<Result<&1,&1,U32 & String,Unit>>:
       released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
       IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(2,"Session is terminally stopped; queued input will not execute. Read its session and retained inbox.")})
     case True{}: do IO<Result<&1,&1,U32 & String,Unit>>:
-      head : String <- wake_found(db,session,"0")
-      owned : Unit <- Store.claim(db,session,head)
-      +policy : Logs.Policy <- Logs.policy(db,session)
-      +level : String <- IO.pure(String,Turn.policy_level(policy))
-      start : P.RetainedStart <- IO.try(P.RetainedStart,Turn.retained(db,session,attempt,cmd,route,thinking,workspace,native,harness,storage,prompt,lock,recovery,level,predecessor))
-      started(db,session,id,log,cursor,native,workspace,attempt,harness,level,lock,start,again,cmd)
+      +head : String <- wake_found(db,session,"0")
+      +label : String <- Accounts.handoff_label_io(db,session)
+      gate : UW.Gate <- UW.window_gate(db,session,Tx.trim_nl(label))
+      held : Bool <- window_held_start(db,session,head,lock,gate)
+      Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),held,
+        IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),
+        do IO<Result<&1,&1,U32 & String,Unit>>:
+          owned : Unit <- Store.claim(db,session,head)
+          +policy : Logs.Policy <- Logs.policy(db,session)
+          +level : String <- IO.pure(String,Turn.policy_level(policy))
+          start : P.RetainedStart <- IO.try(P.RetainedStart,Turn.retained(db,session,attempt,cmd,route,thinking,workspace,native,harness,storage,prompt,lock,recovery,level,predecessor))
+          started(db,session,id,log,cursor,native,workspace,attempt,harness,level,lock,start,again,cmd))
 
 def input_text(decoded: Req.Scalar) -> IO(String):
   match decoded:
