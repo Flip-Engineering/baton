@@ -474,10 +474,10 @@ def unknown_peer_script() -> String:
 # The removal check uses a readable 130-deep chain through the full apply and
 # receipt path so the depth refusal is UID-independent and preservation stays
 # separate from unknown-fact preservation.
-def deep_leaf_path(+prefix: String, remaining: Nat) -> String:
+def deep_leaf_path(remaining: Nat, +prefix: String) -> String:
   match remaining:
     case 0n: prefix ++ "/leaf.txt"
-    case 1n+rest: deep_leaf_path(prefix ++ "/n", rest)
+    case 1n+rest: deep_leaf_path(rest, prefix ++ "/n")
 
 def removal_detail(entries: List<T.Removal>, +path: String) -> String:
   match entries:
@@ -498,7 +498,7 @@ def removal_refused_check(+db: String, +root: String) -> IO(Unit):
     +deep : String = dir ++ "/deep"
     +script : String = "d=" ++ deep ++ "; mkdir -p \"$d\" || exit 1; cd \"$d\" || exit 1; i=0; while [ $i -lt 130 ]; do mkdir n || exit 1; cd n || exit 1; i=$((i+1)); done; printf leaf > leaf.txt"
     built : Unit <- run_cmd(["/bin/sh", "-c", script])
-    +leaf : String = deep_leaf_path(deep, 130n)
+    +leaf : String = deep_leaf_path(130n, deep)
     +candidate : T.Candidate <- candidate_for(dir, T.Scratch{}, clear_facts())
     receipt : T.Receipt <- one_apply(db, root, candidate)
     a : Unit <- check_receipt("interrupted-refused", receipt, dir, "refused")
