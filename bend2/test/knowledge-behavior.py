@@ -153,7 +153,8 @@ class KnowledgeBehavior(unittest.TestCase):
         self.assertEqual(stored['id'], 'notice-finding')
         self.assertEqual(stored['author'], 'grand')
         inbox = self.json_call('inbox', 'worker')
-        self.assertEqual(inbox[0]['body'], {'finding': 'notice-finding', 'author': 'grand'})
+        self.assertEqual(json.loads(inbox[0]['body']),
+                         {'finding': 'notice-finding', 'author': 'grand'})
 
 
 if __name__ == '__main__':
