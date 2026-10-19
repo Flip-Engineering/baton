@@ -1,0 +1,64 @@
+From 5c3715b7580467532717577c14931cbbb0a9e167 Mon Sep 17 00:00:00 2001
+From: Bend2Compile <bend2compile@campaign.local>
+Date: Sun, 18 Oct 2026 22:43:28 -0700
+Subject: [PATCH] Walk a word match's leaves once, not once per pass
+
+compile_book emits the book until own/hot/stat stop growing, and for
+process.bend that is four full passes (75/12/1 -> 76/42/1 -> 77/45/1 ->
+the same). The growth is the analysis, not the order: own feeds brw_of,
+brw_of is fixed for a pass, and hot changes the emitter's allocation
+path, so caller-first order needs four passes too.
+
+emit_lits decides whether a default covers an arm by lowering both terms
+and comparing their JSON strings, at every node of the match. One cold
+compile walks the same match 12 times (three per pass) for 6,000 lowered
+stringifies and 183.8 ms. Keep the leaves by match-node identity: one
+walk, then 11 cache hits.
+
+The emitted C is byte-identical on process.bend, control-output.bend,
+account-binding-smoke.bend and tests/git.bend, and so are stderr and
+stdout; hello links with clang 19 and prints hello, exit 0.
+
+Cold, BEND_CGEN_CACHE=0, bun 1.3.14 --smol, 9 interleaved rounds, load1
+36.5 -> 30.9: median 2.04 s -> 1.81 s (min/max 1.87/2.14 vs 1.57/1.97),
+user 5.15 s -> 4.58 s, 9 of 9 rounds faster. The passes together:
+median 1108 -> 862 ms (min/max 983/1197 vs 730/937), 9 of 9.
+
+Tried and dropped, both byte-identical but below resolution here: a
+lay_of identity cache (17,566 calls reach 3,163 type nodes), median
+paired -42 ms over 15 rounds with 10 of 15 wins, and a ty_wnf identity
+memo.
+---
+ bend2/comp.ts | 12 +++++++++++-
+ 1 file changed, 11 insertions(+), 1 deletion(-)
+
+diff --git a/bend2/comp.ts b/bend2/comp.ts
+index 7fcab602..d38ab83a 100644
+--- a/bend2/comp.ts
++++ b/bend2/comp.ts
+@@ -2709,11 +2709,21 @@ function emit_nats(x: HTerm): Chain {
+   }
+ }
+ 
++// The leaves depend on the match alone, and every pass walks the same match
++// again: keep them by node identity. Each walk compares its own coverage
++// against its own instance by a lowered stringify, which on a deep bit match
++// is the most expensive single thing a pass does.
++const LEAVES: WeakMap<HTerm, Leaf[]> = new WeakMap();
++
++function emit_lits(x: HTerm): Leaf[] {
++  return weak_memo(LEAVES, x, () => emit_lits_walk(x));
++}
++
+ // A word match's leaves: the bits each knows (32: a hit), their value, its
+ // arm, and the words it binds (none; the tail; a bit and its tail). A
+ // default covers the deeper defaults and tail arms that are its instance
+ // (the flattener's substitution replayed): a literal compares whole.
+-function emit_lits(x: HTerm): Leaf[] {
++function emit_lits_walk(x: HTerm): Leaf[] {
+   const ws: Leaf[] = [];
+   const key = (t: HTerm): string => JSON.stringify(Bend.term_lower(t),
+     (k, v) => k === "s" ? undefined : v?.$ === "Ann" ? Bend.term_strip(v) : v);
+-- 
+2.43.0
+

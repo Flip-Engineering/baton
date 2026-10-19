@@ -24,6 +24,11 @@ COMPILER_ARCHIVES = {
         'official_release_artifact': False,
         'binary_sha256': 'b929035652cba78ba1b034b7214a14bbc2f64f0e6c27265c64c53895d24890c0',
     },
+    'ca9f19566db10332c56d5253ad4944d05e675b64ce07b3e12d6ff335c6485d8a': {
+        'name': 'Bend 2.0.25 with Baton memoization, the Cgen cache and the emit-lits fixpoint patch',
+        'official_release_artifact': False,
+        'binary_sha256': '94383bb15b262f5bcd34ae2684d74a06e0f81e88736a75e17c9d8cbe9dbb79dc',
+    },
 }
 ENTRY = 'bend2/src/coordinator/main.bend'
 HOST_SOURCE = 'bend2/src/host/process-spawn.c'

@@ -147,7 +147,7 @@ class ReceiverLayout(unittest.TestCase):
         lock = json.loads(lock_path.read_text())
         provenance = json.loads(provenance_path.read_text())
         self.assertEqual(lock['compiler_archive_sha256'],
-                         'b5d73fd960574dd839e100b7c3242b80c6f35895a8e1a610615c2e90606dc4fe')
+                         '6e03633ff79f14781c35281bf3004b21da9dd5ea46bd3199c62b0ab7b2d3f6c7')
         self.assertEqual(provenance['compiler_archive_sha256'], lock['compiler_archive_sha256'])
         self.assertEqual(provenance['lock_sha256'],
                          hashlib.sha256(lock_path.read_bytes()).hexdigest())

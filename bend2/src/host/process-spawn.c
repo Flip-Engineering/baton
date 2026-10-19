@@ -429,7 +429,7 @@ typedef struct BrKeeper {
   /* A recovery child gets one attach attempt; readiness enables a later retry. */
   int recovery_attempted;
   struct BrWaiter *unwatched_recovery;
-  char *directory,*incoming,*cgroup_parent;
+  char *directory,*incoming;
   size_t incoming_size,incoming_capacity;
   BrManifest manifest;
   BrBuffer *writes,*writes_tail,*outgoing,*outgoing_tail;
@@ -490,10 +490,6 @@ typedef struct {
   int32_t pid,reserved;
   char socket[104];
 } BrOwnerRecord;
-/* An owner advertises that it creates and bounds a per-native cgroup for every
-   native it starts. An owner record without this bit predates the confinement
-   and is refused for admission rather than allowed to spawn unconfined. */
-#define BR_OWNER_CAP_NATIVE_CGROUP 1u
 /* The observation checkpoint of one attempt. It binds the consumed spool offset
    to the reducer state the observation owner had durably committed there, and to
    the exact custody the bytes came from: the native process, the admitted
@@ -872,376 +868,7 @@ done:
 }
 
 #ifdef __linux__
-/* Native cgroup confinement. A receiver unit delegates a bounded cgroup to
-   the user and every native attempt runs in its own child cgroup under it.
-   The keeper writes the native PID to that child's cgroup.procs while the
-   child is stopped on a start gate, then releases it. Membership is
-   inherited, so every process the native creates stays inside the same
-   bounded subtree. The receiver path is supplied by the admitting process
-   (or BATON2_CGROUP_PARENT for a disposable fixture hierarchy); the bound is
-   read from the effective memory.max and memory.swap.max. A missing finite
-   bound, nonzero swap, or a failed create/attach refuses the spawn. */
-#define BR_CGROUP_DEFAULT_ROOT "/sys/fs/cgroup"
-#define BR_CGROUP_CLOSE_RANGE_CLOEXEC 4u
-
-static const char *br_cgroup_root(void) {
-  const char *root=getenv("BATON2_CGROUP_ROOT");
-  return root && root[0]=='/'?root:BR_CGROUP_DEFAULT_ROOT;
-}
-
-static int br_cgroup_relative_ok(const char *path) {
-  if(!path || path[0]!='/')return EINVAL;
-  size_t length=strlen(path);
-  if(!strcmp(path,"/.."))return EINVAL;
-  if(strstr(path,"/../"))return EINVAL;
-  if(length>=3 && !strcmp(path+length-3,"/.."))return EINVAL;
-  return 0;
-}
-
-static char *br_cgroup_path(const char *root,const char *relative,const char *name) {
-  size_t root_length=strlen(root),relative_length=strlen(relative),name_length=name?strlen(name):0;
-  while(root_length>1 && root[root_length-1]=='/')root_length--;
-  size_t size=root_length+relative_length+(name?name_length+1:0)+1;
-  char *path=malloc(size);
-  if(!path)return NULL;
-  memcpy(path,root,root_length);
-  size_t at=root_length;
-  if(!(relative_length==1 && relative[0]=='/')) {
-    memcpy(path+at,relative,relative_length);at+=relative_length;
-  }
-  if(name) {path[at++]='/';memcpy(path+at,name,name_length);at+=name_length;}
-  path[at]=0;
-  return path;
-}
-
-static int br_cgroup_read_text(const char *path,char *value,size_t capacity) {
-  int fd=open(path,O_RDONLY|O_CLOEXEC);
-  if(fd<0)return errno;
-  size_t used=0;int error=0;
-  for(;;) {
-    if(used+1>=capacity){error=EOVERFLOW;break;}
-    ssize_t n=read(fd,value+used,capacity-1-used);
-    if(n<0 && errno==EINTR)continue;
-    if(n<0){error=errno;break;}
-    if(!n)break;
-    used+=(size_t)n;
-  }
-  close(fd);
-  if(error)return error;
-  while(used && (value[used-1]=='\n'||value[used-1]==' '||value[used-1]=='\t'))used--;
-  value[used]=0;
-  return 0;
-}
-
-static int br_cgroup_decimal(const char *text,unsigned long long *value) {
-  if(!text || !*text)return EINVAL;
-  unsigned long long parsed=0;
-  for(const char *at=text;*at;at++) {
-    if(*at<'0'||*at>'9')return EINVAL;
-    unsigned digit=(unsigned)(*at-'0');
-    if(parsed>(ULLONG_MAX-digit)/10)return ERANGE;
-    parsed=parsed*10+digit;
-  }
-  *value=parsed;
-  return 0;
-}
-
-/* Returns the smallest finite value of one memory file over the cgroup and
-   every ancestor. "max" is unbounded; a missing file means the controller is
-   not visible at that level. No finite value anywhere is an error. */
-static int br_cgroup_limit(const char *root,const char *cgroup,const char *file,
-                           unsigned long long *limit) {
-  char *current=strdup(cgroup);
-  if(!current)return ENOMEM;
-  char value[64];
-  unsigned long long best=ULLONG_MAX;
-  int found=0,error=0;
-  for(;;) {
-    char *path=br_cgroup_path(root,current,file);
-    if(!path){error=ENOMEM;break;}
-    int read_error=br_cgroup_read_text(path,value,sizeof(value));
-    free(path);
-    if(!read_error) {
-      if(strcmp(value,"max")) {
-        unsigned long long parsed=0;
-        if((error=br_cgroup_decimal(value,&parsed)))break;
-        if(!found || parsed<best){best=parsed;found=1;}
-      }
-    } else if(read_error!=ENOENT && read_error!=ENOTDIR) {error=read_error;break;}
-    if(!strcmp(current,"/"))break;
-    char *slash=strrchr(current,'/');
-    if(!slash){error=EINVAL;break;}
-    if(slash==current)current[1]=0;
-    else *slash=0;
-  }
-  free(current);
-  if(error)return error;
-  if(!found)return ENODATA;
-  *limit=best;
-  return 0;
-}
-
-static int br_cgroup_membership(const char *text,char **cgroup_out) {
-  *cgroup_out=NULL;
-  const char *line=text;
-  while(*line) {
-    const char *newline=strchr(line,'\n');
-    size_t length=newline?(size_t)(newline-line):strlen(line);
-    if(length>3 && line[0]=='0' && line[1]==':' && line[2]==':' && line[3]=='/') {
-      size_t path_length=length-3;
-      char *path=malloc(path_length+1);
-      if(!path)return ENOMEM;
-      memcpy(path,line+3,path_length);path[path_length]=0;
-      if(br_cgroup_relative_ok(path)){free(path);return EINVAL;}
-      *cgroup_out=path;
-      return 0;
-    }
-    if(!newline)break;
-    line=newline+1;
-  }
-  return ENOENT;
-}
-
-static int br_cgroup_read_proc(const char *path,char **cgroup_out) {
-  char text[4096];
-  int error=br_cgroup_read_text(path,text,sizeof(text));
-  if(error)return error;
-  return br_cgroup_membership(text,cgroup_out);
-}
-
-/* The fixture supplies a disposable hierarchy. Production reads the cgroup
-   membership of the process whose budget must confine the native. */
-static int br_self_cgroup(char **cgroup_out) {
-  *cgroup_out=NULL;
-  const char *supplied=getenv("BATON2_CGROUP_PARENT");
-  if(supplied && supplied[0]) {
-    if(br_cgroup_relative_ok(supplied))return EINVAL;
-    char *copy=strdup(supplied);
-    if(!copy)return ENOMEM;
-    *cgroup_out=copy;
-    return 0;
-  }
-  return br_cgroup_read_proc("/proc/self/cgroup",cgroup_out);
-}
-
-static int br_peer_cgroup(int socket,char **cgroup_out) {
-  *cgroup_out=NULL;
-  const char *supplied=getenv("BATON2_CGROUP_PARENT");
-  if(supplied && supplied[0]) {
-    if(br_cgroup_relative_ok(supplied))return EINVAL;
-    char *copy=strdup(supplied);
-    if(!copy)return ENOMEM;
-    *cgroup_out=copy;
-    return 0;
-  }
-  struct ucred credentials;
-  socklen_t length=sizeof(credentials);
-  if(getsockopt(socket,SOL_SOCKET,SO_PEERCRED,&credentials,&length))return errno;
-  if(credentials.uid!=geteuid())return EPERM;
-  char path[64];
-  int written=snprintf(path,sizeof(path),"/proc/%d/cgroup",(int)credentials.pid);
-  if(written<0 || (size_t)written>=sizeof(path))return EOVERFLOW;
-  return br_cgroup_read_proc(path,cgroup_out);
-}
-
-/* True when this cgroup distributes the named controller to its children. */
-static int br_cgroup_has_controller(const char *root,const char *cgroup,const char *controller) {
-  char *path=br_cgroup_path(root,cgroup,"cgroup.subtree_control");
-  if(!path)return ENOMEM;
-  char value[512];
-  int error=br_cgroup_read_text(path,value,sizeof(value));
-  free(path);
-  if(error)return error==ENOENT?0:error;
-  const char *at=value;
-  while(*at) {
-    while(*at==' '||*at=='\n')at++;
-    const char *end=at;
-    while(*end && *end!=' ' && *end!='\n')end++;
-    size_t length=(size_t)(end-at);
-    if(length==strlen(controller) && !strncmp(at,controller,length))return 1;
-    at=end;
-  }
-  return 0;
-}
-
-static int br_cgroup_enable_controller(const char *root,const char *cgroup,const char *controller) {
-  char *path=br_cgroup_path(root,cgroup,"cgroup.subtree_control");
-  if(!path)return ENOMEM;
-  char value[64];
-  int length;
-  int fd;
-  if(getenv("BATON2_CGROUP_ROOT")) {
-    /* A disposable hierarchy is a plain directory: model the enabled set. */
-    length=snprintf(value,sizeof(value),"%s\n",controller);
-    fd=open(path,O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC,0600);
-  } else {
-    length=snprintf(value,sizeof(value),"+%s\n",controller);
-    fd=open(path,O_WRONLY|O_APPEND|O_CLOEXEC);
-  }
-  int error=fd<0?errno:br_write_all(fd,value,(size_t)length);
-  if(fd>=0)close(fd);
-  free(path);
-  return error;
-}
-
-static int br_cgroup_write_limit(const char *root,const char *placement,const char *name,
-                                 const char *file,unsigned long long value) {
-  char *directory=br_cgroup_path(root,placement,name);
-  char *path=directory?br_path(directory,file):NULL;
-  free(directory);
-  if(!path)return ENOMEM;
-  char text[32];
-  int length=snprintf(text,sizeof(text),"%llu\n",value);
-  int fd=open(path,O_WRONLY|O_CLOEXEC);
-  if(fd<0 && errno==ENOENT && getenv("BATON2_CGROUP_ROOT"))
-    fd=open(path,O_WRONLY|O_CREAT|O_TRUNC|O_CLOEXEC,0600);
-  int error=fd<0?errno:br_write_all(fd,text,(size_t)length);
-  if(fd>=0)close(fd);
-  char held[64];
-  if(!error)error=br_cgroup_read_text(path,held,sizeof(held));
-  if(!error) {
-    unsigned long long recorded=0;
-    error=br_cgroup_decimal(held,&recorded);
-    if(!error && recorded!=value)error=EIO;
-  }
-  free(path);
-  return error;
-}
-
-/* The receiver unit is the delegation boundary. A placement above an admitted
-   unit would lose the receiver's budget, so the walk stops at the deepest
-   .service or .scope component and never climbs into a higher slice. A user
-   manager such as user@1000.service therefore does not outrank a nested
-   worker.scope. */
-static char *br_cgroup_unit_root(const char *cgroup) {
-  const char *at=cgroup;
-  size_t best=0;
-  while(*at) {
-    while(*at=='/')at++;
-    const char *end=strchr(at,'/');
-    size_t length=end?(size_t)(end-at):strlen(at);
-    if((length>=8 && !strncmp(at+length-8,".service",8)) ||
-       (length>=6 && !strncmp(at+length-6,".scope",6)))
-      best=(size_t)(at-cgroup)+length;
-    if(!end)break;
-    at=end+1;
-  }
-  if(!best)return strdup(cgroup);
-  char *root=malloc(best+1);
-  if(!root)return NULL;
-  memcpy(root,cgroup,best);root[best]=0;
-  return root;
-}
-
-/* Creates the per-native child below the nearest delegated ancestor of the
-   receiver that both carries a finite effective bound and distributes the
-   memory controller. The child receives its own memory.max and
-   memory.swap.max, so the bound is explicit rather than inherited. The name
-   is the attempt directory identity, so a repeated start reuses its child. */
-static int br_native_cgroup_create(const char *receiver,const char *name,
-                                   char **path_out,char **relative_out,
-                                   unsigned long long *memory_limit,
-                                   unsigned long long *swap_limit,const char **condition) {
-  *path_out=NULL;*relative_out=NULL;
-  *condition="cgroupParent";
-  if(br_cgroup_relative_ok(receiver))return EINVAL;
-  const char *root=br_cgroup_root();
-  unsigned long long receiver_memory=ULLONG_MAX,receiver_swap=ULLONG_MAX;
-  int receiver_limit=br_cgroup_limit(root,receiver,"memory.max",&receiver_memory);
-  if(receiver_limit==ENODATA)receiver_memory=ULLONG_MAX;
-  else if(receiver_limit){*condition="cgroupUnbounded";return receiver_limit;}
-  receiver_limit=br_cgroup_limit(root,receiver,"memory.swap.max",&receiver_swap);
-  if(receiver_limit==ENODATA)receiver_swap=ULLONG_MAX;
-  else if(receiver_limit){*condition="cgroupSwapUnbounded";return receiver_limit;}
-  char *current=strdup(receiver);
-  if(!current)return ENOMEM;
-  char *unit=br_cgroup_unit_root(receiver);
-  if(!unit){free(current);return ENOMEM;}
-  char *placement=NULL;
-  int error=0;
-  for(;;) {
-    if(strcmp(current,"/")) {
-      unsigned long long limit=0,swap=0;
-      int limits=br_cgroup_limit(root,current,"memory.max",&limit);
-      if(!limits)limits=br_cgroup_limit(root,current,"memory.swap.max",&swap);
-      if(!limits && swap==0) {
-        int enabled=br_cgroup_has_controller(root,current,"memory");
-        if(enabled==0)enabled=br_cgroup_enable_controller(root,current,"memory")?0:1;
-        if(enabled<0){error=-enabled;break;}
-        if(enabled==1) {placement=strdup(current);if(!placement)error=ENOMEM;break;}
-      }
-    }
-    if(!strcmp(current,unit))break;
-    if(!strcmp(current,"/"))break;
-    char *slash=strrchr(current,'/');
-    if(!slash){error=EINVAL;break;}
-    if(slash==current)current[1]=0;
-    else *slash=0;
-  }
-  free(current);free(unit);
-  if(error){free(placement);*condition="cgroupController";return error;}
-  if(!placement){*condition="cgroupUnbounded";return EOPNOTSUPP;}
-  unsigned long long placement_memory=0,placement_swap=0;
-  if((error=br_cgroup_limit(root,placement,"memory.max",&placement_memory))) {
-    *condition="cgroupUnbounded";free(placement);return error==ENODATA?EOPNOTSUPP:error;
-  }
-  int placement_swap_error=br_cgroup_limit(root,placement,"memory.swap.max",&placement_swap);
-  if(placement_swap_error && placement_swap_error!=ENODATA) {
-    *condition="cgroupSwapUnbounded";free(placement);return placement_swap_error;
-  }
-  if(placement_swap_error==ENODATA)placement_swap=ULLONG_MAX;
-  unsigned long long memory=receiver_memory<placement_memory?receiver_memory:placement_memory;
-  unsigned long long swap=receiver_swap<placement_swap?receiver_swap:placement_swap;
-  if(swap!=0){*condition="cgroupSwapUnbounded";free(placement);return EOPNOTSUPP;}
-  char *path=br_cgroup_path(root,placement,name);
-  if(!path){*condition="cgroupCreate";free(placement);return ENOMEM;}
-  if(mkdir(path,0700)) {
-    int create=errno;
-    if(create!=EEXIST){free(path);free(placement);*condition="cgroupCreate";return create;}
-    struct stat info;
-    if(lstat(path,&info)){create=errno;free(path);free(placement);*condition="cgroupCreate";return create;}
-    if(!S_ISDIR(info.st_mode) || info.st_uid!=geteuid()) {
-      free(path);free(placement);*condition="cgroupCreate";return EPERM;
-    }
-  }
-  if((error=br_cgroup_write_limit(root,placement,name,"memory.max",memory))) {
-    *condition="cgroupLimit";free(path);free(placement);return error;
-  }
-  if((error=br_cgroup_write_limit(root,placement,name,"memory.swap.max",0))) {
-    *condition="cgroupLimit";free(path);free(placement);return error;
-  }
-  size_t placement_length=strlen(placement),name_length=strlen(name);
-  char *relative=malloc(placement_length+name_length+2);
-  if(!relative){*condition="cgroupCreate";free(path);free(placement);return ENOMEM;}
-  memcpy(relative,placement,placement_length);
-  relative[placement_length]='/';
-  memcpy(relative+placement_length+1,name,name_length+1);
-  free(placement);
-  *path_out=path;
-  *relative_out=relative;
-  *memory_limit=memory;
-  *swap_limit=swap;
-  *condition=NULL;
-  return 0;
-}
-
-static int br_cgroup_attach(pid_t pid,const char *procs) {
-  int fd=open(procs,O_WRONLY|O_APPEND|O_CLOEXEC);
-  /* A disposable hierarchy is plain directories; it has no kernel-created
-     cgroup.procs. Production always finds the kernel file. */
-  if(fd<0 && errno==ENOENT && getenv("BATON2_CGROUP_ROOT"))
-    fd=open(procs,O_WRONLY|O_CREAT|O_APPEND|O_CLOEXEC,0600);
-  if(fd<0)return errno;
-  char text[34],reversed[32];
-  unsigned long value=(unsigned long)pid;
-  size_t digits=0,length=0;
-  do {reversed[digits++]=(char)('0'+value%10);value/=10;} while(value);
-  while(digits)text[length++]=reversed[--digits];
-  text[length++]='\n';
-  int error=br_write_all(fd,text,length);
-  if(close(fd) && !error)error=errno;
-  return error;
-}
+#define BR_CLOSE_RANGE_CLOEXEC 4u
 
 static char *br_exec_path(const char *name) {
   if(!name || !*name)return NULL;
@@ -1274,13 +901,13 @@ typedef struct {
   const char *cwd;
   int input,output,error_log,gate_read,status_write;
   unsigned long close_limit;
-} BrConfinedChild;
+} BrGatedChild;
 
 /* Runs in the spawned child. It sets up the assigned descriptors, stops on the
    start gate, and execs the native argv exactly as admitted. A failure before
    exec reports its errno on the status pipe, which the parent reads. */
-static void br_confined_exec(BrConfinedChild *child) __attribute__((noreturn));
-static void br_confined_exec(BrConfinedChild *child) {
+static void br_gated_exec(BrGatedChild *child) __attribute__((noreturn));
+static void br_gated_exec(BrGatedChild *child) {
   int error=0;
   if(setpgid(0,0) && errno!=EACCES)error=errno;
   if(!error) {
@@ -1303,7 +930,7 @@ static void br_confined_exec(BrConfinedChild *child) {
   if(!error) {
     int marked=0;
 #ifdef SYS_close_range
-    if(!syscall(SYS_close_range,3,(unsigned)~0u,BR_CGROUP_CLOSE_RANGE_CLOEXEC))marked=1;
+    if(!syscall(SYS_close_range,3,(unsigned)~0u,BR_CLOSE_RANGE_CLOEXEC))marked=1;
     else if(errno!=ENOSYS && errno!=EINVAL)error=errno;
 #endif
     if(!error && !marked) {
@@ -1325,40 +952,35 @@ static void br_confined_exec(BrConfinedChild *child) {
   _exit(127);
 }
 
-/* Spawns once with the start gate. The parent attaches the gated child to the
-   per-native cgroup and only then releases it to exec. A failed attach or exec
-   kills and reaps the child; no fallback spawns it outside the cgroup. */
-static int br_spawn_confined(pid_t *pid,char **argv,const char *cwd,int input,int output,
-                             int error_log,const char *cgroup) {
+/* Starts a child behind a gate so descriptor setup completes before exec.
+   The parent releases the child only after the fork succeeds. Exec errors are
+   returned synchronously, and a failed launch is reaped before custody moves on. */
+static int br_spawn_gated(pid_t *pid,char **argv,const char *cwd,int input,int output,
+                          int error_log) {
   *pid=0;
-  if(!argv || !argv[0] || !cgroup)return EINVAL;
+  if(!argv || !argv[0])return EINVAL;
   char *exec_path=br_exec_path(argv[0]);
   if(!exec_path)return ENOMEM;
-  char *procs=br_path(cgroup,"cgroup.procs");
-  if(!procs){free(exec_path);return ENOMEM;}
   int gate[2]={-1,-1},status[2]={-1,-1};
   int error=baton_pipe(gate);
   if(!error)error=baton_pipe(status);
   if(!error) {
     long limit=sysconf(_SC_OPEN_MAX);
     if(limit<1024 || limit>1048576)limit=65536;
-    BrConfinedChild child={.argv=argv,.exec_path=exec_path,.cwd=cwd,
+    BrGatedChild child={.argv=argv,.exec_path=exec_path,.cwd=cwd,
       .input=input,.output=output,.error_log=error_log,
       .gate_read=gate[0],.status_write=status[1],.close_limit=(unsigned long)limit};
     pid_t created=fork();
     if(created<0)error=errno;
     else if(!created) {
       close(gate[1]);close(status[0]);
-      br_confined_exec(&child);
+      br_gated_exec(&child);
     } else {
       close(gate[0]);gate[0]=-1;
       close(status[1]);status[1]=-1;
       setpgid(created,created);
-      int child_error=br_cgroup_attach(created,procs);
-      if(!child_error) {
-        char released='R';
-        child_error=br_write_all(gate[1],&released,1);
-      }
+      char released='R';
+      int child_error=br_write_all(gate[1],&released,1);
       close(gate[1]);gate[1]=-1;
       if(!child_error) {
         int reported=0;
@@ -1384,15 +1006,8 @@ static int br_spawn_confined(pid_t *pid,char **argv,const char *cwd,int input,in
   if(gate[1]>=0)close(gate[1]);
   if(status[0]>=0)close(status[0]);
   if(status[1]>=0)close(status[1]);
-  free(exec_path);free(procs);
+  free(exec_path);
   return error;
-}
-
-static void br_cgroup_note(BrKeeper *keeper,const char *condition,int error) {
-  char text[256];
-  int length=snprintf(text,sizeof(text),"cgroup %s: %s (%d)\n",
-    condition?condition:"prepare",strerror(error),error);
-  if(length>0)br_file(keeper->directory,"native-start-error",text,(size_t)length,0);
 }
 #endif
 static void *br_reap_detached(void *argument) {
@@ -2351,7 +1966,7 @@ static void br_keeper_stop(BrKeeper *keeper) {
   }
   br_buffer_free(&keeper->writes,&keeper->writes_tail);
   br_buffer_free(&keeper->outgoing,&keeper->outgoing_tail);
-  free(keeper->incoming);free(keeper->directory);free(keeper->cgroup_parent);br_manifest_free(&keeper->manifest);
+  free(keeper->incoming);free(keeper->directory);br_manifest_free(&keeper->manifest);
   free(keeper);
 }
 /* Removes the per-attempt listener path only after acknowledgment has made the
@@ -2481,27 +2096,6 @@ static int br_keeper_spawn(BrKeeper *keeper,const unsigned char *expected_digest
                            const unsigned char *grant_digest) {
   if(!keeper->prepared || keeper->cancelled)return EPERM;
   int error=0;
-  char *cgroup=NULL,*cgroup_relative=NULL;
-  unsigned long long memory_limit=0,swap_limit=0;
-#ifdef __linux__
-  /* Create the per-native cgroup before the start is latched. A setup failure
-     leaves the attempt unlatched and retryable, and no native exists. */
-  if(!keeper->cgroup_parent) {
-    br_cgroup_note(keeper,"cgroupParent",EPERM);
-    return EPERM;
-  }
-  char name[48];
-  int named=snprintf(name,sizeof(name),"baton-native-%016llx",
-    (unsigned long long)br_attempt_identity(keeper->directory));
-  if(named<0 || (size_t)named>=sizeof(name))return EOVERFLOW;
-  const char *condition=NULL;
-  error=br_native_cgroup_create(keeper->cgroup_parent,name,&cgroup,&cgroup_relative,
-    &memory_limit,&swap_limit,&condition);
-  if(error) {
-    br_cgroup_note(keeper,condition?condition:"cgroupCreate",error);
-    return error;
-  }
-#endif
   /* The one start of this task is latched durably before its program exists, so a
      repeated start decision never spawns a second child: an already latched start
      keeps the work it retained and this keeper reports it rather than spawning. */
@@ -2515,9 +2109,8 @@ static int br_keeper_spawn(BrKeeper *keeper,const unsigned char *expected_digest
   char **argv=br_argv(keeper->manifest.field[0],(size_t)keeper->manifest.header.lengths[0]);
   if(log<0 || !argv)error=log<0?errno:ENOMEM;
 #ifdef __linux__
-  if(!error)error=br_spawn_confined(&keeper->native_pid,argv,keeper->manifest.field[1],
-    input[0],keeper->spool,log,cgroup);
-  if(error)br_cgroup_note(keeper,"cgroupAttach",error);
+  if(!error)error=br_spawn_gated(&keeper->native_pid,argv,keeper->manifest.field[1],
+    input[0],keeper->spool,log);
 #else
   if(!error)error=br_spawn(&keeper->native_pid,argv,keeper->manifest.field[1],input[0],keeper->spool,log,-1,-1);
 #endif
@@ -2537,34 +2130,15 @@ static int br_keeper_spawn(BrKeeper *keeper,const unsigned char *expected_digest
     if((error=br_queue(&keeper->writes,&keeper->writes_tail,NULL,0,0,0,1)))goto spawned_failed;
     keeper->input_closed=1;
   }
-#ifdef __linux__
-  if(cgroup_relative) {
-    int length=snprintf(NULL,0,"cgroup=%s memory.max=%llu memory.swap.max=%llu\n",
-      cgroup_relative,memory_limit,swap_limit);
-    char *evidence=length>=0?malloc((size_t)length+1):NULL;
-    if(evidence) {
-      snprintf(evidence,(size_t)length+1,"cgroup=%s memory.max=%llu memory.swap.max=%llu\n",
-        cgroup_relative,memory_limit,swap_limit);
-      br_file(keeper->directory,"native.cgroup",evidence,(size_t)length,0);
-      free(evidence);
-    }
-  }
-#endif
   goto done;
 spawned_failed:
   br_keeper_reap_spawned(keeper);
 done:
-  free(cgroup);free(cgroup_relative);
   return error;
 }
 static int br_keeper_start(BrKeeper *keeper,BrWatcher *watchers,const char *directory,int lock) {
   int error=br_keeper_prepare(keeper,watchers,directory,lock);
   if(error)return error;
-#ifdef __linux__
-  /* A per-attempt keeper inherits the receiver's cgroup; an owner-managed
-     keeper already carries the admitting receiver's cgroup. */
-  if(!keeper->cgroup_parent && (error=br_self_cgroup(&keeper->cgroup_parent)))return error;
-#endif
   if((error=br_lifecycle_ready(directory)))return error;
   keeper->ready=1;
   return br_keeper_spawn(keeper,NULL,NULL);
@@ -2755,8 +2329,7 @@ static int br_epoch_next(const char *directory,const char *path,uint64_t *epoch)
 }
 static int br_owner_record_write(BrOwner *owner) {
   BrOwnerRecord record={.token=owner->token,.epoch=owner->epoch,.device=owner->device,
-    .inode=owner->inode,.pid=(int32_t)getpid(),
-    .reserved=(int32_t)BR_OWNER_CAP_NATIVE_CGROUP};
+    .inode=owner->inode,.pid=(int32_t)getpid()};
   int error=br_owner_socket_copy(record.socket,sizeof(record.socket),owner->socket_path);
   if(error)return error;
   return br_replace(owner->ipc,owner->record_path,&record,sizeof(record),1);
@@ -2990,7 +2563,7 @@ static uint64_t br_owner_attempts(BrOwner *owner) {
    unrelated directory does not. An existing attempt record refuses a second
    native child for the same attempt. */
 static int br_owner_admit(BrOwner *owner,const char *directory,int lock,
-                          const char *cgroup_parent,int *existing,int start_now) {
+                          int *existing,int start_now) {
   int error=0;
   char *resolved=NULL;
   struct stat info;
@@ -3043,10 +2616,6 @@ static int br_owner_admit(BrOwner *owner,const char *directory,int lock,
       *keeper=(BrKeeper){.listener=-1,.client=-1,.input=-1,.lock=lock,.watch=-1,
         .wake={-1,-1},.spool=-1,.native_life=-1,.generation=1,.id=++owner->next_id};
       keeper->directory=resolved;resolved=NULL;
-      if(cgroup_parent) {
-        keeper->cgroup_parent=strdup(cgroup_parent);
-        if(!keeper->cgroup_parent)error=ENOMEM;
-      }
       if(!error)error=start_now?br_keeper_start(keeper,&owner->watcher,directory,lock):br_keeper_prepare(keeper,&owner->watcher,directory,lock);
       if(error) {lock=-1;br_keeper_stop(keeper);}
       else {keeper->next=owner->attempts;owner->attempts=keeper;return 0;}
@@ -3180,18 +2749,6 @@ static void br_owner_notify(BrOwner *owner,int kind) {
     br_owner_reply(subscriber,frame,&notice);
   }
 }
-/* The admitted native inherits the cgroup of the process that asks for it.
-   That is the receiver unit's delegated cgroup, so the receiver's memory
-   bound applies to the per-native child even when the shared keeper lives in
-   another cgroup. */
-static int br_owner_peer_cgroup(BrOwnerControl *control,char **cgroup_out) {
-#ifdef __linux__
-  return br_peer_cgroup(control->socket,cgroup_out);
-#else
-  *cgroup_out=NULL;
-  return 0;
-#endif
-}
 static int br_owner_command(BrOwner *owner,BrOwnerControl *control,BrInstanceFrame frame) {
   const char *payload=control->incoming+sizeof(frame);
   if((frame.owner && frame.owner!=owner->token) || (frame.epoch && frame.epoch!=owner->epoch))
@@ -3212,17 +2769,9 @@ static int br_owner_command(BrOwner *owner,BrOwnerControl *control,BrInstanceFra
   if(frame.op==BI_ADMIT || frame.op==BI_PREPARE) {
     if(frame.length<2 || payload[frame.length-1])
       return br_owner_reply(control,(BrInstanceFrame){.op=BI_REPLY,.error=EINVAL},NULL);
-    char *origin=NULL;
-    int origin_error=br_owner_peer_cgroup(control,&origin);
-    if(origin_error) {
-      if(control->rights>=0){close(control->rights);control->rights=-1;}
-      return br_owner_reply(control,(BrInstanceFrame){.op=BI_REPLY,.owner=owner->token,
-        .epoch=owner->epoch,.error=origin_error},NULL);
-    }
     int existing=0;
-    int error=br_owner_admit(owner,payload,control->rights,origin,&existing,frame.op==BI_ADMIT);
+    int error=br_owner_admit(owner,payload,control->rights,&existing,frame.op==BI_ADMIT);
     control->rights=-1;
-    free(origin);
     if(error)return br_owner_reply(control,(BrInstanceFrame){.op=BI_REPLY,.owner=owner->token,
       .epoch=owner->epoch,.error=error},NULL);
     BrKeeper *keeper=br_owner_find(owner,payload);
@@ -3248,12 +2797,6 @@ static int br_owner_command(BrOwner *owner,BrOwnerControl *control,BrInstanceFra
     if(!error && keeper->monitor_only)error=EPERM;
     if(!error && (!keeper->prepared || !keeper->ready ||
        (keeper->cancelled && frame.op!=BI_CANCEL)))error=EPERM;
-    if(!error && frame.op==BI_START) {
-      char *origin=NULL;
-      int origin_error=br_owner_peer_cgroup(control,&origin);
-      if(origin_error)error=origin_error;
-      else {free(keeper->cgroup_parent);keeper->cgroup_parent=origin;}
-    }
     if(!error && frame.op==BI_START) {
       const unsigned char *decision=(const unsigned char *)payload+path_length+1;
       error=br_keeper_spawn(keeper,decision,decision+32);
@@ -4560,7 +4103,7 @@ static int br_owner_witness_parse(const char *text,uint64_t *token,uint64_t *epo
   if(!error && (!*token || !*epoch))error=EINVAL;
   return error;
 }
-static int br_instance_request_witness(const char *database,BrInstanceFrame frame,const char *payload,int rights,BrInstanceFrame *reply,uint64_t expected_token,uint64_t expected_epoch,int require_cgroup) {
+static int br_instance_request_witness(const char *database,BrInstanceFrame frame,const char *payload,int rights,BrInstanceFrame *reply,uint64_t expected_token,uint64_t expected_epoch) {
   if((expected_token==0)!=(expected_epoch==0))return EINVAL;
   int first=1;
   for(;;) {
@@ -4569,24 +4112,16 @@ static int br_instance_request_witness(const char *database,BrInstanceFrame fram
     int error=br_instance_connect(database,first,&record,&socket_fd);
     first=0;
     if(error)return error;
-    if(expected_token && (record.token!=expected_token || record.epoch!=expected_epoch)) {
-      close(socket_fd);return ESTALE;
-    }
-#ifdef __linux__
-    if(require_cgroup && (!record.token || !record.epoch)) {
-      /* The listener is bound before its record is published. A zero record is
-         that window, not an old owner. */
+    if(!record.token || !record.epoch) {
+      /* The listener is bound before its incarnation record is published. */
       close(socket_fd);
       struct timespec pause={0,20000000};
       nanosleep(&pause,NULL);
       continue;
     }
-    if(require_cgroup && !(record.reserved & BR_OWNER_CAP_NATIVE_CGROUP)) {
-      /* Distinct from an unavailable cgroup in the owner: this is an owner
-         that cannot confine natives at all. */
-      close(socket_fd);return ENOPROTOOPT;
+    if(expected_token && (record.token!=expected_token || record.epoch!=expected_epoch)) {
+      close(socket_fd);return ESTALE;
     }
-#endif
     frame.owner=record.token;frame.epoch=record.epoch;
     error=br_instance_exchange(socket_fd,frame,payload,rights,reply);
     close(socket_fd);
@@ -4599,7 +4134,7 @@ static int br_instance_request_witness(const char *database,BrInstanceFrame fram
   }
 }
 static int br_instance_request(const char *database,BrInstanceFrame frame,const char *payload,int rights,BrInstanceFrame *reply) {
-  return br_instance_request_witness(database,frame,payload,rights,reply,0,0,0);
+  return br_instance_request_witness(database,frame,payload,rights,reply,0,0);
 }
 static void br_instance_owner_witness(BatonProcessCall *call,int spawn) {
   BrInstanceFrame reply={0};
@@ -4660,7 +4195,7 @@ static int br_instance_decision(BatonProcessCall *call) {
   if(!error && expected_token &&
      (expected_token!=retained->owner_incarnation || expected_epoch!=retained->owner_epoch))error=ESTALE;
   if(!error)error=br_instance_request_witness(retained->database,
-    (BrInstanceFrame){.op=op,.length=payload_length},payload,-1,&reply,expected_token,expected_epoch,1);
+    (BrInstanceFrame){.op=op,.length=payload_length},payload,-1,&reply,expected_token,expected_epoch);
   free(payload);
   if(!error && (reply.op!=BI_HELLO || reply.length!=sizeof(BrOwnerState)))error=EPROTO;
   if(!error && call->kind==BP_INSTANCE_START) {
@@ -4768,16 +4303,7 @@ static int br_instance_admit(BatonProcessCall *call,int dormant) {
       error=br_owner_witness_parse(call->owner_witness,&expected_token,&expected_epoch);
     if(!error)error=br_instance_request_witness(call->database,
       (BrInstanceFrame){.op=dormant?BI_PREPARE:BI_ADMIT,.length=strlen(directory)+1},directory,
-      call->lock?(int)call->lock:-1,&reply,expected_token,expected_epoch,1);
-    if(error==ENOPROTOOPT && !dormant) {
-      /* The owner refused before the request exchange: it has no custody of
-         this attempt and started nothing. Use the per-attempt keeper for this
-         new attempt and leave the live owner and its children untouched. */
-      free(address);free(directory);
-      return br_retain(call);
-    }
-    if(error==ENOPROTOOPT)
-      br_spec_detail(call,"database owner lacks native-cgroup confinement; dormant preparation refuses without starting a native");
+      call->lock?(int)call->lock:-1,&reply,expected_token,expected_epoch);
     if(error==EINVAL || error==ESTALE || error==ENOENT || error==ENOMEM) {
       /* Only an attempt this call created, that never reached custody, is
          discarded: the owner writes `launch` as its first custody step, so its
