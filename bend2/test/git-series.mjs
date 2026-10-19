@@ -150,6 +150,36 @@ test('shared registry attribution changes Git headers and leaves selected App id
   }
 });
 
+test('inherited shared Git identity configuration cannot override the selected series headers', async () => {
+  const repository = join(directory, 'shared-config-repository');
+  const environment = {
+    PATH: process.env.PATH,
+    GIT_CONFIG_COUNT: '2',
+    GIT_CONFIG_KEY_0: 'user.name', GIT_CONFIG_VALUE_0: 'Shared fixture',
+    GIT_CONFIG_KEY_1: 'user.email', GIT_CONFIG_VALUE_1: 'fixture@example.invalid',
+  };
+  const launch = (key, ...command) => child(
+    [SOURCE, 'launch', '--registry', registry, '--series-key', key, '--', 'git', ...command],
+    { env: environment });
+  const initialized = await launch('gpt', 'init', '--bare', repository);
+  assert.equal(initialized.code, 0, initialized.stderr);
+  const tree = await launch('gpt', '-C', repository, 'hash-object', '-w', '-t', 'tree', '--stdin');
+  assert.equal(tree.code, 0, tree.stderr);
+  for (const key of model.SERIES) {
+    const committed = await launch(key, '-C', repository, 'commit-tree', tree.stdout.trim(),
+      '-m', 'Shared configuration fixture');
+    assert.equal(committed.code, 0, committed.stderr);
+    const readback = await launch(key, '-C', repository, 'cat-file', 'commit', committed.stdout.trim());
+    assert.equal(readback.code, 0, readback.stderr);
+    const name = 'Flip Baton - ' + model.SERIES_LABELS[key], email = identities[key].commitEmail;
+    for (const field of ['author', 'committer']) {
+      assert.ok(readback.stdout.split('\n').some(line =>
+        line.startsWith(`${field} ${name} <${email}> `)), readback.stdout);
+    }
+    assert.ok(!readback.stdout.includes('fixture@example.invalid'), readback.stdout);
+  }
+});
+
 test('malformed shared registry attribution refuses before launching Git', () => {
   const alternative = join(directory, 'invalid-shared-attribution.json');
   const invalid = [null, {}, { name: 'Flip - Baton' }, { email: 'baton@example.invalid' },

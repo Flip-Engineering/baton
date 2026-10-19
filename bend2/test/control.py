@@ -160,6 +160,14 @@ while True:
         print('fixture diagnostic',file=sys.stderr,flush=True)
         reply({'output_written':len(text)})
         continue
+    if action.get('git_commit'):
+        name,body=action['git_commit']
+        pathlib.Path(name).write_text(body)
+        run=subprocess.run(['git','add',name],capture_output=True,text=True)
+        if run.returncode==0:
+            run=subprocess.run(['git','commit','-q','-m','fixture worker commit'],capture_output=True,text=True)
+        reply({'git_commit':{'code':run.returncode,'stdout':run.stdout,'stderr':run.stderr}})
+        continue
     acknowledge()
     body=action['finish']
     failure=action.get('fail',False)

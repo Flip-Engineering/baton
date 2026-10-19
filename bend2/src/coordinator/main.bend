@@ -155,7 +155,7 @@ def execute(+db: String, command: C.Command) -> IO(Unit):
     case C.LandChecked{player,repo,target,check,files}:
       Land.land_checked_player(db,player,repo,target,check,files)
     case C.Push{repo,branch,remote}:
-      Land.push_branch(repo,branch,remote)
+      Land.push_branch(db,repo,branch,remote)
     case C.RemoteTip{repo,branch,remote}:
       Land.remote_tip(repo,branch,remote)
     case C.ObservedUsage{session}:

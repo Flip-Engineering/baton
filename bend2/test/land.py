@@ -24,6 +24,12 @@ class Land(unittest.TestCase):
         self.repo = self.directory / 'repository'
         self.repo.mkdir()
         self.db = self.directory / 'state.db'
+        # Fixture Git commands use only their own repository configuration and
+        # no inherited author, committer, registry or shared configuration.
+        self.environment = {key: value for key, value in os.environ.items()
+                            if not key.startswith('GIT_')
+                            and key not in ('BATON_SESSION', 'BATON2_GIT_REGISTRY')}
+        self.environment.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
         self.git('init', '-q', '-b', 'main')
         self.git('config', 'user.name', 'Baton test')
         self.git('config', 'user.email', 'baton@example.invalid')
@@ -37,13 +43,13 @@ class Land(unittest.TestCase):
     def git(self, *args):
         return subprocess.run(
             ['git', '-C', str(self.repo), *args],
-            check=True, text=True, capture_output=True,
+            check=True, text=True, capture_output=True, env=self.environment,
         ).stdout
 
     def call(self, *args, ok=True, env=None):
         p = subprocess.run(
             [str(EXE), str(self.db), *map(str, args)],
-            text=True, capture_output=True, env=env,
+            text=True, capture_output=True, env=self.environment if env is None else env,
         )
         if ok:
             self.assertEqual(p.returncode, 0, p.stderr)
@@ -87,24 +93,55 @@ class Land(unittest.TestCase):
             'raise SystemExit(result.returncode)\n'
         )
         wrapper.chmod(0o755)
-        env = os.environ.copy()
+        env = dict(self.environment)
         env['PATH'] = str(wrapper_dir) + os.pathsep + env.get('PATH', '')
         return env
 
-    def recruit_and_commit(self, player='w1', branch='w1-branch', path='wt'):
-        self.call('recruit', player, 'root', 'omp', 'model', 'high',
+    def recruit_and_commit(self, player='w1', branch='w1-branch', path='wt', model='model'):
+        self.call('recruit', player, 'root', 'omp', model, 'high',
                   self.repo, branch, path, self.base)
         wt = self.repo / path
         (wt / 'file.txt').write_text(f'worker change for {player}')
         subprocess.run(
             ['git', '-C', str(wt), 'add', 'file.txt'],
-            check=True, capture_output=True,
+            check=True, capture_output=True, env=self.environment,
         )
         subprocess.run(
             ['git', '-C', str(wt), 'commit', '-q', '-m', 'worker commit'],
-            check=True, capture_output=True,
+            check=True, capture_output=True, env=self.environment,
         )
         return self.git('rev-parse', branch).strip()
+
+    def identity_registry(self, models):
+        """A public series registry mapping each fixture model to its series."""
+        series, emails, mapping = {}, {}, {}
+        for model, (key, display, bot_id) in models.items():
+            directory = self.directory / ('identity-' + key)
+            directory.mkdir()
+            slug = 'fixture-series-' + key
+            github = {
+                'appId': 20000, 'clientId': 'fixture-client-' + key, 'slug': slug,
+                'botLogin': slug + '[bot]', 'botId': bot_id,
+                'commitEmail': f'{bot_id}+{slug}[bot]@users.noreply.github.com',
+                'installationId': 30000, 'repositoryFullName': 'Flip-Engineering/baton',
+                'repositoryId': 40000,
+                'permissions': {'contents': 'write', 'pull_requests': 'write', 'metadata': 'read'},
+            }
+            metadata = directory / 'identity-series.json'
+            metadata.write_text(json.dumps(
+                {'seriesKey': key, 'displaySeries': display, 'github': github}))
+            metadata.chmod(0o600)
+            series[key] = str(directory)
+            emails[key] = github['commitEmail']
+            mapping[model] = key
+        registry = self.directory / 'series.json'
+        registry.write_text(json.dumps({'models': mapping, 'series': series}))
+        registry.chmod(0o600)
+        return registry, emails
+
+    def identity_environment(self, registry):
+        return {**self.environment, 'BATON_SESSION': 'conductor',
+                'BATON2_GIT_REGISTRY': str(registry)}
 
     def test_reviewed_commit_lands_ancestor_while_player_continues(self):
         reviewed = self.recruit_and_commit()
@@ -399,6 +436,58 @@ class Land(unittest.TestCase):
         self.assertEqual(main_tip, result['commit'])
         self.assertEqual(self.git('show', 'main:file.txt').strip(),
                          'worker change for w1')
+
+    def test_checked_landing_uses_the_configured_conductor_identity(self):
+        registry, emails = self.identity_registry({
+            'fixture-worker': ('gpt', 'GPT', 9001),
+            'fixture-conductor': ('kimi', 'Kimi', 9002),
+        })
+        (self.repo / 'check-pass.sh').write_text('exit 0\n')
+        self.git('add', 'check-pass.sh')
+        self.git('commit', '-q', '-m', 'check fixture')
+        self.base = self.git('rev-parse', 'HEAD').strip()
+        self.git('checkout', '-q', '--detach')
+        self.call('recruit', 'conductor', 'root', 'omp', 'fixture-conductor', 'high',
+                  self.repo, 'conductor-branch', 'conductor-wt', self.base)
+        worker = self.recruit_and_commit(model='fixture-worker')
+        self.assertIn('author Baton test <baton@example.invalid> ',
+                      self.git('cat-file', '-p', worker))
+        for key, value in (('user.name', 'Shared fixture'),
+                           ('user.email', 'fixture@example.invalid')):
+            self.git('config', key, value)
+        result = self.call('land-checked', 'w1', self.repo, 'main',
+                           'check-pass.sh', 'file.txt', env=self.identity_environment(registry))
+        self.assertEqual(result['status'], 'landed')
+        raw = self.git('cat-file', '-p', result['commit'])
+        for field in ('author', 'committer'):
+            self.assertIn(f'{field} Flip Baton - Kimi <{emails["kimi"]}> ', raw)
+        self.assertNotIn('fixture@example.invalid', raw)
+        self.assertEqual(self.git('show', 'main:file.txt').strip(), 'worker change for w1')
+        self.assertIn('author Baton test <baton@example.invalid> ',
+                      self.git('cat-file', '-p', worker))
+
+    def test_push_publishes_under_the_configured_conductor_identity(self):
+        registry, emails = self.identity_registry({
+            'fixture-worker': ('gpt', 'GPT', 9001),
+            'fixture-conductor': ('kimi', 'Kimi', 9002),
+        })
+        remote = self.directory / 'remote.git'
+        subprocess.run(['git', 'init', '-q', '--bare', str(remote)],
+                       check=True, capture_output=True, env=self.environment)
+        self.git('remote', 'add', 'test-remote', str(remote))
+        self.git('push', '-q', 'test-remote', 'main')
+        self.call('recruit', 'conductor', 'root', 'omp', 'fixture-conductor', 'high',
+                  self.repo, 'conductor-branch', 'conductor-wt', self.base)
+        self.recruit_and_commit(model='fixture-worker')
+        self.call('land', 'w1', self.repo, 'main')
+        result = self.call('push', self.repo, 'main', 'test-remote',
+                           env=self.identity_environment(registry))
+        self.assertEqual(result, {'status': 'pushed', 'branch': 'main', 'remote': 'test-remote'})
+        tip = subprocess.run(['git', 'ls-remote', str(remote), 'refs/heads/main'],
+                             check=True, text=True, capture_output=True,
+                             env=self.environment).stdout.split()
+        self.assertEqual(tip, [self.git('rev-parse', 'main').strip(), 'refs/heads/main'])
+        self.assertTrue(emails['kimi'].endswith('@users.noreply.github.com'))
 
     def test_checked_landing_blocks_on_new_failure(self):
         (self.repo / 'check-blocked.sh').write_text(
