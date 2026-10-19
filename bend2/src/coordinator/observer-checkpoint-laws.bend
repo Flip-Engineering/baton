@@ -32,6 +32,14 @@ law held_prefix_progress_keeps_the_prior_replay_offset:
   for +prefix: String
   {Observer.checkpoint_due(Observer.empty(),Observer.make("0\n","","","","","","",prefix)) == False{} : Bool}
 
+law output_cursor_progress_keeps_the_prior_replay_offset:
+  for +offset: String
+  {Observer.checkpoint_due_fields(Observer.with_output(Observer.make("0\n","","","","same terminal","","",""),"0"),Observer.with_output(Observer.make("0\n","","","","same terminal","","",""),offset),True{},True{},True{}) == False{} : Bool}
+
+law terminal_change_advances_reducer_checkpoint:
+  for +terminal: String
+  {Observer.checkpoint_due_fields(Observer.make("0\n","","","","","","",""),Observer.make("0\n","","","",terminal,"","",""),True{},True{},True{}) == Bool.or(Bool.not(String.eq("",terminal)),False{}) : Bool}
+
 law omp_completed_message_advances_reducer_checkpoint:
   for +message: String
   {Observer.checkpoint_due(Observer.empty(),Observer.make("0\n",message,"","","","","","")) == Bool.or(Bool.not(String.eq("",message)),False{}) : Bool}
@@ -53,6 +61,12 @@ def reducer_schema_version_is_explicit():
   {==}
 
 def held_prefix_progress_keeps_the_prior_replay_offset(prefix):
+  {==}
+
+def output_cursor_progress_keeps_the_prior_replay_offset(offset):
+  {==}
+
+def terminal_change_advances_reducer_checkpoint(terminal):
   {==}
 
 def omp_completed_message_advances_reducer_checkpoint(message):
