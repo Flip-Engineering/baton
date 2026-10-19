@@ -2,11 +2,12 @@
 # Focused current-main account-credit qualification.
 #
 # Root runs this once in a finite 16 GiB zero-swap service from the exact clean
-# checkout commit:
 #   systemd-run --scope --slice=baton2-build.slice \
 #     -p MemoryMax=16G -p MemorySwapMax=0 -- \
-#     env EXPECTED_HEAD=<exact checkout commit> \
+#     env EXPECTED_HEAD=REPLACE_WITH_EXACT_COMMIT \
 #     /mnt/nvme4tb/ci-runners/baton2-native-homelab/home/worktrees/accounts-oneuse-currentmain-20261019/bundle/account-credit-currentmain-16g-20261019.sh
+#
+# Replace EXPECTED_HEAD with the exact clean checkout commit before running.
 #
 # The script also pins the tested source to ac326067, requires a clean worktree,
 # and exports BATON2_ADMISSION_CGROUP from the admitted unit cgroup.
@@ -63,7 +64,7 @@ cd "$ROOT"
 HEAD=$(git rev-parse HEAD)
 [ -z "$(git status --porcelain)" ] || refuse "worktree is not clean: $(git status --porcelain | tr '\n' ' ')"
 git merge-base --is-ancestor "$SOURCE_PIN" "$HEAD" || refuse "HEAD $HEAD does not contain source pin $SOURCE_PIN"
-if ! git diff --quiet "$SOURCE_PIN" -- bend2/harness/api-key-exec.bend bend2/test/account-credits-focused.py bend2/test/account-credits.bend bend2/test/api-key-exec.test.mjs bend2/test/api-key-exec-test-entry.bend bend2/test/account-binding-smoke.py bend2/test/api-key-spec.py bend2/harness/claude-credit-observe.py bend2/src/coordinator/accounts.bend bend2/src/coordinator/subscription-fallback.bend; then
+if ! git diff --quiet "$SOURCE_PIN" -- bend2/harness/api-key-exec.bend bend2/harness/claude-credit-observe.bend bend2/test/account-credits-focused.py bend2/test/account-credits.bend bend2/test/api-key-exec.test.mjs bend2/test/api-key-exec-test-entry.bend bend2/test/account-binding-smoke.bend bend2/test/account-binding-smoke.py bend2/test/api-key-spec.bend bend2/test/api-key-spec.py bend2/test/account-credits-entry.bend bend2/harness/claude-credit-observe.py bend2/src/coordinator/accounts.bend bend2/src/coordinator/subscription-fallback.bend bend2/scripts/build-native.sh; then
   refuse "tested source differs from pin $SOURCE_PIN"
 fi
 if [ -n "$EXPECTED_HEAD" ] && [ "$HEAD" != "$EXPECTED_HEAD" ]; then
@@ -102,6 +103,7 @@ printf 'account-fixture lines=%s output=deterministic sha256=%s\n' "$lines" "$(s
 ok_lines=$(grep -c '^fixture-account .*: ok$' "$OUT/account-fixture-1.stdout" || true)
 [ "$ok_lines" -eq 79 ] || refuse "fixture ok checks=$ok_lines, expected 79"
 grep -q '^fixture-accounts-ok$' "$OUT/account-fixture-1.stdout" || refuse "fixture final marker is absent"
+[ "$(tail -n 1 "$OUT/account-fixture-1.stdout")" = 'fixture-accounts-ok' ] || refuse "fixture final marker is not last"
 printf 'account-fixture checks=%s final=ok\n' "$ok_lines" | tee -a "$OUT/receipt.txt"
 
 build_one() {
