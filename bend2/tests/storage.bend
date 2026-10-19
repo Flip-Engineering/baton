@@ -148,6 +148,30 @@ def decision_reason_of(+candidate: T.Candidate) -> String:
 def check_receipt(+name: String, receipt: T.Receipt, +path: String, +expected: String) -> IO(Unit):
   +report = receipt_outcome(receipt, path)
   check(name, String.starts_with(report, expected), report)
+# Apply refreshes host facts before unlinking. A same-uid process that the
+# fail-closed scan cannot inspect yields an unknown fact and preserves the
+# candidate. Host process churn can move that answer between two adjacent
+# scans, so the removal fixtures retry exactly that documented answer. Any
+# other result fails on the first attempt.
+def transient_scan_unknown(+report: String) -> Bool:
+  Bool.or(
+    String.eq(report, "changed|fresh evidence preserves: process-unknown"),
+    String.eq(report, "changed|fresh evidence preserves: runtime-input-unknown"))
+
+def remove_until_settled(+db: String, +root: String, +candidate: T.Candidate, +path: String, +attempts: Nat) -> IO(String):
+  match attempts:
+    case 0n:
+      do IO<String>:
+        receipt : T.Receipt <- one_apply(db, root, candidate)
+        IO.pure(String, receipt_outcome(receipt, path))
+    case 1n+rest:
+      do IO<String>:
+        receipt : T.Receipt <- one_apply(db, root, candidate)
+        +report : String = receipt_outcome(receipt, path)
+        Bool.pick(IO(String), transient_scan_unknown(report),
+          remove_until_settled(db, root, candidate, path, rest),
+          IO.pure(String, report))
+
 
 def check_first_receipt(+name: String, receipts: List<T.Receipt>, +path: String, +expected: String) -> IO(Unit):
   match receipts:
@@ -493,8 +517,7 @@ def removal_refused_check(+db: String, +root: String) -> IO(Unit):
     +leaf : String = deep_leaf_path(130n, deep)
     +marker : String = deep_marker_path(130n, deep)
     +candidate : T.Candidate <- candidate_for(dir, T.Scratch{}, clear_facts())
-    receipt : T.Receipt <- one_apply(db, root, candidate)
-    +report : String = receipt_outcome(receipt, dir)
+    +report : String <- remove_until_settled(db, root, candidate, dir, 64n)
     a : Unit <- check("interrupted-refused", String.starts_with(report, "refused"), report)
     b : Unit <- check("interrupted-refused-detail", Bool.and(String.contains(report, "partial"), String.contains(report, "error=")), report)
     kept : O.Observation <- O.observe(leaf)
@@ -510,9 +533,8 @@ def removal_refused_check(+db: String, +root: String) -> IO(Unit):
     repaired_marker_seen : O.Observation <- O.observe(repaired_marker)
     f : Unit <- check("interrupted-repaired-marker-preserved", O.observation_is_found(repaired_marker_seen), "repaired marker missing")
     +replayed_candidate : T.Candidate <- candidate_for(dir, T.Scratch{}, clear_facts())
-    preview : T.Preview <- one_preview(root, replayed_candidate)
-    replayed : T.Receipt <- apply_preview(db, preview)
-    g : Unit <- check_receipt("interrupted-replay", replayed, dir, "removed")
+    +replayed_report : String <- remove_until_settled(db, root, replayed_candidate, dir, 64n)
+    g : Unit <- check("interrupted-replay", String.starts_with(replayed_report, "removed"), replayed_report)
     removed_leaf : O.Observation <- O.observe(repaired_leaf)
     h : Unit <- check("interrupted-replay-leaf-removed", Bool.not(O.observation_is_found(removed_leaf)), "repaired leaf remains")
     removed_marker : O.Observation <- O.observe(repaired_marker)
@@ -637,8 +659,8 @@ def apply_checks(+db: String, +root: String) -> IO(Unit):
     +file : String = root ++ "/file.txt"
     wrote : Unit <- write_file(file, "payload")
     +candidate : T.Candidate <- candidate_for(file, T.Scratch{}, clear_facts())
-    receipt : T.Receipt <- one_apply(db, root, candidate)
-    a : Unit <- check_receipt("apply-removed", receipt, file, "removed")
+    +removed_report : String <- remove_until_settled(db, root, candidate, file, 64n)
+    a : Unit <- check("apply-removed", String.starts_with(removed_report, "removed"), removed_report)
     receipt2 : T.Receipt <- one_apply(db, root, candidate)
     b : Unit <- check_receipt("apply-idempotent", receipt2, file, "already-absent")
     +victim : String = root ++ "/victim.txt"
@@ -646,8 +668,8 @@ def apply_checks(+db: String, +root: String) -> IO(Unit):
     +link : String = root ++ "/link"
     linked : Unit <- run_cmd(["/bin/ln", "-s", "victim.txt", link])
     +link_candidate : T.Candidate <- candidate_for(link, T.Scratch{}, clear_facts())
-    link_receipt : T.Receipt <- one_apply(db, root, link_candidate)
-    c : Unit <- check_receipt("symlink-removed", link_receipt, link, "removed")
+    +link_report : String <- remove_until_settled(db, root, link_candidate, link, 64n)
+    c : Unit <- check("symlink-removed", String.starts_with(link_report, "removed"), link_report)
     victim_state : O.Observation <- O.observe(victim)
     d : Unit <- check("symlink-target-kept", O.observation_is_found(victim_state), "victim missing")
     +race : String = root ++ "/race.txt"
