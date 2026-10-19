@@ -38,6 +38,18 @@ def setup_root(+root: String) -> IO(Unit):
     made : Unit <- IO.try(Unit, F.Files.mkdir(root))
     IO.pure(Unit, made)
 
+def command_output(args: List<String>) -> IO(String):
+  do IO<String>:
+    result : G.RunRes <- Git.runFull(args, ".")
+    match result:
+      case G.RRun{G.SExit{code}, out}: Bool.pick(String, U32.is_eq(code, 0), Tx.trim_nl(out), "")
+      case other: ""
+
+def run_ignore(args: List<String>) -> IO(Unit):
+  do IO<Unit>:
+    result : G.RunRes <- Git.runFull(args, ".")
+    IO.pure(Unit, Unit{})
+
 def write_file(+path: String, +text: String) -> IO(Unit):
   do IO<Unit>:
     unit : Unit <- IO.try(Unit, F.Files.write_private(path, text))
@@ -49,6 +61,15 @@ def db_schema() -> String:
 def db_session_sql(+root: String) -> String:
   "INSERT INTO sessions(id,parent,harness,workspace,branch,base) VALUES('owner',NULL,'omp','" ++ root ++ "','','');"
 
+def db_endpoint_sql(+root: String, +database: String) -> String:
+  "INSERT INTO sessions(id,parent,harness,workspace,branch,base,endpoint) VALUES('db-owner',NULL,'omp','" ++ root ++ "/db-workspace','','','[\"/bin/baton\",\"" ++ database ++ "\",\"receive\",\"db-owner\"]');"
+
+def db_endpoint_setup(+db: String, +root: String, +database: String) -> IO(Unit):
+  do IO<Unit>:
+    removed : String <- IO.try(String, DB.Sql.query(db, "DELETE FROM sessions WHERE id='db-owner';"))
+    inserted : String <- IO.try(String, DB.Sql.query(db, db_endpoint_sql(root, database)))
+    IO.pure(Unit, Unit{})
+
 def db_setup(+db: String, +root: String) -> IO(Unit):
   do IO<Unit>:
     removed : Unit <- run_cmd(["/bin/rm", "-f", db])
@@ -57,7 +78,7 @@ def db_setup(+db: String, +root: String) -> IO(Unit):
     IO.pure(Unit, Unit{})
 
 def clear_facts() -> T.Facts:
-  T.Facts{T.OwnerMatches{"owner"}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}}
+  T.Facts{T.OwnerMatches{"owner"}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}}
 
 def maybe_nat(value: Maybe<Nat>) -> Nat:
   match value:
@@ -71,6 +92,11 @@ def candidate_for(+path: String, +cls: T.StorageClass, +facts: T.Facts) -> IO(T.
     bytes : Nat = maybe_nat(measured)
     identity : String = O.observation_identity(observed)
     IO.pure(T.Candidate, T.Candidate{path, cls, "owner", "proof", bytes, identity, facts})
+
+def u32_of(value: Maybe<U32>) -> U32:
+  match value:
+    case Some{found}: found
+    case None{}: 0
 
 def preview_root(+root: String) -> IO(String):
   do IO<String>:
@@ -132,27 +158,33 @@ def presence_unknown(presence: T.Presence) -> Bool:
 def pure_checks() -> IO(Unit):
   do IO<Unit>:
     base : T.Candidate = T.Candidate{"/x", T.Scratch{}, "owner", "proof", 1n, "file:1:1", clear_facts()}
-    owner_bad : T.Candidate = T.Candidate{"/x", T.Scratch{}, "owner", "proof", 1n, "file:1:1", T.Facts{T.OwnerDiffers{"other"}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}}}
-    lease_live : T.Candidate = T.Candidate{"/x", T.Scratch{}, "owner", "proof", 1n, "file:1:1", T.Facts{T.OwnerMatches{"owner"}, T.Present{"lease"}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}}}
-    process_live : T.Candidate = T.Candidate{"/x", T.Scratch{}, "owner", "proof", 1n, "file:1:1", T.Facts{T.OwnerMatches{"owner"}, T.Absent{}, T.Present{"pid"}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}}}
-    runtime_live : T.Candidate = T.Candidate{"/x", T.BuildOutput{}, "owner", "proof", 1n, "file:1:1", T.Facts{T.OwnerMatches{"owner"}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Present{"pid"}, T.Absent{}, T.Absent{}}}
-    dirty : T.Candidate = T.Candidate{"/x", T.Checkout{}, "owner", "proof", 1n, "dir:1:1", T.Facts{T.OwnerMatches{"owner"}, T.Absent{}, T.Absent{}, T.Present{"worktree"}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}}}
-    unpublished : T.Candidate = T.Candidate{"/x", T.Checkout{}, "owner", "proof", 1n, "dir:1:1", T.Facts{T.OwnerMatches{"owner"}, T.Absent{}, T.Absent{}, T.Absent{}, T.Present{"1"}, T.Absent{}, T.Absent{}, T.Absent{}}}
-    ref_live : T.Candidate = T.Candidate{"/x", T.GitObject{}, "owner", "proof", 1n, "dir:1:1", T.Facts{T.OwnerMatches{"owner"}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Present{"aa"}, T.Absent{}}}
-    pending : T.Candidate = T.Candidate{"/x", T.Scratch{}, "owner", "proof", 1n, "file:1:1", T.Facts{T.OwnerMatches{"owner"}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Present{"1"}}}
+    owner_bad : T.Candidate = T.Candidate{"/x", T.Scratch{}, "owner", "proof", 1n, "file:1:1", T.Facts{T.OwnerDiffers{"other"}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}}}
+    database_live : T.Candidate = T.Candidate{"/x", T.Scratch{}, "owner", "proof", 1n, "file:1:1", T.Facts{T.OwnerMatches{"owner"}, T.Present{"database-path"}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}}}
+    database_unknown : T.Candidate = T.Candidate{"/x", T.Scratch{}, "owner", "proof", 1n, "file:1:1", T.Facts{T.OwnerMatches{"owner"}, T.Unknown{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}}}
+    lease_live : T.Candidate = T.Candidate{"/x", T.Scratch{}, "owner", "proof", 1n, "file:1:1", T.Facts{T.OwnerMatches{"owner"}, T.Absent{}, T.Present{"lease"}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}}}
+    process_live : T.Candidate = T.Candidate{"/x", T.Scratch{}, "owner", "proof", 1n, "file:1:1", T.Facts{T.OwnerMatches{"owner"}, T.Absent{}, T.Absent{}, T.Present{"pid"}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}}}
+    runtime_live : T.Candidate = T.Candidate{"/x", T.BuildOutput{}, "owner", "proof", 1n, "file:1:1", T.Facts{T.OwnerMatches{"owner"}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Present{"pid"}, T.Absent{}, T.Absent{}}}
+    dirty : T.Candidate = T.Candidate{"/x", T.Checkout{}, "owner", "proof", 1n, "dir:1:1", T.Facts{T.OwnerMatches{"owner"}, T.Absent{}, T.Absent{}, T.Absent{}, T.Present{"worktree"}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}}}
+    unpublished : T.Candidate = T.Candidate{"/x", T.Checkout{}, "owner", "proof", 1n, "dir:1:1", T.Facts{T.OwnerMatches{"owner"}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Present{"1"}, T.Absent{}, T.Absent{}, T.Absent{}}}
+    ref_live : T.Candidate = T.Candidate{"/x", T.GitObject{}, "owner", "proof", 1n, "dir:1:1", T.Facts{T.OwnerMatches{"owner"}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Present{"aa"}, T.Absent{}}}
+    pending : T.Candidate = T.Candidate{"/x", T.Scratch{}, "owner", "proof", 1n, "file:1:1", T.Facts{T.OwnerMatches{"owner"}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Present{"1"}}}
     git_clear : T.Candidate = T.Candidate{"/x", T.GitObject{}, "owner", "proof", 1n, "dir:1:1", clear_facts()}
     a : Unit <- check_decision("owner-mismatch", owner_bad, "owner-mismatch")
-    b : Unit <- check_decision("lease-live", lease_live, "lease-live")
-    c : Unit <- check_decision("process-live", process_live, "process-live")
-    d : Unit <- check_decision("runtime-input-live", runtime_live, "runtime-input-live")
-    e : Unit <- check_decision("worktree-dirty", dirty, "worktree-dirty")
-    f : Unit <- check_decision("unpublished-commits", unpublished, "unpublished-commits")
-    g : Unit <- check_decision("ref-live", ref_live, "ref-live")
-    h : Unit <- check_decision("pending-attempt", pending, "pending-attempt")
-    i : Unit <- check_decision("git-object-report-only", git_clear, "git-object-report-only")
-    j : Unit <- check_decision("scratch-clear", base, "remove:scratch-settled")
+    b : Unit <- check_decision("database-path", database_live, "database-path")
+    c : Unit <- check_decision("database-path-unknown", database_unknown, "database-path-unknown")
+    d : Unit <- check_decision("lease-live", lease_live, "lease-live")
+    e : Unit <- check_decision("process-live", process_live, "process-live")
+    f : Unit <- check_decision("runtime-input-live", runtime_live, "runtime-input-live")
+    g : Unit <- check_decision("worktree-dirty", dirty, "worktree-dirty")
+    h : Unit <- check_decision("unpublished-commits", unpublished, "unpublished-commits")
+    i : Unit <- check_decision("ref-live", ref_live, "ref-live")
+    j : Unit <- check_decision("pending-attempt", pending, "pending-attempt")
+    k : Unit <- check_decision("git-object-report-only", git_clear, "git-object-report-only")
+    l : Unit <- check_decision("scratch-clear", base, "remove:scratch-settled")
     malformed : T.Presence = O.presence_result(Done{"garbage"})
-    k : Unit <- check("malformed-presence", presence_unknown(malformed), "malformed host result accepted")
+    m : Unit <- check("malformed-presence", presence_unknown(malformed), "malformed host result accepted")
+    non_linux : T.Presence = O.presence_result(Done{"unknown:non-linux"})
+    n : Unit <- check("non-linux-presence", presence_unknown(non_linux), "non-Linux scan accepted")
     IO.pure(Unit, Unit{})
 
 def presence_detail(presence: T.Presence) -> String:
@@ -199,6 +231,119 @@ def process_checks(+root: String) -> IO(Unit):
     holder : Result<&1,&1,U32 & String,U32> <- Proc.ProcessChild.spawn(Proc.argv(["/bin/sh", "-c", held_file_script(held)]), dir, dir ++ "/holder.stderr")
     unit2 : Unit <- spawned_holder(holder, dir)
     IO.pure(Unit, unit2)
+
+def facts_database_or_unknown(+facts: T.Facts) -> T.Presence:
+  match facts:
+    case T.Facts{owner, database, lease, process, dirty, unpublished, runtime_input, ref, pending_attempt}: database
+
+def database_checks(+db: String, +root: String) -> IO(Unit):
+  do IO<Unit>:
+    +dir : String = root ++ "/database-protected"
+    made : Unit <- IO.try(Unit, F.Files.mkdir(dir))
+    +database : String = dir ++ "/orchestra.db"
+    wrote : Unit <- write_file(database, "payload")
+    seeded : Unit <- db_endpoint_setup(db, root, database)
+    +state : S.State <- S.load(db)
+    +facts_dir : T.Facts <- S.facts_for(T.Scratch{}, "", dir, state)
+    +dir_reason = decision_text(P.decide(T.Scratch{}, "owner", facts_dir))
+    a : Unit <- check("database-ancestor-preserved", String.eq(dir_reason, "database-path"), dir_reason)
+    +dir_candidate : T.Candidate <- candidate_for(dir, T.Scratch{}, facts_dir)
+    receipt : T.Receipt <- one_apply(db, root, dir_candidate)
+    b : Unit <- check_receipt("database-ancestor-kept", receipt, dir, "kept")
+    kept : O.Observation <- O.observe(database)
+    c : Unit <- check("database-file-kept", O.observation_is_found(kept), "database file missing")
+    facts_file : T.Facts <- S.facts_for(T.Scratch{}, "", database, state)
+    +file_reason = decision_text(P.decide(T.Scratch{}, "owner", facts_file))
+    d : Unit <- check("database-exact-preserved", String.eq(file_reason, "database-path"), file_reason)
+    removed : Unit <- run_cmd(["/bin/rm", "-f", database])
+    state2 : S.State <- S.load(db)
+    facts_unlinked : T.Facts <- S.facts_for(T.Scratch{}, "", dir, state2)
+    +unlinked_reason = decision_text(P.decide(T.Scratch{}, "owner", facts_unlinked))
+    e : Unit <- check("database-unlinked-ancestor-preserved", String.eq(unlinked_reason, "database-path"), unlinked_reason)
+    IO.pure(Unit, Unit{})
+
+def database_malformed_check(+db: String, +root: String) -> IO(Unit):
+  do IO<Unit>:
+    inserted : String <- IO.try(String, DB.Sql.query(db, "INSERT INTO sessions(id,parent,harness,workspace,branch,base,endpoint) VALUES('bad-endpoint',NULL,'omp','','','','{bad');"))
+    +state : S.State <- S.load(db)
+    a : Unit <- check("malformed-endpoint-invalid", Bool.not(S.valid_of(state)), "malformed endpoint accepted")
+    facts : T.Facts <- S.facts_for(T.Scratch{}, "", root, state)
+    b : Unit <- check("malformed-endpoint-unknown", presence_unknown(facts_database_or_unknown(facts)), "malformed endpoint produced known database evidence")
+    IO.pure(Unit, Unit{})
+
+def wait_pidfile(+path: String, +attempts: U32) -> IO(Bool):
+  match attempts:
+    case 0: IO.pure(Bool, False{})
+    case _:
+      do IO<Bool>:
+        observed : O.Observation <- O.observe(path)
+        match observed:
+          case O.Found{path, kind, device, inode, bytes}:
+            Bool.pick(IO(Bool), Nat.is_gt(bytes, 0n), IO.pure(Bool, True{}),
+              do IO<Bool>:
+                slept : Unit <- IO.sleep(50)
+                wait_pidfile(path, U32.sub(attempts, 1)))
+          case other:
+            do IO<Bool>:
+              slept : Unit <- IO.sleep(50)
+              wait_pidfile(path, U32.sub(attempts, 1))
+
+def wait_presence(+dir: String, +attempts: U32) -> IO(T.Presence):
+  match attempts:
+    case 0: O.runtime_presence(dir)
+    case _:
+      do IO<T.Presence>:
+        presence : T.Presence <- O.runtime_presence(dir)
+        match presence:
+          case T.Present{detail}: IO.pure(T.Presence, presence)
+          case other:
+            do IO<T.Presence>:
+              slept : Unit <- IO.sleep(50)
+              wait_presence(dir, U32.sub(attempts, 1))
+
+def unlinked_holder_check(+root: String) -> IO(Unit):
+  do IO<Unit>:
+    absolute : String <- command_output(["/bin/realpath", "-m", root])
+    +dir : String = absolute ++ "/unlinked-owner"
+    made : Unit <- IO.try(Unit, F.Files.mkdir(dir))
+    +database : String = dir ++ "/orchestra.db"
+    wrote : Unit <- write_file(database, "payload")
+    +pidfile : String = dir ++ "/holder.pid"
+    +marker : String = dir ++ "/holder.ready"
+    +script : String = "(exec 3<\"$1\"; echo running > \"$3\"; sleep 30) & echo $! > \"$2\"; wait"
+    spawned : Result<&1,&1,U32 & String,U32> <- Proc.ProcessChild.spawn(Proc.argv(["/bin/sh", "-c", script, "sh", database, pidfile, marker]), ".", dir ++ ".stderr")
+    match spawned:
+      case Fail{error}: IO.die(Unit, 1, "unlinked holder spawn failed")
+      case Done{+handle}:
+        do IO<Unit>:
+          ready : Bool <- wait_pidfile(marker, 40)
+          a : Unit <- check("unlinked-holder-started", ready, "holder pid file missing")
+          removed : Unit <- run_cmd(["/bin/rm", "-f", database])
+          presence : T.Presence <- wait_presence(dir, 40)
+          +seen : String = presence_detail(presence)
+          b : Unit <- check("unlinked-fd-owner", Bool.and(Bool.not(String.is_empty(seen)), Bool.not(String.eq(seen, "unknown"))), seen)
+          +pid_text : String = command_output(["/bin/cat", pidfile])
+          +pid : U32 = u32_of(U32.read(pid_text))
+          killed : Unit <- Bool.pick(IO(Unit), U32.is_lt(0, pid), run_ignore(["/bin/kill", "-TERM", U32.show(pid)]), IO.pure(Unit, Unit{}))
+          signaled : Unit <- run_ignore(["/bin/kill", "-TERM", U32.show(handle)])
+          waited : String <- IO.try(String, Proc.ProcessChild.wait(handle))
+          IO.pure(Unit, Unit{})
+
+def exclusive_check() -> IO(Unit):
+  do IO<Unit>:
+    +rows : List<&2,String> = L.parse_exclusive("# comment\nexclusive-a\n\nexclusive-b/\n")
+    a : Unit <- check("exclusive-member", L.exclusive_member("exclusive-a", rows), "exclusive root missing")
+    b : Unit <- check("exclusive-normalized", L.exclusive_member("exclusive-b", rows), "trailing slash not normalized")
+    +specs : List<&2,L.RootSpec> = Con{L.RootSpec{T.Scratch{}, "exclusive-a", ""}, Con{L.RootSpec{T.BuildOutput{}, "exclusive-c", ""}, Nil{}}}
+    +missing : String = L.unproven_roots(specs, rows, "")
+    c : Unit <- check("exclusive-missing", String.eq(missing, "exclusive-c"), missing)
+    +all : List<&2,String> = Con{"exclusive-a", Con{"exclusive-c", Nil{}}}
+    d : Unit <- check("exclusive-all", String.is_empty(L.unproven_roots(specs, all, "")), "unproven root remained")
+    +policy : String = L.policy_json(specs, rows)
+    e : Unit <- check("policy-refused", String.starts_with(policy, "{\"ageOnlyDeletion\":false,\"apply\":\"refused\""), policy)
+    +ready : String = L.policy_json(specs, all)
+    f : Unit <- check("policy-ready", String.starts_with(ready, "{\"ageOnlyDeletion\":false,\"apply\":\"ready\""), ready)
+    IO.pure(Unit, Unit{})
 
 def apply_checks(+db: String, +root: String) -> IO(Unit):
   do IO<Unit>:
@@ -275,7 +420,7 @@ def malformed_entries_check(+root: String) -> IO(Unit):
 
 def facts_owner_unknown(facts: T.Facts) -> Bool:
   match facts:
-    case T.Facts{owner, lease, process, dirty, unpublished, runtime_input, ref, pending_attempt}:
+    case T.Facts{owner, database, lease, process, dirty, unpublished, runtime_input, ref, pending_attempt}:
       match owner:
         case T.OwnerUnknown{}: True{}
         case other: False{}
@@ -337,7 +482,7 @@ def overlap_check(+root: String) -> IO(Unit):
 def busy_check(+db: String, +root: String) -> IO(Unit):
   do IO<Unit>:
     specs : List<&2,L.RootSpec> <- IO.pure(List<&2,L.RootSpec>, Con{L.RootSpec{T.Scratch{}, root, ""}, Nil{}})
-    result : Result<&1,&1,U32 & String,List<T.Receipt>> <- L.apply_locked(db, specs, None{})
+    result : Result<&1,&1,U32 & String,List<T.Receipt>> <- L.apply_locked("", db, specs, None{})
     a : Unit <- check("lock-busy-refused", Result.is_fail(&1,&1,U32 & String,List<T.Receipt>,result), "busy returned success")
     IO.pure(Unit, Unit{})
 
@@ -349,6 +494,9 @@ def main() -> IO(Unit):
     database : Unit <- db_setup(db, root)
     pure : Unit <- pure_checks()
     process : Unit <- process_checks(root)
+    dbpaths : Unit <- database_checks(db, root)
+    unlinked : Unit <- unlinked_holder_check(root)
+    exclusive : Unit <- exclusive_check()
     applied : Unit <- apply_checks(db, root)
     rootrace_dir : Unit <- IO.try(Unit, F.Files.mkdir(root ++ "/rootrace"))
     rootrace : Unit <- root_replacement_check(db, root ++ "/rootrace")
@@ -359,4 +507,5 @@ def main() -> IO(Unit):
     interrupted : Unit <- interrupted_check(db, root)
     parent_rename : Unit <- parent_rename_check(db, root)
     malformed_db : Unit <- malformed_db_check(db, root)
+    malformed_endpoint : Unit <- database_malformed_check(db, root)
     IO.print("storage checks: all green")

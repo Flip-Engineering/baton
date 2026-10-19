@@ -46,16 +46,18 @@ repository for a `git-object` root. Empty configuration performs no scan and
 no deletion. The process reads the configured roots; it does not adopt a
 homelab path or relocate existing files.
 
-`storage-policy preview` refuses overlapping or nested roots before apply.
-`storage-policy apply` holds the `storage-cleanup` database lock, refuses while
-the lock is held, and exits nonzero when the roots overlap or the scan evidence
-is invalid.
+`storage-policy` reports each configured root and its exclusivity.
+`storage-apply SESSION` acquires the session lock and the `storage-cleanup`
+database lock, refuses while either is held, and exits nonzero when the roots
+overlap, a configured root lacks the exclusive declaration, or the scan
+evidence is invalid.
 
 ## Preservation evidence
 
-Each candidate carries the recorded owner, the measured byte count, the host
-identity `kind:device:inode`, and these facts:
+Each candidate carries the measured byte count, the host identity
+`kind:device:inode`, and these facts:
 
+- active coordinator database path or an ancestor of one;
 - owner match against the recorded session or execution;
 - live lease;
 - live process reference;
@@ -70,6 +72,14 @@ preserves the candidate. No input carries an age or timestamp. A path named
 with an old date and no preservation evidence remains a removal candidate; a
 path named today with a live owner does not.
 
+The active database paths are the database passed on the command line and the
+database recorded as element two of each session endpoint. A candidate that
+equals one of those paths or is an ancestor of one is preserved, so the
+directory holding a coordinator database survives cleanup even when the
+database directory entry is unlinked. A non-empty endpoint without a text
+database path makes the database evidence unknown and preserves every
+candidate.
+
 The durable state comes from the coordinator database: session workspaces,
 execution directories, pending messages and registered log paths. Git supplies
 dirty state and commit counts. The host supplies process references, path
@@ -81,23 +91,30 @@ unknown, and unknown evidence preserves the candidate.
 ## Process references
 
 `StorageHost.process_refs` and `StorageHost.runtime_refs` inspect cwd, executable,
-descriptors and mapped files for the current user's process tree. For a
+descriptors and mapped files for every process of the current user. For a
 directory candidate the scan compares each referenced path with the candidate
 directory, so a process working inside a child directory or holding a file
-there is found even though its inode differs from the parent. The scan reports
-`unknown:` on an access error, a non-Linux host or a truncated scan, and the
-policy preserves the candidate.
+there is found even though its inode differs from the parent. A descriptor
+whose directory entry is unlinked still matches after the `" (deleted)"`
+suffix is removed. The scan reports `unknown:` on an access error, a non-Linux
+host or a truncated scan, and the policy preserves the candidate.
 
-The process-tree scope is deliberate: the approved root contract below requires
-writer coordination, and unrelated users' processes cannot be inspected on a
-host with restricted `/proc` access.
+The scan covers active owner and keeper processes outside the cleanup process
+tree. Processes of other users cannot be inspected on a host with restricted
+`/proc` access; that answer is unknown and preserves the candidate.
 
 ## Preview and apply
 
 ```text
-storage-policy preview   # JSON: roots, root identity, valid flag, entries, reasons, bytes
-storage-policy apply     # JSON: receipts with exact paths, bytes, reason, owner proof and outcome
+storage-policy                  # JSON: roots, classes, exclusivity, apply readiness
+storage-preview SESSION         # JSON: roots and entries owned by SESSION
+storage-apply SESSION           # JSON: receipts for SESSION's admitted entries
 ```
+
+Preview and apply select candidates whose recorded owner is exactly `SESSION`;
+a candidate owned by another session or with missing owner evidence is outside
+that session's plan. Apply acquires the session lock, then the `storage-cleanup`
+lock, and re-reads the durable evidence under both.
 
 The preview records the approved root identity. Apply observes the root again
 and refuses every entry when the identity changed or the scan was invalid.
@@ -118,15 +135,18 @@ A receipt names the exact candidate path, measured bytes, class, owner proof,
 decision reason and outcome. The `reclaimedBytes` field counts host-reported
 removed bytes, not the preview estimate.
 
-## Approved-root contract
-
 An approved storage root must have exclusive writer coordination for the
-duration of apply. The root identity, descriptor-relative traversal and
-identity revalidation cover concurrent removal and path replacement. A writer
-that mutates a leaf between the identity check and `unlinkat` remains outside
-this contract; the project does not make a generally writable directory
-cleanable from database state alone. The `storage-cleanup` lock serializes
-cleanup runs, and the operator selects roots on durable volumes.
+duration of apply. `BATON_STORAGE_EXCLUSIVE_ROOTS` names the roots the
+operator dedicates to storage cleanup, one path per line. `storage-policy`
+reports each root's `exclusive` value. `storage-apply` refuses every root, and
+exits with status 3, while a configured root is absent from that list.
+
+The root identity, descriptor-relative traversal and identity revalidation
+cover concurrent removal and path replacement. A writer that mutates a leaf
+between the identity check and `unlinkat` remains outside this contract; the
+project does not make a generally writable directory cleanable from database
+state alone. The `storage-cleanup` lock serializes cleanup runs, and the
+operator selects roots on durable volumes.
 
 ## Preserve-only classes
 
@@ -145,19 +165,27 @@ sh bend2/scripts/build-native.sh bend2/tests/storage.bend .scratch/bend2/storage
 .scratch/bend2/storage-test
 ```
 
-It covers owner, lease, process, dirty, unpublished, runtime-input, ref and
-pending-attempt preservation; descendant cwd and descriptor references under a
-directory candidate; symlink removal with an intact target; child and root
-replacement; unreadable paths; malformed host records; malformed database rows;
-overlapping roots; lock contention; idempotent replay; and interrupted tree
-removal.
+It covers owner, database-path, lease, process, dirty, unpublished,
+runtime-input, ref and pending-attempt preservation; descendant cwd and
+descriptor references under a directory candidate; an unlinked descriptor owner
+outside the cleanup process tree; non-Linux unknown evidence; symlink removal
+with an intact target; child and root replacement; unreadable paths; malformed
+host records; malformed database rows and endpoints; overlapping roots;
+exclusive-root authorization; lock contention; idempotent replay; and
+interrupted tree removal.
 
-The focused native overlay exposes the same command through
+The focused native overlay exposes the same commands through
 `receive-focused.bend`:
 
 ```sh
 BATON2_RECEIVE_FOCUSED=1 sh bend2/scripts/build-native.sh \
   bend2/src/coordinator/receive-focused.bend .scratch/bend2/focused-storage
 BATON_STORAGE_ROOTS='scratch=/absolute/root' \
-  .scratch/bend2/focused-storage DATABASE storage-policy preview
+BATON_STORAGE_EXCLUSIVE_ROOTS='/absolute/root' \
+  .scratch/bend2/focused-storage DATABASE storage-policy
+BATON_STORAGE_ROOTS='scratch=/absolute/root' \
+  .scratch/bend2/focused-storage DATABASE storage-preview SESSION
+BATON_STORAGE_ROOTS='scratch=/absolute/root' \
+BATON_STORAGE_EXCLUSIVE_ROOTS='/absolute/root' \
+  .scratch/bend2/focused-storage DATABASE storage-apply SESSION
 ```
