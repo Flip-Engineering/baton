@@ -114,6 +114,16 @@ class CompilerArmSharing(unittest.TestCase):
                          msg='unexpected shared-arm names: %r' % names)
         self.build_and_run(source, [([], 'empty'), (['hello'], 'hello')])
 
+    def test_nonflat_call_in_arm_keeps_segment_context(self):
+        fixture = FIXTURES / 'arm_nonflat_call.bend'
+        source = pathlib.Path(self.temp.name) / 'arm_nonflat_call.c'
+        self.run_bun(UPSTREAM / 'main.ts', fixture, '-o', source)
+        self.build_and_run(source, [
+            (['a'], 'one'),
+            (['z'], 'xy'),
+            ([], 'xy'),
+        ])
+
     def test_ann_share_regression(self):
         source = self.mutated_c('arm_eq_ann_share')
         self.build_and_run(source, [
