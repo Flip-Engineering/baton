@@ -169,6 +169,36 @@ on fallback paths is not measurable at process granularity.
 `check_only_pass` true, `compiler_tests_pass` true, `focused_entry_check` true
 (`five-overlap.bend`).
 
+## Canonical upstream PR and Baton pin
+
+- Canonical upstream: `bendlang/bend` tag `v2.0.25` (commit `c65bcb78`).
+  `bend2/bend.ts` is byte-identical to the pin
+  (`93c2a43deeb82c15683e4e25bbc5dec5ac3edff9f54e09acc0975e290fcaeb85`).
+  `bend2/comp.ts` differs (`ad8b8213...` upstream versus `a2a949ae...` in the
+  pin): the pin is the Baton guard-combined package built from source commit
+  `37b29f312962de4bf230cc85ad30f87ceff83800`, which is not present in
+  `bendlang/bend` (GitHub API returns 422 for that SHA).
+- Local port branch `fix/match-default-sharing` was created in a shallow
+  `v2.0.25` clone; the diff is `round3/upstream-port.diff`. It compiles, but it
+  does **not** pass the gates: minimal 5,215,717 B and pr890-shaped
+  31,392,801 B, i.e. the unmodified upstream size. Instrumentation shows why:
+  upstream v2.0.25 leaves free probes in all 14,168 arm bodies
+  (`open:14168`), while the pinned fork's lowered arms are closed (histogram
+  `[[0,14168]]`). The closed-arm gate therefore never opens upstream. A
+  canonical upstream PR needs either the fork's checked-term lowering (private
+  lineage) or capture-aware shared spins; it was not pushed.
+- Baton pin change: `round3/baton-pin.json`. It changes only
+  `compiler_source_commit` (to `3a39ad5476`) and `files["bend2/comp.ts"]`
+  (sha256 `a72cf3af...d32d1`, 217,355 bytes); every other manifest field and
+  file hash is unchanged.
+- Compiler source/dependency closure: `round3/closure.json` lists the 6 core
+  files and the 72 `bend2/effs` files with sha256 and byte counts, plus
+  `bin/bun` (Bun 1.3.14). The candidate copy is reproducible from that
+  closure.
+- Blocker: the canonical repository for source commit `37b29f3` is not
+  publicly reachable; the public upstream's term lowering is incompatible with
+  the closed-arm sharing as written. No PR was opened and nothing was pushed.
+
 ## Limits
 
 - No full Main, no recovery-helper build, no push. Clang was used on the four

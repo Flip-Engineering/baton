@@ -1,0 +1,56 @@
+{
+  "compiler_source_commit": "3a39ad5476",
+  "compiler_source_path": "bend2/comp.ts",
+  "base_comp_sha256": "b68bfe1a306c1d89d12b07cbd86012cea873c06986cf191270e65941bae4efda",
+  "staged_path": "/run/baton2-native-homelab/retained/baton-consolidation-review-20261017/private/consolidation-active-ds-20261017/dsh/native-package-reconcile-f32545c-20261018/guard-combined-37b29f3-20261018",
+  "files": {
+    "bin/bend": {
+      "sha256": "5bebff6c901ae0da3ac5a2f2c84c148405f94dc5663a95e67fcc5436df4c68b1",
+      "bytes": 3861
+    },
+    "bin/bun": {
+      "sha256": "9fd36f87e4b90b07632b987a2e4ec81ca15a62c81bf983190cea6d715be2ad74",
+      "bytes": 92752752
+    },
+    "bend2/main.ts": {
+      "sha256": "53ce8e48c7540db6c3e66133a7c7eb270d6f64813fe10a631fd50d22112eb07d",
+      "bytes": 27114
+    },
+    "bend2/comp.ts": {
+      "sha256": "a72cf3afe49d77892ebe4abf061cdbe2542ce7a9f68c46bb740629d0a37d32d1",
+      "bytes": 217355
+    },
+    "bend2/bend.ts": {
+      "sha256": "93c2a43deeb82c15683e4e25bbc5dec5ac3edff9f54e09acc0975e290fcaeb85",
+      "bytes": 135926
+    },
+    "bend2/base.bend": {
+      "sha256": "e5639663177f2de93ef34867c029698aa4e68a98d46629f0b15452b67b99d798",
+      "bytes": 66363
+    },
+    "bend2/LICENSE": {
+      "sha256": "0beb288abd3d067e231f3fbe7df1f8ee37344061fc67f22018150a19e4b26c35",
+      "bytes": 11344
+    }
+  },
+  "pin_change": {
+    "from": {
+      "compiler_source_commit": "37b29f312962de4bf230cc85ad30f87ceff83800",
+      "bend2/comp.ts": {
+        "sha256": "a2a949ae7f1c8520d8a112aa505b4c5440baad861dc912e410bfb501369112bc",
+        "bytes": 208636
+      }
+    },
+    "to": {
+      "compiler_source_commit": "3a39ad5476",
+      "bend2/comp.ts": {
+        "sha256": "a72cf3afe49d77892ebe4abf061cdbe2542ce7a9f68c46bb740629d0a37d32d1",
+        "bytes": 217355
+      }
+    },
+    "branch": "baton/branch-1df5d351e684ff4605e02535c1381069-1",
+    "commit": "3a39ad5476",
+    "closure": "round3/closure.json (72 effs + 6 core files)",
+    "note": "other manifest fields are unchanged; packaging restages the package directory with the candidate comp.ts and keeps bin/bend, bin/bun, bend.ts, main.ts, base.bend, LICENSE byte-identical"
+  }
+}
