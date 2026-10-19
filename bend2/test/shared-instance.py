@@ -164,9 +164,10 @@ class SharedInstance(unittest.TestCase):
             child.stdout.close()
             child.stderr.close()
 
-    def spawn(self, *args):
+    def spawn(self, *args, env=None):
         child = subprocess.Popen([str(EXE), *map(str, args)], stdin=subprocess.PIPE,
-                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                                 env=dict(os.environ, **env) if env else None)
         self.children.append(child)
         child.lines = queue.Queue()
         child.output = []
@@ -247,10 +248,11 @@ class SharedInstance(unittest.TestCase):
     def command(self, *args):
         return subprocess.run([str(EXE), *map(str, args)], capture_output=True, text=True)
 
-    def begin(self, label, session=None, mode='admit', payload='hello\n', cwd=None):
+    def begin(self, label, session=None, mode='admit', payload='hello\n', cwd=None,
+              program=None):
         directory = pathlib.Path(f'{self.db}.attempt-{label}')
         child = self.spawn(mode, self.db, session or label, directory, cwd or self.home,
-                           payload, sys.executable, self.fixture)
+                           payload, *(program or [sys.executable, self.fixture]))
         return directory, child
 
     def native(self, output):
@@ -264,6 +266,57 @@ class SharedInstance(unittest.TestCase):
                                 text=True)
         return [line for line in result.stdout.splitlines()
                 if '--instance-owner' in line and str(self.home) in line]
+
+    def owner_pid(self):
+        owners = self.owner_processes()
+        self.assertEqual(len(owners), 1, owners)
+        return int(owners[0].split()[0])
+
+    def inotify_instances(self, pid):
+        """Returns the process's open inotify instance descriptors."""
+        descriptors = []
+        try:
+            entries = list(pathlib.Path(f'/proc/{pid}/fd').iterdir())
+        except (FileNotFoundError, ProcessLookupError):
+            return None
+        for entry in entries:
+            try:
+                if os.readlink(entry) == 'anon_inode:inotify':
+                    descriptors.append(entry.name)
+            except OSError:
+                pass
+        return descriptors
+
+    def inotify_watches(self, pid):
+        count = 0
+        for descriptor in self.inotify_instances(pid) or []:
+            try:
+                info = pathlib.Path(f'/proc/{pid}/fdinfo/{descriptor}').read_text()
+            except FileNotFoundError:
+                continue
+            count += sum(1 for line in info.splitlines() if line.startswith('inotify wd:'))
+        return count
+
+    def eventually(self, predicate, reason, timeout=10):
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if predicate():
+                return
+            time.sleep(.05)
+        self.fail(reason + '; ' + self.owner_state())
+
+    def compile_inotify_failure_shim(self):
+        directory = pathlib.Path(tempfile.mkdtemp(prefix='b2-inotify-shim-'))
+        self.addCleanup(shutil.rmtree, directory, ignore_errors=True)
+        source = directory / 'fail-inotify-init.c'
+        library = directory / 'fail-inotify-init.so'
+        source.write_text('#include <errno.h>\n'
+                          'int inotify_init1(int flags) { (void)flags; errno = EMFILE; return -1; }\n')
+        compiled = subprocess.run([os.environ.get('CC', 'cc'), '-shared', '-fPIC', '-O1',
+                                   str(source), '-o', str(library)],
+                                  capture_output=True, text=True)
+        self.assertEqual(compiled.returncode, 0, compiled.stderr)
+        return library
 
     def write(self, directory, text):
         path = self.home / 'control.payload'
@@ -351,6 +404,70 @@ class SharedInstance(unittest.TestCase):
         self.assertEqual(parents, {owner_pid}, (owners, summaries))
         print('evidence owner', owners[0].strip())
         print('evidence natives', [summary['pid'] for summary in summaries])
+
+    @unittest.skipUnless(sys.platform.startswith('linux'), 'inotify accounting requires /proc')
+    def test_concurrent_sessions_share_one_inotify_instance(self):
+        runs = [self.begin(f'watch{index}', session=f'watch{index}', payload='\n',
+                           program=[sys.executable, str(self.survivor)])
+                for index in range(4)]
+        for directory, child in runs:
+            self.line(child, 'admitted')
+            self.hold(directory / 'stdout', 'tick:', child=child)
+        owner = self.owner_pid()
+        self.eventually(lambda: len(self.inotify_instances(owner) or []) == 1,
+                        'the owner did not retain one shared inotify instance')
+        watches = self.inotify_watches(owner)
+        self.assertGreaterEqual(watches, len(runs),
+                                'each live attempt must add its own watch')
+        for directory, _ in runs:
+            result = self.command('control-signal', directory, str(signal.SIGTERM))
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        for _, child in runs:
+            self.assertIn('attempt-complete', self.wait_run(child))
+        self.eventually(lambda: self.inotify_instances(owner) == [],
+                        'the shared inotify instance stayed open after every attempt retired')
+        print('evidence shared-inotify', len(runs), 'sessions', watches, 'watches')
+
+    @unittest.skipUnless(sys.platform.startswith('linux'), 'inotify accounting requires /proc')
+    def test_inotify_instance_closes_and_is_reused_after_cleanup(self):
+        _, first = self.begin('watch-once', payload='exit\n')
+        self.assertIn('attempt-complete', self.wait_run(first))
+        owner = self.owner_pid()
+        self.eventually(lambda: self.inotify_instances(owner) == [],
+                        'the owner kept its inotify instance after the attempt retired')
+        directory, second = self.begin('watch-twice', payload='\n',
+                                       program=[sys.executable, str(self.survivor)])
+        self.line(second, 'admitted')
+        self.hold(directory / 'stdout', 'tick:', child=second)
+        self.eventually(lambda: len(self.inotify_instances(owner) or []) == 1,
+                        'the replacement attempt did not create one inotify instance')
+        self.assertEqual(self.inotify_watches(owner), 1)
+        result = self.command('control-signal', directory, str(signal.SIGTERM))
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn('attempt-complete', self.wait_run(second))
+        self.eventually(lambda: self.inotify_instances(owner) == [],
+                        'the reused inotify instance stayed open after cleanup')
+        print('evidence inotify reuse', 'closed-then-reopened')
+
+    @unittest.skipUnless(sys.platform.startswith('linux'), 'inotify interposition requires Linux')
+    def test_keeper_refuses_startup_when_no_inotify_instance_is_available(self):
+        shim = self.compile_inotify_failure_shim()
+        preload = str(shim)
+        if os.environ.get('LD_PRELOAD'):
+            preload += ':' + os.environ['LD_PRELOAD']
+        directory = pathlib.Path(f'{self.db}.attempt-watch-failure')
+        child = self.spawn('admit', self.db, 'watch-failure', directory, self.home,
+                           'one\n', sys.executable, self.fixture,
+                           env={'LD_PRELOAD': preload})
+        child.stdin.close()
+        child.wait()
+        stderr = child.stderr.read()
+        self.assertNotEqual(child.returncode, 0, ''.join(child.output) + stderr)
+        self.assertRegex(stderr.lower(), r'too many open files|emfile|error 24', stderr)
+        self.assertFalse((directory / 'native.pid').exists(),
+                         'a failed watch instance must not start a native child')
+        self.assertEqual((directory / 'stdout').stat().st_size, 0)
+        print('evidence inotify-failure refusal', stderr.strip().replace('\n', '|'))
 
     def test_second_owner_for_one_database_is_refused(self):
         directory, child = self.begin('a0')

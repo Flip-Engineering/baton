@@ -400,11 +400,20 @@ typedef struct BatonRetained {
 static int br_monitor_checkpoint(BatonProcessCall *call,BatonRetained *retained);
 static int br_monitor_lock(BatonRetained *retained);
 static int br_custody_write(const char *directory,BatonRetained *retained);
+/* One filesystem-watch instance serves every attempt's spool in a process.
+   A keeper holds the instance's watch token, so concurrent sessions add
+   watches to one bounded instance rather than one instance each. */
+typedef struct {
+  int fd;
+  size_t count;
+} BrWatcher;
 typedef struct BrKeeper {
   struct BrKeeper *next;
   uint32_t id;
   uint64_t identity;
   int listener,client,input,lock,watch,wake[2],spool,native_life,finishing,change_queued;
+  int spool_changed;
+  BrWatcher *watchers;
   pid_t client_pid;
   BrBirth client_birth;
   int client_birth_set;
@@ -533,6 +542,7 @@ typedef struct {
   uint64_t cursor;
   char *database,*ipc,*key,*socket_path,*record_path,*generation_path,*cursor_path;
   BrKeeper *attempts;
+  BrWatcher watcher;
   BrOwnerControl *controls;
   uint32_t next_id;
 } BrOwner;
@@ -745,6 +755,9 @@ static int br_lifetime(const char *directory,int *ended) {
 }
 static int br_watch_file(int spool,const char *path);
 static void br_watch_drain(int fd);
+static int br_watch_add(BrWatcher *watchers,int spool,const char *path);
+static void br_watch_remove(BrWatcher *watchers,int token);
+static void br_watch_collect(BrWatcher *watchers,BrKeeper *attempts);
 static void br_orphan_exit(BatonRetained *retained) {
   char *path=br_path(retained->directory,"status");FILE *file=path?fopen(path,"r"):NULL;free(path);
   int status;
@@ -1687,13 +1700,83 @@ static void br_watch_drain(int fd) {
   char events[4096];while(read(fd,events,sizeof(events))>0) {}
 #endif
 }
+/* Registers one spool path with the process's shared watch instance. The
+   returned token identifies this watch in collected events. The instance is
+   created on first use and closed when its last watch is removed. */
+static int br_watch_add(BrWatcher *watchers,int spool,const char *path) {
+  if(watchers->fd<0) {
+#ifdef __APPLE__
+    (void)path;
+    watchers->fd=kqueue();
+    if(watchers->fd>=0)fcntl(watchers->fd,F_SETFD,FD_CLOEXEC);
+#else
+    watchers->fd=inotify_init1(IN_NONBLOCK|IN_CLOEXEC);
+#endif
+    if(watchers->fd<0)return -1;
+  }
+  int token;
+#ifdef __APPLE__
+  struct kevent event;EV_SET(&event,spool,EVFILT_VNODE,EV_ADD|EV_CLEAR,NOTE_WRITE|NOTE_EXTEND,0,NULL);
+  token=kevent(watchers->fd,&event,1,NULL,0,NULL)<0?-1:spool;
+#else
+  (void)spool;
+  token=inotify_add_watch(watchers->fd,path,IN_MODIFY|IN_CLOSE_WRITE);
+#endif
+  if(token<0) {
+    int error=errno;
+    if(!watchers->count) {close(watchers->fd);watchers->fd=-1;}
+    errno=error;
+    return -1;
+  }
+  watchers->count++;
+  return token;
+}
+static void br_watch_remove(BrWatcher *watchers,int token) {
+  if(watchers->fd<0 || token<0)return;
+#ifdef __APPLE__
+  struct kevent event;EV_SET(&event,token,EVFILT_VNODE,EV_DELETE,0,0,NULL);
+  kevent(watchers->fd,&event,1,NULL,0,NULL);
+#else
+  inotify_rm_watch(watchers->fd,token);
+#endif
+  if(watchers->count>0)watchers->count--;
+  if(!watchers->count) {close(watchers->fd);watchers->fd=-1;}
+}
+/* Reads the instance's queued events and marks each attempt whose spool
+   changed. Every event is consumed here because the instance is shared, so a
+   keeper that is not ready to send a notice keeps the mark until it is. */
+static void br_watch_collect(BrWatcher *watchers,BrKeeper *attempts) {
+  if(watchers->fd<0)return;
+#ifdef __APPLE__
+  struct kevent events[8];struct timespec zero={0,0};
+  int ready=kevent(watchers->fd,NULL,0,events,8,&zero);
+  for(int i=0;i<ready;i++) if(events[i].filter==EVFILT_VNODE)
+    for(BrKeeper *keeper=attempts;keeper;keeper=keeper->next)
+      if(keeper->watch==(int)events[i].ident) {keeper->spool_changed=1;break;}
+#else
+  char buffer[4096];
+  for(;;) {
+    ssize_t n=read(watchers->fd,buffer,sizeof(buffer));
+    if(n<0 && errno==EINTR)continue;
+    if(n<=0)break;
+    for(char *cursor=buffer;cursor<buffer+n;) {
+      struct inotify_event *event=(struct inotify_event *)cursor;
+      if(!(event->mask&IN_IGNORED))
+        for(BrKeeper *keeper=attempts;keeper;keeper=keeper->next)
+          if(keeper->watch==(int)event->wd) {keeper->spool_changed=1;break;}
+      cursor+=sizeof(*event)+event->len;
+    }
+  }
+#endif
+}
 /* Releases one attempt's descriptors, buffers and record. It runs after the
    attempt's last observer and control connection has finished, and never
    touches another attempt's state. */
 static void br_keeper_stop(BrKeeper *keeper) {
   if(keeper->client>=0)close(keeper->client);if(keeper->listener>=0)close(keeper->listener);
   if(keeper->input>=0)close(keeper->input);if(keeper->lock>=0)close(keeper->lock);
-  if(keeper->watch>=0)close(keeper->watch);if(keeper->spool>=0)close(keeper->spool);
+  if(keeper->watch>=0){br_watch_remove(keeper->watchers,keeper->watch);keeper->watch=-1;}
+  if(keeper->spool>=0)close(keeper->spool);
   if(keeper->native_life>=0)close(keeper->native_life);
   if(keeper->wake[0]>=0)close(keeper->wake[0]);if(keeper->wake[1]>=0)close(keeper->wake[1]);
   while(keeper->controls) {
@@ -1767,7 +1850,8 @@ static int br_attempt_listener(const char *path,struct sockaddr_un *address) {
 /* Starts custody of one attempt. The native process, its stdin writer, its
    stdout spool and its wait authority stay in this process for the attempt's
    lifetime, so observer and coordinator loss leave them intact. */
-static int br_keeper_prepare(BrKeeper *keeper,const char *directory,int lock) {
+static int br_keeper_prepare(BrKeeper *keeper,BrWatcher *watchers,const char *directory,int lock) {
+  keeper->watchers=watchers;
   int error=br_manifest_read(directory,&keeper->manifest);
   if(error)return error;
   if(keeper->manifest.count==8) {
@@ -1810,7 +1894,7 @@ static int br_keeper_prepare(BrKeeper *keeper,const char *directory,int lock) {
     }
   }
   if(keeper->spool<0){error=path?errno:ENOMEM;free(path);return error;}
-  keeper->watch=br_watch_file(keeper->spool,path);free(path);
+  keeper->watch=br_watch_add(watchers,keeper->spool,path);free(path);
   if(keeper->watch<0)return errno;
   if((error=baton_pipe(keeper->wake)))return error;
   keeper->prepared=1;
@@ -1866,15 +1950,16 @@ spawned_failed:
   br_keeper_reap_spawned(keeper);
   return error;
 }
-static int br_keeper_start(BrKeeper *keeper,const char *directory,int lock) {
-  int error=br_keeper_prepare(keeper,directory,lock);
+static int br_keeper_start(BrKeeper *keeper,BrWatcher *watchers,const char *directory,int lock) {
+  int error=br_keeper_prepare(keeper,watchers,directory,lock);
   if(error)return error;
   if((error=br_lifecycle_ready(directory)))return error;
   keeper->ready=1;
   return br_keeper_spawn(keeper,NULL,NULL);
 }
 /* Serves one attempt's ready descriptors: a five-entry fixed slice (listener,
-   observer, spool watch, wake pipe, input) followed by its control slice. */
+   observer, wake pipe, input, native life) followed by its control slice. The
+   spool watch is shared, so its collected mark arrives on the keeper. */
 static int br_attempt_ready(BrKeeper *keeper,struct pollfd *fds,BrControl **clients,size_t count) {
   int error=0;
   if(fds[0].revents&POLLIN) {
@@ -1889,14 +1974,14 @@ static int br_attempt_ready(BrKeeper *keeper,struct pollfd *fds,BrControl **clie
   if(keeper->client>=0 && fds[1].fd==keeper->client && fds[1].revents&(POLLIN|POLLHUP|POLLERR)) {
     if((error=br_read_commands(keeper)))return error;
   }
-  if(fds[2].revents&POLLIN) {
-    br_watch_drain(keeper->watch);
+  if(keeper->spool_changed && (keeper->client<0 || keeper->ready)) {
+    keeper->spool_changed=0;
     if(!keeper->change_queued && keeper->client>=0) {
       if((error=br_send(keeper,(BrFrame){.op=BR_CHANGE},NULL)))return error;
       keeper->outgoing_tail->change=1;keeper->change_queued=1;
     }
   }
-  if(fds[3].revents&POLLIN) {
+  if(fds[2].revents&POLLIN) {
     BrWake event;
     if((error=br_read_all(keeper->wake[0],&event,sizeof(event))))return error;
     if(event.kind=='N') {
@@ -1918,12 +2003,12 @@ static int br_attempt_ready(BrKeeper *keeper,struct pollfd *fds,BrControl **clie
     }
   }
   if(keeper->monitor_only && keeper->native_life>=0 &&
-     fds[5].revents&(POLLIN|POLLHUP|POLLERR)) {
+     fds[4].revents&(POLLIN|POLLHUP|POLLERR)) {
     close(keeper->native_life);keeper->native_life=-1;
     keeper->status_unavailable=1;keeper->exited=1;keeper->input_closed=1;
     if(keeper->client>=0 && (error=br_send(keeper,(BrFrame){.op=BR_UNKNOWN},NULL)))return error;
   }
-  for(size_t i=0;i<count;i++) if(fds[6+i].revents&(POLLIN|POLLHUP|POLLERR)) {
+  for(size_t i=0;i<count;i++) if(fds[5+i].revents&(POLLIN|POLLHUP|POLLERR)) {
     if((error=br_control_read(keeper,clients[i])))return error;
   }
   return 0;
@@ -2344,7 +2429,7 @@ static int br_owner_admit(BrOwner *owner,const char *directory,int lock,int *exi
       *keeper=(BrKeeper){.listener=-1,.client=-1,.input=-1,.lock=lock,.watch=-1,
         .wake={-1,-1},.spool=-1,.native_life=-1,.generation=1,.id=++owner->next_id};
       keeper->directory=resolved;resolved=NULL;
-      error=start_now?br_keeper_start(keeper,directory,lock):br_keeper_prepare(keeper,directory,lock);
+      error=start_now?br_keeper_start(keeper,&owner->watcher,directory,lock):br_keeper_prepare(keeper,&owner->watcher,directory,lock);
       if(error) {lock=-1;br_keeper_stop(keeper);}
       else {keeper->next=owner->attempts;owner->attempts=keeper;return 0;}
     }
@@ -2704,7 +2789,8 @@ static int br_owner_loop(BrOwner *owner) {
       slots++;link=&keeper->next;
     }
     if(owner->finishing && !owner->attempts)return 0;
-    size_t head=owner->listener>=0?1:0,total=head+owner_controls+slots*6+attempt_controls;
+    size_t head=owner->listener>=0?1:0,watch_slot=owner->watcher.fd>=0?1:0,
+      total=head+watch_slot+owner_controls+slots*5+attempt_controls;
     struct pollfd *fds=calloc(total?total:1,sizeof(*fds));
     BrOwnerControl **owner_clients=calloc(owner_controls?owner_controls:1,sizeof(*owner_clients));
     BrKeeper **keepers=calloc(slots?slots:1,sizeof(*keepers));
@@ -2716,6 +2802,8 @@ static int br_owner_loop(BrOwner *owner) {
     }
     size_t index=0;
     if(head)fds[index++]=(struct pollfd){owner->listener,POLLIN,0};
+    size_t watcher_index=index;
+    if(watch_slot)fds[index++]=(struct pollfd){owner->watcher.fd,POLLIN,0};
     size_t owner_first=index;
     size_t owner_bound=0;
     for(BrOwnerControl *control=owner->controls;control;control=control->next,index++) {
@@ -2727,8 +2815,6 @@ static int br_owner_loop(BrOwner *owner) {
       keepers[slot]=keeper;bases[slot]=index;apart[slot]=bound;
       fds[index++]=(struct pollfd){keeper->listener,POLLIN,0};
       fds[index++]=(struct pollfd){keeper->client,POLLIN|(keeper->outgoing?POLLOUT:0),0};
-      /* Spool notifications follow the attached observer's ready reply. */
-      fds[index++]=(struct pollfd){keeper->client>=0 && !keeper->ready?-1:keeper->watch,POLLIN,0};
       fds[index++]=(struct pollfd){keeper->wake[0],POLLIN,0};
       fds[index++]=(struct pollfd){keeper->writes?keeper->input:-1,POLLOUT,0};
       fds[index++]=(struct pollfd){keeper->native_life,POLLIN,0};
@@ -2741,6 +2827,8 @@ static int br_owner_loop(BrOwner *owner) {
       if(keeper->unwatched_recovery) {poll_timeout=100;break;}
     int ready;do {ready=poll(fds,(nfds_t)total,poll_timeout);} while(ready<0 && errno==EINTR);
     if(ready<0) {error=errno;goto polled;}
+    if(watch_slot && fds[watcher_index].revents&POLLIN)
+      br_watch_collect(&owner->watcher,owner->attempts);
     if(head && fds[0].revents&POLLIN) {
       int socket=accept(owner->listener,NULL,NULL);
       if(socket>=0) {
@@ -2844,7 +2932,7 @@ static int br_owner_bind(BrOwner *owner,const char *database) {
   return error;
 }
 static int br_owner_serve(const char *database) {
-  BrOwner owner={.listener=-1,.lock=-1,.database_fd=-1};
+  BrOwner owner={.listener=-1,.lock=-1,.database_fd=-1,.watcher={.fd=-1}};
   int error=br_owner_bind(&owner,database);
   /* The elected owner resumes publications retained for this database birth. */
   if(!error)br_owner_cursor_load(&owner);
@@ -2859,6 +2947,7 @@ static int br_owner_serve(const char *database) {
   if(owner.database_fd>=0)close(owner.database_fd);
   free(owner.ipc);free(owner.key);free(owner.record_path);free(owner.generation_path);
   while(owner.attempts){BrKeeper *keeper=owner.attempts;owner.attempts=keeper->next;br_keeper_stop(keeper);}
+  if(owner.watcher.fd>=0)close(owner.watcher.fd);
   while(owner.controls) {
     BrOwnerControl *control=owner.controls;owner.controls=control->next;
     if(control->rights>=0)close(control->rights);
@@ -2870,7 +2959,7 @@ static int br_owner_serve(const char *database) {
 }
 static int br_keeper(const char *directory,int lock) {
   BrKeeper keeper={.listener=-1,.client=3,.input=-1,.lock=lock,.watch=-1,.wake={-1,-1},.spool=-1,.native_life=-1,.generation=1};
-  BrOwner owner={.listener=-1,.lock=-1,.single=1};
+  BrOwner owner={.listener=-1,.lock=-1,.single=1,.watcher={.fd=-1}};
   BrState state={0,0,0,0,0};
   int error=0;
   keeper.directory=realpath(directory,NULL);
@@ -2881,7 +2970,7 @@ static int br_keeper(const char *directory,int lock) {
   keeper.client_birth_set=1;
   fcntl(keeper.client,F_SETFD,FD_CLOEXEC);
   if((error=br_nonblock(keeper.client)))goto done;
-  if((error=br_keeper_start(&keeper,directory,lock)))goto done;
+  if((error=br_keeper_start(&keeper,&owner.watcher,directory,lock)))goto done;
   keeper.ready=0;
   state=(BrState){keeper.native_pid,0,0,0,keeper.input_closed};
   if((error=br_send(&keeper,(BrFrame){.op=BR_HELLO,.length=sizeof(state),.value=2},&state)))goto done;
@@ -2906,7 +2995,9 @@ done:
   if(error) _exit(1);
   if(keeper.client>=0)close(keeper.client);if(keeper.listener>=0)close(keeper.listener);
   if(keeper.input>=0)close(keeper.input);if(keeper.lock>=0)close(keeper.lock);
-  if(keeper.watch>=0)close(keeper.watch);if(keeper.spool>=0)close(keeper.spool);
+  if(keeper.watch>=0){br_watch_remove(&owner.watcher,keeper.watch);keeper.watch=-1;}
+  if(owner.watcher.fd>=0)close(owner.watcher.fd);
+  if(keeper.spool>=0)close(keeper.spool);
   if(keeper.wake[0]>=0)close(keeper.wake[0]);if(keeper.wake[1]>=0)close(keeper.wake[1]);
   br_buffer_free(&keeper.writes,&keeper.writes_tail);br_buffer_free(&keeper.outgoing,&keeper.outgoing_tail);
   free(keeper.incoming);br_manifest_free(&keeper.manifest);
@@ -3481,6 +3572,7 @@ static int br_owner_recover(BrOwner *owner,const char *directory,const char *boo
         .id=++owner->next_id,.native_pid=saved.pid,.exited=terminal,
         .status=terminal_status,.input_closed=1,.ready=1,.prepared=1,
         .monitor_only=1,.status_unavailable=0};
+      keeper->watchers=&owner->watcher;
       life=-1;
       keeper->directory=canonical;canonical=NULL;
       keeper->manifest=manifest;memset(&manifest,0,sizeof(manifest));
@@ -3495,7 +3587,7 @@ static int br_owner_recover(BrOwner *owner,const char *directory,const char *boo
       struct stat spool_info;
       if(!error && fstat(keeper->spool,&spool_info))error=errno;
       if(!error && (!S_ISREG(spool_info.st_mode) || spool_info.st_uid!=geteuid()))error=EPERM;
-      if(!error)keeper->watch=br_watch_file(keeper->spool,spool);
+      if(!error)keeper->watch=br_watch_add(&owner->watcher,keeper->spool,spool);
       if(!error && keeper->watch<0)error=errno;
       free(spool);
       if(!error)error=baton_pipe(keeper->wake);
