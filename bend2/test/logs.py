@@ -430,6 +430,16 @@ sys.exit(%d)
             connection.execute(
                 'INSERT INTO executions(session,id,mode,directory,phase,status) VALUES (?,?,?,?,?,?)',
                 (protected_session, protected_attempt, 'omp', str(protected_dir), 'exited', 'exit 0'))
+            connection.execute(
+                'CREATE TABLE IF NOT EXISTS log_generations(session TEXT NOT NULL,attempt TEXT NOT NULL,log TEXT NOT NULL,base TEXT NOT NULL,PRIMARY KEY(session,attempt))')
+            generation_log = str(self.log) + '.attempt-' + protected_attempt.encode().hex()
+            connection.execute(
+                'INSERT INTO log_files(session,log) VALUES (?,?)',
+                (protected_session, generation_log))
+            connection.execute(
+                'INSERT INTO log_generations(session,attempt,log,base) VALUES (?,?,?,?)',
+                (protected_session, protected_attempt, generation_log, str(self.log)))
+        pathlib.Path(generation_log).touch()
 
         protected_dir.chmod(0)
         try:
@@ -445,6 +455,10 @@ sys.exit(%d)
         self.assertEqual(skipped[0]['skipped'], 'attempt-artifacts-inaccessible')
         self.assertIn('Permission denied', skipped[0]['error'])
         self.assertEqual((protected_dir / 'released').read_text(), 'released\n')
+        log_skip = by_session[protected_session]['attemptLogs']
+        self.assertEqual(len(log_skip), 1)
+        self.assertEqual(log_skip[0]['skipped'], 'attempt-artifacts-inaccessible')
+        self.assertIn('Permission denied', log_skip[0]['error'])
 
         eligible_result = by_session['omp-worker']['attemptFiles']
         self.assertIn('stdout', {item['file'] for item in eligible_result if item.get('removed')})
@@ -453,6 +467,59 @@ sys.exit(%d)
         self.assertEqual(repeated_protected['attemptFiles'][0]['skipped'], 'attempt-artifacts-inaccessible')
         self.assertFalse(any(item.get('removed') for item in next(
             item for item in repeated if item['session'] == 'omp-worker')['attemptFiles']))
+
+    def test_logs_clean_all_skips_inaccessible_superseded_generation(self):
+        self.stream([self.terminal()])
+        current_attempt, current_dir = self.prepare_attempt_artifacts()
+        old_attempt = 'older-protected-attempt'
+        old_dir = pathlib.Path(str(self.db) + '.attempt-' + old_attempt.encode().hex())
+        old_dir.mkdir()
+        (old_dir / 'released').write_text('released\n')
+        old_log = str(self.log) + '.attempt-' + old_attempt.encode().hex()
+        current_log = str(self.log) + '.attempt-' + current_attempt.encode().hex()
+        pathlib.Path(old_log).touch()
+        pathlib.Path(current_log).touch()
+        with sqlite3.connect(self.db) as connection:
+            connection.execute(
+                'CREATE TABLE IF NOT EXISTS log_generations(session TEXT NOT NULL,attempt TEXT NOT NULL,log TEXT NOT NULL,base TEXT NOT NULL,PRIMARY KEY(session,attempt))')
+            connection.execute(
+                'INSERT OR IGNORE INTO log_files(session,log) VALUES (?,?)',
+                ('omp-worker', old_log))
+            connection.execute(
+                'INSERT OR IGNORE INTO log_files(session,log) VALUES (?,?)',
+                ('omp-worker', current_log))
+            # Put the protected old generation before the current generation.
+            # The cleanup query treats the last rowid as current.
+            connection.execute(
+                'DELETE FROM log_generations WHERE session=? AND attempt=?',
+                ('omp-worker', current_attempt))
+            connection.execute(
+                'INSERT OR IGNORE INTO log_generations(session,attempt,log,base) VALUES (?,?,?,?)',
+                ('omp-worker', old_attempt, old_log, str(self.log)))
+            connection.execute(
+                'INSERT INTO log_generations(session,attempt,log,base) VALUES (?,?,?,?)',
+                ('omp-worker', current_attempt, current_log, str(self.log)))
+
+        with sqlite3.connect(self.db) as connection:
+            registered = {row[0] for row in connection.execute('SELECT log FROM log_files WHERE session=?', ('omp-worker',))}
+        self.assertIn(old_log, registered)
+        self.assertIn(current_log, registered)
+
+        registered_logs = json.loads(self.call('logs-storage'))['logs']
+        self.assertIn(old_log, [item['path'] for item in registered_logs], registered_logs)
+        old_dir.chmod(0)
+        try:
+            results = json.loads(self.call('logs-clean-all'))['results']
+        finally:
+            old_dir.chmod(0o700)
+
+        result = next(item for item in results if item['session'] == 'omp-worker')
+        protected = [item for item in result['attemptLogs']
+                     if item.get('skipped') == 'attempt-artifacts-inaccessible']
+        self.assertEqual(len(protected), 1, result)
+        self.assertEqual(protected[0]['attempt'], old_attempt)
+        self.assertIn('Permission denied', protected[0]['error'])
+        self.assertEqual((old_dir / 'released').read_text(), 'released\n')
 
     def test_attempt_without_durable_turn_record_is_retained(self):
         self.stream([self.terminal()])
