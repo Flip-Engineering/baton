@@ -757,7 +757,11 @@ static int br_watch_file(int spool,const char *path);
 static void br_watch_drain(int fd);
 static int br_watch_add(BrWatcher *watchers,int spool,const char *path);
 static void br_watch_remove(BrWatcher *watchers,int token);
-static void br_watch_collect(BrWatcher *watchers,BrKeeper *attempts);
+static void br_spool_watch_dispatch(BrWatcher *watchers,BrKeeper *attempts);
+static void br_spool_watch_overflow(BrKeeper *attempts);
+#ifndef __APPLE__
+static void br_spool_watch_event(BrKeeper *attempts,uint32_t mask,int wd);
+#endif
 static void br_orphan_exit(BatonRetained *retained) {
   char *path=br_path(retained->directory,"status");FILE *file=path?fopen(path,"r"):NULL;free(path);
   int status;
@@ -1742,10 +1746,29 @@ static void br_watch_remove(BrWatcher *watchers,int token) {
   if(watchers->count>0)watchers->count--;
   if(!watchers->count) {close(watchers->fd);watchers->fd=-1;}
 }
+/* One dropped inotify event stands for an unknown number of spool changes.
+   Every observer that can receive a notice rereads its spool to the current
+   end, so one coalesced mark is enough; br_attempt_ready keeps the existing
+   change_queued behavior. */
+static void br_spool_watch_overflow(BrKeeper *attempts) {
+  for(BrKeeper *keeper=attempts;keeper;keeper=keeper->next)
+    if(keeper->client>=0 && keeper->ready) keeper->spool_changed=1;
+}
+#ifndef __APPLE__
+/* Applies one inotify event to the registered attempts. Linux reports queue
+   overflow with wd -1 and IN_Q_OVERFLOW; individual spool events may have
+   been dropped, so the overflow notifies every ready observer. */
+static void br_spool_watch_event(BrKeeper *attempts,uint32_t mask,int wd) {
+  if((mask&IN_Q_OVERFLOW) || wd<0) {br_spool_watch_overflow(attempts);return;}
+  if(!(mask&(IN_MODIFY|IN_CLOSE_WRITE)))return;
+  for(BrKeeper *keeper=attempts;keeper;keeper=keeper->next)
+    if(keeper->watch==wd) {keeper->spool_changed=1;break;}
+}
+#endif
 /* Reads the instance's queued events and marks each attempt whose spool
    changed. Every event is consumed here because the instance is shared, so a
    keeper that is not ready to send a notice keeps the mark until it is. */
-static void br_watch_collect(BrWatcher *watchers,BrKeeper *attempts) {
+static void br_spool_watch_dispatch(BrWatcher *watchers,BrKeeper *attempts) {
   if(watchers->fd<0)return;
 #ifdef __APPLE__
   struct kevent events[8];struct timespec zero={0,0};
@@ -1762,8 +1785,7 @@ static void br_watch_collect(BrWatcher *watchers,BrKeeper *attempts) {
     for(char *cursor=buffer;cursor<buffer+n;) {
       struct inotify_event *event=(struct inotify_event *)cursor;
       if(!(event->mask&IN_IGNORED))
-        for(BrKeeper *keeper=attempts;keeper;keeper=keeper->next)
-          if(keeper->watch==(int)event->wd) {keeper->spool_changed=1;break;}
+        br_spool_watch_event(attempts,event->mask,(int)event->wd);
       cursor+=sizeof(*event)+event->len;
     }
   }
@@ -2828,7 +2850,7 @@ static int br_owner_loop(BrOwner *owner) {
     int ready;do {ready=poll(fds,(nfds_t)total,poll_timeout);} while(ready<0 && errno==EINTR);
     if(ready<0) {error=errno;goto polled;}
     if(watch_slot && fds[watcher_index].revents&POLLIN)
-      br_watch_collect(&owner->watcher,owner->attempts);
+      br_spool_watch_dispatch(&owner->watcher,owner->attempts);
     if(head && fds[0].revents&POLLIN) {
       int socket=accept(owner->listener,NULL,NULL);
       if(socket>=0) {
