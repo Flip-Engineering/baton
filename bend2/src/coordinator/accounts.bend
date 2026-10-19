@@ -1066,4 +1066,3 @@ def credit_launch_binding(+db: String, +session: String, +attempt: String, +harn
   match chosen:
     case None{}: IO.pure(Maybe<List<String>>,account_binding(harness,None{},helper,profile_store))
     case Some{+account}: credit_launch_binding_account(db,session,attempt,harness,account,helper,profile_store)
-
