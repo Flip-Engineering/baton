@@ -470,6 +470,50 @@ def database_malformed_check(+db: String, +root: String) -> IO(Unit):
 def unknown_peer_script() -> String:
   "import ctypes,time; getattr(ctypes.CDLL(None),'prctl',lambda *args: 0)(4,0,0,0,0); time.sleep(30)"
 
+# Unknown runtime evidence preserves the candidate before removal is attempted.
+# The locked-tree check drives the removal primitive directly so preservation
+# from unknown facts and refusal from an inaccessible child stay separate.
+def removal_refused_check(+db: String, +root: String) -> IO(Unit):
+  do IO<Unit>:
+    +dir : String = root ++ "/interrupted"
+    made : Unit <- IO.try(Unit, F.Files.mkdir(dir))
+    +file : String = dir ++ "/first"
+    wrote : Unit <- write_file(file, "payload")
+    +locked : String = dir ++ "/locked"
+    made_locked : Unit <- IO.try(Unit, F.Files.mkdir(locked))
+    +held : String = locked ++ "/held"
+    wrote_held : Unit <- write_file(held, "payload")
+    chmod : Unit <- run_cmd(["/usr/bin/chmod", "000", locked])
+    observed : O.Observation <- O.observe(dir)
+    +root_identity : String <- preview_root(root)
+    +entry : T.Entry = T.Entry{dir, T.Scratch{}, "owner", "proof", 0n, O.observation_identity(observed), T.Remove{"scratch-settled"}}
+    refresh : A.Refresh = A.Refresh{db, "", root, root_identity}
+    first : T.Removal <- A.apply_remove(entry, refresh)
+    +first_outcome : T.Outcome = A.removal_outcome_of(first)
+    a : Unit <- check("interrupted-refused", String.eq(P.outcome_name(first_outcome), "refused"), P.outcome_name(first_outcome))
+    chmod2 : Unit <- run_cmd(["/usr/bin/chmod", "700", locked])
+    second : T.Removal <- A.apply_remove(entry, refresh)
+    +second_outcome : T.Outcome = A.removal_outcome_of(second)
+    b : Unit <- check("interrupted-replay", String.eq(P.outcome_name(second_outcome), "removed"), P.outcome_name(second_outcome))
+    IO.pure(Unit, Unit{})
+
+def unknown_runtime_spawned(result: Result<&1,&1,U32 & String,U32>, +db: String, +root: String, +file: String) -> IO(Unit):
+  match result:
+    case Fail{error}: IO.die(Unit, 1, "unknown runtime peer spawn failed")
+    case Done{+handle}:
+      do IO<Unit>:
+        slept : Unit <- IO.sleep(100)
+        +candidate : T.Candidate <- candidate_for(file, T.Scratch{}, clear_facts())
+        preview : T.Preview <- one_preview(root, candidate)
+        receipt : T.Receipt <- apply_preview(db, preview)
+        a : Unit <- check_receipt("unknown-runtime-preserved", receipt, file, "changed|fresh evidence preserves: runtime-input-unknown")
+        observed : O.Observation <- O.observe(file)
+        b : Unit <- check("unknown-runtime-kept", O.observation_is_found(observed), "unknown runtime candidate removed")
+        signaled : Unit <- IO.try(Unit, Proc.ProcessChild.signal(handle, 15))
+        waited : String <- IO.try(String, Proc.ProcessChild.wait(handle))
+        IO.pure(Unit, Unit{})
+
+
 def check_unknown_presence(presence: T.Presence) -> IO(Unit):
   match presence:
     case T.Unknown{}: check("unknown-without-match", True{}, "unknown")
@@ -510,6 +554,16 @@ def spawned_presence_precedence(result: Result<&1,&1,U32 & String,U32>, +dir: St
         slept : Unit <- IO.sleep(100)
         holder : Result<&1,&1,U32 & String,U32> <- Proc.ProcessChild.spawn(Proc.argv(["/bin/sleep", "30"]), dir, dir ++ ".cwd-holder.stderr")
         spawned_positive_holder(holder, unknown_handle, dir)
+
+def unknown_runtime_check(+db: String, +root: String) -> IO(Unit):
+  do IO<Unit>:
+    +dir : String = root ++ "/unknown-runtime"
+    made : Unit <- IO.try(Unit, F.Files.mkdir(dir))
+    +file : String = dir ++ "/candidate.txt"
+    wrote : Unit <- write_file(file, "payload")
+    spawned : Result<&1,&1,U32 & String,U32> <- Proc.ProcessChild.spawn(Proc.argv(["/usr/bin/env", "python3", "-c", unknown_peer_script()]), ".", dir ++ ".unknown.stderr")
+    unit : Unit <- unknown_runtime_spawned(spawned, db, root, file)
+    IO.pure(Unit, unit)
 
 def positive_precedence_check(+root: String) -> IO(Unit):
   do IO<Unit>:
@@ -653,27 +707,6 @@ def parent_rename_check(+db: String, +root: String) -> IO(Unit):
     b : Unit <- check("parent-rename-replacement-kept", O.observation_is_found(kept), "replacement missing")
     IO.pure(Unit, Unit{})
 
-def interrupted_check(+db: String, +root: String) -> IO(Unit):
-  do IO<Unit>:
-    +dir : String = root ++ "/interrupted"
-    made : Unit <- IO.try(Unit, F.Files.mkdir(dir))
-    +file : String = dir ++ "/first"
-    wrote : Unit <- write_file(file, "payload")
-    +locked : String = dir ++ "/locked"
-    made_locked : Unit <- IO.try(Unit, F.Files.mkdir(locked))
-    +held : String = locked ++ "/held"
-    wrote_held : Unit <- write_file(held, "payload")
-    chmod : Unit <- run_cmd(["/usr/bin/chmod", "000", locked])
-    +candidate : T.Candidate <- candidate_for(dir, T.Scratch{}, clear_facts())
-    preview1 : T.Preview <- one_preview(root, candidate)
-    first : T.Receipt <- apply_preview(db, preview1)
-    a : Unit <- check_receipt("interrupted-refused", first, dir, "refused")
-    chmod2 : Unit <- run_cmd(["/usr/bin/chmod", "700", locked])
-    preview2 : T.Preview <- one_preview(root, candidate)
-    second : T.Receipt <- apply_preview(db, preview2)
-    b : Unit <- check_receipt("interrupted-replay", second, dir, "removed")
-    IO.pure(Unit, Unit{})
-
 def facts_lease(+facts: T.Facts) -> T.Presence:
   match facts:
     case T.Facts{owner, database, lease, process, dirty, unpublished, runtime_input, ref, pending_attempt}: lease
@@ -780,7 +813,8 @@ def main() -> IO(Unit):
     malformed : Unit <- malformed_entries_check(root)
     overlap : Unit <- overlap_check(db, root)
     busy : Unit <- busy_check(db, root)
-    interrupted : Unit <- interrupted_check(db, root)
+    removal_refused : Unit <- removal_refused_check(db, root)
+    unknown_runtime : Unit <- unknown_runtime_check(db, root)
     parent_rename : Unit <- parent_rename_check(db, root)
     malformed_db : Unit <- malformed_db_check(db, root)
     malformed_endpoint : Unit <- database_malformed_check(db, root)
