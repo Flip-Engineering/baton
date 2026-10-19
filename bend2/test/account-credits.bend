@@ -167,6 +167,22 @@ def authority_checks() -> IO(Unit):
     operator : Unit <- check("authority-without-session",String.eq(A.authority_of(""),"operator"))
     IO.pure(Unit,Unit{})
 
+def cost_checks() -> IO<Unit>:
+  do IO<Unit>:
+    total_only : Unit <- check("cost-total-only",String.eq(A.cost_amount(A.cost_reading("0.4875489",False{},"")),"0.4875489"))
+    model_only : Unit <- check("cost-model-only",Bool.and(String.eq(A.cost_amount(A.cost_reading("",True{},"0.10")),"0.10"),String.eq(A.cost_source(A.cost_reading("",True{},"0.10")),"result-model-usage")))
+    agree : Unit <- check("cost-total-and-model-agree",String.eq(A.cost_amount(A.cost_reading("0.4875489",True{},"0.4875489")),"0.4875489"))
+    conflict : Unit <- check("cost-conflict-refused",String.eq(A.cost_condition(A.cost_reading("0.50",True{},"0.60")),"costAmountsConflict"))
+    missing : Unit <- check("cost-missing-refused",String.eq(A.cost_condition(A.cost_reading("",False{},"")),"costAmountMissing"))
+    malformed : Unit <- check("cost-malformed-refused",String.eq(A.cost_condition(A.cost_reading("lots",False{},"")),"costAmountMalformed"))
+    +sum_in : List<String> <- IO.pure(List<String>,Con{"10",Con{"20",Con{"30",Nil{}}}})
+    summed : Unit <- check("sum-lines-exact-decimal",String.eq(A.sum_lines(sum_in,"0"),"60"))
+    +max_in : List<String> <- IO.pure(List<String>,Con{"10",Con{"50",Con{"30",Nil{}}}})
+    maximal : Unit <- check("max-lines-picks-largest",String.eq(A.max_lines(max_in,""),"50"))
+    cap : Unit <- check("monthly-cap-is-200",String.eq(A.monthly_cap(),"200"))
+    no_bound : Unit <- admission_reason_is(A.admission_after_bound(A.Ac{"claude-credit","anthropic","claude-code","api_key","file:/fixture/secrets/api","org-fixture","2026-10-18"},A.CMeter{"org-fixture","reported","2026-10-cycle","200","USD","200","2026-10","0","0"},""),"chargeBoundUnavailable","admission-refuses-without-observed-cost")
+    IO.pure(Unit,Unit{})
+
 def main() -> IO(Unit):
   do IO<Unit>:
     dec : Unit <- decimal_checks()
@@ -180,5 +196,6 @@ def main() -> IO(Unit):
     states : Unit <- state_checks()
     selections : Unit <- selection_checks()
     authority : Unit <- authority_checks()
+    costs : Unit <- cost_checks()
     printed : Unit <- IO.print("fixture-accounts-ok")
     IO.pure(Unit,Unit{})

@@ -250,10 +250,69 @@ class FocusedAccountCredits(unittest.TestCase):
     def reservation_tables(self):
         return self.query("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='credit_reservations'")[0][0]
 
-    def test_gate_holds_an_eligible_credit_account_and_records_no_reservation(self):
+    def test_gate_refuses_until_an_observed_cost_bound_exists(self):
         self.credit_account()
-        self.assertIn('credit-only routing is not proven', self.gate('attempt-1'))
-        self.assertEqual(self.reservation_tables(), 0)
+        self.assertIn('chargeBoundUnavailable', self.gate('attempt-1'))
+        self.assertEqual(self.reservation_tables(), 1)
+        self.assertEqual(self.query("SELECT count(*) FROM credit_reservations"), [(0,)])
+
+    def seed_cost(self, account='claude-api', organization='org-fixture', amount='0.50', attempt='seed-cost'):
+        cap_period = self.query("SELECT strftime('%Y-%m','now')")[0][0]
+        cycle = self.query("SELECT cycle FROM credit_observations WHERE organization=? AND fact='promotional_credit' "
+                           "ORDER BY observed_at DESC, rowid DESC LIMIT 1", (organization,))[0][0]
+        self.execute("INSERT INTO credit_reservations(attempt,account,organization,cycle,cap_period,amount,unit,state,settled,cost_source) "
+                     "VALUES(?,?,?,?,?,?,'USD','settled',?,'result-total')",
+                     (attempt, account, organization, cycle, cap_period, amount, amount))
+        return cap_period, cycle
+
+    def test_gate_reserves_the_observed_worst_case_charge(self):
+        self.credit_account()
+        self.seed_cost()
+        self.assertEqual(self.gate('attempt-1'), 'node')
+        self.assertEqual(self.query("SELECT amount,state FROM credit_reservations WHERE attempt='attempt-1'"),
+                         [('0.50', 'reserved')])
+        self.assertEqual(self.query("SELECT count(*) FROM credit_authorizations WHERE attempt='attempt-1'"), [(1,)])
+
+    def complete_with_event(self, event):
+        self.credit_account()
+        self.seed_cost()
+        self.assertEqual(self.gate('attempt-1'), 'node')
+        self.execute("INSERT INTO messages(id,sender,recipient,kind,body) VALUES('turn-1','root','leaf','report','done')")
+        self.execute("INSERT INTO turns(id,worker,event) VALUES('turn-1','leaf',?)", (json.dumps(event),))
+        self.execute("INSERT INTO executions(session,id,mode,directory,phase,status) "
+                     "VALUES('leaf','turn-1','retained','attempt-1','exited','exit 0')")
+        self.assertEqual(self.entry('attempt', 'leaf', 'claude-code', 'attempt-1', '').returncode, 0)
+        self.complete('attempt-1')
+
+    def test_settlement_records_the_provider_total(self):
+        self.complete_with_event({'total_cost_usd': 0.4875489,
+                                  'modelUsage': {'claude-sonnet-5-5': {'costUSD': 0.4875489}}})
+        self.assertEqual(self.query("SELECT state,settled,cost_source FROM credit_reservations WHERE attempt='attempt-1'"),
+                         [('settled', '0.4875489', 'result-total')])
+
+    def test_settlement_refuses_conflicting_amounts(self):
+        self.complete_with_event({'total_cost_usd': 0.50,
+                                  'modelUsage': {'claude-sonnet-5-5': {'costUSD': 0.60}}})
+        self.assertEqual(self.query("SELECT state,settled,reason FROM credit_reservations WHERE attempt='attempt-1'"),
+                         [('unknown', '', 'costAmountsConflict')])
+
+    def test_settlement_records_missing_cost_as_unknown(self):
+        self.complete_with_event({'type': 'result', 'is_error': False})
+        self.assertEqual(self.query("SELECT state,settled,reason FROM credit_reservations WHERE attempt='attempt-1'"),
+                         [('unknown', '', 'costAmountMissing')])
+
+    def test_gate_refuses_when_the_bound_exceeds_the_balance(self):
+        self.credit_account(balance='0.20')
+        self.seed_cost(amount='0.50')
+        self.assertIn('promotionalCreditInsufficient', self.gate('attempt-1'))
+
+    def test_gate_refuses_when_the_monthly_cap_is_spent(self):
+        self.credit_account(balance='500.00')
+        cap_period, cycle = self.seed_cost(amount='0.50')
+        self.execute("INSERT INTO credit_reservations(attempt,account,organization,cycle,cap_period,amount,unit,state,settled,cost_source) "
+                     "VALUES('spent','claude-api','org-fixture',?,?,'200','USD','settled','200','result-total')",
+                     (cycle, cap_period))
+        self.assertIn('monthlyCapInsufficient', self.gate('attempt-1'))
 
     def test_gate_refuses_a_reported_zero_balance(self):
         self.credit_account(balance='0.00')
