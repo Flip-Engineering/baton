@@ -10,6 +10,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <pthread.h>
+#include <stdatomic.h>
 
 /* This projection contains only cursor and summary fields. Message bodies and
    reader-visible state remain in the coordinator tables. The triggers run in
@@ -1349,6 +1351,7 @@ static int baton_sql_utf8_ok(const unsigned char *text, size_t length) {
    it comes from sqlite3_mprintf and is released with sqlite3_free by the caller. The
    prepare/step status is preserved rather than translated into encoding text, and
    the encoding refusal is reported only when the pragma itself was read. */
+/* BATON SQL READ CACHE BEGIN */
 /* A distinct status for an encoding this operation observed and refuses, separate
    from the SQLite status of a failed prepare, step or finalize. SQLITE_MISMATCH is a
    real SQLite code and carries no SQLite text of its own, so the helper supplies it. */
@@ -1382,33 +1385,239 @@ static int baton_sql_encoding_status(sqlite3 *db, char **error) {
   return SQLITE_OK;
 }
 
+/* Read-only connections are reused per IO helper thread. The cache is keyed
+   by path, device and inode; a new process, path or file replacement discards
+   the old connection. Every call checks autocommit and rolls back a caller
+   transaction, so a reused connection sees committed writes and leaves no
+   transaction behind. */
+typedef struct {
+  sqlite3 *db;
+  char *path;
+  dev_t device;
+  ino_t file;
+  pid_t pid;
+  int identity;
+} BatonSqlReadCache;
+
+static pthread_key_t baton_sql_read_key;
+static pthread_once_t baton_sql_read_once = PTHREAD_ONCE_INIT;
+static int baton_sql_read_key_ready;
+static _Atomic int baton_sql_read_live;
+
+static void baton_sql_read_cache_destroy(void *value);
+
+static void baton_sql_read_cache_init(void) {
+  if (pthread_key_create(&baton_sql_read_key, baton_sql_read_cache_destroy) == 0)
+    baton_sql_read_key_ready = 1;
+}
+
+static BatonSqlReadCache *baton_sql_read_cache(int create) {
+  pthread_once(&baton_sql_read_once, baton_sql_read_cache_init);
+  if (!baton_sql_read_key_ready) return NULL;
+  BatonSqlReadCache *cache = pthread_getspecific(baton_sql_read_key);
+  if (!cache && create) {
+    cache = calloc(1, sizeof(*cache));
+    if (!cache) return NULL;
+    if (pthread_setspecific(baton_sql_read_key, cache) != 0) {
+      free(cache);
+      return NULL;
+    }
+  }
+  return cache;
+}
+
+static void baton_sql_read_close(BatonSqlReadCache *cache) {
+  if (!cache) return;
+  sqlite3 *db = cache->db;
+  cache->db = NULL;
+  if (db) {
+    __atomic_sub_fetch(&baton_sql_read_live, 1, __ATOMIC_RELAXED);
+    if (sqlite3_close(db) == SQLITE_BUSY) sqlite3_close_v2(db);
+  }
+  free(cache->path);
+  cache->path = NULL;
+  cache->identity = 0;
+}
+
+static void baton_sql_read_cache_destroy(void *value) {
+  BatonSqlReadCache *cache = value;
+  if (!cache) return;
+  baton_sql_read_close(cache);
+  free(cache);
+}
+
+static sqlite3 *baton_sql_read_open(const char *path, char **error, int *status) {
+  sqlite3 *db = NULL;
+  int code = sqlite3_open_v2(path, &db, SQLITE_OPEN_READONLY, NULL);
+  if (code != SQLITE_OK) {
+    *status = code;
+    *error = sqlite3_mprintf("%s", db ? sqlite3_errmsg(db) : "cannot open database read-only");
+    if (db) sqlite3_close(db);
+    return NULL;
+  }
+  sqlite3_busy_handler(db, baton_sql_busy, NULL);
+  char *failure = NULL;
+  code = sqlite3_exec(db, "PRAGMA foreign_keys=ON;", NULL, NULL, &failure);
+  if (code == SQLITE_OK) code = baton_sql_encoding_status(db, &failure);
+  if (code != SQLITE_OK) {
+    *status = code;
+    *error = sqlite3_mprintf("%s", failure ? failure : sqlite3_errmsg(db));
+    sqlite3_free(failure);
+    sqlite3_close(db);
+    return NULL;
+  }
+  sqlite3_free(failure);
+  *status = SQLITE_OK;
+  return db;
+}
+
+static int baton_sql_read_store(BatonSqlReadCache *cache, sqlite3 *db,
+                                const char *path, pid_t pid, int identity,
+                                const struct stat *info) {
+  char *copy = strdup(path);
+  if (!copy) return 0;
+  cache->db = db;
+  cache->path = copy;
+  cache->pid = pid;
+  cache->identity = identity;
+  cache->device = identity ? info->st_dev : 0;
+  cache->file = identity ? info->st_ino : 0;
+  __atomic_add_fetch(&baton_sql_read_live, 1, __ATOMIC_RELAXED);
+  return 1;
+}
+
+static sqlite3 *baton_sql_read_acquire(const char *path, char **error,
+                                       int *status, int *cached) {
+  BatonSqlReadCache *cache = baton_sql_read_cache(1);
+  struct stat info;
+  int identity = stat(path, &info) == 0;
+  pid_t pid = getpid();
+  *cached = 0;
+  *status = SQLITE_OK;
+  if (!cache) return baton_sql_read_open(path, error, status);
+  if (cache->db &&
+      (cache->pid != pid || !cache->path || strcmp(cache->path, path) != 0 ||
+       !identity || !cache->identity ||
+       cache->device != info.st_dev || cache->file != info.st_ino))
+    baton_sql_read_close(cache);
+  if (!cache->db) {
+    sqlite3 *db = baton_sql_read_open(path, error, status);
+    if (!db) return NULL;
+    if (baton_sql_read_store(cache, db, path, pid, identity, &info)) *cached = 1;
+    return db;
+  }
+  if (!sqlite3_get_autocommit(cache->db)) {
+    sqlite3_exec(cache->db, "ROLLBACK", NULL, NULL, NULL);
+    if (!sqlite3_get_autocommit(cache->db)) {
+      baton_sql_read_close(cache);
+      sqlite3 *db = baton_sql_read_open(path, error, status);
+      if (!db) return NULL;
+      if (baton_sql_read_store(cache, db, path, pid, identity, &info)) *cached = 1;
+      return db;
+    }
+  }
+  *cached = 1;
+  return cache->db;
+}
+
 static void baton_sql_read_call(IoWork *w) {
   BatonSql *call = (BatonSql *)w->data;
-  sqlite3 *db = NULL;
-  call->code = sqlite3_open_v2(call->path, &db, SQLITE_OPEN_READONLY, NULL);
-  if (call->code != SQLITE_OK) {
-    call->error = strdup(db ? sqlite3_errmsg(db) : "cannot open database read-only");
-  } else {
-    sqlite3_busy_handler(db, baton_sql_busy, NULL);
-    char *error = NULL;
-    /* A read-only connection runs no write pragma. Foreign keys are a read-side
-       setting; the opened database's encoding is admitted before any caller SQL
-       because compact projections measure bytes with CAST(text AS BLOB). */
-    call->code = sqlite3_exec(db, "PRAGMA foreign_keys=ON;", NULL, NULL, &error);
-    if (call->code == SQLITE_OK) {
-      int encoding = baton_sql_encoding_status(db, &error);
-      if (encoding != SQLITE_OK) call->code = encoding;
-    }
-    if (call->code == SQLITE_OK)
-      call->code = sqlite3_exec(db, call->sql, baton_sql_row, call, &error);
-    if (call->code != SQLITE_OK) {
-      call->error = strdup(error ? error : sqlite3_errmsg(db));
-      sqlite3_exec(db, "ROLLBACK", NULL, NULL, NULL);
-    }
+  char *error = NULL;
+  int cached = 0;
+  sqlite3 *db = baton_sql_read_acquire(call->path, &error, &call->code, &cached);
+  if (!db) {
+    call->error = strdup(error ? error : "cannot open database read-only");
     sqlite3_free(error);
+    return;
   }
-  if (db) sqlite3_close(db);
+  sqlite3_busy_handler(db, baton_sql_busy, NULL);
+  /* A read-only connection runs no write pragma. Foreign keys are a read-side
+     setting; the opened database's encoding is admitted before any caller SQL
+     because compact projections measure bytes with CAST(text AS BLOB). */
+  call->code = sqlite3_exec(db, "PRAGMA foreign_keys=ON;", NULL, NULL, &error);
+  if (call->code == SQLITE_OK)
+    call->code = sqlite3_exec(db, call->sql, baton_sql_row, call, &error);
+  if (call->code != SQLITE_OK) {
+    call->error = strdup(error ? error : sqlite3_errmsg(db));
+    sqlite3_exec(db, "ROLLBACK", NULL, NULL, NULL);
+    if (cached) {
+      BatonSqlReadCache *cache = baton_sql_read_cache(0);
+      if (cache && cache->db == db) baton_sql_read_close(cache);
+      else sqlite3_close(db);
+    } else {
+      sqlite3_close(db);
+    }
+  } else if (!sqlite3_get_autocommit(db)) {
+    sqlite3_exec(db, "ROLLBACK", NULL, NULL, NULL);
+    if (!sqlite3_get_autocommit(db)) {
+      if (cached) {
+        BatonSqlReadCache *cache = baton_sql_read_cache(0);
+        if (cache && cache->db == db) baton_sql_read_close(cache);
+        else sqlite3_close(db);
+      } else {
+        sqlite3_close(db);
+      }
+    }
+  }
+  sqlite3_free(error);
+  if (!cached) sqlite3_close(db);
 }
+
+#ifdef BATON_SQL_READ_TEST
+typedef struct {
+  int code;
+  char *output;
+  char *error;
+  sqlite3 *connection;
+  int autocommit;
+  int live;
+  pid_t cache_pid;
+} BatonSqlReadTestResult;
+
+static void baton_sql_read_test_forget(void) {
+  BatonSqlReadCache *cache = baton_sql_read_cache(0);
+  if (!cache) return;
+  baton_sql_read_close(cache);
+  free(cache);
+  pthread_setspecific(baton_sql_read_key, NULL);
+}
+
+static int baton_sql_read_test_live(void) {
+  return __atomic_load_n(&baton_sql_read_live, __ATOMIC_RELAXED);
+}
+
+static int baton_sql_read_test_run(const char *path, const char *sql,
+                                   BatonSqlReadTestResult *out) {
+  BatonSql call;
+  memset(&call, 0, sizeof(call));
+  memset(out, 0, sizeof(*out));
+  call.path = strdup(path);
+  call.sql = strdup(sql);
+  if (!call.path || !call.sql) {
+    free(call.path);
+    free(call.sql);
+    return 1;
+  }
+  IoWork work;
+  memset(&work, 0, sizeof(work));
+  work.data = (char *)&call;
+  baton_sql_read_call(&work);
+  out->code = call.code;
+  out->output = strdup(call.output ? call.output : "");
+  out->error = call.error ? strdup(call.error) : NULL;
+  BatonSqlReadCache *cache = baton_sql_read_cache(0);
+  out->connection = cache ? cache->db : NULL;
+  out->autocommit = out->connection ? sqlite3_get_autocommit(out->connection) : 1;
+  out->live = __atomic_load_n(&baton_sql_read_live, __ATOMIC_RELAXED);
+  out->cache_pid = cache ? cache->pid : 0;
+  free(call.path);
+  free(call.sql);
+  free(call.output);
+  free(call.error);
+  return 0;
+}
+#endif
+/* BATON SQL READ CACHE END */
 
 #ifdef CID_SQL_READ
 static Term baton_sql_read_run(Env e, Term *f, IoWork *w) {
