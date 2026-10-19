@@ -22,6 +22,11 @@ The four tests cover policy class names, preview/apply/idempotency, pending
 input, and a symlinked attempt directory. The findings below are outside that
 coverage or contradict the documented contract.
 
+Root later selected the `storage-policy`, `storage-preview SESSION` and
+`storage-apply SESSION` command contract and required the core implementation
+to consolidate into it. The generic storage lifecycle remains unqualified work
+in progress. The findings below still describe the reviewed wonder patch.
+
 ## F1. Two storage implementations conflict
 
 The wonder worktree adds `bend2/src/coordinator/storage-policy.bend` with
@@ -35,10 +40,9 @@ with classes `scratch`, `build-output`, `checkout`, `shared-immutable`,
 `storage-policy preview|apply` reading `BATON_STORAGE_ROOTS`.
 
 The two class vocabularies, command shapes and configuration surfaces are
-incompatible. One implementation must be selected before integration. Root
-selected OS service and timer wiring only for the platform slice, so the
-platform no longer ships a storage config adapter or schedules a storage
-apply command. The review remains against the wonder patch.
+incompatible. Root selected the wonder command contract and required the core
+implementation to consolidate into it. The platform slice ships OS service and
+timer wiring only, with no storage config adapter or apply schedule.
 
 ## F2. The policy JSON does not use the recorded project root
 

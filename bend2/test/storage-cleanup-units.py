@@ -19,9 +19,10 @@ class ScheduledLogCleanup(unittest.TestCase):
     def test_service_runs_logs_clean_all_with_the_database(self):
         service = SERVICE.read_text(encoding='utf-8')
         self.assertIn(
-            'ExecStart=/path/to/baton2 /path/to/state.db logs-clean-all',
+            'ExecStart=/path/to/qualified-release/libexec/baton2/logs-clean-all '
+            '/path/to/state.db',
             service)
-        self.assertIn('Uninstalled template', service)
+        self.assertIn('Deployment template', service)
         self.assertIn('StandardOutput=journal', service)
         self.assertNotIn('Environment=', service)
         self.assertNotIn('storage-policy', service)
@@ -39,8 +40,8 @@ class ScheduledLogCleanup(unittest.TestCase):
             agent = plistlib.load(handle)
         self.assertEqual(agent['Label'], 'com.flip.baton.logs-cleanup')
         self.assertEqual(agent['ProgramArguments'],
-                         ['/path/to/baton2', '/path/to/state.db',
-                          'logs-clean-all'])
+                         ['/path/to/qualified-release/libexec/baton2/'
+                          'logs-clean-all', '/path/to/state.db'])
         self.assertIn('StartCalendarInterval', agent)
         self.assertNotIn('EnvironmentVariables', agent)
         self.assertNotIn('--exec', agent['ProgramArguments'])
