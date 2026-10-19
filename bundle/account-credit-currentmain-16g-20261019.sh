@@ -1,10 +1,15 @@
 #!/bin/sh
 # Focused current-main account-credit qualification.
 #
-# Root runs this once in a finite 16 GiB zero-swap service:
+# Root runs this once in a finite 16 GiB zero-swap service from the exact clean
+# checkout commit:
 #   systemd-run --scope --slice=baton2-build.slice \
 #     -p MemoryMax=16G -p MemorySwapMax=0 -- \
+#     env EXPECTED_HEAD=<exact checkout commit> \
 #     /mnt/nvme4tb/ci-runners/baton2-native-homelab/home/worktrees/accounts-oneuse-currentmain-20261019/bundle/account-credit-currentmain-16g-20261019.sh
+#
+# The script also pins the tested source to ac326067, requires a clean worktree,
+# and exports BATON2_ADMISSION_CGROUP from the admitted unit cgroup.
 #
 # The script refuses outside baton2-build.slice, with nonzero swap, or with a
 # memory ceiling other than 16 or 24 GiB. It checks the three account modules,
@@ -13,17 +18,20 @@
 # not build Main and makes no provider call.
 set -eu
 
-ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd -P)
+ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd -P)
 BEND=${BEND:-/mnt/nvme4tb/ci-runners/baton2-native-homelab/home/.local/share/bend2/releases/2.0.25-27629713-20261018/bin/bend}
 CC=${CC:-clang-19}
 NODE=${NODE:-/mnt/nvme4tb/ci-runners/baton2-native-homelab/home/.local/bin/node}
 PYTHON3=${PYTHON3:-python3}
 OUT=${OUT:-"$ROOT/.scratch/account-credit-currentmain-16g-$(date -u +%Y%m%dT%H%M%SZ)"}
+SOURCE_PIN=ac326067a75e004a85e16f988b8e1dfb52921424
+EXPECTED_HEAD=${EXPECTED_HEAD:-}
 
 refuse() {
   printf 'refused: %s\n' "$1" >&2
   exit 78
 }
+[ -n "$EXPECTED_HEAD" ] || refuse "EXPECTED_HEAD must name the exact clean checkout commit"
 
 [ -x "$BEND" ] || refuse "compiler is not executable: $BEND"
 [ -x "$NODE" ] || refuse "node is not executable: $NODE"
@@ -33,6 +41,7 @@ case "$cgroup" in
   *) refuse "not inside baton2-build.slice: $cgroup" ;;
 esac
 cg="/sys/fs/cgroup$cgroup"
+export BATON2_ADMISSION_CGROUP="$cg"
 [ -r "$cg/memory.max" ] || refuse "memory.max is unreadable: $cg"
 [ -r "$cg/memory.swap.max" ] || refuse "memory.swap.max is unreadable: $cg"
 maximum=$(cat "$cg/memory.max")
@@ -51,7 +60,16 @@ printf 'cgroup=%s\nmemory.max=%s\nmemory.swap.max=0\n' "$cgroup" "$maximum" > "$
 "$NODE" --version > "$OUT/node-version.txt" 2>&1 || refuse "node version query failed"
 
 cd "$ROOT"
-printf 'root=%s\ncommit=%s\nstatus=%s\nbend=%s\ncc=%s\nnode=%s\n' "$ROOT" "$(git rev-parse HEAD)" "$(git status --porcelain | wc -l)" "$BEND" "$CC" "$NODE" > "$OUT/receipt.txt"
+HEAD=$(git rev-parse HEAD)
+[ -z "$(git status --porcelain)" ] || refuse "worktree is not clean: $(git status --porcelain | tr '\n' ' ')"
+git merge-base --is-ancestor "$SOURCE_PIN" "$HEAD" || refuse "HEAD $HEAD does not contain source pin $SOURCE_PIN"
+if ! git diff --quiet "$SOURCE_PIN" -- bend2/harness/api-key-exec.bend bend2/test/account-credits-focused.py bend2/test/account-credits.bend bend2/test/api-key-exec.test.mjs bend2/test/api-key-exec-test-entry.bend bend2/test/account-binding-smoke.py bend2/test/api-key-spec.py bend2/harness/claude-credit-observe.py bend2/src/coordinator/accounts.bend bend2/src/coordinator/subscription-fallback.bend; then
+  refuse "tested source differs from pin $SOURCE_PIN"
+fi
+if [ -n "$EXPECTED_HEAD" ] && [ "$HEAD" != "$EXPECTED_HEAD" ]; then
+  refuse "HEAD $HEAD differs from EXPECTED_HEAD $EXPECTED_HEAD"
+fi
+printf 'root=%s\nsource_pin=%s\nhead=%s\nstatus=%s\nbend=%s\ncc=%s\nnode=%s\n' "$ROOT" "$SOURCE_PIN" "$HEAD" "$(git status --porcelain | wc -l)" "$BEND" "$CC" "$NODE" > "$OUT/receipt.txt"
 
 for src in bend2/src/coordinator/accounts.bend bend2/test/account-credits.bend bend2/src/coordinator/subscription-fallback.bend; do
   name=$(basename "$src")
@@ -76,9 +94,15 @@ printf 'account-fixture build exit=%s\n' "$build" | tee -a "$OUT/receipt.txt"
 diff -u "$OUT/account-fixture-1.stdout" "$OUT/account-fixture-2.stdout" > "$OUT/account-fixture.diff"
 lines=$(wc -l < "$OUT/account-fixture-1.stdout")
 printf 'account-fixture lines=%s output=deterministic sha256=%s\n' "$lines" "$(sha256sum "$OUT/account-fixture-1.stdout" | awk '{print $1}')" | tee -a "$OUT/receipt.txt"
-# The checked-in 45-line expected file predates the current 80-check fixture.
-# Preserve the current deterministic output at $OUT/account-fixture-1.stdout
-# for root to adopt as the new golden in a follow-up review.
+# The checked-in 45-line expected file is historical evidence and is preserved.
+# The current fixture is pinned to 80 output lines: 79 "fixture-account ...: ok"
+# checks plus the final "fixture-accounts-ok" line. Keep the recorded output at
+# $OUT/account-fixture-1.stdout for adoption as the next golden.
+[ "$lines" -eq 80 ] || refuse "fixture output lines=$lines, expected 80"
+ok_lines=$(grep -c '^fixture-account .*: ok$' "$OUT/account-fixture-1.stdout" || true)
+[ "$ok_lines" -eq 79 ] || refuse "fixture ok checks=$ok_lines, expected 79"
+grep -q '^fixture-accounts-ok$' "$OUT/account-fixture-1.stdout" || refuse "fixture final marker is absent"
+printf 'account-fixture checks=%s final=ok\n' "$ok_lines" | tee -a "$OUT/receipt.txt"
 
 build_one() {
   entry=$1
