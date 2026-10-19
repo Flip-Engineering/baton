@@ -65,6 +65,32 @@ An API-key account does not launch through the current package. Its input stays
 owed, and the attempt records the refusal. Subscription routes and other
 harnesses keep their existing bindings.
 
+## Request-level metering and admission
+
+`credit_request_admission` in `bend2/src/coordinator/accounts.bend` decides one
+provider request from a `CreditMeter` reading and a stated maximum charge for
+that request. Amounts are decimal text. The decision reserves the maximum
+charge against the reported promotional balance and against the monthly
+organization cap before a request can be started by a future caller.
+
+The decision refuses with a named reason when any required fact is absent or
+does not match: the account is not the Anthropic `claude-code` `api_key` route,
+the account organization is unverified or differs from the meter organization,
+the newest promotional observation is not `reported`, the meter cycle differs
+from the current billing cycle, the cap period differs from the current
+calendar-month period, any amount is not a canonical decimal or the unit is
+empty, the stated maximum charge is zero, the reserved total plus the maximum
+charge exceeds the reported balance, or the cycle spend plus the reserved total
+plus the maximum charge exceeds the monthly cap. An admitted decision carries
+the organization, cycle, new reserved total, balance after the reserve and cap
+room after the reserve.
+
+`account_binding`, `turn.bend` and `api-key-exec` keep the launch hold in the
+previous section. The remaining steps before an API-key launch is enabled are:
+wire the decision into the request path, record a reservation beside the
+attempt, settle the reservation from the provider outcome, and qualify that
+wiring on a remote runner.
+
 ## Funded credit observations
 
 No documented endpoint returns the remaining promotional credit balance. The
@@ -146,8 +172,9 @@ configuration.
 
 - No balance is synthesized from model output, and subscription quota is never
   read as API credit.
-- No budget, expiry deadline, retry, cost estimate or configurable ceiling
-  controls admission, continuation or validation.
+- Promotional-credit admission for one API-key request uses the meter decision
+  above. Subscription launches keep the selection and fallback rules in the
+  sections above.
 - Linking a plan to a Console organization, accepting program terms, purchasing
   credits and changing billing settings remain operator setup actions.
 - The observed Muse wording `Subscription quota exhausted` is not a marker of
@@ -165,8 +192,12 @@ and unavailable paths against a local fixture server and a closed port, each
 checked for the absence of the secret value in stdout and stderr.
 
 `bend2/test/account-credits.bend` drives the pure funding vocabulary, the
-decimal and reference legality rules, the launch binding for both funding
-routes, the account-binding fallback and the selection rule.
+decimal and reference legality rules, exact decimal addition, subtraction and
+comparison, the request-level admission decision and its named refusals, the
+launch binding for both funding routes, the account-binding fallback and the
+selection rule. One fixture case holds the launch binding refused for an
+account whose meter decision admits a request, which records that this slice
+does not enable a launch.
 `bend2/test/account-credits.py` drives the compiled coordinator through the
 account actions, the organization verification, the unavailable observation,
 the pool deduplication and the launch's attempt record. Both are wired into
