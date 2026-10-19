@@ -18,11 +18,15 @@ sh bend2/scripts/build-native.sh bend2/tests/git.bend .scratch/bend2/git-test
 .scratch/bend2/git-test
 sh bend2/scripts/build-native.sh bend2/tests/land.bend .scratch/bend2/land-test
 .scratch/bend2/land-test
+sh bend2/scripts/build-native.sh bend2/tests/storage.bend .scratch/bend2/storage-test
+.scratch/bend2/storage-test
 sh bend2/scripts/build-native.sh bend2/test/subscription-profiles.bend .scratch/bend2/subscription-profiles-test
 .scratch/bend2/subscription-profiles-test
 sh bend2/scripts/build-native.sh bend2/test/focused-reads.bend .scratch/bend2/focused-reads
 BATON2_EXE="$root/.scratch/bend2/focused-reads" "$PYTHON3" bend2/test/observed-usage.py
 BATON2_EXE="$root/.scratch/bend2/focused-reads" "$PYTHON3" bend2/test/harness-inventory.py
+sh bend2/scripts/build-native.sh bend2/test/knowledge-behavior.bend .scratch/bend2/knowledge-behavior-test
+BATON2_EXE="$root/.scratch/bend2/knowledge-behavior-test" "$PYTHON3" bend2/test/knowledge-behavior.py
 sh bend2/scripts/build-native.sh bend2/harness/api-key-exec.bend .scratch/bend2/api-key-exec
 sh bend2/scripts/build-native.sh bend2/test/api-key-spec.bend .scratch/bend2/api-key-spec
 BATON2_API_KEY_SPEC="$root/.scratch/bend2/api-key-spec" "$PYTHON3" bend2/test/api-key-spec.py
@@ -44,6 +48,9 @@ rm -f .scratch/bend2/usage-windows-wake.db
 sh bend2/scripts/build-native.sh bend2/test/usage-windows-wake-path.bend .scratch/bend2/usage-windows-wake-path-test
 rm -f .scratch/bend2/usage-windows-wake-path.db
 .scratch/bend2/usage-windows-wake-path-test .scratch/bend2/usage-windows-wake-path.db
+sh bend2/scripts/build-native.sh bend2/test/quota-exhaustion-reset.bend .scratch/bend2/quota-exhaustion-reset-test
+rm -f .scratch/bend2/quota-exhaustion-reset.db
+.scratch/bend2/quota-exhaustion-reset-test .scratch/bend2/quota-exhaustion-reset.db
 BATON2_API_KEY_EXEC="$root/.scratch/bend2/api-key-exec" "$PYTHON3" bend2/scripts/check-native-parallel.py "$PYTHON3"
 sh bend2/scripts/build-native.sh bend2/test/omp-home-preflight.bend .scratch/bend2/omp-home-preflight-test
 BATON2_EXE="$root/.scratch/bend2/omp-home-preflight-test" "$PYTHON3" bend2/test/omp-home-preflight.py

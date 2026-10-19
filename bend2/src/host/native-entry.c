@@ -81,6 +81,8 @@ static int dispatch_entry(int argc,char **argv) {
   int first=0;
   const char *verb=NULL;
   const char *database="",*project=NULL;
+  if(argc>1 && (!strcmp(argv[1],"help") || !strcmp(argv[1],"--help") ||
+                !strcmp(argv[1],"-h"))) return -1;
   if(argc>1 && dispatch_verb(argv[1])) {verb=argv[1];first=2;}
   else if(argc>3 && !strcmp(argv[1],"--project") && dispatch_verb(argv[3])) {
     verb=argv[3];project=argv[2];first=4;
@@ -137,7 +139,9 @@ static int focused_receiver_verb(int argc,char **argv) {
   if(!strcmp(first,"--dispatch-message") || !strcmp(first,"--host-process-keeper") ||
      !strcmp(first,"--instance-owner") || !strcmp(first,"--instance-shutdown")) return 1;
   if(argc>2 && (!strcmp(argv[2],"receive") || !strcmp(argv[2],"turn") ||
-                !strcmp(argv[2],"turn-text") || !strcmp(argv[2],"agent-native-input"))) return 1;
+                !strcmp(argv[2],"turn-text") || !strcmp(argv[2],"agent-native-input") ||
+                !strcmp(argv[2],"register-receiver") || !strcmp(argv[2],"storage-policy") ||
+                !strcmp(argv[2],"storage-preview") || !strcmp(argv[2],"storage-apply"))) return 1;
   return 0;
 }
 
@@ -154,7 +158,9 @@ static int native_receiver_route(int argc, char **argv) {
     !strcmp(argv[1],"--host-process-keeper") || !strcmp(argv[1],"--instance-owner") ||
     !strcmp(argv[1],"--instance-shutdown") || recovery);
   if(argc>2 && (!strcmp(argv[2],"receive") || !strcmp(argv[2],"turn") ||
-      !strcmp(argv[2],"turn-text") || !strcmp(argv[2],"recover-observer"))) focused_verb=1;
+      !strcmp(argv[2],"turn-text") || !strcmp(argv[2],"recover-observer") ||
+      !strcmp(argv[2],"register-receiver") || !strcmp(argv[2],"storage-policy") ||
+      !strcmp(argv[2],"storage-preview") || !strcmp(argv[2],"storage-apply"))) focused_verb=1;
   if(!native_input && !focused_verb) return -1;
   char *full=application_executable();
   char *directory=full?strdup(full):NULL;
@@ -192,7 +198,7 @@ static int native_receiver_route(int argc, char **argv) {
 #endif
 
 #if defined(BATON2_RECEIVE_FOCUSED) || defined(BATON2_RECOVERY_HELPER)
-static int delegate_full_cli(char **argv) {
+static int delegate_sibling_cli(char **argv,const char *name,const char *role) {
   char *executable=application_executable();
   char *directory=executable?strdup(executable):NULL;
   char *slash=directory?strrchr(directory,'/'):NULL;
@@ -202,24 +208,42 @@ static int delegate_full_cli(char **argv) {
     return 78;
   }
   *slash=0;
-  size_t size=strlen(directory)+sizeof("/baton-full");
+  size_t size=strlen(directory)+strlen(name)+2;
   char *candidate=malloc(size);
   if(!candidate) {
     free(directory);free(executable);
     perror("baton: full CLI path");
     return 1;
   }
-  snprintf(candidate,size,"%s/baton-full",directory);
+  snprintf(candidate,size,"%s/%s",directory,name);
   char *full=realpath(candidate,NULL);
   free(candidate);free(directory);free(executable);
   if(!full || access(full,X_OK)) {
-    fputs("baton: sibling baton-full is missing or not executable. Install the complete Baton package.\n",stderr);
+    if(!strcmp(role,"full CLI"))
+      fputs("baton: sibling baton-full is missing or not executable. Install the complete Baton package.\n",stderr);
+    else
+      fputs("baton: sibling baton-recovery is missing or not executable. Install the complete Baton package.\n",stderr);
     free(full);return 78;
   }
   argv[0]=full;
   execv(full,argv);
-  perror("baton: full CLI could not execute");
+  if(!strcmp(role,"full CLI"))perror("baton: full CLI could not execute");
+  else perror("baton: recovery helper could not execute");
   free(full);return 1;
+}
+
+static int delegate_full_cli(char **argv) {
+  return delegate_sibling_cli(argv,"baton-full","full CLI");
+}
+#endif
+
+#ifdef BATON2_RECEIVE_FOCUSED
+static int focused_recovery_route(int argc,char **argv) {
+  int recovery=(argc>1 && (!strcmp(argv[1],"--recover-observer") ||
+                           !strcmp(argv[1],"--recover-receive"))) ||
+               (argc>2 && !strcmp(argv[2],"recover-observer"));
+  if(!recovery) return -1;
+  return delegate_sibling_cli(argv,"baton-recovery","recovery helper");
 }
 #endif
 
@@ -246,6 +270,10 @@ int main(int argc, char **argv) {
 #endif
   int settings=settings_entry(argc,argv);
   if(settings>=0) return settings;
+#ifdef BATON2_RECEIVE_FOCUSED
+  int recovery_route=focused_recovery_route(argc,argv);
+  if(recovery_route>=0) return recovery_route;
+#endif
   int dispatch=dispatch_entry(argc,argv);
   if(dispatch>=0) return dispatch;
 #ifdef BATON2_NATIVE_RECEIVER_ROUTER

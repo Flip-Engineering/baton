@@ -321,7 +321,7 @@ def wake_fenced_gate(+db: String, +session: String, +cursor: String, launch: Str
 
 def wake_fenced_gated(+db: String, +session: String, +cursor: String, launch: String -> IO(Result<&1,&1,U32 & String,Unit>), lock: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
-    +label : String <- Subs.profile_label_io(db,session)
+    +label : String <- Accounts.handoff_label_io(db,session)
     gate : UW.Gate <- UW.window_gate(db,session,Tx.trim_nl(label))
     next : Result<&1,&1,U32 & String,Unit> <- wake_fenced_gate(db,session,cursor,launch,lock,gate)
     IO.pure(Result<&1,&1,U32 & String,Unit>,next)
@@ -415,8 +415,10 @@ def finish_pending(+db: String, +session: String, id: String, attempt: String, l
     +failed : Bool <- outcome_failed(db,outcome)
     owed : Bool <- wake_owed(db,session,cursor)
     +transient : Bool <- transient_provider_error(db,outcome)
+    +exhaustion : String <- Subs.exhaustion_cause(db,terminal_event(outcome))
+    +exhausted : Bool = Bool.not(String.is_empty(exhaustion))
     delivery_task : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,Turn.finish(db,session,id,log,outcome))
-    continued_task : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),superseded,IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),continue_pending(db,session,cursor,previous => again(Bool.pick(String,Bool.and(failed,transient),attempt,previous)))))
+    continued_task : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),Bool.or(superseded,exhausted),IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),continue_pending(db,session,cursor,previous => again(Bool.pick(String,Bool.and(failed,transient),attempt,previous)))))
     finished : Result<&1,&1,U32 & String,Unit> <- IO.join(Result<&1,&1,U32 & String,Unit>,delivery_task)
     questions : Result<&1,&1,U32 & String,Unit> <- NativeRequests.settle(deliveries)
     stopped : Bool <- Stop.stopped(db,session)
@@ -703,18 +705,42 @@ def started(+db: String, +session: String, +id: String, +log: String, cursor: St
 # native process exists: the claim names the head unacknowledged message as
 # owner and fences the generation past any stale row, so a driver that dies
 # before launch never suppresses the next wake.
+#
+# The receiver endpoint is also entered directly by retained endpoints, so the
+# usage gate is checked under this admission's held session lock before any
+# native process exists: a held window reports the hold, schedules the reset
+# continuation, releases the lock and leaves the input owed. The message is not
+# claimed, so the next wake still owns it.
+def window_held_start(+db: String, +session: String, +head: String, +lock: U32, gate: UW.Gate) -> IO(Bool):
+  match gate:
+    case UW.GateHeld{+window,+resets_at,+source,+receipt}:
+      Bool.pick(IO(Bool),String.is_empty(head),
+        IO.pure(Bool,False{}),
+        do IO<Bool>:
+          held : Unit <- UW.report_held(db,session,head,UW.GateHeld{window,resets_at,source,receipt})
+          scheduled : Unit <- UW.schedule_held(db,head,resets_at)
+          released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
+          IO.pure(Bool,True{}))
+    case other: IO.pure(Bool,False{})
+
 def start_admitted(+db: String, +session: String, +id: String, +cmd: String, route: String, thinking: String, +workspace: String, +log: String, +lock: U32, cursor: String, +native: String, +attempt: String, +harness: String, storage: String, prompt: String, recovery: String, predecessor: String, again: String -> IO(Result<&1,&1,U32 & String,Unit>), allowed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match allowed:
     case False{}: do IO<Result<&1,&1,U32 & String,Unit>>:
       released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
       IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(2,"Session is terminally stopped; queued input will not execute. Read its session and retained inbox.")})
     case True{}: do IO<Result<&1,&1,U32 & String,Unit>>:
-      head : String <- wake_found(db,session,"0")
-      owned : Unit <- Store.claim(db,session,head)
-      +policy : Logs.Policy <- Logs.policy(db,session)
-      +level : String <- IO.pure(String,Turn.policy_level(policy))
-      start : P.RetainedStart <- IO.try(P.RetainedStart,Turn.retained(db,session,attempt,cmd,route,thinking,workspace,native,harness,storage,prompt,lock,recovery,level,predecessor))
-      started(db,session,id,log,cursor,native,workspace,attempt,harness,level,lock,start,again,cmd)
+      +head : String <- wake_found(db,session,"0")
+      +label : String <- Accounts.handoff_label_io(db,session)
+      gate : UW.Gate <- UW.window_gate(db,session,Tx.trim_nl(label))
+      held : Bool <- window_held_start(db,session,head,lock,gate)
+      Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),held,
+        IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),
+        do IO<Result<&1,&1,U32 & String,Unit>>:
+          owned : Unit <- Store.claim(db,session,head)
+          +policy : Logs.Policy <- Logs.policy(db,session)
+          +level : String <- IO.pure(String,Turn.policy_level(policy))
+          start : P.RetainedStart <- IO.try(P.RetainedStart,Turn.retained(db,session,attempt,cmd,route,thinking,workspace,native,harness,storage,prompt,lock,recovery,level,predecessor))
+          started(db,session,id,log,cursor,native,workspace,attempt,harness,level,lock,start,again,cmd))
 
 def input_text(decoded: Req.Scalar) -> IO(String):
   match decoded:
@@ -738,7 +764,7 @@ def selected(+db: String, +session: String, +cmd: String, +model: String, +effor
       storage : String <- IO.try(String,DB.Sql.query(db,"SELECT CASE WHEN parent IS NULL THEN " ++ C.q(db ++ ".root-sessions") ++ " ELSE " ++ C.q(db ++ ".session-") ++ " || lower(hex(id)) END FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
       ident : String <- IO.try(String,DB.Sql.query(db,"SELECT 'receive:' || " ++ C.q(session) ++ " || ':' || CAST(" ++ C.q(cursor) ++ " AS INTEGER) || ':' || lower(hex(randomblob(16)));"))
       +id : String <- IO.pure(String,Tx.trim_nl(ident))
-      +selection : String <- IO.try(String,DB.Sql.query(db,"SELECT json_object('ids',json_group_array(id),'text',coalesce(group_concat(input,char(10)||char(10)),'')) FROM (SELECT id,CASE WHEN kind='report' THEN 'Message (report) from ' || sender || ' [id: ' || id || '] retained ' || CAST(length(CAST(body AS BLOB)) AS TEXT) || ' bytes; read the complete body with baton read ' || id || '.' ELSE 'Message (' || kind || ') from ' || sender || ' [id: ' || id || ']:' || char(10) || body END AS input FROM messages WHERE recipient=" ++ C.q(session) ++ " AND receipt IS NULL AND seq<=CAST(" ++ C.q(cursor) ++ " AS INTEGER) ORDER BY seq);"))
+      +selection : String <- IO.try(String,DB.Sql.query(db,"SELECT json_object('ids',json_group_array(id),'text',coalesce(group_concat(input,char(10)||char(10)),'')) FROM (SELECT id,CASE WHEN kind='task' OR kind='task-assignment' THEN 'Message (' || kind || ') from ' || sender || ' [id: ' || id || ']:' || char(10) || body ELSE 'Message (' || kind || ') from ' || sender || ' [id: ' || id || '] retained ' || CAST(length(CAST(body AS BLOB)) AS TEXT) || ' bytes; read the complete body with baton read ' || id || '.' END AS input FROM messages WHERE recipient=" ++ C.q(session) ++ " AND receipt IS NULL AND seq<=CAST(" ++ C.q(cursor) ++ " AS INTEGER) ORDER BY seq);"))
       body_hex : String <- IO.try(String,DB.Sql.read(db,"SELECT hex(json_extract(" ++ C.q(selection) ++ ",'$.text'));"))
       body : String <- input_text(Req.decode_scalar_utf8(Tx.hex_decode(Tx.trim_nl(body_hex))))
       +inputs : String <- IO.try(String,DB.Sql.read(db,"SELECT json_extract(" ++ C.q(selection) ++ ",'$.ids');"))
@@ -755,10 +781,15 @@ def acquired_pending(+db: String, +session: String, cmd: String, model: String, 
     +cursor : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce(max(seq),0) FROM messages WHERE recipient=" ++ C.q(session) ++ " AND receipt IS NULL;"))
     selected(db,session,cmd,model,effort,cwd,log,lock,cursor,Bool.not(String.eq(cursor,"0\n")),again,predecessor)
 
+# Recovery arguments store harness names as raw argv fields. Recovery consumers use the newline-terminated form returned by SQLite.
+def recovered_harness(+harness: String) -> String:
+  Tx.trim_nl(harness) ++ "\n"
+
 def observe_guarded(+db: String, +session: String, +id: String, cursor: String, cmd: String, model: String, effort: String, +cwd: String, +log: String, harness: String, +directory: String, native: String, +handle: U32, lock: Maybe<U32>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), adopted: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
+    +normalized_harness : String <- IO.pure(String,recovered_harness(harness))
     reconciled : Unit <- Stop.observing(db,session,id,directory)
-    observation : Turn.Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- Turn.retained_output(db,session,id,log,harness,directory,directory,handle,"unknown")
+    observation : Turn.Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- Turn.retained_output(db,session,id,log,normalized_harness,directory,directory,handle,"unknown")
     completed_observation(db,session,id,log,cursor,native,cwd,directory,handle,lock,observation,again,adopted,cmd)
 
 def recovery_arguments(args: List<&2,String>) -> List<&2,String>:

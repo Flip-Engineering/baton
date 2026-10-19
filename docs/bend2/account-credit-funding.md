@@ -55,15 +55,73 @@ An account stores a reference. The launch resolves it.
 A subscription account binds the credential directory the harness reads, through
 the existing `CODEX_HOME` or `CLAUDE_CONFIG_DIR` binding.
 
-Anthropic API-key accounts remain recorded but their launch binding is held
-until request-level promotional-credit admission is installed. The coordinator
-refuses the attempt before spawn, and the packaged `api-key-exec` helper returns
-`creditAdmissionUnavailable` before resolving a secret or starting a child.
-The credit observations describe source readings; they do not authorize a spend.
+An Anthropic API-key launch passes through `credit_launch_binding` in
+`bend2/src/coordinator/accounts.bend`. That function reads the route status
+from the recorded observations and returns no binding for the API-key route.
+The status is one of the eligibility results below. The packaged
+`api-key-exec` helper runs only when a `BATON2_CREDIT_RESERVATION` environment
+marker naming the attempt is present and matches `BATON_ATTEMPT_DIRECTORY`;
+no current binding sets that marker, and the helper also requires a
+`credit_authorizations` row for the attempt in `BATON_DATABASE`, so the helper
+returns `creditAdmissionUnavailable` before resolving a secret or starting a
+child. A marker by itself is not authorization. `credit_record_authorization`
+writes that row only for an eligible route status, in one transaction that
+selects the newest reported promotional observation, and the row records the
+actual reported balance, unit, cycle and the account secret reference. The
+helper binds the row to the reference the account names and consumes it in one
+guarded `UPDATE` restricted to the attempt, that reference and the `authorized`
+state. The caller is admitted only when the statement changes exactly one row.
+A later caller is refused with `creditAuthorizationConsumed`, a different
+reference with `creditAuthorizationMismatch`, and an unreadable database, a
+busy database or a zero-change update with `creditAdmissionUnavailable`. The
+SQLite busy handler in `bend2/src/host/sqlite.c` waits at most 3000 retries of
+10ms for one lock and then returns `SQLITE_BUSY` to the caller.
+The attempt is not started and its input stays owed. Subscription routes and
+other harnesses keep their existing bindings.
 
-An API-key account does not launch through the current package. Its input stays
-owed, and the attempt records the refusal. Subscription routes and other
-harnesses keep their existing bindings.
+## Request-level metering and admission
+
+`credit_request_admission` in `bend2/src/coordinator/accounts.bend` decides one
+provider request from a `CreditMeter` reading and a stated maximum charge for
+that request. Amounts are decimal text. The decision reserves the maximum
+charge against the reported promotional balance and against the monthly
+organization cap before a request can be started by a future caller.
+
+The decision refuses with a named reason when any required fact is absent or
+does not match: the account is not the Anthropic `claude-code` `api_key` route,
+the account organization is unverified or differs from the meter organization,
+the newest promotional observation is not `reported`, the meter cycle differs
+from the current billing cycle, the cap period differs from the current
+calendar-month period, any amount is not a canonical decimal or the unit is
+empty, the stated maximum charge is zero, the reserved total plus the maximum
+charge exceeds the reported balance, or the cycle spend plus the reserved total
+plus the maximum charge exceeds the monthly cap. An admitted decision carries
+the organization, cycle, new reserved total, balance after the reserve and cap
+room after the reserve. The stated maximum charge is an input to this
+decision. Current source has no per-request caller for it, and a retained
+launch is not one provider request.
+
+Route eligibility reads actual recorded facts: the Anthropic `claude-code`
+`api_key` route, a verified organization, and the newest `promotional_credit`
+observation for that organization with its reported balance and unit. A
+reported zero balance reads `promotionalCreditExhausted`. Subscription quota
+and promotional credit are separate facts; a subscription account reads
+`notPromotionalCreditRoute` from this check and keeps its own route.
+
+A reported promotional balance does not prove that the provider will refuse
+usage that incurs billing. A retained launch contains an unbounded number of
+provider requests, and Baton has no
+point that sees each request the Claude CLI makes. Current source records no
+per-request charge and no launch charge. Actual provider cost enters the
+record as `external_spend` observations from the Admin cost report, at
+organization scope. The Claude result frame cost field is not parsed by
+current source. These are the missing data points for per-request accounting:
+a per-request interception point, per-request or per-launch actual cost
+parsing, and a live verified organization with a placed credential.
+
+Credit-only routing stays held until those data points exist and a route
+using them is qualified. Deployment requires a package built from this source
+and the coordinator qualification the release process runs.
 
 ## Funded credit observations
 
@@ -146,14 +204,15 @@ configuration.
 
 - No balance is synthesized from model output, and subscription quota is never
   read as API credit.
-- No budget, expiry deadline, retry, cost estimate or configurable ceiling
-  controls admission, continuation or validation.
+- Promotional-credit admission for one API-key request uses the meter decision
+  above. Subscription launches keep the selection and fallback rules in the
+  sections above.
 - Linking a plan to a Console organization, accepting program terms, purchasing
   credits and changing billing settings remain operator setup actions.
-- The observed Muse wording `Subscription quota exhausted` is not a marker of
-  this module. Whether that refusal should advance an account is a separate
-  finding for #670 and #702, recorded in the delivery report rather than changed
-  here without an observed run.
+- The observed Muse wording `Subscription quota exhausted` classifies as
+  provider usage exhaustion (#907). The account handoff records the provider
+  reset and advances only to a further recorded account; the wake gate holds
+  the refused account until that reset.
 
 ## Verification
 
@@ -165,8 +224,12 @@ and unavailable paths against a local fixture server and a closed port, each
 checked for the absence of the secret value in stdout and stderr.
 
 `bend2/test/account-credits.bend` drives the pure funding vocabulary, the
-decimal and reference legality rules, the launch binding for both funding
-routes, the account-binding fallback and the selection rule.
+decimal and reference legality rules, exact decimal addition, subtraction and
+comparison, the request-level admission decision and its named refusals, the
+launch binding for both funding routes, the account-binding fallback and the
+selection rule. One fixture case holds the launch binding refused for an
+account whose meter decision admits a request, which records that this slice
+does not enable a launch.
 `bend2/test/account-credits.py` drives the compiled coordinator through the
 account actions, the organization verification, the unavailable observation,
 the pool deduplication and the launch's attempt record. Both are wired into
