@@ -56,17 +56,15 @@ A subscription account binds the credential directory the harness reads, through
 the existing `CODEX_HOME` or `CLAUDE_CONFIG_DIR` binding.
 
 An Anthropic API-key launch passes through `credit_launch_binding` in
-`bend2/src/coordinator/accounts.bend`. That function builds the meter from the
-recorded observations and reservations, runs the admission decision in the next
-section, and records a `credit_reservations` row for the attempt when the
-decision admits. The admitted binding carries a `BATON2_CREDIT_RESERVATION` environment
-assignment naming the attempt, placed before the helper path so the launch
-environment sets it for the helper. The packaged `api-key-exec` helper runs
-only when that marker is present and matches `BATON_ATTEMPT_DIRECTORY` when
-that variable is set; it returns `creditAdmissionUnavailable` before resolving
-a secret or starting a child in every other case. A refused decision records no reservation, the attempt is not
-started, and its input stays owed. Subscription routes and other harnesses keep
-their existing bindings.
+`bend2/src/coordinator/accounts.bend`. That function reads the route status
+from the recorded observations and returns no binding for the API-key route.
+The status is one of the eligibility results below. The packaged
+`api-key-exec` helper runs only when a `BATON2_CREDIT_RESERVATION` environment
+marker naming the attempt is present and matches `BATON_ATTEMPT_DIRECTORY`;
+no current binding sets that marker, so the helper returns
+`creditAdmissionUnavailable` before resolving a secret or starting a child.
+The attempt is not started and its input stays owed. Subscription routes and
+other harnesses keep their existing bindings.
 
 ## Request-level metering and admission
 
@@ -86,21 +84,30 @@ empty, the stated maximum charge is zero, the reserved total plus the maximum
 charge exceeds the reported balance, or the cycle spend plus the reserved total
 plus the maximum charge exceeds the monthly cap. An admitted decision carries
 the organization, cycle, new reserved total, balance after the reserve and cap
-room after the reserve.
+room after the reserve. The stated maximum charge is an input to this
+decision. Current source has no per-request caller for it, and a retained
+launch is not one provider request.
 
-The database meter uses the newest `promotional_credit` observation for the
-verified organization, the sum of `reserved` reservation amounts for that
-cycle, and the sum of `settled` reservation amounts for the current
-calendar-month cap period. The monthly cap is 200 in the meter unit per
-organization, the single-account bound for the pooled balance. One retained
-launch reserves 20 in the meter unit. `attempt_completed` settles the
-attempt's reservation at the reserved amount and records the provider outcome
-beside it. A provider cost observation for an attempt is the record that can
-replace the reserved amount as the settled charge for that attempt.
+Route eligibility reads actual recorded facts: the Anthropic `claude-code`
+`api_key` route, a verified organization, and the newest `promotional_credit`
+observation for that organization with its reported balance and unit. A
+reported zero balance reads `promotionalCreditExhausted`. Subscription quota
+and promotional credit are separate facts; a subscription account reads
+`notPromotionalCreditRoute` from this check and keeps its own route.
 
-Deployment requires a package built from this source and the coordinator
-qualification the release process runs. A deployment built from earlier source
-keeps the previous hold behavior.
+The provider enforces the promotional balance on each API request. A retained
+launch contains an unbounded number of provider requests, and Baton has no
+point that sees each request the Claude CLI makes. Current source records no
+per-request charge and no launch charge. Actual provider cost enters the
+record as `external_spend` observations from the Admin cost report, at
+organization scope. The Claude result frame cost field is not parsed by
+current source. These are the missing data points for per-request accounting:
+a per-request interception point, per-request or per-launch actual cost
+parsing, and a live verified organization with a placed credential.
+
+Credit-only routing stays held until those data points exist and a route
+using them is qualified. Deployment requires a package built from this source
+and the coordinator qualification the release process runs.
 
 ## Funded credit observations
 

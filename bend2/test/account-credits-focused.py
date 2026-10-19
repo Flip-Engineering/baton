@@ -247,42 +247,31 @@ class FocusedAccountCredits(unittest.TestCase):
         if balance is not None:
             self.import_credit('claude-api', 'org-fixture', balance)
 
-    def reservations(self):
-        return self.query("SELECT attempt,state,max_charge,organization,cycle FROM credit_reservations ORDER BY attempt")
+    def reservation_tables(self):
+        return self.query("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='credit_reservations'")[0][0]
 
-    def test_gate_admits_reserves_and_settles_one_launch(self):
+    def test_gate_holds_an_eligible_credit_account_and_records_no_reservation(self):
         self.credit_account()
-        self.assertEqual(self.gate('attempt-1'), 'BATON2_CREDIT_RESERVATION=attempt-1')
-        self.assertEqual(self.reservations(), [('attempt-1', 'reserved', '20', 'org-fixture', '2026-10')])
-        self.complete('attempt-1')
-        self.assertEqual(self.reservations(), [('attempt-1', 'settled', '20', 'org-fixture', '2026-10')])
-        self.assertEqual(self.gate('attempt-2'), 'BATON2_CREDIT_RESERVATION=attempt-2')
+        self.assertIn('credit-only routing is not proven', self.gate('attempt-1'))
+        self.assertEqual(self.reservation_tables(), 0)
 
-    def test_gate_refuses_an_unverified_organization_and_records_no_reservation(self):
+    def test_gate_refuses_a_reported_zero_balance(self):
+        self.credit_account(balance='0.00')
+        self.assertIn('promotionalCreditExhausted', self.gate('attempt-1'))
+
+    def test_gate_refuses_an_unverified_organization(self):
         self.record('claude-api', funding='api_key', secret='file:/fixture/api')
         self.bind('claude-api', 'leaf')
         self.assertIn('organizationUnverified', self.gate('attempt-1'))
-        self.assertEqual(self.reservations(), [])
 
     def test_gate_refuses_without_a_reported_credit_observation(self):
         self.credit_account(balance=None)
         self.assertIn('creditObservationUnavailable', self.gate('attempt-1'))
-        self.assertEqual(self.reservations(), [])
 
-    def test_gate_refuses_when_reserved_launches_reach_the_balance(self):
-        self.credit_account(balance='30.00')
-        self.assertEqual(self.gate('attempt-1'), 'BATON2_CREDIT_RESERVATION=attempt-1')
-        self.assertIn('promotionalCreditInsufficient', self.gate('attempt-2'))
-        self.assertEqual([row[0] for row in self.reservations()], ['attempt-1'])
-
-    def test_gate_refuses_when_settled_launches_reach_the_monthly_cap(self):
-        self.credit_account()
-        for index in range(10):
-            attempt = 'attempt-%d' % index
-            self.assertTrue(self.gate(attempt).startswith('BATON2_CREDIT_RESERVATION='))
-            self.complete(attempt)
-        self.assertIn('monthlyCapInsufficient', self.gate('attempt-10'))
-        self.assertEqual(len(self.reservations()), 10)
+    def test_gate_keeps_the_subscription_binding(self):
+        self.record('claude-max')
+        self.bind('claude-max', 'leaf')
+        self.assertEqual(self.gate('attempt-1'), 'CLAUDE_CONFIG_DIR=/fixture/store')
 
     def observe(self, label, organization, observed_at=1760000000000):
         return self.observe_detail(label, self.observation_document(organization, observed_at))

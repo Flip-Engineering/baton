@@ -115,6 +115,15 @@ def admission_checks() -> IO(Unit):
     held : Unit <- binding_refuses(A.account_binding("claude-code",Some{A.Ac{"claude-credit","anthropic","claude-code","api_key","file:/fixture/secrets/api","org-fixture","2026-10-18"}},Some{"/fixture/libexec/api-key-exec"},""),"admission-does-not-lift-launch-hold")
     IO.pure(Unit,Unit{})
 
+def eligibility_checks() -> IO(Unit):
+  do IO<Unit>:
+    eligible : Unit <- check("eligibility-reported-balance",String.eq(A.credit_route_eligibility(A.Ac{"claude-credit","anthropic","claude-code","api_key","file:/fixture/secrets/api","org-fixture","2026-10-18"},A.CMeter{"org-fixture","reported","2026-10","200.00","USD","","","",""}),"eligible"))
+    exhausted : Unit <- check("eligibility-reported-zero-is-exhausted",String.eq(A.credit_route_eligibility(A.Ac{"claude-credit","anthropic","claude-code","api_key","file:/fixture/secrets/api","org-fixture","2026-10-18"},A.CMeter{"org-fixture","reported","2026-10","0.00","USD","","","",""}),"promotionalCreditExhausted"))
+    unavailable : Unit <- check("eligibility-unavailable-observation",String.eq(A.credit_route_eligibility(A.Ac{"claude-credit","anthropic","claude-code","api_key","file:/fixture/secrets/api","org-fixture","2026-10-18"},A.CMeter{"org-fixture","unavailable","2026-10","","USD","","","",""}),"creditObservationUnavailable"))
+    unverified : Unit <- check("eligibility-unverified-organization",String.eq(A.credit_route_eligibility(A.Ac{"claude-credit","anthropic","claude-code","api_key","file:/fixture/secrets/api","","2026-10-18"},A.CMeter{"org-fixture","reported","2026-10","200.00","USD","","","",""}),"organizationUnverified"))
+    subscription : Unit <- check("eligibility-subscription-is-distinct",String.eq(A.credit_route_eligibility(A.Ac{"claude-max","anthropic","claude-code","subscription","/fixture/stores/claude","org-fixture","2026-10-18"},A.CMeter{"org-fixture","reported","2026-10","200.00","USD","","","",""}),"notPromotionalCreditRoute"))
+    IO.pure(Unit,Unit{})
+
 def vocabulary_checks() -> IO(Unit):
   do IO<Unit>:
     subscription : Unit <- check("funding-subscription",A.funding_known("subscription"))
@@ -163,6 +172,7 @@ def main() -> IO(Unit):
     dec : Unit <- decimal_checks()
     arith : Unit <- decimal_arith_checks()
     admission : Unit <- admission_checks()
+    eligibility : Unit <- eligibility_checks()
     vocab : Unit <- vocabulary_checks()
     operations : Unit <- operation_checks()
     binds : Unit <- binding_checks()
