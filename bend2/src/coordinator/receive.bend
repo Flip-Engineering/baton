@@ -1,5 +1,6 @@
 import Base
 import ./agent-guidance.bend as AgentGuidance
+import ./agent-input.bend as AgentInput
 import ../coordinator/commands.bend as C
 import ./../coordinator/logs.bend as Logs
 import ../harness/omp-player.bend as Omp
@@ -455,6 +456,21 @@ def wake_if_kept(db: String, session: String, cursor: String, superseded: Bool, 
     case True{}: IO.pure(Result<&1,&1,U32 & String,Unit>,finished)
     case False{}: completed_wake(db,session,cursor,finished)
 
+def completion_cursor(db: String, handle: U32, fallback: String) -> IO(String):
+  do IO<String>:
+    +checkpoint_state : Observer.State <- Observer.restore(db,handle,False{})
+    value : String <- IO.pure(String,Observer.cursor(checkpoint_state))
+    +trimmed : String <- IO.pure(String,Tx.trim_nl(value))
+    IO.pure(String,Bool.pick(String,String.is_empty(trimmed),fallback,trimmed))
+
+def consume_completed(+db: String, session: String, attempt: String, native: String, +initial_cursor: String, success: Bool, handle: U32) -> IO(Unit):
+  match success:
+    case False{}: IO.pure(Unit,Unit{})
+    case True{}: do IO<Unit>:
+      delivered : String <- completion_cursor(db,handle,initial_cursor)
+      consumed : Unit <- AgentInput.consume_delivered(db,session,attempt,native,initial_cursor,delivered)
+      IO.pure(Unit,Unit{})
+
 # Successful observations and complete recoverable provider errors resume all owed
 # input. Other failures retain the attempt cursor. A recorded profile advance runs
 # its own continuation, and completion operations preserve their results.
@@ -465,11 +481,13 @@ def release_native(db: String, +handle: U32) -> IO(Unit):
     +monitor : Bool <- Observer.monitor_handle(db,handle)
     Bool.pick(IO(Unit),monitor,IO.pure(Unit,Unit{}),IO.try(Unit,P.ProcessChild.release(handle)))
 
-def completed(+db: String, +session: String, +id: String, +log: String, attempt: String, stderr: String, +cursor: String, +handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), +superseded: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+def completed(+db: String, +session: String, +id: String, +log: String, +attempt: String, native: String, stderr: String, +cursor: String, +handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), +superseded: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     failed : Bool <- outcome_failed(db,outcome)
     transient : Bool <- transient_provider_error(db,outcome)
     +pending_cursor : String <- IO.pure(String,Bool.pick(String,Bool.and(failed,Bool.not(Bool.and(transient,observation_clear(outcome)))),cursor,"0"))
+    success : Bool <- Turn.settlement_success(db,outcome)
+    consumed : Unit <- consume_completed(db,session,id,native,cursor,Bool.and(success,Bool.not(String.is_empty(attempt))),handle)
     prepared : Unit <- Turn.prepare(db,session,id,log,stderr,outcome)
     observer_released : Unit <- release_observer(lock)
     native_released : Unit <- release_native(db,handle)
@@ -510,7 +528,7 @@ def restart_pending(+db: String, +session: String, +id: String, attempt: String,
 
 def complete_or_restart(db: String, session: String, id: String, log: String, stderr: String, attempt: String, cursor: String, native: String, cwd: String, handle: U32, lock: Maybe<U32>, outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), gone: Bool, superseded: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match gone:
-    case False{}: completed(db,session,id,log,attempt,stderr,cursor,handle,lock,outcome,deliveries,again,superseded)
+    case False{}: completed(db,session,id,log,attempt,native,stderr,cursor,handle,lock,outcome,deliveries,again,superseded)
     case True{}: restart_pending(db,session,id,attempt,cursor,native,cwd,handle,lock,deliveries,again)
 
 def observed(+db: String, +session: String, +id: String, +log: String, cursor: String, +native: String, cwd: String, +attempt: String, handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), superseded: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):

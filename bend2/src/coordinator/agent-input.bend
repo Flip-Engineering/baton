@@ -406,6 +406,14 @@ def settle_if(+db: String, session: String, attempt: String, success: Bool) -> I
     known : Bool <- present(db)
     settle_reads(db,session,attempt,success,known)
 
+# Completion consumes the admitted prompt and forwarded guidance only while its
+# exited attempt and native identity remain current. The transaction records the
+# matching read rows as handled; a stop or identity change keeps input owed.
+def consume_delivered(+db: String, +session: String, +attempt: String, +native: String, +initial_cursor: String, +delivered_cursor: String) -> IO(Unit):
+  do IO<Unit>:
+    stored : String <- IO.try(String,Store.transact_sql(db,Status.consume_delivered_sql(session,attempt,native,initial_cursor,delivered_cursor)))
+    IO.pure(Unit,Unit{})
+
 def initial_observed(+db: String, +session: String, +attempt: String, +event: String) -> IO(Unit):
   do IO<Unit>:
     identity : String <- IO.try(String,DB.Sql.read(db,"SELECT CASE WHEN json_valid(" ++ C.q(event) ++ ") THEN coalesce(CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.type')='thread.started' THEN json_extract(" ++ C.q(event) ++ ",'$.thread_id') END,json_extract(" ++ C.q(event) ++ ",'$.session_id'),CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.type')='response' AND json_extract(" ++ C.q(event) ++ ",'$.command')='get_state' AND json_extract(" ++ C.q(event) ++ ",'$.success')=1 THEN json_extract(" ++ C.q(event) ++ ",'$.data.sessionId') END,CASE WHEN json_extract(" ++ C.q(event) ++ ",'$.stream.kind')='session' THEN json_extract(" ++ C.q(event) ++ ",'$.stream.id') END,'')<>'' ELSE 0 END;"))
