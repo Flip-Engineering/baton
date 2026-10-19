@@ -122,10 +122,24 @@ with `memory.max = 17179869184`, `memory.swap.max = 0`, and an unlimited
 | `--check-only bend2/src/coordinator/stall-laws.bend` | exit 0, `All terms check` |
 | `--check-only bend2/test/stall-evidence-entry.bend` | exit 0, `All terms check`, four unsafe or foreign defs |
 
-The `stall-evidence-entry.bend` check above covers the revision before the
-`--dispatch-message` followup. That followup adds the wake delivery mode and
-needs its own bounded check and build; `focused-evidence-qualification.json`
-pins the run.
+## Bounded focused qualification
+
+The followed entry revision was qualified at `8a9c52f7db` in the root-managed
+unit `baton-stall-evidence-8a9c52f7-20261019.service` with
+`memory.max = 25769803776`, `memory.swap.max = 0` and an unlimited `RLIMIT_AS`.
+The receipt is
+`/mnt/nvme4tb/retained-root-builds-20261019/baton-stall-evidence-8a9c52f7-20261019/receipt.json`.
+
+| Step | Result |
+|---|---|
+| `--check-only bend2/test/stall-evidence-entry.bend` | exit 0, 129.287 s, five unsafe or foreign defs |
+| build | exit 0, 540.545 s, binary sha256 `60d66b387f6230460788cf4a431f09f53f34a9f02031edca3120073f8b4a5290`, generated C sha256 `11914746e13f53fe3d08291c129b05fb6fa19a1bb57fbfc37c110bb8a9e4a5bb` |
+| init, fixture build, report, check-report | exit 0; five states classified |
+| wake, marker wait, check-wake | exit 0; only `exited` delivered and claimed |
+| parse | exit 0; both commands selected |
+
+The wake check observed `wake-exited-delivered: yes`,
+`wake-other-delivered: no`, and the five claim and stop assertions.
 
 The highest observed peak resident set was 6,467,044 kB. No run used swap.
 A law body must be an equality; the claimless query law asserts
@@ -134,8 +148,6 @@ A law body must be an equality; the claimless query law asserts
 The following gates need build and runtime capacity:
 
 - build `.scratch/bend2/baton2` and run `python3 -m unittest bend2/test/stall.py`;
-- `--check-only bend2/test/stall-evidence-entry.bend`, then build it and run
-  `stall-evidence-fixture.py build`, `check-report` and `check-wake`;
 - `--check-only bend2/src/coordinator/main.bend` with a full-class admission
   receipt;
 - the remote CI checks for the opened PR.
