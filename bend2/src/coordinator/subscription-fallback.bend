@@ -552,6 +552,26 @@ def advance_profile(+db: String, +session: String, +id: String, cause: String, n
     taken : Bool <- Bool.pick(IO(Bool),prepared,choose_profile(db,session,id,record_path,Tx.trim_nl(harness),from_label,cause,started_or_next(profiles,Tx.trim_nl(harness),from_label)),IO.pure(Bool,False{}))
     IO.pure(Bool,taken)
 
+# A held provider window defers the same retained attempt instead of launching
+# the next configured profile or route. The owed guidance keeps the ordinary
+# wake path, and one post-reset continuation re-enters it: the gate re-checks
+# the recorded reset, so a still-held window schedules the next bounded segment
+# and an elapsed one admits the input on its retained assignment and account.
+def defer_gate(+db: String, +session: String, +id: String, gate: UW.Gate) -> IO(Bool):
+  match gate:
+    case UW.GateHeld{+window,+resets_at,+source,+receipt}: do IO<Bool>:
+      +message : String <- IO.pure(String,id ++ ":quota-deferred")
+      +held : UW.Gate <- IO.pure(UW.Gate,UW.GateHeld{window,resets_at,source,receipt})
+      noted : Unit <- UW.report_held(db,session,message,held)
+      scheduled : Unit <- UW.schedule_held(db,message ++ ":usage-window-held",resets_at)
+      IO.pure(Bool,True{})
+    case other: IO.pure(Bool,False{})
+
+def defer_held_window(+db: String, +session: String, +id: String, +label: String, +cause: String) -> IO(Bool):
+  do IO<Bool>:
+    gate : UW.Gate <- UW.window_gate(db,session,label)
+    defer_gate(db,session,id,gate)
+
 # True only when a next operator-listed profile was recorded, so the caller continues the
 # same actor; false when the list is exhausted, which terminates with the report. The
 # caller passes the terminal event text: the Outcome shutter stays in the calling
@@ -561,7 +581,8 @@ def profile_handoff(+db: String, +session: String, +id: String, +event: String, 
     +cause : String <- exhaustion_cause(db,event)
     +label : String <- profile_label_io(db,session)
     recorded : Unit <- Bool.pick(IO(Unit),String.is_empty(cause),IO.pure(Unit,Unit{}),UW.record_cause(db,session,id,label,cause))
-    advanced : Bool <- Bool.pick(IO(Bool),String.is_empty(cause),IO.pure(Bool,False{}),advance_profile(db,session,id,cause,native,cmd,cwd))
+    deferred : Bool <- Bool.pick(IO(Bool),String.is_empty(cause),IO.pure(Bool,False{}),defer_held_window(db,session,id,label,cause))
+    advanced : Bool <- Bool.pick(IO(Bool),Bool.or(String.is_empty(cause),deferred),IO.pure(Bool,False{}),advance_profile(db,session,id,cause,native,cmd,cwd))
     IO.pure(Bool,advanced)
 
 # --- cross-harness route fallback --------------------------------------------

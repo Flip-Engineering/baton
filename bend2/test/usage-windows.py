@@ -56,6 +56,22 @@ class UsageWindowHandoff(receive.Receive):
         self.assertEqual((window, source, harness, account), ('5-hour', 'provider-message', 'omp', ''))
         self.assertIsNone(resets_at)
 
+    def test_future_reset_defers_the_same_attempt(self):
+        self.exhaust('429 Usage limit reached for 5 hour. Your limit will reset at 2999-01-01 00:00:00')
+        self.assert_no_start()
+        rows = self.window_rows()
+        self.assertEqual([(window, resets_at) for window, resets_at, _, _, _ in rows],
+                         [('5-hour', 32472144000000)])
+        with closing(sqlite3.connect(self.db)) as db:
+            deferred = db.execute(
+                "SELECT count(*) FROM messages WHERE id LIKE '%:quota-deferred:usage-window-held'"
+            ).fetchone()[0]
+            handoff = db.execute(
+                "SELECT count(*) FROM messages WHERE id LIKE '%:profile-handoff-%'"
+            ).fetchone()[0]
+        self.assertEqual(deferred, 1)
+        self.assertEqual(handoff, 0)
+
 
 class UsageWindows(unittest.TestCase):
     setUp = control.Control.setUp

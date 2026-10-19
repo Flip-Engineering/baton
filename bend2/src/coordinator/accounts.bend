@@ -14,6 +14,7 @@
 import Base
 import ../coordinator/commands.bend as C
 import ./subscription-fallback.bend as Subs
+import ./usage-windows.bend as UW
 import ../json/canonical.bend as J
 import ../git/text.bend as Tx
 import ../host/sqlite.bend as DB
@@ -718,7 +719,11 @@ def advance_account(+db: String, +session: String, +id: String, +harness: String
 def handoff_decided(+db: String, +session: String, +id: String, +event: String, native: String, cmd: String, cwd: String, +cause: String, +harness: String, bound: Maybe<&2,AccountRecord>) -> IO(Bool):
   match bound:
     case None{}: Subs.profile_handoff(db,session,id,event,native,cmd,cwd)
-    case Some{+refused}: Bool.pick(IO(Bool),String.is_empty(cause),IO.pure(Bool,False{}),advance_account(db,session,id,harness,refused,cause))
+    case Some{+refused}: do IO<Bool>:
+      +label : String <- Subs.profile_label_io(db,session)
+      recorded : Unit <- Bool.pick(IO(Unit),String.is_empty(cause),IO.pure(Unit,Unit{}),UW.record_cause(db,session,id,Tx.trim_nl(label),cause))
+      deferred : Bool <- Bool.pick(IO(Bool),String.is_empty(cause),IO.pure(Bool,False{}),Subs.defer_held_window(db,session,id,Tx.trim_nl(label),cause))
+      Bool.pick(IO(Bool),Bool.or(String.is_empty(cause),deferred),IO.pure(Bool,False{}),advance_account(db,session,id,harness,refused,cause))
 
 # Provider-reported exhaustion advances the account in force when a binding
 # put one in force, and the operator's profile list otherwise. The advance is
