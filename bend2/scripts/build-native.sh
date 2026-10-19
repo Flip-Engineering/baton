@@ -5,6 +5,41 @@ cd "$root"
 entry=${1:-bend2/src/coordinator/main.bend}
 output=${2:-.scratch/bend2/baton2}
 mkdir -p "$(dirname -- "$output")"
+if [ -n "${TMPDIR:-}" ]; then
+  scratch_base=$TMPDIR
+elif [ -n "${BATON2_SCRATCH_ROOT:-}" ]; then
+  scratch_base=$BATON2_SCRATCH_ROOT
+elif [ -r "${BATON2_SCRATCH_CONFIG:-/etc/baton/scratch-root}" ]; then
+  IFS= read -r scratch_base < "${BATON2_SCRATCH_CONFIG:-/etc/baton/scratch-root}" || :
+  [ -n "$scratch_base" ] || scratch_base=/tmp
+else
+  scratch_base=/tmp
+fi
+case "$scratch_base" in
+  /*) ;;
+  *) scratch_base="$root/$scratch_base" ;;
+esac
+build_scratch=$(mktemp -d "$scratch_base/baton2-build.XXXXXXXX")
+cleanup_build_scratch() {
+  status=$?
+  trap - EXIT
+  if [ "$status" -eq 0 ]; then
+    if ! rm -rf -- "$build_scratch"; then
+      printf 'build scratch cleanup failed; retained %s\n' "$build_scratch" >&2 || true
+    fi
+  else
+    printf 'build scratch retained after status %s: %s\n' "$status" "$build_scratch" >&2 || true
+  fi
+  exit "$status"
+}
+trap cleanup_build_scratch EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+TMPDIR=$build_scratch
+TMP=$build_scratch
+TEMP=$build_scratch
+export TMPDIR TMP TEMP
 entry_path=$(readlink -f -- "$entry" 2>/dev/null || printf '%s' "$entry")
 focused=${BATON2_RECEIVE_FOCUSED:-}
 router=${BATON2_NATIVE_RECEIVER_ROUTER:-}
