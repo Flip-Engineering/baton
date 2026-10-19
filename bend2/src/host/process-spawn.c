@@ -225,7 +225,7 @@ typedef struct {
 } BrInputDelivery;
 typedef struct BatonRetained {
   int socket,spool,error,exited,status,input_closed;
-  int guard,watch,life,orphan,unknown,released,acknowledged,observer_only;
+  int guard,watch,life,orphan,unknown,status_known,released,acknowledged,observer_only;
   char *directory,*database;
   uint64_t version,serial,reply_serial,owner_attempt,owner_incarnation,owner_epoch;
   int reply_error;
@@ -535,11 +535,15 @@ static int br_lifetime(const char *directory,int *ended) {
 }
 static int br_watch_file(int spool,const char *path);
 static void br_watch_drain(int fd);
+/* The keeper's BR_EXIT carries the reaped status even when its status-file
+   write failed. A later lifetime event must not replace that known status
+   with an unknown marker, so a read miss marks it only when no exit report
+   supplied one. */
 static void br_orphan_exit(BatonRetained *retained) {
   char *path=br_path(retained->directory,"status");FILE *file=path?fopen(path,"r"):NULL;free(path);
   int status;
-  if(file && fscanf(file,"%d",&status)==1){retained->status=status;retained->unknown=0;}
-  else retained->unknown=1;
+  if(file && fscanf(file,"%d",&status)==1){retained->status=status;retained->unknown=0;retained->status_known=1;}
+  else if(!retained->status_known) retained->unknown=1;
   if(file)fclose(file);
   retained->exited=1;retained->version++;
 }
@@ -669,8 +673,8 @@ static void *br_receiver(void *argument) {
       break;
     }
     if(frame.op==BR_CHANGE) retained->version++;
-    else if(frame.op==BR_EXIT) {retained->exited=1;retained->status=(int)frame.value;retained->version++;}
-    else if(frame.op==BR_UNKNOWN) {retained->exited=1;retained->unknown=1;retained->version++;}
+    else if(frame.op==BR_EXIT) {retained->exited=1;retained->status=(int)frame.value;retained->unknown=0;retained->status_known=1;retained->version++;}
+    else if(frame.op==BR_UNKNOWN) {retained->exited=1;retained->unknown=1;retained->status_known=0;retained->version++;}
     else if(frame.op==BR_CANCELLED) {retained->error=ECANCELED;retained->version++;}
     else if(frame.op==BR_REPLY) {retained->reply_serial=frame.serial;retained->reply_error=frame.error;}
     else if(frame.op==BR_INPUT_CLOSED) retained->input_closed=1;
@@ -716,6 +720,7 @@ static int br_attach_socket(BatonChild *child,const char *directory,int socket,i
   retained->input_closed=state.input_closed;retained->released=state.released;
   retained->observer_only=hello.value==4 || hello.value==5;
   if(hello.value==4)retained->unknown=1;
+  retained->status_known=state.exited && !retained->unknown;
   pthread_mutex_init(&retained->state,NULL);pthread_mutex_init(&retained->command,NULL);
   pthread_mutex_init(&retained->reader,NULL);pthread_cond_init(&retained->changed,NULL);
   if(!retained->directory)error=ENOMEM;
@@ -1071,7 +1076,10 @@ static int br_native_exited(BrKeeper *keeper) {
     br_note(keeper,"status-write-error",error);
   }
   int sent=br_send(keeper,(BrFrame){.op=BR_EXIT,.value=status},NULL);
-  return error?error:sent;
+  /* The reaped status stays in memory and the exit frame carries it. A failed
+     status-file write is recorded, not fatal: terminating here would drop the
+     queued exit frame before the observer reads it. */
+  return sent;
 }
 static int br_command(BrKeeper *keeper,BrFrame frame,const char *payload) {
   int error=0;
