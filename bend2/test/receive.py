@@ -3422,6 +3422,46 @@ class Receive(unittest.TestCase):
         self.assertNotEqual(failed_report['id'], success_report['id'])
         self.assertNotEqual(startup_report['id'], success_report['id'])
 
+    def test_start_failed_retained_attempt_starts_fresh_receive(self):
+        """A retained attempt recorded as `start failed` has no keeper. Its valid
+        manifest and launch must not block the next receive: the fresh attempt
+        continues the same native conversation with the still-owed input, and
+        the failed attempt and its report remain recorded."""
+        self.player()
+        native = 'original-native'
+        self.coord('bind', 'parent', native, 'codex', 'parent', 'low')
+        self.prepare_input('owed', 'parent', 'Finish the work that remained owed.', kind='task')
+        failed_args = self.receive_args('parent')
+        failed_args[5] = str(self.directory / 'missing parent workspace')
+        failed = self.spawn(*failed_args)
+        self.finish(failed, ok=False)
+        phase, status, directory = self.execution('parent')
+        self.assertEqual((phase, status), ('exited', 'start failed'))
+        attempt = pathlib.Path(directory)
+        self.assertTrue((attempt / 'manifest').is_file())
+        self.assertTrue((attempt / 'launch').is_file())
+        self.assertFalse((attempt / 'native.birth').exists())
+        self.assertFalse((attempt / 'native-start-error').exists())
+        startup = next(message for message in self.coord('inbox', 'root')
+                       if 'Player process could not start' in message['body'])
+        retry = self.spawn(*self.receive_args('parent'))
+        control, resumed = self.accept_or_child_exit(
+            retry, 'fresh receive did not start after the recorded start failure')
+        self.assertEqual(resumed['session'], 'parent')
+        self.assertEqual(resumed['native'], native)
+        self.assertEqual(resumed['resume'], native)
+        self.assertIn('[id: owed]', resumed['prompt'])
+        self.action(control)
+        self.finish(retry)
+        self.assertEqual(self.coord('inbox', 'parent'), [])
+        current = self.execution('parent')
+        self.assertEqual(current[:2], ('exited', 'exit 0'))
+        self.assertNotEqual(current[2], directory)
+        self.assertTrue((attempt / 'manifest').is_file())
+        self.assertTrue((attempt / 'launch').is_file())
+        self.assertEqual(self.coord('delivery', startup['id'])['body'], startup['body'])
+        self.assertEqual(self.coord('player', 'parent')['native'], native)
+
     def test_receive_startup_failure_notifies_parent_and_retains_input(self):
         self.coord('attach', 'root', 'codex', 'native-root', self.endpoint('root'))
         self.player()
