@@ -305,6 +305,12 @@ class FocusedAccountCredits(unittest.TestCase):
         admitted = subprocess.run([helper, 'file:' + str(secret), str(child)],
                                   capture_output=True, text=True, env=base)
         self.assertEqual((admitted.returncode, admitted.stdout.strip()), (0, 'KEY=set'), admitted.stderr)
+        replay = subprocess.run([helper, 'file:' + str(secret), str(child)],
+                                capture_output=True, text=True, env=base)
+        self.assertEqual(replay.returncode, 2, replay.stdout)
+        self.assertIn('creditAuthorizationConsumed', replay.stderr)
+        self.assertEqual(self.query("SELECT state,consumed<>'' FROM credit_authorizations WHERE attempt='attempt-1'"),
+                         [('consumed', 1)])
         refused = subprocess.run([helper, 'file:' + str(secret), str(child)],
                                  capture_output=True, text=True,
                                  env={**base, 'BATON_ATTEMPT_DIRECTORY': 'attempt-2'})
@@ -314,6 +320,35 @@ class FocusedAccountCredits(unittest.TestCase):
                                          capture_output=True, text=True, env=base)
         self.assertEqual(wrong_reference.returncode, 2, wrong_reference.stdout)
         self.assertIn('creditAdmissionUnavailable', wrong_reference.stderr)
+
+    def test_one_authorization_admits_exactly_one_concurrent_launch(self):
+        helper = os.environ.get('BATON2_API_KEY_EXEC')
+        if not helper:
+            self.skipTest('BATON2_API_KEY_EXEC not set')
+        directory = self.directory
+        secret = directory / 'secret'
+        secret.write_text('fixture-secret\n')
+        secret.chmod(0o600)
+        self.record('claude-api', funding='api_key', secret='file:' + str(secret))
+        self.bind('claude-api', 'leaf')
+        self.observe('claude-api', 'org-fixture')
+        self.import_credit('claude-api', 'org-fixture', '200.00')
+        self.assertEqual(self.authorize('attempt-1'), 'authorized')
+        child = directory / 'child.sh'
+        child.write_text('#!/bin/sh\nprintf "KEY=${ANTHROPIC_API_KEY:+set}\\n"\n')
+        child.chmod(0o755)
+        environment = {'BATON2_CREDIT_RESERVATION': 'attempt-1', 'BATON_ATTEMPT_DIRECTORY': 'attempt-1',
+                       'BATON_DATABASE': str(self.db), 'PATH': os.environ['PATH']}
+        commands = [helper, 'file:' + str(secret), str(child)]
+        first = subprocess.Popen(commands, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=environment)
+        second = subprocess.Popen(commands, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=environment)
+        outputs = [first.communicate(), second.communicate()]
+        codes = sorted([first.returncode, second.returncode])
+        self.assertEqual(codes, [0, 2], outputs)
+        self.assertEqual(self.query("SELECT count(*) FROM credit_authorizations WHERE attempt='attempt-1' AND state='consumed'"),
+                         [(1,)])
+        refused = [error for code, (out, error) in zip([first.returncode, second.returncode], outputs) if code != 0]
+        self.assertIn('creditAuthorizationConsumed', refused[0])
 
     def test_gate_keeps_the_subscription_binding(self):
         self.record('claude-max')

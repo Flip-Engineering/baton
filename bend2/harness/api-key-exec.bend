@@ -224,26 +224,59 @@ def sql_escaped(+text: String) -> String:
     case SNil{}: ""
     case SCon{head,tail}: Bool.pick(String,U32.is_eq(Char.to_u32(head),39),"''" ++ sql_escaped(tail),SCon{head,sql_escaped(tail)})
 
-def authorization_read(found: Result<&1,&1,U32 & String,String>, +reference: String) -> Bool:
+# One authorization admits one launch. The guarded transition is the lock: a
+# single UPDATE returns changes()=1 to exactly one caller, and every later
+# caller observes the consumed or mismatched state with a named cause.
+def consume_changed(found: Result<&1,&1,U32 & String,String>) -> Bool:
   match found:
     case Fail{(code,detail)}: False{}
-    case Done{+value}: String.eq(Tx.trim_nl(value),reference)
+    case Done{+value}: String.eq(Tx.trim_nl(value),"1")
 
-def authorization_recorded(+db: String, +attempt: String, +reference: String) -> IO(Bool):
-  do IO<Bool>:
-    found : Result<&1,&1,U32 & String,String> <- DB.Sql.read(db,"SELECT secret_ref FROM credit_authorizations WHERE attempt='" ++ sql_escaped(attempt) ++ "' AND state='authorized';")
-    IO.pure(Bool,authorization_read(found,reference))
+def authorization_consume_sql(+attempt: String, +reference: String) -> String:
+  "UPDATE credit_authorizations SET state='consumed',consumed=CAST(strftime('%s','now') AS INTEGER)*1000 WHERE attempt='" ++ sql_escaped(attempt) ++ "' AND secret_ref='" ++ sql_escaped(reference) ++ "' AND state='authorized';SELECT changes();"
 
-def admitted_decided(recorded: Bool, +reference: String, +command: String, args: List<String>) -> IO(Unit):
-  match recorded:
-    case True{}: run(reference,command,args)
-    case False{}: IO.die(Unit,2,refusal_json(reference,"creditAdmissionUnavailable","Anthropic API-key launches require a recorded promotional-credit authorization for this attempt."))
+def authorization_state_sql(+attempt: String, +reference: String) -> String:
+  "SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM credit_authorizations WHERE attempt='" ++ sql_escaped(attempt) ++ "') THEN 'absent' WHEN EXISTS(SELECT 1 FROM credit_authorizations WHERE attempt='" ++ sql_escaped(attempt) ++ "' AND secret_ref='" ++ sql_escaped(reference) ++ "' AND state='authorized') THEN 'authorized' WHEN EXISTS(SELECT 1 FROM credit_authorizations WHERE attempt='" ++ sql_escaped(attempt) ++ "' AND secret_ref='" ++ sql_escaped(reference) ++ "') THEN 'consumed' ELSE 'mismatch' END;"
+
+def state_read(read: Result<&1,&1,U32 & String,String>) -> String:
+  match read:
+    case Fail{(code,detail)}: "absent"
+    case Done{+value}: Tx.trim_nl(value)
+
+# A failed consume never dies: an unreadable or busy database classifies as
+# absent, which the caller reports as creditAdmissionUnavailable and leaves the
+# owed input for a later attempt.
+def refused_state(+db: String, +attempt: String, +reference: String, changed: Bool) -> IO(String):
+  match changed:
+    case True{}: IO.pure(String,"authorized")
+    case False{}: do IO<String>:
+      read : Result<&1,&1,U32 & String,String> <- DB.Sql.read(db,authorization_state_sql(attempt,reference))
+      state : String <- IO.pure(String,state_read(read))
+      IO.pure(String,state)
+
+def authorization_consume(+db: String, +attempt: String, +reference: String) -> IO(String):
+  do IO<String>:
+    consumed : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,authorization_consume_sql(attempt,reference))
+    state : String <- refused_state(db,attempt,reference,consume_changed(consumed))
+    IO.pure(String,state)
+
+def admitted_decided(state: String, +reference: String, +command: String, args: List<String>) -> IO(Unit):
+  match state:
+    case "authorized": run(reference,command,args)
+    case "consumed": IO.die(Unit,2,refusal_json(reference,"creditAuthorizationConsumed","The promotional-credit authorization for this attempt was already used. One authorization admits one launch; a new attempt requires a new authorization."))
+    case "mismatch": IO.die(Unit,2,refusal_json(reference,"creditAuthorizationMismatch","The recorded authorization for this attempt names a different secret reference."))
+    case other: IO.die(Unit,2,refusal_json(reference,"creditAdmissionUnavailable","Anthropic API-key launches require a recorded promotional-credit authorization for this attempt."))
+
+def admitted_marker_matches(+db: String, +marker: String, +attempt: String, +reference: String, +command: String, args: List<String>) -> IO(Unit):
+  match Bool.and(Bool.not(String.is_empty(marker)),String.eq(marker,attempt)):
+    case True{}: do IO<Unit>:
+      state : String <- authorization_consume(db,attempt,reference)
+      admitted_decided(state,reference,command,args)
+    case False{}: admitted_decided("absent",reference,command,args)
 
 def admitted_db(+marker: String, +attempt: String, db_value: Result<&1,&1,U32 & String,String>, +reference: String, +command: String, args: List<String>) -> IO(Unit):
   match db_value:
-    case Done{+db}: do IO<Unit>:
-      recorded : Bool <- Bool.pick(IO(Bool),Bool.and(Bool.not(String.is_empty(marker)),String.eq(marker,attempt)),authorization_recorded(db,attempt,reference),IO.pure(Bool,False{}))
-      admitted_decided(recorded,reference,command,args)
+    case Done{+db}: admitted_marker_matches(db,marker,attempt,reference,command,args)
     case Fail{(code,detail)}: IO.die(Unit,2,refusal_json(reference,"creditAdmissionUnavailable","Anthropic API-key launches require a recorded promotional-credit authorization for this attempt."))
 
 def admitted_attempt(+marker: String, attempt_value: Result<&1,&1,U32 & String,String>, db_value: Result<&1,&1,U32 & String,String>, +reference: String, +command: String, args: List<String>) -> IO(Unit):
