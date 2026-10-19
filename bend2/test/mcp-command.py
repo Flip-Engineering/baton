@@ -23,6 +23,8 @@ if sys.argv[1:] == ['--help'] or (len(sys.argv) > 2 and sys.argv[2] == 'help'):
             sys.stdout.write('dispatch --stdin\\n')
         if values.get('repl', False):
             sys.stdout.write('Actions: inbox, read, send, report, ask, guide, finish, confirm, dispatch, players, assignment, status, role, ensemble, section, orchestra, branch, knowledge, repl\\n')
+        if values.get('context_eval', True):
+            sys.stdout.write('context engines|install|query|eval|result NAMED_ARGS\\n')
     else:
         sys.stdout.write('delivery\\nmessage\\n')
     sys.exit(0)
@@ -44,7 +46,8 @@ sys.exit(values['code'])
 class McpCommand(unittest.TestCase):
     def command(self, stdout='', stderr='', code=0, delay=0, *,
                 tool='baton2_status', arguments=None, session=None, expected_args=None,
-                expected_stdin='', expected_context=None, dispatch=True, repl=False):
+                expected_stdin='', expected_context=None, dispatch=True, repl=False,
+                context_eval=True):
         with tempfile.TemporaryDirectory() as home:
             home = pathlib.Path(home)
             executable = home / 'fixture-coordinator'
@@ -54,7 +57,7 @@ class McpCommand(unittest.TestCase):
             executable.with_suffix('.json').write_text(json.dumps({
                 'stdout': stdout, 'stderr': stderr, 'code': code,
                 'delay': delay, 'completed': str(completed), 'batch': True,
-                'dispatch': dispatch, 'repl': repl,
+                'dispatch': dispatch, 'repl': repl, 'context_eval': context_eval,
             }))
             requests = [
                 {'jsonrpc': '2.0', 'id': 1, 'method': 'initialize', 'params': {}},
@@ -150,6 +153,16 @@ class McpCommand(unittest.TestCase):
                 self.assertEqual('baton2_repl' in self.tools, available)
                 self.assertEqual('Use baton2_repl' in self.instructions, available)
                 self.assertIn('repl', self.tools['baton2_action']['description'])
+                if available:
+                    operations = self.tools['baton2_repl']['inputSchema']['properties']['operation']['enum']
+                    self.assertNotIn('interactive', operations)
+                    self.assertNotIn('interactive', self.instructions)
+
+    def test_context_eval_requires_advertised_coordinator_surface(self):
+        self.command(context_eval=False)
+        self.assertNotIn('baton2_context_eval', self.tools)
+        self.command(context_eval=True)
+        self.assertIn('baton2_context_eval', self.tools)
 
     def test_contextual_action_preserves_complete_bodies_for_independent_batch_items(self):
         first = '\ufeffFull first body λ🙂\nLiteral quotes " and tabs\t.\n' * 10000

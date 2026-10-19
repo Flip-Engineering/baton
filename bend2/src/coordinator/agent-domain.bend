@@ -200,7 +200,7 @@ def subverb(+head: String, +sub: String) -> String:
     Bool.pick(String,member(sub,Tx.split_spaces("read record relate promote search traverse relations")),"knowledge-" ++ sub,""),
     Bool.pick(String,String.eq(head,"project"),
       Bool.pick(String,member(sub,Tx.split_spaces("register sessions settings")),"project-" ++ sub,""),
-      Bool.pick(String,Bool.and(String.eq(head,"context"),member(sub,Tx.split_spaces("engines install query result"))),"context-" ++ sub,"")))
+      Bool.pick(String,Bool.and(String.eq(head,"context"),member(sub,Tx.split_spaces("engines install query eval result"))),"context-" ++ sub,"")))
 
 def finish_values(+verb: String, +options: List<&2,Option>, items: List<&2,Operation>) -> Parsed:
   +cause = option_cause(verb,options)

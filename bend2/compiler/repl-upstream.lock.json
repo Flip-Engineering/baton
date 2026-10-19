@@ -1,6 +1,6 @@
 {
   "upstream": "bend 2.0.25",
-  "compiler_archive_sha256": "6e03633ff79f14781c35281bf3004b21da9dd5ea46bd3199c62b0ab7b2d3f6c7",
+  "compiler_archive_sha256": "b5d73fd960574dd839e100b7c3242b80c6f35895a8e1a610615c2e90606dc4fe",
   "files": [
     {
       "path": "base.bend",

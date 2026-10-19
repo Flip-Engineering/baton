@@ -141,6 +141,22 @@ class ReceiverLayout(unittest.TestCase):
         source.write_text(source.read_text() + '\nchanged\n')
         self.assertRaises(RuntimeError, CHECK.verify_repl, prefix, manifest)
 
+    def test_repl_source_pins_match_checked_in_compiler_closure(self):
+        lock_path = ROOT / 'bend2/compiler/repl-upstream.lock.json'
+        provenance_path = ROOT / 'bend2/compiler/repl-upstream.provenance.json'
+        lock = json.loads(lock_path.read_text())
+        provenance = json.loads(provenance_path.read_text())
+        self.assertEqual(lock['compiler_archive_sha256'],
+                         'b5d73fd960574dd839e100b7c3242b80c6f35895a8e1a610615c2e90606dc4fe')
+        self.assertEqual(provenance['compiler_archive_sha256'], lock['compiler_archive_sha256'])
+        self.assertEqual(provenance['lock_sha256'],
+                         hashlib.sha256(lock_path.read_bytes()).hexdigest())
+        for row in lock['files']:
+            source = ROOT / 'bend2/compiler/upstream' / row['path']
+            self.assertEqual((source.stat().st_size,
+                              hashlib.sha256(source.read_bytes()).hexdigest()),
+                             (row['bytes'], row['sha256']), row['path'])
+
     def test_post_stage_provenance_refreshes_receipt_and_all_checksums(self):
         prefix, manifest, records = self.staged()
         manifest['build'] = {'generated_c_provenance': {'path': 'share/provenance', 'assets': []}}
