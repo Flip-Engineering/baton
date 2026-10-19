@@ -811,24 +811,15 @@ static Term baton_sql_bound_pack(Env e, IoWork *w) {
 }
 
 static int baton_sql_role_directory(char *out, size_t size) {
-  const char *runtime = getenv("XDG_RUNTIME_DIR");
-  char runtime_path[PATH_MAX], temporary_path[PATH_MAX];
-  const char *choices[2] = { NULL, NULL };
-  if (runtime && *runtime) {
-    int n = snprintf(runtime_path, sizeof(runtime_path), "%s/baton2", runtime);
-    if (n > 0 && (size_t)n < sizeof(runtime_path)) choices[0] = runtime_path;
-  }
-  int n = snprintf(temporary_path, sizeof(temporary_path), "/tmp/baton2-%u", (unsigned)geteuid());
-  if (n > 0 && (size_t)n < sizeof(temporary_path)) choices[1] = temporary_path;
-  for (size_t i = 0; i < 2; i++) {
-    if (!choices[i] || !*choices[i]) continue;
-    struct stat info;
-    if (mkdir(choices[i], 0700) && errno != EEXIST) continue;
-    if (lstat(choices[i], &info) || !S_ISDIR(info.st_mode) || info.st_uid != geteuid()) continue;
-    if ((info.st_mode & 0077) && chmod(choices[i], 0700)) continue;
-    if (snprintf(out, size, "%s", choices[i]) > 0 && strlen(choices[i]) < size) return 0;
-  }
-  return EACCES;
+  char path[PATH_MAX];
+  int n = snprintf(path, sizeof(path), "/tmp/baton2-%u", (unsigned)geteuid());
+  if (n <= 0 || (size_t)n >= sizeof(path)) return EOVERFLOW;
+  struct stat info;
+  if (mkdir(path, 0700) && errno != EEXIST) return errno;
+  if (lstat(path, &info) || !S_ISDIR(info.st_mode) || info.st_uid != geteuid()) return EACCES;
+  if ((info.st_mode & 0077) && chmod(path, 0700)) return errno;
+  if (snprintf(out, size, "%s", path) <= 0 || strlen(path) >= size) return EOVERFLOW;
+  return 0;
 }
 
 static int baton_sql_role_guard_call(BatonSqlRoleGuard *call) {
