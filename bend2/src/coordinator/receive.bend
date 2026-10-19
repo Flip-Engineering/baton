@@ -67,6 +67,7 @@ def receive_status(db: String, session: String, status: String) -> IO(Result<&1,
 # The receive wrapper prints the invocation result. Admission status paths that
 # have no attempt return silently so the wrapper remains the one output.
 def receive_silent(+status: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
 
 def exit_status(failed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match failed:
@@ -755,21 +756,35 @@ def input_text(decoded: Req.Scalar) -> IO(String):
 # channel. A concurrent receiver can replace the session's execution row; it
 # cannot write this invocation's channel. The collector keeps the last identity
 # the admission path reported, which is this invocation's current attempt.
+# Fold admitted attempt IDs without reading the session execution row.
 @unsafe
-def collect_admitted(+updates: Chan(String), last: String) -> IO(String):
-  next : Maybe<&1,String> <- Chan.recv(String, updates)
+def collect_admitted(+updates: Chan(String), last: String, next: Maybe<&1,String>) -> IO(String):
   match next:
     case None{}: IO.pure(String,last)
-    case Some{value}: collect_admitted(updates,value)
+    case Some{+value}: do IO<String>:
+      following : Maybe<&1,String> <- Chan.recv(String,updates)
+      collect_admitted(updates,value,following)
 
-# Serve and recovery invocations report no structured result, so they drain the
-# same channel without retaining an identity.
 @unsafe
-def discard_admitted(+updates: Chan(String)) -> IO(Unit):
-  next : Maybe<&1,String> <- Chan.recv(String, updates)
+def collect_admitted_start(+updates: Chan(String)) -> IO(String):
+  do IO<String>:
+    first : Maybe<&1,String> <- Chan.recv(String,updates)
+    collect_admitted(updates,"",first)
+
+# The receiver drains invocation-owned admissions when it does not return them.
+@unsafe
+def discard_admitted(+updates: Chan(String), next: Maybe<&1,String>) -> IO(Unit):
   match next:
     case None{}: IO.pure(Unit,Unit{})
-    case Some{value}: discard_admitted(updates)
+    case Some{value}: do IO<Unit>:
+      following : Maybe<&1,String> <- Chan.recv(String,updates)
+      discard_admitted(updates,following)
+
+@unsafe
+def discard_admitted_start(+updates: Chan(String)) -> IO(Unit):
+  do IO<Unit>:
+    first : Maybe<&1,String> <- Chan.recv(String,updates)
+    discard_admitted(updates,first)
 
 def selected(+db: String, +session: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, +lock: U32, +cursor: String, present: Bool, again: String -> IO(Result<&1,&1,U32 & String,Unit>), predecessor: String, +updates: Chan(String)) -> IO(Result<&1,&1,U32 & String,Unit>):
   match present:
@@ -916,7 +931,7 @@ def run_from(+db: String, +session: String, +cmd: String, +model: String, +effor
 def run(+db: String, session: String, cmd: String, model: String, effort: String, cwd: String, log: String, message: String) -> IO(Result<&1,&1,U32 & String,Unit> & String):
   do IO<Result<&1,&1,U32 & String,Unit> & String>:
     +updates : Chan(String) <- Chan.new(String,1)
-    +collector : Chan(String) <- IO.fork(String,collect_admitted(updates,""))
+    +collector : Chan(String) <- IO.fork(String,collect_admitted_start(updates))
     result : Result<&1,&1,U32 & String,Unit> <- run_from(db,session,cmd,model,effort,cwd,log,"explicit","",updates)
     closed : Unit <- Chan.close(String,updates)
     admitted : String <- IO.join(String,collector)
@@ -956,7 +971,7 @@ def serve(+db: String, +session: String, +cmd: String, +model: String, +effort: 
     lock : U32 <- IO.try(U32,Lock.SessionLock.wait_acquire(canonical,session))
     closed : Bool <- Stop.stopped(canonical,session)
     +updates : Chan(String) <- Chan.new(String,1)
-    +drainer : Chan(Unit) <- IO.fork(Unit,discard_admitted(updates))
+    +drainer : Chan(Unit) <- IO.fork(Unit,discard_admitted_start(updates))
     result : Result<&1,&1,U32 & String,Unit> <- serve_acquired(canonical,session,cmd,model,effort,cwd,log,lock,closed,updates)
     ended : Unit <- Chan.close(String,updates)
     drained : Unit <- IO.join(Unit,drainer)
@@ -967,7 +982,7 @@ def recover_observer_acquired(+db: String, +session: String, id: String, cursor:
   match acquired:
     case (lock,handle): do IO<Result<&1,&1,U32 & String,Unit>>:
       +updates : Chan(String) <- Chan.new(String,1)
-      +drainer : Chan(Unit) <- IO.fork(Unit,discard_admitted(updates))
+      +drainer : Chan(Unit) <- IO.fork(Unit,discard_admitted_start(updates))
       result : Result<&1,&1,U32 & String,Unit> <- observe_guarded(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,Some{lock},previous => continue_receiver(db,session,cmd,"","","",log,"explicit",previous,updates),True{})
       ended : Unit <- Chan.close(String,updates)
       drained : Unit <- IO.join(Unit,drainer)
@@ -1023,7 +1038,7 @@ def observe_attached(+db: String, +session: String, id: String, cursor: String, 
 def recover(+db: String, +session: String, id: String, cursor: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, harness: String, +directory: String, native: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     +updates : Chan(String) <- Chan.new(String,1)
-    +drainer : Chan(Unit) <- IO.fork(Unit,discard_admitted(updates))
+    +drainer : Chan(Unit) <- IO.fork(Unit,discard_admitted_start(updates))
     result : Result<&1,&1,U32 & String,Unit> <- attach_recorded(db,directory,handle => observe_attached(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,previous => continue_receiver(db,session,cmd,model,effort,cwd,log,"explicit",previous,updates)))
     ended : Unit <- Chan.close(String,updates)
     drained : Unit <- IO.join(Unit,drainer)
@@ -1055,5 +1070,5 @@ def report(+db: String, +session: String, +message: String, +admitted: String, o
       IO.die(Unit,2,answer)
 
 def report_result(+db: String, +session: String, +message: String, result: Result<&1,&1,U32 & String,Unit> & String) -> IO(Unit):
-  (outcome,attempt) = result
-  report(db,session,message,attempt,outcome)
+  match result:
+    case (outcome,attempt): report(db,session,message,attempt,outcome)
