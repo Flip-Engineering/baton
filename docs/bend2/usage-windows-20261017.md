@@ -20,11 +20,13 @@ databases self-upgrade on the next commit). Each row records:
 
 - `harness`, `model`, `provider`: the session's harness and recorded model;
   `provider` is the model's provider prefix (`kimi-code` for
-  `kimi-code/kimi-for-coding`).
+  `kimi-code/kimi-for-coding`). An unqualified model has no prefix; its rows
+  use the empty provider, and the gate reads that harness/account-wide scope.
 - `account`: the subscription profile label in force (empty means
   account-wide for that harness and provider).
 - `window`: `5-hour`, `7-day`, `monthly`, or empty when the wording is
-  unrecognized.
+  unrecognized. The empty label is durable and readable; Muse's
+  "Subscription quota exhausted" wording records it.
 - `resets_at`: milliseconds epoch, or NULL. NULL is the explicit unknown; the
   store never invents a reset time.
 - `reset_source`: `provider-message`, `provider-report`, or
@@ -63,6 +65,14 @@ Three sources write observations:
    client reports `5h` and `7d` windows with an absolute `resetsAt` when the
    endpoint returns one; a limit without `resetsAt` keeps the NULL unknown.
 
+An operator reset that covers every currently exhausted window of the
+session's route and account scope is
+`usage-window-reset SESSION RESETS_AT SOURCE`. It records one
+`operator-observation` row per exhausted window, including the empty window
+label, without starting a session, creating an execution or making a provider
+request. `usage-window-observe` remains the single-window form for a known
+label.
+
 ## The wake gate
 
 The wake driver asks the gate for the session's harness, provider prefix, and
@@ -83,7 +93,9 @@ the latest provider row per window for exhaustion evidence:
   time, source, and receipt, releases the lock, leaves the input owed, and
   schedules one detached single-shot continuation at the earliest held reset.
   Eligible work routes to an available configured account or model through the
-  existing handoff and route machinery.
+  existing handoff and route machinery. A route with an unqualified model, an
+  empty provider and an empty window label holds the same way; the empty
+  provider is the harness/account scope.
 - Elapsed: no window is held and an exhausted window's reset has passed. The
   wake reports `usage-window-restored` once per message and admits the owed
   input on the retained assignment and account.
@@ -98,6 +110,14 @@ They deliver no input, drive no wake and start no native, so a held usage
 window remains held. `usage-window-observe SESSION WINDOW RESETS_AT SOURCE`
 records the next reset observation without starting a session; the wake gate
 then reads that durable observation on its next admission.
+
+Repeated refusal reports share one durable identity. `profile-exhausted`,
+`account-exhausted`, `route-unavailable` and the failed-attempt `exit` report
+use the latest exhausted provider row's route, account, window, reset and
+source. The first report inserts; later attempts on the same refusal hit the
+same message identity and add nothing, so the first complete evidence and the
+owed input remain. A refusal with no durable exhausted row keeps its
+per-attempt identity.
 
 The receiver checks the same gate under its admission lock before it starts a
 native process. A retained endpoint that invokes `receive` directly therefore
@@ -126,8 +146,8 @@ gate verdict. Each row carries `source` (the reset's provenance, for example
 `operator-observation`), `exhausted`, and `exhaustionSource` (the latest
 provider row's source), so the reset fact and the exhaustion fact stay
 separate. The reset time is printed in milliseconds and UTC text with its
-receipt. No matching row reads back `none recorded`; a model without a
-provider prefix reports `noProviderQualifiedModel`.
+receipt. No matching row reads back `none recorded`. An unqualified model
+reads the empty provider/harness scope rather than a no-provider condition.
 
 ## Verification
 
@@ -145,3 +165,11 @@ drives the #907 classification, reset extraction, two-attempt hold and account
 handoff recording over a temporary database. `bend2/test/usage-windows.py`
 exercises the command surface against a recruited session fixture on remote
 validation runners.
+
+`bend2/test/quota-backoff-dedupe.bend` reproduces the account DB regression:
+an unqualified Muse model with empty provider/window/account rows holds across
+repeated wake checks, `usage-window-reset` records the actual and past resets
+for the empty window, repeated refusal reports share one identity, and
+clear-only preserves native identity, owed input and the held quota row.
+`bend2/test/clear-stop-quota.bend` covers clear-only no-execution and the
+qualified hold case.

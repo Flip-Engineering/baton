@@ -113,7 +113,9 @@ def result_missing(db: String, player: String, id: String, log: String, stderr: 
 def exit_failure(db: String, player: String, id: String, status: String, success: Bool) -> IO(Unit):
   match success:
     case True{}: IO.pure(Unit,Unit{})
-    case False{}: report(db,player,id ++ ":exit","Player process ended with " ++ status)
+    case False{}: do IO<Unit>:
+      +message_id : String <- Subs.exit_report_id(db,player,id)
+      report(db,player,message_id,"Player process ended with " ++ status)
 
 def failed(+status: String, +event: String, error: String) -> Bool:
   Bool.or(Bool.not(String.eq(status,"exit 0")),Bool.or(String.is_empty(event),Bool.not(String.is_empty(error))))
@@ -230,12 +232,13 @@ def record_exit(db: String, player: String, +id: String, log: String, outcome: O
   match outcome:
     case Ended{status,event,error,incomplete}: Stop.exited(db,player,id,status,event,error,generation_log(log,id))
 
-def player_finished(+db: String, player: String, +id: String, quiet: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+def player_finished(+db: String, player: String, +id: String, quiet: Bool, failed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     +saved : String <- IO.try(String,Store.commit(db,C.Delivery{id}))
+    exit_id : String <- Bool.pick(IO(String),failed,Subs.exit_report_id(db,player,id),IO.pure(String,id ++ ":exit"))
     diagnostic_delivery : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,id ++ ":observation","1","")
     delivered : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,id,"1",saved)
-    exit_delivery : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,id ++ ":exit","1","")
+    exit_delivery : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,exit_id,"1","")
     stopped : Result<&1,&1,U32 & String,Unit> <- Stop.deliver(db,player,id)
     written : Result<&1,&1,U32 & String,Unit> <- Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),quiet,
       IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),T.Text.control_output(saved))
@@ -245,7 +248,7 @@ def finish_parent(db: String, player: String, id: String, log: String, outcome: 
   match outcome:
     case Ended{+status,+event,error,incomplete}:
       match parent:
-        case True{}: player_finished(db,player,id,quiet)
+        case True{}: player_finished(db,player,id,quiet,Bool.not(String.eq(status,"exit 0")))
         case False{}: Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),quiet,
           IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),
           do IO<Result<&1,&1,U32 & String,Unit>>:
@@ -1552,7 +1555,7 @@ def route_reported(+db: String, +player: String, +id: String, event: String, err
   match error_clear:
     case True{}: do IO<Bool>:
       closed : Bool <- Stop.stopped(db,player)
-      triggered : Bool <- Subs.route_trigger(db,id,event)
+      triggered : Bool <- Subs.route_trigger(db,player,id,event)
       IO.pure(Bool,Bool.and(Bool.not(closed),triggered))
     case False{}: IO.pure(Bool,False{})
 

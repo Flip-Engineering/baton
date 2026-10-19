@@ -452,10 +452,9 @@ def latest_rows_sql(+harness: String, +provider: String, +account: String) -> St
 # --- the query ---------------------------------------------------------------
 
 # The latest observation per window for the session's binding, each with its
-# current state. No matching row reads back 'none recorded', never an empty
-# claim, and a model without a provider prefix reports that condition.
-def query_none(+session: String, +account: String) -> String:
-  "{\"schema\":\"baton2-usage-windows-v1\",\"session\":" ++ J.string_literal(session) ++ ",\"account\":" ++ J.string_literal(account) ++ ",\"windows\":\"none recorded\",\"condition\":\"noProviderQualifiedModel\"}"
+# current state. An unqualified model records and reads the empty provider
+# scope, which is the harness/account-wide window for its route. No matching
+# row reads back 'none recorded', never an empty claim.
 
 def query_answer_sql(+session: String, +harness: String, +provider: String, +account: String) -> String:
   +exhausted = exhausted_windows_sql(harness,provider,account)
@@ -474,7 +473,7 @@ def query(+db: String, +session: String, +account: String) -> IO(Unit):
     present : Unit <- observe_registered(found)
     +harness : String <- IO.try(String,DB.Sql.read(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
     +model : String <- IO.try(String,DB.Sql.read(db,"SELECT model FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
-    printed : Unit <- Bool.pick(IO(Unit),String.is_empty(provider_of(Tx.trim_nl(model))),IO.print(query_none(session,Tx.trim_nl(account))),query_bound(db,session,Tx.trim_nl(harness),provider_of(Tx.trim_nl(model)),Tx.trim_nl(account)))
+    printed : Unit <- query_bound(db,session,Tx.trim_nl(harness),provider_of(Tx.trim_nl(model)),Tx.trim_nl(account))
     IO.pure(Unit,Unit{})
 
 # --- the wake gate -----------------------------------------------------------
@@ -529,7 +528,7 @@ def gate_verdicted(+db: String, +session: String, +harness: String, +provider: S
     IO.pure(Gate,gate)
 
 def window_gate_model(+db: String, +session: String, harness: String, +model: String, +account: String) -> IO(Gate):
-  Bool.pick(IO(Gate),String.is_empty(provider_of(model)),IO.pure(Gate,GateNone{}),gate_verdicted(db,session,harness,provider_of(model),account))
+  gate_verdicted(db,session,harness,provider_of(model),account)
 
 def window_gate(+db: String, +session: String, +account: String) -> IO(Gate):
   do IO<Gate>:
@@ -537,6 +536,42 @@ def window_gate(+db: String, +session: String, +account: String) -> IO(Gate):
     +model : String <- IO.try(String,DB.Sql.read(db,"SELECT model FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
     gate : Gate <- window_gate_model(db,session,Tx.trim_nl(harness),Tx.trim_nl(model),Tx.trim_nl(account))
     IO.pure(Gate,gate)
+
+# A stable identity for the latest exhausted provider row of one route, across
+# accounts. Reports for the same refusal share it so the first complete
+# evidence is durable and later attempts add no duplicate report.
+def refusal_identity_sql(+harness: String, +provider: String) -> String:
+  +providers = "SELECT p.* FROM usage_windows p WHERE p.harness=" ++ C.q(harness) ++ " AND p.provider=" ++ C.q(provider) ++ " AND p.reset_source IN ('provider-message','provider-report') AND p.id=(SELECT p2.id FROM usage_windows p2 WHERE p2.harness=" ++ C.q(harness) ++ " AND p2.provider=" ++ C.q(provider) ++ " AND p2.reset_source IN ('provider-message','provider-report') AND p2.window=p.window ORDER BY p2.recorded_at DESC,p2.id DESC LIMIT 1)"
+  +exhausted = "SELECT p.window FROM (" ++ providers ++ ") p WHERE " ++ exhausted_sql("p")
+  "SELECT coalesce((SELECT p.harness || char(31) || p.provider || char(31) || p.account || char(31) || p.window || char(31) || coalesce(CAST(p.resets_at AS TEXT),'-') || char(31) || p.reset_source FROM (" ++ providers ++ ") p WHERE p.window IN (" ++ exhausted ++ ") ORDER BY p.recorded_at DESC,p.id DESC LIMIT 1),'')"
+
+# An operator-observed reset covers every exhausted window in the session's
+# route and account scope, including the empty label a Muse quota message
+# records. It adds observation rows only; no session, execution or provider
+# request follows.
+def reset_exhausted_sql(+session: String, +harness: String, +provider: String, +account: String, +value: String, +source: String) -> String:
+  +exhausted = "SELECT DISTINCT p.window FROM (" ++ latest_provider_rows_sql(harness,provider,account) ++ ") p WHERE p.window IN (" ++ exhausted_windows_sql(harness,provider,account) ++ ")"
+  "INSERT INTO usage_windows(recorded_at,harness,model,provider,account,window,resets_at,reset_source,used_fraction,receipt,message) SELECT " ++ now_ms() ++ "," ++ C.q(harness) ++ ",model," ++ C.q(provider) ++ "," ++ C.q(account) ++ ",e.window," ++ value ++ ",'operator-observation',NULL," ++ C.q("operator-observation: " ++ source) ++ ",'' FROM sessions,(" ++ exhausted ++ ") e WHERE sessions.id=" ++ C.q(session) ++ ";SELECT changes();"
+
+def reset_answer_sql(+session: String, +account: String, +count: String, +value: String, +source: String) -> String:
+  "SELECT json_object('schema','baton2-usage-window-reset-v1','session'," ++ C.q(session) ++ ",'account'," ++ C.q(account) ++ ",'recorded',CAST(" ++ C.q(count) ++ " AS INTEGER),'resetsAt'," ++ value ++ ",'source'," ++ C.q(source) ++ ");"
+
+def reset_exhausted(+db: String, +session: String, +resets: String, +source: String, +account: String) -> IO(Unit):
+  do IO<Unit>:
+    found : String <- IO.try(String,Store.read(db,C.Session{session}))
+    present : Unit <- observe_registered(found)
+    valid : String <- IO.try(String,DB.Sql.query(db,"SELECT length(" ++ C.q(source) ++ ")>0 AND instr(" ++ C.q(source) ++ ",char(10))=0 AND instr(" ++ C.q(source) ++ ",char(13))=0;"))
+    admitted : Unit <- Bool.pick(IO(Unit),String.eq(Tx.trim_nl(valid),"1"),IO.pure(Unit,Unit{}),IO.die(Unit,2,"A usage window reset requires nonempty source text without newlines."))
+    +value : String <- observe_reset_value(db,resets)
+    +harness : String <- IO.try(String,DB.Sql.read(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
+    +model : String <- IO.try(String,DB.Sql.read(db,"SELECT model FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
+    saved : String <- IO.try(String,DB.Sql.query(db,reset_exhausted_sql(session,Tx.trim_nl(harness),provider_of(Tx.trim_nl(model)),account,value,source)))
+    +count = Tx.trim_nl(saved)
+    Bool.pick(IO(Unit),String.eq(count,"0"),
+      IO.die(Unit,2,"No exhausted usage window is recorded for this session's route and account; read usage-windows before recording a reset."),
+      do IO<Unit>:
+        answer : String <- IO.try(String,DB.Sql.read(db,reset_answer_sql(session,account,count,value,source)))
+        IO.print(Tx.trim_nl(answer)))
 
 # --- the post-reset continuation ---------------------------------------------
 #

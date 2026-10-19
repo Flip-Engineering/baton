@@ -460,10 +460,40 @@ def run_status(result: T.RunRes) -> String:
     case T.RRun{T.SSignal{num}, out}: "signal " ++ U32.show(num)
     case T.RSpawn{detail}: detail
 
-def report_body(db: String, session: String, id: String, kind: String, body: String) -> IO(Unit):
+def report_message(db: String, session: String, message_id: String, body: String) -> IO(Unit):
   do IO<Unit>:
-    noted : String <- IO.try(String,DB.Sql.query(db,"INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id ++ ":" ++ kind) ++ ",id," ++ C.report_recipient("sessions.id") ++ ",'report'," ++ C.q(body) ++ " FROM sessions WHERE id=" ++ C.q(session) ++ " AND " ++ C.report_recipient("sessions.id") ++ " IS NOT NULL;"))
+    noted : String <- IO.try(String,DB.Sql.query(db,"INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(message_id) ++ ",id," ++ C.report_recipient("sessions.id") ++ ",'report'," ++ C.q(body) ++ " FROM sessions WHERE id=" ++ C.q(session) ++ " AND " ++ C.report_recipient("sessions.id") ++ " IS NOT NULL;"))
     IO.pure(Unit,Unit{})
+
+def report_body(db: String, session: String, id: String, kind: String, body: String) -> IO(Unit):
+  report_message(db,session,id ++ ":" ++ kind,body)
+
+def result_text(result: Result<&1,&1,U32 & String,String>) -> String:
+  match result:
+    case Fail{(code,cause)}: ""
+    case Done{value}: Tx.trim_nl(value)
+
+# A stable refusal identity makes the first complete report durable across
+# repeated attempts on the same exhausted route. A missing exhausted row or an
+# older database without usage windows keeps the attempt identity, so ordinary
+# failures retain their per-attempt reports.
+def refusal_report_id(db: String, session: String, id: String, kind: String) -> IO(String):
+  do IO<String>:
+    harness : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";")
+    model : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"SELECT model FROM sessions WHERE id=" ++ C.q(session) ++ ";")
+    +harness_text = result_text(harness)
+    +model_text = result_text(model)
+    identity : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,UW.refusal_identity_sql(harness_text,UW.provider_of(model_text)))
+    +trimmed = result_text(identity)
+    Bool.pick(String,String.is_empty(trimmed),id ++ ":" ++ kind,
+      do IO<String>:
+        encoded : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"SELECT lower(hex(" ++ C.q(trimmed) ++ "));")
+        IO.pure(String,"refusal:" ++ result_text(encoded) ++ ":" ++ kind))
+
+def report_account_exhausted(db: String, session: String, id: String, body: String) -> IO(Unit):
+  do IO<Unit>:
+    +message_id <- refusal_report_id(db,session,id,"account-exhausted")
+    report_message(db,session,message_id,body)
 
 # The verdict of the sidecar write, at the head of the definition so the caller's do block
 # ends on a term. A failed write reports its cause and returns false, so no profile is
@@ -560,7 +590,8 @@ def record_and_report(+db: String, +session: String, +id: String, +record_path: 
 
 def report_all_refused(db: String, session: String, id: String, harness: String, from_label: String, cause: String) -> IO(Bool):
   do IO<Bool>:
-    noted : String <- IO.try(String,DB.Sql.query(db,"INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id ++ ":profile-exhausted") ++ ",id," ++ C.report_recipient("sessions.id") ++ ",'report'," ++ C.q(all_refused_body(harness,from_label,cause)) ++ " FROM sessions WHERE id=" ++ C.q(session) ++ " AND " ++ C.report_recipient("sessions.id") ++ " IS NOT NULL;"))
+    +message_id <- refusal_report_id(db,session,id,"profile-exhausted")
+    noted : Unit <- report_message(db,session,message_id,all_refused_body(harness,from_label,cause))
     IO.pure(Bool,False{})
 
 def choose_profile(db: String, session: String, id: String, record_path: String, harness: String, from_label: String, cause: String, decided: Maybe<&2,Profile>) -> IO(Bool):
@@ -870,15 +901,17 @@ def select_route(+db: String, +session: String, id: String) -> IO(Maybe<&2,Route
 # a bound account that was the last recorded account for its harness. History
 # and lineage append IO failures write different reports, so they return false
 # here and never cause a cross-route switch.
-def exhausted_reported(+db: String, +id: String) -> IO(Bool):
+def exhausted_reported(+db: String, +session: String, +id: String) -> IO(Bool):
   do IO<Bool>:
-    found : String <- IO.try(String,DB.Sql.query(db,"SELECT EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(id ++ ":profile-exhausted") ++ " OR id=" ++ C.q(id ++ ":account-exhausted") ++ ");"))
+    profile_id : String <- refusal_report_id(db,session,id,"profile-exhausted")
+    account_id : String <- refusal_report_id(db,session,id,"account-exhausted")
+    found : String <- IO.try(String,DB.Sql.query(db,"SELECT EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(Tx.trim_nl(profile_id)) ++ " OR id=" ++ C.q(Tx.trim_nl(account_id)) ++ ");"))
     IO.pure(Bool,String.eq(found,"1\n"))
 
-def route_trigger(+db: String, id: String, +event: String) -> IO(Bool):
+def route_trigger(+db: String, +session: String, id: String, +event: String) -> IO(Bool):
   do IO<Bool>:
     +cause : String <- exhaustion_cause(db,event)
-    reported : Bool <- Bool.pick(IO(Bool),String.is_empty(cause),IO.pure(Bool,False{}),exhausted_reported(db,id))
+    reported : Bool <- Bool.pick(IO(Bool),String.is_empty(cause),IO.pure(Bool,False{}),exhausted_reported(db,session,id))
     IO.pure(Bool,reported)
 
 # The applying seam reports the chosen route with the original provider cause, or the
@@ -894,7 +927,9 @@ def report_route_chosen(db: String, session: String, id: String, +route: Route, 
   report_body(db,session,id,"route-chosen",route_chosen_body(route_harness(route),route_model(route),route_cmd(route),cause))
 
 def report_route_unavailable(db: String, session: String, id: String, harness: String, cause: String) -> IO(Unit):
-  report_body(db,session,id,"route-unavailable",route_unavailable_body(harness,cause))
+  do IO<Unit>:
+    +message_id <- refusal_report_id(db,session,id,"route-unavailable")
+    report_message(db,session,message_id,route_unavailable_body(harness,cause))
 
 # A cross-harness route change drops only the incompatible native binding; the same
 # harness keeps its conversation. Old attempt, event, request and history rows stay.

@@ -209,9 +209,12 @@ starts no native. The MCP tool `baton2_resume` accepts `liftStop: true` and
 `clearStop: true` for the two operations.
 
 Provider quota holds are separate durable rows in `usage_windows`.
-`usage-window-observe SESSION WINDOW RESETS_AT SOURCE` records an operator
-observation, and `usage-windows SESSION` reads the current state. Clearing a
-terminal stop leaves every held window unchanged.
+`usage-window-reset SESSION RESETS_AT SOURCE` records an operator reset for
+every exhausted window of the session's route and account, including the empty
+window label an unqualified model records.
+`usage-window-observe SESSION WINDOW RESETS_AT SOURCE` records one named
+window. `usage-windows SESSION` reads the current state. Clearing a terminal
+stop leaves every held window unchanged.
 
 Codex App notifications name the recipient's whole pending inbox. Additional
 admissions share the notification until recipient acknowledgement permits a

@@ -172,6 +172,9 @@ def execute(+db: String, command: C.Command) -> IO(Unit):
     case C.UsageWindowObserve{+session,window,resets,source}: do IO<Unit>:
       label : String <- Subscription.profile_label_io(db,session)
       UsageWindows.observe(db,session,window,resets,source,label)
+    case C.UsageWindowReset{+session,resets,source}: do IO<Unit>:
+      label : String <- Subscription.profile_label_io(db,session)
+      UsageWindows.reset_exhausted(db,session,resets,source,label)
     case C.UsageWindowRefresh{+session}: do IO<Unit>:
       label : String <- Subscription.profile_label_io(db,session)
       UsageWindows.refresh(db,session,label)

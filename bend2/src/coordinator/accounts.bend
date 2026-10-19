@@ -722,7 +722,7 @@ def advance_append_observed(+db: String, +session: String, +id: String, +harness
 def advance_account_decided(+db: String, +session: String, +id: String, +harness: String, +refused: AccountRecord, +cause: String, decided: Maybe<&2,AccountRecord>) -> IO(Bool):
   match decided:
     case None{}: do IO<Bool>:
-      noted : Unit <- Subs.report_body(db,session,id,"account-exhausted",account_exhausted_body(harness,account_id(refused),cause))
+      noted : Unit <- Subs.report_account_exhausted(db,session,id,account_exhausted_body(harness,account_id(refused),cause))
       IO.pure(Bool,False{})
     case Some{+next}: do IO<Bool>:
       path : String <- account_sidecar(db,session)

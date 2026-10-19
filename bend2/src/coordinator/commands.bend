@@ -68,6 +68,7 @@ type Command is Data:
   HarnessInventory{}
   UsageWindows{session: String}
   UsageWindowObserve{session: String, window: String, resets: String, source: String}
+  UsageWindowReset{session: String, resets: String, source: String}
   UsageWindowRefresh{session: String}
   Logs{session: String, level: String}
   LogsStorage{}
@@ -656,6 +657,7 @@ def sql(command: Command) -> String:
     case HarnessInventory{}: ""
     case UsageWindows{session}: ""
     case UsageWindowObserve{session,window,resets,source}: ""
+    case UsageWindowReset{session,resets,source}: ""
     case UsageWindowRefresh{session}: ""
     case Logs{session,level}: ""
     case LogsStorage{}: ""
@@ -833,6 +835,7 @@ def parse_verb_three_args(+verb: String, +id: String, +one: String, +two: String
     case "ensemble": Ensemble{id,one,two}
     case "native-reply": NativeReply{id,one,two}
     case "native-reply-file": NativeReplyFile{id,one,two}
+    case "usage-window-reset": UsageWindowReset{id,one,two}
     case "stop": Stop{id,one,two}
     case "report": Report{id,one,two}
     case "report-file": ReportFile{id,one,two}
