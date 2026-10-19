@@ -42,6 +42,17 @@ def cleanup_successful_run(work, ipc, successful):
     return True
 
 
+def process_group_exists(process_group):
+    """Return whether a suite process group still has members after its leader exits."""
+    try:
+        os.killpg(process_group, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 def main():
     work = pathlib.Path(tempfile.mkdtemp(prefix='native-suites-', dir=ROOT / '.scratch'))
     ipc = pathlib.Path(tempfile.mkdtemp(prefix='b2-native-'))
@@ -49,7 +60,7 @@ def main():
     output = ((pathlib.Path(run) / 'evidence/native-suites') if run else
               pathlib.Path(tempfile.mkdtemp(prefix='native-suites-results-',
                                             dir=ROOT / '.scratch/bend2')))
-    output.mkdir(parents=True)
+    output.mkdir(parents=True, exist_ok=True)
     seed = work / 'seed'
     commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
     with (output / 'prepare.log').open('wb') as log:
@@ -126,13 +137,19 @@ def main():
             # The inherited Python shim records each selected suite in its original output directory.
             with (evidence / 'stdout').open('wb') as stdout, (evidence / 'stderr').open('wb') as stderr:
                 child = subprocess.Popen(spec['argv'], cwd=source, env=environment,
-                                         stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr)
+                                         stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr,
+                                         start_new_session=True)
                 row.update(pid=child.pid, native_evidence=str(native_evidence))
                 write(evidence / 'execution.json', row)
                 with lock:
                     print(json.dumps({'started': spec['label'], 'pid': child.pid,
                                       'evidence': str(evidence)}), flush=True)
-                row.update(exit_code=child.wait(), natural_wait_completed=True)
+                child_code = child.wait()
+                has_remaining_processes = process_group_exists(child.pid)
+                row.update(exit_code=1 if has_remaining_processes else child_code,
+                           child_exit_code=child_code,
+                           natural_wait_completed=True,
+                           process_group_empty=not has_remaining_processes)
         except Exception:
             with (evidence / 'stderr').open('ab') as stderr:
                 stderr.write(traceback.format_exc().encode())
