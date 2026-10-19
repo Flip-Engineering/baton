@@ -383,9 +383,13 @@ static int baton_sql_span_row(BatonSqlSpan *call, sqlite3_stmt *statement) {
   return 0;
 }
 
+static sqlite3 *baton_sql_read_acquire(const char *path, char **error, int *status, int *cached);
+static void baton_sql_read_finish(sqlite3 *db, int cached, int failed);
+
 static void baton_sql_span_call(IoWork *w) {
   BatonSqlSpan *call = (BatonSqlSpan *)w->data;
   sqlite3 *db = NULL;
+  int cached = 0;
   call->spool_fd = open(call->spool, O_RDONLY | O_CLOEXEC);
   if (call->spool_fd < 0) { call->code = errno; call->error = strdup("cannot open stdout spool"); return; }
   struct stat info;
@@ -420,15 +424,19 @@ static void baton_sql_span_call(IoWork *w) {
       call->code = EILSEQ; call->error = strdup("stdout frame contains NUL"); return;
     }
   }
-  call->code = sqlite3_open(call->path, &db);
-  if (call->code != SQLITE_OK) {
-    call->error = strdup(db ? sqlite3_errmsg(db) : "cannot open database");
+  /* Span projections are read-only. Reuse the per-thread read-only
+     connection so each frame does not pay schema and encoding setup again. */
+  char *open_error = NULL;
+  db = baton_sql_read_acquire(call->path, &open_error, &call->code, &cached);
+  if (!db) {
+    call->error = strdup(open_error ? open_error : "cannot open database read-only");
+    sqlite3_free(open_error);
   } else {
     sqlite3_busy_handler(db, baton_sql_busy, NULL);
     char *error = NULL;
     call->code = sqlite3_create_function_v2(db, "baton_json_pretty", 1, SQLITE_UTF8 | SQLITE_DETERMINISTIC, NULL, baton_sql_json_pretty, NULL, NULL, NULL);
     if (call->code == SQLITE_OK)
-      call->code = sqlite3_exec(db, "PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL;", NULL, NULL, &error);
+      call->code = sqlite3_exec(db, "PRAGMA foreign_keys=ON;", NULL, NULL, &error);
     const char *tail = call->sql;
     while (call->code == SQLITE_OK && tail && *tail) {
       sqlite3_stmt *statement = NULL;
@@ -459,7 +467,7 @@ static void baton_sql_span_call(IoWork *w) {
     }
     sqlite3_free(error);
   }
-  if (db) sqlite3_close(db);
+  if (db) baton_sql_read_finish(db, cached, call->code != SQLITE_OK);
 }
 
 static void baton_sql_span_release(BatonSqlSpan *call) {
@@ -1438,6 +1446,15 @@ static void baton_sql_read_close(BatonSqlReadCache *cache) {
   cache->path = NULL;
   cache->identity = 0;
 }
+static void baton_sql_read_finish(sqlite3 *db, int cached, int failed) {
+  if (!db) return;
+  if (!cached) { sqlite3_close(db); return; }
+  if (!failed) return;
+  BatonSqlReadCache *cache = baton_sql_read_cache(0);
+  if (cache && cache->db == db) baton_sql_read_close(cache);
+  else sqlite3_close(db);
+}
+
 
 static void baton_sql_read_cache_destroy(void *value) {
   BatonSqlReadCache *cache = value;
@@ -1540,27 +1557,17 @@ static void baton_sql_read_call(IoWork *w) {
   if (call->code != SQLITE_OK) {
     call->error = strdup(error ? error : sqlite3_errmsg(db));
     sqlite3_exec(db, "ROLLBACK", NULL, NULL, NULL);
-    if (cached) {
-      BatonSqlReadCache *cache = baton_sql_read_cache(0);
-      if (cache && cache->db == db) baton_sql_read_close(cache);
-      else sqlite3_close(db);
-    } else {
-      sqlite3_close(db);
-    }
+    baton_sql_read_finish(db, cached, 1);
+    db = NULL;
   } else if (!sqlite3_get_autocommit(db)) {
     sqlite3_exec(db, "ROLLBACK", NULL, NULL, NULL);
     if (!sqlite3_get_autocommit(db)) {
-      if (cached) {
-        BatonSqlReadCache *cache = baton_sql_read_cache(0);
-        if (cache && cache->db == db) baton_sql_read_close(cache);
-        else sqlite3_close(db);
-      } else {
-        sqlite3_close(db);
-      }
+      baton_sql_read_finish(db, cached, 1);
+      db = NULL;
     }
   }
   sqlite3_free(error);
-  if (!cached) sqlite3_close(db);
+  if (db) baton_sql_read_finish(db, cached, 0);
 }
 
 #ifdef BATON_SQL_READ_TEST
