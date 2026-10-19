@@ -3,6 +3,20 @@ import Base
 def Sql.query(path: String, sql: String) -> IO(Result<&1, &1, U32 & String, String>):
   import "./sqlite.c"
 
+# Runs `sql` with the spool byte range bound as parameter 1. The bytes stay in
+# the immutable stdout spool and never become a Bend String. Rows use the
+# Sql.query format.
+def Sql.query_span(path: String, spool: String, offset: String, length: String, sql: String) -> IO(Result<&1, &1, U32 & String, String>):
+  import "./sqlite.c"
+
+# The same binding with `text` as parameter 2.
+def Sql.query_span_text(path: String, spool: String, offset: String, length: String, sql: String, text: String) -> IO(Result<&1, &1, U32 & String, String>):
+  import "./sqlite.c"
+
+# The same binding with `first` and `second` as parameters 2 and 3.
+def Sql.query_span_2text(path: String, spool: String, offset: String, length: String, sql: String, first: String, second: String) -> IO(Result<&1, &1, U32 & String, String>):
+  import "./sqlite.c"
+
 # Opens the existing coordination database at `path` read-write and returns its
 # canonical physical-instance binding. A missing, read-only, in-memory,
 # URI-selected, moved or otherwise unqualified database is refused before any

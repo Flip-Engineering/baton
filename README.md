@@ -5,9 +5,10 @@ coordinating agent assigns tasks, receives reports, reviews changes, and integra
 completed work into a Git repository. Agents can coordinate their own teams for
 delegated tasks.
 
-Baton works with native Claude Code, Codex, Muse, and OMP sessions. Each client
-provides its model access, authentication, and conversation history. Baton records
-the session's client, model, workspace, and parent agent in a SQLite database.
+Baton works with native Claude Code, Codex, DeepSeek Harness, Muse, and OMP
+sessions. Each client provides its model access, authentication, and
+conversation history. Baton records the session's client, model, workspace,
+and parent agent in a SQLite database.
 
 ## Capabilities
 

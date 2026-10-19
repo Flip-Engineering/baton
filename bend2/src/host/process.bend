@@ -5,6 +5,17 @@ import Base
 def ProcessChild.spawn(argv: String, cwd: String, stderr: String) -> IO(Result<&1,&1,U32 & String,U32>):
   import "./process-spawn.c"
 
+# A spawn whose environment is the inherited environment with the entries from
+# one owner-only NAME=VALUE specification file applied. The host reads and
+# unlinks the specification before the child produces bytes.
+def ProcessChild.spawn_env_spec(spec_path: String, argv: String, cwd: String, stderr: String) -> IO(Result<&1,&1,U32 & String,U32>):
+  import "./process-spawn.c"
+
+# Re-raises one child signal so the parent observes the signal, not a
+# synthesized exit code.
+def ProcessChild.reraise(sig: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
+  import "./process-spawn.c"
+
 type RetainedStart is Data:
   Retained{handle: U32}
   Unstarted{error: String}
@@ -79,6 +90,11 @@ def ProcessChild.close_stdin(handle: U32) -> IO(Result<&1,&1,U32 & String,Unit>)
 def ProcessChild.read_line(handle: U32) -> IO(Result<&1,&1,U32 & String,Maybe<String>>):
   import "./process-spawn.c"
 
+# Read a line from a retained stdout spool as its decimal byte offset and length.
+# The range excludes LF and remains valid until the retained attempt is acknowledged.
+def ProcessChild.read_retained_line_span(handle: U32) -> IO(Result<&1,&1,U32 & String,Maybe<String> & String>):
+  import "./process-spawn.c"
+
 # Returns complete text lines, including their actual final LF when present.
 def ProcessChild.read_text_line(handle: U32) -> IO(Result<&1,&1,U32 & String,Maybe<String>>):
   import "./process-spawn.c"
@@ -87,6 +103,13 @@ def ProcessChild.read_text_line(handle: U32) -> IO(Result<&1,&1,U32 & String,May
 # return None with notice text; a native empty line returns Some{""}.
 # The final field is 1 while the subscription remains usable.
 def ProcessChild.read_awake(read: U32, sub: U32) -> IO(Result<&1,&1,U32 & String,Maybe<String> & (String & U32)>):
+  import "./process-spawn.c"
+
+
+# The same multiplexed wake as read_awake, reporting a retained line as its
+# decimal byte offset and length in the immutable stdout spool. A notice-only
+# wake returns None. The final field is 1 while the subscription remains usable.
+def ProcessChild.read_awake_span(read: U32, sub: U32) -> IO(Result<&1,&1,U32 & String,Maybe<String> & (String & (String & U32))>):
   import "./process-spawn.c"
 
 def ProcessChild.wait(handle: U32) -> IO(Result<&1,&1,U32 & String,String>):

@@ -60,6 +60,8 @@ for line in stream:
         print('native-stdin-eof',flush=True)
         send({'eof':True,'bytes':len(data)})
     elif action.get('finish'):
+        if mode == 'terminal-output':
+            print('fixture-terminal-output', flush=True)
         break
 '''
 
@@ -187,11 +189,10 @@ class RetainedControl(unittest.TestCase):
                               sys.executable, self.fixture, self.server.getsockname()[1], native_mode)
         stream, native = self.accept()
         self.assertEqual(native['role'], 'native')
-        self.line(observer, 'early-release-refused')
         self.line(observer, 'observer-write-start')
-        keeper = next(row for row in self.processes() if row['pid'] == native['ppid'])
-        self.assertEqual(keeper['ppid'], observer.pid)
-        self.assertIn('--host-process-keeper', keeper['command'])
+        owner = next(row for row in self.processes() if row['pid'] == native['ppid'])
+        self.assertEqual(owner['ppid'], observer.pid)
+        self.assertIn('--instance-owner', owner['command'])
         self.assertEqual(native['pgid'], native['pid'])
         return observer, stream, native
 
@@ -208,10 +209,114 @@ class RetainedControl(unittest.TestCase):
         observer.stdin.close()
         self.assertEqual(observer.wait(), 0, observer.stderr.read())
         self.line(observer, 'retained-complete')
+        self.run_control('shutdown', self.db)
         while self.processes():
             time.sleep(.01)
         self.assertEqual(self.run_control('lock-try', self.db).stdout, 'acquired\n')
         self.assertFalse((self.attempt / 'recovery-started').exists())
+
+    def wait_for_path(self, path, timeout=10):
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if path.exists():
+                return
+            time.sleep(.01)
+        files = sorted(p.name for p in self.attempt.iterdir()) if self.attempt.exists() else []
+        self.fail(f'{path.name} did not appear; files={files}')
+
+    def assert_recovered_attempt_settled(self):
+        self.wait_for_path(self.attempt / 'released')
+        self.wait_for_path(self.attempt / 'acknowledged')
+        self.assertEqual((self.attempt / 'status').read_text().strip(), '0')
+        recovery_log = (self.attempt / 'observer.log').read_text()
+        self.assertIn('fixture-terminal-output', recovery_log)
+        self.assertIn('retained-complete', recovery_log)
+        self.assertEqual((self.attempt / 'released').read_text().strip(), 'released')
+        self.assertEqual((self.attempt / 'acknowledged').read_text().strip(), 'acknowledged')
+
+    def finish_and_shutdown_recovered_attempt(self):
+        self.run_control('shutdown', self.db)
+        deadline = time.monotonic() + 10
+        while self.processes() and time.monotonic() < deadline:
+            time.sleep(.01)
+        self.assertEqual(self.processes(), [])
+        self.assertEqual(self.run_control('lock-try', self.db).stdout, 'acquired\n')
+
+    def test_exited_disconnected_observer_replays_terminal_output_and_settles(self):
+        initial, _ = self.payload('terminal')
+        observer, stream, native = self.start(initial, native_mode='terminal-output')
+        observer.send_signal(signal.SIGSTOP)
+        self.send(stream, finish=True)
+        self.wait_for_path(self.attempt / 'status')
+        self.assertEqual((self.attempt / 'status').read_text().strip(), '0')
+        observer.send_signal(signal.SIGKILL)
+        self.assertEqual(observer.wait(timeout=10), -signal.SIGKILL)
+        self.wait_for_path(self.attempt / 'recovery-started')
+        self.wait_for_path(self.attempt / 'recovery-attached')
+        self.assert_recovered_attempt_settled()
+        self.finish_and_shutdown_recovered_attempt()
+
+    def test_disconnect_then_native_exit_while_replacement_attaches(self):
+        initial, _ = self.payload('race')
+        observer, stream, native = self.start(initial, native_mode='terminal-output')
+        observer.send_signal(signal.SIGKILL)
+        self.assertEqual(observer.wait(timeout=10), -signal.SIGKILL)
+        self.wait_for_path(self.attempt / 'recovery-attached')
+        self.send(stream, finish=True)
+        self.wait_for_path(self.attempt / 'status')
+        self.assert_recovered_attempt_settled()
+        self.finish_and_shutdown_recovered_attempt()
+
+    def test_failed_recovery_attach_is_not_relaunched_as_a_storm(self):
+        initial, _ = self.payload('failed-recovery')
+        observer = self.spawn('retain', self.db, self.attempt, self.home, initial,
+                              'recovery-fails', sys.executable, self.fixture,
+                              self.server.getsockname()[1], 'terminal-output')
+        stream, native = self.accept()
+        self.assertEqual(native['role'], 'native')
+        self.line(observer, 'observer-write-start')
+        observer.send_signal(signal.SIGKILL)
+        self.assertEqual(observer.wait(timeout=10), -signal.SIGKILL)
+        self.wait_for_path(self.attempt / 'recovery-started')
+        self.wait_for_path(self.attempt / 'observer-error')
+        time.sleep(.2)
+        self.assertEqual((self.attempt / 'recovery-started').read_text().splitlines(), ['failed'])
+        self.assertFalse((self.attempt / 'acknowledged').exists())
+        self.assertFalse((self.attempt / 'released').exists())
+        self.assertTrue(any(row['pid'] == native['pid'] for row in self.processes()))
+        recovered = self.spawn('recover-retained', self.attempt)
+        self.wait_for_path(self.attempt / 'recovery-attached')
+        recovered.send_signal(signal.SIGKILL)
+        self.assertEqual(recovered.wait(timeout=10), -signal.SIGKILL)
+        deadline = time.monotonic() + 10
+        expected = ['failed', 'recovered', 'failed']
+        while time.monotonic() < deadline:
+            if (self.attempt / 'recovery-started').read_text().splitlines() == expected:
+                break
+            time.sleep(.01)
+        self.assertEqual((self.attempt / 'recovery-started').read_text().splitlines(), expected)
+        time.sleep(.2)
+        self.assertEqual((self.attempt / 'recovery-started').read_text().splitlines(), expected)
+        self.assertFalse((self.attempt / 'acknowledged').exists())
+        self.assertFalse((self.attempt / 'released').exists())
+        self.assertTrue(any(row['pid'] == native['pid'] for row in self.processes()))
+
+    def test_disconnected_recovery_stops_after_native_exit(self):
+        source = ROOT / 'bend2/test/process-disconnected-recovery.c'
+        probe = self.home / 'process-disconnected-recovery'
+        compiled = subprocess.run([
+            os.environ.get('CC', 'clang'), '-O1', '-pthread',
+            '-DBATON2_PROCESS_SOURCE=' + json.dumps(str(EXE.with_suffix('.c'))),
+            str(source), '-lsqlite3', '-lm', '-o', str(probe),
+        ], capture_output=True, text=True)
+        self.assertEqual(compiled.returncode, 0, compiled.stderr)
+        result = subprocess.run([str(probe)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), {
+            'liveDisconnectedRecoveredOnce': True,
+            'exitedDisconnectRecoveredOnceNoRetry': True,
+            'terminalStatusPreserved': True,
+        })
 
     def test_observer_and_control_writes_preserve_complete_frames(self):
         initial, first = self.payload('observer', 40000)

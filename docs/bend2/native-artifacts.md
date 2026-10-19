@@ -1,6 +1,6 @@
 # Native artifacts
 
-`bend2/scripts/package-native.py` builds the production coordinator and packages a Darwin arm64 development or release archive. The package contains the native executable, harness adapters, Git helper, Orchestra UI, required Bend2 REPL compiler and Bun runtime, selected context providers, notices, and a manifest. The manifest records the source commit, target platform, selected module identities, required REPL file hashes, system prerequisites, build command and log paths, and compiler archive used for license notices. `SHA256SUMS` records the archive checksum.
+`bend2/scripts/package-native.py` builds the production receiver layout and packages a Darwin arm64 development or release archive. The layout contains the focused receiver at `bin/baton`, the full router at `bin/baton2`, and the general CLI sibling at `bin/baton-full`, together with harness adapters, Git helper, Orchestra UI, required Bend2 REPL compiler and Bun runtime, selected context providers, notices, and a manifest. The manifest records the overall source identity, each binary's path, SHA256, entry, build mode and source commit with tree or source manifest hash, the retained full C hash when available, the full wrapper source pin, the target platform, selected module identities, required REPL dependency hashes, system prerequisites, build commands and log paths, and compiler archive used for license notices. `SHA256SUMS` records the archive checksum and the payload records executable checksums, the manifest and the install receipt.
 
 ## Build and package
 
@@ -34,11 +34,11 @@ python3 "$BATON2_SOURCE/bend2/scripts/package-native.py" \
 
 The checked-in REPL compiler source is verified against
 `bend2/compiler/repl-upstream.lock.json`. The platform Bun executable and its
-complete distribution notices are required build inputs. The native workflow
-retrieves the pinned runtime. A package operation with absent or invalid REPL
-inputs fails and retains its output directory.
+complete distribution notices are required build inputs; packaging fails when
+they are absent or invalid. The manifest records the required
+`bend2-repl-compiler` dependency and the host system prerequisites.
 
-The package command runs [build-native.sh](../../bend2/scripts/build-native.sh) once. `--generated-c /path/to/baton2.c` compiles an existing production C translation unit with the package host's compiler and links its native entry point. The build record includes the supplied C path, command, status, and stdout and stderr paths.
+The package command runs [build-native.sh](../../bend2/scripts/build-native.sh) for each required binary. The focused receiver uses `BATON2_RECEIVE_FOCUSED=1` with its native entry. The full router uses `BATON2_NATIVE_RECEIVER_ROUTER=1` and forwards internal receiver actions to the focused receiver and recovery helper. A supplied binary is accepted only with its explicit source commit and tree or source manifest hash. A general CLI from an earlier qualification may retain its earlier retained source while the current native-entry wrapper records a separate source pin. `--generated-c /path/to/baton2.c` compiles an existing production C translation unit with the package host's compiler and links its native entry point. The build record includes the supplied C path, command, status, and stdout and stderr paths.
 
 `--context-typescript-package /path/to/node_modules/typescript` includes an installed TypeScript package and its source analysis provider. Packaging copies the compiler package into the selected module. Installed module discovery reads its declaration; a selected invocation uses Node module resolution to load the available compiler and records its actual version, path and digest. The provider analyzes TypeScript or JavaScript source and returns definitions, types, references, calls, callers, dependencies, diagnostics, flow and exceptions with captured source identities. Node.js 22.15 or newer runs the provider. The selected-context package fixture exercises TypeScript 5.9.3; `BATON2_CONTEXT_TYPESCRIPT` supplies its installed compiler package.
 
@@ -50,7 +50,7 @@ sh bend2/scripts/check-native.sh
 
 ## Exercise the extracted artifact
 
-The native workflow moves its owned build source directory, then runs [smoke-native-artifact.py](../../bend2/scripts/smoke-native-artifact.py) against the archive and manifest. The smoke checks the archive checksum, member paths and required REPL file inventory, then starts the extracted coordinator from a separate working directory with the source path unavailable. It verifies the installed C/SQLite prerequisites and evaluates a Bend2 expression through the bundled compiler. A controlled OMP fixture exercises recruitment, receive-owner reexecution, report delivery and acknowledgment, repository commit and public landing.
+The native workflow moves its owned build source directory, then runs [smoke-native-artifact.py](../../bend2/scripts/smoke-native-artifact.py) against the archive and manifest. The smoke checks the archive checksum and member paths, then starts the extracted coordinator from a separate working directory with the source path unavailable. A controlled OMP fixture exercises recruitment, receive-owner reexecution, report delivery and acknowledgment, repository commit and public landing. The workflow then runs [repl-package.py](../../.github/scripts/repl-package.py) `smoke` against the extracted prefix. That check verifies the required REPL dependency, evaluates Bend2 definitions and expressions through the bundled compiler, exercises interactive input and native IO, and retains each command's stdout, stderr and wait status.
 
 For a manual smoke, use the archive filename, SHA256 from SHA256SUMS, and manifest produced by packaging:
 
@@ -67,9 +67,19 @@ mv "$BATON2_RUN/source-retained" "$BATON2_SOURCE"
 
 The archive root is `baton2-development-darwin-arm64` by default. `--release-version 2.0.0` selects `baton2-2.0.0-darwin-arm64` and records `2.0.0` in the manifest. Release versions start with a letter or digit and contain letters, digits, dots, underscores, plus signs or hyphens. Release packaging requires the project root LICENSE.
 
+## Re-register a focused receiver
+
+Use the installed focused receiver to record its own executable as a session endpoint:
+
+~~~sh
+bin/baton DATABASE register-receiver SESSION HARNESS_COMMAND OUTPUT_LOG
+~~~
+
+The command validates and updates the endpoint through the coordinator's receiver registration path. It retains the session's model, harness, native session identity, workspace, and branch. Registration leaves pending input queued and does not start a receiver. Supply an optional working-directory argument only when updating the recorded workspace.
+
 ## Package contents and distribution terms
 
-The archive contains identical executable entries at `bin/baton` and `bin/baton2`, manifest.json, notices/, and libexec/baton2/. The Conductor adapters, task input and project settings helpers are included in `libexec/baton2`. Codex inbox coordination and proxy transport are compiled into the executable. The adapters select the archive's executable by default. The output directory also contains build logs, generated C when available, the manifest, archive, and archive checksum.
+The archive contains the focused receiver at `bin/baton`, the full router at `bin/baton2`, the identical general CLI sibling `bin/baton-full`, manifest.json, install-receipt.json, SHA256SUMS, notices/, and libexec/baton2/. The focused receiver delegates general actions to `bin/baton-full`; the full router forwards internal receiver actions to `bin/baton` and recovery actions to `bin/baton-recovery`. A missing sibling makes the operation refuse. The task input, project settings and managed Codex inbox helpers are included in libexec/baton2/. The adapters select the archive's executable by default. The output directory also contains build logs, generated C when available, the manifest, archive, and archive checksum.
 
 Packaging copies the project LICENSE and NOTICE when present, and retains the pinned Bend compiler/runtime license, reference license, and license or notice files in the verified compiler archive. The manifest records the notice paths and their sources. A source snapshot without a root license is marked as unresolved for public distribution.
 
@@ -78,6 +88,32 @@ Packaging copies the project LICENSE and NOTICE when present, and retains the pi
 [.github/workflows/bend2-native.yml](../../.github/workflows/bend2-native.yml) runs the complete native checks on the exact candidate source using a remote Linux host and the pinned Linux Bend compiler. It records the affected Python test outcomes during that complete suite. An independent job builds the exact target and runs the candidate test contracts against the target production executable and helpers. The comparison names each file, test and failure type; skipped, missing or incomplete results refuse qualification. Pull requests select their actual head commit.
 
 The Darwin job verifies the generated C checksum, producer source tree and every tracked source file against its package checkout. It compiles that C with Darwin clang, includes TypeScript 5.9.3, and packages the complete producer results and target comparison under `share/baton2/generated-c-provenance`. The extracted-artifact smoke runs on `macos-15` with the owned build path unavailable. Each job retains complete command streams and actual results.
+
+### Homelab runner-group preflight
+
+Run the read-only runner-group check before dispatching a homelab validation:
+
+~~~sh
+python3 bend2/scripts/check-runner-group-readiness.py \
+  --workflow-branch '<trusted-validation-branch>'
+~~~
+
+The command uses the current `gh` login. `BATON2_RUNNER_GROUP_READ_TOKEN` selects
+a token from the environment when provided. The account needs the organization's
+`Self-hosted runners` read permission. The check verifies that runner group 4 is named
+`baton2-native-homelab`, is restricted to selected repositories and workflows,
+includes repository ID `1296997100` (`Flip-Engineering/baton`), permits public
+repository access for Baton, and permits
+the exact direct workflow ref
+`Flip-Engineering/baton/.github/workflows/bend2-native.yml@refs/heads/<trusted-validation-branch>`.
+
+Use a direct workflow branch ref for the runner-group pin. Pull-request merge
+refs are not supported by this group policy. Dispatch the trusted workflow
+branch and pass candidate and target commits as full commit IDs; this keeps the
+workflow authorization ref separate from the source commits being compared.
+The preflight records policy readiness at the time of its API reads. Retain the
+workflow run's actual runner assignment and completed job result as execution
+evidence.
 
 Pushes and pull requests produce development artifacts. To qualify an immutable candidate for Baton 2.0.0, supply its branch and the exact target commit:
 

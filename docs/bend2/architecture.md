@@ -38,7 +38,7 @@ write transactions.
 | `coordinator/guidance.bend`, `delivery.bend` | Send OMP guidance and invoke the recipient endpoint after a committed message. |
 | `coordinator/codex-inbox*.bend`, `codex-route.bend` | Admit Codex inbox input, preserve its receiver environment, and report completed native turns. |
 | `coordinator/branching*.bend` | Snapshot workspaces, start fresh conversations, retain evaluations, and continue a selected Player. |
-| `bend2/src/harness/` | Construct the four harness launch and resume protocols. |
+| `bend2/src/harness/` | Construct the five harness launch and resume protocols. |
 | `bend2/src/git/` | Inspect Git state, create worktrees, prepare and judge landings, update refs and push. |
 | `bend2/src/host/` | Bind process, file and SQLite effects to the host. |
 | `bend2/scripts/mcp-conductor.mjs` | Connect committed messages to an interactive Claude Code Conductor. |
@@ -149,6 +149,7 @@ path for OMP conversation storage. The lock records no durable session state.
 | Codex | `exec --json`, with task on stdin; `exec resume SESSION` continues the conversation. The supervisor retains the current assistant and terminal events while draining native output. |
 | OMP | RPC mode with session files beside the database. `get_state` supplies observed identity and model. Stdin remains open until turn completion. |
 | Muse | `exec --json --prompt-file`, with `--session-id` for resume. Session and terminal envelopes supply native identity, model and report text. |
+| DeepSeek Harness | `--profile headless --json` with the task on stdin. `--session-id` adopts a persisted session; the `session` frame supplies native identity and the `final` frame the report text. |
 
 The supervisor drains native output and records relevant events. The public log
 keeps every frame the classification names, except the cumulative
@@ -202,7 +203,11 @@ The receiver reads pending messages under session ownership and supervises the
 native turn through the Player harness code. The recipient reviews the input
 and acknowledges it with coordinator commands.
 
-A receiver that finds an active turn returns `queued`. The active supervisor
+The receive command prints one JSON object with the `receive` classification
+(`accepted`, `none` or `refused`), the session, the attempt admitted by this
+invocation, its recorded state, the selected receipt, the pending count and the
+error text. A refused admission prints the same object and exits nonzero. A
+receiver that finds an active turn reports `none`. The active supervisor
 releases ownership after native exit, then checks for newly pending input and
 invokes the receiver again. Reading after release covers messages committed
 while the previous turn was ending. Pending messages remain in the existing
@@ -276,9 +281,10 @@ message delivered to that session invokes the endpoint with the message ID.
 | Muse | `receive` writes the pending input to the attempt's prompt file and launches `exec --json --prompt-file TASK --session-id NATIVE`. | The recorded Muse session ID resumes the same conversation. A resumed identity the harness refuses records a recovery input and starts a fresh conversation with the workspace's state. |
 | Claude Code Conductor | The interactive Conductor's channel adapter delivers the committed message as a channel notification. | The adapter re-registers its endpoint and replays pending messages after its own restart; it needs its own process. |
 | Claude Code Player | `receive` launches `--print --input-format stream-json` with the pending input as one user frame and `--resume NATIVE`. | The recorded session ID resumes the same conversation. |
+| DeepSeek Harness | `receive` launches `--profile headless --json` with the pending input on stdin. | The recorded `session` frame identity resumes through `--session-id`. |
 
-Session ownership is one active attempt per logical session for Codex, OMP, Muse
-and Claude Code. Input committed while an attempt is live remains pending. After the
+Session ownership is one active attempt per logical session for Codex, OMP, Muse,
+DeepSeek Harness and Claude Code. Input committed while an attempt is live remains pending. After the
 attempt releases the session, the drain reads the pending index and the next
 turn consumes the input that read observed, once. Input committed between that
 count read and the drain's reacquisition of the session lock stays pending until

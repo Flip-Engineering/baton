@@ -56,13 +56,84 @@ async function frontend(): Promise<void> {
   const aliases: Record<string, string> = Object.create(null);
   await Bend.book_load(book, Bend.BASE_BEND, '', seen);
   complete(book);
+  const notebook: Set<string> = new Set();
   let ordinal = 0;
   async function load(source: string): Promise<number> {
     const filename = path.join(workspace, `.baton-repl-cell-${ordinal++}.bend`);
     return Bend.book_load(book, filename, '', seen, undefined, source, aliases);
   }
+  // The pinned parser refuses a second declaration of an existing name. A
+  // notebook cell may replace a definition that an earlier cell declared, so
+  // read the names the cell declares, forget the earlier notebook definition,
+  // then load the cell into the complete book. Base and imported names stay
+  // reserved because they are not in `notebook`.
+  function declared(source: string): Set<string> {
+    const lines = source.split('\n');
+    const cell_aliases: Record<string, string> = { ...aliases };
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      const m = line.match(/^import(\s.*|)$/);
+      if (m !== null) {
+        const h = m[1].match(/^\s+(\S+)(?:\s+as\s+([A-Za-z_][A-Za-z0-9_]*))?\s*(?:#.*)?$/);
+        if (h !== null && h[2] !== undefined) {
+          cell_aliases[h[2]] = h[1].replace(/\.bend$/, '');
+        }
+        lines[i] = '';
+        continue;
+      }
+      if (line !== '' && !line.startsWith('#')) break;
+    }
+    const scratch = Bend.book_nil();
+    const names = new Set<string>();
+    try {
+      Bend.parse_book(scratch, workspace + path.sep, lines.join('\n'), '', cell_aliases);
+      for (const name of scratch.order) names.add(name);
+    } catch {
+      // The load below reports the canonical refusal for this source.
+    }
+    return names;
+  }
+  function forget(name: string): void {
+    const old = book.tlds[name];
+    if (old?.$ === 'ADT') {
+      for (const ctr of old.c) delete book.ctrs[ctr.k];
+    }
+    delete book.tlds[name];
+    delete book.tmps[name];
+    book.order = book.order.filter((existing) => existing !== name);
+  }
+  type Cell = { added: string[] };
+  async function load_cell(source: string): Promise<Cell> {
+    const names = [...declared(source)];
+    const replaced = names
+      .filter((name) => notebook.has(name) && book.tlds[name] !== undefined)
+      .map((name): [string, number] => [name, book.order.lastIndexOf(name)]);
+    for (const [name] of replaced) forget(name);
+    const done = await load(source);
+    const added = book.order.slice(done);
+    for (const name of added) notebook.add(name);
+    // The checker builds its definition table in book order. Put a replaced
+    // definition back at its old position so earlier dependents stay valid;
+    // moving it to the end would make those dependents fail to resolve it.
+    for (const [name, at] of replaced.sort((a, b) => a[1] - b[1])) {
+      if (at < 0) continue;
+      const from = book.order.lastIndexOf(name);
+      if (from < 0) continue;
+      book.order.splice(from, 1);
+      book.order.splice(Math.min(at, book.order.length), 0, name);
+    }
+    return { added };
+  }
+  function report_index(cell: Cell): number {
+    for (const name of cell.added) {
+      const from = book.order.lastIndexOf(name);
+      if (from >= 0) book.order.splice(from, 1);
+    }
+    book.order.push(...cell.added);
+    return book.order.length - cell.added.length;
+  }
   for (const declaration of definitions) {
-    await load(declaration);
+    await load_cell(declaration);
     reserved(book);
     complete(book);
   }
@@ -72,9 +143,10 @@ async function frontend(): Promise<void> {
     workspace,
   };
   if (operation === 'define') {
-    const done = await load(source);
+    const cell = await load_cell(source);
     reserved(book);
     complete(book);
+    const done = report_index(cell);
     cli_report(book, done, 2);
     process.stdout.write(JSON.stringify({ protocol: 1, kind: 'definitions', ...provenance,
       declarations: declarations(book) }) + '\n');

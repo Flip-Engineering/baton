@@ -43,6 +43,14 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def toolchain_receipt(args: argparse.Namespace) -> dict:
+    compiler = Path(shutil.which(args.cc) or args.cc).resolve()
+    sharder = MODULE_DIR / "shard_emitted_c.py"
+    return {
+        "compiler_executable": {"path": str(compiler), "sha256": sha256_file(compiler)},
+        "sharder": {"path": str(sharder), "sha256": sha256_file(sharder)},
+    }
+
 def sha256_bytes(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
@@ -132,6 +140,8 @@ class Builder:
         out_path = self.logs / f"{index:04d}-{tag}.stdout"
         err_path = self.logs / f"{index:04d}-{tag}.stderr"
         started = time.monotonic()
+        if self.args.ccache:
+            cmd = [self.args.ccache, *cmd]
         with out_path.open("wb") as out, err_path.open("wb") as err:
             proc = subprocess.Popen(cmd, cwd=str(cwd), stdout=out, stderr=err)
             self.monitor.register(proc.pid)
@@ -398,11 +408,15 @@ def build_oracle(
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--source", required=True, type=Path)
+    ap.add_argument("--build-only", action="store_true", help="compile and link shards without an oracle run")
+    ap.add_argument("--binary", type=Path, help="output binary path for --build-only")
+    ap.add_argument("--ccache", help="optional ccache executable used as the compiler launcher")
     ap.add_argument("--outdir", required=True, type=Path)
     ap.add_argument("--shards", type=int, default=8)
     ap.add_argument("--jobs", type=int, default=8)
     ap.add_argument("--cc", default="/usr/bin/clang-19")
     ap.add_argument("--cflags", nargs="+", default=["-O1", "-pthread"])
+    ap.add_argument("--cflag", action="append", help="one compiler flag; repeat to preserve leading dashes")
     ap.add_argument("--link-extra", nargs="*", default=[])
     ap.add_argument("--link-flags", default="", help="extra compiler/linker flags, shell-split")
     ap.add_argument("--run-args", nargs="*", default=[])
@@ -419,6 +433,8 @@ def main(argv: list[str]) -> int:
                     help="reuse an existing split directory when its input hash matches")
     ap.add_argument("--determinism", action="store_true")
     args = ap.parse_args(argv)
+    if args.cflag is not None:
+        args.cflags = args.cflag
     link_extra = args.link_extra + shlex.split(args.link_flags)
 
     if args.pch_only and args.no_pch:
@@ -441,6 +457,62 @@ def main(argv: list[str]) -> int:
     spins_source = split_dir / "baton_spins.c"
 
     builder = Builder(args)
+    if args.build_only:
+        binary = args.binary or (args.outdir / "sharded-nopch")
+        try:
+            build = build_sharded(
+                builder,
+                "nopch",
+                split_dir,
+                args.outdir / "nopch",
+                shard_sources,
+                core_source,
+                spins_source,
+                link_extra,
+                binary,
+                use_pch=False,
+            )
+        finally:
+            builder.close()
+        build["whole_route_wall_s"] = split_wall + build["total_wall_s"]
+        receipt = {
+            "schema": "baton-cgen-clang-parallel-build-v1",
+            "mode": "sharded-build",
+            "source": {
+                "path": str(source),
+                "bytes": source.stat().st_size,
+                "sha256": sha256_file(source),
+            },
+            "compiler": {
+                "path": args.cc,
+                "version": subprocess.check_output(
+                    [args.cc, "--version"], text=True
+                ).splitlines()[0],
+                "ccache": args.ccache,
+            },
+            "toolchain": toolchain_receipt(args),
+            "compile_flags": builder.compile_flags,
+            "link_flags": builder.link_flags + link_extra,
+            "shard_count": args.shards,
+            "jobs": args.jobs,
+            "split_manifest": manifest,
+            "split_wall_s": split_wall,
+            "build": build,
+            "aggregate_rss_cap_kib": args.max_aggregate_rss_mb * 1024
+                if args.max_aggregate_rss_mb else None,
+            "process_records": builder.records,
+        }
+        receipt_path = args.outdir / "build-receipt.json"
+        receipt_path.write_text(json.dumps(receipt, indent=2) + "\n")
+        print(json.dumps({
+            "binary": str(binary),
+            "binary_sha256": build["binary_sha256"],
+            "source_sha256": receipt["source"]["sha256"],
+            "split_manifest": str(args.outdir / "split-manifest.json"),
+            "receipt": str(receipt_path),
+            "whole_route_wall_s": build["whole_route_wall_s"],
+        }, indent=2))
+        return 0
     try:
         if args.skip_oracle:
             if args.baseline_object is None or args.baseline_binary is None:
@@ -552,6 +624,7 @@ def main(argv: list[str]) -> int:
             "path": args.cc,
             "version": subprocess.check_output([args.cc, "--version"], text=True).splitlines()[0],
         },
+        "toolchain": toolchain_receipt(args),
         "flags": args.cflags,
         "shard_count": args.shards,
         "jobs": args.jobs,

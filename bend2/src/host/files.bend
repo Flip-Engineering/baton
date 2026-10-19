@@ -4,11 +4,25 @@ import Base
 def Files.mkdir(path: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   import "./files.c"
 
+# Reports whether this process can write the path. The check opens no file and
+# writes no probe, so it leaves existing contents and symlinks untouched.
+def Files.writable(path: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  import "./files.c"
+
 def Files.find_suffix(directory: String, suffix: String) -> IO(Result<&1,&1,U32 & String,String>):
   import "./files.c"
 
 # The file's byte size, or zero when it does not exist.
 def Files.size(path: String) -> IO(Result<&1,&1,U32 & String,U32>):
+  import "./files.c"
+
+# The file mode bits, or the stat error as a failure.
+def Files.mode_of(path: String) -> IO(Result<&1,&1,U32 & String,U32>):
+  import "./files.c"
+
+# Creates one owner-only regular file with O_EXCL and no symlink follow. An
+# existing path is a failure; the caller chooses a fresh path.
+def Files.write_private(path: String, text: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   import "./files.c"
 
 # Moves one log file onto another name. A source that does not exist is a no-op.

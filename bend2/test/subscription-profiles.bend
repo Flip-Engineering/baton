@@ -9,6 +9,8 @@ import Base
 import ../src/coordinator/subscription-fallback.bend as Subs
 import ../src/harness/codex-player.bend as Codex
 import ../src/harness/claude-player.bend as Claude
+import ../src/harness/muse-player.bend as Muse
+import ../src/harness/omp-player.bend as Omp
 import ../src/git/text.bend as Tx
 
 def fixture_list() -> String:
@@ -19,56 +21,132 @@ def check(label: String, is_ok: Bool) -> IO(Unit):
     case True{}: IO.print("fixture-profile " ++ label ++ ": ok")
     case False{}: IO.die(Unit,1,"fixture-profile " ++ label ++ ": refused")
 
-def three(profiles: List<Subs.Profile>) -> Bool:
+def three(profiles: List<&2,Subs.Profile>) -> Bool:
   match profiles:
     case first <> second <> third <> Nil{}: True{}
     case other: False{}
 
-def head_is(profiles: List<Subs.Profile>, harness: String, expected: String) -> IO(Unit):
-  match Subs.first_profile(profiles,harness):
-    case Some{+profile}: check("head-" ++ harness,String.eq(profile.label,expected))
+def head_is_found(+harness: String, expected: String, found: Maybe<&2,Subs.Profile>) -> IO(Unit):
+  match found:
+    case Some{+profile}: check("head-" ++ harness,String.eq(Subs.profile_label(profile),expected))
     case None{}: IO.die(Unit,1,"fixture-profile head-" ++ harness ++ ": no profile")
 
-def next_is(profiles: List<Subs.Profile>, harness: String, current: String, expected: String) -> IO(Unit):
-  match Subs.next_profile(profiles,harness,current):
-    case Some{+profile}: check("next-" ++ current,String.eq(profile.label,expected))
+def head_is(profiles: List<&2,Subs.Profile>, +harness: String, expected: String) -> IO(Unit):
+  head_is_found(harness,expected,Subs.first_profile(profiles,harness))
+
+def next_is_found(+current: String, expected: String, found: Maybe<&2,Subs.Profile>) -> IO(Unit):
+  match found:
+    case Some{+profile}: check("next-" ++ current,String.eq(Subs.profile_label(profile),expected))
     case None{}: IO.die(Unit,1,"fixture-profile next-" ++ current ++ ": no profile")
 
-def next_none(profiles: List<Subs.Profile>, harness: String, current: String) -> IO<Unit>:
-  match Subs.next_profile(profiles,harness,current):
-    case Some{+profile}: IO.die(Unit,1,"fixture-profile next-" ++ current ++ ": unexpected " ++ profile.label)
+def next_is(profiles: List<&2,Subs.Profile>, harness: String, +current: String, expected: String) -> IO(Unit):
+  next_is_found(current,expected,Subs.next_profile(profiles,harness,current))
+
+def next_none_found(+current: String, found: Maybe<&2,Subs.Profile>) -> IO(Unit):
+  match found:
+    case Some{+profile}: IO.die(Unit,1,"fixture-profile next-" ++ current ++ ": unexpected " ++ Subs.profile_label(profile))
     case None{}: check("none-after-" ++ current,True{})
 
-def starts_at_head(profiles: List<Subs.Profile>) -> IO<Unit>:
-  match Subs.started_or_next(profiles,"codex",""):
-    case Some{+profile}: check("no-record-starts-at-the-head",String.eq(profile.label,"codex-main"))
+def next_none(profiles: List<&2,Subs.Profile>, harness: String, +current: String) -> IO(Unit):
+  next_none_found(current,Subs.next_profile(profiles,harness,current))
+
+def starts_at_head_found(found: Maybe<&2,Subs.Profile>) -> IO(Unit):
+  match found:
+    case Some{+profile}: check("no-record-starts-at-the-head",String.eq(Subs.profile_label(profile),"codex-main"))
     case None{}: IO.die(Unit,1,"fixture-profile start: no profile")
 
-def advances(profiles: List<Subs.Profile>) -> IO<Unit>:
-  match Subs.started_or_next(profiles,"codex","codex-main"):
-    case Some{+profile}: check("record-advances-to-the-next",String.eq(profile.label,"codex-alt"))
+def starts_at_head(profiles: List<&2,Subs.Profile>) -> IO(Unit):
+  starts_at_head_found(Subs.started_or_next(profiles,"codex",""))
+
+def advances_found(found: Maybe<&2,Subs.Profile>) -> IO(Unit):
+  match found:
+    case Some{+profile}: check("record-advances-to-the-next",String.eq(Subs.profile_label(profile),"codex-alt"))
     case None{}: IO.die(Unit,1,"fixture-profile advance: no profile")
 
-def spaced_store(profiles: List<Subs.Profile>) -> IO<Unit>:
-  match Subs.store_binding("codex","/fixture/stores/codex alt"):
+def advances(profiles: List<&2,Subs.Profile>) -> IO(Unit):
+  advances_found(Subs.started_or_next(profiles,"codex","codex-main"))
+
+def spaced_store_value(binding: List<String>) -> IO(Unit):
+  match binding:
     case single <> Nil{}: check("store-path-with-spaces-is-one-element",String.eq(single,"CODEX_HOME=/fixture/stores/codex alt"))
     case other: IO.die(Unit,1,"fixture-profile spaced-store: not one element")
 
+def spaced_store(profiles: List<&2,Subs.Profile>) -> IO(Unit):
+  spaced_store_value(Subs.store_binding("codex","/fixture/stores/codex alt"))
+
+def omp_store_value(binding: List<String>) -> IO(Unit):
+  match binding:
+    case single <> Nil{}: check("omp-profile-binds-agent-dir",String.eq(single,"PI_CODING_AGENT_DIR=/fixture/stores/omp"))
+    case other: IO.die(Unit,1,"fixture-profile omp-store: not one element")
+
+def omp_store(profiles: List<&2,Subs.Profile>) -> IO(Unit):
+  omp_store_value(Subs.store_binding("omp","/fixture/stores/omp"))
+
+def omp_order_argv(argv: List<String>) -> IO(Unit):
+  match argv:
+    case env <> assigned <> command <> rest:
+      check("omp-profile-argv-binds-agent-dir",Bool.and(String.eq(env,"/usr/bin/env"),Bool.and(String.eq(assigned,"PI_CODING_AGENT_DIR=/fixture/stores/omp"),String.eq(command,"/fixture/bin/omp"))))
+    case other: IO.die(Unit,1,"fixture-profile omp-order: too few arguments")
+
+def omp_order(store: String) -> IO(Unit):
+  omp_order_argv(Tx.split_nul(Omp.argv_profile(Subs.store_binding("omp",store),"/fixture/bin/omp","deepseek/deepseek-flash","max","/fixture/sessions","native-fixture",False{})))
+
+def muse_store_value(binding: List<String>) -> IO(Unit):
+  match binding:
+    case single <> Nil{}: check("muse-profile-binds-config-home",String.eq(single,"XDG_CONFIG_HOME=/fixture/stores/muse"))
+    case other: IO.die(Unit,1,"fixture-profile muse-store: not one element")
+
+def muse_store(profiles: List<&2,Subs.Profile>) -> IO(Unit):
+  muse_store_value(Subs.store_binding("muse","/fixture/stores/muse"))
+
+def muse_order_argv(argv: List<String>) -> IO(Unit):
+  match argv:
+    case env <> assigned <> command <> rest:
+      check("muse-profile-argv-binds-config-home",Bool.and(String.eq(env,"/usr/bin/env"),Bool.and(String.eq(assigned,"XDG_CONFIG_HOME=/fixture/stores/muse"),String.eq(command,"/fixture/bin/muse"))))
+    case other: IO.die(Unit,1,"fixture-profile muse-order: too few arguments")
+
+def muse_order(store: String) -> IO(Unit):
+  muse_order_argv(Tx.split_nul(Muse.argv_profile(Subs.store_binding("muse",store),"/fixture/bin/muse","muse-wonder-1.0","high","/fixture/prompt.txt","native-fixture",False{})))
+
+def history_none(value: Maybe<String>, label: String) -> IO(Unit):
+  match value:
+    case None{}: check(label,True{})
+    case Some{v}: check(label,False{})
+
+def history_is(value: Maybe<String>, expected: String, label: String) -> IO(Unit):
+  match value:
+    case Some{+v}: check(label,String.eq(v,expected))
+    case None{}: check(label,False{})
+
+def history_checks() -> IO(Unit):
+  do IO<Unit>:
+    omp : Unit <- history_none(Subs.history_store_variable("omp"),"history-omp-skipped")
+    muse : Unit <- history_none(Subs.history_store_variable("muse"),"history-muse-skipped")
+    codex : Unit <- history_is(Subs.history_store_variable("codex"),"CODEX_HOME","history-codex-store")
+    claude : Unit <- history_is(Subs.history_store_variable("claude-code"),"CLAUDE_CONFIG_DIR","history-claude-store")
+    IO.pure(Unit,Unit{})
+
 # The corrected env order is proved on the real argv composition: env, both existing
 # key unbinds, then the store assignment, then the command.
-def codex_order(store: String) -> IO<Unit>:
-  match Codex.bound_arguments(Subs.store_binding("codex",store),Nil{},"/fixture/bin/codex","gpt-6-luna","high","native-fixture",False{}):
+def codex_order_argv(argv: List<String>) -> IO(Unit):
+  match argv:
     case env <> uns <> key <> uns2 <> key2 <> assigned <> command <> rest:
       check("codex-env-options-come-first",Bool.and(String.eq(env,"/usr/bin/env"),Bool.and(String.eq(uns,"-u"),Bool.and(String.eq(key,"OPENAI_API_KEY"),Bool.and(String.eq(uns2,"-u"),String.eq(key2,"CODEX_API_KEY"))))))
     case other: IO.die(Unit,1,"fixture-profile codex-order: too few arguments")
 
-def codex_plain() -> IO<Unit>:
-  match Codex.bound_arguments(Nil{},Nil{},"/fixture/bin/codex","gpt-6-luna","high","native-fixture",False{}):
+def codex_order(store: String) -> IO(Unit):
+  codex_order_argv(Codex.bound_arguments(Subs.store_binding("codex",store),Nil{},"/fixture/bin/codex","gpt-6-luna","high","native-fixture",False{}))
+
+def codex_plain_argv(argv: List<String>) -> IO(Unit):
+  match argv:
     case env <> uns <> key <> rest: check("codex-empty-binding-is-plain",Bool.and(String.eq(env,"/usr/bin/env"),String.eq(uns,"-u")))
     case other: IO.die(Unit,1,"fixture-profile codex-plain: too few arguments")
 
-def claude_order(store: String) -> IO<Unit>:
-  match Claude.bound_arguments(Subs.store_binding("claude-code",store),"/fixture/bin/claude","opus-4-6","high","",True{}):
+def codex_plain() -> IO(Unit):
+  codex_plain_argv(Codex.bound_arguments(Nil{},Nil{},"/fixture/bin/codex","gpt-6-luna","high","native-fixture",False{}))
+
+def claude_order_argv(argv: List<String>) -> IO(Unit):
+  match argv:
     case env <> uns <> key <> uns2 <> key2 <> uns3 <> key3 <> assigned <> command <> rest:
       do IO<Unit>:
         options : Unit <- check("claude-auth-options-come-first",Bool.and(String.eq(env,"/usr/bin/env"),Bool.and(String.eq(uns,"-u"),Bool.and(String.eq(uns2,"-u"),String.eq(uns3,"-u")))))
@@ -76,12 +154,18 @@ def claude_order(store: String) -> IO<Unit>:
         check("claude-store-before-command",Bool.and(String.eq(assigned,"CLAUDE_CONFIG_DIR=/fixture/stores/claude-main"),String.eq(command,"/fixture/bin/claude")))
     case other: IO.die(Unit,1,"fixture-profile claude-order: too few arguments")
 
-def claude_plain() -> IO<Unit>:
-  match Claude.bound_arguments(Nil{},"/fixture/bin/claude","opus-4-6","high","",True{}):
+def claude_order(store: String) -> IO(Unit):
+  claude_order_argv(Claude.bound_arguments(Subs.store_binding("claude-code",store),"/fixture/bin/claude","opus-4-6","high","",True{}))
+
+def claude_plain_argv(argv: List<String>) -> IO(Unit):
+  match argv:
     case command <> rest: check("claude-empty-binding-is-plain",String.eq(command,"/fixture/bin/claude"))
     case other: IO.die(Unit,1,"fixture-profile claude-plain: no arguments")
 
-def record_checks() -> IO<Unit>:
+def claude_plain() -> IO(Unit):
+  claude_plain_argv(Claude.bound_arguments(Nil{},"/fixture/bin/claude","opus-4-6","high","",True{}))
+
+def record_checks() -> IO(Unit):
   do IO<Unit>:
     last : Unit <- check("record-last-line-is-current",String.eq(Subs.last_line(Tx.split_lines("codex-main /fixture/a\ncodex-alt /fixture/b c\n")),"codex-alt /fixture/b c"))
     label : Unit <- check("record-label-parses",String.eq(Subs.record_label("codex-alt /fixture/b c"),"codex-alt"))
@@ -110,17 +194,23 @@ def record_checks() -> IO<Unit>:
     empty : Unit <- check("empty-record-is-empty",String.eq(Subs.last_line(Nil{}),""))
     IO.pure(Unit,Unit{})
 
-def missing_read() -> IO<Unit>:
-  match Subs.optional_text(Fail{(2,"No such file or directory")}):
+def missing_read_result(result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
+  match result:
     case Done{text}: check("missing-optional-file-is-empty",String.is_empty(text))
     case Fail{error}: IO.die(Unit,1,"fixture-profile missing-optional-file: unexpected failure")
 
-def failed_read(code: U32, detail: String) -> IO<Unit>:
-  match Subs.optional_text(Fail{(code,detail)}):
+def missing_read() -> IO(Unit):
+  missing_read_result(Subs.optional_text(Fail{(2,"No such file or directory")}))
+
+def failed_read_result(+code: U32, +detail: String, result: Result<&1,&1,U32 & String,String>) -> IO(Unit):
+  match result:
     case Fail{(actual_code,actual_detail)}: check("read-cause-retained",Bool.and(U32.is_eq(actual_code,code),String.eq(actual_detail,detail)))
     case Done{text}: IO.die(Unit,1,"fixture-profile failed-read: failure discarded")
 
-def read_checks() -> IO<Unit>:
+def failed_read(+code: U32, +detail: String) -> IO(Unit):
+  failed_read_result(code,detail,Subs.optional_text(Fail{(code,detail)}))
+
+def read_checks() -> IO(Unit):
   do IO<Unit>:
     missing : Unit <- missing_read()
     denied : Unit <- failed_read(13,"Permission denied")
@@ -134,7 +224,7 @@ def read_checks() -> IO<Unit>:
 def route_fixture_list() -> String:
   "aaa nopick\nomp opus-side /fixture/bin/omp\nomp sol-main /fixture/bin/omp path\nmuse muse-main /fixture/bin/muse\nclaude-code opus-main /fixture/bin/claude\ncodex codex-main /fixture/bin/codex\n\nlonely\nmuse \n"
 
-def route_six(routes: List<Subs.Route>) -> IO(Unit):
+def route_six(routes: List<&2,Subs.Route>) -> IO(Unit):
   match routes:
     case first <> second <> third <> fourth <> fifth <> sixth <> Nil{}: check("route-list-parses-six",True{})
     case other: IO.die(Unit,1,"fixture-profile route-list: unexpected shape")
@@ -144,12 +234,12 @@ def route_pick(decided: Maybe<&2,Subs.Route>, +harness: String, +model: String, 
     case Some{+route}: check("route-pick-" ++ harness ++ "-" ++ model,Bool.and(String.eq(Subs.route_harness(route),expected_harness),Bool.and(String.eq(Subs.route_model(route),expected_model),String.eq(Subs.route_cmd(route),expected_cmd))))
     case None{}: IO.die(Unit,1,"fixture-profile route-pick-" ++ harness ++ "-" ++ model ++ ": no route")
 
-def route_chosen(routes: List<Subs.Route>, refused: List<Subs.Route>, +harness: String, +model: String, +expected_harness: String, +expected_model: String, +expected_cmd: String) -> IO(Unit):
+def route_chosen(routes: List<&2,Subs.Route>, refused: List<&2,Subs.Route>, +harness: String, +model: String, +expected_harness: String, +expected_model: String, +expected_cmd: String) -> IO(Unit):
   route_pick(Subs.choose_route(routes,refused,harness,model),harness,model,expected_harness,expected_model,expected_cmd)
 
 # A two-field lineage pair parses with an empty command: membership compares the
 # harness/model pair only, and selection never picks a command-less entry.
-def route_head_cmd(routes: List<Subs.Route>) -> IO(Unit):
+def route_head_cmd(routes: List<&2,Subs.Route>) -> IO(Unit):
   match routes:
     case head <> tail: check("route-lineage-pair-carries-no-command",String.eq(Subs.route_cmd(head),""))
     case Nil{}: IO.die(Unit,1,"fixture-profile route-lineage-pair: unexpected shape")
@@ -188,7 +278,7 @@ def route_absent(decided: Maybe<&2,Subs.Route>, +harness: String) -> IO(Unit):
     case Some{+route}: IO.die(Unit,1,"fixture-profile route-none: unexpected " ++ Subs.route_line(route))
     case None{}: check("route-none-" ++ harness,True{})
 
-def route_none(routes: List<Subs.Route>, refused: List<Subs.Route>, +harness: String, model: String) -> IO(Unit):
+def route_none(routes: List<&2,Subs.Route>, refused: List<&2,Subs.Route>, +harness: String, model: String) -> IO(Unit):
   route_absent(Subs.choose_route(routes,refused,harness,model),harness)
 
 def route_names() -> IO(Unit):
@@ -201,9 +291,9 @@ def route_names() -> IO(Unit):
     short : Unit <- check("opus-short",Bool.not(Subs.names_opus("op")))
     IO.pure(Unit,Unit{})
 
-def main() -> IO<Unit>:
+def main() -> IO(Unit):
   do IO<Unit>:
-    +profiles : List<Subs.Profile> <- IO.pure(List<Subs.Profile>,Subs.profile_lines(Tx.split_lines(fixture_list())))
+    +profiles : List<&2,Subs.Profile> <- IO.pure(List<&2,Subs.Profile>,Subs.profile_lines(Tx.split_lines(fixture_list())))
     counted : Unit <- check("list-parses-three-profiles",three(profiles))
     head : Unit <- head_is(profiles,"codex","codex-main")
     step : Unit <- next_is(profiles,"codex","codex-main","codex-alt")
@@ -215,16 +305,21 @@ def main() -> IO<Unit>:
     codex : Unit <- codex_order("/fixture/stores/codex alt")
     plain : Unit <- codex_plain()
     claude : Unit <- claude_order("/fixture/stores/claude-main")
+    omp : Unit <- omp_store(profiles)
+    omp_argv : Unit <- omp_order("/fixture/stores/omp")
+    muse : Unit <- muse_store(profiles)
+    muse_argv : Unit <- muse_order("/fixture/stores/muse")
     claude_plain_ok : Unit <- claude_plain()
     records : Unit <- record_checks()
     reads : Unit <- read_checks()
-    +routes : List<Subs.Route> <- IO.pure(List<Subs.Route>,Subs.route_lines(Tx.split_lines(route_fixture_list())))
+    +routes : List<&2,Subs.Route> <- IO.pure(List<&2,Subs.Route>,Subs.route_lines(Tx.split_lines(route_fixture_list())))
     route_count : Unit <- route_six(routes)
-    refused_codex : List<Subs.Route> <- IO.pure(List<Subs.Route>,Subs.route_lines(Tx.split_lines("codex codex-main\n")))
+    refused_codex : List<&2,Subs.Route> <- IO.pure(List<&2,Subs.Route>,Subs.route_lines(Tx.split_lines("codex codex-main\n")))
     route_first : Unit <- route_chosen(routes,refused_codex,"codex","codex-main","omp","sol-main","/fixture/bin/omp path")
-    refused_two : List<Subs.Route> <- IO.pure(List<Subs.Route>,Subs.route_lines(Tx.split_lines("omp sol-main\ncodex codex-main\n")))
+    history : Unit <- history_checks()
+    refused_two : List<&2,Subs.Route> <- IO.pure(List<&2,Subs.Route>,Subs.route_lines(Tx.split_lines("omp sol-main\ncodex codex-main\n")))
     route_opus : Unit <- route_chosen(routes,refused_two,"muse","muse-main","claude-code","opus-main","/fixture/bin/claude")
-    refused_four : List<Subs.Route> <- IO.pure(List<Subs.Route>,Subs.route_lines(Tx.split_lines("omp sol-main\nmuse muse-main\ncodex codex-main\nomp opus-side\n")))
+    refused_four : List<&2,Subs.Route> <- IO.pure(List<&2,Subs.Route>,Subs.route_lines(Tx.split_lines("omp sol-main\nmuse muse-main\ncodex codex-main\nomp opus-side\n")))
     route_last : Unit <- route_none(routes,refused_four,"claude-code","opus-main")
     route_unrunnable : Unit <- route_cmd_default()
     refusals : Unit <- refusal_checks()

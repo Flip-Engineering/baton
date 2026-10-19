@@ -12,7 +12,9 @@ import ./project.bend as Project
 import ./ui-subscription.bend as UISubscription
 import ./instance.bend as Instance
 import ./usage.bend as Usage
+import ./usage-windows.bend as UsageWindows
 import ./../coordinator/logs.bend as Logs
+import ../storage/lifecycle.bend as StoragePolicy
 import ../coordinator/commands.bend as C
 import ../context/native.bend as ContextNative
 import ../context/native-runtime.bend as ContextRuntime
@@ -21,15 +23,18 @@ import ./control.bend as Control
 import ./wake.bend as Wake
 import ./message-batch.bend as MessageBatch
 import ./subscription-fallback.bend as Subscription
+import ./accounts.bend as Accounts
 import ./agent-command.bend as AgentCommand
 import ./agent-route.bend as AgentRoute
 import ./agent-input.bend as AgentInput
 import ./agent-native.bend as AgentNative
+import ./repl.bend as Repl
 import ./task-input.bend as TaskInput
 import ./codex-inbox.bend as CodexInbox
 import ./repl.bend as Repl
 import ../host/text.bend as T
 import ../host/process.bend as P
+import ./stall.bend as Stall
 import ../host/instance.bend as Custody
 
 def output(value: String, empty: Bool) -> IO(Unit):
@@ -57,7 +62,7 @@ def task_usage() -> String:
   "dispatch TEXT [OPTIONS]\ndispatch --stdin [OPTIONS]\ndispatch --help shows project, saved routes, overrides and continuation options.\ntask-input-read --current returns the current actor's latest complete request and setup result.\ntask-input-read --session PLAYER selects that actor's latest dispatch to the Player.\n"
 
 def usage_existing() -> String:
-  "Administration: baton DATABASE COMMAND ARGS\nserve\nowner-status\nproject PATH\nproject-sessions PATH\ntask-input-read --current | --session PLAYER\ndelivery MESSAGE_ID\ndelivery-batch IDS_JSON\nmessage-batch SENDER MESSAGES_JSON\ninput MESSAGE_ID\nturns PLAYER\nui-subscribe AFTER GENERATION\nview SUBJECT [READER [PORT]]\nlogs-storage\nlogs-clean SESSION\nproject PATH registers this database in the project Git common directory. --project PATH selects the registered database.\ndelivery and input inspect an intentionally selected historical message. Native command forms remain available for existing integrations.\n"
+  "Administration: baton DATABASE COMMAND ARGS\nserve\nowner-status\nstall\nstall-wake\nproject PATH\nproject-sessions PATH\ntask-input-read --current | --session PLAYER\ndelivery MESSAGE_ID\ndelivery-batch IDS_JSON\nmessage-batch SENDER MESSAGES_JSON\ninput MESSAGE_ID\nturns PLAYER\nui-subscribe AFTER GENERATION\nview SUBJECT [READER [PORT]]\nlogs-storage\nlogs-clean SESSION\nlogs-clean-all\nstorage-policy\nstorage-preview SESSION\nstorage-apply SESSION (refuses configured roots until cooperative writer leases are implemented)\nstall reports pending-input candidates with recorded state; stall-wake drives the oldest owed message for each stalled candidate through Wake.drive_id.\nproject PATH registers this database in the project Git common directory. --project PATH selects the registered database.\ndelivery and input inspect an intentionally selected historical message. Native command forms remain available for existing integrations.\n"
 
 def usage() -> String:
   task_usage() ++ usage_existing() ++ "native-attachment-input SESSION COMPONENT initializes recorded external native guidance from complete stdin.\n"
@@ -84,6 +89,11 @@ def execute(+db: String, command: C.Command) -> IO(Unit):
         print_result(saved)
     case C.ProfileBind{session,harness,label,store}:
       Subscription.bind_profile(db,session,harness,label,store)
+    case C.Account{+action,+id,provider,harness,funding,secret_ref,organization,detail,+session}:
+      do IO<Unit>:
+        saved : Unit <- Accounts.run(db,action,id,provider,harness,funding,secret_ref,organization,detail,session)
+        woken : Unit <- Bool.pick(IO(Unit),String.eq(action,"bind"),IO.try(Unit,Receive.wake_due(db,session,"0",target => Receive.wake_launch(db,target))),IO.pure(Unit,Unit{}))
+        IO.pure(Unit,Unit{})
     case C.Start{session,harness,cmd,model,effort,cwd,log,id,task}:
       do IO<Unit>:
         saved : String <- Control.start(db,session,harness,cmd,model,effort,cwd,log,id,task)
@@ -158,6 +168,19 @@ def execute(+db: String, command: C.Command) -> IO(Unit):
       Usage.observed_usage(db,session)
     case C.Models{session}:
       Usage.models(db,session)
+    case C.ModelsAll{session}:
+      Usage.models_all(db,session)
+    case C.HarnessInventory{}:
+      Subscription.inventory(db)
+    case C.UsageWindows{+session}: do IO<Unit>:
+      label : String <- Subscription.profile_label_io(db,session)
+      UsageWindows.query(db,session,label)
+    case C.UsageWindowObserve{+session,window,resets,source}: do IO<Unit>:
+      label : String <- Subscription.profile_label_io(db,session)
+      UsageWindows.observe(db,session,window,resets,source,label)
+    case C.UsageWindowRefresh{+session}: do IO<Unit>:
+      label : String <- Subscription.profile_label_io(db,session)
+      UsageWindows.refresh(db,session,label)
     case C.Logs{session,level}: do IO<Unit>:
       saved : String <- Logs.apply(db,session,level)
       log_answer(saved)
@@ -167,6 +190,12 @@ def execute(+db: String, command: C.Command) -> IO(Unit):
     case C.LogsClean{session}: do IO<Unit>:
       saved : String <- Logs.clean(db,session)
       log_answer(saved)
+    case C.LogsCleanAll{}: do IO<Unit>:
+      saved : String <- Logs.clean_all(db)
+      log_answer(saved)
+    case C.StoragePolicy{}: StoragePolicy.run_policy(db)
+    case C.StoragePreview{session}: StoragePolicy.run_preview(db,session)
+    case C.StorageApply{session}: StoragePolicy.run_apply(db,session)
     case C.Worktree{id}: Recruit.inspect(db,id)
     case C.KnowledgeRecord{id,author,claim,evidence,limits}:
       Knowledge.record(db,id,author,claim,evidence,limits)
@@ -212,12 +241,15 @@ def execute(+db: String, command: C.Command) -> IO(Unit):
       ContextNative.query_file(db,owner,query,path)
     case C.ContextResult{query}:
       ContextNative.result(db,query)
+    case C.Stall{}: Stall.report(db)
+    case C.StallWake{}: Stall.wake_stalled(db)
     case C.Serve{}:
       IO.try(Unit,Instance.serve(db))
     case C.OwnerStatus{}:
       IO.try(Unit,Instance.owner_status(db))
-    case C.Receive{session,cmd,model,effort,cwd,log,message}:
-      IO.try(Unit,Receive.run(db,session,cmd,model,effort,cwd,log,message))
+    case C.Receive{+session,cmd,model,effort,cwd,log,+message}: do IO<Unit>:
+      result : Result<&1,&1,U32 & String,Unit> & String <- Receive.run(db,session,cmd,model,effort,cwd,log,message)
+      Receive.report_result(db,session,message,result)
     case C.RecoverObserver{session,observer}:
       IO.try(Unit,Receive.recover_observer(db,session,observer))
     case C.RunTurn{player,id,cmd,model,effort,cwd,task,log,session}:
@@ -265,7 +297,7 @@ type NormalCliKind is Data:
   ReplObserverInput{}
   OrdinaryInput{}
 
-def normal_cli_existing_kind(+head: String) -> NormalCliKind:
+def normal_cli_kind_existing(+head: String) -> NormalCliKind:
   Bool.pick(NormalCliKind,String.eq(head,"agent-native-input"),NativeInput{},
     Bool.pick(NormalCliKind,String.eq(head,"agent-contextual-input"),ContextualInput{},
       Bool.pick(NormalCliKind,String.eq(head,"settle-agent-input"),SettleInput{},
@@ -282,7 +314,7 @@ def normal_cli_kind(+head: String) -> NormalCliKind:
     case "codex-inbox-follow": CodexInboxInput{}
     case "codex-inbox-deliver": CodexInboxInput{}
     case "codex-input-witness": CodexInboxInput{}
-    case other: normal_cli_existing_kind(other)
+    case other: normal_cli_kind_existing(other)
 
 def normal_cli_fallback_if(project: Bool, db: String, head: String, tail: List<String>) -> IO(Unit):
   match project:
@@ -377,7 +409,6 @@ def normal_cli_codex(args: List<String>, db: String, head: String) -> IO(Unit):
     case "codex-inbox-deliver": normal_cli_codex_deliver(args,db,head)
     case "codex-input-witness": normal_cli_codex_witness(args,db,head)
     case other: normal_cli_fallback(db,other,args)
-
 def normal_cli_repl_observer(db: String, args: List<String>) -> IO(Unit):
   match args:
     case cell <> Nil{}: Repl.observe(db,cell)
@@ -472,6 +503,8 @@ def legacy_cli_arity(args: List<String>) -> IO(Unit):
     case flag <> db <> owner <> query <> directory <> worktree <> bootstrap_file <> Nil{}:
       recover_context_query_cli(flag, db, owner, query, directory, worktree,
         bootstrap_file)
+    case "--wake-message" <> +db <> +id <> Nil{}:
+      Wake.message_cli(db,id)
     case +flag <> +directory <> +lock <> Nil{}:
       dispatch_cli(directory,lock,[flag,directory,lock],String.eq(flag,"--host-process-keeper"),String.eq(flag,"--dispatch-message"))
     case flag <> db <> player <> id <> cmd <> model <> effort <> cwd <> log <> harness <> directory <> native <> Nil{}:

@@ -1,4 +1,8 @@
 #include <sqlite3.h>
+#include <stdint.h>
+#include <inttypes.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <sys/file.h>
@@ -60,63 +64,151 @@ static const char *const baton_change_schema[] = {
   NULL
 };
 
-/* Return whether a DROP TRIGGER is immediately followed by the same trigger
-   definition already stored in sqlite_schema. SQLite omits the final semicolon
-   from sqlite_schema.sql, so compare after trimming that terminator. */
-static int baton_sql_trigger_matches(sqlite3 *db, const char *drop_sql,
-                                     const char *create_sql, int *matches,
-                                     char **error) {
-  static const char drop_prefix[] = "DROP TRIGGER IF EXISTS ";
-  static const char create_prefix[] = "CREATE TRIGGER ";
-  *matches = 0;
-  if (strncmp(drop_sql, drop_prefix, sizeof(drop_prefix) - 1) != 0 ||
-      strncmp(create_sql, create_prefix, sizeof(create_prefix) - 1) != 0)
-    return SQLITE_OK;
-  const char *drop_name = drop_sql + sizeof(drop_prefix) - 1;
-  size_t drop_name_length = strcspn(drop_name, "; \t\r\n");
-  const char *create_name = create_sql + sizeof(create_prefix) - 1;
-  size_t create_name_length = strcspn(create_name, " \t\r\n");
-  if (!drop_name_length || drop_name[drop_name_length] != ';' ||
-      drop_name_length != create_name_length ||
-      memcmp(drop_name, create_name, drop_name_length) != 0)
-    return SQLITE_OK;
-
-  sqlite3_stmt *statement = NULL;
-  int code = sqlite3_prepare_v2(db,
-    "SELECT sql FROM sqlite_master WHERE type='trigger' AND name=?1;",
-    -1, &statement, NULL);
-  if (code == SQLITE_OK)
-    code = sqlite3_bind_text(statement, 1, drop_name, (int)drop_name_length, SQLITE_STATIC);
-  if (code == SQLITE_OK) {
-    code = sqlite3_step(statement);
-    if (code == SQLITE_ROW) {
-      const char *stored = (const char *)sqlite3_column_text(statement, 0);
-      size_t stored_length = (size_t)sqlite3_column_bytes(statement, 0);
-      size_t wanted_length = strlen(create_sql);
-      while (stored_length && (stored[stored_length - 1] == ';' ||
-             stored[stored_length - 1] == ' ' || stored[stored_length - 1] == '\t' ||
-             stored[stored_length - 1] == '\r' || stored[stored_length - 1] == '\n'))
-        stored_length--;
-      while (wanted_length && (create_sql[wanted_length - 1] == ';' ||
-             create_sql[wanted_length - 1] == ' ' || create_sql[wanted_length - 1] == '\t' ||
-             create_sql[wanted_length - 1] == '\r' || create_sql[wanted_length - 1] == '\n'))
-        wanted_length--;
-      *matches = stored && stored_length == wanted_length &&
-        memcmp(stored, create_sql, wanted_length) == 0;
-      code = SQLITE_OK;
-    } else if (code == SQLITE_DONE) {
-      code = SQLITE_OK;
-    }
+/* Durable install marker. The fingerprint covers the exact caller schema
+   text and every baton_change_schema entry, so a schema or projection change
+   in a new binary changes the fingerprint and forces a reinstall. The stored
+   schema_version changes on any later DDL by any process, so dropping an
+   application table or trigger also forces the full installer and repairs it.
+   The marker row is written in the same BEGIN IMMEDIATE..COMMIT transaction
+   as the DDL it certifies, so it is visible only when the whole projection
+   committed. A database created or replaced by another process carries no
+   matching marker and is installed again. */
+static void baton_sql_projection_fingerprint(const char *schema, char out[17]) {
+  uint64_t hash = 14695981039346656037ULL;
+  const unsigned char *at;
+  for (at = (const unsigned char *)(schema ? schema : ""); *at; at++) {
+    hash ^= *at;
+    hash *= 1099511628211ULL;
   }
-  int final = sqlite3_finalize(statement);
-  if (code == SQLITE_OK && final != SQLITE_OK) code = final;
-  if (code != SQLITE_OK && error && !*error)
-    *error = sqlite3_mprintf("%s", sqlite3_errmsg(db));
+  hash ^= 0xffU;
+  hash *= 1099511628211ULL;
+  for (size_t i = 0; baton_change_schema[i]; i++) {
+    for (at = (const unsigned char *)baton_change_schema[i]; *at; at++) {
+      hash ^= *at;
+      hash *= 1099511628211ULL;
+    }
+    hash ^= 0xffU;
+    hash *= 1099511628211ULL;
+  }
+  snprintf(out, 17, "%016" PRIx64, hash);
+}
+
+static int baton_sql_scalar_int(sqlite3 *db, const char *sql, sqlite3_int64 *value) {
+  sqlite3_stmt *stmt = NULL;
+  int code = sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
+  if (code != SQLITE_OK) return code;
+  code = sqlite3_step(stmt);
+  if (code == SQLITE_ROW) {
+    *value = sqlite3_column_int64(stmt, 0);
+    code = SQLITE_OK;
+  } else if (code == SQLITE_DONE) {
+    code = SQLITE_MISUSE;
+  }
+  sqlite3_finalize(stmt);
   return code;
 }
 
+/* Copies the name from a CREATE TRIGGER statement. Projection statements use
+   plain identifiers; any other form fails the check and runs the installer. */
+static int baton_sql_trigger_name(const char *statement, char *out, size_t size) {
+  if (strncmp(statement, "CREATE TRIGGER ", 15) != 0) return 0;
+  const char *at = statement + 15;
+  if (strncmp(at, "IF NOT EXISTS ", 14) == 0) at += 14;
+  size_t n = 0;
+  while (at[n] && at[n] != ' ' && at[n] != '\t' && at[n] != '\n') {
+    char c = at[n];
+    if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')
+          || (c >= '0' && c <= '9') || c == '_')
+        || n + 1 >= size)
+      return 0;
+    out[n++] = c;
+  }
+  out[n] = 0;
+  return n > 0;
+}
+
+/* Cheap read-only completeness check against durable in-database state:
+   the marker fingerprint and schema version, the projection tables, the
+   migrated columns and the exact projection trigger names recorded in
+   sqlite_master. Triggers owned by other modules are outside this check.
+   Returns 1 only on a positive match; any missing object or read failure
+   returns 0 and the caller runs the full installer, which surfaces the real
+   error. */
+static int baton_sql_projection_is_current(sqlite3 *db, const char *schema,
+                                           const char fingerprint[17]) {
+  (void)schema;
+  if (sqlite3_table_column_metadata(db, NULL, "knowledge", "kind", NULL, NULL, NULL, NULL, NULL) != SQLITE_OK)
+    return 0;
+  if (sqlite3_table_column_metadata(db, NULL, "knowledge_promotions", "source_kind", NULL, NULL, NULL, NULL, NULL) != SQLITE_OK)
+    return 0;
+  if (sqlite3_table_column_metadata(db, NULL, "knowledge_promotions", "destination_kind", NULL, NULL, NULL, NULL, NULL) != SQLITE_OK)
+    return 0;
+  if (sqlite3_table_column_metadata(db, NULL, "baton_projection_state", "schema_version", NULL, NULL, NULL, NULL, NULL) != SQLITE_OK)
+    return 0;
+  sqlite3_int64 tables = 0;
+  if (baton_sql_scalar_int(db, "SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('native_changes','knowledge','knowledge_promotions','knowledge_relations','baton_projection_state');", &tables) != SQLITE_OK || tables != 5)
+    return 0;
+  char trigger_query[4096];
+  int used = snprintf(trigger_query, sizeof trigger_query,
+                      "SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name IN (");
+  int expected_triggers = 0;
+  if (used < 0 || (size_t)used >= sizeof trigger_query)
+    return 0;
+  for (size_t i = 0; baton_change_schema[i]; i++) {
+    if (strncmp(baton_change_schema[i], "CREATE TRIGGER", 14) != 0)
+      continue;
+    char name[64];
+    if (!baton_sql_trigger_name(baton_change_schema[i], name, sizeof name))
+      return 0;
+    int written = snprintf(trigger_query + used,
+                           sizeof trigger_query - (size_t)used,
+                           "%s'%s'", expected_triggers ? "," : "", name);
+    if (written < 0 || (size_t)written >= sizeof trigger_query - (size_t)used)
+      return 0;
+    used += written;
+    expected_triggers++;
+  }
+  if (expected_triggers == 0)
+    return 0;
+  int closing = snprintf(trigger_query + used,
+                         sizeof trigger_query - (size_t)used, ");");
+  if (closing < 0 || (size_t)closing >= sizeof trigger_query - (size_t)used)
+    return 0;
+  sqlite3_int64 triggers = 0;
+  if (baton_sql_scalar_int(db, trigger_query, &triggers) != SQLITE_OK || triggers != expected_triggers)
+    return 0;
+  sqlite3_int64 schema_version = 0;
+  if (baton_sql_scalar_int(db, "PRAGMA schema_version;", &schema_version) != SQLITE_OK)
+    return 0;
+  sqlite3_stmt *stmt = NULL;
+  if (sqlite3_prepare_v2(db, "SELECT fingerprint, schema_version FROM baton_projection_state WHERE id=1;", -1, &stmt, NULL) != SQLITE_OK)
+    return 0;
+  int current = 0;
+  if (sqlite3_step(stmt) == SQLITE_ROW) {
+    const unsigned char *stored = sqlite3_column_text(stmt, 0);
+    current = stored && strcmp((const char *)stored, fingerprint) == 0
+              && sqlite3_column_int64(stmt, 1) == schema_version;
+  }
+  sqlite3_finalize(stmt);
+  return current;
+}
+
 static int baton_sql_install_projection(sqlite3 *db, const char *schema, char **error) {
+  char fingerprint[17];
+  baton_sql_projection_fingerprint(schema, fingerprint);
+  /* Steady state: a previous install committed the marker, so this call
+     takes no write transaction and no write lock. */
+  if (baton_sql_projection_is_current(db, schema, fingerprint))
+    return SQLITE_OK;
   int code = sqlite3_exec(db, "BEGIN IMMEDIATE", NULL, NULL, error);
+  /* A concurrent first installer may have committed while this call waited
+     for the write lock; re-check under the lock and skip the DDL then. */
+  if (code == SQLITE_OK && baton_sql_projection_is_current(db, schema, fingerprint)) {
+    code = sqlite3_exec(db, "COMMIT", NULL, NULL, error);
+    if (code != SQLITE_OK)
+      sqlite3_exec(db, "ROLLBACK", NULL, NULL, NULL);
+    return code;
+  }
   if (code == SQLITE_OK)
     code = sqlite3_exec(db, schema, NULL, NULL, error);
   if (code == SQLITE_OK)
@@ -129,18 +221,21 @@ static int baton_sql_install_projection(sqlite3 *db, const char *schema, char **
     code = sqlite3_exec(db, "ALTER TABLE knowledge_promotions ADD COLUMN source_kind TEXT NOT NULL DEFAULT 'session';", NULL, NULL, error);
   if (code == SQLITE_OK && sqlite3_table_column_metadata(db, NULL, "knowledge_promotions", "destination_kind", NULL, NULL, NULL, NULL, NULL) != SQLITE_OK)
     code = sqlite3_exec(db, "ALTER TABLE knowledge_promotions ADD COLUMN destination_kind TEXT NOT NULL DEFAULT 'session';", NULL, NULL, error);
-  for (size_t i = 0; code == SQLITE_OK && baton_change_schema[i]; i++) {
-    int matches = 0;
-    if (baton_change_schema[i + 1] &&
-        strncmp(baton_change_schema[i], "DROP TRIGGER IF EXISTS ", 23) == 0)
-      code = baton_sql_trigger_matches(db, baton_change_schema[i],
-        baton_change_schema[i + 1], &matches, error);
-    if (code == SQLITE_OK && matches) {
-      i++;
-      continue;
-    }
-    if (code == SQLITE_OK)
-      code = sqlite3_exec(db, baton_change_schema[i], NULL, NULL, error);
+  for (size_t i = 0; code == SQLITE_OK && baton_change_schema[i]; i++)
+    code = sqlite3_exec(db, baton_change_schema[i], NULL, NULL, error);
+  if (code == SQLITE_OK)
+    code = sqlite3_exec(db, "CREATE TABLE IF NOT EXISTS baton_projection_state (id INTEGER PRIMARY KEY CHECK(id=1), fingerprint TEXT NOT NULL, schema_version INTEGER NOT NULL DEFAULT 0);", NULL, NULL, error);
+  /* A marker table written before schema_version existed is migrated in the
+     same transaction; the next check then compares the durable version. */
+  if (code == SQLITE_OK && sqlite3_table_column_metadata(db, NULL, "baton_projection_state", "schema_version", NULL, NULL, NULL, NULL, NULL) != SQLITE_OK)
+    code = sqlite3_exec(db, "ALTER TABLE baton_projection_state ADD COLUMN schema_version INTEGER NOT NULL DEFAULT 0;", NULL, NULL, error);
+  sqlite3_int64 schema_version = 0;
+  if (code == SQLITE_OK)
+    code = baton_sql_scalar_int(db, "PRAGMA schema_version;", &schema_version);
+  if (code == SQLITE_OK) {
+    char marker_sql[160];
+    snprintf(marker_sql, sizeof(marker_sql), "INSERT OR REPLACE INTO baton_projection_state(id,fingerprint,schema_version) VALUES(1,'%s',%lld);", fingerprint, (long long)schema_version);
+    code = sqlite3_exec(db, marker_sql, NULL, NULL, error);
   }
   if (code == SQLITE_OK)
     code = sqlite3_exec(db, "COMMIT", NULL, NULL, error);
@@ -175,7 +270,11 @@ static int baton_sql_row(void *context, int count, char **values, char **columns
 }
 
 static int baton_sql_busy(void *context, int tries) {
-  (void)context; (void)tries;
+  (void)context;
+  /* Bounded wait: at most 3000 retries of 10ms for one lock acquisition.
+     A caller that cannot acquire the lock receives SQLITE_BUSY and reports
+     that cause; no caller waits without a bound. */
+  if (tries >= 3000) return 0;
   sqlite3_sleep(10);
   return 1;
 }
@@ -236,6 +335,195 @@ static Term baton_sql_run(Env e, Term *f, IoWork *w) {
 }
 static void __attribute__((constructor)) baton_sql_use(void) {
   io_eff(CID_SQL_QUERY, baton_sql_run, 0);
+}
+#endif
+
+#if defined(CID_SQL_QUERY_SPAN) || defined(CID_SQL_QUERY_SPAN_TEXT) || defined(CID_SQL_QUERY_SPAN_2TEXT)
+/* Runs caller SQL with a byte range of an immutable stdout spool bound once
+   as parameter 1, plus optional caller text as parameters 2 and 3. The range
+   is mapped read-only and bound with SQLITE_STATIC, so a large native frame
+   reaches SQLite without becoming a Bend String. Rows use the Sql.query
+   format: columns joined by a tab and each row newline terminated. */
+typedef struct {
+  char *path, *spool, *sql, *text, *text2, *output, *error;
+  size_t length, text_length, text2_length, map_length;
+  uint64_t offset, span_length;
+  int code, params, spool_fd;
+  void *map;
+} BatonSqlSpan;
+
+static int baton_sql_span_parse_u64(const char *digits, uint64_t *value) {
+  if (!digits || !*digits) return EINVAL;
+  uint64_t n = 0;
+  for (const unsigned char *at = (const unsigned char *)digits; *at; at++) {
+    if (*at < '0' || *at > '9') return EINVAL;
+    unsigned digit = (unsigned)(*at - '0');
+    if (n > (UINT64_MAX - digit) / 10) return EOVERFLOW;
+    n = n * 10 + digit;
+  }
+  *value = n;
+  return 0;
+}
+
+static int baton_sql_span_row(BatonSqlSpan *call, sqlite3_stmt *statement) {
+  int count = sqlite3_column_count(statement);
+  for (int i = 0; i < count; i++) {
+    const unsigned char *value = sqlite3_column_text(statement, i);
+    size_t n = value ? (size_t)sqlite3_column_bytes(statement, i) : 0;
+    char *next = realloc(call->output, call->length + n + 2);
+    if (!next) return 1;
+    call->output = next;
+    if (n) memcpy(next + call->length, value, n);
+    call->length += n;
+    next[call->length++] = i + 1 == count ? '\n' : '\t';
+    next[call->length] = 0;
+  }
+  return 0;
+}
+
+static void baton_sql_span_call(IoWork *w) {
+  BatonSqlSpan *call = (BatonSqlSpan *)w->data;
+  sqlite3 *db = NULL;
+  call->spool_fd = open(call->spool, O_RDONLY | O_CLOEXEC);
+  if (call->spool_fd < 0) { call->code = errno; call->error = strdup("cannot open stdout spool"); return; }
+  struct stat info;
+  if (fstat(call->spool_fd, &info)) { call->code = errno; call->error = strdup("cannot inspect stdout spool"); return; }
+  if (!S_ISREG(info.st_mode) || info.st_size < 0) {
+    call->code = EINVAL; call->error = strdup("stdout spool is not a regular file"); return;
+  }
+  uint64_t size = (uint64_t)info.st_size;
+  if (call->offset > size || call->span_length > size - call->offset) {
+    call->code = EINVAL; call->error = strdup("stdout span is outside the spool"); return;
+  }
+  const char *bytes = "";
+  if (call->span_length) {
+    if (call->span_length > SIZE_MAX) { call->code = EOVERFLOW; call->error = strdup("stdout span is too large"); return; }
+    long page_size = sysconf(_SC_PAGESIZE);
+    if (page_size <= 0) { call->code = errno ? errno : EINVAL; call->error = strdup("cannot determine mmap page size"); return; }
+    uint64_t page = (uint64_t)page_size;
+    uint64_t aligned_offset = call->offset - call->offset % page;
+    uint64_t delta = call->offset - aligned_offset;
+    if (delta > SIZE_MAX || call->span_length > SIZE_MAX - (size_t)delta) {
+      call->code = EOVERFLOW; call->error = strdup("stdout span mapping length overflows"); return;
+    }
+    off_t map_offset = (off_t)aligned_offset;
+    if (map_offset < 0 || (uint64_t)map_offset != aligned_offset) {
+      call->code = EOVERFLOW; call->error = strdup("stdout span offset is too large"); return;
+    }
+    call->map_length = (size_t)delta + (size_t)call->span_length;
+    call->map = mmap(NULL, call->map_length, PROT_READ, MAP_PRIVATE, call->spool_fd, map_offset);
+    if (call->map == MAP_FAILED) { call->map = NULL; call->code = errno; call->error = strdup("cannot map stdout span"); return; }
+    bytes = (const char *)call->map + (size_t)delta;
+    if (memchr(bytes, 0, (size_t)call->span_length)) {
+      call->code = EILSEQ; call->error = strdup("stdout frame contains NUL"); return;
+    }
+  }
+  call->code = sqlite3_open(call->path, &db);
+  if (call->code != SQLITE_OK) {
+    call->error = strdup(db ? sqlite3_errmsg(db) : "cannot open database");
+  } else {
+    sqlite3_busy_handler(db, baton_sql_busy, NULL);
+    char *error = NULL;
+    call->code = sqlite3_create_function_v2(db, "baton_json_pretty", 1, SQLITE_UTF8 | SQLITE_DETERMINISTIC, NULL, baton_sql_json_pretty, NULL, NULL, NULL);
+    if (call->code == SQLITE_OK)
+      call->code = sqlite3_exec(db, "PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL;", NULL, NULL, &error);
+    const char *tail = call->sql;
+    while (call->code == SQLITE_OK && tail && *tail) {
+      sqlite3_stmt *statement = NULL;
+      const char *next = NULL;
+      call->code = sqlite3_prepare_v2(db, tail, -1, &statement, &next);
+      if (call->code != SQLITE_OK) break;
+      if (!statement) { tail = next; continue; }
+      int parameter_count = sqlite3_bind_parameter_count(statement);
+      if (parameter_count >= 1)
+        call->code = sqlite3_bind_text64(statement, 1, bytes, (sqlite3_uint64)call->span_length, SQLITE_STATIC, SQLITE_UTF8);
+      if (call->code == SQLITE_OK && call->params > 1 && parameter_count >= 2)
+        call->code = sqlite3_bind_text64(statement, 2, call->text ? call->text : "", (sqlite3_uint64)call->text_length, SQLITE_STATIC, SQLITE_UTF8);
+      if (call->code == SQLITE_OK && call->params > 2 && parameter_count >= 3)
+        call->code = sqlite3_bind_text64(statement, 3, call->text2 ? call->text2 : "", (sqlite3_uint64)call->text2_length, SQLITE_STATIC, SQLITE_UTF8);
+      while (call->code == SQLITE_OK) {
+        int step = sqlite3_step(statement);
+        if (step == SQLITE_ROW) { if (baton_sql_span_row(call, statement)) call->code = SQLITE_NOMEM; }
+        else if (step == SQLITE_DONE) break;
+        else call->code = step;
+      }
+      int final = sqlite3_finalize(statement);
+      if (call->code == SQLITE_OK) call->code = final;
+      tail = next;
+    }
+    if (call->code != SQLITE_OK) {
+      call->error = strdup(error ? error : sqlite3_errmsg(db));
+      sqlite3_exec(db, "ROLLBACK", NULL, NULL, NULL);
+    }
+    sqlite3_free(error);
+  }
+  if (db) sqlite3_close(db);
+}
+
+static void baton_sql_span_release(BatonSqlSpan *call) {
+  if (call->map) munmap(call->map, call->map_length);
+  if (call->spool_fd >= 0) close(call->spool_fd);
+  free(call->path); free(call->spool); free(call->sql); free(call->text); free(call->text2);
+  free(call->output); free(call->error); free(call);
+}
+
+static Term baton_sql_span_pack(Env e, IoWork *w) {
+  BatonSqlSpan *call = (BatonSqlSpan *)w->data;
+  Term result = call->code == SQLITE_OK
+    ? io_done(e, io_str(e, call->output ? call->output : "", call->length))
+    : io_fail(e, (u32)call->code, call->error ? call->error : "SQLite failed");
+  baton_sql_span_release(call);
+  w->data = NULL;
+  return result;
+}
+
+static Term baton_sql_span_run(Env e, Term *f, IoWork *w, int params) {
+  BatonSqlSpan *call = calloc(1, sizeof(*call));
+  if (!call) return io_fail(e, ENOMEM, NULL);
+  call->spool_fd = -1;
+  call->params = params;
+  u64 path_n = 0, spool_n = 0, offset_n = 0, length_n = 0, sql_n = 0, text_n = 0, text2_n = 0;
+  call->path = io_cstr(e, f[0], &path_n);
+  call->spool = io_cstr(e, f[1], &spool_n);
+  char *offset_text = io_cstr(e, f[2], &offset_n);
+  char *length_text = io_cstr(e, f[3], &length_n);
+  call->sql = io_cstr(e, f[4], &sql_n);
+  if (params > 1) { call->text = io_cstr(e, f[5], &text_n); call->text_length = text_n; }
+  if (params > 2) { call->text2 = io_cstr(e, f[6], &text2_n); call->text2_length = text2_n; }
+  if (!call->path || !call->spool || !call->sql || !offset_text || !length_text ||
+      strlen(call->path) != path_n || strlen(call->spool) != spool_n || strlen(call->sql) != sql_n ||
+      strlen(offset_text) != offset_n || strlen(length_text) != length_n) {
+    call->code = EINVAL; call->error = strdup("database path, spool path or SQL contains NUL");
+  } else {
+    call->code = baton_sql_span_parse_u64(offset_text, &call->offset);
+    if (!call->code) call->code = baton_sql_span_parse_u64(length_text, &call->span_length);
+    if (call->code) call->error = strdup("stdout span is not a decimal byte range");
+  }
+  free(offset_text); free(length_text);
+  w->data = (char *)call;
+  if (call->code) return baton_sql_span_pack(e, w);
+  return io_work(w, baton_sql_span_call, baton_sql_span_pack);
+}
+#endif
+
+#ifdef CID_SQL_QUERY_SPAN
+static Term baton_sql_query_span_run(Env e, Term *f, IoWork *w) { return baton_sql_span_run(e, f, w, 1); }
+static void __attribute__((constructor)) baton_sql_query_span_use(void) {
+  io_eff(CID_SQL_QUERY_SPAN, baton_sql_query_span_run, 0);
+}
+#endif
+
+#ifdef CID_SQL_QUERY_SPAN_TEXT
+static Term baton_sql_query_span_text_run(Env e, Term *f, IoWork *w) { return baton_sql_span_run(e, f, w, 2); }
+static void __attribute__((constructor)) baton_sql_query_span_text_use(void) {
+  io_eff(CID_SQL_QUERY_SPAN_TEXT, baton_sql_query_span_text_run, 0);
+}
+#endif
+
+#ifdef CID_SQL_QUERY_SPAN_2TEXT
+static Term baton_sql_query_span_2text_run(Env e, Term *f, IoWork *w) { return baton_sql_span_run(e, f, w, 3); }
+static void __attribute__((constructor)) baton_sql_query_span_2text_use(void) {
+  io_eff(CID_SQL_QUERY_SPAN_2TEXT, baton_sql_query_span_2text_run, 0);
 }
 #endif
 

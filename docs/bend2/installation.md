@@ -1,16 +1,76 @@
 # Native installation
 
 Baton is developed on `main`. The Darwin arm64 archive contains the native
-executable, packaged Conductor adapters, Git identity helper, Bend2 REPL compiler
-and Bun runtime, selected context providers, notices and source/build manifest. Build logs are retained in the
-package output directory. Hosted CI also retains the smoke logs.
+executable, packaged Conductor adapters, Git identity helper, required Bend2
+REPL compiler and Bun runtime, selected context providers, notices and
+source/build manifest. Build logs are retained in the package output directory.
+Self-hosted validation runners also retain the smoke logs.
 The [historical 1.0 scope](release-1.0.md)
 records the supported platform and qualifications of that archive.
-A source installation stages the compiled executable and its required runtime
-payload for other hosts and architectures. The original npm package and its smoke checks
+A source build produces a native executable and remains the procedure
+for other hosts and architectures. The original npm package and its smoke checks
 are retained with the original implementation in Git history.
 [Native development artifacts](native-artifacts.md) describe archive packaging,
-the extracted smoke procedure and hosted CI.
+the extracted smoke procedure and self-hosted validation.
+
+The standard archive carries one required `bend2-repl-compiler` dependency.
+`check-install.py` verifies its complete file inventory and recorded hashes,
+runs the packaged Bun, and checks the C compiler and SQLite headers and
+library. Darwin requires Apple Command Line Tools and a macOS SDK; Linux
+source installations require Clang 14 or later and SQLite development files.
+The check refuses before command links change.
+
+## Stage a source installation
+
+A source installation from the receiver layout contains four executable paths
+across three roles. `bin/baton` is the focused receiver, `bin/baton2` is the
+full router, `bin/baton-full` is the general CLI sibling, and
+`bin/baton-recovery` is the recovery helper. The focused receiver sends
+general and help actions to `bin/baton-full`. The full router is relinked with
+`BATON2_NATIVE_RECEIVER_ROUTER` and forwards internal receiver actions to
+`bin/baton` and recovery actions to `bin/baton-recovery`. A missing or
+non-executable sibling makes the operation refuse with exit status 78.
+
+Stage the layout from three already-built binaries. Each binary needs its exact
+source commit and either its source tree object or a source manifest SHA256.
+The full router also records its current native-entry wrapper source separately
+from the retained full source or C identity. `bend2/scripts/stage-native-install.py` also requires the current REPL
+compiler source, Bun runtime, runtime SHA256 and complete runtime notices.
+
+```sh
+python3 "$BATON2_SOURCE/bend2/scripts/stage-native-install.py" \
+  --prefix "$BATON2_PREFIX" \
+  --focused-binary "$BATON2_FOCUSED" \
+  --full-binary "$BATON2_FULL" \
+  --recovery-binary "$BATON2_RECOVERY" \
+  --focused-source-commit "$BATON2_FOCUSED_COMMIT" \
+  --focused-source-tree "$BATON2_FOCUSED_TREE" \
+  --full-source-commit "$BATON2_FULL_COMMIT" \
+  --full-source-tree "$BATON2_FULL_TREE" \
+  --recovery-source-commit "$BATON2_RECOVERY_COMMIT" \
+  --recovery-source-tree "$BATON2_RECOVERY_TREE" \
+  --full-wrapper-source-commit "$BATON2_WRAPPER_COMMIT" \
+  --full-wrapper-source-tree "$BATON2_WRAPPER_TREE" \
+  --repl-compiler-source "$BATON2_SOURCE/bend2/compiler/upstream" \
+  --repl-runtime "$BATON2_BUN" \
+  --repl-runtime-sha256 "$BATON2_BUN_SHA256" \
+  --repl-runtime-notices "$BATON2_BUN_NOTICES"
+```
+
+An emergency full router may retain an earlier installed `bin/baton2` binary.
+Pass its earlier retained source with `--full-source-commit` and
+`--full-source-tree`, its retained C with `--full-c-sha256`, and the current wrapper with
+`--full-wrapper-source-commit` and `--full-wrapper-source-tree`. The manifest
+and install receipt record both pins while the focused receiver keeps its current
+pin. The earlier binary's own features remain limited to its retained source pin.
+
+The staging manifest uses schema `baton2-native-install-v2` and records each
+binary's role, installed path, SHA256, source pin, entry and build mode.
+`SHA256SUMS` covers the four executable paths, the manifest and the install
+receipt. `install-receipt.json` binds the manifest hash and binary pins.
+`libexec/baton2/check-install.py` verifies those files, the full general CLI
+sibling and all three role binaries, and the required REPL payload. It refuses a missing, non-executable, altered or
+unrecorded binary and reports the verified binary pins in its result.
 
 ## Install or update a published release
 
@@ -50,9 +110,12 @@ python3 - "$BATON2_PREFIX" <<'PY'
 import hashlib, json, pathlib, sys
 prefix = pathlib.Path(sys.argv[1])
 manifest = json.loads((prefix / 'manifest.json').read_text())
-assert hashlib.sha256((prefix / 'bin/baton2').read_bytes()).hexdigest() == manifest['binary']['sha256']
-assert manifest['binary']['alias'] == 'bin/baton'
-assert (prefix / 'bin/baton').read_bytes() == (prefix / 'bin/baton2').read_bytes()
+assert manifest['binary']['path'] == 'bin/baton'
+assert manifest['binary']['alias'] is None
+assert (prefix / 'bin/baton2').read_bytes() == (prefix / 'bin/baton-full').read_bytes()
+assert (prefix / 'bin/baton').read_bytes() != (prefix / 'bin/baton2').read_bytes()
+for record in manifest['binaries']:
+    assert hashlib.sha256((prefix / record['path']).read_bytes()).hexdigest() == record['sha256']
 PY
 python3 "$BATON2_PREFIX/libexec/baton2/check-install.py" \
   --output "$BATON2_DOWNLOAD/installation-check"
@@ -80,13 +143,6 @@ owned turn completes, refresh its receiver using the procedure below. Preserve
 the recorded native identity, parent, workspace, pending input, receipts and
 explicit stops. Record any process that continues to use an earlier prefix;
 selecting the command symlink does not reload that process.
-
-The preactivation check verifies the required REPL files and recorded hashes.
-It also compiles and runs a SQLite probe using Apple Command Line Tools and the
-macOS SDK. If those prerequisites are absent, install them with
-`xcode-select --install`, select a valid macOS SDK and repeat the check before
-changing command symlinks. The complete [REPL compiler payload](repl.md#bundled-compiler)
-is part of the standard installation.
 
 ## Install the historical 1.0 archive
 
@@ -182,26 +238,18 @@ BATON2_SOURCE='<qualified-commit>'
 BATON2_ARCHIVE="$BATON2_PACKAGE/baton2-development-darwin-arm64-$BATON2_SOURCE.tar.gz"
 BATON2_PREFIX="$HOME/.local/share/baton2/releases/development-$BATON2_SOURCE"
 BATON2_COMMAND="$HOME/.local/bin/baton2"
-(
-  cd "$BATON2_PACKAGE"
-  shasum -a 256 -c SHA256SUMS
-)
 mkdir -p "$HOME/.local/share/baton2/releases" "$HOME/.local/bin"
 mkdir "$BATON2_PREFIX"
 tar -xzpf "$BATON2_ARCHIVE" -C "$BATON2_PREFIX" --strip-components=1
 chmod 755 "$BATON2_PREFIX"
-cmp "$BATON2_PREFIX/manifest.json" "$BATON2_PACKAGE/manifest.json"
-python3 "$BATON2_PREFIX/libexec/baton2/check-install.py" \
-  --output "$BATON2_PACKAGE/installation-check"
 ln -s "$BATON2_PREFIX/bin/baton2" "$BATON2_COMMAND.next"
 mv -f "$BATON2_COMMAND.next" "$BATON2_COMMAND"
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
 Keep the complete extracted prefix, including `lib/context/modules` and
-`libexec/baton2`. The executable resolves its Conductor adapters and selected
-context providers there. The compiled coordinator manages Codex inbox delivery
-through the native proxy transport. Keep the earlier prefix available
+`libexec/baton2`. The executable resolves its Codex inbox helper, Conductor
+adapters and selected context providers there. Keep the earlier prefix available
 for receivers and recovery commands that still reference it.
 
 The command symlink selects the executable for subsequent CLI invocations.
@@ -228,42 +276,6 @@ source path was unavailable during use. The
 released archive above carries the complete payload. The executable
 linked system SQLite and libSystem on the qualified host. Other operating
 systems and architectures need their own build and execution qualification.
-
-## Install a source build
-
-Run the native build on the qualified host with the recorded Bend compiler.
-Then stage its installation prefix with the exact platform Bun runtime and its
-verified SHA256 and complete distribution notices. The checked-in compiler
-source under `bend2/compiler/upstream` is required and verified against its lock.
-
-```sh
-set -eu
-sh bend2/scripts/build-native.sh
-BATON2_PREFIX=/absolute/path/to/new/native-prefix
-BATON2_REPL_RUNTIME=/absolute/path/to/verified/platform/bun
-BATON2_REPL_RUNTIME_SHA256='<verified-platform-runtime-sha256>'
-BATON2_REPL_NOTICES=/absolute/path/to/complete/Bun-NOTICES
-python3 bend2/scripts/stage-native-install.py \
-  --binary .scratch/bend2/baton2 --prefix "$BATON2_PREFIX" \
-  --repl-runtime "$BATON2_REPL_RUNTIME" \
-  --repl-runtime-sha256 "$BATON2_REPL_RUNTIME_SHA256" \
-  --repl-runtime-notices "$BATON2_REPL_NOTICES"
-python3 "$BATON2_PREFIX/libexec/baton2/check-install.py" \
-  --output "$BATON2_PREFIX.installation-check"
-mkdir -p "$HOME/.local/bin"
-ln -s "$BATON2_PREFIX/bin/baton2" "$HOME/.local/bin/baton2.next"
-mv -f "$HOME/.local/bin/baton2.next" "$HOME/.local/bin/baton2"
-ln -s "$BATON2_PREFIX/bin/baton" "$HOME/.local/bin/baton.next"
-mv -f "$HOME/.local/bin/baton.next" "$HOME/.local/bin/baton"
-```
-
-The staging command records the executable, required REPL dependency, context
-modules, system prerequisites and notices. Keep the complete prefix. The native
-build output is an intermediate executable; source installation requires the
-staged payload. The installed REPL resolves its compiler under
-`libexec/baton2/repl/compiler` in that prefix. Linux installations require Clang
-14 or later and SQLite development headers and library. The preactivation check
-reports the missing prerequisite and its remedy.
 
 ## Install a context module
 
@@ -332,6 +344,11 @@ Create a scratchpad deliberately when working notes need a file. Dispatch source
 is retained as database text. Native transcripts remain separate runtime files.
 The [dispatch interface](task-start-716.md) describes defaults, authority and
 partial failures. `task` remains a compatibility alias.
+
+The installed router runs the dispatch operation with an absolute `BATON2_NODE`
+when set, a sibling `bin/node`, the packaged `libexec/baton2/repl/bun`, or
+`node` from PATH, in that order. A complete package includes the bundled Bun
+runtime. `check-install.py` refuses a package with no dispatch runtime.
 
 An attached coordinator uses `baton2_dispatch` with text or an existing file to
 assign independent work through its recorded identity. Existing native controls

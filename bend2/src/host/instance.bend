@@ -78,6 +78,13 @@ def Instance.retire(handle: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
 def Instance.commit(handle: U32, schema: U32, state: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   import "./process-spawn.c"
 
+# Writes one monitor checkpoint for an adopted attempt whose native status is
+# unknown. The host revalidates the custody record (manifest digest, native
+# birth, spool device and inode), requires a non-decreasing cursor within the
+# current spool and a reducer snapshot, and refuses every non-monitor handle.
+def Instance.monitor_commit(handle: U32, schema: U32, state: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  import "./process-spawn.c"
+
 # Returns the persisted reducer state and positions the reader at the validated
 # matching offset. An empty String means no usable checkpoint and offset zero: a
 # corrupted or stale record returns empty with a durable diagnostic, while an

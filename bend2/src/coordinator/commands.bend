@@ -62,10 +62,20 @@ type Command is Data:
   Push{repo: String, branch: String, remote: String}
   RemoteTip{repo: String, branch: String, remote: String}
   ObservedUsage{session: String}
+  Account{action: String, id: String, provider: String, harness: String, funding: String, secret_ref: String, organization: String, detail: String, session: String}
   Models{session: String}
+  ModelsAll{session: String}
+  HarnessInventory{}
+  UsageWindows{session: String}
+  UsageWindowObserve{session: String, window: String, resets: String, source: String}
+  UsageWindowRefresh{session: String}
   Logs{session: String, level: String}
   LogsStorage{}
   LogsClean{session: String}
+  LogsCleanAll{}
+  StoragePolicy{}
+  StoragePreview{session: String}
+  StorageApply{session: String}
   Status{}
   Players{}
   LegacySubordinates{}
@@ -100,6 +110,8 @@ type Command is Data:
   ContextQueryFile{owner: String, query: String, path: String}
   ContextResult{query: String}
   Serve{}
+  Stall{}
+  StallWake{}
   OwnerStatus{}
   Help{}
   Invalid{}
@@ -147,11 +159,21 @@ def wake_claim_schema() -> String:
 def task_input_schema() -> String:
   "CREATE TABLE IF NOT EXISTS task_input_requests (id TEXT PRIMARY KEY NOT NULL,request TEXT NOT NULL CHECK(json_valid(request) AND json_type(request)='object'),result TEXT CHECK(result IS NULL OR (json_valid(result) AND json_type(result)='object')));"
 
+# Usage window observations (#797): one row per observed provider window
+# event, bound to the session's harness, the provider prefix of its model, and
+# the subscription profile label in force (an empty label is account-wide).
+# resets_at NULL is the explicit unknown; the store never invents a reset.
+def usage_windows_schema() -> String:
+  "CREATE TABLE IF NOT EXISTS usage_windows (id INTEGER PRIMARY KEY AUTOINCREMENT, recorded_at INTEGER NOT NULL, harness TEXT NOT NULL, model TEXT NOT NULL DEFAULT '', provider TEXT NOT NULL DEFAULT '', account TEXT NOT NULL DEFAULT '', window TEXT NOT NULL, resets_at INTEGER, reset_source TEXT NOT NULL, used_fraction REAL, receipt TEXT NOT NULL, message TEXT NOT NULL DEFAULT '');"
+  ++ "CREATE INDEX IF NOT EXISTS idx_usage_windows_match ON usage_windows(harness, provider, account, recorded_at);"
+
 def schema() -> String:
   wake_claim_schema()
   ++ task_input_schema()
+  ++ usage_windows_schema()
   ++ "CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY NOT NULL, parent TEXT REFERENCES sessions(id), harness TEXT NOT NULL, model TEXT NOT NULL DEFAULT '', effort TEXT NOT NULL DEFAULT '', native TEXT NOT NULL DEFAULT '', observed_harness TEXT NOT NULL DEFAULT '', observed_model TEXT NOT NULL DEFAULT '', observed_effort TEXT NOT NULL DEFAULT '', endpoint TEXT NOT NULL DEFAULT '', workspace TEXT NOT NULL DEFAULT '', branch TEXT NOT NULL DEFAULT '', base TEXT NOT NULL DEFAULT '');"
   ++ "CREATE TABLE IF NOT EXISTS messages (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, sender TEXT NOT NULL REFERENCES sessions(id), recipient TEXT NOT NULL REFERENCES sessions(id), kind TEXT NOT NULL, body TEXT NOT NULL, receipt TEXT);"
+  ++ "CREATE INDEX IF NOT EXISTS messages_pending ON messages(recipient,seq) WHERE receipt IS NULL;"
   ++ "CREATE TABLE IF NOT EXISTS turns (id TEXT PRIMARY KEY NOT NULL REFERENCES messages(id), worker TEXT NOT NULL REFERENCES sessions(id), event TEXT NOT NULL);"
   ++ "CREATE TABLE IF NOT EXISTS executions (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), id TEXT NOT NULL, mode TEXT NOT NULL, directory TEXT NOT NULL, phase TEXT NOT NULL, status TEXT NOT NULL DEFAULT '');"
   ++ MessageStatus.schema()
@@ -193,7 +215,7 @@ def omp_terminal_error_sql_expr(+event: String) -> String:
 
 def blocked_cause_sql(+session: String) -> String:
   "CASE WHEN " ++ stopped_session_sql(session) ++ " THEN 'terminal-stop'"
-  ++ " WHEN (SELECT route.harness FROM sessions AS route WHERE route.id=" ++ session ++ ") NOT IN ('codex','omp','muse','claude-code') THEN 'harness-unsupported'"
+  ++ " WHEN (SELECT route.harness FROM sessions AS route WHERE route.id=" ++ session ++ ") NOT IN ('codex','omp','muse','claude-code','dsh') THEN 'harness-unsupported'"
   ++ " WHEN " ++ blocked_endpoint_absent_sql(session) ++ " AND NOT " ++ direct_app_route_sql(session) ++ " THEN 'endpoint-absent'"
   ++ " WHEN EXISTS(SELECT 1 FROM executions e WHERE e.session=" ++ session ++ " AND e.phase='exited' AND (e.status<>'exit 0' OR EXISTS(SELECT 1 FROM turns t WHERE t.id=e.id AND t.worker=e.session AND (coalesce(json_extract(t.event,'$.is_error'),0)=1 OR " ++ omp_terminal_error_sql_expr("t.event") ++ " OR (json_extract(t.event,'$.payload.kind')='run_terminal' AND json_extract(t.event,'$.payload.terminal')<>'completed'))))) THEN 'provider-failure'"
   ++ " ELSE '' END"
@@ -298,7 +320,7 @@ def configure_matches(session: String, harness: String, model: String, effort: S
   "EXISTS(SELECT 1 FROM sessions WHERE id=" ++ q(session) ++ " AND harness=" ++ q(harness) ++ " AND model=" ++ q(model) ++ " AND effort=" ++ q(effort) ++ ")"
 
 def configure_admitted(+session: String, +harness: String, +model: String, +endpoint: String, +expected_harness: String, +expected_model: String, expected_effort: String) -> String:
-  "(" ++ q(harness) ++ " IN ('codex','omp','muse','claude-code') AND " ++ q(model) ++ "<>'' AND " ++ configure_matches(session,expected_harness,expected_model,expected_effort)
+  "(" ++ q(harness) ++ " IN ('codex','omp','muse','claude-code','dsh') AND " ++ q(model) ++ "<>'' AND " ++ configure_matches(session,expected_harness,expected_model,expected_effort)
   ++ " AND ((" ++ q(harness) ++ "=" ++ q(expected_harness) ++ " AND " ++ q(model) ++ "=" ++ q(expected_model) ++ ") OR (NOT " ++ stopped_session_sql(q(session))
   ++ " AND NOT EXISTS(SELECT 1 FROM executions WHERE session=" ++ q(session) ++ " AND phase<>'exited')"
   ++ " AND " ++ endpoint_admitted(endpoint) ++ ")))"
@@ -346,6 +368,9 @@ def terminal_expr(+event: String) -> String:
 def terminal(+event: String) -> String:
   "(SELECT " ++ terminal_expr("native_frame.value") ++ " FROM (SELECT " ++ q(event) ++ " AS value) native_frame)"
 
+def terminal_span(+event: String) -> String:
+  "(SELECT " ++ terminal_expr("native_frame.value") ++ " FROM (SELECT " ++ event ++ " AS value) native_frame)"
+
 # A child reports to its recorded parent. A parentless Conductor reports to the
 # registered operator when that session has the explicit operator responsibility.
 def report_recipient(+session: String) -> String:
@@ -360,7 +385,7 @@ def omp_terminal_error_sql(+event: String) -> String:
 # The report carries the observed provider status and diagnostic. The native
 # log retains the complete terminal frame.
 def omp_terminal_error_text_sql_expr(+event: String) -> String:
-  "CASE WHEN json_extract(" ++ event ++ ",'$.type')='agent_end' THEN (SELECT 'OMP provider failure: stopReason=error, errorStatus=' || coalesce(CAST(json_extract(m.value,'$.errorStatus') AS TEXT),'unknown') || '; ' || coalesce(json_extract(m.value,'$.errorMessage'),'the retained frame carries no provider diagnostic') FROM (SELECT " ++ last_assistant_sql_expr(event) ++ " AS value) m WHERE json_extract(m.value,'$.stopReason')='error') END"
+  "CASE WHEN json_valid(" ++ event ++ ") THEN CASE WHEN json_extract(" ++ event ++ ",'$.type')='agent_end' THEN (SELECT 'OMP provider failure: stopReason=error, errorStatus=' || coalesce(CAST(json_extract(m.value,'$.errorStatus') AS TEXT),'unknown') || '; ' || coalesce(json_extract(m.value,'$.errorMessage'),'the retained frame carries no provider diagnostic') FROM (SELECT " ++ last_assistant_sql_expr(event) ++ " AS value) m WHERE json_extract(m.value,'$.stopReason')='error') END END"
 
 def omp_terminal_error_text_sql(+event: String) -> String:
   "(SELECT " ++ omp_terminal_error_text_sql_expr("native_frame.value") ++ " FROM (SELECT " ++ q(event) ++ " AS value) native_frame)"
@@ -423,7 +448,7 @@ def tight_peers(+sender: String, +recipient: String) -> String:
   "(" ++ peers(sender,recipient) ++ " AND " ++ assigned_role(sender) ++ "<>'operator' AND " ++ assigned_role(recipient) ++ "<>'operator' AND EXISTS(SELECT 1 FROM ensemble_members a JOIN ensemble_members b ON b.ensemble=a.ensemble JOIN ensembles e ON e.id=a.ensemble WHERE a.session=" ++ sender ++ " AND b.session=" ++ recipient ++ " AND e.coupling='tight'))"
 
 def operator_route(+sender: String, +recipient: String) -> String:
-  "((" ++ assigned_role(sender) ++ "='operator' AND " ++ assigned_role(recipient) ++ "='conductor' AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ recipient ++ " AND parent IS NULL)) OR (" ++ assigned_role(recipient) ++ "='operator' AND " ++ assigned_role(sender) ++ "='conductor' AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ sender ++ " AND parent IS NULL)))"
+  "((" ++ assigned_role(sender) ++ "='operator' AND " ++ assigned_role(recipient) ++ "='conductor' AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ recipient ++ " AND (parent IS NULL OR parent=" ++ sender ++ "))) OR (" ++ assigned_role(recipient) ++ "='operator' AND " ++ assigned_role(sender) ++ "='conductor' AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ sender ++ " AND parent IS NULL)))"
 
 def message_route(+sender: String, +recipient: String) -> String:
   "(EXISTS(SELECT 1 FROM sessions WHERE id=" ++ sender ++ ") AND EXISTS(SELECT 1 FROM sessions WHERE id=" ++ recipient ++ ") AND " ++ sender ++ "<>" ++ recipient ++ " AND ((" ++ assigned_role(sender) ++ "<>'operator' AND " ++ assigned_role(recipient) ++ "<>'operator' AND (coalesce((SELECT parent FROM sessions WHERE id=" ++ sender ++ ")=" ++ recipient ++ ",0) OR coalesce((SELECT parent FROM sessions WHERE id=" ++ recipient ++ ")=" ++ sender ++ ",0) OR (" ++ assigned_role(sender) ++ "='conductor' AND " ++ descendant(sender,recipient) ++ ") OR " ++ tight_peers(sender,recipient) ++ ")) OR " ++ operator_route(sender,recipient) ++ "))"
@@ -623,10 +648,20 @@ def sql(command: Command) -> String:
     case Push{repo,branch,remote}: ""
     case RemoteTip{repo,branch,remote}: ""
     case ObservedUsage{session}: ""
+    case Account{action,id,provider,harness,funding,secret_ref,organization,detail,session}: ""
     case Models{session}: ""
+    case ModelsAll{session}: ""
+    case HarnessInventory{}: ""
+    case UsageWindows{session}: ""
+    case UsageWindowObserve{session,window,resets,source}: ""
+    case UsageWindowRefresh{session}: ""
     case Logs{session,level}: ""
     case LogsStorage{}: ""
+    case StoragePolicy{}: ""
+    case StoragePreview{session}: ""
+    case StorageApply{session}: ""
     case LogsClean{session}: ""
+    case LogsCleanAll{}: ""
     case Recruit{id,parent,harness,model,effort,repo,branch,path,base}: ""
     case Join{id,parent,harness,model,effort,path}: ""
     case Worktree{id}: ""
@@ -651,6 +686,8 @@ def sql(command: Command) -> String:
     case ContextInstall{module_id,source}: ""
     case ContextQueryFile{owner,query,path}: ""
     case ContextResult{query}: ""
+    case Stall{}: ""
+    case StallWake{}: ""
     case Serve{}: ""
     case OwnerStatus{}: ""
     case Help{}: ""
@@ -660,12 +697,17 @@ def parse_verb_only(+verb: String) -> Command:
   match verb:
     case "context-engines": ContextEngines{""}
     case "logs-storage": LogsStorage{}
+    case "logs-clean-all": LogsCleanAll{}
+    case "storage-policy": StoragePolicy{}
     case "help": Help{}
     case "--help": Help{}
     case "status": Status{}
+    case "harness-inventory": HarnessInventory{}
     case "workers": LegacySubordinates{}
     case "players": Players{}
     case "orchestra": Orchestra{}
+    case "stall": Stall{}
+    case "stall-wake": StallWake{}
     case "pending": Pending{}
     case "serve": Serve{}
     case "owner-status": OwnerStatus{}
@@ -677,6 +719,8 @@ def parse_verb_id(+verb: String, +id: String) -> Command:
     case "context-result": ContextResult{id}
     case "logs": Logs{id,""}
     case "logs-clean": LogsClean{id}
+    case "storage-preview": StoragePreview{id}
+    case "storage-apply": StorageApply{id}
     case "players": match id:
       case "--pretty": Pretty{Players{}}
       case _: Invalid{}
@@ -709,6 +753,8 @@ def parse_verb_id(+verb: String, +id: String) -> Command:
     case "knowledge-relations": KnowledgeRelations{id,"worker",id}
     case "observed-usage": ObservedUsage{id}
     case "models": Models{id}
+    case "usage-windows": UsageWindows{id}
+    case "usage-window-refresh": UsageWindowRefresh{id}
     case "view": View{id,id,"7682"}
     case _: Invalid{}
 
@@ -720,6 +766,9 @@ def parse_verb_session_id(+verb: String, +session: String, +id: String) -> Comma
     case "pending": Bool.pick(Command,Bool.or(Bool.and(String.eq(session,"--index"),String.eq(id,"--pretty")),Bool.and(String.eq(session,"--pretty"),String.eq(id,"--index"))),Pretty{PendingIndex{}},Invalid{})
     case "resume": match id:
       case "--lift-stop": Resume{session,True{}}
+      case _: Invalid{}
+    case "models": match id:
+      case "--all": ModelsAll{session}
       case _: Invalid{}
     case "ui-subscribe": UiSubscribe{session,id}
     case "logs": Logs{session,id}
@@ -794,6 +843,7 @@ def parse_verb_three_args(+verb: String, +id: String, +one: String, +two: String
 def parse_verb_four_args(+verb: String, +id: String, +one: String, +two: String, +three: String) -> Command:
   match verb:
     case "profile-bind": ProfileBind{id,one,two,three}
+    case "usage-window-observe": UsageWindowObserve{id,one,two,three}
     case "knowledge-search": KnowledgeSearch{id,one,two,three}
     case "knowledge":
       Bool.pick(Command,Bool.and(String.eq(one,"--id"),String.eq(three,"--pretty")),Pretty{KnowledgeDetail{id,two}},
@@ -838,6 +888,7 @@ def parse_receive(+verb: String, +session: String, +cmd: String, +model: String,
 def parse_verb_nine_args(+verb: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +session: String) -> Command:
   match verb:
     case "configure": Configure{player,id,cmd,model,effort,cwd,task,log,session}
+    case "account": Account{player,id,cmd,model,effort,cwd,task,log,session}
     case "start": Start{player,id,cmd,model,effort,cwd,task,log,session}
     case "turn": RunTurn{player,id,cmd,model,effort,cwd,task,log,session}
     case "recruit": Recruit{player,id,cmd,model,effort,cwd,task,log,session}
@@ -1130,4 +1181,16 @@ law owner_status_parser_rejects_extra_arguments:
   {parse(["owner-status",extra]) == Invalid{} : Command}
 
 def owner_status_parser_rejects_extra_arguments(extra):
+  {==}
+
+law stall_parser_selects_the_candidate_report:
+  {parse(["stall"]) == Stall{} : Command}
+
+def stall_parser_selects_the_candidate_report():
+  {==}
+
+law stall_wake_parser_selects_the_wake:
+  {parse(["stall-wake"]) == StallWake{} : Command}
+
+def stall_wake_parser_selects_the_wake():
   {==}

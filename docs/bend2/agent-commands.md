@@ -332,6 +332,20 @@ identities and selects the latest query owned by the current actor for its resul
 An explicit `--id ID` selects a retained query.
 `models`, `observed-usage` and `logs` select the current session, with an optional
 `--session SESSION`; `logs --level LEVEL` uses the native log configuration.
+`models --all` reports one observation per recorded session with a harness. Each
+entry carries its source session, harness, command, model and recorded workspace,
+so it reads as that session's own models read. A session without a recorded
+harness has no entry in this read; account-wide usable models remain unknown.
+
+## Bend2 REPL
+
+`baton repl` evaluates Bend2 expressions and retains checked definitions in the
+current actor's notebook. The standard installation includes the required
+compiler and Bun runtime. `define`, `eval`, `bind`, `read`, `recover`, `share`,
+`import` and `interactive` accept the named arguments in
+[the REPL design](repl.md). The compiler infers expression types; `--type`
+supplies an expected type. IO evaluation uses the actor's native process
+authority and records complete stdout, stderr and the actual wait status.
 
 ## Results and compatibility
 

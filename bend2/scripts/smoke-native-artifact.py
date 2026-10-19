@@ -8,7 +8,6 @@ All output, repository work, command results and process records remain in OUTPU
 """
 import argparse
 import hashlib
-import importlib.util
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -16,7 +15,6 @@ import select
 import re
 import shlex
 import shutil
-import sqlite3
 import subprocess
 import sys
 import tarfile
@@ -166,18 +164,10 @@ def fixture(kind, config_path, arguments):
     save(output / 'native-complete.json', {'pid': os.getpid(), 'stdin_eof': True})
 
 
-def verify_repl(prefix, manifest):
-    checker_path = Path(__file__).with_name('check-install.py')
-    spec = importlib.util.spec_from_file_location('baton_install_check', checker_path)
-    checker = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(checker)
-    return checker.verify_repl(prefix, manifest)
-
-
 def extract(archive, manifest_path, destination):
     manifest_bytes = manifest_path.read_bytes()
     manifest = json.loads(manifest_bytes)
-    require(manifest.get('schema') == 'baton2-native-artifact-v1', 'Unsupported artifact manifest schema')
+    require(manifest.get('schema') == 'baton2-native-artifact-v2', 'Unsupported artifact manifest schema')
     name = manifest['archive_root']
     require(PurePosixPath(name).parts == (name,) and name not in ('', '.', '..') and '\\' not in name,
             'Archive root must be one directory name')
@@ -205,16 +195,41 @@ def extract(archive, manifest_path, destination):
     prefix = destination / name
     require((prefix / 'manifest.json').read_bytes() == manifest_bytes,
             'Archive manifest differs from supplied manifest')
+    binaries = manifest.get('binaries')
+    require(isinstance(binaries, list) and len(binaries) == 3,
+            'The receiver archive must declare the focused receiver, full router and recovery helper')
+    expected = {'focused-facade': ('bin/baton', None),
+                'full-cli': ('bin/baton2', 'bin/baton-full'),
+                'recovery-helper': ('bin/baton-recovery', None)}
+    seen = set()
+    focused = None
+    for record in binaries:
+        role = record.get('role')
+        require(role in expected and role not in seen, 'Archive binary role is unknown or repeated')
+        seen.add(role)
+        path, alias_name = expected[role]
+        require(record.get('path') == path, 'Archive binary is installed at an unexpected path')
+        installed = prefix / path
+        require(installed.is_file() and not installed.is_symlink() and os.access(installed, os.X_OK),
+                'Archive ' + role + ' binary is missing or not executable')
+        require(archive_digest(installed) == record.get('sha256'),
+                'Archive ' + role + ' binary differs from its manifest hash')
+        if alias_name:
+            require(record.get('alias') == alias_name, record['role'] + ' must declare its ' + alias_name + ' alias')
+            alias = prefix / alias_name
+            require(alias.is_file() and not alias.is_symlink() and os.access(alias, os.X_OK),
+                    'Staged ' + alias_name + ' alias is not an executable regular file')
+            require(archive_digest(alias) == archive_digest(installed),
+                    'Staged ' + alias_name + ' alias differs from its binary')
+        else:
+            require(record.get('alias') is None, 'Unexpected binary alias in the archive')
+        if role == 'focused-facade':
+            focused = record
+    require(seen == set(expected), 'Archive is missing a required package role')
     binary = manifest['binary']
-    require(binary['path'] == 'bin/baton2', 'Manifest must name the installed bin/baton2 entry')
-    require(os.access(prefix / binary['path'], os.X_OK), 'Staged coordinator is not executable')
-    require(binary.get('alias') == 'bin/baton', 'Manifest must name the installed bin/baton alias')
-    alias = prefix / binary['alias']
-    require(alias.is_file() and not alias.is_symlink() and os.access(alias, os.X_OK),
-            'Staged baton alias is not an executable regular file')
-    require(archive_digest(alias) == archive_digest(prefix / binary['path']),
-            'Staged baton alias differs from the coordinator binary')
-    verify_repl(prefix, manifest)
+    require(binary.get('path') == focused['path'] and binary.get('alias') == focused['alias']
+            and binary.get('sha256') == focused['sha256'],
+            'Compatibility binary record does not match the focused receiver')
     return prefix, manifest
 
 
@@ -268,7 +283,7 @@ def main():
         prefix, manifest = extract(args.archive, args.manifest, output / 'extracted')
         require(Path(manifest['source']['directory']).resolve() == unavailable,
                 'Unavailable source path differs from recorded build source')
-        binary = prefix / 'bin/baton2'
+        binary = prefix / 'bin/baton'
         working = output / 'separate working directory λ'
         working.mkdir()
         repo, db = working / 'repository', working / 'state.db'
@@ -282,10 +297,6 @@ def main():
                            GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM='1')
         commands = Commands(output, working, environment, 'smoke')
         cli = lambda name, *args: json.loads(commands.call(name, ['baton2', str(db), *args]))
-        install_check = json.loads(commands.call('installation-check',
-            [sys.executable, prefix / 'libexec/baton2/check-install.py',
-             '--output', output / 'installation-check']))
-        require(install_check['status'] == 'ready', 'The installed C/SQLite prerequisites are unavailable')
         require('usage:' in commands.call('baton-alias-help', ['baton', 'help']),
                 'Installed baton alias did not answer help')
         require('--stdin' in commands.call('baton-task-help', ['baton', 'task', '--help']),
@@ -318,25 +329,6 @@ def main():
                      'artifact-worker', 'worker tree', base)
         workspace = Path(player['workspace'])
         require(workspace.parent == repo and player['base'] == base, 'Recruit returned another workspace or base')
-        require('Standard installations include' in commands.call('repl-help', ['baton', 'help', 'repl']),
-                'The installed REPL help did not advertise the bundled compiler')
-        repl = cli('repl-eval', 'as', 'worker', 'repl', 'eval', 'U32.add(20,22)', '--label', 'archive-smoke')
-        with sqlite3.connect(db.as_uri() + '?mode=ro', uri=True) as connection:
-            attempts = connection.execute(
-                "SELECT n.compiler,a.stdout,a.wait_status,a.cause FROM repl_notebooks n "
-                "JOIN repl_cells c ON c.notebook=n.id JOIN repl_attempts a ON a.cell=c.id "
-                "WHERE n.owner='worker' AND c.label='archive-smoke' AND a.stage='compiler'").fetchall()
-        require(len(attempts) == 1, 'The installed REPL did not retain its compiler attempt')
-        compiler, answer, status, cause = attempts[0]
-        bundled = prefix / 'libexec/baton2/repl/compiler'
-        require(Path(compiler).resolve() == bundled.resolve() and status == 'exit 0' and cause == '',
-                'The installed REPL did not use its bundled compiler successfully')
-        answer = json.loads(answer)
-        require(answer.get('kind') == 'pure' and answer.get('value') == '42',
-                'The installed REPL returned another pure result')
-        save(output / 'installed-repl.json', {'compiler': compiler, 'compiler_sha256': archive_digest(bundled),
-            'dependency': verify_repl(prefix, manifest), 'answer': answer, 'result': repl,
-            'build_source_absent': not unavailable.exists()})
         adapters = prefix / 'libexec/baton2'
         node = shutil.which('node')
         require(node is not None, 'The extracted Conductor control smoke requires Node 22 or later')

@@ -10,6 +10,7 @@ import ../host/sqlite.bend as DB
 import ../host/text.bend as Text
 import ../host/session-lock.bend as Lock
 import ../host/control.bend as Host
+import ./usage-windows.bend as UW
 import ../git/process.bend as Proc
 import ../git/types.bend as T
 
@@ -85,10 +86,12 @@ def first_selected(profiles: List<&2,Profile>) -> Maybe<&2,Profile>:
 def first_profile(profiles: List<&2,Profile>, harness: String) -> Maybe<&2,Profile>:
   first_selected(profiles_for(profiles,harness))
 
-# The credential-store variable each harness reads. A harness without one gets no
-# binding, so an unknown harness adds nothing to the spawn environment.
+# The credential-store variable each harness reads. OMP binds its supported
+# agent directory through PI_CODING_AGENT_DIR and Muse binds the XDG config
+# root through XDG_CONFIG_HOME; HOME is unchanged. A harness without a variable
+# gets no binding, so an unknown harness adds nothing to the spawn environment.
 def store_variable(+harness: String) -> Maybe<String>:
-  Bool.pick(Maybe<String>,String.eq(harness,"codex"),Some{"CODEX_HOME"},Bool.pick(Maybe<String>,Bool.or(String.eq(harness,"claude-code"),String.eq(harness,"claude")),Some{"CLAUDE_CONFIG_DIR"},None{}))
+  Bool.pick(Maybe<String>,String.eq(harness,"codex"),Some{"CODEX_HOME"},Bool.pick(Maybe<String>,Bool.or(String.eq(harness,"claude-code"),String.eq(harness,"claude")),Some{"CLAUDE_CONFIG_DIR"},Bool.pick(Maybe<String>,String.eq(harness,"omp"),Some{"PI_CODING_AGENT_DIR"},Bool.pick(Maybe<String>,String.eq(harness,"muse"),Some{"XDG_CONFIG_HOME"},None{}))))
 
 def binding_for(variable: Maybe<String>, store: String) -> List<String>:
   match variable:
@@ -99,6 +102,13 @@ def binding_for(variable: Maybe<String>, store: String) -> List<String>:
 # path with spaces stays a single argument and needs no shell quoting.
 def store_binding(harness: String, store: String) -> List<String>:
   binding_for(store_variable(harness),store)
+
+# The native history helper handles the Codex and Claude provider stores. OMP
+# and Muse provider history is not handled by that helper, so an OMP or Muse
+# profile advance records the selection and continues without a prepared
+# history home. Their store bindings remain launch bindings.
+def history_store_variable(+harness: String) -> Maybe<String>:
+  Bool.pick(Maybe<String>,Bool.or(String.eq(harness,"omp"),String.eq(harness,"muse")),None{},store_variable(harness))
 
 # The profile after the one that refused, in operator order, or none when the
 # operator listed no further profile for that harness. Order is the file's own order;
@@ -229,22 +239,38 @@ def all_refused_body(harness: String, refused: String, cause: String) -> String:
   "subscription profiles exhausted: harness=" ++ harness ++ "; profile=" ++ refused ++ " was the last operator-listed profile and the provider reported usage exhaustion; cause: " ++ cause
 
 # The provider's own diagnostic text for a terminal error frame, per the shapes this
-# tree already handles plus the Claude SDK result message:
+# tree already handles plus the Claude SDK result message and the Muse run terminal:
 #   OMP    {"type":"agent_end", ..., {"role":"assistant","stopReason":"error","errorMessage":"..."}}
 #   Codex  {"type":"turn.failed","error":{"message":"..."}}
 #   Claude {"type":"result","subtype":...,"is_error":true,"result":"...","errors":[...],
 #           "api_error_status":429,...}   (ResultMessage: is_error, result, errors,
 #           api_error_status; the CLI emits api_error_status since v2.1.110)
+#   Muse   {"payload_type":"run.terminal.failed",
+#           "payload":{"kind":"run_terminal","terminal":"failed","reason":"..."}}
+#          The diagnostic is in payload.reason; a fixture or adapter may carry the same
+#          text in payload.text. A compaction failure that ends the run carries the summarizer and quota
+#          diagnostic in the same reason, so it classifies by that text too.
 def usage_text_sql_expr(+event: String) -> String:
-  "CASE WHEN json_extract(" ++ event ++ ",'$.type')='agent_end' THEN coalesce(json_extract((SELECT " ++ C.last_assistant_sql_expr(event) ++ "),'$.errorMessage'),'') WHEN json_extract(" ++ event ++ ",'$.type')='turn.failed' THEN coalesce(json_extract(" ++ event ++ ",'$.error.message'),'') WHEN json_extract(" ++ event ++ ",'$.type')='result' THEN coalesce(json_extract(" ++ event ++ ",'$.result'),'') || ' ' || coalesce((SELECT group_concat(value,' ') FROM json_each(CASE WHEN json_type(" ++ event ++ ",'$.errors')='array' THEN json_extract(" ++ event ++ ",'$.errors') ELSE '[]' END)),'') ELSE '' END"
+  "CASE WHEN json_extract(" ++ event ++ ",'$.type')='agent_end' THEN coalesce(json_extract((SELECT " ++ C.last_assistant_sql_expr(event) ++ "),'$.errorMessage'),'')"
+  ++ " WHEN json_extract(" ++ event ++ ",'$.type')='turn.failed' THEN coalesce(json_extract(" ++ event ++ ",'$.error.message'),'')"
+  ++ " WHEN json_extract(" ++ event ++ ",'$.type')='result' THEN coalesce(json_extract(" ++ event ++ ",'$.result'),'') || ' ' || coalesce((SELECT group_concat(value,' ') FROM json_each(CASE WHEN json_type(" ++ event ++ ",'$.errors')='array' THEN json_extract(" ++ event ++ ",'$.errors') ELSE '[]' END)),'')"
+  ++ " WHEN json_extract(" ++ event ++ ",'$.payload.kind')='run_terminal' OR json_extract(" ++ event ++ ",'$.payload_type')='run.terminal.failed' THEN coalesce(nullif(json_extract(" ++ event ++ ",'$.payload.reason'),''),json_extract(" ++ event ++ ",'$.payload.text'),'')"
+  ++ " ELSE '' END"
 
 # A genuinely failed provider terminal only:
 #   Codex  {"type":"turn.failed","error":{"message":"..."}}
 #   Claude {"type":"result","is_error":true,...}          (a successful result that merely
 #                                                          quotes limit words is never one)
 #   OMP    {"type":"agent_end", ... {"stopReason":"error","errorMessage":"..."}}
+#   Muse   {"payload_type":"run.terminal.failed","payload":{"kind":"run_terminal",
+#           "terminal":"failed","reason":"..."}}          (a completed run that quotes
+#                                                          limit words is never one)
 def failed_terminal_sql_expr(+event: String) -> String:
-  "CASE WHEN json_extract(" ++ event ++ ",'$.type')='turn.failed' THEN 1 WHEN json_extract(" ++ event ++ ",'$.type')='result' AND json_extract(" ++ event ++ ",'$.is_error')=1 THEN 1 WHEN " ++ C.omp_terminal_error_sql_expr(event) ++ "=1 THEN 1 ELSE 0 END"
+  "CASE WHEN json_extract(" ++ event ++ ",'$.type')='turn.failed' THEN 1"
+  ++ " WHEN json_extract(" ++ event ++ ",'$.type')='result' AND json_extract(" ++ event ++ ",'$.is_error')=1 THEN 1"
+  ++ " WHEN json_extract(" ++ event ++ ",'$.payload_type')='run.terminal.failed' THEN 1"
+  ++ " WHEN json_extract(" ++ event ++ ",'$.payload.kind')='run_terminal' AND json_extract(" ++ event ++ ",'$.payload.terminal')='failed' THEN 1"
+  ++ " WHEN " ++ C.omp_terminal_error_sql_expr(event) ++ "=1 THEN 1 ELSE 0 END"
 
 # The provider's own subscription-limit wordings. Codex (protocol src/error.rs Display):
 # "You’ve hit your usage limit[ for {limit_name}]", "Your workspace is out of credits.",
@@ -255,17 +281,39 @@ def failed_terminal_sql_expr(+event: String) -> String:
 # limit. Your quota will reset when the current 5-hour window ends.", which the
 # "reached your" fragment below covers. The "hit your" fragment omits the apostrophe so
 # the curly and ASCII forms both match. ZAI reports "Usage limit reached for 5 hour"
-# with its reset time. The observed OMP 402 stopReason=error shape reports
-# "402 Insufficient Balance" with type=unknown_error. Not matched: the upstream
-# "limit reached" header flag, "rate limit exceeded", the context-window message,
-# stream disconnection and timeouts.
+# with its reset time. Muse reports "Subscription quota exhausted" with the usage
+# window reset, and the ZAI GLM route reports "Weekly/Monthly Limit Exhausted", so
+# "quota exhausted" and "limit exhausted" are exhaustion markers. The observed OMP 402
+# stopReason=error shape reports "402 Insufficient Balance" with type=unknown_error. A
+# funded API-key route reports the Claude API credit stop: "Your credit balance is too
+# low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase
+# credits.", and Claude Code shows the footer "Credit balance too low · Add funds: ...".
+# Not matched: the upstream "limit reached" header flag, "rate limit exceeded", the
+# context-window message, stream disconnection and timeouts.
 def exhausted_marker_sql(+text: String) -> String:
-  "CASE WHEN (instr(lower(" ++ text ++ "),'hit your')>0 AND (instr(lower(" ++ text ++ "),'limit')>0 OR instr(lower(" ++ text ++ "),'budget')>0)) OR (instr(lower(" ++ text ++ "),'reached your')>0 AND (instr(lower(" ++ text ++ "),'limit')>0 OR instr(lower(" ++ text ++ "),'quota')>0)) OR instr(lower(" ++ text ++ "),'usage limit reached for ')>0 OR instr(lower(" ++ text ++ "),'out of credits')>0 OR instr(lower(" ++ text ++ "),'spend cap')>0 OR instr(lower(" ++ text ++ "),'quota exceeded')>0 OR instr(lower(" ++ text ++ "),'spend limit reached')>0 OR instr(lower(" ++ text ++ "),'spend limit unavailable')>0 OR instr(lower(" ++ text ++ "),'insufficient balance')>0 THEN 1 ELSE 0 END"
+  "CASE WHEN (instr(lower(" ++ text ++ "),'hit your')>0 AND (instr(lower(" ++ text ++ "),'limit')>0 OR instr(lower(" ++ text ++ "),'budget')>0))"
+  ++ " OR (instr(lower(" ++ text ++ "),'reached your')>0 AND (instr(lower(" ++ text ++ "),'limit')>0 OR instr(lower(" ++ text ++ "),'quota')>0))"
+  ++ " OR instr(lower(" ++ text ++ "),'usage limit reached for ')>0"
+  ++ " OR instr(lower(" ++ text ++ "),'out of credits')>0"
+  ++ " OR instr(lower(" ++ text ++ "),'spend cap')>0"
+  ++ " OR instr(lower(" ++ text ++ "),'quota exceeded')>0"
+  ++ " OR instr(lower(" ++ text ++ "),'quota exhausted')>0"
+  ++ " OR instr(lower(" ++ text ++ "),'limit exhausted')>0"
+  ++ " OR instr(lower(" ++ text ++ "),'hard quota')>0"
+  ++ " OR instr(lower(" ++ text ++ "),'spend limit reached')>0"
+  ++ " OR instr(lower(" ++ text ++ "),'spend limit unavailable')>0"
+  ++ " OR instr(lower(" ++ text ++ "),'insufficient balance')>0"
+  ++ " OR instr(lower(" ++ text ++ "),'credit balance is too low')>0"
+  ++ " OR instr(lower(" ++ text ++ "),'credit balance too low')>0 THEN 1 ELSE 0 END"
 
 # Bind the complete terminal once and extract its diagnostic once for the
-# provider's subscription-limit wording and the returned cause.
+# provider's subscription-limit wording, the returned cause, and the Claude
+# result frame's API status. A failed Claude result carrying api_error_status
+# 402 (billing_error) classifies as exhaustion by status first: billing is a
+# funding fact for either route, and the documented tier-cap 429 and spend-limit
+# 400 shapes stay on wording until an observed fixture terminal names them.
 def exhausted_reason_sql(event: String) -> String:
-  "WITH frame(value) AS (VALUES(" ++ C.q(event) ++ ")), diagnostic(failed,text) AS MATERIALIZED (SELECT " ++ failed_terminal_sql_expr("frame.value") ++ "," ++ usage_text_sql_expr("frame.value") ++ " FROM frame) SELECT CASE WHEN diagnostic.failed=1 AND " ++ exhausted_marker_sql("diagnostic.text") ++ "=1 THEN 'provider-reported usage exhaustion: ' || diagnostic.text ELSE '' END FROM diagnostic;"
+  "WITH frame(value) AS (VALUES(" ++ C.q(event) ++ ")), diagnostic(failed,text,status_402) AS MATERIALIZED (SELECT " ++ failed_terminal_sql_expr("frame.value") ++ "," ++ usage_text_sql_expr("frame.value") ++ ",CASE WHEN json_extract(frame.value,'$.type')='result' AND json_extract(frame.value,'$.api_error_status')=402 THEN 1 ELSE 0 END FROM frame) SELECT CASE WHEN diagnostic.failed=0 THEN '' WHEN diagnostic.status_402=1 THEN 'provider-reported billing exhaustion (api_error_status 402): ' || diagnostic.text WHEN " ++ exhausted_marker_sql("diagnostic.text") ++ "=1 THEN 'provider-reported usage exhaustion: ' || diagnostic.text ELSE '' END FROM diagnostic;"
 
 # The operator list and the per-session record are plain files beside the database,
 # like the other coordinator sidecars: no schema, no daemon, no environment lookup.
@@ -326,6 +374,16 @@ def profile_record_path(+db: String, session: String) -> IO(String):
   do IO<String>:
     saved : String <- IO.try(String,DB.Sql.query(db,profile_record_sql(db,session)))
     IO.pure(String,Tx.trim_nl(saved))
+
+# The profile label in force for the session's own harness, read for callers
+# outside this module (the usage window binding and gate). An empty label
+# means the account-wide default store for that harness.
+def profile_label_io(+db: String, +session: String) -> IO(String):
+  do IO<String>:
+    +record_path : String <- profile_record_path(db,session)
+    +current : String <- file_text(record_path)
+    +harness : String <- IO.try(String,DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
+    IO.pure(String,record_current(Tx.trim_nl(harness),last_line(Tx.split_lines(current))))
 
 # The named profile format comes from #703 candidate 25f29f0d. Task setup
 # binds it before admitting new work. A failed append retains its IO cause.
@@ -483,7 +541,7 @@ def prepare_history(+db: String, +session: String, +id: String, +harness: String
       +path : String <- history_path(db,session)
       recorded : String <- file_text(path)
       previous : String <- IO.pure(String,Bool.pick(String,String.is_empty(from_store),"",last_line(Tx.split_lines(recorded))))
-      prepare_history_variable(db,session,id,harness,from_store,cmd,cwd,native,profile,store_variable(harness),previous)
+      prepare_history_variable(db,session,id,harness,from_store,cmd,cwd,native,profile,history_store_variable(harness),previous)
 
 # Each account advance records its provider cause under a separate report ID.
 def record_handoff(db: String, session: String, id: String, harness: String, from_label: String, +profile: Profile, cause: String) -> IO(Bool):
@@ -537,8 +595,10 @@ def advance_profile(+db: String, +session: String, +id: String, cause: String, n
 # True only when a next operator-listed profile was recorded, so the caller continues the
 # same actor; false when the list is exhausted, which terminates with the report. The
 # caller passes the terminal event text: the Outcome shutter stays in the calling
-# module, so this shared worker takes no provider-harness type.
-def profile_handoff(+db: String, session: String, id: String, +event: String, native: String, cmd: String, cwd: String) -> IO(Bool):
+# module, so this shared worker takes no provider-harness type. Accounts.handoff records
+# the usage-window observation once for both the profile and account paths, under the
+# same account label the wake gate reads.
+def profile_handoff(+db: String, +session: String, +id: String, +event: String, native: String, cmd: String, cwd: String) -> IO(Bool):
   do IO<Bool>:
     +cause : String <- exhaustion_cause(db,event)
     advanced : Bool <- Bool.pick(IO(Bool),String.is_empty(cause),IO.pure(Bool,False{}),advance_profile(db,session,id,cause,native,cmd,cwd))
@@ -813,13 +873,15 @@ def select_route(+db: String, +session: String, id: String) -> IO(Maybe<&2,Route
     recorded : Result<&1,&1,U32 & String,Unit> <- Text.Text.append(refused_path,Tx.trim_nl(marker) ++ " " ++ Tx.trim_nl(assignment) ++ " " ++ Tx.trim_nl(harness) ++ " " ++ Tx.trim_nl(model) ++ "\n")
     select_recorded(db,session,id,refused_path,chosen,recorded)
 
-# True only on the actual all-accounts-refused outcome: the terminal states
-# provider-reported usage exhaustion and this attempt recorded the exhausted report.
-# History and lineage append IO failures write different reports, so they return false
+# True on the actual all-accounts-refused outcome: the terminal states
+# provider-reported usage exhaustion and this attempt recorded the exhausted
+# report - the profile form for operator-listed profiles, the account form for
+# a bound account that was the last recorded account for its harness. History
+# and lineage append IO failures write different reports, so they return false
 # here and never cause a cross-route switch.
-def exhausted_reported(db: String, id: String) -> IO(Bool):
+def exhausted_reported(+db: String, +id: String) -> IO(Bool):
   do IO<Bool>:
-    found : String <- IO.try(String,DB.Sql.query(db,"SELECT EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(id ++ ":profile-exhausted") ++ ");"))
+    found : String <- IO.try(String,DB.Sql.query(db,"SELECT EXISTS(SELECT 1 FROM messages WHERE id=" ++ C.q(id ++ ":profile-exhausted") ++ " OR id=" ++ C.q(id ++ ":account-exhausted") ++ ");"))
     IO.pure(Bool,String.eq(found,"1\n"))
 
 def route_trigger(+db: String, id: String, +event: String) -> IO(Bool):
@@ -854,3 +916,112 @@ def clear_when(clear: Bool, +db: String, +session: String) -> IO(Unit):
 
 def clear_incompatible_native(db: String, session: String, old_harness: String, new_harness: String) -> IO(Unit):
   clear_when(String.eq(old_harness,new_harness),db,session)
+
+# --- recorded harness/account inventory (#792) --------------------------------
+#
+# A native session assembling a heterogeneous ensemble reads the recorded
+# harness/model/effort identities across sessions and the operator-ordered
+# account profiles in one descriptive answer. The read runs no harness
+# command, writes nothing, and decides nothing: quota, budget, catalog
+# membership, freshness, and probe outcomes never gate admission,
+# continuation, or validation. Missing records stay visible as null or
+# unknown with their cause.
+
+# One unit-separator-joined row per recorded session, ordered by id. Every
+# text field is JSON-quoted in SQL, so no field is ever empty and no value
+# can carry the separator: json_quote escapes control characters. The
+# trailing field carries the hex identity the profile sidecar name records.
+# The operator bookkeeping row is not a harness and is excluded.
+def inventory_rows_sql() -> String:
+  "SELECT coalesce(group_concat(row, char(10)),'') FROM (SELECT "
+  ++ "json_quote(id) || char(31) || json_quote(harness) || char(31) || json_quote(model) || char(31) || json_quote(effort) || char(31)"
+  ++ " || json_quote(observed_harness) || char(31) || json_quote(observed_model) || char(31) || json_quote(observed_effort) || char(31)"
+  ++ " || CASE WHEN endpoint<>'' THEN '1' ELSE '0' END || char(31) || CASE WHEN workspace<>'' THEN '1' ELSE '0' END || char(31) || lower(hex(id)) AS row"
+  ++ " FROM sessions WHERE id<>'operator' ORDER BY id);"
+
+# The profile the session's own record file states, beside the record's own
+# harness: a record written under another harness stays distinguishable
+# from the session's harness instead of being scoped away. Store paths stay
+# out of the answer; every parsed record carries a nonempty store.
+def inventory_record_parsed(parsed: Maybe<&2,Profile>) -> String:
+  match parsed:
+    case None{}: "null"
+    case Some{+profile}: "{\"harness\":" ++ J.string_literal(profile_harness(profile)) ++ ",\"label\":" ++ J.string_literal(profile_label(profile)) ++ "}"
+
+def inventory_record_json(record: String) -> String:
+  inventory_record_parsed(record_of(last_line(Tx.split_lines(record))))
+
+def inventory_profile_result(read: Result<&1,&1,U32 & String,String>) -> String:
+  match read:
+    case Fail{(+code,detail)}: Bool.pick(String,U32.is_eq(code,2),"null","{\"state\":\"unknown\",\"code\":" ++ U32.show(code) ++ ",\"detail\":" ++ J.string_literal(detail) ++ "}")
+    case Done{record}: inventory_record_json(record)
+
+def inventory_session_profile(+db: String, +idhex: String) -> IO(String):
+  do IO<String>:
+    read : Result<&1,&1,U32 & String,String> <- Text.Text.read(db ++ ".profile-" ++ idhex)
+    IO.pure(String,inventory_profile_result(read))
+
+def inventory_session_json(+db: String, fields: List<String>) -> IO(String):
+  match fields:
+    case sid <> harness <> model <> effort <> oharness <> omodel <> oeffort <> hasCmd <> hasWs <> idhex <> Nil{}: do IO<String>:
+      profile : String <- inventory_session_profile(db,idhex)
+      IO.pure(String,"{\"session\":" ++ sid ++ ",\"harness\":" ++ harness ++ ",\"model\":" ++ model ++ ",\"effort\":" ++ effort
+        ++ ",\"observedHarness\":" ++ oharness ++ ",\"observedModel\":" ++ omodel ++ ",\"observedEffort\":" ++ oeffort
+        ++ ",\"hasRecordedCommand\":" ++ Bool.pick(String,String.eq(hasCmd,"1"),"true","false")
+        ++ ",\"hasWorkspace\":" ++ Bool.pick(String,String.eq(hasWs,"1"),"true","false")
+        ++ ",\"profile\":" ++ profile ++ "}")
+    case _: IO.pure(String,"{\"state\":\"unknown\",\"reason\":\"inventoryRowShape\"}")
+
+def inventory_session_tail(+db: String, lines: List<String>) -> IO(String):
+  match lines:
+    case Nil{}: IO.pure(String,"")
+    case +line <> rest: do IO<String>:
+      +empty : Bool <- IO.pure(Bool,String.is_empty(line))
+      +head : String <- Bool.pick(IO(String),empty,IO.pure(String,""),inventory_session_json(db,split_parts(String.split(line,Char.from_u32(31)))))
+      +tail : String <- inventory_session_tail(db,rest)
+      IO.pure(String,Bool.pick(String,empty,tail,Bool.pick(String,String.is_empty(tail),head,head ++ "," ++ tail)))
+
+# The operator-ordered profile list as stated: order is fallback preference,
+# never an availability claim. A missing list is unknown; an empty list is a
+# reported empty order, like an empty catalog.
+def inventory_profile_entry(+profile: Profile) -> String:
+  "{\"harness\":" ++ J.string_literal(profile_harness(profile)) ++ ",\"label\":" ++ J.string_literal(profile_label(profile)) ++ "}"
+
+def inventory_profile_order(profiles: List<&2,Profile>) -> String:
+  match profiles:
+    case Nil{}: ""
+    case +profile <> +rest:
+      +head = inventory_profile_entry(profile)
+      +tail = inventory_profile_order(rest)
+      Bool.pick(String,String.is_empty(tail),head,head ++ "," ++ tail)
+
+def inventory_profiles_result(read: Result<&1,&1,U32 & String,String>) -> String:
+  match read:
+    case Fail{(+code,detail)}: Bool.pick(String,U32.is_eq(code,2),
+      "{\"state\":\"unknown\",\"reason\":\"noOperatorProfileList\"}",
+      "{\"state\":\"unknown\",\"reason\":\"profileListReadFailure\",\"code\":" ++ U32.show(code) ++ ",\"detail\":" ++ J.string_literal(detail) ++ "}")
+    case Done{listed}: "{\"state\":\"reported\",\"order\":[" ++ inventory_profile_order(profile_lines(Tx.split_lines(listed))) ++ "]}"
+
+def inventory_profiles(+db: String) -> IO(String):
+  do IO<String>:
+    list_path : String <- profile_list_path(db)
+    read : Result<&1,&1,U32 & String,String> <- Text.Text.read(list_path)
+    IO.pure(String,inventory_profiles_result(read))
+
+def inventory_limits() -> String:
+  "[\"Sessions list recorded sessions only; the operator bookkeeping row is excluded.\","
+  ++ "\"hasRecordedCommand and hasWorkspace report presence only, never values.\","
+  ++ "\"Operator profile order is fallback preference; it states no availability.\","
+  ++ "\"A per-session profile names the account record last bound for that session; a missing record is null.\","
+  ++ "\"A Muse profile echo does not establish model existence; read models --session for the single-profile observation.\","
+  ++ "\"No Artificial Analysis or Design Arena assessments are read here.\","
+  ++ "\"Quota, budget, catalog membership, freshness, and probe outcomes decide nothing in this read.\","
+  ++ "\"Harnesses and accounts with no recorded session or profile are not enumerated.\"]"
+
+def inventory(+db: String) -> IO(Unit):
+  do IO<Unit>:
+    rows : String <- IO.try(String,DB.Sql.read(db,inventory_rows_sql()))
+    observed : String <- IO.try(String,DB.Sql.read(db,"SELECT CAST(strftime('%s','now') AS INTEGER)*1000;"))
+    sessions : String <- inventory_session_tail(db,Tx.split_lines(Tx.trim_nl(rows)))
+    profiles : String <- inventory_profiles(db)
+    IO.print("{\"schema\":\"baton2-harness-inventory-v1\",\"observedAt\":" ++ Tx.trim_nl(observed) ++ ",\"sessions\":[" ++ sessions ++ "],\"profiles\":" ++ profiles ++ ",\"limits\":" ++ inventory_limits() ++ "}")

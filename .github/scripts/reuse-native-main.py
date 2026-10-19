@@ -12,7 +12,6 @@ import shutil
 import subprocess
 import sys
 import tarfile
-import tempfile
 import time
 import traceback
 
@@ -25,10 +24,10 @@ COMPILER_ARCHIVES = {
         'official_release_artifact': False,
         'binary_sha256': 'b929035652cba78ba1b034b7214a14bbc2f64f0e6c27265c64c53895d24890c0',
     },
-    '2df30208da307f7922fefc5517563ad1ee484bc60227f60d88994aad57e4779e': {
-        'name': 'Bend 2.0.25 with Baton memoization and Bun small heap',
+    'ca9f19566db10332c56d5253ad4944d05e675b64ce07b3e12d6ff335c6485d8a': {
+        'name': 'Bend 2.0.25 with Baton memoization, the Cgen cache and the emit-lits fixpoint patch',
         'official_release_artifact': False,
-        'binary_sha256': 'a36231553ac8e1ed447a5d413e5a6787e24ac86ffe7188bb9c96f3fb26e1b554',
+        'binary_sha256': '94383bb15b262f5bcd34ae2684d74a06e0f81e88736a75e17c9d8cbe9dbb79dc',
     },
 }
 ENTRY = 'bend2/src/coordinator/main.bend'
@@ -61,206 +60,6 @@ def verify_file(row):
     require(all(actual[key] == row[key] for key in ('sha256', 'size_bytes')),
             'Retained file differs from its recorded bytes: ' + row['path'])
     return pathlib.Path(row['path'])
-
-
-def verify_sharded_build(receipt_path, source, entry, output, path_map=None, tool_root=None):
-    receipt_path = pathlib.Path(receipt_path).resolve()
-    source, entry, output = (pathlib.Path(path).resolve() for path in (source, entry, output))
-    resolve_recorded = path_map or (lambda value: pathlib.Path(value).resolve())
-
-    def resolve_executable(value):
-        try:
-            resolved = pathlib.Path(resolve_recorded(value)).resolve()
-        except ValueError:
-            recorded = pathlib.Path(value)
-            require(recorded.is_absolute() and '..' not in recorded.parts,
-                    'Sharded Main executable path is not normalized.')
-            resolved = recorded.resolve()
-        require(resolved.is_file() and not resolved.is_symlink(),
-                'Sharded Main executable is missing or indirect.')
-        return resolved
-
-    receipt = json.loads(receipt_path.read_text())
-    require(receipt.get('schema') == 'baton2-clang-sharded-main-build-v2',
-            'Unknown sharded Main build receipt.')
-    require(receipt.get('route') == 'linux-x86_64-clang-19-no-pch',
-            'Unexpected sharded Main build route.')
-    require(resolve_recorded(receipt['source']) == source
-            and receipt['source_sha256'] == digest(source), 'Sharded Main C source differs.')
-    require(resolve_recorded(receipt['entry']) == entry
-            and receipt['entry_sha256'] == digest(entry), 'Sharded Main native entry differs.')
-    tool_root = pathlib.Path(tool_root).resolve() if tool_root else pathlib.Path(__file__).resolve().parents[2]
-    splitter = tool_root / 'tools/cgen-clang-parallel/shard_emitted_c.py'
-    require(resolve_recorded(receipt['splitter']) == splitter
-            and receipt['splitter_sha256'] == digest(splitter), 'Sharder source differs.')
-    driver = tool_root / 'tools/cgen-clang-parallel/build_native.py'
-    require(resolve_recorded(receipt['driver']) == driver
-            and receipt['driver_sha256'] == digest(driver), 'Sharded Main build driver differs.')
-    manifest = receipt.get('split_manifest')
-    manifest_bytes = json.dumps(manifest, sort_keys=True, separators=(',', ':')).encode()
-    require(hashlib.sha256(manifest_bytes).hexdigest() == receipt.get('split_manifest_sha256'),
-            'Sharded Main split manifest differs.')
-    expected_names = ['baton_core.c', 'baton_spins.c'] + [f'shard_{index:02d}.c' for index in range(4)]
-    compile_objects = receipt.get('compile_objects')
-    require(receipt.get('shards') == 4 and len(compile_objects) == 6
-            and [row['source_name'] for row in compile_objects] == expected_names
-            and [row['object_name'] for row in compile_objects]
-                == [pathlib.Path(name).with_suffix('.o').name for name in expected_names],
-            'Sharded Main object list differs.')
-    require(receipt.get('compile_flags') == ['-O1', '-pthread', '-Dmain=baton2_runtime_main'],
-            'Sharded Main compile flags differ.')
-    compiler_argv = receipt['compiler']
-    compiler = resolve_executable(compiler_argv)
-    require(receipt.get('compiler_sha256') == digest(compiler),
-            'Sharded Main compiler executable differs.')
-    compiler_version_probe = receipt.get('compiler_version_probe')
-    require(isinstance(compiler_version_probe, dict)
-            and compiler_version_probe.get('argv') == [compiler_argv, '--version']
-            and compiler_version_probe.get('returncode') == 0
-            and compiler_version_probe.get('wait_completed') is True
-            and compiler_version_probe.get('natural_exit') is True,
-            'Sharded Main compiler version probe is incomplete.')
-    for key in ('stdout_sha256', 'stderr_sha256'):
-        require(re.fullmatch(r'[0-9a-f]{64}', compiler_version_probe.get(key, '')) is not None,
-                'Sharded Main compiler version stream digest is invalid.')
-    require(receipt.get('compiler_version_sha256') == compiler_version_probe['stdout_sha256'],
-            'Sharded Main compiler version digest differs.')
-    version_run = subprocess.run([str(compiler), '--version'], check=False,
-                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    require(version_run.returncode == 0
-            and hashlib.sha256(version_run.stdout).hexdigest() == receipt['compiler_version_sha256']
-            and hashlib.sha256(version_run.stderr).hexdigest() == compiler_version_probe['stderr_sha256'],
-            'Sharded Main compiler version output differs.')
-    version_text = version_run.stdout.decode(errors='replace')
-    require(version_text.splitlines()
-            and version_text.splitlines()[0] == receipt.get('compiler_version')
-            and re.search(r'\bclang version 19(?:\.\d+)?\b', version_text) is not None,
-            'Sharded Main compiler version is not the exact recorded Clang 19 build.')
-    ccache = receipt.get('ccache', '')
-    require(bool(ccache) == bool(receipt.get('ccache_sha256')),
-            'Sharded Main ccache binding is incomplete.')
-    if ccache:
-        require(digest(resolve_executable(ccache)) == receipt['ccache_sha256'],
-                'Sharded Main ccache executable differs.')
-    require(receipt.get('segments') == manifest.get('counts', {}).get('segments'),
-            'Sharded Main segment count differs from its manifest.')
-    object_directory = pathlib.Path(resolve_recorded(receipt['object_directory'])).resolve()
-    require(object_directory.parent == output.parent
-            and object_directory.name.startswith(output.name + '.objects-')
-            and object_directory.is_dir() and not object_directory.is_symlink(),
-            'Sharded Main retained object directory is missing.')
-
-    def validate_command_record(record, name):
-        require(isinstance(record, dict)
-                and isinstance(record.get('argv'), list)
-                and record.get('returncode') == 0
-                and record.get('wait_completed') is True
-                and record.get('natural_exit') is True
-                and isinstance(record.get('elapsed_seconds'), (int, float))
-                and record['elapsed_seconds'] >= 0,
-                'Sharded Main ' + name + ' process did not complete naturally.')
-        for key in ('stdout_sha256', 'stderr_sha256'):
-            require(re.fullmatch(r'[0-9a-f]{64}', record.get(key, '')) is not None,
-                    'Sharded Main ' + name + ' stream digest is invalid.')
-        return record['argv']
-
-    split_argv = validate_command_record(receipt.get('split'), 'splitter')
-    recorded_staging_directory = pathlib.Path(split_argv[5]).parent
-    staging_directory = pathlib.Path(resolve_recorded(recorded_staging_directory)).resolve()
-    require(len(split_argv) == 8
-            and resolve_executable(split_argv[0])
-            and resolve_recorded(split_argv[1]) == splitter
-            and split_argv[2] == '--input' and resolve_recorded(split_argv[3]) == source
-            and split_argv[4] == '--outdir'
-            and pathlib.Path(split_argv[5]).is_absolute()
-            and pathlib.Path(split_argv[5]).name == 'split'
-            and staging_directory.parent == output.parent
-            and staging_directory.name.startswith('.' + output.name + '.clang-shards-')
-            and split_argv[6:8] == ['--shards', str(receipt['shards'])],
-            'Sharded Main splitter invocation differs.')
-    compile_prefix = ([ccache, compiler_argv] if ccache else [compiler_argv])
-    compile_rows = []
-    expected_names = ['baton_core.c', 'baton_spins.c'] + [f'shard_{index:02d}.c' for index in range(4)]
-    with tempfile.TemporaryDirectory(prefix='baton-verify-sharded-main-') as temp:
-        split_dir = pathlib.Path(temp)
-        split_result = subprocess.run(
-            [sys.executable, str(splitter), '--input', str(source),
-             '--outdir', str(split_dir), '--shards', str(receipt['shards'])],
-            check=False, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        require(split_result.returncode == 0,
-                'Sharded Main splitter could not rederive the retained C partition.')
-        regenerated = json.loads((split_dir / 'manifest.json').read_text())
-        expected_manifest = dict(manifest)
-        require(resolve_recorded(expected_manifest.get('input', '')) == source,
-                'Sharded Main split manifest input differs.')
-        expected_manifest['input'] = regenerated['input']
-        require(regenerated == expected_manifest,
-                'Sharded Main split outputs differ from the retained manifest.')
-        command_source_index = len(compile_prefix) + len(receipt['compile_flags']) + 1
-        for row, name in zip(compile_objects, expected_names):
-            require(set(row) == {'source_name', 'source_sha256', 'object_name',
-                                 'object_path', 'object_sha256', 'compile'},
-                    'Sharded Main compile row fields differ.')
-            generated_source = split_dir / name
-            require(row.get('source_sha256') == digest(generated_source),
-                    'Sharded Main generated source hash differs: ' + name)
-            object_path = pathlib.Path(resolve_recorded(row.get('object_path', ''))).resolve()
-            require(object_path.parent == object_directory
-                    and object_path.name == row['object_name']
-                    and object_path.is_file() and not object_path.is_symlink()
-                    and row.get('object_sha256') == digest(object_path),
-                    'Sharded Main retained object differs: ' + name)
-            argv = validate_command_record(row.get('compile'), 'compile ' + name)
-            require(argv[:len(compile_prefix)] == compile_prefix
-                    and argv[len(compile_prefix):command_source_index]
-                        == receipt['compile_flags'] + ['-c']
-                    and resolve_recorded(argv[command_source_index])
-                        == staging_directory / 'split' / name
-                    and argv[command_source_index + 1] == '-o'
-                    and resolve_recorded(argv[command_source_index + 2])
-                        == staging_directory / row['object_name'],
-                    'Sharded Main compile invocation differs: ' + name)
-            compile_rows.append(row)
-    require({path.name for path in object_directory.iterdir()} ==
-            {row['object_name'] for row in compile_rows},
-            'Sharded Main retained object set differs.')
-    aggregate_argv = validate_command_record(receipt.get('aggregate'), 'object aggregation')
-    require(resolve_executable(aggregate_argv[0]) == compiler and aggregate_argv[1] == '-r'
-            and [resolve_recorded(value) for value in aggregate_argv[2:8]]
-                == [staging_directory / row['object_name'] for row in compile_rows]
-            and aggregate_argv[8] == '-o'
-            and resolve_recorded(aggregate_argv[9]) == staging_directory / (output.name + '.o'),
-            'Sharded Main object aggregation invocation differs.')
-    require(receipt.get('aggregate_command') == [compiler_argv, '-r',
-            *[row['object_name'] for row in compile_objects], '-o', output.name + '.o'],
-            'Sharded Main object aggregation command differs.')
-    link_command = receipt.get('link_command', [])
-    require(len(link_command) == 9 and link_command[:3] == [compiler_argv, '-O1', '-pthread']
-            and resolve_recorded(link_command[3]) == entry
-            and link_command[4:] == [output.name + '.o', '-lsqlite3', '-lm', '-o', output.name],
-            'Sharded Main native link command differs.')
-    link_argv = validate_command_record(receipt.get('link'), 'native link')
-    require(link_argv[:3] == [compiler_argv, '-O1', '-pthread']
-            and resolve_recorded(link_argv[3]) == entry
-            and resolve_recorded(link_argv[4]) == staging_directory / (output.name + '.o')
-            and link_argv[5:8] == ['-lsqlite3', '-lm', '-o']
-            and resolve_recorded(link_argv[8]) == staging_directory / output.name,
-            'Sharded Main native link execution differs.')
-    object_file = output.with_name(output.name + '.o')
-    require(resolve_recorded(receipt['object']) == object_file
-            and receipt['object_sha256'] == digest(object_file), 'Sharded Main object differs.')
-    require(resolve_recorded(receipt['output']) == output
-            and receipt['output_sha256'] == digest(output), 'Sharded Main executable differs.')
-    return {'status': 'verified', 'receipt': str(receipt_path),
-            'receipt_sha256': digest(receipt_path), 'source_sha256': digest(source),
-            'object_sha256': digest(object_file), 'output_sha256': digest(output),
-            'route': receipt['route'],
-            'retained_objects': [
-                {'source_name': row['source_name'], 'object_name': row['object_name'],
-                 'path': row['object_path'], 'size_bytes': pathlib.Path(
-                     resolve_recorded(row['object_path'])).stat().st_size,
-                 'sha256': row['object_sha256']}
-                for row in compile_rows]}
 
 
 def save(path, value):
@@ -454,7 +253,7 @@ def select(args, result):
     proof = json.loads(args.proof.read_text())
     require(proof['schema'] == 'baton2-main-c-reuse-v1' and proof['status'] == 'reused'
             and proof['root'] == args.bound_root, 'Main C reuse proof does not bind the selected checkout.')
-    origin = args.proof.parent.resolve() / 'main-c-origin'
+    origin = args.proof.parent / 'main-c-origin'
     for row in proof['origin_assets']:
         path = args.proof.parent / row['path']
         require(path.resolve().is_relative_to(origin), 'Origin asset leaves Main compilation evidence.')
@@ -502,15 +301,6 @@ def artifact_identity(handoff):
 def handoff_binding(path, expected_sha):
     handoff = json.loads(path.read_text())
     selected_sha = digest(path)
-    if handoff.get('schema') == 'baton2-combined-main-ci-reference-v1':
-        require(selected_sha == expected_sha, 'The combined Main CI reference digest differs.')
-        original_path = verify_file(handoff['original_handoff'])
-        original = json.loads(original_path.read_text())
-        require(original.get('schema') == 'baton2-combined-main-handoff-v1',
-                'The CI reference requires an original combined Main handoff.')
-        return original, {'kind': 'combined-main-ci-reference', 'selected_sha256': selected_sha,
-                          'requested_sha256': expected_sha, 'original_handoff': handoff['original_handoff'],
-                          'path_maps': handoff['path_maps']}
     if selected_sha == expected_sha:
         return handoff, {'kind': 'selected-handoff', 'selected_sha256': selected_sha,
                          'requested_sha256': expected_sha}
@@ -527,208 +317,6 @@ def handoff_binding(path, expected_sha):
     return handoff, {'kind': 'mapped-handoff', 'selected_sha256': selected_sha,
                      'requested_sha256': expected_sha, 'original_handoff': handoff['origin_handoff'],
                      'original_seed': original['source_seed_manifest']}
-
-
-def legacy_evidence(handoff, binding, origin):
-    for key, name in (('source_seed_manifest', 'seed.json'),
-                      ('build_stdout_as_of_boundary', 'build.stdout'),
-                      ('build_stderr_as_of_boundary', 'build.stderr')):
-        copy_record(handoff[key], origin / name)
-    require(b'.scratch/bend2/baton2\n' in (origin / 'build.stdout').read_bytes().splitlines(keepends=True),
-            'Retained build output lacks the completed Main marker.')
-    seed = json.loads((origin / 'seed.json').read_text())
-    require(seed['schema'] == 'baton2-early-main-source-seed-v1' and seed['source_clean'] is True
-            and seed['source_commit'] == handoff['source_commit'] and seed['source_tree'] == handoff['source_tree'],
-            'Retained source seed differs from the Main handoff.')
-    copy_record(seed['file_manifest'], origin / 'seed-files.json')
-    if handoff.get('origin_handoff'):
-        copy_record(handoff['origin_handoff'], origin / 'original-handoff.json')
-    if seed.get('original_seed_manifest'):
-        copy_record(seed['original_seed_manifest'], origin / 'original-seed.json')
-    if binding['kind'] == 'mapped-handoff':
-        require(seed['original_seed_manifest']['sha256'] == binding['original_seed']['sha256'],
-                'Mapped seed does not bind the original Main seed.')
-        original_seed = json.loads((origin / 'original-seed.json').read_text())
-        for key in ('source_commit', 'source_tree', 'source_clean', 'original_native'):
-            require(seed[key] == original_seed[key], 'Mapped seed changes original compiler/source identity: ' + key)
-        require(seed['file_manifest']['sha256'] == original_seed['file_manifest']['sha256'],
-                'Mapped seed changes the original source/toolchain file manifest.')
-    return seed
-
-
-def combined_evidence(handoff, binding, origin, compiler_archive):
-    require(handoff['main_build_completed'] is True and handoff['qualification'] is False,
-            'Combined handoff does not record a completed Main build.')
-    mappings = []
-    for item in binding.get('path_maps', []):
-        require(set(item) == {'original', 'copy'}, 'Unexpected combined path mapping fields.')
-        old, new = pathlib.Path(item['original']), pathlib.Path(item['copy'])
-        require(old.is_absolute() and new.is_absolute() and '..' not in old.parts and '..' not in new.parts,
-                'Combined path mappings require normalized absolute paths.')
-        require(new.is_dir() and new.resolve() == new, 'Combined evidence mapping requires a real directory.')
-        mappings.append((old, new))
-    require(len({str(old) for old, _ in mappings}) == len(mappings), 'Duplicate combined path mappings.')
-
-    def mapped(value):
-        path = pathlib.Path(value)
-        require(path.is_absolute() and '..' not in path.parts, 'Combined evidence path is not absolute.')
-        matches = [(old, new) for old, new in mappings if path.is_relative_to(old)]
-        if not matches:
-            require(not mappings, 'Combined evidence path lacks a CI mapping: ' + str(path))
-            return path
-        old, new = max(matches, key=lambda pair: len(pair[0].parts))
-        result = new / path.relative_to(old)
-        require(result.resolve().is_relative_to(new), 'Combined mapped evidence leaves its copy root.')
-        return result
-
-    def retained(row):
-        require(set(row) == {'path', 'bytes', 'sha256'}, 'Unexpected combined file fact fields.')
-        actual = fact(mapped(row['path']))
-        require(actual['size_bytes'] == row['bytes'] and actual['sha256'] == row['sha256'],
-                'Combined retained bytes differ: ' + row['path'])
-        return actual
-
-    source = mapped(handoff['source']).resolve()
-    commit = git(source, 'rev-parse', 'HEAD').decode().rstrip('\n')
-    source_rows = source_files(source, commit, handoff['source_tree'])
-    manifest = retained(handoff['source_manifest'])
-    recorded_rows = json.loads(pathlib.Path(manifest['path']).read_text())
-    expected_rows = [{'path': row['path'], 'kind': 'symlink' if row['mode'] == '120000' else 'file',
-                      'bytes': row['size_bytes'], 'sha256': row['sha256'],
-                      'mode': row['mode'], 'git_blob': row['git_blob']} for row in source_rows]
-    require(sorted(recorded_rows, key=lambda row: row['path']) == sorted(expected_rows, key=lambda row: row['path']),
-            'Combined source manifest differs from the clean Git snapshot.')
-    copy_record(manifest, origin / 'combined-source-files.json')
-    copy_record(retained(handoff['input_manifest']), origin / 'combined-input-manifest.json')
-    check_fact = retained(handoff['source_check_proof'])
-    copy_record(check_fact, origin / 'combined-source-check-proof.json')
-    check = json.loads(pathlib.Path(check_fact['path']).read_text())
-    check_result = retained(check['result'])
-    copy_record(check_result, origin / 'combined-source-check-result.json')
-    checked = json.loads(pathlib.Path(check_result['path']).read_text())
-    require(check['source_tree'] == handoff['source_tree'] and check['natural_check_success_verified'] is True
-            and checked['source_tree'] == handoff['source_tree'] and checked['success'] is True
-            and len(checked['records']) == 1, 'Combined full source check differs.')
-    checked_record = checked['records'][0]
-    require(checked_record['returncode'] == 0 and checked_record['natural_exit'] is True
-            and checked_record['original_wait_completed'] is True, 'Combined source check was incomplete.')
-    compiler = retained(handoff['compiler'])
-    logical_compiler = pathlib.Path(handoff['compiler']['path'])
-    require(logical_compiler.name == 'bend' and logical_compiler.parent.name == 'bin',
-            'Combined compiler layout differs.')
-    native_build = handoff.get('native_build')
-    if native_build is not None:
-        require(set(native_build) == {'route', 'receipt', 'retained_objects'}
-                and native_build['route'] == 'linux-x86_64-clang-19-no-pch',
-                'Combined sharded Main build declaration differs.')
-        receipt = retained(native_build['receipt'])
-        receipt_copy = origin / 'sharded-main-build.json'
-        copy_record(receipt, receipt_copy)
-        receipt_data = json.loads(receipt_copy.read_text())
-        retained_objects = native_build['retained_objects']
-        require(len(retained_objects) == 6
-                and [row.get('source_name') for row in retained_objects]
-                    == [row['source_name'] for row in receipt_data['compile_objects']],
-                'Combined sharded object custody is incomplete.')
-        for object_row, compiled_row in zip(retained_objects, receipt_data['compile_objects']):
-            require(set(object_row) == {'source_name', 'object_name', 'path',
-                                        'copy_path', 'size_bytes', 'sha256'}
-                    and object_row['object_name'] == compiled_row['object_name']
-                    and object_row['path'] == compiled_row['object_path']
-                    and object_row['sha256'] == compiled_row['object_sha256'],
-                    'Combined sharded object custody differs from its build receipt.')
-            copy_path = pathlib.Path(object_row['copy_path'])
-            generated_root = origin.parent.resolve()
-            retained_object_path = (generated_root / copy_path).resolve()
-            require(copy_path == pathlib.Path('baton2-shard-objects') / object_row['object_name']
-                    and retained_object_path.is_relative_to(generated_root)
-                    and retained_object_path.is_file() and not retained_object_path.is_symlink()
-                    and retained_object_path.stat().st_size == object_row['size_bytes']
-                    and digest(retained_object_path) == object_row['sha256'],
-                    'Combined retained shard object differs: ' + object_row['object_name'])
-            original_object_path = mapped(object_row['path'])
-            original_object_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(retained_object_path, original_object_path)
-        c_artifact = next((item for item in handoff['build_artifacts']
-                           if pathlib.Path(item['original']['path']).name == 'baton2.c'), None)
-        object_artifact = next((item for item in handoff['build_artifacts']
-                                if pathlib.Path(item['original']['path']).name == 'baton2.o'), None)
-        binary_artifact = next((item for item in handoff['build_artifacts']
-                                if pathlib.Path(item['original']['path']).name == 'baton2'), None)
-        require(c_artifact and object_artifact and binary_artifact,
-                'Combined sharded Main artifact set is incomplete.')
-        entry = source / 'bend2/src/host/native-entry.c'
-        sharded_validation = verify_sharded_build(
-            receipt_copy, mapped(c_artifact['original']['path']), entry,
-            mapped(binary_artifact['original']['path']), path_map=mapped, tool_root=source)
-        require(mapped(receipt_data['object'])
-                == mapped(object_artifact['original']['path']),
-                'Sharded receipt object does not name the retained Main object.')
-        save(origin / 'sharded-main-build-validation.json', sharded_validation)
-        expected_phases = ('c-generation',)
-    else:
-        expected_phases = ('c-generation', 'main-object', 'native-link')
-    native = None
-    for phase in expected_phases:
-        matches = [row for row in handoff['records'] if pathlib.Path(row['stdout']['path']).parent.name == phase]
-        require(len(matches) == 1, 'Combined Main phase record is missing or repeated: ' + phase)
-        row = matches[0]
-        require(row['returncode'] == 0 and row['wait_status'] == 0 and row['natural_exit'] is True
-                and row['original_wait'] is True and row['original_wait_completed'] is True,
-                'Combined Main phase did not finish naturally: ' + phase)
-        require(row['source_tree'] == handoff['source_tree'] and row['cwd'] == handoff['source'],
-                'Combined Main phase source differs: ' + phase)
-        stat_pid, stat_tail = row['stat_after_spawn'].split(' (', 1)
-        require(int(stat_pid) == row['pid'] and stat_tail.rsplit(')', 1)[1].split()[19] == row['birth'],
-                'Combined Main phase birth record differs: ' + phase)
-        stdout, stderr = retained(row['stdout']), retained(row['stderr'])
-        require(pathlib.Path(row['stderr']['path']).parent == pathlib.Path(row['stdout']['path']).parent,
-                'Combined Main phase streams differ: ' + phase)
-        result_path = pathlib.Path(stdout['path']).parent / 'result.json'
-        require(json.loads(result_path.read_text()) == row, 'Combined phase differs from its retained result: ' + phase)
-        copy_record(stdout, origin / (phase + '.stdout'))
-        copy_record(stderr, origin / (phase + '.stderr'))
-        shutil.copyfile(result_path, origin / (phase + '.json'))
-        if phase == 'c-generation':
-            require(row['argv'] == [str(logical_compiler), ENTRY, '-o', '.scratch/bend2/baton2.c'],
-                    'Combined Main compiler invocation differs.')
-            native = {'exe': compiler['path'],
-                      'cmdline': ' '.join([compiler['path'], ENTRY, '-o', '.scratch/bend2/baton2.c']),
-                      'environment': row['environment'], 'original_record': row}
-        elif phase == 'main-object':
-            argv = row['argv']
-            if pathlib.Path(argv[0]).name == 'ccache-private':
-                argv = argv[1:]
-            require(argv == ['/usr/bin/clang-19', '-O1', '-pthread', '-Dmain=baton2_runtime_main',
-                             '-c', '.scratch/bend2/baton2.c', '-o', '.scratch/bend2/baton2.o'],
-                    'Combined Main object invocation differs.')
-        elif phase == 'native-link':
-            require(row['argv'] == ['/usr/bin/clang-19', '-O1', '-pthread', 'bend2/src/host/native-entry.c',
-                                    '.scratch/bend2/baton2.o', '-lsqlite3', '-lm', '-o', '.scratch/bend2/baton2'],
-                    'Combined Main native link invocation differs.')
-    require(len([row for row in handoff['records']
-                 if pathlib.Path(row['stdout']['path']).parent.name in
-                 ('c-generation', 'main-object', 'native-link')]) == len(expected_phases),
-            'Combined Main build phase set differs from its declared route.')
-    artifacts = []
-    for item in handoff['build_artifacts']:
-        require(item['stable_during_copy'] is True, 'Combined Main artifact copy was unstable.')
-        old, copy = retained(item['original']), retained(item['copy'])
-        require(all(old[key] == copy[key] for key in ('size_bytes', 'sha256')),
-                'Combined artifact copy differs from its original.')
-        name = pathlib.Path(old['path']).name
-        require(pathlib.Path(item['original']['path']) == pathlib.Path(handoff['source']) / '.scratch/bend2' / name
-                and pathlib.Path(copy['path']).name == name, 'Combined artifact path differs.')
-        artifacts.append({'original': old, 'copy': copy, 'stable_during_copy': True})
-    base = fact(mapped(logical_compiler.parent.parent / 'bend2/base.bend'))
-    archive = fact(compiler_archive.resolve())
-    save(origin / 'combined-evidence-validation.json', {
-        'schema': 'baton2-combined-main-reuse-validation-v1', 'source_snapshot_commit': commit,
-        'source_tree': handoff['source_tree'], 'compiler_archive_verified_during_reuse': archive,
-        'original_compiler_fact': handoff['compiler'], 'binding': binding,
-        'original_compiler_invocation': native['original_record']})
-    return {**handoff, 'source': str(source), 'source_commit': commit, 'compiler': compiler,
-            'compiler_archive': archive, 'base': base, 'build_artifacts': artifacts}, {'original_native': native}
 
 
 def prepare(args, result):
@@ -754,21 +342,36 @@ def prepare(args, result):
     handoff_path = pathlib.Path(paths[0]).resolve()
     handoff, binding = handoff_binding(handoff_path, args.handoff_sha256)
     result['handoff_binding'] = binding
-    combined = handoff['schema'] == 'baton2-combined-main-handoff-v1'
-    require(combined or (handoff['schema'] == 'baton2-early-main-review-payload-v1'
-            and handoff['main_build_completed'] is True and handoff['source_clean_at_seed'] is True),
+    require(handoff['schema'] == 'baton2-early-main-review-payload-v1'
+            and handoff['main_build_completed'] is True and handoff['source_clean_at_seed'] is True,
             'Retained handoff does not record a completed clean Main build.')
-    if not combined:
-        require(handoff['actual_main_success_marker'] == '.scratch/bend2/baton2', 'Unexpected Main completion marker.')
+    require(handoff['actual_main_success_marker'] == '.scratch/bend2/baton2', 'Unexpected Main completion marker.')
     origin = generated / 'main-c-origin'
     origin.mkdir()
     shutil.copyfile(handoff_path, origin / 'handoff.json')
-    if combined:
-        if binding['kind'] == 'combined-main-ci-reference':
-            copy_record(binding['original_handoff'], origin / 'original-combined-handoff.json')
-        handoff, seed = combined_evidence(handoff, binding, origin, args.compiler_archive)
-    else:
-        seed = legacy_evidence(handoff, binding, origin)
+    for key, name in (('source_seed_manifest', 'seed.json'),
+                      ('build_stdout_as_of_boundary', 'build.stdout'),
+                      ('build_stderr_as_of_boundary', 'build.stderr')):
+        copy_record(handoff[key], origin / name)
+    require(b'.scratch/bend2/baton2\n' in (origin / 'build.stdout').read_bytes().splitlines(keepends=True),
+            'Retained build output lacks the completed Main marker.')
+    seed = json.loads((origin / 'seed.json').read_text())
+    require(seed['schema'] == 'baton2-early-main-source-seed-v1' and seed['source_clean'] is True
+            and seed['source_commit'] == handoff['source_commit'] and seed['source_tree'] == handoff['source_tree'],
+            'Retained source seed differs from the Main handoff.')
+    copy_record(seed['file_manifest'], origin / 'seed-files.json')
+    if handoff.get('origin_handoff'):
+        copy_record(handoff['origin_handoff'], origin / 'original-handoff.json')
+    if seed.get('original_seed_manifest'):
+        copy_record(seed['original_seed_manifest'], origin / 'original-seed.json')
+    if binding['kind'] == 'mapped-handoff':
+        require(seed['original_seed_manifest']['sha256'] == binding['original_seed']['sha256'],
+                'Mapped seed does not bind the original Main seed.')
+        original_seed = json.loads((origin / 'original-seed.json').read_text())
+        for key in ('source_commit', 'source_tree', 'source_clean', 'original_native'):
+            require(seed[key] == original_seed[key], 'Mapped seed changes original compiler/source identity: ' + key)
+        require(seed['file_manifest']['sha256'] == original_seed['file_manifest']['sha256'],
+                'Mapped seed changes the original source/toolchain file manifest.')
     artifacts = []
     c_record = None
     for item in handoff['build_artifacts']:
@@ -869,19 +472,6 @@ def verify_transfer(args):
     require(digest(origin / 'handoff.json') == result['origin_handoff_sha256'], 'Origin handoff binding differs.')
     require(digest(generated / 'baton2.c') == result['generated_c_sha256']
             and (generated / 'baton2.c').stat().st_size == result['generated_c_size'], 'Reused Main C differs.')
-    original_handoff = json.loads((origin / 'original-combined-handoff.json').read_text()) \
-        if (origin / 'original-combined-handoff.json').is_file() else json.loads((origin / 'handoff.json').read_text())
-    native_build = original_handoff.get('native_build')
-    if native_build is not None:
-        receipt_copy = origin / 'sharded-main-build.json'
-        receipt_data = json.loads(receipt_copy.read_text())
-        verify_sharded_transfer({
-            'route': native_build['route'],
-            'receipt_sha256': native_build['receipt']['sha256'],
-            'output_sha256': receipt_data['output_sha256'],
-            'object_sha256': receipt_data['object_sha256'],
-            'retained_objects': native_build['retained_objects'],
-        }, receipt_copy, generated, verify_outputs=False)
     rows = source_files(args.source.resolve(), result['current_source_commit'], result['current_source_tree'])
     require(rows == json.loads((origin / 'current-source-files.json').read_text()), 'Current full source differs from reuse proof.')
     current, issue = production_inputs(args.source.resolve(), rows)
@@ -914,58 +504,6 @@ def verify_transfer(args):
     return result
 
 
-def verify_sharded_transfer(native_build, receipt_path, generated, verify_outputs=True):
-    require(set(native_build) == {'route', 'receipt_sha256', 'output_sha256',
-                                  'object_sha256', 'retained_objects'}
-            and native_build['route'] == 'linux-x86_64-clang-19-no-pch',
-            'Transferred sharded Main declaration differs.')
-    receipt_path = pathlib.Path(receipt_path)
-    require(receipt_path.is_file() and digest(receipt_path) == native_build['receipt_sha256'],
-            'Transferred sharded Main build receipt differs.')
-    receipt = json.loads(receipt_path.read_text())
-    require(receipt['output_sha256'] == native_build['output_sha256']
-            and receipt['object_sha256'] == native_build['object_sha256'],
-            'Transferred sharded Main build result differs.')
-    if verify_outputs:
-        object_file = pathlib.Path(generated) / 'baton2.o'
-        executable = pathlib.Path(generated) / 'baton2-linux-x64'
-        require(object_file.is_file() and not object_file.is_symlink()
-                and digest(object_file) == native_build['object_sha256'],
-                'Transferred sharded aggregate object differs.')
-        require(executable.is_file() and not executable.is_symlink()
-                and digest(executable) == native_build['output_sha256'],
-                'Transferred sharded executable differs.')
-    rows = native_build['retained_objects']
-    expected = receipt.get('compile_objects', [])
-    require(isinstance(rows, list) and len(rows) == len(expected) == 6,
-            'Transferred sharded object set is incomplete.')
-    seen = set()
-    for row, compiled in zip(rows, expected):
-        require(set(row) == {'source_name', 'object_name', 'path', 'copy_path',
-                             'size_bytes', 'sha256'}
-                and row['source_name'] == compiled['source_name']
-                and row['object_name'] == compiled['object_name']
-                and row['path'] == compiled['object_path']
-                and row['sha256'] == compiled['object_sha256'],
-                'Transferred shard object receipt differs.')
-        relative = pathlib.Path(row['copy_path'])
-        require(relative == pathlib.Path('baton2-shard-objects') / row['object_name'],
-                'Transferred shard object path differs.')
-        object_path = pathlib.Path(generated) / relative
-        require(object_path.is_file() and not object_path.is_symlink()
-                and object_path.stat().st_size == row['size_bytes']
-                and digest(object_path) == row['sha256'],
-                'Transferred shard object bytes differ: ' + row['object_name'])
-        seen.add(row['object_name'])
-    object_directory = pathlib.Path(generated) / 'baton2-shard-objects'
-    require(object_directory.is_dir() and not object_directory.is_symlink()
-            and {path.name for path in object_directory.iterdir()} == seen,
-            'Transferred shard object directory contents differ.')
-    return {'status': 'verified', 'object_count': len(seen),
-            'objects_sha256': hashlib.sha256(json.dumps(rows, sort_keys=True,
-                separators=(',', ':')).encode()).hexdigest()}
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     modes = parser.add_subparsers(dest='mode', required=True)
@@ -980,14 +518,6 @@ def main():
     verify_parser = modes.add_parser('verify-transfer')
     verify_parser.add_argument('--source', type=pathlib.Path, required=True)
     verify_parser.add_argument('--generated', type=pathlib.Path, required=True)
-    sharded_transfer_parser = modes.add_parser('verify-sharded-transfer')
-    sharded_transfer_parser.add_argument('--handoff', type=pathlib.Path, required=True)
-    sharded_transfer_parser.add_argument('--generated', type=pathlib.Path, required=True)
-    build_parser = modes.add_parser('verify-build')
-    build_parser.add_argument('--receipt', type=pathlib.Path, required=True)
-    build_parser.add_argument('--source', type=pathlib.Path, required=True)
-    build_parser.add_argument('--entry', type=pathlib.Path, required=True)
-    build_parser.add_argument('--output', type=pathlib.Path, required=True)
     select_parser = modes.add_parser('select')
     select_parser.add_argument('--source', type=pathlib.Path, required=True)
     select_parser.add_argument('--compiler', type=pathlib.Path, required=True)
@@ -999,18 +529,6 @@ def main():
     args = parser.parse_args()
     if args.mode == 'verify-transfer':
         print(json.dumps(verify_transfer(args)))
-        return
-    if args.mode == 'verify-sharded-transfer':
-        handoff = json.loads(args.handoff.read_text())
-        native_build = handoff.get('main_native_build')
-        require(native_build is not None, 'Sharded Main build record is missing.')
-        receipt_path = args.generated / 'baton2.build.json'
-        result = verify_sharded_transfer(native_build, receipt_path, args.generated.resolve())
-        print(json.dumps(result))
-        return
-    if args.mode == 'verify-build':
-        print(json.dumps(verify_sharded_build(args.receipt, args.source,
-                                              args.entry, args.output)))
         return
     if args.mode == 'select':
         result = {'pid': os.getpid(), 'observed_at_ns': time.time_ns(), 'output': str(args.output.resolve())}

@@ -1,9 +1,14 @@
 #include <errno.h>
 #include <limits.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <spawn.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
-#include <dirent.h>
+#include <unistd.h>
 
 extern char **environ;
 
@@ -20,10 +25,11 @@ typedef struct {
   BatonChild *child;
   char *args, *cwd, *log, *text;
   size_t length;
+  uint64_t frame_start, frame_length;
   u32 handle, signal, index;
   uint64_t owner_incarnation,owner_attempt;
-  int kind, error, eof, unstarted, fresh, preserve_line, notice_socket;
-  char *directory, *initial, *recovery, *detail, *database, *artifact_name, *artifact, *identity, *owner_witness;
+  int kind, error, eof, unstarted, fresh, preserve_line;
+  char *directory, *initial, *recovery, *detail, *database, *artifact_name, *artifact, *identity, *owner_witness, *spec;
   size_t initial_length, recovery_length, artifact_name_length, artifact_length, identity_length;
   u32 keep_stdin, lock;
   char *cursor, *generation;
@@ -58,8 +64,8 @@ enum { BP_SPAWN, BP_WRITE, BP_CLOSE, BP_READ, BP_READ_AWAKE, BP_WAIT, BP_SIGNAL,
        BP_INSTANCE_PREPARE_WITH_FILE, BP_INSTANCE_START, BP_INSTANCE_CANCEL,
        BP_INSTANCE_OWNER_WITNESS, BP_INSTANCE_ENSURE_OWNER_WITNESS,
        BP_INSTANCE_RECOVER, BP_INSTANCE_INPUT_WITNESS, BP_INSTANCE_INPUT_PROMPT,
-       BP_OBSERVER_RECOVERY };
-
+       BP_OBSERVER_RECOVERY, BP_READ_SPAN, BP_READ_AWAKE_SPAN, BP_SPAWN_ENV_FILE,
+       BP_INSTANCE_MONITOR_COMMIT };
 static int baton_pipe(int fds[2]) {
   if (pipe(fds)) return errno;
   if (fcntl(fds[0],F_SETFD,FD_CLOEXEC) < 0 || fcntl(fds[1],F_SETFD,FD_CLOEXEC) < 0) {
@@ -117,7 +123,7 @@ static void baton_child_retire_slot(BatonProcessCall *call) {
   }
 }
 
-static void baton_child_spawn(BatonProcessCall *call) {
+static void baton_child_spawn_env(BatonProcessCall *call,char **envp) {
   if (!call->length || call->args[call->length-1] != 0 || !call->args[0]) {
     call->error=EINVAL; return;
   }
@@ -159,7 +165,7 @@ static void baton_child_spawn(BatonProcessCall *call) {
   BP_ACTION(posix_spawnattr_setsigdefault(&attr,&defaults));
   BP_ACTION(posix_spawnattr_setpgroup(&attr,0));
   BP_ACTION(posix_spawnattr_setflags(&attr,POSIX_SPAWN_SETPGROUP|POSIX_SPAWN_SETSIGDEF));
-  rc=posix_spawnp(&call->child->pid,argv[0],&actions,&attr,argv,environ);
+  rc=posix_spawnp(&call->child->pid,argv[0],&actions,&attr,argv,envp);
 actions_done:
 #undef BP_ACTION
   posix_spawnattr_destroy(&attr); posix_spawn_file_actions_destroy(&actions); close(log);
@@ -172,6 +178,158 @@ pipes:
   if(in[0]>=0)close(in[0]); if(in[1]>=0)close(in[1]);
   if(out[0]>=0)close(out[0]); if(out[1]>=0)close(out[1]);
   free(argv);
+}
+
+static void baton_child_spawn(BatonProcessCall *call) {
+  baton_child_spawn_env(call,environ);
+}
+
+/* The environment-spec launch is a transparent wrapper: the child inherits the
+   wrapper's stdin and stdout, and its stderr goes to the named log. The
+   credential reaches only the child environment. */
+static void baton_child_spawn_env_inherit(BatonProcessCall *call,char **envp) {
+  if (!call->length || call->args[call->length-1] != 0 || !call->args[0]) {
+    call->error=EINVAL; return;
+  }
+  size_t count=0;
+  for(size_t i=0;i<call->length;i++) if(!call->args[i]) count++;
+  char **argv=calloc(count+1,sizeof(char *));
+  if(!argv) { call->error=ENOMEM; return; }
+  size_t index=0, start=0;
+  for(size_t i=0;i<call->length;i++) if(!call->args[i]) {
+    argv[index++]=call->args+start; start=i+1;
+  }
+  int log=-1;
+  if(call->log && call->log[0]) {
+    log=open(call->log,O_WRONLY|O_CREAT|O_APPEND|O_CLOEXEC,0600);
+    if(log<0) { call->error=errno; free(argv); return; }
+  }
+  posix_spawn_file_actions_t actions;
+  posix_spawnattr_t attr;
+  int rc=posix_spawn_file_actions_init(&actions);
+  if(rc) { call->error=rc; if(log>=0)close(log); free(argv); return; }
+  rc=posix_spawnattr_init(&attr);
+  if(rc) { call->error=rc; posix_spawn_file_actions_destroy(&actions); if(log>=0)close(log); free(argv); return; }
+#define BP_ACTION(expr) do { rc=(expr); if(rc) goto actions_done; } while(0)
+  BP_ACTION(posix_spawn_file_actions_addchdir_np(&actions,call->cwd));
+  if(log>=0) {
+    BP_ACTION(posix_spawn_file_actions_adddup2(&actions,log,STDERR_FILENO));
+    BP_ACTION(posix_spawn_file_actions_addclose(&actions,log));
+  }
+  sigset_t defaults;
+  sigemptyset(&defaults); sigaddset(&defaults,SIGPIPE);
+  BP_ACTION(posix_spawnattr_setsigdefault(&attr,&defaults));
+  BP_ACTION(posix_spawnattr_setpgroup(&attr,0));
+  BP_ACTION(posix_spawnattr_setflags(&attr,POSIX_SPAWN_SETPGROUP|POSIX_SPAWN_SETSIGDEF));
+  rc=posix_spawnp(&call->child->pid,argv[0],&actions,&attr,argv,envp);
+actions_done:
+#undef BP_ACTION
+  posix_spawnattr_destroy(&attr); posix_spawn_file_actions_destroy(&actions); if(log>=0)close(log);
+  if(rc) call->error=rc; else { call->child->input=-1; call->child->output=NULL; }
+  free(argv);
+}
+
+static void br_spec_detail(BatonProcessCall *call,const char *detail) {
+  if(call->detail) return;
+  size_t length=strlen(detail);
+  call->detail=malloc(length+1);
+  if(call->detail) memcpy(call->detail,detail,length+1);
+}
+
+/* The small key-environment contract: one credential variable and a few
+   inherited overrides. A sparse or growing specification is refused before
+   allocation. */
+#define BR_ENV_SPEC_MAX 65536
+/* Reads a 0600 NAME=VALUE specification, builds an environment from the
+   inherited environment with those names replaced, unlinks the specification
+   before the child produces bytes, and spawns with that environment. */
+static void baton_child_spawn_env_file(BatonProcessCall *call) {
+  if(!call->spec || !call->length || call->args[call->length-1] != 0 || !call->args[0]) {
+    call->error=EINVAL; return;
+  }
+  int flags=O_RDONLY|O_CLOEXEC;
+#ifdef O_NOFOLLOW
+  flags|=O_NOFOLLOW;
+#endif
+  int fd=open(call->spec,flags);
+  if(fd<0) {call->error=errno;br_spec_detail(call,"specUnreadable: specification cannot be opened");return;}
+  struct stat info;
+  if(fstat(fd,&info)) {int error=errno;close(fd);call->error=error;br_spec_detail(call,"specUnreadable: specification cannot be inspected");return;}
+  if(!S_ISREG(info.st_mode) || (info.st_mode & 077) || info.st_uid!=geteuid()) {
+    close(fd);call->error=EACCES;br_spec_detail(call,"specUnreadable: specification is not an owner-only regular file");return;
+  }
+  if(info.st_size < 0 || (uint64_t)info.st_size > BR_ENV_SPEC_MAX) {
+    close(fd);call->error=E2BIG;br_spec_detail(call,"specUnreadable: specification exceeds the small key-environment bound");return;
+  }
+  size_t capacity=(size_t)info.st_size+1,length=0;
+  char *buffer=malloc(capacity);
+  if(!buffer) {close(fd);call->error=ENOMEM;return;}
+  while(length<capacity-1) {
+    ssize_t count=read(fd,buffer+length,capacity-1-length);
+    if(count>0) {length+=(size_t)count;continue;}
+    if(count<0 && errno==EINTR) continue;
+    if(count<0) {int error=errno;free(buffer);close(fd);call->error=error;br_spec_detail(call,"specUnreadable: specification cannot be read");return;}
+    break;
+  }
+  char extra;
+  ssize_t more=read(fd,&extra,1);
+  if(more<0) {int error=errno;free(buffer);close(fd);call->error=error;br_spec_detail(call,"specUnreadable: specification cannot be read");return;}
+  if(more>0) {free(buffer);close(fd);call->error=E2BIG;br_spec_detail(call,"specUnreadable: specification exceeds the small key-environment bound");return;}
+  close(fd);
+  if(memchr(buffer,0,length)) {free(buffer);call->error=EINVAL;br_spec_detail(call,"specLineMalformed: specification contains NUL");return;}
+  buffer[length]=0;
+  if(length && buffer[length-1]!='\n') {
+    char *grown=realloc(buffer,length+2);
+    if(!grown) {free(buffer);call->error=ENOMEM;return;}
+    buffer=grown;buffer[length++]='\n';buffer[length]=0;
+  }
+  size_t entries=0;
+  for(size_t i=0;i<length;i++) if(buffer[i]=='\n') {
+    size_t start=i;
+    while(start>0 && buffer[start-1]!='\n') start--;
+    size_t equals=start;
+    while(equals<i && buffer[equals]!='=') equals++;
+    if(equals==i) {free(buffer);call->error=EINVAL;br_spec_detail(call,"specLineMalformed: specification line has no '='");return;}
+    entries++;
+  }
+  size_t inherited=0;
+  if(environ) while(environ[inherited]) inherited++;
+  char **envp=calloc(inherited+entries+1,sizeof(*envp));
+  if(!envp) {free(buffer);call->error=ENOMEM;return;}
+  size_t kept=0,line=0;
+  for(size_t i=0;environ && environ[i];i++) {
+    const char *equals=strchr(environ[i],'=');
+    size_t name=equals?(size_t)(equals-environ[i]):strlen(environ[i]);
+    int replaced=0;
+    size_t start=0;
+    while(start<length && !replaced) {
+      size_t end=start;
+      while(end<length && buffer[end]!='\n') end++;
+      size_t spec_equals=start;
+      while(spec_equals<end && buffer[spec_equals]!='=') spec_equals++;
+      if(spec_equals-start==name && !strncmp(buffer+start,environ[i],name)) replaced=1;
+      start=end+1;
+    }
+    if(!replaced) envp[kept++]=environ[i];
+  }
+  size_t start=0;
+  while(start<length) {
+    size_t end=start;
+    while(end<length && buffer[end]!='\n') end++;
+    if(end>start) {
+      buffer[end]=0;
+      if(end>start && buffer[end-1]=='\r') buffer[end-1]=0;
+      envp[kept++]=buffer+start;
+    }
+    start=end+1;
+  }
+  envp[kept]=NULL;
+  if(unlink(call->spec)) {
+    int error=errno;free(envp);free(buffer);
+    call->error=error;br_spec_detail(call,"specUnreadable: specification could not be removed");return;
+  }
+  baton_child_spawn_env_inherit(call,envp);
+  free(envp);free(buffer);
 }
 
 #include <pthread.h>
@@ -194,7 +352,7 @@ pipes:
 enum { BR_HELLO=1, BR_CHANGE, BR_EXIT, BR_REPLY, BR_WRITE, BR_CLOSE,
        BR_SIGNAL, BR_RELEASE, BR_ACK, BR_INPUT_CLOSED,
        BR_ATTACH, BR_CONTROL_WRITE, BR_CONTROL_SIGNAL, BR_READY, BR_CANCELLED,
-       BR_UNKNOWN };
+       BR_UNKNOWN, BR_CONTROL_RECONCILE };
 typedef struct { uint32_t op; int32_t error; uint64_t serial,length; int64_t value; } BrFrame;
 typedef struct { int32_t pid,exited,status,released,input_closed; } BrState;
 typedef struct {
@@ -226,7 +384,8 @@ typedef struct {
 } BrInputDelivery;
 typedef struct BatonRetained {
   int socket,spool,error,exited,status,input_closed;
-  int guard,watch,life,orphan,unknown,released,acknowledged,observer_only;
+  int guard,watch,life,orphan,unknown,released,acknowledged,observer_only,custody_lock;
+  int observer_detached,receiver_started;
   char *directory,*database;
   uint64_t version,serial,reply_serial,owner_attempt,owner_incarnation,owner_epoch;
   int reply_error;
@@ -238,18 +397,37 @@ typedef struct BatonRetained {
   pthread_mutex_t state,command,reader;
   pthread_cond_t changed;
 } BatonRetained;
+static int br_monitor_checkpoint(BatonProcessCall *call,BatonRetained *retained);
+static int br_monitor_lock(BatonRetained *retained);
+static int br_custody_write(const char *directory,BatonRetained *retained);
+/* One filesystem-watch instance serves every attempt's spool in a process.
+   A keeper holds the instance's watch token, so concurrent sessions add
+   watches in one bounded instance per owner. */
+typedef struct {
+  int fd;
+  size_t count;
+  struct BrKeeper **attempts;
+} BrWatcher;
 typedef struct BrKeeper {
   struct BrKeeper *next;
   uint32_t id;
   uint64_t identity;
   int listener,client,input,lock,watch,wake[2],spool,native_life,finishing,change_queued;
+  int spool_changed;
+  BrWatcher *watchers;
+  pid_t client_pid;
+  BrBirth client_birth;
+  int client_birth_set;
   uint64_t generation;
   pid_t native_pid,recovery_pid;
+  BrBirth native_birth;
   int exited,status,released,input_closed,ready,native_waiting,prepared,cancelled;
   int monitor_only,status_unavailable;
   /* Recovery observers are owner-managed continuation work. An acknowledged
      attempt remains live until every child launched for it has been reaped. */
   size_t recovery_pending;
+  /* A recovery child gets one attach attempt; readiness enables a later retry. */
+  int recovery_attempted;
   struct BrWaiter *unwatched_recovery;
   char *directory,*incoming;
   size_t incoming_size,incoming_capacity;
@@ -367,6 +545,7 @@ typedef struct {
   uint64_t cursor;
   char *database,*ipc,*key,*socket_path,*record_path,*generation_path,*cursor_path;
   BrKeeper *attempts;
+  BrWatcher watcher;
   BrOwnerControl *controls;
   uint32_t next_id;
 } BrOwner;
@@ -519,8 +698,51 @@ static int br_process_lifetime(pid_t pid,int *ended) {
   int fd=(int)syscall(SYS_pidfd_open,pid,0);
   if(fd<0){if(errno==ESRCH)*ended=1;return -1;}
   fcntl(fd,F_SETFD,FD_CLOEXEC);
+  struct pollfd observed={fd,POLLIN,0};
+  int ready;do {ready=poll(&observed,1,0);}while(ready<0 && errno==EINTR);
+  if(ready<0){int error=errno;close(fd);errno=error;return -1;}
+  if(ready && (observed.revents&(POLLIN|POLLHUP|POLLERR))) {
+    close(fd);*ended=1;errno=ESRCH;return -1;
+  }
 #endif
   return fd;
+}
+/* A live observer must match the executable recorded in this attempt's
+   recovery argv. The keeper separately binds its PID to the connected peer birth. */
+static int br_process_matches_executable(pid_t pid,const char *expected,int life,int *ended) {
+  if(!expected || !*expected || expected[0]!='/')return EINVAL;
+  char *recorded=realpath(expected,NULL);
+  if(!recorded)return errno;
+#ifdef __APPLE__
+  (void)life;(void)ended;
+  char target[PROC_PIDPATHINFO_MAXSIZE];
+  int length=proc_pidpath(pid,target,sizeof(target));
+  if(length<=0){int error=errno?errno:ESRCH;free(recorded);return error;}
+  char *observed=realpath(target,NULL);
+  if(!observed){int error=errno;free(recorded);return error;}
+  struct stat expected_info,observed_info;int error=0;
+  if(stat(recorded,&expected_info))error=errno;
+  else if(stat(observed,&observed_info))error=errno;
+  else if(expected_info.st_dev!=observed_info.st_dev ||
+          expected_info.st_ino!=observed_info.st_ino)error=ESTALE;
+  free(recorded);free(observed);return error;
+#else
+  char target[64];snprintf(target,sizeof(target),"/proc/%d/exe",(int)pid);
+  struct stat expected_info,observed_info;int error=0;
+  if(stat(recorded,&expected_info))error=errno;
+  else if(stat(target,&observed_info))error=errno;
+  else if(expected_info.st_dev!=observed_info.st_dev ||
+          expected_info.st_ino!=observed_info.st_ino)error=ESTALE;
+  if(error==ENOENT || error==ESRCH) {
+    struct pollfd observed={life,POLLIN,0};
+    int ready;do {ready=poll(&observed,1,0);}while(ready<0 && errno==EINTR);
+    if(ready<0)error=errno;
+    else if(ready && (observed.revents&(POLLIN|POLLHUP|POLLERR))) {
+      *ended=1;error=0;
+    }
+  }
+  free(recorded);return error;
+#endif
 }
 /* Registration precedes the keeper's waitpid. A dead/reused birth is ended. */
 static int br_lifetime(const char *directory,int *ended) {
@@ -536,6 +758,13 @@ static int br_lifetime(const char *directory,int *ended) {
 }
 static int br_watch_file(int spool,const char *path);
 static void br_watch_drain(int fd);
+static int br_watch_add(BrWatcher *watchers,int spool,const char *path);
+static void br_watch_remove(BrWatcher *watchers,int token);
+static void br_spool_watch_dispatch(BrWatcher *watchers,BrKeeper *attempts);
+static void br_spool_watch_overflow(BrKeeper *attempts);
+#ifndef __APPLE__
+static void br_spool_watch_event(BrKeeper *attempts,uint32_t mask,int wd);
+#endif
 static void br_orphan_exit(BatonRetained *retained) {
   char *path=br_path(retained->directory,"status");FILE *file=path?fopen(path,"r"):NULL;free(path);
   int status;
@@ -598,25 +827,7 @@ static char *br_self(void) {
   if(buffer && !_NSGetExecutablePath(buffer,&size)) path=realpath(buffer,NULL);
   free(buffer);return path;
 #else
-  static const char deleted[]=" (deleted)";
-  char link[PATH_MAX+1];
-  ssize_t length=readlink("/proc/self/exe",link,PATH_MAX);
-  if(length<0 || length>=PATH_MAX)return NULL;
-  link[length]=0;
-  size_t suffix=sizeof(deleted)-1;
-  if((size_t)length<suffix || memcmp(link+length-suffix,deleted,suffix))
-    return realpath(link,NULL);
-  struct stat exact;
-  if(!stat(link,&exact))return realpath(link,NULL);
-  if(errno!=ENOENT)return NULL;
-  link[length-suffix]=0;
-  char *current=realpath(link,NULL);
-  if(!current)return NULL;
-  struct stat info;
-  if(stat(current,&info) || !S_ISREG(info.st_mode) || access(current,X_OK)) {
-    free(current);return NULL;
-  }
-  return current;
+  return realpath("/proc/self/exe",NULL);
 #endif
 }
 
@@ -655,6 +866,150 @@ done:
   posix_spawnattr_destroy(&attributes);posix_spawn_file_actions_destroy(&actions);
   return rc;
 }
+
+#ifdef __linux__
+#define BR_CLOSE_RANGE_CLOEXEC 4u
+
+static char *br_exec_path(const char *name) {
+  if(!name || !*name)return NULL;
+  if(strchr(name,'/'))return strdup(name);
+  const char *path=getenv("PATH");
+  if(!path || !*path)path="/usr/bin:/bin";
+  const char *at=path;
+  for(;;) {
+    const char *colon=strchr(at,':');
+    size_t length=colon?(size_t)(colon-at):strlen(at);
+    size_t name_length=strlen(name);
+    char *candidate=malloc(length+name_length+2);
+    if(!candidate)return NULL;
+    if(length) {
+      memcpy(candidate,at,length);
+      candidate[length]='/';
+      memcpy(candidate+length+1,name,name_length+1);
+    } else memcpy(candidate,name,name_length+1);
+    if(access(candidate,X_OK)==0)return candidate;
+    free(candidate);
+    if(!colon)break;
+    at=colon+1;
+  }
+  return strdup(name);
+}
+
+typedef struct {
+  char **argv;
+  char *exec_path;
+  const char *cwd;
+  int input,output,error_log,gate_read,status_write;
+  unsigned long close_limit;
+} BrGatedChild;
+
+/* Runs in the spawned child. It sets up the assigned descriptors, stops on the
+   start gate, and execs the native argv exactly as admitted. A failure before
+   exec reports its errno on the status pipe, which the parent reads. */
+static void br_gated_exec(BrGatedChild *child) __attribute__((noreturn));
+static void br_gated_exec(BrGatedChild *child) {
+  int error=0;
+  if(setpgid(0,0) && errno!=EACCES)error=errno;
+  if(!error) {
+    struct sigaction action;
+    memset(&action,0,sizeof(action));
+    action.sa_handler=SIG_DFL;
+    sigemptyset(&action.sa_mask);
+    if(sigaction(SIGPIPE,&action,NULL))error=errno;
+  }
+  int originals[3]={child->input,child->output,child->error_log},copies[3]={-1,-1,-1};
+  for(int i=0;!error && i<3;i++) if(originals[i]>=0) {
+    copies[i]=fcntl(originals[i],F_DUPFD_CLOEXEC,10);
+    if(copies[i]<0)error=errno;
+  }
+  for(int i=0;!error && i<3;i++) if(copies[i]>=0) {
+    if(dup2(copies[i],i)<0)error=errno;
+    else close(copies[i]);
+  }
+  if(!error && child->cwd && chdir(child->cwd))error=errno;
+  if(!error) {
+    int marked=0;
+#ifdef SYS_close_range
+    if(!syscall(SYS_close_range,3,(unsigned)~0u,BR_CLOSE_RANGE_CLOEXEC))marked=1;
+    else if(errno!=ENOSYS && errno!=EINVAL)error=errno;
+#endif
+    if(!error && !marked) {
+      for(unsigned long fd=3;fd<child->close_limit;fd++)
+        fcntl((int)fd,F_SETFD,FD_CLOEXEC);
+    }
+  }
+  if(!error) {
+    char released;
+    ssize_t n;
+    do {n=read(child->gate_read,&released,1);} while(n<0 && errno==EINTR);
+    if(n!=1)error=n<0?errno:EPIPE;
+  }
+  if(!error) {
+    execve(child->exec_path,child->argv,environ);
+    error=errno;
+  }
+  br_write_all(child->status_write,&error,sizeof(error));
+  _exit(127);
+}
+
+/* Starts a child behind a gate so descriptor setup completes before exec.
+   The parent releases the child only after the fork succeeds. Exec errors are
+   returned synchronously, and a failed launch is reaped before custody moves on. */
+static int br_spawn_gated(pid_t *pid,char **argv,const char *cwd,int input,int output,
+                          int error_log) {
+  *pid=0;
+  if(!argv || !argv[0])return EINVAL;
+  char *exec_path=br_exec_path(argv[0]);
+  if(!exec_path)return ENOMEM;
+  int gate[2]={-1,-1},status[2]={-1,-1};
+  int error=baton_pipe(gate);
+  if(!error)error=baton_pipe(status);
+  if(!error) {
+    long limit=sysconf(_SC_OPEN_MAX);
+    if(limit<1024 || limit>1048576)limit=65536;
+    BrGatedChild child={.argv=argv,.exec_path=exec_path,.cwd=cwd,
+      .input=input,.output=output,.error_log=error_log,
+      .gate_read=gate[0],.status_write=status[1],.close_limit=(unsigned long)limit};
+    pid_t created=fork();
+    if(created<0)error=errno;
+    else if(!created) {
+      close(gate[1]);close(status[0]);
+      br_gated_exec(&child);
+    } else {
+      close(gate[0]);gate[0]=-1;
+      close(status[1]);status[1]=-1;
+      setpgid(created,created);
+      char released='R';
+      int child_error=br_write_all(gate[1],&released,1);
+      close(gate[1]);gate[1]=-1;
+      if(!child_error) {
+        int reported=0;
+        ssize_t n;
+        for(;;) {
+          n=read(status[0],&reported,sizeof(reported));
+          if(n<0 && errno==EINTR)continue;
+          break;
+        }
+        if(n<0)child_error=errno;
+        else if(n>0)child_error=n==(ssize_t)sizeof(reported)&&reported?reported:EIO;
+      }
+      if(child_error) {
+        kill(created,SIGKILL);
+        kill(-created,SIGKILL);
+        int wait_status;
+        while(waitpid(created,&wait_status,0)<0 && errno==EINTR) {}
+        error=child_error;
+      } else *pid=created;
+    }
+  }
+  if(gate[0]>=0)close(gate[0]);
+  if(gate[1]>=0)close(gate[1]);
+  if(status[0]>=0)close(status[0]);
+  if(status[1]>=0)close(status[1]);
+  free(exec_path);
+  return error;
+}
+#endif
 static void *br_reap_detached(void *argument) {
   pid_t pid=(pid_t)(intptr_t)argument;
   while(waitpid(pid,NULL,0)<0 && errno==EINTR) {}
@@ -711,15 +1066,22 @@ static int br_hello(int socket,BrFrame *hello,int *guard) {
   if(message.msg_flags&MSG_CTRUNC)return EPROTO;
   return (size_t)length<sizeof(*hello)?br_read_all(socket,(char *)hello+length,sizeof(*hello)-(size_t)length):0;
 }
-static int br_attach_socket(BatonChild *child,const char *directory,int socket,int *unstarted,uint64_t incarnation,int ready_ack) {
+static int br_attach_socket(BatonChild *child,const char *directory,int socket,int *unstarted,uint64_t incarnation,int ready_ack,int defer_receiver,int allow_legacy_transfer) {
   BrFrame hello;BrState state={0};int guard=-1;
   int error=br_hello(socket,&hello,&guard);
+  if(!error && hello.serial>1)error=EPROTO;
+  int legacy_transfer=0;
+  int acknowledge_ready=ready_ack;
   if(!error && hello.error) {
     error=hello.error;
     if(unstarted && hello.op==BR_HELLO && hello.value==1)*unstarted=1;
   }
   if(!error && (hello.op!=BR_HELLO || hello.length!=sizeof(state)))error=EPROTO;
   if(!error)error=br_read_all(socket,&state,sizeof(state));
+  if(!error && allow_legacy_transfer && hello.serial==0) {
+    if(!state.exited)error=EBUSY;
+    else {legacy_transfer=1;acknowledge_ready=0;}
+  }
   char *path=br_path(directory,"stdout");int spool=-1;
   if(!error){spool=path?open(path,O_RDONLY|O_CLOEXEC):-1;if(spool<0)error=path?errno:ENOMEM;}
   free(path);
@@ -731,8 +1093,10 @@ static int br_attach_socket(BatonChild *child,const char *directory,int socket,i
   if(!error && !retained)error=ENOMEM;
   if(error){if(life>=0)close(life);if(guard>=0)close(guard);if(spool>=0)close(spool);close(socket);return error;}
   retained->socket=socket;retained->spool=spool;retained->guard=guard;retained->life=life;retained->watch=-1;
+  retained->custody_lock=-1;
   retained->directory=strdup(directory);retained->exited=state.exited;retained->status=state.status;
   retained->input_closed=state.input_closed;retained->released=state.released;
+  retained->observer_detached=hello.serial==1 || legacy_transfer;
   retained->observer_only=hello.value==4 || hello.value==5;
   if(hello.value==4)retained->unknown=1;
   pthread_mutex_init(&retained->state,NULL);pthread_mutex_init(&retained->command,NULL);
@@ -743,20 +1107,34 @@ static int br_attach_socket(BatonChild *child,const char *directory,int socket,i
      caller's decision, taken through restore after it has restored the reducer
      state the checkpoint carries. */
   if(!error && (hello.value==2 || hello.value==3 || hello.value==4 || hello.value==5)) {
-    BrFrame ready={.op=BR_READY,.serial=ready_ack?1:0};error=br_write_all(socket,&ready,sizeof(ready));
+    BrFrame ready={.op=BR_READY,.serial=acknowledge_ready?1:0};error=br_write_all(socket,&ready,sizeof(ready));
     BrFrame reply={0};
-    if(!error && ready_ack)error=br_read_all(socket,&reply,sizeof(reply));
-    if(!error && ready_ack && (reply.op!=BR_REPLY || reply.serial!=ready.serial || reply.length))error=EPROTO;
-    if(!error && ready_ack)error=reply.error;
+    if(!error && acknowledge_ready)error=br_read_all(socket,&reply,sizeof(reply));
+    if(!error && acknowledge_ready && (reply.op!=BR_REPLY || reply.serial!=ready.serial || reply.length))error=EPROTO;
+    if(!error && acknowledge_ready)error=reply.error;
   }
-  if(!error)error=pthread_create(&retained->receiver,NULL,br_receiver,retained);
+  if(!error && legacy_transfer) {
+    retained->exited=1;retained->unknown=1;retained->observer_only=1;retained->input_closed=1;
+  }
+  if(!error && !defer_receiver) {
+    error=pthread_create(&retained->receiver,NULL,br_receiver,retained);
+    if(!error)retained->receiver_started=1;
+  }
   if(error){if(life>=0)close(life);if(guard>=0)close(guard);close(spool);close(socket);free(retained->directory);free(retained);return error;}
   child->pid=state.pid;child->retained=retained;
   return 0;
 }
+static int br_retained_start(BatonChild *child) {
+  BatonRetained *retained=child?child->retained:NULL;
+  if(!retained)return EINVAL;
+  if(retained->receiver_started)return 0;
+  int error=pthread_create(&retained->receiver,NULL,br_receiver,retained);
+  if(!error)retained->receiver_started=1;
+  return error;
+}
 static int br_attach_orphan(BatonChild *child,const char *directory,int guard) {
   BatonRetained *retained=calloc(1,sizeof(*retained));if(!retained)return ENOMEM;
-  retained->socket=-1;retained->spool=-1;retained->watch=-1;retained->life=-1;
+  retained->socket=-1;retained->spool=-1;retained->watch=-1;retained->life=-1;retained->custody_lock=-1;
   /* No owner serves this attempt, so no incarnation is bound and a checkpoint
      carrying one is unreadable; the native identity still binds. */
   retained->guard=fcntl(guard,F_DUPFD_CLOEXEC,10);retained->directory=strdup(directory);
@@ -768,7 +1146,7 @@ static int br_attach_orphan(BatonChild *child,const char *directory,int guard) {
   pthread_mutex_init(&retained->state,NULL);pthread_mutex_init(&retained->command,NULL);
   pthread_mutex_init(&retained->reader,NULL);pthread_cond_init(&retained->changed,NULL);
   if(!error)error=br_orphan(retained);
-  if(!error)error=pthread_create(&retained->receiver,NULL,br_follow,retained);
+  if(!error) {error=pthread_create(&retained->receiver,NULL,br_follow,retained);if(!error)retained->receiver_started=1;}
   if(error){if(retained->guard>=0)close(retained->guard);if(retained->spool>=0)close(retained->spool);
     if(retained->life>=0)close(retained->life);if(retained->watch>=0)close(retained->watch);
     free(retained->directory);free(retained);return error;}
@@ -844,12 +1222,66 @@ static void br_read_line(BatonProcessCall *call) {
   }
   pthread_mutex_unlock(&retained->reader);
 }
+/* Read one complete retained-spool line as a byte range. Commit the cursor
+   only after a full line or exited partial tail has been read successfully. */
+static void br_read_line_span(BatonProcessCall *call) {
+  BatonRetained *retained=call->child->retained;
+  pthread_mutex_lock(&retained->reader);
+  if(retained->spool<0 || retained->offset<0) {call->error=EBADF;goto done;}
+  off_t staged=retained->offset;
+  call->frame_start=(uint64_t)staged;
+  for(;;) {
+    pthread_mutex_lock(&retained->state);
+    uint64_t version=retained->version;int exited=retained->exited;
+    call->error=retained->error;pthread_mutex_unlock(&retained->state);
+    if(call->error) break;
+    char chunk[8192];ssize_t n=pread(retained->spool,chunk,sizeof(chunk),staged);
+    if(n<0 && errno==EINTR) continue;
+    if(n<0) {call->error=errno;break;}
+    if(n) {
+      char *newline=memchr(chunk,'\n',(size_t)n);
+      size_t consumed=newline?(size_t)(newline-chunk)+1:(size_t)n;
+      size_t content=consumed-(newline?1u:0u);
+      if(content>UINT64_MAX-call->frame_length || consumed>(size_t)LLONG_MAX ||
+         staged>LLONG_MAX-(off_t)consumed) {call->error=EOVERFLOW;break;}
+      call->frame_length+=(uint64_t)content;
+      staged+=(off_t)consumed;
+      if(newline) break;
+      continue;
+    }
+    pthread_mutex_lock(&retained->state);
+    int finished=retained->exited;
+    if(retained->error) call->error=retained->error;
+    else if(finished) call->eof=call->frame_length==0;
+    else {
+      while(version==retained->version && !retained->exited && !retained->error)
+        pthread_cond_wait(&retained->changed,&retained->state);
+    }
+    pthread_mutex_unlock(&retained->state);
+    if(call->error || finished) break;
+  }
+  if(!call->error && !call->eof) {
+    char start[32],length[32];
+    int a=snprintf(start,sizeof(start),"%llu",(unsigned long long)call->frame_start);
+    int b=snprintf(length,sizeof(length),"%llu",(unsigned long long)call->frame_length);
+    if(a<0 || (size_t)a>=sizeof(start) || b<0 || (size_t)b>=sizeof(length)) call->error=EOVERFLOW;
+    else {
+      call->cursor=strdup(start);
+      call->generation=strdup(length);
+      if(!call->cursor || !call->generation) call->error=ENOMEM;
+      else retained->offset=staged;
+    }
+  }
+done:
+  pthread_mutex_unlock(&retained->reader);
+}
 static void baton_retained_call(BatonProcessCall *call) {
   BatonRetained *retained=call->child->retained;
   if(retained->observer_only &&
      (call->kind==BP_WRITE || call->kind==BP_CLOSE || call->kind==BP_SIGNAL ||
       call->kind==BP_RELEASE || call->kind==BP_ACK ||
-      call->kind==BP_INSTANCE_START || call->kind==BP_INSTANCE_CANCEL)) {
+      call->kind==BP_INSTANCE_START || call->kind==BP_INSTANCE_CANCEL ||
+      call->kind==BP_INSTANCE_COMMIT || call->kind==BP_INSTANCE_REPLAY)) {
     call->error=EPERM;return;
   }
   if(call->kind==BP_INSTANCE_STATE) {
@@ -860,7 +1292,12 @@ static void baton_retained_call(BatonProcessCall *call) {
     call->error=br_instance_decision(call);
     return;
   }
+  if(call->kind==BP_INSTANCE_MONITOR_COMMIT) {
+    call->error=br_monitor_checkpoint(call,retained);
+    return;
+  }
   if(call->kind==BP_READ) {br_read_line(call);return;}
+  if(call->kind==BP_READ_SPAN) {br_read_line_span(call);return;}
   if(call->kind==BP_INSTANCE_COMMIT) {
     /* One atomic record: the consumed offset and the reducer state the caller
        committed after its own durable store and reducer effects for that frame.
@@ -949,11 +1386,12 @@ static void baton_retained_call(BatonProcessCall *call) {
   if(!call->error && call->kind==BP_ACK) {
     retained->acknowledged=1;
     if(retained->socket>=0)shutdown(retained->socket,SHUT_RDWR);
-    pthread_join(retained->receiver,NULL);
+    if(retained->receiver_started)pthread_join(retained->receiver,NULL);
     if(retained->socket>=0)close(retained->socket);retained->socket=-1;
     close(retained->spool);retained->spool=-1;
     if(retained->life>=0)close(retained->life);retained->life=-1;
     if(retained->watch>=0)close(retained->watch);retained->watch=-1;
+    if(retained->custody_lock>=0)close(retained->custody_lock);retained->custody_lock=-1;
   }
 }
 
@@ -1050,35 +1488,49 @@ static int br_recovery_reap_unwatched(BrKeeper *keeper) {
   return 0;
 }
 static void br_recover(BrKeeper *keeper) {
+  if(keeper->recovery_attempted)return;
+  keeper->recovery_attempted=1;
   char **argv=br_argv(keeper->manifest.field[4],(size_t)keeper->manifest.header.lengths[4]);
   char *path=br_path(keeper->directory,"observer.log");
   int null=open("/dev/null",O_RDONLY|O_CLOEXEC),log=path?open(path,O_WRONLY|O_CREAT|O_APPEND|O_CLOEXEC,0600):-1;
   BrWaiter *waiter=argv&&path&&null>=0&&log>=0?br_waiter_prepare(keeper,'R'):NULL;
+  int launched=0;
   int error=argv&&path&&null>=0&&log>=0&&waiter?
     br_spawn(&keeper->recovery_pid,argv,keeper->manifest.field[1],null,log,log,-1,-1):errno?errno:ENOMEM;
+  if(!error)launched=1;
   if(null>=0)close(null);if(log>=0)close(log);free(path);free(argv);
   if(!error)error=br_waiter_submit(keeper,waiter,keeper->recovery_pid);
   else br_waiter_discard(waiter);
-  if(error) br_note(keeper,"observer-error",error);
+  if(error) {
+    if(!launched)keeper->recovery_attempted=0;
+    br_note(keeper,"observer-error",error);
+  }
 }
 static void br_detach_observer(BrKeeper *keeper) {
   if(keeper->client>=0) close(keeper->client);
-  keeper->client=-1;keeper->ready=0;keeper->incoming_size=0;keeper->change_queued=0;
+  keeper->client=-1;keeper->client_pid=0;keeper->client_birth_set=0;
+  memset(&keeper->client_birth,0,sizeof(keeper->client_birth));
+  keeper->ready=0;keeper->incoming_size=0;keeper->change_queued=0;
   br_buffer_free(&keeper->outgoing,&keeper->outgoing_tail);
 }
 static void br_disconnected(BrKeeper *keeper) {
   br_detach_observer(keeper);
-  if(!keeper->finishing && keeper->native_pid) br_recover(keeper);
+  if(!keeper->finishing && keeper->native_pid && !keeper->recovery_attempted) br_recover(keeper);
 }
-static int br_native_exited(BrKeeper *keeper) {
-  if(!keeper->ready || !keeper->native_waiting || !keeper->native_pid)return 0;
+static int br_record_native_exit(BrKeeper *keeper) {
+  if(!keeper->native_waiting || !keeper->native_pid)return 0;
   pid_t reaped;int status;
   do {reaped=waitpid(keeper->native_pid,&status,0);}while(reaped<0 && errno==EINTR);
   if(reaped<0)return errno;
   keeper->status=status;keeper->exited=1;keeper->native_waiting=0;
   char text[64];int n=snprintf(text,sizeof(text),"%d\n",status);
   int error=br_file(keeper->directory,"status",text,(size_t)n,1);
-  return error?error:br_send(keeper,(BrFrame){.op=BR_EXIT,.value=status},NULL);
+  if(error)return error;
+  return keeper->ready?br_send(keeper,(BrFrame){.op=BR_EXIT,.value=status},NULL):0;
+}
+static int br_native_exited(BrKeeper *keeper) {
+  if(!keeper->ready)return 0;
+  return br_record_native_exit(keeper);
 }
 static int br_command(BrKeeper *keeper,BrFrame frame,const char *payload) {
   int error=0;
@@ -1103,8 +1555,16 @@ static int br_command(BrKeeper *keeper,BrFrame frame,const char *payload) {
     int error=br_lifecycle_ready(keeper->directory);
     if(error)return br_reply(keeper,frame.serial,keeper->generation,error);
     keeper->ready=1;
+    keeper->recovery_attempted=0;
     if((error=br_reply(keeper,frame.serial,keeper->generation,0)))return error;
-    return keeper->native_pid?br_native_exited(keeper):0;
+    /* A waiter can observe the native exit before readiness. Reap that exit now
+       that readiness is set; a running native returns without error. An error is
+       recorded without failing the keeper serving state. */
+    if(keeper->native_waiting) {
+      int exit_error=br_native_exited(keeper);
+      if(exit_error)br_note(keeper,"native-exit-error",exit_error);
+    }
+    return 0;
   }
   if(frame.op==BR_SIGNAL) {
     if(keeper->exited)error=ESRCH;
@@ -1221,6 +1681,40 @@ static void br_control_reply(BrControl *control,uint64_t serial,int error) {
   control->reply=(BrFrame){.op=BR_REPLY,.serial=serial,.error=error};
   control->answered=1;
 }
+/* The original keeper validates the native birth and performs the wait itself.
+   A lost status file can then be restored from durable wait status. */
+static int br_reconcile_native(BrKeeper *keeper,BrBirth requested) {
+  if(!keeper->native_pid || requested.pid!=keeper->native_pid ||
+     !br_same_birth(requested,keeper->native_birth))return ESTALE;
+  BrBirth recorded;
+  int error=br_read_file(keeper->directory,"native.birth",&recorded,sizeof(recorded));
+  if(error)return error;
+  if(!br_same_birth(recorded,keeper->native_birth))return ESTALE;
+  if(keeper->exited) {
+    char text[64];int length=snprintf(text,sizeof(text),"%d\n",keeper->status);
+    error=br_file(keeper->directory,"status",text,(size_t)length,1);
+    if(error!=EEXIST)return error;
+    char *path=br_path(keeper->directory,"status");FILE *file=path?fopen(path,"r"):NULL;
+    error=file?0:path?errno:ENOMEM;free(path);
+    int status=0;
+    if(file) {if(fscanf(file,"%d",&status)!=1)error=EINVAL;fclose(file);}
+    return error?error:status==keeper->status?0:ESTALE;
+  }
+  BrBirth current;
+  error=br_birth(keeper->native_pid,&current);
+  if(error)return error;
+  if(!br_same_birth(current,keeper->native_birth))return ESTALE;
+  siginfo_t information;memset(&information,0,sizeof(information));
+  int waited;
+  do {waited=waitid(P_PID,(id_t)keeper->native_pid,&information,WEXITED|WNOHANG|WNOWAIT);}
+  while(waited<0 && errno==EINTR);
+  if(waited<0)return errno;
+  if(information.si_pid!=keeper->native_pid)return EBUSY;
+  keeper->native_waiting=1;
+  error=br_record_native_exit(keeper);
+  if(error)return error;
+  return br_exists(keeper->directory,"status")?0:ENOENT;
+}
 static int br_observer_pid(int socket,pid_t *pid) {
 #ifdef __APPLE__
   socklen_t length=sizeof(*pid);
@@ -1232,135 +1726,9 @@ static int br_observer_pid(int socket,pid_t *pid) {
   *pid=peer.pid;return 0;
 #endif
 }
-/* A live replacement must identify the supplied process from the exact retained
-   attempt it is observing. The pidfd remains open through handoff and retirement. */
-static int br_observer_attempt_custody(pid_t pid,const char *database,const char *session,
-                                       const char *directory,int lock,int *life_out) {
-  if(!life_out)return EINVAL;
-  *life_out=-1;
-  char *canonical=realpath(directory,NULL),*database_path=realpath(database,NULL);
-  if(!canonical || !database_path) {free(canonical);free(database_path);return errno;}
-  char *stdout_path=br_path(canonical,"stdout");
-  char *log_path=br_path(canonical,"observer.log");
-  int error=!stdout_path || !log_path?ENOMEM:0;
-  int ended=0,life=-1,public_receive=0,recovery=0;
-  if(!error) {
-    life=br_process_lifetime(pid,&ended);
-    if(life<0)error=ended?ESRCH:errno;
-  }
-#ifndef __APPLE__
-  char command_path[PATH_MAX];
-  unsigned char command[65536];
-  size_t command_length=0;
-  if(!error) {
-    int n=snprintf(command_path,sizeof(command_path),"/proc/%ld/cmdline",(long)pid);
-    if(n<0 || (size_t)n>=sizeof(command_path))error=EOVERFLOW;
-  }
-  if(!error) {
-    int fd=open(command_path,O_RDONLY|O_CLOEXEC);
-    if(fd<0)error=errno;
-    else {
-      while(command_length<sizeof(command)) {
-        ssize_t n=read(fd,command+command_length,sizeof(command)-command_length);
-        if(n<0 && errno==EINTR)continue;
-        if(n<0){error=errno;break;}
-        if(!n)break;
-        command_length+=(size_t)n;
-      }
-      if(!error && command_length==sizeof(command))error=E2BIG;
-      close(fd);
-    }
-  }
-  if(!error) {
-    char *argv[16];size_t argc=0,start=0;
-    if(!command_length || command[command_length-1])error=EINVAL;
-    else {
-      for(size_t i=0;i<command_length;i++)if(!command[i]) {
-        if(argc==sizeof(argv)/sizeof(argv[0])){error=E2BIG;break;}
-        argv[argc++]=(char *)command+start;start=i+1;
-      }
-      int receive=!error && (argc==14 || argc==15) && !strcmp(argv[1],"--recover-receive");
-      public_receive=!error && argc==10 && !strcmp(argv[2],"receive");
-      recovery=!error && argc==5 && !strcmp(argv[2],"recover-observer");
-      if(!error && !receive && !public_receive && !recovery)error=EPERM;
-      if(!error && strcmp(argv[3],session))error=EPERM;
-      if(!error) {
-        char *saved_database=realpath(receive?argv[2]:argv[1],NULL);
-        if(!saved_database || strcmp(saved_database,database_path))error=EPERM;
-        free(saved_database);
-      }
-      if(!error && receive) {
-        char *saved_directory=realpath(argv[12],NULL);
-        if(!saved_directory || strcmp(saved_directory,canonical))error=EPERM;
-        free(saved_directory);
-        const char *name=strrchr(canonical,'/');name=name?name+1:canonical;
-        const char *encoded=strstr(name,".attempt-");
-        const char *id=argv[4];static const char hex[]="0123456789abcdef";
-        size_t id_length=strlen(id);
-        if(!encoded || strlen(encoded+9)!=id_length*2)error=EPERM;
-        else for(size_t i=0;i<id_length;i++) {
-          unsigned char c=(unsigned char)id[i];
-          if(encoded[9+i*2]!=hex[c>>4] || encoded[10+i*2]!=hex[c&15]){error=EPERM;break;}
-        }
-      }
-      if(!error && recovery) {
-        char *end=NULL;errno=0;unsigned long prior=strtoul(argv[4],&end,10);
-        if(errno || end==argv[4] || *end || !prior || prior>INT_MAX)error=EPERM;
-      }
-    }
-  }
-
-  if(!error) {
-    struct pollfd alive={life,POLLIN,0};
-    int ready;do {ready=poll(&alive,1,0);}while(ready<0 && errno==EINTR);
-    if(ready<0)error=errno;
-    else if(ready || (alive.revents&(POLLIN|POLLHUP|POLLERR)))error=ESRCH;
-  }
-  if(!error) {
-    struct stat lock_info;
-    if(fstat(lock,&lock_info))error=errno;
-    char fd_directory[PATH_MAX],fd_path[PATH_MAX],target[PATH_MAX+1];
-    int length=snprintf(fd_directory,sizeof(fd_directory),"/proc/%ld/fd",(long)pid);
-    if(!error && (length<0 || (size_t)length>=sizeof(fd_directory)))error=EOVERFLOW;
-    DIR *fds=!error?opendir(fd_directory):NULL;
-    if(!error && !fds)error=errno;
-    int stdout_owned=0,log_owned=0,lock_owned=0;
-    struct dirent *entry;
-    while(!error && (entry=readdir(fds))) {
-      if(entry->d_name[0]=='.')continue;
-      length=snprintf(fd_path,sizeof(fd_path),"%s/%s",fd_directory,entry->d_name);
-      if(length<0 || (size_t)length>=sizeof(fd_path)){error=EOVERFLOW;break;}
-      ssize_t n=readlink(fd_path,target,sizeof(target)-1);
-      if(n>=0) {
-        target[n]=0;
-        if(!strcmp(target,stdout_path))stdout_owned=1;
-        if(!strcmp(target,log_path))log_owned=1;
-      }
-      struct stat info;
-      if(!stat(fd_path,&info) && info.st_dev==lock_info.st_dev && info.st_ino==lock_info.st_ino)lock_owned=1;
-      if(stdout_owned && log_owned && lock_owned)break;
-    }
-    if(fds)closedir(fds);
-    if(!error && (!stdout_owned || (!public_receive && !recovery && !log_owned) || !lock_owned))error=EPERM;
-  }
-  if(!error) {
-    struct pollfd alive={life,POLLIN,0};
-    int ready;do {ready=poll(&alive,1,0);}while(ready<0 && errno==EINTR);
-    if(ready<0)error=errno;
-    else if(ready || (alive.revents&(POLLIN|POLLHUP|POLLERR)))error=ESRCH;
-  }
-#else
-  if(!error)error=ENOTSUP;
-#endif
-  free(stdout_path);free(log_path);free(canonical);free(database_path);
-  if(error) {if(life>=0)close(life);return error;}
-  *life_out=life;
-  return 0;
-}
-
 static int br_control_command(BrKeeper *keeper,BrControl *control,BrFrame frame,const char *payload) {
   const char *end=memchr(payload,0,(size_t)frame.length);
-  int error=0;
+  int error=0,observer_detached=0;
   if(!end || strcmp(payload,keeper->directory))error=EINVAL;
   else if(keeper->finishing)error=ESHUTDOWN;
   else if(keeper->monitor_only &&
@@ -1368,26 +1736,56 @@ static int br_control_command(BrKeeper *keeper,BrControl *control,BrFrame frame,
   if(error) {br_control_reply(control,frame.serial,error);return 0;}
   size_t identity=(size_t)(end-payload)+1;
   if(frame.op==BR_ATTACH) {
+    pid_t new_pid=0;BrBirth new_birth={0};
     if(frame.length!=identity || frame.serial)error=EPROTO;
-    else if(keeper->client>=0) {
+    else {
+      error=br_observer_pid(control->socket,&new_pid);
+      if(!error)error=br_birth(new_pid,&new_birth);
+    }
+    if(!error && keeper->client>=0) {
       pid_t observer=0;
       /* A completed attempt can transfer the selected observer's connection. */
       if(frame.value>1 && frame.value<=INT_MAX && keeper->exited) {
+        BrBirth current={0};
         error=br_observer_pid(keeper->client,&observer);
-        if(!error && observer==(pid_t)frame.value)br_detach_observer(keeper);
-        else if(!error)error=EBUSY;
+        if(!error && observer==(pid_t)frame.value && observer==keeper->client_pid &&
+           keeper->client_birth_set)
+          error=br_birth(observer,&current);
+        else if(!error)error=ESTALE;
+        if(!error && br_same_birth(current,keeper->client_birth)) {
+          br_detach_observer(keeper);
+          observer_detached=1;
+        } else if(!error)error=ESTALE;
       } else error=EBUSY;
+    } else if(!error && frame.value>1 && frame.value<=INT_MAX) {
+      /* A recovery request may attach without replacing a keeper client only
+         after the requested observer has ended. A live PID is not proof that
+         it owns this attempt. */
+      int ended=0,life=br_process_lifetime((pid_t)frame.value,&ended);
+      if(life>=0) {close(life);error=EBUSY;}
+      else if(!ended)error=errno;
     }
     if(error) {
       control->reply=(BrFrame){.op=BR_HELLO,.error=error};control->answered=1;
     } else {
       keeper->client=control->socket;control->socket=-1;keeper->generation++;keeper->ready=0;
+      keeper->client_pid=new_pid;keeper->client_birth=new_birth;keeper->client_birth_set=1;
       BrState state={keeper->native_pid,keeper->exited,keeper->status,keeper->released,keeper->input_closed};
-      return br_send(keeper,(BrFrame){.op=BR_HELLO,.length=sizeof(state),
+      return br_send(keeper,(BrFrame){.op=BR_HELLO,.serial=observer_detached,
+        .length=sizeof(state),
         .value=keeper->monitor_only?(keeper->status_unavailable?4:5):keeper->native_pid?2:3},&state);
     }
   } else if(!frame.serial)br_control_reply(control,frame.serial,EPROTO);
-  else if(frame.op==BR_CONTROL_WRITE) {
+  else if(frame.op==BR_CONTROL_RECONCILE) {
+    if(frame.length!=identity+sizeof(BrBirth) || frame.value<=1 || frame.value>INT_MAX)
+      error=EPROTO;
+    else {
+      BrBirth requested;memcpy(&requested,payload+identity,sizeof(requested));
+      if(requested.pid!=(int32_t)frame.value)error=ESTALE;
+      else error=br_reconcile_native(keeper,requested);
+    }
+    br_control_reply(control,frame.serial,error);
+  } else if(frame.op==BR_CONTROL_WRITE) {
     if(keeper->input_closed || keeper->exited)error=EPIPE;
     else {
       error=br_queue(&keeper->writes,&keeper->writes_tail,payload+identity,
@@ -1461,13 +1859,104 @@ static void br_watch_drain(int fd) {
   char events[4096];while(read(fd,events,sizeof(events))>0) {}
 #endif
 }
+/* Registers one spool path with the process's shared watch instance. The
+   returned token identifies this watch in collected events. The instance is
+   created on first use and closed when its last watch is removed. */
+static int br_watch_add(BrWatcher *watchers,int spool,const char *path) {
+  if(watchers->fd>=0 && watchers->attempts)
+    br_spool_watch_dispatch(watchers,*watchers->attempts);
+  if(watchers->fd<0) {
+#ifdef __APPLE__
+    (void)path;
+    watchers->fd=kqueue();
+    if(watchers->fd>=0)fcntl(watchers->fd,F_SETFD,FD_CLOEXEC);
+#else
+    watchers->fd=inotify_init1(IN_NONBLOCK|IN_CLOEXEC);
+#endif
+    if(watchers->fd<0)return -1;
+  }
+  int token;
+#ifdef __APPLE__
+  struct kevent event;EV_SET(&event,spool,EVFILT_VNODE,EV_ADD|EV_CLEAR,NOTE_WRITE|NOTE_EXTEND,0,NULL);
+  token=kevent(watchers->fd,&event,1,NULL,0,NULL)<0?-1:spool;
+#else
+  (void)spool;
+  token=inotify_add_watch(watchers->fd,path,IN_MODIFY|IN_CLOSE_WRITE);
+#endif
+  if(token<0) {
+    int error=errno;
+    if(!watchers->count) {close(watchers->fd);watchers->fd=-1;}
+    errno=error;
+    return -1;
+  }
+  watchers->count++;
+  return token;
+}
+static void br_watch_remove(BrWatcher *watchers,int token) {
+  if(watchers->fd<0 || token<0)return;
+#ifdef __APPLE__
+  struct kevent event;EV_SET(&event,token,EVFILT_VNODE,EV_DELETE,0,0,NULL);
+  kevent(watchers->fd,&event,1,NULL,0,NULL);
+#else
+  inotify_rm_watch(watchers->fd,token);
+#endif
+  if(watchers->count>0)watchers->count--;
+  if(!watchers->count) {close(watchers->fd);watchers->fd=-1;}
+}
+/* One dropped inotify event stands for an unknown number of spool changes.
+   Every connected observer keeps one coalesced dirty mark, including while it
+   is completing its readiness exchange; br_attempt_ready sends the notice
+   when that observer is ready. Attempts without a connected observer have no
+   notice recipient. */
+static void br_spool_watch_overflow(BrKeeper *attempts) {
+  for(BrKeeper *keeper=attempts;keeper;keeper=keeper->next)
+    if(keeper->client>=0) keeper->spool_changed=1;
+}
+#ifndef __APPLE__
+/* Applies one inotify event to the registered attempts. Linux reports queue
+   overflow with wd -1 and IN_Q_OVERFLOW; individual spool events may have
+   been dropped, so each connected observer keeps a dirty mark until ready. */
+static void br_spool_watch_event(BrKeeper *attempts,uint32_t mask,int wd) {
+  if((mask&IN_Q_OVERFLOW) || wd<0) {br_spool_watch_overflow(attempts);return;}
+  if(!(mask&(IN_MODIFY|IN_CLOSE_WRITE)))return;
+  for(BrKeeper *keeper=attempts;keeper;keeper=keeper->next)
+    if(keeper->watch==wd) {keeper->spool_changed=1;break;}
+}
+#endif
+/* Reads the instance's queued events and marks each attempt whose spool
+   changed. Every event is consumed here because the instance is shared, so a
+   keeper that is not ready to send a notice keeps the mark until it is. */
+static void br_spool_watch_dispatch(BrWatcher *watchers,BrKeeper *attempts) {
+  if(watchers->fd<0)return;
+#ifdef __APPLE__
+  struct kevent events[8];struct timespec zero={0,0};
+  int ready=kevent(watchers->fd,NULL,0,events,8,&zero);
+  for(int i=0;i<ready;i++) if(events[i].filter==EVFILT_VNODE)
+    for(BrKeeper *keeper=attempts;keeper;keeper=keeper->next)
+      if(keeper->watch==(int)events[i].ident) {keeper->spool_changed=1;break;}
+#else
+  char buffer[4096];
+  for(;;) {
+    ssize_t n=read(watchers->fd,buffer,sizeof(buffer));
+    if(n<0 && errno==EINTR)continue;
+    if(n<=0)break;
+    for(char *cursor=buffer;cursor<buffer+n;) {
+      struct inotify_event *event=(struct inotify_event *)cursor;
+      if(!(event->mask&IN_IGNORED))
+        br_spool_watch_event(attempts,event->mask,(int)event->wd);
+      cursor+=sizeof(*event)+event->len;
+    }
+  }
+#endif
+}
 /* Releases one attempt's descriptors, buffers and record. It runs after the
    attempt's last observer and control connection has finished, and never
    touches another attempt's state. */
 static void br_keeper_stop(BrKeeper *keeper) {
   if(keeper->client>=0)close(keeper->client);if(keeper->listener>=0)close(keeper->listener);
   if(keeper->input>=0)close(keeper->input);if(keeper->lock>=0)close(keeper->lock);
-  if(keeper->watch>=0)close(keeper->watch);if(keeper->spool>=0)close(keeper->spool);
+  if(keeper->watch>=0){br_watch_remove(keeper->watchers,keeper->watch);keeper->watch=-1;}
+  if(keeper->spool>=0)close(keeper->spool);
   if(keeper->native_life>=0)close(keeper->native_life);
   if(keeper->wake[0]>=0)close(keeper->wake[0]);if(keeper->wake[1]>=0)close(keeper->wake[1]);
   while(keeper->controls) {
@@ -1541,7 +2030,8 @@ static int br_attempt_listener(const char *path,struct sockaddr_un *address) {
 /* Starts custody of one attempt. The native process, its stdin writer, its
    stdout spool and its wait authority stay in this process for the attempt's
    lifetime, so observer and coordinator loss leave them intact. */
-static int br_keeper_prepare(BrKeeper *keeper,const char *directory,int lock) {
+static int br_keeper_prepare(BrKeeper *keeper,BrWatcher *watchers,const char *directory,int lock) {
+  keeper->watchers=watchers;
   int error=br_manifest_read(directory,&keeper->manifest);
   if(error)return error;
   if(keeper->manifest.count==8) {
@@ -1560,6 +2050,12 @@ static int br_keeper_prepare(BrKeeper *keeper,const char *directory,int lock) {
   if((error=br_attempt_manifest_verify(directory)))return error;
   if((error=br_admission_verify(directory,NULL,lock)))return error;
   if((error=br_lifecycle_prepare_check(directory)))return error;
+  /* Every current keeper, per-attempt or owner-managed, advertises the
+     reconcile operation. A deployed e6 keeper has no capability file. */
+  static const char capabilities[]="reconcile\nobserver-transfer-v1\n";
+  int capability=br_file(keeper->directory?keeper->directory:directory,
+                         "capabilities",capabilities,sizeof(capabilities)-1,1);
+  if(capability && capability!=EEXIST)return capability;
   keeper->identity=br_manifest_digest(&keeper->manifest.header,keeper->manifest.field,keeper->manifest.count);
   if(lock>=0)fcntl(lock,F_SETFD,FD_CLOEXEC);
   struct sockaddr_un address;
@@ -1578,7 +2074,7 @@ static int br_keeper_prepare(BrKeeper *keeper,const char *directory,int lock) {
     }
   }
   if(keeper->spool<0){error=path?errno:ENOMEM;free(path);return error;}
-  keeper->watch=br_watch_file(keeper->spool,path);free(path);
+  keeper->watch=br_watch_add(watchers,keeper->spool,path);free(path);
   if(keeper->watch<0)return errno;
   if((error=baton_pipe(keeper->wake)))return error;
   keeper->prepared=1;
@@ -1604,23 +2100,29 @@ static int br_keeper_spawn(BrKeeper *keeper,const unsigned char *expected_digest
      repeated start decision never spawns a second child: an already latched start
      keeps the work it retained and this keeper reports it rather than spawning. */
   int retained=0;
-  if((error=br_lifecycle_start(keeper->directory,expected_digest,grant_digest,&retained)))return error;
-  if(retained)return keeper->native_pid?0:EPERM;
-  if(keeper->native_pid)return EPERM;
-  if((error=br_file(keeper->directory,"launch","launch\n",7,1)))return error;
-  int input[2];if((error=baton_pipe(input)))return error;
+  if((error=br_lifecycle_start(keeper->directory,expected_digest,grant_digest,&retained)))goto done;
+  if(retained){error=keeper->native_pid?0:EPERM;goto done;}
+  if(keeper->native_pid){error=EPERM;goto done;}
+  if((error=br_file(keeper->directory,"launch","launch\n",7,1)))goto done;
+  int input[2];if((error=baton_pipe(input)))goto done;
   int log=open(keeper->manifest.field[2],O_WRONLY|O_CREAT|O_APPEND|O_CLOEXEC,0600);
   char **argv=br_argv(keeper->manifest.field[0],(size_t)keeper->manifest.header.lengths[0]);
   if(log<0 || !argv)error=log<0?errno:ENOMEM;
-  else error=br_spawn(&keeper->native_pid,argv,keeper->manifest.field[1],input[0],keeper->spool,log,-1,-1);
+#ifdef __linux__
+  if(!error)error=br_spawn_gated(&keeper->native_pid,argv,keeper->manifest.field[1],
+    input[0],keeper->spool,log);
+#else
+  if(!error)error=br_spawn(&keeper->native_pid,argv,keeper->manifest.field[1],input[0],keeper->spool,log,-1,-1);
+#endif
   free(argv);if(log>=0)close(log);close(input[0]);
-  if(error){close(input[1]);return error;}
+  if(error){close(input[1]);goto done;}
   keeper->input=input[1];br_nonblock(keeper->input);
   char pid[64];int n=snprintf(pid,sizeof(pid),"%d\n",keeper->native_pid);
   BrBirth birth;
   if((error=br_file(keeper->directory,"native.pid",pid,(size_t)n,1)))goto spawned_failed;
   if((error=br_birth(keeper->native_pid,&birth)))goto spawned_failed;
   if((error=br_file(keeper->directory,"native.birth",&birth,sizeof(birth),1)))goto spawned_failed;
+  keeper->native_birth=birth;
   if((error=br_wait_start(keeper,keeper->native_pid,'N')))goto spawned_failed;
   if((error=br_queue(&keeper->writes,&keeper->writes_tail,keeper->manifest.field[3],
                     (size_t)keeper->manifest.header.lengths[3],0,0,0)))goto spawned_failed;
@@ -1628,20 +2130,22 @@ static int br_keeper_spawn(BrKeeper *keeper,const unsigned char *expected_digest
     if((error=br_queue(&keeper->writes,&keeper->writes_tail,NULL,0,0,0,1)))goto spawned_failed;
     keeper->input_closed=1;
   }
-  return 0;
+  goto done;
 spawned_failed:
   br_keeper_reap_spawned(keeper);
+done:
   return error;
 }
-static int br_keeper_start(BrKeeper *keeper,const char *directory,int lock) {
-  int error=br_keeper_prepare(keeper,directory,lock);
+static int br_keeper_start(BrKeeper *keeper,BrWatcher *watchers,const char *directory,int lock) {
+  int error=br_keeper_prepare(keeper,watchers,directory,lock);
   if(error)return error;
   if((error=br_lifecycle_ready(directory)))return error;
   keeper->ready=1;
   return br_keeper_spawn(keeper,NULL,NULL);
 }
 /* Serves one attempt's ready descriptors: a five-entry fixed slice (listener,
-   observer, spool watch, wake pipe, input) followed by its control slice. */
+   observer, wake pipe, input, native life) followed by its control slice. The
+   spool watch is shared, so its collected mark arrives on the keeper. */
 static int br_attempt_ready(BrKeeper *keeper,struct pollfd *fds,BrControl **clients,size_t count) {
   int error=0;
   if(fds[0].revents&POLLIN) {
@@ -1656,20 +2160,22 @@ static int br_attempt_ready(BrKeeper *keeper,struct pollfd *fds,BrControl **clie
   if(keeper->client>=0 && fds[1].fd==keeper->client && fds[1].revents&(POLLIN|POLLHUP|POLLERR)) {
     if((error=br_read_commands(keeper)))return error;
   }
-  if(fds[2].revents&POLLIN) {
-    br_watch_drain(keeper->watch);
+  if(keeper->spool_changed && (keeper->client<0 || keeper->ready)) {
+    keeper->spool_changed=0;
     if(!keeper->change_queued && keeper->client>=0) {
       if((error=br_send(keeper,(BrFrame){.op=BR_CHANGE},NULL)))return error;
       keeper->outgoing_tail->change=1;keeper->change_queued=1;
     }
   }
-  if(fds[3].revents&POLLIN) {
+  if(fds[2].revents&POLLIN) {
     BrWake event;
     if((error=br_read_all(keeper->wake[0],&event,sizeof(event))))return error;
     if(event.kind=='N') {
-      if(event.status<0)return ECHILD;
-      keeper->native_waiting=1;
-      if((error=br_native_exited(keeper)))return error;
+      if(!keeper->exited) {
+        if(event.status<0)return ECHILD;
+        keeper->native_waiting=1;
+        if((error=br_native_exited(keeper)))return error;
+      }
     } else if(event.kind=='R') {
       /* Recovery waiters belong to this keeper attempt, not an observer
          generation. A replacement observer must not strand their counts. */
@@ -1683,12 +2189,12 @@ static int br_attempt_ready(BrKeeper *keeper,struct pollfd *fds,BrControl **clie
     }
   }
   if(keeper->monitor_only && keeper->native_life>=0 &&
-     fds[5].revents&(POLLIN|POLLHUP|POLLERR)) {
+     fds[4].revents&(POLLIN|POLLHUP|POLLERR)) {
     close(keeper->native_life);keeper->native_life=-1;
     keeper->status_unavailable=1;keeper->exited=1;keeper->input_closed=1;
     if(keeper->client>=0 && (error=br_send(keeper,(BrFrame){.op=BR_UNKNOWN},NULL)))return error;
   }
-  for(size_t i=0;i<count;i++) if(fds[6+i].revents&(POLLIN|POLLHUP|POLLERR)) {
+  for(size_t i=0;i<count;i++) if(fds[5+i].revents&(POLLIN|POLLHUP|POLLERR)) {
     if((error=br_control_read(keeper,clients[i])))return error;
   }
   return 0;
@@ -2056,7 +2562,8 @@ static uint64_t br_owner_attempts(BrOwner *owner) {
    live in the database's own directory, so an alias pathname works and an
    unrelated directory does not. An existing attempt record refuses a second
    native child for the same attempt. */
-static int br_owner_admit(BrOwner *owner,const char *directory,int lock,int *existing,int start_now) {
+static int br_owner_admit(BrOwner *owner,const char *directory,int lock,
+                          int *existing,int start_now) {
   int error=0;
   char *resolved=NULL;
   struct stat info;
@@ -2109,7 +2616,7 @@ static int br_owner_admit(BrOwner *owner,const char *directory,int lock,int *exi
       *keeper=(BrKeeper){.listener=-1,.client=-1,.input=-1,.lock=lock,.watch=-1,
         .wake={-1,-1},.spool=-1,.native_life=-1,.generation=1,.id=++owner->next_id};
       keeper->directory=resolved;resolved=NULL;
-      error=start_now?br_keeper_start(keeper,directory,lock):br_keeper_prepare(keeper,directory,lock);
+      if(!error)error=start_now?br_keeper_start(keeper,&owner->watcher,directory,lock):br_keeper_prepare(keeper,&owner->watcher,directory,lock);
       if(error) {lock=-1;br_keeper_stop(keeper);}
       else {keeper->next=owner->attempts;owner->attempts=keeper;return 0;}
     }
@@ -2469,7 +2976,8 @@ static int br_owner_loop(BrOwner *owner) {
       slots++;link=&keeper->next;
     }
     if(owner->finishing && !owner->attempts)return 0;
-    size_t head=owner->listener>=0?1:0,total=head+owner_controls+slots*6+attempt_controls;
+    size_t head=owner->listener>=0?1:0,watch_slot=owner->watcher.fd>=0?1:0,
+      total=head+watch_slot+owner_controls+slots*5+attempt_controls;
     struct pollfd *fds=calloc(total?total:1,sizeof(*fds));
     BrOwnerControl **owner_clients=calloc(owner_controls?owner_controls:1,sizeof(*owner_clients));
     BrKeeper **keepers=calloc(slots?slots:1,sizeof(*keepers));
@@ -2481,6 +2989,8 @@ static int br_owner_loop(BrOwner *owner) {
     }
     size_t index=0;
     if(head)fds[index++]=(struct pollfd){owner->listener,POLLIN,0};
+    size_t watcher_index=index;
+    if(watch_slot)fds[index++]=(struct pollfd){owner->watcher.fd,POLLIN,0};
     size_t owner_first=index;
     size_t owner_bound=0;
     for(BrOwnerControl *control=owner->controls;control;control=control->next,index++) {
@@ -2492,8 +3002,6 @@ static int br_owner_loop(BrOwner *owner) {
       keepers[slot]=keeper;bases[slot]=index;apart[slot]=bound;
       fds[index++]=(struct pollfd){keeper->listener,POLLIN,0};
       fds[index++]=(struct pollfd){keeper->client,POLLIN|(keeper->outgoing?POLLOUT:0),0};
-      /* Spool notifications follow the attached observer's ready reply. */
-      fds[index++]=(struct pollfd){keeper->client>=0 && !keeper->ready?-1:keeper->watch,POLLIN,0};
       fds[index++]=(struct pollfd){keeper->wake[0],POLLIN,0};
       fds[index++]=(struct pollfd){keeper->writes?keeper->input:-1,POLLOUT,0};
       fds[index++]=(struct pollfd){keeper->native_life,POLLIN,0};
@@ -2506,6 +3014,8 @@ static int br_owner_loop(BrOwner *owner) {
       if(keeper->unwatched_recovery) {poll_timeout=100;break;}
     int ready;do {ready=poll(fds,(nfds_t)total,poll_timeout);} while(ready<0 && errno==EINTR);
     if(ready<0) {error=errno;goto polled;}
+    if(watch_slot && fds[watcher_index].revents&POLLIN)
+      br_spool_watch_dispatch(&owner->watcher,owner->attempts);
     if(head && fds[0].revents&POLLIN) {
       int socket=accept(owner->listener,NULL,NULL);
       if(socket>=0) {
@@ -2609,7 +3119,8 @@ static int br_owner_bind(BrOwner *owner,const char *database) {
   return error;
 }
 static int br_owner_serve(const char *database) {
-  BrOwner owner={.listener=-1,.lock=-1,.database_fd=-1};
+  BrOwner owner={.listener=-1,.lock=-1,.database_fd=-1,.watcher={.fd=-1}};
+  owner.watcher.attempts=&owner.attempts;
   int error=br_owner_bind(&owner,database);
   /* The elected owner resumes publications retained for this database birth. */
   if(!error)br_owner_cursor_load(&owner);
@@ -2624,6 +3135,7 @@ static int br_owner_serve(const char *database) {
   if(owner.database_fd>=0)close(owner.database_fd);
   free(owner.ipc);free(owner.key);free(owner.record_path);free(owner.generation_path);
   while(owner.attempts){BrKeeper *keeper=owner.attempts;owner.attempts=keeper->next;br_keeper_stop(keeper);}
+  if(owner.watcher.fd>=0)close(owner.watcher.fd);
   while(owner.controls) {
     BrOwnerControl *control=owner.controls;owner.controls=control->next;
     if(control->rights>=0)close(control->rights);
@@ -2635,14 +3147,19 @@ static int br_owner_serve(const char *database) {
 }
 static int br_keeper(const char *directory,int lock) {
   BrKeeper keeper={.listener=-1,.client=3,.input=-1,.lock=lock,.watch=-1,.wake={-1,-1},.spool=-1,.native_life=-1,.generation=1};
-  BrOwner owner={.listener=-1,.lock=-1,.single=1};
+  BrOwner owner={.listener=-1,.lock=-1,.single=1,.watcher={.fd=-1}};
+  owner.watcher.attempts=&owner.attempts;
   BrState state={0,0,0,0,0};
   int error=0;
   keeper.directory=realpath(directory,NULL);
   if(!keeper.directory)return errno;
+  error=br_observer_pid(keeper.client,&keeper.client_pid);
+  if(!error)error=br_birth(keeper.client_pid,&keeper.client_birth);
+  if(error)goto done;
+  keeper.client_birth_set=1;
   fcntl(keeper.client,F_SETFD,FD_CLOEXEC);
   if((error=br_nonblock(keeper.client)))goto done;
-  if((error=br_keeper_start(&keeper,directory,lock)))goto done;
+  if((error=br_keeper_start(&keeper,&owner.watcher,directory,lock)))goto done;
   keeper.ready=0;
   state=(BrState){keeper.native_pid,0,0,0,keeper.input_closed};
   if((error=br_send(&keeper,(BrFrame){.op=BR_HELLO,.length=sizeof(state),.value=2},&state)))goto done;
@@ -2658,7 +3175,7 @@ done:
       br_write_all(keeper.client,&hello,sizeof(hello));
     }
   }
-  if(keeper.finishing || (error && !keeper.native_pid)) {
+  if((keeper.finishing || (error && !keeper.native_pid)) && keeper.manifest.field[5]) {
     unlink(keeper.manifest.field[5]);
     char *parent=strdup(keeper.manifest.field[5]);
     if(parent){char *slash=strrchr(parent,'/');if(slash){*slash=0;rmdir(parent);}free(parent);}
@@ -2667,7 +3184,9 @@ done:
   if(error) _exit(1);
   if(keeper.client>=0)close(keeper.client);if(keeper.listener>=0)close(keeper.listener);
   if(keeper.input>=0)close(keeper.input);if(keeper.lock>=0)close(keeper.lock);
-  if(keeper.watch>=0)close(keeper.watch);if(keeper.spool>=0)close(keeper.spool);
+  if(keeper.watch>=0){br_watch_remove(&owner.watcher,keeper.watch);keeper.watch=-1;}
+  if(owner.watcher.fd>=0)close(owner.watcher.fd);
+  if(keeper.spool>=0)close(keeper.spool);
   if(keeper.wake[0]>=0)close(keeper.wake[0]);if(keeper.wake[1]>=0)close(keeper.wake[1]);
   br_buffer_free(&keeper.writes,&keeper.writes_tail);br_buffer_free(&keeper.outgoing,&keeper.outgoing_tail);
   free(keeper.incoming);br_manifest_free(&keeper.manifest);
@@ -2816,14 +3335,16 @@ static int br_artifact_same(const char *directory,const char *name,size_t name_l
   return error;
 }
 /* Exact comparison of the stored manifest with a requested one: the same field
-   count, the same lengths and the same bytes in every field. */
+   count, the same lengths and bytes in every identity field. Field 5 is the
+   per-attempt control socket path; it is not part of the manifest identity and
+   is reused from custody on a repeated admission. */
 static int br_manifest_same(const char *directory,const BrManifestHeader *header,char *const *fields,int count) {
   BrManifest stored={0};
   int error=br_manifest_read(directory,&stored);
   if(!error && (stored.count!=count || stored.header.keep_stdin!=header->keep_stdin))error=EEXIST;
   for(int i=0;!error && i<count;i++)
-    if(stored.header.lengths[i]!=header->lengths[i] ||
-       memcmp(stored.field[i],fields[i],(size_t)header->lengths[i]))error=EEXIST;
+    if(i!=5 && (stored.header.lengths[i]!=header->lengths[i] ||
+       memcmp(stored.field[i],fields[i],(size_t)header->lengths[i])))error=EEXIST;
   br_manifest_free(&stored);
   return error;
 }
@@ -3242,6 +3763,7 @@ static int br_owner_recover(BrOwner *owner,const char *directory,const char *boo
         .id=++owner->next_id,.native_pid=saved.pid,.exited=terminal,
         .status=terminal_status,.input_closed=1,.ready=1,.prepared=1,
         .monitor_only=1,.status_unavailable=0};
+      keeper->watchers=&owner->watcher;
       life=-1;
       keeper->directory=canonical;canonical=NULL;
       keeper->manifest=manifest;memset(&manifest,0,sizeof(manifest));
@@ -3256,7 +3778,7 @@ static int br_owner_recover(BrOwner *owner,const char *directory,const char *boo
       struct stat spool_info;
       if(!error && fstat(keeper->spool,&spool_info))error=errno;
       if(!error && (!S_ISREG(spool_info.st_mode) || spool_info.st_uid!=geteuid()))error=EPERM;
-      if(!error)keeper->watch=br_watch_file(keeper->spool,spool);
+      if(!error)keeper->watch=br_watch_add(&owner->watcher,keeper->spool,spool);
       if(!error && keeper->watch<0)error=errno;
       free(spool);
       if(!error)error=baton_pipe(keeper->wake);
@@ -3303,10 +3825,14 @@ static int br_attempt_prepare(BatonProcessCall *call,char **directory_out,char *
   if(mkdir(call->directory,0700)) {
     int error=errno;
     if(error!=EEXIST || !idempotent)return error;
+    error=0;
     /* The directory exists. The same admission identity reuses it, so a repeated
        admission is idempotent; a different identity is conflicting reuse. */
     char *existing=realpath(call->directory,NULL);
     if(!existing)return errno;
+    /* An adopted attempt with unknown native status must not be relaunched.
+       The custody record is the durable block; a retry of adoption reads it. */
+    if(br_exists(existing,"custody")) {free(existing);return EBUSY;}
     BrManifestHeader header={.keep_stdin=call->keep_stdin,.reserved=0};
     char *fields[8]={call->args,call->cwd,call->log,call->initial,call->recovery,NULL,NULL,NULL};
     size_t lengths[8]={call->length,strlen(call->cwd),strlen(call->log),call->initial_length,call->recovery_length,0,0,0};
@@ -3328,7 +3854,8 @@ static int br_attempt_prepare(BatonProcessCall *call,char **directory_out,char *
       }
     } else memcpy(header.magic,"BATONRP1",8);
     for(int i=0;i<count;i++)header.lengths[i]=lengths[i];
-    /* The stored manifest must describe exactly this request, field by field. */
+    /* The stored manifest must describe this request in every identity field;
+       the control socket path is reused from custody. */
     if(!error)error=br_manifest_same(existing,&header,fields,count);
     if(!error)error=br_admission_verify(existing,call->database,(int)call->lock);
     if(!error)error=br_lifecycle_expectation(existing,expected);
@@ -3386,7 +3913,7 @@ static int br_attempt_prepare(BatonProcessCall *call,char **directory_out,char *
 }
 static int br_retain(BatonProcessCall *call) {
   char *directory=NULL,*address=NULL;
-  int error=br_attempt_prepare(call,&directory,&address,0);
+  int error=br_attempt_prepare(call,&directory,&address,1);
   int sockets[2]={-1,-1},null=-1,log=-1;
   char *self=NULL,*log_path=NULL;
   if(!error && socketpair(AF_UNIX,SOCK_STREAM,0,sockets))error=errno;
@@ -3406,7 +3933,7 @@ static int br_retain(BatonProcessCall *call) {
     }
   }
   if(sockets[1]>=0)close(sockets[1]);
-  if(!error) {error=br_attach_socket(call->child,directory,sockets[0],&call->unstarted,0,1);sockets[0]=-1;}
+  if(!error) {error=br_attach_socket(call->child,directory,sockets[0],&call->unstarted,0,1,0,0);sockets[0]=-1;}
   if(sockets[0]>=0)close(sockets[0]);if(null>=0)close(null);if(log>=0)close(log);
   free(self);free(log_path);free(address);free(directory);
   return error;
@@ -3585,6 +4112,13 @@ static int br_instance_request_witness(const char *database,BrInstanceFrame fram
     int error=br_instance_connect(database,first,&record,&socket_fd);
     first=0;
     if(error)return error;
+    if(!record.token || !record.epoch) {
+      /* The listener is bound before its incarnation record is published. */
+      close(socket_fd);
+      struct timespec pause={0,20000000};
+      nanosleep(&pause,NULL);
+      continue;
+    }
     if(expected_token && (record.token!=expected_token || record.epoch!=expected_epoch)) {
       close(socket_fd);return ESTALE;
     }
@@ -3708,11 +4242,11 @@ static int br_attempt_socket(const char *directory,uint32_t op,uint64_t serial,i
   return error;
 }
 /* Legacy attempt connections use the keeper's serial-zero ready exchange. */
-static int br_instance_attach_legacy(BatonProcessCall *call,const char *directory) {
+static int br_instance_attach_legacy(BatonProcessCall *call,const char *directory,int64_t observer,int defer_receiver,int allow_legacy_transfer) {
   int socket_fd=-1;
-  int error=br_attempt_socket(directory,BR_ATTACH,0,0,NULL,0,&socket_fd);
+  int error=br_attempt_socket(directory,BR_ATTACH,0,observer>1?(uint64_t)observer:0,NULL,0,&socket_fd);
   if(!error) {
-    error=br_attach_socket(call->child,directory,socket_fd,NULL,0,0);
+    error=br_attach_socket(call->child,directory,socket_fd,NULL,0,0,defer_receiver,allow_legacy_transfer);
     socket_fd=-1;
   }
   if(socket_fd>=0)close(socket_fd);
@@ -3720,11 +4254,11 @@ static int br_instance_attach_legacy(BatonProcessCall *call,const char *director
 }
 /* Joins an existing attempt as its observer, bound to the owner incarnation
    that resolved it. */
-static int br_instance_join(BatonProcessCall *call,const char *directory,uint64_t incarnation,uint64_t epoch,int64_t observer) {
+static int br_instance_join(BatonProcessCall *call,const char *directory,uint64_t incarnation,uint64_t epoch,int64_t observer,int allow_legacy_transfer) {
   int socket_fd=-1;
   int error=br_attempt_socket(directory,BR_ATTACH,0,observer,NULL,0,&socket_fd);
   if(!error) {
-    error=br_attach_socket(call->child,directory,socket_fd,NULL,incarnation,1);socket_fd=-1;
+    error=br_attach_socket(call->child,directory,socket_fd,NULL,incarnation,1,observer>1,allow_legacy_transfer);socket_fd=-1;
     if(!error && call->child->retained) {
       call->child->retained->database=strdup(call->database);
       if(!call->child->retained->database)error=ENOMEM;
@@ -3770,8 +4304,6 @@ static int br_instance_admit(BatonProcessCall *call,int dormant) {
     if(!error)error=br_instance_request_witness(call->database,
       (BrInstanceFrame){.op=dormant?BI_PREPARE:BI_ADMIT,.length=strlen(directory)+1},directory,
       call->lock?(int)call->lock:-1,&reply,expected_token,expected_epoch);
-    if(!error)call->owner_attempt=reply.attempt;
-    if(!error && reply.attempt)call->unstarted=0;
     if(error==EINVAL || error==ESTALE || error==ENOENT || error==ENOMEM) {
       /* Only an attempt this call created, that never reached custody, is
          discarded: the owner writes `launch` as its first custody step, so its
@@ -3782,7 +4314,9 @@ static int br_instance_admit(BatonProcessCall *call,int dormant) {
       return error;
     }
   }
-  if(!error)error=br_instance_join(call,directory,reply.owner,reply.epoch,0);
+  if(!error)call->owner_attempt=reply.attempt;
+  if(!error && reply.attempt)call->unstarted=0;
+  if(!error)error=br_instance_join(call,directory,reply.owner,reply.epoch,0,0);
   if(!error && dormant) {
     call->unstarted=0;
     br_instance_state_call(call);
@@ -3790,20 +4324,40 @@ static int br_instance_admit(BatonProcessCall *call,int dormant) {
   free(address);free(directory);
   return error;
 }
-static int br_instance_attach_observer(BatonProcessCall *call,int64_t observer) {
+static int br_instance_attach_observer(BatonProcessCall *call,int64_t observer,int legacy_unknown) {
   char *directory=realpath(call->directory,NULL);
   if(!directory)return errno;
   BrInstanceFrame reply={0};
-  int error=br_instance_request(call->database,
+  BatonRetained monitor={.custody_lock=-1,.directory=directory};
+  int error=observer>1 && legacy_unknown?br_monitor_lock(&monitor):0;
+  if(!error)error=br_instance_request(call->database,
     (BrInstanceFrame){.op=BI_ATTACH,.length=strlen(directory)+1},directory,-1,&reply);
-  if(!error)error=br_instance_join(call,directory,reply.owner,reply.epoch,observer);
+  if(!error)error=br_instance_join(call,directory,reply.owner,reply.epoch,observer,observer>1 && legacy_unknown);
   else if(!observer && (error==ENOENT || error==ECONNREFUSED || error==EPIPE || error==ECONNRESET))
-    error=br_instance_attach_legacy(call,directory);
+    error=br_instance_attach_legacy(call,directory,0,0,0);
+  else if(observer>1 && legacy_unknown &&
+          (error==EPROTO || error==EPIPE || error==ECONNRESET || error==ENOSYS ||
+           error==EOPNOTSUPP || error==ENOENT || error==ECONNREFUSED))
+    error=br_instance_attach_legacy(call,directory,observer,1,1);
+  if(!error && observer>1 && call->child && call->child->retained) {
+    BatonRetained *retained=call->child->retained;
+    if(monitor.custody_lock>=0 && retained->unknown) {
+      retained->custody_lock=monitor.custody_lock;monitor.custody_lock=-1;
+      error=br_custody_write(directory,retained);
+    } else if(monitor.custody_lock>=0) {
+      close(monitor.custody_lock);monitor.custody_lock=-1;
+    }
+    if(!error && call->database) {
+      retained->database=strdup(call->database);
+      if(!retained->database)error=ENOMEM;
+    }
+  }
+  if(monitor.custody_lock>=0)close(monitor.custody_lock);
   free(directory);
   return error;
 }
 static int br_instance_attach(BatonProcessCall *call) {
-  return br_instance_attach_observer(call,0);
+  return br_instance_attach_observer(call,0,0);
 }
 static int br_instance_recover(BatonProcessCall *call) {
   if(!call || !call->database || !call->directory || !call->identity ||
@@ -3849,7 +4403,7 @@ static int br_instance_recover(BatonProcessCall *call) {
   if(socket_fd>=0)close(socket_fd);
   if(!error) {
     call->owner_attempt=reply.attempt;
-    error=br_instance_join(call,directory,reply.owner,reply.epoch,0);
+    error=br_instance_join(call,directory,reply.owner,reply.epoch,0,0);
   }
   if(!error) {
     BrManifest manifest={0};BrBirth birth={0};uint64_t manifest_digest=0;
@@ -3904,14 +4458,14 @@ static int br_instance_attach_owned(BatonProcessCall *call) {
   int error=br_instance_request(call->database,
     (BrInstanceFrame){.op=BI_ATTACH,.length=strlen(directory)+1},directory,-1,&reply);
   if(!error) {
-    error=br_instance_join(call,directory,reply.owner,reply.epoch,0);
+    error=br_instance_join(call,directory,reply.owner,reply.epoch,0,0);
     if(error==ECONNREFUSED || error==ENOENT || error==EPIPE || error==ECONNRESET)
       error=br_attach_orphan(call->child,directory,(int)call->lock);
   }
   else if(error==ENOENT || error==ECONNREFUSED || error==EPIPE || error==ECONNRESET) {
     /* A legacy keeper can still serve this attempt when the database owner
        has no record of it. Attach there to retain native input and completion. */
-    error=br_instance_attach_legacy(call,directory);
+    error=br_instance_attach_legacy(call,directory,0,0,0);
     if(error==ENOENT || error==ECONNREFUSED || error==EPIPE || error==ECONNRESET)
       error=br_attach_orphan(call->child,directory,(int)call->lock);
   }
@@ -4165,6 +4719,7 @@ static int br_instance_retire(BatonProcessCall *call) {
   if(retained->spool>=0)close(retained->spool);
   if(retained->life>=0)close(retained->life);
   if(retained->watch>=0)close(retained->watch);
+  if(retained->custody_lock>=0)close(retained->custody_lock);
   pthread_mutex_destroy(&retained->state);pthread_mutex_destroy(&retained->command);
   pthread_mutex_destroy(&retained->reader);pthread_cond_destroy(&retained->changed);
   free(retained->directory);free(retained->database);free(retained);
@@ -4258,29 +4813,11 @@ static int br_instance_publish(const char *database,uint64_t cursor) {
 }
 static void br_subscription_free(BatonRetained *retained) {
   if(!retained)return;
-  if(retained->socket>=0) {
-    shutdown(retained->socket,SHUT_RDWR);
-    close(retained->socket);
-  }
+  if(retained->socket>=0)close(retained->socket);
   retained->socket=-1;
+  if(retained->custody_lock>=0)close(retained->custody_lock);
   free(retained->directory);free(retained->database);
   free(retained);
-}
-/* The IO loop selects a live handle before it queues a worker. Each notice
-   owns its socket until its read returns. Unsubscribe removes the registry
-   entry here, while later effect selections are serialized with this one. */
-static int br_subscription_prepare(BatonProcessCall *call) {
-  BatonRetained *retained=call->child?call->child->retained:NULL;
-  if(!retained || retained->socket<0)return EBADF;
-  if(call->kind==BP_INSTANCE_NOTICE) {
-    int socket_fd=fcntl(retained->socket,F_DUPFD_CLOEXEC,0);
-    if(socket_fd<0)return errno;
-    call->notice_socket=socket_fd;
-    call->child=NULL;
-  } else {
-    baton_children[call->index]=NULL;
-  }
-  return 0;
 }
 /* Woken-read design note: every wait round below blocks in poll with no
    timeout. The watcher thread only watches the spool condition and pokes a
@@ -4333,6 +4870,49 @@ static int br_spool_try_line(BatonRetained *retained,BatonProcessCall *call) {
   if(staged) {call->length=base;call->text[base]=0;}
   return call->error?-1:0;
 }
+/* Bounded spool probe that reports one complete retained line as a byte range
+   instead of building its text. The newline is consumed and excluded; an end
+   of output commits a partial tail with its own length, mirroring
+   br_spool_try_line. A silent or failed probe commits nothing. */
+static int br_spool_try_line_span(BatonRetained *retained,BatonProcessCall *call) {
+  uint64_t start=(uint64_t)retained->offset;
+  uint64_t staged=0;
+  for(;;) {
+    pthread_mutex_lock(&retained->state);
+    int exited=retained->exited;
+    call->error=retained->error;pthread_mutex_unlock(&retained->state);
+    if(call->error) break;
+    char chunk[8192];
+    ssize_t n=pread(retained->spool,chunk,sizeof(chunk),retained->offset+(off_t)staged);
+    if(n<0 && errno==EINTR) continue;
+    if(n<0) {call->error=errno;break;}
+    if(n==0) {
+      pthread_mutex_lock(&retained->state);
+      if(retained->error) call->error=retained->error;
+      else if(exited) {
+        if(staged>(uint64_t)LLONG_MAX || retained->offset>LLONG_MAX-(off_t)staged) call->error=EOVERFLOW;
+        else retained->offset+=(off_t)staged;
+        call->eof=staged==0;
+        if(!call->error && staged) {call->frame_start=start;call->frame_length=staged;}
+      }
+      pthread_mutex_unlock(&retained->state);
+      if(call->error || exited) return -1;
+      break;
+    }
+    char *newline=memchr(chunk,'\n',(size_t)n);
+    size_t consumed=newline?(size_t)(newline-chunk)+1:(size_t)n;
+    if(consumed>UINT64_MAX-staged) {call->error=EOVERFLOW;break;}
+    staged+=consumed;
+    if(newline) {
+      if(staged>(uint64_t)LLONG_MAX || retained->offset>LLONG_MAX-(off_t)staged) {call->error=EOVERFLOW;break;}
+      retained->offset+=(off_t)staged;
+      call->frame_start=start;
+      call->frame_length=staged-1;
+      return 1;
+    }
+  }
+  return call->error?-1:0;
+}
 typedef struct { BatonRetained *retained;uint64_t version;int wake;int done; } BrAwakeWatch;
 /* Single-shot spool watcher: waits for spool progress, child exit or failure,
    then writes one byte so the owner's poll returns. Never reads the
@@ -4369,7 +4949,7 @@ static void *br_awake_watch(void *raw) {
    this call returns. A consumed notice is always reported, including at end
    of output; the Turn layer drains it and terminates on the following
    notice-free round. */
-static void br_read_awake(BatonProcessCall *call) {
+static void br_read_awake_probe(BatonProcessCall *call,int (*probe)(BatonRetained*,BatonProcessCall*)) {
   BatonChild *child=call->child;
   BatonRetained *retained=child?child->retained:NULL;
   if(!retained || retained->spool<0) {call->error=EBADF;return;}
@@ -4397,7 +4977,7 @@ static void br_read_awake(BatonProcessCall *call) {
     pthread_mutex_lock(&retained->state);
     uint64_t version=retained->version;
     pthread_mutex_unlock(&retained->state);
-    int line=br_spool_try_line(retained,call);
+    int line=probe(retained,call);
     if(line!=0 || call->error || call->eof || noticed) {
       if(noticed && line==0) call->eof=1;
       if(!call->error) call->awake_alive=1;
@@ -4453,9 +5033,16 @@ static void br_read_awake(BatonProcessCall *call) {
     }
   }
 }
+static void br_read_awake(BatonProcessCall *call) {br_read_awake_probe(call,br_spool_try_line);}
+static void br_read_awake_span(BatonProcessCall *call) {br_read_awake_probe(call,br_spool_try_line_span);}
 static void br_instance_subscribe_call(BatonProcessCall *call) {
   uint64_t generation=0,after_cursor=0;
-  int error=br_parse_u64(call->generation,call->generation?strlen(call->generation):0,&generation);
+  /* An empty expected generation means the caller holds no incarnation and
+     accepts the owner's ready cursor or a gap snapshot; it is not a malformed
+     decimal. The after-cursor is still required to be decimal. */
+  int error=0;
+  if(call->generation && *call->generation)
+    error=br_parse_u64(call->generation,strlen(call->generation),&generation);
   if(!error)error=br_parse_u64(call->cursor,call->cursor?strlen(call->cursor):0,&after_cursor);
   BrInstanceReady ready={0};
   int socket_fd=-1;
@@ -4468,7 +5055,7 @@ static void br_instance_subscribe_call(BatonProcessCall *call) {
     return;
   }
   retained->socket=socket_fd;
-  retained->spool=-1;retained->guard=-1;retained->watch=-1;retained->life=-1;
+  retained->spool=-1;retained->guard=-1;retained->watch=-1;retained->life=-1;retained->custody_lock=-1;
   retained->directory=strdup(call->database?call->database:"");
   retained->subscribe_generation=ready.generation;
   retained->subscribe_cursor=ready.cursor;
@@ -4489,10 +5076,11 @@ static void br_instance_subscribe_call(BatonProcessCall *call) {
   call->length=(size_t)written;
 }
 static void br_instance_notice_call(BatonProcessCall *call) {
+  BatonRetained *retained=call->child?call->child->retained:NULL;
+  if(!retained || retained->socket<0) {call->error=EBADF;return;}
   BrInstanceNotice notice={0};
   uint64_t generation=0;
-  int error=br_instance_notice(call->notice_socket,&notice,&generation);
-  close(call->notice_socket);call->notice_socket=-1;
+  int error=br_instance_notice(retained->socket,&notice,&generation);
   if(error) {call->error=error;return;}
   const char *kind=notice.kind==BN_COMMIT?"commit":notice.kind==BN_GAP?"gap":"unknown";
   char text[192];
@@ -4510,6 +5098,7 @@ static void br_instance_unsubscribe_call(BatonProcessCall *call) {
   if(!call->child) {call->error=EBADF;return;}
   br_subscription_free(call->child->retained);
   call->child->retained=NULL;
+  baton_children[call->index]=NULL;
   free(call->child);
   call->child=NULL;
 }
@@ -4565,13 +5154,13 @@ static void br_instance_state_call(BatonProcessCall *call) {
   char *directory=br_json_escape(retained->directory);
   if(!directory){call->error=ENOMEM;return;}
   const char *format=
-    "{\"schema\":\"baton2-host-ready-v1\",\"state\":\"%s\",\"handle\":%u,\"directory\":\"%s\","
+    "{\"schema\":\"baton2-host-ready-v1\",\"state\":\"%s\",\"observation\":\"%s\",\"handle\":%u,\"directory\":\"%s\","
     "\"ownerIncarnation\":%llu,\"ownerEpoch\":%llu,\"ownerAttempt\":%llu,\"guardDevice\":%llu,\"guardInode\":%llu,\"guard\":\"%llu:%llu\","
     "\"observer_ready\":%s,\"native_pid\":%llu,\"status_known\":%s,\"status\":%d,"
     "\"spawn_latched\":%s,\"cancelled\":%s,\"identity\":\"%s\",\"expectedBinding\":\"%s\","
     "\"grant\":\"%s\",\"rejection\":\"%s\"}";
   int needed=snprintf(NULL,0,format,
-    state,(unsigned)call->handle,directory,
+    state,retained->observer_only?"monitor":"observer",(unsigned)call->handle,directory,
     (unsigned long long)retained->owner_incarnation,(unsigned long long)retained->owner_epoch,
     (unsigned long long)retained->owner_attempt,
     (unsigned long long)guard_device,(unsigned long long)guard_inode,
@@ -4586,7 +5175,7 @@ static void br_instance_state_call(BatonProcessCall *call) {
   call->text=malloc(capacity);
   if(!call->text) {free(directory);call->error=ENOMEM;return;}
   int written=snprintf(call->text,capacity,format,
-    state,(unsigned)call->handle,directory,
+    state,retained->observer_only?"monitor":"observer",(unsigned)call->handle,directory,
     (unsigned long long)retained->owner_incarnation,(unsigned long long)retained->owner_epoch,
     (unsigned long long)retained->owner_attempt,
     (unsigned long long)guard_device,(unsigned long long)guard_inode,
@@ -4628,7 +5217,7 @@ static void baton_retained_begin_call(BatonProcessCall *call) {
       int socket_fd=-1;
       call->error=br_attempt_socket(directory,op,serial,call->signal,payload,length,&socket_fd);
       if(!call->error) {
-        if(attach) {call->error=br_attach_socket(call->child,directory,socket_fd,NULL,0,1);socket_fd=-1;}
+        if(attach) {call->error=br_attach_socket(call->child,directory,socket_fd,NULL,0,1,0,0);socket_fd=-1;}
         else {
           BrFrame reply;
           call->error=br_read_all(socket_fd,&reply,sizeof(reply));
@@ -4642,7 +5231,7 @@ static void baton_retained_begin_call(BatonProcessCall *call) {
       free(directory);
     }
   }
-  if(call->error) {
+  if(call->error && !call->detail) {
     const char *operation=call->kind==BP_RETAIN?"retain":call->kind==BP_ATTACH?"attach":
       call->kind==BP_CONTROL_WRITE?"control_write":call->kind==BP_CONTROL_SIGNAL?"control_signal":
       call->kind==BP_INSTANCE_OWNER?"owner":call->kind==BP_INSTANCE_ADMIT?"admit":
@@ -4677,6 +5266,7 @@ static void baton_process_call(IoWork *w) {
   if(call->kind==BP_INSTANCE_RETIRE && child->retained &&
      child->retained->observer_only) { call->error=EPERM;return; }
   if(call->kind==BP_SPAWN) { baton_child_spawn(call);return; }
+  if(call->kind==BP_SPAWN_ENV_FILE) { baton_child_spawn_env_file(call);return; }
   if(call->kind==BP_INSTANCE_RECOVER) { call->error=br_instance_recover(call);return; }
   if(call->kind==BP_INSTANCE_INPUT_WITNESS) { call->error=br_instance_input_witness(call);return; }
   if(call->kind==BP_INSTANCE_INPUT_PROMPT) { call->error=br_instance_input_prompt(call);return; }
@@ -4694,6 +5284,9 @@ static void baton_process_call(IoWork *w) {
     baton_retained_begin_call(call);return;
   }
   if(call->kind==BP_READ_AWAKE && child->retained) {br_read_awake(call);return;}
+  if(call->kind==BP_READ_SPAN && !child->retained) {call->error=ENOTSUP;return;}
+  if(call->kind==BP_READ_AWAKE_SPAN && child->retained) {br_read_awake_span(call);return;}
+  if(call->kind==BP_READ_AWAKE_SPAN) {call->error=ENOTSUP;return;}
   if(child->retained) { baton_retained_call(call);return; }
   if(call->kind==BP_RELEASE || call->kind==BP_ACK || call->kind==BP_INSTANCE_COMMIT ||
      call->kind==BP_INSTANCE_RESTORE || call->kind==BP_INSTANCE_REPLAY) { call->error=EINVAL;return; }
@@ -4748,7 +5341,7 @@ static Term baton_process_pack(Env e, IoWork *w) {
   BatonProcessCall *call=(BatonProcessCall *)w->data;
   Term value=term_pak(CID_UNIT,0);
   if(!call->error) {
-    if(call->kind==BP_SPAWN || call->kind==BP_ATTACH || call->kind==BP_ATTACH_OWNED ||
+    if(call->kind==BP_SPAWN || call->kind==BP_SPAWN_ENV_FILE || call->kind==BP_ATTACH || call->kind==BP_ATTACH_OWNED ||
        call->kind==BP_INSTANCE_ATTACH || call->kind==BP_INSTANCE_ATTACH_OWNED) value=(Term)call->handle;
     else if(call->kind==BP_INPUT_CLOSED) value=(Term)call->signal;
     else if(call->kind==BP_WAIT) value=io_str(e,call->text,call->length);
@@ -4767,6 +5360,14 @@ static Term baton_process_pack(Env e, IoWork *w) {
     else if(call->kind==BP_READ || call->kind==BP_RECOVERY || call->kind==BP_OBSERVER_RECOVERY) value=call->eof ? term_pak(CID_NONE,0)
       : io_box(e,CID_SOME,io_str(e,call->text,call->length));
 #endif
+#ifdef CID_PROCESSCHILD_READ_RETAINED_LINE_SPAN
+#ifdef CID_SOME
+    else if(call->kind==BP_READ_SPAN) value=io_tup(e,
+      call->eof ? term_pak(CID_NONE,0)
+        : io_box(e,CID_SOME,io_str(e,call->cursor?call->cursor:"",call->cursor?strlen(call->cursor):0)),
+      io_str(e,call->generation?call->generation:"",call->generation?strlen(call->generation):0));
+#endif
+#endif
 #ifdef CID_PROCESSCHILD_READ_AWAKE
 #ifdef CID_SOME
     else if(call->kind==BP_READ_AWAKE)
@@ -4774,6 +5375,19 @@ static Term baton_process_pack(Env e, IoWork *w) {
         call->eof ? term_pak(CID_NONE,0)
         : io_box(e,CID_SOME,io_str(e,call->text?call->text:"",call->length)),
         io_tup(e,io_str(e,call->notice?call->notice:"",call->notice_length),(Term)call->awake_alive));
+#ifdef CID_PROCESSCHILD_READ_AWAKE_SPAN
+#ifdef CID_SOME
+    else if(call->kind==BP_READ_AWAKE_SPAN) {
+      char offset[32], length[32];
+      int a=snprintf(offset,sizeof(offset),"%llu",(unsigned long long)call->frame_start);
+      int b=snprintf(length,sizeof(length),"%llu",(unsigned long long)call->frame_length);
+      value=io_tup(e,call->eof ? term_pak(CID_NONE,0)
+        : io_box(e,CID_SOME,io_str(e,a<0?"":offset,a<0?0:(size_t)a)),
+        io_tup(e,io_str(e,b<0?"":length,b<0?0:(size_t)b),
+          io_tup(e,io_str(e,call->notice?call->notice:"",call->notice_length),(Term)call->awake_alive)));
+    }
+#endif
+#endif
 #endif
 #endif
   }
@@ -4811,7 +5425,7 @@ static Term baton_process_pack(Env e, IoWork *w) {
 #endif
   int preparation=call->kind==BP_INSTANCE_PREPARE || call->kind==BP_INSTANCE_PREPARE_WITH_FILE;
   Term result=call->error && (preparation || !call->unstarted) ? io_fail(e,call->error,call->detail) : io_done(e,value);
-  if((call->kind==BP_SPAWN || call->kind==BP_RETAIN || call->kind==BP_ATTACH || call->kind==BP_ATTACH_OWNED ||
+  if((call->kind==BP_SPAWN || call->kind==BP_SPAWN_ENV_FILE || call->kind==BP_RETAIN || call->kind==BP_ATTACH || call->kind==BP_ATTACH_OWNED ||
       call->kind==BP_INSTANCE_ADMIT || call->kind==BP_INSTANCE_PREPARE || call->kind==BP_INSTANCE_ATTACH || call->kind==BP_INSTANCE_ATTACH_OWNED ||
       call->kind==BP_RETAIN_WITH_FILE || call->kind==BP_INSTANCE_ADMIT_WITH_FILE || call->kind==BP_INSTANCE_PREPARE_WITH_FILE ||
       call->kind==BP_INSTANCE_SUBSCRIBE || call->kind==BP_INSTANCE_RECOVER) && call->error) {
@@ -4822,7 +5436,7 @@ static Term baton_process_pack(Env e, IoWork *w) {
   }
   free(call->args);free(call->cwd);free(call->log);free(call->text);
   free(call->directory);free(call->initial);free(call->recovery);free(call->detail);free(call->database);free(call->notice);
-  free(call->artifact_name);free(call->artifact);free(call->identity);free(call->owner_witness);free(call->cursor);free(call->generation);free(call);
+  free(call->artifact_name);free(call->artifact);free(call->identity);free(call->owner_witness);free(call->spec);free(call->cursor);free(call->generation);free(call);
   w->data=NULL;
   return result;
 }
@@ -4830,13 +5444,12 @@ static Term baton_process_pack(Env e, IoWork *w) {
 static Term baton_process_begin_mode(Env e, Term *f, IoWork *w, int kind, int preserve_line) {
   BatonProcessCall *call=calloc(1,sizeof(*call));
   if(!call) return io_fail(e,ENOMEM,NULL);
-  int acquire=kind==BP_SPAWN || kind==BP_RETAIN || kind==BP_ATTACH || kind==BP_ATTACH_OWNED ||
+  int acquire=kind==BP_SPAWN || kind==BP_SPAWN_ENV_FILE || kind==BP_RETAIN || kind==BP_ATTACH || kind==BP_ATTACH_OWNED ||
               kind==BP_INSTANCE_ADMIT || kind==BP_INSTANCE_PREPARE || kind==BP_INSTANCE_ATTACH || kind==BP_INSTANCE_ATTACH_OWNED || kind==BP_INSTANCE_RECOVER ||
               kind==BP_RETAIN_WITH_FILE || kind==BP_INSTANCE_ADMIT_WITH_FILE || kind==BP_INSTANCE_PREPARE_WITH_FILE ||
               kind==BP_INSTANCE_SUBSCRIBE;
   call->kind=kind;
   call->preserve_line=preserve_line;
-  call->notice_socket=-1;
   if(acquire) {
     int error=baton_child_allocate(call);
     if(error) {free(call);return io_fail(e,(u32)error,NULL);}
@@ -4883,7 +5496,15 @@ static Term baton_process_begin_mode(Env e, Term *f, IoWork *w, int kind, int pr
       }
     }
   }
-  if(kind==BP_RETAIN || kind==BP_INSTANCE_ADMIT || kind==BP_INSTANCE_PREPARE) {
+  if(kind==BP_SPAWN_ENV_FILE) {
+    u64 spec_length=0,length=0,cwd_length=0,log_length=0;
+    call->spec=io_cstr(e,f[0],&spec_length);
+    call->args=io_cstr(e,f[1],&length);call->length=length;
+    call->cwd=io_cstr(e,f[2],&cwd_length);
+    call->log=io_cstr(e,f[3],&log_length);
+    if(!call->spec || strlen(call->spec)!=spec_length) call->error=EINVAL;
+    if(strlen(call->cwd)!=cwd_length || strlen(call->log)!=log_length) call->error=EINVAL;
+  } else if(kind==BP_RETAIN || kind==BP_INSTANCE_ADMIT || kind==BP_INSTANCE_PREPARE) {
     u64 length=0;call->directory=io_cstr(e,f[kind==BP_RETAIN?0:1],&length);
     if(strlen(call->directory)!=length)call->error=EINVAL;
   } else if(kind==BP_ATTACH || kind==BP_ATTACH_OWNED || kind==BP_RECOVERY || kind==BP_OBSERVER_RECOVERY || kind==BP_KEEPER ||
@@ -4929,7 +5550,7 @@ static Term baton_process_begin_mode(Env e, Term *f, IoWork *w, int kind, int pr
     if(call->child->reaped && !call->child->retained && kind!=BP_WRITE && kind!=BP_INPUT_CLOSED) {free(call);return io_fail(e,ECHILD,NULL);}
     if(kind==BP_PID) {Term pid=io_done(e,(Term)call->child->pid);free(call);return pid;}
     if(kind==BP_WRITE) {u64 length=0;call->text=io_cstr(e,f[1],&length);call->length=length;}
-    if(kind==BP_INSTANCE_COMMIT) {
+    if(kind==BP_INSTANCE_COMMIT || kind==BP_INSTANCE_MONITOR_COMMIT) {
       call->signal=(u32)f[1];
       u64 length=0;call->text=io_cstr(e,f[2],&length);call->length=length;
     }
@@ -4944,9 +5565,7 @@ static Term baton_process_begin_mode(Env e, Term *f, IoWork *w, int kind, int pr
     }
     if(kind==BP_INSTANCE_RESTORE) call->signal=(u32)f[1];
     if(kind==BP_SIGNAL) call->signal=(u32)f[1];
-    if(kind==BP_READ_AWAKE) call->signal=(u32)f[1];
-    if(kind==BP_INSTANCE_NOTICE || kind==BP_INSTANCE_UNSUBSCRIBE)
-      call->error=br_subscription_prepare(call);
+    if(kind==BP_READ_AWAKE || kind==BP_READ_AWAKE_SPAN) call->signal=(u32)f[1];
   }
   w->data=(char *)call;
   if(call->error) return baton_process_pack(e,w);
@@ -4957,11 +5576,26 @@ static Term baton_process_begin(Env e, Term *f, IoWork *w, int kind) {
   return baton_process_begin_mode(e,f,w,kind,0);
 }
 
+#ifdef CID_PROCESSCHILD_RERAISE
+static Term baton_process_reraise_run(Env e,Term *f,IoWork *w) {
+  int sig=(int)(u32)f[0];
+  signal(sig,SIG_DFL);
+  raise(sig);
+  return io_fail(e,errno?errno:EINVAL,"signal re-raise did not terminate");
+}
+static void __attribute__((constructor)) baton_process_reraise_use(void) {
+  io_eff(CID_PROCESSCHILD_RERAISE,baton_process_reraise_run,0);
+}
+#endif
+
 #define BP_EFFECT(name,ID,kind) \
   static Term name##_run(Env e,Term *f,IoWork *w){return baton_process_begin(e,f,w,kind);} \
   static void __attribute__((constructor)) name##_use(void){io_eff(ID,name##_run,0);}
 #ifdef CID_PROCESSCHILD_SPAWN
 BP_EFFECT(baton_process_spawn,CID_PROCESSCHILD_SPAWN,BP_SPAWN)
+#endif
+#ifdef CID_PROCESSCHILD_SPAWN_ENV_SPEC
+BP_EFFECT(baton_process_spawn_env_spec,CID_PROCESSCHILD_SPAWN_ENV_SPEC,BP_SPAWN_ENV_FILE)
 #endif
 #ifdef CID_PROCESSCHILD_WRITE
 BP_EFFECT(baton_process_write,CID_PROCESSCHILD_WRITE,BP_WRITE)
@@ -4982,6 +5616,12 @@ static void __attribute__((constructor)) baton_process_read_text_use(void) {
 #endif
 #ifdef CID_PROCESSCHILD_READ_AWAKE
 BP_EFFECT(baton_process_read_awake,CID_PROCESSCHILD_READ_AWAKE,BP_READ_AWAKE)
+#endif
+#ifdef CID_PROCESSCHILD_READ_AWAKE_SPAN
+BP_EFFECT(baton_process_read_awake_span,CID_PROCESSCHILD_READ_AWAKE_SPAN,BP_READ_AWAKE_SPAN)
+#endif
+#ifdef CID_PROCESSCHILD_READ_RETAINED_LINE_SPAN
+BP_EFFECT(baton_process_read_span,CID_PROCESSCHILD_READ_RETAINED_LINE_SPAN,BP_READ_SPAN)
 #endif
 #ifdef CID_PROCESSCHILD_WAIT
 BP_EFFECT(baton_process_wait,CID_PROCESSCHILD_WAIT,BP_WAIT)
@@ -5072,6 +5712,9 @@ BP_EFFECT(baton_instance_retire,CID_INSTANCE_RETIRE,BP_INSTANCE_RETIRE)
 #ifdef CID_INSTANCE_COMMIT
 BP_EFFECT(baton_instance_commit,CID_INSTANCE_COMMIT,BP_INSTANCE_COMMIT)
 #endif
+#ifdef CID_INSTANCE_MONITOR_COMMIT
+BP_EFFECT(baton_instance_monitor_commit,CID_INSTANCE_MONITOR_COMMIT,BP_INSTANCE_MONITOR_COMMIT)
+#endif
 #ifdef CID_INSTANCE_RESTORE
 BP_EFFECT(baton_instance_restore,CID_INSTANCE_RESTORE,BP_INSTANCE_RESTORE)
 #endif
@@ -5110,75 +5753,318 @@ BP_EFFECT(baton_instance_publish_commit,CID_INSTANCE_PUBLISH_COMMIT,BP_INSTANCE_
 static void __attribute__((constructor)) baton_process_signals(void){signal(SIGPIPE,SIG_IGN);}
 
 /* Session locks use the physical database key and the owner IPC namespace. */
-#if defined(CID_SESSIONLOCK_CANONICAL) || defined(CID_SESSIONLOCK_TRY_ACQUIRE) || defined(CID_SESSIONLOCK_WAIT_ACQUIRE) || defined(CID_SESSIONLOCK_RELEASE) || defined(CID_SESSIONLOCK_EXECUTABLE) || defined(CID_SESSIONLOCK_RECOVER_OBSERVER)
 typedef struct {
   char *database, *session, *path, *directory;
   const char *detail;
-  int handle, error, kind, keeper, observer_life, observer_absent, observer_retired;
+  int handle, error, kind, keeper, legacy_unknown, observer_life, observer_ended;
   u32 observer;
   BatonProcessCall attempt;
 } BatonSessionLock;
+
+/* Same-attempt custody for a keeper that cannot reconcile an unknown status.
+   The record binds the manifest, native birth, spool and last validated
+   checkpoint. It never connects to the keeper, so a legacy observer connection
+   is not closed and its disconnect replay path is not entered. */
+typedef struct {
+  char magic[8];
+  uint32_t schema,flags;
+  uint64_t manifest,spool_device,spool_inode,offset,length,check;
+  BrBirth birth;
+} BrCustody;
+#define BR_CUSTODY_MAGIC "BATONCUS"
+#define BR_CUSTODY_SCHEMA 1
+#define BR_CUSTODY_UNKNOWN 1
+#define BR_CUSTODY_INPUT_UNFINISHED 2
+
+static uint64_t br_custody_check(const BrCustody *record) {
+  uint64_t digest=0xcbf29ce484222325ULL;
+  const unsigned char *bytes=(const unsigned char *)record;
+  for(size_t i=0;i<offsetof(BrCustody,check);i++) {digest^=bytes[i];digest*=0x100000001b3ULL;}
+  for(size_t i=offsetof(BrCustody,check)+sizeof(uint64_t);i<sizeof(*record);i++) {
+    digest^=bytes[i];digest*=0x100000001b3ULL;
+  }
+  return digest;
+}
+
+static int br_custody_write(const char *directory,BatonRetained *retained) {
+  if(retained->spool<0)return EBADF;
+  struct stat info;
+  if(fstat(retained->spool,&info))return errno;
+  BrManifest manifest={0};
+  int error=br_manifest_read(directory,&manifest);
+  if(error){br_manifest_free(&manifest);return error;}
+  uint64_t offset=0;
+  int checked=br_checkpoint_verified_offset(directory,retained->spool,&offset);
+  if(checked!=0 && checked!=ENOENT) {br_manifest_free(&manifest);return checked;}
+  BrBirth birth={0};
+  error=br_read_file(directory,"native.birth",&birth,sizeof(birth));
+  if(error){br_manifest_free(&manifest);return error;}
+  BrCustody record={0};
+  memcpy(record.magic,BR_CUSTODY_MAGIC,8);
+  record.schema=BR_CUSTODY_SCHEMA;
+  record.flags=BR_CUSTODY_UNKNOWN|BR_CUSTODY_INPUT_UNFINISHED;
+  record.manifest=br_manifest_digest(&manifest.header,manifest.field,manifest.count);
+  record.birth=birth;
+  record.spool_device=(uint64_t)info.st_dev;
+  record.spool_inode=(uint64_t)info.st_ino;
+  record.offset=offset;
+  record.length=(uint64_t)info.st_size;
+  record.check=br_custody_check(&record);
+  br_manifest_free(&manifest);
+  error=br_file(directory,"custody",&record,sizeof(record),1);
+  if(error!=EEXIST)return error;
+  BrCustody stored={0};
+  error=br_read_file(directory,"custody",&stored,sizeof(stored));
+  if(error)return error;
+  if(memcmp(stored.magic,BR_CUSTODY_MAGIC,8) || stored.schema!=BR_CUSTODY_SCHEMA ||
+     stored.manifest!=record.manifest || stored.birth.pid!=birth.pid ||
+     stored.birth.first!=birth.first || stored.birth.second!=birth.second ||
+     stored.spool_device!=record.spool_device || stored.spool_inode!=record.spool_inode ||
+     stored.check!=br_custody_check(&stored))return ESTALE;
+  return 0;
+}
+
+static int br_custody_read(const char *directory,BrCustody *record) {
+  int error=br_read_file(directory,"custody",record,sizeof(*record));
+  if(error)return error;
+  if(memcmp(record->magic,BR_CUSTODY_MAGIC,8) || record->schema!=BR_CUSTODY_SCHEMA)
+    return EINVAL;
+  return record->check==br_custody_check(record)?0:EINVAL;
+}
+
+/* The monitor lock is a separate file because the custody record is replaced
+   atomically on every checkpoint. One live adopted reader holds it; a second
+   observer that would read the same spool and write the same database is
+   refused instead of duplicating reducer effects. */
+static int br_monitor_lock(BatonRetained *retained) {
+  char *path=br_path(retained->directory,"monitor.lock");
+  if(!path)return ENOMEM;
+  int fd=open(path,O_CREAT|O_RDWR|O_CLOEXEC,0600);
+  free(path);
+  if(fd<0)return errno;
+  int held;
+  do {held=flock(fd,LOCK_EX|LOCK_NB);} while(held<0 && errno==EINTR);
+  if(held<0) {
+    int error=errno;close(fd);
+    return error==EWOULDBLOCK||error==EAGAIN?EBUSY:error;
+  }
+  retained->custody_lock=fd;
+  return 0;
+}
+
+/* True only when the recorded observer process has ended. A live observer still
+   owns the attempt; a second reader must not adopt beside it. */
+static int br_process_dead(pid_t pid) {
+  int ended=0;
+  int life=br_process_lifetime(pid,&ended);
+  if(life>=0){close(life);return 0;}
+  return ended;
+}
+
+/* The session guard serialises recovery. A live holder keeps the attempt; the
+   caller receives EBUSY instead of waiting or adopting a second reader. */
+static int br_guard_lock(int fd) {
+  int held;
+  do {held=flock(fd,LOCK_EX|LOCK_NB);} while(held<0 && errno==EINTR);
+  if(held==0)return 0;
+  return errno==EWOULDBLOCK||errno==EAGAIN?EBUSY:errno;
+}
+
+/* The only checkpoint an adopted monitor may write. It revalidates the exact
+   custody record the adoption wrote: manifest digest, native birth, spool
+   device and inode, a non-decreasing cursor within the current spool extent,
+   and a reducer snapshot committed after the caller wrote that frame's output.
+   The record is updated in the same step so a retry resumes from this floor. */
+static int br_monitor_checkpoint(BatonProcessCall *call,BatonRetained *retained) {
+  if(!retained->observer_only)return EPERM;
+  if(retained->spool<0)return EBADF;
+  if(call->length==0)return EINVAL;
+  /* An owner-managed monitor remains attached to its keeper. Its single
+     attached observer can persist the ordinary attempt-bound checkpoint.
+     Orphan-adopted monitors use the custody lock and stronger custody record
+     validation below. */
+  if(retained->custody_lock<0) {
+    pthread_mutex_lock(&retained->reader);
+    pthread_mutex_lock(&retained->state);
+    if(retained->socket<0 || retained->orphan || retained->error) {
+      pthread_mutex_unlock(&retained->state);
+      pthread_mutex_unlock(&retained->reader);
+      return EBUSY;
+    }
+    int error=br_checkpoint_store(retained->directory,retained->spool,
+      (uint32_t)call->signal,retained->incarnation,(uint64_t)retained->offset,
+      call->text,call->length);
+    if(!error)retained->offset_stored=(uint64_t)retained->offset;
+    pthread_mutex_unlock(&retained->state);
+    pthread_mutex_unlock(&retained->reader);
+    return error;
+  }
+  pthread_mutex_lock(&retained->reader);
+  BrCustody custody={0};
+  int error=br_custody_read(retained->directory,&custody);
+  struct stat info={0};
+  if(!error && fstat(retained->spool,&info))error=errno;
+  if(!error && (!S_ISREG(info.st_mode) ||
+      (uint64_t)info.st_dev!=custody.spool_device ||
+      (uint64_t)info.st_ino!=custody.spool_inode))error=ESTALE;
+  uint64_t manifest=0;
+  if(!error)error=br_manifest_digest_file(retained->directory,&manifest);
+  if(!error && manifest!=custody.manifest)error=ESTALE;
+  BrBirth birth={0};
+  if(!error)error=br_read_file(retained->directory,"native.birth",&birth,sizeof(birth));
+  if(!error && !br_same_birth(birth,custody.birth))error=ESTALE;
+  uint64_t offset=(uint64_t)retained->offset;
+  if(!error && (offset<custody.offset || offset>(uint64_t)info.st_size))error=ESTALE;
+  if(!error)error=br_checkpoint_store(retained->directory,retained->spool,
+    (uint32_t)call->signal,retained->incarnation,offset,call->text,call->length);
+  if(!error) {
+    retained->offset_stored=offset;
+    custody.offset=offset;
+    custody.length=(uint64_t)info.st_size;
+    custody.check=br_custody_check(&custody);
+    char *path=br_path(retained->directory,"custody");
+    if(!path)error=ENOMEM;
+    else {error=br_replace(retained->directory,path,&custody,sizeof(custody),1);free(path);}
+  }
+  pthread_mutex_unlock(&retained->reader);
+  return error;
+}
+
+#if defined(CID_SESSIONLOCK_CANONICAL) || defined(CID_SESSIONLOCK_TRY_ACQUIRE) || defined(CID_SESSIONLOCK_WAIT_ACQUIRE) || defined(CID_SESSIONLOCK_RELEASE) || defined(CID_SESSIONLOCK_EXECUTABLE) || defined(CID_SESSIONLOCK_RECOVER_OBSERVER)
+static int br_adopt_orphan(BatonProcessCall *call,const char *directory,int lock) {
+  int error=br_admission_verify(directory,call->database,-1);
+  BrManifest manifest={0};
+  if(!error)error=br_manifest_read(directory,&manifest);
+  if(!error)error=br_attempt_manifest_verify(directory);
+  if(!error) {
+    char *status=br_path(directory,"status");
+    int recorded=status && access(status,F_OK)==0;
+    free(status);
+    if(recorded)error=EBUSY;
+  }
+  if(!error) {
+    BrBirth birth={0},current={0};
+    error=br_read_file(directory,"native.birth",&birth,sizeof(birth));
+    char *pid_path=error?NULL:br_path(directory,"native.pid");
+    FILE *pid_file=pid_path?fopen(pid_path,"r"):NULL;
+    long native_pid=0;
+    if(pid_file) {if(fscanf(pid_file,"%ld",&native_pid)!=1)error=EINVAL;fclose(pid_file);}
+    else if(!error)error=pid_path?errno:ENOMEM;
+    free(pid_path);
+    if(!error && (native_pid<=1 || native_pid!=birth.pid))error=ESTALE;
+    if(!error) {
+      int birth_error=br_birth((pid_t)native_pid,&current);
+      if(!birth_error && !br_same_birth(birth,current))error=ESTALE;
+      else if(birth_error && birth_error!=ESRCH)error=birth_error;
+    }
+  }
+  char *spool_path=NULL;
+  int spool=-1;
+  if(!error) {
+    spool_path=br_path(directory,"stdout");
+    spool=spool_path?open(spool_path,O_RDONLY|O_CLOEXEC):-1;
+    if(spool<0)error=spool_path?errno:ENOMEM;
+  }
+  if(!error) {
+    uint64_t offset=0;
+    int checked=br_checkpoint_verified_offset(directory,spool,&offset);
+    if(checked!=0 && checked!=ENOENT)error=checked;
+  }
+  if(spool>=0)close(spool);
+  free(spool_path);
+  if(!error)error=br_attach_orphan(call->child,directory,lock);
+  if(!error && call->child->retained) {
+    BatonRetained *retained=call->child->retained;
+    pthread_mutex_lock(&retained->state);
+    retained->observer_only=1;
+    retained->unknown=1;
+    retained->input_closed=1;
+    pthread_mutex_unlock(&retained->state);
+    error=br_monitor_lock(retained);
+    if(!error)error=br_custody_write(directory,retained);
+    if(error && retained->custody_lock>=0) {
+      close(retained->custody_lock);retained->custody_lock=-1;
+    }
+  }
+  br_manifest_free(&manifest);
+  return error;
+}
 
 static int baton_observer_completed(BatonSessionLock *call) {
   if(call->observer<=1 || call->observer>INT_MAX || call->observer==(u32)getpid())return EINVAL;
   int error=br_admission_verify(call->directory,call->database,-1);
   if(error)return error;
-  char *path=br_path(call->directory,"status");
-  if(!path)return ENOMEM;
-  errno=0;
-  FILE *file=fopen(path,"r");
-  int status_error=file?0:errno;
-  free(path);
-  int status=0,live_pending=0;
-  if(file) {
-    if(fscanf(file,"%d",&status)!=1)status_error=EINVAL;
-    else if(!WIFEXITED(status) && !WIFSIGNALED(status))status_error=EBUSY;
-    fclose(file);
-  } else if(status_error==ENOENT) {
-    live_pending=1;
-    status_error=0;
-  }
-  if(status_error) {call->detail="Observer recovery requires a valid retained native status or a live native birth.";return status_error;}
   BrBirth native;
   if((error=br_read_file(call->directory,"native.birth",&native,sizeof(native))))return error;
+  FILE *pid_file=NULL;char *pid_path=br_path(call->directory,"native.pid");
+  if(!pid_path)return ENOMEM;
+  pid_file=fopen(pid_path,"r");error=pid_file?0:errno;free(pid_path);
+  long recorded_pid=0;
+  if(!error && (fscanf(pid_file,"%ld",&recorded_pid)!=1 || recorded_pid<=1 || recorded_pid>INT_MAX))error=EINVAL;
+  if(pid_file)fclose(pid_file);
+  if(error)return error;
+  if(recorded_pid!=native.pid || native.pid<=1)return ESTALE;
   if(call->observer==(u32)native.pid)return EINVAL;
-  if(live_pending) {
-    int ended=0,life=br_lifetime(call->directory,&ended);
-    if(life<0) {
-      error=ended?ESRCH:errno;
-      call->detail="Live observer recovery requires the recorded native birth to remain alive.";
-      return error;
+  char *path=br_path(call->directory,"status");
+  FILE *file=path?fopen(path,"r"):NULL;
+  error=file?0:path?errno:ENOMEM;
+  free(path);
+  int status=0;
+  if(file) {
+    if(fscanf(file,"%d",&status)!=1)error=EINVAL;
+    else if(!WIFEXITED(status) && !WIFSIGNALED(status))error=EBUSY;
+    fclose(file);
+  } else if(error==ENOENT) {
+    if(!br_exists(call->directory,"capabilities")) {
+      /* No capability file means a legacy e6 keeper. Do not send an operation
+         it does not implement; adopt monitor-only custody instead. */
+      call->legacy_unknown=1;
+      error=0;
+    } else {
+    int socket_fd=-1;
+    error=br_attempt_socket(call->directory,BR_CONTROL_RECONCILE,1,native.pid,
+                                      (const char *)&native,sizeof(native),&socket_fd);
+    if(!error) {
+      BrFrame reply;
+      error=br_read_all(socket_fd,&reply,sizeof(reply));
+      if(!error && (reply.op!=BR_REPLY || reply.serial!=1 || reply.length))error=EPROTO;
+      if(!error)error=reply.error;
     }
-    close(life);
-    error=br_observer_attempt_custody((pid_t)call->observer,call->database,call->session,call->directory,call->handle,&call->observer_life);
-    if(error) {
-      call->detail="Live observer recovery requires the supplied process to hold this attempt's required custody descriptors.";
-      return error;
+    if(socket_fd>=0)close(socket_fd);
+    if(!error) {
+      path=br_path(call->directory,"status");
+      file=path?fopen(path,"r"):NULL;
+      error=file?0:path?errno:ENOMEM;free(path);
+      if(file) {
+        if(fscanf(file,"%d",&status)!=1)error=EINVAL;
+        else if(!WIFEXITED(status) && !WIFSIGNALED(status))error=EBUSY;
+        fclose(file);
+      }
+    } else if(error==EPROTO || error==EPIPE || error==ECONNRESET ||
+              error==ENOSYS || error==EOPNOTSUPP ||
+              error==ENOENT || error==ECONNREFUSED) {
+      call->legacy_unknown=1;
+      error=0;
+    }
     }
   }
-#ifndef __APPLE__
-  else {
-    /* Bind a live terminal observer to this retained attempt before any
-       legacy EBUSY fallback can retire the supplied PID. */
-    error=br_observer_attempt_custody((pid_t)call->observer,call->database,call->session,call->directory,call->handle,&call->observer_life);
-    if(error==ESRCH || error==ENOENT) {
-      int ended=0,life=br_process_lifetime((pid_t)call->observer,&ended);
-      if(life>=0) {close(life);error=EPERM;}
-      else if(ended) {error=0;call->observer_absent=1;}
-      else error=errno;
-    }
-    if(error) {
-      call->detail="Terminal observer recovery requires the supplied live process to hold this attempt's custody descriptors.";
-      return error;
-    }
-  }
-#endif
+  if(error) {call->detail="Observer recovery requires the original keeper to verify and retain the native exit status.";return error;}
   BrManifest manifest={0};
   if((error=br_manifest_read(call->directory,&manifest))) {
     br_manifest_free(&manifest);return error;
   }
+  char **recovery=br_argv(manifest.field[4],(size_t)manifest.header.lengths[4]);
+  if(!error && !recovery)error=EINVAL;
+  if(!error && !call->observer_ended && call->observer_life<0) {
+    call->observer_life=br_process_lifetime((pid_t)call->observer,&call->observer_ended);
+    if(call->observer_life<0 && !call->observer_ended)error=errno;
+  }
+  if(!error && !call->observer_ended)
+    error=br_process_matches_executable((pid_t)call->observer,recovery[0],
+                                        call->observer_life,&call->observer_ended);
+  free(recovery);
   struct sockaddr_un address;
-  error=br_socket_address(&address,manifest.field[5]);
+  if(!error)error=br_socket_address(&address,manifest.field[5]);
   br_manifest_free(&manifest);
   int probe=error?-1:socket(AF_UNIX,SOCK_STREAM,0);
   if(!error && probe<0)error=errno;
@@ -5187,59 +6073,112 @@ static int baton_observer_completed(BatonSessionLock *call) {
       call->keeper=1;
     } else {
       error=errno;
-      if(!live_pending && (error==ENOENT || error==ECONNREFUSED))error=0;
+      if(error==ENOENT || error==ECONNREFUSED)error=0;
     }
   }
   if(probe>=0)close(probe);
-  if(!error && live_pending && !call->keeper) {
-    error=ECONNREFUSED;
-    call->detail="Live observer recovery requires the active native keeper.";
-  }
   return error;
 }
 
+static int baton_observer_transfer_supported(const char *directory) {
+  char *path=br_path(directory,"capabilities");
+  if(!path)return ENOMEM;
+  FILE *file=fopen(path,"r");
+  int error=file?0:errno;
+  free(path);
+  if(error)return error==ENOENT?ENOTSUP:error;
+  char line[128];int supported=0;
+  while(fgets(line,sizeof(line),file)) {
+    if(!strcmp(line,"observer-transfer-v1\n") || !strcmp(line,"observer-transfer-v1")) {
+      supported=1;break;
+    }
+  }
+  if(ferror(file))error=errno?errno:EIO;
+  fclose(file);
+  return error?error:supported?0:ENOTSUP;
+}
+
 static int baton_observer_retire(BatonSessionLock *call) {
-  if(call->observer_retired)return 0;
-  if(call->observer_absent) {call->observer_retired=1;return 0;}
-  int ended=0,life=call->observer_life;
-  call->observer_life=-1;
-  if(life<0)life=br_process_lifetime((pid_t)call->observer,&ended);
-  if(life<0) {
-    if(ended)call->observer_retired=1;
-    return ended?0:errno;
-  }
-  call->observer_retired=1;
-  int error=0;
-#ifdef SYS_pidfd_send_signal
-  if(syscall(SYS_pidfd_send_signal,life,SIGTERM,NULL,0) && errno!=ESRCH)error=errno;
-  if(!error && syscall(SYS_pidfd_send_signal,life,SIGCONT,NULL,0) && errno!=ESRCH)error=errno;
+  BatonRetained *retained=call->attempt.child?call->attempt.child->retained:NULL;
+  if(!retained || !retained->observer_detached)return 0;
+  if(call->observer_ended)return 0;
+  if(call->observer_life<0)return EBUSY;
+#if defined(__linux__) && defined(SYS_pidfd_send_signal)
+  int signaled=syscall(SYS_pidfd_send_signal,call->observer_life,SIGTERM,NULL,0);
+  if(signaled<0 && errno!=ESRCH)return errno;
+  if(signaled==0 && syscall(SYS_pidfd_send_signal,call->observer_life,SIGCONT,NULL,0)<0 && errno!=ESRCH)
+    return errno;
+  struct pollfd observed={call->observer_life,POLLIN,0};
+  int ready;do {ready=poll(&observed,1,-1);}while(ready<0 && errno==EINTR);
+  if(ready<0)return errno;
+  return 0;
 #else
-  if(kill((pid_t)call->observer,SIGTERM) && errno!=ESRCH)error=errno;
-  if(!error && kill((pid_t)call->observer,SIGCONT) && errno!=ESRCH)error=errno;
+  /* A numeric PID signal cannot be bound to the incarnation attested by the
+     keeper. Keep the old observer alive when the platform cannot signal its
+     already-open process handle. */
+  return ENOTSUP;
 #endif
-  if(!error) {
-    struct pollfd observed={life,POLLIN,0};
-    int ready;do {ready=poll(&observed,1,-1);}while(ready<0 && errno==EINTR);
-    if(ready<0)error=errno;
-  }
-  close(life);
-  return error;
 }
 
 static int baton_observer_recover(BatonSessionLock *call) {
   int error=baton_observer_completed(call);
   if(error)return error;
+  if(call->observer_life<0 && !call->observer_ended) {
+    call->observer_life=br_process_lifetime((pid_t)call->observer,&call->observer_ended);
+    if(call->observer_life<0 && !call->observer_ended)return errno;
+  }
+#if defined(__linux__) && defined(SYS_pidfd_send_signal)
+  if(!call->observer_ended &&
+     syscall(SYS_pidfd_send_signal,call->observer_life,0,NULL,0)<0) {
+    if(errno==ESRCH)call->observer_ended=1;
+    else return errno;
+  }
+#else
+  if(!call->observer_ended)return ENOTSUP;
+#endif
+  if(call->keeper && !call->observer_ended && !call->legacy_unknown) {
+    error=baton_observer_transfer_supported(call->directory);
+    if(error) {
+      call->detail="The keeper cannot attest a live observer handoff.";
+      return error==ENOTSUP?EBUSY:error;
+    }
+  }
   call->attempt.database=call->database;
   call->attempt.directory=call->directory;
   call->attempt.lock=(u32)call->handle;
   if(call->keeper) {
-    error=br_instance_attach_observer(&call->attempt,call->observer);
-    if(error==EBUSY) {
-      /* Older keepers use ordinary attachment after observer exit. */
-      error=baton_observer_retire(call);
-      if(!error)error=br_instance_attach(&call->attempt);
-    } else if(!error)error=baton_observer_retire(call);
+    error=br_instance_attach_observer(&call->attempt,call->observer,call->legacy_unknown);
+    if(error==EBUSY && call->legacy_unknown) {
+      /* A legacy keeper cannot transfer an unknown attempt and its EBUSY may
+         mean another live observer still holds the connection. Adopt only
+         after the recorded observer has ended, so a second reader never
+         repeats the live observer's database writes. */
+      if(!call->observer_ended)
+        error=EBUSY;
+      else {
+        error=br_guard_lock((int)call->handle);
+        if(!error)error=br_adopt_orphan(&call->attempt,call->directory,(int)call->handle);
+      }
+    } else if(!error) {
+      BatonRetained *retained=call->attempt.child?call->attempt.child->retained:NULL;
+      if(!call->observer_ended && (!retained || !retained->observer_detached)) {
+        call->detail="The keeper did not attest the live observer connection.";
+        error=EBUSY;
+      } else {
+        error=baton_observer_retire(call);
+        if(!error)error=br_retained_start(call->attempt.child);
+      }
+    }
+    else if(call->legacy_unknown &&
+            (error==EPROTO || error==EPIPE || error==ECONNRESET ||
+             error==ENOENT || error==ECONNREFUSED)) {
+      error=call->observer_ended?
+        br_adopt_orphan(&call->attempt,call->directory,(int)call->handle):EBUSY;
+    }
     if(error==EBUSY)call->detail="Another observer holds the retained attempt; inspect its current receive.";
+    if(!error && call->attempt.child->retained &&
+       !call->attempt.child->retained->receiver_started)
+      error=br_retained_start(call->attempt.child);
     if(!error) {
       int guard=call->attempt.child->retained->guard;
       if(guard>=0) {
@@ -5250,10 +6189,24 @@ static int baton_observer_recover(BatonSessionLock *call) {
       }
     } else if(error!=ENOENT && error!=ECONNREFUSED && error!=EPIPE && error!=ECONNRESET)return error;
   }
-  if(!call->attempt.child->retained && (error=baton_observer_retire(call)))return error;
-  int held;do {held=flock(call->handle,LOCK_EX);}while(held<0 && errno==EINTR);
-  if(held<0)return errno;
-  return call->attempt.child->retained?0:br_instance_attach_owned(&call->attempt);
+  if(!call->attempt.child->retained && !call->observer_ended) {
+    call->detail="Observer recovery cannot verify the live observer connection; inspect its current receive.";
+    return EBUSY;
+  }
+  int guard_error=br_guard_lock((int)call->handle);
+  if(guard_error) {
+    if(guard_error==EBUSY)call->detail="Another observer holds the retained attempt; inspect its current receive.";
+    return guard_error;
+  }
+  if(call->attempt.child->retained)return 0;
+  if(call->legacy_unknown) {
+    if(!call->observer_ended) {
+      call->detail="Another observer holds the retained attempt; inspect its current receive.";
+      return EBUSY;
+    }
+    return br_adopt_orphan(&call->attempt,call->directory,(int)call->handle);
+  }
+  return br_instance_attach_owned(&call->attempt);
 }
 
 static void baton_session_lock_call(IoWork *w) {
@@ -5329,11 +6282,12 @@ static Term baton_session_lock_pack(Env e, IoWork *w) {
       BatonRetained *retained=call->attempt.child->retained;
       if(retained) {
         if(retained->socket>=0)shutdown(retained->socket,SHUT_RDWR);
-        pthread_join(retained->receiver,NULL);
+        if(retained->receiver_started)pthread_join(retained->receiver,NULL);
         if(retained->socket>=0)close(retained->socket);
         if(retained->guard>=0)close(retained->guard);
         if(retained->spool>=0)close(retained->spool);
         if(retained->life>=0)close(retained->life);
+        if(retained->custody_lock>=0)close(retained->custody_lock);
         if(retained->watch>=0)close(retained->watch);
         pthread_mutex_destroy(&retained->state);pthread_mutex_destroy(&retained->command);
         pthread_mutex_destroy(&retained->reader);pthread_cond_destroy(&retained->changed);

@@ -1,6 +1,6 @@
 {
   "upstream": "bend 2.0.25",
-  "compiler_archive_sha256": "2df30208da307f7922fefc5517563ad1ee484bc60227f60d88994aad57e4779e",
+  "compiler_archive_sha256": "6e03633ff79f14781c35281bf3004b21da9dd5ea46bd3199c62b0ab7b2d3f6c7",
   "files": [
     {
       "path": "base.bend",
@@ -14,8 +14,8 @@
     },
     {
       "path": "comp.ts",
-      "bytes": 196139,
-      "sha256": "1956f2e238e4d0cda91cd694c82d05ea06d5edd6b4eed12604c730012a69610a"
+      "bytes": 218591,
+      "sha256": "dc33f3a053589e84cd95395be6b309e562633213556660a3d596aa166e288eed"
     },
     {
       "path": "effs/args.c",
@@ -379,8 +379,8 @@
     },
     {
       "path": "main.ts",
-      "bytes": 24396,
-      "sha256": "92dcdb49e82fd59443e3aea10784f7dcf03a93f5a21920666543098b657b6b1e"
+      "bytes": 27114,
+      "sha256": "53ce8e48c7540db6c3e66133a7c7eb270d6f64813fe10a631fd50d22112eb07d"
     }
   ],
   "license": {

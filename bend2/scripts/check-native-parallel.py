@@ -33,12 +33,34 @@ def copy_tree(source, destination, log):
                        stdout=log, stderr=log, check=True)
 
 
+def cleanup_successful_run(work, ipc, successful):
+    """Remove only this run's copies after every test child has exited cleanly."""
+    if not successful:
+        return False
+    shutil.rmtree(work)
+    shutil.rmtree(ipc)
+    return True
+
+
+def process_group_exists(process_group):
+    """Return whether a suite process group still has members after its leader exits."""
+    try:
+        os.killpg(process_group, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 def main():
     work = pathlib.Path(tempfile.mkdtemp(prefix='native-suites-', dir=ROOT / '.scratch'))
-    ipc = pathlib.Path(tempfile.mkdtemp(prefix='b2-native-', dir='/tmp'))
+    ipc = pathlib.Path(tempfile.mkdtemp(prefix='b2-native-'))
     run = os.environ.get('BATON2_LINUX_RUN')
-    output = (pathlib.Path(run) / 'evidence/native-suites') if run else work / 'results'
-    output.mkdir(parents=True)
+    output = ((pathlib.Path(run) / 'evidence/native-suites') if run else
+              pathlib.Path(tempfile.mkdtemp(prefix='native-suites-results-',
+                                            dir=ROOT / '.scratch/bend2')))
+    output.mkdir(parents=True, exist_ok=True)
     seed = work / 'seed'
     commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip()
     with (output / 'prepare.log').open('wb') as log:
@@ -76,6 +98,7 @@ def main():
              for path in sorted((seed / 'bend2/test').glob('*.py'))]
     queue.extend([
         {'label': 'node-git-series', 'argv': ['node', '--test', 'bend2/test/git-series.mjs']},
+        {'label': 'node-api-key-exec', 'argv': ['node', '--test', 'bend2/test/api-key-exec.test.mjs']},
         {'label': 'node-provider-availability', 'argv': ['node', '--test', 'bend2/test/provider-availability.mjs']},
         {'label': 'node-context-runtime', 'argv': ['node', '--test',
             'bend2/test/context-provider.test.mjs', 'bend2/test/context-project-policy.test.mjs',
@@ -106,20 +129,27 @@ def main():
                 copy_tree(seed, source, log)
             for name in ('tmp', 'runtime'):
                 (runtime / name).mkdir(mode=0o700)
-            (directory / 'native-evidence').mkdir(mode=0o700)
+            native_evidence = evidence / 'native-context'
+            native_evidence.mkdir(mode=0o700)
             environment = dict(os.environ, TMPDIR=str(runtime / 'tmp'),
                                XDG_RUNTIME_DIR=str(runtime / 'runtime'),
-                               FINAL_NATIVE_CONTEXT_EVIDENCE=str(directory / 'native-evidence'))
+                               FINAL_NATIVE_CONTEXT_EVIDENCE=str(native_evidence))
             # The inherited Python shim records each selected suite in its original output directory.
             with (evidence / 'stdout').open('wb') as stdout, (evidence / 'stderr').open('wb') as stderr:
                 child = subprocess.Popen(spec['argv'], cwd=source, env=environment,
-                                         stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr)
-                row.update(pid=child.pid, native_evidence=str(directory / 'native-evidence'))
+                                         stdin=subprocess.DEVNULL, stdout=stdout, stderr=stderr,
+                                         start_new_session=True)
+                row.update(pid=child.pid, native_evidence=str(native_evidence))
                 write(evidence / 'execution.json', row)
                 with lock:
                     print(json.dumps({'started': spec['label'], 'pid': child.pid,
                                       'evidence': str(evidence)}), flush=True)
-                row.update(exit_code=child.wait(), natural_wait_completed=True)
+                child_code = child.wait()
+                has_remaining_processes = process_group_exists(child.pid)
+                row.update(exit_code=1 if has_remaining_processes else child_code,
+                           child_exit_code=child_code,
+                           natural_wait_completed=True,
+                           process_group_empty=not has_remaining_processes)
         except Exception:
             with (evidence / 'stderr').open('ab') as stderr:
                 stderr.write(traceback.format_exc().encode())
@@ -136,8 +166,14 @@ def main():
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
         codes = list(pool.map(run_suite, enumerate(queue)))
+    cleaned = cleanup_successful_run(work, ipc, not any(codes))
+    if not cleaned:
+        print(json.dumps({'preserved_work': str(work), 'preserved_runtime_root': str(ipc),
+                          'reason': 'one or more suites failed; retain isolated trees for review'}),
+              flush=True)
     print(json.dumps({'suites': len(codes), 'failures': sum(code != 0 for code in codes),
-                      'results': str(output / 'results.json'), 'work': str(work)}), flush=True)
+                      'results': str(output / 'results.json'), 'work': str(work),
+                      'scratch_cleanup': 'removed' if cleaned else 'preserved'}), flush=True)
     return int(any(code != 0 for code in codes))
 
 

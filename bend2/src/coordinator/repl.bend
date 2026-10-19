@@ -174,7 +174,9 @@ def interactive_binding(db: String, actor: String, notebook: String, args: List<
     case name <> Nil{}: do IO<Bool>:
       bound : Unit <- bind_result(db,actor,notebook,[D.Field{"--source",name}],False{})
       IO.pure(Bool,True{})
-    case other: IO.die(Bool,2,"Use :bind NAME to check a named definition from the latest pure result.")
+    case other: do IO<Bool>:
+      printed : Unit <- IO.write("Use :bind NAME to check a named definition from the latest pure result.\n")
+      IO.pure(Bool,True{})
 
 def interactive_source(+db: String, +actor: String, +notebook: String, +line: String, words: List<String>) -> IO(Bool):
   match words:
@@ -182,12 +184,25 @@ def interactive_source(+db: String, +actor: String, +notebook: String, +line: St
       Bool.pick(IO(Bool),String.eq(verb,":bind"),interactive_binding(db,actor,notebook,rest),append_draft(db,notebook,line))
     case Nil{}: append_draft(db,notebook,line)
 
+def interactive_submit_lock(db: String, actor: String, notebook: String, lock: Maybe<U32>) -> IO(Bool):
+  match lock:
+    case None{}: do IO<Bool>:
+      printed : Unit <- IO.write("This notebook has an active evaluation. Read or recover its original cell after the observer exits.\n")
+      IO.pure(Bool,True{})
+    case Some{handle}: do IO<Bool>:
+      released : Unit <- IO.try(Unit,Lock.SessionLock.release(handle))
+      submitted : Unit <- submit_draft(db,actor,notebook)
+      IO.pure(Bool,True{})
+
+def interactive_submit(+db: String, +actor: String, +notebook: String) -> IO(Bool):
+  do IO<Bool>:
+    lock : Maybe<U32> <- IO.try(Maybe<U32>,Lock.SessionLock.try_acquire(db,"repl:" ++ notebook))
+    interactive_submit_lock(db,actor,notebook,lock)
+
 def interactive_trimmed(+db: String, +actor: String, +notebook: String, +line: String, trimmed: String) -> IO(Bool):
   match trimmed:
     case ":quit": IO.pure(Bool,False{})
-    case ":submit": do IO<Bool>:
-      submitted : Unit <- submit_draft(db,actor,notebook)
-      IO.pure(Bool,True{})
+    case ":submit": interactive_submit(db,actor,notebook)
     case ":read": do IO<Bool>:
       body : String <- M.read(db,notebook,"")
       printed : Unit <- IO.write(body)
