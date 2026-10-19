@@ -108,8 +108,9 @@ reported zero balance reads `promotionalCreditExhausted`. Subscription quota
 and promotional credit are separate facts; a subscription account reads
 `notPromotionalCreditRoute` from this check and keeps its own route.
 
-The provider enforces the promotional balance on each API request. A retained
-launch contains an unbounded number of provider requests, and Baton has no
+A reported promotional balance does not prove that the provider will refuse
+usage that incurs billing. A retained launch contains an unbounded number of
+provider requests, and Baton has no
 point that sees each request the Claude CLI makes. Current source records no
 per-request charge and no launch charge. Actual provider cost enters the
 record as `external_spend` observations from the Admin cost report, at

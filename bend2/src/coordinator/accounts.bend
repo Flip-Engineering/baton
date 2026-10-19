@@ -1000,9 +1000,9 @@ def record_current_attempt(+db: String, +session: String, +attempt: String, +pre
 # Eligibility reads actual recorded facts: the Anthropic claude-code api_key
 # route, a verified organization, and the newest promotional_credit
 # observation for that organization with its reported balance and unit. A
-# reported zero balance is the provider-reported exhausted state. The provider
-# enforces the balance on each request; a retained launch contains an
-# unbounded number of provider requests, so no launch-level charge bound is
+# reported zero balance is the provider-reported exhausted state. A retained
+# launch contains an unbounded number of provider requests. A reported balance
+# does not prove that the provider will refuse billed usage. No charge bound is
 # derived and no reservation or settled amount is recorded from a launch.
 # Actual provider cost enters through external_spend observations from the
 # Admin cost report. Credit-only routing stays held until a per-request
