@@ -131,8 +131,8 @@ law receive_status_returns_output_failure:
 def receive_status_returns_output_failure(db,session,status):
   {==}
 
-# A busy session reports queued for every launch argument and continuation.
-law busy_receive_only_reports_queued:
+# A busy session admits nothing; the invocation result reports none.
+law busy_receive_defers_to_the_invocation_result:
   for +db: String
   for +session: String
   for cmd: String
@@ -142,9 +142,10 @@ law busy_receive_only_reports_queued:
   for log: String
   for again: String -> IO(Result<&1,&1,U32 & String,Unit>)
   for predecessor: String
-  {Receive.acquired(db,session,cmd,model,effort,cwd,log,None{},again,predecessor) == Receive.receive_status(db,session,"queued") : IO(Result<&1,&1,U32 & String,Unit>)}
+  for +path: String
+  {Receive.acquired(db,session,cmd,model,effort,cwd,log,None{},again,predecessor,path) == Receive.receive_silent("queued") : IO(Result<&1,&1,U32 & String,Unit>)}
 
-def busy_receive_only_reports_queued(db,session,cmd,model,effort,cwd,log,again,predecessor):
+def busy_receive_defers_to_the_invocation_result(db,session,cmd,model,effort,cwd,log,again,predecessor,path):
   {==}
 
 # The recovery attachment boundary opens the supplied attempt directory and
@@ -365,6 +366,10 @@ def m17_recovery_input_is_one_guarded_transaction(db,session,id,native,note):
   {==}
 
 
+def acquired_recorded_with_setup(+db: String, +session: String, cmd: String, model: String, effort: String, cwd: String, log: String, +lock: U32, predecessor: String, again: String -> IO(Result<&1,&1,U32 & String,Unit>), +path: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    ensured : Unit <- Store.ensure_before_begin(db)
+    Receive.acquired_recorded(db,session,lock,again,continuation => Receive.acquired_pending(db,session,cmd,model,effort,cwd,log,lock,continuation,predecessor,path))
 # M-8: one owner resolves the durable attempt before admitting another native.
 law acquired_native_owner_resolves_recorded_attempt:
   for db: String
@@ -377,14 +382,11 @@ law acquired_native_owner_resolves_recorded_attempt:
   for lock: U32
   for predecessor: String
   for again: String -> IO(Result<&1,&1,U32 & String,Unit>)
-  {Receive.acquired(db,session,cmd,model,effort,cwd,log,Some{lock},again,predecessor) == acquired_recorded_with_setup(db,session,cmd,model,effort,cwd,log,lock,predecessor,again) : IO(Result<&1,&1,U32 & String,Unit>)}
+  for +path: String
+  {Receive.acquired(db,session,cmd,model,effort,cwd,log,Some{lock},again,predecessor,path) == acquired_recorded_with_setup(db,session,cmd,model,effort,cwd,log,lock,predecessor,again,path) : IO(Result<&1,&1,U32 & String,Unit>)}
 
-def acquired_recorded_with_setup(+db: String, +session: String, cmd: String, model: String, effort: String, cwd: String, log: String, +lock: U32, predecessor: String, again: String -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
-  do IO<Result<&1,&1,U32 & String,Unit>>:
-    ensured : Unit <- Store.ensure_before_begin(db)
-    Receive.acquired_recorded(db,session,lock,again,continuation => Receive.acquired_pending(db,session,cmd,model,effort,cwd,log,lock,continuation,predecessor))
 
-def acquired_native_owner_resolves_recorded_attempt(db,session,cmd,model,effort,cwd,log,lock,predecessor,again):
+def acquired_native_owner_resolves_recorded_attempt(db,session,cmd,model,effort,cwd,log,lock,predecessor,again,path):
   {==}
 
 def recorded_attempt_before_pending(+db: String, +session: String, cmd: String, model: String, effort: String, cwd: String, log: String, +lock: U32, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):

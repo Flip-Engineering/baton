@@ -11,7 +11,9 @@ import ../git/types.bend as T
 
 def dispatch_receive(selected: Bool, +db: String, +session: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, +message: String) -> IO(Unit):
   match selected:
-    case True{}: IO.try(Unit,Receive.run(db,session,cmd,model,effort,cwd,log,message))
+    case True{}: do IO<Unit>:
+      result : Result<&1,&1,U32 & String,Unit> & String <- Receive.run(db,session,cmd,model,effort,cwd,log,message)
+      Receive.report_result(db,session,message,result)
     case False{}: IO.die(Unit,2,"expected receive")
 
 def dispatch_instance(owner: Bool, shutdown: Bool, +db: String) -> IO(Unit):
