@@ -144,3 +144,54 @@ found; removing the `fl.segs.push` would avoid creating the dead segment.
 No full Main, no recovery-helper build, and no clang of the giant entry were
 run. The generated C executions are the four protected fixtures and the repro
 binaries.
+
+## Corrected candidate review
+
+Exact pin: commit `50e84c98effe3887cb35c06005787804f05ebc67` ("Make arm_eq a
+total structural equality"), `round2/compiler-src/bend2/comp.ts` sha256
+`7cc3394b45f6139011bf8141eff917497cbd5991171ca87ec449d66cf1894ba6`,
+`bend.ts` `93c2a43deeb82c15683e4e25bbc5dec5ac3edff9f54e09acc0975e290fcaeb85`,
+`main.ts` `53ce8e48c7540db6c3e66133a7c7eb270d6f64813fe10a631fd50d22112eb07d`.
+
+The correction is verified by execution. `arm_eq` now handles `Sub` and `All`
+and every unknown kind returns false; the busy-equal representative takes the
+inline fallback. Generated C with `clang-19 -std=c11 -O0` matches the pinned
+baseline on the four protected fixtures, and the maximal hint-collision build
+(constant `arm_hint`, same patch as below) also matches:
+
+| fixture | corrected | corrected + collapsed hint |
+| --- | --- | --- |
+| `nat_pattern_deep` | `306n` | `306n` |
+| `u32_table_bitvar` | `2496 2397` | `2496 2397` |
+| `word_match_cover_key` | `2139095040 2143289344 0 0 2139095040 2143289344` | same |
+| `match_default` | `0n` | `0n` |
+| `minimal` argv | `host` | `host` |
+
+The repro argv matrix with the corrected compiler is 18 cases, 0 diffs.
+
+### Open item 1: Lam.q, Let.q, Ann.T are still ignored
+
+In `7cc3394b`, `arm_eq`'s `Lam` case (`comp.ts:3195`) does not compare `x.q`;
+its `Let` case (`comp.ts:3202`) does not compare `x.q`; its `Ann` case
+(`comp.ts:3223`) drops `T`. The corrected report calls the equality "total",
+but it is total only over the term kinds it compares, not over the quantities
+and annotations that drive erasure: `let_live` (`comp.ts:801`) reads `Let.q` to
+decide whether a binding is emitted and freed, and `ty_peel` reads `Ann.T` when
+the shared spin body is emitted. Same-source duplicates usually share the
+source quantity markers, so a triggering fixture was not produced; the
+requested repair or an explicit proof that equal hints force equal quantities
+and annotations is still missing. This is the root's Lam.q/Let.q/Ann.T request.
+
+### Open item 2: canonical upstream delivery
+
+The correction lives only in `round2/compiler-src`. The canonical upstream tree
+`bend2/compiler/upstream/comp.ts` is still
+`b68bfe1a306c1d89d12b07cbd86012cea873c06986cf191270e65941bae4efda`, and
+`bend2/compiler/repl-upstream.provenance.json`
+(`46bf9b44e257d9a73976b51aeac30405265dc4991f8a632ac027293ec1160ad4`) still
+pins that file. No commit in `50e84c98ef` touches `bend2/compiler/upstream` or
+the provenance/lock files, so the canonical delivery the root requested is
+absent.
+
+The rejected round-2 findings and the negative commits remain in place; this
+section adds the corrected-candidate evidence and the two open items.

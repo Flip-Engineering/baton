@@ -13,3 +13,10 @@ u32_table_bitvar 2496 2397
 word_match_cover_key 2139095040 2143289344 0 0 2139095040 2143289344 
 match_default 0n
 minimal host
+
+Corrected candidate 50e84c98ef, comp.ts 7cc3394b45f6139011bf8141eff917497cbd5991171ca87ec449d66cf1894ba6
+corrected outputs: nat=306n u32='2496 2397' word='2139095040 2143289344 0 0 2139095040 2143289344' match=0n minimal=host
+corrected + collapsed hint: same outputs
+corrected repro argv: 18 cases, 0 diffs
+canonical upstream comp.ts b68bfe1a306c1d89d12b07cbd86012cea873c06986cf191270e65941bae4efda (unchanged)
+provenance 46bf9b44e257d9a73976b51aeac30405265dc4991f8a632ac027293ec1160ad4 (pins b68bfe1a)
