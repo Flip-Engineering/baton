@@ -85,13 +85,18 @@ class NativeSuiteCleanupTest(unittest.TestCase):
         subprocess.run(['git', '-C', str(root), 'commit', '-q', '-m', 'fixture'], check=True)
 
     def run_main_fixture(self, root, environment, return_code, remaining_process_group=False):
+        real_popen = subprocess.Popen
+
         class FinishedProcess:
             pid = 2147483000
 
             def wait(self):
                 return return_code
 
-        def fake_popen(argv, cwd, env, **kwargs):
+        def fake_popen(argv, *args, **kwargs):
+            if not kwargs.get('start_new_session'):
+                return real_popen(argv, *args, **kwargs)
+            env = kwargs['env']
             destination = Path(env['FINAL_NATIVE_CONTEXT_EVIDENCE'])
             (destination / 'fixture.json').write_text(json.dumps({'argv': argv}))
             return FinishedProcess()
