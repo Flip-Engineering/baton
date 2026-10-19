@@ -158,16 +158,6 @@ def covered_root(+spec: RootSpec) -> Bool:
     case RootSpec{cls, path, source}:
       Bool.and(covered_class(cls), String.starts_with(path, "/"))
 
-# The first configured root without a participating managed writer. Apply
-# refuses while this answer names a root.
-def uncovered_roots(specs: List<&2,RootSpec>, +acc: String) -> String:
-  match specs:
-    case Nil{}: acc
-    case Con{+head, tail}:
-      +path : String = root_path_of(head)
-      Bool.pick(String, covered_root(head), uncovered_roots(tail, acc),
-        Bool.pick(String, String.is_empty(acc), path, acc))
-
 def log_rows_under(rows: List<&2,S.LogRow>, +root: String) -> Bool:
   match rows:
     case Nil{}: False{}

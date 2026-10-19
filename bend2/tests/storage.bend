@@ -678,11 +678,6 @@ def facts_lease(+facts: T.Facts) -> T.Presence:
   match facts:
     case T.Facts{owner, database, lease, process, dirty, unpublished, runtime_input, ref, pending_attempt}: lease
 
-def presence_absent(+presence: T.Presence) -> Bool:
-  match presence:
-    case T.Absent{}: True{}
-    case other: False{}
-
 def active_retained_apply(result: Result<&1,&1,U32 & String,List<T.Receipt>>, +path: String) -> IO(Unit):
   match result:
     case Fail{error}: check("active-retained-apply", False{}, "apply refused")
@@ -698,7 +693,7 @@ def active_retained_check(+db: String, +root: String) -> IO(Unit):
     wrote_base : Unit <- write_file(base_file, "base")
     +attempt : String = "active-attempt"
     cleared : String <- IO.try(String, DB.Sql.query(db, "DELETE FROM executions WHERE id='" ++ attempt ++ "';DELETE FROM log_generations WHERE attempt='" ++ attempt ++ "';"))
-    inserted : String <- IO.try(String, DB.Sql.query(db, "INSERT INTO executions(session,id,directory,phase,status) VALUES('owner','" ++ attempt ++ "','" ++ dir ++ "/attempt','running','running');INSERT INTO log_generations(session,attempt,log,base) VALUES('owner','" ++ attempt ++ "','" ++ file ++ "','" ++ base_file ++ "');"))
+    inserted : String <- IO.try(String, DB.Sql.query(db, "INSERT INTO executions(session,id,directory,phase,status) VALUES('owner','" ++ attempt ++ "','" ++ dir ++ "/attempt','running','running');INSERT INTO log_generations(session,attempt,log,base) VALUES('owner','" ++ attempt ++ "','" ++ file ++ "','" ++ base_file ++ "');INSERT OR REPLACE INTO log_files(session,log) VALUES('owner','" ++ file ++ "');INSERT OR REPLACE INTO log_files(session,log) VALUES('owner','" ++ base_file ++ "');"))
     +state : S.State <- S.load(db)
     facts : T.Facts <- S.facts_for(T.LogEvidence{}, "", file, state)
     +lease : T.Presence = facts_lease(facts)
@@ -719,9 +714,13 @@ def active_retained_check(+db: String, +root: String) -> IO(Unit):
     absent_state : S.State <- S.load(db)
     absent_facts : T.Facts <- S.facts_for(T.LogEvidence{}, "", file, absent_state)
     +absent_lease : T.Presence = facts_lease(absent_facts)
-    e : Unit <- check("active-retained-absent-table", presence_absent(absent_lease), presence_detail(absent_lease))
+    e : Unit <- check("active-retained-absent-table", String.eq(presence_detail(absent_lease), "retained-log"), presence_detail(absent_lease))
+    receipt_files : Result<&1,&1,U32 & String,List<T.Receipt>> <- L.apply_session_roots(db, "owner", specs)
+    files_applied : Unit <- active_retained_apply(receipt_files, file)
+    kept_files : O.Observation <- O.observe(file)
+    f : Unit <- check("active-retained-log-files", O.observation_is_found(kept_files), "log_files-only retained log removed")
     recreated : String <- IO.try(String, DB.Sql.query(db, "CREATE TABLE IF NOT EXISTS log_generations(session TEXT NOT NULL,attempt TEXT NOT NULL,log TEXT NOT NULL,base TEXT NOT NULL,PRIMARY KEY(session,attempt));"))
-    cleaned : String <- IO.try(String, DB.Sql.query(db, "DELETE FROM executions WHERE id='" ++ attempt ++ "';DELETE FROM log_generations WHERE attempt='" ++ attempt ++ "';"))
+    cleaned : String <- IO.try(String, DB.Sql.query(db, "DELETE FROM executions WHERE id='" ++ attempt ++ "';DELETE FROM log_generations WHERE attempt='" ++ attempt ++ "';DELETE FROM log_files WHERE session='owner' AND log IN ('" ++ file ++ "','" ++ base_file ++ "');"))
     IO.pure(Unit, Unit{})
 
 def malformed_db_check(+db: String, +root: String) -> IO(Unit):

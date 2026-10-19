@@ -393,6 +393,45 @@ law acquired_native_owner_resolves_recorded_attempt:
 def acquired_native_owner_resolves_recorded_attempt(db,session,cmd,model,effort,cwd,log,lock,predecessor,again,updates):
   {==}
 
+def recorded_attempt_before_pending(+db: String, +session: String, cmd: String, model: String, effort: String, cwd: String, log: String, +lock: U32, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    +directory : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce((SELECT directory FROM executions WHERE session=" ++ C.q(session) ++ " AND mode='retained'),'');"))
+    +attempt : String <- IO.pure(String,Tx.trim_nl(directory))
+    recovery : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.recovery_argv(attempt))
+    Receive.acquired_attempt(db,session,cmd,model,effort,cwd,log,lock,attempt,recovery,again)
+
+law native_admission_reads_current_attempt_before_pending_input:
+  for +db: String
+  for +session: String
+  for cmd: String
+  for model: String
+  for effort: String
+  for cwd: String
+  for log: String
+  for +lock: U32
+  for -again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
+  {Receive.acquired_recorded(db,session,cmd,model,effort,cwd,log,lock,again) == recorded_attempt_before_pending(db,session,cmd,model,effort,cwd,log,lock,again) : IO(Result<&1,&1,U32 & String,Unit>)}
+
+def native_admission_reads_current_attempt_before_pending_input(db,session,cmd,model,effort,cwd,log,lock,again):
+  {==}
+
+law surviving_attempt_recovery_preserves_its_guard:
+  for db: String
+  for session: String
+  for cmd: String
+  for model: String
+  for effort: String
+  for cwd: String
+  for log: String
+  for lock: U32
+  for directory: String
+  for args: String
+  for again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)
+  {Receive.acquired_attempt(db,session,cmd,model,effort,cwd,log,lock,directory,Some{args},again) == Receive.recover_owned(db,session,directory,lock,String.split(args,Char.from_u32(0)),again) : IO(Result<&1,&1,U32 & String,Unit>)}
+
+def surviving_attempt_recovery_preserves_its_guard(db,session,cmd,model,effort,cwd,log,lock,directory,args,again):
+  {==}
+
 def completion_prepares_before_owner_release(+db: String, +session: String, +id: String, +log: String, stderr: String, +cursor: String, +handle: U32, lock: Maybe<U32>, +outcome: Turn.Outcome, deliveries: List<Chan(Result<&1,&1,U32 & String,String>)>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     prepared : Unit <- Turn.prepare(db,session,id,log,stderr,outcome)
@@ -551,12 +590,10 @@ def retained_observation_uses_the_reconciled_input_cursor(db,session,id,log,curs
   {==}
 
 def guarded_attempt_observation(+db: String, +session: String, +id: String, cursor: String, cmd: String, model: String, effort: String, +cwd: String, +log: String, harness: String, +directory: String, native: String, +handle: U32, lock: Maybe<U32>, again: Unit -> IO(Result<&1,&1,U32 & String,Unit>), adopted: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
-  Storage.with_writer_leases(Result<&1,&1,U32 & String,Unit>, log, directory,
-    error => IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error}),
-    unit => do IO<Result<&1,&1,U32 & String,Unit>>:
-      reconciled : Unit <- Stop.reconcile(db,session,id,directory)
-      observation : Turn.Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- Turn.retained_output(db,session,id,log,harness,directory,directory,handle,"unknown")
-      Receive.observed_output(db,session,id,log,cursor,native,cwd,directory,handle,lock,observation,again,adopted))
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    reconciled : Unit <- Stop.reconcile(db,session,id,directory)
+    observation : Turn.Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- Turn.retained_output(db,session,id,log,harness,directory,directory,handle,"unknown")
+    Receive.observed_output(db,session,id,log,cursor,native,cwd,directory,handle,lock,observation,again,adopted)
 
 law guarded_observation_preserves_its_adopted_origin:
   for +db: String

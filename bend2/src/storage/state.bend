@@ -181,6 +181,11 @@ def retained_fields(fields: List<String>) -> List<&2,String>:
 def retained_row(line: String) -> List<&2,String>:
   retained_fields(Tx.split_tabs(line))
 
+def log_path_walk(rows: List<String>, acc: List<&2,String>) -> List<&2,String>:
+  match rows:
+    case Nil{}: List.reverse(&2, String, acc)
+    case Con{head, tail}: log_path_walk(tail, Con{decode_field(head), acc})
+
 def retained_walk(rows: List<String>, acc: List<&2,String>) -> List<&2,String>:
   match rows:
     case Nil{}: List.reverse(&2, String, acc)
@@ -224,7 +229,11 @@ def load(+db: String) -> IO(State):
     +database_pair : DatabaseRows = database_entries(db, database_text)
     retained_result : Result<&1,&1,U32 & String,String> <- DB.Sql.read(db, "SELECT CASE WHEN g.log='' THEN '~' ELSE hex(g.log) END,CASE WHEN g.base='' THEN '~' ELSE hex(g.base) END FROM log_generations g JOIN executions e ON e.session=g.session AND e.id=g.attempt WHERE e.phase<>'exited' ORDER BY g.log;")
     +retained_text : String = text_or_empty(retained_result)
-    +retained : List<&2,String> = retained_walk(Tx.split_lines(retained_text), Nil{})
+    +retained_generations : List<&2,String> = retained_walk(Tx.split_lines(retained_text), Nil{})
+    fallback_result : Result<&1,&1,U32 & String,String> <- DB.Sql.read(db, "SELECT CASE WHEN l.log='' THEN '~' ELSE hex(l.log) END FROM log_files l WHERE EXISTS(SELECT 1 FROM executions e WHERE e.session=l.session AND e.phase<>'exited') ORDER BY l.log;")
+    +fallback_text : String = text_or_empty(fallback_result)
+    +retained_files : List<&2,String> = log_path_walk(Tx.split_lines(fallback_text), Nil{})
+    +retained : List<&2,String> = List.append(&2, String, retained_generations, retained_files)
     IO.pure(State, loaded_state(sessions, executions, logs, pending, database_pair, retained))
 
 def path_under(+path: String, +parent: String) -> Bool:
@@ -271,13 +280,20 @@ def log_owners(rows: List<&2,LogRow>, +path: String, acc: List<String>) -> List<
           next = owner_append(String.eq(path, log), session, acc)
           log_owners(tail, path, next)
 
+def owners_equal(+value: String, rows: List<String>) -> Bool:
+  match rows:
+    case Nil{}: True{}
+    case Con{head, tail}: Bool.and(String.eq(value, head), owners_equal(value, tail))
+
+# Several evidence sources naming the same owner still identify that owner;
+# only distinct named owners make the owner unknown.
 def owner_choice_lists(owners: List<String>) -> OwnerChoice:
   match owners:
     case Nil{}: OwnerChoice{"", T.OwnerMissing{}}
-    case Con{+only, Nil{}}:
-      fact : T.Owner = T.OwnerMatches{only}
-      OwnerChoice{only, fact}
-    case other: OwnerChoice{"", T.OwnerUnknown{}}
+    case Con{+only, tail}:
+      Bool.pick(OwnerChoice, owners_equal(only, tail),
+        OwnerChoice{only, T.OwnerMatches{only}},
+        OwnerChoice{"", T.OwnerUnknown{}})
 def owner_choice(+state: State, +path: String) -> OwnerChoice:
   match state:
     case State{sessions, executions, logs, pending, databases, retained, valid}:

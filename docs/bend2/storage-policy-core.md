@@ -157,8 +157,10 @@ protocol stores no timestamp, owner record or age. A configured root name and
 an entry in BATON_STORAGE_EXCLUSIVE_ROOTS are operator declarations, not lease
 proof. A registered retained log recorded in `log_generations` for a
 non-exited execution also preserves that log and its `base` path, including
-ancestor directories, when the lease is not observed. A database without the
-`log_generations` table has no retained-generation reference.
+ancestor directories, when the lease is not observed. A `log_files` row whose
+session has a non-exited execution is the second reference source, so a
+database without the `log_generations` table still preserves its registered
+active logs.
 
 The internal removal primitive checks the approved root identity, opens the
 root and candidate by descriptor, and opens intermediate directories with
@@ -201,7 +203,8 @@ before lease acquisition; a lease-gated policy; an external shared writer that
 refuses apply and preserves its file, followed by a successful apply after the
 writer exits; shared and exclusive lease contention in process; an active
 execution's registered retained log and distinct base path preserved under the
-cleaner exclusion, including a database without `log_generations`; lock
+cleaner exclusion, including the `log_files` fallback when `log_generations` is
+absent; lock
 contention; idempotent replay; and interrupted tree removal. The Python
 integration test drives the real receive and direct entrypoints: a paused
 writer holds the lease across the quiet gap, apply refuses and retains bytes,
