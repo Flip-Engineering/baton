@@ -1362,7 +1362,7 @@ static void br_detach_observer(BrKeeper *keeper) {
 }
 static void br_disconnected(BrKeeper *keeper) {
   br_detach_observer(keeper);
-  if(!keeper->finishing && keeper->native_pid) br_recover(keeper);
+  if(!keeper->finishing && keeper->native_pid && !keeper->exited) br_recover(keeper);
 }
 static int br_record_native_exit(BrKeeper *keeper) {
   if(!keeper->native_waiting || !keeper->native_pid)return 0;

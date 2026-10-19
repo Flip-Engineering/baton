@@ -213,6 +213,23 @@ class RetainedControl(unittest.TestCase):
         self.assertEqual(self.run_control('lock-try', self.db).stdout, 'acquired\n')
         self.assertFalse((self.attempt / 'recovery-started').exists())
 
+    def test_disconnected_recovery_stops_after_native_exit(self):
+        source = ROOT / 'bend2/test/process-disconnected-recovery.c'
+        probe = self.home / 'process-disconnected-recovery'
+        compiled = subprocess.run([
+            os.environ.get('CC', 'clang'), '-O1', '-pthread',
+            '-DBATON2_PROCESS_SOURCE=' + json.dumps(str(EXE.with_suffix('.c'))),
+            str(source), '-lsqlite3', '-lm', '-o', str(probe),
+        ], capture_output=True, text=True)
+        self.assertEqual(compiled.returncode, 0, compiled.stderr)
+        result = subprocess.run([str(probe)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout), {
+            'liveDisconnectedRecoveredOnce': True,
+            'exitedDisconnectDidNotRecover': True,
+            'terminalStatusPreserved': True,
+        })
+
     def test_observer_and_control_writes_preserve_complete_frames(self):
         initial, first = self.payload('observer', 40000)
         observer, stream, native = self.start(initial)
