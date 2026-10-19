@@ -4,7 +4,7 @@ The fixture compiles the verbatim BatonSql row callback, busy handler and the
 marked read-cache section of bend2/src/host/sqlite.c. It exercises two helper
 threads, path switching, file replacement, committed-write visibility,
 autocommit rollback, busy handling, fork reset, UTF-8 refusal and thread-exit
-cleanup, then measures database reads for fresh and reused read calls against
+cleanup, then measures process rchar for fresh and reused read calls against
 a small replay-shaped database and a 158-byte spool.
 """
 import os
@@ -110,29 +110,29 @@ class SqliteReadReuse(unittest.TestCase):
                       'lifecycle'):
             self.assertIn('ok ' + label, result.stdout)
 
-    def test_reused_read_reduces_database_bytes(self):
-        result = self.run_mode('bytes')
-        if result.returncode == 2 and 'bytes unavailable' in result.stdout:
+    def test_reused_read_reduces_process_rchar(self):
+        result = self.run_mode('rchar')
+        if result.returncode == 2 and 'rchar unavailable' in result.stdout:
             self.skipTest('/proc/self/io is unavailable')
         self.assertEqual(result.returncode, 0,
                          result.stdout + result.stderr)
         match = re.search(
-            r'bytes fresh=(\d+) reused=(\d+) reads=(\d+) spool=(\d+) '
+            r'rchar fresh=(\d+) reused=(\d+) reads=(\d+) spool=(\d+) '
             r'fresh_ratio=([0-9.]+) reused_ratio=([0-9.]+)',
             result.stdout)
         self.assertIsNotNone(match, result.stdout)
-        fresh, reused = int(match.group(1)), int(match.group(2))
+        fresh_rchar, reused_rchar = int(match.group(1)), int(match.group(2))
         reads, spool = int(match.group(3)), int(match.group(4))
         fresh_ratio, reused_ratio = float(match.group(5)), float(match.group(6))
         self.assertEqual(reads, 20)
         self.assertEqual(spool, 158)
-        self.assertGreater(fresh, 0)
-        self.assertGreater(reused, 0)
-        self.assertLess(reused, fresh)
+        self.assertGreater(fresh_rchar, 0)
+        self.assertGreater(reused_rchar, 0)
+        self.assertLess(reused_rchar, fresh_rchar)
         self.assertLess(reused_ratio, fresh_ratio)
-        self.assertLess(reused * 2, fresh)
-        self.assertEqual(round(fresh / spool, 3), fresh_ratio)
-        self.assertEqual(round(reused / spool, 3), reused_ratio)
+        self.assertLess(reused_rchar * 2, fresh_rchar)
+        self.assertEqual(round(fresh_rchar / spool, 3), fresh_ratio)
+        self.assertEqual(round(reused_rchar / spool, 3), reused_ratio)
 
 
 if __name__ == '__main__':

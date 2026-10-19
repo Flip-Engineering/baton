@@ -480,7 +480,7 @@ static int mode_lifecycle(const char *work) {
   return 0;
 }
 
-static int mode_bytes(const char *work) {
+static int mode_rchar(const char *work) {
   char database[4096], spool[4096];
   if (make_path(database, sizeof(database), work, "replay.db") ||
       make_path(spool, sizeof(spool), work, "stdout.spool")) return 1;
@@ -491,14 +491,14 @@ static int mode_bytes(const char *work) {
   baton_sql_read_test_forget();
   long long before = rchar_bytes();
   if (before < 0) {
-    printf("bytes unavailable\n");
+    printf("rchar unavailable\n");
     return 2;
   }
   for (int i = 0; i < reads; i++) {
     baton_sql_read_test_forget();
     if (baton_sql_read_test_run(database, sql, &result) != 0 ||
         result.code != SQLITE_OK) {
-      fprintf(stderr, "fail bytes fresh: code=%d\n", result.code);
+      fprintf(stderr, "fail rchar fresh: code=%d\n", result.code);
       return 1;
     }
     free(result.output);
@@ -510,7 +510,7 @@ static int mode_bytes(const char *work) {
   for (int i = 0; i < reads; i++) {
     if (baton_sql_read_test_run(database, sql, &result) != 0 ||
         result.code != SQLITE_OK) {
-      fprintf(stderr, "fail bytes reused: code=%d\n", result.code);
+      fprintf(stderr, "fail rchar reused: code=%d\n", result.code);
       return 1;
     }
     free(result.output);
@@ -519,7 +519,7 @@ static int mode_bytes(const char *work) {
   long long reused = rchar_bytes() - before;
   baton_sql_read_test_forget();
   long long spool_bytes = 158;
-  printf("bytes fresh=%lld reused=%lld reads=%d spool=%lld fresh_ratio=%.3f reused_ratio=%.3f\n",
+  printf("rchar fresh=%lld reused=%lld reads=%d spool=%lld fresh_ratio=%.3f reused_ratio=%.3f\n",
          fresh, reused, reads, spool_bytes, (double)fresh / (double)spool_bytes,
          (double)reused / (double)spool_bytes);
   return 0;
@@ -527,11 +527,11 @@ static int mode_bytes(const char *work) {
 
 int main(int argc, char **argv) {
   if (argc < 3) {
-    fprintf(stderr, "usage: lifecycle|bytes WORKDIR\n");
+    fprintf(stderr, "usage: lifecycle|rchar WORKDIR\n");
     return 2;
   }
   if (strcmp(argv[1], "lifecycle") == 0) return mode_lifecycle(argv[2]);
-  if (strcmp(argv[1], "bytes") == 0) return mode_bytes(argv[2]);
+  if (strcmp(argv[1], "rchar") == 0) return mode_rchar(argv[2]);
   fprintf(stderr, "unknown mode: %s\n", argv[1]);
   return 2;
 }
