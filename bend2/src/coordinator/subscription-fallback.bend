@@ -86,10 +86,12 @@ def first_selected(profiles: List<&2,Profile>) -> Maybe<&2,Profile>:
 def first_profile(profiles: List<&2,Profile>, harness: String) -> Maybe<&2,Profile>:
   first_selected(profiles_for(profiles,harness))
 
-# The credential-store variable each harness reads. A harness without one gets no
-# binding, so an unknown harness adds nothing to the spawn environment.
+# The credential-store variable each harness reads. OMP binds its supported
+# agent directory through PI_CODING_AGENT_DIR and Muse binds the XDG config
+# root through XDG_CONFIG_HOME; HOME is unchanged. A harness without a variable
+# gets no binding, so an unknown harness adds nothing to the spawn environment.
 def store_variable(+harness: String) -> Maybe<String>:
-  Bool.pick(Maybe<String>,String.eq(harness,"codex"),Some{"CODEX_HOME"},Bool.pick(Maybe<String>,Bool.or(String.eq(harness,"claude-code"),String.eq(harness,"claude")),Some{"CLAUDE_CONFIG_DIR"},None{}))
+  Bool.pick(Maybe<String>,String.eq(harness,"codex"),Some{"CODEX_HOME"},Bool.pick(Maybe<String>,Bool.or(String.eq(harness,"claude-code"),String.eq(harness,"claude")),Some{"CLAUDE_CONFIG_DIR"},Bool.pick(Maybe<String>,String.eq(harness,"omp"),Some{"PI_CODING_AGENT_DIR"},Bool.pick(Maybe<String>,String.eq(harness,"muse"),Some{"XDG_CONFIG_HOME"},None{}))))
 
 def binding_for(variable: Maybe<String>, store: String) -> List<String>:
   match variable:
@@ -100,6 +102,13 @@ def binding_for(variable: Maybe<String>, store: String) -> List<String>:
 # path with spaces stays a single argument and needs no shell quoting.
 def store_binding(harness: String, store: String) -> List<String>:
   binding_for(store_variable(harness),store)
+
+# The native history helper handles the Codex and Claude provider stores. OMP
+# and Muse provider history is not handled by that helper, so an OMP or Muse
+# profile advance records the selection and continues without a prepared
+# history home. Their store bindings remain launch bindings.
+def history_store_variable(+harness: String) -> Maybe<String>:
+  Bool.pick(Maybe<String>,Bool.or(String.eq(harness,"omp"),String.eq(harness,"muse")),None{},store_variable(harness))
 
 # The profile after the one that refused, in operator order, or none when the
 # operator listed no further profile for that harness. Order is the file's own order;
@@ -532,7 +541,7 @@ def prepare_history(+db: String, +session: String, +id: String, +harness: String
       +path : String <- history_path(db,session)
       recorded : String <- file_text(path)
       previous : String <- IO.pure(String,Bool.pick(String,String.is_empty(from_store),"",last_line(Tx.split_lines(recorded))))
-      prepare_history_variable(db,session,id,harness,from_store,cmd,cwd,native,profile,store_variable(harness),previous)
+      prepare_history_variable(db,session,id,harness,from_store,cmd,cwd,native,profile,history_store_variable(harness),previous)
 
 # Each account advance records its provider cause under a separate report ID.
 def record_handoff(db: String, session: String, id: String, harness: String, from_label: String, +profile: Profile, cause: String) -> IO(Bool):
