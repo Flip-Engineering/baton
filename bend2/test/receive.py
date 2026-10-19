@@ -1029,6 +1029,41 @@ class Receive(unittest.TestCase):
         self.assertEqual(report1['nativeInputStatus']['read'], 'recorded')
         self.assertEqual(report1['nativeInputStatus']['handled'], 'recorded')
 
+    def test_large_pending_guidance_is_referenced_not_expanded(self):
+        config_path = self.directory / 'fixture.json'
+        config = json.loads(config_path.read_text())
+        config['ack_root'] = False
+        config_path.write_text(json.dumps(config))
+        self.coord('connect', 'root', 'native-root',
+                   json.dumps([str(self.fixture), 'parent_endpoint']))
+        self.player()
+        self.prepare_input('task-836-guidance', 'parent', 'Complete the assignment.', kind='task')
+        body = 'G' * 200_000
+        with sqlite3.connect(self.db) as database:
+            for index in range(12):
+                database.execute(
+                    'INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)',
+                    (f'guidance-{index}', 'root', 'parent', 'guidance',
+                     body + f' marker-{index}'))
+        self.connect('parent')
+        observer = self.spawn(*self.receive_args('parent'))
+        native, started = self.accept('parent')
+        prompt = started['prompt']
+        self.assertIn('[id: task-836-guidance]', prompt)
+        self.assertIn('Complete the assignment.', prompt)
+        for index in range(12):
+            self.assertIn(f'[id: guidance-{index}]', prompt)
+            self.assertIn(f'baton read guidance-{index}', prompt)
+        self.assertNotIn('marker-0', prompt)
+        self.assertNotIn('G' * 1000, prompt)
+        self.assertLess(len(prompt), 100_000,
+                        'pending guidance bodies were expanded into the prompt')
+        self.action(native, exit_fixture=True)
+        self.finish(observer, ok=False)
+        pending = [row['id'] for row in self.coord('inbox', 'parent')]
+        self.assertIn('guidance-0', pending)
+        self.assertEqual(self.coord('delivery', 'guidance-0')['body'], body + ' marker-0')
+
     def test_completed_attempt_acknowledged_while_continuation_live(self):
         self.player()
         self.prepare_input('first', 'parent', 'Complete the original input.', kind='task')
