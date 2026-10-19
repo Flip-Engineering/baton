@@ -84,6 +84,127 @@ def decimal_tail(+text: String, +seen_dot: Bool, +seen_digit: Bool) -> Bool:
 def decimal_text(+text: String) -> Bool:
   decimal_tail(text,False{},False{})
 
+# --- exact decimal arithmetic ------------------------------------------------
+# Amounts stay decimal text end to end. Comparison, addition and subtraction
+# scale both operands to integer digit strings at the wider fractional width,
+# so no amount passes through a float and authored precision is preserved.
+
+def digits_clean_tail(+text: String) -> String:
+  match text:
+    case SNil{}: "0"
+    case SCon{head,tail}: Bool.pick(String,Bool.and(U32.is_eq(Char.to_u32(head),48),Bool.not(String.is_empty(tail))),digits_clean_tail(tail),text)
+
+def digits_clean(+text: String) -> String:
+  Bool.pick(String,String.is_empty(text),"0",digits_clean_tail(text))
+
+def decimal_int_of(parts: List<&2,String>) -> String:
+  match parts:
+    case head <> rest: head
+    case Nil{}: ""
+
+def decimal_int_part(+text: String) -> String:
+  decimal_int_of(String.split(text,Char.from_u32(46)))
+
+def decimal_frac_of(parts: List<&2,String>) -> String:
+  match parts:
+    case head <> frac <> rest: frac
+    case other: ""
+
+def decimal_frac_part(+text: String) -> String:
+  decimal_frac_of(String.split(text,Char.from_u32(46)))
+
+def frac_padded(+frac: String, +other: String) -> String:
+  match frac other:
+    case SNil{} SNil{}: ""
+    case SNil{} SCon{ohead,otail}: SCon{Char.from_u32(48),frac_padded("",otail)}
+    case SCon{head,tail} SNil{}: frac
+    case SCon{head,tail} SCon{ohead,otail}: SCon{head,frac_padded(tail,otail)}
+
+def decimal_scaled(+text: String, +other: String) -> String:
+  digits_clean(digits_clean(decimal_int_part(text)) ++ frac_padded(decimal_frac_part(text),decimal_frac_part(other)))
+
+def digits_is_gt(+a: String, +b: String) -> Bool:
+  Bool.pick(Bool,Nat.is_eq(String.length(a),String.length(b)),String.is_gt(a,b),Nat.is_lt(String.length(b),String.length(a)))
+
+def decimal_is_gt(+a: String, +b: String) -> Bool:
+  digits_is_gt(decimal_scaled(a,b),decimal_scaled(b,a))
+
+def decimal_lte(+a: String, +b: String) -> Bool:
+  Bool.not(decimal_is_gt(a,b))
+
+def decimal_is_zero_tail(+text: String) -> Bool:
+  match text:
+    case SNil{}: True{}
+    case SCon{head,tail}: Bool.and(Bool.or(U32.is_eq(Char.to_u32(head),48),U32.is_eq(Char.to_u32(head),46)),decimal_is_zero_tail(tail))
+
+def decimal_is_zero(+text: String) -> Bool:
+  Bool.and(decimal_text(text),decimal_is_zero_tail(text))
+
+def digit_value(+head: Char) -> U32:
+  U32.sub(Char.to_u32(head),48)
+
+def digits_add_rev(+a: String, +b: String, +carry: U32) -> String:
+  match a b:
+    case SNil{} SNil{}: Bool.pick(String,U32.is_eq(carry,1),"1","")
+    case SNil{} SCon{bhead,btail}: SCon{Char.from_u32(U32.add(48,U32.mod(U32.add(digit_value(bhead),carry),10))),digits_add_rev("",btail,U32.div(U32.add(digit_value(bhead),carry),10))}
+    case SCon{ahead,atail} SNil{}: SCon{Char.from_u32(U32.add(48,U32.mod(U32.add(digit_value(ahead),carry),10))),digits_add_rev(atail,"",U32.div(U32.add(digit_value(ahead),carry),10))}
+    case SCon{ahead,atail} SCon{bhead,btail}: SCon{Char.from_u32(U32.add(48,U32.mod(U32.add(U32.add(digit_value(ahead),digit_value(bhead)),carry),10))),digits_add_rev(atail,btail,U32.div(U32.add(U32.add(digit_value(ahead),digit_value(bhead)),carry),10))}
+
+def digits_add(+a: String, +b: String) -> String:
+  digits_clean(String.reverse(digits_add_rev(String.reverse(digits_clean(a)),String.reverse(digits_clean(b)),0)))
+
+def digits_sub_rev(+a: String, +b: String, +borrow: U32) -> String:
+  match a b:
+    case SNil{} SNil{}: ""
+    case SNil{} SCon{bhead,btail}: ""
+    case SCon{ahead,atail} SNil{}: Bool.pick(String,U32.is_lt(digit_value(ahead),borrow),SCon{Char.from_u32(U32.add(48,U32.sub(U32.add(digit_value(ahead),10),borrow))),digits_sub_rev(atail,"",1)},SCon{Char.from_u32(U32.add(48,U32.sub(digit_value(ahead),borrow))),digits_sub_rev(atail,"",0)})
+    case SCon{ahead,atail} SCon{bhead,btail}: Bool.pick(String,U32.is_lt(digit_value(ahead),U32.add(digit_value(bhead),borrow)),SCon{Char.from_u32(U32.add(48,U32.sub(U32.add(digit_value(ahead),10),U32.add(digit_value(bhead),borrow)))),digits_sub_rev(atail,btail,1)},SCon{Char.from_u32(U32.add(48,U32.sub(digit_value(ahead),U32.add(digit_value(bhead),borrow)))),digits_sub_rev(atail,btail,0)})
+
+def digits_sub(+a: String, +b: String) -> String:
+  digits_clean(String.reverse(digits_sub_rev(String.reverse(digits_clean(a)),String.reverse(digits_clean(b)),0)))
+
+def take_like(+text: String, +like: String) -> String:
+  match text like:
+    case SNil{} SNil{}: ""
+    case SNil{} SCon{lhead,ltail}: ""
+    case SCon{head,tail} SNil{}: ""
+    case SCon{head,tail} SCon{lhead,ltail}: SCon{head,take_like(tail,ltail)}
+
+def drop_like(+text: String, +like: String) -> String:
+  match text like:
+    case SNil{} SNil{}: ""
+    case SNil{} SCon{lhead,ltail}: ""
+    case SCon{head,tail} SNil{}: text
+    case SCon{head,tail} SCon{lhead,ltail}: drop_like(tail,ltail)
+
+def zeros_like(+like: String) -> String:
+  match like:
+    case SNil{}: ""
+    case SCon{head,tail}: SCon{Char.from_u32(48),zeros_like(tail)}
+
+def frac_trimmed_go(+reversed: String) -> String:
+  match reversed:
+    case SNil{}: ""
+    case SCon{head,tail}: Bool.pick(String,U32.is_eq(Char.to_u32(head),48),frac_trimmed_go(tail),String.reverse(reversed))
+
+def frac_trimmed(+frac: String) -> String:
+  frac_trimmed_go(String.reverse(frac))
+
+def decimal_join_parts(+rev_int: String, +frac: String) -> String:
+  Bool.pick(String,String.is_empty(frac),digits_clean(String.reverse(rev_int)),digits_clean(String.reverse(rev_int)) ++ "." ++ frac)
+
+def decimal_join_scaled(+scaled: String, +frac_like: String) -> String:
+  decimal_join_parts(drop_like(String.reverse(scaled),frac_like),frac_trimmed(zeros_like(drop_like(frac_like,String.reverse(take_like(String.reverse(scaled),frac_like)))) ++ String.reverse(take_like(String.reverse(scaled),frac_like))))
+
+def decimal_from_scaled(+scaled: String, +frac_like: String) -> String:
+  Bool.pick(String,String.is_empty(frac_like),digits_clean(scaled),decimal_join_scaled(digits_clean(scaled),frac_like))
+
+def decimal_add(+a: String, +b: String) -> String:
+  decimal_from_scaled(digits_add(decimal_scaled(a,b),decimal_scaled(b,a)),frac_padded(decimal_frac_part(a),decimal_frac_part(b)))
+
+def decimal_sub(+a: String, +b: String) -> String:
+  decimal_from_scaled(digits_sub(decimal_scaled(a,b),decimal_scaled(b,a)),frac_padded(decimal_frac_part(a),decimal_frac_part(b)))
+
 def funding_known(+funding: String) -> Bool:
   Bool.or(String.eq(funding,"subscription"),String.eq(funding,"api_key"))
 
@@ -206,6 +327,98 @@ def credit_api_key_refusal(account: AccountRecord) -> String:
       match funding:
         case "api_key": Bool.pick(String,Bool.and(String.eq(provider,"anthropic"),String.eq(harness,"claude-code")),"Anthropic API-key launches are held because request-level promotional-credit admission is unavailable; the attempt was not started and its input stays owed.","This API-key launch has no installed resolver beside the resolved identity helper; the attempt was not started and its input stays owed.")
         case other: "The selected account has no available launch binding; the attempt was not started and its input stays owed."
+
+# --- request-level credit metering and admission -----------------------------
+# A meter reading is the newest reported promotional-credit observation for one
+# verified organization, stated beside the two clocks that bound it: the plan
+# billing cycle that refreshes the credit and the calendar-month period that
+# resets the organization spend cap. Reserved is the sum of maximum charges
+# already admitted and not yet settled for that organization and cycle.
+type CreditMeter is Data:
+  CMeter{organization: String, state: String, cycle: String, balance: String, unit: String, monthly_cap: String, cap_period: String, cycle_spent: String, reserved: String}
+
+type CreditAdmission is Data:
+  CAdmitted{organization: String, cycle: String, reserved_total: String, balance_after_reserve: String, cap_after_reserve: String}
+  CRefused{reason: String}
+
+def meter_organization(meter: CreditMeter) -> String:
+  match meter:
+    case CMeter{organization,state,cycle,balance,unit,monthly_cap,cap_period,cycle_spent,reserved}: organization
+
+def meter_state(meter: CreditMeter) -> String:
+  match meter:
+    case CMeter{organization,state,cycle,balance,unit,monthly_cap,cap_period,cycle_spent,reserved}: state
+
+def meter_cycle(meter: CreditMeter) -> String:
+  match meter:
+    case CMeter{organization,state,cycle,balance,unit,monthly_cap,cap_period,cycle_spent,reserved}: cycle
+
+def meter_balance(meter: CreditMeter) -> String:
+  match meter:
+    case CMeter{organization,state,cycle,balance,unit,monthly_cap,cap_period,cycle_spent,reserved}: balance
+
+def meter_unit(meter: CreditMeter) -> String:
+  match meter:
+    case CMeter{organization,state,cycle,balance,unit,monthly_cap,cap_period,cycle_spent,reserved}: unit
+
+def meter_monthly_cap(meter: CreditMeter) -> String:
+  match meter:
+    case CMeter{organization,state,cycle,balance,unit,monthly_cap,cap_period,cycle_spent,reserved}: monthly_cap
+
+def meter_cap_period(meter: CreditMeter) -> String:
+  match meter:
+    case CMeter{organization,state,cycle,balance,unit,monthly_cap,cap_period,cycle_spent,reserved}: cap_period
+
+def meter_cycle_spent(meter: CreditMeter) -> String:
+  match meter:
+    case CMeter{organization,state,cycle,balance,unit,monthly_cap,cap_period,cycle_spent,reserved}: cycle_spent
+
+def meter_reserved(meter: CreditMeter) -> String:
+  match meter:
+    case CMeter{organization,state,cycle,balance,unit,monthly_cap,cap_period,cycle_spent,reserved}: reserved
+
+def credit_admission_admitted(admission: CreditAdmission) -> Bool:
+  match admission:
+    case CAdmitted{organization,cycle,reserved_total,balance_after_reserve,cap_after_reserve}: True{}
+    case CRefused{reason}: False{}
+
+def credit_admission_reason(admission: CreditAdmission) -> String:
+  match admission:
+    case CAdmitted{organization,cycle,reserved_total,balance_after_reserve,cap_after_reserve}: ""
+    case CRefused{reason}: reason
+
+def credit_admission_reserved_total(admission: CreditAdmission) -> String:
+  match admission:
+    case CAdmitted{organization,cycle,reserved_total,balance_after_reserve,cap_after_reserve}: reserved_total
+    case CRefused{reason}: ""
+
+def credit_admission_balance_after(admission: CreditAdmission) -> String:
+  match admission:
+    case CAdmitted{organization,cycle,reserved_total,balance_after_reserve,cap_after_reserve}: balance_after_reserve
+    case CRefused{reason}: ""
+
+def credit_admission_cap_after(admission: CreditAdmission) -> String:
+  match admission:
+    case CAdmitted{organization,cycle,reserved_total,balance_after_reserve,cap_after_reserve}: cap_after_reserve
+    case CRefused{reason}: ""
+
+# Fail-closed admission for one provider request. Every fact must be present
+# and current for its own clock before the bounded charge is reserved against
+# both the promotional balance and the monthly cap. An admitted result carries
+# the reservation totals the caller records; it does not start a request. The
+# launch hold stays in account_binding until a caller wires this decision into
+# the request path and that wiring is qualified.
+def credit_request_admission(+account: AccountRecord, +meter: CreditMeter, +current_cycle: String, +current_cap_period: String, +max_charge: String) -> CreditAdmission:
+  Bool.pick(CreditAdmission,Bool.not(Bool.and(String.eq(account_provider(account),"anthropic"),Bool.and(String.eq(account_harness(account),"claude-code"),String.eq(account_funding(account),"api_key")))),CRefused{"notPromotionalCreditRoute"},
+  Bool.pick(CreditAdmission,Bool.or(String.is_empty(account_organization(account)),Bool.not(String.eq(account_organization(account),meter_organization(meter)))),CRefused{"organizationUnverified"},
+  Bool.pick(CreditAdmission,Bool.not(String.eq(meter_state(meter),"reported")),CRefused{"creditObservationUnavailable"},
+  Bool.pick(CreditAdmission,Bool.or(String.is_empty(meter_cycle(meter)),Bool.not(String.eq(meter_cycle(meter),current_cycle))),CRefused{"creditCycleMismatch"},
+  Bool.pick(CreditAdmission,Bool.or(String.is_empty(meter_cap_period(meter)),Bool.not(String.eq(meter_cap_period(meter),current_cap_period))),CRefused{"monthlyCapPeriodMismatch"},
+  Bool.pick(CreditAdmission,Bool.not(Bool.and(decimal_text(meter_balance(meter)),Bool.and(decimal_text(meter_monthly_cap(meter)),Bool.and(decimal_text(meter_cycle_spent(meter)),Bool.and(decimal_text(meter_reserved(meter)),Bool.and(decimal_text(max_charge),Bool.not(String.is_empty(meter_unit(meter))))))))),CRefused{"creditAmountMalformed"},
+  Bool.pick(CreditAdmission,decimal_is_zero(max_charge),CRefused{"requestChargeUnbounded"},
+  Bool.pick(CreditAdmission,decimal_is_gt(decimal_add(meter_reserved(meter),max_charge),meter_balance(meter)),CRefused{"promotionalCreditInsufficient"},
+  Bool.pick(CreditAdmission,decimal_is_gt(decimal_add(decimal_add(meter_cycle_spent(meter),meter_reserved(meter)),max_charge),meter_monthly_cap(meter)),CRefused{"monthlyCapInsufficient"},
+  CAdmitted{meter_organization(meter),meter_cycle(meter),decimal_add(meter_reserved(meter),max_charge),decimal_sub(meter_balance(meter),decimal_add(meter_reserved(meter),max_charge)),decimal_sub(meter_monthly_cap(meter),decimal_add(decimal_add(meter_cycle_spent(meter),meter_reserved(meter)),max_charge))})))))))))
 
 def launch_binding(+harness: String, +funding: String, +secret_ref: String, helper: Maybe<String>) -> Maybe<List<String>>:
   Bool.pick(Maybe<List<String>>,Bool.and(String.eq(funding,"api_key"),Bool.not(String.eq(harness,"claude-code"))),None{},Bool.pick(Maybe<List<String>>,String.eq(funding,"api_key"),api_key_binding(secret_ref,helper),Some{Subs.store_binding(harness,secret_ref)}))
