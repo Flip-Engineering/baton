@@ -91,8 +91,7 @@ static char *dispatch_runtime(void) {
   char *slash=directory?strrchr(directory,'/'):NULL;
   if(slash) {
     *slash=0;
-    const char *suffixes[]={"/node","/../libexec/baton2/repl/bun",
-      "/../libexec/baton2/node",NULL};
+    const char *suffixes[]={"/node","/../libexec/baton2/repl/bun",NULL};
     for(size_t i=0;suffixes[i];i++) {
       size_t size=strlen(directory)+strlen(suffixes[i])+1;
       char *candidate=malloc(size);
