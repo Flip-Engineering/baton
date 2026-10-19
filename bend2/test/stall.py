@@ -77,6 +77,7 @@ class Stall(unittest.TestCase):
         self.session('stopped', 'exited', self.endpoint('stopped'))
         self.session('blocked', 'exited', '')
         self.session('claimed', 'exited', self.endpoint('claimed'))
+        self.session('never', '', self.endpoint('never'))
         self.rows("INSERT INTO session_stops(session,id,reason,attempt,directory,outcome) VALUES(?,?,?,?,?,?)",
                   ('stopped', 'stop-stopped', 'operator stop', '', '', 'stopped'))
         self.rows("INSERT OR REPLACE INTO wake_claims(session,state,owner,generation) VALUES(?,?,?,?)",
@@ -95,12 +96,23 @@ class Stall(unittest.TestCase):
         rows = {row['id']: row for row in report['candidates']}
         self.assertEqual({name: row['state'] for name, row in rows.items()},
                          {'active': 'active', 'exited': 'stalled', 'stopped': 'stopped',
-                          'blocked': 'blocked', 'claimed': 'claimed'})
+                          'blocked': 'blocked', 'claimed': 'claimed', 'never': 'blocked'})
         self.assertEqual(rows['exited']['owedMessage'], 'owed-exited')
         self.assertEqual(rows['exited']['attempt']['phase'], 'exited')
         self.assertEqual(rows['stopped']['stopped'], 1)
         self.assertEqual(rows['blocked']['endpointPresent'], 0)
         self.assertEqual(rows['claimed']['claim'], 'claimed')
+        self.assertEqual(rows['never']['state'], 'blocked')
+        self.assertEqual(rows['never']['attempt'], {'id': '', 'phase': ''})
+        self.assertEqual(rows['never']['pending'], 1)
+        self.assertEqual(rows['never']['endpointPresent'], 1)
+
+    def test_report_includes_a_never_started_candidate(self):
+        report = self.coord('stall')
+        row = next(row for row in report['candidates'] if row['id'] == 'never')
+        self.assertEqual(row['state'], 'blocked')
+        self.assertEqual(row['attempt'], {'id': '', 'phase': ''})
+        self.assertEqual(row['owedMessage'], 'owed-never')
 
     def test_report_without_the_claim_table(self):
         self.rows('DROP TABLE wake_claims')
@@ -117,10 +129,11 @@ class Stall(unittest.TestCase):
         self.assertNotIn('blocked', claims)
         self.assertNotIn('stopped', claims)
         self.assertEqual(claims.get('claimed'), 'claimed')
+        self.assertNotIn('never', claims)
         self.assertTrue(self.wait_for(self.directory / 'exited.marker'),
                         'the stalled candidate was not delivered')
         time.sleep(0.5)
-        for name in ('active', 'stopped', 'blocked', 'claimed'):
+        for name in ('active', 'stopped', 'blocked', 'claimed', 'never'):
             self.assertFalse((self.directory / (name + '.marker')).exists(),
                              f'{name} candidate was driven')
         self.assertEqual(len(self.rows('SELECT 1 FROM session_stops WHERE session=?', ('stopped',))), 1)

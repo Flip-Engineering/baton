@@ -2,8 +2,8 @@
 """Build and check the focused stall evidence fixture.
 
 The schema is created by the stall evidence entry (`stall-evidence DB init`).
-This fixture inserts the five recorded states used by the focused report and
-wake checks, then verifies the report and wake observations.
+This fixture inserts the recorded states used by the focused report and wake
+checks, then verifies the report and wake observations.
 """
 import json
 import pathlib
@@ -33,15 +33,17 @@ def build(database_path):
             ('exited', 'exited', endpoint_json),
             ('stopped', 'exited', endpoint_json),
             ('blocked', 'exited', ''),
-            ('claimed', 'exited', endpoint_json)):
+            ('claimed', 'exited', endpoint_json),
+            ('never', '', endpoint_json)):
         database.execute(
             'INSERT INTO sessions(id,parent,harness,model,effort,native,endpoint) '
             'VALUES(?,?,?,?,?,?,?)',
             (name, 'root', 'omp', 'fixture', 'low', 'native-' + name, endpoint_value))
-        database.execute(
-            'INSERT INTO executions(session,id,mode,directory,phase,status) '
-            'VALUES(?,?,?,?,?,?)',
-            (name, 'attempt-' + name, 'retained', '', phase, 'exit 0'))
+        if phase:
+            database.execute(
+                'INSERT INTO executions(session,id,mode,directory,phase,status) '
+                'VALUES(?,?,?,?,?,?)',
+                (name, 'attempt-' + name, 'retained', '', phase, 'exit 0'))
         database.execute(
             'INSERT INTO messages(id,sender,recipient,kind,body) VALUES(?,?,?,?,?)',
             ('owed-' + name, 'root', name, 'task', 'Owed work for ' + name))
@@ -62,7 +64,7 @@ def check_report(path):
     report = json.loads(pathlib.Path(path).read_text())
     rows = {row['id']: row['state'] for row in report['candidates']}
     expected = {'active': 'active', 'exited': 'stalled', 'stopped': 'stopped',
-                'blocked': 'blocked', 'claimed': 'claimed'}
+                'blocked': 'blocked', 'claimed': 'claimed', 'never': 'blocked'}
     observed = [f'CASE report-{name}: {rows.get(name, "missing")}'
                 for name in sorted(expected)]
     expected_lines = [f'CASE report-{name}: {expected[name]}'
@@ -78,7 +80,8 @@ def check_wake(database_path, marker_path):
     lines = marker.read_text().splitlines() if marker.exists() else []
     delivered = [line for line in lines if 'owed-exited' in line]
     others = [line for line in lines
-              if any('owed-' + name in line for name in ('active', 'stopped', 'blocked', 'claimed'))]
+              if any('owed-' + name in line
+                     for name in ('active', 'stopped', 'blocked', 'claimed', 'never'))]
     database = sqlite3.connect(database_path)
     claims = dict(database.execute('SELECT session,state FROM wake_claims'))
     stopped = database.execute(
@@ -90,6 +93,7 @@ def check_wake(database_path, marker_path):
         'CASE wake-exited-claim: ' + claims.get('exited', 'missing'),
         'CASE wake-active-claim: ' + claims.get('active', 'missing'),
         'CASE wake-blocked-claim: ' + claims.get('blocked', 'missing'),
+        'CASE wake-never-claim: ' + claims.get('never', 'missing'),
         'CASE wake-stopped-claim: ' + claims.get('stopped', 'missing'),
         'CASE wake-claimed-claim: ' + claims.get('claimed', 'missing'),
         'CASE wake-stopped-preserved: ' + str(stopped),
@@ -100,6 +104,7 @@ def check_wake(database_path, marker_path):
         'CASE wake-exited-claim: claimed',
         'CASE wake-active-claim: missing',
         'CASE wake-blocked-claim: missing',
+        'CASE wake-never-claim: missing',
         'CASE wake-stopped-claim: missing',
         'CASE wake-claimed-claim: claimed',
         'CASE wake-stopped-preserved: 1',

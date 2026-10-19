@@ -24,11 +24,14 @@ def blocked_row() -> String:
 def claimed_row() -> String:
   "worker\t18\tattempt-1\texited\t1\tm7\t0\tclaimed\tclaimed"
 
+def never_row() -> String:
+  "worker\t18\t\t\t1\tm7\t0\t\tblocked"
+
 def two_rows() -> List<String>:
   Con{"", Con{row(), Con{"", Con{row(), Nil{}}}}}
 
 law the_row_query_selects_pending_candidates_and_classifies_them:
-  {Stall.stalled_rows_sql(True{}) == "SELECT s.id||char(9)||CAST((SELECT count(*) FROM messages m WHERE m.recipient=s.id AND m.receipt IS NULL) AS TEXT)||char(9)||coalesce(e.id,'')||char(9)||coalesce(e.phase,'')||char(9)||CAST(CASE WHEN json_valid(s.endpoint) THEN json_type(s.endpoint)='array' AND json_array_length(s.endpoint)>0 ELSE 0 END AS TEXT)||char(9)||coalesce((SELECT m.id FROM messages m WHERE m.recipient=s.id AND m.receipt IS NULL ORDER BY m.seq LIMIT 1),'')||char(9)||CAST(EXISTS(SELECT 1 FROM session_stops WHERE session=s.id) AS TEXT)||char(9)||coalesce((SELECT state FROM wake_claims WHERE session=s.id),'')||char(9)||CASE WHEN EXISTS(SELECT 1 FROM session_stops WHERE session=s.id) THEN 'stopped' WHEN coalesce((SELECT state FROM wake_claims WHERE session=s.id),'')='claimed' THEN 'claimed' WHEN e.phase='exited' AND (CASE WHEN json_valid(s.endpoint) THEN json_type(s.endpoint)='array' AND json_array_length(s.endpoint)>0 ELSE 0 END)=0 THEN 'blocked' WHEN e.phase='exited' THEN 'stalled' ELSE 'active' END FROM sessions s JOIN executions e ON e.session=s.id WHERE (SELECT count(*) FROM messages m WHERE m.recipient=s.id AND m.receipt IS NULL)>0 ORDER BY s.id;" : String}
+  {Stall.stalled_rows_sql(True{}) == "SELECT s.id||char(9)||CAST((SELECT count(*) FROM messages m WHERE m.recipient=s.id AND m.receipt IS NULL) AS TEXT)||char(9)||coalesce(e.id,'')||char(9)||coalesce(e.phase,'')||char(9)||CAST(CASE WHEN json_valid(s.endpoint) THEN json_type(s.endpoint)='array' AND json_array_length(s.endpoint)>0 ELSE 0 END AS TEXT)||char(9)||coalesce((SELECT m.id FROM messages m WHERE m.recipient=s.id AND m.receipt IS NULL ORDER BY m.seq LIMIT 1),'')||char(9)||CAST(EXISTS(SELECT 1 FROM session_stops WHERE session=s.id) AS TEXT)||char(9)||coalesce((SELECT state FROM wake_claims WHERE session=s.id),'')||char(9)||CASE WHEN EXISTS(SELECT 1 FROM session_stops WHERE session=s.id) THEN 'stopped' WHEN coalesce((SELECT state FROM wake_claims WHERE session=s.id),'')='claimed' THEN 'claimed' WHEN coalesce(e.phase,'')='' THEN 'blocked' WHEN e.phase='exited' AND (CASE WHEN json_valid(s.endpoint) THEN json_type(s.endpoint)='array' AND json_array_length(s.endpoint)>0 ELSE 0 END)=0 THEN 'blocked' WHEN e.phase='exited' THEN 'stalled' ELSE 'active' END FROM sessions s LEFT JOIN executions e ON e.session=s.id WHERE (SELECT count(*) FROM messages m WHERE m.recipient=s.id AND m.receipt IS NULL)>0 ORDER BY s.id;" : String}
 
 def the_row_query_selects_pending_candidates_and_classifies_them():
   {==}
@@ -43,6 +46,12 @@ law a_stalled_row_becomes_the_fact_object:
   {Stall.row_json(row()) == "{\"id\":\"worker\",\"pending\":18,\"attempt\":{\"id\":\"attempt-1\",\"phase\":\"exited\"},\"endpointPresent\":1,\"owedMessage\":\"m7\",\"stopped\":0,\"claim\":\"\",\"state\":\"stalled\"}" : String}
 
 def a_stalled_row_becomes_the_fact_object():
+  {==}
+
+law a_never_started_row_is_blocked:
+  {Stall.row_json(never_row()) == "{\"id\":\"worker\",\"pending\":18,\"attempt\":{\"id\":\"\",\"phase\":\"\"},\"endpointPresent\":1,\"owedMessage\":\"m7\",\"stopped\":0,\"claim\":\"\",\"state\":\"blocked\"}" : String}
+
+def a_never_started_row_is_blocked():
   {==}
 
 law a_row_without_nine_fields_is_skipped:

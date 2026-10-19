@@ -1,9 +1,10 @@
 # CLAIM: a pending-input candidate is classified from recorded database state.
 # A candidate is active while its recorded attempt is not exited. An exited
 # attempt with a present endpoint is stalled; an exited attempt without one is
-# blocked. The report keeps an explicit stop or existing wake claim in its
-# recorded state. A stalled candidate is woken through the existing Wake.drive_id
-# route, addressed by its oldest owed message.
+# blocked. A candidate with no recorded attempt is blocked conservatively. The
+# report keeps an explicit stop or existing wake claim in its recorded state. A
+# stalled candidate is woken through the existing Wake.drive_id route, addressed
+# by its oldest owed message.
 #
 # The module classifies from recorded database state; the database carries no
 # clock value, so no observed instant is reported.
@@ -34,10 +35,13 @@ def claim_state_expr(+session: String, +present: Bool) -> String:
 
 # The candidate classification. The recorded attempt phase separates a live
 # attempt from a finished one; the endpoint decides whether a finished attempt
-# can be woken; the stop and claim checks take precedence over both.
+# can be woken; the stop and claim checks take precedence over both. A session
+# with no recorded attempt has an empty phase and is blocked conservatively:
+# there is no attempt to wake.
 def state_expr(+session: String, +phase: String, +endpoint: String, +present: Bool) -> String:
   "CASE WHEN " ++ stopped_expr(session) ++ " THEN 'stopped'"
   ++ " WHEN " ++ claim_state_expr(session,present) ++ "='claimed' THEN 'claimed'"
+  ++ " WHEN coalesce(" ++ phase ++ ",'')='' THEN 'blocked'"
   ++ " WHEN " ++ phase ++ "='exited' AND (" ++ endpoint_present_expr(endpoint) ++ ")=0 THEN 'blocked'"
   ++ " WHEN " ++ phase ++ "='exited' THEN 'stalled'"
   ++ " ELSE 'active' END"
@@ -45,7 +49,9 @@ def state_expr(+session: String, +phase: String, +endpoint: String, +present: Bo
 # One line per pending-input candidate: session, pending count, attempt id,
 # attempt phase, endpoint presence, the oldest owed message, stopped flag,
 # claim state, and classification. Tabs between fields, so the row transport is
-# the coordinator's existing one.
+# the coordinator's existing one. The executions.session primary key makes the
+# left join add at most one attempt row, so a pending session with no attempt
+# appears once with an empty attempt id and phase.
 def stalled_rows_sql(+present: Bool) -> String:
   "SELECT s.id||char(9)||"
   ++ "CAST(" ++ owed_expr("s.id") ++ " AS TEXT)||char(9)||"
@@ -55,7 +61,7 @@ def stalled_rows_sql(+present: Bool) -> String:
   ++ "CAST(" ++ stopped_expr("s.id") ++ " AS TEXT)||char(9)||"
   ++ claim_state_expr("s.id",present) ++ "||char(9)||"
   ++ state_expr("s.id","e.phase","s.endpoint",present)
-  ++ " FROM sessions s JOIN executions e ON e.session=s.id"
+  ++ " FROM sessions s LEFT JOIN executions e ON e.session=s.id"
   ++ " WHERE " ++ owed_expr("s.id") ++ ">0"
   ++ " ORDER BY s.id;"
 

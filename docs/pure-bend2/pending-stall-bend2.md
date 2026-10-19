@@ -10,7 +10,7 @@ recorded database state.
 | Field | Source |
 |---|---|
 | pending count | `messages` rows with `recipient = session` and `receipt IS NULL` |
-| attempt | `executions.id` and `executions.phase` for the session |
+| attempt | `executions.id` and `executions.phase` for the session; both empty when no execution row is recorded |
 | endpoint present | `sessions.endpoint`, using the coordinator's `json_valid` / `json_type` / `json_array_length` check |
 | stop | a `session_stops` row for the session |
 | wake claim | `wake_claims.state` for the session |
@@ -22,13 +22,17 @@ candidate as `claimed`.
 The state is derived again on each invocation from the recorded attempt,
 endpoint, stop and claim rows.
 
+`executions.session` is the primary key, so the report's left join adds at
+most one attempt row. A pending session with no recorded attempt appears once
+with an empty attempt id and phase and is classified `blocked`.
+
 ## Classification
 
 | State | Recorded evidence |
 |---|---|
 | `active` | pending input and an attempt whose phase is not `exited` |
 | `stalled` | pending input, an `exited` attempt, a present endpoint, no stop and no `claimed` wake claim |
-| `blocked` | pending input, an `exited` attempt and no present endpoint |
+| `blocked` | pending input, an `exited` attempt and no present endpoint, or no execution row |
 | `stopped` | a `session_stops` row |
 | `claimed` | `wake_claims.state = 'claimed'` |
 
@@ -47,6 +51,9 @@ The command prints `{"candidates":[...]}`. Each row contains `id`, `pending`,
 `attempt` (`id` and `phase`), `endpointPresent` (0 or 1), `owedMessage`,
 `stopped` (0 or 1), `claim` (the recorded state or an empty string), and
 `state`.
+
+`attempt.id` and `attempt.phase` are empty strings for a session with no
+recorded execution row.
 
 ## Wake
 
@@ -73,7 +80,7 @@ that route.
 nine-field row transport, empty and malformed line handling, and the wake
 address for each state.
 
-`bend2/test/stall.py` creates five live coordinator rows and exercises both
+`bend2/test/stall.py` creates six live coordinator rows and exercises both
 commands:
 
 - an active attempt with owed input renders `active` and is not driven;
@@ -83,12 +90,17 @@ commands:
 - an exited attempt with no endpoint renders `blocked` and is not driven;
 - an exited attempt with an existing `claimed` wake claim renders `claimed` and
   is not driven.
+- a pending session with no execution row renders `blocked` with an empty
+  attempt and is not driven.
 
 `bend2/test/stall-evidence-entry.bend` builds as a standalone consumer. Its
 `init`, `report`, `wake` and `parse` modes drive the same commands and handlers
 without coordinator Main. The wake driver launches that same executable with
 `--dispatch-message DB ID`; the entry handles that mode by calling
 `Delivery.deliver`, so the wake path reaches the recorded endpoint.
+
+`bend2/test/stall-evidence-fixture.py` inserts the same six states for the
+standalone entry.
 
 ## Verification
 
@@ -140,6 +152,10 @@ The receipt is
 
 The wake check observed `wake-exited-delivered: yes`,
 `wake-other-delivered: no`, and the five claim and stop assertions.
+
+That receipt covers `8a9c52f7db`. The never-started `LEFT JOIN` fix changes
+`stall.bend`, `stall-laws.bend` and both fixtures; the new candidate needs a
+bounded run before the qualification carries forward.
 
 The highest observed peak resident set was 6,467,044 kB. No run used swap.
 A law body must be an equality; the claimless query law asserts
