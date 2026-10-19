@@ -230,22 +230,37 @@ def all_refused_body(harness: String, refused: String, cause: String) -> String:
   "subscription profiles exhausted: harness=" ++ harness ++ "; profile=" ++ refused ++ " was the last operator-listed profile and the provider reported usage exhaustion; cause: " ++ cause
 
 # The provider's own diagnostic text for a terminal error frame, per the shapes this
-# tree already handles plus the Claude SDK result message:
+# tree already handles plus the Claude SDK result message and the Muse run terminal:
 #   OMP    {"type":"agent_end", ..., {"role":"assistant","stopReason":"error","errorMessage":"..."}}
 #   Codex  {"type":"turn.failed","error":{"message":"..."}}
 #   Claude {"type":"result","subtype":...,"is_error":true,"result":"...","errors":[...],
 #           "api_error_status":429,...}   (ResultMessage: is_error, result, errors,
 #           api_error_status; the CLI emits api_error_status since v2.1.110)
+#   Muse   {"payload_type":"run.terminal.failed",
+#           "payload":{"kind":"run_terminal","terminal":"failed","reason":"..."}}
+#          A compaction failure that ends the run carries the summarizer and quota
+#          diagnostic in the same reason, so it classifies by that text too.
 def usage_text_sql_expr(+event: String) -> String:
-  "CASE WHEN json_extract(" ++ event ++ ",'$.type')='agent_end' THEN coalesce(json_extract((SELECT " ++ C.last_assistant_sql_expr(event) ++ "),'$.errorMessage'),'') WHEN json_extract(" ++ event ++ ",'$.type')='turn.failed' THEN coalesce(json_extract(" ++ event ++ ",'$.error.message'),'') WHEN json_extract(" ++ event ++ ",'$.type')='result' THEN coalesce(json_extract(" ++ event ++ ",'$.result'),'') || ' ' || coalesce((SELECT group_concat(value,' ') FROM json_each(CASE WHEN json_type(" ++ event ++ ",'$.errors')='array' THEN json_extract(" ++ event ++ ",'$.errors') ELSE '[]' END)),'') ELSE '' END"
+  "CASE WHEN json_extract(" ++ event ++ ",'$.type')='agent_end' THEN coalesce(json_extract((SELECT " ++ C.last_assistant_sql_expr(event) ++ "),'$.errorMessage'),'')"
+  ++ " WHEN json_extract(" ++ event ++ ",'$.type')='turn.failed' THEN coalesce(json_extract(" ++ event ++ ",'$.error.message'),'')"
+  ++ " WHEN json_extract(" ++ event ++ ",'$.type')='result' THEN coalesce(json_extract(" ++ event ++ ",'$.result'),'') || ' ' || coalesce((SELECT group_concat(value,' ') FROM json_each(CASE WHEN json_type(" ++ event ++ ",'$.errors')='array' THEN json_extract(" ++ event ++ ",'$.errors') ELSE '[]' END)),'')"
+  ++ " WHEN json_extract(" ++ event ++ ",'$.payload.kind')='run_terminal' OR json_extract(" ++ event ++ ",'$.payload_type')='run.terminal.failed' THEN coalesce(json_extract(" ++ event ++ ",'$.payload.reason'),'')"
+  ++ " ELSE '' END"
 
 # A genuinely failed provider terminal only:
 #   Codex  {"type":"turn.failed","error":{"message":"..."}}
 #   Claude {"type":"result","is_error":true,...}          (a successful result that merely
 #                                                          quotes limit words is never one)
 #   OMP    {"type":"agent_end", ... {"stopReason":"error","errorMessage":"..."}}
+#   Muse   {"payload_type":"run.terminal.failed","payload":{"kind":"run_terminal",
+#           "terminal":"failed","reason":"..."}}          (a completed run that quotes
+#                                                          limit words is never one)
 def failed_terminal_sql_expr(+event: String) -> String:
-  "CASE WHEN json_extract(" ++ event ++ ",'$.type')='turn.failed' THEN 1 WHEN json_extract(" ++ event ++ ",'$.type')='result' AND json_extract(" ++ event ++ ",'$.is_error')=1 THEN 1 WHEN " ++ C.omp_terminal_error_sql_expr(event) ++ "=1 THEN 1 ELSE 0 END"
+  "CASE WHEN json_extract(" ++ event ++ ",'$.type')='turn.failed' THEN 1"
+  ++ " WHEN json_extract(" ++ event ++ ",'$.type')='result' AND json_extract(" ++ event ++ ",'$.is_error')=1 THEN 1"
+  ++ " WHEN json_extract(" ++ event ++ ",'$.payload_type')='run.terminal.failed' THEN 1"
+  ++ " WHEN json_extract(" ++ event ++ ",'$.payload.kind')='run_terminal' AND json_extract(" ++ event ++ ",'$.payload.terminal')='failed' THEN 1"
+  ++ " WHEN " ++ C.omp_terminal_error_sql_expr(event) ++ "=1 THEN 1 ELSE 0 END"
 
 # The provider's own subscription-limit wordings. Codex (protocol src/error.rs Display):
 # "You’ve hit your usage limit[ for {limit_name}]", "Your workspace is out of credits.",
@@ -256,15 +271,30 @@ def failed_terminal_sql_expr(+event: String) -> String:
 # limit. Your quota will reset when the current 5-hour window ends.", which the
 # "reached your" fragment below covers. The "hit your" fragment omits the apostrophe so
 # the curly and ASCII forms both match. ZAI reports "Usage limit reached for 5 hour"
-# with its reset time. The observed OMP 402 stopReason=error shape reports
-# "402 Insufficient Balance" with type=unknown_error. A funded API-key route reports
-# the Claude API credit stop: "Your credit balance is too low to access the Anthropic
-# API. Please go to Plans & Billing to upgrade or purchase credits.", and Claude Code
-# shows the footer "Credit balance too low · Add funds: ...". Not matched: the upstream
-# "limit reached" header flag, "rate limit exceeded", the context-window message,
-# stream disconnection and timeouts.
+# with its reset time. Muse reports "Subscription quota exhausted" with the usage
+# window reset, and the ZAI GLM route reports "Weekly/Monthly Limit Exhausted", so
+# "quota exhausted" and "limit exhausted" are exhaustion markers. The observed OMP 402
+# stopReason=error shape reports "402 Insufficient Balance" with type=unknown_error. A
+# funded API-key route reports the Claude API credit stop: "Your credit balance is too
+# low to access the Anthropic API. Please go to Plans & Billing to upgrade or purchase
+# credits.", and Claude Code shows the footer "Credit balance too low · Add funds: ...".
+# Not matched: the upstream "limit reached" header flag, "rate limit exceeded", the
+# context-window message, stream disconnection and timeouts.
 def exhausted_marker_sql(+text: String) -> String:
-  "CASE WHEN (instr(lower(" ++ text ++ "),'hit your')>0 AND (instr(lower(" ++ text ++ "),'limit')>0 OR instr(lower(" ++ text ++ "),'budget')>0)) OR (instr(lower(" ++ text ++ "),'reached your')>0 AND (instr(lower(" ++ text ++ "),'limit')>0 OR instr(lower(" ++ text ++ "),'quota')>0)) OR instr(lower(" ++ text ++ "),'usage limit reached for ')>0 OR instr(lower(" ++ text ++ "),'out of credits')>0 OR instr(lower(" ++ text ++ "),'spend cap')>0 OR instr(lower(" ++ text ++ "),'quota exceeded')>0 OR instr(lower(" ++ text ++ "),'spend limit reached')>0 OR instr(lower(" ++ text ++ "),'spend limit unavailable')>0 OR instr(lower(" ++ text ++ "),'insufficient balance')>0 OR instr(lower(" ++ text ++ "),'credit balance is too low')>0 OR instr(lower(" ++ text ++ "),'credit balance too low')>0 THEN 1 ELSE 0 END"
+  "CASE WHEN (instr(lower(" ++ text ++ "),'hit your')>0 AND (instr(lower(" ++ text ++ "),'limit')>0 OR instr(lower(" ++ text ++ "),'budget')>0))"
+  ++ " OR (instr(lower(" ++ text ++ "),'reached your')>0 AND (instr(lower(" ++ text ++ "),'limit')>0 OR instr(lower(" ++ text ++ "),'quota')>0))"
+  ++ " OR instr(lower(" ++ text ++ "),'usage limit reached for ')>0"
+  ++ " OR instr(lower(" ++ text ++ "),'out of credits')>0"
+  ++ " OR instr(lower(" ++ text ++ "),'spend cap')>0"
+  ++ " OR instr(lower(" ++ text ++ "),'quota exceeded')>0"
+  ++ " OR instr(lower(" ++ text ++ "),'quota exhausted')>0"
+  ++ " OR instr(lower(" ++ text ++ "),'limit exhausted')>0"
+  ++ " OR instr(lower(" ++ text ++ "),'hard quota')>0"
+  ++ " OR instr(lower(" ++ text ++ "),'spend limit reached')>0"
+  ++ " OR instr(lower(" ++ text ++ "),'spend limit unavailable')>0"
+  ++ " OR instr(lower(" ++ text ++ "),'insufficient balance')>0"
+  ++ " OR instr(lower(" ++ text ++ "),'credit balance is too low')>0"
+  ++ " OR instr(lower(" ++ text ++ "),'credit balance too low')>0 THEN 1 ELSE 0 END"
 
 # Bind the complete terminal once and extract its diagnostic once for the
 # provider's subscription-limit wording, the returned cause, and the Claude
@@ -555,12 +585,12 @@ def advance_profile(+db: String, +session: String, +id: String, cause: String, n
 # True only when a next operator-listed profile was recorded, so the caller continues the
 # same actor; false when the list is exhausted, which terminates with the report. The
 # caller passes the terminal event text: the Outcome shutter stays in the calling
-# module, so this shared worker takes no provider-harness type.
+# module, so this shared worker takes no provider-harness type. Accounts.handoff records
+# the usage-window observation once for both the profile and account paths, under the
+# same account label the wake gate reads.
 def profile_handoff(+db: String, +session: String, +id: String, +event: String, native: String, cmd: String, cwd: String) -> IO(Bool):
   do IO<Bool>:
     +cause : String <- exhaustion_cause(db,event)
-    +label : String <- profile_label_io(db,session)
-    recorded : Unit <- Bool.pick(IO(Unit),String.is_empty(cause),IO.pure(Unit,Unit{}),UW.record_cause(db,session,id,label,cause))
     advanced : Bool <- Bool.pick(IO(Bool),String.is_empty(cause),IO.pure(Bool,False{}),advance_profile(db,session,id,cause,native,cmd,cwd))
     IO.pure(Bool,advanced)
 

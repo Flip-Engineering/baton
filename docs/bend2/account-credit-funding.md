@@ -177,10 +177,10 @@ configuration.
   sections above.
 - Linking a plan to a Console organization, accepting program terms, purchasing
   credits and changing billing settings remain operator setup actions.
-- The observed Muse wording `Subscription quota exhausted` is not a marker of
-  this module. Whether that refusal should advance an account is a separate
-  finding for #670 and #702, recorded in the delivery report rather than changed
-  here without an observed run.
+- The observed Muse wording `Subscription quota exhausted` classifies as
+  provider usage exhaustion (#907). The account handoff records the provider
+  reset and advances only to a further recorded account; the wake gate holds
+  the refused account until that reset.
 
 ## Verification
 
