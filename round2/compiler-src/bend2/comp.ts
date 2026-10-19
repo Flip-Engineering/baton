@@ -3193,7 +3193,9 @@ function arm_eq(a: HTerm, b: HTerm): boolean {
       }
       case "Ref": return x.k === (y as Of<"Ref">).k;
       case "Lam": {
-        const oa = term_open(x), ob = term_open(y as Of<"Lam">);
+        const yl = y as Of<"Lam">;
+        if (((x.q as any)?.$ ?? "") !== ((yl.q as any)?.$ ?? "")) return false;
+        const oa = term_open(x), ob = term_open(yl);
         bind(oa.ps[0].i, ob.ps[0].i, d);
         const r = go(oa.b, ob.b, d + 1);
         unbind(oa.ps[0].i, ob.ps[0].i);
@@ -3201,8 +3203,12 @@ function arm_eq(a: HTerm, b: HTerm): boolean {
       }
       case "Let": {
         const ya = y as Of<"Let">;
-        const oa = term_open(x), ob = term_open(ya);
         if (x.v.length !== ya.v.length) return false;
+        if (x.q.length !== ya.q.length) return false;
+        for (let i = 0; i < x.q.length; i++) {
+          if (((x.q[i] as any)?.$ ?? "") !== ((ya.q[i] as any)?.$ ?? "")) return false;
+        }
+        const oa = term_open(x), ob = term_open(ya);
         for (let i = 0; i < x.v.length; i++) if (!go(x.v[i], ya.v[i], d)) return false;
         oa.ps.forEach((p, j) => bind(p.i, ob.ps[j].i, d + j));
         const r = go(oa.b, ob.b, d + oa.ps.length);
@@ -3220,7 +3226,10 @@ function arm_eq(a: HTerm, b: HTerm): boolean {
         return x.k === ym.k && go(x.h, ym.h, d) && go(x.m, ym.m, d);
       }
       case "Lit": return JSON.stringify(x.v) === JSON.stringify((y as Of<"Lit">).v);
-      case "Ann": return go(x.x, (y as Of<"Ann">).x, d);
+      case "Ann": {
+        const ya = y as Of<"Ann">;
+        return go(x.x, ya.x, d) && go(x.T, ya.T, d);
+      }
       case "Rwt": {
         const yr = y as Of<"Rwt">;
         return go(x.e, yr.e, d) && go(x.p, yr.p, d) && go(x.f, yr.f, d);

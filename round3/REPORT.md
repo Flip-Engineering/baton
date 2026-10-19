@@ -3,7 +3,7 @@
 Status: gates pass, compile wall is now at or below the pinned baseline, and
 `arm_eq` is a total structural equality. Candidate
 `round2/compiler-src/bend2/comp.ts` sha256
-`7cc3394b45f6139011bf8141eff917497cbd5991171ca87ec449d66cf1894ba6`.
+`a72cf3afe49d77892ebe4abf061cdbe2542ce7a9f68c46bb740629d0a37d32d1`.
 
 ## Equality totality fix (evaluator review of 1e5eb5b09f)
 
@@ -17,11 +17,24 @@ value-distinct arm. `arm_eq` is now total:
   sides at the current depth, compares `f` at depth + 1, and unbinds.
 - `All{q,k,i,A,B}` compares the quantity, `A`, and the two bodies applied to
   a binder `Var` at the current depth, at depth + 1.
+- `Lam.q` and `Let.q` (each element) compare, because `let_live` reads
+  `Let.q`; `Ann.T` compares structurally alongside `Ann.x`, because `ty_peel`
+  reads `Ann.T`. `Qua.q` compares.
 - `Qnt`, `Rfl` and `Efq` compare equal (no fields); every other unknown kind
   returns false. No reuse is authorized by the hint.
 - A representative that matches but is being emitted returns false (inline
   fallback) instead of creating another spin, so reentrant generation stays
   bounded, as in the round-2 path.
+
+Why unequal q/T cannot normally collide: `arm_hint` includes the outer source
+spans, so only copies of the same source row share a bucket, and
+`body_sub`/`term_lower`/`term_higher` copy `Lam.q`, `Let.q` and `Ann.T`
+unchanged. The comparisons above make the equality total regardless, and two
+purposeful fixtures exercise the carriers: `round3/fixtures/quant_ann_match.bend`
+(typed let + annotated result + `+` pattern binder under the literal prefix;
+C 4,871,155 B, clang-19, outputs `2`/`7`/`9`) and
+`round3/fixtures/quant_ann_collision.bend` (two arms differing in annotation
+and let shape; C 4,871,103 B, outputs `3`/`7`/`9`).
 
 Re-verified after the fix: the four repro gates and the five-overlap C are
 byte-identical to the values below (hashes unchanged); `nat_pattern_deep`
