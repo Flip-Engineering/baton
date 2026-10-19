@@ -74,6 +74,21 @@ keep a repeated invocation safe.
 the candidate array. `stall-wake` writes only through `Wake.drive_id`; all process starts go through
 that route.
 
+## Production entry and package
+
+The production command entry is `bend2/src/coordinator/main.bend`, installed as
+`bin/baton2` with the `bin/baton-full` alias by
+`bend2/scripts/package-native.py` and `bend2/scripts/stage-native-install.py`.
+The `stall` and `stall-wake` commands are `C.Stall{}` and `C.StallWake{}` in
+`bend2/src/coordinator/commands.bend`, dispatched by `main.bend` to
+`Stall.report` and `Stall.wake_stalled`.
+
+No separate stall package exists. The qualified focused consumer
+`bend2/test/stall-evidence-entry.bend` is a test entry; it is not installed and
+is not a deployment artifact. Deployment requires the normal coordinator
+artifact and the full Main acceptance. The focused qualification does not
+authorize deployment on its own.
+
 ## Focused fixtures
 
 `bend2/src/coordinator/stall-laws.bend` pins the query text, the row object, the
@@ -136,28 +151,30 @@ with `memory.max = 17179869184`, `memory.swap.max = 0`, and an unlimited
 
 ## Bounded focused qualification
 
-The followed entry revision was qualified at `8a9c52f7db` in the root-managed
-unit `baton-stall-evidence-8a9c52f7-20261019.service` with
-`memory.max = 25769803776`, `memory.swap.max = 0` and an unlimited `RLIMIT_AS`.
-The receipt is
-`/mnt/nvme4tb/retained-root-builds-20261019/baton-stall-evidence-8a9c52f7-20261019/receipt.json`.
+The never-started candidate was qualified at `11cbe6a4b9` in the root-managed
+unit `baton-stall-evidence-11cbe6a4-20261019.service` with
+`memory.max = 25769803776`, `memory.swap.max = 0`, unlimited `RLIMIT_AS` and no
+build timeout. The receipt is
+`/mnt/nvme4tb/retained-root-builds-20261019/baton-stall-evidence-11cbe6a4-20261019/receipt.json`.
 
 | Step | Result |
 |---|---|
-| `--check-only bend2/test/stall-evidence-entry.bend` | exit 0, 129.287 s, five unsafe or foreign defs |
-| build | exit 0, 540.545 s, binary sha256 `60d66b387f6230460788cf4a431f09f53f34a9f02031edca3120073f8b4a5290`, generated C sha256 `11914746e13f53fe3d08291c129b05fb6fa19a1bb57fbfc37c110bb8a9e4a5bb` |
-| init, fixture build, report, check-report | exit 0; five states classified |
-| wake, marker wait, check-wake | exit 0; only `exited` delivered and claimed |
+| check-only | exit 0, 134.25 s, five unsafe or foreign defs |
+| build | exit 0, 579.376 s, binary sha256 `302378ff0bb3ede96882e46c772a592565686f1acd3096915d72d309d1b72821`, generated C sha256 `2e8d98f16a3e03ab89e608720ab8a05337ffcb03bb666dee6a8d6cfc68c23a29` (17,081,954 B) |
+| init, fixture build, report, check-report | exit 0; six states, `never` blocked |
+| wake, marker wait, check-wake | exit 0; only `exited` delivered; `never` not delivered |
 | parse | exit 0; both commands selected |
 
-The wake check observed `wake-exited-delivered: yes`,
-`wake-other-delivered: no`, and the five claim and stop assertions.
+The check-report output includes `CASE report-never: blocked`; the check-wake
+output includes `CASE wake-never-claim: missing` and
+`CASE wake-other-delivered: no`.
 
-That receipt covers `8a9c52f7db`. The never-started `LEFT JOIN` fix changes
-`stall.bend`, `stall-laws.bend` and both fixtures; the new candidate needs a
-bounded run before the qualification carries forward.
+The evidence-entry check does not import `stall-laws.bend`. A separate current
+`--check-only bend2/src/coordinator/stall-laws.bend` is pinned in
+`stall-laws-check.json` and pending; the source is ready for root review once
+that check passes.
 
-The highest observed peak resident set was 6,467,044 kB. No run used swap.
+The prior `8a9c52f7db` run peaked at 6,467,044 kB. No run used swap.
 A law body must be an equality; the claimless query law asserts
 `String.contains(Stall.stalled_rows_sql(False{}),"wake_claims") == False{}`.
 
