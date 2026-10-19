@@ -70,15 +70,18 @@ def identity_checked(runtime: String, identity: String & String, model: String) 
 # A configured identity embeds a Node helper in the endpoint, so resolve the
 # runtime only when the registry is present. An absent identity keeps the
 # native command exactly as recorded and needs no Node executable.
+def identity_runtime_result(resolved: Result<&1,&1,U32 & String,String>) -> IO(String):
+  match resolved:
+    case Done{value}: IO.pure(String,value)
+    case Fail{(code,detail)}: IO.die(String,code,detail)
+
 def identity_runtime(executable: String, identity: String & String) -> IO(String):
   (registry,helper)=identity
   match String.is_empty(registry):
     case True{}: IO.pure(String,"")
     case False{}: do IO<String>:
       resolved : Result<&1,&1,U32 & String,String> <- NodeRuntime.resolve(executable)
-      match resolved:
-        case Done{value}: IO.pure(String,value)
-        case Fail{(code,detail)}: IO.die(String,code,detail)
+      identity_runtime_result(resolved)
 
 law native_receiver_leaves_the_wake_argument_to_delivery:
   for executable: String
