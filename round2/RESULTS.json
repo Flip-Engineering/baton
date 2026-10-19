@@ -70,10 +70,33 @@
     "pass": true,
     "candidate_baseline_output_identical": true
   },
+  "five_overlap_fixture": {
+    "path": "round2/fixtures/five-overlap.bend",
+    "sha256": "e7b0ee7b178e8d82b3cd0e2989e963eede07ab75b0c6fafd5a30adc3aa4ef971",
+    "own_baseline_bytes": 33992046,
+    "own_baseline_lines": 432223,
+    "note": "IO.write/IO.die leaves, shape order literal-3,2,13,14,4,error; the root-reported 54730033 B / 600231 lines fixture has different bodies and is not compared directly"
+  },
+  "control_two_long": {
+    "before_bytes": 102122,
+    "after_bytes": 109402,
+    "within_gate": true,
+    "note": "above its own baseline; this is the shared-default result and stays under 300000"
+  },
+  "sharing_key": "fallback origin | term_key(term_lower(default type)) | ordered capture layouts | ordered argument layouts",
+  "invariants": [
+    "first-row-wins order",
+    "guard and literal exclusions",
+    "binder quantities (patt_mark, xq, xs joins)",
+    "match arity and scrutinee slicing",
+    "emit_lits/lits_rows/emit_nats table behavior",
+    "character literal semantics (flat SCon matching, IO.args dispatch)"
+  ],
   "runtime_argv": {
     "ran": true,
     "method": "both compilers interpreted the same fixture with the same argv (no clang)",
     "cases": 18,
-    "diffs": 0
+    "diffs": 0,
+    "c_executed": false
   }
 }
