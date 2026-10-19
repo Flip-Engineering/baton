@@ -31,6 +31,7 @@ import ../git/text.bend as Tx
 import ../host/text.bend as Text
 import ./store.bend as Store
 import ./control.bend as Control
+import ./usage-windows.bend as UW
 
 law direct_replay_keeps_output_failure_for_completion:
   for +db: String
@@ -736,14 +737,17 @@ law an_owned_wake_admits_through_the_fence:
 def an_owned_wake_admits_through_the_fence(db,session,cursor,launch,lock):
   {==}
 
-def fenced_admission_reads_claim_and_custody(+db: String, +session: String, +cursor: String, launch: String -> IO(Result<&1,&1,U32 & String,Unit>), +lock: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
+def fenced_admission_reads_claim_and_custody(+db: String, +session: String, +cursor: String, launch: String -> IO(Result<&1,&1,U32 & String,Unit>), +lock: U32, gate: UW.Gate) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
+    +found : String <- Receive.wake_found(db,session,cursor)
+    restored : Unit <- UW.report_restored(db,session,Tx.trim_nl(found),gate)
     state : String <- Store.claim_state(db,session)
     dir : String <- IO.try(String,DB.Sql.query(db,Receive.attempt_dir_sql(session)))
     +trimmed : String <- IO.pure(String,Tx.trim_nl(dir))
     +dead : Bool <- Receive.custody_dead(db,trimmed,String.is_empty(trimmed))
     recovered : Unit <- Receive.recover_if_dead(db,session,dead)
-    Receive.wake_admit(db,session,cursor,launch,lock,state,dead)
+    replay_cursor : String = Bool.pick(String,Bool.and(dead,Bool.not(String.is_empty(trimmed))),"0",cursor)
+    Receive.wake_admit(db,session,replay_cursor,launch,lock,state,dead)
 
 law the_wake_admits_on_claim_and_custody:
   for +db: String
@@ -751,9 +755,10 @@ law the_wake_admits_on_claim_and_custody:
   for +cursor: String
   for launch: String -> IO(Result<&1,&1,U32 & String,Unit>)
   for +lock: U32
-  {Receive.wake_fenced(db,session,cursor,launch,lock,True{}) == fenced_admission_reads_claim_and_custody(db,session,cursor,launch,lock) : IO(Result<&1,&1,U32 & String,Unit>)}
+  for gate: UW.Gate
+  {Receive.wake_fenced_owed(db,session,cursor,launch,lock,gate) == fenced_admission_reads_claim_and_custody(db,session,cursor,launch,lock,gate) : IO(Result<&1,&1,U32 & String,Unit>)}
 
-def the_wake_admits_on_claim_and_custody(db,session,cursor,launch,lock):
+def the_wake_admits_on_claim_and_custody(db,session,cursor,launch,lock,gate):
   {==}
 
 law a_claimed_obligation_with_ambiguous_custody_is_held:
