@@ -350,6 +350,35 @@ class FocusedAccountCredits(unittest.TestCase):
         self.assertIn('creditAccountMismatch', foreign.stderr)
         self.assertEqual(self.query("SELECT state,settled FROM credit_reservations WHERE attempt='attempt-1'"), settled)
 
+    def test_a_final_reservation_refuses_a_retry_before_a_child_starts(self):
+        helper = os.environ.get('BATON2_API_KEY_EXEC')
+        if not helper:
+            self.skipTest('BATON2_API_KEY_EXEC not set')
+        self.credit_account()
+        cap_period = self.query("SELECT strftime('%Y-%m','now')")[0][0]
+        cycle = self.query("SELECT cycle FROM credit_observations WHERE organization='org-fixture' "
+                           "AND fact='promotional_credit' ORDER BY observed_at DESC, rowid DESC LIMIT 1")[0][0]
+        self.execute("INSERT INTO credit_reservations(attempt,session,account,organization,cycle,cap_period,amount,unit,state,settled,cost_source) "
+                     "VALUES('attempt-1','leaf','claude-api','org-fixture',?,?,'0.50','USD','settled','0.50','result-total')",
+                     (cycle, cap_period))
+        self.assertEqual(self.authorize('attempt-1'), 'authorized')
+        marker = self.directory / 'child-started'
+        child = self.directory / 'child.sh'
+        child.write_text('#!/bin/sh\nprintf started > "' + str(marker) + '"\n')
+        child.chmod(0o755)
+        refused = subprocess.run([helper, 'file:/fixture/api', str(child)],
+                                 capture_output=True, text=True,
+                                 env={'BATON2_CREDIT_RESERVATION': 'attempt-1', 'BATON2_CREDIT_ACCOUNT': 'claude-api',
+                                      'BATON2_CREDIT_SESSION': 'leaf', 'BATON_ATTEMPT_DIRECTORY': 'attempt-1',
+                                      'BATON_DATABASE': str(self.db), 'PATH': os.environ['PATH']})
+        self.assertEqual(refused.returncode, 2, refused.stdout)
+        self.assertIn('creditReservationFinal', refused.stderr)
+        self.assertFalse(marker.exists())
+        self.assertEqual(self.query("SELECT state,settled FROM credit_reservations WHERE attempt='attempt-1'"),
+                         [('settled', '0.50')])
+        self.assertEqual(self.query("SELECT state FROM credit_authorizations WHERE attempt='attempt-1'"),
+                         [('authorized',)])
+
     def test_gate_refuses_when_the_bound_exceeds_the_balance(self):
         self.credit_account(balance='0.20')
         self.seed_cost(amount='0.50')

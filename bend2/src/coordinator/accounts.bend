@@ -1253,12 +1253,14 @@ def credit_admit_launch(db: String, +session: String, +attempt: String, +account
           case False{}: IO.pure(String,credit_admission_reason(admission))
 
 def request_reservation_sql(attempt: String, account: String, session: String) -> String:
-  "SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM credit_reservations WHERE attempt=" ++ C.q(attempt) ++ ") THEN 'absent' WHEN EXISTS(SELECT 1 FROM credit_reservations WHERE attempt=" ++ C.q(attempt) ++ " AND account=" ++ C.q(account) ++ " AND session=" ++ C.q(session) ++ ") THEN 'match' ELSE 'mismatch' END;"
+  "SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM credit_reservations WHERE attempt=" ++ C.q(attempt) ++ ") THEN 'absent' WHEN NOT EXISTS(SELECT 1 FROM credit_reservations WHERE attempt=" ++ C.q(attempt) ++ " AND account=" ++ C.q(account) ++ " AND session=" ++ C.q(session) ++ ") THEN 'mismatch' WHEN EXISTS(SELECT 1 FROM credit_reservations WHERE attempt=" ++ C.q(attempt) ++ " AND account=" ++ C.q(account) ++ " AND session=" ++ C.q(session) ++ " AND state='reserved') THEN 'reserved' ELSE 'final' END;"
 
 # The request path asks again immediately before the provider process starts.
-# An existing reservation is idempotent only for the same account and session;
-# a different marker refuses, and an unbound account refuses before any secret
-# is used.
+# An existing reservation is idempotent only for the same account and session
+# and only while it is still reserved: a settled or unknown reservation means
+# the attempt completed, so a retry refuses instead of spawning with no row its
+# cost could settle into. A different marker refuses, and an unbound account
+# refuses before any secret is used.
 def credit_admit_request(db: String, +session: String, +attempt: String, +account_label: String) -> IO(String):
   do IO<String>:
     reservation : String <- IO.try(String,DB.Sql.read(db,request_reservation_sql(attempt,account_label,session)))
@@ -1268,7 +1270,8 @@ def credit_admit_request(db: String, +session: String, +attempt: String, +accoun
         match found:
           case None{}: IO.pure(String,"creditAccountUnbound")
           case Some{+account}: credit_admit_launch(db,session,attempt,account)
-      case "match": IO.pure(String,"")
+      case "reserved": IO.pure(String,"")
+      case "final": IO.pure(String,"creditReservationFinal")
       case other: IO.pure(String,"creditAccountMismatch")
 
 def credit_record_authorization_decided(+db: String, +session: String, +attempt: String, +account: AccountRecord, +status: String) -> IO(Bool):
