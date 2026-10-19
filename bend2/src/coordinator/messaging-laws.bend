@@ -170,7 +170,7 @@ law committed_message_routes_refuse_before_endpoint_delivery:
   for db: String
   for command: C.Command
   for +saved: String
-  {Store.committed(Done{saved}) == Store.route_accepted(saved,Bool.or(Store.naming_refused(saved),Bool.or(Tx.starts_with(saved,"{\"error\":\"player-assignment-conflict\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"message-route-denied\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"invalid-endpoint\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"message-id-conflict\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"finding-id-conflict\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"knowledge-notice-conflict\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"promotion-id-conflict\""),Tx.starts_with(saved,"{\"error\":\"promotion-notice-conflict\"")))))))))) : IO(Result<&1,&1,U32 & String,String>)}
+  {Store.committed(Done{saved}) == Store.route_accepted(saved,Bool.or(Store.naming_refused(saved),Bool.or(Tx.starts_with(saved,"{\"error\":\"player-assignment-conflict\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"message-route-denied\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"invalid-endpoint\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"message-id-conflict\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"relation-id-conflict\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"finding-id-conflict\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"knowledge-notice-conflict\""),Bool.or(Tx.starts_with(saved,"{\"error\":\"promotion-id-conflict\""),Tx.starts_with(saved,"{\"error\":\"promotion-notice-conflict\""))))))))))) : IO(Result<&1,&1,U32 & String,String>)}
 
 def committed_message_routes_refuse_before_endpoint_delivery(db,command,saved):
   {==}
