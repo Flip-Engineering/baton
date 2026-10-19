@@ -1,8 +1,8 @@
 """Verify gated native startup and legacy owner record compatibility."""
 import os
 import pathlib
-import subprocess
 import shutil
+import subprocess
 import tempfile
 import unittest
 
@@ -20,7 +20,9 @@ class StartGate(unittest.TestCase):
                                      '.scratch/bend2/process-test'], cwd=ROOT,
                                     capture_output=True, text=True)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        result = subprocess.run([os.environ.get('CC', 'clang'), '-O1', '-pthread',
+        compiler = os.environ.get('CC') or shutil.which('clang-19') or shutil.which('clang')
+        self.assertIsNotNone(compiler, 'clang-19 or clang is required')
+        result = subprocess.run([compiler, '-O1', '-pthread',
             '-DBATON2_PROCESS_SOURCE=' + repr(str(PROCESS_C)).replace("'", '"'),
             str(SOURCE), '-lsqlite3', '-lm', '-o', str(FIXTURE)],
             cwd=ROOT, capture_output=True, text=True)
