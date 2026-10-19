@@ -502,10 +502,10 @@ def launch_binding(+harness: String, +funding: String, +secret_ref: String, help
 # requires. /usr/bin/env treats each NAME=VALUE binding element as an
 # environment assignment for the command that follows, so the marker reaches
 # the helper's environment and never becomes a harness argument.
-def marked_binding(+attempt: String, binding: Maybe<List<String>>) -> Maybe<List<String>>:
+def marked_binding(+attempt: String, +account: String, +session: String, binding: Maybe<List<String>>) -> Maybe<List<String>>:
   match binding:
     case None{}: None{}
-    case Some{+values}: Some{Con{"BATON2_CREDIT_RESERVATION=" ++ attempt,values}}
+    case Some{+values}: Some{Con{"BATON2_CREDIT_RESERVATION=" ++ attempt,Con{"BATON2_CREDIT_ACCOUNT=" ++ account,Con{"BATON2_CREDIT_SESSION=" ++ session,values}}}}
 
 # The packaged resolver sits beside the resolved identity helper, so it is
 # installed and versioned with the runtime this deployment resolves.
@@ -798,6 +798,18 @@ def account_by_label(+db: String, +label: String, +harness: String) -> IO(Maybe<
     rows : String <- IO.try(String,DB.Sql.read(db,account_row_sql()))
     +accounts : List<&2,AccountRecord> <- IO.pure(List<&2,AccountRecord>,account_lines(Tx.split_lines(rows),Nil{}))
     IO.pure(Maybe<&2,AccountRecord>,named_account(accounts,label,harness))
+
+def named_account_id(accounts: List<&2,AccountRecord>, +id: String) -> Maybe<&2,AccountRecord>:
+  match accounts:
+    case Nil{}: None{}
+    case +account <> +rest: Bool.pick(Maybe<&2,AccountRecord>,String.eq(account_id(account),id),Some{account},named_account_id(rest,id))
+
+def account_by_id(db: String, +id: String) -> IO(Maybe<&2,AccountRecord>):
+  do IO<Maybe<&2,AccountRecord>>:
+    ready : Unit <- ensure(db)
+    rows : String <- IO.try(String,DB.Sql.read(db,account_row_sql()))
+    +accounts : List<&2,AccountRecord> <- IO.pure(List<&2,AccountRecord>,account_lines(Tx.split_lines(rows),Nil{}))
+    IO.pure(Maybe<&2,AccountRecord>,named_account_id(accounts,id))
 
 def current_account(+db: String, +session: String, +harness: String) -> IO(Maybe<&2,AccountRecord>):
   do IO<Maybe<&2,AccountRecord>>:
@@ -1229,6 +1241,23 @@ def credit_admit_launch(db: String, +session: String, +attempt: String, +account
         IO.pure(String,"")
       case False{}: IO.pure(String,credit_admission_reason(admission))
 
+def request_reserved_sql(attempt: String) -> String:
+  "SELECT EXISTS(SELECT 1 FROM credit_reservations WHERE attempt=" ++ C.q(attempt) ++ " AND state='reserved');"
+
+# The request path asks again immediately before the provider process starts.
+# A reservation recorded by the coordinator makes the answer idempotent; an
+# unbound account refuses before any secret is used.
+def credit_admit_request(db: String, +session: String, +attempt: String, +account_label: String) -> IO(String):
+  do IO<String>:
+    reserved : String <- IO.try(String,DB.Sql.read(db,request_reserved_sql(attempt)))
+    match String.eq(Tx.trim_nl(reserved),"1"):
+      case True{}: IO.pure(String,"")
+      case False{}: do IO<String>:
+        found : Maybe<&2,AccountRecord> <- account_by_id(db,account_label)
+        match found:
+          case None{}: IO.pure(String,"creditAccountUnbound")
+          case Some{+account}: credit_admit_launch(db,session,attempt,account)
+
 def credit_record_authorization_decided(+db: String, +session: String, +attempt: String, +account: AccountRecord, +status: String) -> IO(Bool):
   match status:
     case "eligible": do IO<Bool>:
@@ -1247,7 +1276,7 @@ def credit_launch_binding_account(+db: String, +session: String, +attempt: Strin
     case False{}: IO.pure(Maybe<List<String>>,account_binding(harness,Some{account},helper,profile_store))
     case True{}: do IO<Maybe<List<String>>>:
       refusal : String <- credit_admit_launch(db,session,attempt,account)
-      IO.pure(Maybe<List<String>>,Bool.pick(Maybe<List<String>>,String.is_empty(refusal),marked_binding(attempt,launch_binding(harness,"api_key",account_secret_ref(account),helper)),None{}))
+      IO.pure(Maybe<List<String>>,Bool.pick(Maybe<List<String>>,String.is_empty(refusal),marked_binding(attempt,account_id(account),session,launch_binding(harness,"api_key",account_secret_ref(account),helper)),None{}))
 
 def credit_launch_binding(+db: String, +session: String, +attempt: String, +harness: String, chosen: Maybe<&2,AccountRecord>, helper: Maybe<String>, +profile_store: String) -> IO(Maybe<List<String>>):
   match chosen:

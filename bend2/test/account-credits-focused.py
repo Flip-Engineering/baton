@@ -335,6 +335,7 @@ class FocusedAccountCredits(unittest.TestCase):
     def test_authorization_records_actual_reported_balance_only_when_eligible(self):
         self.credit_account()
         self.assertEqual(self.authorize('attempt-1'), 'authorized')
+        self.seed_cost()
         rows = self.query("SELECT attempt,account,organization,balance,unit FROM credit_authorizations")
         self.assertEqual(rows, [('attempt-1', 'claude-api', 'org-fixture', '200.00', 'USD')])
 
@@ -352,6 +353,7 @@ class FocusedAccountCredits(unittest.TestCase):
         self.assertEqual((saved['observation']['expires'], saved['observation']['cycle']),
                          ('2026-11-01', '2026-10'))
         self.assertEqual(self.authorize('attempt-1'), 'authorized')
+        self.seed_cost()
         self.assertEqual(self.query("SELECT cycle,balance,unit FROM credit_authorizations WHERE attempt='attempt-1'"),
                          [('2026-10', '200.00', 'USD')])
 
@@ -368,10 +370,11 @@ class FocusedAccountCredits(unittest.TestCase):
         self.observe('claude-api', 'org-fixture')
         self.import_credit('claude-api', 'org-fixture', '200.00')
         self.assertEqual(self.authorize('attempt-1'), 'authorized')
+        self.seed_cost()
         child = directory / 'child.sh'
         child.write_text('#!/bin/sh\nprintf "KEY=${ANTHROPIC_API_KEY:+set}\n"\n')
         child.chmod(0o755)
-        base = {'BATON2_CREDIT_RESERVATION': 'attempt-1', 'BATON_ATTEMPT_DIRECTORY': 'attempt-1',
+        base = {'BATON2_CREDIT_RESERVATION': 'attempt-1', 'BATON2_CREDIT_ACCOUNT': 'claude-api', 'BATON2_CREDIT_SESSION': 'leaf', 'BATON_ATTEMPT_DIRECTORY': 'attempt-1',
                 'BATON_DATABASE': str(self.db), 'PATH': os.environ['PATH']}
         admitted = subprocess.run([helper, 'file:' + str(secret), str(child)],
                                   capture_output=True, text=True, env=base)
@@ -405,10 +408,11 @@ class FocusedAccountCredits(unittest.TestCase):
         self.observe('claude-api', 'org-fixture')
         self.import_credit('claude-api', 'org-fixture', '200.00')
         self.assertEqual(self.authorize('attempt-1'), 'authorized')
+        self.seed_cost()
         child = directory / 'child.sh'
         child.write_text('#!/bin/sh\nprintf "KEY=${ANTHROPIC_API_KEY:+set}\\n"\n')
         child.chmod(0o755)
-        environment = {'BATON2_CREDIT_RESERVATION': 'attempt-1', 'BATON_ATTEMPT_DIRECTORY': 'attempt-1',
+        environment = {'BATON2_CREDIT_RESERVATION': 'attempt-1', 'BATON2_CREDIT_ACCOUNT': 'claude-api', 'BATON2_CREDIT_SESSION': 'leaf', 'BATON_ATTEMPT_DIRECTORY': 'attempt-1',
                        'BATON_DATABASE': str(self.db), 'PATH': os.environ['PATH']}
         commands = [helper, 'file:' + str(secret), str(child)]
         first = subprocess.Popen(commands, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=environment)
@@ -437,7 +441,7 @@ class FocusedAccountCredits(unittest.TestCase):
         child.chmod(0o755)
         refused = subprocess.run([helper, 'file:' + str(secret), str(child)],
                                  capture_output=True, text=True,
-                                 env={'BATON2_CREDIT_RESERVATION': 'attempt-1',
+                                 env={'BATON2_CREDIT_RESERVATION': 'attempt-1', 'BATON2_CREDIT_ACCOUNT': 'claude-api', 'BATON2_CREDIT_SESSION': 'leaf',
                                       'BATON_ATTEMPT_DIRECTORY': 'attempt-1',
                                       'BATON_DATABASE': str(self.db), 'PATH': os.environ['PATH']})
         self.assertEqual(refused.returncode, 2, refused.stdout)
@@ -457,6 +461,7 @@ class FocusedAccountCredits(unittest.TestCase):
         self.observe('claude-api', 'org-fixture')
         self.import_credit('claude-api', 'org-fixture', '200.00')
         self.assertEqual(self.authorize('attempt-1'), 'authorized')
+        self.seed_cost()
         marker = directory / 'child-started'
         child = directory / 'child.sh'
         child.write_text('#!/bin/sh\nprintf started > "' + str(marker) + '"\n')
@@ -469,7 +474,7 @@ class FocusedAccountCredits(unittest.TestCase):
                      "BEGIN SELECT RAISE(IGNORE); END")
         refused = subprocess.run([helper, 'file:' + str(secret), str(child)],
                                  capture_output=True, text=True,
-                                 env={'BATON2_CREDIT_RESERVATION': 'attempt-1',
+                                 env={'BATON2_CREDIT_RESERVATION': 'attempt-1', 'BATON2_CREDIT_ACCOUNT': 'claude-api', 'BATON2_CREDIT_SESSION': 'leaf',
                                       'BATON_ATTEMPT_DIRECTORY': 'attempt-1',
                                       'BATON_DATABASE': str(self.db), 'PATH': os.environ['PATH']})
         self.assertEqual(refused.returncode, 2, refused.stdout)
@@ -491,10 +496,11 @@ class FocusedAccountCredits(unittest.TestCase):
         self.observe('claude-api', 'org-fixture')
         self.import_credit('claude-api', 'org-fixture', '200.00')
         self.assertEqual(self.authorize('attempt-1'), 'authorized')
+        self.seed_cost()
         child = directory / 'child.sh'
         child.write_text('#!/bin/sh\nexit 7\n')
         child.chmod(0o755)
-        environment = {'BATON2_CREDIT_RESERVATION': 'attempt-1', 'BATON_ATTEMPT_DIRECTORY': 'attempt-1',
+        environment = {'BATON2_CREDIT_RESERVATION': 'attempt-1', 'BATON2_CREDIT_ACCOUNT': 'claude-api', 'BATON2_CREDIT_SESSION': 'leaf', 'BATON_ATTEMPT_DIRECTORY': 'attempt-1',
                        'BATON_DATABASE': str(self.db), 'PATH': os.environ['PATH']}
         aborted = subprocess.run([helper, 'file:' + str(secret), str(child)],
                                  capture_output=True, text=True, env=environment)
@@ -519,10 +525,11 @@ class FocusedAccountCredits(unittest.TestCase):
         self.observe('claude-api', 'org-fixture')
         self.import_credit('claude-api', 'org-fixture', '200.00')
         self.assertEqual(self.authorize('attempt-1'), 'authorized')
+        self.seed_cost()
         child = directory / 'child.sh'
         child.write_text('#!/bin/sh\nprintf "KEY=${ANTHROPIC_API_KEY:+set}\n"\n')
         child.chmod(0o755)
-        environment = {'BATON2_CREDIT_RESERVATION': 'attempt-1', 'BATON_ATTEMPT_DIRECTORY': 'attempt-1',
+        environment = {'BATON2_CREDIT_RESERVATION': 'attempt-1', 'BATON2_CREDIT_ACCOUNT': 'claude-api', 'BATON2_CREDIT_SESSION': 'leaf', 'BATON_ATTEMPT_DIRECTORY': 'attempt-1',
                        'BATON_DATABASE': str(self.db), 'PATH': os.environ['PATH']}
         admitted = subprocess.run([helper, 'file:' + str(secret), str(child)],
                                   capture_output=True, text=True, env=environment)
@@ -543,10 +550,11 @@ class FocusedAccountCredits(unittest.TestCase):
         self.observe('claude-api', 'org-fixture')
         self.import_credit('claude-api', 'org-fixture', '200.00')
         self.assertEqual(self.authorize('attempt-1'), 'authorized')
+        self.seed_cost()
         child = directory / 'child.sh'
         child.write_text('#!/bin/sh\nprintf "KEY=${ANTHROPIC_API_KEY:+set}\n"\n')
         child.chmod(0o755)
-        environment = {'BATON2_CREDIT_RESERVATION': 'attempt-1', 'BATON_ATTEMPT_DIRECTORY': 'attempt-1',
+        environment = {'BATON2_CREDIT_RESERVATION': 'attempt-1', 'BATON2_CREDIT_ACCOUNT': 'claude-api', 'BATON2_CREDIT_SESSION': 'leaf', 'BATON_ATTEMPT_DIRECTORY': 'attempt-1',
                        'BATON_DATABASE': str(self.db), 'PATH': os.environ['PATH']}
         admitted = subprocess.run([helper, 'file:' + str(secret), str(child)],
                                   capture_output=True, text=True, env=environment)
