@@ -37,18 +37,6 @@ def configured_absolute(+configured: String, absolute: Bool) -> IO(Result<&1,&1,
 def configured_runtime(+configured: String) -> IO(Result<&1,&1,U32 & String,String>):
   configured_absolute(configured,is_absolute(configured))
 
-def candidate_result(rest: List<String>, +executable: String, found: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String>):
-  match found:
-    case Done{value}: IO.pure(Result<&1,&1,U32 & String,String>,Done{value})
-    case Fail{error}: try_installed(rest,executable)
-
-def try_installed(candidates: List<String>, +executable: String) -> IO(Result<&1,&1,U32 & String,String>):
-  match candidates:
-    case Nil{}: IO.pure(Result<&1,&1,U32 & String,String>,Fail{(2,missing_runtime(executable))})
-    case candidate <> rest: do IO<Result<&1,&1,U32 & String,String>>:
-      found : Result<&1,&1,U32 & String,String> <- Host.Control.command(candidate)
-      candidate_result(rest,executable,found)
-
 def path_result(executable: String, found: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String>):
   match found:
     case Done{value}: IO.pure(Result<&1,&1,U32 & String,String>,Done{"node"})
@@ -58,6 +46,29 @@ def path_runtime(executable: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
     found : Result<&1,&1,U32 & String,String> <- Host.Control.command("node")
     path_result(executable,found)
+
+def bundled_result(executable: String, found: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String>):
+  match found:
+    case Done{value}: IO.pure(Result<&1,&1,U32 & String,String>,Done{value})
+    case Fail{error}: path_runtime(executable)
+
+def bundled_runtime(executable: String) -> IO(Result<&1,&1,U32 & String,String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
+    found : Result<&1,&1,U32 & String,String> <- Host.Control.command(directory(executable) ++ "../libexec/baton2/repl/bun")
+    bundled_result(executable,found)
+
+def sibling_result(executable: String, found: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String>):
+  match found:
+    case Done{value}: IO.pure(Result<&1,&1,U32 & String,String>,Done{value})
+    case Fail{error}: bundled_runtime(executable)
+
+def sibling_runtime(executable: String) -> IO(Result<&1,&1,U32 & String,String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
+    found : Result<&1,&1,U32 & String,String> <- Host.Control.command(directory(executable) ++ "node")
+    sibling_result(executable,found)
+
+def installed_runtime(executable: String) -> IO(Result<&1,&1,U32 & String,String>):
+  sibling_runtime(executable)
 
 def environment_value(+executable: String, +value: String, empty: Bool) -> IO(Result<&1,&1,U32 & String,String>):
   match empty:
@@ -73,15 +84,3 @@ def resolve(+executable: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
     configured : Result<&1,&1,U32 & String,String> <- IO.get_env("BATON2_NODE")
     environment_result(executable,configured)
-
-def installed_result(+executable: String, found: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String>):
-  match found:
-    case Done{value}: IO.pure(Result<&1,&1,U32 & String,String>,Done{value})
-    case Fail{error}: path_runtime(executable)
-
-def installed_runtime(+executable: String) -> IO(Result<&1,&1,U32 & String,String>):
-  do IO<Result<&1,&1,U32 & String,String>>:
-    +base : String = directory(executable)
-    candidates = [base ++ "node",base ++ "../libexec/baton2/repl/bun"]
-    found : Result<&1,&1,U32 & String,String> <- try_installed(candidates,executable)
-    installed_result(executable,found)
