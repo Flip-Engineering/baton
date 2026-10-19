@@ -61,18 +61,9 @@ jobs:
       BATON2_FOCUSED_SUITE: ${{ inputs.suite }}
       BATON2_FOCUSED_FULL_RUNTIME: ${{ inputs.full_runtime }}
       BATON2_FOCUSED_FULL_RUNTIME_SHA256: ${{ inputs.full_runtime_sha256 }}
-      BATON2_FOCUSED_MEMORY_MAX_BYTES: ${{ vars.BATON2_FOCUSED_MEMORY_MAX_BYTES }}
-      BATON2_FOCUSED_MEMORY_RESERVE_BYTES: ${{ vars.BATON2_FOCUSED_MEMORY_RESERVE_BYTES }}
-      BATON2_FOCUSED_TASKS_MAX: ${{ vars.BATON2_FOCUSED_TASKS_MAX }}
-      BATON2_FOCUSED_RUNTIME_SECONDS: ${{ vars.BATON2_FOCUSED_RUNTIME_SECONDS }}
     steps:
       - name: Initialize evidence and validate dispatch pins
         shell: bash
-        env:
-          BATON2_FOCUSED_MEMORY_MAX_BYTES: ${{ vars.BATON2_FOCUSED_MEMORY_MAX_BYTES }}
-          BATON2_FOCUSED_MEMORY_RESERVE_BYTES: ${{ vars.BATON2_FOCUSED_MEMORY_RESERVE_BYTES }}
-          BATON2_FOCUSED_TASKS_MAX: ${{ vars.BATON2_FOCUSED_TASKS_MAX }}
-          BATON2_FOCUSED_RUNTIME_SECONDS: ${{ vars.BATON2_FOCUSED_RUNTIME_SECONDS }}
         run: |
           set -euo pipefail
           run="$RUNNER_TEMP/baton2-focused-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
@@ -93,10 +84,6 @@ jobs:
           [[ "$BATON2_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$BATON2_TARGET_SHA" =~ ^[0-9a-f]{40}$ ]]
           test "$BATON2_FOCUSED_SUITE" = observer-recovery
-          test -n "${BATON2_FOCUSED_MEMORY_MAX_BYTES:-}"
-          test -n "${BATON2_FOCUSED_MEMORY_RESERVE_BYTES:-}"
-          test -n "${BATON2_FOCUSED_TASKS_MAX:-}"
-          test -n "${BATON2_FOCUSED_RUNTIME_SECONDS:-}"
       - name: Checkout exact trusted target source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -134,14 +121,10 @@ jobs:
           printf 'BATON2_FOCUSED_COMPILER=%s\n' "$raw" >> "$GITHUB_ENV"
           sha256sum "$raw.raw" "$raw" "$run/toolchain-home/bin/bun" \
             "$run/toolchain-home/bend2/main.ts" > "$run/evidence/compiler-files.sha256"
-      - name: Run focused source comparison inside an admitted scope
+      - name: Run focused source comparison inside an owned scope
         shell: bash
         env:
           BATON2_FOCUSED_VALIDATORS: ${{ vars.BATON2_FOCUSED_VALIDATORS }}
-          BATON2_FOCUSED_MEMORY_MAX_BYTES: ${{ vars.BATON2_FOCUSED_MEMORY_MAX_BYTES }}
-          BATON2_FOCUSED_MEMORY_RESERVE_BYTES: ${{ vars.BATON2_FOCUSED_MEMORY_RESERVE_BYTES }}
-          BATON2_FOCUSED_TASKS_MAX: ${{ vars.BATON2_FOCUSED_TASKS_MAX }}
-          BATON2_FOCUSED_RUNTIME_SECONDS: ${{ vars.BATON2_FOCUSED_RUNTIME_SECONDS }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
