@@ -155,7 +155,12 @@ def presence_unknown(presence: T.Presence) -> Bool:
     case T.Unknown{}: True{}
     case other: False{}
 
-def pure_checks() -> IO(Unit):
+def check_present_presence(label: String, presence: T.Presence) -> IO(Unit):
+  match presence:
+    case T.Present{detail}: check(label, True{}, detail)
+    case other: check(label, False{}, "not-present")
+
+def pure_identity_checks() -> IO(Unit):
   do IO<Unit>:
     base : T.Candidate = T.Candidate{"/x", T.Scratch{}, "owner", "proof", 1n, "file:1:1", clear_facts()}
     owner_bad : T.Candidate = T.Candidate{"/x", T.Scratch{}, "owner", "proof", 1n, "file:1:1", T.Facts{T.OwnerDiffers{"other"}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}}}
@@ -202,8 +207,11 @@ def spawned_holder(result: Result<&1,&1,U32 & String,U32>, +dir: String) -> IO(U
     case Done{+handle}:
       do IO<Unit>:
         presence : T.Presence <- O.runtime_presence(dir)
-        +seen : String = presence_detail(presence)
-        ok : Unit <- check("fd-descendant", Bool.not(String.is_empty(seen)), seen)
+        ok : Unit <- check_present_presence("fd-descendant", presence)
+        removed : Unit <- run_cmd(["/bin/rm", "-f", dir ++ "/orchestra.db"])
+        unlinked : T.Presence <- O.runtime_presence(dir)
+        +unlinked_seen : String = presence_detail(unlinked)
+        unlinked_ok : Unit <- check("unlinked-fd-owner", Bool.and(Bool.not(String.is_empty(unlinked_seen)), Bool.not(String.eq(unlinked_seen, "unknown"))), unlinked_seen)
         signaled : Unit <- IO.try(Unit, Proc.ProcessChild.signal(handle, 15))
         waited : String <- IO.try(String, Proc.ProcessChild.wait(handle))
         IO.pure(Unit, Unit{})
@@ -271,35 +279,56 @@ def database_malformed_check(+db: String, +root: String) -> IO(Unit):
     b : Unit <- check("malformed-endpoint-unknown", presence_unknown(facts_database_or_unknown(facts)), "malformed endpoint produced known database evidence")
     IO.pure(Unit, Unit{})
 
-def wait_pidfile(+path: String, +attempts: U32) -> IO(Bool):
-  match attempts:
-    case 0: IO.pure(Bool, False{})
-    case _:
-      do IO<Bool>:
-        observed : O.Observation <- O.observe(path)
-        match observed:
-          case O.Found{path, kind, device, inode, bytes}:
-            Bool.pick(IO(Bool), Nat.is_gt(bytes, 0n), IO.pure(Bool, True{}),
-              do IO<Bool>:
-                slept : Unit <- IO.sleep(50)
-                wait_pidfile(path, U32.sub(attempts, 1)))
-          case other:
-            do IO<Bool>:
-              slept : Unit <- IO.sleep(50)
-              wait_pidfile(path, U32.sub(attempts, 1))
+def unknown_peer_script() -> String:
+  "import ctypes,time; getattr(ctypes.CDLL(None),'prctl',lambda *args: 0)(4,0,0,0,0); time.sleep(30)"
 
-def wait_presence(+dir: String, +attempts: U32) -> IO(T.Presence):
-  match attempts:
-    case 0: O.runtime_presence(dir)
-    case _:
-      do IO<T.Presence>:
+def check_unknown_presence(presence: T.Presence) -> IO(Unit):
+  match presence:
+    case T.Unknown{}: check("unknown-without-match", True{}, "unknown")
+    case other: check("unknown-without-match", False{}, presence_detail(other))
+
+def spawned_unknown_holder(result: Result<&1,&1,U32 & String,U32>, +dir: String, +database: String) -> IO(Unit):
+  match result:
+    case Fail{error}: IO.die(Unit, 1, "unknown peer spawn failed")
+    case Done{+handle}:
+      do IO<Unit>:
+        slept : Unit <- IO.sleep(100)
+        absent : T.Presence <- O.runtime_presence(dir)
+        unknown_ok : Unit <- check_unknown_presence(absent)
+        signaled : Unit <- IO.try(Unit, Proc.ProcessChild.signal(handle, 15))
+        waited : String <- IO.try(String, Proc.ProcessChild.wait(handle))
+        holder : Result<&1,&1,U32 & String,U32> <- Proc.ProcessChild.spawn(Proc.argv(["/bin/sh", "-c", held_file_script(database), "sh", database]), ".", dir ++ ".holder.stderr")
+        held : Unit <- spawned_holder(holder, dir)
+        IO.pure(Unit, held)
+
+def spawned_positive_holder(holder: Result<&1,&1,U32 & String,U32>, +unknown_handle: U32, +dir: String) -> IO(Unit):
+  match holder:
+    case Fail{error}: IO.die(Unit, 1, "positive holder spawn failed")
+    case Done{+holder_handle}:
+      do IO<Unit>:
         presence : T.Presence <- O.runtime_presence(dir)
-        match presence:
-          case T.Present{detail}: IO.pure(T.Presence, presence)
-          case other:
-            do IO<T.Presence>:
-              slept : Unit <- IO.sleep(50)
-              wait_presence(dir, U32.sub(attempts, 1))
+        positive : Unit <- check_present_presence("positive-match-with-unknown-peer", presence)
+        signaled_holder : Unit <- IO.try(Unit, Proc.ProcessChild.signal(holder_handle, 15))
+        waited_holder : String <- IO.try(String, Proc.ProcessChild.wait(holder_handle))
+        signaled_unknown : Unit <- IO.try(Unit, Proc.ProcessChild.signal(unknown_handle, 15))
+        waited_unknown : String <- IO.try(String, Proc.ProcessChild.wait(unknown_handle))
+        IO.pure(Unit, positive)
+
+def spawned_presence_precedence(result: Result<&1,&1,U32 & String,U32>, +dir: String) -> IO(Unit):
+  match result:
+    case Fail{error}: IO.die(Unit, 1, "unknown peer spawn failed")
+    case Done{+unknown_handle}:
+      do IO<Unit>:
+        slept : Unit <- IO.sleep(100)
+        holder : Result<&1,&1,U32 & String,U32> <- Proc.ProcessChild.spawn(Proc.argv(["/bin/sleep", "30"]), dir, dir ++ ".cwd-holder.stderr")
+        spawned_positive_holder(holder, unknown_handle, dir)
+
+def positive_precedence_check(+root: String) -> IO(Unit):
+  do IO<Unit>:
+    +dir : String = root ++ "/positive-precedence"
+    made : Unit <- IO.try(Unit, F.Files.mkdir(dir))
+    unknown : Result<&1,&1,U32 & String,U32> <- Proc.ProcessChild.spawn(Proc.argv(["/usr/bin/env", "python3", "-c", unknown_peer_script()]), ".", dir ++ ".unknown.stderr")
+    spawned_presence_precedence(unknown, dir)
 
 def unlinked_holder_check(+root: String) -> IO(Unit):
   do IO<Unit>:
@@ -308,26 +337,8 @@ def unlinked_holder_check(+root: String) -> IO(Unit):
     made : Unit <- IO.try(Unit, F.Files.mkdir(dir))
     +database : String = dir ++ "/orchestra.db"
     wrote : Unit <- write_file(database, "payload")
-    +pidfile : String = dir ++ "/holder.pid"
-    +marker : String = dir ++ "/holder.ready"
-    +script : String = "(exec 3<\"$1\"; echo running > \"$3\"; sleep 30) & echo $! > \"$2\"; wait"
-    spawned : Result<&1,&1,U32 & String,U32> <- Proc.ProcessChild.spawn(Proc.argv(["/bin/sh", "-c", script, "sh", database, pidfile, marker]), ".", dir ++ ".stderr")
-    match spawned:
-      case Fail{error}: IO.die(Unit, 1, "unlinked holder spawn failed")
-      case Done{+handle}:
-        do IO<Unit>:
-          ready : Bool <- wait_pidfile(marker, 40)
-          a : Unit <- check("unlinked-holder-started", ready, "holder pid file missing")
-          removed : Unit <- run_cmd(["/bin/rm", "-f", database])
-          presence : T.Presence <- wait_presence(dir, 40)
-          +seen : String = presence_detail(presence)
-          b : Unit <- check("unlinked-fd-owner", Bool.and(Bool.not(String.is_empty(seen)), Bool.not(String.eq(seen, "unknown"))), seen)
-          +pid_text : String = command_output(["/bin/cat", pidfile])
-          +pid : U32 = u32_of(U32.read(pid_text))
-          killed : Unit <- Bool.pick(IO(Unit), U32.is_lt(0, pid), run_ignore(["/bin/kill", "-TERM", U32.show(pid)]), IO.pure(Unit, Unit{}))
-          signaled : Unit <- run_ignore(["/bin/kill", "-TERM", U32.show(handle)])
-          waited : String <- IO.try(String, Proc.ProcessChild.wait(handle))
-          IO.pure(Unit, Unit{})
+    spawned : Result<&1,&1,U32 & String,U32> <- Proc.ProcessChild.spawn(Proc.argv(["/usr/bin/env", "python3", "-c", unknown_peer_script()]), ".", dir ++ ".unknown.stderr")
+    spawned_unknown_holder(spawned, dir, database)
 
 def exclusive_check() -> IO(Unit):
   do IO<Unit>:
@@ -496,6 +507,7 @@ def main() -> IO(Unit):
     process : Unit <- process_checks(root)
     dbpaths : Unit <- database_checks(db, root)
     unlinked : Unit <- unlinked_holder_check(root)
+    precedence : Unit <- positive_precedence_check(root)
     exclusive : Unit <- exclusive_check()
     applied : Unit <- apply_checks(db, root)
     rootrace_dir : Unit <- IO.try(Unit, F.Files.mkdir(root ++ "/rootrace"))
