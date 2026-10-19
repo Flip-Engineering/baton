@@ -4,15 +4,19 @@
 # durable shape, then proves the gate holds across repeated wake checks, the
 # empty-window reset observation is supported, repeated refusal reports share
 # one durable identity, and clear-only preserves native identity, owed input and
-# the quota hold.
+# the quota hold. It also proves cross-session report separation, the first-attempt
+# exit identity before its usage row, and the handoff/direct-start gate.
 #
 # usage: quota-backoff-dedupe DB
 import Base
 import ../src/coordinator/commands.bend as C
+import ../src/coordinator/accounts.bend as Accounts
 import ../src/coordinator/stop.bend as Stop
 import ../src/coordinator/subscription-fallback.bend as Subs
+import ../src/coordinator/turn.bend as Turn
 import ../src/coordinator/usage-windows.bend as UW
 import ../src/host/sqlite.bend as DB
+import ../src/host/text.bend as Text
 import ../src/git/text.bend as Tx
 
 def expect(+label: String, is_ok: Bool) -> IO(Unit):
@@ -50,12 +54,18 @@ def messages_state_sql(session: String) -> String:
 def cause(ident: String) -> String:
   "provider-reported usage exhaustion: API error 429 [request_id=" ++ ident ++ "]: Subscription quota exhausted. Your usage window resets at 2026-10-26T00:00:00Z. (rate_limit_error)"
 
+def quota_event(ident: String) -> String:
+  "{\"payload_type\":\"run.terminal.failed\",\"payload\":{\"kind\":\"run_terminal\",\"terminal\":\"failed\",\"reason\":\"" ++ cause(ident) ++ "\"}}"
+
 def setup(+db: String) -> IO(Unit):
   do IO<Unit>:
     made : String <- IO.try(String,DB.Sql.query(db,C.schema()))
     operator : Unit <- query(db,"INSERT INTO sessions(id,parent,harness,model,effort,native,endpoint) VALUES('operator',NULL,'operator','','','','');")
-    roles : Unit <- query(db,"INSERT INTO session_roles(session,role) VALUES('operator','operator'),('wonder','conductor');")
     wonder : Unit <- query(db,"INSERT INTO sessions(id,parent,harness,model,effort,native,endpoint,workspace,branch,base) VALUES('wonder',NULL,'muse','muse-wonder-1.0','high','01a1549a-4b05-78c1-982a-ebda86e8b067','','/wonder','wonder-branch','base-sha');")
+    wonder2 : Unit <- query(db,"INSERT INTO sessions(id,parent,harness,model,effort,native,endpoint,workspace,branch,base) VALUES('wonder2',NULL,'muse','muse-wonder-1.0','high','01a1549a-4b05-78c1-982a-ebda86e8b068','','/wonder2','wonder2-branch','base-sha');")
+    wonder_first : Unit <- query(db,"INSERT INTO sessions(id,parent,harness,model,effort,native,endpoint,workspace,branch,base) VALUES('wonder-first',NULL,'muse-first','muse-wonder-1.0','high','01a1549a-4b05-78c1-982a-ebda86e8b069','','/wonder-first','wonder-first-branch','base-sha');")
+    wonder_gate : Unit <- query(db,"INSERT INTO sessions(id,parent,harness,model,effort,native,endpoint,workspace,branch,base) VALUES('wonder-gate',NULL,'muse','muse-wonder-1.0','high','01a1549a-4b05-78c1-982a-ebda86e8b070','','/wonder-gate','wonder-gate-branch','base-sha');")
+    roles : Unit <- query(db,"INSERT INTO session_roles(session,role) VALUES('operator','operator'),('wonder','conductor'),('wonder2','conductor'),('wonder-first','conductor'),('wonder-gate','conductor');")
     attempt : Unit <- query(db,"INSERT INTO executions(session,id,mode,directory,phase,status) VALUES('wonder','attempt-prod','retained','/wonder','exited','exit 1');")
     stop : Unit <- query(db,"INSERT INTO session_stops(session,id,reason,attempt,directory,signal,applied_signal,outcome,native_status,report_id) VALUES('wonder','stop-prod','provider exhaustion retained','attempt-prod','/wonder',15,15,'stopped','exit 1','stop-result:stop-prod');")
     task : Unit <- query(db,"INSERT INTO messages(id,sender,recipient,kind,body) VALUES('task-1','operator','wonder','task','Retained task.');")
@@ -78,7 +88,7 @@ def gate_cases(+db: String) -> IO(Unit):
     held : Unit <- expect_gate(db,"wonder","","held","unqualified-provider-message-holds")
     repeated : Unit <- gate_attempts(db,"wonder","",["184737","184742","184753","184759","184765","184771"])
     executions : Unit <- expect_read(db,"SELECT count(*) FROM executions WHERE session='wonder';","1\n","gate-creates-no-execution")
-    provider_rows : Unit <- expect_read(db,"SELECT count(*) FROM usage_windows WHERE reset_source='provider-message' AND account='';","3\n","provider-exhaustion-durable")
+    provider_rows : Unit <- expect_read(db,"SELECT count(*) FROM usage_windows WHERE reset_source='provider-message' AND account='' AND harness='muse';","3\n","provider-exhaustion-durable")
     IO.pure(Unit,Unit{})
 
 def dedupe_cases(+db: String) -> IO(Unit):
@@ -95,15 +105,20 @@ def dedupe_cases(+db: String) -> IO(Unit):
     route_count : Unit <- expect_read(db,"SELECT count(*) FROM messages WHERE id LIKE '%:route-unavailable';","1\n","route-unavailable-deduped")
     +route_body : String <- read(db,"SELECT body FROM messages WHERE id LIKE '%:route-unavailable';")
     expect("route-first-evidence",Bool.and(String.contains(route_body,first_cause),Bool.not(String.contains(route_body,second_cause))))
-    +exit_one : String <- Subs.exit_report_id(db,"wonder","attempt-one")
-    +exit_two : String <- Subs.exit_report_id(db,"wonder","attempt-two")
+    +exit_one : String <- Subs.exit_report_id(db,"wonder","attempt-one",quota_event("first-request"))
+    +exit_two : String <- Subs.exit_report_id(db,"wonder","attempt-two",quota_event("second-request"))
     expect("exit-id-shared",String.eq(exit_one,exit_two))
     expect("exit-id-kind",String.ends_with(exit_one,":exit"))
     first_exit : Unit <- Subs.report_message(db,"wonder",exit_one,"Player process ended with exit 1")
     second_exit : Unit <- Subs.report_message(db,"wonder",exit_two,"Player process ended with exit 1")
-    exit_count : Unit <- expect_read(db,"SELECT count(*) FROM messages WHERE id LIKE '%:exit';","1\n","exit-report-deduped")
+    exit_count : Unit <- expect_read(db,"SELECT count(*) FROM messages WHERE id LIKE '%:exit' AND sender='wonder';","1\n","exit-report-deduped")
     reported : Bool <- Subs.exhausted_reported(db,"wonder","attempt-one")
     expect("exhausted-report-detected",reported)
+    second_session : Bool <- Subs.report_all_refused(db,"wonder2","attempt-w2","muse","",second_cause)
+    cross_count : Unit <- expect_read(db,"SELECT count(*) FROM messages WHERE id LIKE '%:profile-exhausted';","2\n","cross-session-profile-not-suppressed")
+    cross_distinct : Unit <- expect_read(db,"SELECT count(DISTINCT id) FROM messages WHERE id LIKE '%:profile-exhausted';","2\n","cross-session-profile-ids-distinct")
+    +exit_w2 : String <- Subs.exit_report_id(db,"wonder2","attempt-w2",quota_event("second-request"))
+    expect("cross-session-exit-id",Bool.not(String.eq(exit_one,exit_w2)))
     IO.pure(Unit,Unit{})
 
 def clear_cases(+db: String) -> IO<Unit>:
@@ -129,13 +144,41 @@ def reset_cases(+db: String) -> IO<Unit>:
     elapsed : Unit <- UW.reset_exhausted(db,"wonder","2020-01-01T00:00:00Z","provider console","")
     selectable : Unit <- expect_gate(db,"wonder","","elapsed","actual-past-reset-selectable")
     observations : Unit <- expect_read(db,"SELECT count(*) FROM usage_windows WHERE reset_source='operator-observation' AND window='' AND account='';","2\n","two-empty-window-resets")
-    providers : Unit <- expect_read(db,"SELECT count(*) FROM usage_windows WHERE reset_source='provider-message' AND account='';","3\n","no-provider-success-fabricated")
+    providers : Unit <- expect_read(db,"SELECT count(*) FROM usage_windows WHERE reset_source='provider-message' AND account='' AND harness='muse';","3\n","no-provider-success-fabricated")
     executions : Unit <- expect_read(db,"SELECT count(*) FROM executions WHERE session='wonder';","1\n","reset-creates-no-execution")
     refused : Result<&1,&1,U32 & String,Unit> <- IO.try(Unit,UW.reset_exhausted(db,"wonder","next monday","console",""))
     match refused:
       case Done{unit}: IO.die(Unit,1,"fixture-quota-backoff invalid-reset: unexpectedly succeeded")
       case Fail{(code,detail)}: expect("invalid-reset-refused",Bool.and(U32.is_eq(code,22),Bool.not(String.is_empty(detail))))
     unchanged : Unit <- expect_read(db,"SELECT count(*) FROM usage_windows WHERE reset_source='operator-observation';","2\n","invalid-reset-records-nothing")
+    IO.pure(Unit,Unit{})
+
+def first_exit_cases(+db: String) -> IO(Unit):
+  do IO<Unit>:
+    +event_one = quota_event("first-exit-request")
+    +before : String <- Subs.exit_report_id(db,"wonder-first","attempt-first",event_one)
+    expect("first-exit-is-refusal",Tx.starts_with(before,"refusal:"))
+    first_insert : Unit <- Subs.report_message(db,"wonder-first",before,"Player process ended with exit 1")
+    advanced : Bool <- Accounts.handoff(db,"wonder-first","attempt-first",event_one,"native","cmd","/wonder-first")
+    +event_two = quota_event("second-exit-request")
+    +after : String <- Subs.exit_report_id(db,"wonder-first","attempt-second",event_two)
+    expect("second-exit-same-identity",String.eq(before,after))
+    second_insert : Unit <- Subs.report_message(db,"wonder-first",after,"Player process ended with exit 1")
+    count : Unit <- expect_read(db,"SELECT count(*) FROM messages WHERE id LIKE '%:exit' AND sender='wonder-first';","1\n","first-exit-order-one-report")
+    IO.pure(Unit,Unit{})
+
+def handoff_gate_case(+db: String) -> IO(Unit):
+  do IO<Unit>:
+    bound : Unit <- Subs.bind_profile(db,"wonder-gate","muse","current","/store/current")
+    profiles : Unit <- IO.try(Unit,Text.Text.append(db ++ ".profiles","muse next /store/next\n"))
+    +record_path : String <- Subs.profile_record_path(db,"wonder-gate")
+    advanced : Bool <- Accounts.handoff(db,"wonder-gate","attempt-gate",quota_event("gate-request"),"native","cmd","/wonder-gate")
+    expect("handoff-held-no-start",Bool.not(advanced))
+    +after : String <- IO.try(String,Text.Text.read(record_path))
+    expect("handoff-recorded-next-profile",String.contains(after,"next"))
+    handoff_report : Unit <- expect_read(db,"SELECT count(*) FROM messages WHERE id LIKE '%:profile-handoff-next';","1\n","handoff-evidence-recorded")
+    gate : UW.Gate <- Turn.direct_window_gate(db,"wonder-gate")
+    expect("direct-start-held",Turn.direct_gate_held(gate))
     IO.pure(Unit,Unit{})
 
 def main_args(args: List<String>) -> IO<Unit>:
@@ -145,6 +188,8 @@ def main_args(args: List<String>) -> IO<Unit>:
       gate_cases(path)
       clear_cases(path)
       dedupe_cases(path)
+      first_exit_cases(path)
+      handoff_gate_case(path)
       reset_cases(path)
       IO.print("fixture-quota-backoff-dedupe-ok")
     case other: IO.die(Unit,2,"usage: quota-backoff-dedupe DB")

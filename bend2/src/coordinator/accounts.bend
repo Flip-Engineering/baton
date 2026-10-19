@@ -765,6 +765,11 @@ def handoff_label_io(+db: String, +session: String) -> IO(String):
 # so the provider reset survives even when the advance fails; the advance is
 # recorded before the caller relaunches, so the next attempt records the next
 # account beside its own attempt identity. An empty cause records nothing.
+def gate_held(gate: UW.Gate) -> Bool:
+  match gate:
+    case UW.GateHeld{window,resets_at,source,receipt}: True{}
+    case other: False{}
+
 def handoff(+db: String, +session: String, +id: String, +event: String, native: String, cmd: String, cwd: String) -> IO(Bool):
   do IO<Bool>:
     +cause : String <- Subs.exhaustion_cause(db,event)
@@ -774,7 +779,10 @@ def handoff(+db: String, +session: String, +id: String, +event: String, native: 
     +label : String <- label_for_bound(db,session,bound)
     recorded : Unit <- Bool.pick(IO(Unit),String.is_empty(cause),IO.pure(Unit,Unit{}),UW.record_cause(db,session,id,label,cause))
     advanced : Bool <- handoff_decided(db,session,id,event,native,cmd,cwd,cause,harness,bound)
-    IO.pure(Bool,advanced)
+    +next_label : String <- handoff_label_io(db,session)
+    gate : UW.Gate <- UW.window_gate(db,session,next_label)
+    held : Bool <- IO.pure(Bool,Bool.and(Bool.not(String.is_empty(cause)),gate_held(gate)))
+    IO.pure(Bool,Bool.and(advanced,Bool.not(held)))
 
 # --- the account selected for each attempt -----------------------------------
 

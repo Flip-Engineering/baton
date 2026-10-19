@@ -46,7 +46,7 @@ sh bend2/scripts/build-native.sh bend2/test/clear-stop-quota.bend .scratch/bend2
 rm -f .scratch/bend2/clear-stop-quota.db
 .scratch/bend2/clear-stop-quota-test .scratch/bend2/clear-stop-quota.db
 sh bend2/scripts/build-native.sh bend2/test/quota-backoff-dedupe.bend .scratch/bend2/quota-backoff-dedupe-test
-rm -f .scratch/bend2/quota-backoff-dedupe.db
+rm -f .scratch/bend2/quota-backoff-dedupe.db .scratch/bend2/quota-backoff-dedupe.db.profiles .scratch/bend2/quota-backoff-dedupe.db.profile-*
 .scratch/bend2/quota-backoff-dedupe-test .scratch/bend2/quota-backoff-dedupe.db
 sh bend2/scripts/build-native.sh bend2/test/usage-windows-wake.bend .scratch/bend2/usage-windows-wake-test
 rm -f .scratch/bend2/usage-windows-wake.db

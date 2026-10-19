@@ -12,6 +12,7 @@ import ./connect-laws.bend as ConnectLaws
 import ./naming-laws.bend as NamingLaws
 import ./delivery.bend as Delivery
 import ./turn.bend as Turn
+import ./subscription-fallback.bend as Subs
 import ../coordinator/commands.bend as C
 import ./receive.bend as Receive
 import ./guidance.bend as Guidance
@@ -78,9 +79,12 @@ law m17_failed_player_end_reports_to_the_parent:
   for +player: String
   for +id: String
   for +status: String
-  {Turn.exit_failure(db, player, id, status, False{}) == Turn.report(db, player, id ++ ":exit", "Player process ended with " ++ status) : IO(Unit)}
+  for +event: String
+  {Turn.exit_failure(db, player, id, status, False{}, event) == (do IO<Unit>:
+    +message_id : String <- Subs.exit_report_id(db,player,id,event)
+    Turn.report(db, player, message_id, "Player process ended with " ++ status)) : IO(Unit)}
 
-def m17_failed_player_end_reports_to_the_parent(db, player, id, status):
+def m17_failed_player_end_reports_to_the_parent(db, player, id, status, event):
   {==}
 
 law m17_missing_native_result_reports_to_the_parent:

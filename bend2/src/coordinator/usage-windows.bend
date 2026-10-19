@@ -540,10 +540,10 @@ def window_gate(+db: String, +session: String, +account: String) -> IO(Gate):
 # A stable identity for the latest exhausted provider row of one route, across
 # accounts. Reports for the same refusal share it so the first complete
 # evidence is durable and later attempts add no duplicate report.
-def refusal_identity_sql(+harness: String, +provider: String) -> String:
+def refusal_identity_sql(+session: String, +harness: String, +provider: String) -> String:
   +providers = "SELECT p.* FROM usage_windows p WHERE p.harness=" ++ C.q(harness) ++ " AND p.provider=" ++ C.q(provider) ++ " AND p.reset_source IN ('provider-message','provider-report') AND p.id=(SELECT p2.id FROM usage_windows p2 WHERE p2.harness=" ++ C.q(harness) ++ " AND p2.provider=" ++ C.q(provider) ++ " AND p2.reset_source IN ('provider-message','provider-report') AND p2.window=p.window ORDER BY p2.recorded_at DESC,p2.id DESC LIMIT 1)"
   +exhausted = "SELECT p.window FROM (" ++ providers ++ ") p WHERE " ++ exhausted_sql("p")
-  "SELECT coalesce((SELECT p.harness || char(31) || p.provider || char(31) || p.account || char(31) || p.window || char(31) || coalesce(CAST(p.resets_at AS TEXT),'-') || char(31) || p.reset_source FROM (" ++ providers ++ ") p WHERE p.window IN (" ++ exhausted ++ ") ORDER BY p.recorded_at DESC,p.id DESC LIMIT 1),'')"
+  "SELECT coalesce((SELECT " ++ C.q(session) ++ " || char(31) || p.harness || char(31) || p.provider || char(31) || p.account || char(31) || p.window || char(31) || coalesce(CAST(p.resets_at AS TEXT),'-') || char(31) || p.reset_source FROM (" ++ providers ++ ") p WHERE p.window IN (" ++ exhausted ++ ") ORDER BY p.recorded_at DESC,p.id DESC LIMIT 1),'')"
 
 # An operator-observed reset covers every exhausted window in the session's
 # route and account scope, including the empty label a Muse quota message

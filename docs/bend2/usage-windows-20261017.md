@@ -111,13 +111,17 @@ window remains held. `usage-window-observe SESSION WINDOW RESETS_AT SOURCE`
 records the next reset observation without starting a session; the wake gate
 then reads that durable observation on its next admission.
 
-Repeated refusal reports share one durable identity. `profile-exhausted`,
+Repeated refusal reports share one durable identity per session. `profile-exhausted`,
 `account-exhausted`, `route-unavailable` and the failed-attempt `exit` report
 use the latest exhausted provider row's route, account, window, reset and
 source. The first report inserts; later attempts on the same refusal hit the
 same message identity and add nothing, so the first complete evidence and the
 owed input remain. A refusal with no durable exhausted row keeps its
-per-attempt identity.
+per-attempt identity. The failed-attempt `exit` identity comes from the
+session and the provider cause, so the first attempt has the same identity
+before its usage row is recorded. Handoff and direct-start paths check the
+held window before starting a native; the usage-window commands read the same
+`Accounts.handoff_label_io` account scope as the gate and handoff.
 
 The receiver checks the same gate under its admission lock before it starts a
 native process. A retained endpoint that invokes `receive` directly therefore
@@ -170,6 +174,8 @@ validation runners.
 an unqualified Muse model with empty provider/window/account rows holds across
 repeated wake checks, `usage-window-reset` records the actual and past resets
 for the empty window, repeated refusal reports share one identity, and
-clear-only preserves native identity, owed input and the held quota row.
+clear-only preserves native identity, owed input and the held quota row. It
+also separates report identities across sessions, keeps the first-attempt exit
+identity before its usage row, and refuses a held handoff or direct start.
 `bend2/test/clear-stop-quota.bend` covers clear-only no-execution and the
 qualified hold case.

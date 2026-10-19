@@ -483,12 +483,33 @@ def refusal_report_id(db: String, session: String, id: String, kind: String) -> 
     model : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"SELECT model FROM sessions WHERE id=" ++ C.q(session) ++ ";")
     +harness_text = result_text(harness)
     +model_text = result_text(model)
-    identity : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,UW.refusal_identity_sql(harness_text,UW.provider_of(model_text)))
+    identity : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,UW.refusal_identity_sql(session,harness_text,UW.provider_of(model_text)))
     +trimmed = result_text(identity)
     Bool.pick(String,String.is_empty(trimmed),id ++ ":" ++ kind,
       do IO<String>:
         encoded : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"SELECT lower(hex(" ++ C.q(trimmed) ++ "));")
         IO.pure(String,"refusal:" ++ result_text(encoded) ++ ":" ++ kind))
+
+# The exit identity comes from the session and the provider cause, so the first
+# failed attempt has the same identity before its usage row is recorded. The
+# request id in the provider text is not part of the identity.
+def exit_report_id(db: String, session: String, id: String, event: String) -> IO(String):
+  do IO<String>:
+    +cause : String <- exhaustion_cause(db,event)
+    Bool.pick(IO(String),String.is_empty(cause),IO.pure(String,id ++ ":exit"),
+      do IO<String>:
+        harness : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";")
+        model : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"SELECT model FROM sessions WHERE id=" ++ C.q(session) ++ ";")
+        +harness_text = result_text(harness)
+        +model_text = result_text(model)
+        +window = UW.window_label_of(UW.lower_ascii(cause))
+        +reset = UW.reset_text_of(cause)
+        identity : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"SELECT " ++ C.q(session) ++ " || char(31) || " ++ C.q(harness_text) ++ " || char(31) || " ++ C.q(UW.provider_of(model_text)) ++ " || char(31) || " ++ C.q(window) ++ " || char(31) || " ++ C.q(reset) ++ ";")
+        +trimmed = result_text(identity)
+        Bool.pick(IO(String),String.is_empty(trimmed),IO.pure(String,id ++ ":exit"),
+          do IO<String>:
+            encoded : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"SELECT lower(hex(" ++ C.q(trimmed) ++ "));")
+            IO.pure(String,"refusal:" ++ result_text(encoded) ++ ":exit"))
 
 def report_account_exhausted(db: String, session: String, id: String, body: String) -> IO(Unit):
   do IO<Unit>:
