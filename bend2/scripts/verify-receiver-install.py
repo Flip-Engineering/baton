@@ -105,6 +105,8 @@ def main():
     operations.append(probe(prefix, 0, [prefix / 'bin/baton-full', '--help']))
     operations.append(probe(prefix, 0, [prefix / 'bin/baton2', '--help']))
     operations.append(probe(prefix, 0, [prefix / 'bin/baton-recovery', '--help']))
+    operations.append(probe(prefix, 0, [prefix / 'bin/baton', 'repl', '--help']))
+    operations.append(probe(prefix, 0, [prefix / 'bin/baton2', 'repl', '--help']))
     operations.append(probe_missing_full_routes(prefix))
     focused = prefix / 'bin/baton'
     hidden_focused = prefix / 'bin/.baton.retained'

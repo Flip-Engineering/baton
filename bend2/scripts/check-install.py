@@ -345,6 +345,12 @@ def check(prefix, output):
 
     run([prefix / 'bin/baton', '--help'])
     run([prefix / 'bin/baton-full', '--help'])
+    repl_help = run([prefix / 'bin/baton', 'repl', '--help'])
+    require('repl define' in repl_help,
+            'The installed focused CLI lacks the public REPL action')
+    router_repl_help = run([prefix / 'bin/baton2', 'repl', '--help'])
+    require('repl define' in router_repl_help,
+            'The installed full router lacks the public REPL action')
     runtime_version = run([prefix / dependency['path'] / 'bun', '--version'])
     require(re.fullmatch(r'\d+\.\d+\.\d+(?:[-+][\w.-]+)?', runtime_version) is not None,
             'The bundled Bun runtime did not report its version')

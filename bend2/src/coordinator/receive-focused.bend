@@ -9,6 +9,9 @@ import ../git/process.bend as GitProcess
 import ../git/text.bend as Tx
 import ../git/types.bend as T
 import ../storage/lifecycle.bend as StoragePolicy
+import ./repl.bend as Repl
+import ./project.bend as Project
+import ../host/sqlite.bend as DB
 
 def dispatch_receive(selected: Bool, +db: String, +session: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, +message: String) -> IO(Unit):
   match selected:
@@ -143,7 +146,80 @@ def register_receiver_cwd(selected: Bool, +db: String, +session: String, +cmd: S
       IO.print(saved)
     case False{}: IO.die(Unit,2,"unsupported focused receive command")
 
+# Public REPL requests use the existing REPL handler. The focused facade owns
+# them so a package whose full CLI predates the REPL still answers.
+def repl_help(args: List<String>) -> Bool:
+  match args:
+    case "help" <> rest: True{}
+    case "--help" <> rest: True{}
+    case "-h" <> rest: True{}
+    case other: False{}
+
+def env_value(name: String) -> IO(String):
+  do IO<String>:
+    value : String <- IO.try(String,IO.get_env(name))
+    IO.pure(String,Tx.trim_nl(value))
+
+def first_actor(db: String) -> IO(String):
+  do IO<String>:
+    value : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce((SELECT id FROM sessions ORDER BY rowid LIMIT 1),'');"))
+    IO.pure(String,Tx.trim_nl(value))
+
+def selected_actor(db: String, supplied: String) -> IO(String):
+  match String.is_empty(supplied):
+    case False{}: IO.pure(String,supplied)
+    case True{}: do IO<String>:
+      session : String <- env_value("BATON_SESSION")
+      Bool.pick(IO(String),String.is_empty(session),
+        (do IO<String>:
+          codex : String <- env_value("CODEX_THREAD_ID")
+          Bool.pick(IO(String),String.is_empty(codex),first_actor(db),IO.pure(String,codex))),
+        IO.pure(String,session))
+
+def selected_database(supplied: String) -> IO(String):
+  match String.is_empty(supplied):
+    case False{}: IO.pure(String,supplied)
+    case True{}: do IO<String>:
+      database : String <- env_value("BATON_DATABASE")
+      Bool.pick(IO(String),String.is_empty(database),Project.database("."),IO.pure(String,database))
+
+def repl_run(db: String, session: String, args: List<String>) -> IO(Unit):
+  match repl_help(args):
+    case True{}: IO.write(Repl.help())
+    case False{}: do IO<Unit>:
+      database : String <- selected_database(db)
+      actor : String <- selected_actor(database,session)
+      Repl.execute(database,actor,args)
+
+def repl_project(path: String, session: String, args: List<String>) -> IO(Unit):
+  do IO<Unit>:
+    database : String <- Project.database(path)
+    repl_run(database,session,args)
+
+def dispatch_repl(args: List<String>) -> IO(Unit):
+  match args:
+    case "repl" <> rest: repl_run("","",rest)
+    case "as" <> session <> "repl" <> rest: repl_run("",session,rest)
+    case "--project" <> path <> "as" <> session <> "repl" <> rest: repl_project(path,session,rest)
+    case "--project" <> path <> "repl" <> rest: repl_project(path,"",rest)
+    case db <> "as" <> session <> "repl" <> rest: repl_run(db,session,rest)
+    case db <> "repl" <> rest: repl_run(db,"",rest)
+    case other: IO.die(Unit,2,"unsupported repl command")
+
+def repl_request(args: List<String>) -> Bool:
+  match args:
+    case "repl" <> rest: True{}
+    case "as" <> session <> "repl" <> rest: True{}
+    case "--project" <> path <> "repl" <> rest: True{}
+    case "--project" <> path <> "as" <> session <> "repl" <> rest: True{}
+    case db <> "repl" <> rest: True{}
+    case db <> "as" <> session <> "repl" <> rest: True{}
+    case other: False{}
+
 def dispatch(args: List<String>) -> IO(Unit):
+  Bool.pick(IO(Unit),repl_request(args),dispatch_repl(args),dispatch_receiver(args))
+
+def dispatch_receiver(args: List<String>) -> IO(Unit):
   match args:
     case +db <> +verb <> Nil{}:
       Bool.pick(IO(Unit), String.eq(verb,"storage-policy"), StoragePolicy.run_policy(db),

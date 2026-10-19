@@ -165,6 +165,19 @@ static int dispatch_entry(int argc,char **argv) {
 static int native_help_request(int argc,char **argv) {
   return argc>1 && (!strcmp(argv[1],"help") || !strcmp(argv[1],"--help") || !strcmp(argv[1],"-h"));
 }
+
+/* A public REPL request stays in the focused facade so an installed package
+   remains usable beside a full CLI built before the REPL action existed. */
+static int repl_request(int argc,char **argv) {
+  if(argc>1 && !strcmp(argv[1],"repl")) return 1;
+  if(argc>3 && !strcmp(argv[1],"as") && !strcmp(argv[3],"repl")) return 1;
+  if(argc>3 && !strcmp(argv[1],"--project") && !strcmp(argv[3],"repl")) return 1;
+  if(argc>5 && !strcmp(argv[1],"--project") && !strcmp(argv[3],"as") &&
+     !strcmp(argv[5],"repl")) return 1;
+  if(argc>2 && !strcmp(argv[2],"repl")) return 1;
+  if(argc>4 && !strcmp(argv[2],"as") && !strcmp(argv[4],"repl")) return 1;
+  return 0;
+}
 #endif
 
 #ifdef BATON2_RECEIVE_FOCUSED
@@ -179,6 +192,7 @@ static int focused_receiver_verb(int argc,char **argv) {
                 !strcmp(argv[2],"turn-text") || !strcmp(argv[2],"agent-native-input") ||
                 !strcmp(argv[2],"register-receiver") || !strcmp(argv[2],"storage-policy") ||
                 !strcmp(argv[2],"storage-preview") || !strcmp(argv[2],"storage-apply"))) return 1;
+  if(repl_request(argc,argv)) return 1;
   return 0;
 }
 
@@ -193,11 +207,12 @@ static int native_receiver_route(int argc, char **argv) {
                (argc>2 && !strcmp(argv[2],"recover-observer"));
   int focused_verb=argc>1 && (!strcmp(argv[1],"--dispatch-message") ||
     !strcmp(argv[1],"--host-process-keeper") || !strcmp(argv[1],"--instance-owner") ||
-    !strcmp(argv[1],"--instance-shutdown") || recovery);
+    !strcmp(argv[1],"--instance-shutdown") || recovery || repl_request(argc,argv));
   if(argc>2 && (!strcmp(argv[2],"receive") || !strcmp(argv[2],"turn") ||
       !strcmp(argv[2],"turn-text") || !strcmp(argv[2],"recover-observer") ||
       !strcmp(argv[2],"register-receiver") || !strcmp(argv[2],"storage-policy") ||
       !strcmp(argv[2],"storage-preview") || !strcmp(argv[2],"storage-apply"))) focused_verb=1;
+  if(repl_request(argc,argv)) focused_verb=1;
   if(!native_input && !focused_verb) return -1;
   char *full=application_executable();
   char *directory=full?strdup(full):NULL;

@@ -32,6 +32,10 @@ by Baton. `--label NAME` adds a semantic name; selecting a repeated label return
 its latest cell. `read` without `--cell` returns the complete notebook. `bind`,
 `recover` and `share` select its latest cell by default.
 
+The focused `bin/baton` facade handles `repl` requests itself. An installed
+package therefore keeps the REPL action when its sibling full CLI was built
+before that action existed. The full router sends `repl` to the focused facade.
+
 `define` accepts complete Bend2 declarations, including imports, types and named
 functions. Only a declaration cell whose canonical check succeeds enters later
 source snapshots. The names `main` and `__baton_repl_expression` are reserved for

@@ -72,6 +72,7 @@ sh bend2/scripts/build-native.sh bend2/test/launch-store-retained.bend .scratch/
 BATON2_EXE="$root/.scratch/bend2/launch-store-retained-test" "$PYTHON3" bend2/test/launch-store-retained.py
 "$PYTHON3" bend2/test/native-dispatch-runtime.py
 "$PYTHON3" bend2/test/check-install-dispatch-runtime.py
+"$PYTHON3" bend2/test/check-install-repl.py
 sh bend2/scripts/build-native.sh bend2/test/dsh-player.bend .scratch/bend2/dsh-player-test
 BATON2_EXE="$root/.scratch/bend2/dsh-player-test" "$PYTHON3" bend2/test/dsh-player.py
 sh bend2/scripts/build-native.sh bend2/test/dsh-retained.bend .scratch/bend2/dsh-retained-test

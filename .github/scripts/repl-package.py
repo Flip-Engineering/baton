@@ -193,10 +193,14 @@ def smoke(args):
         run('git-commit', ['git', 'commit', '-qm', 'Prepare REPL package acceptance'])
         cli('attach', 'attach', 'parent', 'fixture', '', '')
         cli('join', 'join', 'worker', 'parent', 'codex', 'gpt-6-astra', 'low', work)
+        cli('join', 'join', 'consumer', 'parent', 'codex', 'gpt-6-astra', 'low', work)
         cli('define', 'as', 'worker', 'repl', 'define', 'def double(+x: U32) -> U32:\n  U32.add(x,x)\n', '--label', 'arithmetic')
         cli('evaluate', 'as', 'worker', 'repl', 'eval', 'double(21)', '--label', 'answer')
         cli('bind', 'as', 'worker', 'repl', 'bind', 'saved_answer', '--cell', 'answer')
         cli('compose', 'as', 'worker', 'repl', 'eval', 'U32.add(saved_answer(),1)')
+        shared = json.loads(cli('share', 'as', 'worker', 'repl', 'share', '--cell', 'arithmetic', '--to', 'consumer'))
+        cli('import', 'as', 'consumer', 'repl', 'import', shared['id'])
+        cli('consume', 'as', 'consumer', 'repl', 'eval', 'double(21)', '--label', 'consumer-answer')
         cli('type-refusal', 'as', 'worker', 'repl', 'eval', '"wrong"', '--type', 'U32', expected=1)
         cli('foreign-syntax-refusal', 'as', 'worker', 'repl', 'eval', '((x: number) => x + 1)(41)', expected=1)
         cli('foreign-declaration-refusal', 'as', 'worker', 'repl', 'eval', 'const answer = 42;', expected=1)
@@ -206,13 +210,18 @@ def smoke(args):
         body = 'Complete installed REPL stdout λ🙂\nSecond line.\n'
         cli('io', 'as', 'worker', 'repl', 'eval', 'IO.write(' + json.dumps(body, ensure_ascii=False) + ')', '--type', 'IO(Unit)')
         cli('read', 'as', 'worker', 'repl', 'read')
+        cli('project', 'project', work)
+        project = json.loads(cli('project-sessions', 'project-sessions', work))
+        project_ids = {row['id'] for row in project['sessions']}
+        assert {'worker', 'consumer'} <= project_ids, project
         with sqlite3.connect(db.as_uri() + '?mode=ro', uri=True) as connection:
             rows = connection.execute('SELECT a.stage,a.stdout,a.stderr,a.wait_status,a.cause FROM repl_attempts a JOIN repl_cells c ON c.id=a.cell ORDER BY c.seq,a.stage').fetchall()
             with sqlite3.connect(args.output / 'final.db') as copy:
                 connection.backup(copy)
         pure = [json.loads(out)['value'] for stage, out, err, status, cause in rows
                 if stage == 'compiler' and status == 'exit 0' and cause == '' and json.loads(out)['kind'] == 'pure']
-        assert pure == ['42', '43', '44'], pure
+        assert pure[:3] == ['42', '43', '44'], pure
+        assert pure[3:] == ['42'], pure
         assert any(stage == 'compiler' and status != 'exit 0' for stage, out, err, status, cause in rows)
         assert [(out, status, cause) for stage, out, err, status, cause in rows if stage == 'native'] == [(body, 'exit 0', '')]
         native_results = [json.loads(out) for stage, out, err, status, cause in rows
@@ -244,7 +253,9 @@ def smoke(args):
              'source_language': 'Bend2', 'pure_results': pure, 'type_refusal_retained': True,
              'foreign_syntax_refused': True, 'language_option_refused': True, 'complete_native_stdout': body,
              'native_result': native_result, 'commands': len(records), 'runtime': runtime, 'system_dependencies': system_dependencies,
-             'scope': 'Extracted required dependency through CLI, interactive input and native IO on this host.'})
+             'producer_consumer': {'share_id': shared['id'], 'consumer_pure': pure[3:]},
+             'project_sessions': sorted(project_ids),
+             'scope': 'Extracted required dependency through CLI, interactive input, native IO, and a producer-to-consumer shared cell on this host.'})
     except BaseException as error:
         save(args.output / 'failure.json', {'error': repr(error), 'commands': records})
         raise
