@@ -377,6 +377,35 @@ sys.exit(%d)
             self.assertTrue((attempt_dir / name).is_file(), name)
         self.assertEqual(json.loads(self.call('delivery', 'turn-1'))['body'], 'Complete answer λ')
 
+    def test_logs_clean_all_cleans_settled_attempts_and_preserves_pending_sessions(self):
+        self.stream([self.terminal()])
+        attempt, attempt_dir = self.prepare_attempt_artifacts()
+        evidence = attempt_dir / 'stdout'
+        evidence.write_text('settled attempt diagnostic')
+        for name in ('native.stderr', 'observer.log', 'keeper.log'):
+            (attempt_dir / name).write_text('diagnostic data')
+        with sqlite3.connect(self.db) as connection:
+            connection.execute(
+                'INSERT INTO messages(id,sender,recipient,kind,body) VALUES (?,?,?,?,?)',
+                ('bulk-clean-pending', 'root', 'root', 'guidance', 'Keep this session pending.'))
+
+        results = json.loads(self.call('logs-clean-all'))['results']
+        by_session = {item['session']: item for item in results}
+        self.assertIn('omp-worker', by_session)
+        self.assertIn('root', by_session)
+        removed = by_session['omp-worker']['attemptFiles']
+        self.assertIn('stdout', {item['file'] for item in removed if item.get('removed')})
+        self.assertFalse(evidence.exists())
+        for name in ('manifest', 'status', 'released', 'acknowledged'):
+            self.assertTrue((attempt_dir / name).is_file(), name)
+        self.assertEqual(by_session['root']['skipped'], 'pending-input')
+        self.assertEqual(json.loads(self.call('delivery', 'bulk-clean-pending'))['body'],
+                         'Keep this session pending.')
+
+        second = json.loads(self.call('logs-clean-all'))['results']
+        repeated = next(item for item in second if item['session'] == 'omp-worker')
+        self.assertFalse(any(item.get('removed') for item in repeated['attemptFiles']))
+
     def test_attempt_without_durable_turn_record_is_retained(self):
         self.stream([self.terminal()])
         attempt, attempt_dir = self.prepare_attempt_artifacts()
