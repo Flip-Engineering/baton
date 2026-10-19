@@ -1191,7 +1191,7 @@ finally:
         drain.start()
         queued = self.coord('receive', 'w1', str(self.fixture), 'w1', 'low',
                             str(self.checkouts / 'w1'), str(self.co_dir / 'w1.jsonl'), '')
-        self.assertEqual(queued['status'], 'queued', 'ordinary receive waited for the active native turn')
+        self.assertEqual(queued['receive'], 'none', 'ordinary receive waited for the active native turn')
         self.assertEqual(self.query("SELECT id FROM executions WHERE session='w1'"), held_attempt,
                          'the queued receive replaced the original native attempt')
         self.assertEqual(len(self.connections('w1')), 1,
