@@ -222,9 +222,9 @@ def run(+reference: String, +command: String, args: List<String>) -> IO(Unit):
 # Bool.pick evaluates both of its value arguments, so calling sql_escaped on
 # the tail inside each branch escapes every tail twice and grows exponentially
 # with the string length. Escape the tail once and choose the head here.
-def sql_escape_char(head: Char, tail: String, quote: Bool) -> String:
+def sql_escape_char(+head: Char, tail: String, quote: Bool) -> String:
   match quote:
-    case True{}: "''" ++ tail
+    case True{}: SCon{head,SCon{head,tail}}
     case False{}: SCon{head,tail}
 
 def sql_escaped(+text: String) -> String:
