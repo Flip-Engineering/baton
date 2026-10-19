@@ -125,8 +125,9 @@ type File = Carb & {
   tabs: Map<string, number>;
   spins: [string, string, Set<string>][];
   spun: Map<string, string>;
-  arms: Map<string, { name: string; lay: Lay; ks: Kind[]; term: HTerm }>;
+  armSeq: number;
   armBusy: Set<string>;
+  armHints: Map<string, { term: HTerm; name: string; lay: Lay; ks: Kind[] }[]>;
   clos: Set<string>;
   img: string[];
   lits: Map<string, number>;
@@ -1913,7 +1914,7 @@ function cid_mac(k: string): string {
 
 function file_new(cb: Carb, decl: string): File {
   return { ...cb, decl, segs: [], seg: seg_new("", BOX, []), tab: 2,
-    cids: new Map(), tabs: new Map(), spins: [], spun: new Map(), arms: new Map(), armBusy: new Set(), clos: new Set(),
+    cids: new Map(), tabs: new Map(), spins: [], spun: new Map(), armSeq: 0, armBusy: new Set(), armHints: new Map(), clos: new Set(),
     img: [], lits: new Map(), consts: new Map(), reqs: "", fuel: 0,
     fresh: new Map(), spares: [],
     uses: new Map(), brwl: new Map(), rest: [], def: "",
@@ -3125,57 +3126,37 @@ function lits_cond(w: string, j: number, n: number): string {
 
 // A match arm body that is closed is the same function at every column the
 // flattener duplicated it into. Emit its body once as a spin over its
-// parameters and call that spin from each site. A canonical numeric key of
-// the arm term plus a structural equality check key the spin:
-// binders become relative depths, free variables first-occurrence positions.
-// The checker rebuilds the term per site, so object identity cannot key the
-// shared spin; a key hit is only shared when the terms are alpha-equal.
-function arm_hash(t: HTerm, bound = new Map<number, number>(),
-  free = new Map<number, number>(), d = 0): number {
-  const s = term_force(t);
-  let h = 2166136261;
-  const mix = (n: number): void => { h = Math.imul(h ^ n, 16777619); };
-  const str = (k: string): void => { for (let i = 0; i < k.length; i++) mix(k.charCodeAt(i)); };
-  const go = (u: HTerm, dep: number): void => {
-    const v = term_force(u);
-    mix(v.$ === "Var" ? 1 : v.$ === "Lam" ? 2 : v.$ === "Mat" ? 3
-      : v.$ === "App" ? 4 : v.$ === "Ctr" ? 5 : v.$ === "Ref" ? 6
-      : v.$ === "Ann" ? 7 : v.$ === "Let" ? 8 : v.$ === "Lit" ? 9
-      : v.$ === "Efq" ? 10 : v.$ === "Rwt" ? 11 : v.$ === "Rfl" ? 12 : 13);
-    switch (v.$) {
-      case "Var":
-        if (bound.has(v.i)) { mix(0); mix(dep - bound.get(v.i)!); }
-        else { mix(1); mix(free.get(v.i) ?? (free.set(v.i, free.size), free.size - 1)); }
-        return;
-      case "Ref": str(v.k); return;
-      case "Lam": {
-        const o = term_open(v); bound.set(o.ps[0].i, dep);
-        go(o.b, dep + 1); bound.delete(o.ps[0].i); return;
-      }
-      case "Let": {
-        const o = term_open(v);
-        v.v.forEach((x) => go(x, dep));
-        o.ps.forEach((p, j) => bound.set(p.i, dep + j));
-        go(o.b, dep + o.ps.length);
-        o.ps.forEach((p) => bound.delete(p.i)); return;
-      }
-      case "App": go(v.f, dep); go(v.x, dep); return;
-      case "Ctr": str(v.k); v.x.forEach((x) => go(x, dep)); return;
-      case "Mat": str(v.k); go(v.h, dep); go(v.m, dep); return;
-      case "Lit": str(JSON.stringify(v.v)); return;
-      case "Ann": go(v.x, dep); return;
-      case "Rwt": go(v.e, dep); go(v.p, dep); go(v.f, dep); return;
-      case "Eql": go(v.a, dep); go(v.b, dep); go(v.T, dep); return;
-      case "ADT": str(v.k); v.x.forEach((x) => go(x, dep)); return;
-      case "Min": go(v.a, dep); go(v.b, dep); return;
-      case "Typ": go(v.g, dep); return;
-      case "Qua": str((v.q as any).$ ?? ""); return;
-      case "Hol": str(v.k); return;
-      default: return;
+// parameters and call that spin from each site. The hint (outer node spans
+// and kinds, the innermost body's span, and the argument/result layouts) only
+// narrows the candidate list; structural alpha-equality decides every reuse.
+function arm_hint(h: HTerm): string {
+  let t = term_force(h);
+  let out = "";
+  for (let i = 0; i < 3; i++) {
+    const sp: any = (t as any).s;
+    out += (sp !== undefined && sp.beg !== undefined
+      ? sp.beg + ":" + sp.end : "?") + ":" + t.$ + ";";
+    if (t.$ === "Ann") {
+      t = term_force(t.x);
+    } else if (t.$ === "Lam") {
+      t = term_force(term_open(t).b);
+    } else {
+      break;
     }
-  };
-  go(t, d);
-  return h >>> 0;
+  }
+  let b = term_force(h);
+  for (let i = 0; i < 100000; i++) {
+    if (b.$ === "Ann") {
+      b = term_force(b.x);
+    } else if (b.$ === "Lam") {
+      b = term_force(term_open(b).b);
+    } else {
+      break;
+    }
+  }
+  const sp: any = (b as any).s;
+  return out + "|" + (sp !== undefined && sp.beg !== undefined
+    ? sp.beg + ":" + sp.end : "?") + ":" + b.$;
 }
 
 function arm_eq(a: HTerm, b: HTerm): boolean {
@@ -3255,19 +3236,21 @@ function emit_arm_shared(fl: File, h: HTerm, av: Val[], dst: Dst): boolean {
   }
   const lay = dst?.lay ?? fl.seg.ret;
   const ks = av.flatMap((v) => v.lay.ks);
-  const key = [arm_hash(h), ks.join("."),
-    lay.ks.join("."), lay.arms === null ? "" : lay.arms.map((a) => a.k).join(",")].join("|");
-  const got = fl.arms.get(key);
-  if (got !== undefined) {
-    if (fl.armBusy.has(key) || !arm_eq(got.term, h)) {
-      return false;
+  const base = [ks.join("."), lay.ks.join("."),
+    lay.arms === null ? "" : lay.arms.map((a) => a.k).join(",")].join("|");
+  const hint = arm_hint(h) + "|" + base;
+  const reps = fl.armHints.get(hint) ?? [];
+  for (const rep of reps) {
+    if (!fl.armBusy.has(rep.name) && arm_eq(rep.term, h)) {
+      emit_arm_call(fl, rep, av, dst);
+      return true;
     }
-    emit_arm_call(fl, { name: got.name, lay: got.lay, ks: got.ks }, av, dst);
-    return true;
   }
-  const name = seg_ref(fl, `arm_${fl.arms.size}`);
-  fl.arms.set(key, { name, lay, ks, term: h });
-  fl.armBusy.add(key);
+  const name = seg_ref(fl, `arm_${fl.armSeq++}`);
+  const rec = { term: h, name, lay, ks };
+  reps.push(rec);
+  fl.armHints.set(hint, reps);
+  fl.armBusy.add(name);
   const ts = ks.map(() => name_local(fl, "a"));
   const outer = { seg: fl.seg, uses: fl.uses, spares: fl.spares,
     tab: fl.tab, rest: fl.rest };
@@ -3294,8 +3277,8 @@ function emit_arm_shared(fl: File, h: HTerm, av: Val[], dst: Dst): boolean {
     "  return 1;", "}"].join("\n"), seg.refs]);
   }
   Object.assign(fl, outer);
-  fl.armBusy.delete(key);
-  emit_arm_call(fl, { name, lay, ks }, av, dst);
+  fl.armBusy.delete(name);
+  emit_arm_call(fl, rec, av, dst);
   return true;
 }
 
@@ -3704,6 +3687,13 @@ export function compile_book(book: Bend.Book): string {
     ["Tables", [diagnostic_join("fills.tables", defs, "\n"), ...[...fl.tabs].map(([r, i]) =>
       `CONSTV u64 TAB_${i}[] = { ${r} };`)]],
     ["Spins", [`CONSTV u64 STAT_IMG[] = { ${diagnostic_join("fills.image", fl.img, ", ") || 0} };`,
+      // A spin may call one emitted later (a nested spin is pushed before its
+      // caller's body is joined), so every spin is declared before the block.
+      ...fl.spins.map(([_, src]) => {
+        const sig = src.slice(0, src.indexOf("\n"))
+          .replace(/^(INLINE|FAR)\s+/, "").replace(/\s*\{\s*$/, "");
+        return `static ${sig};`;
+      }),
       ...fl.spins.map((s) => s[1])]],
     ["Segments", [compile_segs(fl)]],
     ["Requests", [fl.reqs]],
