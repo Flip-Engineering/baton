@@ -270,7 +270,11 @@ static int baton_sql_row(void *context, int count, char **values, char **columns
 }
 
 static int baton_sql_busy(void *context, int tries) {
-  (void)context; (void)tries;
+  (void)context;
+  /* Bounded wait: at most 3000 retries of 10ms for one lock acquisition.
+     A caller that cannot acquire the lock receives SQLITE_BUSY and reports
+     that cause; no caller waits without a bound. */
+  if (tries >= 3000) return 0;
   sqlite3_sleep(10);
   return 1;
 }
