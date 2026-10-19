@@ -4693,7 +4693,12 @@ class Receive(unittest.TestCase):
             database.execute(
                 "UPDATE sessions SET native='superseding-native' WHERE id='parent'")
         self.action(control, body='Old native completed after handoff.', complete_task=False, ack=False)
-        self.finish(observer)
+        continued, resumed = self.accept_or_child_exit(
+            observer, 'native mismatch did not continue the owed guidance')
+        self.assertIn('[id: first-guidance]', resumed['prompt'])
+        self.assertIsNone(self.coord('delivery', 'first-guidance')['receipt'])
+        self.action(continued, fail=True, ack=False)
+        self.finish(observer, ok=False)
         self.assertTrue(recorded_native)
         self.assertIsNone(self.coord('delivery', 'first-guidance')['receipt'])
         self.assertIn('first-guidance', [message['id'] for message in self.coord('inbox', 'parent')])
@@ -4731,23 +4736,16 @@ class Receive(unittest.TestCase):
         self.assertIn('[id: original]', original['prompt'])
         self.message('owed', 'parent', 'Guidance queued after the original prompt.')
         self.assertNotIn('[id: owed]', original['prompt'])
-        self.action(control, ack=False, complete_task=False)
-        continued, resumed = self.accept_or_child_exit(
-            first, 'successful turn did not continue the newly queued input')
-        self.assertEqual(resumed['native'], original['native'])
-        self.assertIn('[id: owed]', resumed['prompt'])
-        self.assertNotIn('[id: original]', resumed['prompt'])
-        self.assertIsNotNone(self.coord('delivery', 'original')['receipt'])
-        self.action(continued, read_steer=True, check_steer_receipt=True)
-        accepted = json.loads(continued.readline())['steer_received']
+        self.action(control, read_steer=True, check_steer_receipt=True)
+        accepted = json.loads(control.readline())['steer_received']
         self.assertEqual(accepted['id'], 'owed')
         marker = 'steer accepted before provider failure'
-        self.action(continued, progress=marker)
-        self.assertEqual(json.loads(continued.readline()), {'progress_written': marker})
+        self.action(control, progress=marker)
+        self.assertEqual(json.loads(control.readline()), {'progress_written': marker})
         self.eventually(lambda: marker in self.output_log('parent').read_text(),
                         'the observer did not read past the accepted steer')
         self.assertIsNone(self.coord('delivery', 'owed')['receipt'])
-        self.action(continued, fail=True, ack=False)
+        self.action(control, fail=True, ack=False)
         self.finish(first, ok=False)
         self.assertEqual([row['id'] for row in self.coord('inbox', 'parent')], ['owed'])
         self.assertIsNone(self.coord('delivery', 'owed')['receipt'])

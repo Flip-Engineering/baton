@@ -49,13 +49,14 @@ def settle_sql(+session: String, +attempt: String, +identity: String) -> String:
   ++ " AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ q(session) ++ ");"
   ++ "UPDATE messages SET receipt=coalesce(receipt," ++ q(receipt) ++ ") WHERE recipient=" ++ q(session) ++ " AND id IN(SELECT r.message FROM message_reads r JOIN executions e ON e.id=r.attempt AND e.session=r.recipient JOIN sessions s ON s.id=r.recipient WHERE r.recipient=" ++ q(session) ++ " AND r.attempt=" ++ q(attempt) ++ " AND r.identity=" ++ q(identity) ++ " AND s.native=r.native AND r.handled IS NOT NULL) AND NOT EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ q(session) ++ ");COMMIT;"
 
-# A successfully completed turn consumes every input carried by its admitted
-# prompt and every guidance frame forwarded to the native attempt before it
-# stopped. Input after the prompt that was not forwarded stays owed. The
-# initial cursor covers the prompt; the delivered cursor covers live guidance.
+# A successfully completed turn consumes the admitted prompt's full read rows and
+# every guidance frame forwarded to the native attempt before it stopped.
+# Non-guidance input after the prompt that was not forwarded stays owed. The
+# delivered cursor covers forwarded guidance, including guidance pending at
+# admission.
 def consume_delivered_sql(+session: String, +attempt: String, +native: String, +initial_cursor: String, +delivered_cursor: String) -> String:
   +receipt = "native-turn:" ++ attempt
-  +eligible = "recipient=" ++ q(session) ++ " AND receipt IS NULL AND ((seq<=CAST(" ++ q(initial_cursor) ++ " AS INTEGER) AND id IN(SELECT r.message FROM message_reads r WHERE r.recipient=" ++ q(session) ++ " AND r.attempt=" ++ q(attempt) ++ " AND r.native=" ++ q(native) ++ ")) OR (kind='guidance' AND seq>CAST(" ++ q(initial_cursor) ++ " AS INTEGER) AND seq<=CAST(" ++ q(delivered_cursor) ++ " AS INTEGER)))"
+  +eligible = "recipient=" ++ q(session) ++ " AND receipt IS NULL AND ((seq<=CAST(" ++ q(initial_cursor) ++ " AS INTEGER) AND id IN(SELECT r.message FROM message_reads r WHERE r.recipient=" ++ q(session) ++ " AND r.attempt=" ++ q(attempt) ++ " AND r.native=" ++ q(native) ++ ")) OR (kind='guidance' AND seq<=CAST(" ++ q(delivered_cursor) ++ " AS INTEGER)))"
   +current = "EXISTS(SELECT 1 FROM executions e JOIN sessions s ON s.id=e.session WHERE e.session=" ++ q(session) ++ " AND e.id=" ++ q(attempt) ++ " AND e.phase='exited' AND s.native=" ++ q(native) ++ ")"
   +unstopped = "NOT EXISTS(SELECT 1 FROM session_stops WHERE session=" ++ q(session) ++ ")"
   "BEGIN IMMEDIATE;UPDATE message_reads SET handled=coalesce(handled," ++ q(receipt) ++ ") WHERE recipient=" ++ q(session) ++ " AND attempt=" ++ q(attempt) ++ " AND native=" ++ q(native)

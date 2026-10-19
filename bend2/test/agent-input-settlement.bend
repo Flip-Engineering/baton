@@ -34,6 +34,7 @@ def seed(+db: String) -> IO(Unit):
       ++ "INSERT INTO messages(seq,id,sender,recipient,kind,body,receipt) VALUES"
       ++ "(1,'prior','root','success','task','prior prompt','prior-receipt'),"
       ++ "(2,'prompt','root','success','task','initial prompt',NULL),"
+      ++ "(2,'guidance-pre','root','success','guidance','guidance pending at admission',NULL),"
       ++ "(3,'guidance-1','root','success','guidance','forwarded guidance one',NULL),"
       ++ "(4,'recovery-between','root','success','recovery','non-guidance inside delivered range',NULL),"
       ++ "(5,'guidance-2','root','success','guidance','forwarded guidance two',NULL),"
@@ -70,6 +71,7 @@ def success_case(+db: String) -> IO(Unit):
     prior_receipt : Unit <- expect_read(db,"SELECT coalesce(receipt,'<null>') FROM messages WHERE id='prior';","prior-receipt\n","existing-receipt-preserved")
     prompt_receipt : Unit <- expect_read(db,"SELECT coalesce(receipt,'<null>') FROM messages WHERE id='prompt';","native-turn:attempt-success\n","initial-prompt-consumed")
     first_receipt : Unit <- expect_read(db,"SELECT coalesce(receipt,'<null>') FROM messages WHERE id='guidance-1';","native-turn:attempt-success\n","first-guidance-consumed")
+    pre_receipt : Unit <- expect_read(db,"SELECT coalesce(receipt,'<null>') FROM messages WHERE id='guidance-pre';","native-turn:attempt-success\n","pre-admission-guidance-consumed")
     prior_handled : Unit <- expect_read(db,"SELECT coalesce(handled,'<null>') FROM message_reads WHERE message='guidance-1';","prior-handled\n","existing-handled-preserved")
     between_receipt : Unit <- expect_read(db,"SELECT coalesce(receipt,'<null>') FROM messages WHERE id='recovery-between';","<null>\n","non-guidance-between-cursors-preserved")
     second_receipt : Unit <- expect_read(db,"SELECT coalesce(receipt,'<null>') FROM messages WHERE id='guidance-2';","native-turn:attempt-success\n","last-forwarded-guidance-consumed")
