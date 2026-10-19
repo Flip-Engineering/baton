@@ -112,29 +112,19 @@ storage-preview SESSION         # JSON: roots and entries owned by SESSION
 storage-apply SESSION           # JSON: receipts for SESSION's admitted entries
 ```
 
-Preview and apply select candidates whose recorded owner is exactly `SESSION`;
+Preview selects candidates whose recorded owner is exactly `SESSION`;
 a candidate owned by another session or with missing owner evidence is outside
-that session's plan. Apply acquires the session lock, then the `storage-cleanup`
-lock, and re-reads the durable evidence under both.
+that session's plan.
 
-The preview records the approved root identity. Apply observes the root again
-and refuses every entry when the identity changed or the scan was invalid.
-The host removal opens the approved root, verifies its `dev` and `ino`, resolves
-the candidate relative to that descriptor, and opens every intermediate
-directory with `O_NOFOLLOW`. It revalidates `kind:device:inode` before unlinking.
-A path reached through a symlinked parent is refused. A symlink entry is
-unlinked; its target is never followed.
+The public `storage-apply` command currently returns a refusal because cleanup
+and root writers do not share a per-root lease. Operator-declared exclusivity
+does not establish that coordination.
 
-Apply reruns the preservation decision from current durable evidence for every
-admitted entry. A path that now has a live owner, lease, process, runtime input,
-dirty state, unpublished commit, ref or pending attempt becomes `changed` and
-is not removed. A missing path becomes `already-absent`, so replaying a plan is
-idempotent. An interrupted tree removal reports `refused` with its partial byte
-count and the plan can be replayed.
-
-A receipt names the exact candidate path, measured bytes, class, owner proof,
-decision reason and outcome. The `reclaimedBytes` field counts host-reported
-removed bytes, not the preview estimate.
+The internal removal primitive checks the approved root identity, opens the
+root and candidate by descriptor, and opens intermediate directories with
+`O_NOFOLLOW`. It revalidates `kind:device:inode` before unlinking. The public
+command does not call this primitive while the shared writer lease protocol is
+unavailable.
 
 BATON_STORAGE_EXCLUSIVE_ROOTS lists operator-declared roots, one path per
 line. storage-policy reports that declaration. The storage-cleanup lock

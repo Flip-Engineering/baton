@@ -146,16 +146,15 @@ def dispatch(args: List<String>) -> IO(Unit):
     case +db <> +verb <> Nil{}:
       Bool.pick(IO(Unit), String.eq(verb,"storage-policy"), StoragePolicy.run_policy(db),
         dispatch_instance(String.eq(db,"--instance-owner"),String.eq(db,"--instance-shutdown"),verb))
-    case +db <> +verb <> +session <> Nil{}:
-      Bool.pick(IO(Unit), String.eq(verb,"storage-preview"), StoragePolicy.run_preview(db,session),
-        Bool.pick(IO(Unit), String.eq(verb,"storage-apply"), StoragePolicy.run_apply(db,session),
-          dispatch_three(db,verb,session)))
+    case +db <> +verb <> +third <> Nil{}:
+      Bool.pick(IO(Unit), String.eq(verb,"storage-preview"), StoragePolicy.run_preview(db,third),
+        Bool.pick(IO(Unit), String.eq(verb,"storage-apply"), StoragePolicy.run_apply(db,third),
+          Bool.pick(IO(Unit), String.eq(verb,"agent-native-input"), focused_native_input(db,third),
+            dispatch_three(db,verb,third))))
     case +db <> +route <> +session <> +cmd <> +log <> Nil{}:
       register_receiver(String.eq(route,"register-receiver"),db,session,cmd,log)
     case +db <> +route <> +session <> +cmd <> +log <> +cwd <> Nil{}:
       register_receiver_cwd(String.eq(route,"register-receiver"),db,session,cmd,log,cwd)
-    case +db <> +verb <> +full <> Nil{}:
-      Bool.pick(IO(Unit),String.eq(verb,"agent-native-input"),focused_native_input(db,full),dispatch_three(db,verb,full))
     case +db <> +verb <> +session <> +cmd <> +model <> +effort <> +cwd <> +log <> +message <> Nil{}:
       dispatch_receive(String.eq(verb,"receive"),db,session,cmd,model,effort,cwd,log,message)
     case +db <> +verb <> +player <> +id <> +cmd <> +model <> +effort <> +cwd <> +task <> +log <> +session <> Nil{}:
