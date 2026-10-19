@@ -1,9 +1,9 @@
 # Round 3: shared-term key cost reduction (issue #776)
 
-Status: the round-3 gates passed on candidate `3a39ad5476`. This head adds
-the quantity, annotation and binder-key corrections and the protected tests
-below. Candidate `round2/compiler-src/bend2/comp.ts` sha256
-`9cdce0df770b3a2c547b20e8d0a34b1196a1915a9ffdd73d49cb818dda6fb7ce`.
+Status: this head passes the three repro gates and the protected tests below.
+It adds the quantity, annotation, binder-key and Ref.b corrections. Candidate
+`round2/compiler-src/bend2/comp.ts` sha256
+`cfe7865fee3d9d45bf692370d8cf8ce033195c86fa84f799d66ac734d2618760`.
 
 ## Equality totality fix (evaluator review of 1e5eb5b09f)
 
@@ -23,21 +23,22 @@ value-distinct arm. `arm_eq` is now total:
   fallback) instead of creating another spin, so reentrant generation stays
   bounded, as in the round-2 path.
 
-Round-3 gate values, measured on `3a39ad5476` (the repro sources are not in
-this checkout, so they were not re-run at this head): minimal
-`06a5ad6eafeeb49ffde3d52a4229a942d754bedca880d8fbe10c606ed11ceb30`,
-pr890-shaped
-`f411f8c4dbb3db3a07878ffe0d7a562a36951d89ed3f1200d23826367bb8fd6b`,
-five-overlap
-`b7b0b85b08e3f44d8bb2dd2309b35dacfeb616a57ae19168a4812d57d3384316`,
-control-two-long
-`fa56e094194d4ab26c1a098addaec301c8ba964643cf8c5ba50cf254f41e11cf`,
-control-literal-two
-`03256cfa0d1b510fbb8e3edf19ebbe9742d45c8de94be8e2e60dd4e72ceb3d64`.
-Measured at this head: the four protected Nat/U32 fixtures emit
-byte-identical C to base and execute `306n`, `2496 2397`, the word match
-output and `0n`; the carrier, annotation-sharing and binder-key tests are in
-the next section.
+Repro gates measured at this head with the pinned `bend.ts`, `main.ts` and
+`base.bend`:
+
+| Fixture | C bytes | sha256 | Wall | Peak RSS |
+| --- | ---: | --- | ---: | ---: |
+| minimal | 513,186 | `06a5ad6e...` | 10.6 s | 695 MB |
+| five-overlap | 528,878 | `b7b0b85b...` | 65.8 s | 4.57 GB |
+| pr890-shaped | 528,767 | `f411f8c4...` | 51.2 s | 3.96 GB |
+
+Minimal is below 1,000,000 B and pr890-shaped below 2,000,000 B; five-overlap
+matches the round-3 value. The three binaries build with clang-19 and print
+`host` / `two` / `13` / `14` / `four` / `other` for the argv cases; an empty
+argv exits 2. The four protected Nat/U32 fixtures emit byte-identical C to
+base and execute `306n`, `2496 2397`, the word match output and `0n`. The
+carrier, annotation-sharing, binder-key and Ref.b tests are in the next
+section.
 
 Pinned compiler: `bend.ts 93c2a43d...fcaeb85`, `comp.ts a2a949ae...69112bc`,
 `main.ts 53ce8e48...12eb07d`, `base.bend e5639663...b99d798`. Round 2 commit
@@ -129,19 +130,38 @@ COMPILER_DIR/bin/bun --smol round3/tests/arm_eq_binder_key.ts COMPILER_DIR
 (byte-identical to the pinned file) for terms and loads only `comp.ts` from
 `COMPILER_DIR`.
 
-Ref.b end-to-end: `round3/fixtures/ref_bang_plain.bend` and
-`round3/fixtures/ref_bang_marked.bend` are the same program except for
-`deep(5n)` and `deep!(5n)`. The plain C is 84,810 B (hash
-`877f8e3b7fb15995...`) and the marked C is 84,739 B (hash
-`185329de2742e9b8...`); both execute `5`. Base `50e84c98` and this head emit
-identical C for each variant. The marker changes the emitted program, so two
-arms that differ in it must not share.
+Ref.b sharing regression: `round3/tests/arm_eq_ref_bang_share.ts` loads
+`round3/fixtures/arm_eq_ann_share.bend`, copies the path to one call-head Ref
+in the second copy of the duplicated arm group `431:448:Lam`, and sets
+`b = true` there. The bang marker also joins the file's bang set, so the whole
+C changes in both lanes; the sharing decision is the arm-spin count.
+
+- Base `50e84c98`: 214 to 214 spins (shares), C 511,757 to 511,738 B, sha256
+  `24b464ef70da79d15ee912b78c9db58bad4f86e02a91588f18057b7ef187bc83`.
+- This head: 214 to 218 spins (separate spins), C 511,757 to 512,899 B,
+  sha256 `20747c0830e8fc34d57db886dd08682760590d786210bfbd8fa25f1d250acfdd`.
+
+Both mutated C files build with clang-19 and print `host` / `two` / `other`
+for argv `--host-process-keeper a b`, `a b` and `x`, exit 0. The test exits 0
+when the arm-spin count grows and 1 when it does not; base exits 1. Command:
+
+```
+COMPILER_DIR/bin/bun --smol round3/tests/arm_eq_ref_bang_share.ts COMPILER_DIR
+```
+
+Supporting variants: `round3/fixtures/ref_bang_plain.bend` and
+`ref_bang_marked.bend` are the same program except `deep(5n)` and `deep!(5n)`.
+The plain C is 84,810 B (hash `877f8e3b...`) and the marked C is 84,739 B
+(hash `185329de...`); both execute `5`. Base and this head emit identical C
+per variant. These show the marker changes the emitted program; the sharing
+test above is the gate regression.
 
 Limit: no source program in this checkout changes runtime output between base
-and head. The emitted C changes under the `ann_share` mutation and between
-the `Ref.b` variants. The base review's 168 `Ann.T`-divergent hits are not
-explained here; on the unmutated fixtures in this checkout base and head emit
-identical C.
+and head. The `ann_share` mutation changes the emitted spin set; the Ref.b
+mutation changes the emitted spin set and the file's bang set, so C differs
+in both lanes and the test compares arm-spin counts. The base review's 168
+`Ann.T`-divergent hits are not explained here; on the unmutated fixtures in
+this checkout base and head emit identical C.
 
 ## What changed from 178f01fbba
 

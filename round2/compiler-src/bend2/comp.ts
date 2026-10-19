@@ -3242,16 +3242,15 @@ function arm_eq(a: HTerm, b: HTerm): boolean {
         const ye = y as Of<"Eql">;
         return go(x.a, ye.a, d) && go(x.b, ye.b, d) && go(x.T, ye.T, d);
       }
-      // ADT.r is the checker's remaining-constructor refinement. A
-      // different refinement excludes only constructors a value of that
-      // type cannot carry, and no layout or call reads it, so it stays
-      // out of the equality.
+      // ADT.r is the checker's remaining-constructor refinement. book_adt
+      // reads it to filter the constructor list used for default-arm
+      // existence; layouts and calls key on k and the type arguments, so it
+      // stays out of the equality.
       case "ADT": {
         const yd = y as Of<"ADT">;
         return x.k === yd.k && x.x.length === yd.x.length
           && x.x.every((z, i) => go(z, yd.x[i], d));
       }
-      case "Min": { const ym = y as Of<"Min">; return go(x.a, ym.a, d) && go(x.b, ym.b, d); }
       case "Typ": return go(x.g, (y as Of<"Typ">).g, d);
       case "Qua": return x.q.$ === (y as Of<"Qua">).q.$;
       case "Hol": return x.k === (y as Of<"Hol">).k;
