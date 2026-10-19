@@ -75,6 +75,42 @@ static int contextual_dispatch_args(int argc,char **argv,int first) {
   return 0;
 }
 
+static int executable_at(const char *path) {
+  return path && path[0] && access(path,X_OK)==0;
+}
+
+/* The installed package can carry a Node executable beside the router or the
+   bundled Bun runtime below libexec. BATON2_NODE selects an absolute runtime
+   explicitly. The PATH lookup remains the final fallback. */
+static char *dispatch_runtime(void) {
+  const char *configured=getenv("BATON2_NODE");
+  if(configured && configured[0]=='/' && executable_at(configured))
+    return strdup(configured);
+  char *executable=application_executable();
+  char *directory=executable?strdup(executable):NULL;
+  char *slash=directory?strrchr(directory,'/'):NULL;
+  if(slash) {
+    *slash=0;
+    const char *suffixes[]={"/node","/../libexec/baton2/repl/bun",
+      "/../libexec/baton2/node",NULL};
+    for(size_t i=0;suffixes[i];i++) {
+      size_t size=strlen(directory)+strlen(suffixes[i])+1;
+      char *candidate=malloc(size);
+      if(!candidate) break;
+      snprintf(candidate,size,"%s%s",directory,suffixes[i]);
+      char *resolved=realpath(candidate,NULL);
+      free(candidate);
+      if(resolved && executable_at(resolved)) {
+        free(directory);free(executable);
+        return resolved;
+      }
+      free(resolved);
+    }
+  }
+  free(directory);free(executable);
+  return strdup("node");
+}
+
 /* The dispatch frontend reads complete input and calls the native setup and
    admission operations. exec preserves its stdin, stdout and exit status. */
 static int dispatch_entry(int argc,char **argv) {
@@ -113,15 +149,17 @@ static int dispatch_entry(int argc,char **argv) {
   }
   char **args=calloc((size_t)argc+9,sizeof(*args));
   if(!args) {free(helper);free(executable);perror("baton dispatch arguments");return 1;}
+  char *runtime=dispatch_runtime();
+  if(!runtime) {free(args);free(helper);free(executable);perror("baton dispatch runtime");return 1;}
   int count=0;
-  args[count++]="node";args[count++]=helper;
+  args[count++]=runtime;args[count++]=helper;
   args[count++]="--baton2";args[count++]=executable;
   args[count++]="--database";args[count++]=(char *)database;
   if(project) {args[count++]="--project";args[count++]=(char *)project;}
   for(int i=first;i<argc;i++) args[count++]=argv[i];
   execvp(args[0],args);
-  perror("baton dispatch: Node could not execute the installed dispatch operation");
-  free(args);free(helper);free(executable);return 1;
+  perror("baton dispatch: dispatch runtime could not execute the installed dispatch operation");
+  free(args);free(helper);free(executable);free(runtime);return 1;
 }
 
 #if defined(BATON2_RECEIVE_FOCUSED) || defined(BATON2_NATIVE_RECEIVER_ROUTER) || defined(BATON2_RECOVERY_HELPER)
