@@ -3288,7 +3288,14 @@ function arm_eq(a: HTerm, b: HTerm): boolean {
 }
 
 function emit_arm_shared(fl: File, h: HTerm, av: Val[], dst: Dst): boolean {
-  if (term_uses(fl, h).length !== 0) {
+  // A shared arm is emitted as an ordinary C helper with only its explicit
+  // parameters. WL_JMP uses the register bank declared for its segment, so
+  // an arm that can transfer segments must stay in its owning segment.
+  const has_segment_jump = term_any(fl, h, (node) => {
+    const call = call_kind(fl, node);
+    return call !== null && !flat_call(fl, node);
+  });
+  if (term_uses(fl, h).length !== 0 || has_segment_jump) {
     return false;
   }
   const lay = dst?.lay ?? fl.seg.ret;
