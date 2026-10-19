@@ -131,10 +131,9 @@ law detached_turn_uses_the_recorded_assignment_and_native_identity:
   effort : String <- Control.recorded_field(db,player,"effort")
   cwd : String <- Control.recorded_field(db,player,"workspace")
   native : String <- Control.recorded_field(db,player,"native")
-  +identity : String & String <- IO.try(String & String,Host.Control.identity(executable))
-  +runtime : String <- Control.identity_runtime(executable,identity)
-  checked : String & String <- Control.identity_checked(runtime,identity,model)
-  IO.try(String,Host.Control.launch(Tx.enc_argv(Control.identity_args(runtime,[executable,database,"turn",player,id,harness_cmd,model,effort,cwd,path,output,native],model,checked)),database,id))) : IO(String)}
+  identity : String & String <- IO.try(String & String,Host.Control.identity(executable))
+  prepared <- Control.identity_prepare(executable,identity,model)
+  IO.try(String,Host.Control.launch(Tx.enc_argv(Control.identity_args_prepared(prepared,[executable,database,"turn",player,id,harness_cmd,model,effort,cwd,path,output,native],model)),database,id))) : IO(String)}
 
 def detached_turn_uses_the_recorded_assignment_and_native_identity(db,player,id,cmd,log,task):
   {==}
@@ -371,10 +370,9 @@ law receiver_setup_resolves_native_paths_and_model_identity:
   +executable : String <- IO.try(String,Lock.SessionLock.executable())
   database : String <- IO.try(String,Lock.SessionLock.canonical(db))
   output : String <- IO.try(String,Host.Control.output(log))
-  +identity : String & String <- IO.try(String & String,Host.Control.identity(executable))
-  +runtime : String <- Control.identity_runtime(executable,identity)
-  checked : String & String <- Control.identity_checked(runtime,identity,model)
-  IO.pure(String,Control.identity_endpoint(runtime,executable,database,session,native,output,model,checked))) : IO(String)}
+  identity : String & String <- IO.try(String & String,Host.Control.identity(executable))
+  prepared <- Control.identity_prepare(executable,identity,model)
+  IO.pure(String,Control.identity_endpoint_prepared(prepared,executable,database,session,native,output,model))) : IO(String)}
 
 def receiver_setup_resolves_native_paths_and_model_identity(db,session,cmd,log,model):
   {==}
@@ -535,7 +533,7 @@ law configured_model_identity_is_checked_before_the_endpoint_is_built:
   for +registry: String
   for +helper: String
   for +model: String
-  {Control.identity_checked(runtime,(registry,helper),model) == (do IO<String & String>:
+  {Control.identity_checked(runtime,registry,helper,model) == (do IO<String & String>:
     checked : Unit <- Control.identity_check_body(runtime,registry,helper,model,String.is_empty(registry))
     IO.pure(String & String,(registry,helper))) : IO(String & String)}
 

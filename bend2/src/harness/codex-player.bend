@@ -65,7 +65,7 @@ def wake_runtime(runtime: Result<&1,&1,U32 & String,String>, path: Result<&1,&1,
 def inbox_admission(executable: Result<&1,&1,U32 & String,String>, thread: String, pointer: String, stderr: String) -> IO(Result<&1,&1,U32 & String,U32>):
   match executable:
     case Fail{error}: IO.pure(Result<&1,&1,U32 & String,U32>,Fail{error})
-    case Done{path}: do IO<Result<&1,&1,U32 & String,U32>>:
+    case Done{+path}: do IO<Result<&1,&1,U32 & String,U32>>:
       script : Result<&1,&1,U32 & String,String> <- wake_path(path)
       runtime : Result<&1,&1,U32 & String,String> <- NodeRuntime.resolve(path)
       wake_runtime(runtime,script,thread,pointer,stderr)

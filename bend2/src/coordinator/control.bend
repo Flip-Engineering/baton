@@ -59,8 +59,7 @@ def identity_check_body(runtime: String, +registry: String, +helper: String, +mo
 
 # The helper is consulted only when the host resolved a registry for the
 # executable; an absent registry embeds no identity and needs no model mapping.
-def identity_checked(runtime: String, identity: String & String, model: String) -> IO(String & String):
-  (registry,helper)=identity
+def identity_checked(runtime: String, +registry: String, +helper: String, model: String) -> IO(String & String):
   +configured=registry
   +kept=helper
   do IO<String & String>:
@@ -70,21 +69,50 @@ def identity_checked(runtime: String, identity: String & String, model: String) 
 # A configured identity embeds a Node helper in the endpoint, so resolve the
 # runtime only when the registry is present. An absent identity keeps the
 # native command exactly as recorded and needs no Node executable.
-def identity_runtime_result(resolved: Result<&1,&1,U32 & String,String>) -> IO(String):
+type RuntimeSelection is Data:
+  RuntimeSelection{runtime: String, registry: String}
+
+type PreparedIdentity is Data:
+  PreparedIdentity{runtime: String, registry: String, helper: String}
+
+def identity_runtime_result(+registry: String, resolved: Result<&1,&1,U32 & String,String>) -> IO(RuntimeSelection):
   match resolved:
-    case Done{value}: IO.pure(String,value)
-    case Fail{(code,detail)}: IO.die(String,code,detail)
+    case Done{value}: IO.pure(RuntimeSelection,RuntimeSelection{value,registry})
+    case Fail{(code,detail)}: IO.die(RuntimeSelection,code,detail)
 
-def identity_runtime_present(present: Bool, executable: String) -> IO(String):
+def identity_runtime_present(present: Bool, executable: String, +registry: String) -> IO(RuntimeSelection):
   match present:
-    case True{}: IO.pure(String,"")
-    case False{}: do IO<String>:
+    case True{}: IO.pure(RuntimeSelection,RuntimeSelection{"",registry})
+    case False{}: do IO<RuntimeSelection>:
       resolved : Result<&1,&1,U32 & String,String> <- NodeRuntime.resolve(executable)
-      identity_runtime_result(resolved)
+      identity_runtime_result(registry,resolved)
 
-def identity_runtime(executable: String, identity: String & String) -> IO(String):
+def identity_runtime(executable: String, +registry: String) -> IO(RuntimeSelection):
+  identity_runtime_present(String.is_empty(registry),executable,registry)
+
+def prepared_identity(runtime: String, identity: String & String) -> PreparedIdentity:
   (registry,helper)=identity
-  identity_runtime_present(String.is_empty(registry),executable)
+  PreparedIdentity{runtime,registry,helper}
+
+def identity_checked_runtime(selection: RuntimeSelection, +helper: String, model: String) -> IO(PreparedIdentity):
+  match selection:
+    case RuntimeSelection{+runtime,registry}: do IO<PreparedIdentity>:
+      checked : String & String <- identity_checked(runtime,registry,helper,model)
+      IO.pure(PreparedIdentity,prepared_identity(runtime,checked))
+
+def identity_prepare(executable: String, identity: String & String, model: String) -> IO(PreparedIdentity):
+  (registry,helper)=identity
+  do IO<PreparedIdentity>:
+    selection : RuntimeSelection <- identity_runtime(executable,registry)
+    identity_checked_runtime(selection,helper,model)
+
+def identity_endpoint_prepared(prepared: PreparedIdentity, executable: String, db: String, session: String, cmd: String, log: String, model: String) -> String:
+  match prepared:
+    case PreparedIdentity{runtime,registry,helper}: identity_endpoint(runtime,executable,db,session,cmd,log,model,(registry,helper))
+
+def identity_args_prepared(prepared: PreparedIdentity, args: List<String>, model: String) -> List<String>:
+  match prepared:
+    case PreparedIdentity{runtime,registry,helper}: identity_args(runtime,args,model,(registry,helper))
 
 law native_receiver_leaves_the_wake_argument_to_delivery:
   for executable: String
@@ -114,10 +142,9 @@ def configured_endpoint(+db: String, session: String, +cmd: String, log: String,
     +executable : String <- IO.try(String,Lock.SessionLock.executable())
     database : String <- IO.try(String,Lock.SessionLock.canonical(db))
     output : String <- IO.try(String,Host.Control.output(log))
-    +identity : String & String <- IO.try(String & String,Host.Control.identity(executable))
-    +runtime : String <- identity_runtime(executable,identity)
-    checked : String & String <- identity_checked(runtime,identity,model)
-    IO.pure(String,identity_endpoint(runtime,executable,database,session,native,output,model,checked))
+    identity : String & String <- IO.try(String & String,Host.Control.identity(executable))
+    prepared : PreparedIdentity <- identity_prepare(executable,identity,model)
+    IO.pure(String,identity_endpoint_prepared(prepared,executable,database,session,native,output,model))
 
 # A receiver records the adapter argv and working directory for later delivery.
 # A supplied directory updates the assignment; an empty value keeps the recorded one.
@@ -311,9 +338,9 @@ def default_receiver_absent(+db: String, +player: String, cmd: String, +model: S
       +executable : String <- IO.try(String,Lock.SessionLock.executable())
       database : String <- IO.try(String,Lock.SessionLock.canonical(db))
       output : String <- IO.try(String,Host.Control.output(log))
-      +identity : String & String <- IO.try(String & String,Host.Control.identity(executable))
-      runtime : String <- identity_runtime(executable,identity)
-      endpoint : String <- IO.pure(String,"[" ++ strings(identity_args(runtime,[executable,database,"receive",player,cmd,model,effort,cwd,output],model,identity)) ++ "]")
+      identity : String & String <- IO.try(String & String,Host.Control.identity(executable))
+      prepared : PreparedIdentity <- identity_prepare(executable,identity,model)
+      endpoint : String <- IO.pure(String,"[" ++ strings(identity_args_prepared(prepared,[executable,database,"receive",player,cmd,model,effort,cwd,output],model)) ++ "]")
       saved : String <- IO.try(String,DB.Sql.query(db,"UPDATE sessions SET endpoint=" ++ C.q(endpoint) ++ " WHERE id=" ++ C.q(player) ++ " AND coalesce(endpoint,'')='' AND NOT " ++ C.stopped_session_sql(C.q(player)) ++ ";"))
       IO.pure(Unit,Unit{})
 
@@ -339,10 +366,9 @@ def dispatch_turn(+db: String, +player: String, +id: String, +cmd: String, log: 
     effort : String <- recorded_field(db,player,"effort")
     cwd : String <- recorded_field(db,player,"workspace")
     native : String <- recorded_field(db,player,"native")
-    +identity : String & String <- IO.try(String & String,Host.Control.identity(executable))
-    +runtime : String <- identity_runtime(executable,identity)
-    checked : String & String <- identity_checked(runtime,identity,model)
-    IO.try(String,Host.Control.launch(Tx.enc_argv(identity_args(runtime,[executable,database,"turn",player,id,harness_cmd,model,effort,cwd,path,output,native],model,checked)),database,id))
+    identity : String & String <- IO.try(String & String,Host.Control.identity(executable))
+    prepared : PreparedIdentity <- identity_prepare(executable,identity,model)
+    IO.try(String,Host.Control.launch(Tx.enc_argv(identity_args_prepared(prepared,[executable,database,"turn",player,id,harness_cmd,model,effort,cwd,path,output,native],model)),database,id))
 
 def status_pretty(+db: String) -> IO(String):
   do IO<String>:
