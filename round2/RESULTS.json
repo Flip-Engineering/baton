@@ -1,0 +1,79 @@
+{
+  "schema": "baton2-match-default-sharing-round2-v1",
+  "before_c_bytes": 33992046,
+  "after_c_bytes": 493026,
+  "check_only_pass": true,
+  "compiler_tests_pass": true,
+  "focused_entry_check": true,
+  "focused_entry": "round2/fixtures/five-overlap.bend",
+  "compiler": {
+    "pinned": {
+      "bend_ts_sha256": "93c2a43deeb82c15683e4e25bbc5dec5ac3edff9f54e09acc0975e290fcaeb85",
+      "comp_ts_sha256": "a2a949ae7f1c8520d8a112aa505b4c5440baad861dc912e410bfb501369112bc",
+      "main_ts_sha256": "53ce8e48c7540db6c3e66133a7c7eb270d6f64813fe10a631fd50d22112eb07d",
+      "base_bend_sha256": "e5639663177f2de93ef34867c029698aa4e68a98d46629f0b15452b67b99d798"
+    },
+    "candidate": {
+      "bend_ts_sha256": "a25abe9d0d1afca31dbcad8dc58761adf6ab45dbad76421904edaa45ffade98e",
+      "comp_ts_sha256": "8cfacdb8d7c3adb0570c3a54a1a2d75046f7ab8cc1ed1b40d30ab5163acb979c",
+      "main_ts_sha256": "53ce8e48c7540db6c3e66133a7c7eb270d6f64813fe10a631fd50d22112eb07d"
+    }
+  },
+  "fixture_sha256": {
+    "round2/fixtures/five-overlap.bend": "e7b0ee7b178e8d82b3cd0e2989e963eede07ab75b0c6fafd5a30adc3aa4ef971"
+  },
+  "reproducer": {
+    "repo": "/mnt/nvme4tb/ci-runners/baton2-native-homelab/retained/baton-consolidation-review-20261017/private/cgen-allocation-ds-pr890-split-20261019/repro-repo",
+    "commit": "87703d2df22780f46cf16756ce2c24c3fe4b9f78"
+  },
+  "fixtures": {
+    "five-overlap": {
+      "before": {"bytes": 33992046, "lines": 432223, "wall_s": 55.28, "max_rss_kib": 4769288, "wl_case": 7658},
+      "after": {"bytes": 493026, "lines": 8139, "wall_s": 31.20, "max_rss_kib": 3943124, "wl_case": 16}
+    },
+    "minimal": {
+      "before": {"bytes": 5215600, "lines": 77836, "wall_s": 10.01, "max_rss_kib": 899512, "wl_case": 1404},
+      "after": {"bytes": 270581, "lines": 5408, "wall_s": 5.30, "max_rss_kib": 747904, "wl_case": 16}
+    },
+    "pr890-shaped": {
+      "before": {"bytes": 31392684, "lines": 429444, "wall_s": 55.16, "max_rss_kib": 4659608, "wl_case": 9048},
+      "after": {"bytes": 465981, "lines": 7873, "wall_s": 28.09, "max_rss_kib": 3368344, "wl_case": 16}
+    },
+    "control-two-long": {
+      "before": {"bytes": 102122, "lines": 3769, "wall_s": 0.45, "max_rss_kib": 108644, "wl_case": 27},
+      "after": {"bytes": 109402, "lines": 3824, "wall_s": 0.45, "max_rss_kib": 101456, "wl_case": 16}
+    },
+    "control-literal-two": {
+      "before": {"bytes": 170585, "lines": 5971, "wall_s": 0.92, "max_rss_kib": 144200, "wl_case": 84},
+      "after": {"bytes": 94356, "lines": 3627, "wall_s": 0.67, "max_rss_kib": 129952, "wl_case": 16}
+    }
+  },
+  "gates": {
+    "minimal_max_bytes": 1000000,
+    "pr890_shaped_max_bytes": 2000000,
+    "control_max_bytes": 300000,
+    "minimal_pass": true,
+    "pr890_shaped_pass": true,
+    "controls_pass": true,
+    "all_pass": true
+  },
+  "check_only": {
+    "fixtures": [
+      "round2/fixtures/five-overlap.bend",
+      "repro/minimal.bend",
+      "repro/pr890-shaped.bend",
+      "repro/control-two-long.bend",
+      "repro/control-literal-two.bend",
+      "tests/flatten/dead_residue_elision_004.bend",
+      "tests/compile/string_match_sparse.bend"
+    ],
+    "pass": true,
+    "candidate_baseline_output_identical": true
+  },
+  "runtime_argv": {
+    "ran": true,
+    "method": "both compilers interpreted the same fixture with the same argv (no clang)",
+    "cases": 18,
+    "diffs": 0
+  }
+}
