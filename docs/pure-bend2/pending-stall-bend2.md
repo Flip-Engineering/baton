@@ -84,6 +84,12 @@ commands:
 - an exited attempt with an existing `claimed` wake claim renders `claimed` and
   is not driven.
 
+`bend2/test/stall-evidence-entry.bend` builds as a standalone consumer. Its
+`init`, `report`, `wake` and `parse` modes drive the same commands and handlers
+without coordinator Main. The wake driver launches that same executable with
+`--dispatch-message DB ID`; the entry handles that mode by calling
+`Delivery.deliver`, so the wake path reaches the recorded endpoint.
+
 ## Verification
 
 The three-file port at `3e42c349` passed the focused 16 GiB gate on
@@ -116,6 +122,11 @@ with `memory.max = 17179869184`, `memory.swap.max = 0`, and an unlimited
 | `--check-only bend2/src/coordinator/stall-laws.bend` | exit 0, `All terms check` |
 | `--check-only bend2/test/stall-evidence-entry.bend` | exit 0, `All terms check`, four unsafe or foreign defs |
 
+The `stall-evidence-entry.bend` check above covers the revision before the
+`--dispatch-message` followup. That followup adds the wake delivery mode and
+needs its own bounded check and build; `focused-evidence-qualification.json`
+pins the run.
+
 The highest observed peak resident set was 6,467,044 kB. No run used swap.
 A law body must be an equality; the claimless query law asserts
 `String.contains(Stall.stalled_rows_sql(False{}),"wake_claims") == False{}`.
@@ -123,7 +134,7 @@ A law body must be an equality; the claimless query law asserts
 The following gates need build and runtime capacity:
 
 - build `.scratch/bend2/baton2` and run `python3 -m unittest bend2/test/stall.py`;
-- build `bend2/test/stall-evidence-entry.bend` and run
+- `--check-only bend2/test/stall-evidence-entry.bend`, then build it and run
   `stall-evidence-fixture.py build`, `check-report` and `check-wake`;
 - `--check-only bend2/src/coordinator/main.bend` with a full-class admission
   receipt;
