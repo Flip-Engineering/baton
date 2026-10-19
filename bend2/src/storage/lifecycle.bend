@@ -36,73 +36,23 @@ type RootSpec is Data:
 type RootPreview is Type:
   RootPreview{root: String, mount: String, identity: String, preview: T.Preview}
 
-def split_pipe(+text: String) -> List<&2,String>:
-  String.split(text, Char.from_u32(124))
+def join_path(+root: String, +name: String) -> String:
+  Bool.pick(String, String.ends_with(root, "/"), root ++ name, root ++ "/" ++ name)
 
-def source_of(parts: List<&2,String>) -> String:
-  match parts:
-    case Nil{}: ""
-    case Con{head, tail}:
-      match tail:
-        case Nil{}: ""
-        case Con{source, rest}: source
+def roots_for(+session: String, state: S.State) -> List<&2,RootSpec>:
+  +workspace = S.workspace_of(state, session)
+  Bool.pick(List<&2,RootSpec>, String.is_empty(workspace), Nil{},
+    Con{RootSpec{T.Scratch{}, workspace ++ "/.scratch", ""},
+      Con{RootSpec{T.BuildOutput{}, workspace ++ "/.build", ""},
+        Con{RootSpec{T.GitObject{}, workspace ++ "/.git/objects", workspace}, Nil{}}}})
 
-def first_part(parts: List<&2,String>) -> String:
-  match parts:
-    case Nil{}: ""
-    case Con{head, tail}: head
-
-def normalize_root(+path: String) -> String:
-  +length = String.length(path)
-  Bool.pick(String, Bool.and(Nat.is_gt(length, 1n), String.ends_with(path, "/")), String.take(path, Nat.sub(length, 1n)), path)
-
-def root_fields(fields: List<&2,String>) -> RootSpec:
-  match fields:
-    case marker <> rest:
-      +path = String.join(rest, "=")
-      +parts = split_pipe(path)
-      +root_path = normalize_root(first_part(parts))
-      +source = source_of(parts)
-      +cls = P.classify(marker)
-      RootSpec{cls, root_path, source}
-    case other: RootSpec{T.Unclassified{}, "", ""}
-
-def root_spec(+line: String) -> RootSpec:
-  root_fields(String.split(line, Char.from_u32(61)))
-
-def root_path_of(+spec: RootSpec) -> String:
+def root_path_of(spec: RootSpec) -> String:
   match spec:
     case RootSpec{cls, path, source}: path
 
-def root_source_of(+spec: RootSpec) -> String:
+def root_source_of(spec: RootSpec) -> String:
   match spec:
     case RootSpec{cls, path, source}: source
-
-def roots_add_line(+line: String, acc: List<&2,RootSpec>, empty: Bool, comment: Bool) -> List<&2,RootSpec>:
-  match empty:
-    case True{}: acc
-    case False{}:
-      match comment:
-        case True{}: acc
-        case False{}: Con{root_spec(line), acc}
-
-def roots_walk(lines: List<String>, acc: List<&2,RootSpec>) -> List<&2,RootSpec>:
-  match lines:
-    case Nil{}: List.reverse(&2, RootSpec, acc)
-    case Con{+head, tail}:
-      next = roots_add_line(head, acc, String.is_empty(head), String.starts_with(head, "#"))
-      roots_walk(tail, next)
-
-def parse_roots(+text: String) -> List<&2,RootSpec>:
-  roots_walk(Tx.split_lines(text), Nil{})
-
-def configured_roots() -> IO(List<&2,RootSpec>):
-  do IO<List<&2,RootSpec>>:
-    text : String <- IO.try(String, IO.get_env("BATON_STORAGE_ROOTS"))
-    IO.pure(List<&2,RootSpec>, parse_roots(text))
-
-def join_path(+root: String, +name: String) -> String:
-  Bool.pick(String, String.ends_with(root, "/"), root ++ name, root ++ "/" ++ name)
 
 def child_class(+spec: RootSpec, +child: O.Child) -> T.StorageClass:
   match spec:
@@ -251,23 +201,6 @@ def apply_roots(+db: String, specs: List<&2,RootSpec>, acc: List<T.Receipt>) -> 
         deeper : List<T.Receipt> <- apply_roots(db, tail, Con{receipt, acc})
         IO.pure(List<T.Receipt>, deeper)
 
-def run_preview(+db: String) -> IO(List<RootPreview>):
-  do IO<List<RootPreview>>:
-    specs : List<&2,RootSpec> <- configured_roots()
-    state : S.State <- S.load(db)
-    answer : List<RootPreview> <- preview_roots(specs, state, Nil{})
-    IO.pure(List<RootPreview>, answer)
-
-def locked_apply(+db: String, specs: List<&2,RootSpec>, lock: Maybe<U32>) -> IO(List<T.Receipt>):
-  match lock:
-    case None{}:
-      IO.pure(List<T.Receipt>, Nil{})
-    case Some{handle}:
-      do IO<List<T.Receipt>>:
-        receipts : List<T.Receipt> <- apply_roots(db, specs, Nil{})
-        released : Unit <- IO.try(Unit, Lock.SessionLock.release(handle))
-        IO.pure(List<T.Receipt>, receipts)
-
 def root_overlap(+spec: RootSpec, rest: List<&2,RootSpec>) -> Bool:
   match rest:
     case Nil{}: False{}
@@ -280,6 +213,28 @@ def roots_overlap(specs: List<&2,RootSpec>) -> Bool:
     case Nil{}: False{}
     case Con{head, tail}: root_overlap(head, tail)
 
+def run_preview(+db: String, +session: String) -> IO(Result<&1,&1,U32 & String,List<RootPreview>>):
+  do IO<Result<&1,&1,U32 & String,List<RootPreview>>>:
+    +state : S.State <- S.load(db)
+    +specs : List<&2,RootSpec> = roots_for(session, state)
+    overlap : Bool = roots_overlap(specs)
+    answer : Result<&1,&1,U32 & String,List<RootPreview>> <- Bool.pick(IO(Result<&1,&1,U32 & String,List<RootPreview>>), overlap,
+      IO.pure(Result<&1,&1,U32 & String,List<RootPreview>>, Fail{(3, "storage roots overlap")}),
+      do IO<Result<&1,&1,U32 & String,List<RootPreview>>>:
+        previews : List<RootPreview> <- preview_roots(specs, state, Nil{})
+        IO.pure(Result<&1,&1,U32 & String,List<RootPreview>>, Done{previews}))
+    IO.pure(Result<&1,&1,U32 & String,List<RootPreview>>, answer)
+
+def locked_apply(+db: String, specs: List<&2,RootSpec>, lock: Maybe<U32>) -> IO(List<T.Receipt>):
+  match lock:
+    case None{}:
+      IO.pure(List<T.Receipt>, Nil{})
+    case Some{handle}:
+      do IO<List<T.Receipt>>:
+        receipts : List<T.Receipt> <- apply_roots(db, specs, Nil{})
+        released : Unit <- IO.try(Unit, Lock.SessionLock.release(handle))
+        IO.pure(List<T.Receipt>, receipts)
+
 def apply_locked(+db: String, specs: List<&2,RootSpec>, lock: Maybe<U32>) -> IO(Result<&1,&1,U32 & String,List<T.Receipt>>):
   match lock:
     case None{}: IO.pure(Result<&1,&1,U32 & String,List<T.Receipt>>, Fail{(4, "storage cleanup busy")})
@@ -289,9 +244,10 @@ def apply_locked(+db: String, specs: List<&2,RootSpec>, lock: Maybe<U32>) -> IO(
         released : Unit <- IO.try(Unit, Lock.SessionLock.release(handle))
         IO.pure(Result<&1,&1,U32 & String,List<T.Receipt>>, Done{receipts})
 
-def run_apply(+db: String) -> IO(Result<&1,&1,U32 & String,List<T.Receipt>>):
+def run_apply(+db: String, +session: String) -> IO(Result<&1,&1,U32 & String,List<T.Receipt>>):
   do IO<Result<&1,&1,U32 & String,List<T.Receipt>>>:
-    +specs : List<&2,RootSpec> <- configured_roots()
+    +state : S.State <- S.load(db)
+    +specs : List<&2,RootSpec> = roots_for(session, state)
     overlap : Bool = roots_overlap(specs)
     answer : Result<&1,&1,U32 & String,List<T.Receipt>> <- Bool.pick(IO(Result<&1,&1,U32 & String,List<T.Receipt>>), overlap,
       IO.pure(Result<&1,&1,U32 & String,List<T.Receipt>>, Fail{(3, "storage roots overlap")}),
@@ -306,34 +262,20 @@ def root_preview_json(item: RootPreview) -> String:
     case RootPreview{root, mount, identity, planned}:
       "{\"root\":" ++ J.string_literal(root) ++ ",\"mount\":" ++ J.string_literal(mount) ++ ",\"identity\":" ++ J.string_literal(identity) ++ ",\"preview\":" ++ P.preview_json(planned) ++ "}"
 
-def root_preview_append_choice(empty: Bool, +acc: String, head: RootPreview) -> String:
-  match empty:
-    case True{}: root_preview_json(head)
-    case False{}: acc ++ "," ++ root_preview_json(head)
-
-def root_preview_append(+acc: String, head: RootPreview) -> String:
-  root_preview_append_choice(String.is_empty(acc), acc, head)
-
 def root_preview_items(items: List<RootPreview>, +acc: String) -> String:
   match items:
     case Nil{}: acc
     case Con{head, tail}:
-      +next = root_preview_append(acc, head)
+      +piece = root_preview_json(head)
+      +next = Bool.pick(String, String.is_empty(acc), piece, acc ++ "," ++ piece)
       root_preview_items(tail, next)
-
-def receipt_append_choice(empty: Bool, +acc: String, head: T.Receipt) -> String:
-  match empty:
-    case True{}: P.receipt_json(head)
-    case False{}: acc ++ "," ++ P.receipt_json(head)
-
-def receipt_append(+acc: String, head: T.Receipt) -> String:
-  receipt_append_choice(String.is_empty(acc), acc, head)
 
 def receipt_json_list(items: List<T.Receipt>, +acc: String) -> String:
   match items:
     case Nil{}: acc
     case Con{head, tail}:
-      +next = receipt_append(acc, head)
+      +piece = P.receipt_json(head)
+      +next = Bool.pick(String, String.is_empty(acc), piece, acc ++ "," ++ piece)
       receipt_json_list(tail, next)
 
 def previews_json(items: List<RootPreview>) -> String:
@@ -342,21 +284,38 @@ def previews_json(items: List<RootPreview>) -> String:
 def receipts_json(items: List<T.Receipt>) -> String:
   "{\"receipts\":[" ++ receipt_json_list(items, "") ++ "]}"
 
-def run_apply_result(result: Result<&1,&1,U32 & String,List<T.Receipt>>) -> IO(Unit):
+def preview_result(result: Result<&1,&1,U32 & String,List<RootPreview>>) -> IO(Unit):
+  match result:
+    case Done{previews}: IO.write(previews_json(previews))
+    case Fail{error}:
+      (code, detail) = error
+      IO.die(Unit, code, detail)
+
+def apply_result(result: Result<&1,&1,U32 & String,List<T.Receipt>>) -> IO(Unit):
   match result:
     case Done{receipts}: IO.write(receipts_json(receipts))
     case Fail{error}:
       (code, detail) = error
       IO.die(Unit, code, detail)
 
-def run(+db: String, +action: String) -> IO(Unit):
-  Bool.pick(IO(Unit), String.eq(action, "preview"),
-    do IO<Unit>:
-      previews : List<RootPreview> <- run_preview(db)
-      IO.write(previews_json(previews)),
-  Bool.pick(IO(Unit), String.eq(action, "apply"),
-    do IO<Unit>:
-      result : Result<&1,&1,U32 & String,List<T.Receipt>> <- run_apply(db)
-      answer : Unit <- run_apply_result(result)
-      IO.pure(Unit, answer),
-    IO.die(Unit, 2, "usage: storage-policy preview|apply")))
+def policy_json(+db: String) -> String:
+  "{\"database\":" ++ J.string_literal(db)
+  ++ ",\"classes\":[\"scratch\",\"build-output\",\"checkout\",\"shared-immutable\",\"git-object\",\"log-evidence\"]"
+  ++ ",\"roots\":\"session-workspace\""
+  ++ ",\"preserved\":[\"checkout\",\"shared-immutable\",\"git-object\",\"log-evidence\"]"
+  ++ ",\"ageRule\":false}"
+
+def run_policy(+db: String) -> IO(Unit):
+  IO.write(policy_json(db))
+
+def run_preview_command(+db: String, +session: String) -> IO(Unit):
+  do IO<Unit>:
+    result : Result<&1,&1,U32 & String,List<RootPreview>> <- run_preview(db, session)
+    answer : Unit <- preview_result(result)
+    IO.pure(Unit, answer)
+
+def run_apply_command(+db: String, +session: String) -> IO(Unit):
+  do IO<Unit>:
+    result : Result<&1,&1,U32 & String,List<T.Receipt>> <- run_apply(db, session)
+    answer : Unit <- apply_result(result)
+    IO.pure(Unit, answer)

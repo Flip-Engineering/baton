@@ -28,28 +28,32 @@ A storage root declares one class:
 An unrecognised marker becomes `unclassified`, and an unclassified candidate
 stays in the preview.
 
-## Configured roots
+## Command contract
 
-`BATON_STORAGE_ROOTS` holds one root per line:
+The storage commands resolve roots from the session's recorded workspace:
 
 ```text
-scratch=/mnt/large/scratch
-build-output=/mnt/large/build
-checkout=/mnt/large/worktrees
-shared-immutable=/mnt/large/assets
-git-object=/repo/.git/objects|/repo
-log-evidence=/mnt/large/baton-logs
+storage-policy           # class contract and resolved root source
+storage-preview SESSION  # JSON preview for that session's workspace roots
+storage-apply SESSION    # JSON receipts for that session's workspace roots
 ```
 
-The marker before `=` selects the class. The optional `|source` names a Git
-repository for a `git-object` root. Empty configuration performs no scan and
-no deletion. The process reads the configured roots; it does not adopt a
-homelab path or relocate existing files.
+The preview roots are `<workspace>/.scratch` (scratch),
+`<workspace>/.build` (build output) and `<workspace>/.git/objects` (Git
+objects). The workspace itself is reported as a checkout and remains
+preserved. Shared immutable assets and registered log evidence are reported
+as preserved classes. The process reads the recorded workspace; it does not
+adopt a homelab path or relocate existing files.
 
-`storage-policy preview` refuses overlapping or nested roots before apply.
-`storage-policy apply` holds the `storage-cleanup` database lock, refuses while
-the lock is held, and exits nonzero when the roots overlap or the scan evidence
-is invalid.
+`storage-preview` refuses overlapping or nested roots before apply.
+`storage-apply` holds the `storage-cleanup` database lock, refuses while the
+lock is held, and exits nonzero when the roots overlap or the scan evidence is
+invalid.
+
+The coordinator database path and every ancestor of that path are preserved.
+The same rule covers its `-wal`, `-journal` and `-shm` sidecars and adjacent
+`.attempt-` stores, including a database whose original parent path is
+missing. Database evidence does not rely on finding the owning process.
 
 ## Preservation evidence
 
@@ -81,22 +85,22 @@ unknown, and unknown evidence preserves the candidate.
 ## Process references
 
 `StorageHost.process_refs` and `StorageHost.runtime_refs` inspect cwd, executable,
-descriptors and mapped files for the current user's process tree. For a
-directory candidate the scan compares each referenced path with the candidate
-directory, so a process working inside a child directory or holding a file
-there is found even though its inode differs from the parent. The scan reports
-`unknown:` on an access error, a non-Linux host or a truncated scan, and the
-policy preserves the candidate.
-
-The process-tree scope is deliberate: the approved root contract below requires
-writer coordination, and unrelated users' processes cannot be inspected on a
-host with restricted `/proc` access.
+descriptors and mapped files for same-user processes. For a directory candidate
+the scan compares each referenced path with the candidate directory, so a
+process working inside a child directory or holding a file there is found even
+though its inode differs from the parent. The scan reports `unknown:` on an
+access error for a process in the cleanup process tree, a non-Linux host or a
+truncated scan, and the policy preserves the candidate. A restricted `maps`
+file is skipped because the cwd, executable and descriptor checks remain
+available. An inaccessible unrelated same-user process is skipped; the
+coordinator database path rule preserves active database users independently
+of this scan.
 
 ## Preview and apply
 
 ```text
-storage-policy preview   # JSON: roots, root identity, valid flag, entries, reasons, bytes
-storage-policy apply     # JSON: receipts with exact paths, bytes, reason, owner proof and outcome
+storage-preview SESSION  # JSON: roots, root identity, valid flag, entries, reasons, bytes
+storage-apply SESSION    # JSON: receipts with exact paths, bytes, reason, owner proof and outcome
 ```
 
 The preview records the approved root identity. Apply observes the root again
@@ -122,11 +126,13 @@ removed bytes, not the preview estimate.
 
 An approved storage root must have exclusive writer coordination for the
 duration of apply. The root identity, descriptor-relative traversal and
-identity revalidation cover concurrent removal and path replacement. A writer
-that mutates a leaf between the identity check and `unlinkat` remains outside
-this contract; the project does not make a generally writable directory
-cleanable from database state alone. The `storage-cleanup` lock serializes
-cleanup runs, and the operator selects roots on durable volumes.
+identity revalidation detect a replaced root and a replaced candidate before
+the unlink. The check and the `unlinkat` are separate operations, so a writer
+that mutates a leaf between them remains outside this contract. The project
+does not claim atomic concurrent-replacement protection and does not make a
+generally writable directory cleanable from database state alone. The
+`storage-cleanup` lock serializes cleanup runs; it does not coordinate outside
+writers.
 
 ## Preserve-only classes
 
@@ -149,8 +155,8 @@ It covers owner, lease, process, dirty, unpublished, runtime-input, ref and
 pending-attempt preservation; descendant cwd and descriptor references under a
 directory candidate; symlink removal with an intact target; child and root
 replacement; unreadable paths; malformed host records; malformed database rows;
-overlapping roots; lock contention; idempotent replay; and interrupted tree
-removal.
+overlapping roots; lock contention; idempotent replay; interrupted tree removal;
+and preservation of an active coordinator database path and its ancestors.
 
 The focused native overlay exposes the same command through
 `receive-focused.bend`:
@@ -158,6 +164,7 @@ The focused native overlay exposes the same command through
 ```sh
 BATON2_RECEIVE_FOCUSED=1 sh bend2/scripts/build-native.sh \
   bend2/src/coordinator/receive-focused.bend .scratch/bend2/focused-storage
-BATON_STORAGE_ROOTS='scratch=/absolute/root' \
-  .scratch/bend2/focused-storage DATABASE storage-policy preview
+.scratch/bend2/focused-storage DATABASE storage-policy
+.scratch/bend2/focused-storage DATABASE storage-preview SESSION
+.scratch/bend2/focused-storage DATABASE storage-apply SESSION
 ```

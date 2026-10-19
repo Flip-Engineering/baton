@@ -328,6 +328,16 @@ def malformed_db_check(+db: String, +root: String) -> IO(Unit):
     b : Unit <- check("malformed-db-preserves", facts_owner_unknown(facts), "malformed DB produced a known owner")
     IO.pure(Unit, Unit{})
 
+def db_ancestor_check(+db: String, +root: String) -> IO(Unit):
+  do IO<Unit>:
+    state : S.State <- S.load(db)
+    +ancestor : String = root ++ "/state"
+    facts : T.Facts <- S.facts_for(T.Scratch{}, "", ancestor, state)
+    +reason : String = decision_reason_of(T.Candidate{ancestor, T.Scratch{}, "owner", "proof", 0n, "dir:0:0", facts})
+    a : Unit <- check("db-ancestor-preserved", String.eq(reason, "lease-live"), reason)
+    b : Unit <- check("db-path-ancestor-unknown-db", S.coordinator_related(root ++ "/state/missing.db", ancestor), "missing db ancestor not protected")
+    IO.pure(Unit, Unit{})
+
 def overlap_check(+root: String) -> IO(Unit):
   do IO<Unit>:
     specs : List<&2,L.RootSpec> <- IO.pure(List<&2,L.RootSpec>, Con{L.RootSpec{T.Scratch{}, root, ""}, Con{L.RootSpec{T.BuildOutput{}, root ++ "/nested", ""}, Nil{}}})
@@ -344,8 +354,9 @@ def busy_check(+db: String, +root: String) -> IO(Unit):
 def main() -> IO(Unit):
   do IO<Unit>:
     +root : String = ".scratch/bend2-storage-test"
-    +db : String = ".scratch/bend2-storage-test.db"
     setup : Unit <- setup_root(root)
+    state_dir : Unit <- IO.try(Unit, F.Files.mkdir(root ++ "/state"))
+    +db : String = root ++ "/state/coord.db"
     database : Unit <- db_setup(db, root)
     pure : Unit <- pure_checks()
     process : Unit <- process_checks(root)
@@ -356,6 +367,7 @@ def main() -> IO(Unit):
     malformed : Unit <- malformed_entries_check(root)
     overlap : Unit <- overlap_check(root)
     busy : Unit <- busy_check(db, root)
+    db_ancestor : Unit <- db_ancestor_check(db, root)
     interrupted : Unit <- interrupted_check(db, root)
     parent_rename : Unit <- parent_rename_check(db, root)
     malformed_db : Unit <- malformed_db_check(db, root)

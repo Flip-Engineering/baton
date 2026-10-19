@@ -644,11 +644,11 @@ static int baton_storage_access_unknown(int error) {
 }
 
 /* Answers 1 on a match, 0 otherwise, and marks UNKNOWN on an access error. */
-static int baton_storage_path_hit(const char *path, baton_u64 device, baton_u64 inode, int *unknown) {
+static int baton_storage_path_hit(const char *path, baton_u64 device, baton_u64 inode, int strict, int *unknown) {
   struct stat info;
   if (!stat(path, &info)) return (baton_u64)info.st_dev == device && (baton_u64)info.st_ino == inode;
   if (errno == ENOENT || errno == ESRCH || errno == ENOTDIR) return 0;
-  if (baton_storage_access_unknown(errno)) *unknown = 1;
+  if (strict && baton_storage_access_unknown(errno)) *unknown = 1;
   return 0;
 }
 
@@ -693,19 +693,19 @@ static char *baton_storage_maps_path(char *line) {
 
 /* Answers 1 when PID references the inode through cwd, exe, a descriptor or a
  * mapped file. Access errors and scan truncation set their flag. */
-static int baton_storage_pid_hit(pid_t pid, baton_u64 device, baton_u64 inode, const char *root, int is_dir, int *unknown, int *truncated) {
+static int baton_storage_pid_hit(pid_t pid, baton_u64 device, baton_u64 inode, const char *root, int is_dir, int strict, int *unknown, int *truncated) {
   char path[64];
   snprintf(path, sizeof(path), "/proc/%ld/cwd", (long)pid);
-  if (baton_storage_path_hit(path, device, inode, unknown)) return 1;
+  if (baton_storage_path_hit(path, device, inode, strict, unknown)) return 1;
   if (is_dir && baton_storage_link_hit(path, root, unknown)) return 1;
   snprintf(path, sizeof(path), "/proc/%ld/exe", (long)pid);
-  if (baton_storage_path_hit(path, device, inode, unknown)) return 1;
+  if (baton_storage_path_hit(path, device, inode, strict, unknown)) return 1;
   if (is_dir && baton_storage_link_hit(path, root, unknown)) return 1;
 
   snprintf(path, sizeof(path), "/proc/%ld/fd", (long)pid);
   DIR *fds = opendir(path);
   if (!fds) {
-    if (baton_storage_access_unknown(errno)) *unknown = 1;
+    if (strict && baton_storage_access_unknown(errno)) *unknown = 1;
   } else {
     struct dirent *entry;
     size_t seen = 0;
@@ -717,7 +717,7 @@ static int baton_storage_pid_hit(pid_t pid, baton_u64 device, baton_u64 inode, c
       if (++seen > BATON_STORAGE_REF_LIMIT) { *truncated = 1; break; }
       char target_path[128];
       snprintf(target_path, sizeof(target_path), "/proc/%ld/fd/%s", (long)pid, entry->d_name);
-      if (baton_storage_path_hit(target_path, device, inode, unknown)) { closedir(fds); return 1; }
+      if (baton_storage_path_hit(target_path, device, inode, strict, unknown)) { closedir(fds); return 1; }
       if (is_dir && baton_storage_link_hit(target_path, root, unknown)) { closedir(fds); return 1; }
     }
     if (entry == NULL && errno) *unknown = 1;
@@ -727,7 +727,7 @@ static int baton_storage_pid_hit(pid_t pid, baton_u64 device, baton_u64 inode, c
   snprintf(path, sizeof(path), "/proc/%ld/maps", (long)pid);
   FILE *maps = fopen(path, "r");
   if (!maps) {
-    if (baton_storage_access_unknown(errno)) *unknown = 1;
+    /* A restricted maps file cannot hide an otherwise visible descriptor. */
   } else {
     char *line = NULL;
     size_t capacity = 0;
@@ -736,7 +736,7 @@ static int baton_storage_pid_hit(pid_t pid, baton_u64 device, baton_u64 inode, c
       if (++seen > BATON_STORAGE_REF_LIMIT) { *truncated = 1; break; }
       char *mapped = baton_storage_maps_path(line);
       if (!mapped || mapped[0] != '/') continue;
-      if (baton_storage_path_hit(mapped, device, inode, unknown)) { free(line); fclose(maps); return 1; }
+      if (baton_storage_path_hit(mapped, device, inode, strict, unknown)) { free(line); fclose(maps); return 1; }
       if (is_dir && baton_storage_prefix(root, mapped)) { free(line); fclose(maps); return 1; }
     }
     if (ferror(maps)) *unknown = 1;
@@ -807,8 +807,8 @@ static void baton_storage_refs_call(IoWork *w) {
     struct stat process_info;
     if (stat(process_path, &process_info)) continue;
     if (process_info.st_uid != geteuid()) continue;
-    if (!baton_storage_in_tree(pid)) continue;
-    if (baton_storage_pid_hit(pid, device, inode, root, is_dir, &unknown, &truncated)) {
+    int strict = baton_storage_in_tree(pid);
+    if (baton_storage_pid_hit(pid, device, inode, root, is_dir, strict, &unknown, &truncated)) {
       if (baton_storage_pid_push(&pids, pid)) { call->error = ENOMEM; break; }
       if (pids.count >= BATON_STORAGE_REF_LIMIT) { truncated = 1; break; }
     }

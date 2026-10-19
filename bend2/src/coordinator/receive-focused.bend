@@ -102,11 +102,6 @@ def focused_native_observer(selected: Bool, +full: String, +db: String, +verb: S
     case True{}: dispatch_observer(True{},db,session,observer)
     case False{}: focused_fallback(full,db,Con{verb,Con{session,Con{observer,Nil{}}}})
 
-def focused_native_storage(selected: Bool, +full: String, +db: String, +verb: String, +action: String) -> IO(Unit):
-  match selected:
-    case True{}: StoragePolicy.run(db,action)
-    case False{}: focused_fallback(full,db,Con{verb,Con{action,Nil{}}})
-
 def focused_native_args(+full: String, +db: String, args: List<String>) -> IO(Unit):
   match args:
     case +verb <> +session <> +cmd <> +model <> +effort <> +cwd <> +log <> +message <> Nil{}:
@@ -115,8 +110,6 @@ def focused_native_args(+full: String, +db: String, args: List<String>) -> IO(Un
       focused_native_turn(String.eq(verb,"turn-text"),String.eq(verb,"turn"),full,db,verb,player,id,cmd,model,effort,cwd,task,log,session)
     case +verb <> +session <> +observer <> Nil{}:
       focused_native_observer(String.eq(verb,"recover-observer"),full,db,verb,session,observer)
-    case +verb <> +action <> Nil{}:
-      focused_native_storage(String.eq(verb,"storage-policy"),full,db,verb,action)
     case other: focused_fallback(full,db,other)
 
 def focused_native_input(+db: String, +full: String) -> IO(Unit):
@@ -142,14 +135,16 @@ def register_receiver_cwd(selected: Bool, +db: String, +session: String, +cmd: S
 
 def dispatch(args: List<String>) -> IO(Unit):
   match args:
-    case +db <> +verb <> +action <> Nil{}:
-      Bool.pick(IO(Unit), String.eq(verb, "storage-policy"), StoragePolicy.run(db, action), IO.die(Unit, 2, "unsupported focused storage command"))
+    case +db <> +verb <> Nil{}:
+      Bool.pick(IO(Unit), String.eq(verb, "storage-policy"), StoragePolicy.run_policy(db), IO.die(Unit, 2, "unsupported focused storage command"))
     case +db <> +route <> +session <> +cmd <> +log <> Nil{}:
       register_receiver(String.eq(route,"register-receiver"),db,session,cmd,log)
     case +db <> +route <> +session <> +cmd <> +log <> +cwd <> Nil{}:
       register_receiver_cwd(String.eq(route,"register-receiver"),db,session,cmd,log,cwd)
-    case +db <> +verb <> +full <> Nil{}:
-      Bool.pick(IO(Unit),String.eq(verb,"agent-native-input"),focused_native_input(db,full),dispatch_three(db,verb,full))
+    case +db <> +verb <> +argument <> Nil{}:
+      Bool.pick(IO(Unit),String.eq(verb,"agent-native-input"),focused_native_input(db,argument),
+        Bool.pick(IO(Unit),String.eq(verb,"storage-preview"),StoragePolicy.run_preview_command(db,argument),
+          Bool.pick(IO(Unit),String.eq(verb,"storage-apply"),StoragePolicy.run_apply_command(db,argument),dispatch_three(db,verb,argument))))
     case +db <> +verb <> +session <> +cmd <> +model <> +effort <> +cwd <> +log <> +message <> Nil{}:
       dispatch_receive(String.eq(verb,"receive"),db,session,cmd,model,effort,cwd,log,message)
     case +db <> +verb <> +player <> +id <> +cmd <> +model <> +effort <> +cwd <> +task <> +log <> +session <> Nil{}:

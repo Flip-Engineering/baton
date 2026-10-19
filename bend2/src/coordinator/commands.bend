@@ -72,7 +72,9 @@ type Command is Data:
   Logs{session: String, level: String}
   LogsStorage{}
   LogsClean{session: String}
-  StoragePolicy{action: String}
+  StoragePolicy{}
+  StoragePreview{session: String}
+  StorageApply{session: String}
   Status{}
   Players{}
   LegacySubordinates{}
@@ -651,7 +653,9 @@ def sql(command: Command) -> String:
     case UsageWindowRefresh{session}: ""
     case Logs{session,level}: ""
     case LogsStorage{}: ""
-    case StoragePolicy{action}: ""
+    case StoragePolicy{}: ""
+    case StoragePreview{session}: ""
+    case StorageApply{session}: ""
     case LogsClean{session}: ""
     case Recruit{id,parent,harness,model,effort,repo,branch,path,base}: ""
     case Join{id,parent,harness,model,effort,path}: ""
@@ -686,7 +690,7 @@ def parse_verb_only(+verb: String) -> Command:
   match verb:
     case "context-engines": ContextEngines{""}
     case "logs-storage": LogsStorage{}
-    case "storage-policy": StoragePolicy{"preview"}
+    case "storage-policy": StoragePolicy{}
     case "help": Help{}
     case "--help": Help{}
     case "status": Status{}
@@ -705,7 +709,8 @@ def parse_verb_id(+verb: String, +id: String) -> Command:
     case "context-result": ContextResult{id}
     case "logs": Logs{id,""}
     case "logs-clean": LogsClean{id}
-    case "storage-policy": StoragePolicy{id}
+    case "storage-preview": StoragePreview{id}
+    case "storage-apply": StorageApply{id}
     case "players": match id:
       case "--pretty": Pretty{Players{}}
       case _: Invalid{}

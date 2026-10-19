@@ -27,7 +27,7 @@ type PendingRow is Data:
   PendingRow{session: String, count: U32}
 
 type State is Data:
-  State{sessions: List<&2,SessionRow>, executions: List<&2,ExecutionRow>, logs: List<&2,LogRow>, pending: List<&2,PendingRow>, valid: Bool}
+  State{sessions: List<&2,SessionRow>, executions: List<&2,ExecutionRow>, logs: List<&2,LogRow>, pending: List<&2,PendingRow>, database: String, valid: Bool}
 
 type OwnerChoice is Data:
   OwnerChoice{owner: String, fact: T.Owner}
@@ -128,9 +128,21 @@ def pending_ok(rows: List<&2,PendingRow>) -> Bool:
       match head:
         case PendingRow{session, count}: Bool.and(Bool.not(String.is_empty(session)), pending_ok(tail))
 
+def workspace_of_rows(rows: List<&2,SessionRow>, +session: String) -> String:
+  match rows:
+    case Nil{}: ""
+    case Con{head, tail}:
+      match head:
+        case SessionRow{id, workspace, branch, base}:
+          Bool.pick(String, String.eq(id, session), workspace, workspace_of_rows(tail, session))
+
+def workspace_of(state: State, +session: String) -> String:
+  match state:
+    case State{sessions, executions, logs, pending, database, valid}: workspace_of_rows(sessions, session)
+
 def valid_of(state: State) -> Bool:
   match state:
-    case State{sessions, executions, logs, pending, valid}: valid
+    case State{sessions, executions, logs, pending, database, valid}: valid
 
 def load(+db: String) -> IO(State):
   do IO<State>:
@@ -143,7 +155,7 @@ def load(+db: String) -> IO(State):
     +logs : List<&2,LogRow> = logs_walk(Tx.split_lines(logs_text), Nil{})
     +pending : List<&2,PendingRow> = pending_walk(Tx.split_lines(pending_text), Nil{})
     valid : Bool = Bool.and(sessions_ok(sessions), Bool.and(executions_ok(executions), Bool.and(logs_ok(logs), pending_ok(pending))))
-    IO.pure(State, State{sessions, executions, logs, pending, valid})
+    IO.pure(State, State{sessions, executions, logs, pending, db, valid})
 
 def path_under(+path: String, +parent: String) -> Bool:
   Bool.pick(Bool, String.is_empty(parent), False{},
@@ -198,7 +210,7 @@ def owner_choice_lists(owners: List<String>) -> OwnerChoice:
     case other: OwnerChoice{"", T.OwnerUnknown{}}
 def owner_choice(+state: State, +path: String) -> OwnerChoice:
   match state:
-    case State{sessions, executions, logs, pending, valid}:
+    case State{sessions, executions, logs, pending, database, valid}:
       owner_choice_lists(execution_owners(executions, path, workspace_owners(sessions, path, log_owners(logs, path, Nil{}))))
 
 def active_execution(rows: List<&2,ExecutionRow>, +path: String) -> String:
@@ -213,7 +225,7 @@ def active_execution(rows: List<&2,ExecutionRow>, +path: String) -> String:
 
 def lease_fact(+state: State, +path: String) -> T.Presence:
   match state:
-    case State{sessions, executions, logs, pending, valid}:
+    case State{sessions, executions, logs, pending, database, valid}:
       +active = active_execution(executions, path)
       Bool.pick(T.Presence, String.is_empty(active), T.Absent{}, T.Present{active})
 
@@ -226,7 +238,7 @@ def pending_count(rows: List<&2,PendingRow>, +owner: String) -> U32:
 
 def pending_fact(+state: State, +owner: String) -> T.Presence:
   match state:
-    case State{sessions, executions, logs, pending, valid}:
+    case State{sessions, executions, logs, pending, database, valid}:
       +count = pending_count(pending, owner)
       Bool.pick(T.Presence, U32.is_eq(count, 0), T.Absent{}, T.Present{U32.show(count)})
 
@@ -282,7 +294,7 @@ def unpublished_fact(+cls: T.StorageClass, +path: String, +state: State, +owner:
   match cls:
     case T.Checkout{}:
       match state:
-        case State{sessions, executions, logs, pending, valid}:
+        case State{sessions, executions, logs, pending, database, valid}:
           +base = session_base(sessions, owner)
           unpublished_command(base, path)
     case other:
@@ -360,18 +372,41 @@ def ref_fact(+cls: T.StorageClass, +source: String, +path: String) -> IO(T.Prese
     case other:
       IO.pure(T.Presence, ref_result(cls, source, path, None{}))
 
+def coordinator_related(+db: String, +path: String) -> Bool:
+  Bool.or(path_under(db, path), String.starts_with(path, db))
+
+def class_preserved_only(cls: T.StorageClass) -> Bool:
+  match cls:
+    case T.GitObject{}: True{}
+    case T.SharedImmutable{}: True{}
+    case other: False{}
+
+def class_preserved_facts(+fact: T.Owner) -> T.Facts:
+  T.Facts{fact, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Absent{}, T.Unknown{}, T.Absent{}}
+
+def protected_facts(+fact: T.Owner) -> T.Facts:
+  T.Facts{fact, T.Present{"coordinator-db"}, T.Unknown{}, T.Unknown{}, T.Unknown{}, T.Unknown{}, T.Unknown{}, T.Unknown{}}
+
+def state_database(state: State) -> String:
+  match state:
+    case State{sessions, executions, logs, pending, database, valid}: database
+
 def facts_choice(+cls: T.StorageClass, +source: String, +path: String, +state: State, +choice: OwnerChoice) -> IO(T.Facts):
   match choice:
     case OwnerChoice{owner, fact}:
-      do IO<T.Facts>:
-        process : T.Presence <- O.process_presence(path)
-        runtime : T.Presence <- O.runtime_presence(path)
-        dirty : T.Presence <- dirty_fact(cls, path)
-        unpublished : T.Presence <- unpublished_fact(cls, path, state, owner)
-        ref : T.Presence <- ref_fact(cls, source, path)
-        lease : T.Presence = lease_fact(state, path)
-        pending_input : T.Presence = pending_fact(state, owner)
-        IO.pure(T.Facts, T.Facts{fact, lease, process, dirty, unpublished, runtime, ref, pending_input})
+      Bool.pick(IO(T.Facts), class_preserved_only(cls),
+        IO.pure(T.Facts, class_preserved_facts(fact)),
+      Bool.pick(IO(T.Facts), coordinator_related(state_database(state), path),
+        IO.pure(T.Facts, protected_facts(fact)),
+        do IO<T.Facts>:
+          process : T.Presence <- O.process_presence(path)
+          runtime : T.Presence <- O.runtime_presence(path)
+          dirty : T.Presence <- dirty_fact(cls, path)
+          unpublished : T.Presence <- unpublished_fact(cls, path, state, owner)
+          ref : T.Presence <- ref_fact(cls, source, path)
+          lease : T.Presence = lease_fact(state, path)
+          pending_input : T.Presence = pending_fact(state, owner)
+          IO.pure(T.Facts, T.Facts{fact, lease, process, dirty, unpublished, runtime, ref, pending_input})))
 
 def invalid_facts() -> T.Facts:
   T.Facts{T.OwnerUnknown{}, T.Unknown{}, T.Unknown{}, T.Unknown{}, T.Unknown{}, T.Unknown{}, T.Unknown{}, T.Unknown{}}
@@ -383,5 +418,5 @@ def facts_valid(valid: Bool, +cls: T.StorageClass, +source: String, +path: Strin
 
 def facts_for(+cls: T.StorageClass, +source: String, +path: String, +state: State) -> IO(T.Facts):
   match state:
-    case State{sessions, executions, logs, pending, valid}:
+    case State{sessions, executions, logs, pending, database, valid}:
       facts_valid(valid, cls, source, path, state)
