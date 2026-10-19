@@ -12,6 +12,7 @@ import ../json/canonical.bend as J
 import ../git/text.bend as Tx
 import ../host/node-runtime.bend as NodeRuntime
 import ../git/types.bend as T
+import ../git/process.bend as Process
 
 def string_tail(args: List<String>) -> String:
   match args:
