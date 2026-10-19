@@ -993,7 +993,7 @@ law m5_the_retained_claude_argv_resumes_the_recorded_conversation:
   for +effort: String
   for +sessions: String
   for +session: String
-  {Turn.retained_arguments(False{},True{},cmd,model,effort,sessions,session) == Claude.argv(cmd,model,effort,session,String.is_empty(session)) : String}
+  {Turn.retained_arguments(False{},True{},False{},cmd,model,effort,sessions,"",session) == Claude.argv(cmd,model,effort,session,String.is_empty(session)) : String}
 
 def m5_the_retained_claude_argv_resumes_the_recorded_conversation(cmd, model, effort, sessions, session):
   {==}
