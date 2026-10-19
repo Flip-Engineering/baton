@@ -201,8 +201,17 @@ that message's current receipt and the latest retained report in separate
 fields. A queued request keeps its receipt pending until the recipient handles
 it. `resume SESSION` preserves an explicit stop. `resume SESSION --lift-stop`
 clears the current stop and delivers pending input to the same native conversation.
-Stored stop reports and turn history remain available. The MCP tool
-`baton2_resume` accepts `liftStop: true` for this explicit operation.
+Stored stop reports and turn history remain available.
+`resume SESSION --clear-stop` (also `clear-stop SESSION`) removes a terminal
+stop without continuing: the native identity, conversation history, workspace
+and retained input stay unchanged, and it delivers no input, drives no wake and
+starts no native. The MCP tool `baton2_resume` accepts `liftStop: true` and
+`clearStop: true` for the two operations.
+
+Provider quota holds are separate durable rows in `usage_windows`.
+`usage-window-observe SESSION WINDOW RESETS_AT SOURCE` records an operator
+observation, and `usage-windows SESSION` reads the current state. Clearing a
+terminal stop leaves every held window unchanged.
 
 Codex App notifications name the recipient's whole pending inbox. Additional
 admissions share the notification until recipient acknowledgement permits a

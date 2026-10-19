@@ -40,7 +40,7 @@ def member(+value: String, values: List<String>) -> Bool:
     case +head <> rest: Bool.or(String.eq(value,head),member(value,rest))
 
 def known(verb: String) -> Bool:
-  member(verb,Tx.split_spaces("session player players assignment completion-request completion-confirmed guide acknowledge status pending orchestra role ensemble ensemble-member section section-member attempt attempts outbox receiver configure account resume stop force-stop recover-observer continue-task turn receive profile-bind connect bind report ask native-reply dispatch recruit join worktree land push remote-tip knowledge project context models observed-usage logs harness-inventory"))
+  member(verb,Tx.split_spaces("session player players assignment completion-request completion-confirmed guide acknowledge status pending orchestra role ensemble ensemble-member section section-member attempt attempts outbox receiver configure account resume stop force-stop clear-stop recover-observer continue-task turn receive profile-bind connect bind report ask native-reply dispatch recruit join worktree land push remote-tip knowledge project context models observed-usage logs harness-inventory"))
 
 def names_lookup(entries: List<NameSet>, +verb: String) -> List<String>:
   match entries:
@@ -71,9 +71,9 @@ def names(verb: String) -> List<String>:
     Names{"outbox","--session"},
     Names{"receiver","--session --command --output-log --cwd"},
     Names{"configure","--session --harness --model --effort --command --output-log --expected-harness --expected-model --expected-effort"},
-    Names{"resume","--session --lift-stop"},
-    Names{"stop","--session --id --reason --reason-file"},
-    Names{"force-stop","--session --id"},
+    Names{"resume","--session --lift-stop --clear-stop"},
+    Names{"stop","--session --id --reason --reason-file --clear"},
+    Names{"clear-stop","--session"},
     Names{"recover-observer","--session --observer"},
     Names{"continue-task","--session --id"},
     Names{"turn","--session --id --command --model --effort --cwd --file --output-log --native"},
@@ -174,7 +174,7 @@ def option_cause(+verb: String, +options: List<&2,Option>) -> String:
       first(pair_cause(options,"--limits","--limits-file",False{}),
         first(pair_cause(options,"--links","--links-file",False{}),
           first(pair_cause(options,"--query","--query-file",String.eq(verb,"knowledge-search")),
-            pair_cause(options,"--reason","--reason-file",String.eq(verb,"stop")))))))
+            pair_cause(options,"--reason","--reason-file",Bool.and(String.eq(verb,"stop"),Bool.not(present(options,"--clear")))))))))
   +land = Bool.pick(String,Bool.and(String.eq(verb,"land"),
     Bool.or(Bool.and(present(options,"--check"),Bool.not(present(options,"--files"))),
       Bool.and(Bool.not(present(options,"--check")),present(options,"--files")))),
@@ -186,7 +186,9 @@ def option_cause(+verb: String, +options: List<&2,Option>) -> String:
     Bool.and(present(options,"--session"),present(options,"--id"))),"Choose --session or --id.","")
   +section = Bool.pick(String,Bool.and(String.eq(verb,"section"),Bool.and(present(options,"--owner"),Bool.not(present(options,"--capability")))),"Supply --capability when selecting a Section owner.","")
   +endpoint = Bool.pick(String,Bool.and(String.eq(verb,"connect"),Bool.not(present(options,"--endpoint"))),"Supply --endpoint JSON_ARGV; an empty string disconnects it.","")
-  first(Bool.pick(String,String.is_empty(absent),"","Missing " ++ absent ++ "."),first(pairs,first(body,first(endpoint,first(land,first(read,first(inspection,section)))))))
+  +clear = Bool.pick(String,Bool.and(String.eq(verb,"resume"),Bool.and(present(options,"--clear-stop"),present(options,"--lift-stop"))),"Resume accepts one of --clear-stop or --lift-stop, not both.","")
+  +stop_clear = Bool.pick(String,Bool.and(String.eq(verb,"stop"),Bool.and(present(options,"--clear"),Bool.or(present(options,"--reason"),Bool.or(present(options,"--reason-file"),present(options,"--id"))))),"A clear-only stop takes no reason or stop identity; use stop SESSION --clear.","")
+  first(clear,first(stop_clear,first(Bool.pick(String,String.is_empty(absent),"","Missing " ++ absent ++ "."),first(pairs,first(body,first(endpoint,first(land,first(read,first(inspection,section)))))))))
 
 def reverse(items: List<&2,Operation>, tail: List<&2,Operation>) -> List<&2,Operation>:
   match items:
@@ -233,7 +235,7 @@ def transition(phase: Phase, +head: String, +verb: String, +options: List<&2,Opt
       Bool.pick(ParseState,Bool.or(String.eq(head,"and"),String.eq(head,"--and")),
         Bool.pick(ParseState,String.is_empty(cause),Active{ActionHead{},"",Nil{},Con{Call{verb,options},items}},Failed{cause}),
         Bool.pick(ParseState,Bool.and(member(head,names(verb)),Bool.not(present(options,head))),
-          Bool.pick(ParseState,member(head,Tx.split_spaces("--lift-stop --index --recursive --pretty")),
+          Bool.pick(ParseState,member(head,Tx.split_spaces("--lift-stop --clear-stop --clear --index --recursive --pretty")),
             Active{OptionHead{},verb,Con{Field{head,"true"},options},items},
             Active{OptionValue{head},verb,options,items}),
           Failed{"Unknown or repeated argument " ++ head ++ ". Use help " ++ verb ++ "."}))
@@ -278,9 +280,9 @@ def help(action: String) -> String:
     case "outbox": "outbox [--session SESSION]\nRead complete authored messages and their current recipient receipts.\n"
     case "receiver": "receiver --command EXECUTABLE --output-log PATH [--session SESSION] [--cwd PATH]\nRegister the ordinary receiver. Omitted session selects the current actor; omitted cwd preserves the recorded workspace.\n"
     case "configure": "configure [--session SESSION] [--harness NAME] [--model MODEL] [--effort EFFORT] [--command EXECUTABLE] [--output-log PATH] [--expected-harness NAME] [--expected-model MODEL] [--expected-effort EFFORT]\nOmitted route and expected fields use the selected recorded session. Recorded receiver command and log supply omitted executable arguments. Native configure preserves its expected-route and current-attempt rules.\n"
-    case "resume": "resume [--session SESSION] [--lift-stop]\nResume the same recorded conversation. --lift-stop explicitly lifts its current stop.\n"
-    case "stop": "stop [--id STOP_ID] (--reason TEXT | --reason-file PATH) [--session SESSION]\nRetain an explicit stop and complete reason. Baton generates its identity or selects the existing stop for the session; native reason validation applies.\n"
-    case "force-stop": "force-stop [--id STOP_ID] [--session SESSION]\nBaton selects the session's existing stop when --id is omitted and invokes the native force operation.\n"
+    case "resume": "resume [--session SESSION] [--lift-stop | --clear-stop]\nResume the same recorded conversation. --lift-stop explicitly lifts its current stop and continues it. --clear-stop removes the terminal stop without delivering input, waking the session or starting a native.\n"
+    case "stop": "stop [--id STOP_ID] (--reason TEXT | --reason-file PATH) [--session SESSION]\nRetain an explicit stop and complete reason. Baton generates its identity or selects the existing stop for the session; native reason validation applies. stop SESSION --clear removes a terminal stop without continuing the conversation.\n"
+    case "clear-stop": "clear-stop [--session SESSION]\nRemove the session's terminal stop only. Native identity, conversation history, workspace and retained input stay unchanged; no input is delivered, no wake runs and no native starts.\n"
     case "recover-observer": "recover-observer --observer PID [--session SESSION]\nUse the existing attempt recovery and observer ownership operation.\n"
     case "continue-task": "continue-task [--id TURN_ID] [--session SESSION]\nExplicitly request continuation of the selected open assignment. Baton generates the continuation identity when omitted.\n"
     case "turn": "turn [--id TURN_ID] --command EXECUTABLE --file TASK_PATH --output-log PATH [--session SESSION] [--model MODEL] [--effort EFFORT] [--cwd PATH] [--native ID]\nStart the existing managed direct turn. Omitted route, workspace and native identity use the selected session. PATH - reads stdin.\n"

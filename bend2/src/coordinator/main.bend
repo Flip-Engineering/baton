@@ -224,6 +224,7 @@ def execute(+db: String, command: C.Command) -> IO(Unit):
     case C.Project{path}: Project.describe(db,path)
     case C.ProjectSessions{path}: Project.sessions(db,path)
     case C.Resume{session,lift_stop}: Project.resume(db,session,lift_stop)
+    case C.ClearStop{session}: Stop.clear(db,session)
     case C.View{subject,reader,port}: UiView.run(db,subject,reader,port)
     case C.UiSubscribe{after_cursor,generation}:
       UISubscription.run(db,after_cursor,generation)

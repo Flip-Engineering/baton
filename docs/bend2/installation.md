@@ -266,9 +266,11 @@ Omitting CWD retains the actor's workspace and branch. `receiver` retains its
 native conversation, parent, model, effort, pending input and explicit stops;
 stopped actors can refresh their receiver while the stop remains recorded.
 `resume SESSION --lift-stop` explicitly lifts the stop and continues pending
-input through the same conversation. An accepted registration for an unstopped
-actor can continue its pending input. Existing observers and
-attempt recovery commands finish under their admitted executable.
+input through the same conversation. `resume SESSION --clear-stop` (also
+`clear-stop SESSION`) removes a terminal stop without continuing: pending input
+stays owed, and no wake, native or provider request follows. An accepted
+registration for an unstopped actor can continue its pending input. Existing
+observers and attempt recovery commands finish under their admitted executable.
 
 The [historical installation qualification](native-installation-2026-10-02/README.md)
 measured an earlier source build and staged only `bin/baton2`. Its original build

@@ -73,7 +73,11 @@ the latest provider row per window for exhaustion evidence:
   reports `usedFraction` at or above 1. A partial provider report with a
   future reset is not exhaustion.
 - An operator-observed reset keeps the window's provider exhaustion and
-  supplies the reset time; this is the Kimi Code Console path.
+  supplies the reset time; this is the Kimi Code Console path. Once a reset
+  time is observed for an exhausted window, a later unknown observation does
+  not replace it: the hold lasts until an actual reset observation or the
+  recorded reset instant passes. The provider exhaustion row stays recorded;
+  an operator observation records no provider success.
 - Held: an exhausted window's reset is in the future. The wake reports
   `usage-window-held` to the session and its conductor with the window, reset
   time, source, and receipt, releases the lock, leaves the input owed, and
@@ -87,6 +91,13 @@ the latest provider row per window for exhaustion evidence:
   wake proceeds; an unknown reset never blocks.
 - None: no exhausted window. Partial reports stay visible in the query and do
   not hold.
+
+A terminal session stop is separate durable state. `resume SESSION
+--clear-stop` and `clear-stop SESSION` remove only the `session_stops` row.
+They deliver no input, drive no wake and start no native, so a held usage
+window remains held. `usage-window-observe SESSION WINDOW RESETS_AT SOURCE`
+records the next reset observation without starting a session; the wake gate
+then reads that durable observation on its next admission.
 
 The receiver checks the same gate under its admission lock before it starts a
 native process. A retained endpoint that invokes `receive` directly therefore

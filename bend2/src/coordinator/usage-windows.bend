@@ -436,14 +436,18 @@ def refresh(+db: String, +session: String, +account: String) -> IO(Unit):
 def exhausted_sql(+alias: String) -> String:
   "((" ++ alias ++ ".used_fraction IS NOT NULL AND " ++ alias ++ ".used_fraction >= 1) OR " ++ alias ++ ".reset_source='provider-message')"
 
-def latest_rows_sql(+harness: String, +provider: String, +account: String) -> String:
-  "SELECT w.* FROM usage_windows w WHERE " ++ window_match_sql(harness,provider,account) ++ " AND w.id=(SELECT w2.id FROM usage_windows w2 WHERE " ++ window_match_sql(harness,provider,account) ++ " AND w2.window=w.window ORDER BY w2.recorded_at DESC, w2.id DESC LIMIT 1)"
-
 def latest_provider_rows_sql(+harness: String, +provider: String, +account: String) -> String:
   "SELECT p.* FROM usage_windows p WHERE " ++ window_match_sql(harness,provider,account) ++ " AND p.reset_source IN ('provider-message','provider-report') AND p.id=(SELECT p2.id FROM usage_windows p2 WHERE " ++ window_match_sql(harness,provider,account) ++ " AND p2.reset_source IN ('provider-message','provider-report') AND p2.window=p.window ORDER BY p2.recorded_at DESC, p2.id DESC LIMIT 1)"
 
 def exhausted_windows_sql(+harness: String, +provider: String, +account: String) -> String:
   "SELECT p.window FROM (" ++ latest_provider_rows_sql(harness,provider,account) ++ ") p WHERE " ++ exhausted_sql("p")
+
+# The state row prefers the latest observed reset for an exhausted window, so
+# an unknown observation recorded after a future reset does not release the
+# hold. A non-exhausted window keeps its newest observation.
+def latest_rows_sql(+harness: String, +provider: String, +account: String) -> String:
+  +exhausted = exhausted_windows_sql(harness,provider,account)
+  "SELECT w.* FROM usage_windows w WHERE " ++ window_match_sql(harness,provider,account) ++ " AND w.id=(SELECT w2.id FROM usage_windows w2 WHERE " ++ window_match_sql(harness,provider,account) ++ " AND w2.window=w.window ORDER BY CASE WHEN w2.window IN (" ++ exhausted ++ ") AND w2.resets_at IS NULL THEN 1 ELSE 0 END,w2.recorded_at DESC,w2.id DESC LIMIT 1)"
 
 # --- the query ---------------------------------------------------------------
 
@@ -475,13 +479,14 @@ def query(+db: String, +session: String, +account: String) -> IO(Unit):
 
 # --- the wake gate -----------------------------------------------------------
 #
-# Each window is represented by its latest row for state and reset, and by its
-# latest provider row for exhaustion evidence. A window is exhausted when the
-# provider said so: the latest provider row is a limit message or reports a used
-# fraction at or above 1. A partial provider report with a future reset is not
-# exhaustion and does not hold. An operator-observed reset keeps the window's
-# provider exhaustion and supplies the reset time. The gate holds when any
-# exhausted window's reset is still in the future, is elapsed when one has
+# Each window is represented by its state row and by its latest provider row
+# for exhaustion evidence. A window is exhausted when the provider said so:
+# the latest provider row is a limit message or reports a used fraction at or
+# above 1. A partial provider report with a future reset is not exhaustion and
+# does not hold. An observed reset supplies the reset time; once observed, an
+# unknown observation does not replace it, so the hold lasts until an actual
+# reset observation or the recorded reset instant passes. The gate holds when
+# any exhausted window's reset is still in the future, is elapsed when one has
 # passed, is unknown when the only exhausted evidence carries no reset, and is
 # none otherwise.
 
