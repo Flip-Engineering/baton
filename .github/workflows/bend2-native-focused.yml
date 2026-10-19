@@ -17,7 +17,7 @@ name: bend2-native-focused-qualification
         type: choice
         options: [observer-recovery]
       full_runtime:
-        description: Existing executable full CLI used for recovery helper delegation
+        description: Existing executable full CLI (baton-full) used for recovery helper delegation
         required: true
         type: string
       full_runtime_sha256:
