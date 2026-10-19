@@ -40,7 +40,7 @@ static int wait_recovery(BrKeeper *keeper, int descriptor, const char *marker) {
 
 static int setup_recovery(BrKeeper *keeper,const char *directory) {
   char command[PATH_MAX];
-  int n=snprintf(command,sizeof(command),"printf 'x\\n' > %s/recovery-started",directory);
+  int n=snprintf(command,sizeof(command),"printf 'x\\n' >> %s/recovery-started",directory);
   if(n<0 || (size_t)n>=sizeof(command)) return EOVERFLOW;
   size_t cwd_length=strlen(directory)+1;
   keeper->directory=strdup(directory);
@@ -84,11 +84,11 @@ static int run_exited(const char *directory) {
   REQUIRE(br_record_native_exit(&keeper)==0);
   REQUIRE(keeper.exited && WIFEXITED(keeper.status) && WEXITSTATUS(keeper.status)==17);
   br_disconnected(&keeper);
-  br_disconnected(&keeper);
   char marker[PATH_MAX]; snprintf(marker,sizeof(marker),"%s/recovery-started",directory);
+  REQUIRE(wait_recovery(&keeper,wake[0],marker)==0);
+  br_disconnected(&keeper);
   struct timespec delay={.tv_sec=0,.tv_nsec=200000000};
   nanosleep(&delay,NULL);
-  REQUIRE(access(marker,F_OK)<0 && errno==ENOENT);
   char status_path[PATH_MAX]; snprintf(status_path,sizeof(status_path),"%s/status",directory);
   FILE *file=fopen(status_path,"rb"); REQUIRE(file!=NULL);
   char bytes[16]={0}; size_t count=fread(bytes,1,sizeof(bytes),file);
@@ -112,6 +112,6 @@ int main(void) {
   snprintf(marker,sizeof(marker),"%s/recovery-started",directory);
   snprintf(status_path,sizeof(status_path),"%s/status",directory);
   unlink(marker); unlink(status_path); rmdir(directory);
-  puts("{\"liveDisconnectedRecoveredOnce\":true,\"exitedDisconnectDidNotRecover\":true,\"terminalStatusPreserved\":true}");
+  puts("{\"liveDisconnectedRecoveredOnce\":true,\"exitedDisconnectRecoveredOnceNoRetry\":true,\"terminalStatusPreserved\":true}");
   return 0;
 }
