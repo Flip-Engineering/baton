@@ -477,7 +477,14 @@ def result_text(result: Result<&1,&1,U32 & String,String>) -> String:
 # repeated attempts on the same exhausted route. A missing exhausted row or an
 # older database without usage windows keeps the attempt identity, so ordinary
 # failures retain their per-attempt reports.
-def refusal_base_id(db: String, session: String, id: String) -> IO(String):
+def refusal_base_identity(+db: String, id: String, +trimmed: String) -> IO(String):
+  match trimmed:
+    case SNil{}: IO.pure(String,id)
+    case other: do IO<String>:
+      encoded : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"SELECT lower(hex(" ++ C.q(other) ++ "));" )
+      IO.pure(String,"refusal:" ++ result_text(encoded))
+
+def refusal_base_id(+db: String, +session: String, id: String) -> IO(String):
   do IO<String>:
     harness : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";")
     model : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"SELECT model FROM sessions WHERE id=" ++ C.q(session) ++ ";")
@@ -485,13 +492,9 @@ def refusal_base_id(db: String, session: String, id: String) -> IO(String):
     +model_text : String <- IO.pure(String,result_text(model))
     identity : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,UW.refusal_identity_sql(session,harness_text,UW.provider_of(model_text)))
     +trimmed : String <- IO.pure(String,result_text(identity))
-    match trimmed:
-      case SNil{}: IO.pure(String,id)
-      case other: do IO<String>:
-        encoded : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"SELECT lower(hex(" ++ C.q(other) ++ "));")
-        IO.pure(String,"refusal:" ++ result_text(encoded))
+    refusal_base_identity(db,id,trimmed)
 
-def refusal_report_id(db: String, session: String, id: String, kind: String) -> IO(String):
+def refusal_report_id(+db: String, +session: String, id: String, kind: String) -> IO(String):
   do IO<String>:
     +base : String <- refusal_base_id(db,session,id)
     IO.pure(String,base ++ ":" ++ kind)
@@ -499,26 +502,30 @@ def refusal_report_id(db: String, session: String, id: String, kind: String) -> 
 # The exit identity comes from the session and the provider cause, so the first
 # failed attempt has the same identity before its usage row is recorded. The
 # request id in the provider text is not part of the identity.
-def exit_report_id(db: String, session: String, id: String, event: String) -> IO(String):
+def exit_report_identity(id: String, +trimmed: String) -> String:
+  match trimmed:
+    case SNil{}: id ++ ":exit"
+    case other: "refusal:" ++ other ++ ":exit"
+
+def exit_report_cause(+db: String, +session: String, id: String, +cause: String) -> IO(String):
+  match cause:
+    case SNil{}: IO.pure(String,id ++ ":exit")
+    case other: do IO<String>:
+      harness : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";")
+      model : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"SELECT model FROM sessions WHERE id=" ++ C.q(session) ++ ";")
+      +harness_text : String <- IO.pure(String,result_text(harness))
+      +model_text : String <- IO.pure(String,result_text(model))
+      +reset : String <- IO.pure(String,UW.reset_text_of(other))
+      identity : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"SELECT lower(hex(" ++ C.q(session) ++ " || char(31) || " ++ C.q(harness_text) ++ " || char(31) || " ++ C.q(UW.provider_of(model_text)) ++ " || char(31) || " ++ C.q(reset) ++ "));")
+      +trimmed : String <- IO.pure(String,result_text(identity))
+      IO.pure(String,exit_report_identity(id,trimmed))
+
+def exit_report_id(+db: String, +session: String, id: String, event: String) -> IO(String):
   do IO<String>:
     +cause : String <- exhaustion_cause(db,event)
-    match cause:
-      case SNil{}: IO.pure(String,id ++ ":exit")
-      case other: do IO<String>:
-        harness : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";")
-        model : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"SELECT model FROM sessions WHERE id=" ++ C.q(session) ++ ";")
-        +harness_text : String <- IO.pure(String,result_text(harness))
-        +model_text : String <- IO.pure(String,result_text(model))
-        +reset : String <- IO.pure(String,UW.reset_text_of(other))
-        identity : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"SELECT " ++ C.q(session) ++ " || char(31) || " ++ C.q(harness_text) ++ " || char(31) || " ++ C.q(UW.provider_of(model_text)) ++ " || char(31) || " ++ C.q(reset) ++ ";")
-        +trimmed : String <- IO.pure(String,result_text(identity))
-        match trimmed:
-          case SNil{}: IO.pure(String,id ++ ":exit")
-          case tail: do IO<String>:
-            encoded : Result<&1,&1,U32 & String,String> <- DB.Sql.query(db,"SELECT lower(hex(" ++ C.q(tail) ++ "));")
-            IO.pure(String,"refusal:" ++ result_text(encoded) ++ ":exit")
+    exit_report_cause(db,session,id,cause)
 
-def report_account_exhausted(db: String, session: String, id: String, body: String) -> IO(Unit):
+def report_account_exhausted(+db: String, +session: String, id: String, body: String) -> IO(Unit):
   do IO<Unit>:
     +message_id : String <- refusal_report_id(db,session,id,"account-exhausted")
     report_message(db,session,message_id,body)
@@ -529,10 +536,9 @@ def report_account_exhausted(db: String, session: String, id: String, body: Stri
 def history_appended(db: String, session: String, id: String, path: String, variable: String, appended: Result<&1,&1,U32 & String,Unit>) -> IO(Bool):
   match appended:
     case Done{unit}: IO.pure(Bool,True{})
-    case Fail{error}: match error:
-      case (code,detail): do IO<Bool>:
-        noted : String <- IO.try(String,DB.Sql.query(db,"INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id ++ ":profile-history-failed") ++ ",id," ++ C.report_recipient("sessions.id") ++ ",'report'," ++ C.q("subscription profile history home record failed at " ++ path ++ " for " ++ variable ++ ": " ++ U32.show(code) ++ ": " ++ detail ++ "; the provider cause stands and no profile was advanced.") ++ " FROM sessions WHERE id=" ++ C.q(session) ++ " AND " ++ C.report_recipient("sessions.id") ++ " IS NOT NULL;"))
-        IO.pure(Bool,False{})
+    case Fail{(code,detail)}: do IO<Bool>:
+      noted : String <- IO.try(String,DB.Sql.query(db,"INSERT OR IGNORE INTO messages(id,sender,recipient,kind,body) SELECT " ++ C.q(id ++ ":profile-history-failed") ++ ",id," ++ C.report_recipient("sessions.id") ++ ",'report'," ++ C.q("subscription profile history home record failed at " ++ path ++ " for " ++ variable ++ ": " ++ U32.show(code) ++ ": " ++ detail ++ "; the provider cause stands and no profile was advanced.") ++ " FROM sessions WHERE id=" ++ C.q(session) ++ " AND " ++ C.report_recipient("sessions.id") ++ " IS NOT NULL;"))
+      IO.pure(Bool,False{})
 
 def history_recorded(db: String, session: String, id: String, variable: String, +path: String, line: String) -> IO(Bool):
   do IO<Bool>:
@@ -616,7 +622,7 @@ def record_and_report(+db: String, +session: String, +id: String, +record_path: 
     appended : Result<&1,&1,U32 & String,Unit> <- Text.Text.append(record_path,record_line(profile) ++ "\n")
     record_append_observed(db,session,id,record_path,harness,from_label,profile,cause,appended)
 
-def report_all_refused(db: String, session: String, id: String, harness: String, from_label: String, cause: String) -> IO(Bool):
+def report_all_refused(+db: String, +session: String, id: String, harness: String, from_label: String, cause: String) -> IO(Bool):
   do IO<Bool>:
     +message_id : String <- refusal_report_id(db,session,id,"profile-exhausted")
     noted : Unit <- report_message(db,session,message_id,all_refused_body(harness,from_label,cause))
@@ -954,7 +960,7 @@ def route_unavailable_body(harness: String, cause: String) -> String:
 def report_route_chosen(db: String, session: String, id: String, +route: Route, cause: String) -> IO(Unit):
   report_body(db,session,id,"route-chosen",route_chosen_body(route_harness(route),route_model(route),route_cmd(route),cause))
 
-def report_route_unavailable(db: String, session: String, id: String, harness: String, cause: String) -> IO(Unit):
+def report_route_unavailable(+db: String, +session: String, id: String, harness: String, cause: String) -> IO(Unit):
   do IO<Unit>:
     +message_id : String <- refusal_report_id(db,session,id,"route-unavailable")
     report_message(db,session,message_id,route_unavailable_body(harness,cause))
