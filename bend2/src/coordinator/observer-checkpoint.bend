@@ -105,18 +105,20 @@ def changed_when(enabled: Bool, previous: String, next: String) -> Bool:
 
 # Turn supplies the payload fields its reducer can change on this frame.
 # Cursor, command and filter changes always participate in the decision.
+# Retained output progress moves the output position without changing the
+# reducer's replay decision: the position is carried by the next semantic
+# checkpoint and by finalization, and a crash replays from the prior offset.
 def checkpoint_due_fields(+previous: State, +next: State, message_enabled: Bool, terminal_enabled: Bool, codex_enabled: Bool) -> Bool:
   +episode_changed = Bool.not(String.eq(episode(previous),episode(next)))
   +guidance_changed = Bool.not(String.eq(cursor(previous),cursor(next)))
   +message_changed = changed_when(message_enabled,last_message(previous),last_message(next))
-  +output_changed = Bool.not(String.eq(output(previous),output(next)))
   +activity_changed = Bool.not(String.eq(omp_activity(previous),omp_activity(next)))
   +primary_changed = Bool.not(String.eq(muse_primary(previous),muse_primary(next)))
   +current_changed = Bool.not(String.eq(muse_current(previous),muse_current(next)))
   +terminal_changed = changed_when(terminal_enabled,terminal(previous),terminal(next))
   +filter_changed = Bool.not(String.eq(filter_mode(previous),filter_mode(next)))
   +codex_changed = changed_when(codex_enabled,codex_log(previous),codex_log(next))
-  Bool.or(episode_changed,Bool.or(output_changed,Bool.or(activity_changed,Bool.or(guidance_changed,Bool.or(message_changed,Bool.or(primary_changed,Bool.or(current_changed,Bool.or(terminal_changed,Bool.or(filter_changed,codex_changed)))))))))
+  Bool.or(episode_changed,Bool.or(activity_changed,Bool.or(guidance_changed,Bool.or(message_changed,Bool.or(primary_changed,Bool.or(current_changed,Bool.or(terminal_changed,Bool.or(filter_changed,codex_changed))))))))
 
 def checkpoint_due(previous: State, next: State) -> Bool:
   checkpoint_due_fields(previous,next,True{},True{},True{})
