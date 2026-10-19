@@ -2,8 +2,8 @@
 
 Linux reports a dropped-event queue as one IN_Q_OVERFLOW event with wd -1.
 The shared spool watcher must notify every ready observer to reread its spool,
-coalesce with an already queued change, and leave unready or absent observers
-alone. The fixture injects that event directly, so the result does not depend
+coalesce with an already queued change, defer notices for unready observers,
+and leave attempts without a client untouched. The fixture injects that event directly, so the result does not depend
 on exhausting the kernel queue.
 """
 import json

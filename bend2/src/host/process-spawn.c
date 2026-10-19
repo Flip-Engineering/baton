@@ -402,7 +402,7 @@ static int br_monitor_lock(BatonRetained *retained);
 static int br_custody_write(const char *directory,BatonRetained *retained);
 /* One filesystem-watch instance serves every attempt's spool in a process.
    A keeper holds the instance's watch token, so concurrent sessions add
-   watches to one bounded instance rather than one instance each. */
+   watches in one bounded instance per owner. */
 typedef struct {
   int fd;
   size_t count;
@@ -1761,7 +1761,7 @@ static void br_spool_watch_overflow(BrKeeper *attempts) {
 #ifndef __APPLE__
 /* Applies one inotify event to the registered attempts. Linux reports queue
    overflow with wd -1 and IN_Q_OVERFLOW; individual spool events may have
-   been dropped, so the overflow notifies every ready observer. */
+   been dropped, so each connected observer keeps a dirty mark until ready. */
 static void br_spool_watch_event(BrKeeper *attempts,uint32_t mask,int wd) {
   if((mask&IN_Q_OVERFLOW) || wd<0) {br_spool_watch_overflow(attempts);return;}
   if(!(mask&(IN_MODIFY|IN_CLOSE_WRITE)))return;
