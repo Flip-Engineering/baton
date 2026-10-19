@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Uninstalled template. Install it as
+  ~/Library/LaunchAgents/com.flip.baton.logs-cleanup.plist after the main CLI
+  build and merge of PR #918 (head 44b618d7ffe1adfe374762e8ec85640e46b7b434)
+  and root review.
+
+  Run as the database owner with the standard Baton environment. Do not add
+  credentials to this agent.
+
+  The command prints one JSON object to stdout:
+    {"results":[<one logs-clean response per registered session>]}
+  It enumerates session IDs from the database, calls Logs.clean sequentially,
+  takes each session lock, rereads pending input and applies settlement checks.
+  Temporary scratch and build outputs are not database candidates.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.flip.baton.logs-cleanup</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/path/to/baton2</string>
+    <string>/path/to/state.db</string>
+    <string>logs-clean-all</string>
+  </array>
+  <key>WorkingDirectory</key>
+  <string>/path/to/PROJECT</string>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>3</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>/path/to/PROJECT/logs/baton-logs-cleanup.log</string>
+  <key>StandardErrorPath</key>
+  <string>/path/to/PROJECT/logs/baton-logs-cleanup.stderr</string>
+  <key>ProcessType</key>
+  <string>Background</string>
+</dict>
+</plist>

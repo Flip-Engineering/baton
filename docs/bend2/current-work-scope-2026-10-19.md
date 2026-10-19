@@ -101,6 +101,24 @@ the ensemble. Verify actual session and native execution records before reportin
 it active. Existing body and clothing systems and ONE_SHOT_CURE's defects supply
 the starting implementation and render comparisons.
 
+## Durable storage
+
+[Issue #912](https://github.com/Flip-Engineering/baton/issues/912) defines the
+durable storage classes and ownership-safe cleanup for project work. The homelab
+root ext4 volume held 43 GB free on 2026-10-19 while the NVMe volume held 1.1 TB
+free. Storage-class roots are Bend2 product state. The platform slice owns the
+OS service and timer wiring only. The templates under `deploy/storage` target
+the eventual `logs-clean-all` command and stay uninstalled until its exact
+contract is published and root approves deployment. Active paths and the
+deployed NVMe scratch configuration stay in place.
+`docs/bend2/storage-deployment.md` records the observed layout, store owners
+and the macOS project-local layout.
+Cleanup coordinates with
+[issue #644](https://github.com/Flip-Engineering/baton/issues/644) for retained
+worktrees and [issue #686](https://github.com/Flip-Engineering/baton/issues/686)
+for log volume. Heavy execution placement remains
+[issue #677](https://github.com/Flip-Engineering/baton/issues/677).
+
 ## Providers, knowledge and remaining integration
 
 - [#844](https://github.com/Flip-Engineering/baton/issues/844) and

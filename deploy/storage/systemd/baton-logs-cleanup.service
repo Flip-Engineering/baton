@@ -1,0 +1,23 @@
+# Uninstalled template. Install it after the main CLI build and merge of
+# PR #918 (head 44b618d7ffe1adfe374762e8ec85640e46b7b434) and root review.
+#
+# Run under the database owner with the standard Baton environment (HOME,
+# PATH and the deployed Baton variables). Do not add credentials to this unit.
+#
+# The command prints one JSON object to stdout:
+#   {"results":[<one logs-clean response per registered session>]}
+# It enumerates session IDs from the database, calls Logs.clean sequentially,
+# takes each session lock, rereads pending input and applies settlement checks.
+# Temporary scratch and build outputs are not database candidates.
+[Unit]
+Description=Baton log cleanup (issue #912)
+Documentation=file:/path/to/repo/docs/bend2/storage-deployment.md
+
+[Service]
+Type=oneshot
+User=batonci
+Group=batonci
+ExecStart=/path/to/baton2 /path/to/state.db logs-clean-all
+StandardOutput=journal
+Nice=10
+IOSchedulingClass=idle
