@@ -23,6 +23,8 @@ sh bend2/scripts/build-native.sh bend2/test/subscription-profiles.bend .scratch/
 sh bend2/scripts/build-native.sh bend2/test/focused-reads.bend .scratch/bend2/focused-reads
 BATON2_EXE="$root/.scratch/bend2/focused-reads" "$PYTHON3" bend2/test/observed-usage.py
 BATON2_EXE="$root/.scratch/bend2/focused-reads" "$PYTHON3" bend2/test/harness-inventory.py
+sh bend2/scripts/build-native.sh bend2/test/knowledge-behavior.bend .scratch/bend2/knowledge-behavior-test
+BATON2_EXE="$root/.scratch/bend2/knowledge-behavior-test" "$PYTHON3" bend2/test/knowledge-behavior.py
 sh bend2/scripts/build-native.sh bend2/harness/api-key-exec.bend .scratch/bend2/api-key-exec
 sh bend2/scripts/build-native.sh bend2/test/api-key-spec.bend .scratch/bend2/api-key-spec
 BATON2_API_KEY_SPEC="$root/.scratch/bend2/api-key-spec" "$PYTHON3" bend2/test/api-key-spec.py
