@@ -498,6 +498,15 @@ def cost_reading(total: String, models_present: Bool, models_sum: String) -> Cos
 def launch_binding(+harness: String, +funding: String, +secret_ref: String, helper: Maybe<String>) -> Maybe<List<String>>:
   Bool.pick(Maybe<List<String>>,Bool.and(String.eq(funding,"api_key"),Bool.not(String.eq(harness,"claude-code"))),None{},Bool.pick(Maybe<List<String>>,String.eq(funding,"api_key"),api_key_binding(secret_ref,helper),Some{Subs.store_binding(harness,secret_ref)}))
 
+# The admitted promotional launch carries the attempt marker the helper
+# requires. /usr/bin/env treats each NAME=VALUE binding element as an
+# environment assignment for the command that follows, so the marker reaches
+# the helper's environment and never becomes a harness argument.
+def marked_binding(+attempt: String, binding: Maybe<List<String>>) -> Maybe<List<String>>:
+  match binding:
+    case None{}: None{}
+    case Some{+values}: Some{Con{"BATON2_CREDIT_RESERVATION=" ++ attempt,values}}
+
 # The packaged resolver sits beside the resolved identity helper, so it is
 # installed and versioned with the runtime this deployment resolves.
 def api_key_helper(+helper: String) -> String:
@@ -1193,8 +1202,8 @@ def credit_launch_refusal_for(+db: String, chosen: Maybe<&2,AccountRecord>) -> I
     case None{}: IO.pure(String,"")
     case Some{+account}: do IO<String>:
       status : String <- credit_status_for(db,account)
-      eligibility : String <- IO.pure(String,credit_launch_refusal_decided(account,status))
-      refusal : String <- Bool.pick(IO(String),String.is_empty(eligibility),admission_refusal_for_launch(db,account),IO.pure(String,eligibility))
+      promotional : Bool <- IO.pure(Bool,Bool.and(String.eq(account_provider(account),"anthropic"),Bool.and(String.eq(account_harness(account),"claude-code"),String.eq(account_funding(account),"api_key"))))
+      refusal : String <- Bool.pick(IO(String),Bool.and(promotional,String.eq(status,"eligible")),admission_refusal_for_launch(db,account),IO.pure(String,credit_launch_refusal_decided(account,status)))
       IO.pure(String,refusal)
 
 def credit_authorization_sql(+session: String, +attempt: String, +account: AccountRecord) -> String:
@@ -1238,7 +1247,7 @@ def credit_launch_binding_account(+db: String, +session: String, +attempt: Strin
     case False{}: IO.pure(Maybe<List<String>>,account_binding(harness,Some{account},helper,profile_store))
     case True{}: do IO<Maybe<List<String>>>:
       refusal : String <- credit_admit_launch(db,session,attempt,account)
-      IO.pure(Maybe<List<String>>,Bool.pick(Maybe<List<String>>,String.is_empty(refusal),account_binding(harness,Some{account},helper,profile_store),None{}))
+      IO.pure(Maybe<List<String>>,Bool.pick(Maybe<List<String>>,String.is_empty(refusal),marked_binding(attempt,launch_binding(harness,"api_key",account_secret_ref(account),helper)),None{}))
 
 def credit_launch_binding(+db: String, +session: String, +attempt: String, +harness: String, chosen: Maybe<&2,AccountRecord>, helper: Maybe<String>, +profile_store: String) -> IO(Maybe<List<String>>):
   match chosen:
