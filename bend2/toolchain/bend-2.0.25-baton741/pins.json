@@ -16,6 +16,27 @@
   "source_url_prefix": "https://raw.githubusercontent.com/bendlang/bend/v2.0.25/bend2/",
   "patch_sha256": "cc6378755d516e3621f9ccfecc20f7c79b1761376d2ad86ff2f450d11f92aa24",
   "patched_comp_sha256": "d600b1256b14ac03313c72867d162c2f4c83a37362de3f3474431a6bc57f74af",
+  "patched_sources": {
+    "main.ts": "36f637d27f35c618b6319654e6dd481123ce2f79c0f1cb47c9b56d9c2ddfd423",
+    "bend.ts": "93c2a43deeb82c15683e4e25bbc5dec5ac3edff9f54e09acc0975e290fcaeb85",
+    "comp.ts": "f206fcd798822e58c9d2e71fc24a2b8c6edee83153a11f994d4461e4903b9685",
+    "cache.ts": "245af5eae0c0167f7074e13ac8563e431d1d10796a8a738510e1352c50ec879a"
+  },
+  "cache_patch": {
+    "filename": "cache.patch",
+    "sha256": "c0931bfe4bab37b389de2cf0002e9bbc32eee1234da4454f9a4d965cfbcc3358",
+    "commit": "d37af25dd358adb0e718e559cc73ddacc3b17233",
+    "base_commit": "8657944e84fa0b258a9a7d9b6b3fb99daae80c85",
+    "subject": "Cache emitted C by proven inputs, default on",
+    "switches": {
+      "default": "on",
+      "opt_out": "BEND_CGEN_CACHE=0",
+      "relocate": "BEND_CGEN_CACHE_DIR"
+    },
+    "upstream_repository": "https://github.com/bendlang/bend",
+    "source_clone": "/home/atari2036/render-fframes-port-20261016/work/bend2-compile-20261018/bendlang",
+    "pushed": false
+  },
   "bun": {
     "url": "https://github.com/oven-sh/bun/releases/download/bun-v1.3.14/bun-linux-x64.zip",
     "archive_sha256": "951ee2aee855f08595aeec6225226a298d3fea83a3dcd6465c09cbccdf7e848f",
@@ -23,10 +44,62 @@
     "revision": "1.3.14+0d9b296af"
   },
   "retained_distribution": {
-    "filename": "bend-2.0.25-baton741-pure-memo-full-linux-x64.tar.gz",
-    "sha256": "38bb1813d52ddc7b816a8a01f971fe8503959fef54795ca22eb346b5cfc069a7",
-    "size_bytes": 72053603,
-    "compiler_sha256": "b929035652cba78ba1b034b7214a14bbc2f64f0e6c27265c64c53895d24890c0",
-    "manifest_sha256": "a3cdfa556b3f83063249627d7bcd0b0da2bc95e47c4fa2d20a12e83741b52603"
+    "filename": "bend-2.0.25-baton741-cgen-cache-full-linux-x64.tar.gz",
+    "sha256": "ca9f19566db10332c56d5253ad4944d05e675b64ce07b3e12d6ff335c6485d8a",
+    "size_bytes": 72031164,
+    "compiler_sha256": "94383bb15b262f5bcd34ae2684d74a06e0f81e88736a75e17c9d8cbe9dbb79dc",
+    "manifest_sha256": "3f5870dc691523757fd0f7c72a5dd27b67c7653ac1faa0b987f34c387916f726"
+  },
+  "previous_distributions": [
+    {
+      "name": "Bend 2.0.25 with the Baton #741 pure memo patch",
+      "filename": "bend-2.0.25-baton741-pure-memo-full-linux-x64.tar.gz",
+      "sha256": "38bb1813d52ddc7b816a8a01f971fe8503959fef54795ca22eb346b5cfc069a7",
+      "size_bytes": 72053603,
+      "compiler_sha256": "b929035652cba78ba1b034b7214a14bbc2f64f0e6c27265c64c53895d24890c0",
+      "manifest_sha256": "a3cdfa556b3f83063249627d7bcd0b0da2bc95e47c4fa2d20a12e83741b52603"
+    }
+  ],
+  "fixpoint_patch": {
+    "filename": "0002-5c3715b7-emit-lits-leaves.patch",
+    "sha256": "7858618efc0c1c5880dde3c31d8ca41b4a3a96d5e211d9aff0101dd94fc133c3",
+    "commit": "5c3715b7580467532717577c14931cbbb0a9e167",
+    "parent_commit": "d37af25dd358adb0e718e559cc73ddacc3b17233",
+    "branch": "fixpoint-cold-path",
+    "subject": "Walk a word match's leaves once, not once per pass",
+    "patched_comp_sha256": "f206fcd798822e58c9d2e71fc24a2b8c6edee83153a11f994d4461e4903b9685",
+    "upstream_repository": "https://github.com/bendlang/bend",
+    "source_clone": "/home/atari2036/render-fframes-port-20261016/work/bend2-compile-20261018/bendlang",
+    "pushed": false
+  },
+  "patches": [
+    {
+      "order": 1,
+      "filename": "memo.patch",
+      "sha256": "cc6378755d516e3621f9ccfecc20f7c79b1761376d2ad86ff2f450d11f92aa24",
+      "subject": "the pinned baton #741 pure-memo fork patch",
+      "source": "retained upstream fork"
+    },
+    {
+      "order": 2,
+      "filename": "cache.patch",
+      "sha256": "c0931bfe4bab37b389de2cf0002e9bbc32eee1234da4454f9a4d965cfbcc3358",
+      "commit": "d37af25dd358adb0e718e559cc73ddacc3b17233",
+      "subject": "Cache emitted C by proven inputs, default on"
+    },
+    {
+      "order": 3,
+      "filename": "0002-5c3715b7-emit-lits-leaves.patch",
+      "sha256": "7858618efc0c1c5880dde3c31d8ca41b4a3a96d5e211d9aff0101dd94fc133c3",
+      "commit": "5c3715b7580467532717577c14931cbbb0a9e167",
+      "subject": "Walk a word match's leaves once, not once per pass"
+    }
+  ],
+  "release": {
+    "directory": "/mnt/nvme4tb/ci-runners/baton2-native-homelab/retained/baton2-compiler-cgen-cache-fixpoint-20261018",
+    "source_base_commit": "d37af25dd358adb0e718e559cc73ddacc3b17233",
+    "source_base_parent": "8657944e84fa0b258a9a7d9b6b3fb99daae80c85",
+    "rollback": "set retained_distribution to the entry in previous_distributions (38bb1813...); the previous directory baton2-compiler-741-20261015 is untouched",
+    "activation": "apply admission.diff, build-fork.diff and pins.diff to the baton repo, then dispatch with retained_compiler_archive=<directory>/bend-2.0.25-baton741-cgen-cache-full-linux-x64.tar.gz and its sha256"
   }
 }

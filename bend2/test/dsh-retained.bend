@@ -35,7 +35,7 @@ def run(args: List<String>) -> IO(Unit):
       home : String <- Turn.dsh_home(db,canonical,"dsh-fixture")
       prepared : Result<&1,&1,U32 & String,Dsh.Prepared> <- Dsh.prepare(directory,model,effort)
       prefix : String <- IO.pure(String,P.argv(["/usr/bin/env","BATON_SESSION=dsh-fixture"]))
-      launch : Result<&1,&1,U32 & String,Turn.RetainedLaunch> <- Turn.retained_launch_checked(prepared,True{},prefix,home,cmd,model,effort,native,False{},"","","fixture task",False{},False{},"default",False{})
+      launch : Result<&1,&1,U32 & String,Turn.RetainedLaunch> <- Turn.retained_launch_checked(prepared,True{},prefix,home,cmd,model,effort,native,False{},"","fixture task",False{},False{},"default",False{})
       launch_value(launch)
     case other: IO.die(Unit,2,"usage: dsh-retained DB DIRECTORY CMD MODEL EFFORT NATIVE")
 

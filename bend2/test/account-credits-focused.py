@@ -419,6 +419,69 @@ class FocusedAccountCredits(unittest.TestCase):
         self.assertEqual(self.query("SELECT state,consumed FROM credit_authorizations WHERE attempt='attempt-1'"),
                          [('authorized', '')])
 
+    def test_an_aborted_consume_refuses_and_starts_no_child(self):
+        helper = os.environ.get('BATON2_API_KEY_EXEC')
+        if not helper:
+            self.skipTest('BATON2_API_KEY_EXEC not set')
+        directory = self.directory
+        secret = directory / 'secret'
+        secret.write_text('fixture-secret\n')
+        secret.chmod(0o600)
+        self.record('claude-api', funding='api_key', secret='file:' + str(secret))
+        self.bind('claude-api', 'leaf')
+        self.observe('claude-api', 'org-fixture')
+        self.import_credit('claude-api', 'org-fixture', '200.00')
+        self.assertEqual(self.authorize('attempt-1'), 'authorized')
+        marker = directory / 'child-started'
+        child = directory / 'child.sh'
+        child.write_text('#!/bin/sh\nprintf started > "' + str(marker) + '"\n')
+        child.chmod(0o755)
+        # The update itself fails rather than changing zero rows. A failed
+        # consume must refuse and must not admit from the post-failure read.
+        self.execute("CREATE TRIGGER abort_consume BEFORE UPDATE ON credit_authorizations "
+                     "WHEN OLD.attempt='attempt-1' AND OLD.state='authorized' "
+                     "BEGIN SELECT RAISE(ABORT,'fixture abort'); END")
+        refused = subprocess.run([helper, 'file:' + str(secret), str(child)],
+                                 capture_output=True, text=True,
+                                 env={'BATON2_CREDIT_RESERVATION': 'attempt-1',
+                                      'BATON_ATTEMPT_DIRECTORY': 'attempt-1',
+                                      'BATON_DATABASE': str(self.db), 'PATH': os.environ['PATH']})
+        self.assertEqual(refused.returncode, 2, refused.stdout)
+        self.assertIn('creditAdmissionUnavailable', refused.stderr)
+        self.assertFalse(marker.exists())
+        self.assertEqual(self.query("SELECT state,consumed FROM credit_authorizations WHERE attempt='attempt-1'"),
+                         [('authorized', '')])
+
+    def test_a_fresh_wrong_reference_refuses_and_leaves_the_row_authorized(self):
+        helper = os.environ.get('BATON2_API_KEY_EXEC')
+        if not helper:
+            self.skipTest('BATON2_API_KEY_EXEC not set')
+        directory = self.directory
+        secret = directory / 'secret'
+        secret.write_text('fixture-secret\n')
+        secret.chmod(0o600)
+        self.record('claude-api', funding='api_key', secret='file:' + str(secret))
+        self.bind('claude-api', 'leaf')
+        self.observe('claude-api', 'org-fixture')
+        self.import_credit('claude-api', 'org-fixture', '200.00')
+        self.assertEqual(self.authorize('attempt-1'), 'authorized')
+        marker = directory / 'child-started'
+        child = directory / 'child.sh'
+        child.write_text('#!/bin/sh\nprintf started > "' + str(marker) + '"\n')
+        child.chmod(0o755)
+        # A different reference against an unconsumed row names the mismatch and
+        # leaves the authorization available for the account it was written for.
+        refused = subprocess.run([helper, 'file:/fixture/other-secret', str(child)],
+                                 capture_output=True, text=True,
+                                 env={'BATON2_CREDIT_RESERVATION': 'attempt-1',
+                                      'BATON_ATTEMPT_DIRECTORY': 'attempt-1',
+                                      'BATON_DATABASE': str(self.db), 'PATH': os.environ['PATH']})
+        self.assertEqual(refused.returncode, 2, refused.stdout)
+        self.assertIn('creditAuthorizationMismatch', refused.stderr)
+        self.assertFalse(marker.exists())
+        self.assertEqual(self.query("SELECT state,consumed FROM credit_authorizations WHERE attempt='attempt-1'"),
+                         [('authorized', '')])
+
     def test_an_aborted_child_keeps_the_authorization_consumed(self):
         helper = os.environ.get('BATON2_API_KEY_EXEC')
         if not helper:

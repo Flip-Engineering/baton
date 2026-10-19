@@ -866,6 +866,150 @@ done:
   posix_spawnattr_destroy(&attributes);posix_spawn_file_actions_destroy(&actions);
   return rc;
 }
+
+#ifdef __linux__
+#define BR_CLOSE_RANGE_CLOEXEC 4u
+
+static char *br_exec_path(const char *name) {
+  if(!name || !*name)return NULL;
+  if(strchr(name,'/'))return strdup(name);
+  const char *path=getenv("PATH");
+  if(!path || !*path)path="/usr/bin:/bin";
+  const char *at=path;
+  for(;;) {
+    const char *colon=strchr(at,':');
+    size_t length=colon?(size_t)(colon-at):strlen(at);
+    size_t name_length=strlen(name);
+    char *candidate=malloc(length+name_length+2);
+    if(!candidate)return NULL;
+    if(length) {
+      memcpy(candidate,at,length);
+      candidate[length]='/';
+      memcpy(candidate+length+1,name,name_length+1);
+    } else memcpy(candidate,name,name_length+1);
+    if(access(candidate,X_OK)==0)return candidate;
+    free(candidate);
+    if(!colon)break;
+    at=colon+1;
+  }
+  return strdup(name);
+}
+
+typedef struct {
+  char **argv;
+  char *exec_path;
+  const char *cwd;
+  int input,output,error_log,gate_read,status_write;
+  unsigned long close_limit;
+} BrGatedChild;
+
+/* Runs in the spawned child. It sets up the assigned descriptors, stops on the
+   start gate, and execs the native argv exactly as admitted. A failure before
+   exec reports its errno on the status pipe, which the parent reads. */
+static void br_gated_exec(BrGatedChild *child) __attribute__((noreturn));
+static void br_gated_exec(BrGatedChild *child) {
+  int error=0;
+  if(setpgid(0,0) && errno!=EACCES)error=errno;
+  if(!error) {
+    struct sigaction action;
+    memset(&action,0,sizeof(action));
+    action.sa_handler=SIG_DFL;
+    sigemptyset(&action.sa_mask);
+    if(sigaction(SIGPIPE,&action,NULL))error=errno;
+  }
+  int originals[3]={child->input,child->output,child->error_log},copies[3]={-1,-1,-1};
+  for(int i=0;!error && i<3;i++) if(originals[i]>=0) {
+    copies[i]=fcntl(originals[i],F_DUPFD_CLOEXEC,10);
+    if(copies[i]<0)error=errno;
+  }
+  for(int i=0;!error && i<3;i++) if(copies[i]>=0) {
+    if(dup2(copies[i],i)<0)error=errno;
+    else close(copies[i]);
+  }
+  if(!error && child->cwd && chdir(child->cwd))error=errno;
+  if(!error) {
+    int marked=0;
+#ifdef SYS_close_range
+    if(!syscall(SYS_close_range,3,(unsigned)~0u,BR_CLOSE_RANGE_CLOEXEC))marked=1;
+    else if(errno!=ENOSYS && errno!=EINVAL)error=errno;
+#endif
+    if(!error && !marked) {
+      for(unsigned long fd=3;fd<child->close_limit;fd++)
+        fcntl((int)fd,F_SETFD,FD_CLOEXEC);
+    }
+  }
+  if(!error) {
+    char released;
+    ssize_t n;
+    do {n=read(child->gate_read,&released,1);} while(n<0 && errno==EINTR);
+    if(n!=1)error=n<0?errno:EPIPE;
+  }
+  if(!error) {
+    execve(child->exec_path,child->argv,environ);
+    error=errno;
+  }
+  br_write_all(child->status_write,&error,sizeof(error));
+  _exit(127);
+}
+
+/* Starts a child behind a gate so descriptor setup completes before exec.
+   The parent releases the child only after the fork succeeds. Exec errors are
+   returned synchronously, and a failed launch is reaped before custody moves on. */
+static int br_spawn_gated(pid_t *pid,char **argv,const char *cwd,int input,int output,
+                          int error_log) {
+  *pid=0;
+  if(!argv || !argv[0])return EINVAL;
+  char *exec_path=br_exec_path(argv[0]);
+  if(!exec_path)return ENOMEM;
+  int gate[2]={-1,-1},status[2]={-1,-1};
+  int error=baton_pipe(gate);
+  if(!error)error=baton_pipe(status);
+  if(!error) {
+    long limit=sysconf(_SC_OPEN_MAX);
+    if(limit<1024 || limit>1048576)limit=65536;
+    BrGatedChild child={.argv=argv,.exec_path=exec_path,.cwd=cwd,
+      .input=input,.output=output,.error_log=error_log,
+      .gate_read=gate[0],.status_write=status[1],.close_limit=(unsigned long)limit};
+    pid_t created=fork();
+    if(created<0)error=errno;
+    else if(!created) {
+      close(gate[1]);close(status[0]);
+      br_gated_exec(&child);
+    } else {
+      close(gate[0]);gate[0]=-1;
+      close(status[1]);status[1]=-1;
+      setpgid(created,created);
+      char released='R';
+      int child_error=br_write_all(gate[1],&released,1);
+      close(gate[1]);gate[1]=-1;
+      if(!child_error) {
+        int reported=0;
+        ssize_t n;
+        for(;;) {
+          n=read(status[0],&reported,sizeof(reported));
+          if(n<0 && errno==EINTR)continue;
+          break;
+        }
+        if(n<0)child_error=errno;
+        else if(n>0)child_error=n==(ssize_t)sizeof(reported)&&reported?reported:EIO;
+      }
+      if(child_error) {
+        kill(created,SIGKILL);
+        kill(-created,SIGKILL);
+        int wait_status;
+        while(waitpid(created,&wait_status,0)<0 && errno==EINTR) {}
+        error=child_error;
+      } else *pid=created;
+    }
+  }
+  if(gate[0]>=0)close(gate[0]);
+  if(gate[1]>=0)close(gate[1]);
+  if(status[0]>=0)close(status[0]);
+  if(status[1]>=0)close(status[1]);
+  free(exec_path);
+  return error;
+}
+#endif
 static void *br_reap_detached(void *argument) {
   pid_t pid=(pid_t)(intptr_t)argument;
   while(waitpid(pid,NULL,0)<0 && errno==EINTR) {}
@@ -1956,17 +2100,22 @@ static int br_keeper_spawn(BrKeeper *keeper,const unsigned char *expected_digest
      repeated start decision never spawns a second child: an already latched start
      keeps the work it retained and this keeper reports it rather than spawning. */
   int retained=0;
-  if((error=br_lifecycle_start(keeper->directory,expected_digest,grant_digest,&retained)))return error;
-  if(retained)return keeper->native_pid?0:EPERM;
-  if(keeper->native_pid)return EPERM;
-  if((error=br_file(keeper->directory,"launch","launch\n",7,1)))return error;
-  int input[2];if((error=baton_pipe(input)))return error;
+  if((error=br_lifecycle_start(keeper->directory,expected_digest,grant_digest,&retained)))goto done;
+  if(retained){error=keeper->native_pid?0:EPERM;goto done;}
+  if(keeper->native_pid){error=EPERM;goto done;}
+  if((error=br_file(keeper->directory,"launch","launch\n",7,1)))goto done;
+  int input[2];if((error=baton_pipe(input)))goto done;
   int log=open(keeper->manifest.field[2],O_WRONLY|O_CREAT|O_APPEND|O_CLOEXEC,0600);
   char **argv=br_argv(keeper->manifest.field[0],(size_t)keeper->manifest.header.lengths[0]);
   if(log<0 || !argv)error=log<0?errno:ENOMEM;
-  else error=br_spawn(&keeper->native_pid,argv,keeper->manifest.field[1],input[0],keeper->spool,log,-1,-1);
+#ifdef __linux__
+  if(!error)error=br_spawn_gated(&keeper->native_pid,argv,keeper->manifest.field[1],
+    input[0],keeper->spool,log);
+#else
+  if(!error)error=br_spawn(&keeper->native_pid,argv,keeper->manifest.field[1],input[0],keeper->spool,log,-1,-1);
+#endif
   free(argv);if(log>=0)close(log);close(input[0]);
-  if(error){close(input[1]);return error;}
+  if(error){close(input[1]);goto done;}
   keeper->input=input[1];br_nonblock(keeper->input);
   char pid[64];int n=snprintf(pid,sizeof(pid),"%d\n",keeper->native_pid);
   BrBirth birth;
@@ -1981,9 +2130,10 @@ static int br_keeper_spawn(BrKeeper *keeper,const unsigned char *expected_digest
     if((error=br_queue(&keeper->writes,&keeper->writes_tail,NULL,0,0,0,1)))goto spawned_failed;
     keeper->input_closed=1;
   }
-  return 0;
+  goto done;
 spawned_failed:
   br_keeper_reap_spawned(keeper);
+done:
   return error;
 }
 static int br_keeper_start(BrKeeper *keeper,BrWatcher *watchers,const char *directory,int lock) {
@@ -2412,7 +2562,8 @@ static uint64_t br_owner_attempts(BrOwner *owner) {
    live in the database's own directory, so an alias pathname works and an
    unrelated directory does not. An existing attempt record refuses a second
    native child for the same attempt. */
-static int br_owner_admit(BrOwner *owner,const char *directory,int lock,int *existing,int start_now) {
+static int br_owner_admit(BrOwner *owner,const char *directory,int lock,
+                          int *existing,int start_now) {
   int error=0;
   char *resolved=NULL;
   struct stat info;
@@ -2465,7 +2616,7 @@ static int br_owner_admit(BrOwner *owner,const char *directory,int lock,int *exi
       *keeper=(BrKeeper){.listener=-1,.client=-1,.input=-1,.lock=lock,.watch=-1,
         .wake={-1,-1},.spool=-1,.native_life=-1,.generation=1,.id=++owner->next_id};
       keeper->directory=resolved;resolved=NULL;
-      error=start_now?br_keeper_start(keeper,&owner->watcher,directory,lock):br_keeper_prepare(keeper,&owner->watcher,directory,lock);
+      if(!error)error=start_now?br_keeper_start(keeper,&owner->watcher,directory,lock):br_keeper_prepare(keeper,&owner->watcher,directory,lock);
       if(error) {lock=-1;br_keeper_stop(keeper);}
       else {keeper->next=owner->attempts;owner->attempts=keeper;return 0;}
     }
@@ -3184,14 +3335,16 @@ static int br_artifact_same(const char *directory,const char *name,size_t name_l
   return error;
 }
 /* Exact comparison of the stored manifest with a requested one: the same field
-   count, the same lengths and the same bytes in every field. */
+   count, the same lengths and bytes in every identity field. Field 5 is the
+   per-attempt control socket path; it is not part of the manifest identity and
+   is reused from custody on a repeated admission. */
 static int br_manifest_same(const char *directory,const BrManifestHeader *header,char *const *fields,int count) {
   BrManifest stored={0};
   int error=br_manifest_read(directory,&stored);
   if(!error && (stored.count!=count || stored.header.keep_stdin!=header->keep_stdin))error=EEXIST;
   for(int i=0;!error && i<count;i++)
-    if(stored.header.lengths[i]!=header->lengths[i] ||
-       memcmp(stored.field[i],fields[i],(size_t)header->lengths[i]))error=EEXIST;
+    if(i!=5 && (stored.header.lengths[i]!=header->lengths[i] ||
+       memcmp(stored.field[i],fields[i],(size_t)header->lengths[i])))error=EEXIST;
   br_manifest_free(&stored);
   return error;
 }
@@ -3672,6 +3825,7 @@ static int br_attempt_prepare(BatonProcessCall *call,char **directory_out,char *
   if(mkdir(call->directory,0700)) {
     int error=errno;
     if(error!=EEXIST || !idempotent)return error;
+    error=0;
     /* The directory exists. The same admission identity reuses it, so a repeated
        admission is idempotent; a different identity is conflicting reuse. */
     char *existing=realpath(call->directory,NULL);
@@ -3700,7 +3854,8 @@ static int br_attempt_prepare(BatonProcessCall *call,char **directory_out,char *
       }
     } else memcpy(header.magic,"BATONRP1",8);
     for(int i=0;i<count;i++)header.lengths[i]=lengths[i];
-    /* The stored manifest must describe exactly this request, field by field. */
+    /* The stored manifest must describe this request in every identity field;
+       the control socket path is reused from custody. */
     if(!error)error=br_manifest_same(existing,&header,fields,count);
     if(!error)error=br_admission_verify(existing,call->database,(int)call->lock);
     if(!error)error=br_lifecycle_expectation(existing,expected);
@@ -3758,7 +3913,7 @@ static int br_attempt_prepare(BatonProcessCall *call,char **directory_out,char *
 }
 static int br_retain(BatonProcessCall *call) {
   char *directory=NULL,*address=NULL;
-  int error=br_attempt_prepare(call,&directory,&address,0);
+  int error=br_attempt_prepare(call,&directory,&address,1);
   int sockets[2]={-1,-1},null=-1,log=-1;
   char *self=NULL,*log_path=NULL;
   if(!error && socketpair(AF_UNIX,SOCK_STREAM,0,sockets))error=errno;
@@ -3957,6 +4112,13 @@ static int br_instance_request_witness(const char *database,BrInstanceFrame fram
     int error=br_instance_connect(database,first,&record,&socket_fd);
     first=0;
     if(error)return error;
+    if(!record.token || !record.epoch) {
+      /* The listener is bound before its incarnation record is published. */
+      close(socket_fd);
+      struct timespec pause={0,20000000};
+      nanosleep(&pause,NULL);
+      continue;
+    }
     if(expected_token && (record.token!=expected_token || record.epoch!=expected_epoch)) {
       close(socket_fd);return ESTALE;
     }
@@ -4142,8 +4304,6 @@ static int br_instance_admit(BatonProcessCall *call,int dormant) {
     if(!error)error=br_instance_request_witness(call->database,
       (BrInstanceFrame){.op=dormant?BI_PREPARE:BI_ADMIT,.length=strlen(directory)+1},directory,
       call->lock?(int)call->lock:-1,&reply,expected_token,expected_epoch);
-    if(!error)call->owner_attempt=reply.attempt;
-    if(!error && reply.attempt)call->unstarted=0;
     if(error==EINVAL || error==ESTALE || error==ENOENT || error==ENOMEM) {
       /* Only an attempt this call created, that never reached custody, is
          discarded: the owner writes `launch` as its first custody step, so its
@@ -4154,6 +4314,8 @@ static int br_instance_admit(BatonProcessCall *call,int dormant) {
       return error;
     }
   }
+  if(!error)call->owner_attempt=reply.attempt;
+  if(!error && reply.attempt)call->unstarted=0;
   if(!error)error=br_instance_join(call,directory,reply.owner,reply.epoch,0,0);
   if(!error && dormant) {
     call->unstarted=0;
@@ -5069,7 +5231,7 @@ static void baton_retained_begin_call(BatonProcessCall *call) {
       free(directory);
     }
   }
-  if(call->error) {
+  if(call->error && !call->detail) {
     const char *operation=call->kind==BP_RETAIN?"retain":call->kind==BP_ATTACH?"attach":
       call->kind==BP_CONTROL_WRITE?"control_write":call->kind==BP_CONTROL_SIGNAL?"control_signal":
       call->kind==BP_INSTANCE_OWNER?"owner":call->kind==BP_INSTANCE_ADMIT?"admit":
