@@ -224,27 +224,37 @@ def sql_escaped(+text: String) -> String:
     case SNil{}: ""
     case SCon{head,tail}: Bool.pick(String,U32.is_eq(Char.to_u32(head),39),"''" ++ sql_escaped(tail),SCon{head,sql_escaped(tail)})
 
-def authorization_read(found: Result<&1,&1,U32 & String,String>) -> Bool:
+def authorization_read(found: Result<&1,&1,U32 & String,String>, +reference: String) -> Bool:
   match found:
     case Fail{(code,detail)}: False{}
-    case Done{+value}: String.eq(Tx.trim_nl(value),"1")
+    case Done{+value}: String.eq(Tx.trim_nl(value),reference)
 
-def authorization_recorded(+db: String, +attempt: String) -> IO(Bool):
+def authorization_recorded(+db: String, +attempt: String, +reference: String) -> IO(Bool):
   do IO<Bool>:
-    found : Result<&1,&1,U32 & String,String> <- DB.Sql.read(db,"SELECT EXISTS(SELECT 1 FROM credit_authorizations WHERE attempt='" ++ sql_escaped(attempt) ++ "');")
-    IO.pure(Bool,authorization_read(found))
+    found : Result<&1,&1,U32 & String,String> <- DB.Sql.read(db,"SELECT secret_ref FROM credit_authorizations WHERE attempt='" ++ sql_escaped(attempt) ++ "' AND state='authorized';")
+    IO.pure(Bool,authorization_read(found,reference))
 
 def admitted_decided(recorded: Bool, +reference: String, +command: String, args: List<String>) -> IO(Unit):
   match recorded:
     case True{}: run(reference,command,args)
     case False{}: IO.die(Unit,2,refusal_json(reference,"creditAdmissionUnavailable","Anthropic API-key launches require a recorded promotional-credit authorization for this attempt."))
 
-def admitted_marker(marker_value: Result<&1,&1,U32 & String,String>, attempt_value: Result<&1,&1,U32 & String,String>, db_value: Result<&1,&1,U32 & String,String>, +reference: String, +command: String, args: List<String>) -> IO(Unit):
-  match marker_value attempt_value db_value:
-    case Done{+marker} Done{+attempt} Done{+db}: do IO<Unit>:
-      recorded : Bool <- Bool.pick(IO(Bool),Bool.and(Bool.not(String.is_empty(marker)),String.eq(marker,attempt)),authorization_recorded(db,attempt),IO.pure(Bool,False{}))
+def admitted_db(+marker: String, +attempt: String, db_value: Result<&1,&1,U32 & String,String>, +reference: String, +command: String, args: List<String>) -> IO(Unit):
+  match db_value:
+    case Done{+db}: do IO<Unit>:
+      recorded : Bool <- Bool.pick(IO(Bool),Bool.and(Bool.not(String.is_empty(marker)),String.eq(marker,attempt)),authorization_recorded(db,attempt,reference),IO.pure(Bool,False{}))
       admitted_decided(recorded,reference,command,args)
-    case other_marker other_attempt other_db: IO.die(Unit,2,refusal_json(reference,"creditAdmissionUnavailable","Anthropic API-key launches require a recorded promotional-credit authorization for this attempt."))
+    case Fail{(code,detail)}: IO.die(Unit,2,refusal_json(reference,"creditAdmissionUnavailable","Anthropic API-key launches require a recorded promotional-credit authorization for this attempt."))
+
+def admitted_attempt(+marker: String, attempt_value: Result<&1,&1,U32 & String,String>, db_value: Result<&1,&1,U32 & String,String>, +reference: String, +command: String, args: List<String>) -> IO(Unit):
+  match attempt_value:
+    case Done{+attempt}: admitted_db(marker,attempt,db_value,reference,command,args)
+    case Fail{(code,detail)}: IO.die(Unit,2,refusal_json(reference,"creditAdmissionUnavailable","Anthropic API-key launches require a recorded promotional-credit authorization for this attempt."))
+
+def admitted_marker(marker_value: Result<&1,&1,U32 & String,String>, attempt_value: Result<&1,&1,U32 & String,String>, db_value: Result<&1,&1,U32 & String,String>, +reference: String, +command: String, args: List<String>) -> IO(Unit):
+  match marker_value:
+    case Done{+marker}: admitted_attempt(marker,attempt_value,db_value,reference,command,args)
+    case Fail{(code,detail)}: IO.die(Unit,2,refusal_json(reference,"creditAdmissionUnavailable","Anthropic API-key launches require a recorded promotional-credit authorization for this attempt."))
 
 def run_admitted(+reference: String, +command: String, args: List<String>) -> IO(Unit):
   do IO<Unit>:

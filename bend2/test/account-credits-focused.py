@@ -288,12 +288,15 @@ class FocusedAccountCredits(unittest.TestCase):
         helper = os.environ.get('BATON2_API_KEY_EXEC')
         if not helper:
             self.skipTest('BATON2_API_KEY_EXEC not set')
-        self.credit_account()
-        self.assertEqual(self.authorize('attempt-1'), 'authorized')
         directory = self.directory
         secret = directory / 'secret'
         secret.write_text('fixture-secret\n')
         secret.chmod(0o600)
+        self.record('claude-api', funding='api_key', secret='file:' + str(secret))
+        self.bind('claude-api', 'leaf')
+        self.observe('claude-api', 'org-fixture')
+        self.import_credit('claude-api', 'org-fixture', '200.00')
+        self.assertEqual(self.authorize('attempt-1'), 'authorized')
         child = directory / 'child.sh'
         child.write_text('#!/bin/sh\nprintf "KEY=${ANTHROPIC_API_KEY:+set}\n"\n')
         child.chmod(0o755)
@@ -307,6 +310,10 @@ class FocusedAccountCredits(unittest.TestCase):
                                  env={**base, 'BATON_ATTEMPT_DIRECTORY': 'attempt-2'})
         self.assertEqual(refused.returncode, 2, refused.stdout)
         self.assertIn('creditAdmissionUnavailable', refused.stderr)
+        wrong_reference = subprocess.run([helper, 'file:/fixture/other-secret', str(child)],
+                                         capture_output=True, text=True, env=base)
+        self.assertEqual(wrong_reference.returncode, 2, wrong_reference.stdout)
+        self.assertIn('creditAdmissionUnavailable', wrong_reference.stderr)
 
     def test_gate_keeps_the_subscription_binding(self):
         self.record('claude-max')

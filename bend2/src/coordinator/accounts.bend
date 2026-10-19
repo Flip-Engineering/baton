@@ -461,7 +461,7 @@ def schema() -> String:
   ++ "CREATE TABLE IF NOT EXISTS account_attempts (attempt TEXT PRIMARY KEY NOT NULL,session TEXT NOT NULL REFERENCES sessions(id),turn TEXT NOT NULL DEFAULT '',account TEXT NOT NULL REFERENCES accounts(id),organization TEXT NOT NULL DEFAULT '',funding TEXT NOT NULL,secret_ref TEXT NOT NULL,workload TEXT NOT NULL DEFAULT '',outcome TEXT NOT NULL DEFAULT '',error_text TEXT NOT NULL DEFAULT '',started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,ended_at TEXT NOT NULL DEFAULT '',predecessor TEXT NOT NULL DEFAULT '',recorded TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);"
   ++ "CREATE TABLE IF NOT EXISTS credit_observations (id TEXT PRIMARY KEY NOT NULL,organization TEXT NOT NULL DEFAULT '',fact TEXT NOT NULL,state TEXT NOT NULL CHECK(state IN ('reported','unavailable')),balance TEXT NOT NULL DEFAULT '',unit TEXT NOT NULL DEFAULT '',expires TEXT NOT NULL DEFAULT '',cycle TEXT NOT NULL DEFAULT '',source TEXT NOT NULL,detail TEXT NOT NULL DEFAULT '',observed_at TEXT NOT NULL,authority TEXT NOT NULL);"
   ++ "CREATE INDEX IF NOT EXISTS credit_observations_pool ON credit_observations(organization,fact);"
-  ++ "CREATE TABLE IF NOT EXISTS credit_authorizations (attempt TEXT PRIMARY KEY NOT NULL,session TEXT NOT NULL DEFAULT '',account TEXT NOT NULL DEFAULT '',organization TEXT NOT NULL DEFAULT '',cycle TEXT NOT NULL DEFAULT '',balance TEXT NOT NULL DEFAULT '',unit TEXT NOT NULL DEFAULT '',created TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);"
+  ++ "CREATE TABLE IF NOT EXISTS credit_authorizations (attempt TEXT PRIMARY KEY NOT NULL,session TEXT NOT NULL DEFAULT '',account TEXT NOT NULL DEFAULT '',organization TEXT NOT NULL DEFAULT '',cycle TEXT NOT NULL DEFAULT '',balance TEXT NOT NULL DEFAULT '',unit TEXT NOT NULL DEFAULT '',secret_ref TEXT NOT NULL DEFAULT '',state TEXT NOT NULL DEFAULT 'authorized',consumed TEXT NOT NULL DEFAULT '',created TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);"
   ++ "CREATE INDEX IF NOT EXISTS account_attempts_session ON account_attempts(session,recorded);"
 
 # One transaction that installs the collaboration schema and this module's tables
@@ -510,6 +510,26 @@ def attempt_columns_ensured_present(+db: String) -> IO(Unit):
   do IO<Unit>:
     missing : List<String> <- attempt_columns_missing(db,attempt_columns())
     attempt_columns_installed(db,missing)
+
+def auth_columns_missing(+db: String, columns: List<String>) -> IO(List<String>):
+  match columns:
+    case Nil{}: IO.pure(List<String>,Nil{})
+    case +column <> rest: do IO<List<String>>:
+      found : String <- IO.try(String,DB.Sql.read(db,"SELECT EXISTS(SELECT 1 FROM pragma_table_info('credit_authorizations') WHERE name=" ++ C.q(column) ++ ");"))
+      missing : List<String> <- auth_columns_missing(db,rest)
+      IO.pure(List<String>,attempt_columns_missing_kept(String.eq(Tx.trim_nl(found),"0"),column,missing))
+
+def auth_columns_installed(+db: String, columns: List<String>) -> IO(Unit):
+  match columns:
+    case Nil{}: IO.pure(Unit,Unit{})
+    case +column <> rest: do IO<Unit>:
+      added : String <- IO.try(String,DB.Sql.query(db,"ALTER TABLE credit_authorizations ADD COLUMN " ++ column ++ " TEXT NOT NULL DEFAULT '';"))
+      auth_columns_installed(db,rest)
+
+def auth_columns_ensured(+db: String) -> IO(Unit):
+  do IO<Unit>:
+    missing : List<String> <- auth_columns_missing(db,["secret_ref","state","consumed"])
+    auth_columns_installed(db,missing)
 
 def attempt_columns_ensured(+db: String) -> IO(Unit):
   do IO<Unit>:
@@ -1023,16 +1043,16 @@ def credit_launch_refusal_for(+db: String, chosen: Maybe<&2,AccountRecord>) -> I
       status : String <- credit_status_for(db,account)
       IO.pure(String,credit_launch_refusal_decided(account,status))
 
-def credit_authorization_sql(+session: String, +attempt: String, +account: AccountRecord, +meter: CreditMeter) -> String:
-  "INSERT OR IGNORE INTO credit_authorizations(attempt,session,account,organization,cycle,balance,unit) VALUES(" ++ C.q(attempt) ++ "," ++ C.q(session) ++ "," ++ C.q(account_id(account)) ++ "," ++ C.q(account_organization(account)) ++ "," ++ C.q(meter_cycle(meter)) ++ "," ++ C.q(meter_balance(meter)) ++ "," ++ C.q(meter_unit(meter)) ++ ");"
+def credit_authorization_sql(+session: String, +attempt: String, +account: AccountRecord) -> String:
+  "INSERT OR IGNORE INTO credit_authorizations(attempt,session,account,organization,cycle,balance,unit,secret_ref,state) SELECT " ++ C.q(attempt) ++ "," ++ C.q(session) ++ "," ++ C.q(account_id(account)) ++ "," ++ C.q(account_organization(account)) ++ ",cycle,balance,unit," ++ C.q(account_secret_ref(account)) ++ ",'authorized' FROM credit_observations WHERE organization=" ++ C.q(account_organization(account)) ++ " AND fact='promotional_credit' AND state='reported' ORDER BY observed_at DESC,rowid DESC LIMIT 1;"
+  ++ "SELECT count(*) FROM credit_authorizations WHERE attempt=" ++ C.q(attempt) ++ " AND account=" ++ C.q(account_id(account)) ++ " AND organization=" ++ C.q(account_organization(account)) ++ " AND secret_ref=" ++ C.q(account_secret_ref(account)) ++ " AND state='authorized';"
 
 def credit_record_authorization_decided(+db: String, +session: String, +attempt: String, +account: AccountRecord, +status: String) -> IO(Bool):
   match status:
     case "eligible": do IO<Bool>:
-      meter_rows : String <- IO.try(String,DB.Sql.read(db,credit_meter_sql(account_organization(account))))
-      +meter : CreditMeter <- IO.pure(CreditMeter,credit_meter_fields(account_organization(account),String.split(Tx.trim_nl(meter_rows),Char.from_u32(31))))
-      saved : String <- IO.try(String,commit_read(db,credit_authorization_sql(session,attempt,account,meter)))
-      IO.pure(Bool,True{})
+      migrated : Unit <- auth_columns_ensured(db)
+      saved : String <- IO.try(String,commit_read(db,credit_authorization_sql(session,attempt,account)))
+      IO.pure(Bool,String.eq(Tx.trim_nl(saved),"1"))
     case other: IO.pure(Bool,False{})
 
 def credit_record_authorization(+db: String, +session: String, +attempt: String, +account: AccountRecord) -> IO(Bool):

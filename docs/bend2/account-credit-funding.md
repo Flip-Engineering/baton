@@ -65,8 +65,13 @@ no current binding sets that marker, and the helper also requires a
 `credit_authorizations` row for the attempt in `BATON_DATABASE`, so the helper
 returns `creditAdmissionUnavailable` before resolving a secret or starting a
 child. A marker by itself is not authorization. `credit_record_authorization`
-writes that row only for an eligible route status, with the actual reported
-balance and unit from the newest promotional observation. The SQLite busy
+writes that row only for an eligible route status, in one transaction that
+selects the newest reported promotional observation, and the row records the
+actual reported balance, unit, cycle and the account secret reference. The
+helper check binds the row to the reference the account names. The host
+write query spins in the helper binary, so the helper performs this check on
+the read connection; consumption of the row after a successful launch is a
+remaining step for the proven route. The SQLite busy
 handler in `bend2/src/host/sqlite.c` waits at most 3000 retries of 10ms for
 one lock and then returns `SQLITE_BUSY` to the caller.
 The attempt is not started and its input stays owed. Subscription routes and
