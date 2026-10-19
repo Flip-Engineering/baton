@@ -1,11 +1,13 @@
 """The source installation carries the focused facade, full router, and recovery helper."""
 import argparse
+import hashlib
 import importlib.util
 import json
 import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -107,6 +109,37 @@ class ReceiverLayout(unittest.TestCase):
 
 
 
+
+    def test_repl_dependency_stages_and_verifies_its_manifest(self):
+        prefix = self.home / 'repl-prefix'
+        (prefix / 'libexec/baton2').mkdir(parents=True)
+        runtime = self.home / 'bun'
+        runtime.write_text('#!/bin/sh\nexit 0\n')
+        runtime.chmod(0o755)
+        notices = self.home / 'Bun-NOTICES'
+        notices.write_text('Bun runtime notices\n')
+        digest = hashlib.sha256(runtime.read_bytes()).hexdigest()
+        staged = subprocess.run(
+            [sys.executable, str(ROOT / 'bend2/scripts/stage-repl-compiler.py'),
+             '--runtime', str(runtime), '--runtime-sha256', digest,
+             '--runtime-notices', str(notices),
+             '--output', str(prefix / 'libexec/baton2/repl')],
+            capture_output=True, text=True)
+        self.assertEqual(staged.returncode, 0, staged.stdout + staged.stderr)
+        fact = json.loads(staged.stdout)
+        manifest = {'selected_dependencies': [{
+            'id': 'bend2-repl-compiler', 'required': True,
+            'path': 'libexec/baton2/repl', **fact}]}
+        dependency = CHECK.verify_repl(prefix, manifest)
+        self.assertEqual(dependency['sha256'], fact['sha256'])
+        self.assertEqual(dependency['manifest'], 'upstream/compiler.json')
+        self.assertIn('compiler', {row['path'] for row in dependency['files']})
+        self.assertIn('notices/Bun-NOTICES', {row['path'] for row in dependency['files']})
+        self.assertRaises(RuntimeError, CHECK.verify_repl, prefix,
+                          {'selected_dependencies': []})
+        source = prefix / 'libexec/baton2/repl/upstream/repl.ts'
+        source.write_text(source.read_text() + '\nchanged\n')
+        self.assertRaises(RuntimeError, CHECK.verify_repl, prefix, manifest)
 
     def test_post_stage_provenance_refreshes_receipt_and_all_checksums(self):
         prefix, manifest, records = self.staged()

@@ -326,7 +326,7 @@ const TOOLS = [
     name: 'baton2_repl',
     description: 'Evaluate actual Bend2 source or retain checked definitions in the attached actor\'s notebook. The packaged canonical compiler infers types and checks affine use. IO runs in the recorded workspace through native custody. Read returns complete source, results, diagnostics and process outcomes; recover observes the original attempt. Bind checks a named definition from a pure result for later expressions. Labels select saved result records. Share sends a complete cell through ordinary message routing; import displays the complete received message through the owned-read path and checks its declaration snapshot. Standard installations include the Bend2 REPL compiler and runtime. Use baton2_action with action help and arguments ["repl"] for usage.',
     inputSchema: { type: 'object', properties: {
-      operation: { enum: ['define', 'eval', 'bind', 'read', 'recover', 'share', 'import'] },
+      operation: { enum: ['define', 'eval', 'bind', 'read', 'recover', 'share', 'import', 'interactive'] },
       source: { type: 'string', description: 'Complete Bend2 declarations or expression for define or eval.' },
       expectedType: { type: 'string', description: 'Optional expected Bend2 type for eval.' },
       name: { type: 'string', description: 'Bend2 definition name for binding a selected pure result.' },
@@ -392,6 +392,16 @@ const TOOLS = [
     inputSchema: { type: 'object', properties: {
       query: { type: 'string' }, path: { type: 'string', description: 'Path to the query request JSON file' },
     }, required: ['path'], additionalProperties: false },
+  },
+  {
+    name: 'baton2_context_eval',
+    description: 'Evaluate one expression in an already launched native runtime session as the attached session and retain the complete result in this database. Baton submits the existing runtime evaluate request with its control and evaluation effects; no second evaluator exists. Omitted query identity is generated; omitted cwd uses the owner recorded workspace.',
+    inputSchema: { type: 'object', properties: {
+      session: { type: 'string', description: 'Launched runtime session identity' },
+      expression: { type: 'string', description: 'Expression to evaluate in the selected runtime session' },
+      frame: { type: 'string', description: 'Optional admitted frame handle' },
+      query: { type: 'string' }, owner: { type: 'string' }, cwd: { type: 'string' },
+    }, required: ['session', 'expression'], additionalProperties: false },
   },
   {
     name: 'baton2_context_result',
@@ -1053,6 +1063,16 @@ function handleToolCall(msg) {
       case 'baton2_context_query_file':
         result = args.query !== undefined ? coord('context-query-file', sessionId, args.query, args.path)
           : contextualAction('context', ['query', '--file', args.path]);
+        break;
+      case 'baton2_context_eval':
+        result = args.query !== undefined
+          ? coord('context-eval', args.owner ?? sessionId, args.query, args.session,
+                  args.expression, args.frame ?? '', args.cwd ?? '')
+          : contextualAction('context', ['eval', '--session', args.session,
+              '--expression', args.expression,
+              ...(args.frame !== undefined ? ['--frame', args.frame] : []),
+              ...(args.cwd !== undefined ? ['--cwd', args.cwd] : []),
+              ...(args.owner !== undefined ? ['--owner', args.owner] : [])]);
         break;
       case 'baton2_context_result':
         result = args.query !== undefined ? coord('context-result', args.query)

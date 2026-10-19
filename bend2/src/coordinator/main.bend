@@ -233,6 +233,8 @@ def execute(+db: String, command: C.Command) -> IO(Unit):
       ContextNative.install_module(module_id,source)
     case C.ContextQueryFile{owner,query,path}:
       ContextNative.query_file(db,owner,query,path)
+    case C.ContextEval{owner,query,session,expression,frame,cwd}:
+      ContextNative.eval(db,owner,query,session,expression,frame,cwd)
     case C.ContextResult{query}:
       ContextNative.result(db,query)
     case C.Stall{}: Stall.report(db)

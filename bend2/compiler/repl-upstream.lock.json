@@ -14,8 +14,8 @@
     },
     {
       "path": "comp.ts",
-      "bytes": 217968,
-      "sha256": "3aa09f277ca44d748fca6f8a1d911409fe1dc17d98b8e1c45a992f41cf253258"
+      "bytes": 218170,
+      "sha256": "cae85ea60d693518a1c23480d435df6c698a5d48abddc374906fdd2a52ecfcf1"
     },
     {
       "path": "effs/args.c",

@@ -238,6 +238,7 @@ class McpCommand(unittest.TestCase):
             'baton2_ack': ('id', 'receipt'),
             'baton2_guide': ('id', 'request'),
             'baton2_context_query_file': ('query',),
+            'baton2_context_eval': ('query',),
             'baton2_context_result': ('query',),
             'baton2_knowledge_record': ('id',),
             'baton2_knowledge_relate': ('id',),
@@ -290,6 +291,10 @@ class McpCommand(unittest.TestCase):
                                        'log': '/retained output', 'task': "/tasks/task's λ.txt"},
              ['turn', '--session', 'worker', '--command', '/native command',
               '--output-log', '/retained output', '--file', "/tasks/task's λ.txt"]),
+            ('baton2_context_eval', {'session': 'rt:installed', 'expression': '1 + 1',
+                                     'frame': 'frame-1', 'cwd': '/work'},
+             ['context', 'eval', '--session', 'rt:installed', '--expression', '1 + 1',
+              '--frame', 'frame-1', '--cwd', '/work']),
         )
         for tool, arguments, contextual in cases:
             with self.subTest(tool=tool, arguments=arguments):
@@ -299,6 +304,12 @@ class McpCommand(unittest.TestCase):
                 self.assertEqual(result['content'],
                                  [{'type': 'text', 'text': '{"retained":"native decision λ"}'}])
                 self.assertNotIn('isError', result)
+        self.command(tool='baton2_context_eval',
+                     arguments={'session': 'rt:installed', 'expression': '1 + 1',
+                                'query': 'eval-one'},
+                     session='attached-λ',
+                     expected_args=['context-eval', 'attached-λ', 'eval-one',
+                                    'rt:installed', '1 + 1', '', ''])
         self.command(tool='baton2_ack', arguments={'id': 'selected input',
                      'receipt': 'First complete handling.'}, session='attached-λ',
                      expected_args=['ack', 'selected input', 'attached-λ', 'First complete handling.'])
