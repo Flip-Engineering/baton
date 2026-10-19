@@ -412,6 +412,48 @@ sys.exit(%d)
         repeated = next(item for item in second if item['session'] == 'omp-worker')
         self.assertFalse(any(item.get('removed') for item in repeated['attemptFiles']))
 
+    def test_logs_clean_all_skips_inaccessible_attempt_and_cleans_next_session(self):
+        self.stream([self.terminal()])
+        attempt, eligible_dir = self.prepare_attempt_artifacts()
+        eligible = eligible_dir / 'stdout'
+        eligible.write_text('eligible diagnostics')
+
+        protected_session = 'a-protected'
+        protected_attempt = 'a-protected-attempt'
+        protected_dir = pathlib.Path(str(self.db) + '.attempt-' + protected_attempt.encode().hex())
+        protected_dir.mkdir()
+        (protected_dir / 'released').write_text('released\n')
+        with sqlite3.connect(self.db) as connection:
+            connection.execute(
+                'INSERT INTO sessions(id,harness,model) VALUES (?,?,?)',
+                (protected_session, 'test', ''))
+            connection.execute(
+                'INSERT INTO executions(session,id,mode,directory,phase,status) VALUES (?,?,?,?,?,?)',
+                (protected_session, protected_attempt, 'omp', str(protected_dir), 'exited', 'exit 0'))
+
+        protected_dir.chmod(0)
+        try:
+            results = json.loads(self.call('logs-clean-all'))['results']
+            repeated = json.loads(self.call('logs-clean-all'))['results']
+        finally:
+            protected_dir.chmod(0o700)
+
+        by_session = {item['session']: item for item in results}
+        skipped = by_session[protected_session]['attemptFiles']
+        self.assertEqual(len(skipped), 1)
+        self.assertEqual(skipped[0]['attempt'], protected_attempt)
+        self.assertEqual(skipped[0]['skipped'], 'attempt-artifacts-inaccessible')
+        self.assertIn('Permission denied', skipped[0]['error'])
+        self.assertEqual((protected_dir / 'released').read_text(), 'released\n')
+
+        eligible_result = by_session['omp-worker']['attemptFiles']
+        self.assertIn('stdout', {item['file'] for item in eligible_result if item.get('removed')})
+        self.assertFalse(eligible.exists())
+        repeated_protected = next(item for item in repeated if item['session'] == protected_session)
+        self.assertEqual(repeated_protected['attemptFiles'][0]['skipped'], 'attempt-artifacts-inaccessible')
+        self.assertFalse(any(item.get('removed') for item in next(
+            item for item in repeated if item['session'] == 'omp-worker')['attemptFiles']))
+
     def test_attempt_without_durable_turn_record_is_retained(self):
         self.stream([self.terminal()])
         attempt, attempt_dir = self.prepare_attempt_artifacts()
