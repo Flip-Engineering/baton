@@ -4760,6 +4760,9 @@ class Receive(unittest.TestCase):
         retried, replay = self.accept('parent')
         self.assertEqual(replay['native'], original['native'])
         self.assertIn('[id: owed]', replay['prompt'])
+        self.action(retried, read_steer=True, check_steer_receipt=True)
+        accepted = json.loads(retried.readline())['steer_received']
+        self.assertEqual(accepted['id'], 'owed')
         self.action(retried, body='Original guidance handled after provider recovery.')
         self.finish(retry)
         self.assertEqual(self.coord('delivery', 'owed')['receipt'], 'native-reviewed')
