@@ -126,7 +126,8 @@ class ReceiveAcceptance(unittest.TestCase):
         self.assertEqual(git(repo, 'diff', '--name-only', evidence['source'], 'HEAD'),
                          'docs/bend2/receive-recovery-example.md')
         retry = next(row for row in evidence['timeline'] if row['kind'] == 'normal-receive-retry')
-        self.assertEqual(json.loads(retry['event']['stdout']), {'session': 'worker', 'status': 'queued'})
+        retry_result = json.loads(retry['event']['stdout'])
+        self.assertEqual((retry_result['receive'], retry_result['attempt']), ('none', ''))
         self.assertEqual(set(evidence['native_thread_ids']), {'controlled-receive-thread'})
         native = [json.loads(line) for line in (directory / 'native-observations.jsonl').read_text().splitlines()]
         self.assertEqual([row['resume'] for row in native], ['', 'controlled-receive-thread'])
