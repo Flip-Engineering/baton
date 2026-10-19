@@ -46,11 +46,12 @@ repository for a `git-object` root. Empty configuration performs no scan and
 no deletion. The process reads the configured roots; it does not adopt a
 homelab path or relocate existing files.
 
-`storage-policy` reports each configured root and its exclusivity.
-`storage-apply SESSION` acquires the session lock and the `storage-cleanup`
-database lock, refuses while either is held, and exits nonzero when the roots
-overlap, a configured root lacks the exclusive declaration, or the scan
-evidence is invalid.
+storage-policy reports each configured root and whether it appears in
+BATON_STORAGE_EXCLUSIVE_ROOTS. That setting records an operator declaration.
+The current implementation has no cooperative root-writer lease, so
+storage-apply SESSION exits with status 3 whenever at least one root is
+configured. An empty root list returns an empty receipt. Preview and policy
+commands remain available.
 
 ## Preservation evidence
 
@@ -135,18 +136,15 @@ A receipt names the exact candidate path, measured bytes, class, owner proof,
 decision reason and outcome. The `reclaimedBytes` field counts host-reported
 removed bytes, not the preview estimate.
 
-An approved storage root must have exclusive writer coordination for the
-duration of apply. `BATON_STORAGE_EXCLUSIVE_ROOTS` names the roots the
-operator dedicates to storage cleanup, one path per line. `storage-policy`
-reports each root's `exclusive` value. `storage-apply` refuses every root, and
-exits with status 3, while a configured root is absent from that list.
+BATON_STORAGE_EXCLUSIVE_ROOTS lists operator-declared roots, one path per
+line. storage-policy reports that declaration. The storage-cleanup lock
+serializes cleanup runs. It does not coordinate with processes that write the
+root. Apply remains disabled until writers and cleanup acquire the same
+per-root lease and tests show that a concurrent writer preserves its files.
 
 The root identity, descriptor-relative traversal and identity revalidation
-cover concurrent removal and path replacement. A writer that mutates a leaf
-between the identity check and `unlinkat` remains outside this contract; the
-project does not make a generally writable directory cleanable from database
-state alone. The `storage-cleanup` lock serializes cleanup runs, and the
-operator selects roots on durable volumes.
+cover path replacement during an individual removal. Those checks do not
+establish writer ownership for an entire scan-and-apply operation.
 
 ## Preserve-only classes
 
