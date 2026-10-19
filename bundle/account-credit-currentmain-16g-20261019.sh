@@ -64,7 +64,11 @@ cd "$ROOT"
 HEAD=$(git rev-parse HEAD)
 [ -z "$(git status --porcelain)" ] || refuse "worktree is not clean: $(git status --porcelain | tr '\n' ' ')"
 git merge-base --is-ancestor "$SOURCE_PIN" "$HEAD" || refuse "HEAD $HEAD does not contain source pin $SOURCE_PIN"
-if ! git diff --quiet "$SOURCE_PIN" -- bend2/harness/api-key-exec.bend bend2/harness/claude-credit-observe.bend bend2/test/account-credits-focused.py bend2/test/account-credits.bend bend2/test/api-key-exec.test.mjs bend2/test/api-key-exec-test-entry.bend bend2/test/account-binding-smoke.bend bend2/test/account-binding-smoke.py bend2/test/api-key-spec.bend bend2/test/api-key-spec.py bend2/test/account-credits-entry.bend bend2/harness/claude-credit-observe.py bend2/src/coordinator/accounts.bend bend2/src/coordinator/subscription-fallback.bend bend2/scripts/build-native.sh; then
+PINNED_SOURCES="bend2/harness/api-key-exec.bend bend2/harness/claude-credit-observe.bend bend2/test/claude-credit-observe.py bend2/test/account-credits-focused.py bend2/test/account-credits.bend bend2/test/api-key-exec.test.mjs bend2/test/api-key-exec-test-entry.bend bend2/test/account-binding-smoke.bend bend2/test/account-binding-smoke.py bend2/test/api-key-spec.bend bend2/test/api-key-spec.py bend2/test/account-credits-entry.bend bend2/src/coordinator/accounts.bend bend2/src/coordinator/subscription-fallback.bend bend2/scripts/build-native.sh"
+for path in $PINNED_SOURCES; do
+  git cat-file -e "$SOURCE_PIN:$path" || refuse "pinned source is absent: $path"
+done
+if ! git diff --quiet "$SOURCE_PIN" -- $PINNED_SOURCES; then
   refuse "tested source differs from pin $SOURCE_PIN"
 fi
 if [ -n "$EXPECTED_HEAD" ] && [ "$HEAD" != "$EXPECTED_HEAD" ]; then
