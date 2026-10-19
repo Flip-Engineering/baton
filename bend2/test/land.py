@@ -936,7 +936,7 @@ class Land(unittest.TestCase):
         (wt / 'file.txt').write_text('worker change for w5 and w6\n')
         subprocess.run(['git', '-C', str(wt), 'add', 'file.txt'], check=True, capture_output=True)
         subprocess.run(['git', '-C', str(wt), 'rebase', '--continue'], check=True,
-                       capture_output=True, env={**os.environ, 'GIT_EDITOR': 'true'})
+                       capture_output=True, env={**self.environment, 'GIT_EDITOR': 'true'})
         self.assertEqual(self.git('rev-parse', 'wf^').strip(), moved['commit'])
         again = self.call('land-checked', 'w6', self.repo, 'main',
                           'check-plain.sh', 'file.txt')
