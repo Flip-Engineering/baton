@@ -107,6 +107,8 @@ type Command is Data:
   ContextQueryFile{owner: String, query: String, path: String}
   ContextResult{query: String}
   Serve{}
+  Stall{}
+  StallWake{}
   OwnerStatus{}
   Help{}
   Invalid{}
@@ -677,6 +679,8 @@ def sql(command: Command) -> String:
     case ContextInstall{module_id,source}: ""
     case ContextQueryFile{owner,query,path}: ""
     case ContextResult{query}: ""
+    case Stall{}: ""
+    case StallWake{}: ""
     case Serve{}: ""
     case OwnerStatus{}: ""
     case Help{}: ""
@@ -694,6 +698,8 @@ def parse_verb_only(+verb: String) -> Command:
     case "workers": LegacySubordinates{}
     case "players": Players{}
     case "orchestra": Orchestra{}
+    case "stall": Stall{}
+    case "stall-wake": StallWake{}
     case "pending": Pending{}
     case "serve": Serve{}
     case "owner-status": OwnerStatus{}
@@ -1165,4 +1171,16 @@ law owner_status_parser_rejects_extra_arguments:
   {parse(["owner-status",extra]) == Invalid{} : Command}
 
 def owner_status_parser_rejects_extra_arguments(extra):
+  {==}
+
+law stall_parser_selects_the_candidate_report:
+  {parse(["stall"]) == Stall{} : Command}
+
+def stall_parser_selects_the_candidate_report():
+  {==}
+
+law stall_wake_parser_selects_the_wake:
+  {parse(["stall-wake"]) == StallWake{} : Command}
+
+def stall_wake_parser_selects_the_wake():
   {==}
