@@ -3182,6 +3182,10 @@ function arm_eq(a: HTerm, b: HTerm): boolean {
     return pa.$ === "PCtr" && pa.k === pb.k && pa.x.length === pb.x.length
       && pa.x.every((z: any, i: number) => patt_eq(z, pb.x[i], d));
   };
+  // A quantity compares by tag. A lambda's quantity is optional: absent
+  // (no annotation) is not the same term as an explicit erased binder.
+  const q_eq = (qa: Bend.Quant | undefined, qb: Bend.Quant | undefined): boolean =>
+    (qa === undefined ? "" : qa.$) === (qb === undefined ? "" : qb.$);
   const go = (u: HTerm, v: HTerm, d: number): boolean => {
     const x = term_force(u), y = term_force(v);
     if (x.$ !== y.$) {
@@ -3191,9 +3195,14 @@ function arm_eq(a: HTerm, b: HTerm): boolean {
       case "Var": {
         return same_var(x.i, (y as Of<"Var">).i, d);
       }
-      case "Ref": return x.k === (y as Of<"Ref">).k;
+      case "Ref": {
+        const yr = y as Of<"Ref">;
+        return x.k === yr.k && (x.b === true) === (yr.b === true);
+      }
       case "Lam": {
-        const oa = term_open(x), ob = term_open(y as Of<"Lam">);
+        const ya = y as Of<"Lam">;
+        if (!q_eq(x.q, ya.q)) return false;
+        const oa = term_open(x), ob = term_open(ya);
         bind(oa.ps[0].i, ob.ps[0].i, d);
         const r = go(oa.b, ob.b, d + 1);
         unbind(oa.ps[0].i, ob.ps[0].i);
@@ -3203,6 +3212,10 @@ function arm_eq(a: HTerm, b: HTerm): boolean {
         const ya = y as Of<"Let">;
         const oa = term_open(x), ob = term_open(ya);
         if (x.v.length !== ya.v.length) return false;
+        if (x.q.length !== ya.q.length) return false;
+        for (let i = 0; i < x.q.length; i++) {
+          if (x.q[i].$ !== ya.q[i].$) return false;
+        }
         for (let i = 0; i < x.v.length; i++) if (!go(x.v[i], ya.v[i], d)) return false;
         oa.ps.forEach((p, j) => bind(p.i, ob.ps[j].i, d + j));
         const r = go(oa.b, ob.b, d + oa.ps.length);
@@ -3220,7 +3233,13 @@ function arm_eq(a: HTerm, b: HTerm): boolean {
         return x.k === ym.k && go(x.h, ym.h, d) && go(x.m, ym.m, d);
       }
       case "Lit": return JSON.stringify(x.v) === JSON.stringify((y as Of<"Lit">).v);
-      case "Ann": return go(x.x, (y as Of<"Ann">).x, d);
+      case "Ann": {
+        const ya = y as Of<"Ann">;
+        // A repeated copy keeps the same annotation object. Comparing it
+        // with itself costs a full traversal of a type that can carry the
+        // whole continuation, and the duplicate arms dominate the compile.
+        return go(x.x, ya.x, d) && (x.T === ya.T || go(x.T, ya.T, d));
+      }
       case "Rwt": {
         const yr = y as Of<"Rwt">;
         return go(x.e, yr.e, d) && go(x.p, yr.p, d) && go(x.f, yr.f, d);
@@ -3229,6 +3248,10 @@ function arm_eq(a: HTerm, b: HTerm): boolean {
         const ye = y as Of<"Eql">;
         return go(x.a, ye.a, d) && go(x.b, ye.b, d) && go(x.T, ye.T, d);
       }
+      // ADT.r is the checker's remaining-constructor refinement. A
+      // different refinement excludes only constructors a value of that
+      // type cannot carry, and no layout or call reads it, so it stays
+      // out of the equality.
       case "ADT": {
         const yd = y as Of<"ADT">;
         return x.k === yd.k && x.x.length === yd.x.length

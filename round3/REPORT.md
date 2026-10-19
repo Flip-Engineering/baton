@@ -3,7 +3,7 @@
 Status: gates pass, compile wall is now at or below the pinned baseline, and
 `arm_eq` is a total structural equality. Candidate
 `round2/compiler-src/bend2/comp.ts` sha256
-`7cc3394b45f6139011bf8141eff917497cbd5991171ca87ec449d66cf1894ba6`.
+`7fa4c9d3a83c7d32ba701939af82f631657d0c31b3b38a61febc96e517af3d28`.
 
 ## Equality totality fix (evaluator review of 1e5eb5b09f)
 
@@ -50,6 +50,50 @@ Pinned compiler: `bend.ts 93c2a43d...fcaeb85`, `comp.ts a2a949ae...69112bc`,
 `main.ts 53ce8e48...12eb07d`, `base.bend e5639663...b99d798`. Round 2 commit
 `178f01fbba` is the previous candidate (full `arm_hash` + `arm_eq` at every
 site).
+
+## Quantity and annotation equality (issue #776 follow-up)
+
+`arm_eq` compares `Lam.q`, every element of `Let.q`, and `Ann.T`. The `Lam`
+quantity is optional, so an absent quantity compares only with absent; the
+`Let` quantities compare by tag; `Ann.T` compares through `go` under the same
+binder discipline. `Ref.b` compares too: the bang marker selects the offload
+call form in `term_spine` and `emit_body`, so two arms that differ only in it
+must not share. `ADT.r` stays out of the equality: it is the checker's
+remaining-constructor refinement, the emitter reads it only through
+`book_adt`'s constructor filter for whether a default arm exists, and layouts
+and calls key on `k` and the type arguments. Comparing it changed the
+five-overlap C from 528,878 to 540,581 bytes with identical outputs.
+
+A repeated copy keeps the same annotation object. `arm_eq` skips the type
+traversal when `x.T === ya.T`: in an instrumented five-overlap run 1,526,534
+of 3,000,000 annotation comparisons were object-equal. Five-overlap emits
+528,878 B (hash
+`b7b0b85b08e3f44d8bb2dd2309b35dacfeb616a57ae19168a4812d57d3384316`) in 56.8 s
+at 5.13 GB peak RSS. The four protected Nat/U32 fixtures emit byte-identical C
+and execute `306n`, `2496 2397`, the word match output, and `0n`.
+
+Fixtures: `round3/fixtures/quant_ann_match.bend` and
+`round3/fixtures/quant_ann_collision.bend`. A literal prefix duplicates each
+row at every character column, so `emit_arm_shared` scans the arm bodies that
+carry `Lam.q`, `Let.q` and `Ann.T`. Both fixtures emit the same C and outputs
+on base `50e84c98` and this head: 4,871,155 B and 4,871,103 B, outputs
+`2`/`7`/`9` and `3`/`7`/`9` for argv `--host-process-keeper a b`, `a b` and
+`x`. Command:
+
+```
+bin/bun --smol bend2/main.ts round3/fixtures/quant_ann_match.bend -o out.c
+clang-19 -std=c11 -O1 -w out.c -lm -lpthread -o out
+./out --host-process-keeper a b   # 2 (collision: 3)
+./out a b                         # 7
+./out x                           # 9
+```
+
+Limit: no source program in this checkout changes emitted output between base
+and head. The base review reports 168 `Ann.T`-divergent true hits; on the
+fixtures available here every such hit is shadowed by an earlier
+representative whose annotation object matches, so the C is unchanged. The
+fixtures exercise the carriers and the sharing decision; they are not a
+wrong-output counterexample.
 
 ## What changed from 178f01fbba
 
