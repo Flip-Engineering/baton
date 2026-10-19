@@ -34,7 +34,7 @@ def the_row_query_selects_pending_candidates_and_classifies_them():
   {==}
 
 law the_claimless_query_omits_the_claim_table:
-  {Bool.not(String.contains(Stall.stalled_rows_sql(False{}),"wake_claims")) : Bool}
+  {String.contains(Stall.stalled_rows_sql(False{}),"wake_claims") == False{} : Bool}
 
 def the_claimless_query_omits_the_claim_table():
   {==}

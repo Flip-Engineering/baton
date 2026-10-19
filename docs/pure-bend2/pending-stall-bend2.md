@@ -100,3 +100,31 @@ Receipts are under
 `rowsjson-current-main-20261018/run-root-20261018T051013Z` in the retained
 assignment directory. The successor commit adds the two CLI commands and the
 live fixtures; its focused check receipts are recorded with that run.
+
+## Current-main port verification
+
+The port targets main `bcfa6785a37088f0e2c42d82d001a31775f944c0`. The compiler
+is the guarded Bend 2.0.25 release `2.0.25-27629713-20261018`. Each run executed
+inside `/sys/fs/cgroup/system.slice/rewrite-recovery-deepseek-native-20261019.scope`
+with `memory.max = 17179869184`, `memory.swap.max = 0`, and an unlimited
+`RLIMIT_AS`.
+
+| Check | Result |
+|---|---|
+| `--check-only bend2/src/coordinator/commands.bend` | exit 0, `All terms check` |
+| `--check-only bend2/src/coordinator/stall.bend` | exit 0, `All terms check`, four unsafe or foreign defs |
+| `--check-only bend2/src/coordinator/stall-laws.bend` | exit 0, `All terms check` |
+| `--check-only bend2/test/stall-evidence-entry.bend` | exit 0, `All terms check`, four unsafe or foreign defs |
+
+The highest observed peak resident set was 6,467,044 kB. No run used swap.
+A law body must be an equality; the claimless query law asserts
+`String.contains(Stall.stalled_rows_sql(False{}),"wake_claims") == False{}`.
+
+The following gates need build and runtime capacity:
+
+- build `.scratch/bend2/baton2` and run `python3 -m unittest bend2/test/stall.py`;
+- build `bend2/test/stall-evidence-entry.bend` and run
+  `stall-evidence-fixture.py build`, `check-report` and `check-wake`;
+- `--check-only bend2/src/coordinator/main.bend` with a full-class admission
+  receipt;
+- the remote CI checks for the opened PR.
