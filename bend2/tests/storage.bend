@@ -498,34 +498,22 @@ def unknown_peer_script() -> String:
 # The removal check uses a readable 130-deep chain through the full apply and
 # receipt path so the depth refusal is UID-independent and preservation stays
 # separate from unknown-fact preservation.
+# After the refusal the deep leaf and marker move to a shallow repaired path;
+# a fresh preview and apply then remove the repaired candidate.
 def deep_leaf_path(remaining: Nat, +prefix: String) -> String:
   match remaining:
     case 0n: prefix ++ "/leaf.txt"
     case 1n+rest: deep_leaf_path(rest, prefix ++ "/n")
+
 def deep_marker_path(remaining: Nat, +prefix: String) -> String:
   match remaining:
     case 0n: prefix ++ "/marker.txt"
     case 1n+rest: deep_marker_path(rest, prefix ++ "/n")
 
-def removal_refused_check(+db: String, +root: String) -> IO(Unit):
+def removal_repair_check(+db: String, +root: String, +dir: String, +deep: String, +leaf: String, +marker: String) -> IO(Unit):
   do IO<Unit>:
-    +dir : String = root ++ "/interrupted"
-    made : Unit <- IO.try(Unit, F.Files.mkdir(dir))
-    +deep : String = dir ++ "/deep"
-    +script : String = "d=" ++ deep ++ "; mkdir -p \"$d\" || exit 1; cd \"$d\" || exit 1; i=0; while [ $i -lt 130 ]; do mkdir n || exit 1; cd n || exit 1; i=$((i+1)); done; printf leaf > leaf.txt; printf marker > marker.txt"
-    built : Unit <- run_cmd(["/bin/sh", "-c", script])
-    +leaf : String = deep_leaf_path(130n, deep)
-    +marker : String = deep_marker_path(130n, deep)
-    +candidate : T.Candidate <- candidate_for(dir, T.Scratch{}, clear_facts())
-    +report : String <- remove_until_settled(db, root, candidate, dir, 64n)
-    a : Unit <- check("interrupted-refused", String.starts_with(report, "refused"), report)
-    b : Unit <- check("interrupted-refused-detail", Bool.and(String.contains(report, "partial"), String.contains(report, "error=")), report)
-    kept : O.Observation <- O.observe(leaf)
-    c : Unit <- check("interrupted-leaf-preserved", O.observation_is_found(kept), "deep leaf removed")
-    kept_marker : O.Observation <- O.observe(marker)
-    d : Unit <- check("interrupted-marker-preserved", O.observation_is_found(kept_marker), "deep marker removed")
-    +repair : String = "r=" ++ dir ++ "/repaired; mkdir -p \"$r\" || exit 1; mv \"" ++ leaf ++ "\" \"$r/leaf.txt\" || exit 1; mv \"" ++ marker ++ "\" \"$r/marker.txt\" || exit 1; rm -rf \"" ++ deep ++ "\""
-    repaired : Unit <- run_cmd(["/bin/sh", "-c", repair])
+    +repair : String = "r=\"$1/repaired\"; mkdir -p \"$r\" || exit 1; mv \"$2\" \"$r/leaf.txt\" || exit 1; mv \"$3\" \"$r/marker.txt\" || exit 1; rm -rf \"$4\""
+    repaired : Unit <- run_cmd(["/bin/sh", "-c", repair, "sh", dir, leaf, marker, deep])
     +repaired_leaf : String = dir ++ "/repaired/leaf.txt"
     +repaired_marker : String = dir ++ "/repaired/marker.txt"
     repaired_leaf_seen : O.Observation <- O.observe(repaired_leaf)
@@ -539,6 +527,26 @@ def removal_refused_check(+db: String, +root: String) -> IO(Unit):
     h : Unit <- check("interrupted-replay-leaf-removed", Bool.not(O.observation_is_found(removed_leaf)), "repaired leaf remains")
     removed_marker : O.Observation <- O.observe(repaired_marker)
     i : Unit <- check("interrupted-replay-marker-removed", Bool.not(O.observation_is_found(removed_marker)), "repaired marker remains")
+    IO.pure(Unit, Unit{})
+
+def removal_refused_check(+db: String, +root: String) -> IO(Unit):
+  do IO<Unit>:
+    +dir : String = root ++ "/interrupted"
+    made : Unit <- IO.try(Unit, F.Files.mkdir(dir))
+    +deep : String = dir ++ "/deep"
+    +script : String = "d=\"$1\"; mkdir -p \"$d\" || exit 1; cd \"$d\" || exit 1; i=0; while [ $i -lt 130 ]; do mkdir n || exit 1; cd n || exit 1; i=$((i+1)); done; printf leaf > leaf.txt; printf marker > marker.txt"
+    built : Unit <- run_cmd(["/bin/sh", "-c", script, "sh", deep])
+    +leaf : String = deep_leaf_path(130n, deep)
+    +marker : String = deep_marker_path(130n, deep)
+    +candidate : T.Candidate <- candidate_for(dir, T.Scratch{}, clear_facts())
+    +report : String <- remove_until_settled(db, root, candidate, dir, 64n)
+    a : Unit <- check("interrupted-refused", String.starts_with(report, "refused"), report)
+    b : Unit <- check("interrupted-refused-detail", Bool.and(String.contains(report, "partial"), String.contains(report, "error=")), report)
+    kept : O.Observation <- O.observe(leaf)
+    c : Unit <- check("interrupted-leaf-preserved", O.observation_is_found(kept), "deep leaf removed")
+    kept_marker : O.Observation <- O.observe(marker)
+    d : Unit <- check("interrupted-marker-preserved", O.observation_is_found(kept_marker), "deep marker removed")
+    replay : Unit <- removal_repair_check(db, root, dir, deep, leaf, marker)
     cleaned : Unit <- run_cmd(["/bin/rm", "-rf", dir])
     IO.pure(Unit, Unit{})
 
@@ -551,7 +559,9 @@ def unknown_runtime_spawned(result: Result<&1,&1,U32 & String,U32>, +db: String,
         +candidate : T.Candidate <- candidate_for(file, T.Scratch{}, clear_facts())
         preview : T.Preview <- one_preview(root, candidate)
         receipt : T.Receipt <- apply_preview(db, preview)
-        a : Unit <- check_receipt("unknown-runtime-preserved", receipt, file, "changed|fresh evidence preserves: runtime-input-unknown")
+        # The peer denies cwd, exe, descriptors and maps, so the fixed
+        # preservation order reports the process fact unknown first.
+        a : Unit <- check_receipt("unknown-runtime-preserved", receipt, file, "changed|fresh evidence preserves: process-unknown")
         observed : O.Observation <- O.observe(file)
         b : Unit <- check("unknown-runtime-kept", O.observation_is_found(observed), "unknown runtime candidate removed")
         signaled : Unit <- IO.try(Unit, Proc.ProcessChild.signal(handle, 15))
