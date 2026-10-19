@@ -2592,7 +2592,11 @@ function emit_native(fl: File, ck: Call, ers: HTerm[]): string {
     ...dst.ws.map((v, j) => `  o[${j}] = ${v};`),
     "  return 1;", "}"].join("\n"), seg.refs]);
   }
+  // The arm name counter is monotone across nested emission. Restoring the
+  // whole file must not roll it back, or a spin body's arm name is reused.
+  const armSeq = fl.armSeq;
   Object.assign(fl, outer);
+  fl.armSeq = armSeq;
   return name;
 }
 

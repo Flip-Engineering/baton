@@ -13,6 +13,7 @@ import hashlib
 import json
 import os
 import pathlib
+import re
 import shutil
 import subprocess
 import tempfile
@@ -98,6 +99,20 @@ class CompilerArmSharing(unittest.TestCase):
         self.assertIn('PASS all', result.stdout)
         self.assertIn('PASS ann', result.stdout)
         self.assertIn('PASS control', result.stdout)
+
+    def test_native_arm_collision(self):
+        fixture = FIXTURES / 'native_arm_collision.bend'
+        source = pathlib.Path(self.temp.name) / 'native_arm_collision.c'
+        self.run_bun(UPSTREAM / 'main.ts', fixture, '-o', source)
+        text = source.read_text()
+        names = re.findall(r'^(?:INLINE|FAR) Term (arm_\d+)\(', text, re.M)
+        self.assertTrue(names, msg='the fixture emitted no shared arms')
+        self.assertIn('spin_', text, msg='the fixture emitted no native spin')
+        self.assertEqual(len(names), len(set(names)),
+                         msg='a native spin reused an arm name: %r' % names)
+        self.assertEqual(sorted(set(names)), ['arm_1', 'arm_3'],
+                         msg='unexpected shared-arm names: %r' % names)
+        self.build_and_run(source, [([], 'empty'), (['hello'], 'hello')])
 
     def test_ann_share_regression(self):
         source = self.mutated_c('arm_eq_ann_share')
