@@ -140,7 +140,7 @@ static int focused_receiver_verb(int argc,char **argv) {
      !strcmp(first,"--instance-owner") || !strcmp(first,"--instance-shutdown")) return 1;
   if(argc>2 && (!strcmp(argv[2],"receive") || !strcmp(argv[2],"turn") ||
                 !strcmp(argv[2],"turn-text") || !strcmp(argv[2],"agent-native-input") ||
-                !strcmp(argv[2],"register-receiver"))) return 1;
+                !strcmp(argv[2],"register-receiver") || !strcmp(argv[2],"storage-policy"))) return 1;
   return 0;
 }
 
@@ -158,7 +158,7 @@ static int native_receiver_route(int argc, char **argv) {
     !strcmp(argv[1],"--instance-shutdown") || recovery);
   if(argc>2 && (!strcmp(argv[2],"receive") || !strcmp(argv[2],"turn") ||
       !strcmp(argv[2],"turn-text") || !strcmp(argv[2],"recover-observer") ||
-      !strcmp(argv[2],"register-receiver"))) focused_verb=1;
+      !strcmp(argv[2],"register-receiver") || !strcmp(argv[2],"storage-policy"))) focused_verb=1;
   if(!native_input && !focused_verb) return -1;
   char *full=application_executable();
   char *directory=full?strdup(full):NULL;
