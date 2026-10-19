@@ -1,9 +1,11 @@
 # Round 3: shared-term key cost reduction (issue #776)
 
-Status: this head passes the three repro gates and the protected tests below.
-It adds the quantity, annotation, binder-key and Ref.b corrections. Candidate
+Status: this head passes minimal and pr890-shaped; five-overlap is left to
+root qualification because the shared 8 GB session cgroup killed the compile.
+It restores the `Min` comparison from `4ea82573` and adds the quantity,
+annotation, binder-key and Ref.b corrections. Candidate
 `round2/compiler-src/bend2/comp.ts` sha256
-`cfe7865fee3d9d45bf692370d8cf8ce033195c86fa84f799d66ac734d2618760`.
+`3aa09f277ca44d748fca6f8a1d911409fe1dc17d98b8e1c45a992f41cf253258`.
 
 ## Equality totality fix (evaluator review of 1e5eb5b09f)
 
@@ -17,6 +19,7 @@ value-distinct arm. `arm_eq` is now total:
 - `All{q,k,i,A,B}` compares the quantity, `A`, and the two bodies applied to
   a `Var` with a synthetic key below every real index (`-2 - d`), at
   depth + 1.
+- `Min{a,b}` compares both terms, as at `4ea82573`.
 - `Qnt`, `Rfl` and `Efq` compare equal (no fields); every other unknown kind
   returns false. No reuse is authorized by the hint.
 - A representative that matches but is being emitted returns false (inline
@@ -28,17 +31,20 @@ Repro gates measured at this head with the pinned `bend.ts`, `main.ts` and
 
 | Fixture | C bytes | sha256 | Wall | Peak RSS |
 | --- | ---: | --- | ---: | ---: |
-| minimal | 513,186 | `06a5ad6e...` | 10.6 s | 695 MB |
-| five-overlap | 528,878 | `b7b0b85b...` | 65.8 s | 4.57 GB |
-| pr890-shaped | 528,767 | `f411f8c4...` | 51.2 s | 3.96 GB |
+| minimal | 513,186 | `06a5ad6e...` | 9.6 s | 702 MB |
+| five-overlap | not completed | — | 39.3 s (killed) | 4.41 GB |
+| pr890-shaped | 528,767 | `f411f8c4...` | 56.5 s | 4.39 GB |
 
-Minimal is below 1,000,000 B and pr890-shaped below 2,000,000 B; five-overlap
-matches the round-3 value. The three binaries build with clang-19 and print
-`host` / `two` / `13` / `14` / `four` / `other` for the argv cases; an empty
-argv exits 2. The four protected Nat/U32 fixtures emit byte-identical C to
-base and execute `306n`, `2496 2397`, the word match output and `0n`. The
-carrier, annotation-sharing, binder-key and Ref.b tests are in the next
-section.
+Minimal is below 1,000,000 B and pr890-shaped below 2,000,000 B. The
+five-overlap compile was killed by the shared 8 GB session cgroup at
+4,411,172 KB RSS after 39.3 s; root qualifies that binary. The last completed
+five-overlap run (`64782788`) emitted 528,878 B, sha256 `b7b0b85b...`; this
+head restores the `Min` case that run omitted. The completed binaries build
+with clang-19 and print `host` / `two` / `13` / `14` / `four` / `other` for
+the argv cases; an empty argv exits 2. The four protected Nat/U32 fixtures
+emit byte-identical C to base and execute `306n`, `2496 2397`, the word match
+output and `0n`. The carrier, annotation-sharing, binder-key and Ref.b tests
+are in the next section.
 
 Pinned compiler: `bend.ts 93c2a43d...fcaeb85`, `comp.ts a2a949ae...69112bc`,
 `main.ts 53ce8e48...12eb07d`, `base.bend e5639663...b99d798`. Round 2 commit

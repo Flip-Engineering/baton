@@ -3251,6 +3251,7 @@ function arm_eq(a: HTerm, b: HTerm): boolean {
         return x.k === yd.k && x.x.length === yd.x.length
           && x.x.every((z, i) => go(z, yd.x[i], d));
       }
+      case "Min": { const ym = y as Of<"Min">; return go(x.a, ym.a, d) && go(x.b, ym.b, d); }
       case "Typ": return go(x.g, (y as Of<"Typ">).g, d);
       case "Qua": return x.q.$ === (y as Of<"Qua">).q.$;
       case "Hol": return x.k === (y as Of<"Hol">).k;
