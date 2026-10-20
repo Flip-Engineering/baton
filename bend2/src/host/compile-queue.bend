@@ -77,8 +77,8 @@ def basename_go(s: String, acc: String) -> String:
     case SNil{}: acc
     case SCon{+c, +rest}:
       +is_slash = U32.is_eq(Char.to_u32(c), 47)
-      Bool.pick(String, is_slash, basename_go(rest, ""),
-        basename_go(rest, acc ++ SCon{c, SNil{}}))
+      +next_acc = Bool.pick(String, is_slash, "", acc ++ SCon{c, SNil{}})
+      basename_go(rest, next_acc)
 
 def basename(s: String) -> String:
   basename_go(s, "")

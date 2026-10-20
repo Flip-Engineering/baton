@@ -599,12 +599,19 @@ def CompileQueueIdentity.input_source_fields(fields: List<&2,String>) -> String:
 def CompileQueueIdentity.input_source(line: String) -> String:
   CompileQueueIdentity.input_source_fields(String.split(line, Char.from_u32(9)))
 
-def CompileQueueIdentity.input_sources(lines: List<&2,String>) -> String:
+def CompileQueueIdentity.input_sources_go(lines: List<&2,String>, +acc: String, first: Bool) -> String:
   match lines:
-    case Nil{}: ""
+    case Nil{}: acc
     case +line <> +rest:
       +source = CompileQueueIdentity.input_source(line)
-      Bool.pick(String, String.is_empty(source), CompileQueueIdentity.input_sources(rest), source ++ "\\n" ++ CompileQueueIdentity.input_sources(rest))
+      +empty = String.is_empty(source)
+      +separator = Bool.pick(String, Bool.or(empty, first), "", "\n")
+      +next_acc = acc ++ separator ++ source
+      +next_first = Bool.and(first, empty)
+      CompileQueueIdentity.input_sources_go(rest, next_acc, next_first)
+
+def CompileQueueIdentity.input_sources(lines: List<&2,String>) -> String:
+  CompileQueueIdentity.input_sources_go(lines, "", True{})
 
 def CompileQueueIdentity.artifact_name_fields(fields: List<&2,String>) -> String:
   match fields:
@@ -645,6 +652,13 @@ def CompileQueueIdentity.input_rows(lines: List<&2,String>) -> IO(Result<&1,&1,U
           more : String <- IO.try(String, CompileQueueIdentity.input_rows(rest))
           IO.pure(Result<&1,&1,U32 & String,String>, Done{Bool.pick(String, String.is_empty(row), "", row ++ "\n") ++ more}))
 
+# Inputs and aux are separate newline-separated lists. Join them with one
+# newline only when both sides carry entries, so a path is never concatenated
+# with the first aux entry.
+def CompileQueueIdentity.closure_files(sources: String, aux: String) -> String:
+  Bool.pick(String, String.is_empty(sources), aux,
+    Bool.pick(String, String.is_empty(aux), sources, sources ++ "\n" ++ aux))
+
 # Encodings are the ones documented above. Inputs and aux are read as given;
 # cwd and root are accepted for policy compatibility. The command tokens are
 # already normalized to @root/@cwd, {in:...}, {out:...} and {compiler}.
@@ -652,7 +666,7 @@ def CompileQueueIdentity.request_key(+kind: String, +cwd: String, +root: String,
   do IO<Result<&1,&1,U32 & String,String>>:
     +closure : String <- Bool.pick(IO(String), String.eq(kind, "cgen"),
       IO.try(String, CompileQueueIdentity.source_digest(source_root, entry)),
-      IO.try(String, CompileQueueIdentity.file_closure_digest(source_root, CompileQueueIdentity.input_sources(String.lines(inputs)) ++ aux)))
+      IO.try(String, CompileQueueIdentity.file_closure_digest(source_root, CompileQueueIdentity.closure_files(CompileQueueIdentity.input_sources(String.lines(inputs)), aux))))
     +ccache : String <- IO.pure(String, CompileQueueIdentity.ccache_expand(CompileQueueIdentity.ccache_path(String.lines(command)), cwd, root, compiler))
     toolchain : String <- IO.try(String, CompileQueueIdentity.compiler_closure_digest(compiler, linker, version, ccache))
     rows : String <- IO.try(String, CompileQueueIdentity.input_rows(String.lines(inputs)))
