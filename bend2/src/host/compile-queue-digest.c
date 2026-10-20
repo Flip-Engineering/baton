@@ -1027,7 +1027,8 @@ enum {
   CQ_ID_FILE_DIGEST = 5,
   CQ_ID_TEXT_DIGEST = 6,
   CQ_ID_FILE_CLOSURE_DIGEST = 7,
-  CQ_ID_COMPILER_CLOSURE_DIGEST = 8
+  CQ_ID_COMPILER_CLOSURE_DIGEST = 8,
+  CQ_ID_FILE_SIZE = 9
 };
 
 typedef struct {
@@ -1077,6 +1078,17 @@ static void cq_id_call_work(IoWork *work) {
       char hex[65];
       cq_id_hash_bytes(call->first, call->first_length, hex);
       call->text = cq_id_strdup(hex);
+      break;
+    }
+    case CQ_ID_FILE_SIZE: {
+      struct stat info;
+      if (stat(call->first, &info)) {
+        call->error = errno;
+        break;
+      }
+      char text[32];
+      snprintf(text, sizeof text, "%llu", (unsigned long long)info.st_size);
+      call->text = cq_id_strdup(text);
       break;
     }
     default:
@@ -1180,6 +1192,20 @@ static Term cq_id_text_digest_run(Env env, Term *fields, IoWork *work) {
     return io_fail(env, ENOMEM, NULL);
   }
   call->first_length = (size_t)length;
+  work->data = call;
+  return io_work(work, cq_id_call_work, cq_id_call_pack);
+}
+
+static Term cq_id_file_size_run(Env env, Term *fields, IoWork *work) {
+  CqIdCall *call = (CqIdCall *)calloc(1, sizeof(*call));
+  if (!call) return io_fail(env, ENOMEM, NULL);
+  call->mode = CQ_ID_FILE_SIZE;
+  u64 length = 0;
+  call->first = io_cstr(env, fields[0], &length);
+  if (!call->first || strlen(call->first) != length) {
+    cq_id_call_free(call);
+    return io_fail(env, EINVAL, "path contains NUL");
+  }
   work->data = call;
   return io_work(work, cq_id_call_work, cq_id_call_pack);
 }
@@ -1290,5 +1316,11 @@ static void __attribute__((constructor)) cq_id_file_digest_use(void) {
 #ifdef CID_COMPILEQUEUEIDENTITY_TEXT_DIGEST
 static void __attribute__((constructor)) cq_id_text_digest_use(void) {
   io_eff(CID_COMPILEQUEUEIDENTITY_TEXT_DIGEST, cq_id_text_digest_run, 0);
+}
+#endif
+
+#ifdef CID_COMPILEQUEUEIDENTITY_FILE_SIZE
+static void __attribute__((constructor)) cq_id_file_size_use(void) {
+  io_eff(CID_COMPILEQUEUEIDENTITY_FILE_SIZE, cq_id_file_size_run, 0);
 }
 #endif

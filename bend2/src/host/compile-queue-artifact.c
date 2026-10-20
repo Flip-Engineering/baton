@@ -533,7 +533,8 @@ enum {
   CQ_ART_KIND = 1,
   CQ_ART_DIGEST = 2,
   CQ_ART_COPY = 3,
-  CQ_ART_INSTALL = 4
+  CQ_ART_INSTALL = 4,
+  CQ_ART_REMOVE = 5
 };
 
 typedef struct {
@@ -679,6 +680,11 @@ static void cq_art_call_work(IoWork *work) {
       }
       break;
     }
+    case CQ_ART_REMOVE: {
+      int error = cq_art_remove(call->first);
+      if (error) call->error = error;
+      break;
+    }
     default:
       call->error = EINVAL;
       break;
@@ -766,5 +772,14 @@ static Term cq_art_install_run(Env env, Term *fields, IoWork *work) {
 }
 static void __attribute__((constructor)) cq_art_install_use(void) {
   io_eff(CID_COMPILEQUEUEARTIFACT_INSTALL, cq_art_install_run, 0);
+}
+#endif
+
+#ifdef CID_COMPILEQUEUEARTIFACT_REMOVE
+static Term cq_art_remove_run(Env env, Term *fields, IoWork *work) {
+  return cq_art_run(env, fields, work, CQ_ART_REMOVE, 1);
+}
+static void __attribute__((constructor)) cq_art_remove_use(void) {
+  io_eff(CID_COMPILEQUEUEARTIFACT_REMOVE, cq_art_remove_run, 0);
 }
 #endif

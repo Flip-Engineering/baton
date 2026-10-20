@@ -104,6 +104,9 @@ def CompileQueueIdentity.compiler_closure_digest(compiler: String, linker: Strin
 def CompileQueueIdentity.file_digest(path: String) -> IO(Result<&1,&1,U32 & String,String>):
   import "./compile-queue-digest.c"
 
+def CompileQueueIdentity.file_size(path: String) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./compile-queue-digest.c"
+
 def CompileQueueIdentity.nonempty(values: List<&2,String>) -> List<&2,String>:
   match values:
     case Nil{}:
@@ -174,3 +177,70 @@ def CompileQueueIdentity.material(kind: String, entry: String, options: String, 
 
 def CompileQueueIdentity.material_key(kind: String, entry: String, options: String, source_digest: String, file_closure_digest: String, compiler_digest: String, input_rows: String, artifact_names: String, normalized_argv: String) -> IO(Result<&1,&1,U32 & String,String>):
   CompileQueueIdentity.key(CompileQueueIdentity.material(kind, entry, options, source_digest, file_closure_digest, compiler_digest, input_rows, artifact_names, normalized_argv))
+
+def CompileQueueIdentity.input_source(line: String) -> String:
+  match String.split(line, Char.from_u32(9)):
+    case source <> destination <> tail:
+      source
+    case other:
+      ""
+
+def CompileQueueIdentity.input_sources(lines: List<&2,String>) -> String:
+  match lines:
+    case Nil{}:
+      ""
+    case line <> rest:
+      source = CompileQueueIdentity.input_source(line)
+      Bool.pick(String, String.is_empty(source), CompileQueueIdentity.input_sources(rest), source ++ "\n" ++ CompileQueueIdentity.input_sources(rest))
+
+def CompileQueueIdentity.artifact_name(line: String) -> String:
+  match String.split(line, Char.from_u32(9)):
+    case name <> path <> tail:
+      name
+    case other:
+      ""
+
+def CompileQueueIdentity.artifact_names(lines: List<&2,String>) -> String:
+  match lines:
+    case Nil{}:
+      ""
+    case line <> rest:
+      name = CompileQueueIdentity.artifact_name(line)
+      Bool.pick(String, String.is_empty(name), CompileQueueIdentity.artifact_names(rest), name ++ "\n" ++ CompileQueueIdentity.artifact_names(rest))
+
+def CompileQueueIdentity.input_row(line: String) -> IO(Result<&1,&1,U32 & String,String>):
+  match String.split(line, Char.from_u32(9)):
+    case source <> destination <> tail:
+      do IO<Result<&1,&1,U32 & String,String>>:
+        digest : String <- IO.try(String, CompileQueueIdentity.file_digest(source))
+        size : String <- IO.try(String, CompileQueueIdentity.file_size(source))
+        IO.pure(Result<&1,&1,U32 & String,String>, Done{destination ++ "\t" ++ digest ++ "\t" ++ size})
+    case other:
+      IO.pure(Result<&1,&1,U32 & String,String>, Done{""})
+
+def CompileQueueIdentity.input_rows(lines: List<&2,String>) -> IO(Result<&1,&1,U32 & String,String>):
+  match lines:
+    case Nil{}:
+      IO.pure(Result<&1,&1,U32 & String,String>, Done{""})
+    case line <> rest:
+      Bool.pick(IO(Result<&1,&1,U32 & String,String>), String.is_empty(line), CompileQueueIdentity.input_rows(rest),
+        do IO<Result<&1,&1,U32 & String,String>>:
+          row : String <- IO.try(String, CompileQueueIdentity.input_row(line))
+          more : String <- IO.try(String, CompileQueueIdentity.input_rows(rest))
+          IO.pure(Result<&1,&1,U32 & String,String>, Done{Bool.pick(String, String.is_empty(row), "", row ++ "\n") ++ more}))
+
+# Encodings are the ones documented above. Inputs and aux are read as given;
+# cwd and root are accepted for policy compatibility. The command tokens are
+# already normalized to @root/@cwd, {in:...}, {out:...} and {compiler}.
+def CompileQueueIdentity.request_key(kind: String, cwd: String, root: String, source_root: String, entry: String, compiler: String, linker: String, version: String, inputs: String, aux: String, artifacts: String, options: String, command: String) -> IO(Result<&1,&1,U32 & String,String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
+    closure : String <- Bool.pick(IO(String), String.eq(kind, "cgen"),
+      IO.try(String, CompileQueueIdentity.source_digest(source_root, entry)),
+      IO.try(String, CompileQueueIdentity.file_closure_digest(source_root, CompileQueueIdentity.input_sources(String.lines(inputs)) ++ aux)))
+    toolchain : String <- IO.try(String, CompileQueueIdentity.compiler_closure_digest(compiler, linker, version))
+    rows : String <- IO.try(String, CompileQueueIdentity.input_rows(String.lines(inputs)))
+    CompileQueueIdentity.material_key(kind, entry, options,
+      Bool.pick(String, String.eq(kind, "cgen"), closure, ""),
+      Bool.pick(String, String.eq(kind, "cgen"), "", closure),
+      toolchain, rows,
+      CompileQueueIdentity.artifact_names(String.lines(artifacts)), command)

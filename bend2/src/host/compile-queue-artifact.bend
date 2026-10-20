@@ -24,3 +24,6 @@ def CompileQueueArtifact.copy(source: String, staging: String) -> IO(Result<&1,&
 
 def CompileQueueArtifact.install(source: String, destination: String, staging: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   import "./compile-queue-artifact.c"
+
+def CompileQueueArtifact.remove(path: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  import "./compile-queue-artifact.c"
