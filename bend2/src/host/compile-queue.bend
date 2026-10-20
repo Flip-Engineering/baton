@@ -295,10 +295,12 @@ def identity_key(config: Config) -> IO(String):
       +cwd = field(text, "cwd")
       +root = field(text, "root")
       +compiler = field(text, "compiler")
+      +linker = Bool.pick(String, String.eq(field(text, "kind"), "cc"),
+        Bool.pick(String, non_empty(field(text, "linker")), field(text, "linker"), "ld"), "")
       IO.try(String, Identity.request_key(
         field(text, "kind"), cwd, root,
         field(text, "source_root"), field(text, "entry"), compiler,
-        "", "", input_pairs_text(inputs),
+        linker, "", input_pairs_text(inputs),
         Tx.join("\n", fields_all(text, "aux")),
         artifact_pairs_text(artifacts),
         Tx.join("\n", fields_all(text, "option")),
