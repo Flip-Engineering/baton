@@ -516,10 +516,13 @@ static int cq_spawn_detached(const char *argv_text, size_t argv_length,
   error = cq_self_path(&self);
   if (error) { free(parsed); return error; }
   int prepend = parsed[0][0] != '/';
-  char **argv = calloc((size_t)count + (prepend ? 2 : 1), sizeof(*argv));
+  char **argv = calloc((size_t)count + (prepend ? 3 : 1), sizeof(*argv));
   if (!argv) { free(parsed); free(self); return ENOMEM; }
   int at = 0;
-  if (prepend) argv[at++] = self;
+  if (prepend) {
+    argv[at++] = self;
+    argv[at++] = "--";
+  }
   for (int i = 0; i < count; i++) argv[at++] = parsed[i];
   argv[at] = NULL;
   const char *exec = argv[0];
