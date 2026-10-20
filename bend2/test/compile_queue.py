@@ -60,6 +60,7 @@ def compile_cc(argv, inputs, output, cwd, compiler=None, options=()):
     request = [queue, 'run', '--kind', 'cc',
                '--state-root', str(state_root()),
                '--cwd', str(cwd),
+               '--source-root', str(pathlib.Path(cwd).resolve()),
                '--compiler', compiler,
                '--linker', linker,
                '--version', version]

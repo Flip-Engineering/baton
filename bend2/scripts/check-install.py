@@ -364,7 +364,8 @@ def check(prefix, output):
                 'Set BATON_COMPILE_QUEUE_ROOT to the shared absolute compile-queue state directory')
         output_path = args[args.index('-o') + 1]
         command = [queue_executable(prefix), 'run', '--kind', 'cc',
-                   '--state-root', state, '--cwd', cwd, '--compiler', compiler_name,
+                   '--state-root', state, '--cwd', cwd, '--source-root', cwd,
+                   '--compiler', compiler_name,
                    '--linker', linker, '--version', ' '.join(version_text.split()),
                    '--input', input_file, '--artifact', 'binary=' + str(output_path)]
         for option in options:

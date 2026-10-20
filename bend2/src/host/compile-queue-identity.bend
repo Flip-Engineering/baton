@@ -483,8 +483,11 @@ def CompileQueueIdentity.linker_lines(linker: String) -> IO(Result<&1,&1,U32 & S
           IO.pure(Result<&1,&1,U32 & String,String>, Done{lines}))
 
 # A cc command may name a ccache executable as `--ccache <path>` or
-# `--ccache=<path>`. Identity records the executable bytes; the absolute path
-# is transient input and never enters the key.
+# `--ccache=<path>`. The command is normalized before identity reads it, so a
+# path under the root or cwd arrives as `@root/...` or `@cwd/...`; `{compiler}`
+# names the compiler. Identity restores the caller path, follows the wrapper
+# exec chain, and records the entry and each exec target digest. The absolute
+# path is transient input and never enters the key.
 def CompileQueueIdentity.ccache_value(tokens: List<&2,String>) -> String:
   match tokens:
     case value <> tail:
@@ -503,13 +506,22 @@ def CompileQueueIdentity.ccache_path(tokens: List<&2,String>) -> String:
     case Nil{}:
       ""
 
+def CompileQueueIdentity.ccache_expand(value: String, cwd: String, root: String, compiler: String) -> String:
+  Bool.pick(String, String.eq(value, "{compiler}"), compiler,
+    Bool.pick(String, String.starts_with(value, "@root/"),
+      root ++ "/" ++ String.drop(value, String.length("@root/")),
+      Bool.pick(String, String.starts_with(value, "@cwd/"),
+        cwd ++ "/" ++ String.drop(value, String.length("@cwd/")),
+        value)))
+
 def CompileQueueIdentity.ccache_lines(ccache: String) -> IO(Result<&1,&1,U32 & String,String>):
   Bool.pick(IO(Result<&1,&1,U32 & String,String>), String.is_empty(ccache),
     IO.pure(Result<&1,&1,U32 & String,String>, Done{"ccache=none\n"}),
     do IO<Result<&1,&1,U32 & String,String>>:
-      resolved : String <- IO.try(String, CompileQueueIdentity.resolve_command(ccache))
-      digest : String <- IO.try(String, CompileQueueIdentity.file_digest(resolved))
-      IO.pure(Result<&1,&1,U32 & String,String>, Done{"ccache-entry=" ++ digest ++ "\n"}))
+      chain : CompileQueueChain <- IO.try(CompileQueueChain, CompileQueueIdentity.chain(ccache, "ccache"))
+      match chain:
+        case CompileQueueChain{lines, final}:
+          IO.pure(Result<&1,&1,U32 & String,String>, Done{lines}))
 
 def CompileQueueIdentity.toolchain_text(compiler: String, linker: String, version: String, ccache: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
@@ -629,7 +641,7 @@ def CompileQueueIdentity.request_key(kind: String, cwd: String, root: String, so
     closure : String <- Bool.pick(IO(String), String.eq(kind, "cgen"),
       IO.try(String, CompileQueueIdentity.source_digest(source_root, entry)),
       IO.try(String, CompileQueueIdentity.file_closure_digest(source_root, CompileQueueIdentity.input_sources(String.lines(inputs)) ++ aux)))
-    +ccache = CompileQueueIdentity.ccache_path(String.lines(command))
+    +ccache = CompileQueueIdentity.ccache_expand(CompileQueueIdentity.ccache_path(String.lines(command)), cwd, root, compiler)
     toolchain : String <- IO.try(String, CompileQueueIdentity.compiler_closure_digest(compiler, linker, version, ccache))
     rows : String <- IO.try(String, CompileQueueIdentity.input_rows(String.lines(inputs)))
     CompileQueueIdentity.material_key(kind, entry, options,

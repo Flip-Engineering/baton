@@ -177,6 +177,12 @@ request rejects a `--state-root` that differs from
 `BATON_COMPILE_QUEUE_ROOT`, and it rejects a root that is missing, unreadable,
 unwritable or unable to hold `$state/heavy.lock`.
 
+Every cc request also supplies an absolute `--source-root`, the resolved
+linker path and the captured compiler `--version` text. The queue rejects a cc
+request without any of the four fields. When `BATON2_CCACHE` is set,
+build-native passes the ccache config file as an `--aux` input and a sorted
+`CCACHE_*` environment snapshot as an `--option`; both enter the identity.
+
 After the executable exists, validate it with:
 
 ```

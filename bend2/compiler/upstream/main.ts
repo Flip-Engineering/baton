@@ -427,6 +427,7 @@ function queue_cc(queue: string, stateRoot: string, compiler: string, linker: st
   const absoluteFile = path.resolve(file);
   const argv = ["run", "--kind", "cc", "--state-root", stateRoot,
     "--cwd", process.cwd(), "--root", path.dirname(absoluteFile),
+    "--source-root", path.dirname(absoluteFile),
     "--compiler", compiler, "--linker", linker, "--version", version,
     "--input", absoluteFile,
     "--artifact", artifact + "=" + path.resolve(artifactPath),

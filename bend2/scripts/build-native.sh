@@ -83,10 +83,30 @@ cc_linker=
 cc_version=
 cc_identity() {
   if [ -z "$cc_version" ]; then
-    cc_linker=${LD:-$("$cc" -print-prog-name=ld 2>/dev/null || :)}
-    [ -n "$cc_linker" ] || cc_linker=$cc
-    cc_version=$("$cc" --version 2>/dev/null | tr '\n' ' ')
-    [ -n "$cc_version" ] || cc_version=unknown
+    cc_linker=${LD:-}
+    if [ -z "$cc_linker" ]; then
+      cc_linker=$("$cc" -print-prog-name=ld 2>/dev/null) || {
+        echo "The C compiler did not report its linker identity: $cc" >&2
+        exit 1
+      }
+    fi
+    if [ -z "$cc_linker" ]; then
+      echo "The C compiler did not report its linker identity: $cc" >&2
+      exit 1
+    fi
+    if ! command -v "$cc_linker" >/dev/null 2>&1 && [ ! -x "$cc_linker" ]; then
+      echo "The C linker is unavailable: $cc_linker" >&2
+      exit 1
+    fi
+    cc_output=$("$cc" --version 2>/dev/null) || {
+      echo "The C compiler did not report its version: $cc" >&2
+      exit 1
+    }
+    cc_version=$(printf '%s' "$cc_output" | tr '\n' ' ')
+    if [ -z "$cc_version" ]; then
+      echo "The C compiler did not report its version: $cc" >&2
+      exit 1
+    fi
   fi
 }
 mode=plain
@@ -168,16 +188,34 @@ build_native_shards() {
   if [ -n "${BATON2_CCACHE:-}" ]; then
     set -- "$@" --ccache "$BATON2_CCACHE"
   fi
+  ccache_config=
+  ccache_env=none
+  if [ -n "${BATON2_CCACHE:-}" ]; then
+    if [ -n "${CCACHE_CONFIGPATH:-}" ]; then
+      if [ ! -f "$CCACHE_CONFIGPATH" ] || [ ! -r "$CCACHE_CONFIGPATH" ]; then
+        echo "The ccache config is unreadable: $CCACHE_CONFIGPATH" >&2
+        exit 1
+      fi
+      ccache_config=$CCACHE_CONFIGPATH
+    elif [ -n "${CCACHE_DIR:-}" ] && [ -f "$CCACHE_DIR/ccache.conf" ] && [ -r "$CCACHE_DIR/ccache.conf" ]; then
+      ccache_config=$CCACHE_DIR/ccache.conf
+    fi
+    ccache_env=$(env | LC_ALL=C sort | grep '^CCACHE_' | grep -v '^CCACHE_DIR=' | grep -v '^CCACHE_LOGFILE=' | grep -v '^CCACHE_CONFIGPATH=' | tr '\n' ' ')
+    [ -n "$ccache_env" ] || ccache_env=none
+  fi
   cc_identity
   set -- sh "$queue" run --kind cc --state-root "$queue_state" --cwd "$root" --root "$root" \
+    --source-root "$root" \
     --compiler "$cc" --linker "$cc_linker" --version "$cc_version" \
     --input "$output.c" \
     --input "$root/bend2/src/host/native-entry.c" \
     --aux "$root/tools/cgen-clang-parallel/build_and_measure.py" \
     --aux "$root/tools/cgen-clang-parallel/shard_emitted_c.py" \
+    --aux "$ccache_config" \
     --artifact "binary=$native_binary" \
     --artifact "outdir=$native_binary.parallel" \
     --option "mode=$mode" \
+    --option "ccache-env=$ccache_env" \
     -- python3 "$root/tools/cgen-clang-parallel/build_and_measure.py" "$@"
   "$@"
 }
@@ -198,6 +236,7 @@ else
   esac
   cc_identity
   sh "$queue" run --kind cc --state-root "$queue_state" --cwd "$root" --root "$root" \
+    --source-root "$root" \
     --compiler "$cc" --linker "$cc_linker" --version "$cc_version" --input "$output.c" \
     --artifact "binary=$output" -- \
     "${CC:-clang}" -O1 -pthread "$output.c" -lsqlite3 -lm $extra_libs -o "$output"

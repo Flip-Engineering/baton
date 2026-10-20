@@ -311,6 +311,7 @@ def validate_config(config: Config, need_command: Bool) -> String:
       +artifact_ok = Bool.and(non_empty_list(artifacts), artifact_paths_ok(artifacts))
       +source_ok = Bool.pick(Bool, Tx.str_eq(kind, "cgen"),
         Bool.and(non_empty(source), non_empty(entry)), True{})
+      +cc_source_ok = Bool.pick(Bool, Tx.str_eq(kind, "cc"), valid_state_root(source), True{})
       +linker = field(text, "linker")
       +version = field(text, "version")
       +toolchain_ok = Bool.pick(Bool, Tx.str_eq(kind, "cc"),
@@ -324,13 +325,15 @@ def validate_config(config: Config, need_command: Bool) -> String:
             Bool.pick(String, command_ok,
               Bool.pick(String, artifact_ok,
                 Bool.pick(String, source_ok,
-                  Bool.pick(String, toolchain_ok,
-                    Bool.pick(String, token_okay,
-                      Bool.pick(String, duplicates,
-                        "compile-queue: two inputs share a destination basename",
-                        ""),
-                      "compile-queue: token must contain only letters, digits, dot, underscore or hyphen"),
-                    "compile-queue: cc requires --linker and --version"),
+                  Bool.pick(String, cc_source_ok,
+                    Bool.pick(String, toolchain_ok,
+                      Bool.pick(String, token_okay,
+                        Bool.pick(String, duplicates,
+                          "compile-queue: two inputs share a destination basename",
+                          ""),
+                        "compile-queue: token must contain only letters, digits, dot, underscore or hyphen"),
+                      "compile-queue: cc requires --linker and --version"),
+                    "compile-queue: cc requires an absolute --source-root"),
                   "compile-queue: cgen requires --source-root and --entry"),
                 "compile-queue: artifact names must be safe relative paths"),
               "compile-queue: a command is required after --"),
@@ -1206,7 +1209,7 @@ def adopt_command(args: List<String>) -> IO(Unit):
 def usage() -> String:
   "usage: compile-queue.sh run --kind cgen|cc --state-root DIR --cwd DIR [options] -- COMMAND...\n"
   ++ "       compile-queue.sh key --kind cgen|cc [options]\n"
-  ++ "       cc requests require --compiler, --linker and --version\n"
+  ++ "       cc requests require --compiler, --linker, --version and an absolute --source-root\n"
   ++ "       compile-queue.sh cancel --state-root DIR --key KEY --token TOKEN\n"
   ++ "       compile-queue.sh wait --state-root DIR --key KEY\n"
   ++ "       compile-queue.sh status --state-root DIR [--key KEY]\n"

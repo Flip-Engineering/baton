@@ -125,6 +125,7 @@ class CompilerArmSharing(unittest.TestCase):
         self.run_queue([
             'run', '--kind', 'cc', '--state-root', self.state, '--cwd', ROOT,
             '--compiler', self.cc, '--linker', linker, '--version', version,
+            '--source-root', ROOT,
             '--input', source,
             '--artifact', 'binary=%s' % binary, '--option', 'test=%s' % source.stem,
             '--', self.cc, '-O1', '-w', source, '-lm', '-lpthread', '-o', binary])
