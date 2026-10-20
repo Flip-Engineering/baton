@@ -1,8 +1,7 @@
 #!/bin/sh
 # Root qualification script for the account-credit current-main port.
 #
-# Run as root from any directory. The script records the current cgroup memory
-# settings and observed swap use without imposing a memory or swap limit.
+# The script records the current cgroup memory settings and observed swap use.
 #
 # The script runs the three pinned module checks, builds and runs the focused
 # fixture, compares its output with the frozen expected output, and records exit

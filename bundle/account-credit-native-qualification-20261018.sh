@@ -1,12 +1,11 @@
 #!/bin/sh
 # Root qualification script for the native API-key account boundary.
 #
-# Run as root from any directory. The script records the current cgroup memory
-# settings without imposing a memory or swap limit.
+# The script records the current cgroup memory settings.
 #
 # It builds the native API-key helper and account-boundary fixtures, then runs
 # observation, binding, focused account, API-key specification and credential-
-# safety checks. It does not build Main.
+# safety checks.
 #
 # NODE names the native Node executable. The default is the installed native
 # path below; a bare name is resolved through PATH. A missing or non-executable
