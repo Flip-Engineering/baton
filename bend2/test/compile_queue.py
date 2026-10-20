@@ -31,6 +31,12 @@ def queue_entry():
     return None
 
 
+def queue_command(queue, args):
+    """Build argv for a native queue binary or its public launcher."""
+    delimiter = ['--'] if os.environ.get('BATON2_COMPILE_QUEUE_BIN') else []
+    return [queue, *delimiter, *map(str, args)]
+
+
 def state_root():
     value = os.environ.get('BATON_COMPILE_QUEUE_ROOT')
     if not value or not pathlib.Path(value).is_absolute():
@@ -72,13 +78,13 @@ def compile_cc(argv, inputs, output, cwd, compiler=None, options=()):
         raise unittest.SkipTest('the shared compile queue executable is unavailable')
     compiler = str(compiler if compiler is not None else argv[0])
     linker, version = compiler_identity(compiler)
-    request = [queue, 'run', '--kind', 'cc',
+    request = queue_command(queue, ['run', '--kind', 'cc',
                '--state-root', str(state_root()),
                '--cwd', str(cwd),
                '--source-root', str(common_source_root(inputs, cwd)),
                '--compiler', compiler,
                '--linker', linker,
-               '--version', version]
+               '--version', version])
     for item in inputs:
         request += ['--input', str(item)]
     request += ['--artifact', 'binary=' + str(output)]
