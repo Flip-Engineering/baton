@@ -14,6 +14,7 @@
 import Base
 import ../coordinator/commands.bend as C
 import ./subscription-fallback.bend as Subs
+import ./usage-windows.bend as UW
 import ../json/canonical.bend as J
 import ../git/text.bend as Tx
 import ../host/sqlite.bend as DB
@@ -83,6 +84,127 @@ def decimal_tail(+text: String, +seen_dot: Bool, +seen_digit: Bool) -> Bool:
 
 def decimal_text(+text: String) -> Bool:
   decimal_tail(text,False{},False{})
+
+# --- exact decimal arithmetic ------------------------------------------------
+# Amounts stay decimal text end to end. Comparison, addition and subtraction
+# scale both operands to integer digit strings at the wider fractional width,
+# so no amount passes through a float and authored precision is preserved.
+
+def digits_clean_tail(+text: String) -> String:
+  match text:
+    case SNil{}: "0"
+    case SCon{head,tail}: Bool.pick(String,Bool.and(U32.is_eq(Char.to_u32(head),48),Bool.not(String.is_empty(tail))),digits_clean_tail(tail),text)
+
+def digits_clean(+text: String) -> String:
+  Bool.pick(String,String.is_empty(text),"0",digits_clean_tail(text))
+
+def decimal_int_of(parts: List<&2,String>) -> String:
+  match parts:
+    case head <> rest: head
+    case Nil{}: ""
+
+def decimal_int_part(+text: String) -> String:
+  decimal_int_of(String.split(text,Char.from_u32(46)))
+
+def decimal_frac_of(parts: List<&2,String>) -> String:
+  match parts:
+    case head <> frac <> rest: frac
+    case other: ""
+
+def decimal_frac_part(+text: String) -> String:
+  decimal_frac_of(String.split(text,Char.from_u32(46)))
+
+def frac_padded(+frac: String, +other: String) -> String:
+  match frac other:
+    case SNil{} SNil{}: ""
+    case SNil{} SCon{ohead,otail}: SCon{Char.from_u32(48),frac_padded("",otail)}
+    case SCon{head,tail} SNil{}: frac
+    case SCon{head,tail} SCon{ohead,otail}: SCon{head,frac_padded(tail,otail)}
+
+def decimal_scaled(+text: String, +other: String) -> String:
+  digits_clean(digits_clean(decimal_int_part(text)) ++ frac_padded(decimal_frac_part(text),decimal_frac_part(other)))
+
+def digits_is_gt(+a: String, +b: String) -> Bool:
+  Bool.pick(Bool,Nat.is_eq(String.length(a),String.length(b)),String.is_gt(a,b),Nat.is_lt(String.length(b),String.length(a)))
+
+def decimal_is_gt(+a: String, +b: String) -> Bool:
+  digits_is_gt(decimal_scaled(a,b),decimal_scaled(b,a))
+
+def decimal_lte(+a: String, +b: String) -> Bool:
+  Bool.not(decimal_is_gt(a,b))
+
+def decimal_is_zero_tail(+text: String) -> Bool:
+  match text:
+    case SNil{}: True{}
+    case SCon{head,tail}: Bool.and(Bool.or(U32.is_eq(Char.to_u32(head),48),U32.is_eq(Char.to_u32(head),46)),decimal_is_zero_tail(tail))
+
+def decimal_is_zero(+text: String) -> Bool:
+  Bool.and(decimal_text(text),decimal_is_zero_tail(text))
+
+def digit_value(+head: Char) -> U32:
+  U32.sub(Char.to_u32(head),48)
+
+def digits_add_rev(+a: String, +b: String, +carry: U32) -> String:
+  match a b:
+    case SNil{} SNil{}: Bool.pick(String,U32.is_eq(carry,1),"1","")
+    case SNil{} SCon{bhead,btail}: SCon{Char.from_u32(U32.add(48,U32.mod(U32.add(digit_value(bhead),carry),10))),digits_add_rev("",btail,U32.div(U32.add(digit_value(bhead),carry),10))}
+    case SCon{ahead,atail} SNil{}: SCon{Char.from_u32(U32.add(48,U32.mod(U32.add(digit_value(ahead),carry),10))),digits_add_rev(atail,"",U32.div(U32.add(digit_value(ahead),carry),10))}
+    case SCon{ahead,atail} SCon{bhead,btail}: SCon{Char.from_u32(U32.add(48,U32.mod(U32.add(U32.add(digit_value(ahead),digit_value(bhead)),carry),10))),digits_add_rev(atail,btail,U32.div(U32.add(U32.add(digit_value(ahead),digit_value(bhead)),carry),10))}
+
+def digits_add(+a: String, +b: String) -> String:
+  digits_clean(String.reverse(digits_add_rev(String.reverse(digits_clean(a)),String.reverse(digits_clean(b)),0)))
+
+def digits_sub_rev(+a: String, +b: String, +borrow: U32) -> String:
+  match a b:
+    case SNil{} SNil{}: ""
+    case SNil{} SCon{bhead,btail}: ""
+    case SCon{ahead,atail} SNil{}: Bool.pick(String,U32.is_lt(digit_value(ahead),borrow),SCon{Char.from_u32(U32.add(48,U32.sub(U32.add(digit_value(ahead),10),borrow))),digits_sub_rev(atail,"",1)},SCon{Char.from_u32(U32.add(48,U32.sub(digit_value(ahead),borrow))),digits_sub_rev(atail,"",0)})
+    case SCon{ahead,atail} SCon{bhead,btail}: Bool.pick(String,U32.is_lt(digit_value(ahead),U32.add(digit_value(bhead),borrow)),SCon{Char.from_u32(U32.add(48,U32.sub(U32.add(digit_value(ahead),10),U32.add(digit_value(bhead),borrow)))),digits_sub_rev(atail,btail,1)},SCon{Char.from_u32(U32.add(48,U32.sub(digit_value(ahead),U32.add(digit_value(bhead),borrow)))),digits_sub_rev(atail,btail,0)})
+
+def digits_sub(+a: String, +b: String) -> String:
+  digits_clean(String.reverse(digits_sub_rev(String.reverse(digits_clean(a)),String.reverse(digits_clean(b)),0)))
+
+def take_like(+text: String, +like: String) -> String:
+  match text like:
+    case SNil{} SNil{}: ""
+    case SNil{} SCon{lhead,ltail}: ""
+    case SCon{head,tail} SNil{}: ""
+    case SCon{head,tail} SCon{lhead,ltail}: SCon{head,take_like(tail,ltail)}
+
+def drop_like(+text: String, +like: String) -> String:
+  match text like:
+    case SNil{} SNil{}: ""
+    case SNil{} SCon{lhead,ltail}: ""
+    case SCon{head,tail} SNil{}: text
+    case SCon{head,tail} SCon{lhead,ltail}: drop_like(tail,ltail)
+
+def zeros_like(+like: String) -> String:
+  match like:
+    case SNil{}: ""
+    case SCon{head,tail}: SCon{Char.from_u32(48),zeros_like(tail)}
+
+def frac_trimmed_go(+reversed: String) -> String:
+  match reversed:
+    case SNil{}: ""
+    case SCon{head,tail}: Bool.pick(String,U32.is_eq(Char.to_u32(head),48),frac_trimmed_go(tail),String.reverse(reversed))
+
+def frac_trimmed(+frac: String) -> String:
+  frac_trimmed_go(String.reverse(frac))
+
+def decimal_join_parts(+rev_int: String, +frac: String) -> String:
+  Bool.pick(String,String.is_empty(frac),digits_clean(String.reverse(rev_int)),digits_clean(String.reverse(rev_int)) ++ "." ++ frac)
+
+def decimal_join_scaled(+scaled: String, +frac_like: String) -> String:
+  decimal_join_parts(drop_like(String.reverse(scaled),frac_like),frac_trimmed(zeros_like(drop_like(frac_like,String.reverse(take_like(String.reverse(scaled),frac_like)))) ++ String.reverse(take_like(String.reverse(scaled),frac_like))))
+
+def decimal_from_scaled(+scaled: String, +frac_like: String) -> String:
+  Bool.pick(String,String.is_empty(frac_like),digits_clean(scaled),decimal_join_scaled(digits_clean(scaled),frac_like))
+
+def decimal_add(+a: String, +b: String) -> String:
+  decimal_from_scaled(digits_add(decimal_scaled(a,b),decimal_scaled(b,a)),frac_padded(decimal_frac_part(a),decimal_frac_part(b)))
+
+def decimal_sub(+a: String, +b: String) -> String:
+  decimal_from_scaled(digits_sub(decimal_scaled(a,b),decimal_scaled(b,a)),frac_padded(decimal_frac_part(a),decimal_frac_part(b)))
 
 def funding_known(+funding: String) -> Bool:
   Bool.or(String.eq(funding,"subscription"),String.eq(funding,"api_key"))
@@ -189,16 +311,115 @@ def select_account(accounts: List<&2,AccountRecord>, +blocked: String, +harness:
 
 # --- the launch binding ------------------------------------------------------
 
-# The funding route decides the launch binding. A subscription account binds the
-# credential directory the harness reads. An API-key account runs the packaged
-# native resolver as the launch head; the resolver path and the secret reference
-# are the binding, and the harness command follows it. The stored argv carries
-# the reference and never a value. A missing resolver leaves an API-key account
-# unlaunchable, which the caller reports as the actual cause.
+# A subscription account binds the credential directory the harness reads. The
+# API-key helper binding carries only a resolver path and secret reference. The
+# coordinator applies the credit-admission hold before returning that binding.
 def api_key_binding(+secret_ref: String, helper: Maybe<String>) -> Maybe<List<String>>:
   match helper:
     case None{}: None{}
     case Some{+script}: Some{Con{script,Con{secret_ref,Nil{}}}}
+
+# Anthropic Claude API-key funding is held until every request can reserve its
+# maximum charge before it reaches the provider. A CLI spend threshold does not
+# bound a request that is already in flight.
+def credit_api_key_refusal(account: AccountRecord) -> String:
+  match account:
+    case Ac{id,provider,harness,funding,secret_ref,organization,verified_at}:
+      match funding:
+        case "api_key": Bool.pick(String,Bool.and(String.eq(provider,"anthropic"),String.eq(harness,"claude-code")),"Anthropic API-key launches are held because request-level promotional-credit admission is unavailable; the attempt was not started and its input stays owed.","This API-key launch has no installed resolver beside the resolved identity helper; the attempt was not started and its input stays owed.")
+        case other: "The selected account has no available launch binding; the attempt was not started and its input stays owed."
+
+# --- request-level credit metering and admission -----------------------------
+# A meter reading is the newest reported promotional-credit observation for one
+# verified organization, stated beside the two clocks that bound it: the plan
+# billing cycle that refreshes the credit and the calendar-month period that
+# resets the organization spend cap. Reserved is the sum of maximum charges
+# already admitted and not yet settled for that organization and cycle.
+type CreditMeter is Data:
+  CMeter{organization: String, state: String, cycle: String, balance: String, unit: String, monthly_cap: String, cap_period: String, cycle_spent: String, reserved: String}
+
+type CreditAdmission is Data:
+  CAdmitted{organization: String, cycle: String, reserved_total: String, balance_after_reserve: String, cap_after_reserve: String}
+  CRefused{reason: String}
+
+def meter_organization(meter: CreditMeter) -> String:
+  match meter:
+    case CMeter{organization,state,cycle,balance,unit,monthly_cap,cap_period,cycle_spent,reserved}: organization
+
+def meter_state(meter: CreditMeter) -> String:
+  match meter:
+    case CMeter{organization,state,cycle,balance,unit,monthly_cap,cap_period,cycle_spent,reserved}: state
+
+def meter_cycle(meter: CreditMeter) -> String:
+  match meter:
+    case CMeter{organization,state,cycle,balance,unit,monthly_cap,cap_period,cycle_spent,reserved}: cycle
+
+def meter_balance(meter: CreditMeter) -> String:
+  match meter:
+    case CMeter{organization,state,cycle,balance,unit,monthly_cap,cap_period,cycle_spent,reserved}: balance
+
+def meter_unit(meter: CreditMeter) -> String:
+  match meter:
+    case CMeter{organization,state,cycle,balance,unit,monthly_cap,cap_period,cycle_spent,reserved}: unit
+
+def meter_monthly_cap(meter: CreditMeter) -> String:
+  match meter:
+    case CMeter{organization,state,cycle,balance,unit,monthly_cap,cap_period,cycle_spent,reserved}: monthly_cap
+
+def meter_cap_period(meter: CreditMeter) -> String:
+  match meter:
+    case CMeter{organization,state,cycle,balance,unit,monthly_cap,cap_period,cycle_spent,reserved}: cap_period
+
+def meter_cycle_spent(meter: CreditMeter) -> String:
+  match meter:
+    case CMeter{organization,state,cycle,balance,unit,monthly_cap,cap_period,cycle_spent,reserved}: cycle_spent
+
+def meter_reserved(meter: CreditMeter) -> String:
+  match meter:
+    case CMeter{organization,state,cycle,balance,unit,monthly_cap,cap_period,cycle_spent,reserved}: reserved
+
+def credit_admission_admitted(admission: CreditAdmission) -> Bool:
+  match admission:
+    case CAdmitted{organization,cycle,reserved_total,balance_after_reserve,cap_after_reserve}: True{}
+    case CRefused{reason}: False{}
+
+def credit_admission_reason(admission: CreditAdmission) -> String:
+  match admission:
+    case CAdmitted{organization,cycle,reserved_total,balance_after_reserve,cap_after_reserve}: ""
+    case CRefused{reason}: reason
+
+def credit_admission_reserved_total(admission: CreditAdmission) -> String:
+  match admission:
+    case CAdmitted{organization,cycle,reserved_total,balance_after_reserve,cap_after_reserve}: reserved_total
+    case CRefused{reason}: ""
+
+def credit_admission_balance_after(admission: CreditAdmission) -> String:
+  match admission:
+    case CAdmitted{organization,cycle,reserved_total,balance_after_reserve,cap_after_reserve}: balance_after_reserve
+    case CRefused{reason}: ""
+
+def credit_admission_cap_after(admission: CreditAdmission) -> String:
+  match admission:
+    case CAdmitted{organization,cycle,reserved_total,balance_after_reserve,cap_after_reserve}: cap_after_reserve
+    case CRefused{reason}: ""
+
+# Fail-closed admission for one provider request. Every fact must be present
+# and current for its own clock before the bounded charge is reserved against
+# both the promotional balance and the monthly cap. An admitted result carries
+# the reservation totals the caller records; it does not start a request. The
+# launch hold stays in account_binding until a caller wires this decision into
+# the request path and that wiring is qualified.
+def credit_request_admission(+account: AccountRecord, +meter: CreditMeter, +current_cycle: String, +current_cap_period: String, +max_charge: String) -> CreditAdmission:
+  Bool.pick(CreditAdmission,Bool.not(Bool.and(String.eq(account_provider(account),"anthropic"),Bool.and(String.eq(account_harness(account),"claude-code"),String.eq(account_funding(account),"api_key")))),CRefused{"notPromotionalCreditRoute"},
+  Bool.pick(CreditAdmission,Bool.or(String.is_empty(account_organization(account)),Bool.not(String.eq(account_organization(account),meter_organization(meter)))),CRefused{"organizationUnverified"},
+  Bool.pick(CreditAdmission,Bool.not(String.eq(meter_state(meter),"reported")),CRefused{"creditObservationUnavailable"},
+  Bool.pick(CreditAdmission,Bool.or(String.is_empty(meter_cycle(meter)),Bool.not(String.eq(meter_cycle(meter),current_cycle))),CRefused{"creditCycleMismatch"},
+  Bool.pick(CreditAdmission,Bool.or(String.is_empty(meter_cap_period(meter)),Bool.not(String.eq(meter_cap_period(meter),current_cap_period))),CRefused{"monthlyCapPeriodMismatch"},
+  Bool.pick(CreditAdmission,Bool.not(Bool.and(decimal_text(meter_balance(meter)),Bool.and(decimal_text(meter_monthly_cap(meter)),Bool.and(decimal_text(meter_cycle_spent(meter)),Bool.and(decimal_text(meter_reserved(meter)),Bool.and(decimal_text(max_charge),Bool.not(String.is_empty(meter_unit(meter))))))))),CRefused{"creditAmountMalformed"},
+  Bool.pick(CreditAdmission,decimal_is_zero(max_charge),CRefused{"requestChargeUnbounded"},
+  Bool.pick(CreditAdmission,decimal_is_gt(decimal_add(meter_reserved(meter),max_charge),meter_balance(meter)),CRefused{"promotionalCreditInsufficient"},
+  Bool.pick(CreditAdmission,decimal_is_gt(decimal_add(decimal_add(meter_cycle_spent(meter),meter_reserved(meter)),max_charge),meter_monthly_cap(meter)),CRefused{"monthlyCapInsufficient"},
+  CAdmitted{meter_organization(meter),meter_cycle(meter),decimal_add(meter_reserved(meter),max_charge),decimal_sub(meter_balance(meter),decimal_add(meter_reserved(meter),max_charge)),decimal_sub(meter_monthly_cap(meter),decimal_add(decimal_add(meter_cycle_spent(meter),meter_reserved(meter)),max_charge))})))))))))
 
 def launch_binding(+harness: String, +funding: String, +secret_ref: String, helper: Maybe<String>) -> Maybe<List<String>>:
   Bool.pick(Maybe<List<String>>,Bool.and(String.eq(funding,"api_key"),Bool.not(String.eq(harness,"claude-code"))),None{},Bool.pick(Maybe<List<String>>,String.eq(funding,"api_key"),api_key_binding(secret_ref,helper),Some{Subs.store_binding(harness,secret_ref)}))
@@ -223,7 +444,13 @@ def api_key_resolver(identity: String & String) -> Maybe<String>:
 def account_binding(+harness: String, chosen: Maybe<&2,AccountRecord>, helper: Maybe<String>, +profile_store: String) -> Maybe<List<String>>:
   match chosen:
     case None{}: Bool.pick(Maybe<List<String>>,String.is_empty(profile_store),None{},Some{Subs.store_binding(harness,profile_store)})
-    case Some{+account}: launch_binding(harness,account_funding(account),account_secret_ref(account),helper)
+    case Some{+account}:
+      match account:
+        case Ac{id,provider,account_harness,funding,secret_ref,organization,verified_at}:
+          match funding:
+            case "api_key": Bool.pick(Maybe<List<String>>,Bool.and(String.eq(provider,"anthropic"),String.eq(account_harness,"claude-code")),None{},launch_binding(harness,"api_key",secret_ref,helper))
+            case "subscription": Some{Subs.store_binding(harness,secret_ref)}
+            case other: None{}
 
 # --- the schema --------------------------------------------------------------
 
@@ -234,6 +461,7 @@ def schema() -> String:
   ++ "CREATE TABLE IF NOT EXISTS account_attempts (attempt TEXT PRIMARY KEY NOT NULL,session TEXT NOT NULL REFERENCES sessions(id),turn TEXT NOT NULL DEFAULT '',account TEXT NOT NULL REFERENCES accounts(id),organization TEXT NOT NULL DEFAULT '',funding TEXT NOT NULL,secret_ref TEXT NOT NULL,workload TEXT NOT NULL DEFAULT '',outcome TEXT NOT NULL DEFAULT '',error_text TEXT NOT NULL DEFAULT '',started_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,ended_at TEXT NOT NULL DEFAULT '',predecessor TEXT NOT NULL DEFAULT '',recorded TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);"
   ++ "CREATE TABLE IF NOT EXISTS credit_observations (id TEXT PRIMARY KEY NOT NULL,organization TEXT NOT NULL DEFAULT '',fact TEXT NOT NULL,state TEXT NOT NULL CHECK(state IN ('reported','unavailable')),balance TEXT NOT NULL DEFAULT '',unit TEXT NOT NULL DEFAULT '',expires TEXT NOT NULL DEFAULT '',cycle TEXT NOT NULL DEFAULT '',source TEXT NOT NULL,detail TEXT NOT NULL DEFAULT '',observed_at TEXT NOT NULL,authority TEXT NOT NULL);"
   ++ "CREATE INDEX IF NOT EXISTS credit_observations_pool ON credit_observations(organization,fact);"
+  ++ "CREATE TABLE IF NOT EXISTS credit_authorizations (attempt TEXT PRIMARY KEY NOT NULL,session TEXT NOT NULL DEFAULT '',account TEXT NOT NULL DEFAULT '',organization TEXT NOT NULL DEFAULT '',cycle TEXT NOT NULL DEFAULT '',balance TEXT NOT NULL DEFAULT '',unit TEXT NOT NULL DEFAULT '',secret_ref TEXT NOT NULL DEFAULT '',state TEXT NOT NULL DEFAULT 'authorized',consumed TEXT NOT NULL DEFAULT '',created TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);"
   ++ "CREATE INDEX IF NOT EXISTS account_attempts_session ON account_attempts(session,recorded);"
 
 # One transaction that installs the collaboration schema and this module's tables
@@ -282,6 +510,26 @@ def attempt_columns_ensured_present(+db: String) -> IO(Unit):
   do IO<Unit>:
     missing : List<String> <- attempt_columns_missing(db,attempt_columns())
     attempt_columns_installed(db,missing)
+
+def auth_columns_missing(+db: String, columns: List<String>) -> IO(List<String>):
+  match columns:
+    case Nil{}: IO.pure(List<String>,Nil{})
+    case +column <> rest: do IO<List<String>>:
+      found : String <- IO.try(String,DB.Sql.read(db,"SELECT EXISTS(SELECT 1 FROM pragma_table_info('credit_authorizations') WHERE name=" ++ C.q(column) ++ ");"))
+      missing : List<String> <- auth_columns_missing(db,rest)
+      IO.pure(List<String>,attempt_columns_missing_kept(String.eq(Tx.trim_nl(found),"0"),column,missing))
+
+def auth_columns_installed(+db: String, columns: List<String>) -> IO(Unit):
+  match columns:
+    case Nil{}: IO.pure(Unit,Unit{})
+    case +column <> rest: do IO<Unit>:
+      added : String <- IO.try(String,DB.Sql.query(db,"ALTER TABLE credit_authorizations ADD COLUMN " ++ column ++ " TEXT NOT NULL DEFAULT '';"))
+      auth_columns_installed(db,rest)
+
+def auth_columns_ensured(+db: String) -> IO(Unit):
+  do IO<Unit>:
+    missing : List<String> <- auth_columns_missing(db,["secret_ref","state","consumed"])
+    auth_columns_installed(db,missing)
 
 def attempt_columns_ensured(+db: String) -> IO(Unit):
   do IO<Unit>:
@@ -494,16 +742,37 @@ def handoff_decided(+db: String, +session: String, +id: String, +event: String, 
     case None{}: Subs.profile_handoff(db,session,id,event,native,cmd,cwd)
     case Some{+refused}: Bool.pick(IO(Bool),String.is_empty(cause),IO.pure(Bool,False{}),advance_account(db,session,id,harness,refused,cause))
 
+# The account label in force: the bound account's own label, or the operator's
+# profile label when no account record exists. The handoff's usage-window record
+# and the wake gate both read this one value, so the reported reset and the
+# refusal to retry before it name the same account.
+def label_for_bound(+db: String, +session: String, +bound: Maybe<&2,AccountRecord>) -> IO(String):
+  match bound:
+    case Some{+account}: IO.pure(String,account_id(account))
+    case None{}: Subs.profile_label_io(db,session)
+
+def handoff_label_io(+db: String, +session: String) -> IO(String):
+  do IO<String>:
+    +harness_text : String <- IO.try(String,DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
+    +harness : String <- IO.pure(String,Tx.trim_nl(harness_text))
+    bound : Maybe<&2,AccountRecord> <- bound_account(db,session,harness)
+    label : String <- label_for_bound(db,session,bound)
+    IO.pure(String,label)
+
 # Provider-reported exhaustion advances the account in force when a binding
-# put one in force, and the operator's profile list otherwise. The advance is
+# put one in force, and the operator's profile list otherwise. The usage-window
+# observation is recorded before any advance, under the refused account label,
+# so the provider reset survives even when the advance fails; the advance is
 # recorded before the caller relaunches, so the next attempt records the next
-# account beside its own attempt identity.
+# account beside its own attempt identity. An empty cause records nothing.
 def handoff(+db: String, +session: String, +id: String, +event: String, native: String, cmd: String, cwd: String) -> IO(Bool):
   do IO<Bool>:
     +cause : String <- Subs.exhaustion_cause(db,event)
     +harness_text : String <- IO.try(String,DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(session) ++ ";"))
     +harness : String <- IO.pure(String,Tx.trim_nl(harness_text))
-    bound : Maybe<&2,AccountRecord> <- bound_account(db,session,harness)
+    +bound : Maybe<&2,AccountRecord> <- bound_account(db,session,harness)
+    +label : String <- label_for_bound(db,session,bound)
+    recorded : Unit <- Bool.pick(IO(Unit),String.is_empty(cause),IO.pure(Unit,Unit{}),UW.record_cause(db,session,id,label,cause))
     advanced : Bool <- handoff_decided(db,session,id,event,native,cmd,cwd,cause,harness,bound)
     IO.pure(Bool,advanced)
 
@@ -726,3 +995,75 @@ def record_current_attempt(+db: String, +session: String, +attempt: String, +pre
   match chosen:
     case None{}: IO.pure(Unit,Unit{})
     case Some{+account}: record_attempt(db,session,attempt,predecessor,account)
+
+# --- the credit-only route status recorded in the database -------------------
+# Eligibility reads actual recorded facts: the Anthropic claude-code api_key
+# route, a verified organization, and the newest promotional_credit
+# observation for that organization with its reported balance and unit. A
+# reported zero balance is the provider-reported exhausted state. A retained
+# launch contains an unbounded number of provider requests. A reported balance
+# does not prove that the provider will refuse billed usage. No charge bound is
+# derived and no reservation or settled amount is recorded from a launch.
+# Actual provider cost enters through external_spend observations from the
+# Admin cost report. Credit-only routing stays held until a per-request
+# accounting route is proven; the status names the actual reason.
+def credit_meter_sql(+organization: String) -> String:
+  "SELECT state||char(31)||balance||char(31)||unit||char(31)||cycle FROM credit_observations WHERE organization=" ++ C.q(organization) ++ " AND fact='promotional_credit' ORDER BY observed_at DESC,rowid DESC LIMIT 1;"
+
+def credit_meter_fields(+organization: String, fields: List<&2,String>) -> CreditMeter:
+  match fields:
+    case state <> balance <> unit <> cycle <> rest: CMeter{organization,state,cycle,balance,unit,"","","",""}
+    case other: CMeter{organization,"unavailable","","","","","","",""}
+
+def credit_route_eligibility(+account: AccountRecord, +meter: CreditMeter) -> String:
+  Bool.pick(String,Bool.not(Bool.and(String.eq(account_provider(account),"anthropic"),Bool.and(String.eq(account_harness(account),"claude-code"),String.eq(account_funding(account),"api_key")))),"notPromotionalCreditRoute",
+  Bool.pick(String,Bool.or(String.is_empty(account_organization(account)),Bool.not(String.eq(account_organization(account),meter_organization(meter)))),"organizationUnverified",
+  Bool.pick(String,Bool.not(String.eq(meter_state(meter),"reported")),"creditObservationUnavailable",
+  Bool.pick(String,Bool.or(Bool.not(decimal_text(meter_balance(meter))),String.is_empty(meter_unit(meter))),"creditAmountMalformed",
+  Bool.pick(String,decimal_is_zero(meter_balance(meter)),"promotionalCreditExhausted","eligible")))))
+
+def credit_status_fields(+db: String, +account: AccountRecord, meter_rows: String) -> IO(String):
+  IO.pure(String,credit_route_eligibility(account,credit_meter_fields(account_organization(account),String.split(Tx.trim_nl(meter_rows),Char.from_u32(31)))))
+
+def credit_status_for(+db: String, +account: AccountRecord) -> IO(String):
+  do IO<String>:
+    meter_rows : String <- IO.try(String,DB.Sql.read(db,credit_meter_sql(account_organization(account))))
+    credit_status_fields(db,account,meter_rows)
+
+def credit_launch_refusal_status(+status: String) -> String:
+  Bool.pick(String,String.eq(status,"eligible"),"Anthropic API-key launches are held because credit-only routing is not proven for this deployment; the attempt was not started and its input stays owed.","Anthropic API-key launch refused by promotional-credit eligibility (" ++ status ++ "); the attempt was not started and its input stays owed.")
+
+def credit_launch_refusal_decided(+account: AccountRecord, +status: String) -> String:
+  Bool.pick(String,Bool.and(String.eq(account_provider(account),"anthropic"),Bool.and(String.eq(account_harness(account),"claude-code"),String.eq(account_funding(account),"api_key"))),credit_launch_refusal_status(status),"")
+
+def credit_launch_refusal_for(+db: String, chosen: Maybe<&2,AccountRecord>) -> IO(String):
+  match chosen:
+    case None{}: IO.pure(String,"")
+    case Some{+account}: do IO<String>:
+      status : String <- credit_status_for(db,account)
+      IO.pure(String,credit_launch_refusal_decided(account,status))
+
+def credit_authorization_sql(+session: String, +attempt: String, +account: AccountRecord) -> String:
+  "INSERT OR IGNORE INTO credit_authorizations(attempt,session,account,organization,cycle,balance,unit,secret_ref,state) SELECT " ++ C.q(attempt) ++ "," ++ C.q(session) ++ "," ++ C.q(account_id(account)) ++ "," ++ C.q(account_organization(account)) ++ ",cycle,balance,unit," ++ C.q(account_secret_ref(account)) ++ ",'authorized' FROM credit_observations WHERE organization=" ++ C.q(account_organization(account)) ++ " AND fact='promotional_credit' AND state='reported' ORDER BY observed_at DESC,rowid DESC LIMIT 1;"
+  ++ "SELECT count(*) FROM credit_authorizations WHERE attempt=" ++ C.q(attempt) ++ " AND account=" ++ C.q(account_id(account)) ++ " AND organization=" ++ C.q(account_organization(account)) ++ " AND secret_ref=" ++ C.q(account_secret_ref(account)) ++ " AND state='authorized';"
+
+def credit_record_authorization_decided(+db: String, +session: String, +attempt: String, +account: AccountRecord, +status: String) -> IO(Bool):
+  match status:
+    case "eligible": do IO<Bool>:
+      migrated : Unit <- auth_columns_ensured(db)
+      saved : String <- IO.try(String,commit_read(db,credit_authorization_sql(session,attempt,account)))
+      IO.pure(Bool,String.eq(Tx.trim_nl(saved),"1"))
+    case other: IO.pure(Bool,False{})
+
+def credit_record_authorization(+db: String, +session: String, +attempt: String, +account: AccountRecord) -> IO(Bool):
+  do IO<Bool>:
+    status : String <- credit_status_for(db,account)
+    credit_record_authorization_decided(db,session,attempt,account,status)
+
+def credit_launch_binding_account(+db: String, +session: String, +attempt: String, +harness: String, +account: AccountRecord, helper: Maybe<String>, +profile_store: String) -> IO(Maybe<List<String>>):
+  Bool.pick(IO(Maybe<List<String>>),Bool.and(String.eq(account_provider(account),"anthropic"),Bool.and(String.eq(account_harness(account),"claude-code"),String.eq(account_funding(account),"api_key"))),IO.pure(Maybe<List<String>>,None{}),IO.pure(Maybe<List<String>>,account_binding(harness,Some{account},helper,profile_store)))
+
+def credit_launch_binding(+db: String, +session: String, +attempt: String, +harness: String, chosen: Maybe<&2,AccountRecord>, helper: Maybe<String>, +profile_store: String) -> IO(Maybe<List<String>>):
+  match chosen:
+    case None{}: IO.pure(Maybe<List<String>>,account_binding(harness,None{},helper,profile_store))
+    case Some{+account}: credit_launch_binding_account(db,session,attempt,harness,account,helper,profile_store)

@@ -1,10 +1,11 @@
 # Native api-key-exec boundary specification
 
-Status: implementation specification and landed boundary, 2026-10-17, seat accounts-glm;
-native implementation landed 2026-10-18. The native helper
-`bend2/harness/api-key-exec.bend`, built as `api-key-exec`, is the executed driver.
-Product policy lives in Bend2 and the host boundary shrinks to two mechanical
-primitives. No policy lives in C.
+Status: secret-resolution boundary landed 2026-10-18; Anthropic API-key launches
+are held until request-level promotional-credit admission is available. The
+packaged helper `bend2/harness/api-key-exec.bend`, built as `api-key-exec`,
+returns `creditAdmissionUnavailable` before resolving a secret or spawning a
+child. The details below describe the retained secret boundary used when the
+launch gate is enabled.
 
 ## Host boundary (C additions to `process-spawn.c`, exposed in `process.bend`)
 
@@ -41,11 +42,9 @@ All policy, in Bend2, mirroring the wrapper's typed conditions exactly:
 
 ## Integration and acceptance
 
-The retained launch for an `api_key` claude-code account calls this module before admission:
-resolution failure is the existing launch refusal with its typed condition, and the attempt
-row keeps its unstarted attribution. The seam switch is one commit in `turn.bend`
-(`retained_prepare` composes the plain harness argv plus the spec path) and is coordinated
-with the runtime seat, which owns `turn.bend` during the memory repair. Acceptance: the C8
-probe (`bend2/test/api-key-exec.test.mjs`) re-pointed at the native entry (same five cases),
-plus one fixture binding an `api_key` account through a stub provider command that prints its
-environment and argv.
+The retained coordinator refuses an Anthropic `api_key` account before spawn,
+and the packaged helper also refuses direct invocation. The focused fixture
+checks both refusal paths, confirms that a secret is not read and confirms that
+the child does not start. A later admission implementation must preserve this
+secret boundary and add request-level spend reservation before forwarding each
+provider request.

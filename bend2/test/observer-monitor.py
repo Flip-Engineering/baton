@@ -20,7 +20,7 @@ import time
 import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-FIXTURE = ROOT / '.scratch/bend2/monitor-fixture'
+FIXTURE = pathlib.Path(os.environ.get('OBSERVER_MONITOR_FIXTURE', ROOT / '.scratch/bend2/monitor-fixture'))
 COORDINATOR = pathlib.Path(os.getenv('OBSERVER_RECOVERY_BIN', ROOT / '.scratch/bend2/observer-recovery'))
 OBSERVER_ENTRY = ROOT / 'bend2/test/observer-recovery-entry.bend'
 NATIVE_UUID = '01a14948-63f9-7000-abc2-89573aa39352'
@@ -147,7 +147,8 @@ class ObserverMonitor(unittest.TestCase):
 
     def start_attempt(self, stderr_text='', native_uuid=NATIVE_UUID, attempt_id='attempt1',
                       stdout_text='monitor-line\n', sleep_seconds=8,
-                      later_stdout_text='', stdout_file=None, later_stdout_file=None):
+                      later_stdout_text='', stdout_file=None, later_stdout_file=None,
+                      harness='codex'):
         self.native.write_text(
             '\n'.join([
                 '#!' + sys.executable,
@@ -182,12 +183,12 @@ class ObserverMonitor(unittest.TestCase):
         self.stdout_text = stdout_text
         expected_stdout_bytes = (pathlib.Path(stdout_file).stat().st_size
                                  if stdout_file is not None else len(stdout_text.encode()))
-        self.fixture('init', self.db)
+        self.fixture('init', self.db, harness)
         with sqlite3.connect(self.db) as database:
             database.execute("UPDATE sessions SET native=? WHERE id='parent'", (native_uuid,))
         start = subprocess.Popen(
             [str(FIXTURE), 'start', str(self.db), attempt_id, str(self.attempt),
-             str(self.workspace), str(self.log), native_uuid, str(COORDINATOR), 'codex',
+             str(self.workspace), str(self.log), native_uuid, str(COORDINATOR), harness,
              'controlled-model', 'low', sys.executable, str(self.native),
              native_uuid, str(self.uuid_marker),
              *([str(self.release_marker)] if later_stdout_text else [])],
@@ -199,7 +200,8 @@ class ObserverMonitor(unittest.TestCase):
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline:
             if (self.attempt / 'native.pid').exists() and (self.attempt / 'stdout').exists():
-                if (self.attempt / 'stdout').stat().st_size >= expected_stdout_bytes:
+                if ((self.attempt / 'stdout').stat().st_size >= expected_stdout_bytes and
+                        self.uuid_marker.exists()):
                     break
             time.sleep(0.02)
         self.assertTrue((self.attempt / 'native.pid').exists(), 'native.pid was not written')
@@ -213,6 +215,7 @@ class ObserverMonitor(unittest.TestCase):
         self.assertIsNotNone(owner, 'database owner was not found')
         observer, observer_argv = receive_pid(self.db, 'parent', self.attempt_id)
         self.assertIsNotNone(observer, 'fixture receive child was not found by exact DB/session/attempt argv')
+        self.observer_argv = observer_argv
         os.kill(owner, signal.SIGKILL)
         deadline = time.monotonic() + 10
         while time.monotonic() < deadline and owner_pid(self.db) is not None:
@@ -607,6 +610,75 @@ class ObserverMonitor(unittest.TestCase):
         self.assertEqual(turn_event, report)
         self.assertEqual(self.row("SELECT COUNT(*) FROM messages WHERE kind='report' AND sender='parent'"), (1,))
         self.assertEqual(self.row('SELECT receipt FROM messages WHERE id=?', 'task'), (None,))
+
+    def test_spanned_agent_end_monitor_keeps_unknown_custody(self):
+        frame = ('{"type":"agent_end","isTerminal":true,"messages":[{"role":"assistant",'
+                 '"content":[{"type":"text","text":"terminal"}]}],"padding":"'
+                 + ('x' * 8192) + '"}\n')
+        observer, birth, manifest = self.start_attempt(
+            stdout_text=frame, sleep_seconds=3, harness='omp')
+        self.assertEqual(self.observer_argv[11], 'omp',
+                         'the persisted receive argv must retain the bare OMP harness')
+        self.wait_native_exit(timeout=10)
+        recovered = self.recover(observer)
+        self.assertNotEqual(recovered.returncode, 0,
+                            recovered.stdout + recovered.stderr)
+        self.assertNotIn('Operation not permitted', recovered.stdout + recovered.stderr,
+                         'monitor frame handling attempted a forbidden stdin close')
+        self.assertEqual((self.attempt / 'native.birth').read_bytes(), birth)
+        self.assertEqual((self.attempt / 'manifest').read_bytes(), manifest)
+        self.assertEqual(checkpoint_offset(self.attempt), len(frame.encode()),
+                         'spanned turn_end did not advance the final spool cursor')
+        self.assertEqual(custody_offset(self.attempt), len(frame.encode()),
+                         'monitor custody cursor differs from the final checkpoint')
+        self.assertEqual(self.row('SELECT receipt FROM messages WHERE id=?', 'task'), (None,))
+        self.assert_unknown_pending(native_exited=True)
+        self.assertFalse((self.attempt / 'acknowledged').exists())
+        self.assertFalse((self.attempt / 'released').exists())
+
+    def test_quiet_spool_awake_span_wakes_for_delayed_stdout(self):
+        delayed_line = 'wake-line-after-quiet-spool\n'
+        observer, birth, manifest = self.start_attempt(
+            stdout_text='', later_stdout_text=delayed_line, sleep_seconds=15,
+            harness='omp')
+        recover_argv = [str(COORDINATOR), '--recover-observer', str(self.db),
+                        'parent', str(observer)]
+        recovery = subprocess.Popen(
+            recover_argv, text=True, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, env=self.environment)
+        self.addCleanup(self.stop_owned_process, recovery)
+
+        # The spool is empty. Recovery must wait for the retained process event
+        # before it can checkpoint the delayed line.
+        time.sleep(0.5)
+        if recovery.poll() is not None:
+            stdout, stderr = recovery.communicate(timeout=10)
+            self.fail('recovery exited before delayed stdout: exit=%r stdout=%r stderr=%r' %
+                      (recovery.returncode, stdout, stderr))
+        self.release_marker.write_text('release\n')
+
+        expected_offset = len(delayed_line.encode())
+        deadline = time.monotonic() + 20
+        while time.monotonic() < deadline:
+            if checkpoint_offset(self.attempt) == expected_offset:
+                break
+            if recovery.poll() is not None:
+                break
+            time.sleep(0.02)
+        stdout, stderr = recovery.communicate(timeout=30)
+        self.assertEqual(checkpoint_offset(self.attempt), expected_offset,
+                         'awake span did not read and checkpoint delayed stdout; exit=%r stdout=%r stderr=%r' %
+                         (recovery.returncode, stdout, stderr))
+        self.assertNotEqual(recovery.returncode, 0,
+                            'unknown native status must remain a pending monitor result')
+        self.assertEqual(custody_offset(self.attempt), expected_offset)
+        self.assertEqual((self.attempt / 'native.birth').read_bytes(), birth)
+        self.assertEqual((self.attempt / 'manifest').read_bytes(), manifest)
+        self.assertEqual(int((self.attempt / 'native.pid').read_text()), self.native_process)
+        self.assertEqual(self.uuid_marker.read_text(), NATIVE_UUID)
+        self.assertEqual(self.row('SELECT receipt FROM messages WHERE id=?', 'task'), (None,))
+        self.wait_native_exit(timeout=5)
+        self.assert_unknown_pending(native_exited=True)
         self.assertFalse((self.attempt / 'acknowledged').exists())
         self.assertFalse((self.attempt / 'released').exists())
 

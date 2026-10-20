@@ -9,11 +9,11 @@ import ../src/host/session-lock.bend as Lock
 # Seeds the isolated coordinator database with one registered session and one
 # unacknowledged task message. The message sequence is the attempt's input
 # cursor, so a later observation that reads no further input retains it.
-def init_cli(+db: String) -> IO(Unit):
+def init_cli(+db: String, +harness: String) -> IO(Unit):
   do IO<Unit>:
     ensured : Unit <- Store.ensure_before_begin(db)
     seeded : String <- IO.try(String,DB.Sql.query(db,
-      "INSERT INTO sessions(id,parent,harness,model,effort,native) VALUES('parent',NULL,'codex','controlled-model','low','native-uuid');"
+      "INSERT INTO sessions(id,parent,harness,model,effort,native) VALUES('parent',NULL," ++ C.q(harness) ++ ",'controlled-model','low','native-uuid');"
       ++ "INSERT INTO messages(id,sender,recipient,kind,body) VALUES('task','parent','parent','task','Monitor the retained attempt.');"))
     IO.pure(Unit,Unit{})
 
@@ -76,8 +76,8 @@ def mode_number(+mode: String) -> U32:
 def dispatch_number(number: U32, rest: List<String>) -> IO(Unit):
   match number:
     case 1: match rest:
-      case db <> Nil{}: init_cli(db)
-      case other: IO.die(Unit,2,"monitor-fixture init DB")
+      case db <> harness <> Nil{}: init_cli(db,harness)
+      case other: IO.die(Unit,2,"monitor-fixture init DB HARNESS")
     case 2: match rest:
       case db <> attempt <> directory <> cwd <> log <> native <> recovery_executable <> harness <> model <> effort <> program:
         start_cli(db,attempt,directory,cwd,log,native,recovery_executable,harness,model,effort,program)
@@ -91,7 +91,7 @@ def dispatch_number(number: U32, rest: List<String>) -> IO(Unit):
     case 5: match rest:
       case db <> Nil{}: IO.try(Unit,Custody.Instance.owner(db))
       case other: IO.die(Unit,2,"--instance-owner DATABASE")
-    case other: IO.die(Unit,2,"monitor-fixture init DB | start ... | shutdown DB")
+    case other: IO.die(Unit,2,"monitor-fixture init DB HARNESS | start ... | shutdown DB")
 
 def dispatch_mode(mode: String, rest: List<String>) -> IO(Unit):
   dispatch_number(mode_number(mode),rest)
@@ -99,7 +99,7 @@ def dispatch_mode(mode: String, rest: List<String>) -> IO(Unit):
 def dispatch(args: List<String>) -> IO(Unit):
   match args:
     case +mode <> rest: dispatch_mode(mode,rest)
-    case other: IO.die(Unit,2,"monitor-fixture init DB | start ... | shutdown DB")
+    case other: IO.die(Unit,2,"monitor-fixture init DB HARNESS | start ... | shutdown DB")
 
 def main() -> IO(Unit):
   do IO<Unit>:

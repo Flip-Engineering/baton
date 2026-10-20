@@ -89,6 +89,11 @@ def retained_started(start: P.RetainedStart, lock: U32, payload: String, close: 
     case P.Unstarted{error}: IO.die(Unit,1,error)
     case P.Retained{handle}: observe_retained(handle,Some{lock},payload,close)
 
+def recovery_program(mode: String, executable: String, directory: String) -> String:
+  P.argv([executable,
+    Bool.pick(String,String.eq(mode,"recovery-fails"),"recover-retained-fail","recover-retained"),
+    directory])
+
 def retained_locked(database: String, +directory: String, +cwd: String, payload: String, +mode: String, program: List<String>, lock: Maybe<U32>) -> IO(Unit):
   match lock:
     case None{}: IO.die(Unit,1,"fixture session busy")
@@ -96,7 +101,7 @@ def retained_locked(database: String, +directory: String, +cwd: String, payload:
       executable : String <- IO.try(String,Lock.SessionLock.executable())
       bytes : String <- IO.try(String,Text.Text.read(payload))
       stderr : String = Bool.pick(String,String.eq(mode,"setup-failure"),cwd ++ "/setup.stderr",directory ++ "/native.stderr")
-      start : P.RetainedStart <- IO.try(P.RetainedStart,Custody.Instance.admit(database,directory,P.argv(program),cwd,stderr,"",1,Some{handle},P.argv([executable,"recover-retained",directory])))
+      start : P.RetainedStart <- IO.try(P.RetainedStart,Custody.Instance.admit(database,directory,P.argv(program),cwd,stderr,"",1,Some{handle},recovery_program(mode,executable,directory)))
       retained_started(start,handle,bytes,String.eq(mode,"close"))
 
 def retained_cli(args: List<String>) -> IO(Unit):
@@ -105,11 +110,20 @@ def retained_cli(args: List<String>) -> IO(Unit):
       Lock.SessionLock.acquire_session(Unit,db,"fixture",canonical => lock => retained_locked(canonical,directory,cwd,payload,mode,program,lock))
     case _: IO.die(Unit,2,"retain DATABASE ATTEMPT CWD PAYLOAD MODE PROGRAM ARGS...")
 
+def failed_recovery_cli(args: List<String>) -> IO(Unit):
+  match args:
+    case +directory <> Nil{}: do IO<Unit>:
+      recorded : Unit <- IO.try(Unit,Text.Text.append(directory ++ "/recovery-started","failed\n"))
+      +handle : U32 <- IO.try(U32,P.ProcessChild.attach(directory ++ "/missing"))
+      IO.die(Unit,3,"fixture recovery unexpectedly attached")
+    case _: IO.die(Unit,2,"recover-retained-fail ATTEMPT")
+
 def recovery_cli(args: List<String>) -> IO(Unit):
   match args:
     case +directory <> Nil{}: do IO<Unit>:
       recorded : Unit <- IO.try(Unit,Text.Text.append(directory ++ "/recovery-started","recovered\n"))
       +handle : U32 <- IO.try(U32,P.ProcessChild.attach(directory))
+      attached : Unit <- IO.try(Unit,Text.Text.append(directory ++ "/recovery-attached","attached\n"))
       sender : Chan(Unit) <- IO.fork(Unit,IO.pure(Unit,Unit{}))
       first : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.read_line(handle))
       retained_lines(handle,None{},sender,first)
@@ -162,6 +176,42 @@ def recover_observer_cli(args: List<String>) -> IO(Unit):
       recover_observer_with_pid(database,directory,U32.read(observer))
     case _: IO.die(Unit,2,"recover-observer DATABASE ATTEMPT OBSERVER_PID")
 
+def observer_probe_line(line: Maybe<String>) -> IO(Unit):
+  match line:
+    case None{}: IO.print("probe-eof")
+    case Some{text}: IO.print("probe:" ++ text)
+
+def observer_probe_result(result: Result<&1,&1,U32 & String,U32 & U32>) -> IO(Unit):
+  match result:
+    case Fail{(code,text)}: IO.die(Unit,1,U32.show(code) ++ ": " ++ text)
+    case Done{(+lock,+handle)}: do IO<Unit>:
+      line : Maybe<String> <- IO.try(Maybe<String>,P.ProcessChild.read_line(handle))
+      shown : Unit <- observer_probe_line(line)
+      unlocked : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
+      IO.print("probe-custody-open")
+
+def recover_observer_probe_with_pid(database: String, directory: String,
+                                    parsed: Maybe<&2,U32>) -> IO(Unit):
+  match parsed:
+    case None{}: IO.die(Unit,2,"invalid observer PID")
+    case Some{pid}: do IO<Unit>:
+      result : Result<&1,&1,U32 & String,U32 & U32> <- Lock.SessionLock.recover_observer(database,"fixture",directory,pid)
+      observer_probe_result(result)
+
+def recover_observer_probe_cli(args: List<String>) -> IO(Unit):
+  match args:
+    case database <> directory <> observer <> Nil{}:
+      recover_observer_probe_with_pid(database,directory,U32.read(observer))
+    case _: IO.die(Unit,2,"recover-probe DATABASE ATTEMPT OBSERVER_PID")
+
+def observer_hold_cli(args: List<String>) -> IO(Unit):
+  match args:
+    case directory <> Nil{}: do IO<Unit>:
+      +handle : U32 <- IO.try(U32,P.ProcessChild.attach(directory))
+      held : String <- IO.try(String,Text.Text.read("-"))
+      IO.print("observer-holder-released")
+    case _: IO.die(Unit,2,"observer-hold ATTEMPT")
+
 def write_cli(args: List<String>) -> IO(Unit):
   match args:
     case directory <> path <> Nil{}: do IO<Unit>:
@@ -209,10 +259,13 @@ def mode_number(+mode: String) -> U32:
   Bool.pick(U32,String.eq(mode,"shutdown"),9,
   Bool.pick(U32,String.eq(mode,"retain"),2,
   Bool.pick(U32,String.eq(mode,"recover-retained"),3,
+  Bool.pick(U32,String.eq(mode,"recover-retained-fail"),12,
   Bool.pick(U32,String.eq(mode,"lock-try"),4,
   Bool.pick(U32,String.eq(mode,"control-write"),5,
   Bool.pick(U32,String.eq(mode,"control-signal"),6,
-  Bool.pick(U32,String.eq(mode,"recover-observer"),7,0)))))))))
+  Bool.pick(U32,String.eq(mode,"recover-observer"),7,
+  Bool.pick(U32,String.eq(mode,"recover-probe"),10,
+  Bool.pick(U32,String.eq(mode,"observer-hold"),11,0))))))))))))
 
 def dispatch(mode: U32, original: String, rest: List<String>) -> IO(Unit):
   match mode:
@@ -225,6 +278,9 @@ def dispatch(mode: U32, original: String, rest: List<String>) -> IO(Unit):
     case 7: recover_observer_cli(rest)
     case 8: instance_owner_cli(rest)
     case 9: instance_shutdown_cli(rest)
+    case 10: recover_observer_probe_cli(rest)
+    case 11: observer_hold_cli(rest)
+    case 12: failed_recovery_cli(rest)
     case _: spawn_cli(original <> rest)
 
 def cli(args: List<String>) -> IO(Unit):

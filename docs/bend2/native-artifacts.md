@@ -67,6 +67,16 @@ mv "$BATON2_RUN/source-retained" "$BATON2_SOURCE"
 
 The archive root is `baton2-development-darwin-arm64` by default. `--release-version 2.0.0` selects `baton2-2.0.0-darwin-arm64` and records `2.0.0` in the manifest. Release versions start with a letter or digit and contain letters, digits, dots, underscores, plus signs or hyphens. Release packaging requires the project root LICENSE.
 
+## Re-register a focused receiver
+
+Use the installed focused receiver to record its own executable as a session endpoint:
+
+~~~sh
+bin/baton DATABASE register-receiver SESSION HARNESS_COMMAND OUTPUT_LOG
+~~~
+
+The command validates and updates the endpoint through the coordinator's receiver registration path. It retains the session's model, harness, native session identity, workspace, and branch. Registration leaves pending input queued and does not start a receiver. Supply an optional working-directory argument only when updating the recorded workspace.
+
 ## Package contents and distribution terms
 
 The archive contains the focused receiver at `bin/baton`, the full router at `bin/baton2`, the identical general CLI sibling `bin/baton-full`, manifest.json, install-receipt.json, SHA256SUMS, notices/, and libexec/baton2/. The focused receiver delegates general actions to `bin/baton-full`; the full router forwards internal receiver actions to `bin/baton` and recovery actions to `bin/baton-recovery`. A missing sibling makes the operation refuse. The task input, project settings and managed Codex inbox helpers are included in libexec/baton2/. The adapters select the archive's executable by default. The output directory also contains build logs, generated C when available, the manifest, archive, and archive checksum.
@@ -78,6 +88,32 @@ Packaging copies the project LICENSE and NOTICE when present, and retains the pi
 [.github/workflows/bend2-native.yml](../../.github/workflows/bend2-native.yml) runs the complete native checks on the exact candidate source using a remote Linux host and the pinned Linux Bend compiler. It records the affected Python test outcomes during that complete suite. An independent job builds the exact target and runs the candidate test contracts against the target production executable and helpers. The comparison names each file, test and failure type; skipped, missing or incomplete results refuse qualification. Pull requests select their actual head commit.
 
 The Darwin job verifies the generated C checksum, producer source tree and every tracked source file against its package checkout. It compiles that C with Darwin clang, includes TypeScript 5.9.3, and packages the complete producer results and target comparison under `share/baton2/generated-c-provenance`. The extracted-artifact smoke runs on `macos-15` with the owned build path unavailable. Each job retains complete command streams and actual results.
+
+### Homelab runner-group preflight
+
+Run the read-only runner-group check before dispatching a homelab validation:
+
+~~~sh
+python3 bend2/scripts/check-runner-group-readiness.py \
+  --workflow-branch '<trusted-validation-branch>'
+~~~
+
+The command uses the current `gh` login. `BATON2_RUNNER_GROUP_READ_TOKEN` selects
+a token from the environment when provided. The account needs the organization's
+`Self-hosted runners` read permission. The check verifies that runner group 4 is named
+`baton2-native-homelab`, is restricted to selected repositories and workflows,
+includes repository ID `1296997100` (`Flip-Engineering/baton`), permits public
+repository access for Baton, and permits
+the exact direct workflow ref
+`Flip-Engineering/baton/.github/workflows/bend2-native.yml@refs/heads/<trusted-validation-branch>`.
+
+Use a direct workflow branch ref for the runner-group pin. Pull-request merge
+refs are not supported by this group policy. Dispatch the trusted workflow
+branch and pass candidate and target commits as full commit IDs; this keeps the
+workflow authorization ref separate from the source commits being compared.
+The preflight records policy readiness at the time of its API reads. Retain the
+workflow run's actual runner assignment and completed job result as execution
+evidence.
 
 Pushes and pull requests produce development artifacts. To qualify an immutable candidate for Baton 2.0.0, supply its branch and the exact target commit:
 
