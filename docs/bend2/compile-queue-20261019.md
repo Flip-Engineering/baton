@@ -16,7 +16,7 @@ run one at a time.
 
 ## Identity
 
-The material for one request is a line-oriented text record:
+The material for one request is a line-oriented text record. The identity schema is versioned independently of the bootstrap shell; a shell key is never reused as a permanent cache key because it omits imported C and header inputs.
 
 ```
 schema=baton-compile-queue-v1
@@ -41,11 +41,14 @@ with `@root/`, and a `--cwd` prefix with `@cwd/`. Output locations and absolute
 worktree paths do not enter the key; identical content in different worktrees
 produces the same key.
 
-The C-generation source digest covers `bend2/src/**/*.bend`, the entry path, and
-for an entry outside `bend2/src`, every `*.bend` under the entry's directory.
-The compiler identity hashes the wrapper chain and, when the resolved path has
-a release layout with `bend2/main.ts` and `bin/bun`, every file under `bend2/`
-and `bin/bun`.
+The C-generation source closure covers the entry, every imported `.bend` file
+and every imported C or header file reachable from it (for example
+`control.c`, `files.c`, `process-spawn.c`, `sqlite.c`, `text.c`). The C
+compilation closure covers the generated C, `native-entry.c`, the builder and
+sharder sources, included host C/header files, and the compiler/linker
+identity. The compiler identity hashes the wrapper chain and, when the resolved
+path has a release layout with `bend2/main.ts` and `bin/bun`, every file under
+`bend2/` and `bin/bun`.
 
 ## Execution
 
@@ -75,10 +78,11 @@ still completes and its artifacts remain available for the next request. A
 supervisor that dies without a result releases the lock, and the next waiter
 starts a new attempt.
 
-`cancel --key` reads the active process group, verifies the recorded leader
-start time, sends `SIGTERM`, waits up to 3 seconds, then sends `SIGKILL`. The
-supervisor trap writes a canceled result. External adopted executions are never
-signaled.
+Each requester is bound to an owner token. `cancel --token` withdraws that
+owner; the shared execution is canceled only when no owners remain. The active
+process group is verified by leader start time, sent `SIGTERM`, and, after the
+grace window, `SIGKILL`. The supervisor writes a canceled result. External
+adopted executions are never signaled.
 
 ## Artifacts and state
 
@@ -110,10 +114,13 @@ verifying `completed/result`. The queue keeps no separate status ledger.
 `adopt --pid PID` reads the running compiler's cwd, entry, `BEND` environment
 and output path, computes the same key a normal request would use, and starts a
 guard that holds the key lock and the C-generation lock for the process
-lifetime. On exit the guard publishes the artifact when it exists and is
-non-empty, or records a failure. Identical requests attach to the adopted
-execution; distinct C-generation requests queue behind it. The guard records
-the pid start time and never signals the adopted process.
+lifetime. The guard records the live argv, cwd, options, input hashes and output path and
+publishes the artifact with those fields. The result is reusable only when the
+command, process start identity, inputs, output path and artifact hashes match
+the recorded values exactly; an unverified external result remains evidence.
+Identical requests attach to the adopted execution; distinct C-generation
+requests queue behind it. The guard records the pid start time and never signals
+the adopted process.
 
 ## Bootstrap boundary
 
@@ -134,8 +141,8 @@ is installed, the wrapper exits 2 with the missing path and build entry. The
 reference shell implementation is retained at commit 97a95949 for the current
 operator hold.
 
-The lifecycle boundary uses portable host primitives: `fcntl` record locks and
-`setsid(2)` in the C binding, and SHA-256 in the digest binding. Every supported
+The lifecycle boundary uses portable host primitives: BSD `flock(2)` for inherited key and cgen locks,
+`setsid(2)` for detachment, and SHA-256 in the digest binding. Every supported
 host requires queue coordination; `bend2/scripts/build-native.sh` has no
 un-queued compile path. The reference shell is Linux-only bootstrap evidence for
 the current hold and is not the permanent implementation.
@@ -158,6 +165,11 @@ State root: `$HOME/.cache/baton/compile-queue`. Evidence:
 | Cancellation | exit 130; compiler process group gone |
 | Requester loss | survivor exits 0; 1 compiler start |
 
+The measurements used the reference shell identity for queue mechanics. The
+permanent Bend2 identity adds the imported C/header closure and the compiler,
+linker and toolchain closure, so the reference keys are bootstrap evidence and
+are not reused as permanent cache keys.
+
 The executor requester's `/usr/bin/time -v` maximum RSS includes the supervisor
 and compiler; waiters report the requester only (2,680-3,192 KiB). Memory values
 come from `wait4` `ru_maxrss` for the waited child tree.
@@ -168,13 +180,18 @@ The adopted `#959` compiler ran as PID 42767 in
 `2.0.25-f5185e38-pr967-pr968-e5c4efd-20261019`. Its queue key is
 `9be2a723056f078d56116374b824b8ff03f64ea4e13b0c4f706bebae742915d0`. The source
 differs from current main by the two-line PR #959 `ContextEval` change, so the
-artifact is reused only for that source identity.
+artifact is bootstrap evidence for that source identity and is not reused by the permanent identity.
 
 ## Open items
 
 - The Bend2 implementation is under source review; it has not been built or
   qualified. Root owns consolidation and deployment.
+- The reference shell `cancel --key` interface is bootstrap-only. The permanent
+  queue binds each requester to an owner token and cancels a shared execution
+  only when no owners remain.
+- External adoption is reusable only after the live command, process start
+  identity, input hashes, output path and artifact hashes are verified.
 - C-generation qualification and the ordinary `build-native.sh` main build run
   after the operator hold permits compilation.
-- macOS provides `fcntl` locks and `setsid(2)` through its POSIX host boundary.
+- macOS provides BSD `flock(2)` and `setsid(2)` through its POSIX host boundary.
   The Bend2 lifecycle uses those primitives, so macOS jobs use the queue.
