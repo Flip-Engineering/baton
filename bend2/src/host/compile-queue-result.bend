@@ -344,22 +344,6 @@ def CompileQueueResult.external_process(adoption: String) -> String:
 def CompileQueueResult.external_artifacts(name: String, digest: String) -> String:
   name ++ ":" ++ digest
 
-def CompileQueueResult.artifact_value(row: String) -> String:
-  match String.split(row, Char.from_u32(9)):
-    case name_field <> kind <> digest <> tail:
-      String.drop(name_field, String.length("artifact=")) ++ ":" ++ digest
-    case other:
-      ""
-
-def CompileQueueResult.first_artifact_lines(lines: List<&2,String>) -> String:
-  match lines:
-    case Nil{}:
-      ""
-    case row <> rest:
-      Bool.pick(String, String.is_empty(row), CompileQueueResult.first_artifact_lines(rest), CompileQueueResult.artifact_value(row))
-
-def CompileQueueResult.first_artifact_value(result: String) -> String:
-  CompileQueueResult.first_artifact_lines(String.lines(CompileQueueResult.artifact_rows(result)))
 
 def CompileQueueResult.write_adoption(path: String, key: String, started: String, finished: String, adoption: String, name: String, artifact_path: String, artifacts_dir: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
@@ -383,6 +367,8 @@ def CompileQueueResult.write_adoption(path: String, key: String, started: String
       ++ "external-inputs=" ++ inputs ++ "\n"
       ++ "external-output=" ++ output ++ "\n"
       ++ "external-artifacts=" ++ artifacts_value ++ "\n"
+      ++ "artifact-name=" ++ name ++ "\n"
+      ++ "artifact-digest=" ++ digest ++ "\n"
       ++ adoption
       ++ "external-name=" ++ name ++ "\n"
       ++ "artifact=" ++ name ++ "\t" ++ kind ++ "\t" ++ digest ++ "\n"
@@ -396,15 +382,24 @@ def CompileQueueResult.verify_adoption(keydir: String, adoption: String) -> IO(R
         IO.pure(Result<&1,&1,U32 & String,Bool>, Done{False{}})
       case Done{result}:
         key = CompileQueueResult.basename(keydir)
-        expected_artifacts = CompileQueueResult.first_artifact_value(result)
+        rows = CompileQueueResult.artifact_rows(result)
+        artifact_name = CompileQueueResult.field(result, "artifact-name")
+        artifact_digest = CompileQueueResult.field(result, "artifact-digest")
+        expected_artifacts = CompileQueueResult.external_artifacts(artifact_name, artifact_digest)
         adopted = Bool.and(CompileQueueResult.base_verified(result, key),
-          CompileQueueResult.external_verified(result,
-            CompileQueueResult.adoption_field(adoption, "argv"),
-            CompileQueueResult.external_process(adoption),
-            CompileQueueResult.adoption_field(adoption, "input"),
-            CompileQueueResult.field(adoption, "output"),
-            expected_artifacts))
-        artifacts_ok : Bool <- CompileQueueResult.verify(keydir, key)
+          Bool.and(String.eq(CompileQueueResult.field(result, "external"), "1"),
+            Bool.and(String.eq(CompileQueueResult.field(result, "external-verified"), "1"),
+              Bool.and(CompileQueueResult.completed(result),
+                Bool.and(Bool.not(String.is_empty(rows)),
+                  Bool.and(Bool.not(String.is_empty(artifact_name)),
+                    Bool.and(Bool.not(String.is_empty(artifact_digest)),
+                      CompileQueueResult.external_verified(result,
+                        CompileQueueResult.adoption_field(adoption, "argv"),
+                        CompileQueueResult.external_process(adoption),
+                        CompileQueueResult.adoption_field(adoption, "input"),
+                        CompileQueueResult.field(adoption, "output"),
+                        expected_artifacts))))))))
+        artifacts_ok : Bool <- CompileQueueResult.verify_rows(String.lines(rows), keydir)
         IO.pure(Result<&1,&1,U32 & String,Bool>, Done{Bool.and(adopted, artifacts_ok)})
 
 def CompileQueueResult.verify_completed(keydir: String) -> IO(Result<&1,&1,U32 & String,Bool>):

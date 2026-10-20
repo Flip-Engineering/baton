@@ -106,6 +106,21 @@ def CompileQueueIdentity.file_digest(path: String) -> IO(Result<&1,&1,U32 & Stri
 def CompileQueueIdentity.file_size(path: String) -> IO(Result<&1,&1,U32 & String,String>):
   import "./compile-queue-digest.c"
 
+def CompileQueueIdentity.list_dir(path: String) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./compile-queue-digest.c"
+
+def CompileQueueIdentity.realpath(path: String) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./compile-queue-digest.c"
+
+def CompileQueueIdentity.readlink(path: String) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./compile-queue-digest.c"
+
+def CompileQueueIdentity.is_script(path: String) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./compile-queue-digest.c"
+
+def CompileQueueIdentity.resolve_command(path: String) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./compile-queue-digest.c"
+
 def CompileQueueIdentity.nonempty(values: List<&2,String>) -> List<&2,String>:
   match values:
     case Nil{}:
