@@ -303,7 +303,7 @@ def CompileQueueIdentity.walk(state: CompileQueueWalk, root: String) -> IO(Resul
           IO.pure(Result<&1,&1,U32 & String,CompileQueueWalk>, Done{state})
         case head <> rest:
           Bool.pick(IO<Result<&1,&1,U32 & String,CompileQueueWalk>>, String.starts_with(head, "!absolute:"),
-            IO.pure(Result<&1,&1,U32 & String,CompileQueueWalk>, Fail{(1u32, "absolute import")}),
+            IO.pure(Result<&1,&1,U32 & String,CompileQueueWalk>, Fail{(1, "absolute import")}),
             do IO<Result<&1,&1,U32 & String,CompileQueueWalk>>:
               resolved : String <- IO.try(String, CompileQueueIdentity.realpath(head))
               Bool.pick(IO<Result<&1,&1,U32 & String,CompileQueueWalk>>, CompileQueueIdentity.path_inside(root, resolved),
@@ -317,7 +317,7 @@ def CompileQueueIdentity.walk(state: CompileQueueWalk, root: String) -> IO(Resul
                     targets = CompileQueueIdentity.closure_targets(resolved, text)
                     next_queue = CompileQueueIdentity.enqueue_targets(resolved, targets, rest)
                     CompileQueueIdentity.walk(CompileQueueWalk{next_queue, resolved <> visited, record <> records}, root)),
-                IO.pure(Result<&1,&1,U32 & String,CompileQueueWalk>, Fail{(1u32, "source path outside root")})))
+                IO.pure(Result<&1,&1,U32 & String,CompileQueueWalk>, Fail{(1, "source path outside root")})))
 
 def CompileQueueIdentity.source_lines(records: List<&2,String>) -> String:
   match records:
@@ -338,7 +338,7 @@ def CompileQueueIdentity.source_closure(source_root: String, entry: String) -> I
           case CompileQueueWalk{queue, visited, records}:
             text = "schema=baton-compile-queue-source-v2\nsource-entry=" ++ CompileQueueIdentity.path_relative(root, resolved) ++ "\n" ++ CompileQueueIdentity.source_lines(CompileQueueIdentity.sort(records))
             IO.pure(Result<&1,&1,U32 & String,String>, Done{text}),
-      IO.pure(Result<&1,&1,U32 & String,String>, Fail{(1u32, "entry outside root")}))
+      IO.pure(Result<&1,&1,U32 & String,String>, Fail{(1, "entry outside root")}))
 
 def CompileQueueIdentity.source_digest(source_root: String, entry: String) -> IO(Result<&1,&1,U32 & String,String>):
   do IO<Result<&1,&1,U32 & String,String>>:
