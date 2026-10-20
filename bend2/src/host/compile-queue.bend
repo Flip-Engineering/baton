@@ -5,6 +5,7 @@ import ../host/process.bend as P
 import ./compile-queue-lifecycle.bend as L
 import ./compile-queue-identity.bend as Identity
 import ./compile-queue-result.bend as Result
+import ./compile-queue-artifact.bend as Artifact
 
 # The identity seat declares schema(), source_closure, source_digest,
 # file_closure, compiler_closure, file_digest, text_digest, key(material) and
@@ -713,19 +714,43 @@ def artifact_mode_check(mode: Result<&1,&1,U32 & String,U32>, name: String) -> I
     case Done{value}: IO.pure(Unit, Unit{})
     case Fail{error}: IO.die(Unit, 1, "compile-queue: artifact " ++ name ++ " was not written")
 
-def verify_artifacts(+work: String, names: List<&2,String>) -> IO(Unit):
+def cgen_path_valid_kind(named: Bool, kind: String) -> Bool:
+  Bool.and(named, String.eq(kind, "text"))
+
+def cgen_path_valid(+name: String, path: String) -> IO(Bool):
+  do IO<Bool>:
+    kind : String <- IO.try(String, Artifact.CompileQueueArtifact.c_source_kind(path))
+    named : Bool <- IO.pure(Bool, String.ends_with(name, ".c"))
+    IO.pure(Bool, cgen_path_valid_kind(named, kind))
+
+def verify_cgen_artifact_valid(valid: Bool, name: String) -> IO(Unit):
+  Bool.pick(IO(Unit), valid, IO.pure(Unit, Unit{}),
+    IO.die(Unit, 1, "compile-queue: cgen artifact " ++ name ++ " must be nonempty text C with a .c suffix"))
+
+def verify_cgen_artifact(work: String, +name: String) -> IO(Unit):
+  do IO<Unit>:
+    valid : Bool <- cgen_path_valid(name, work ++ "/" ++ name)
+    verify_cgen_artifact_valid(valid, name)
+
+def verify_artifact_kind(kind: String, work: String, +name: String) -> IO(Unit):
+  match kind:
+    case "cgen": verify_cgen_artifact(work, name)
+    case _: IO.pure(Unit, Unit{})
+
+def verify_artifacts(+queue_kind: String, +work: String, names: List<&2,String>) -> IO(Unit):
   match names:
     case Nil{}: IO.pure(Unit, Unit{})
     case Con{+name, rest}:
       do IO<Unit>:
         mode : Result<&1,&1,U32 & String,U32> <- F.Files.mode_of(work ++ "/" ++ name)
         checked : Unit <- artifact_mode_check(mode, name)
-        verify_artifacts(work, rest)
+        valid : Unit <- verify_artifact_kind(queue_kind, work, name)
+        verify_artifacts(queue_kind, work, rest)
 
 def verify_and_finish(+attempt: String, +keydir: String, +kind: String, +key: String,
                        +started: String, +names: List<&2,String>) -> IO(Unit):
   do IO<Unit>:
-    checked : Unit <- verify_artifacts(attempt ++ "/work", names)
+    checked : Unit <- verify_artifacts(kind, attempt ++ "/work", names)
     finish_success(attempt, keydir, kind, key, started, names)
 
 def supervised_completion(canceled: Bool, failed: Bool, +code: U32, disposition: String,
@@ -1287,23 +1312,31 @@ def finish_adoption(+keydir: String, +adoption: String, +name: String, +path: St
     removed : Unit <- IO.try(Unit, L.CompileQueueLifecycle.remove(keydir ++ "/active"))
     IO.pure(Unit, Unit{})
 
+def adoption_after_cgen_check(valid: Bool, +keydir: String, +adoption: String, +name: String,
+                              +path: String, +started: String) -> IO(Unit):
+  Bool.pick(IO(Unit), valid,
+    do IO<Unit>:
+      size : U32 <- IO.try(U32, F.Files.size(path))
+      Bool.pick(IO(Unit), U32.is_lt(0, size),
+        do IO<Unit>:
+          digest : String <- IO.try(String, Identity.CompileQueueIdentity.file_digest(path))
+          +record : String <- IO.pure(String, adoption ++ "artifact-name=" ++ name ++ "\nartifact-digest=" ++ digest ++ "\n")
+          recorded : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(keydir ++ "/adoption", record))
+          published : Unit <- finish_adoption(keydir, record, name, path)
+          verified : Bool <- IO.try(Bool, Result.CompileQueueResult.verify_adoption(keydir, record))
+          Bool.pick(IO(Unit), verified,
+            IO.pure(Unit, Unit{}),
+            do IO<Unit>:
+              removed : Unit <- IO.try(Unit, L.CompileQueueLifecycle.remove_tree(keydir ++ "/completed"))
+              write_adoption_failure(keydir, started, "adoption identity differs from the live process")),
+        write_adoption_failure(keydir, started, "external compiler exited without a complete artifact")),
+    write_adoption_failure(keydir, started, "external cgen artifact is not nonempty text C"))
+
 def guard_after_exit(+keydir: String, +name: String, +path: String, +started: String) -> IO(Unit):
   do IO<Unit>:
     +adoption : String <- IO.try(String, L.CompileQueueLifecycle.read_text(keydir ++ "/adoption"))
-    size : U32 <- IO.try(U32, F.Files.size(path))
-    Bool.pick(IO(Unit), U32.is_lt(0, size),
-      do IO<Unit>:
-        digest : String <- IO.try(String, Identity.CompileQueueIdentity.file_digest(path))
-        +record : String <- IO.pure(String, adoption ++ "artifact-name=" ++ name ++ "\nartifact-digest=" ++ digest ++ "\n")
-        recorded : Unit <- IO.try(Unit, L.CompileQueueLifecycle.write_text(keydir ++ "/adoption", record))
-        published : Unit <- finish_adoption(keydir, record, name, path)
-        verified : Bool <- IO.try(Bool, Result.CompileQueueResult.verify_adoption(keydir, record))
-        Bool.pick(IO(Unit), verified,
-          IO.pure(Unit, Unit{}),
-          do IO<Unit>:
-            removed : Unit <- IO.try(Unit, L.CompileQueueLifecycle.remove_tree(keydir ++ "/completed"))
-            write_adoption_failure(keydir, started, "adoption identity differs from the live process")),
-      write_adoption_failure(keydir, started, "external compiler exited without a complete artifact"))
+    valid : Bool <- cgen_path_valid(name, path)
+    adoption_after_cgen_check(valid, keydir, adoption, name, path, started)
 
 def guard_loop(+keydir: String, pid: U32, start: String, name: String, +path: String, +started: String) -> IO(Unit):
   do IO<Unit>:

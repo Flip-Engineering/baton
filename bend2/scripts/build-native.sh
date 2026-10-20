@@ -165,7 +165,7 @@ else
   fi
   sh "$queue" run --kind cgen --state-root "$queue_state" --cwd "$root" --root "$root" \
     --source-root "$root" --entry "$entry" --compiler "$compiler" \
-    --artifact "c=$output.c" -- "$compiler" "$entry" -o "$output.c"
+    --artifact "c.c=$output.c" -- "$compiler" "$entry" -o "$output.c"
 fi
 build_native_shards() {
   native_link_flags="-O1 -pthread -lsqlite3 -lm"

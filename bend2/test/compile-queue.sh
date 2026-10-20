@@ -32,6 +32,7 @@ out=''
 sleep_s=0
 fail=0
 gpu=0
+suffix_sensitive=0
 prev=''
 for arg in "$@"; do
   case $prev in
@@ -42,6 +43,7 @@ for arg in "$@"; do
   case $arg in
     --fail) fail=1 ;;
     --gpu-build) gpu=1 ;;
+    --suffix-sensitive) suffix_sensitive=1 ;;
   esac
   [ "$prev" = -o ] && out=$arg
   prev=$arg
@@ -56,6 +58,11 @@ fi
 [ "$sleep_s" = 0 ] || sleep "$sleep_s"
 if [ "$gpu" = 1 ]; then
   printf 'gpu-artifact-%s' "$tag" > "$0.gpu"
+elif [ "$suffix_sensitive" = 1 ] && [ -n "$out" ]; then
+  case "$out" in
+    *.c) printf '/* textual C generated for %s */\n' "$tag" > "$out" ;;
+    *) printf '\177ELF\002\001\001fake-binary-%s' "$tag" > "$out" ;;
+  esac
 elif [ -n "$out" ]; then
   printf 'artifact-%s' "$tag" > "$out"
 fi
@@ -98,7 +105,7 @@ run_cgen() { # tag output extra...
   shift 2
   sh "$QUEUE" run --kind cgen --state-root "$STATE" --cwd "$T/src" --root "$T/src" \
     --source-root "$T/src" --entry bend2/src/fixture.bend --compiler "$FAKE" \
-    --artifact "c=$out" --option "test=$tag" \
+    --artifact "c.c=$out" --option "test=$tag" \
     --token "tok-$(basename "$out")" \
     -- "$FAKE" --tag "$tag" --log "$LOG" -o "$out" "$@" >"$T/$(basename "$out").out" 2>"$T/$(basename "$out").err"
 }
@@ -109,7 +116,7 @@ cgen_key() { # tag output extra...
   shift 2
   sh "$QUEUE" key --kind cgen --state-root "$STATE" --cwd "$T/src" --root "$T/src" \
     --source-root "$T/src" --entry bend2/src/fixture.bend --compiler "$FAKE" \
-    --artifact "c=$out" --option "test=$tag" \
+    --artifact "c.c=$out" --option "test=$tag" \
     --token "tok-$(basename "$out")" \
     -- "$FAKE" --tag "$tag" --log "$LOG" -o "$out" "$@"
 }
@@ -198,6 +205,29 @@ sh "$QUEUE" run --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" --
 [ "$(cat "$T/fake-compiler.gpu" 2>/dev/null)" = 'gpu-artifact-gpu' ] \
   && pass 'nested GPU sidecar copied to ordinary output path' || bad 'nested GPU sidecar missing'
 [ "$(count_starts)" = 1 ] && pass 'GPU sidecar fake command ran once' || bad 'GPU sidecar fake command count differs'
+
+# A producer selects its output format from the staged filename suffix.
+# The suffixless artifact emits ELF and must fail before a completed cache row;
+# preserving .c through staging emits text C and may complete.
+: > "$LOG"
+wrong_c_key=$(sh "$QUEUE" key --kind cgen --state-root "$STATE" --cwd "$T/src" --root "$T/src" \
+  --source-root "$T/src" --entry bend2/src/fixture.bend --compiler "$FAKE" \
+  --artifact "c=$T/suffixless.c" --option 'test=suffix-sensitive' \
+  --token tok-suffixless -- "$FAKE" --tag suffix-sensitive --log "$LOG" --suffix-sensitive -o "$T/suffixless.c")
+wrong_c_rc=0
+sh "$QUEUE" run --kind cgen --state-root "$STATE" --cwd "$T/src" --root "$T/src" \
+  --source-root "$T/src" --entry bend2/src/fixture.bend --compiler "$FAKE" \
+  --artifact "c=$T/suffixless.c" --option 'test=suffix-sensitive' \
+  --token tok-suffixless -- "$FAKE" --tag suffix-sensitive --log "$LOG" --suffix-sensitive -o "$T/suffixless.c" \
+  >"$T/suffixless.out" 2>"$T/suffixless.err" || wrong_c_rc=$?
+[ "$wrong_c_rc" != 0 ] && pass 'binary cgen output rejected' || bad 'binary cgen output was accepted'
+[ ! -f "$STATE/keys/$wrong_c_key/completed/result" ] && pass 'binary cgen output not cached as completed' || bad 'binary cgen output entered completed cache'
+: > "$LOG"
+run_cgen suffix-sensitive "$T/suffix-good.c" --suffix-sensitive || bad 'suffix-preserving cgen request failed'
+grep -Fxq '/* textual C generated for suffix-sensitive */' "$T/suffix-good.c" \
+  && pass 'artifact .c suffix reached suffix-sensitive producer' || bad 'producer did not emit C for staged .c suffix'
+"$QUEUE" status --state-root "$STATE" --key "$(cgen_key suffix-sensitive "$T/suffix-good.c" --suffix-sensitive)" >/dev/null 2>&1 \
+  && pass 'text C cgen result is queryable' || bad 'text C cgen result missing'
 
 # Identical concurrent cgen requests.
 : > "$LOG"

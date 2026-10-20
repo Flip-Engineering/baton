@@ -534,7 +534,8 @@ enum {
   CQ_ART_DIGEST = 2,
   CQ_ART_COPY = 3,
   CQ_ART_INSTALL = 4,
-  CQ_ART_REMOVE = 5
+  CQ_ART_REMOVE = 5,
+  CQ_ART_C_SOURCE_KIND = 6
 };
 
 typedef struct {
@@ -568,6 +569,50 @@ static void cq_art_call_work(IoWork *work) {
         strcpy(call->answer, "missing");
       } else {
         strcpy(call->answer, "other");
+      }
+      break;
+    }
+    case CQ_ART_C_SOURCE_KIND: {
+      int fd = open(call->first, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+      if (fd < 0) {
+        call->error = errno;
+        break;
+      }
+      struct stat info;
+      if (fstat(fd, &info)) {
+        call->error = errno;
+        close(fd);
+        break;
+      }
+      if (!S_ISREG(info.st_mode) || info.st_size <= 0) {
+        strcpy(call->answer, "binary");
+        close(fd);
+        break;
+      }
+      unsigned char buffer[65536];
+      unsigned char prefix[4] = {0, 0, 0, 0};
+      size_t prefix_length = 0;
+      int has_nul = 0;
+      for (;;) {
+        ssize_t count = read(fd, buffer, sizeof(buffer));
+        if (count < 0) {
+          if (errno == EINTR) continue;
+          call->error = errno;
+          break;
+        }
+        if (count == 0) break;
+        for (ssize_t i = 0; i < count; i++) {
+          if (prefix_length < sizeof(prefix)) prefix[prefix_length++] = buffer[i];
+          if (buffer[i] == 0) has_nul = 1;
+        }
+      }
+      close(fd);
+      if (call->error) break;
+      if (has_nul || (prefix_length == 4 && prefix[0] == 0x7f
+          && prefix[1] == 'E' && prefix[2] == 'L' && prefix[3] == 'F')) {
+        strcpy(call->answer, "binary");
+      } else {
+        strcpy(call->answer, "text");
       }
       break;
     }
@@ -745,6 +790,15 @@ static Term cq_art_kind_run(Env env, Term *fields, IoWork *work) {
 }
 static void __attribute__((constructor)) cq_art_kind_use(void) {
   io_eff(CID_COMPILEQUEUEARTIFACT_KIND, cq_art_kind_run, 0);
+}
+#endif
+
+#ifdef CID_COMPILEQUEUEARTIFACT_C_SOURCE_KIND
+static Term cq_art_c_source_kind_run(Env env, Term *fields, IoWork *work) {
+  return cq_art_run(env, fields, work, CQ_ART_C_SOURCE_KIND, 1);
+}
+static void __attribute__((constructor)) cq_art_c_source_kind_use(void) {
+  io_eff(CID_COMPILEQUEUEARTIFACT_C_SOURCE_KIND, cq_art_c_source_kind_run, 0);
 }
 #endif
 

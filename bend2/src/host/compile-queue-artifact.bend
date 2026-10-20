@@ -19,6 +19,9 @@ def CompileQueueArtifact.kind(path: String) -> IO(Result<&1,&1,U32 & String,Stri
 def CompileQueueArtifact.digest(path: String) -> IO(Result<&1,&1,U32 & String,String>):
   import "./compile-queue-artifact.c"
 
+def CompileQueueArtifact.c_source_kind(path: String) -> IO(Result<&1,&1,U32 & String,String>):
+  import "./compile-queue-artifact.c"
+
 def CompileQueueArtifact.copy(source: String, staging: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   import "./compile-queue-artifact.c"
 
