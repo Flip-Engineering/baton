@@ -236,4 +236,29 @@ key2=$(cgen_key keyfile "$T/keyfile")
 [ "$key1" != "$key2" ] && pass 'source change changes the key' || bad 'source change kept the key'
 printf 'import Base\ndef main() -> IO(Unit): IO.die(Unit,0,"fixture")\n' > "$T/src/bend2/src/fixture.bend"
 
+# Explicit scalar options override defaults and reach execution and key.
+echo '=== explicit configuration ===' | tee -a "$T/results.txt"
+explicit_key() { # compiler root
+  sh "$QUEUE" key --kind cc --state-root "$STATE" --cwd "$T" --root "$2" \
+    --compiler "$1" --input "$T/input.c" --artifact "binary=$T/explicit" \
+    --option 'test=explicit' \
+    -- "$1" --tag explicit --log "$LOG" -o "$T/explicit" "$T/input.c"
+}
+k1=$(explicit_key "$FAKE" "$T")
+k1b=$(explicit_key "$FAKE" "$T")
+[ -n "$k1" ] && [ "$k1" = "$k1b" ] && pass 'explicit key is stable' || bad 'explicit key unstable'
+cp "$FAKE" "$T/fake-compiler-2"
+printf '\n# variant\n' >> "$T/fake-compiler-2"
+chmod +x "$T/fake-compiler-2"
+k2=$(explicit_key "$T/fake-compiler-2" "$T")
+[ "$k1" != "$k2" ] && pass 'explicit compiler reaches key' || bad 'compiler ignored in key'
+k3=$(explicit_key "$FAKE" "$T/other-root")
+[ "$k1" != "$k3" ] && pass 'explicit root reaches key' || bad 'root ignored in key'
+sh "$QUEUE" run --kind cc --state-root "$STATE" --cwd "$T" --compiler "$FAKE" \
+  --input "$T/input.c" --artifact "probe=$T/probe" \
+  -- sh -c 'pwd > cwd-probe; printf x > "$1"' sh "$T/probe" >/dev/null 2>&1 \
+  && pass 'explicit run options accepted' || bad 'explicit run failed'
+[ -f "$T/cwd-probe" ] && pass 'explicit cwd reaches execution' || bad 'cwd ignored in execution'
+[ -d "$STATE/keys" ] && pass 'explicit state root used' || bad 'state root ignored'
+
 exit "$fail"

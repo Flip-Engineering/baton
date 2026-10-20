@@ -90,14 +90,20 @@ def token_ok_go(s: String) -> Bool:
 def token_ok(s: String) -> Bool:
   Bool.and(non_empty(s), token_ok_go(s))
 
-def field_lines(lines: List<String>, name: String) -> String:
+def last_field(lines: List<String>, name: String, current: String) -> String:
   match lines:
-    case Nil{}: ""
+    case Nil{}: current
     case +line <> rest:
       match split_eq(line, ""):
         case Some{Split{left, right}}:
-          Bool.pick(String, Tx.str_eq(left, name), right, field_lines(rest, name))
-        case None{}: field_lines(rest, name)
+          Bool.pick(String, Tx.str_eq(left, name), last_field(rest, name, right), last_field(rest, name, current))
+        case None{}: last_field(rest, name, current)
+
+# Scalar options are last-wins so an explicit CLI flag overrides the default
+# field written by default_config. Repeated input/option/artifact fields use
+# fields_all and keep every occurrence.
+def field_lines(lines: List<String>, name: String) -> String:
+  last_field(lines, name, "")
 
 def field(text: String, name: String) -> String:
   field_lines(Tx.split_lines(text), name)
