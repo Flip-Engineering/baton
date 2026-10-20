@@ -604,7 +604,7 @@ def CompileQueueIdentity.input_sources(lines: List<&2,String>) -> String:
     case Nil{}: ""
     case +line <> +rest:
       +source = CompileQueueIdentity.input_source(line)
-      Bool.pick(String, String.is_empty(source), CompileQueueIdentity.input_sources(rest), source ++ "\\n" ++ CompileQueueIdentity.input_sources(rest))
+      Bool.pick(String, String.is_empty(source), CompileQueueIdentity.input_sources(rest), source ++ "\n" ++ CompileQueueIdentity.input_sources(rest))
 
 def CompileQueueIdentity.artifact_name_fields(fields: List<&2,String>) -> String:
   match fields:
