@@ -94,16 +94,17 @@ def token_ok(s: String) -> Bool:
 # appends supplied values, so the supplied value for a singleton is the last
 # matching line. Repeated fields (input, option, artifact, aux) are read with
 # fields_all and keep every line.
+def field_line_value(parsed: Maybe<Split>, rest: List<String>, name: String, acc: String) -> String:
+  match parsed:
+    case Some{Split{left, right}}:
+      +next = Bool.pick(String, Tx.str_eq(left, name), right, acc)
+      field_lines_go(rest, name, next)
+    case None{}: field_lines_go(rest, name, acc)
+
 def field_lines_go(lines: List<String>, name: String, acc: String) -> String:
   match lines:
     case Nil{}: acc
-    case +line <> rest:
-      +queue_scrutinee_101 = split_eq(line, "")
-      match queue_scrutinee_101:
-        case Some{Split{left, right}}:
-          +next = Bool.pick(String, Tx.str_eq(left, name), right, acc)
-          field_lines_go(rest, name, next)
-        case None{}: field_lines_go(rest, name, acc)
+    case +line <> rest: field_line_value(split_eq(line, ""), rest, name, acc)
 
 def field_lines(lines: List<String>, name: String) -> String:
   field_lines_go(lines, name, "")
@@ -111,46 +112,51 @@ def field_lines(lines: List<String>, name: String) -> String:
 def field(text: String, name: String) -> String:
   field_lines(Tx.split_lines(text), name)
 
+def collect_line_value(parsed: Maybe<Split>, rest: List<String>, name: String, acc: List<String>) -> List<String>:
+  match parsed:
+    case Some{Split{left, right}}:
+      +next = Bool.pick(List<String>, Tx.str_eq(left, name), Con{right, acc}, acc)
+      collect_lines(rest, name, next)
+    case None{}: collect_lines(rest, name, acc)
+
 def collect_lines(lines: List<String>, name: String, acc: List<String>) -> List<String>:
   match lines:
     case Nil{}: List.reverse(&1, String, acc)
-    case +line <> rest:
-      +queue_scrutinee_117 = split_eq(line, "")
-      match queue_scrutinee_117:
-        case Some{Split{left, right}}:
-          +next = Bool.pick(List<String>, Tx.str_eq(left, name), Con{right, acc}, acc)
-          collect_lines(rest, name, next)
-        case None{}: collect_lines(rest, name, acc)
+    case +line <> rest: collect_line_value(split_eq(line, ""), rest, name, acc)
 
 def fields_all(text: String, name: String) -> List<String>:
   collect_lines(Tx.split_lines(text), name, Nil{})
 
-def pair_of_tabs(value: String) -> Maybe<Pair>:
-  +queue_scrutinee_127 = Tx.split_tabs(value)
-  match queue_scrutinee_127:
+def pair_from_fields(parts: List<String>) -> Maybe<Pair>:
+  match parts:
     case left <> right <> Nil{}: Some{Pair{left, right}}
     case other: None{}
+
+def pair_of_tabs(value: String) -> Maybe<Pair>:
+  pair_from_fields(Tx.split_tabs(value))
+
+def input_row_pair(parsed: Maybe<Pair>, rest: List<String>, acc: List<Input>) -> List<Input>:
+  match parsed:
+    case Some{Pair{left, right}}: input_rows_go(rest, Con{Input{left, right}, acc})
+    case None{}: input_rows_go(rest, acc)
 
 def input_rows_go(rows: List<String>, acc: List<Input>) -> List<Input>:
   match rows:
     case Nil{}: List.reverse(&1, Input, acc)
-    case +row <> rest:
-      +queue_scrutinee_135 = pair_of_tabs(row)
-      match queue_scrutinee_135:
-        case Some{Pair{left, right}}: input_rows_go(rest, Con{Input{left, right}, acc})
-        case None{}: input_rows_go(rest, acc)
+    case +row <> rest: input_row_pair(pair_of_tabs(row), rest, acc)
 
 def input_rows(text: String) -> List<Input>:
   input_rows_go(fields_all(text, "input"), Nil{})
 
+def artifact_row_pair(parsed: Maybe<Pair>, rest: List<String>, acc: List<Artifact>) -> List<Artifact>:
+  match parsed:
+    case Some{Pair{left, right}}: artifact_rows_go(rest, Con{Artifact{left, right}, acc})
+    case None{}: artifact_rows_go(rest, acc)
+
 def artifact_rows_go(rows: List<String>, acc: List<Artifact>) -> List<Artifact>:
   match rows:
     case Nil{}: List.reverse(&1, Artifact, acc)
-    case +row <> rest:
-      +queue_scrutinee_146 = pair_of_tabs(row)
-      match queue_scrutinee_146:
-        case Some{Pair{left, right}}: artifact_rows_go(rest, Con{Artifact{left, right}, acc})
-        case None{}: artifact_rows_go(rest, acc)
+    case +row <> rest: artifact_row_pair(pair_of_tabs(row), rest, acc)
 
 def artifact_rows(text: String) -> List<Artifact>:
   artifact_rows_go(fields_all(text, "artifact"), Nil{})
@@ -263,6 +269,11 @@ def require_state_root(state: String) -> IO(Unit):
                   case Fail{(code, message)}:
                     IO.die(Unit, 2, "compile-queue: state root cannot hold the queue lock: " ++ state ++ ": " ++ message))
 
+def parse_artifact_option(parsed: Maybe<Split>, value: String, rest: List<String>, config: Config) -> IO(Config):
+  match parsed:
+    case Some{Split{name, path}}: parse_common(rest, config_line(config, "artifact", name ++ "\t" ++ path))
+    case None{}: IO.die(Config, 2, "compile-queue: artifact must be NAME=PATH: " ++ value)
+
 def parse_common(args: List<String>, config: Config) -> IO(Config):
   match args:
     case Nil{}: IO.pure(Config, config)
@@ -279,11 +290,7 @@ def parse_common(args: List<String>, config: Config) -> IO(Config):
     case "--input" <> value <> rest: parse_common(rest, config_input(config, value))
     case "--aux" <> value <> rest: parse_common(rest, config_line(config, "aux", value))
     case "--option" <> value <> rest: parse_common(rest, config_line(config, "option", value))
-    case "--artifact" <> value <> rest:
-      +queue_scrutinee_249 = split_eq(value, "")
-      match queue_scrutinee_249:
-        case Some{Split{name, path}}: parse_common(rest, config_line(config, "artifact", name ++ "\t" ++ path))
-        case None{}: IO.die(Config, 2, "compile-queue: artifact must be NAME=PATH: " ++ value)
+    case "--artifact" <> value <> rest: parse_artifact_option(split_eq(value, ""), value, rest, config)
     case +option <> rest: IO.die(Config, 2, "compile-queue: unknown option " ++ option)
 
 def validate_config(config: Config, need_command: Bool) -> String:
@@ -373,27 +380,34 @@ def prefix_token(token: String, prefix: String, marker: String) -> Maybe<String>
   Bool.pick(Maybe<String>, Bool.and(non_empty(prefix), Tx.starts_with(token, prefix ++ "/")),
     Some{marker ++ "/" ++ String.drop(token, Nat.add(String.length(prefix), 1))}, None{})
 
+def normalize_after_input(result: Maybe<String>, token: String, cwd: String, root: String, compiler: String,
+                          inputs: List<Input>, artifacts: List<Artifact>) -> String:
+  match result:
+    case Some{destination}: "{in:" ++ destination ++ "}"
+    case None{}: Bool.pick(String, Tx.str_eq(token, compiler), "{compiler}", normalize_prefix_token(token, cwd, root))
+
+def normalize_after_artifact(result: Maybe<String>, token: String, cwd: String, root: String, compiler: String,
+                             inputs: List<Input>, artifacts: List<Artifact>) -> String:
+  match result:
+    case Some{name}: "{out:" ++ name ++ "}"
+    case None{}: normalize_after_input(input_destination_match(token, inputs), token, cwd, root, compiler, inputs, artifacts)
+
 def normalize_token(token: String, cwd: String, root: String, compiler: String,
                     inputs: List<Input>, artifacts: List<Artifact>) -> String:
-  +queue_scrutinee_343 = artifact_name_match(token, artifacts)
-  match queue_scrutinee_343:
-    case Some{name}: "{out:" ++ name ++ "}"
-    case None{}:
-      +queue_scrutinee_346 = input_destination_match(token, inputs)
-      match queue_scrutinee_346:
-        case Some{destination}: "{in:" ++ destination ++ "}"
-        case None{}:
-          Bool.pick(String, Tx.str_eq(token, compiler), "{compiler}", normalize_prefix_token(token, cwd, root))
+  normalize_after_artifact(artifact_name_match(token, artifacts), token, cwd, root, compiler, inputs, artifacts)
+
+def normalize_after_root(result: Maybe<String>, token: String, cwd: String) -> String:
+  match result:
+    case Some{value}: value
+    case None{}: normalize_after_cwd(prefix_token(token, cwd, "@cwd"), token)
+
+def normalize_after_cwd(result: Maybe<String>, token: String) -> String:
+  match result:
+    case Some{value}: value
+    case None{}: token
 
 def normalize_prefix_token(token: String, cwd: String, root: String) -> String:
-  +root_prefix = prefix_token(token, root, "@root")
-  match root_prefix:
-    case Some{value}: value
-    case None{}:
-      +cwd_prefix = prefix_token(token, cwd, "@cwd")
-      match cwd_prefix:
-        case Some{value}: value
-        case None{}: token
+  normalize_after_root(prefix_token(token, root, "@root"), token, cwd)
 
 def normalize_command(args: List<String>, cwd: String, root: String, compiler: String,
                       inputs: List<Input>, artifacts: List<Artifact>) -> String:
@@ -430,15 +444,18 @@ def copy_inputs(work: String, inputs: List<Input>) -> IO(Unit):
           copy_inputs(work, rest),
           IO.die(Unit, 1, "compile-queue: input changed while staging"))
 
-def replace_token(token: String, work: String, inputs: List<Input>, artifacts: List<Artifact>) -> String:
-  +queue_scrutinee_389 = artifact_match(token, work, artifacts)
-  match queue_scrutinee_389:
+def replace_after_input(result: Maybe<String>, token: String) -> String:
+  match result:
     case Some{value}: value
-    case None{}:
-      +queue_scrutinee_392 = input_match(token, work, inputs)
-      match queue_scrutinee_392:
-        case Some{value}: value
-        case None{}: token
+    case None{}: token
+
+def replace_after_artifact(result: Maybe<String>, token: String, work: String, inputs: List<Input>) -> String:
+  match result:
+    case Some{value}: value
+    case None{}: replace_after_input(input_match(token, work, inputs), token)
+
+def replace_token(token: String, work: String, inputs: List<Input>, artifacts: List<Artifact>) -> String:
+  replace_after_artifact(artifact_match(token, work, artifacts), token, work, inputs)
 
 def artifact_match(token: String, work: String, artifacts: List<Artifact>) -> Maybe<String>:
   match artifacts:
@@ -528,6 +545,21 @@ def remove_token(keydir: String, token: String) -> IO(Unit):
     released : Unit <- IO.try(Unit, L.lock_release(lock))
     IO.pure(Unit, Unit{})
 
+def count_live_owner_pid(parsed: Maybe<U32>, keydir: String, name: String, rest: List<String>, acc: U32, start: String) -> IO(U32):
+  match parsed:
+    case None{}:
+      do IO<U32>:
+        removed : Unit <- IO.try(Unit, L.remove(keydir ++ "/owners/" ++ name))
+        count_live_owners(keydir, rest, acc)
+    case Some{pid}:
+      do IO<U32>:
+        alive <- IO.try(U32, L.alive(pid, start))
+        Bool.pick(IO(U32), U32.is_eq(alive, 1),
+          count_live_owners(keydir, rest, U32.add(1, acc)),
+          do IO<U32>:
+            removed : Unit <- IO.try(Unit, L.remove(keydir ++ "/owners/" ++ name))
+            count_live_owners(keydir, rest, acc))
+
 def count_live_owners(keydir: String, names: List<String>, acc: U32) -> IO(U32):
   match names:
     case Nil{}: IO.pure(U32, acc)
@@ -536,23 +568,25 @@ def count_live_owners(keydir: String, names: List<String>, acc: U32) -> IO(U32):
         text <- IO.try(String, L.read_text(keydir ++ "/owners/" ++ name))
         +pid_text = field(text, "pid")
         +start = field(text, "starttime")
-        +queue_scrutinee_492 = U32.read(pid_text)
-        match queue_scrutinee_492:
-          case None{}:
-            removed : Unit <- IO.try(Unit, L.remove(keydir ++ "/owners/" ++ name))
-            count_live_owners(keydir, rest, acc)
-          case Some{pid}:
-            alive <- IO.try(U32, L.alive(pid, start))
-            Bool.pick(IO(U32), U32.is_eq(alive, 1),
-              count_live_owners(keydir, rest, U32.add(1, acc)),
-              do IO<U32>:
-                removed : Unit <- IO.try(Unit, L.remove(keydir ++ "/owners/" ++ name))
-                count_live_owners(keydir, rest, acc))
+        count_live_owner_pid(U32.read(pid_text), keydir, name, rest, acc, start)
 
 def owner_count(keydir: String) -> IO(U32):
   do IO<U32>:
     names <- IO.try(String, L.list_dir(keydir ++ "/owners"))
     count_live_owners(keydir, Tx.split_lines(names), 0)
+
+def clean_stale_active_pid(parsed: Maybe<U32>, active: String, start: String) -> IO(Unit):
+  match parsed:
+    case None{}:
+      do IO<Unit>:
+        removed : Unit <- IO.try(Unit, L.remove(active))
+        IO.pure(Unit, Unit{})
+    case Some{pid}:
+      do IO<Unit>:
+        alive <- IO.try(U32, L.alive(pid, start))
+        removed : Unit <- Bool.pick(IO(Unit), U32.is_eq(alive, 1), IO.pure(Unit, Unit{}),
+          IO.try(Unit, L.remove(active)))
+        IO.pure(Unit, Unit{})
 
 def clean_stale_active(keydir: String) -> IO(Unit):
   do IO<Unit>:
@@ -560,16 +594,7 @@ def clean_stale_active(keydir: String) -> IO(Unit):
     text <- IO.try(String, L.read_text(active))
     +pid_text = field(text, "pid")
     +start = field(text, "starttime")
-    +queue_scrutinee_515 = U32.read(pid_text)
-    match queue_scrutinee_515:
-      case None{}:
-        removed : Unit <- IO.try(Unit, L.remove(active))
-        IO.pure(Unit, Unit{})
-      case Some{pid}:
-        alive <- IO.try(U32, L.alive(pid, start))
-        removed : Unit <- Bool.pick(IO(Unit), U32.is_eq(alive, 1), IO.pure(Unit, Unit{}),
-          IO.try(Unit, L.remove(active)))
-        IO.pure(Unit, Unit{})
+    clean_stale_active_pid(U32.read(pid_text), active, start)
 
 def write_failure(attempt: String, keydir: String, status: String, code: U32,
                   kind: String, key: String, started: String, detail: String,
@@ -822,6 +847,30 @@ def parse_cancel(args: List<String>, state: String, key: String, token: String) 
     case "--token" <> value <> rest: parse_cancel(rest, state, key, value)
     case +option <> rest: IO.die(CancelArgs, 2, "compile-queue: unknown option " ++ option)
 
+def cancel_active_pid(parsed: Maybe<U32>, key: String, token: String, text: String) -> IO(String):
+  match parsed:
+    case None{}: IO.pure(String, "canceled=none\nkey=" ++ key ++ "\ntoken=" ++ token ++ "\n")
+    case Some{pid}:
+      do IO<String>:
+        +start = field(text, "starttime")
+        alive <- IO.try(U32, L.alive(pid, start))
+        Bool.pick(IO(String), U32.is_eq(alive, 1),
+          do IO<String>:
+            +mode = field(text, "setsid")
+            +external = Bool.or(Tx.str_eq(mode, "external"), Tx.str_eq(mode, "starting"))
+            Bool.pick(IO(String), external,
+              IO.pure(String, "canceled=refused\nkey=" ++ key ++ "\nreason=external-or-starting\n"),
+              do IO<String>:
+                signaled : Unit <- Bool.pick(IO(Unit), Tx.str_eq(mode, "1"),
+                  IO.try(Unit, L.signal_group(pid, 15)), IO.try(Unit, L.signal_pid(pid, 15)))
+                slept : Unit <- IO.try(Unit, L.sleep_millis(3000))
+                alive2 <- IO.try(U32, L.alive(pid, start))
+                escalated : Unit <- Bool.pick(IO(Unit), U32.is_eq(alive2, 0), IO.pure(Unit, Unit{}),
+                  Bool.pick(IO(Unit), Tx.str_eq(mode, "1"),
+                    IO.try(Unit, L.signal_group(pid, 9)), IO.try(Unit, L.signal_pid(pid, 9))))
+                IO.pure(String, "canceled=requested\nkey=" ++ key ++ "\npid=" ++ U32.show(pid) ++ "\ntoken=" ++ token ++ "\n")),
+          IO.pure(String, "canceled=stale\nkey=" ++ key ++ "\ntoken=" ++ token ++ "\n"))
+
 def cancel_locked(keydir: String, key: String, token: String) -> IO(String):
   do IO<String>:
     +owner = keydir ++ "/owners/" ++ token
@@ -834,33 +883,7 @@ def cancel_locked(keydir: String, key: String, token: String) -> IO(String):
           do IO<String>:
             text <- IO.try(String, L.read_text(keydir ++ "/active"))
             +pid_text = field(text, "pid")
-            +start = field(text, "starttime")
-            +queue_scrutinee_786 = U32.read(pid_text)
-            match queue_scrutinee_786:
-              case None{}:
-                IO.pure(String, "canceled=none\nkey=" ++ key ++ "\ntoken=" ++ token ++ "\n")
-              case Some{pid}:
-                do IO<String>:
-                  alive <- IO.try(U32, L.alive(pid, start))
-                  Bool.pick(IO(String), U32.is_eq(alive, 1),
-                    do IO<String>:
-                      +mode = field(text, "setsid")
-                      +external = Bool.or(Tx.str_eq(mode, "external"), Tx.str_eq(mode, "starting"))
-                      Bool.pick(IO(String), external,
-                        IO.pure(String, "canceled=refused\nkey=" ++ key ++ "\nreason=external-or-starting\n"),
-                        do IO<String>:
-                          signaled : Unit <- Bool.pick(IO(Unit), Tx.str_eq(mode, "1"),
-                            IO.try(Unit, L.signal_group(pid, 15)),
-                            IO.try(Unit, L.signal_pid(pid, 15)))
-                          slept : Unit <- IO.try(Unit, L.sleep_millis(3000))
-                          alive2 <- IO.try(U32, L.alive(pid, start))
-                          escalated : Unit <- Bool.pick(IO(Unit), U32.is_eq(alive2, 0),
-                            IO.pure(Unit, Unit{}),
-                            Bool.pick(IO(Unit), Tx.str_eq(mode, "1"),
-                              IO.try(Unit, L.signal_group(pid, 9)),
-                              IO.try(Unit, L.signal_pid(pid, 9))))
-                          IO.pure(String, "canceled=requested\nkey=" ++ key ++ "\npid=" ++ U32.show(pid) ++ "\ntoken=" ++ token ++ "\n"))),
-                    IO.pure(String, "canceled=stale\nkey=" ++ key ++ "\ntoken=" ++ token ++ "\n")),
+            cancel_active_pid(U32.read(pid_text), key, token, text),
           IO.pure(String, "canceled=withdrawn\nkey=" ++ key ++ "\ntoken=" ++ token ++ "\nowners=" ++ U32.show(left) ++ "\n")),
       IO.pure(String, "canceled=unknown-token\nkey=" ++ key ++ "\ntoken=" ++ token ++ "\n"))
 
@@ -1027,28 +1050,32 @@ def guard_loop(keydir: String, pid: U32, start: String, name: String, path: Stri
                 write_adoption_failure(keydir, started, "adoption identity differs from the live process")),
           write_adoption_failure(keydir, started, "external compiler exited without a complete artifact")))
 
-def guard(keydir: String, pid_text: String, start: String, name: String, path: String) -> IO(Unit):
-  do IO<Unit>:
-    +queue_scrutinee_979 = U32.read(pid_text)
-    match queue_scrutinee_979:
-      case None{}: IO.die(Unit, 2, "compile-queue: adoption pid is malformed")
-      case Some{pid}:
-        do IO<Unit>:
-          locked_key : Unit <- IO.try(Unit, L.lock_fd_acquire(9))
-          locked_cgen : Unit <- IO.try(Unit, L.lock_fd_acquire(8))
-          present <- regular(keydir ++ "/completed/result")
-          match present:
-            case True{}:
-              do IO<Unit>:
-                adoption <- IO.try(String, L.read_text(keydir ++ "/adoption"))
-                verified <- IO.try(Bool, Result.verify_adoption(keydir, adoption))
-                Bool.pick(IO(Unit), verified, IO.pure(Unit, Unit{}),
-                  IO.die(Unit, 1, "compile-queue: completed result is not a verified adoption record"))
-            case False{}:
+def guard_pid_result(parsed: Maybe<U32>, keydir: String, pid_text: String, start: String,
+                     name: String, path: String) -> IO(Unit):
+  match parsed:
+    case None{}: IO.die(Unit, 2, "compile-queue: adoption pid is malformed")
+    case Some{pid}:
+      do IO<Unit>:
+        locked_key : Unit <- IO.try(Unit, L.lock_fd_acquire(9))
+        locked_cgen : Unit <- IO.try(Unit, L.lock_fd_acquire(8))
+        present <- regular(keydir ++ "/completed/result")
+        match present:
+          case True{}:
+            do IO<Unit>:
+              adoption <- IO.try(String, L.read_text(keydir ++ "/adoption"))
+              verified <- IO.try(Bool, Result.verify_adoption(keydir, adoption))
+              Bool.pick(IO(Unit), verified, IO.pure(Unit, Unit{}),
+                IO.die(Unit, 1, "compile-queue: completed result is not a verified adoption record"))
+          case False{}:
+            do IO<Unit>:
               started <- IO.try(String, L.now_ns())
               active : Unit <- IO.try(Unit, L.write_text(keydir ++ "/active", "pid=" ++ pid_text
                 ++ "\nstarttime=" ++ start ++ "\nkind=cgen\nsetsid=external\nstarted_ns=" ++ started ++ "\n"))
               guard_loop(keydir, pid, start, name, path, started)
+
+def guard(keydir: String, pid_text: String, start: String, name: String, path: String) -> IO(Unit):
+  guard_pid_result(U32.read(pid_text), keydir, pid_text, start, name, path)
+
 
 def parse_adopt(args: List<String>, config: Config) -> IO(Config):
   match args:
@@ -1123,6 +1150,39 @@ def adopt_live(pid: U32, pid_text: String, start: String, cwd: String,
                 IO.write("adopted=1\nkey=" ++ key ++ "\npid=" ++ pid_text
                   ++ "\nguard=" ++ U32.show(guard_pid) ++ "\nartifact=" ++ path ++ "\n")
 
+def adopt_artifact_value(parsed: Maybe<Split>, pid: U32, pid_text: String, start: String, cwd: String,
+                         argv: List<String>, output_abs: String, text: String) -> IO(Unit):
+  match parsed:
+    case None{}: IO.die(Unit, 2, "compile-queue: adopt requires --artifact NAME=PATH")
+    case Some{Split{name, path}}:
+      do IO<Unit>:
+        +path_ok = Tx.str_eq(output_abs, path)
+        +absolute_ok = Tx.starts_with(path, "/")
+        Bool.pick(IO(Unit), path_ok,
+          Bool.pick(IO(Unit), absolute_ok,
+            adopt_live(pid, pid_text, start, cwd, argv, output_abs, name, path, text),
+            IO.die(Unit, 2, "compile-queue: adopted artifact path must be absolute")),
+          IO.die(Unit, 2, "compile-queue: artifact path differs from the live -o output"))
+
+def adopt_output_value(parsed: String, pid: U32, pid_text: String, start: String,
+                       cwd: String, argv: List<String>, artifact: String, text: String) -> IO(Unit):
+  match parsed:
+    case SNil{}: IO.die(Unit, 2, "compile-queue: the live command has no -o output")
+    case output_path:
+      +output_abs = absolute_path(cwd, output_path)
+      adopt_artifact_value(split_eq(artifact, ""), pid, pid_text, start, cwd, argv, output_abs, text)
+
+def adopt_pid_value(parsed: Maybe<U32>, pid_text: String, artifact: String, text: String) -> IO(Unit):
+  match parsed:
+    case None{}: IO.die(Unit, 2, "compile-queue: adopt requires --pid")
+    case Some{pid}:
+      do IO<Unit>:
+        start <- IO.try(String, L.starttime(pid))
+        cwd <- IO.try(String, L.cwd_of_pid(pid))
+        cmdline <- IO.try(String, L.cmdline(pid))
+        +argv = Tx.split_nul(cmdline)
+        adopt_output_value(output_of_argv(argv), pid, pid_text, start, cwd, argv, artifact, text)
+
 def adopt_command(args: List<String>) -> IO(Unit):
   do IO<Unit>:
     state <- default_state_root()
@@ -1134,31 +1194,7 @@ def adopt_command(args: List<String>) -> IO(Unit):
           ready <- require_state_root(field(text, "state_root"))
           +pid_text = field(text, "pid")
           +artifact = field(text, "artifact")
-          +queue_scrutinee_1082 = U32.read(pid_text)
-          match queue_scrutinee_1082:
-            case None{}: IO.die(Unit, 2, "compile-queue: adopt requires --pid")
-            case Some{pid}:
-              do IO<Unit>:
-                start <- IO.try(String, L.starttime(pid))
-                cwd <- IO.try(String, L.cwd_of_pid(pid))
-                cmdline <- IO.try(String, L.cmdline(pid))
-                +argv = Tx.split_nul(cmdline)
-                +output = output_of_argv(argv)
-                match output:
-                  case SNil{}: IO.die(Unit, 2, "compile-queue: the live command has no -o output")
-                  case output_path:
-                    +output_abs = absolute_path(cwd, output_path)
-                    +queue_scrutinee_1095 = split_eq(artifact, "")
-                    match queue_scrutinee_1095:
-                      case None{}: IO.die(Unit, 2, "compile-queue: adopt requires --artifact NAME=PATH")
-                      case Some{Split{name, path}}:
-                        +path_ok = Tx.str_eq(output_abs, path)
-                        +absolute_ok = Tx.starts_with(path, "/")
-                        Bool.pick(IO(Unit), path_ok,
-                          Bool.pick(IO(Unit), absolute_ok,
-                            adopt_live(pid, pid_text, start, cwd, argv, output_abs, name, path, text),
-                            IO.die(Unit, 2, "compile-queue: adopted artifact path must be absolute")),
-                          IO.die(Unit, 2, "compile-queue: artifact path differs from the live -o output"))
+          adopt_pid_value(U32.read(pid_text), pid_text, artifact, text)
 
 def usage() -> String:
   "usage: compile-queue.sh run --kind cgen|cc --state-root DIR --cwd DIR [options] -- COMMAND...\n"
