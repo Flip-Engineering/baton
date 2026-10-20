@@ -1,6 +1,7 @@
 import Base
 import ../coordinator/commands.bend as C
 import ./../coordinator/logs.bend as Logs
+import ../storage/lifecycle.bend as Storage
 import ../harness/omp-player.bend as Omp
 import ./control.bend as Control
 import ./store.bend as Store
@@ -740,12 +741,16 @@ def start_admitted(+db: String, +session: String, +id: String, +cmd: String, rou
       held : Bool <- window_held_start(db,session,head,lock,gate)
       Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),held,
         IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),
-        do IO<Result<&1,&1,U32 & String,Unit>>:
-          owned : Unit <- Store.claim(db,session,head)
-          +policy : Logs.Policy <- Logs.policy(db,session)
-          +level : String <- IO.pure(String,Turn.policy_level(policy))
-          start : P.RetainedStart <- IO.try(P.RetainedStart,Turn.retained(db,session,attempt,cmd,route,thinking,workspace,native,harness,storage,prompt,lock,recovery,level,predecessor))
-          started(db,session,id,log,cursor,native,workspace,attempt,harness,level,lock,start,again,cmd))
+        Storage.with_writer_leases(Result<&1,&1,U32 & String,Unit>, log, attempt,
+          error => do IO<Result<&1,&1,U32 & String,Unit>>:
+            released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
+            IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error}),
+          unit => do IO<Result<&1,&1,U32 & String,Unit>>:
+            owned : Unit <- Store.claim(db,session,head)
+            +policy : Logs.Policy <- Logs.policy(db,session)
+            +level : String <- IO.pure(String,Turn.policy_level(policy))
+            start : P.RetainedStart <- IO.try(P.RetainedStart,Turn.retained(db,session,attempt,cmd,route,thinking,workspace,native,harness,storage,prompt,lock,recovery,level,predecessor))
+            started(db,session,id,log,cursor,native,workspace,attempt,harness,level,lock,start,again,cmd)))
 
 def input_text(decoded: Req.Scalar) -> IO(String):
   match decoded:
@@ -829,11 +834,13 @@ def recovered_harness(+harness: String) -> String:
   Tx.trim_nl(harness) ++ "\n"
 
 def observe_guarded(+db: String, +session: String, +id: String, cursor: String, cmd: String, model: String, effort: String, +cwd: String, +log: String, harness: String, +directory: String, native: String, +handle: U32, lock: Maybe<U32>, again: String -> IO(Result<&1,&1,U32 & String,Unit>), adopted: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
-  do IO<Result<&1,&1,U32 & String,Unit>>:
-    +normalized_harness : String <- IO.pure(String,recovered_harness(harness))
-    reconciled : Unit <- Stop.observing(db,session,id,directory)
-    observation : Turn.Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- Turn.retained_output(db,session,id,log,normalized_harness,directory,directory,handle,"unknown")
-    completed_observation(db,session,id,log,cursor,native,cwd,directory,handle,lock,observation,again,adopted,cmd)
+  Storage.with_writer_leases(Result<&1,&1,U32 & String,Unit>, log, directory,
+    error => IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error}),
+    unit => do IO<Result<&1,&1,U32 & String,Unit>>:
+      +normalized_harness : String <- IO.pure(String,recovered_harness(harness))
+      reconciled : Unit <- Stop.observing(db,session,id,directory)
+      observation : Turn.Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- Turn.retained_output(db,session,id,log,normalized_harness,directory,directory,handle,"unknown")
+      completed_observation(db,session,id,log,cursor,native,cwd,directory,handle,lock,observation,again,adopted,cmd))
 
 def recovery_arguments(args: List<&2,String>) -> List<&2,String>:
   match args:
@@ -843,11 +850,15 @@ def recovery_arguments(args: List<&2,String>) -> List<&2,String>:
 
 def recover_owned_arguments(+db: String, +session: String, +directory: String, +lock: U32, args: List<&2,String>, again: String -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   match args:
-    case executable <> flag <> saved_db <> saved_session <> id <> cursor <> cmd <> model <> effort <> cwd <> log <> harness <> saved_directory <> native <> Nil{}:
-      do IO<Result<&1,&1,U32 & String,Unit>>:
-        valid : Unit <- Stop.error_result("Recorded native recovery arguments differ from the current session; retain the attempt and inspect its manifest.",Bool.and(String.eq(flag,"--recover-receive"),Bool.and(String.eq(session,saved_session),String.eq(directory,saved_directory))))
-        handle : U32 <- IO.try(U32,Custody.Instance.attach_owned(db,directory,lock))
-        observe_guarded(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,Some{lock},again,True{})
+    case executable <> flag <> saved_db <> saved_session <> id <> cursor <> cmd <> model <> effort <> cwd <> +log <> harness <> saved_directory <> native <> Nil{}:
+      Storage.with_writer_leases(Result<&1,&1,U32 & String,Unit>, log, directory,
+        error => do IO<Result<&1,&1,U32 & String,Unit>>:
+          released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
+          IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error}),
+        unit => do IO<Result<&1,&1,U32 & String,Unit>>:
+          valid : Unit <- Stop.error_result("Recorded native recovery arguments differ from the current session; retain the attempt and inspect its manifest.",Bool.and(String.eq(flag,"--recover-receive"),Bool.and(String.eq(session,saved_session),String.eq(directory,saved_directory))))
+          handle : U32 <- IO.try(U32,Custody.Instance.attach_owned(db,directory,lock))
+          observe_guarded(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,Some{lock},again,True{}))
     case other: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{(2,"Recorded native recovery arguments are invalid; retain the attempt and inspect its manifest.")})
 
 def recover_owned(db: String, session: String, directory: String, lock: U32, args: List<&2,String>, again: String -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
@@ -1025,10 +1036,12 @@ def recover_observer(+db: String, +session: String, observer: String) -> IO(Resu
     canonical : String <- IO.try(String,Lock.SessionLock.canonical(db))
     recover_observer_pid(canonical,session,U32.read(observer))
 
-def attach_recorded(+db: String, directory: String, next: @+handle: U32 -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
-  do IO<Result<&1,&1,U32 & String,Unit>>:
-    handle : U32 <- IO.try(U32,Custody.Instance.attach(db,directory))
-    next(handle)
+def attach_recorded(+db: String, +directory: String, +log: String, next: @+handle: U32 -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
+  Storage.with_writer_leases(Result<&1,&1,U32 & String,Unit>, log, directory,
+    error => IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error}),
+    unit => do IO<Result<&1,&1,U32 & String,Unit>>:
+      handle : U32 <- IO.try(U32,Custody.Instance.attach(db,directory))
+      next(handle))
 
 def observe_attached(+db: String, +session: String, id: String, cursor: String, +cmd: String, +model: String, +effort: String, +cwd: String, +log: String, harness: String, directory: String, native: String, +handle: U32, again: String -> IO(Result<&1,&1,U32 & String,Unit>)) -> IO(Result<&1,&1,U32 & String,Unit>):
   observe_guarded(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,None{},again,False{})
@@ -1039,7 +1052,7 @@ def recover(+db: String, +session: String, id: String, cursor: String, +cmd: Str
   do IO<Result<&1,&1,U32 & String,Unit>>:
     +updates : Chan(String) <- Chan.new(String,1)
     +drainer : Chan(Unit) <- IO.fork(Unit,discard_admitted_start(updates))
-    result : Result<&1,&1,U32 & String,Unit> <- attach_recorded(db,directory,handle => observe_attached(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,previous => continue_receiver(db,session,cmd,model,effort,cwd,log,"explicit",previous,updates)))
+    result : Result<&1,&1,U32 & String,Unit> <- attach_recorded(db,directory,log,handle => observe_attached(db,session,id,cursor,cmd,model,effort,cwd,log,harness,directory,native,handle,previous => continue_receiver(db,session,cmd,model,effort,cwd,log,"explicit",previous,updates)))
     ended : Unit <- Chan.close(String,updates)
     drained : Unit <- IO.join(Unit,drainer)
     IO.pure(Result<&1,&1,U32 & String,Unit>,result)

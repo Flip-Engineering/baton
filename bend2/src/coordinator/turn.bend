@@ -28,6 +28,7 @@ import ../harness/codex-player.bend as Codex
 import ../harness/dsh-player.bend as Dsh
 import ../git/process.bend as GitProc
 import ../git/types.bend as G
+import ../storage/lifecycle.bend as Storage
 import ../context/request.bend as Req
 import ../json/canonical.bend as J
 import ./../coordinator/frame-span.bend as Frame
@@ -1536,6 +1537,13 @@ def direct_release_lock(lock: Maybe<U32>) -> IO(Unit):
     case None{}: IO.pure(Unit,Unit{})
     case Some{handle}: IO.try(Unit,Lock.SessionLock.release(handle))
 
+def direct_lease_refused(-A: Type, +db: String, +player: String, +id: String, +log: String, lock: Maybe<U32>, error: U32 & String) -> IO(A):
+  (code, +detail) = error
+  do IO<A>:
+    noted : Result<&1,&1,U32 & String,Unit> <- direct_setup_note(db,player,id,log,detail)
+    released : Unit <- direct_release_lock(lock)
+    IO.die(A,code,append_write_error(detail,noted))
+
 def direct_acknowledge(+handle: U32) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
     acknowledged : Result<&1,&1,U32 & String,Unit> <- P.ProcessChild.acknowledge(handle)
@@ -1706,8 +1714,11 @@ def direct_second_started(+db: String, +player: String, +id: String, +log: Strin
                   +recovery : String <- IO.pure(String,direct_recovery_argv(executable,db,player,id,cmd,model,effort,cwd,log,harness,retry,conversation))
                   +policy : Logs.Policy <- Logs.policy(db,player)
                   +level : String <- IO.pure(String,policy_level(policy))
-                  next : P.RetainedStart <- IO.try(P.RetainedStart,direct_retained(db,player,retry,cmd,model,effort,cwd,conversation,harness,db ++ ".sessions",prompt,held,recovery,level))
-                  direct_second_started(db,player,id,log,retry,harness,Omp.filter_events(level),cmd,model,effort,cwd,task,prompt,conversation,inner_lock,next)),
+                  Storage.with_writer_leases(Unit, log, retry,
+                    error => direct_lease_refused(Unit,db,player,id,log,None{},error),
+                    unit => do IO<Unit>:
+                      next : P.RetainedStart <- IO.try(P.RetainedStart,direct_retained(db,player,retry,cmd,model,effort,cwd,conversation,harness,db ++ ".sessions",prompt,held,recovery,level))
+                      direct_second_started(db,player,id,log,retry,harness,Omp.filter_events(level),cmd,model,effort,cwd,task,prompt,conversation,inner_lock,next))),
             moved_deliveries => moved_lock => do IO<Unit>:
               cleaned : Unit <- direct_cleanup(handle,moved_deliveries)
               +continued : String <- direct_continued_directory(db,player,directory)
@@ -1717,8 +1728,11 @@ def direct_second_started(+db: String, +player: String, +id: String, +log: Strin
               +recovery : String <- IO.pure(String,direct_recovery_argv(executable,db,player,id,cmd,model,effort,cwd,log,harness,continued,conversation))
               +policy : Logs.Policy <- Logs.policy(db,player)
               +level : String <- IO.pure(String,policy_level(policy))
-              next : P.RetainedStart <- IO.try(P.RetainedStart,direct_retained(db,player,continued,cmd,model,effort,cwd,conversation,harness,db ++ ".sessions",prompt,held,recovery,level))
-              direct_second_started(db,player,id,log,continued,harness,Omp.filter_events(level),cmd,model,effort,cwd,task,prompt,conversation,Some{held},next)))
+              Storage.with_writer_leases(Unit, log, continued,
+                error => direct_lease_refused(Unit,db,player,id,log,None{},error),
+                unit => do IO<Unit>:
+                  next : P.RetainedStart <- IO.try(P.RetainedStart,direct_retained(db,player,continued,cmd,model,effort,cwd,conversation,harness,db ++ ".sessions",prompt,held,recovery,level))
+                  direct_second_started(db,player,id,log,continued,harness,Omp.filter_events(level),cmd,model,effort,cwd,task,prompt,conversation,Some{held},next))))
     case P.Unstarted{error}: direct_unstarted(db,player,id,log,directory,lock,error)
 
 def direct_restart_with_lock(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +harness: String, +directory: String, +prompt: String, +outcome: Outcome, +lock: U32) -> IO(Unit):
@@ -1733,8 +1747,11 @@ def direct_restart_with_lock(+db: String, +player: String, +id: String, +cmd: St
     +recovery : String <- IO.pure(String,direct_recovery_argv(executable,db,player,id,cmd,model,effort,cwd,log,harness,fresh,""))
     +policy : Logs.Policy <- Logs.policy(db,player)
     +level : String <- IO.pure(String,policy_level(policy))
-    start : P.RetainedStart <- IO.try(P.RetainedStart,direct_retained(db,player,fresh,cmd,model,effort,cwd,"",harness,db ++ ".sessions",note,lock,recovery,level))
-    direct_second_started(db,player,id,log,fresh,harness,Omp.filter_events(level),cmd,model,effort,cwd,task,prompt,"",Some{lock},start)
+    Storage.with_writer_leases(Unit, log, fresh,
+      error => direct_lease_refused(Unit,db,player,id,log,None{},error),
+      unit => do IO<Unit>:
+        start : P.RetainedStart <- IO.try(P.RetainedStart,direct_retained(db,player,fresh,cmd,model,effort,cwd,"",harness,db ++ ".sessions",note,lock,recovery,level))
+        direct_second_started(db,player,id,log,fresh,harness,Omp.filter_events(level),cmd,model,effort,cwd,task,prompt,"",Some{lock},start))
 
 def direct_restart_acquired(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +harness: String, +directory: String, +prompt: String, +outcome: Outcome, lock: Maybe<U32>) -> IO(Unit):
   match lock:
@@ -1756,8 +1773,11 @@ def direct_handoff_relaunch_locked(+db: String, +player: String, +id: String, +c
     +recovery : String <- IO.pure(String,direct_recovery_argv(executable,db,player,id,cmd,model,effort,cwd,log,harness,continued,conversation))
     +policy : Logs.Policy <- Logs.policy(db,player)
     +level : String <- IO.pure(String,policy_level(policy))
-    start : P.RetainedStart <- IO.try(P.RetainedStart,direct_retained(db,player,continued,cmd,model,effort,cwd,conversation,harness,db ++ ".sessions",prompt,lock,recovery,level))
-    direct_second_started(db,player,id,log,continued,harness,Omp.filter_events(level),cmd,model,effort,cwd,task,prompt,conversation,Some{lock},start)
+    Storage.with_writer_leases(Unit, log, continued,
+      error => direct_lease_refused(Unit,db,player,id,log,None{},error),
+      unit => do IO<Unit>:
+        start : P.RetainedStart <- IO.try(P.RetainedStart,direct_retained(db,player,continued,cmd,model,effort,cwd,conversation,harness,db ++ ".sessions",prompt,lock,recovery,level))
+        direct_second_started(db,player,id,log,continued,harness,Omp.filter_events(level),cmd,model,effort,cwd,task,prompt,conversation,Some{lock},start))
 
 # Keeper recovery reacquires the session lock before starting the next account.
 def direct_handoff_acquired(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +harness: String, +directory: String, +prompt: String, +conversation: String, lock: Maybe<U32>) -> IO(Unit):
@@ -1783,8 +1803,11 @@ def direct_transient_relaunch_locked(+db: String, +player: String, +id: String, 
     +recovery : String <- IO.pure(String,direct_recovery_argv(executable,db,player,id,cmd,model,effort,cwd,log,harness,retry,conversation))
     +policy : Logs.Policy <- Logs.policy(db,player)
     +level : String <- IO.pure(String,policy_level(policy))
-    start : P.RetainedStart <- IO.try(P.RetainedStart,direct_retained(db,player,retry,cmd,model,effort,cwd,conversation,harness,db ++ ".sessions",prompt,lock,recovery,level))
-    direct_second_started(db,player,id,log,retry,harness,Omp.filter_events(level),cmd,model,effort,cwd,task,prompt,conversation,Some{lock},start)
+    Storage.with_writer_leases(Unit, log, retry,
+      error => direct_lease_refused(Unit,db,player,id,log,None{},error),
+      unit => do IO<Unit>:
+        start : P.RetainedStart <- IO.try(P.RetainedStart,direct_retained(db,player,retry,cmd,model,effort,cwd,conversation,harness,db ++ ".sessions",prompt,lock,recovery,level))
+        direct_second_started(db,player,id,log,retry,harness,Omp.filter_events(level),cmd,model,effort,cwd,task,prompt,conversation,Some{lock},start))
 
 # Keeper recovery reacquires the session lock before retrying the same account.
 def direct_transient_acquired(+db: String, +player: String, +id: String, +cmd: String, +model: String, +effort: String, +cwd: String, +task: String, +log: String, +harness: String, +retry: String, +prompt: String, +conversation: String, lock: Maybe<U32>) -> IO(Unit):
@@ -1869,11 +1892,14 @@ def choose(+db: String, +player: String, +id: String, +cmd: String, +model: Stri
         +saved : String <- IO.try(String,Store.commit(db,C.Delivery{id}))
         written : Result<&1,&1,U32 & String,Unit> <- T.Text.control_output(saved)
         direct_replay_finished(db,player,lock,written)
-    case False{}: do IO<Unit>:
-      allowed : Bool <- Stop.admit(db,player,id,"direct",directory)
-      admitted : Unit <- Stop.admitted(allowed)
-      setup : Result<&1,&1,U32 & String,DirectSetup> <- direct_setup(db,player,id,cmd,model,effort,cwd,log,session,harness,directory,prompt)
-      direct_setup_result(db,player,id,cmd,model,effort,cwd,task,log,session,harness,directory,prompt,lock,setup)
+    case False{}:
+      Storage.with_writer_leases(Unit, log, directory,
+        error => direct_lease_refused(Unit,db,player,id,log,Some{lock},error),
+        unit => do IO<Unit>:
+          allowed : Bool <- Stop.admit(db,player,id,"direct",directory)
+          admitted : Unit <- Stop.admitted(allowed)
+          setup : Result<&1,&1,U32 & String,DirectSetup> <- direct_setup(db,player,id,cmd,model,effort,cwd,log,session,harness,directory,prompt)
+          direct_setup_result(db,player,id,cmd,model,effort,cwd,task,log,session,harness,directory,prompt,lock,setup))
 
 def supported_harness(supported: Bool) -> IO(Unit):
   match supported:
@@ -2087,11 +2113,14 @@ def recover_retained(+db: String, +player: String, +id: String, +cmd: String, +m
   do IO<Unit>:
     +recorded_harness : String <- IO.try(String,DB.Sql.query(db,"SELECT harness FROM sessions WHERE id=" ++ C.q(player) ++ ";"))
     valid_harness : Unit <- Stop.error_result("Recorded direct recovery harness differs from the current session; preserve the attempt and inspect its manifest.",String.eq(Tx.trim_nl(recorded_harness),harness))
-    prompt : String <- IO.try(String,NativeInitialInput.guidance(db,directory))
-    +handle : U32 <- IO.try(U32,Custody.Instance.attach(db,directory))
-    reconciled : Unit <- Stop.observing(db,player,id,directory)
-    observation : Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- retained_output(db,player,id,log,recorded_harness,directory,directory,handle,"unknown")
-    direct_first_observed(db,player,id,cmd,model,effort,cwd,"",log,recorded_harness,directory,session,prompt,handle,None{},observation)
+    Storage.with_writer_leases(Unit, log, directory,
+      error => direct_lease_refused(Unit,db,player,id,log,None{},error),
+      unit => do IO<Unit>:
+        prompt : String <- IO.try(String,NativeInitialInput.guidance(db,directory))
+        +handle : U32 <- IO.try(U32,Custody.Instance.attach(db,directory))
+        reconciled : Unit <- Stop.observing(db,player,id,directory)
+        observation : Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- retained_output(db,player,id,log,recorded_harness,directory,directory,handle,"unknown")
+        direct_first_observed(db,player,id,cmd,model,effort,cwd,"",log,recorded_harness,directory,session,prompt,handle,None{},observation))
 
 def recover_launch(+db: String, +player: String, +id: String, cmd: String, model: String, effort: String, cwd: String, log: String, harness: String, directory: String, session: String, launch: Result<&1,&1,U32 & String,String>) -> IO(Unit):
   match launch:

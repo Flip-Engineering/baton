@@ -34,7 +34,7 @@ type DatabaseRows is Data:
   DatabaseRows{rows: List<&2,String>, invalid: Bool}
 
 type State is Data:
-  State{sessions: List<&2,SessionRow>, executions: List<&2,ExecutionRow>, logs: List<&2,LogRow>, pending: List<&2,PendingRow>, databases: List<&2,String>, valid: Bool}
+  State{sessions: List<&2,SessionRow>, executions: List<&2,ExecutionRow>, logs: List<&2,LogRow>, pending: List<&2,PendingRow>, databases: List<&2,String>, retained: List<&2,String>, valid: Bool}
 
 type OwnerChoice is Data:
   OwnerChoice{owner: String, fact: T.Owner}
@@ -172,18 +172,48 @@ def pending_ok(rows: List<&2,PendingRow>) -> Bool:
       match head:
         case PendingRow{session, count}: Bool.and(Bool.not(String.is_empty(session)), pending_ok(tail))
 
+def retained_fields(fields: List<String>) -> List<&2,String>:
+  match fields:
+    case log <> base <> Nil{}:
+      Con{decode_field(log), Con{decode_field(base), Nil{}}}
+    case other: Con{"", Nil{}}
+
+def retained_row(line: String) -> List<&2,String>:
+  retained_fields(Tx.split_tabs(line))
+
+def log_path_walk(rows: List<String>, acc: List<&2,String>) -> List<&2,String>:
+  match rows:
+    case Nil{}: List.reverse(&2, String, acc)
+    case Con{head, tail}: log_path_walk(tail, Con{decode_field(head), acc})
+
+def retained_walk(rows: List<String>, acc: List<&2,String>) -> List<&2,String>:
+  match rows:
+    case Nil{}: List.reverse(&2, String, acc)
+    case Con{head, tail}:
+      retained_walk(tail, List.append(&2, String, acc, retained_row(head)))
+
+def retained_ok(rows: List<&2,String>) -> Bool:
+  match rows:
+    case Nil{}: True{}
+    case Con{head, tail}: Bool.and(Bool.not(String.is_empty(head)), retained_ok(tail))
+
 def valid_of(state: State) -> Bool:
   match state:
-    case State{sessions, executions, logs, pending, databases, valid}: valid
+    case State{sessions, executions, logs, pending, databases, retained, valid}: valid
 
-def loaded_state_with_database(+sessions: List<&2,SessionRow>, +executions: List<&2,ExecutionRow>, +logs: List<&2,LogRow>, +pending: List<&2,PendingRow>, +databases: List<&2,String>, database_invalid: Bool) -> State:
-  valid : Bool = Bool.and(Bool.not(database_invalid), Bool.and(sessions_ok(sessions), Bool.and(executions_ok(executions), Bool.and(logs_ok(logs), pending_ok(pending)))))
-  State{sessions, executions, logs, pending, databases, valid}
+def loaded_state_with_database(+sessions: List<&2,SessionRow>, +executions: List<&2,ExecutionRow>, +logs: List<&2,LogRow>, +pending: List<&2,PendingRow>, +databases: List<&2,String>, +retained: List<&2,String>, database_invalid: Bool) -> State:
+  valid : Bool = Bool.and(Bool.not(database_invalid), Bool.and(sessions_ok(sessions), Bool.and(executions_ok(executions), Bool.and(logs_ok(logs), Bool.and(pending_ok(pending), retained_ok(retained))))))
+  State{sessions, executions, logs, pending, databases, retained, valid}
 
-def loaded_state(+sessions: List<&2,SessionRow>, +executions: List<&2,ExecutionRow>, +logs: List<&2,LogRow>, +pending: List<&2,PendingRow>, +database_pair: DatabaseRows) -> State:
+def loaded_state(+sessions: List<&2,SessionRow>, +executions: List<&2,ExecutionRow>, +logs: List<&2,LogRow>, +pending: List<&2,PendingRow>, +database_pair: DatabaseRows, +retained: List<&2,String>) -> State:
   match database_pair:
     case DatabaseRows{databases, database_invalid}:
-      loaded_state_with_database(sessions, executions, logs, pending, databases, database_invalid)
+      loaded_state_with_database(sessions, executions, logs, pending, databases, retained, database_invalid)
+
+def text_or_empty(result: Result<&1,&1,U32 & String,String>) -> String:
+  match result:
+    case Done{value}: value
+    case Fail{error}: ""
 
 def load(+db: String) -> IO(State):
   do IO<State>:
@@ -197,7 +227,14 @@ def load(+db: String) -> IO(State):
     +pending : List<&2,PendingRow> = pending_walk(Tx.split_lines(pending_text), Nil{})
     database_text : String <- IO.try(String, DB.Sql.read(db, "SELECT CASE WHEN endpoint='' THEN '' WHEN json_valid(endpoint)=0 THEN '~invalid' ELSE CASE WHEN json_type(endpoint)!='array' THEN '~invalid' WHEN json_extract(endpoint,'$[1]') IS NULL OR json_type(endpoint,'$[1]')!='text' OR json_extract(endpoint,'$[1]')='' THEN '~missing' ELSE hex(json_extract(endpoint,'$[1]')) END END FROM sessions WHERE endpoint IS NULL OR length(endpoint)>0 ORDER BY id;"))
     +database_pair : DatabaseRows = database_entries(db, database_text)
-    IO.pure(State, loaded_state(sessions, executions, logs, pending, database_pair))
+    retained_result : Result<&1,&1,U32 & String,String> <- DB.Sql.read(db, "SELECT CASE WHEN g.log='' THEN '~' ELSE hex(g.log) END,CASE WHEN g.base='' THEN '~' ELSE hex(g.base) END FROM log_generations g JOIN executions e ON e.session=g.session AND e.id=g.attempt WHERE e.phase<>'exited' ORDER BY g.log;")
+    +retained_text : String = text_or_empty(retained_result)
+    +retained_generations : List<&2,String> = retained_walk(Tx.split_lines(retained_text), Nil{})
+    fallback_result : Result<&1,&1,U32 & String,String> <- DB.Sql.read(db, "SELECT CASE WHEN l.log='' THEN '~' ELSE hex(l.log) END FROM log_files l WHERE EXISTS(SELECT 1 FROM executions e WHERE e.session=l.session AND e.phase<>'exited') ORDER BY l.log;")
+    +fallback_text : String = text_or_empty(fallback_result)
+    +retained_files : List<&2,String> = log_path_walk(Tx.split_lines(fallback_text), Nil{})
+    +retained : List<&2,String> = List.append(&2, String, retained_generations, retained_files)
+    IO.pure(State, loaded_state(sessions, executions, logs, pending, database_pair, retained))
 
 def path_under(+path: String, +parent: String) -> Bool:
   Bool.pick(Bool, String.is_empty(parent), False{},
@@ -243,16 +280,23 @@ def log_owners(rows: List<&2,LogRow>, +path: String, acc: List<String>) -> List<
           next = owner_append(String.eq(path, log), session, acc)
           log_owners(tail, path, next)
 
+def owners_equal(+value: String, rows: List<String>) -> Bool:
+  match rows:
+    case Nil{}: True{}
+    case Con{head, tail}: Bool.and(String.eq(value, head), owners_equal(value, tail))
+
+# Several evidence sources naming the same owner still identify that owner;
+# only distinct named owners make the owner unknown.
 def owner_choice_lists(owners: List<String>) -> OwnerChoice:
   match owners:
     case Nil{}: OwnerChoice{"", T.OwnerMissing{}}
-    case Con{+only, Nil{}}:
-      fact : T.Owner = T.OwnerMatches{only}
-      OwnerChoice{only, fact}
-    case other: OwnerChoice{"", T.OwnerUnknown{}}
+    case Con{+only, tail}:
+      Bool.pick(OwnerChoice, owners_equal(only, tail),
+        OwnerChoice{only, T.OwnerMatches{only}},
+        OwnerChoice{"", T.OwnerUnknown{}})
 def owner_choice(+state: State, +path: String) -> OwnerChoice:
   match state:
-    case State{sessions, executions, logs, pending, databases, valid}:
+    case State{sessions, executions, logs, pending, databases, retained, valid}:
       owner_choice_lists(execution_owners(executions, path, workspace_owners(sessions, path, log_owners(logs, path, Nil{}))))
 
 def active_execution(rows: List<&2,ExecutionRow>, +path: String) -> String:
@@ -265,11 +309,21 @@ def active_execution(rows: List<&2,ExecutionRow>, +path: String) -> String:
             Bool.pick(String, String.is_empty(id), "execution", "execution:" ++ id),
             active_execution(tail, path))
 
+def retained_log_under(rows: List<&2,String>, +path: String) -> Bool:
+  match rows:
+    case Nil{}: False{}
+    case Con{+head, tail}: Bool.or(path_under(head, path), retained_log_under(tail, path))
+
+# A candidate that is, or contains, a retained log recorded for a non-exited
+# execution stays. This preserves the database-referenced active log even when
+# the writer lease was not observed (for example a foreign or crashed writer).
 def lease_fact(+state: State, +path: String) -> T.Presence:
   match state:
-    case State{sessions, executions, logs, pending, databases, valid}:
+    case State{sessions, executions, logs, pending, databases, retained, valid}:
       +active = active_execution(executions, path)
-      Bool.pick(T.Presence, String.is_empty(active), T.Absent{}, T.Present{active})
+      Bool.pick(T.Presence, String.is_empty(active),
+        Bool.pick(T.Presence, retained_log_under(retained, path), T.Present{"retained-log"}, T.Absent{}),
+        T.Present{active})
 
 def pending_count(rows: List<&2,PendingRow>, +owner: String) -> U32:
   match rows:
@@ -280,7 +334,7 @@ def pending_count(rows: List<&2,PendingRow>, +owner: String) -> U32:
 
 def pending_fact(+state: State, +owner: String) -> T.Presence:
   match state:
-    case State{sessions, executions, logs, pending, databases, valid}:
+    case State{sessions, executions, logs, pending, databases, retained, valid}:
       +count = pending_count(pending, owner)
       Bool.pick(T.Presence, U32.is_eq(count, 0), T.Absent{}, T.Present{U32.show(count)})
 
@@ -326,7 +380,7 @@ def database_fact_valid(databases: List<&2,String>, +path: String) -> IO(T.Prese
 # match; otherwise that unresolved endpoint makes the result Unknown.
 def database_fact(+state: State, +path: String) -> IO(T.Presence):
   match state:
-    case State{sessions, executions, logs, pending, databases, valid}:
+    case State{sessions, executions, logs, pending, databases, retained, valid}:
       Bool.pick(IO(T.Presence), Bool.and(valid, Bool.not(String.is_empty(path))),
         database_fact_valid(databases, path),
         IO.pure(T.Presence, T.Unknown{}))
@@ -340,7 +394,7 @@ def session_match(rows: List<&2,SessionRow>, +session: String) -> Bool:
 
 def session_known(+state: State, +session: String) -> Bool:
   match state:
-    case State{sessions, executions, logs, pending, databases, valid}: session_match(sessions, session)
+    case State{sessions, executions, logs, pending, databases, retained, valid}: session_match(sessions, session)
 
 def dirty_result(status: Result<&1, &1, G.GitFail, G.WtStatus>) -> T.Presence:
   match status:
@@ -394,7 +448,7 @@ def unpublished_fact(+cls: T.StorageClass, +path: String, +state: State, +owner:
   match cls:
     case T.Checkout{}:
       match state:
-        case State{sessions, executions, logs, pending, databases, valid}:
+        case State{sessions, executions, logs, pending, databases, retained, valid}:
           +base = session_base(sessions, owner)
           unpublished_command(base, path)
     case other:
@@ -496,5 +550,5 @@ def facts_valid(valid: Bool, +cls: T.StorageClass, +source: String, +path: Strin
 
 def facts_for(+cls: T.StorageClass, +source: String, +path: String, +state: State) -> IO(T.Facts):
   match state:
-    case State{sessions, executions, logs, pending, databases, valid}:
+    case State{sessions, executions, logs, pending, databases, retained, valid}:
       facts_valid(valid, cls, source, path, state)
