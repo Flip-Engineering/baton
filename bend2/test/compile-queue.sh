@@ -70,6 +70,7 @@ run_cc() { # tag output extra...
   shift 2
   sh "$QUEUE" run --kind cc --state-root "$STATE" --cwd "$T" --compiler "$FAKE" \
     --input "$T/input.c" --artifact "binary=$out" --option "test=$tag" \
+    --token "tok-$(basename "$out")" \
     -- "$FAKE" --tag "$tag" --log "$LOG" -o "$out" "$T/input.c" "$@" >"$T/$(basename "$out").out" 2>"$T/$(basename "$out").err"
 }
 
@@ -80,6 +81,7 @@ run_cgen() { # tag output extra...
   sh "$QUEUE" run --kind cgen --state-root "$STATE" --cwd "$T/src" --root "$T/src" \
     --source-root "$T/src" --entry bend2/src/fixture.bend --compiler "$FAKE" \
     --artifact "c=$out" --option "test=$tag" \
+    --token "tok-$(basename "$out")" \
     -- "$FAKE" --tag "$tag" --log "$LOG" -o "$out" "$@" >"$T/$(basename "$out").out" 2>"$T/$(basename "$out").err"
 }
 
@@ -90,6 +92,7 @@ cgen_key() { # tag output extra...
   sh "$QUEUE" key --kind cgen --state-root "$STATE" --cwd "$T/src" --root "$T/src" \
     --source-root "$T/src" --entry bend2/src/fixture.bend --compiler "$FAKE" \
     --artifact "c=$out" --option "test=$tag" \
+    --token "tok-$(basename "$out")" \
     -- "$FAKE" --tag "$tag" --log "$LOG" -o "$out" "$@"
 }
 
@@ -192,11 +195,27 @@ while [ "$i" -lt 200 ]; do
   i=$((i + 1))
   sleep 0.05
 done
-sh "$QUEUE" cancel --state-root "$STATE" --key "$key" >/dev/null 2>&1
+sh "$QUEUE" cancel --state-root "$STATE" --key "$key" --token tok-cancelcase >/dev/null 2>&1
 krc=0
 wait "$k" || krc=$?
 [ "$krc" = 130 ] && pass 'cancellation returned 130' || bad "cancellation exit $krc"
 [ "$(count_starts)" = 1 ] && pass 'cancellation stopped after one execution' || bad "cancel starts=$(count_starts)"
+
+# One owner withdraws; another owner keeps the shared execution.
+: > "$LOG"
+run_cc owner "$T/ownerA" --sleep 2 & o1=$!
+sleep 0.3
+run_cc owner "$T/ownerB" --sleep 2 & o2=$!
+sleep 0.5
+ownkey=$(sh "$QUEUE" key --kind cc --state-root "$STATE" --cwd "$T" --compiler "$FAKE" \
+  --input "$T/input.c" --artifact "binary=$T/ownerA" --option 'test=owner' \
+  -- "$FAKE" --tag owner --log "$LOG" -o "$T/ownerA" "$T/input.c" --sleep 2)
+sh "$QUEUE" cancel --state-root "$STATE" --key "$ownkey" --token tok-ownerA >/dev/null 2>&1
+o2rc=0
+wait "$o2" || o2rc=$?
+[ "$o2rc" = 0 ] && pass 'remaining owner completed after one withdrew' || bad "remaining owner exit $o2rc"
+[ "$(count_starts)" = 1 ] && pass 'owner withdrawal kept one execution' || bad "owner withdraw starts=$(count_starts)"
+wait "$o1" 2>/dev/null || true
 
 # Requester loss with a surviving requester.
 : > "$LOG"
