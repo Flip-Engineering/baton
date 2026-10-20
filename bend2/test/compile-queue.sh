@@ -151,6 +151,10 @@ grep -F "$(cat "$T/artifact-row-prefix")" "$STATE/keys/$ident_key/completed/resu
   && pass 'completed result records bare artifact name' || bad 'completed result artifact row missing'
 [ "$(cat "$STATE/keys/$ident_key/completed/artifacts/binary")" = 'artifact-ident' ] \
   && pass 'completed result retains named artifact bytes' || bad 'completed artifact bytes missing'
+runs=$(find "$STATE/keys/$ident_key/runs" -mindepth 1 -maxdepth 1 -type d | wc -l)
+[ "$runs" = 1 ] && pass 'identical cc stored one attempt' || bad "identical cc attempts=$runs"
+grep -q '^status=completed$' "$STATE/keys/$ident_key/completed/result" \
+  && pass 'completed result status recorded' || bad 'completed result status missing'
 
 # Artifact names are relative paths used under the attempt and cache roots.
 invalid_artifact=0
@@ -605,5 +609,26 @@ else
   bad 'guard did not publish the adopted result'
 fi
 wait "$adopt_run_pid" 2>/dev/null || true
+
+# A supervisor with no live owners must publish a canceled result even when
+# attempt/stdout and attempt/stderr are absent. This directly covers the
+# write_failure -> log_text boundary without running a compiler.
+fb_key=fabricated-missing-logs
+fb_dir="$STATE/keys/$fb_key"
+fb_attempt="$fb_dir/runs/fabricated"
+mkdir -p "$fb_attempt/work" "$fb_dir/owners"
+printf 'kind=cc\ncwd=%s\nsource_root=%s\nentry=\nkey=%s\nkeydir=%s\nattempt=%s\nartifact_name=binary\n' \
+  "$T" "$T" "$fb_key" "$fb_dir" "$fb_attempt" > "$fb_attempt/meta"
+fb_rc=0
+"$BATON2_COMPILE_QUEUE_BIN" -- __supervise "$fb_attempt" >"$T/fabricated.out" 2>"$T/fabricated.err" || fb_rc=$?
+[ "$fb_rc" -eq 0 ] && pass 'absent-log supervisor exited cleanly' || bad "absent-log supervisor exit $fb_rc"
+if [ -f "$fb_attempt/result" ]; then
+  grep -q '^status=canceled$' "$fb_attempt/result" \
+    && pass 'absent-log failure result published' || bad 'absent-log failure result status wrong'
+  grep -q '^detail=all requesters canceled before execution$' "$fb_attempt/result" \
+    && pass 'absent-log failure detail preserved' || bad 'absent-log failure detail missing'
+else
+  bad 'absent-log failure result missing'
+fi
 
 exit "$fail"

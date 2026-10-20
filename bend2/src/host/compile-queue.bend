@@ -691,6 +691,11 @@ def write_failure(+attempt: String, +keydir: String, status: String, code: U32,
     removed : Unit <- IO.try(Unit, L.CompileQueueLifecycle.remove(keydir ++ "/active"))
     IO.pure(Unit, Unit{})
 
+def copy_log_if_present(+source: String, +dest: String) -> IO(Unit):
+  do IO<Unit>:
+    present : Bool <- regular(source)
+    Bool.pick(IO(Unit), present, IO.try(Unit, L.CompileQueueLifecycle.copy_file(source, dest)), IO.pure(Unit, Unit{}))
+
 def finish_success(+attempt: String, +keydir: String, +kind: String, +key: String,
                     +started: String, +names: List<&2,String>) -> IO(Unit):
   do IO<Unit>:
@@ -702,8 +707,8 @@ def finish_success(+attempt: String, +keydir: String, +kind: String, +key: Strin
     finished : String <- IO.try(String, L.CompileQueueLifecycle.now_ns())
     wrote : Unit <- IO.try(Unit, Result.CompileQueueResult.write(cache ++ "/result", "completed", "0", kind, key, started,
       finished, attempt, work, attempt ++ "/stdout", attempt ++ "/stderr", "", artifact_paths_text(names)))
-    copied_out : Unit <- IO.try(Unit, L.CompileQueueLifecycle.copy_file(attempt ++ "/stdout", cache ++ "/stdout"))
-    copied_err : Unit <- IO.try(Unit, L.CompileQueueLifecycle.copy_file(attempt ++ "/stderr", cache ++ "/stderr"))
+    copied_out : Unit <- copy_log_if_present(attempt ++ "/stdout", cache ++ "/stdout")
+    copied_err : Unit <- copy_log_if_present(attempt ++ "/stderr", cache ++ "/stderr")
     renamed : Unit <- IO.try(Unit, F.Files.rename(cache, keydir ++ "/completed"))
     copied_result : Unit <- IO.try(Unit, L.CompileQueueLifecycle.copy_file(keydir ++ "/completed/result", attempt ++ "/result"))
     removed : Unit <- IO.try(Unit, L.CompileQueueLifecycle.remove(keydir ++ "/active"))
