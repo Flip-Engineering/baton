@@ -151,6 +151,13 @@ grep -F "$(cat "$T/artifact-row-prefix")" "$STATE/keys/$ident_key/completed/resu
   && pass 'completed result records bare artifact name' || bad 'completed result artifact row missing'
 [ "$(cat "$STATE/keys/$ident_key/completed/artifacts/binary")" = 'artifact-ident' ] \
   && pass 'completed result retains named artifact bytes' || bad 'completed artifact bytes missing'
+grep -q '^log-stdout-bytes=0$' "$STATE/keys/$ident_key/completed/result" \
+  && pass 'completed result records empty stdout log' || bad 'completed stdout log row missing'
+grep -q '^log-stderr-bytes=0$' "$STATE/keys/$ident_key/completed/result" \
+  && pass 'completed result records empty stderr log' || bad 'completed stderr log row missing'
+ident_attempts=$(find "$STATE/keys/$ident_key/runs" -mindepth 1 -maxdepth 1 -type d | wc -l)
+[ "$ident_attempts" = 1 ] && pass 'identical cc shared one attempt' || bad "identical cc attempts=$ident_attempts"
+[ -f "$STATE/keys/$ident_key/completed/result" ] && pass 'identical cc published one completed result' || bad 'identical cc completed result missing'
 
 # Artifact names are relative paths used under the attempt and cache roots.
 invalid_artifact=0
@@ -371,6 +378,16 @@ qrc=0
 wait "$queued" || qrc=$?
 [ "$qrc" != 0 ] && pass 'queued canceled requester received terminal failure' || bad 'queued canceled requester succeeded'
 [ "$(grep -c '^start' "$LOG" 2>/dev/null || true)" = 1 ] && pass 'canceled queued command never started' || bad 'canceled queued command started'
+queued_result=$(find "$STATE/keys/$qkey/runs" -type f -name result | head -n 1)
+if [ -n "$queued_result" ] && grep -q '^status=canceled$' "$queued_result"; then
+  pass 'queued cancellation published a canceled result'
+else
+  bad 'queued cancellation result missing or not canceled'
+fi
+grep -q '^log-stdout-bytes=0$' "$queued_result" \
+  && pass 'queued cancellation records empty stdout log' || bad 'queued cancellation stdout log row missing'
+grep -q '^log-stderr-bytes=0$' "$queued_result" \
+  && pass 'queued cancellation records empty stderr log' || bad 'queued cancellation stderr log row missing'
 
 # One owner withdraws; another owner keeps the shared execution.
 : > "$LOG"

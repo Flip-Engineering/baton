@@ -680,11 +680,22 @@ def clean_stale_active(keydir: String) -> IO(Unit):
     start : String <- IO.pure(String, field(text, "starttime"))
     clean_stale_active_pid(U32.read(pid_text), active, start)
 
+def ensure_logs(+attempt: String) -> IO(Unit):
+  do IO<Unit>:
+    stdout_present : Bool <- regular(attempt ++ "/stdout")
+    stdout_ready : Unit <- Bool.pick(IO(Unit), stdout_present, IO.pure(Unit, Unit{}),
+      IO.try(Unit, L.CompileQueueLifecycle.write_text(attempt ++ "/stdout", "")))
+    stderr_present : Bool <- regular(attempt ++ "/stderr")
+    stderr_ready : Unit <- Bool.pick(IO(Unit), stderr_present, IO.pure(Unit, Unit{}),
+      IO.try(Unit, L.CompileQueueLifecycle.write_text(attempt ++ "/stderr", "")))
+    IO.pure(Unit, Unit{})
+
 def write_failure(+attempt: String, +keydir: String, status: String, code: U32,
                   kind: String, key: String, started: String, detail: String,
                   +names: List<&2,String>) -> IO(Unit):
   do IO<Unit>:
     finished : String <- IO.try(String, L.CompileQueueLifecycle.now_ns())
+    logs : Unit <- ensure_logs(attempt)
     wrote : Unit <- IO.try(Unit, Result.CompileQueueResult.write(attempt ++ "/result", status, U32.show(code), kind, key, started,
       finished, attempt, attempt ++ "/work", attempt ++ "/stdout", attempt ++ "/stderr",
       detail, artifact_paths_text(names)))
@@ -700,6 +711,7 @@ def finish_success(+attempt: String, +keydir: String, +kind: String, +key: Strin
     made : Unit <- IO.try(Unit, L.CompileQueueLifecycle.mkdir_p(cache ++ "/artifacts"))
     retained : Unit <- IO.try(Unit, Result.CompileQueueResult.retain_artifacts(work, cache ++ "/artifacts", artifact_paths_text(names)))
     finished : String <- IO.try(String, L.CompileQueueLifecycle.now_ns())
+    logs : Unit <- ensure_logs(attempt)
     wrote : Unit <- IO.try(Unit, Result.CompileQueueResult.write(cache ++ "/result", "completed", "0", kind, key, started,
       finished, attempt, work, attempt ++ "/stdout", attempt ++ "/stderr", "", artifact_paths_text(names)))
     copied_out : Unit <- IO.try(Unit, L.CompileQueueLifecycle.copy_file(attempt ++ "/stdout", cache ++ "/stdout"))
