@@ -22,6 +22,9 @@ def queue_entry():
                   os.environ.get('BATON2_COMPILE_QUEUE')):
         if value and pathlib.Path(value).exists():
             return value
+    prefix = os.environ.get('BATON2_PREFIX')
+    if prefix and pathlib.Path(prefix, 'bin/baton-compile-queue').exists():
+        return str(LAUNCHER) if LAUNCHER.exists() else str(pathlib.Path(prefix, 'bin/baton-compile-queue'))
     if LAUNCHER.exists() and any(path.exists() for path in SCRATCH):
         return str(LAUNCHER)
     return None

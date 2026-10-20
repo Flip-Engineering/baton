@@ -659,14 +659,22 @@ def run_command(args: List<String>) -> IO(Unit):
                       released : Unit <- IO.try(Unit, L.lock_release(lock))
                       IO.pure(Unit, Unit{})
                   case False{}:
-                    latest <- IO.try(String, Result.latest_result(keydir, wait_start, Bool.pick(String, present, "1", "0")))
-                    match latest:
-                      case SNil{}: start_attempt(parsed, key, keydir, lock, owner)
-                      case path:
-                        do IO<Unit>:
-                          removed : Unit <- remove_token(keydir, owner)
-                          released : Unit <- IO.try(Unit, L.lock_release(lock))
-                          Result.report_failure(path)
+                    +completed_path = keydir ++ "/completed/result"
+                    existing <- regular(completed_path)
+                    Bool.pick(IO(Unit), existing,
+                      do IO<Unit>:
+                        removed : Unit <- remove_token(keydir, owner)
+                        released : Unit <- IO.try(Unit, L.lock_release(lock))
+                        IO.die(Unit, 1, "compile-queue: completed result exists but is not reusable; only adopt may reuse an external result"),
+                      do IO<Unit>:
+                        latest <- IO.try(String, Result.latest_result(keydir, wait_start, Bool.pick(String, present, "1", "0")))
+                        match latest:
+                          case SNil{}: start_attempt(parsed, key, keydir, lock, owner)
+                          case path:
+                            do IO<Unit>:
+                              removed : Unit <- remove_token(keydir, owner)
+                              released : Unit <- IO.try(Unit, L.lock_release(lock))
+                              Result.report_failure(path))
             case other: IO.die(Unit, 2, "compile-queue: malformed configuration")
       case error: IO.die(Unit, 2, error)
 
@@ -707,13 +715,22 @@ def wait_command(args: List<String>) -> IO(Unit):
                   released : Unit <- IO.try(Unit, L.lock_release(lock))
                   IO.write("status=completed\nkey=" ++ key ++ "\n")
               case False{}:
-                latest <- IO.try(String, Result.latest_result(keydir, "0", "0"))
-                match latest:
-                  case SNil{}: IO.die(Unit, 4, "compile-queue: no result for key " ++ key)
-                  case path:
-                    do IO<Unit>:
-                      released : Unit <- IO.try(Unit, L.lock_release(lock))
-                      Result.report_failure(path),
+                +completed_path = keydir ++ "/completed/result"
+                existing <- regular(completed_path)
+                Bool.pick(IO(Unit), existing,
+                  do IO<Unit>:
+                    text <- IO.try(String, L.read_text(completed_path))
+                    +label = Bool.pick(String, Tx.str_eq(field(text, "external"), "1"), "completed-external", "completed-unusable")
+                    released : Unit <- IO.try(Unit, L.lock_release(lock))
+                    IO.write("status=" ++ label ++ "\nkey=" ++ key ++ "\n"),
+                  do IO<Unit>:
+                    latest <- IO.try(String, Result.latest_result(keydir, "0", "0"))
+                    match latest:
+                      case SNil{}: IO.die(Unit, 4, "compile-queue: no result for key " ++ key)
+                      case path:
+                        do IO<Unit>:
+                          released : Unit <- IO.try(Unit, L.lock_release(lock))
+                          Result.report_failure(path)),
           IO.die(Unit, 2, "compile-queue: wait requires --key"))
 
 def parse_cancel(args: List<String>, state: String, key: String, token: String) -> IO(CancelArgs):
@@ -789,7 +806,16 @@ def status_rows(state_root: String, filter: String, names: List<String>) -> IO(U
               IO.pure(Unit, Unit{}))
             completed <- IO.try(Bool, Result.verify_completed(keydir))
             done : Unit <- Bool.pick(IO(Unit), completed,
-              IO.write("completed key=" ++ key ++ "\n"), IO.pure(Unit, Unit{}))
+              IO.write("completed key=" ++ key ++ "\n"),
+              do IO<Unit>:
+                +completed_path = keydir ++ "/completed/result"
+                existing <- regular(completed_path)
+                Bool.pick(IO(Unit), existing,
+                  do IO<Unit>:
+                    result <- IO.try(String, L.read_text(completed_path))
+                    +label = Bool.pick(String, Tx.str_eq(field(result, "external"), "1"), "completed-external", "completed-unusable")
+                    IO.write(label ++ " key=" ++ key ++ "\n"),
+                  IO.pure(Unit, Unit{})))
             IO.pure(Unit, Unit{}),
           IO.pure(Unit, Unit{}))
         status_rows(state_root, filter, rest)
@@ -911,8 +937,11 @@ def guard_loop(keydir: String, pid: U32, start: String, name: String, path: Stri
         size <- IO.try(U32, F.Files.size(path))
         Bool.pick(IO(Unit), U32.is_lt(0, size),
           do IO<Unit>:
-            published : Unit <- finish_adoption(keydir, adoption, name, path)
-            verified <- IO.try(Bool, Result.verify_adoption(keydir, adoption))
+            digest <- IO.try(String, Identity.file_digest(path))
+            +record = adoption ++ "artifact-name=" ++ name ++ "\nartifact-digest=" ++ digest ++ "\n"
+            recorded : Unit <- IO.try(Unit, L.write_text(keydir ++ "/adoption", record))
+            published : Unit <- finish_adoption(keydir, record, name, path)
+            verified <- IO.try(Bool, Result.verify_adoption(keydir, record))
             Bool.pick(IO(Unit), verified,
               IO.pure(Unit, Unit{}),
               do IO<Unit>:

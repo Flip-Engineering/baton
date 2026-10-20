@@ -354,7 +354,15 @@ def CompileQueueResult.write_adoption(path: String, key: String, started: String
     inputs = CompileQueueResult.adoption_field(adoption, "input")
     output = CompileQueueResult.field(adoption, "output")
     artifacts_value = CompileQueueResult.external_artifacts(name, digest)
-    verified = Bool.pick(String, Bool.and(Bool.not(String.eq(kind, "missing")), Bool.not(String.is_empty(digest))), "1", "0")
+    ready = Bool.and(Bool.not(String.is_empty(command)),
+      Bool.and(Bool.not(String.is_empty(process)),
+        Bool.and(Bool.not(String.is_empty(output)),
+          Bool.and(Bool.not(String.is_empty(name)),
+            Bool.and(Bool.not(String.is_empty(digest)),
+              Bool.and(Bool.not(String.eq(kind, "missing")),
+                Bool.and(Bool.not(String.is_empty(CompileQueueResult.adoption_field(adoption, "pid"))),
+                  Bool.not(String.is_empty(CompileQueueResult.adoption_field(adoption, "starttime"))))))))))
+    verified = Bool.pick(String, ready, "1", "0")
     text = CompileQueueResult.header("cgen", key, verified, "1")
       ++ "status=completed\nexit=0\n"
       ++ "started_ns=" ++ started ++ "\n"
@@ -383,22 +391,27 @@ def CompileQueueResult.verify_adoption(keydir: String, adoption: String) -> IO(R
       case Done{result}:
         key = CompileQueueResult.basename(keydir)
         rows = CompileQueueResult.artifact_rows(result)
-        artifact_name = CompileQueueResult.field(result, "artifact-name")
-        artifact_digest = CompileQueueResult.field(result, "artifact-digest")
-        expected_artifacts = CompileQueueResult.external_artifacts(artifact_name, artifact_digest)
-        adopted = Bool.and(CompileQueueResult.base_verified(result, key),
-          Bool.and(String.eq(CompileQueueResult.field(result, "external"), "1"),
-            Bool.and(String.eq(CompileQueueResult.field(result, "external-verified"), "1"),
-              Bool.and(CompileQueueResult.completed(result),
-                Bool.and(Bool.not(String.is_empty(rows)),
-                  Bool.and(Bool.not(String.is_empty(artifact_name)),
-                    Bool.and(Bool.not(String.is_empty(artifact_digest)),
-                      CompileQueueResult.external_verified(result,
-                        CompileQueueResult.adoption_field(adoption, "argv"),
-                        CompileQueueResult.external_process(adoption),
-                        CompileQueueResult.adoption_field(adoption, "input"),
-                        CompileQueueResult.field(adoption, "output"),
-                        expected_artifacts))))))))
+        recorded_name = CompileQueueResult.adoption_field(adoption, "artifact-name")
+        recorded_digest = CompileQueueResult.adoption_field(adoption, "artifact-digest")
+        result_name = CompileQueueResult.field(result, "artifact-name")
+        result_digest = CompileQueueResult.field(result, "artifact-digest")
+        expected_artifacts = CompileQueueResult.external_artifacts(recorded_name, recorded_digest)
+        consistent = Bool.and(String.eq(recorded_name, result_name),
+          String.eq(recorded_digest, result_digest))
+        adopted = Bool.and(Bool.not(String.is_empty(recorded_name)),
+          Bool.and(Bool.not(String.is_empty(recorded_digest)),
+            Bool.and(consistent,
+              Bool.and(CompileQueueResult.base_verified(result, key),
+                Bool.and(String.eq(CompileQueueResult.field(result, "external"), "1"),
+                  Bool.and(String.eq(CompileQueueResult.field(result, "external-verified"), "1"),
+                    Bool.and(CompileQueueResult.completed(result),
+                      Bool.and(Bool.not(String.is_empty(rows)),
+                        CompileQueueResult.external_verified(result,
+                          CompileQueueResult.adoption_field(adoption, "argv"),
+                          CompileQueueResult.external_process(adoption),
+                          CompileQueueResult.adoption_field(adoption, "input"),
+                          CompileQueueResult.field(adoption, "output"),
+                          expected_artifacts)))))))))
         artifacts_ok : Bool <- CompileQueueResult.verify_rows(String.lines(rows), keydir)
         IO.pure(Result<&1,&1,U32 & String,Bool>, Done{Bool.and(adopted, artifacts_ok)})
 
