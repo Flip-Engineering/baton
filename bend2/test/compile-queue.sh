@@ -74,6 +74,15 @@ run_cc() { # tag output extra...
     -- "$FAKE" --tag "$tag" --log "$LOG" -o "$out" "$T/input.c" "$@" >"$T/$(basename "$out").out" 2>"$T/$(basename "$out").err"
 }
 
+cc_key() { # tag output extra...
+  tag=$1
+  out=$2
+  shift 2
+  sh "$QUEUE" key --kind cc --state-root "$STATE" --cwd "$T" --compiler "$FAKE" \
+    --input "$T/input.c" --artifact "binary=$out" --option "test=$tag" \
+    -- "$FAKE" --tag "$tag" --log "$LOG" -o "$out" "$T/input.c" "$@"
+}
+
 run_cgen() { # tag output extra...
   tag=$1
   out=$2
@@ -228,6 +237,26 @@ lrc=0
 wait "$l2" || lrc=$?
 [ "$lrc" = 0 ] && pass 'surviving requester completed' || bad "survivor exit $lrc"
 [ "$(count_starts)" = 1 ] && pass 'requester loss shared one execution' || bad "loss starts=$(count_starts)"
+
+# A live or uncertain active record refuses a fresh admission.
+: > "$LOG"
+livekey=$(cc_key live "$T/live")
+mkdir -p "$STATE/keys/$livekey"
+live_start=$(awk '{print $22}' "/proc/$$/stat")
+printf 'pid=%s\nstarttime=%s\nkind=cc\nsetsid=1\nstarted_ns=0\n' "$$" "$live_start" > "$STATE/keys/$livekey/active"
+if run_cc live "$T/live"; then bad 'live active admitted'; else pass 'live active refused'; fi
+grep -q 'refusing a fresh admission' "$T/live.err" && pass 'live active diagnostic reported' || bad 'live active diagnostic missing'
+[ "$(count_starts)" = 0 ] && pass 'live active did not start a compiler' || bad "live active starts=$(count_starts)"
+rm -f "$STATE/keys/$livekey/active"
+
+: > "$LOG"
+unckey=$(cc_key uncertain "$T/uncertain")
+mkdir -p "$STATE/keys/$unckey"
+printf 'pid=%s\n' "$$" > "$STATE/keys/$unckey/active"
+if run_cc uncertain "$T/uncertain"; then bad 'uncertain active admitted'; else pass 'uncertain active refused'; fi
+grep -q 'uncertain' "$T/uncertain.err" && pass 'uncertain active diagnostic reported' || bad 'uncertain active diagnostic missing'
+[ "$(count_starts)" = 0 ] && pass 'uncertain active did not start a compiler' || bad "uncertain active starts=$(count_starts)"
+rm -f "$STATE/keys/$unckey/active"
 
 # Source identity changes the key.
 key1=$(cgen_key keyfile "$T/keyfile")

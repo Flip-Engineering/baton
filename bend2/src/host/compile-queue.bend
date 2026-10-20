@@ -489,13 +489,32 @@ def clean_stale_active(keydir: String) -> IO(Unit):
     +start = field(text, "starttime")
     match U32.read(pid_text):
       case None{}:
-        removed : Unit <- IO.try(Unit, L.remove(active))
         IO.pure(Unit, Unit{})
       case Some{pid}:
-        alive <- IO.try(U32, L.alive(pid, start))
-        removed : Unit <- Bool.pick(IO(Unit), U32.is_eq(alive, 1), IO.pure(Unit, Unit{}),
-          IO.try(Unit, L.remove(active)))
-        IO.pure(Unit, Unit{})
+        Bool.pick(IO(Unit), String.is_empty(start),
+          IO.pure(Unit, Unit{}),
+          do IO<Unit>:
+            alive <- IO.try(U32, L.alive(pid, start))
+            removed : Unit <- Bool.pick(IO(Unit), U32.is_eq(alive, 1), IO.pure(Unit, Unit{}),
+              IO.try(Unit, L.remove(active)))
+            IO.pure(Unit, Unit{}))
+
+# 0 means no active record or a dead owner; 1 is live; 2 is an active record
+# with no parseable identity. A fresh admission refuses 1 and 2.
+def active_state(keydir: String) -> IO<U32>:
+  do IO<U32>:
+    text <- IO.try(String, L.read_text(keydir ++ "/active"))
+    Bool.pick(IO<U32>, String.is_empty(text), IO.pure(U32, 0),
+      do IO<U32>:
+        +pid_text = field(text, "pid")
+        +start = field(text, "starttime")
+        match U32.read(pid_text):
+          case None{}: IO.pure(U32, 2)
+          case Some{pid}:
+            Bool.pick(IO<U32>, String.is_empty(start), IO.pure(U32, 2),
+              do IO<U32>:
+                alive <- IO.try(U32, L.alive(pid, start))
+                IO.pure(U32, Bool.pick(U32, U32.is_eq(alive, 1), 1, 0))))
 
 def write_failure(attempt: String, keydir: String, status: String, code: U32,
                   kind: String, key: String, started: String, detail: String,
@@ -659,22 +678,29 @@ def run_command(args: List<String>) -> IO(Unit):
                       released : Unit <- IO.try(Unit, L.lock_release(lock))
                       IO.pure(Unit, Unit{})
                   case False{}:
-                    +completed_path = keydir ++ "/completed/result"
-                    existing <- regular(completed_path)
-                    Bool.pick(IO(Unit), existing,
+                    state <- IO.try(U32, active_state(keydir))
+                    Bool.pick(IO(Unit), U32.is_eq(state, 0),
+                      do IO<Unit>:
+                        +completed_path = keydir ++ "/completed/result"
+                        existing <- regular(completed_path)
+                        Bool.pick(IO(Unit), existing,
+                          do IO<Unit>:
+                            removed : Unit <- remove_token(keydir, owner)
+                            released : Unit <- IO.try(Unit, L.lock_release(lock))
+                            IO.die(Unit, 1, "compile-queue: completed result exists but is not reusable; only adopt may reuse an external result"),
+                          do IO<Unit>:
+                            latest <- IO.try(String, Result.latest_result(keydir, wait_start, Bool.pick(String, present, "1", "0")))
+                            match latest:
+                              case SNil{}: start_attempt(parsed, key, keydir, lock, owner)
+                              case path:
+                                do IO<Unit>:
+                                  removed : Unit <- remove_token(keydir, owner)
+                                  released : Unit <- IO.try(Unit, L.lock_release(lock))
+                                  Result.report_failure(path)),
                       do IO<Unit>:
                         removed : Unit <- remove_token(keydir, owner)
                         released : Unit <- IO.try(Unit, L.lock_release(lock))
-                        IO.die(Unit, 1, "compile-queue: completed result exists but is not reusable; only adopt may reuse an external result"),
-                      do IO<Unit>:
-                        latest <- IO.try(String, Result.latest_result(keydir, wait_start, Bool.pick(String, present, "1", "0")))
-                        match latest:
-                          case SNil{}: start_attempt(parsed, key, keydir, lock, owner)
-                          case path:
-                            do IO<Unit>:
-                              removed : Unit <- remove_token(keydir, owner)
-                              released : Unit <- IO.try(Unit, L.lock_release(lock))
-                              Result.report_failure(path))
+                        IO.die(Unit, 1, "compile-queue: active execution is live or has uncertain ownership; refusing a fresh admission"))
             case other: IO.die(Unit, 2, "compile-queue: malformed configuration")
       case error: IO.die(Unit, 2, error)
 
