@@ -3343,7 +3343,7 @@ function emit_arm_shared(fl: File, h: HTerm, av: Val[], dst: Dst,
   def: boolean, lit = false): boolean {
   const u = term_uses(fl, h);
   const closed = u.length === 0;
-  if (fl.dry || (!def && !closed)) return false;
+  if (!def && !closed) return false;
   // A shared arm is emitted as an ordinary C helper with only its explicit
   // parameters. WL_JMP uses the register bank declared for its segment, so
   // an arm that can transfer segments must stay in its owning segment.
