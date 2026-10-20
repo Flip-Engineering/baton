@@ -50,6 +50,24 @@ identity. The compiler identity hashes the wrapper chain and, when the resolved
 path has a release layout with `bend2/main.ts` and `bin/bun`, every file under
 `bend2/` and `bin/bun`.
 
+## Language boundary
+
+The host C bindings supply primitives: SHA-256 over bytes and files, file
+reading and size, directory listing, `realpath`/`readlink`, script detection,
+executable resolution through `PATH`, and storage observation for file, link and
+directory kind. Bend2 owns the queue policy: `.bend` import and C `#include`
+parsing, closure membership and order, wrapper exec-chain parsing, Bend release
+layout detection, toolchain file enumeration and composition, normalized
+identity material, result parsing and verification, artifact publication, and
+the public run/key/wait/cancel/status/adopt behavior.
+
+`bend2/src/host/compile-queue-lifecycle.c` owns `flock(2)` descriptors,
+`setsid(2)` detachment, process start identity and zombies, signals, and the
+detached spawn. Key and C-generation lock descriptors are inherited by the
+supervisor; the parent closes its references without calling `LOCK_UN`. The
+spawn remaps the inherited key, C-generation and status descriptors through
+duplicates at fd 10 or higher before installing them at fds 9 and 8.
+
 ## Execution
 
 A request opens `$state/keys/<key>/lock` and takes an exclusive record lock. With the
@@ -207,8 +225,11 @@ artifact is bootstrap evidence for that source identity and is not reused by the
 
 ## Open items
 
-- The Bend2 implementation is under source review; it has not been built or
-  qualified. Root owns consolidation and deployment.
+- The Bend2 implementation has passed static review only; it has not been
+  built or run. Root owns the first build, qualification and deployment.
+- Direct fixture compiler sites and Bend internal `cli_build` are inventoried;
+  the normal build launcher and the public queue operation are wired. Root
+  decides the remaining caller edits after the queue executable exists.
 - The reference shell `cancel --key` interface is bootstrap-only. The permanent
   queue binds each requester to an owner token and cancels a shared execution
   only when no owners remain.
