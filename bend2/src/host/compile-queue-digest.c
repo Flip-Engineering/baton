@@ -1028,7 +1028,12 @@ enum {
   CQ_ID_TEXT_DIGEST = 6,
   CQ_ID_FILE_CLOSURE_DIGEST = 7,
   CQ_ID_COMPILER_CLOSURE_DIGEST = 8,
-  CQ_ID_FILE_SIZE = 9
+  CQ_ID_FILE_SIZE = 9,
+  CQ_ID_LIST_DIR = 10,
+  CQ_ID_REALPATH = 11,
+  CQ_ID_READLINK = 12,
+  CQ_ID_IS_SCRIPT = 13,
+  CQ_ID_RESOLVE_COMMAND = 14
 };
 
 typedef struct {
@@ -1091,6 +1096,90 @@ static void cq_id_call_work(IoWork *work) {
       call->text = cq_id_strdup(text);
       break;
     }
+    case CQ_ID_LIST_DIR: {
+      DIR *directory = opendir(call->first);
+      if (!directory) {
+        call->error = errno;
+        break;
+      }
+      CqIdBuffer listing = {0, 0, 0, 0};
+      struct dirent *entry;
+      while ((entry = readdir(directory)) != NULL) {
+        if (!strcmp(entry->d_name, ".") || !strcmp(entry->d_name, "..")) continue;
+        if (!cq_id_buf_adds(&listing, entry->d_name)
+            || !cq_id_buf_adds(&listing, "\n")) {
+          listing.error = ENOMEM;
+          break;
+        }
+      }
+      closedir(directory);
+      if (listing.error) {
+        call->error = listing.error;
+        cq_id_buf_free(&listing);
+        break;
+      }
+      if (!listing.data) {
+        listing.data = cq_id_strdup("");
+        if (!listing.data) {
+          call->error = ENOMEM;
+          break;
+        }
+      }
+      call->text = listing.data;
+      break;
+    }
+    case CQ_ID_REALPATH: {
+      char *resolved = realpath(call->first, NULL);
+      if (!resolved) call->error = errno;
+      else call->text = resolved;
+      break;
+    }
+    case CQ_ID_READLINK: {
+      size_t capacity = 256;
+      char *target = NULL;
+      for (;;) {
+        char *next = (char *)malloc(capacity);
+        if (!next) {
+          call->error = ENOMEM;
+          break;
+        }
+        ssize_t length = readlink(call->first, next, capacity - 1);
+        if (length < 0) {
+          call->error = errno;
+          free(next);
+          free(target);
+          break;
+        }
+        if ((size_t)length < capacity - 1) {
+          next[length] = '\0';
+          free(target);
+          target = next;
+          break;
+        }
+        free(next);
+        free(target);
+        target = NULL;
+        capacity *= 2;
+      }
+      if (!call->error) call->text = target;
+      break;
+    }
+    case CQ_ID_IS_SCRIPT: {
+      int fd = open(call->first, O_RDONLY);
+      if (fd < 0) {
+        call->error = errno;
+        break;
+      }
+      unsigned char magic[2];
+      ssize_t count = read(fd, magic, sizeof magic);
+      close(fd);
+      call->text = cq_id_strdup(
+        count == 2 && magic[0] == '#' && magic[1] == '!' ? "1" : "0");
+      break;
+    }
+    case CQ_ID_RESOLVE_COMMAND:
+      call->text = cq_id_resolve_command(call->first);
+      break;
     default:
       call->error = EINVAL;
       break;
@@ -1322,5 +1411,64 @@ static void __attribute__((constructor)) cq_id_text_digest_use(void) {
 #ifdef CID_COMPILEQUEUEIDENTITY_FILE_SIZE
 static void __attribute__((constructor)) cq_id_file_size_use(void) {
   io_eff(CID_COMPILEQUEUEIDENTITY_FILE_SIZE, cq_id_file_size_run, 0);
+}
+#endif
+
+static Term cq_id_primitive_run(Env env, Term *fields, IoWork *work, int mode) {
+  CqIdCall *call = (CqIdCall *)calloc(1, sizeof(*call));
+  if (!call) return io_fail(env, ENOMEM, NULL);
+  call->mode = mode;
+  u64 length = 0;
+  call->first = io_cstr(env, fields[0], &length);
+  if (!call->first || strlen(call->first) != length) {
+    cq_id_call_free(call);
+    return io_fail(env, EINVAL, "path contains NUL");
+  }
+  work->data = call;
+  return io_work(work, cq_id_call_work, cq_id_call_pack);
+}
+
+#ifdef CID_COMPILEQUEUEIDENTITY_LIST_DIR
+static Term cq_id_list_dir_run(Env env, Term *fields, IoWork *work) {
+  return cq_id_primitive_run(env, fields, work, CQ_ID_LIST_DIR);
+}
+static void __attribute__((constructor)) cq_id_list_dir_use(void) {
+  io_eff(CID_COMPILEQUEUEIDENTITY_LIST_DIR, cq_id_list_dir_run, 0);
+}
+#endif
+
+#ifdef CID_COMPILEQUEUEIDENTITY_REALPATH
+static Term cq_id_realpath_run(Env env, Term *fields, IoWork *work) {
+  return cq_id_primitive_run(env, fields, work, CQ_ID_REALPATH);
+}
+static void __attribute__((constructor)) cq_id_realpath_use(void) {
+  io_eff(CID_COMPILEQUEUEIDENTITY_REALPATH, cq_id_realpath_run, 0);
+}
+#endif
+
+#ifdef CID_COMPILEQUEUEIDENTITY_READLINK
+static Term cq_id_readlink_run(Env env, Term *fields, IoWork *work) {
+  return cq_id_primitive_run(env, fields, work, CQ_ID_READLINK);
+}
+static void __attribute__((constructor)) cq_id_readlink_use(void) {
+  io_eff(CID_COMPILEQUEUEIDENTITY_READLINK, cq_id_readlink_run, 0);
+}
+#endif
+
+#ifdef CID_COMPILEQUEUEIDENTITY_IS_SCRIPT
+static Term cq_id_is_script_run(Env env, Term *fields, IoWork *work) {
+  return cq_id_primitive_run(env, fields, work, CQ_ID_IS_SCRIPT);
+}
+static void __attribute__((constructor)) cq_id_is_script_use(void) {
+  io_eff(CID_COMPILEQUEUEIDENTITY_IS_SCRIPT, cq_id_is_script_run, 0);
+}
+#endif
+
+#ifdef CID_COMPILEQUEUEIDENTITY_RESOLVE_COMMAND
+static Term cq_id_resolve_command_run(Env env, Term *fields, IoWork *work) {
+  return cq_id_primitive_run(env, fields, work, CQ_ID_RESOLVE_COMMAND);
+}
+static void __attribute__((constructor)) cq_id_resolve_command_use(void) {
+  io_eff(CID_COMPILEQUEUEIDENTITY_RESOLVE_COMMAND, cq_id_resolve_command_run, 0);
 }
 #endif
