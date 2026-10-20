@@ -605,14 +605,21 @@ def CompileQueueResult.read_or_empty(+path: String) -> IO(String):
     read : Result<&1,&1,U32 & String,String> <- T.Text.read(path)
     CompileQueueResult.read_or_empty_result(read)
 
+def CompileQueueResult.failure_exit(parsed: Maybe<&2,U32>) -> U32:
+  match parsed:
+    case None{}: 1
+    case Some{+code}:
+      Bool.pick(U32, Bool.and(U32.is_ne(code, 0), U32.is_le(code, 255)), code, 1)
+
 def CompileQueueResult.report_failure_result(read: Result<&1,&1,U32 & String,String>, +path: String) -> IO(Unit):
   match read:
     case Fail{error}:
-      IO.print_err("compile-queue: unreadable result " ++ path ++ "\n")
+      IO.die(Unit, 1, "compile-queue: unreadable result " ++ path ++ "\n")
     case Done{+result}:
       do IO<Unit>:
         tail : String <- CompileQueueResult.read_or_empty(CompileQueueResult.dirname(path) ++ "/stderr")
-        IO.print_err("compile-queue: " ++ CompileQueueResult.field(result, "kind") ++ " execution " ++ CompileQueueResult.field(result, "status") ++ " key=" ++ CompileQueueResult.field(result, "key") ++ " exit=" ++ CompileQueueResult.field(result, "exit") ++ "\ncompile-queue: " ++ CompileQueueResult.field(result, "detail") ++ "\n" ++ tail)
+        code : U32 <- IO.pure(U32, CompileQueueResult.failure_exit(U32.read(CompileQueueResult.field(result, "exit"))))
+        IO.die(Unit, code, "compile-queue: " ++ CompileQueueResult.field(result, "kind") ++ " execution " ++ CompileQueueResult.field(result, "status") ++ " key=" ++ CompileQueueResult.field(result, "key") ++ " exit=" ++ CompileQueueResult.field(result, "exit") ++ "\ncompile-queue: " ++ CompileQueueResult.field(result, "detail") ++ "\n" ++ tail)
 
 def CompileQueueResult.report_failure(+path: String) -> IO(Unit):
   do IO<Unit>:
