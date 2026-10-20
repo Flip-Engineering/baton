@@ -227,6 +227,8 @@ def parse_common(args: List<String>, config: Config) -> IO(Config):
     case "--source-root" <> value <> rest: parse_common(rest, config_line(config, "source_root", value))
     case "--entry" <> value <> rest: parse_common(rest, config_line(config, "entry", value))
     case "--compiler" <> value <> rest: parse_common(rest, config_line(config, "compiler", value))
+    case "--linker" <> value <> rest: parse_common(rest, config_line(config, "linker", value))
+    case "--version" <> value <> rest: parse_common(rest, config_line(config, "version", value))
     case "--receipt" <> value <> rest: parse_common(rest, config_line(config, "receipt", value))
     case "--token" <> value <> rest: parse_common(rest, config_line(config, "token", value))
     case "--input" <> value <> rest: parse_common(rest, config_input(config, value))
@@ -254,6 +256,10 @@ def validate_config(config: Config, need_command: Bool) -> String:
       +artifact_ok = non_empty_list(artifacts)
       +source_ok = Bool.pick(Bool, Tx.str_eq(kind, "cgen"),
         Bool.and(non_empty(source), non_empty(entry)), True{})
+      +linker = field(text, "linker")
+      +version = field(text, "version")
+      +toolchain_ok = Bool.pick(Bool, Tx.str_eq(kind, "cc"),
+        Bool.and(non_empty(linker), non_empty(version)), True{})
       +token_okay = Bool.pick(Bool, non_empty(token), token_ok(token), True{})
       +state_ok = Tx.starts_with(state, "/")
       +cwd_ok = non_empty(cwd)
@@ -264,11 +270,13 @@ def validate_config(config: Config, need_command: Bool) -> String:
             Bool.pick(String, command_ok,
               Bool.pick(String, artifact_ok,
                 Bool.pick(String, source_ok,
-                  Bool.pick(String, token_okay,
-                    Bool.pick(String, duplicates,
-                      "compile-queue: two inputs share a destination basename",
-                      ""),
-                    "compile-queue: token must contain only letters, digits, dot, underscore or hyphen"),
+                  Bool.pick(String, toolchain_ok,
+                    Bool.pick(String, token_okay,
+                      Bool.pick(String, duplicates,
+                        "compile-queue: two inputs share a destination basename",
+                        ""),
+                      "compile-queue: token must contain only letters, digits, dot, underscore or hyphen"),
+                    "compile-queue: cc requires --linker and --version"),
                   "compile-queue: cgen requires --source-root and --entry"),
                 "compile-queue: at least one --artifact NAME=PATH is required"),
               "compile-queue: a command is required after --"),
@@ -296,12 +304,12 @@ def identity_key(config: Config) -> IO(String):
       +cwd = field(text, "cwd")
       +root = field(text, "root")
       +compiler = field(text, "compiler")
-      +linker = Bool.pick(String, String.eq(field(text, "kind"), "cc"),
-        Bool.pick(String, non_empty(field(text, "linker")), field(text, "linker"), "ld"), "")
+      +linker = Bool.pick(String, String.eq(field(text, "kind"), "cc"), field(text, "linker"), "")
+      +version = Bool.pick(String, String.eq(field(text, "kind"), "cc"), field(text, "version"), "")
       IO.try(String, Identity.request_key(
         field(text, "kind"), cwd, root,
         field(text, "source_root"), field(text, "entry"), compiler,
-        linker, "", input_pairs_text(inputs),
+        linker, version, input_pairs_text(inputs),
         Tx.join("\n", fields_all(text, "aux")),
         artifact_pairs_text(artifacts),
         Tx.join("\n", fields_all(text, "option")),
@@ -1031,6 +1039,7 @@ def adopt_command(args: List<String>) -> IO(Unit):
 def usage() -> String:
   "usage: compile-queue.sh run --kind cgen|cc --state-root DIR --cwd DIR [options] -- COMMAND...\n"
   ++ "       compile-queue.sh key --kind cgen|cc [options]\n"
+  ++ "       cc requests require --compiler, --linker and --version\n"
   ++ "       compile-queue.sh cancel --state-root DIR --key KEY --token TOKEN\n"
   ++ "       compile-queue.sh wait --state-root DIR --key KEY\n"
   ++ "       compile-queue.sh status --state-root DIR [--key KEY]\n"

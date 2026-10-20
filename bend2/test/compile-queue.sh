@@ -68,7 +68,7 @@ run_cc() { # tag output extra...
   tag=$1
   out=$2
   shift 2
-  sh "$QUEUE" run --kind cc --state-root "$STATE" --cwd "$T" --compiler "$FAKE" \
+  sh "$QUEUE" run --kind cc --state-root "$STATE" --cwd "$T" --compiler "$FAKE" --linker "$FAKE" --version fake-version \
     --input "$T/input.c" --artifact "binary=$out" --option "test=$tag" \
     --token "tok-$(basename "$out")" \
     -- "$FAKE" --tag "$tag" --log "$LOG" -o "$out" "$T/input.c" "$@" >"$T/$(basename "$out").out" 2>"$T/$(basename "$out").err"
@@ -186,7 +186,7 @@ run_cc failure "$T/retry" --fail || true
 # Cancellation.
 : > "$LOG"
 run_cc cancelcase "$T/cancelcase" --sleep 30 & k=$!
-key=$(sh "$QUEUE" key --kind cc --state-root "$STATE" --cwd "$T" --compiler "$FAKE" \
+key=$(sh "$QUEUE" key --kind cc --state-root "$STATE" --cwd "$T" --compiler "$FAKE" --linker "$FAKE" --version fake-version \
   --input "$T/input.c" --artifact "binary=$T/cancelcase" --option 'test=cancelcase' \
   -- "$FAKE" --tag cancelcase --log "$LOG" -o "$T/cancelcase" "$T/input.c" --sleep 30)
 i=0
@@ -207,7 +207,7 @@ run_cc owner "$T/ownerA" --sleep 2 & o1=$!
 sleep 0.3
 run_cc owner "$T/ownerB" --sleep 2 & o2=$!
 sleep 0.5
-ownkey=$(sh "$QUEUE" key --kind cc --state-root "$STATE" --cwd "$T" --compiler "$FAKE" \
+ownkey=$(sh "$QUEUE" key --kind cc --state-root "$STATE" --cwd "$T" --compiler "$FAKE" --linker "$FAKE" --version fake-version \
   --input "$T/input.c" --artifact "binary=$T/ownerA" --option 'test=owner' \
   -- "$FAKE" --tag owner --log "$LOG" -o "$T/ownerA" "$T/input.c" --sleep 2)
 sh "$QUEUE" cancel --state-root "$STATE" --key "$ownkey" --token tok-ownerA >/dev/null 2>&1
@@ -233,36 +233,36 @@ wait "$l2" || lrc=$?
 : > "$LOG"
 printf 'int extra(void){return 0;}\n' > "$T/extra.c"
 base=$(sh "$QUEUE" key --kind cc --state-root "$STATE" --cwd "$T" --root "$T" \
-  --compiler "$FAKE" --input "$T/input.c" \
+  --compiler "$FAKE" --linker "$FAKE" --version fake-version --input "$T/input.c" \
   --artifact "binary=$T/config-base" --option first=1 \
   -- "$FAKE" --tag base --flag "$T/root-token" -o "$T/config-base" "$T/input.c")
 overridden=$(sh "$QUEUE" key --kind bad --kind cc --state-root /nonexistent --state-root "$STATE" \
   --cwd /nonexistent --cwd "$T" --root /nonexistent --root "$T" \
-  --compiler "$T/missing" --compiler "$FAKE" --input "$T/input.c" \
+  --compiler "$T/missing" --compiler "$FAKE" --linker "$T/missing" --linker "$FAKE" --version bad --version fake-version --input "$T/input.c" \
   --artifact "binary=$T/config-base" --option first=1 \
   -- "$FAKE" --tag base --flag "$T/root-token" -o "$T/config-base" "$T/input.c")
 [ "$base" = "$overridden" ] && pass 'explicit scalar options override defaults' \
   || bad 'scalar options did not override seeded defaults'
-one_input=$(sh "$QUEUE" key --kind cc --state-root "$STATE" --cwd "$T" --compiler "$FAKE" \
+one_input=$(sh "$QUEUE" key --kind cc --state-root "$STATE" --cwd "$T" --compiler "$FAKE" --linker "$FAKE" --version fake-version \
   --input "$T/input.c" --artifact "binary=$T/config-base" --option first=1 \
   -- "$FAKE" --tag base -o "$T/config-base" "$T/input.c")
-two_inputs=$(sh "$QUEUE" key --kind cc --state-root "$STATE" --cwd "$T" --compiler "$FAKE" \
+two_inputs=$(sh "$QUEUE" key --kind cc --state-root "$STATE" --cwd "$T" --compiler "$FAKE" --linker "$FAKE" --version fake-version \
   --input "$T/input.c" --input "$T/extra.c" --artifact "binary=$T/config-base" --option first=1 \
   -- "$FAKE" --tag base -o "$T/config-base" "$T/input.c")
 [ "$one_input" != "$two_inputs" ] && pass 'repeated inputs accumulate' \
   || bad 'repeated inputs were ignored'
-one_option=$(sh "$QUEUE" key --kind cc --state-root "$STATE" --cwd "$T" --compiler "$FAKE" \
+one_option=$(sh "$QUEUE" key --kind cc --state-root "$STATE" --cwd "$T" --compiler "$FAKE" --linker "$FAKE" --version fake-version \
   --input "$T/input.c" --artifact "binary=$T/config-base" --option first=1 \
   -- "$FAKE" --tag base -o "$T/config-base" "$T/input.c")
-two_options=$(sh "$QUEUE" key --kind cc --state-root "$STATE" --cwd "$T" --compiler "$FAKE" \
+two_options=$(sh "$QUEUE" key --kind cc --state-root "$STATE" --cwd "$T" --compiler "$FAKE" --linker "$FAKE" --version fake-version \
   --input "$T/input.c" --artifact "binary=$T/config-base" --option first=1 --option second=2 \
   -- "$FAKE" --tag base -o "$T/config-base" "$T/input.c")
 [ "$one_option" != "$two_options" ] && pass 'repeated options accumulate' \
   || bad 'repeated options were ignored'
-one_artifact=$(sh "$QUEUE" key --kind cc --state-root "$STATE" --cwd "$T" --compiler "$FAKE" \
+one_artifact=$(sh "$QUEUE" key --kind cc --state-root "$STATE" --cwd "$T" --compiler "$FAKE" --linker "$FAKE" --version fake-version \
   --input "$T/input.c" --artifact "binary=$T/config-base" --option first=1 \
   -- "$FAKE" --tag base -o "$T/config-base" "$T/input.c")
-two_artifacts=$(sh "$QUEUE" key --kind cc --state-root "$STATE" --cwd "$T" --compiler "$FAKE" \
+two_artifacts=$(sh "$QUEUE" key --kind cc --state-root "$STATE" --cwd "$T" --compiler "$FAKE" --linker "$FAKE" --version fake-version \
   --input "$T/input.c" --artifact "binary=$T/config-base" --artifact "extra=$T/extra.out" \
   --option first=1 -- "$FAKE" --tag base -o "$T/config-base" "$T/input.c")
 [ "$one_artifact" != "$two_artifacts" ] && pass 'repeated artifacts accumulate' \
@@ -270,7 +270,7 @@ two_artifacts=$(sh "$QUEUE" key --kind cc --state-root "$STATE" --cwd "$T" --com
 rc=0
 sh "$QUEUE" run --kind bad --kind cc --state-root /nonexistent --state-root "$STATE" \
   --cwd /nonexistent --cwd "$T" --root /nonexistent --root "$T" \
-  --compiler "$T/missing" --compiler "$FAKE" \
+  --compiler "$T/missing" --compiler "$FAKE" --linker "$T/missing" --linker "$FAKE" --version bad --version fake-version \
   --input "$T/input.c" --input "$T/extra.c" \
   --artifact "binary=$T/config-run" --option first=1 --option second=2 \
   --token tok-config \
