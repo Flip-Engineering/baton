@@ -6,6 +6,7 @@ here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
 root=$(CDPATH= cd -- "$here/../.." && pwd -P)
 for candidate in \
   ${BATON2_COMPILE_QUEUE_BIN:+"$BATON2_COMPILE_QUEUE_BIN"} \
+  ${BATON2_COMPILE_QUEUE:+"$BATON2_COMPILE_QUEUE"} \
   ${BATON2_PREFIX:+"$BATON2_PREFIX/bin/baton-compile-queue"} \
   "$here/baton-compile-queue" \
   "$root/.scratch/bend2/compile-queue" \

@@ -471,7 +471,8 @@ static int cq_setup_child_fds(int key_lock, int cgen_lock, int status_write,
   if (key_copy >= 0) close(key_copy);
   if (cgen_copy >= 0) close(cgen_copy);
   if (error) {
-    if (status_copy >= 0) close(status_copy);
+    /* status[1] may already be closed by the remap; report through the copy. */
+    if (status_copy >= 0) *status_out = status_copy;
     return error;
   }
   *status_out = status_copy;
