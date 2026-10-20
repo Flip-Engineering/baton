@@ -198,24 +198,20 @@ def env_value(name: String) -> IO(String):
       case Done{value}: IO.pure(String, value)
       case Fail{error}: IO.pure(String, "")
 
-def choose_root(root: String, xdg: String, home: String, uid: U32) -> String:
+# The one host state root is BATON_COMPILE_QUEUE_ROOT when set; it must be
+# absolute. Without it every host build shares /var/tmp/baton/compile-queue.
+# The per-user XDG/HOME/UID fallbacks split the lock domain and are gone.
+def choose_root(root: String) -> String:
   match root:
     case SCon{c, rest}: root
-    case SNil{}:
-      match xdg:
-        case SCon{c, rest}: xdg ++ "/baton/compile-queue"
-        case SNil{}:
-          match home:
-            case SCon{c, rest}: home ++ "/.cache/baton/compile-queue"
-            case SNil{}: "/tmp/baton-compile-queue-" ++ U32.show(uid)
+    case SNil{}: "/var/tmp/baton/compile-queue"
 
 def default_state_root() -> IO(String):
   do IO<String>:
     root <- env_value("BATON_COMPILE_QUEUE_ROOT")
-    xdg <- env_value("XDG_CACHE_HOME")
-    home <- env_value("HOME")
-    uid <- IO.try(U32, L.uid())
-    IO.pure(String, choose_root(root, xdg, home, uid))
+    Bool.pick(IO(String), Bool.and(non_empty(root), Bool.not(Tx.starts_with(root, "/"))),
+      IO.die(String, 2, "compile-queue: BATON_COMPILE_QUEUE_ROOT must be an absolute path"),
+      IO.pure(String, choose_root(root)))
 
 def fresh_config() -> IO(Config):
   do IO<Config>:
@@ -602,13 +598,16 @@ def start_attempt(config: Config, key: String, keydir: String, lock: U32, owner:
           +kind = field(text, "kind")
           made : Unit <- IO.try(Unit, L.mkdir_p(attempt ++ "/work"))
           prepared : Unit <- write_attempt_files(config, key, keydir, attempt)
-          cgen <- IO.try(U32, L.lock_open(state ++ "/cgen.lock"))
-          locked : Unit <- Bool.pick(IO(Unit), Tx.str_eq(kind, "cgen"),
-            IO.try(Unit, L.lock_fd_acquire(cgen)), IO.pure(Unit, Unit{}))
+          # The cgen lock is the host-wide heavy-build lock: every distinct
+          # cgen or cc request acquires it, so concurrent builds cannot
+          # multiply C-shard concurrency. Each request keeps the internal
+          # shard parallelism of its own command.
+          heavy <- IO.try(U32, L.lock_open(state ++ "/cgen.lock"))
+          locked : Unit <- IO.try(Unit, L.lock_fd_acquire(heavy))
           +args = P.argv(Con{"__supervise", Con{attempt, Nil{}}})
-          supervisor <- IO.try(U32, L.spawn_detached(args, lock, cgen))
+          supervisor <- IO.try(U32, L.spawn_detached(args, lock, heavy))
           released_lock : Unit <- IO.try(Unit, L.close_fd(lock))
-          released_cgen : Unit <- IO.try(Unit, L.close_fd(cgen))
+          released_heavy : Unit <- IO.try(Unit, L.close_fd(heavy))
           waited <- IO.try(U32, L.wait_pid(supervisor))
           completed <- IO.try(Bool, Result.verify_completed(keydir))
           match completed:

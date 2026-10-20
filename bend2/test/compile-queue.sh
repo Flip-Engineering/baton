@@ -144,13 +144,13 @@ for i in range(len(values)):
             sys.exit(1)
 PY
 
-# Distinct cc requests overlap.
+# Distinct cc requests serialize on the shared heavy lock.
 : > "$LOG"
-run_cc parallel1 "$T/parallel1" --sleep 2 & q1=$!
-run_cc parallel2 "$T/parallel2" --sleep 2 & q2=$!
-wait "$q1" || bad 'parallel first requester failed'
-wait "$q2" || bad 'parallel second requester failed'
-python3 - "$LOG" <<'PY' && pass 'distinct cc overlapped' || bad 'distinct cc intervals did not overlap'
+run_cc serialcc1 "$T/serialcc1" --sleep 1 & q1=$!
+run_cc serialcc2 "$T/serialcc2" --sleep 1 & q2=$!
+wait "$q1" || bad 'serial cc first requester failed'
+wait "$q2" || bad 'serial cc second requester failed'
+python3 - "$LOG" <<'PY' && pass 'distinct cc serialized' || bad 'distinct cc intervals overlap'
 import sys
 rows=[]
 for line in open(sys.argv[1]):
@@ -164,8 +164,7 @@ values=[(v['start'],v['end']) for v in intervals.values() if 'start' in v and 'e
 for i in range(len(values)):
     for j in range(i+1,len(values)):
         if values[i][0] < values[j][1] and values[j][0] < values[i][1]:
-            sys.exit(0)
-sys.exit(1)
+            sys.exit(1)
 PY
 
 # Shared failure and retry.
@@ -228,6 +227,21 @@ lrc=0
 wait "$l2" || lrc=$?
 [ "$lrc" = 0 ] && pass 'surviving requester completed' || bad "survivor exit $lrc"
 [ "$(count_starts)" = 1 ] && pass 'requester loss shared one execution' || bad "loss starts=$(count_starts)"
+
+# One configured host state root: a relative configured root is refused and
+# an absolute one is used without --state-root.
+if env BATON_COMPILE_QUEUE_ROOT=relative/path sh "$QUEUE" key --kind cc --cwd "$T" \
+    --compiler "$FAKE" --input "$T/input.c" --artifact "binary=$T/rootref" \
+    -- "$FAKE" -o "$T/rootref" "$T/input.c" >"$T/rootref.out" 2>"$T/rootref.err"; then
+  bad 'relative BATON_COMPILE_QUEUE_ROOT accepted'
+else
+  pass 'relative BATON_COMPILE_QUEUE_ROOT refused'
+fi
+env BATON_COMPILE_QUEUE_ROOT="$STATE" sh "$QUEUE" key --kind cc --cwd "$T" \
+  --compiler "$FAKE" --input "$T/input.c" --artifact "binary=$T/rooted" \
+  --option 'test=rooted' -- "$FAKE" -o "$T/rooted" "$T/input.c" >"$T/rooted.out" 2>"$T/rooted.err" \
+  && pass 'absolute BATON_COMPILE_QUEUE_ROOT used without --state-root' \
+  || bad 'absolute BATON_COMPILE_QUEUE_ROOT refused'
 
 # Source identity changes the key.
 key1=$(cgen_key keyfile "$T/keyfile")
