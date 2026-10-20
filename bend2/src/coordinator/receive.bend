@@ -255,25 +255,28 @@ def wake_target(+db: String, +session: String, +target: String, launch: String -
       launched : Result<&1,&1,U32 & String,Unit> <- launch(target)
       wake_refused(db,session,launched)
 
-def wake_decided(+db: String, +session: String, +cursor: String, launch: String -> IO(Result<&1,&1,U32 & String,Unit>), lock: U32, owed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
-  match owed:
-    case False{}: do IO<Result<&1,&1,U32 & String,Unit>>:
-      released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
-      IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
-    case True{}: do IO<Result<&1,&1,U32 & String,Unit>>:
-      +found : String <- wake_found(db,session,cursor)
-      wake_target(db,session,found,launch,lock,String.eq(found,""))
+# Dead custody restarts the oldest unacknowledged input, independent of the
+# cursor the newly delivered message named. Reading that message directly
+# replaces a zero cursor that forced every earlier message through the wake.
+def wake_pending_all(db: String, session: String) -> IO(Bool):
+  do IO<Bool>:
+    count : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ C.completion_pending_sql(session) ++ ";"))
+    IO.pure(Bool,Bool.not(String.eq(Tx.trim_nl(count),"0")))
+
+def wake_oldest(db: String, session: String) -> IO(String):
+  do IO<String>:
+    found : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce(" ++ C.completion_oldest_sql(session) ++ ",'');"))
+    IO.pure(String,Tx.trim_nl(found))
 
 # A claimed retained attempt with an available session lock is adopted through
 # detached public delivery. Adoption preserves its claim and native process.
-def wake_stand(+db: String, +session: String, +cursor: String, launch: String -> IO(Result<&1,&1,U32 & String,Unit>), lock: U32, owned: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+def wake_stand_found(+db: String, +session: String, +found: String, launch: String -> IO(Result<&1,&1,U32 & String,Unit>), lock: U32, owned: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
   match owned:
     case True{}: do IO<Result<&1,&1,U32 & String,Unit>>:
-      +found : String <- wake_found(db,session,cursor)
       released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
       Bool.pick(IO(Result<&1,&1,U32 & String,Unit>),String.is_empty(found),
         IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}),wake_launch(db,found))
-    case False{}: wake_decided(db,session,cursor,launch,lock,True{})
+    case False{}: wake_target(db,session,found,launch,lock,String.is_empty(found))
 
 # The obligation is held exactly when the claim row names an owner while host
 # custody cannot observe its death. A finished attempt, a missing directory,
@@ -287,25 +290,33 @@ def recover_if_dead(+db: String, +session: String, dead: Bool) -> IO(Unit):
     case False{}: IO.pure(Unit,Unit{})
     case True{}: Store.record_owner_death(db,session)
 
-def wake_admit(+db: String, +session: String, +cursor: String, launch: String -> IO(Result<&1,&1,U32 & String,Unit>), lock: U32, state: String, +dead: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
-  wake_stand(db,session,cursor,launch,lock,wake_held(state,dead))
+def wake_admit_found(+db: String, +session: String, +found: String, launch: String -> IO(Result<&1,&1,U32 & String,Unit>), lock: U32, state: String, +dead: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+  wake_stand_found(db,session,found,launch,lock,wake_held(state,dead))
 
 # The wake reads the claim and retained attempt under the session lock. A
 # retained attempt with unknown native status keeps its claim for public receive
-# adoption. Observed native death updates the execution and admits the message.
-def wake_fenced(+db: String, +session: String, +cursor: String, launch: String -> IO(Result<&1,&1,U32 & String,Unit>), lock: U32, owed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
-  match owed:
+# adoption. Observed native death updates the execution and admits the oldest
+# unacknowledged message, so a dead attempt never needs a cursor of zero.
+def wake_fenced_after(+db: String, +session: String, +cursor: String, +attempt: String, launch: String -> IO(Result<&1,&1,U32 & String,Unit>), lock: U32, state: String, +dead: Bool, needed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match needed:
     case False{}: do IO<Result<&1,&1,U32 & String,Unit>>:
       released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
       IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
     case True{}: do IO<Result<&1,&1,U32 & String,Unit>>:
-      state : String <- Store.claim_state(db,session)
-      dir : String <- IO.try(String,DB.Sql.query(db,attempt_dir_sql(session)))
-      +trimmed : String <- IO.pure(String,Tx.trim_nl(dir))
-      +dead : Bool <- custody_dead(db,trimmed,String.is_empty(trimmed))
-      recovered : Unit <- recover_if_dead(db,session,dead)
-      replay_cursor : String = Bool.pick(String,Bool.and(dead,Bool.not(String.is_empty(trimmed))),"0",cursor)
-      wake_admit(db,session,replay_cursor,launch,lock,state,dead)
+      +dead_attempt : Bool <- IO.pure(Bool,Bool.and(dead,Bool.not(String.is_empty(attempt))))
+      found : String <- Bool.pick(IO(String),dead_attempt,wake_oldest(db,session),wake_found(db,session,cursor))
+      wake_admit_found(db,session,found,launch,lock,state,dead)
+
+def wake_fenced(+db: String, +session: String, +cursor: String, launch: String -> IO(Result<&1,&1,U32 & String,Unit>), lock: U32, owed: Bool) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    state : String <- Store.claim_state(db,session)
+    dir : String <- IO.try(String,DB.Sql.query(db,attempt_dir_sql(session)))
+    +trimmed : String <- IO.pure(String,Tx.trim_nl(dir))
+    +dead : Bool <- custody_dead(db,trimmed,String.is_empty(trimmed))
+    recovered : Unit <- recover_if_dead(db,session,dead)
+    +dead_attempt : Bool <- IO.pure(Bool,Bool.and(dead,Bool.not(String.is_empty(trimmed))))
+    needed : Bool <- Bool.pick(IO(Bool),dead_attempt,wake_pending_all(db,session),IO.pure(Bool,owed))
+    wake_fenced_after(db,session,cursor,trimmed,launch,lock,state,dead,needed)
 
 def wake_owned(+db: String, +session: String, +cursor: String, launch: String -> IO(Result<&1,&1,U32 & String,Unit>), lock: Maybe<U32>) -> IO(Result<&1,&1,U32 & String,Unit>):
   match lock:

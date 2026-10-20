@@ -152,3 +152,103 @@ and replay order are Bend2 policy over the existing SQL probe style.
    The OMP17.4 evidence request above is the open blocker for design
    item 1; item 3's trio decision is the open blocker for the storage
    choice. Both are requested from root through muse.
+
+## Implementation status
+
+Source-only. Compilation, builds, tests, checks and CI remain held by the
+shared compilation queue (#970).
+
+### Item A evidence
+
+The missing-id refusal frame the review asked for exists in the retained spool
+of attempt `receive:rewrite-native:46` at line 4:
+
+```
+{"type":"response","command":"set_event_filter","success":false,"error":"Unknown command: set_event_filter"}
+```
+
+The frame carries no `id`, `success` is false and the command is echoed. Rule
+(i) and rule (ii) in the conditional review both classify it as `refused`; the
+landed arm in `filter_mode_sql` is rule (i). The spool is native lineage
+evidence and was read only.
+
+### Item B: durable observation rows
+
+`commands.schema()` creates `observations`:
+
+```
+id INTEGER PRIMARY KEY, session, attempt, kind, frame_id,
+is_prefix INTEGER, level TEXT, payload TEXT, projected TEXT
+```
+
+`observation_store_sql` writes one row per frame in the transaction
+`observe_event` already commits. A cumulative frame (`message_update`,
+`tool_execution_update`) with an identity upserts its newest payload and moves
+the row to the current observation position. Every other frame appends; an
+exact repeated append row is not written twice, which covers a keeper replay
+from a checkpoint before the frame. `projected` is the line the public log
+received at the recorded level; `level` keeps the projection readable after a
+level change.
+
+The identity selection in `logs.frame_id_sql` now reads
+`message.responseId` and `message.toolCallId`. The real spool above shows the
+17.4 message frames carry those fields and not `messageId` or `message.id`;
+without them every cumulative snapshot has an empty identity and is written to
+the projected log. The fallbacks keep `toolCallId` and `messageId` first for
+older frames.
+
+The store is written for OMP attempts only. A store-only frame commits under
+`C.observation_schema()` without reinstalling the coordinator schema or
+publishing a coordinator change.
+
+### Item C: bounded replay
+
+`receive.wake_fenced` no longer forces a dead attempt's cursor to `0`. It reads
+the oldest unacknowledged message directly when host custody is dead and an
+attempt is recorded, and keeps the cursor selection for a live attempt.
+
+`turn.retained_output` always restores the host's verified checkpoint.
+`Observer.restore_checked` reports whether the host accepted one. A missing
+generation file is rebuilt from the observation rows and never by rewinding the
+spool. The rebuild includes only rows the projection already wrote when the
+observer had not finished its EOF flush; open prefixes stay in the restored
+held set and are written by their normal close or flush. When the checkpoint is
+unusable the host has already positioned the reader at the spool start; a
+genuinely pre-store attempt with a missing generation keeps the compat rewind.
+A diagnostic-level generation keeps the raw spool replay: that level retains
+every frame, while the store keeps only the newest cumulative prefix per
+identity. The raw spool remains untouched and append-only.
+
+### Retained spool measurement (read-only)
+
+The retained spool of attempt `receive:rewrite-native:46` was read without
+modification and reduced with the rules above:
+
+| Measure | Value |
+| --- | --- |
+| frames | 30,541 |
+| `message_update` frames | 28,439 |
+| cumulative snapshot bytes | 355,846,832 |
+| cumulative identities | 63 |
+| identities closed by `message_end` | 63 |
+| projected default-level snapshot bytes | 0 |
+| `message_end` full frames | 157 / 536,106 bytes |
+| all append bytes | 1,824,087 bytes |
+| first plus added bytes over the cumulative sequences | 874,711 bytes |
+
+Every cumulative identity was closed, so the default projection drops all
+28,439 snapshots. The full messages are the 157 `message_end` frames; their
+536,106 bytes are below the 874,711-byte first-plus-added bound. The reduction
+is a replay of the projection rules over the original spool, not an observer
+run.
+
+### Remaining gates
+
+- Items B and C are implemented but not compiled or exercised. The five
+  acceptance scenarios in `docs/pure-bend2/acceptance-769-omp-logging.md`
+  remain admission-gated through rewrite-root.
+- The trio decision on spool compaction or rotation (design item 3) remains
+- A frame stored after the last committed checkpoint is replayed from that
+  checkpoint. The append guard keeps one row, and the projection write compares
+  the replayed bytes with the existing bytes at the same position. Rows written
+  after the checkpoint stay in the projection; the store is the durable source.

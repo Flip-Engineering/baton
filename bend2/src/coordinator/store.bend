@@ -156,6 +156,12 @@ def apply(db: String, command: C.Command) -> IO(Result<&1, &1, U32 & String, Str
     result : Result<&1,&1,U32 & String,String> <- commit(db,command)
     committed(result)
 
+# A store-only observation changes no published coordinator row. It commits the
+# observation statement under the store's own definitions, so a cumulative
+# frame does not reinstall the coordinator schema or publish a change the
+# coordinator cannot read.
+def apply_observation(db: String, command: C.Command) -> IO(Result<&1,&1,U32 & String,String>):
+  DB.Sql.query(db,"BEGIN IMMEDIATE;" ++ C.observation_schema() ++ C.sql(command) ++ "COMMIT;")
 
 # Wake-claim transitions for issue #685. The table is owned by this module:
 # every writer ensures it with the canonical definition first, so a fresh

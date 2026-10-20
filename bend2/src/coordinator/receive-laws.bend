@@ -723,7 +723,9 @@ def fenced_admission_reads_claim_and_custody(+db: String, +session: String, +cur
     +trimmed : String <- IO.pure(String,Tx.trim_nl(dir))
     +dead : Bool <- Receive.custody_dead(db,trimmed,String.is_empty(trimmed))
     recovered : Unit <- Receive.recover_if_dead(db,session,dead)
-    Receive.wake_admit(db,session,cursor,launch,lock,state,dead)
+    +dead_attempt : Bool <- IO.pure(Bool,Bool.and(dead,Bool.not(String.is_empty(trimmed))))
+    needed : Bool <- Bool.pick(IO(Bool),dead_attempt,Receive.wake_pending_all(db,session),IO.pure(Bool,True{}))
+    Receive.wake_fenced_after(db,session,cursor,trimmed,launch,lock,state,dead,needed)
 
 law the_wake_admits_on_claim_and_custody:
   for +db: String
@@ -778,7 +780,7 @@ law a_held_obligation_launches_nothing:
   for +cursor: String
   for launch: String -> IO(Result<&1,&1,U32 & String,Unit>)
   for lock: U32
-  {Receive.wake_stand(db,session,cursor,launch,lock,True{}) == (do IO<Result<&1,&1,U32 & String,Unit>>:
+  {Receive.wake_stand_found(db,session,"message",launch,lock,True{}) == (do IO<Result<&1,&1,U32 & String,Unit>>:
     released : Unit <- IO.try(Unit,Lock.SessionLock.release(lock))
     IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})) : IO(Result<&1,&1,U32 & String,Unit>)}
 
@@ -791,7 +793,7 @@ law a_released_obligation_proceeds_to_claim_and_launch:
   for +cursor: String
   for launch: String -> IO(Result<&1,&1,U32 & String,Unit>)
   for lock: U32
-  {Receive.wake_stand(db,session,cursor,launch,lock,False{}) == Receive.wake_decided(db,session,cursor,launch,lock,True{}) : IO(Result<&1,&1,U32 & String,Unit>)}
+  {Receive.wake_stand_found(db,session,"message",launch,lock,False{}) == Receive.wake_target(db,session,"message",launch,lock,False{}) : IO(Result<&1,&1,U32 & String,Unit>)}
 
 def a_released_obligation_proceeds_to_claim_and_launch(db,session,cursor,launch,lock):
   {==}

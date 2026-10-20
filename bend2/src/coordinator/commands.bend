@@ -35,7 +35,7 @@ type Command is Data:
   MessageBatch{sender: String, input: String}
   MessageBatchFile{sender: String, path: String}
   TaskContinue{session: String, id: String}
-  Observe{id: String, player: String, event: String, sealed: Bool}
+  Observe{id: String, player: String, event: String, sealed: Bool, observe: Bool, attempt: String, kind: String, frame_id: String, level: String, frame: String, projected: String, prefix: Bool}
   ObserveFile{id: String, player: String, path: String}
   Report{id: String, sender: String, body: String}
   ReportFile{id: String, sender: String, path: String}
@@ -147,8 +147,22 @@ def wake_claim_schema() -> String:
 def task_input_schema() -> String:
   "CREATE TABLE IF NOT EXISTS task_input_requests (id TEXT PRIMARY KEY NOT NULL,request TEXT NOT NULL CHECK(json_valid(request) AND json_type(request)='object'),result TEXT CHECK(result IS NULL OR (json_valid(result) AND json_type(result)='object')));"
 
+# The durable observation record of one retained native attempt. A cumulative
+# prefix frame is stored once per (attempt, kind, identity): the newest payload
+# replaces the earlier one in the same transaction the observation already
+# commits. Every other frame appends in arrival order. `projected` is the line
+# the public log received at the recorded level, so a missing generation file is
+# rebuilt without reading the raw spool. An exact repeated append row is not
+# stored twice: the keeper replays a frame after a crash before the checkpoint,
+# and the observer deduplicates that replay by this key.
+def observation_schema() -> String:
+  "CREATE TABLE IF NOT EXISTS observations (id INTEGER PRIMARY KEY, session TEXT NOT NULL, attempt TEXT NOT NULL, kind TEXT NOT NULL, frame_id TEXT NOT NULL, is_prefix INTEGER NOT NULL CHECK(is_prefix IN (0,1)), level TEXT NOT NULL, payload TEXT NOT NULL, projected TEXT NOT NULL);"
+  ++ "CREATE UNIQUE INDEX IF NOT EXISTS observations_prefix_key ON observations(session,attempt,kind,frame_id) WHERE is_prefix=1;"
+  ++ "CREATE INDEX IF NOT EXISTS observations_attempt_order ON observations(session,attempt,id);"
+
 def schema() -> String:
   wake_claim_schema()
+  ++ observation_schema()
   ++ task_input_schema()
   ++ "CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY NOT NULL, parent TEXT REFERENCES sessions(id), harness TEXT NOT NULL, model TEXT NOT NULL DEFAULT '', effort TEXT NOT NULL DEFAULT '', native TEXT NOT NULL DEFAULT '', observed_harness TEXT NOT NULL DEFAULT '', observed_model TEXT NOT NULL DEFAULT '', observed_effort TEXT NOT NULL DEFAULT '', endpoint TEXT NOT NULL DEFAULT '', workspace TEXT NOT NULL DEFAULT '', branch TEXT NOT NULL DEFAULT '', base TEXT NOT NULL DEFAULT '');"
   ++ "CREATE TABLE IF NOT EXISTS messages (seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT UNIQUE NOT NULL, sender TEXT NOT NULL REFERENCES sessions(id), recipient TEXT NOT NULL REFERENCES sessions(id), kind TEXT NOT NULL, body TEXT NOT NULL, receipt TEXT);"
@@ -403,11 +417,29 @@ def completion_sql(+id: String, +player: String, +event: String) -> String:
 def observe_completion_sql(+id: String, +player: String, +event: String, sealed: Bool) -> String:
   Bool.pick(String,sealed,"",completion_sql(id,player,event))
 
-def observe_sql(+id: String, +player: String, +event: String, sealed: Bool) -> String:
-  observation_frame_sql(event)
-  ++ observe_identity_sql_expr(player,observation_frame())
-  ++ Bool.pick(String,sealed,"",completion_sql_expr(id,player,observation_frame()))
-  ++ "DROP TABLE temp.baton_observation_frame;"
+# Store enablement is the caller's policy decision: a frame is stored only when
+# the attempt and the raw line are present. A cumulative frame with an identity
+# upserts its newest payload; one without an identity appends, because there is
+# no key to replace.
+def observation_store_sql(+player: String, +attempt: String, +kind: String, +frame_id: String, +level: String, +frame: String, +projected: String, prefix: Bool) -> String:
+  +enabled = Bool.and(Bool.not(String.is_empty(attempt)),Bool.not(String.is_empty(frame)))
+  +identified = Bool.and(prefix,Bool.not(String.is_empty(frame_id)))
+  match enabled:
+    case False{}: ""
+    case True{}: match identified:
+      case True{}:
+        "INSERT INTO observations(session,attempt,kind,frame_id,is_prefix,level,payload,projected) VALUES(" ++ q(player) ++ "," ++ q(attempt) ++ "," ++ q(kind) ++ "," ++ q(frame_id) ++ ",1," ++ q(level) ++ "," ++ q(frame) ++ "," ++ q(projected) ++ ") ON CONFLICT(session,attempt,kind,frame_id) WHERE is_prefix=1 DO UPDATE SET level=excluded.level,payload=excluded.payload,projected=excluded.projected,id=(SELECT coalesce(max(id),0)+1 FROM observations);"
+      case False{}:
+        "INSERT INTO observations(session,attempt,kind,frame_id,is_prefix,level,payload,projected) SELECT " ++ q(player) ++ "," ++ q(attempt) ++ "," ++ q(kind) ++ "," ++ q(frame_id) ++ ",0," ++ q(level) ++ "," ++ q(frame) ++ "," ++ q(projected) ++ " WHERE NOT EXISTS(SELECT 1 FROM observations WHERE session=" ++ q(player) ++ " AND attempt=" ++ q(attempt) ++ " AND kind=" ++ q(kind) ++ " AND frame_id=" ++ q(frame_id) ++ " AND is_prefix=0 AND payload=" ++ q(frame) ++ ");"
+
+def observe_sql(+id: String, +player: String, +event: String, sealed: Bool, observe: Bool, +attempt: String, +kind: String, +frame_id: String, +level: String, +frame: String, +projected: String, prefix: Bool) -> String:
+  match observe:
+    case False{}: observation_store_sql(player,attempt,kind,frame_id,level,frame,projected,prefix)
+    case True{}: observation_frame_sql(event)
+      ++ observe_identity_sql_expr(player,observation_frame())
+      ++ Bool.pick(String,sealed,"",completion_sql_expr(id,player,observation_frame()))
+      ++ "DROP TABLE temp.baton_observation_frame;"
+      ++ observation_store_sql(player,attempt,kind,frame_id,level,frame,projected,prefix)
 
 # UNION makes ancestry finite even if a database has malformed cyclic parentage.
 def ancestors(+session: String) -> String:
@@ -536,7 +568,7 @@ def sql(command: Command) -> String:
   match command:
     case TaskContinue{+session,+id}:
       task_continuation_sql(session,id) ++ "SELECT json_object('session',id,'continuationId',(SELECT id FROM messages WHERE id=" ++ q(id ++ ":task-continuation") ++ " AND recipient=" ++ q(session) ++ " AND receipt IS NULL),'taskCompletion'," ++ task_state_sql("sessions.id") ++ ") FROM sessions WHERE id=" ++ q(session) ++ ";"
-    case Observe{id,player,event,sealed}: observe_sql(id,player,event,sealed)
+    case Observe{id,player,event,sealed,observe,attempt,kind,frame_id,level,frame,projected,prefix}: observe_sql(id,player,event,sealed,observe,attempt,kind,frame_id,level,frame,projected,prefix)
     case Attach{+id, harness, native, endpoint}:
       "INSERT INTO sessions(id,harness,native,endpoint) VALUES(" ++ q(id) ++ "," ++ q(harness) ++ "," ++ q(native) ++ "," ++ q(endpoint) ++ ") ON CONFLICT(id) DO UPDATE SET harness=excluded.harness,native=excluded.native,endpoint=excluded.endpoint WHERE sessions.parent IS NULL;"
       ++ "SELECT json_object('error','attach-parent-conflict','session',id,'parent',parent,'condition','The session is already registered with a parent.','next','Read session ID and use connect or receiver to update its native endpoint.') FROM sessions WHERE id=" ++ q(id) ++ " AND parent IS NOT NULL;"

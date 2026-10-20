@@ -13,6 +13,7 @@ import ./guidance.bend as Guidance
 import ./native-requests.bend as NativeRequests
 import ./native-initial-input.bend as NativeInitialInput
 import ./observer-checkpoint.bend as Observer
+import ./observation-store.bend as ObservationStore
 import ./../coordinator/logs.bend as Logs
 import ../host/log-checkpoint.bend as Checkpoint
 import ../host/sqlite.bend as DB
@@ -271,7 +272,7 @@ def codex_report(+db: String, +player: String, +id: String, event: String, empty
     case True{}: IO.pure(Unit,Unit{})
     case False{}: do IO<Unit>:
       recorded : String <- IO.try(String,DB.Sql.query(db,codex_report_recorded_sql(player,id)))
-      saved : String <- IO.try(String,Store.apply(db,C.Observe{id,player,event,Bool.or(sealed,String.eq(recorded,"1\n"))}))
+      saved : String <- IO.try(String,Store.apply(db,C.Observe{id,player,event,Bool.or(sealed,String.eq(recorded,"1\n")),True{},"","","","","","",False{}}))
       IO.pure(Unit,Unit{})
 
 def codex_result_sql(source: String) -> String:
@@ -455,12 +456,15 @@ def observed_initial(db: String, player: String, id: String, line: String, resul
       observed : Unit <- AgentInput.initial_observed(db,player,id,line)
       IO.pure(Result<&1,&1,U32 & String,String>,Done{saved})
 
-def observe_event(+db: String, +player: String, +id: String, +line: String, relevant: Bool, sealed: Bool) -> IO(Result<&1,&1,U32 & String,String>):
-  match relevant:
-    case True{}: do IO<Result<&1,&1,U32 & String,String>>:
-      stored : Result<&1,&1,U32 & String,String> <- Store.apply(db,C.Observe{id,player,line,sealed})
-      observed_initial(db,player,id,line,stored)
+def observe_event(+db: String, +player: String, +id: String, +event: String, relevant: Bool, sealed: Bool, +attempt: String, +kind: String, +frame_id: String, +level: String, +frame: String, +projected: String, prefix: Bool) -> IO(Result<&1,&1,U32 & String,String>):
+  +store : Bool <- IO.pure(Bool,Bool.and(Bool.not(String.is_empty(attempt)),Bool.not(String.is_empty(frame))))
+  +run : Bool <- IO.pure(Bool,Bool.or(relevant,store))
+  match run:
     case False{}: IO.pure(Result<&1,&1,U32 & String,String>,Done{""})
+    case True{}: do IO<Result<&1,&1,U32 & String,String>>:
+      +command : C.Command <- IO.pure(C.Command,C.Observe{id,player,event,sealed,relevant,attempt,kind,frame_id,level,frame,projected,prefix})
+      stored : Result<&1,&1,U32 & String,String> <- Bool.pick(IO(Result<&1,&1,U32 & String,String>),relevant,Store.apply(db,command),Store.apply_observation(db,command))
+      Bool.pick(IO(Result<&1,&1,U32 & String,String>),relevant,observed_initial(db,player,id,event,stored),IO.pure(Result<&1,&1,U32 & String,String>,stored))
 
 # Later native episodes keep the first report and publish their own reports.
 def deferred_terminal_sql(+event: String, +terminal: String) -> String:
@@ -511,7 +515,7 @@ def publish_deferred(+db: String, +player: String, +id: String, +event: String, 
       failure : String <- IO.try(String,DB.Sql.query(db,"SELECT coalesce(" ++ C.omp_terminal_error_text_sql(event) ++ ",'');"))
       write_deferred(db,player,id,Tx.trim_nl(failure),Tx.trim_nl(pending),String.eq(presence,"1\n"))
     case True{}: do IO<Unit>:
-      +saved : String <- IO.try(String,Store.apply(db,C.Observe{report_id,player,event,False{}}))
+      +saved : String <- IO.try(String,Store.apply(db,C.Observe{report_id,player,event,False{},True{},"","","","","","",False{}}))
       delivered : Result<&1,&1,U32 & String,String> <- Delivery.deliver(db,report_id,"1",saved)
       written : Result<&1,&1,U32 & String,Unit> <- T.Text.control_output(saved)
       IO.pure(Unit,Unit{})
@@ -777,7 +781,7 @@ def consume(+db: String, +player: String, +id: String, +log: String, +policy: Lo
           +observation_sealed : Bool <- IO.pure(Bool,terminal_observation_sealed(sealed,terminal_frame,admitted,state))
           conflict_note : Unit <- completion_conflict_note(db,player,id,event,String.eq(state,"conflict"))
           +episode : String <- deferred_note(db,player,id,event,terminal,next_primary,next_current,Observer.episode(checkpoint_state),Bool.and(sealed,terminal_frame),String.eq(harness,"muse\n"))
-          +observed : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,String> <- shared_result_io(String,observe_event(db,player,id,event,relevant,Bool.or(observation_sealed,failed)))
+          +observed : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,String> <- shared_result_io(String,observe_event(db,player,id,event,relevant,Bool.or(observation_sealed,failed),Bool.pick(String,String.eq(harness,"omp\n"),attempt,""),Tx.trim_nl(kind),frame_key,policy_level(current_policy),line,Logs.store_projected(policy_level(current_policy),Tx.trim_nl(kind),kept),Logs.cumulative_kind(Tx.trim_nl(kind))))
           +terminal_selected : Bool <- IO.pure(Bool,Bool.and(relevant,Bool.and(admitted,Bool.not(sealed))))
           +ended : String <- terminal_event(event,terminal,terminal_selected)
           +closed_input : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,Unit> <- shared_result_io(Unit,close_input(handle,Bool.not(Bool.and(String.eq(harness,"omp\n"),Bool.and(String.is_empty(terminal),Bool.not(String.is_empty(ended)))))))
@@ -820,6 +824,41 @@ def started(+db: String, +player: String, +id: String, +log: String, prompt: Str
           observation : Outcome & List<Chan(Result<&1,&1,U32 & String,String>)> <- consume(db,player,id,generation,policy,"",False{},handle,harness,"0\n","","","","","",requested,"",restore_error,sender,"",Observer.empty(),restore_failed,0,False{},Nil{},first)
           direct_observed(observation))
 
+def projection_state(log: String, lines: List<String>, +state: Observer.State) -> IO(Observer.State):
+  match lines:
+    case Nil{}: do IO<Observer.State>:
+      position : String <- IO.try(String,Logs.write_positioned_retained(log,Nil{},"0",True{}))
+      IO.pure(Observer.State,Observer.with_output(state,position))
+    case other: do IO<Observer.State>:
+      position : String <- IO.try(String,Logs.write_positioned_retained(log,other,"0",True{}))
+      IO.pure(Observer.State,Observer.with_output(state,position))
+
+# The generation file is the derived projection; the durable observation rows
+# are the source. A usable checkpoint positions the reader at its verified
+# offset, so only the spool tail after that offset is read.
+def rebuild_projection(db: String, player: String, attempt: String, log: String, finished: Bool, +state: Observer.State) -> IO(Observer.State):
+  do IO<Observer.State>:
+    lines : List<String> <- ObservationStore.projected_rows(db,player,attempt,finished)
+    projection_state(log,lines,state)
+
+# A missing generation is rebuilt from the observation store and never by
+# rewinding the spool. A diagnostic-level generation keeps the raw spool
+# replay because the store keeps only the newest cumulative prefix per
+# identity. Only genuinely pre-store evidence and diagnostic keep the compat
+# rewind. An unusable checkpoint already left the reader at the spool start.
+def retained_checkpoint(db: String, player: String, attempt: String, handle: U32, log: String, level: String, output_present: Bool, restored: Observer.Restored) -> IO(Observer.State):
+  match restored:
+    case Observer.Restored{state,usable}: do IO<Observer.State>:
+      +missing : Bool <- IO.pure(Bool,Bool.and(usable,Bool.not(output_present)))
+      +diagnostic : Bool <- IO.pure(Bool,String.eq(level,"diagnostic"))
+      +store_missing : Bool <- IO.pure(Bool,Bool.and(missing,Bool.not(diagnostic)))
+      has : Bool <- Bool.pick(IO(Bool),store_missing,ObservationStore.has_rows(db,player,attempt),IO.pure(Bool,False{}))
+      +rebuild : Bool <- IO.pure(Bool,Bool.and(store_missing,has))
+      +compat : Bool <- IO.pure(Bool,Bool.and(missing,Bool.or(diagnostic,Bool.not(has))))
+      +finished : Bool <- IO.pure(Bool,Observer.output_done(state))
+      rebuilt : Observer.State <- Bool.pick(IO(Observer.State),rebuild,rebuild_projection(db,player,attempt,log,finished,state),IO.pure(Observer.State,state))
+      Bool.pick(IO(Observer.State),compat,Observer.reset_empty(db,handle),IO.pure(Observer.State,rebuilt))
+
 # The retained process sends its initial input once. Reattachment reads the same
 # attempt from its first frame so native completion can be reconstructed.
 @unsafe
@@ -829,7 +868,8 @@ def retained_output(+db: String, +player: String, +id: String, +log: String, +ha
     +policy : Logs.Policy <- Logs.open_attempt(db,player,log,id)
     sender : Chan(Result<&1,&1,U32 & String,Unit>) <- IO.fork(Result<&1,&1,U32 & String,Unit>,IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}}))
     output_present : Bool <- Logs.prepare_retained_output(generation)
-    +checkpoint_state : Observer.State <- Bool.pick(IO(Observer.State),output_present,Observer.restore(db,handle),Observer.reset_empty(db,handle))
+    restored : Observer.Restored <- Observer.restore_checked(db,handle)
+    +checkpoint_state : Observer.State <- retained_checkpoint(db,player,attempt,handle,generation,policy_level(policy),output_present,restored)
     +resumed : Result<&2,&2,Sigma<&2,&2,U32,_ => String>,Unit> <- shared_result_io(Unit,NativeRequests.resume(db,player,id,attempt,Bool.and(String.eq(harness,"omp\n"),Bool.and(Bool.not(String.is_empty(attempt)),String.is_empty(Observer.terminal(checkpoint_state))))))
     +resume_error : String <- IO.pure(String,append_write_error("",unshared_result(Unit,resumed)))
     +resume_failed : Bool <- IO.pure(Bool,checkpoint_write_failed(unshared_result(Unit,resumed)))

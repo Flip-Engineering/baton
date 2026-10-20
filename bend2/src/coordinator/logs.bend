@@ -102,6 +102,16 @@ def apply(+db: String, +session: String, +level: String) -> IO(String):
 def terminal_kind(+kind: String) -> Bool:
   Bool.or(String.eq(kind,"agent_end"),String.eq(kind,"turn_end"))
 
+# The line the durable observation record stores for one frame. A prefix frame
+# is stored as its received line and reduced by the close rule at rebuild. A
+# quiet level drops every classified non-terminal frame, so its stored
+# projection is empty; default and diagnostic keep the retained line.
+def store_projected(+level: String, +kind: String, +line: String) -> String:
+  Bool.pick(String,String.eq(level,"diagnostic"),line,
+    Bool.pick(String,String.eq(level,"quiet"),
+      Bool.pick(String,Bool.and(Bool.not(String.is_empty(kind)),Bool.not(terminal_kind(kind))),"",line),
+      line))
+
 def first_failure(first: Result<&1,&1,U32 & String,Unit>, second: Result<&1,&1,U32 & String,Unit>) -> Result<&1,&1,U32 & String,Unit>:
   match first:
     case Fail{error}: Fail{error}
@@ -187,17 +197,17 @@ def held_lines(held: String, +kind: String, +id: String) -> List<String>:
 def held_all(held: String) -> List<String>:
   all_walk(Tx.split_lines(held))
 
-def prefix_kind(+kind: String) -> Bool:
-  Bool.or(String.eq(kind,"tool_execution_update"),Bool.or(String.eq(kind,"message_start"),String.eq(kind,"message_update")))
-
-def close_kind(+kind: String) -> Bool:
-  Bool.or(String.eq(kind,"tool_execution_end"),String.eq(kind,"message_end"))
+def cumulative_kind(+kind: String) -> Bool:
+  Bool.or(String.eq(kind,"message_update"),String.eq(kind,"tool_execution_update"))
 
 def codex_kind(+kind: String) -> Bool:
   Bool.or(String.eq(kind,"codex_command_start"),String.eq(kind,"codex_command_end"))
 
+# OMP 17.4 message frames carry their identity at message.responseId or
+# message.toolCallId and not at message.id; tool executions carry toolCallId.
+# The coalesce order is a total selection per frame shape, not a policy.
 def frame_id_sql(+line: String) -> String:
-  "WITH frame(value) AS (VALUES(" ++ C.q(line) ++ ")) SELECT coalesce(json_extract(value,'$.toolCallId'),json_extract(value,'$.messageId'),json_extract(value,'$.message.id'),'') FROM frame;"
+  "WITH frame(value) AS (VALUES(" ++ C.q(line) ++ ")) SELECT coalesce(json_extract(value,'$.toolCallId'),json_extract(value,'$.messageId'),json_extract(value,'$.message.id'),json_extract(value,'$.message.responseId'),json_extract(value,'$.message.toolCallId'),json_extract(value,'$.id'),'') FROM frame;"
 
 def frame_id(db: String, line: String, omp: Bool) -> IO(String):
   match omp:
@@ -213,14 +223,16 @@ def codex_frame_id(db: String, line: String) -> IO(String):
     found : String <- IO.try(String,DB.Sql.query(db,"WITH frame(value) AS (VALUES(" ++ C.q(line) ++ ")) SELECT json_extract(value,'$.item.id') FROM frame;"))
     IO.pure(String,Tx.trim_nl(found))
 
-def frame_identity_kind(db: String, line: String, +kind: String, omp: Bool, codex: Bool) -> IO(String):
+def frame_identity_kind(db: String, line: String, omp: Bool, codex: Bool) -> IO(String):
   match codex:
     case True{}: codex_frame_id(db,line)
-    case False{}: frame_id(db,line,Bool.and(omp,Bool.or(prefix_kind(kind),close_kind(kind))))
+    case False{}: frame_id(db,line,omp)
 
-# The identity is read only for a frame the policy holds or closes.
+# The identity is read for every OMP frame: held prefixes and closes pair on
+# it, and the durable observation record keys its prefix rows by it.
 def frame_identity(db: String, line: String, +kind: String, +omp: Bool) -> IO(String):
-  frame_identity_kind(db,line,kind,omp,codex_kind(kind))
+  frame_identity_kind(db,line,omp,codex_kind(kind))
+
 
 # Public terminal projections retain identifiers, status, completion text and
 # raw size accounting. Turn supplies the normalized event and streamed-message
