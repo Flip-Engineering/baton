@@ -110,6 +110,9 @@ jobs:
           path: candidate-source
           fetch-depth: 0
           persist-credentials: false
+      - name: Check admitted scope cleanup
+        shell: bash
+        run: python3 "$GITHUB_WORKSPACE/candidate-source/bend2/test/focused-native-cleanup.py" -v
       - name: Prepare pinned Bend 2.0.25 toolchain
         shell: bash
         env:
