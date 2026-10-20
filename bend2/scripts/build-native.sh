@@ -48,7 +48,7 @@ compiler=${BEND:-"$root/.bend/bin/bend"}
 if [ ! -x "$compiler" ]; then
   compiler="$root/node_modules/.bend/bin/bend"
 fi
-queue=${BATON2_COMPILE_QUEUE:-"$root/bend2/scripts/compile-queue.sh"}
+queue="$root/bend2/scripts/compile-queue.sh"
 [ -f "$queue" ] || {
   echo "The host compile queue entry is unavailable: $queue" >&2
   echo 'Run bend2/scripts/bootstrap-compile-queue.sh once to build the queue executable.' >&2
@@ -77,7 +77,6 @@ if [ ! -w "$queue_state" ] || [ ! -x "$queue_state" ]; then
   exit 1
 fi
 export BATON_COMPILE_QUEUE_ROOT="$queue_state"
-export BATON2_COMPILE_QUEUE="$queue"
 cc=${CC:-clang}
 cc_linker=
 cc_version=
