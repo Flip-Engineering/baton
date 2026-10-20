@@ -3050,9 +3050,9 @@ function emit_arm_shared(fl: File, h: HTerm, av: Val[], dst: Dst,
     : arm_hint(h) + "|" + base;
   const reps = fl.armHints.get(hint) ?? [];
   for (const rep of reps) {
-    if (fl.armBusy.has(rep.name)) continue;
     if (rep.ks.length === capKs.length + avKs.length
       && rep.caps.length === caps.length && arm_eq(rep.term, h)) {
+      if (fl.armBusy.has(rep.name)) return false;
       const capWs = caps.flatMap(([p, b]) => {
         const use = term_use(u, p);
         fl.uses.set(p, { ...b, n: b.n - use + 1 });
