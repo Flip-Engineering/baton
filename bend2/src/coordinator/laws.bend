@@ -318,7 +318,7 @@ law m12_a_named_cursor_sends_nothing:
   for +handle: U32
   for +cursor: String
   for +next: String
-  {Guidance.send(db, handle, cursor, next, True{}) == IO.pure(String, cursor) : IO(String)}
+  {Guidance.send(db, handle, "", cursor, next, True{}) == IO.pure(String, cursor) : IO(String)}
 
 def m12_a_named_cursor_sends_nothing(db, handle, cursor, next):
   {==}
