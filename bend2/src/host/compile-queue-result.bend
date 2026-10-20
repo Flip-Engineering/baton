@@ -344,6 +344,32 @@ def CompileQueueResult.external_process(adoption: String) -> String:
 def CompileQueueResult.external_artifacts(name: String, digest: String) -> String:
   name ++ ":" ++ digest
 
+# The recorded artifact row is the authority for the adopted artifact identity.
+# The published artifact-name/artifact-digest fields must agree with the row,
+# and the live adoption must name the same artifact. verify_rows then rehashes
+# the cached artifact against that row.
+def CompileQueueResult.first_artifact_row(rows: List<&2,String>) -> String:
+  match rows:
+    case Nil{}:
+      ""
+    case row <> rest:
+      Bool.pick(String, String.starts_with(row, "artifact="), row,
+        CompileQueueResult.first_artifact_row(rest))
+
+def CompileQueueResult.artifact_row_name(row: String) -> String:
+  match String.split(row, Char.from_u32(9)):
+    case name <> kind <> digest <> Nil{}:
+      String.drop(name, String.length("artifact="))
+    case other:
+      ""
+
+def CompileQueueResult.artifact_row_digest(row: String) -> String:
+  match String.split(row, Char.from_u32(9)):
+    case name <> kind <> digest <> Nil{}:
+      digest
+    case other:
+      ""
+
 
 def CompileQueueResult.write_adoption(path: String, key: String, started: String, finished: String, adoption: String, name: String, artifact_path: String, artifacts_dir: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   do IO<Result<&1,&1,U32 & String,Unit>>:
@@ -383,22 +409,26 @@ def CompileQueueResult.verify_adoption(keydir: String, adoption: String) -> IO(R
       case Done{result}:
         key = CompileQueueResult.basename(keydir)
         rows = CompileQueueResult.artifact_rows(result)
+        row = CompileQueueResult.first_artifact_row(String.lines(rows))
+        row_name = CompileQueueResult.artifact_row_name(row)
+        row_digest = CompileQueueResult.artifact_row_digest(row)
         artifact_name = CompileQueueResult.field(result, "artifact-name")
         artifact_digest = CompileQueueResult.field(result, "artifact-digest")
-        expected_artifacts = CompileQueueResult.external_artifacts(artifact_name, artifact_digest)
+        expected_artifacts = CompileQueueResult.external_artifacts(row_name, row_digest)
         adopted = Bool.and(CompileQueueResult.base_verified(result, key),
           Bool.and(String.eq(CompileQueueResult.field(result, "external"), "1"),
             Bool.and(String.eq(CompileQueueResult.field(result, "external-verified"), "1"),
               Bool.and(CompileQueueResult.completed(result),
-                Bool.and(Bool.not(String.is_empty(rows)),
-                  Bool.and(Bool.not(String.is_empty(artifact_name)),
-                    Bool.and(Bool.not(String.is_empty(artifact_digest)),
-                      CompileQueueResult.external_verified(result,
-                        CompileQueueResult.adoption_field(adoption, "argv"),
-                        CompileQueueResult.external_process(adoption),
-                        CompileQueueResult.adoption_field(adoption, "input"),
-                        CompileQueueResult.field(adoption, "output"),
-                        expected_artifacts))))))))
+                Bool.and(Bool.not(String.is_empty(row_name)),
+                  Bool.and(Bool.not(String.is_empty(row_digest)),
+                    Bool.and(String.eq(artifact_name, row_name),
+                      Bool.and(String.eq(artifact_digest, row_digest),
+                        CompileQueueResult.external_verified(result,
+                          CompileQueueResult.adoption_field(adoption, "argv"),
+                          CompileQueueResult.external_process(adoption),
+                          CompileQueueResult.adoption_field(adoption, "input"),
+                          CompileQueueResult.field(adoption, "output"),
+                          expected_artifacts)))))))))
         artifacts_ok : Bool <- CompileQueueResult.verify_rows(String.lines(rows), keydir)
         IO.pure(Result<&1,&1,U32 & String,Bool>, Done{Bool.and(adopted, artifacts_ok)})
 
