@@ -1,4 +1,5 @@
 import Base
+import ./text.bend as T
 
 # Shared compile queue identity, schema version 2.
 #
@@ -76,20 +77,6 @@ def CompileQueueIdentity.text_digest(text: String) -> IO(Result<&1,&1,U32 & Stri
 def CompileQueueIdentity.key(material: String) -> IO(Result<&1,&1,U32 & String,String>):
   CompileQueueIdentity.text_digest(material)
 
-def CompileQueueIdentity.source_closure(source_root: String, entry: String) -> IO(Result<&1,&1,U32 & String,String>):
-  import "./compile-queue-digest.c"
-
-def CompileQueueIdentity.source_digest(source_root: String, entry: String) -> IO(Result<&1,&1,U32 & String,String>):
-  import "./compile-queue-digest.c"
-
-# `files` is one path per line. The caller passes the generated C,
-# native-entry.c, helper scripts and other explicit cc inputs. Relative names
-# resolve under source_root; absolute names must still be inside it.
-def CompileQueueIdentity.file_closure(source_root: String, files: String) -> IO(Result<&1,&1,U32 & String,String>):
-  import "./compile-queue-digest.c"
-
-def CompileQueueIdentity.file_closure_digest(source_root: String, files: String) -> IO(Result<&1,&1,U32 & String,String>):
-  import "./compile-queue-digest.c"
 
 # `version` is the captured compiler --version text, or empty when the caller
 # could not collect it. The closure records its SHA-256 and therefore changes
@@ -187,6 +174,202 @@ def CompileQueueIdentity.argv_lines(tokens: String) -> String:
 
 def CompileQueueIdentity.digest_lines(kind: String, source_digest: String, file_closure_digest: String) -> String:
   Bool.pick(String, String.eq(kind, "cgen"), "source-digest=" ++ source_digest ++ "\n", "file-digest=" ++ file_closure_digest ++ "\n")
+
+# -------------------------------------------------------------------------
+# Source closure policy. The C binding supplies host primitives (realpath,
+# file_digest, file_size, Text.read); this module owns import/include parsing,
+# closure membership, root-relative validation and record order.
+
+type CompileQueueWalk is Data:
+  CompileQueueWalk{queue: List<String>, visited: List<String>, records: List<String>}
+
+def CompileQueueIdentity.path_drop_last(parts: List<&2,String>) -> List<&2,String>:
+  match parts:
+    case Nil{}:
+      Nil{}
+    case part <> Nil{}:
+      Nil{}
+    case part <> rest:
+      part <> CompileQueueIdentity.path_drop_last(rest)
+
+def CompileQueueIdentity.path_last(parts: List<&2,String>, current: String) -> String:
+  match parts:
+    case Nil{}:
+      current
+    case part <> rest:
+      Bool.pick(String, String.is_empty(part), CompileQueueIdentity.path_last(rest, current), CompileQueueIdentity.path_last(rest, part))
+
+def CompileQueueIdentity.path_basename(path: String) -> String:
+  CompileQueueIdentity.path_last(String.split(path, Char.from_u32(47)), "")
+
+def CompileQueueIdentity.path_dirname(path: String) -> String:
+  parts = CompileQueueIdentity.path_drop_last(String.split(path, Char.from_u32(47)))
+  joined = String.join(parts, "/")
+  Bool.pick(String, String.is_empty(joined), Bool.pick(String, String.starts_with(path, "/"), "/", "."), joined)
+
+def CompileQueueIdentity.path_join(directory: String, name: String) -> String:
+  Bool.pick(String, String.eq(directory, "."), name, directory ++ "/" ++ name)
+
+def CompileQueueIdentity.path_inside(root: String, path: String) -> Bool:
+  Bool.or(String.eq(root, path), String.starts_with(path, root ++ "/"))
+
+def CompileQueueIdentity.path_relative(root: String, path: String) -> String:
+  String.drop(path, Nat.add(String.length(root), 1n))
+
+def CompileQueueIdentity.path_absolute(path: String) -> Bool:
+  String.starts_with(path, "/")
+
+def CompileQueueIdentity.list_contains(values: List<&2,String>, value: String) -> Bool:
+  match values:
+    case Nil{}:
+      False{}
+    case head <> rest:
+      Bool.pick(Bool, String.eq(head, value), True{}, CompileQueueIdentity.list_contains(rest, value))
+
+def CompileQueueIdentity.second(values: List<&2,String>) -> String:
+  match values:
+    case first <> value <> rest:
+      value
+    case other:
+      ""
+
+def CompileQueueIdentity.first_token(value: String) -> String:
+  match String.split(value, Char.from_u32(32)):
+    case first <> rest:
+      match String.split(first, Char.from_u32(9)):
+        case token <> tail:
+          token
+        case other:
+          ""
+    case other:
+      ""
+
+def CompileQueueIdentity.bend_import_value(trimmed: String, original: String) -> String:
+  rest = String.drop(trimmed, 7)
+  Bool.pick(String, String.starts_with(rest, "\""),
+    CompileQueueIdentity.second(String.split(rest, Char.from_u32(34))),
+    Bool.pick(String, String.eq(trimmed, original), CompileQueueIdentity.first_token(rest), ""))
+
+def CompileQueueIdentity.bend_import_target(line: String) -> String:
+  trimmed = String.trim_start(line)
+  Bool.pick(String, String.starts_with(trimmed, "import "),
+    CompileQueueIdentity.bend_import_value(trimmed, line),
+    "")
+
+def CompileQueueIdentity.bend_targets(lines: List<&2,String>) -> List<&2,String>:
+  match lines:
+    case Nil{}:
+      Nil{}
+    case line <> rest:
+      target = CompileQueueIdentity.bend_import_target(line)
+      Bool.pick(List<&2,String>, String.is_empty(target), CompileQueueIdentity.bend_targets(rest),
+        Bool.pick(List<&2,String>, String.eq(target, "Base"), CompileQueueIdentity.bend_targets(rest),
+          target <> CompileQueueIdentity.bend_targets(rest)))
+
+def CompileQueueIdentity.c_include_target(line: String) -> String:
+  trimmed = String.trim_start(line)
+  Bool.pick(String, String.starts_with(trimmed, "#include \""),
+    CompileQueueIdentity.second(String.split(trimmed, Char.from_u32(34))),
+    "")
+
+def CompileQueueIdentity.c_targets(lines: List<&2,String>) -> List<&2,String>:
+  match lines:
+    case Nil{}:
+      Nil{}
+    case line <> rest:
+      target = CompileQueueIdentity.c_include_target(line)
+      Bool.pick(List<&2,String>, String.is_empty(target), CompileQueueIdentity.c_targets(rest),
+        target <> CompileQueueIdentity.c_targets(rest))
+
+def CompileQueueIdentity.closure_targets(path: String, text: String) -> List<&2,String>:
+  name = String.to_lower(CompileQueueIdentity.path_basename(path))
+  Bool.pick(List<&2,String>, String.ends_with(name, ".bend"),
+    CompileQueueIdentity.bend_targets(String.lines(text)),
+    Bool.pick(List<&2,String>, Bool.or(String.ends_with(name, ".c"), String.ends_with(name, ".h")),
+      CompileQueueIdentity.c_targets(String.lines(text)),
+      Nil{}))
+
+def CompileQueueIdentity.enqueue_targets(importer: String, targets: List<&2,String>, queue: List<&2,String>) -> List<&2,String>:
+  match targets:
+    case Nil{}:
+      queue
+    case target <> rest:
+      next = Bool.pick(String, CompileQueueIdentity.path_absolute(target),
+        "!absolute:" ++ target,
+        CompileQueueIdentity.path_join(CompileQueueIdentity.path_dirname(importer), target))
+      CompileQueueIdentity.enqueue_targets(importer, rest, next <> queue)
+
+def CompileQueueIdentity.walk(state: CompileQueueWalk, root: String) -> IO(Result<&1,&1,U32 & String,CompileQueueWalk>):
+  match state:
+    case CompileQueueWalk{queue, visited, records}:
+      match queue:
+        case Nil{}:
+          IO.pure(Result<&1,&1,U32 & String,CompileQueueWalk>, Done{state})
+        case head <> rest:
+          Bool.pick(IO<Result<&1,&1,U32 & String,CompileQueueWalk>>, String.starts_with(head, "!absolute:"),
+            IO.pure(Result<&1,&1,U32 & String,CompileQueueWalk>, Fail{(1u32, "absolute import")}),
+            do IO<Result<&1,&1,U32 & String,CompileQueueWalk>>:
+              resolved : String <- IO.try(String, CompileQueueIdentity.realpath(head))
+              Bool.pick(IO<Result<&1,&1,U32 & String,CompileQueueWalk>>, CompileQueueIdentity.path_inside(root, resolved),
+                Bool.pick(IO<Result<&1,&1,U32 & String,CompileQueueWalk>>, CompileQueueIdentity.list_contains(visited, resolved),
+                  CompileQueueIdentity.walk(CompileQueueWalk{rest, visited, records}, root),
+                  do IO<Result<&1,&1,U32 & String,CompileQueueWalk>>:
+                    text : String <- IO.try(String, T.Text.read(resolved))
+                    digest : String <- IO.try(String, CompileQueueIdentity.file_digest(resolved))
+                    size : String <- IO.try(String, CompileQueueIdentity.file_size(resolved))
+                    record = CompileQueueIdentity.path_relative(root, resolved) ++ "\t" ++ digest ++ "\t" ++ size
+                    targets = CompileQueueIdentity.closure_targets(resolved, text)
+                    next_queue = CompileQueueIdentity.enqueue_targets(resolved, targets, rest)
+                    CompileQueueIdentity.walk(CompileQueueWalk{next_queue, resolved <> visited, record <> records}, root)),
+                IO.pure(Result<&1,&1,U32 & String,CompileQueueWalk>, Fail{(1u32, "source path outside root")})))
+
+def CompileQueueIdentity.source_lines(records: List<&2,String>) -> String:
+  match records:
+    case Nil{}:
+      ""
+    case record <> rest:
+      "source-file=" ++ record ++ "\n" ++ CompileQueueIdentity.source_lines(rest)
+
+def CompileQueueIdentity.source_closure(source_root: String, entry: String) -> IO(Result<&1,&1,U32 & String,String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
+    root : String <- IO.try(String, CompileQueueIdentity.realpath(source_root))
+    entry_path = Bool.pick(String, CompileQueueIdentity.path_absolute(entry), entry, root ++ "/" ++ entry)
+    resolved : String <- IO.try(String, CompileQueueIdentity.realpath(entry_path))
+    Bool.pick(IO<Result<&1,&1,U32 & String,String>>, CompileQueueIdentity.path_inside(root, resolved),
+      do IO<Result<&1,&1,U32 & String,String>>:
+        final : CompileQueueWalk <- IO.try(CompileQueueWalk, CompileQueueIdentity.walk(CompileQueueWalk{[resolved], Nil{}, Nil{}}, root))
+        match final:
+          case CompileQueueWalk{queue, visited, records}:
+            text = "schema=baton-compile-queue-source-v2\nsource-entry=" ++ CompileQueueIdentity.path_relative(root, resolved) ++ "\n" ++ CompileQueueIdentity.source_lines(CompileQueueIdentity.sort(records))
+            IO.pure(Result<&1,&1,U32 & String,String>, Done{text}),
+      IO.pure(Result<&1,&1,U32 & String,String>, Fail{(1u32, "entry outside root")}))
+
+def CompileQueueIdentity.source_digest(source_root: String, entry: String) -> IO(Result<&1,&1,U32 & String,String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
+    text : String <- IO.try(String, CompileQueueIdentity.source_closure(source_root, entry))
+    CompileQueueIdentity.text_digest(text)
+
+def CompileQueueIdentity.file_queue(names: List<&2,String>, root: String) -> List<&2,String>:
+  match names:
+    case Nil{}:
+      Nil{}
+    case name <> rest:
+      Bool.pick(List<&2,String>, String.is_empty(name), CompileQueueIdentity.file_queue(rest, root),
+        Bool.pick(String, CompileQueueIdentity.path_absolute(name), name, root ++ "/" ++ name) <> CompileQueueIdentity.file_queue(rest, root))
+
+def CompileQueueIdentity.file_closure(source_root: String, files: String) -> IO(Result<&1,&1,U32 & String,String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
+    root : String <- IO.try(String, CompileQueueIdentity.realpath(source_root))
+    final : CompileQueueWalk <- IO.try(CompileQueueWalk, CompileQueueIdentity.walk(CompileQueueWalk{CompileQueueIdentity.file_queue(String.lines(files), root), Nil{}, Nil{}}, root))
+    match final:
+      case CompileQueueWalk{queue, visited, records}:
+        text = "schema=baton-compile-queue-source-v2\n" ++ CompileQueueIdentity.source_lines(CompileQueueIdentity.sort(records))
+        IO.pure(Result<&1,&1,U32 & String,String>, Done{text})
+
+def CompileQueueIdentity.file_closure_digest(source_root: String, files: String) -> IO(Result<&1,&1,U32 & String,String>):
+  do IO<Result<&1,&1,U32 & String,String>>:
+    text : String <- IO.try(String, CompileQueueIdentity.file_closure(source_root, files))
+    CompileQueueIdentity.text_digest(text)
 
 def CompileQueueIdentity.material(kind: String, entry: String, options: String, source_digest: String, file_closure_digest: String, compiler_digest: String, input_rows: String, artifact_names: String, normalized_argv: String) -> String:
   "schema=" ++ CompileQueueIdentity.schema() ++ "\n"

@@ -291,22 +291,6 @@ static int cq_id_buf_format(CqIdBuffer *buffer, const char *format, ...) {
   return ok;
 }
 
-static char *cq_id_format(const char *format, ...) {
-  char small[512];
-  va_list args;
-  va_start(args, format);
-  int length = vsnprintf(small, sizeof small, format, args);
-  va_end(args);
-  if (length < 0) return NULL;
-  if ((size_t)length < sizeof small) return strdup(small);
-  char *large = (char *)malloc((size_t)length + 1);
-  if (!large) return NULL;
-  va_start(args, format);
-  vsnprintf(large, (size_t)length + 1, format, args);
-  va_end(args);
-  return large;
-}
-
 static char *cq_id_strdup(const char *text) {
   size_t length = strlen(text);
   char *copy = (char *)malloc(length + 1);
@@ -406,22 +390,6 @@ static char *cq_id_dirname(const char *path) {
   return out;
 }
 
-static const char *cq_id_basename(const char *path) {
-  const char *slash = strrchr(path, '/');
-  return slash ? slash + 1 : path;
-}
-
-static int cq_id_inside(const char *root, const char *path) {
-  size_t length = strlen(root);
-  if (length == 1 && root[0] == '/') return path[0] == '/';
-  return !strncmp(root, path, length) && path[length] == '/';
-}
-
-static char *cq_id_relative(const char *root, const char *path) {
-  size_t length = strlen(root);
-  return cq_id_strdup(path + length + 1);
-}
-
 static int cq_id_is_file(const char *path) {
   struct stat info;
   return !stat(path, &info) && S_ISREG(info.st_mode);
@@ -518,363 +486,6 @@ static char *cq_id_resolve_command(const char *command) {
   }
   return cq_id_strdup(command);
 }
-
-static int cq_id_read_file(const char *path, char **data, size_t *size) {
-  int fd = open(path, O_RDONLY);
-  if (fd < 0) return errno;
-  CqIdBuffer buffer = {0, 0, 0, 0};
-  char chunk[65536];
-  for (;;) {
-    ssize_t count = read(fd, chunk, sizeof chunk);
-    if (count > 0) {
-      if (!cq_id_buf_add(&buffer, chunk, (size_t)count)) {
-        buffer.error = ENOMEM;
-        break;
-      }
-      continue;
-    }
-    if (count == 0) break;
-    if (errno == EINTR) continue;
-    buffer.error = errno;
-    break;
-  }
-  if (close(fd) && !buffer.error) buffer.error = errno;
-  if (buffer.error) {
-    cq_id_buf_free(&buffer);
-    return buffer.error;
-  }
-  if (!buffer.data) {
-    buffer.data = (char *)malloc(1);
-    if (!buffer.data) return ENOMEM;
-    buffer.data[0] = '\0';
-  }
-  *data = buffer.data;
-  *size = buffer.length;
-  return 0;
-}
-
-/* ------------------------------------------------------------------------- */
-/* Source closure                                                            */
-/* ------------------------------------------------------------------------- */
-
-typedef struct {
-  char *root;
-  CqIdList records;
-  CqIdList visited;
-  CqIdList queue;
-  size_t head;
-  int error;
-} CqIdClosure;
-
-static void cq_id_closure_free(CqIdClosure *closure) {
-  free(closure->root);
-  cq_id_list_free(&closure->records);
-  cq_id_list_free(&closure->visited);
-  cq_id_list_free(&closure->queue);
-  closure->root = NULL;
-  closure->head = 0;
-  closure->error = 0;
-}
-
-static void cq_id_enqueue(CqIdClosure *closure, const char *path) {
-  if (closure->error) return;
-  char *copy = cq_id_strdup(path);
-  if (!copy) {
-    closure->error = ENOMEM;
-    return;
-  }
-  if (!cq_id_list_add(&closure->queue, copy)) closure->error = ENOMEM;
-}
-
-static void cq_id_enqueue_relative(CqIdClosure *closure, const char *importer,
-                                   const char *target) {
-  if (closure->error) return;
-  if (target[0] == '/') {
-    closure->error = EINVAL;
-    return;
-  }
-  char *directory = cq_id_dirname(importer);
-  if (!directory) {
-    closure->error = ENOMEM;
-    return;
-  }
-  char *joined = cq_id_join(directory, target);
-  free(directory);
-  if (!joined) {
-    closure->error = ENOMEM;
-    return;
-  }
-  if (!cq_id_list_add(&closure->queue, joined)) closure->error = ENOMEM;
-}
-
-static int cq_id_space(char value) {
-  return value == ' ' || value == '\t';
-}
-
-static int cq_id_next_line(const char *data, size_t size, size_t *offset,
-                           size_t *start, size_t *end) {
-  if (*offset >= size) return 0;
-  *start = *offset;
-  while (*offset < size && data[*offset] != '\n') (*offset)++;
-  *end = *offset;
-  if (*offset < size) (*offset)++;
-  if (*end > *start && data[*end - 1] == '\r') (*end)--;
-  return 1;
-}
-
-static void cq_id_parse_bend(CqIdClosure *closure, const char *path,
-                             const char *data, size_t size) {
-  size_t offset = 0;
-  size_t start = 0;
-  size_t end = 0;
-  while (!closure->error
-         && cq_id_next_line(data, size, &offset, &start, &end)) {
-    size_t position = start;
-    size_t indent = 0;
-    while (position < end && cq_id_space(data[position])) {
-      position++;
-      indent++;
-    }
-    if (position >= end || data[position] == '#') continue;
-    if (end - position < 6 || memcmp(data + position, "import", 6)) continue;
-    size_t cursor = position + 6;
-    if (cursor < end && !cq_id_space(data[cursor]) && data[cursor] != '"') {
-      continue;
-    }
-    while (cursor < end && cq_id_space(data[cursor])) cursor++;
-    if (cursor >= end) continue;
-    if (data[cursor] == '"') {
-      size_t close = cursor + 1;
-      while (close < end && data[close] != '"') close++;
-      if (close >= end) continue;
-      size_t length = close - cursor - 1;
-      char *target = (char *)malloc(length + 1);
-      if (!target) {
-        closure->error = ENOMEM;
-        return;
-      }
-      memcpy(target, data + cursor + 1, length);
-      target[length] = '\0';
-      cq_id_enqueue_relative(closure, path, target);
-      free(target);
-      continue;
-    }
-    if (indent != 0) continue;
-    size_t target_end = cursor;
-    while (target_end < end && !cq_id_space(data[target_end])) target_end++;
-    size_t length = target_end - cursor;
-    char *target = (char *)malloc(length + 1);
-    if (!target) {
-      closure->error = ENOMEM;
-      return;
-    }
-    memcpy(target, data + cursor, length);
-    target[length] = '\0';
-    if (!strcmp(target, "Base")) {
-      free(target);
-      continue;
-    }
-    cq_id_enqueue_relative(closure, path, target);
-    free(target);
-  }
-}
-
-static void cq_id_parse_c(CqIdClosure *closure, const char *path,
-                          const char *data, size_t size) {
-  size_t offset = 0;
-  size_t start = 0;
-  size_t end = 0;
-  while (!closure->error
-         && cq_id_next_line(data, size, &offset, &start, &end)) {
-    size_t position = start;
-    while (position < end && cq_id_space(data[position])) position++;
-    if (position >= end || data[position] != '#') continue;
-    position++;
-    while (position < end && cq_id_space(data[position])) position++;
-    if (end - position < 7 || memcmp(data + position, "include", 7)) continue;
-    position += 7;
-    while (position < end && cq_id_space(data[position])) position++;
-    if (position >= end || data[position] != '"') continue;
-    size_t close = position + 1;
-    while (close < end && data[close] != '"') close++;
-    if (close >= end) continue;
-    size_t length = close - position - 1;
-    char *target = (char *)malloc(length + 1);
-    if (!target) {
-      closure->error = ENOMEM;
-      return;
-    }
-    memcpy(target, data + position + 1, length);
-    target[length] = '\0';
-    cq_id_enqueue_relative(closure, path, target);
-    free(target);
-  }
-}
-
-static void cq_id_closure_parse(CqIdClosure *closure, const char *path,
-                                const char *data, size_t size) {
-  const char *name = cq_id_basename(path);
-  const char *dot = strrchr(name, '.');
-  if (!dot) return;
-  if (!strcmp(dot, ".bend")) {
-    cq_id_parse_bend(closure, path, data, size);
-  } else if (!strcmp(dot, ".c") || !strcmp(dot, ".h")) {
-    cq_id_parse_c(closure, path, data, size);
-  }
-}
-
-static void cq_id_closure_run(CqIdClosure *closure) {
-  while (!closure->error && closure->head < closure->queue.length) {
-    char *candidate = closure->queue.items[closure->head++];
-    char *resolved = realpath(candidate, NULL);
-    if (!resolved) {
-      closure->error = ENOENT;
-      break;
-    }
-    if (!cq_id_inside(closure->root, resolved)) {
-      free(resolved);
-      closure->error = EINVAL;
-      break;
-    }
-    if (cq_id_list_contains(&closure->visited, resolved)) {
-      free(resolved);
-      continue;
-    }
-    char *visited = cq_id_strdup(resolved);
-    if (!visited || !cq_id_list_add(&closure->visited, visited)) {
-      free(resolved);
-      closure->error = ENOMEM;
-      break;
-    }
-    char *data = NULL;
-    size_t size = 0;
-    int error = cq_id_read_file(resolved, &data, &size);
-    if (error) {
-      free(resolved);
-      closure->error = error;
-      break;
-    }
-    char digest[65];
-    cq_id_hash_bytes(data, size, digest);
-    char *relative = cq_id_relative(closure->root, resolved);
-    if (!relative) {
-      free(data);
-      free(resolved);
-      closure->error = ENOMEM;
-      break;
-    }
-    char *record = cq_id_format("%s\t%s\t%llu", relative, digest,
-                                (unsigned long long)size);
-    free(relative);
-    if (!record || !cq_id_list_add(&closure->records, record)) {
-      free(data);
-      free(resolved);
-      closure->error = ENOMEM;
-      break;
-    }
-    cq_id_closure_parse(closure, resolved, data, size);
-    free(data);
-    free(resolved);
-  }
-}
-
-static char *cq_id_closure_text(const char *root, const char *entry,
-                                const char *files) {
-  CqIdClosure closure;
-  memset(&closure, 0, sizeof closure);
-  closure.root = realpath(root, NULL);
-  if (!closure.root) return NULL;
-  char *entry_relative = NULL;
-  if (entry) {
-    char *candidate = NULL;
-    if (entry[0] == '/') {
-      candidate = realpath(entry, NULL);
-    } else {
-      char *joined = cq_id_join(closure.root, entry);
-      if (joined) {
-        candidate = realpath(joined, NULL);
-        free(joined);
-      }
-    }
-    if (!candidate || !cq_id_inside(closure.root, candidate)) {
-      free(candidate);
-      cq_id_closure_free(&closure);
-      return NULL;
-    }
-    entry_relative = cq_id_relative(closure.root, candidate);
-    if (!entry_relative) {
-      free(candidate);
-      cq_id_closure_free(&closure);
-      return NULL;
-    }
-    cq_id_enqueue(&closure, candidate);
-    free(candidate);
-  }
-  if (files) {
-    const char *start = files;
-    while (*start) {
-      const char *end = strchr(start, '\n');
-      size_t length = end ? (size_t)(end - start) : strlen(start);
-      if (length > 0) {
-        char *name = (char *)malloc(length + 1);
-        if (!name) {
-          closure.error = ENOMEM;
-          break;
-        }
-        memcpy(name, start, length);
-        name[length] = '\0';
-        char *candidate = NULL;
-        if (name[0] == '/') {
-          candidate = realpath(name, NULL);
-        } else {
-          char *joined = cq_id_join(closure.root, name);
-          if (joined) {
-            candidate = realpath(joined, NULL);
-            free(joined);
-          }
-        }
-        free(name);
-        if (!candidate || !cq_id_inside(closure.root, candidate)) {
-          free(candidate);
-          closure.error = EINVAL;
-          break;
-        }
-        cq_id_enqueue(&closure, candidate);
-        free(candidate);
-      }
-      if (!end) break;
-      start = end + 1;
-    }
-  }
-  cq_id_closure_run(&closure);
-  if (closure.error) {
-    free(entry_relative);
-    cq_id_closure_free(&closure);
-    return NULL;
-  }
-  cq_id_list_sort_unique(&closure.records);
-  CqIdBuffer out = {0, 0, 0, 0};
-  cq_id_buf_adds(&out, "schema=baton-compile-queue-source-v2\n");
-  if (entry_relative) {
-    cq_id_buf_format(&out, "source-entry=%s\n", entry_relative);
-    free(entry_relative);
-  }
-  for (size_t i = 0; i < closure.records.length; i++) {
-    cq_id_buf_adds(&out, "source-file=");
-    cq_id_buf_adds(&out, closure.records.items[i]);
-    cq_id_buf_adds(&out, "\n");
-  }
-  cq_id_closure_free(&closure);
-  if (out.error) {
-    cq_id_buf_free(&out);
-    return NULL;
-  }
-  return out.data;
-}
-
-/* ------------------------------------------------------------------------- */
-/* Compiler and linker closure                                               */
-/* ------------------------------------------------------------------------- */
 
 static void cq_id_collect_all(CqIdList *list, const char *directory,
                               const char *prefix) {
@@ -1020,13 +631,9 @@ static char *cq_id_toolchain_text(const char *compiler, const char *linker,
 /* ------------------------------------------------------------------------- */
 
 enum {
-  CQ_ID_SOURCE_CLOSURE = 1,
-  CQ_ID_SOURCE_DIGEST = 2,
-  CQ_ID_FILE_CLOSURE = 3,
   CQ_ID_COMPILER_CLOSURE = 4,
   CQ_ID_FILE_DIGEST = 5,
   CQ_ID_TEXT_DIGEST = 6,
-  CQ_ID_FILE_CLOSURE_DIGEST = 7,
   CQ_ID_COMPILER_CLOSURE_DIGEST = 8,
   CQ_ID_FILE_SIZE = 9,
   CQ_ID_LIST_DIR = 10,
@@ -1057,14 +664,6 @@ static void cq_id_call_free(CqIdCall *call) {
 static void cq_id_call_work(IoWork *work) {
   CqIdCall *call = (CqIdCall *)work->data;
   switch (call->mode) {
-    case CQ_ID_SOURCE_CLOSURE:
-    case CQ_ID_SOURCE_DIGEST:
-      call->text = cq_id_closure_text(call->first, call->second, NULL);
-      break;
-    case CQ_ID_FILE_CLOSURE:
-    case CQ_ID_FILE_CLOSURE_DIGEST:
-      call->text = cq_id_closure_text(call->first, NULL, call->second);
-      break;
     case CQ_ID_COMPILER_CLOSURE:
     case CQ_ID_COMPILER_CLOSURE_DIGEST:
       call->text = cq_id_toolchain_text(call->first, call->second, call->third);
@@ -1192,9 +791,7 @@ static Term cq_id_call_pack(Env env, IoWork *work) {
   Term result;
   if (call->error) {
     result = io_fail(env, call->error, NULL);
-  } else if (call->mode == CQ_ID_SOURCE_DIGEST
-             || call->mode == CQ_ID_FILE_CLOSURE_DIGEST
-             || call->mode == CQ_ID_COMPILER_CLOSURE_DIGEST) {
+  } else if (call->mode == CQ_ID_COMPILER_CLOSURE_DIGEST) {
     char hex[65];
     cq_id_hash_bytes(call->text, strlen(call->text), hex);
     result = io_done(env, io_str(env, hex, 64));
@@ -1206,37 +803,6 @@ static Term cq_id_call_pack(Env env, IoWork *work) {
   return result;
 }
 
-static Term cq_id_source_run(Env env, Term *fields, IoWork *work, int mode) {
-  CqIdCall *call = (CqIdCall *)calloc(1, sizeof(*call));
-  if (!call) return io_fail(env, ENOMEM, NULL);
-  call->mode = mode;
-  u64 first = 0, second = 0;
-  call->first = io_cstr(env, fields[0], &first);
-  call->second = io_cstr(env, fields[1], &second);
-  if (!call->first || strlen(call->first) != first
-      || !call->second || strlen(call->second) != second) {
-    cq_id_call_free(call);
-    return io_fail(env, EINVAL, "source path contains NUL");
-  }
-  work->data = call;
-  return io_work(work, cq_id_call_work, cq_id_call_pack);
-}
-
-static Term cq_id_file_closure_run(Env env, Term *fields, IoWork *work) {
-  CqIdCall *call = (CqIdCall *)calloc(1, sizeof(*call));
-  if (!call) return io_fail(env, ENOMEM, NULL);
-  call->mode = CQ_ID_FILE_CLOSURE;
-  u64 first = 0, second = 0;
-  call->first = io_cstr(env, fields[0], &first);
-  call->second = io_cstr(env, fields[1], &second);
-  if (!call->first || strlen(call->first) != first
-      || !call->second || strlen(call->second) != second) {
-    cq_id_call_free(call);
-    return io_fail(env, EINVAL, "closure path contains NUL");
-  }
-  work->data = call;
-  return io_work(work, cq_id_call_work, cq_id_call_pack);
-}
 
 static Term cq_id_compiler_run(Env env, Term *fields, IoWork *work) {
   CqIdCall *call = (CqIdCall *)calloc(1, sizeof(*call));
@@ -1299,21 +865,6 @@ static Term cq_id_file_size_run(Env env, Term *fields, IoWork *work) {
   return io_work(work, cq_id_call_work, cq_id_call_pack);
 }
 
-static Term cq_id_file_closure_digest_run(Env env, Term *fields, IoWork *work) {
-  CqIdCall *call = (CqIdCall *)calloc(1, sizeof(*call));
-  if (!call) return io_fail(env, ENOMEM, NULL);
-  call->mode = CQ_ID_FILE_CLOSURE_DIGEST;
-  u64 first = 0, second = 0;
-  call->first = io_cstr(env, fields[0], &first);
-  call->second = io_cstr(env, fields[1], &second);
-  if (!call->first || strlen(call->first) != first
-      || !call->second || strlen(call->second) != second) {
-    cq_id_call_free(call);
-    return io_fail(env, EINVAL, "closure path contains NUL");
-  }
-  work->data = call;
-  return io_work(work, cq_id_call_work, cq_id_call_pack);
-}
 
 static Term cq_id_compiler_closure_digest_run(Env env, Term *fields,
                                               IoWork *work) {
@@ -1334,12 +885,6 @@ static Term cq_id_compiler_closure_digest_run(Env env, Term *fields,
   return io_work(work, cq_id_call_work, cq_id_call_pack);
 }
 
-#ifdef CID_COMPILEQUEUEIDENTITY_FILE_CLOSURE_DIGEST
-static void __attribute__((constructor)) cq_id_file_closure_digest_use(void) {
-  io_eff(CID_COMPILEQUEUEIDENTITY_FILE_CLOSURE_DIGEST,
-         cq_id_file_closure_digest_run, 0);
-}
-#endif
 
 #ifdef CID_COMPILEQUEUEIDENTITY_COMPILER_CLOSURE_DIGEST
 static void __attribute__((constructor)) cq_id_compiler_closure_digest_use(void) {
@@ -1366,29 +911,6 @@ static void __attribute__((constructor)) cq_digest_text_use(void) {
 }
 #endif
 
-#ifdef CID_COMPILEQUEUEIDENTITY_SOURCE_CLOSURE
-static Term cq_id_source_closure_run(Env env, Term *fields, IoWork *work) {
-  return cq_id_source_run(env, fields, work, CQ_ID_SOURCE_CLOSURE);
-}
-static void __attribute__((constructor)) cq_id_source_closure_use(void) {
-  io_eff(CID_COMPILEQUEUEIDENTITY_SOURCE_CLOSURE, cq_id_source_closure_run, 0);
-}
-#endif
-
-#ifdef CID_COMPILEQUEUEIDENTITY_SOURCE_DIGEST
-static Term cq_id_source_digest_run(Env env, Term *fields, IoWork *work) {
-  return cq_id_source_run(env, fields, work, CQ_ID_SOURCE_DIGEST);
-}
-static void __attribute__((constructor)) cq_id_source_digest_use(void) {
-  io_eff(CID_COMPILEQUEUEIDENTITY_SOURCE_DIGEST, cq_id_source_digest_run, 0);
-}
-#endif
-
-#ifdef CID_COMPILEQUEUEIDENTITY_FILE_CLOSURE
-static void __attribute__((constructor)) cq_id_file_closure_use(void) {
-  io_eff(CID_COMPILEQUEUEIDENTITY_FILE_CLOSURE, cq_id_file_closure_run, 0);
-}
-#endif
 
 #ifdef CID_COMPILEQUEUEIDENTITY_COMPILER_CLOSURE
 static void __attribute__((constructor)) cq_id_compiler_use(void) {
