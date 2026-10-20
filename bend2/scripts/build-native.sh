@@ -89,8 +89,24 @@ if [ "$recovery" = 1 ] && { [ "$focused" = 1 ] || [ "$router" = 1 ]; }; then
   printf '{"error":"build-mode-conflict","condition":"recovery-helper-with-other-native-entry","entry":"%s"}\n' "$entry_path" >&2
   exit 78
 fi
+# Reusable generated C is honored only with its verification bundle: the
+# sibling directory of the selected file must carry a verify-transfer proof
+# for this checkout and the proof status must be reused.
 generated=
-if [ -n "${BATON2_MAIN_GENERATED_C:-}" ] &&
+if [ -n "${BEND_GENERATED_C:-}" ]; then
+  generated_dir=$(CDPATH= cd -- "$(dirname -- "$BEND_GENERATED_C")" && pwd -P)
+  verification=$(python3 "$root/.github/scripts/reuse-native-main.py" verify-transfer \
+    --source "$root" --generated "$generated_dir")
+  verification_status=$(printf '%s' "$verification" \
+    | python3 -c 'import json,sys; print(json.load(sys.stdin)["status"])')
+  if [ "$verification_status" != "reused" ]; then
+    printf 'Generated C reuse is not verified for this checkout (proof status %s).\n' \
+      "$verification_status" >&2
+    exit 1
+  fi
+  generated=$BEND_GENERATED_C
+fi
+if [ -z "$generated" ] && [ -n "${BATON2_MAIN_GENERATED_C:-}" ] &&
    [ "$entry_path" = "$root/bend2/src/coordinator/main.bend" ]; then
   generated=$(python3 "${BATON2_MAIN_C_VERIFIER:?}" select \
     --source "$root" --compiler "$compiler" \

@@ -354,29 +354,35 @@ function compile_queue_entry(): string | null {
   return null;
 }
 
-// queue_cc runs one C compilation through the shared host compile queue and
-// returns true. It returns false when the queue entry is a launcher whose
-// executable is not installed yet, so the caller compiles directly. A queue
-// execution that starts and then fails throws with the retained stderr.
+// compile_queue_state_root resolves the one host state root shared with the
+// queue and build-native.sh: BATON_COMPILE_QUEUE_ROOT when set, else the
+// fixed host default. A set-but-relative root is a configuration error.
+function compile_queue_state_root(): string {
+  const root = process.env.BATON_COMPILE_QUEUE_ROOT || "";
+  if (root === "") return "/var/tmp/baton/compile-queue";
+  if (!path.isAbsolute(root)) {
+    throw "Error: BATON_COMPILE_QUEUE_ROOT must be an absolute path: " + root;
+  }
+  return root;
+}
+
+// queue_cc runs one C compilation through the shared host compile queue. It
+// throws when the queue execution fails; there is no direct compile bypass.
 function queue_cc(queue: string, cc: string, file: string, bin: string,
-                  mac: boolean, bangs: boolean, cuda: string, args: string[]): boolean {
-  const argv = ["run", "--kind", "cc", "--compiler", cc,
+                  mac: boolean, bangs: boolean, cuda: string, args: string[]): void {
+  const argv = ["run", "--kind", "cc", "--state-root", compile_queue_state_root(),
+    "--compiler", cc,
     "--input", file, "--artifact", "binary=" + path.resolve(bin),
     "--option", "platform=" + (mac ? "darwin" : "linux"),
     "--option", "backend=" + (bangs ? (mac ? "gpu-metal" : "gpu-cuda") : "cpu")];
   if (bangs && !mac) argv.push("--option", "cuda-root=" + cuda);
   argv.push("--", cc, ...args);
   const result = child.spawnSync(queue, argv, { encoding: "utf8" });
-  const stderr = result.stderr || "";
-  if (result.error
-      || (result.status === 2 && stderr.indexOf("missing Bend2 queue executable") !== -1)) {
-    return false;
-  }
   if (result.status !== 0) {
+    const stderr = result.stderr || "";
     throw "Error: the compile queue failed to build " + bin
       + (stderr ? "\n" + stderr.trim() : "");
   }
-  return true;
 }
 
 // cli_build builds the C file at `file` into the binary `bin`. A `!` program
@@ -384,9 +390,9 @@ function queue_cc(queue: string, cc: string, file: string, bin: string,
 // CUDA at $CUDA_HOME, else /usr/local/cuda, its libraries in lib64 or, as
 // nix lays them, lib; else the ! runs on the cores). On macOS a program with
 // a framework (#import: a window, audio) builds as Objective-C; on Linux it
-// links the X11 and ALSA libraries it includes. The C compilation uses the
-// shared host compile queue when BATON2_COMPILE_QUEUE_BIN or
-// BATON2_COMPILE_QUEUE selects one; it compiles directly otherwise.
+// links the X11 and ALSA libraries it includes. The C compilation is
+// admitted by the shared host compile queue; cli_build fails when no queue
+// entry is configured.
 function cli_build(bin: string, file: string): void {
   const c     = fs.readFileSync(file, "utf8");
   const mac   = process.platform === "darwin";
@@ -406,8 +412,12 @@ function cli_build(bin: string, file: string): void {
   const steps: [string, string[]][] = bangs
     ? [[cc, gpu], [path.resolve(bin), ["--gpu-build"]]] : [[cc, cpu]];
   const queue = compile_queue_entry();
+  if (queue === null) {
+    throw "Error: the shared host compile queue is required for C builds; set BATON2_COMPILE_QUEUE_BIN";
+  }
   for (const [cmd, args] of steps) {
-    if (queue !== null && cmd === cc && queue_cc(queue, cc, file, bin, mac, bangs, cuda, args)) {
+    if (cmd === cc) {
+      queue_cc(queue, cc, file, bin, mac, bangs, cuda, args);
       continue;
     }
     if (child.spawnSync(cmd, args, { stdio: "inherit" }).status !== 0) {
