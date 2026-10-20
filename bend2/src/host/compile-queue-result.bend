@@ -158,11 +158,10 @@ def CompileQueueResult.verify_rows(rows: List<&2,String>, keydir: String) -> IO(
           Bool.pick(IO(Bool), ok, CompileQueueResult.verify_rows(rest, keydir), IO.pure(Bool, False{})))
 
 def CompileQueueResult.acceptable(result: String, key: String, rows: String) -> Bool:
-  Bool.and(CompileQueueResult.base_verified(result, key),
-    Bool.and(CompileQueueResult.completed(result),
-      Bool.and(Bool.not(String.is_empty(rows)),
-        Bool.pick(Bool, String.eq(CompileQueueResult.field(result, "external"), "1"),
-          String.eq(CompileQueueResult.field(result, "external-verified"), "1"), True{}))))
+  Bool.and(String.eq(CompileQueueResult.field(result, "external"), "0"),
+    Bool.and(CompileQueueResult.base_verified(result, key),
+      Bool.and(CompileQueueResult.completed(result),
+        Bool.not(String.is_empty(rows)))))
 
 def CompileQueueResult.verify(keydir: String, key: String) -> IO(Bool):
   do IO<Bool>:
