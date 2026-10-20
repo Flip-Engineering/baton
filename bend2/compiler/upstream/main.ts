@@ -342,17 +342,58 @@ function cc_find(gpu: boolean): string {
     + " --install";
 }
 
+// host_file requires one executable host path selected by the environment.
+function host_file(label: string, value: string): string {
+  let info: fs.Stats;
+  try {
+    info = fs.statSync(value);
+  } catch {
+    throw "Error: " + label + " is missing: " + value;
+  }
+  if (!info.isFile()) {
+    throw "Error: " + label + " is not a file: " + value;
+  }
+  try {
+    fs.accessSync(value, fs.constants.X_OK);
+  } catch {
+    throw "Error: " + label + " is not executable: " + value;
+  }
+  return value;
+}
+
 // compile_queue_entry requires the shared host compile queue entry.
 // BATON2_COMPILE_QUEUE_BIN names the built executable; BATON2_COMPILE_QUEUE
-// names its launcher.
+// names its launcher. An explicitly selected entry is never replaced.
 function compile_queue_entry(): string {
   const direct = process.env.BATON2_COMPILE_QUEUE_BIN;
+  if (direct) return host_file("BATON2_COMPILE_QUEUE_BIN", direct);
   const launcher = process.env.BATON2_COMPILE_QUEUE;
-  const queue = direct && fs.existsSync(direct) ? direct : launcher;
-  if (!queue || !fs.existsSync(queue)) {
-    throw "Error: set BATON2_COMPILE_QUEUE_BIN or BATON2_COMPILE_QUEUE to the shared host compile queue";
+  if (launcher) return host_file("BATON2_COMPILE_QUEUE", launcher);
+  throw "Error: set BATON2_COMPILE_QUEUE_BIN or BATON2_COMPILE_QUEUE to the shared host compile queue";
+}
+
+// compile_queue_state_root requires one explicit writable host directory
+// shared by every queued build.
+function compile_queue_state_root(): string {
+  const stateRoot = process.env.BATON_COMPILE_QUEUE_ROOT;
+  if (!stateRoot || !path.isAbsolute(stateRoot)) {
+    throw "Error: set BATON_COMPILE_QUEUE_ROOT to the shared absolute compile-queue state directory";
   }
-  return queue;
+  let info: fs.Stats;
+  try {
+    info = fs.statSync(stateRoot);
+  } catch {
+    throw "Error: the compile-queue state root is missing: " + stateRoot;
+  }
+  if (!info.isDirectory()) {
+    throw "Error: the compile-queue state root is not a directory: " + stateRoot;
+  }
+  try {
+    fs.accessSync(stateRoot, fs.constants.W_OK | fs.constants.X_OK);
+  } catch {
+    throw "Error: the compile-queue state root is not writable: " + stateRoot;
+  }
+  return stateRoot;
 }
 
 // queue_cc runs one native compilation through the shared host compile queue.
@@ -404,10 +445,7 @@ function cli_build(bin: string, file: string): void {
     : ["-DBEND_CUDA=1", "-I" + cuda + "/include", "-L" + cuda + "/lib64",
       "-L" + cuda + "/lib", ...cpu, "-lcuda", "-lnvrtc"];
   const queue = compile_queue_entry();
-  const stateRoot = process.env.BATON_COMPILE_QUEUE_ROOT;
-  if (!stateRoot || !path.isAbsolute(stateRoot)) {
-    throw "Error: set BATON_COMPILE_QUEUE_ROOT to the shared absolute compile-queue state directory";
-  }
+  const stateRoot = compile_queue_state_root();
   queue_cc(queue, stateRoot, cc, file, [], "binary", bin, [], mac, bangs, cuda,
     bangs ? gpu : cpu);
   if (bangs) {

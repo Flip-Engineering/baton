@@ -3,10 +3,10 @@
 The native build launchers share one host compilation queue. The queue key
 covers source contents, compiler/toolchain identity, entry, mode and the
 relevant options. Requests with the same key share one active execution and its
-completed C and object artifacts. Heavy C generation runs one execution at a
-time host-wide. C compilation keeps the shard parallelism of
-`tools/cgen-clang-parallel/build_and_measure.py` and distinct compilation
-requests run concurrently.
+completed C and object artifacts. One host lock serializes distinct heavy
+requests across C generation and C compilation. Each request keeps its own
+shard parallelism; `tools/cgen-clang-parallel/build_and_measure.py` runs four
+shards inside one queued compilation.
 
 The 2026-10-19 outage recorded nine Bun processes with a summed 182.56 GiB RSS
 and 168 KiB free swap before the kernel killed an ACP validation process. The
@@ -63,9 +63,9 @@ the public run/key/wait/cancel/status/adopt behavior.
 
 `bend2/src/host/compile-queue-lifecycle.c` owns `flock(2)` descriptors,
 `setsid(2)` detachment, process start identity and zombies, signals, and the
-detached spawn. Key and C-generation lock descriptors are inherited by the
+detached spawn. Key and heavy lock descriptors are inherited by the
 supervisor; the parent closes its references without calling `LOCK_UN`. The
-spawn remaps the inherited key, C-generation and status descriptors through
+spawn remaps the inherited key, heavy and status descriptors through
 duplicates at fd 10 or higher before installing them at fds 9 and 8.
 
 ## Execution
@@ -77,14 +77,14 @@ attempt directory, copies the declared inputs, normalizes output paths into the
 attempt work directory, and starts a supervisor.
 
 The supervisor is detached from the requester and holds the key lock through
-inherited descriptors. It runs the command with the recorded cwd and captures
-stdout and stderr. A `cgen` supervisor takes the shared
-`$state/cgen.lock` before running; `cc` supervisors do not. On success it copies
-the declared artifacts into `completed/artifacts/` and publishes
-`completed/result`. On failure it writes `runs/<attempt>/result` with the exit
-status and retained logs. A later request with the same key retries a failed or
-canceled attempt; a request that was waiting when the attempt failed receives
-the failure.
+inherited descriptors. It takes the shared `$state/heavy.lock` before it runs
+the command, for both `cgen` and `cc`, and it holds that lock until the command
+and artifact publication finish. It runs the command with the recorded cwd and
+captures stdout and stderr. On success it copies the declared artifacts into
+`completed/artifacts/` and publishes `completed/result`. On failure it writes
+`runs/<attempt>/result` with the exit status and retained logs. A later request
+with the same key retries a failed or canceled attempt; a request that was
+waiting when the attempt failed receives the failure.
 
 Waiters block on the key lock. Requesters that witnessed an attempt compare the
 attempt finish time with the time they started waiting. This distinguishes a
@@ -115,6 +115,7 @@ $state/keys/<key>/runs/<attempt>/meta
 $state/keys/<key>/runs/<attempt>/stdout
 $state/keys/<key>/runs/<attempt>/stderr
 $state/keys/<key>/runs/<attempt>/result
+$state/heavy.lock
 ```
 
 `completed/result` uses schema `baton-compile-queue-result-v1` with `status`,
@@ -132,14 +133,14 @@ verifying `completed/result`. The queue keeps no separate status ledger.
 
 `adopt --pid PID` reads the running compiler's cwd, entry, `BEND` environment
 and output path, computes the same key a normal request would use, and starts a
-guard that holds the key lock and the C-generation lock for the process
-lifetime. The guard records the live argv, cwd, options, input hashes and output path and
+guard that holds the key lock and the heavy lock for the process lifetime. The
+guard records the live argv, cwd, options, input hashes and output path and
 publishes the artifact with those fields. The result is reusable only when the
 command, process start identity, inputs, output path and artifact hashes match
 the recorded values exactly; an unverified external result remains evidence.
-Identical requests attach to the adopted execution; distinct C-generation
-requests queue behind it. The guard records the pid start time and never signals
-the adopted process.
+Identical requests attach to the adopted execution; distinct heavy requests
+queue behind it. The guard records the pid start time and never signals the
+adopted process.
 
 ## Bootstrap boundary
 
@@ -152,55 +153,53 @@ Permanent queue behavior is Bend2 source at:
 - `bend2/src/host/compile-queue-digest.c/.bend`
 - `bend2/src/host/compile-queue-artifact.c/.bend`
 
-`bend2/scripts/compile-queue.sh` resolves the queue executable and executes the
-public operation with the original arguments. The queue executable is built from
-`bend2/src/host/compile-queue.bend` through the native build and is selected by
-`BATON2_COMPILE_QUEUE_BIN` or the documented default path. Until that executable
-is installed, the wrapper exits 2 with the missing path and build entry. The
-reference shell implementation is retained at commit 97a95949 for the current
-operator hold.
-
-The first queue executable is built through the reference shell at commit
-97a95949, which is already operational on the Linux homelab:
+`bend2/scripts/bootstrap-compile-queue.sh` is the one-time bootstrap. It
+builds exactly `bend2/src/host/compile-queue.bend` to one output path and
+accepts no entry, command or option arguments. It runs Bend to produce C and
+the host C compiler to link the queue executable. It is the only supported
+pre-queue build path, and it cannot build another entry.
 
 ```
-git show 97a95949:bend2/scripts/compile-queue.sh > /tmp/ref-compile-queue.sh
-chmod +x /tmp/ref-compile-queue.sh
-BATON2_COMPILE_QUEUE_BIN=/tmp/ref-compile-queue.sh \
-  sh bend2/scripts/build-native.sh bend2/src/host/compile-queue.bend \
-  .scratch/bend2/compile-queue
+BEND=/path/to/bend CC=clang \
+  sh bend2/scripts/bootstrap-compile-queue.sh .scratch/bend2/compile-queue
 ```
 
-The thin launcher then resolves `.scratch/bend2/compile-queue`. Installation
-places it under the prefix as `bin/baton-compile-queue`, or the caller sets
-`BATON2_COMPILE_QUEUE_BIN`. The reference shell is Linux-only; the first macOS
-build of this change needs a packaged queue executable from a previous install
-or another supported bootstrap. After the executable exists, validate it with:
+`bend2/scripts/compile-queue.sh` resolves the queue executable from
+`BATON2_COMPILE_QUEUE_BIN`, the installation prefix, or `.scratch/bend2`, and
+executes the public operation with the original arguments. It exits 2 when no
+executable is available. `bend2/scripts/build-native.sh` and the Bend internal
+`cli_build` require `BATON_COMPILE_QUEUE_ROOT` to be one absolute shared
+directory; `cli_build` also requires the queue entry. A `run` or `adopt`
+request rejects a `--state-root` that differs from
+`BATON_COMPILE_QUEUE_ROOT`, and it rejects a root that is missing, unreadable,
+unwritable or unable to hold `$state/heavy.lock`.
+
+After the executable exists, validate it with:
 
 ```
 BATON2_COMPILE_QUEUE_BIN=.scratch/bend2/compile-queue \
   sh bend2/test/compile-queue.sh
 ```
 
-The lifecycle boundary uses portable host primitives: BSD `flock(2)` for inherited key and cgen locks,
-`setsid(2)` for detachment, and SHA-256 in the digest binding. Every supported
-host requires queue coordination; `bend2/scripts/build-native.sh` has no
-un-queued compile path. The reference shell is Linux-only bootstrap evidence for
-the current hold and is not the permanent implementation.
+The lifecycle boundary uses portable host primitives: BSD `flock(2)` for the
+inherited key and heavy locks, `setsid(2)` for detachment, and SHA-256 in the
+digest binding. Every supported host requires queue coordination;
+`bend2/scripts/build-native.sh` has no un-queued compile path.
 
 ## Qualification
 
 Host: homelab Linux, 220 GiB RAM. C compiler: `/usr/lib/llvm-19/bin/clang`,
 Ubuntu clang 19.1.1, SHA-256
 `f6d5286a52de10b1e3e8841457c9903a1ea28f222ac0f58cd616697d0dcd9db3`.
-State root: `$HOME/.cache/baton/compile-queue`. Evidence:
+State root (reference-shell measurements): `$HOME/.cache/baton/compile-queue`.
+Evidence:
 `.scratch/evidence/compile-queue-cc.cLXmYeF5/`.
 
 | Case | Result |
 | --- | --- |
 | Two concurrent identical `cc` requests | 1 compiler start; both outputs SHA-256 `ae7b3db78e011bba163ab7b4702dd75c725aaee7815a0391567b192e22c9120d` |
 | Reuse after completion | 0 additional compiler starts; same SHA-256 |
-| Two distinct `cc` requests | 2 compiler intervals overlapping for 3.446 s; 3.50 s and 3.50 s wall; 121,992 KiB and 118,156 KiB peak RSS |
+| Two distinct `cc` requests (reference shell) | 2 compiler intervals overlapping for 3.446 s; 3.50 s and 3.50 s wall; 121,992 KiB and 118,156 KiB peak RSS |
 | Shared failure | 1 compiler start; both requesters exit 1 with the same stderr tail; no completed artifact |
 | Retry after failure | 1 compiler start |
 | Cancellation | exit 130; compiler process group gone |
@@ -210,6 +209,12 @@ The measurements used the reference shell identity for queue mechanics. The
 permanent Bend2 identity adds the imported C/header closure and the compiler,
 linker and toolchain closure, so the reference keys are bootstrap evidence and
 are not reused as permanent cache keys.
+
+The reference shell did not serialize distinct `cc` requests. The permanent
+queue serializes every distinct heavy request through `$state/heavy.lock` and
+keeps each request's internal shard parallelism. Commit 97a95949 retains the
+reference shell used for these measurements; it is not a bootstrap route for
+the permanent queue.
 
 The executor requester's `/usr/bin/time -v` maximum RSS includes the supervisor
 and compiler; waiters report the requester only (2,680-3,192 KiB). Memory values
@@ -227,14 +232,15 @@ artifact is bootstrap evidence for that source identity and is not reused by the
 
 - The Bend2 implementation has passed static review only; it has not been
   built or run. Root owns the first build, qualification and deployment.
-- Direct fixture compiler sites and Bend internal `cli_build` are wired in
-  source. `cli_build` (bend2/compiler/upstream/main.ts) admits its C
-  compilation through the queue when `BATON2_COMPILE_QUEUE_BIN` or
-  `BATON2_COMPILE_QUEUE` selects one and compiles directly otherwise; the
-  staged REPL launcher exports the installed `bin/baton-compile-queue`.
-  `bend2/test/compiler-arm-sharing.py` admits its fixture compiles when a
-  queue executable is installed and compiles directly otherwise. Root owns
-  the first build and qualification of these paths.
+- `cli_build` in `bend2/compiler/upstream/main.ts` requires the shared queue
+  executable and the explicit state root. A missing entry, missing root or
+  failed queue execution is an error, and no direct compiler path remains.
+  `bend2/test/compiler-arm-sharing.py` requires the same queue and root.
+- `BEND_GENERATED_C` is rejected by `build-native.sh` and `package-native.py`.
+  Only the verified Main-C reuse inputs (`BATON2_MAIN_GENERATED_C*`) are
+  accepted.
+- The one-time queue bootstrap is `bootstrap-compile-queue.sh`; it is separate
+  from `build-native.sh` and only builds the queue entry.
 - The reference shell `cancel --key` interface is bootstrap-only. The permanent
   queue binds each requester to an owner token and cancels a shared execution
   only when no owners remain.

@@ -38,7 +38,7 @@ def CompileQueueLifecycle.signal_pid(pid: U32, sig: U32) -> IO(Result<&1,&1,U32 
   import "./compile-queue-lifecycle.c"
 
 # Opens a lock file without acquiring it. The descriptor crosses into a
-# detached supervisor or guard as descriptor 8 (cgen) or 9 (key). The
+# detached supervisor or guard as descriptor 8 (heavy) or 9 (key). The
 # descriptor is inheritable so the flock open-file description survives exec.
 def CompileQueueLifecycle.lock_open(path: String) -> IO(Result<&1,&1,U32 & String,U32>):
   import "./compile-queue-lifecycle.c"
@@ -93,9 +93,9 @@ def CompileQueueLifecycle.sleep_millis(millis: U32) -> IO(Result<&1,&1,U32 & Str
 
 # argv is the NUL-terminated argument string used by host/process.bend. The
 # child starts in a new session through setsid(2), inherits key_lock as
-# descriptor 9 and cgen_lock as descriptor 8, and has stdin/stdout/stderr on
+# descriptor 9 and heavy_lock as descriptor 8, and has stdin/stdout/stderr on
 # /dev/null. The parent receives the child pid after descriptor transfer.
-def CompileQueueLifecycle.spawn_detached(argv: String, key_lock: U32, cgen_lock: U32) -> IO(Result<&1,&1,U32 & String,U32>):
+def CompileQueueLifecycle.spawn_detached(argv: String, key_lock: U32, heavy_lock: U32) -> IO(Result<&1,&1,U32 & String,U32>):
   import "./compile-queue-lifecycle.c"
 
 def CompileQueueLifecycle.wait_pid(pid: U32) -> IO(Result<&1,&1,U32 & String,U32>):

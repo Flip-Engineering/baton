@@ -51,8 +51,13 @@ fi
 queue=${BATON2_COMPILE_QUEUE:-"$root/bend2/scripts/compile-queue.sh"}
 [ -f "$queue" ] || {
   echo "The host compile queue entry is unavailable: $queue" >&2
+  echo 'Run bend2/scripts/bootstrap-compile-queue.sh once to build the queue executable.' >&2
   exit 1
 }
+if [ -n "${BATON2_COMPILE_QUEUE_BIN:-}" ] && { [ ! -f "${BATON2_COMPILE_QUEUE_BIN}" ] || [ ! -x "${BATON2_COMPILE_QUEUE_BIN}" ]; }; then
+  echo "The selected compile queue executable is missing or not executable: $BATON2_COMPILE_QUEUE_BIN" >&2
+  exit 1
+fi
 queue_state=${BATON_COMPILE_QUEUE_ROOT:-}
 case "$queue_state" in
   /*) ;;
@@ -61,6 +66,16 @@ case "$queue_state" in
     exit 1
     ;;
 esac
+if [ ! -d "$queue_state" ]; then
+  if ! mkdir -p "$queue_state"; then
+    echo "The compile-queue state root is missing and cannot be created: $queue_state" >&2
+    exit 1
+  fi
+fi
+if [ ! -w "$queue_state" ] || [ ! -x "$queue_state" ]; then
+  echo "The compile-queue state root is not writable: $queue_state" >&2
+  exit 1
+fi
 export BATON_COMPILE_QUEUE_ROOT="$queue_state"
 export BATON2_COMPILE_QUEUE="$queue"
 mode=plain
@@ -118,7 +133,6 @@ else
     echo 'This native binding requires Bend 2.0.25.' >&2
     exit 1
   fi
-  mkdir -p "$queue_state"
   sh "$queue" run --kind cgen --state-root "$queue_state" --cwd "$root" --root "$root" \
     --source-root "$root" --entry "$entry" --compiler "$compiler" \
     --artifact "c=$output.c" -- "$compiler" "$entry" -o "$output.c"
@@ -143,7 +157,6 @@ build_native_shards() {
   if [ -n "${BATON2_CCACHE:-}" ]; then
     set -- "$@" --ccache "$BATON2_CCACHE"
   fi
-  mkdir -p "$queue_state"
   set -- sh "$queue" run --kind cc --state-root "$queue_state" --cwd "$root" --root "$root" \
     --compiler "${CC:-clang}" \
     --input "$output.c" \
@@ -171,7 +184,6 @@ else
   case "$entry_path" in
     */bend2/harness/claude-credit-observe.bend) extra_libs=-lcurl ;;
   esac
-  mkdir -p "$queue_state"
   sh "$queue" run --kind cc --state-root "$queue_state" --cwd "$root" --root "$root" \
     --compiler "${CC:-clang}" --input "$output.c" \
     --artifact "binary=$output" -- \

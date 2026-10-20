@@ -234,6 +234,35 @@ def fresh_config() -> IO(Config):
     cwd <- IO.try(String, L.cwd())
     IO.pure(Config, default_config(state, cwd))
 
+# require_state_root rejects a request whose flag differs from the host
+# configuration, then verifies the configured directory is present, readable,
+# writable and able to hold the queue lock. The queue never invents a state
+# root: a missing host directory is a configuration failure.
+def require_state_root(state: String) -> IO(Unit):
+  do IO<Unit>:
+    configured <- default_state_root()
+    +mismatch = Bool.and(non_empty(configured), Bool.not(Tx.str_eq(configured, state)))
+    Bool.pick(IO(Unit), mismatch,
+      IO.die(Unit, 2, "compile-queue: --state-root differs from BATON_COMPILE_QUEUE_ROOT"),
+      do IO<Unit>:
+        listed : Result<&1,&1,U32 & String,String> <- L.list_dir(state)
+        match listed:
+          case Fail{(code, message)}:
+            IO.die(Unit, 2, "compile-queue: state root is missing or unreadable: " ++ state ++ ": " ++ message)
+          case Done{value}:
+            writable : Result<&1,&1,U32 & String,Unit> <- F.Files.writable(state)
+            match writable:
+              case Fail{(code, message)}:
+                IO.die(Unit, 2, "compile-queue: state root is not writable: " ++ state ++ ": " ++ message)
+              case Done{value}:
+                opened : Result<&1,&1,U32 & String,U32> <- L.lock_open(state ++ "/heavy.lock")
+                match opened:
+                  case Done{value}:
+                    released : Unit <- IO.try(Unit, L.lock_release(value))
+                    IO.pure(Unit, Unit{})
+                  case Fail{(code, message)}:
+                    IO.die(Unit, 2, "compile-queue: state root cannot hold the queue lock: " ++ state ++ ": " ++ message))
+
 def parse_common(args: List<String>, config: Config) -> IO(Config):
   match args:
     case Nil{}: IO.pure(Config, config)
@@ -377,6 +406,10 @@ def normalize_command(args: List<String>, cwd: String, root: String, compiler: S
 def keydir_of(state_root: String, key: String) -> String:
   state_root ++ "/keys/" ++ key
 
+def config_state(config: Config) -> String:
+  match config:
+    case Config{text, command}: field(text, "state_root")
+
 def regular(path: String) -> IO(Bool):
   do IO<Bool>:
     result : Result<&1,&1,U32 & String,String> <- F.Files.regular(path)
@@ -463,7 +496,7 @@ def write_attempt_files(config: Config, key: String, keydir: String, attempt: St
         IO.pure(Unit, Unit{})
 
 def owner_lock(keydir: String) -> IO(U32):
-  L.lock_acquire(keydir ++ "/owners.lock")
+  IO.try(U32, L.lock_acquire(keydir ++ "/owners.lock"))
 
 def publish_token(keydir: String, requested: String) -> IO(String):
   do IO<String>:
@@ -625,6 +658,7 @@ def supervise(attempt: String) -> IO(Unit):
         active : Unit <- IO.try(Unit, L.write_text(keydir ++ "/active", "pid=" ++ U32.show(pid)
           ++ "\nstarttime=" ++ start ++ "\nkind=" ++ kind ++ "\nsetsid=1\nstarted_ns=" ++ started ++ "\n"))
         released : Unit <- IO.try(Unit, L.lock_release(gate))
+        # Descriptor 8 is the one host-wide heavy lock for cgen and cc.
         locked : Unit <- IO.try(Unit, L.lock_fd_acquire(8))
         Bool.pick(IO(Unit), Tx.str_eq(kind, "cgen"),
           do IO<Unit>:
@@ -649,6 +683,7 @@ def start_attempt(config: Config, key: String, keydir: String, lock: U32, owner:
           +kind = field(text, "kind")
           made : Unit <- IO.try(Unit, L.mkdir_p(attempt ++ "/work"))
           prepared : Unit <- write_attempt_files(config, key, keydir, attempt)
+          # The supervisor takes this lock for every kind before it runs.
           heavy <- IO.try(U32, L.lock_open(state ++ "/heavy.lock"))
           +args = P.argv(Con{"__supervise", Con{attempt, Nil{}}})
           supervisor <- IO.try(U32, L.spawn_detached(args, lock, heavy))
@@ -692,6 +727,7 @@ def run_command(args: List<String>) -> IO(Unit):
     match invalid:
       case SNil{}:
         do IO<Unit>:
+          ready <- require_state_root(config_state(parsed))
           key <- identity_key(parsed)
           match parsed:
             case Config{text, command}:
@@ -1095,6 +1131,7 @@ def adopt_command(args: List<String>) -> IO(Unit):
     match parsed:
       case Config{text, command}:
         do IO<Unit>:
+          ready <- require_state_root(field(text, "state_root"))
           +pid_text = field(text, "pid")
           +artifact = field(text, "artifact")
           +queue_scrutinee_1082 = U32.read(pid_text)

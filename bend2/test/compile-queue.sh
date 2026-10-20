@@ -19,6 +19,7 @@ esac
 T=$(mktemp -d "${TMPDIR:-/tmp}/compile-queue-test.XXXXXX") || exit 2
 trap 'rm -rf -- "$T"' EXIT
 STATE=$BATON_COMPILE_QUEUE_ROOT
+mkdir -p "$STATE" || exit 2
 LOG=$T/compiler.log
 FAKE=$T/fake-compiler
 : > "$LOG"
@@ -119,6 +120,32 @@ sh "$QUEUE" key --kind cc --state-root "$STATE" --cwd "$T" --compiler "$FAKE" \
   --input "$T/input.c" --artifact "../escape=$T/escape" --token invalid-artifact \
   -- "$FAKE" -o "$T/escape" "$T/input.c" >/dev/null 2>&1 || invalid_artifact=$?
 [ "$invalid_artifact" = 2 ] && pass 'artifact traversal rejected' || bad "artifact traversal exit $invalid_artifact"
+
+# A request must use the configured host state root.
+mismatch_rc=0
+sh "$QUEUE" run --kind cc --state-root "$T/other-root" --cwd "$T" --compiler "$FAKE" \
+  --input "$T/input.c" --artifact "binary=$T/mismatch" --token mismatch-root \
+  -- "$FAKE" -o "$T/mismatch" "$T/input.c" >/dev/null 2>&1 || mismatch_rc=$?
+[ "$mismatch_rc" = 2 ] && pass 'state root mismatch rejected' || bad "state root mismatch exit $mismatch_rc"
+
+# Missing and unusable host roots fail before a request is published.
+missing_root_rc=0
+env -u BATON_COMPILE_QUEUE_ROOT sh "$QUEUE" run --kind cc --cwd "$T" --compiler "$FAKE" \
+  --input "$T/input.c" --artifact "binary=$T/missing-root" --token missing-root \
+  -- "$FAKE" -o "$T/missing-root" "$T/input.c" >/dev/null 2>&1 || missing_root_rc=$?
+[ "$missing_root_rc" = 2 ] && pass 'missing state root rejected' || bad "missing state root exit $missing_root_rc"
+printf 'not a directory\n' > "$T/not-a-root"
+unusable_root_rc=0
+env -u BATON_COMPILE_QUEUE_ROOT sh "$QUEUE" run --kind cc --state-root "$T/not-a-root" \
+  --cwd "$T" --compiler "$FAKE" --input "$T/input.c" --artifact "binary=$T/unusable-root" \
+  --token unusable-root -- "$FAKE" -o "$T/unusable-root" "$T/input.c" >/dev/null 2>&1 || unusable_root_rc=$?
+[ "$unusable_root_rc" = 2 ] && pass 'unusable state root rejected' || bad "unusable state root exit $unusable_root_rc"
+
+# A declared but missing queue executable fails closed in the launcher.
+missing_queue_rc=0
+BATON2_COMPILE_QUEUE_BIN="$T/absent-queue" sh "$QUEUE" status --state-root "$STATE" \
+  >/dev/null 2>&1 || missing_queue_rc=$?
+[ "$missing_queue_rc" = 2 ] && pass 'missing queue executable rejected' || bad "missing queue executable exit $missing_queue_rc"
 
 # Reuse.
 before=$(count_starts)

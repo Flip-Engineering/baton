@@ -584,7 +584,6 @@ jobs:
             --output "$BATON2_NATIVE_RUN/package"
             --bend "$BATON2_NATIVE_RUN/toolchain-home/bin/bend"
             --compiler-archive "$BATON2_NATIVE_RUN/toolchain/bend-2.0.25-darwin-arm64.tar.gz"
-            --generated-c "$RUNNER_TEMP/baton2-generated-c-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT/generated/baton2.c"
             --context-typescript-package "$BATON2_NATIVE_RUN/typescript-runtime/node_modules/typescript"
           )
           runtime_sha=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["binary"]["sha256"])' "$BATON2_NATIVE_RUN/repl-runtime/runtime.json")

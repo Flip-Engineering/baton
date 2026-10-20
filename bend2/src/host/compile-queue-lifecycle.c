@@ -2,7 +2,7 @@
 
    Locking is BSD flock(2) directly in this file. The lock belongs to the open
    file description and survives fork and exec, so a detached supervisor or
-   guard inherits the key and cgen locks through descriptors 9 and 8. The
+   guard inherits the key and heavy locks through descriptors 9 and 8. The
    process start identity follows process-spawn.c: Linux /proc/<pid>/stat
    starttime and macOS PROC_PIDTBSDINFO start time. Detachment follows the
    fork/exec shape of br_spawn_gated, with setsid(2) in the child. No shell
