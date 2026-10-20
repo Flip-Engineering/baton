@@ -7,14 +7,18 @@ set -u
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd -P)
 QUEUE=${BATON2_COMPILE_QUEUE:-$ROOT/bend2/scripts/compile-queue.sh}
 [ -f "$QUEUE" ] || { printf 'missing queue launcher: %s\n' "$QUEUE" >&2; exit 2; }
-if [ -z "${BATON2_COMPILE_QUEUE_BIN:-}" ]; then
-  printf 'SKIP: set BATON2_COMPILE_QUEUE_BIN to the built Bend2 queue executable\n'
-  exit 0
+if [ -z "${BATON2_COMPILE_QUEUE_BIN:-}" ] || [ ! -x "$BATON2_COMPILE_QUEUE_BIN" ]; then
+  printf 'Set BATON2_COMPILE_QUEUE_BIN to the built Bend2 queue executable\n' >&2
+  exit 2
 fi
+case "${BATON_COMPILE_QUEUE_ROOT:-}" in
+  /*) ;;
+  *) printf 'Set BATON_COMPILE_QUEUE_ROOT to the shared absolute queue state directory\n' >&2; exit 2 ;;
+esac
 
 T=$(mktemp -d "${TMPDIR:-/tmp}/compile-queue-test.XXXXXX") || exit 2
 trap 'rm -rf -- "$T"' EXIT
-STATE=$T/state
+STATE=$BATON_COMPILE_QUEUE_ROOT
 LOG=$T/compiler.log
 FAKE=$T/fake-compiler
 : > "$LOG"
@@ -105,6 +109,13 @@ wait "$p2" || bad 'identical cc second requester failed'
 [ "$(count_starts)" = 1 ] && pass 'identical cc shared one execution' || bad "identical cc starts=$(count_starts)"
 [ "$(cat "$T/ident1")" = "$(cat "$T/ident2")" ] && pass 'identical cc artifacts match' || bad 'identical cc artifacts differ'
 
+# Artifact names are relative paths used under the attempt and cache roots.
+invalid_artifact=0
+sh "$QUEUE" key --kind cc --state-root "$STATE" --cwd "$T" --compiler "$FAKE" \
+  --input "$T/input.c" --artifact "../escape=$T/escape" --token invalid-artifact \
+  -- "$FAKE" -o "$T/escape" "$T/input.c" >/dev/null 2>&1 || invalid_artifact=$?
+[ "$invalid_artifact" = 2 ] && pass 'artifact traversal rejected' || bad "artifact traversal exit $invalid_artifact"
+
 # Reuse.
 before=$(count_starts)
 run_cc ident "$T/reuse" || bad 'reuse request failed'
@@ -144,13 +155,8 @@ for i in range(len(values)):
             sys.exit(1)
 PY
 
-# Distinct cc requests overlap.
-: > "$LOG"
-run_cc parallel1 "$T/parallel1" --sleep 2 & q1=$!
-run_cc parallel2 "$T/parallel2" --sleep 2 & q2=$!
-wait "$q1" || bad 'parallel first requester failed'
-wait "$q2" || bad 'parallel second requester failed'
-python3 - "$LOG" <<'PY' && pass 'distinct cc overlapped' || bad 'distinct cc intervals did not overlap'
+assert_serialized() {
+  python3 - "$LOG" <<'PY'
 import sys
 rows=[]
 for line in open(sys.argv[1]):
@@ -161,12 +167,30 @@ intervals={}
 for tag,kind,ts in rows:
     intervals.setdefault(tag,{})[kind]=ts
 values=[(v['start'],v['end']) for v in intervals.values() if 'start' in v and 'end' in v]
+if len(values) < 2:
+    sys.exit(2)
 for i in range(len(values)):
     for j in range(i+1,len(values)):
         if values[i][0] < values[j][1] and values[j][0] < values[i][1]:
-            sys.exit(0)
-sys.exit(1)
+            sys.exit(1)
 PY
+}
+
+# Distinct cc requests serialize under the host lock.
+: > "$LOG"
+run_cc cc1 "$T/cc1" --sleep 1 & q1=$!
+run_cc cc2 "$T/cc2" --sleep 1 & q2=$!
+wait "$q1" || bad 'first cc requester failed'
+wait "$q2" || bad 'second cc requester failed'
+assert_serialized && pass 'distinct cc serialized' || bad 'distinct cc intervals overlap'
+
+# C generation and native C compilation share the same host lock.
+: > "$LOG"
+run_cgen mixed-cgen "$T/mixed.c" --sleep 1 & m1=$!
+run_cc mixed-cc "$T/mixed-bin" --sleep 1 & m2=$!
+wait "$m1" || bad 'mixed cgen requester failed'
+wait "$m2" || bad 'mixed cc requester failed'
+assert_serialized && pass 'cgen and cc serialized together' || bad 'cgen and cc intervals overlap'
 
 # Shared failure and retry.
 : > "$LOG"
@@ -200,6 +224,34 @@ krc=0
 wait "$k" || krc=$?
 [ "$krc" = 130 ] && pass 'cancellation returned 130' || bad "cancellation exit $krc"
 [ "$(count_starts)" = 1 ] && pass 'cancellation stopped after one execution' || bad "cancel starts=$(count_starts)"
+
+# Cancel the final requester while its supervisor waits behind another key.
+# The supervisor must publish a terminal result without starting the command.
+: > "$LOG"
+run_cc occupies-queue "$T/occupies-queue" --sleep 3 & blocker=$!
+i=0
+while [ "$i" -lt 200 ]; do
+  (grep -q '^start' "$LOG" 2>/dev/null) && break
+  i=$((i + 1))
+  sleep 0.05
+done
+qkey=$(sh "$QUEUE" key --kind cc --state-root "$STATE" --cwd "$T" --compiler "$FAKE" \
+  --input "$T/input.c" --artifact "binary=$T/queued-cancel" --option 'test=queued-cancel' \
+  -- "$FAKE" --tag queued-cancel --log "$LOG" -o "$T/queued-cancel" "$T/input.c")
+run_cc queued-cancel "$T/queued-cancel" & queued=$!
+i=0
+while [ "$i" -lt 200 ]; do
+  [ -f "$STATE/keys/$qkey/active" ] && break
+  i=$((i + 1))
+  sleep 0.05
+done
+[ -f "$STATE/keys/$qkey/active" ] && pass 'queued supervisor published cancellable ownership' || bad 'queued supervisor never became visible'
+sh "$QUEUE" cancel --state-root "$STATE" --key "$qkey" --token tok-queued-cancel >"$T/queued-cancel.cancel" 2>&1 || bad 'queued cancellation command failed'
+wait "$blocker" || bad 'queue blocker failed'
+qrc=0
+wait "$queued" || qrc=$?
+[ "$qrc" != 0 ] && pass 'queued canceled requester received terminal failure' || bad 'queued canceled requester succeeded'
+[ "$(grep -c '^start' "$LOG" 2>/dev/null || true)" = 1 ] && pass 'canceled queued command never started' || bad 'canceled queued command started'
 
 # One owner withdraws; another owner keeps the shared execution.
 : > "$LOG"

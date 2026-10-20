@@ -54,15 +54,15 @@ queue=${BATON2_COMPILE_QUEUE:-"$root/bend2/scripts/compile-queue.sh"}
   exit 1
 }
 queue_state=${BATON_COMPILE_QUEUE_ROOT:-}
-if [ -z "$queue_state" ]; then
-  if [ -n "${XDG_CACHE_HOME:-}" ]; then
-    queue_state=$XDG_CACHE_HOME/baton/compile-queue
-  elif [ -n "${HOME:-}" ]; then
-    queue_state=$HOME/.cache/baton/compile-queue
-  else
-    queue_state=/tmp/baton-compile-queue-$(id -u)
-  fi
-fi
+case "$queue_state" in
+  /*) ;;
+  *)
+    echo 'Set BATON_COMPILE_QUEUE_ROOT to the shared absolute compile-queue state directory.' >&2
+    exit 1
+    ;;
+esac
+export BATON_COMPILE_QUEUE_ROOT="$queue_state"
+export BATON2_COMPILE_QUEUE="$queue"
 mode=plain
 if [ "$router" = 1 ]; then
   mode=router
@@ -91,8 +91,12 @@ if [ "$recovery" = 1 ] && { [ "$focused" = 1 ] || [ "$router" = 1 ]; }; then
   printf '{"error":"build-mode-conflict","condition":"recovery-helper-with-other-native-entry","entry":"%s"}\n' "$entry_path" >&2
   exit 78
 fi
-generated=${BEND_GENERATED_C:-}
-if [ -z "$generated" ] && [ -n "${BATON2_MAIN_GENERATED_C:-}" ] &&
+if [ -n "${BEND_GENERATED_C:-}" ]; then
+  echo 'BEND_GENERATED_C is unsupported; use the verified main-C reuse inputs.' >&2
+  exit 1
+fi
+generated=
+if [ -n "${BATON2_MAIN_GENERATED_C:-}" ] &&
    [ "$entry_path" = "$root/bend2/src/coordinator/main.bend" ]; then
   generated=$(python3 "${BATON2_MAIN_C_VERIFIER:?}" select \
     --source "$root" --compiler "$compiler" \

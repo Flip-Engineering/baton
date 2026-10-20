@@ -44,20 +44,22 @@ def find_cc():
 
 
 QUEUE = ROOT / 'bend2/scripts/compile-queue.sh'
-SCRATCH_QUEUES = (ROOT / '.scratch/bend2/compile-queue',
-                  ROOT / '.scratch/bend2/baton-compile-queue')
 
 
 def find_queue():
-    # The shared compile queue executable or launcher, when one is installed.
-    # Without it the tests compile directly, as they did before the queue.
+    # All native compiler work uses the shared host queue.
     for value in (os.environ.get('BATON2_COMPILE_QUEUE_BIN'),
                   os.environ.get('BATON2_COMPILE_QUEUE')):
         if value and pathlib.Path(value).exists():
             return value
-    if QUEUE.exists() and any(path.exists() for path in SCRATCH_QUEUES):
-        return str(QUEUE)
-    return None
+    return str(QUEUE)
+
+
+def shared_queue_root():
+    value = os.environ.get('BATON_COMPILE_QUEUE_ROOT')
+    if not value or not pathlib.Path(value).is_absolute():
+        raise RuntimeError('set BATON_COMPILE_QUEUE_ROOT to the shared absolute queue state directory')
+    return pathlib.Path(value)
 
 
 class CompilerArmSharing(unittest.TestCase):
@@ -71,8 +73,7 @@ class CompilerArmSharing(unittest.TestCase):
             raise unittest.SkipTest('a C compiler is unavailable')
         cls.temp = tempfile.TemporaryDirectory(prefix='compiler-arm-sharing-')
         cls.queue = find_queue()
-        cls.state = pathlib.Path(cls.temp.name) / 'queue-state'
-        cls.state.mkdir()
+        cls.state = shared_queue_root()
         cls.compiler = pathlib.Path(cls.temp.name) / 'compiler'
         bend2 = cls.compiler / 'bend2'
         bend2.mkdir(parents=True)
@@ -105,36 +106,30 @@ class CompilerArmSharing(unittest.TestCase):
         return result
 
     def run_cgen(self, tag, fixture, source):
-        # A fresh per-run state root keeps these digest-pinned tests free of
-        # stale queue cache entries; the queue still admits and runs the
-        # compile that build-native.sh would otherwise run directly.
-        self.run_queue([
+        # Include the compiler frontend and runtime files in the queue key.
+        inputs = [path for path in sorted(UPSTREAM.rglob('*')) if path.is_file()]
+        args = [
             'run', '--kind', 'cgen', '--state-root', self.state, '--cwd', ROOT,
             '--root', ROOT, '--source-root', ROOT,
             '--entry', fixture.relative_to(ROOT).as_posix(),
             '--compiler', self.bun, '--artifact', 'c=%s' % source,
             '--option', 'test=%s' % tag,
-            '--', self.bun, '--smol', UPSTREAM / 'main.ts', fixture, '-o', source])
+        ]
+        for path in inputs:
+            args.extend(['--input', path])
+        args.extend(['--', self.bun, '--smol', UPSTREAM / 'main.ts', fixture, '-o', source])
+        self.run_queue(args)
 
     def compile_fixture(self, tag, fixture, source):
-        if self.queue is not None:
-            self.run_cgen(tag, fixture, source)
-        else:
-            self.run_bun(UPSTREAM / 'main.ts', fixture, '-o', source)
+        self.run_cgen(tag, fixture, source)
 
     def build_and_run(self, source, argv_results):
         binary = source.with_suffix('.bin')
-        if self.queue is not None:
-            self.run_queue([
-                'run', '--kind', 'cc', '--state-root', self.state, '--cwd', ROOT,
-                '--compiler', self.cc, '--input', source,
-                '--artifact', 'binary=%s' % binary, '--option', 'test=%s' % source.stem,
-                '--', self.cc, '-O1', '-w', source, '-lm', '-lpthread', '-o', binary])
-        else:
-            build = subprocess.run(
-                [self.cc, '-O1', '-w', str(source), '-lm', '-lpthread', '-o', str(binary)],
-                capture_output=True, text=True, timeout=180)
-            self.assertEqual(build.returncode, 0, msg=build.stderr)
+        self.run_queue([
+            'run', '--kind', 'cc', '--state-root', self.state, '--cwd', ROOT,
+            '--compiler', self.cc, '--input', source,
+            '--artifact', 'binary=%s' % binary, '--option', 'test=%s' % source.stem,
+            '--', self.cc, '-O1', '-w', source, '-lm', '-lpthread', '-o', binary])
         for argv, expected in argv_results:
             run = subprocess.run([str(binary), *argv], capture_output=True,
                                  text=True, timeout=30)
@@ -143,8 +138,21 @@ class CompilerArmSharing(unittest.TestCase):
 
     def mutated_c(self, test_name):
         source = pathlib.Path(self.temp.name) / (test_name + '.c')
-        self.run_bun(TEST_DIR / (test_name + '.ts'), self.compiler,
-                     env={**os.environ, 'ARM_EQ_C': str(source)})
+        fixture = TEST_DIR / (test_name + '.ts')
+        args = [
+            'run', '--kind', 'cgen', '--state-root', self.state, '--cwd', ROOT,
+            '--root', ROOT, '--source-root', ROOT,
+            '--entry', fixture.relative_to(ROOT).as_posix(),
+            '--compiler', self.bun, '--input', fixture,
+            '--artifact', 'c=%s' % source, '--option', 'test=%s' % test_name,
+        ]
+        compiler_sources = [path for path in sorted((self.compiler / 'bend2').rglob('*'))
+                            if path.is_file()]
+        for path in compiler_sources:
+            args.extend(['--input', path])
+        args.extend(['--', 'env', 'ARM_EQ_C=%s' % source, self.bun, '--smol',
+                     fixture, self.compiler])
+        self.run_queue(args)
         self.assertTrue(source.is_file(), msg='the test did not write ' + str(source))
         return source
 

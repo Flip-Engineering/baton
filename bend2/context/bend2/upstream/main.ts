@@ -342,12 +342,51 @@ function cc_find(gpu: boolean): string {
     + " --install";
 }
 
+// compile_queue_entry requires the shared host compile queue entry.
+// BATON2_COMPILE_QUEUE_BIN names the built executable; BATON2_COMPILE_QUEUE
+// names its launcher.
+function compile_queue_entry(): string {
+  const direct = process.env.BATON2_COMPILE_QUEUE_BIN;
+  const launcher = process.env.BATON2_COMPILE_QUEUE;
+  const queue = direct && fs.existsSync(direct) ? direct : launcher;
+  if (!queue || !fs.existsSync(queue)) {
+    throw "Error: set BATON2_COMPILE_QUEUE_BIN or BATON2_COMPILE_QUEUE to the shared host compile queue";
+  }
+  return queue;
+}
+
+// queue_cc runs one native compilation through the shared host compile queue.
+function queue_cc(queue: string, stateRoot: string, compiler: string, file: string,
+                  extraInputs: string[], artifact: string, artifactPath: string,
+                  extraOptions: string[], mac: boolean, bangs: boolean, cuda: string,
+                  args: string[]): void {
+  const absoluteFile = path.resolve(file);
+  const argv = ["run", "--kind", "cc", "--state-root", stateRoot,
+    "--cwd", process.cwd(), "--root", path.dirname(absoluteFile),
+    "--compiler", compiler, "--input", absoluteFile,
+    "--artifact", artifact + "=" + path.resolve(artifactPath),
+    "--option", "platform=" + (mac ? "darwin" : "linux"),
+    "--option", "backend=" + (bangs ? (mac ? "gpu-metal" : "gpu-cuda") : "cpu")];
+  for (const input of extraInputs) argv.push("--input", path.resolve(input));
+  if (bangs && !mac) argv.push("--option", "cuda-root=" + cuda);
+  for (const option of extraOptions) argv.push("--option", option);
+  argv.push("--", compiler, ...args);
+  const result = child.spawnSync(queue, argv, { encoding: "utf8" });
+  const stderr = result.stderr || "";
+  if (result.error || result.status !== 0) {
+    throw "Error: the compile queue failed to build " + artifactPath
+      + (result.error ? "\n" + result.error.message : "")
+      + (stderr ? "\n" + stderr.trim() : "");
+  }
+}
+
 // cli_build builds the C file at `file` into the binary `bin`. A `!` program
 // builds with the GPU lane and writes its GPU program too (on Linux only with
-// CUDA at $CUDA_HOME, else at /usr/local/cuda, its libraries in lib64 or, as
+// CUDA at $CUDA_HOME, else /usr/local/cuda, its libraries in lib64 or, as
 // nix lays them, lib; else the ! runs on the cores). On macOS a program with
 // a framework (#import: a window, audio) builds as Objective-C; on Linux it
-// links the X11 and ALSA libraries it includes.
+// links the X11 and ALSA libraries it includes. Native build commands use the
+// shared host compile queue and its configured state root.
 function cli_build(bin: string, file: string): void {
   const c     = fs.readFileSync(file, "utf8");
   const mac   = process.platform === "darwin";
@@ -364,12 +403,20 @@ function cli_build(bin: string, file: string): void {
   const gpu = mac ? ["-DBEND_METAL=1", ...cpu]
     : ["-DBEND_CUDA=1", "-I" + cuda + "/include", "-L" + cuda + "/lib64",
       "-L" + cuda + "/lib", ...cpu, "-lcuda", "-lnvrtc"];
-  const steps: [string, string[]][] = bangs
-    ? [[cc, gpu], [path.resolve(bin), ["--gpu-build"]]] : [[cc, cpu]];
-  for (const [cmd, args] of steps) {
-    if (child.spawnSync(cmd, args, { stdio: "inherit" }).status !== 0) {
-      throw "Error: " + path.basename(cmd) + " failed to build " + bin;
-    }
+  const queue = compile_queue_entry();
+  const stateRoot = process.env.BATON_COMPILE_QUEUE_ROOT;
+  if (!stateRoot || !path.isAbsolute(stateRoot)) {
+    throw "Error: set BATON_COMPILE_QUEUE_ROOT to the shared absolute compile-queue state directory";
+  }
+  queue_cc(queue, stateRoot, cc, file, [], "binary", bin, [], mac, bangs, cuda,
+    bangs ? gpu : cpu);
+  if (bangs) {
+    const invocation = Date.now().toString(36) + "-" + Math.random().toString(36).slice(2);
+    const builder = path.resolve(bin);
+    const sidecar = path.basename(builder) + ".gpu";
+    queue_cc(queue, stateRoot, builder, file, [builder], "inputs/" + sidecar,
+      builder + ".gpu", ["gpu-build-invocation=" + invocation], mac, bangs, cuda,
+      ["--gpu-build"]);
   }
 }
 

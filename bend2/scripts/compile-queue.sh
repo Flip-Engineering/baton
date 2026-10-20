@@ -4,8 +4,14 @@
 set -eu
 here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
 root=$(CDPATH= cd -- "$here/../.." && pwd -P)
+if [ -n "${BATON2_COMPILE_QUEUE_BIN:-}" ]; then
+  if [ ! -x "$BATON2_COMPILE_QUEUE_BIN" ]; then
+    printf 'compile-queue: selected executable is missing or not executable: %s\n' "$BATON2_COMPILE_QUEUE_BIN" >&2
+    exit 2
+  fi
+  exec "$BATON2_COMPILE_QUEUE_BIN" "$@"
+fi
 for candidate in \
-  ${BATON2_COMPILE_QUEUE_BIN:+"$BATON2_COMPILE_QUEUE_BIN"} \
   ${BATON2_PREFIX:+"$BATON2_PREFIX/bin/baton-compile-queue"} \
   "$here/baton-compile-queue" \
   "$root/.scratch/bend2/compile-queue" \

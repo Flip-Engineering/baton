@@ -454,14 +454,14 @@ static int cq_art_copy_path(const char *source, const char *destination,
     }
     if (!error && close(output)) error = errno;
     else if (error) close(output);
-    if (!error && chmod(destination, info->st_mode & 07777)) {
+    if (!error && chmod(destination, info->st_mode & 0777)) {
       error = errno;
     }
     close(input);
     return error;
   }
   if (S_ISDIR(info->st_mode)) {
-    if (mkdir(destination, info->st_mode & 07777)) {
+    if (mkdir(destination, info->st_mode & 0777)) {
       if (errno != EEXIST || !cq_art_is_dir(destination)) return errno;
     }
     DIR *dir = opendir(source);
@@ -489,7 +489,7 @@ static int cq_art_copy_path(const char *source, const char *destination,
       if (error) break;
     }
     closedir(dir);
-    if (!error && chmod(destination, info->st_mode & 07777)) error = errno;
+    if (!error && chmod(destination, info->st_mode & 0777)) error = errno;
     return error;
   }
 #ifdef S_ISLNK

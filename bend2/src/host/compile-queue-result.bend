@@ -4,6 +4,7 @@ import ./files.bend as F
 import ./compile-queue-identity.bend as Identity
 import ./compile-queue-artifact.bend as Artifact
 import ./storage.bend as Storage
+import ./compile-queue-lifecycle.bend as L
 
 # Compile queue result schema version 2.
 #
@@ -308,6 +309,7 @@ def CompileQueueResult.retain_rows(work: String, destination: String, names: Lis
         do IO<Result<&1,&1,U32 & String,Unit>>:
           target = destination ++ "/" ++ name
           staging = target ++ ".queue-tmp"
+          made : Unit <- IO.try(Unit, L.mkdir_p(CompileQueueResult.dirname(target)))
           removed : Unit <- IO.try(Unit, Artifact.CompileQueueArtifact.remove(staging))
           installed : Unit <- IO.try(Unit, Artifact.CompileQueueArtifact.install(work ++ "/" ++ name, target, staging))
           CompileQueueResult.retain_rows(work, destination, rest))
@@ -418,6 +420,7 @@ def CompileQueueResult.copy_rows(keydir: String, rows: List<&2,String>) -> IO(Re
           match String.split(row, Char.from_u32(9)):
             case name <> destination <> tail:
               staging = destination ++ ".queue-tmp"
+              made : Unit <- IO.try(Unit, L.mkdir_p(CompileQueueResult.dirname(destination)))
               removed : Unit <- IO.try(Unit, Artifact.CompileQueueArtifact.remove(staging))
               installed : Unit <- IO.try(Unit, Artifact.CompileQueueArtifact.install(keydir ++ "/completed/artifacts/" ++ name, destination, staging))
               CompileQueueResult.copy_rows(keydir, rest)

@@ -150,6 +150,25 @@ def artifact_rows_go(rows: List<String>, acc: List<Artifact>) -> List<Artifact>:
 def artifact_rows(text: String) -> List<Artifact>:
   artifact_rows_go(fields_all(text, "artifact"), Nil{})
 
+def artifact_components_ok(parts: List<String>) -> Bool:
+  match parts:
+    case Nil{}: True{}
+    case Con{part, rest}:
+      +part_ok = Bool.and(token_ok(part),
+        Bool.and(Bool.not(Tx.str_eq(part, ".")), Bool.not(Tx.str_eq(part, ".."))))
+      Bool.and(part_ok, artifact_components_ok(rest))
+
+def artifact_path_ok(name: String) -> Bool:
+  Bool.and(non_empty(name),
+    Bool.and(Bool.not(Tx.starts_with(name, "/")),
+      artifact_components_ok(String.split(name, Char.from_u32(47)))))
+
+def artifact_paths_ok(artifacts: List<Artifact>) -> Bool:
+  match artifacts:
+    case Nil{}: True{}
+    case Con{Artifact{name, path}, rest}:
+      Bool.and(artifact_path_ok(name), artifact_paths_ok(rest))
+
 def artifact_names(artifacts: List<Artifact>) -> List<String>:
   match artifacts:
     case Nil{}: Nil{}
@@ -198,24 +217,11 @@ def env_value(name: String) -> IO(String):
       case Done{value}: IO.pure(String, value)
       case Fail{error}: IO.pure(String, "")
 
-def choose_root(root: String, xdg: String, home: String, uid: U32) -> String:
-  match root:
-    case SCon{c, rest}: root
-    case SNil{}:
-      match xdg:
-        case SCon{c, rest}: xdg ++ "/baton/compile-queue"
-        case SNil{}:
-          match home:
-            case SCon{c, rest}: home ++ "/.cache/baton/compile-queue"
-            case SNil{}: "/tmp/baton-compile-queue-" ++ U32.show(uid)
+def valid_state_root(root: String) -> Bool:
+  Bool.and(non_empty(root), Tx.starts_with(root, "/"))
 
 def default_state_root() -> IO(String):
-  do IO<String>:
-    root <- env_value("BATON_COMPILE_QUEUE_ROOT")
-    xdg <- env_value("XDG_CACHE_HOME")
-    home <- env_value("HOME")
-    uid <- IO.try(U32, L.uid())
-    IO.pure(String, choose_root(root, xdg, home, uid))
+  env_value("BATON_COMPILE_QUEUE_ROOT")
 
 def fresh_config() -> IO(Config):
   do IO<Config>:
@@ -258,11 +264,11 @@ def validate_config(config: Config, need_command: Bool) -> String:
       +token = field(text, "token")
       +kind_ok = Bool.or(Tx.str_eq(kind, "cgen"), Tx.str_eq(kind, "cc"))
       +command_ok = Bool.pick(Bool, need_command, non_empty_list(command), True{})
-      +artifact_ok = non_empty_list(artifacts)
+      +artifact_ok = Bool.and(non_empty_list(artifacts), artifact_paths_ok(artifacts))
       +source_ok = Bool.pick(Bool, Tx.str_eq(kind, "cgen"),
         Bool.and(non_empty(source), non_empty(entry)), True{})
       +token_okay = Bool.pick(Bool, non_empty(token), token_ok(token), True{})
-      +state_ok = Tx.starts_with(state, "/")
+      +state_ok = valid_state_root(state)
       +cwd_ok = non_empty(cwd)
       +duplicates = duplicate_destinations(inputs)
       Bool.pick(String, kind_ok,
@@ -277,10 +283,10 @@ def validate_config(config: Config, need_command: Bool) -> String:
                       ""),
                     "compile-queue: token must contain only letters, digits, dot, underscore or hyphen"),
                   "compile-queue: cgen requires --source-root and --entry"),
-                "compile-queue: at least one --artifact NAME=PATH is required"),
+                "compile-queue: artifact names must be safe relative paths"),
               "compile-queue: a command is required after --"),
             "compile-queue: cwd is unavailable"),
-          "compile-queue: state root must be absolute"),
+          "compile-queue: set BATON_COMPILE_QUEUE_ROOT or pass an absolute --state-root"),
         "compile-queue: kind must be cgen or cc")
 
 def input_pairs_text(inputs: List<Input>) -> String:
@@ -442,21 +448,38 @@ def write_attempt_files(config: Config, key: String, keydir: String, attempt: St
           IO.pure(Unit, Unit{}))
         IO.pure(Unit, Unit{})
 
+def owner_lock(keydir: String) -> IO(U32):
+  L.lock_acquire(keydir ++ "/owners.lock")
+
 def publish_token(keydir: String, requested: String) -> IO(String):
   do IO<String>:
+    made_keydir : Unit <- IO.try(Unit, L.mkdir_p(keydir))
+    lock <- owner_lock(keydir)
     pid <- IO.try(U32, L.pid())
     now <- IO.try(String, L.now_ns())
     start <- IO.try(String, L.starttime(pid))
     +token = Bool.pick(String, non_empty(requested), requested,
       "owner-" ++ U32.show(pid) ++ "-" ++ now)
     made : Unit <- IO.try(Unit, L.mkdir_p(keydir ++ "/owners"))
-    wrote : Unit <- IO.try(Unit, L.write_text(keydir ++ "/owners/" ++ token,
+    +owner_path = keydir ++ "/owners/" ++ token
+    exists <- regular(owner_path)
+    checked : Unit <- Bool.pick(IO(Unit), exists,
+      IO.die(Unit, 2, "compile-queue: owner token is already in use"), IO.pure(Unit, Unit{}))
+    wrote : Unit <- IO.try(Unit, L.write_text(owner_path,
       "pid=" ++ U32.show(pid) ++ "\nstarttime=" ++ start ++ "\nstarted_ns=" ++ now ++ "\n"))
+    released : Unit <- IO.try(Unit, L.lock_release(lock))
     IO.pure(String, token)
 
-def remove_token(keydir: String, token: String) -> IO(Unit):
+def remove_token_unlocked(keydir: String, token: String) -> IO(Unit):
   Bool.pick(IO(Unit), non_empty(token),
     IO.try(Unit, L.remove(keydir ++ "/owners/" ++ token)), IO.pure(Unit, Unit{}))
+
+def remove_token(keydir: String, token: String) -> IO(Unit):
+  do IO<Unit>:
+    lock <- owner_lock(keydir)
+    removed : Unit <- remove_token_unlocked(keydir, token)
+    released : Unit <- IO.try(Unit, L.lock_release(lock))
+    IO.pure(Unit, Unit{})
 
 def count_live_owners(keydir: String, names: List<String>, acc: U32) -> IO(U32):
   match names:
@@ -526,7 +549,6 @@ def finish_success(attempt: String, keydir: String, kind: String, key: String,
     renamed : Unit <- IO.try(Unit, F.Files.rename(cache, keydir ++ "/completed"))
     copied_result : Unit <- IO.try(Unit, L.copy_file(keydir ++ "/completed/result", attempt ++ "/result"))
     removed : Unit <- IO.try(Unit, L.remove(keydir ++ "/active"))
-    owners : Unit <- IO.try(Unit, L.remove_tree(keydir ++ "/owners"))
     IO.pure(Unit, Unit{})
 
 def verify_artifacts(work: String, names: List<String>) -> IO(Unit):
@@ -576,19 +598,28 @@ def supervise(attempt: String) -> IO(Unit):
     started <- IO.try(String, L.now_ns())
     pid <- IO.try(U32, L.pid())
     start <- IO.try(String, L.starttime(pid))
-    active : Unit <- IO.try(Unit, L.write_text(keydir ++ "/active", "pid=" ++ U32.show(pid)
-      ++ "\nstarttime=" ++ start ++ "\nkind=" ++ kind ++ "\nsetsid=1\nstarted_ns=" ++ started ++ "\n"))
-    Bool.pick(IO(Unit), Tx.str_eq(kind, "cgen"),
+    gate <- owner_lock(keydir)
+    owners <- owner_count(keydir)
+    Bool.pick(IO(Unit), U32.is_eq(owners, 0),
       do IO<Unit>:
+        released : Unit <- IO.try(Unit, L.lock_release(gate))
+        write_failure(attempt, keydir, "canceled", 130, kind, key, started,
+          "all requesters canceled before execution", names),
+      do IO<Unit>:
+        active : Unit <- IO.try(Unit, L.write_text(keydir ++ "/active", "pid=" ++ U32.show(pid)
+          ++ "\nstarttime=" ++ start ++ "\nkind=" ++ kind ++ "\nsetsid=1\nstarted_ns=" ++ started ++ "\n"))
+        released : Unit <- IO.try(Unit, L.lock_release(gate))
         locked : Unit <- IO.try(Unit, L.lock_fd_acquire(8))
-        before <- IO.try(String, L.read_text(attempt ++ "/source-digest"))
-        +before_digest = field(before, "digest")
-        after <- IO.try(String, Identity.source_digest(source_root, entry))
-        Bool.pick(IO(Unit), Tx.str_eq(before_digest, after),
-          run_supervised(attempt, keydir, kind, key, started, names, cwd),
-          write_failure(attempt, keydir, "failed", 1, kind, key, started,
-            "source changed before execution", names)),
-      run_supervised(attempt, keydir, kind, key, started, names, cwd))
+        Bool.pick(IO(Unit), Tx.str_eq(kind, "cgen"),
+          do IO<Unit>:
+            before <- IO.try(String, L.read_text(attempt ++ "/source-digest"))
+            +before_digest = field(before, "digest")
+            after <- IO.try(String, Identity.source_digest(source_root, entry))
+            Bool.pick(IO(Unit), Tx.str_eq(before_digest, after),
+              run_supervised(attempt, keydir, kind, key, started, names, cwd),
+              write_failure(attempt, keydir, "failed", 1, kind, key, started,
+                "source changed before execution", names)),
+          run_supervised(attempt, keydir, kind, key, started, names, cwd)))
 
 def start_attempt(config: Config, key: String, keydir: String, lock: U32, owner: String) -> IO<Unit>:
   do IO<Unit>:
@@ -602,13 +633,11 @@ def start_attempt(config: Config, key: String, keydir: String, lock: U32, owner:
           +kind = field(text, "kind")
           made : Unit <- IO.try(Unit, L.mkdir_p(attempt ++ "/work"))
           prepared : Unit <- write_attempt_files(config, key, keydir, attempt)
-          cgen <- IO.try(U32, L.lock_open(state ++ "/cgen.lock"))
-          locked : Unit <- Bool.pick(IO(Unit), Tx.str_eq(kind, "cgen"),
-            IO.try(Unit, L.lock_fd_acquire(cgen)), IO.pure(Unit, Unit{}))
+          heavy <- IO.try(U32, L.lock_open(state ++ "/heavy.lock"))
           +args = P.argv(Con{"__supervise", Con{attempt, Nil{}}})
-          supervisor <- IO.try(U32, L.spawn_detached(args, lock, cgen))
+          supervisor <- IO.try(U32, L.spawn_detached(args, lock, heavy))
           released_lock : Unit <- IO.try(Unit, L.close_fd(lock))
-          released_cgen : Unit <- IO.try(Unit, L.close_fd(cgen))
+          released_heavy : Unit <- IO.try(Unit, L.close_fd(heavy))
           waited <- IO.try(U32, L.wait_pid(supervisor))
           completed <- IO.try(Bool, Result.verify_completed(keydir))
           match completed:
@@ -625,8 +654,17 @@ def start_attempt(config: Config, key: String, keydir: String, lock: U32, owner:
                   removed : Unit <- remove_token(keydir, owner)
                   Result.report_failure(attempt ++ "/result"),
                 do IO<Unit>:
+                  left <- owner_count(keydir)
+                  +was_canceled = U32.is_eq(left, 0)
+                  wrote : Unit <- write_failure(attempt, keydir,
+                    Bool.pick(String, was_canceled, "canceled", "failed"),
+                    Bool.pick(U32, was_canceled, 130, 1), field(text, "kind"), key, now,
+                    Bool.pick(String, was_canceled,
+                      "all requesters canceled before a terminal result",
+                      "supervisor exited before publishing a terminal result"),
+                    artifact_names(artifact_rows(text)))
                   removed : Unit <- remove_token(keydir, owner)
-                  IO.die(Unit, 1, "compile-queue: execution ended without a result"))
+                  Result.report_failure(attempt ++ "/result"))
       case other:
         IO.die(Unit, 2, "compile-queue: malformed configuration")
 
@@ -686,7 +724,10 @@ def key_command(args: List<String>) -> IO(Unit):
 
 def parse_state_key(args: List<String>, state: String, key: String) -> IO(StateKey):
   match args:
-    case Nil{}: IO.pure(StateKey, StateKey{state, key})
+    case Nil{}:
+      Bool.pick(IO(StateKey), valid_state_root(state),
+        IO.pure(StateKey, StateKey{state, key}),
+        IO.die(StateKey, 2, "compile-queue: set BATON_COMPILE_QUEUE_ROOT or pass an absolute --state-root"))
     case "--state-root" <> value <> rest: parse_state_key(rest, value, key)
     case "--key" <> value <> rest: parse_state_key(rest, state, value)
     case +option <> rest: IO.die(StateKey, 2, "compile-queue: unknown option " ++ option)
@@ -720,11 +761,55 @@ def wait_command(args: List<String>) -> IO(Unit):
 
 def parse_cancel(args: List<String>, state: String, key: String, token: String) -> IO(CancelArgs):
   match args:
-    case Nil{}: IO.pure(CancelArgs, CancelArgs{state, key, token})
+    case Nil{}:
+      Bool.pick(IO(CancelArgs), valid_state_root(state),
+        IO.pure(CancelArgs, CancelArgs{state, key, token}),
+        IO.die(CancelArgs, 2, "compile-queue: set BATON_COMPILE_QUEUE_ROOT or pass an absolute --state-root"))
     case "--state-root" <> value <> rest: parse_cancel(rest, value, key, token)
     case "--key" <> value <> rest: parse_cancel(rest, state, value, token)
     case "--token" <> value <> rest: parse_cancel(rest, state, key, value)
     case +option <> rest: IO.die(CancelArgs, 2, "compile-queue: unknown option " ++ option)
+
+def cancel_locked(keydir: String, key: String, token: String) -> IO(String):
+  do IO<String>:
+    +owner = keydir ++ "/owners/" ++ token
+    present <- regular(owner)
+    Bool.pick(IO(String), present,
+      do IO<String>:
+        removed : Unit <- remove_token_unlocked(keydir, token)
+        left <- owner_count(keydir)
+        Bool.pick(IO(String), U32.is_eq(left, 0),
+          do IO<String>:
+            text <- IO.try(String, L.read_text(keydir ++ "/active"))
+            +pid_text = field(text, "pid")
+            +start = field(text, "starttime")
+            match U32.read(pid_text):
+              case None{}:
+                IO.pure(String, "canceled=none\nkey=" ++ key ++ "\ntoken=" ++ token ++ "\n")
+              case Some{pid}:
+                do IO<String>:
+                  alive <- IO.try(U32, L.alive(pid, start))
+                  Bool.pick(IO(String), U32.is_eq(alive, 1),
+                    do IO<String>:
+                      +mode = field(text, "setsid")
+                      +external = Bool.or(Tx.str_eq(mode, "external"), Tx.str_eq(mode, "starting"))
+                      Bool.pick(IO(String), external,
+                        IO.pure(String, "canceled=refused\nkey=" ++ key ++ "\nreason=external-or-starting\n"),
+                        do IO<String>:
+                          signaled : Unit <- Bool.pick(IO(Unit), Tx.str_eq(mode, "1"),
+                            IO.try(Unit, L.signal_group(pid, 15)),
+                            IO.try(Unit, L.signal_pid(pid, 15)))
+                          slept : Unit <- IO.try(Unit, L.sleep_millis(3000))
+                          alive2 <- IO.try(U32, L.alive(pid, start))
+                          escalated : Unit <- Bool.pick(IO(Unit), U32.is_eq(alive2, 0),
+                            IO.pure(Unit, Unit{}),
+                            Bool.pick(IO(Unit), Tx.str_eq(mode, "1"),
+                              IO.try(Unit, L.signal_group(pid, 9)),
+                              IO.try(Unit, L.signal_pid(pid, 9))))
+                          IO.pure(String, "canceled=requested\nkey=" ++ key ++ "\npid=" ++ U32.show(pid) ++ "\ntoken=" ++ token ++ "\n"))),
+                    IO.pure(String, "canceled=stale\nkey=" ++ key ++ "\ntoken=" ++ token ++ "\n")),
+          IO.pure(String, "canceled=withdrawn\nkey=" ++ key ++ "\ntoken=" ++ token ++ "\nowners=" ++ U32.show(left) ++ "\n")),
+      IO.pure(String, "canceled=unknown-token\nkey=" ++ key ++ "\ntoken=" ++ token ++ "\n"))
 
 def cancel_command(args: List<String>) -> IO(Unit):
   do IO<Unit>:
@@ -736,42 +821,10 @@ def cancel_command(args: List<String>) -> IO(Unit):
         Bool.pick(IO(Unit), ok,
           do IO<Unit>:
             +keydir = keydir_of(state, key)
-            +owner = keydir ++ "/owners/" ++ token
-            present <- regular(owner)
-            Bool.pick(IO(Unit), present,
-              do IO<Unit>:
-                removed : Unit <- IO.try(Unit, L.remove(owner))
-                left <- owner_count(keydir)
-                Bool.pick(IO(Unit), U32.is_eq(left, 0),
-                  do IO<Unit>:
-                    text <- IO.try(String, L.read_text(keydir ++ "/active"))
-                    +pid_text = field(text, "pid")
-                    +start = field(text, "starttime")
-                    match U32.read(pid_text):
-                      case None{}: IO.write("canceled=none\nkey=" ++ key ++ "\ntoken=" ++ token ++ "\n")
-                      case Some{pid}:
-                        alive <- IO.try(U32, L.alive(pid, start))
-                        Bool.pick(IO(Unit), U32.is_eq(alive, 1),
-                          do IO<Unit>:
-                            +mode = field(text, "setsid")
-                            +external = Bool.or(Tx.str_eq(mode, "external"), Tx.str_eq(mode, "starting"))
-                            Bool.pick(IO(Unit), external,
-                              IO.write("canceled=refused\nkey=" ++ key ++ "\nreason=external-or-starting\n"),
-                              do IO<Unit>:
-                                signaled : Unit <- Bool.pick(IO(Unit), Tx.str_eq(mode, "1"),
-                                  IO.try(Unit, L.signal_group(pid, 15)),
-                                  IO.try(Unit, L.signal_pid(pid, 15)))
-                                slept : Unit <- IO.try(Unit, L.sleep_millis(3000))
-                                alive2 <- IO.try(U32, L.alive(pid, start))
-                                escalated : Unit <- Bool.pick(IO(Unit), U32.is_eq(alive2, 0),
-                                  IO.pure(Unit, Unit{}),
-                                  Bool.pick(IO(Unit), Tx.str_eq(mode, "1"),
-                                    IO.try(Unit, L.signal_group(pid, 9)),
-                                    IO.try(Unit, L.signal_pid(pid, 9))))
-                                IO.write("canceled=requested\nkey=" ++ key ++ "\npid=" ++ U32.show(pid) ++ "\ntoken=" ++ token ++ "\n")),
-                          IO.write("canceled=stale\nkey=" ++ key ++ "\ntoken=" ++ token ++ "\n")),
-                  IO.write("canceled=withdrawn\nkey=" ++ key ++ "\ntoken=" ++ token ++ "\nowners=" ++ U32.show(left) ++ "\n")),
-              IO.write("canceled=unknown-token\nkey=" ++ key ++ "\ntoken=" ++ token ++ "\n")),
+            lock <- owner_lock(keydir)
+            result <- cancel_locked(keydir, key, token)
+            released : Unit <- IO.try(Unit, L.lock_release(lock))
+            IO.write(result),
           IO.die(Unit, 2, "compile-queue: cancel requires --key and --token"))
 
 def status_rows(state_root: String, filter: String, names: List<String>) -> IO(Unit):
@@ -898,7 +951,6 @@ def finish_adoption(keydir: String, adoption: String, name: String, path: String
       adoption, name, path, cache ++ "/artifacts"))
     renamed : Unit <- IO.try(Unit, F.Files.rename(cache, keydir ++ "/completed"))
     removed : Unit <- IO.try(Unit, L.remove(keydir ++ "/active"))
-    owners : Unit <- IO.try(Unit, L.remove_tree(keydir ++ "/owners"))
     IO.pure(Unit, Unit{})
 
 def guard_loop(keydir: String, pid: U32, start: String, name: String, path: String, started: String) -> IO(Unit):
@@ -946,7 +998,10 @@ def guard(keydir: String, pid_text: String, start: String, name: String, path: S
 
 def parse_adopt(args: List<String>, config: Config) -> IO(Config):
   match args:
-    case Nil{}: IO.pure(Config, config)
+    case Nil{}:
+      Bool.pick(IO(Config), valid_state_root(field(config.text, "state_root")),
+        IO.pure(Config, config),
+        IO.die(Config, 2, "compile-queue: set BATON_COMPILE_QUEUE_ROOT or pass an absolute --state-root"))
     case "--pid" <> value <> rest: parse_adopt(rest, config_line(config, "pid", value))
     case "--state-root" <> value <> rest: parse_adopt(rest, config_line(config, "state_root", value))
     case "--source-root" <> value <> rest: parse_adopt(rest, config_line(config, "source_root", value))
@@ -995,18 +1050,24 @@ def adopt_live(pid: U32, pid_text: String, start: String, cwd: String,
               IO.die(Unit, 2, "compile-queue: completed result is not a verified adoption record"))
       case False{}:
         do IO<Unit>:
-          started <- IO.try(String, L.now_ns())
-          adoption <- adoption_text(pid_text, start, cwd, output, compiler, entry, argv, inputs, key, started)
-          wrote : Unit <- IO.try(Unit, L.write_text(keydir ++ "/adoption", adoption))
-          cgen <- IO.try(U32, L.lock_open(state ++ "/cgen.lock"))
-          locked : Unit <- IO.try(Unit, L.lock_fd_acquire(cgen))
-          +guard_args = P.argv(Con{"__guard", Con{keydir, Con{pid_text, Con{start,
-            Con{name, Con{path, Nil{}}}}}}}})
-          guard_pid <- IO.try(U32, L.spawn_detached(guard_args, lock, cgen))
-          released_lock : Unit <- IO.try(Unit, L.close_fd(lock))
-          released_cgen : Unit <- IO.try(Unit, L.close_fd(cgen))
-          IO.write("adopted=1\nkey=" ++ key ++ "\npid=" ++ pid_text
-            ++ "\nguard=" ++ U32.show(guard_pid) ++ "\nartifact=" ++ path ++ "\n")
+          heavy <- IO.try(Maybe<U32>, L.lock_try(state ++ "/heavy.lock"))
+          match heavy:
+            case None{}:
+              do IO<Unit>:
+                released_lock : Unit <- IO.try(Unit, L.lock_release(lock))
+                IO.write("adopted=0\nkey=" ++ key ++ "\nreason=compiler-queue-busy\n")
+            case Some{heavy}:
+              do IO<Unit>:
+                started <- IO.try(String, L.now_ns())
+                adoption <- adoption_text(pid_text, start, cwd, output, compiler, entry, argv, inputs, key, started)
+                wrote : Unit <- IO.try(Unit, L.write_text(keydir ++ "/adoption", adoption))
+                +guard_args = P.argv(Con{"__guard", Con{keydir, Con{pid_text, Con{start,
+                  Con{name, Con{path, Nil{}}}}}}}})
+                guard_pid <- IO.try(U32, L.spawn_detached(guard_args, lock, heavy))
+                released_lock : Unit <- IO.try(Unit, L.close_fd(lock))
+                released_heavy : Unit <- IO.try(Unit, L.close_fd(heavy))
+                IO.write("adopted=1\nkey=" ++ key ++ "\npid=" ++ pid_text
+                  ++ "\nguard=" ++ U32.show(guard_pid) ++ "\nartifact=" ++ path ++ "\n")
 
 def adopt_command(args: List<String>) -> IO(Unit):
   do IO<Unit>:
