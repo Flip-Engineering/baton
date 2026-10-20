@@ -8,7 +8,7 @@ for candidate in \
   ${BATON2_PREFIX:+"$BATON2_PREFIX/bin/baton-compile-queue"}; do
   [ -n "$candidate" ] || continue
   if [ -x "$candidate" ]; then
-    exec "$candidate" "$@"
+    exec "$candidate" -- "$@"
   fi
 done
 printf 'compile-queue: missing Bend2 queue executable; set BATON2_COMPILE_QUEUE_BIN or BATON2_COMPILE_QUEUE, or install bin/baton-compile-queue\n' >&2
