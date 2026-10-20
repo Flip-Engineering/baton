@@ -1,0 +1,12 @@
+{"type":"response","command":"set_event_filter","success":false,"error":"Unknown command: set_event_filter"}
+{"type":"message_start","message":{"role":"assistant","content":[]}}
+{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","delta":"λ","partial":{"role":"assistant","content":[{"type":"thinking","thinking":"λ🙂 plan"}]}},"message":{"role":"assistant","content":[{"type":"thinking","thinking":"λ🙂 plan"}]}}
+{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","delta":" detail","partial":{"role":"assistant","content":[{"type":"thinking","thinking":"λ🙂 plan λ🙂 plan detail"}]}},"message":{"role":"assistant","content":[{"type":"thinking","thinking":"λ🙂 plan λ🙂 plan detail"}]}}
+{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","delta":" final","partial":{"role":"assistant","content":[{"type":"thinking","thinking":"λ🙂 plan λ🙂 plan detail λ🙂 plan detail final"}]}},"message":{"role":"assistant","content":[{"type":"thinking","thinking":"λ🙂 plan λ🙂 plan detail λ🙂 plan detail final"}]}}
+{"type":"tool_execution_start","toolCallId":"call-1","toolName":"bash","args":{"command":"printf λ"}}
+{"type":"tool_execution_update","toolCallId":"call-1","toolName":"bash","partialResult":{"content":[{"type":"text","text":"λ partial"}]}}
+{"type":"tool_execution_update","toolCallId":"call-1","toolName":"bash","partialResult":{"content":[{"type":"text","text":"λ partial complete"}]}}
+{"type":"tool_execution_end","toolCallId":"call-1","toolName":"bash","result":{"content":[{"type":"text","text":"λ result"}]},"isError":false}
+{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","delta":" error","partial":{"role":"assistant","content":[{"type":"thinking","thinking":"λ🙂 plan λ🙂 plan detail λ🙂 plan detail final λ🙂 error"}]}},"message":{"role":"assistant","content":[{"type":"thinking","thinking":"λ🙂 plan λ🙂 plan detail λ🙂 plan detail final λ🙂 error"}]}}
+{"type":"message_end","message":{"role":"assistant","provider":"provider","model":"actual","stopReason":"error","content":[{"type":"text","text":"final answer λ"}]}}
+{"type":"agent_end","isTerminal":true,"messages":[{"role":"assistant","stopReason":"error","content":[{"type":"text","text":"final answer λ"}]}]}
