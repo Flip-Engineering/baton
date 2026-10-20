@@ -5,16 +5,19 @@
 #
 # A string match with a two-character literal and a default arm whose body
 # returns base, a parameter bound outside the match. The flattener duplicates
-# that default at both character columns. With the capture-aware shared arm
-# path, emit_arm_shared emits one arm_<seq> helper whose parameter list
-# includes the captured base word beyond the match's own arguments, and both
-# character-site calls pass base. Without sharing, the two branches inline the
-# base return and no arm_<seq> call for it appears.
+# that default at every nested match level the literal flattens into (the top
+# String match, the SCon tail chain, and the final SNil check). With the
+# capture-aware shared arm path, emit_arm_shared emits exactly one arm_<seq>
+# helper for the base default body whose parameter list carries the captured
+# base word ahead of the match arguments, with two or more call sites each
+# passing base. Without sharing, the base return is inline in those branches
+# and no arm_<seq> call for it appears.
 #
-# Derived, not measured: with no argv, first([]) is "zz", base is
-# String.length("zz") = 2, the default returns 2, and IO.print writes "2";
-# exit 0. With argv ["ab"], the literal returns 1; any other first argument
-# returns its length. Total for any List<String>.
+# Derived, not measured: IO.print appends a newline. With no argv, first([])
+# is "zz", base is String.length("zz") = 2, the default returns 2, and
+# IO.print writes "2\n"; exit 0. With argv ["ab"], the literal returns 1 and
+# IO.print writes "1\n". Any other first argument returns its length and
+# writes it with a newline. Total for any List<String>.
 import Base
 
 def first(xs: List<String>) -> String:

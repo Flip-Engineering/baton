@@ -7,15 +7,16 @@
 # default. The fallback row is a non-default specific pattern (+a <> Nil{}),
 # its body 7 is closed, and the flattener duplicates that row at both
 # character columns of "ab". The restored def-or-closed gate admits the
-# closed copies, so emit_arm_shared emits one arm_<seq> returning 7 and both
-# duplicated fallback branches call it. Without sharing, both branches inline
-# 7 and no arm_<seq> call for 7 appears. The default body 0 may have its own
-# one-site shared arm.
+# closed copies, so emit_arm_shared emits one arm_<seq> returning 7 and the
+# duplicated fallback calls it (two or more copies). Without sharing, the
+# copies inline 7 and no arm_<seq> call for 7 appears. The default body 0 may
+# have its own one-site shared arm.
 #
-# Derived, not measured: with no argv, args is [], the literal and one-token
-# fallback do not match, the default returns 0, and IO.print writes "0";
-# exit 0. With argv ["x"], the fallback returns 7 and IO.print writes "7".
-# With argv ["ab"], the literal returns 1. Total for any List<String>.
+# Derived, not measured: IO.print appends a newline. With no argv, args is
+# [], the literal and one-token fallback do not match, the default returns 0,
+# and IO.print writes "0\n"; exit 0. With argv ["x"], the fallback returns 7
+# and IO.print writes "7\n". With argv ["ab"], the literal returns 1 and
+# IO.print writes "1\n". Total for any List<String>.
 import Base
 
 def tag(args: List<String>) -> U32:
