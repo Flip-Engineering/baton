@@ -84,6 +84,9 @@ type File = Carb & {
   tabs: Map<string, number>;
   spins: [string, string, Set<string>][];
   spun: Map<string, string>;
+  armSeq: number;
+  armBusy: Set<string>;
+  armHints: Map<string, ArmRep[]>;
   clos: Set<string>;
   img: string[];
   lits: Map<string, number>;
@@ -105,6 +108,7 @@ type Of<K> = Extract<HTerm, { $: K }>;
 type HAll = Of<"All">;
 
 type Probe = Of<"Var">;
+type ArmRep = { term: HTerm; name: string; lay: Lay; ks: Kind[]; caps: Probe[] };
 
 type HAdt = Of<"ADT">;
 
@@ -1543,7 +1547,8 @@ function cid_mac(k: string): string {
 
 function file_new(cb: Carb, decl: string): File {
   return { ...cb, decl, segs: [], seg: seg_new("", BOX, []), tab: 2,
-    cids: new Map(), tabs: new Map(), spins: [], spun: new Map(), clos: new Set(),
+    cids: new Map(), tabs: new Map(), spins: [], spun: new Map(),
+    armSeq: 0, armBusy: new Set(), armHints: new Map(), clos: new Set(),
     img: [], lits: new Map(), consts: new Map(), reqs: "", fuel: 0,
     fresh: new Map(), spares: [],
     uses: new Map(), brwl: new Map(), rest: [], def: "" };
@@ -2741,6 +2746,273 @@ function lits_cond(w: string, j: number, n: number): string {
   return j === 32 ? `${w} == ${n}` : `(${w} & ${2 ** j - 1}) == ${n}`;
 }
 
+// A match arm body is the same function at every column the flattener
+// duplicated it into when its free probes have the same use structure and
+// layouts. The public v2.0.25 lowering keeps those probes free, so a shared
+// spin takes them as explicit capture parameters and each arm passes its own
+// captured values. The hint narrows the candidate list; structural
+// alpha-equality over the whole term decides every reuse.
+function arm_hint(h: HTerm): string {
+  let t = term_force(h);
+  let out = "";
+  for (let i = 0; i < 3; i++) {
+    const sp = t.s;
+    out += (sp !== undefined && sp.beg !== undefined
+      ? sp.beg + ":" + sp.end : "?") + ":" + t.$ + ";";
+    if (t.$ === "Ann") {
+      t = term_force(t.x);
+    } else if (t.$ === "Lam") {
+      t = term_force(term_open(t).b);
+    } else {
+      break;
+    }
+  }
+  let b = term_force(h);
+  for (let i = 0; i < 100000; i++) {
+    if (b.$ === "Ann") {
+      b = term_force(b.x);
+    } else if (b.$ === "Lam") {
+      b = term_force(term_open(b).b);
+    } else {
+      break;
+    }
+  }
+  const sp = b.s;
+  return out + "|" + (sp !== undefined && sp.beg !== undefined
+    ? sp.beg + ":" + sp.end : "?") + ":" + b.$;
+}
+
+function arm_eq(a: HTerm, b: HTerm): boolean {
+  const ba = new Map<number, number>(), bb = new Map<number, number>();
+  const fa = new Map<number, number>(), fb = new Map<number, number>();
+  const bind = (i: number, j: number, d: number): void => {
+    ba.set(i, d); bb.set(j, d);
+  };
+  const unbind = (i: number, j: number): void => {
+    ba.delete(i); bb.delete(j);
+  };
+  const same_var = (i: number, j: number, d: number): boolean => {
+    const xb = ba.has(i), yb = bb.has(j);
+    if (xb !== yb) return false;
+    if (xb) return d - ba.get(i)! === d - bb.get(j)!;
+    const xf = fa.get(i) ?? (fa.set(i, fa.size), fa.size - 1);
+    const yf = fb.get(j) ?? (fb.set(j, fb.size), fb.size - 1);
+    return xf === yf;
+  };
+  const patt_eq = (pa: Bend.Patt, pb: Bend.Patt, d: number): boolean => {
+    if (pa.$ !== pb.$) return false;
+    if (pa.$ === "PVar") return same_var(pa.i, pb.i, d);
+    return pa.$ === "PCtr" && pa.k === pb.k && pa.x.length === pb.x.length
+      && pa.x.every((z, i) => patt_eq(z, pb.x[i], d));
+  };
+  const go = (u: HTerm, v: HTerm, d: number): boolean => {
+    const x = term_force(u), y = term_force(v);
+    if (x.$ !== y.$) {
+      return false;
+    }
+    switch (x.$) {
+      case "Var": {
+        return same_var(x.i, (y as Of<"Var">).i, d);
+      }
+      case "Ref": return x.k === (y as Of<"Ref">).k;
+      case "Lam": {
+        const yl = y as Of<"Lam">;
+        if ((x.q?.$ ?? "") !== (yl.q?.$ ?? "")) return false;
+        const oa = term_open(x), ob = term_open(yl);
+        bind(oa.ps[0].i, ob.ps[0].i, d);
+        const r = go(oa.b, ob.b, d + 1);
+        unbind(oa.ps[0].i, ob.ps[0].i);
+        return r;
+      }
+      case "Let": {
+        const ya = y as Of<"Let">;
+        if (x.v.length !== ya.v.length) return false;
+        if (x.q.length !== ya.q.length) return false;
+        for (let i = 0; i < x.q.length; i++) {
+          if ((x.q[i]?.$ ?? "") !== (ya.q[i]?.$ ?? "")) return false;
+        }
+        const oa = term_open(x), ob = term_open(ya);
+        for (let i = 0; i < x.v.length; i++) if (!go(x.v[i], ya.v[i], d)) return false;
+        oa.ps.forEach((p, j) => bind(p.i, ob.ps[j].i, d + j));
+        const r = go(oa.b, ob.b, d + oa.ps.length);
+        oa.ps.forEach((p, j) => unbind(p.i, ob.ps[j].i));
+        return r;
+      }
+      case "App": return go(x.f, (y as Of<"App">).f, d) && go(x.x, (y as Of<"App">).x, d);
+      case "Ctr": {
+        const yc = y as Of<"Ctr">;
+        if (x.k !== yc.k || x.x.length !== yc.x.length) return false;
+        return x.x.every((z, i) => go(z, yc.x[i], d));
+      }
+      case "Mat": {
+        const ym = y as Of<"Mat">;
+        return x.k === ym.k && go(x.h, ym.h, d) && go(x.m, ym.m, d);
+      }
+      case "Lit": return JSON.stringify(x.v) === JSON.stringify((y as Of<"Lit">).v);
+      case "Ann": {
+        const ya = y as Of<"Ann">;
+        return go(x.x, ya.x, d) && go(x.T, ya.T, d);
+      }
+      case "Rwt": {
+        const yr = y as Of<"Rwt">;
+        return go(x.e, yr.e, d) && go(x.p, yr.p, d) && go(x.f, yr.f, d);
+      }
+      case "Eql": {
+        const ye = y as Of<"Eql">;
+        return go(x.a, ye.a, d) && go(x.b, ye.b, d) && go(x.T, ye.T, d);
+      }
+      case "ADT": {
+        const yd = y as Of<"ADT">;
+        return x.k === yd.k && x.x.length === yd.x.length
+          && x.x.every((z, i) => go(z, yd.x[i], d));
+      }
+      case "Min": { const ym = y as Of<"Min">; return go(x.a, ym.a, d) && go(x.b, ym.b, d); }
+      case "Typ": return go(x.g, (y as Of<"Typ">).g, d);
+      case "Qua": return x.q.$ === (y as Of<"Qua">).q.$;
+      case "Hol": return x.k === (y as Of<"Hol">).k;
+      case "Sub": {
+        const ys = y as Of<"Sub">;
+        const xv = x.v, yv = ys.v;
+        if (xv.$ === "PVar" || xv.$ === "PCtr") {
+          if (yv.$ !== "PVar" && yv.$ !== "PCtr") return false;
+          if (!patt_eq(xv, yv, d)) return false;
+        } else {
+          if (yv.$ === "PVar" || yv.$ === "PCtr") return false;
+          if (!go(xv, yv, d)) return false;
+        }
+        bind(x.i, ys.i, d);
+        const r = go(x.f, ys.f, d + 1);
+        unbind(x.i, ys.i);
+        return r;
+      }
+      case "All": {
+        const ya = y as Of<"All">;
+        if (JSON.stringify(x.q) !== JSON.stringify(ya.q)) return false;
+        if (!go(x.A, ya.A, d)) return false;
+        const va = Bend.Var(x.k, d), vb = Bend.Var(ya.k, d);
+        bind(d, d, d);
+        const r = go(x.B(va), ya.B(vb), d + 1);
+        unbind(d, d);
+        return r;
+      }
+      case "Qnt":
+      case "Rfl":
+      case "Efq": return true;
+      default: return false;
+    }
+  };
+  return go(a, b, 0);
+}
+
+// The captures in the term's first-use order. A probe absent from fl.uses
+// cannot be passed as a parameter; a missing capture makes the arm fall back
+// to inline emission rather than emit an unbound name.
+function capture_order(fl: File, h: HTerm, u: UMap): [Probe, Bind][] {
+  const out: [Probe, Bind][] = [];
+  const seen = new Set<number>();
+  const by_idx = new Map<number, [Probe, Bind]>();
+  for (const e of fl.uses) by_idx.set(e[0].i, e);
+  const walk = (t: HTerm): void => {
+    const s = term_force(t);
+    if (s.$ === "Var") {
+      const p = s as Probe;
+      if (term_use(u, p) > 0 && !seen.has(p.i)) {
+        const e = by_idx.get(p.i);
+        if (e !== undefined) {
+          seen.add(p.i);
+          out.push(e);
+        }
+      }
+      return;
+    }
+    for (const k of term_kids(fl, s)) walk(k);
+  };
+  walk(h);
+  return out;
+}
+
+
+function emit_arm_shared(fl: File, h: HTerm, av: Val[], dst: Dst,
+  def: boolean): boolean {
+  if (!def) return false;
+  const u = term_uses(fl, h);
+  const caps = capture_order(fl, h, u);
+  if (Bend.pmap_to_array(u).length > caps.length) return false;
+  const capKs = caps.flatMap(([, b]) => b.val.lay.ks);
+  const avKs = av.flatMap((v) => v.lay.ks);
+  const lay = dst?.lay ?? fl.seg.ret;
+  const base = [capKs.join("."), avKs.join("."), lay.ks.join("."),
+    lay.arms === null ? "" : lay.arms.map((a) => a.k).join(",")].join("|");
+  const hint = arm_hint(h) + "|" + base;
+  const reps = fl.armHints.get(hint) ?? [];
+  for (const rep of reps) {
+    if (fl.armBusy.has(rep.name)) continue;
+    if (rep.ks.length === capKs.length + avKs.length
+      && rep.caps.length === caps.length && arm_eq(rep.term, h)) {
+      const capWs = caps.flatMap(([p, b]) => {
+        const use = term_use(u, p);
+        fl.uses.set(p, { ...b, n: b.n - use + 1 });
+        return val_own(fl, bind_pop(fl, p));
+      });
+      emit_arm_call(fl, rep, capWs, av, dst);
+      return true;
+    }
+  }
+  const name = seg_ref(fl, `arm_${fl.armSeq++}`);
+  const ks = [...capKs, ...avKs];
+  const rec: ArmRep = { term: h, name, lay, ks, caps: caps.map(([p]) => p) };
+  reps.push(rec);
+  fl.armHints.set(hint, reps);
+  fl.armBusy.add(name);
+  const ts = ks.map(() => name_local(fl, "a"));
+  const outer = { seg: fl.seg, uses: fl.uses, spares: fl.spares,
+    tab: fl.tab, rest: fl.rest };
+  const seg = seg_new(name, lay, ts, ks);
+  fl.segs.push(seg);
+  Object.assign(fl, { seg, spares: [], tab: 2, uses: new Map(fl.uses) });
+  let at = 0;
+  for (const [p, b] of caps) {
+    const w = val_new(ts.slice(at, at + b.val.lay.ks.length), b.val.lay);
+    at += b.val.lay.ks.length;
+    bind_uses(fl, p, w, [h], b.A, false);
+  }
+  const aparams = av.map((v) => {
+    const w = val_new(ts.slice(at, at + v.lay.ks.length), v.lay);
+    at += v.lay.ks.length;
+    return w;
+  });
+  const d = val_new(lay.ks.map(() => name_local(fl, "v")), lay);
+  emit_body(fl, h, null, [], aparams, d);
+  fl.spins.push([name, [`${seg.lines.length < SPIN_FAR ? "INLINE" : "FAR"} Term ${name}(Env e, THR Term* o${
+    seg.ks.map((k, i) => `, ${lay_c(k)} r${i}`).join("")}) {`,
+  "  u32 wpoll = 0;",
+  ...d.ws.map((v, j) => `  ${lay_c(lay.ks[j])} ${v} = 0;`),
+  ...seg_take(seg).map((l) => "  " + l),
+  "  WL_SPIN", ...seg.lines, "  break;", "  }",
+  ...d.ws.map((v, j) => `  o[${j}] = ${v};`),
+  "  return 1;", "}"].join("\n"), seg.refs]);
+  Object.assign(fl, outer);
+  fl.armBusy.delete(name);
+  const capWs = caps.flatMap(([p, b]) => {
+    const use = term_use(u, p);
+    fl.uses.set(p, { ...b, n: b.n - use + 1 });
+    return val_own(fl, bind_pop(fl, p));
+  });
+  emit_arm_call(fl, rec, capWs, av, dst);
+  return true;
+}
+
+function emit_arm_call(fl: File,
+  ent: { name: string; lay: Lay; ks: Kind[] }, capWs: string[],
+  av: Val[], dst: Dst): void {
+  seg_ref(fl, ent.name);
+  const ws = [...capWs, ...av.flatMap((v) => val_own(fl, v))];
+  const o = name_local(fl, "o");
+  file_push(fl, `Term ${o}[${ent.lay.ks.length}];`);
+  block(fl, `if (${ent.name}(${["e", o, ...ws].join(", ")}) == 0) {`,
+    () => file_push(fl, "return 0;"));
+  emit_put(fl, dst, val_new(ent.lay.ks.map((_, j) => `${o}[${j}]`), ent.lay));
+}
 function emit_match(fl: File, x: Of<"Mat"> | Of<"Efq">,
   ty: HTerm | null, ers: HTerm[], args: Val[], dst: Dst): void {
   if (x.$ === "Efq") {
@@ -2802,11 +3074,15 @@ function emit_match(fl: File, x: Of<"Mat"> | Of<"Efq">,
     lv.push(["", end, () => [u]]);
   }
   const spares = fl.spares;
-  const arms2 = lv.map(([, h, fs]) => () => {
+  const arms2 = lv.map(([, h, fs], i) => () => {
     fl.spares = spares.slice();
     const outer = { seg: fl.seg, tab: fl.tab, uses: new Map(fl.uses) };
     bind_dead(fl, [h]);
-    emit_body(fl, h, null, ers, [...fs(), ...rest], dst);
+    const av = [...fs(), ...rest];
+    if (!emit_arm_shared(fl, h, av, dst,
+      i === lv.length - 1 && lv[i][0] === "")) {
+      emit_body(fl, h, null, ers, av, dst);
+    }
     if (dst !== null) {
       spare_flush(fl);
     }
@@ -2843,7 +3119,7 @@ function emit_chain(fl: File, cond: (i: number) => string,
 // =======
 
 function compile_def(fl: File, k: Bend.Name, tld: Def): void {
-  Object.assign(fl, { fresh: new Map(), brwl: new Map(), rest: [] });
+  Object.assign(fl, { fresh: new Map(), brwl: new Map(), rest: [], armBusy: new Set() });
   memo_gc();
   const vals = emit_open(fl, k);
   fl.segs.push(fl.seg);
@@ -3033,6 +3309,11 @@ export function compile_book(book: Bend.Book): string {
     ["Tables", [defs.join("\n"), ...[...fl.tabs].map(([r, i]) =>
       `CONSTV u64 TAB_${i}[] = { ${r} };`)]],
     ["Spins", [`CONSTV u64 STAT_IMG[] = { ${fl.img.join(", ") || 0} };`,
+      ...fl.spins.map(([, src]) => {
+        const sig = src.slice(0, src.indexOf("\n"))
+          .replace(/^(INLINE|FAR)\s+/, "").replace(/\s*\{\s*$/, "");
+        return `static ${sig};`;
+      }),
       ...fl.spins.map((s) => s[1])]],
     ["Segments", [compile_segs(fl)]],
     ["Requests", [fl.reqs]],
