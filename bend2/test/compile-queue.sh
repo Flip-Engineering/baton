@@ -144,6 +144,30 @@ fi
 [ "$(count_starts)" = 0 ] && pass 'failed source closure did not start the fake compiler' || bad 'failed source closure started the fake compiler'
 printf 'int main(void){return 0;}\n' > "$T/input.c"
 
+# A release-root compiler identity walks nested release files. Host list_dir
+# returns newline-terminated rows, so this checks the terminal empty row too.
+RELEASE="$T/compiler-release"
+mkdir -p "$RELEASE/bin" "$RELEASE/bend2/nested/deeper"
+printf '#!/bin/sh\nexit 0\n' > "$RELEASE/bin/bend"
+printf '#!/bin/sh\nexit 0\n' > "$RELEASE/bin/bun"
+chmod +x "$RELEASE/bin/bend" "$RELEASE/bin/bun"
+printf 'export default 1;\n' > "$RELEASE/bend2/main.ts"
+printf 'export const nested = 1;\n' > "$RELEASE/bend2/nested/deeper/module.ts"
+release_key=$(sh "$QUEUE" key --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" \
+  --compiler "$RELEASE/bin/bend" --linker "$FAKE" --version fake-version \
+  --input "$T/input.c" --artifact "binary=$T/release-output" --option 'test=release-walk' \
+  -- "$FAKE" -o "$T/release-output" "$T/input.c" 2>"$T/release-key.err") || release_key=''
+[ -n "$release_key" ] && pass 'nested release identity completed with terminal directory row' \
+  || { cat "$T/release-key.err" >&2; bad 'nested release identity failed'; }
+printf 'export const nested = 2;\n' > "$RELEASE/bend2/nested/deeper/module.ts"
+release_key_changed=$(sh "$QUEUE" key --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" \
+  --compiler "$RELEASE/bin/bend" --linker "$FAKE" --version fake-version \
+  --input "$T/input.c" --artifact "binary=$T/release-output" --option 'test=release-walk' \
+  -- "$FAKE" -o "$T/release-output" "$T/input.c" 2>"$T/release-key-changed.err") || release_key_changed=''
+[ -n "$release_key" ] && [ -n "$release_key_changed" ] && [ "$release_key" != "$release_key_changed" ] \
+  && pass 'nested release contents affect compiler identity' \
+  || { cat "$T/release-key-changed.err" >&2; bad 'nested release content was not bound to identity'; }
+
 # Identical concurrent cc requests.
 : > "$LOG"
 run_cc ident "$T/ident1" & p1=$!
