@@ -85,7 +85,7 @@ run_cc() { # tag output extra...
   out=$2
   shift 2
   sh "$QUEUE" run --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" --compiler "$FAKE" --linker "$FAKE" --version fake-version \
-    --input "$T/input.c" --artifact "binary=$out" --option "test=$tag" \
+    --input "$T/input.c" --artifact "binary=$out" --receipt "$out.receipt" --option "test=$tag" \
     --token "tok-$(basename "$out")" \
     -- "$FAKE" --tag "$tag" --log "$LOG" -o "$out" "$T/input.c" "$@" >"$T/$(basename "$out").out" 2>"$T/$(basename "$out").err"
 }
@@ -140,7 +140,12 @@ run_cc ident "$T/ident2" & p2=$!
 wait "$p1" || bad 'identical cc first requester failed'
 wait "$p2" || bad 'identical cc second requester failed'
 [ "$(count_starts)" = 1 ] && pass 'identical cc shared one execution' || bad "identical cc starts=$(count_starts)"
-[ "$(cat "$T/ident1")" = "$(cat "$T/ident2")" ] && pass 'identical cc artifacts match' || bad 'identical cc artifacts differ'
+[ -f "$T/ident1" ] && [ -f "$T/ident2" ] && cmp -s "$T/ident1" "$T/ident2" \
+  && pass 'identical cc artifacts match' || bad 'identical cc artifacts differ'
+grep -Fx "artifact-binary=$T/ident1" "$T/ident1.receipt" \
+  && pass 'first requester receipt records its artifact binding' || bad 'first requester receipt artifact binding differs'
+grep -Fx "artifact-binary=$T/ident2" "$T/ident2.receipt" \
+  && pass 'waiting requester receipt records its artifact binding' || bad 'waiting requester receipt artifact binding differs'
 # Successful results store bare artifact names and retain the declared bytes.
 ident_key=$(sh "$QUEUE" key --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" --compiler "$FAKE" \
   --linker "$FAKE" --version fake-version \
@@ -193,11 +198,20 @@ sh "$QUEUE" key --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" --
 [ "$missing_cc" = 2 ] && pass 'cc request without linker/version rejected' || bad "missing cc identity exit $missing_cc"
 
 # Reuse.
+# Cached results may contain forward-compatible fields that this version does
+# not inspect. Keep enough of them to exercise linear result-row filtering.
+n=1
+while [ "$n" -le 64 ]; do
+  printf 'future-field-%s=value-%s\n' "$n" "$n" >> "$STATE/keys/$ident_key/completed/result"
+  n=$((n + 1))
+done
 before=$(count_starts)
 run_cc ident "$T/reuse" || bad 'reuse request failed'
 after=$(count_starts)
 [ "$before" = "$after" ] && pass 'completed result reused' || bad "reuse starts $before -> $after"
 [ "$(cat "$T/reuse")" = "artifact-ident" ] && pass 'reused artifact bytes match' || bad 'reused artifact differs'
+grep -Fx "artifact-binary=$T/reuse" "$T/reuse.receipt" \
+  && pass 'reused receipt records the bare artifact binding' || bad 'reused receipt artifact binding differs'
 
 # Copying an artifact must work under an ordinary pre-existing output parent.
 mkdir -p "$T/ordinary-output"

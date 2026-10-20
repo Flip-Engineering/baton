@@ -873,8 +873,8 @@ def start_attempt_completed(completed: Bool, +text: String, +key: String,
   match completed:
     case True{}:
       do IO<Unit>:
-        copied : Unit <- IO.try(Unit, Result.CompileQueueResult.copy_artifacts(keydir, Result.CompileQueueResult.artifact_rows(text)))
-        receipt : Unit <- IO.try(Unit, Result.CompileQueueResult.receipt_write(field(text, "receipt"), "completed", key, "0", owner, Result.CompileQueueResult.artifact_rows(text)))
+        copied : Unit <- IO.try(Unit, Result.CompileQueueResult.copy_artifacts(keydir, artifact_pairs_text(artifact_rows(text))))
+        receipt : Unit <- IO.try(Unit, Result.CompileQueueResult.receipt_write(field(text, "receipt"), "completed", key, "0", owner, artifact_pairs_text(artifact_rows(text))))
         removed : Unit <- remove_token(keydir, owner)
         IO.pure(Unit, Unit{})
     case False{}: start_attempt_missing_result(text, key, keydir, attempt, owner, now)
@@ -967,8 +967,8 @@ def run_completed_result(completed: Bool, state: U32, +text: String, +parsed: Co
   match completed:
     case True{}:
       do IO<Unit>:
-        copied : Unit <- IO.try(Unit, Result.CompileQueueResult.copy_artifacts(keydir, Result.CompileQueueResult.artifact_rows(text)))
-        receipt : Unit <- IO.try(Unit, Result.CompileQueueResult.receipt_write(field(text, "receipt"), "completed", key, "1", owner, Result.CompileQueueResult.artifact_rows(text)))
+        copied : Unit <- IO.try(Unit, Result.CompileQueueResult.copy_artifacts(keydir, artifact_pairs_text(artifact_rows(text))))
+        receipt : Unit <- IO.try(Unit, Result.CompileQueueResult.receipt_write(field(text, "receipt"), "completed", key, "1", owner, artifact_pairs_text(artifact_rows(text))))
         removed : Unit <- remove_token(keydir, owner)
         released : Unit <- IO.try(Unit, L.CompileQueueLifecycle.lock_release(lock))
         IO.pure(Unit, Unit{})

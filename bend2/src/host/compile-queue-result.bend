@@ -70,7 +70,8 @@ def CompileQueueResult.artifact_lines(lines: List<&2,String>, +acc: String) -> S
     case Nil{}:
       acc
     case +line <> +rest:
-      Bool.pick(String, String.starts_with(line, "artifact="), CompileQueueResult.artifact_lines(rest, acc ++ line ++ "\n"), CompileQueueResult.artifact_lines(rest, acc))
+      next_acc = Bool.pick(String, String.starts_with(line, "artifact="), acc ++ line ++ "\n", acc)
+      CompileQueueResult.artifact_lines(rest, next_acc)
 
 def CompileQueueResult.artifact_rows(+result: String) -> String:
   CompileQueueResult.artifact_lines(String.lines(result), "")
@@ -248,7 +249,8 @@ def CompileQueueResult.last_part(+parts: List<&2,String>, +current: String) -> S
     case Nil{}:
       current
     case +part <> +rest:
-      Bool.pick(String, String.is_empty(part), CompileQueueResult.last_part(rest, current), CompileQueueResult.last_part(rest, part))
+      next = Bool.pick(String, String.is_empty(part), current, part)
+      CompileQueueResult.last_part(rest, next)
 
 def CompileQueueResult.basename(+path: String) -> String:
   CompileQueueResult.last_part(String.split(path, Char.from_u32(47)), "")
@@ -367,9 +369,9 @@ def CompileQueueResult.adoption_values(+lines: List<&2,String>, +prefix: String,
     case Nil{}:
       acc
     case +line <> +rest:
-      Bool.pick(String, String.starts_with(line, prefix),
-        CompileQueueResult.adoption_values(rest, prefix, CompileQueueResult.adoption_append(acc, String.drop(line, String.length(prefix)))),
-        CompileQueueResult.adoption_values(rest, prefix, acc))
+      next = Bool.pick(String, String.starts_with(line, prefix),
+        CompileQueueResult.adoption_append(acc, String.drop(line, String.length(prefix))), acc)
+      CompileQueueResult.adoption_values(rest, prefix, next)
 
 def CompileQueueResult.adoption_field(+text: String, +name: String) -> String:
   CompileQueueResult.adoption_values(String.lines(text), name ++ "=", "")
@@ -495,15 +497,16 @@ def CompileQueueResult.copy_artifacts(+keydir: String, +rows: String) -> IO(Resu
 def CompileQueueResult.receipt_row_parts(parts: List<&2,String>) -> String:
   match parts:
     case name <> destination <> tail:
-      "artifact-" ++ name ++ "=" ++ destination ++ "\\n"
+      "artifact-" ++ name ++ "=" ++ destination ++ "\n"
     case other: ""
 
 def CompileQueueResult.receipt_rows(rows: List<&2,String>) -> String:
   match rows:
     case Nil{}: ""
     case +row <> +rest:
-      Bool.pick(String, String.is_empty(row), CompileQueueResult.receipt_rows(rest),
-        CompileQueueResult.receipt_row_parts(String.split(row, Char.from_u32(9))) ++ CompileQueueResult.receipt_rows(rest))
+      current = Bool.pick(String, String.is_empty(row), "",
+        CompileQueueResult.receipt_row_parts(String.split(row, Char.from_u32(9))))
+      current ++ CompileQueueResult.receipt_rows(rest)
 
 def CompileQueueResult.receipt_write(+receipt: String, +status: String, +key: String, +reused: String, +owner: String, +rows: String) -> IO(Result<&1,&1,U32 & String,Unit>):
   text = "status=" ++ status ++ "\n"
@@ -524,7 +527,9 @@ def CompileQueueResult.run_names(records: List<&2,String>) -> List<&2,String>:
     case Nil{}: Nil{}
     case +record <> +rest:
       +name = CompileQueueResult.run_name_parts(String.split(record, Char.from_u32(9)))
-      Bool.pick(List<&2,String>, String.is_empty(name), CompileQueueResult.run_names(rest), name <> CompileQueueResult.run_names(rest))
+      prefix = Bool.pick(List<&2,String>, String.is_empty(name), Nil{}, name <> Nil{})
+      suffix = CompileQueueResult.run_names(rest)
+      List.append(&2,String,prefix,suffix)
 
 def CompileQueueResult.latest_scan_choose(+best_path: String, +best_status: String, +best_finished: String, +keydir: String, +name: String, +status: String, +finished: String) -> CompileQueueLatest:
   Bool.pick(CompileQueueLatest, String.is_empty(best_path),
