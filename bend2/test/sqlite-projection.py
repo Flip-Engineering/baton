@@ -15,6 +15,8 @@ import subprocess
 import tempfile
 import unittest
 
+import compile_queue
+
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 SQLITE_C = ROOT / 'bend2/src/host/sqlite.c'
 FIXTURE_MAIN = ROOT / 'bend2/test/sqlite-projection.c'
@@ -39,12 +41,12 @@ def build_fixture():
     combined.write_text(''.join(lines[:end + 1])
                         + ''.join(lines[busy:busy_end + 1])
                         + FIXTURE_MAIN.read_text())
-    result = subprocess.run(
-        [os.environ.get('CC', 'cc'), '-Wall', '-Wextra', '-O2',
+    compiler = os.environ.get('CC', 'cc')
+    compile_queue.compile_cc(
+        [compiler, '-Wall', '-Wextra', '-O2',
          str(combined), '-lsqlite3', '-o', str(FIXTURE)],
-        capture_output=True, text=True)
-    if result.returncode:
-        raise AssertionError(result.stdout + result.stderr)
+        inputs=[combined, FIXTURE_MAIN, SQLITE_C], output=FIXTURE, cwd=ROOT,
+        compiler=compiler)
 
 
 class SqliteProjection(unittest.TestCase):

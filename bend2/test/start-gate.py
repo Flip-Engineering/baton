@@ -6,6 +6,8 @@ import subprocess
 import tempfile
 import unittest
 
+import compile_queue
+
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 FIXTURE = ROOT / '.scratch/bend2/start-gate'
 SOURCE = ROOT / 'bend2/test/start-gate.c'
@@ -22,11 +24,10 @@ class StartGate(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         compiler = os.environ.get('CC') or shutil.which('clang-19') or shutil.which('clang')
         self.assertIsNotNone(compiler, 'clang-19 or clang is required')
-        result = subprocess.run([compiler, '-O1', '-pthread',
+        compile_queue.compile_cc([compiler, '-O1', '-pthread',
             '-DBATON2_PROCESS_SOURCE=' + repr(str(PROCESS_C)).replace("'", '"'),
             str(SOURCE), '-lsqlite3', '-lm', '-o', str(FIXTURE)],
-            cwd=ROOT, capture_output=True, text=True)
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            inputs=[SOURCE, PROCESS_C], output=FIXTURE, cwd=ROOT, compiler=compiler)
         env = dict(os.environ)
         env.pop('BATON2_CGROUP_PARENT', None)
         env.pop('BATON2_CGROUP_ROOT', None)

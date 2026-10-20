@@ -13,6 +13,8 @@ import subprocess
 import sys
 import unittest
 
+import compile_queue
+
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 PROCESS_C = ROOT / '.scratch/bend2/process-test.c'
 SOURCE = ROOT / 'bend2/test/spool-watch-overflow.c'
@@ -31,13 +33,12 @@ class SpoolWatchOverflow(unittest.TestCase):
             ], cwd=ROOT, capture_output=True, text=True)
             if result.returncode:
                 raise AssertionError(result.stdout + result.stderr)
-        result = subprocess.run([
-            os.environ.get('CC', 'clang'), '-O1', '-pthread',
+        compiler = os.environ.get('CC', 'clang')
+        compile_queue.compile_cc([
+            compiler, '-O1', '-pthread',
             '-DBATON2_PROCESS_SOURCE=' + json.dumps(str(PROCESS_C)),
             str(SOURCE), '-lsqlite3', '-lm', '-o', str(FIXTURE),
-        ], capture_output=True, text=True)
-        if result.returncode:
-            raise AssertionError(result.stdout + result.stderr)
+        ], inputs=[SOURCE, PROCESS_C], output=FIXTURE, cwd=ROOT, compiler=compiler)
 
     def test_overflow_notifies_every_ready_keeper(self):
         result = subprocess.run([str(FIXTURE)], capture_output=True, text=True, timeout=60)

@@ -12,6 +12,8 @@ import subprocess
 import tempfile
 import unittest
 
+import compile_queue
+
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 NATIVE_ENTRY = pathlib.Path(os.environ.get('BATON2_NATIVE_ENTRY', ROOT / 'bend2/src/host/native-entry.c')).resolve()
@@ -55,8 +57,11 @@ class DispatchRuntime(unittest.TestCase):
         stub = self.root / 'stub.c'
         stub.write_text(STUB)
         self.exe = self.bin / 'dispatch-test'
-        subprocess.run([compiler(), '-O1', '-pthread', str(NATIVE_ENTRY), str(stub),
-                        '-o', str(self.exe)], check=True, capture_output=True, text=True)
+        cc = compiler()
+        compile_queue.compile_cc([cc, '-O1', '-pthread', str(NATIVE_ENTRY), str(stub),
+                                  '-o', str(self.exe)],
+                                 inputs=[NATIVE_ENTRY, stub], output=self.exe,
+                                 cwd=ROOT, compiler=cc)
 
     def run_dispatch(self, extra=None):
         self.receipt.unlink(missing_ok=True)

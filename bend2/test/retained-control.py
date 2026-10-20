@@ -16,6 +16,8 @@ import threading
 import time
 import unittest
 
+import compile_queue
+
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 EXE = ROOT / '.scratch/bend2/process-test'
 
@@ -304,12 +306,12 @@ class RetainedControl(unittest.TestCase):
     def test_disconnected_recovery_stops_after_native_exit(self):
         source = ROOT / 'bend2/test/process-disconnected-recovery.c'
         probe = self.home / 'process-disconnected-recovery'
-        compiled = subprocess.run([
-            os.environ.get('CC', 'clang'), '-O1', '-pthread',
+        compiler = os.environ.get('CC', 'clang')
+        compile_queue.compile_cc([
+            compiler, '-O1', '-pthread',
             '-DBATON2_PROCESS_SOURCE=' + json.dumps(str(EXE.with_suffix('.c'))),
             str(source), '-lsqlite3', '-lm', '-o', str(probe),
-        ], capture_output=True, text=True)
-        self.assertEqual(compiled.returncode, 0, compiled.stderr)
+        ], inputs=[source, EXE.with_suffix('.c')], output=probe, cwd=ROOT, compiler=compiler)
         result = subprocess.run([str(probe)], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(json.loads(result.stdout), {
@@ -466,13 +468,13 @@ class RetainedControl(unittest.TestCase):
 
     def test_ended_orphan_first_wait_preserves_retained_status(self):
         probe = self.home / 'orphan-first-wait'
-        compiled = subprocess.run([
-            os.environ.get('CC', 'clang'), '-O1', '-pthread',
+        compiler = os.environ.get('CC', 'clang')
+        orphan_source = ROOT / 'bend2/test/orphan-first-wait.c'
+        compile_queue.compile_cc([
+            compiler, '-O1', '-pthread',
             '-DBATON2_PROCESS_SOURCE=' + json.dumps(str(EXE.with_suffix('.c'))),
-            str(ROOT / 'bend2/test/orphan-first-wait.c'),
-            '-lsqlite3', '-lm', '-o', str(probe),
-        ], capture_output=True, text=True)
-        self.assertEqual(compiled.returncode, 0, compiled.stderr)
+            str(orphan_source), '-lsqlite3', '-lm', '-o', str(probe),
+        ], inputs=[orphan_source, EXE.with_suffix('.c')], output=probe, cwd=ROOT, compiler=compiler)
         for mode, expected in [('absent', 'unknown after keeper loss'),
                                ('malformed', 'unknown after keeper loss'),
                                ('nonzero', 'exit 13'), ('zero', 'exit 0'),
@@ -524,10 +526,10 @@ int main(void) {
   return 0;
 }
 ''')
-        compiled = subprocess.run([os.environ.get('CC', 'clang'), '-O1', '-pthread', str(source),
-                                   '-lsqlite3', '-lm', '-o', str(probe)],
-                                  capture_output=True, text=True)
-        self.assertEqual(compiled.returncode, 0, compiled.stderr)
+        compiler = os.environ.get('CC', 'clang')
+        compile_queue.compile_cc([compiler, '-O1', '-pthread', str(source),
+                                  '-lsqlite3', '-lm', '-o', str(probe)],
+                                 inputs=[source], output=probe, cwd=ROOT, compiler=compiler)
         result = subprocess.run([str(probe)], capture_output=True, text=True)
         self.assertEqual(result.returncode, 0, result.stderr)
         observed = json.loads(result.stdout)
