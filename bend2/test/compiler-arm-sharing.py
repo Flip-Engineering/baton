@@ -18,6 +18,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+import compile_queue
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 UPSTREAM = ROOT / 'bend2/compiler/upstream'
@@ -125,9 +126,11 @@ class CompilerArmSharing(unittest.TestCase):
 
     def build_and_run(self, source, argv_results):
         binary = source.with_suffix('.bin')
+        linker, version = compile_queue.compiler_identity(self.cc)
         self.run_queue([
             'run', '--kind', 'cc', '--state-root', self.state, '--cwd', ROOT,
-            '--compiler', self.cc, '--input', source,
+            '--compiler', self.cc, '--linker', linker, '--version', version,
+            '--input', source,
             '--artifact', 'binary=%s' % binary, '--option', 'test=%s' % source.stem,
             '--', self.cc, '-O1', '-w', source, '-lm', '-lpthread', '-o', binary])
         for argv, expected in argv_results:
