@@ -78,6 +78,17 @@ if [ ! -w "$queue_state" ] || [ ! -x "$queue_state" ]; then
 fi
 export BATON_COMPILE_QUEUE_ROOT="$queue_state"
 export BATON2_COMPILE_QUEUE="$queue"
+cc=${CC:-clang}
+cc_linker=
+cc_version=
+cc_identity() {
+  if [ -z "$cc_version" ]; then
+    cc_linker=${LD:-$("$cc" -print-prog-name=ld 2>/dev/null || :)}
+    [ -n "$cc_linker" ] || cc_linker=$cc
+    cc_version=$("$cc" --version 2>/dev/null | tr '\n' ' ')
+    [ -n "$cc_version" ] || cc_version=unknown
+  fi
+}
 mode=plain
 if [ "$router" = 1 ]; then
   mode=router
@@ -157,8 +168,9 @@ build_native_shards() {
   if [ -n "${BATON2_CCACHE:-}" ]; then
     set -- "$@" --ccache "$BATON2_CCACHE"
   fi
+  cc_identity
   set -- sh "$queue" run --kind cc --state-root "$queue_state" --cwd "$root" --root "$root" \
-    --compiler "${CC:-clang}" \
+    --compiler "$cc" --linker "$cc_linker" --version "$cc_version" \
     --input "$output.c" \
     --input "$root/bend2/src/host/native-entry.c" \
     --aux "$root/tools/cgen-clang-parallel/build_and_measure.py" \
@@ -184,8 +196,9 @@ else
   case "$entry_path" in
     */bend2/harness/claude-credit-observe.bend) extra_libs=-lcurl ;;
   esac
+  cc_identity
   sh "$queue" run --kind cc --state-root "$queue_state" --cwd "$root" --root "$root" \
-    --compiler "${CC:-clang}" --input "$output.c" \
+    --compiler "$cc" --linker "$cc_linker" --version "$cc_version" --input "$output.c" \
     --artifact "binary=$output" -- \
     "${CC:-clang}" -O1 -pthread "$output.c" -lsqlite3 -lm $extra_libs -o "$output"
 fi

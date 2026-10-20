@@ -17,6 +17,20 @@ def require(condition, message):
         raise RuntimeError(message)
 
 
+def queue_executable(prefix):
+    prefix = Path(prefix)
+    candidates = [
+        os.environ.get('BATON2_COMPILE_QUEUE_BIN'),
+        os.environ.get('BATON2_COMPILE_QUEUE'),
+        str(prefix / 'bin' / 'baton-compile-queue'),
+        shutil.which('baton-compile-queue'),
+    ]
+    for candidate in candidates:
+        if candidate and Path(candidate).is_file() and os.access(candidate, os.X_OK):
+            return str(candidate)
+    raise RuntimeError('The shared host compilation queue executable is not installed; '
+                       'set BATON2_COMPILE_QUEUE_BIN or install bin/baton-compile-queue')
+
 def archive_digest(path):
     digest = hashlib.sha256()
     with path.open('rb') as stream:
@@ -343,6 +357,20 @@ def check(prefix, output):
         require(result.returncode == 0, 'Installation prerequisite command failed: ' + str(argv))
         return result.stdout.strip()
 
+    def compile_with_queue(args, input_file, options, cwd, compiler_name, linker, version_text):
+        state = os.environ.get('BATON_COMPILE_QUEUE_ROOT')
+        require(state is not None and Path(state).is_absolute(),
+                'Set BATON_COMPILE_QUEUE_ROOT to the shared absolute compile-queue state directory')
+        output_path = args[args.index('-o') + 1]
+        command = [queue_executable(prefix), 'run', '--kind', 'cc',
+                   '--state-root', state, '--cwd', cwd, '--compiler', compiler_name,
+                   '--linker', linker, '--version', ' '.join(version_text.split()),
+                   '--input', input_file, '--artifact', 'binary=' + str(output_path)]
+        for option in options:
+            command += ['--option', option]
+        command += ['--', *args]
+        run(command)
+
     run([prefix / 'bin/baton', '--help'])
     run([prefix / 'bin/baton-full', '--help'])
     runtime_version = run([prefix / dependency['path'] / 'bun', '--version'])
@@ -358,6 +386,8 @@ def check(prefix, output):
         require(compiler is not None, 'Install Clang 14 or later and the SQLite development package')
         sdk, flags = None, []
     version = run([compiler, '--version'])
+    linker = run([compiler, '-print-prog-name=ld'])
+    require(bool(linker), 'The selected Clang did not report its linker')
     match = re.search(r'clang version (\d+)', version)
     require(match is not None and int(match[1]) >= 14,
             'REPL native evaluation requires Clang 14 or later')
@@ -369,7 +399,8 @@ def check(prefix, output):
                       'if (sqlite3_exec(db, "SELECT 1", 0, 0, 0) != SQLITE_OK) return 2; '
                       'if (sqlite3_close(db) != SQLITE_OK) return 3; '
                       'puts(sqlite3_libversion()); return 0; }\n')
-    run([compiler, '-std=c11', *flags, source, '-lsqlite3', '-o', program])
+    compile_with_queue([compiler, '-std=c11', *flags, str(source), '-lsqlite3', '-o', str(program)],
+                       str(source), ['-std=c11', *flags], str(output), compiler, linker, version)
     sqlite_version = run([program])
     return {'status': 'ready', 'prefix': str(prefix), 'manifest_sha256': archive_digest(manifest_path),
             'install_receipt_sha256': archive_digest(prefix / 'install-receipt.json'),

@@ -14,6 +14,7 @@ import sqlite3
 import subprocess
 import tempfile
 import unittest
+import compile_queue
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 SQLITE_C = ROOT / 'bend2/src/host/sqlite.c'
@@ -39,10 +40,10 @@ def build_fixture():
     combined.write_text(''.join(lines[:end + 1])
                         + ''.join(lines[busy:busy_end + 1])
                         + FIXTURE_MAIN.read_text())
-    result = subprocess.run(
+    result = compile_queue.compile_cc(
         [os.environ.get('CC', 'cc'), '-Wall', '-Wextra', '-O2',
          str(combined), '-lsqlite3', '-o', str(FIXTURE)],
-        capture_output=True, text=True)
+        [combined], FIXTURE, SCRATCH)
     if result.returncode:
         raise AssertionError(result.stdout + result.stderr)
 
