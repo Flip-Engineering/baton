@@ -317,7 +317,7 @@ class OmpRootAdapter(unittest.TestCase):
         prompt = native_calls[0]['prompt']
         self.assertIn('You are session lead in a Baton Orchestra.', prompt)
         self.assertIn('Read complete owed input with inbox.', prompt)
-        self.assertIn('Use acknowledge after handling', prompt)
+        self.assertNotIn('Use acknowledge', prompt)
         self.assertEqual(native_calls[1]['args'][native_calls[1]['args'].index('--resume') + 1], 'native-lead')
         reports = [json.loads(line) for line in root_calls.read_text().splitlines()]
         self.assertEqual([r['body'] for r in reports], ['Reviewed and landed first', 'Reviewed and landed second'])
@@ -368,7 +368,7 @@ class OmpRootAdapter(unittest.TestCase):
                            if line.startswith(prefix))
         self.assertEqual(json.loads(coordinator), [str(EXE), str(self.db)])
         self.assertIn('Read complete owed input with inbox.', prompt)
-        self.assertIn('Use acknowledge after handling', prompt)
+        self.assertNotIn('Use acknowledge', prompt)
         selected = json.loads(self.coord('player', associate))
         self.assertEqual(selected['role'], 'associate-conductor')
         self.assertEqual(json.loads(selected['endpoint'])[2:4], ['receive', associate])
