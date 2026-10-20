@@ -142,7 +142,8 @@ wait "$p2" || bad 'identical cc second requester failed'
 [ "$(count_starts)" = 1 ] && pass 'identical cc shared one execution' || bad "identical cc starts=$(count_starts)"
 [ "$(cat "$T/ident1")" = "$(cat "$T/ident2")" ] && pass 'identical cc artifacts match' || bad 'identical cc artifacts differ'
 # Successful results store bare artifact names and retain the declared bytes.
-ident_key=$(sh "$QUEUE" key --kind cc --state-root "$STATE" --cwd "$T" --compiler "$FAKE" \
+ident_key=$(sh "$QUEUE" key --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" --compiler "$FAKE" \
+  --linker "$FAKE" --version fake-version \
   --input "$T/input.c" --artifact "binary=$T/ident1" --option 'test=ident' \
   --token tok-ident1 -- "$FAKE" --tag ident --log "$LOG" -o "$T/ident1" "$T/input.c")
 printf 'artifact=binary\tfile\t' > "$T/artifact-row-prefix"
@@ -555,5 +556,54 @@ cmp -s "$expected" "$T/runtime-argv.tail" \
   || bad 'runtime reserved options or literal -- changed'
 [ -s "$T/runtime-argv-output" ] \
   && pass 'argv recorder published its declared binary' || bad 'argv recorder output missing'
+
+# Adoption spawns the guard through the runtime delimiter. A run request is
+# held at its key lock so the heavy lane is free for adopt. The external fake
+# compiler stays alive briefly; the guard must dispatch with its argv intact
+# and publish the adopted result and artifact.
+adopt_artifact="$T/adopt-artifact"
+adopt_hold_output="$T/adopt-hold-output"
+adopt_hold_key=$(sh "$QUEUE" key --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" \
+  --compiler "$FAKE" --linker "$FAKE" --version fake-version \
+  --input "$T/input.c" --artifact "binary=$adopt_hold_output" --option 'test=adopt-hold' \
+  -- "$FAKE" --tag adopt-hold --log "$LOG" -o "$adopt_hold_output" "$T/input.c")
+mkdir -p "$STATE/keys/$adopt_hold_key"
+(
+  flock -x 9 || exit 1
+  sleep 15
+) 9>"$STATE/keys/$adopt_hold_key/lock" &
+adopt_lock_pid=$!
+sleep 1
+run_cc adopt-hold "$adopt_hold_output" --sleep 3 >"$T/adopt-hold.out" 2>"$T/adopt-hold.err" &
+adopt_run_pid=$!
+"$FAKE" --tag adopt --log "$LOG" -o "$adopt_artifact" --sleep 5 &
+adopt_pid=$!
+adopt_out=$(sh "$QUEUE" adopt --pid "$adopt_pid" --state-root "$STATE" \
+  --artifact "binary=$adopt_artifact" 2>"$T/adopt.err") \
+  && pass 'adoption admitted the external compiler' || bad 'adoption admission failed'
+printf '%s\n' "$adopt_out" | grep -q '^adopted=1$' \
+  && pass 'adoption dispatched the guard' || bad 'adoption did not dispatch the guard'
+adopt_key=$(printf '%s\n' "$adopt_out" | sed -n 's/^key=//p')
+kill "$adopt_lock_pid" 2>/dev/null || true
+wait "$adopt_lock_pid" 2>/dev/null || true
+wait "$adopt_pid" 2>/dev/null || true
+adopt_wait=0
+while [ ! -f "$STATE/keys/$adopt_key/completed/result" ] && [ "$adopt_wait" -lt 40 ]; do
+  sleep 0.5
+  adopt_wait=$((adopt_wait + 1))
+done
+if [ -f "$STATE/keys/$adopt_key/completed/result" ]; then
+  grep -q '^external=1$' "$STATE/keys/$adopt_key/completed/result" \
+    && pass 'guard published the external result' || bad 'guard result is not external'
+  grep -q '^verified=1$' "$STATE/keys/$adopt_key/completed/result" \
+    && pass 'guard verified the adopted artifact' || bad 'guard adoption is unverified'
+  grep -qF -- '--tag' "$STATE/keys/$adopt_key/completed/result" \
+    && pass 'guard recorded the preserved command argv' || bad 'guard command argv was not preserved'
+  cmp -s "$STATE/keys/$adopt_key/completed/artifacts/binary" "$adopt_artifact" \
+    && pass 'guard published the adopted artifact bytes' || bad 'guard artifact differs'
+else
+  bad 'guard did not publish the adopted result'
+fi
+wait "$adopt_run_pid" 2>/dev/null || true
 
 exit "$fail"
