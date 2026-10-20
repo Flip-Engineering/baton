@@ -44,16 +44,9 @@ def find_cc():
     return None
 
 
-QUEUE = ROOT / 'bend2/scripts/compile-queue.sh'
-
-
 def find_queue():
     # All native compiler work uses the shared host queue.
-    for value in (os.environ.get('BATON2_COMPILE_QUEUE_BIN'),
-                  os.environ.get('BATON2_COMPILE_QUEUE')):
-        if value and pathlib.Path(value).exists():
-            return value
-    return str(QUEUE)
+    return compile_queue.queue_entry()
 
 
 def shared_queue_root():
@@ -74,6 +67,8 @@ class CompilerArmSharing(unittest.TestCase):
             raise unittest.SkipTest('a C compiler is unavailable')
         cls.temp = tempfile.TemporaryDirectory(prefix='compiler-arm-sharing-')
         cls.queue = find_queue()
+        if cls.queue is None:
+            raise unittest.SkipTest('the shared compile queue executable is unavailable')
         cls.state = shared_queue_root()
         cls.compiler = pathlib.Path(cls.temp.name) / 'compiler'
         bend2 = cls.compiler / 'bend2'

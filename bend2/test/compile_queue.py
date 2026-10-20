@@ -12,9 +12,6 @@ import unittest
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 LAUNCHER = ROOT / 'bend2/scripts/compile-queue.sh'
-SCRATCH = (ROOT / 'bend2/scripts/baton-compile-queue',
-           ROOT / '.scratch/bend2/compile-queue',
-           ROOT / '.scratch/bend2/baton-compile-queue')
 IDENTITIES = {}
 
 
@@ -27,9 +24,10 @@ def queue_entry():
                 return str(path)
             raise AssertionError('the configured compile queue entry is unavailable: ' + value)
     prefix = os.environ.get('BATON2_PREFIX')
-    candidates = ([pathlib.Path(prefix) / 'bin/baton-compile-queue'] if prefix else []) + list(SCRATCH)
-    if LAUNCHER.is_file() and any(path.is_file() and os.access(path, os.X_OK) for path in candidates):
-        return str(LAUNCHER)
+    if prefix:
+        candidate = pathlib.Path(prefix) / 'bin' / 'baton-compile-queue'
+        if candidate.is_file() and os.access(candidate, os.X_OK):
+            return str(LAUNCHER)
     return None
 
 

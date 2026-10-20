@@ -26,9 +26,9 @@ def queue_executable(prefix):
             if path.is_file() and os.access(path, os.X_OK):
                 return str(path)
             raise RuntimeError('The configured compile queue entry is unavailable: ' + value)
-    for candidate in (str(prefix / 'bin' / 'baton-compile-queue'), shutil.which('baton-compile-queue')):
-        if candidate and Path(candidate).is_file() and os.access(candidate, os.X_OK):
-            return str(candidate)
+    candidate = prefix / 'bin' / 'baton-compile-queue'
+    if candidate.is_file() and os.access(candidate, os.X_OK):
+        return str(candidate)
     raise RuntimeError('The shared host compilation queue executable is not installed; '
                        'set BATON2_COMPILE_QUEUE_BIN or install bin/baton-compile-queue')
 

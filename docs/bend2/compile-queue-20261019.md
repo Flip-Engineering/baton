@@ -164,10 +164,13 @@ BEND=/path/to/bend CC=clang \
   sh bend2/scripts/bootstrap-compile-queue.sh .scratch/bend2/compile-queue
 ```
 
-`bend2/scripts/compile-queue.sh` resolves the queue executable from
-`BATON2_COMPILE_QUEUE_BIN`, the installation prefix, or `.scratch/bend2`, and
-executes the public operation with the original arguments. It exits 2 when no
-executable is available. `bend2/scripts/build-native.sh` and the Bend internal
+`bend2/scripts/compile-queue.sh` resolves the queue executable only from
+`BATON2_COMPILE_QUEUE_BIN`, `BATON2_COMPILE_QUEUE`, or
+`$BATON2_PREFIX/bin/baton-compile-queue`, and executes the public operation
+with the original arguments. It exits 2 when no executable is available.
+After the one-time bootstrap, set `BATON2_COMPILE_QUEUE_BIN` to its output or
+install that output under the prefix; the launcher does not resolve
+`.scratch` paths. `bend2/scripts/build-native.sh` and the Bend internal
 `cli_build` require `BATON_COMPILE_QUEUE_ROOT` to be one absolute shared
 directory; `cli_build` also requires the queue entry. A `run` or `adopt`
 request rejects a `--state-root` that differs from
