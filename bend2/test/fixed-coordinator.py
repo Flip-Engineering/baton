@@ -854,7 +854,9 @@ finally:
             else None), 'the resumed Muse report never reached its conductor')
         self.assertEqual(self.inbox('m1'), [])
         self.assertEqual(self.query("SELECT receipt FROM messages WHERE id IN ('tm1','gm1') ORDER BY id"),
-                         [('native-reviewed',), ('native-turn:' + first_attempt,)])
+                         [(None,), (None,)])
+        self.assertEqual(self.query("SELECT DISTINCT message FROM message_reads WHERE message IN ('tm1','gm1') ORDER BY message"),
+                         [('gm1',), ('tm1',)])
         self.assertEqual(len(self.connections('m1')), 2, 'Muse input was executed more than once')
         self.shutdown()
 

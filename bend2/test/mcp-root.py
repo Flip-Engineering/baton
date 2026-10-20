@@ -202,9 +202,8 @@ class McpRoot(unittest.TestCase):
         self.activate(proc)
         return proc
 
-    def test_connected_claude_acknowledges_only_its_complete_read_set(self):
+    def test_connected_claude_records_only_its_complete_read_set(self):
         proc = self.connected_claude()
-        self.assertEqual(self.tool(proc, 'baton2_ack'), [])
         self.assertEqual(self.native_reads(), [])
         self.tool(proc, 'baton2_inbox', {'index': True})
         self.tool(proc, 'baton2_delivery', {'id': 'connected-foreign'})
@@ -238,26 +237,27 @@ class McpRoot(unittest.TestCase):
                    BATON_MCP_INPUT=json.dumps(forged))
         for name in ('BATON_ATTEMPT_DIRECTORY', 'CODEX_THREAD_ID'):
             env.pop(name, None)
-        sibling = subprocess.run([str(EXE), str(self.db), 'as', 'root', 'acknowledge'],
+        sibling = subprocess.run([str(EXE), str(self.db), 'as', 'root', 'read', 'connected-owned'],
                                  env=env, capture_output=True, text=True)
         self.assertEqual(sibling.returncode, 2, sibling)
         self.assertIn('socket belongs to a different MCP process', sibling.stderr)
-        self.assertEqual(sibling.stdout, '')
         self.assertEqual(self.native_reads(), before)
         self.assertIsNone(json.loads(self.coord('delivery', 'connected-owned'))['receipt'])
         self.coord('message', 'connected-unread', 'operator', 'root', 'guidance',
                    'Arrived after the complete read.')
-        result = self.tool(proc, 'baton2_ack')
-        self.assertEqual([row['id'] for row in result], ['connected-owned'])
-        receipt = 'native-turn:' + before[0]['attempt']
-        self.assertEqual(result[0]['acknowledgement']['receipt'], receipt)
-        self.assertEqual(self.native_reads()[0]['handled'], receipt)
-        self.tool(proc, 'baton2_ack')
-        self.assertEqual(json.loads(self.coord('delivery', 'connected-owned'))['receipt'], receipt)
-        for ident in ('connected-foreign', 'connected-unread'):
-            self.assertIsNone(json.loads(self.coord('delivery', ident))['receipt'])
+        # The earlier inbox read already recorded the complete read; reading the
+        # late input records only it.
+        late = self.tool(proc, 'baton2_delivery', {'id': 'connected-unread'})
+        self.assertEqual(late['id'], 'connected-unread')
+        self.assertEqual({row['message'] for row in self.native_reads()},
+                         {'connected-owned', 'connected-unread'})
+        self.assertTrue(all(row['handled'] is None for row in self.native_reads()))
+        self.assertIsNone(json.loads(self.coord('delivery', 'connected-owned'))['receipt'])
+        self.assertEqual(json.loads(self.coord('delivery', 'connected-owned'))['nativeInputStatus']['read'],
+                         'recorded')
+        self.assertIsNone(json.loads(self.coord('delivery', 'connected-foreign'))['receipt'])
 
-    def test_restarted_claude_connection_rereads_before_implicit_acknowledgement(self):
+    def test_restarted_claude_connection_rereads_before_the_read_state_applies(self):
         first = self.connected_claude()
         self.tool(first, 'baton2_inbox')
         original = self.native_reads()[0]
@@ -268,19 +268,21 @@ class McpRoot(unittest.TestCase):
         self.initialize(second)
         self.activate(second)
         self.assertNotEqual(json.loads(self.coord('session', 'root'))['endpoint'], original_endpoint)
-        self.assertEqual(self.tool(second, 'baton2_ack'), [])
         self.assertIsNone(json.loads(self.coord('delivery', 'connected-owned'))['receipt'])
         pending = self.tool(second, 'baton2_pending', {'pretty': True})
-        self.assertEqual({row['id'] for row in pending}, {'connected-owned', 'connected-foreign'})
+        self.assertEqual({row['id'] for row in pending}, {'connected-foreign'})
+        # Activation re-reads the owed input under the new attempt; the earlier
+        # attempt's read row is preserved unchanged.
         reads = self.native_reads()
         self.assertEqual({row['message'] for row in reads}, {'connected-owned'})
         self.assertEqual(len(reads), 2, reads)
+        reread = self.tool(second, 'baton2_delivery', {'id': 'connected-owned'})
+        self.assertEqual(reread['id'], 'connected-owned')
+        reads = self.native_reads()
+        self.assertEqual(len(reads), 2, reads)
         current = next(row for row in reads if row['attempt'] != original['attempt'])
         self.assertNotEqual(current['identity'], original['identity'])
-        handled = self.tool(second, 'baton2_ack')
-        self.assertEqual([row['id'] for row in handled], ['connected-owned'])
-        receipt = 'native-turn:' + current['attempt']
-        self.assertEqual(handled[0]['acknowledgement']['receipt'], receipt)
+        self.assertIsNone(current['handled'])
         self.assertEqual(next(row for row in self.native_reads()
                               if row['attempt'] == original['attempt']), original)
         self.assertIsNone(json.loads(self.coord('delivery', 'connected-foreign'))['receipt'])

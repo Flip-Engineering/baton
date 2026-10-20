@@ -408,7 +408,6 @@ reply({'pid':os.getpid(),'ppid':os.getppid(),'session':session,'native':native,'
        'cwd':os.getcwd(),'codexHome':os.environ.get('CODEX_HOME',''),'apiKeyVariablesPresent':[key for key in ('OPENAI_API_KEY','CODEX_API_KEY') if key in os.environ],
        'claudeAuthVariablesPresent':[key for key in ('ANTHROPIC_API_KEY','ANTHROPIC_AUTH_TOKEN','CLAUDE_CODE_OAUTH_TOKEN') if key in os.environ],
        'sessionGuardDescriptors':guard_descriptors})
-steered_inputs=[]
 while True:
     line=stream.readline()
     if not line: break
@@ -461,7 +460,6 @@ while True:
             assert delivery['receipt'] is None,delivery
         if action.get('finish_fragment'): print(action['finish_fragment'],flush=True)
         print(json.dumps({'type':'response','command':'steer','success':True,'id':frame['id']}),flush=True)
-        steered_inputs.append(frame['id'])
         reply({'steer_received':frame})
         continue
     if action.get('native_request'):
@@ -501,13 +499,6 @@ while True:
         read=coordinator('read',ident)
         with (home/'native-reads.jsonl').open('a') as reads:
             reads.write(json.dumps({'id':ident,'read':read})+ '\n')
-    if action.get('ack',True):
-        handled_inputs=re.findall(r'^Message \([^\n]*\) from [^\n]* \[id: (.*?)\]:$',prompt,re.M)+steered_inputs
-        if action.get('ack_inbox'):
-            handled_inputs += [message['id'] for message in coordinator('inbox',session)]
-        for ident in dict.fromkeys(handled_inputs):
-            subprocess.run([config['exe'],config['db'],'ack',ident,session,'native-reviewed'],check=True,stdout=subprocess.DEVNULL)
-        coordinator('acknowledge','--receipt','native-reviewed')
     failure=action.get('fail',False)
     body=action.get('body','native review complete')
     if not failure and 'fail_status' not in action and action.get('complete_task',True):

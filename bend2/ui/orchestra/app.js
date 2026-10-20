@@ -145,17 +145,17 @@ function deriveStatus(p) {
     return "completed";
   }
   // Owed means the pending work set plus recorded reports awaiting
-  // acknowledgement; the unacknowledged count carries what the pending
+  // a read; the unread count carries what the pending
   // set omits. Status and ordering read this total; the row marks show
   // the two counts as two separate facts.
-  if (Math.max(p.pendingCount || 0, p.unacknowledgedCount || 0) > 0) return "pending";
+  if (Math.max(p.pendingCount || 0, p.unreadCount || 0) > 0) return "pending";
   return "unknown";
 }
 
-// A seat owes work when its recorded queue holds unacknowledged messages: the actor's
+// A seat owes work when its recorded queue holds unread messages: the actor's
 // own inbox answers them.
 function owesWork(p) {
-  return Math.max(p.pendingCount || 0, p.unacknowledgedCount || 0) > 0;
+  return Math.max(p.pendingCount || 0, p.unreadCount || 0) > 0;
 }
 
 // Identify an explicit stop or failure on the current attempt.
@@ -1138,7 +1138,7 @@ function renderProject() {
       }
       entries.push(["Workspace", session.workspace], ["Branch", session.branch], ["Native conversation", session.native],
         ["Execution phase", session.execution?.phase], ["Execution status", session.execution?.status],
-        ["Pending input", session.pendingCount], ["Unacknowledged input", session.unacknowledgedCount],
+        ["Pending input", session.pendingCount], ["Unread input", session.unreadCount],
         ["Latest report ID", session.latestReportId]);
       if (session.stop) entries.push(["Stop status", session.stop.status], ["Stop reason", session.stop.reason],
         ["Stop outcome", session.stop.outcome], ["Stopped attempt", session.stop.attempt]);
@@ -1787,7 +1787,7 @@ function connectEvents() {
     const p = state.players.get(m.session);
     if (p) {
       if (typeof m.pendingCount === "number") p.pendingCount = m.pendingCount;
-      if (typeof m.unacknowledgedCount === "number") p.unacknowledgedCount = m.unacknowledgedCount;
+      if (typeof m.unreadCount === "number") p.unreadCount = m.unreadCount;
       if (typeof m.lastTurnId === "string") p.lastTurnId = m.lastTurnId;
       if (typeof m.latestReportId === "string") p.latestReportId = m.latestReportId;
       renderTree();
@@ -2062,16 +2062,16 @@ function documentPlayers() {
       status,
       taskCompletion: p.taskCompletion || null,
       pendingCount: p.pendingCount || 0,
-      // Reports this seat was sent and never acknowledged. The snapshot records
+      // Reports this seat was sent and never read. The snapshot records
       // the count, and it is a different kind of waiting from a queued input.
-      unacknowledgedCount: p.unacknowledgedCount || 0,
+      unreadCount: p.unreadCount || 0,
       // The stored sample carries the kinds, so the report mark reads its own
-      // count. This is not unacknowledgedCount minus pendingCount: a stopped
+      // count. This is not unreadCount minus pendingCount: a stopped
       // actor's queued inputs leave pendingCount while its reports stay
-      // unacknowledged, so the difference reads as reports that are not there.
+      // read, so the difference reads as reports that are not there.
       reportCount: pendingItems(p).filter((m) => m && m.kind === "report").length,
       // Everything the seat owes, whatever the kind, for ordering and the rail.
-      owedTotal: Math.max(p.pendingCount || 0, p.unacknowledgedCount || 0),
+      owedTotal: Math.max(p.pendingCount || 0, p.unreadCount || 0),
       // Two reads with two names: the work the actor owes its own inbox, and
       // whether the current attempt is stopped or failed.
       owesWork: owesWork(p),
@@ -2200,16 +2200,16 @@ function selectedSeat() {
       : null,
     resume: state.resume && state.resume.actor === p.id ? state.resume : null,
     pendingCount: p.pendingCount || 0,
-    unacknowledgedCount: p.unacknowledgedCount || 0,
+    unreadCount: p.unreadCount || 0,
     // The report count the record states for this seat, read from the sample.
     reportCount: pendingItems(p).filter((m) => m && m.kind === "report").length,
-    owedTotal: Math.max(p.pendingCount || 0, p.unacknowledgedCount || 0),
+    owedTotal: Math.max(p.pendingCount || 0, p.unreadCount || 0),
     action: action.label || "",
     taskTitle: (state.tasks[p.id] && state.tasks[p.id].title) || "",
     // The recorded work read for this seat, when the on-demand read has landed
     // for it: the task body, the current input, the open request and the report.
     work: state.workActorId === p.id ? state.work : null,
-    // The recorded ids of the messages this seat has not acknowledged. A count
+    // The recorded ids of the messages this seat has not read. A count
     // alone says nothing about what they ask, so the ids travel with the seat and
     // the reader can open the complete stored body of any of them.
     pending: pendingItems(p).map((m) => ({
@@ -2267,7 +2267,7 @@ function drawnNow(data) {
   const rows = [];
   for (const p of data.players) {
     rows.push([
-      p.id, p.status, p.pendingCount, p.unacknowledgedCount,
+      p.id, p.status, p.pendingCount, p.unreadCount,
       p.owesWork ? 1 : 0, p.notProgressing ? 1 : 0, p.action, p.actionAt,
       p.taskCompletion && p.taskCompletion.open === true ? 1 : 0,
       (p.ensembles || []).join(","),

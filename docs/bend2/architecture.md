@@ -74,13 +74,12 @@ Recipient delivery starts after the transaction commits. A delivery failure leav
 the message available in the database and returns an error to the writer.
 
 A matching retry of a message ID, sender, recipient, kind and body returns its
-retained result and receipt.
+retained result and read state.
 Conflicting reuse of an ID fails. A repeated completed turn ID returns its
 existing report. Retrying failed work uses a new turn ID and may resume the
-same native session. `acknowledge` derives recipient-owned handling receipts
-from the current native turn's complete reads. Each receipt preserves its first
-stored value. Branch review and landing have their own report and Git evidence.
-The explicit `ack ID RECIPIENT RECEIPT` form remains available for integrations.
+same native session. Baton records a complete recipient-owned read when the
+recipient reads the input; the record persists when the turn later fails or is
+interrupted. Branch review and landing have their own report and Git evidence.
 
 The native session ID refers to the harness's retained conversation. The logical
 Player ID routes messages and associates a workspace with that conversation.
@@ -168,8 +167,9 @@ pending input remains deliverable after role or membership changes.
 During an OMP turn
 the supervisor sends pending guidance as native `steer` frames on response, message
 completion and tool events. Forwarding advances the attempt's guidance cursor.
-The observed stream retains the native steer response. Complete recipient-owned
-reads supply the inputs handled by successful turn settlement or `acknowledge`.
+The observed stream retains the native steer response. A forwarded steer frame
+records the read at forwarding; a complete recipient-owned `inbox` or `read`
+records the same event directly.
 Guidance during a silent tool operation waits for the next relevant
 native event. Other Player harnesses currently receive further instructions
 through their next explicitly started native turn; their inbox remains readable.
@@ -192,18 +192,18 @@ The endpoint invokes `receive SESSION HARNESS_COMMAND MODEL EFFORT CWD
 OUTPUT_LOG MESSAGE_ID`. Empty model, effort and working-directory arguments
 select the recorded session values. The executable and log path are required.
 The receiver reads pending messages under session ownership and supervises the
-native turn through the Player harness code. The recipient reviews the input
-and acknowledges it with coordinator commands.
+native turn through the Player harness code. Baton records the recipient's
+complete reads internally.
 
 The receive command prints one JSON object with the `receive` classification
 (`accepted`, `none` or `refused`), the session, the attempt admitted by this
-invocation, its recorded state, the selected receipt, the pending count and the
-error text. A refused admission prints the same object and exits nonzero. A
+invocation, its recorded state, the read state of the selected input, the
+pending count and the error text. A refused admission prints the same object and exits nonzero. A
 receiver that finds an active turn reports `none`. The active supervisor
 releases ownership after native exit, then checks for newly pending input and
 invokes the receiver again. Reading after release covers messages committed
 while the previous turn was ending. Pending messages remain in the existing
-SQLite inbox. A failed turn retains unacknowledged input for later delivery.
+SQLite inbox. A failed turn retains unread input for later delivery.
 
 Native initialization stores its seed, instruction and complete unprefixed
 guidance in `native_initial_inputs`. The retained attempt seals the rendered

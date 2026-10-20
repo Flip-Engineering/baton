@@ -132,11 +132,11 @@ def message_projection_value(+saved: String, shape: U32, known: Bool, status: St
     case 1: "SELECT coalesce(json_group_array(json(item)),'[]') FROM (SELECT json_patch(j.value,json_object('nativeInputStatus'," ++ status ++ ")) AS item FROM json_each(" ++ C.q(saved) ++ ") j ORDER BY CAST(j.key AS INTEGER));"
     case 2: "SELECT json_patch(j.value,json_object('nativeInputStatus'," ++ status ++ ")) FROM (SELECT " ++ C.q(Tx.trim_nl(saved)) ++ " AS value) j;"
     case 3:
-      Bool.pick(String,known,MessageStatus.decorate_detail_sql(saved),"SELECT json_set(" ++ C.q(Tx.trim_nl(saved)) ++ ",'$.message.nativeInputStatus',json_object('delivered','unrecorded','read','unrecorded','handled','unrecorded','attempts',json('[]')),'$.attemptRelation',json_object('status','unrecorded','attempts',json('[]')));")
+      Bool.pick(String,known,MessageStatus.decorate_detail_sql(saved),"SELECT json_set(" ++ C.q(Tx.trim_nl(saved)) ++ ",'$.message.nativeInputStatus',json_object('delivered','unrecorded','read','unrecorded','attempts',json('[]')),'$.attemptRelation',json_object('status','unrecorded','attempts',json('[]')));")
     case other: ""
 
 def message_projection(saved: String, shape: U32, +known: Bool) -> String:
-  message_projection_value(saved,shape,known,Bool.pick(String,known,MessageStatus.projection("json_extract(j.value,'$.id')"),"json_object('delivered','unrecorded','read','unrecorded','handled','unrecorded','attempts',json('[]'))"))
+  message_projection_value(saved,shape,known,Bool.pick(String,known,MessageStatus.projection("json_extract(j.value,'$.id')"),"json_object('delivered','unrecorded','read','unrecorded','attempts',json('[]'))"))
 
 def message_read_result(+db: String, +shape: U32, result: Result<&1,&1,U32 & String,String>) -> IO(Result<&1,&1,U32 & String,String>):
   match result:
@@ -148,7 +148,8 @@ def message_read_result(+db: String, +shape: U32, result: Result<&1,&1,U32 & Str
           DB.Sql.read(db,message_projection(saved,shape,String.eq(exists,"1\n")))))
 
 def read(+db: String, +command: C.Command) -> IO(Result<&1, &1, U32 & String, String>):
-  do IO<Result<&1,&1,U32 & String,String>>:
+  do IO<Result<&1, &1, U32 & String, String>>:
+    ensured : Unit <- ensure_before_begin(db)
     result : Result<&1,&1,U32 & String,String> <- DB.Sql.read(db,C.sql(command))
     message_read_result(db,message_shape(command),result)
 
@@ -167,7 +168,7 @@ def apply(db: String, command: C.Command) -> IO(Result<&1, &1, U32 & String, Str
 # obligation hands over; the generation fences takeovers so a late finisher
 # can never mistake an older write for the live row. Released to unclaimed
 # only by a lock holder when no input is owed and no retained attempt is
-# recorded live. Deleted when acknowledgement clears every owed input, or
+# recorded live. Deleted when a recorded read clears every owed input, or
 # when an admitted stop resolves the obligation.
 def claim_schema_sql() -> String:
   "CREATE TABLE IF NOT EXISTS wake_claims (session TEXT PRIMARY KEY NOT NULL REFERENCES sessions(id), state TEXT NOT NULL DEFAULT 'claimed', owner TEXT NOT NULL DEFAULT '', generation INTEGER NOT NULL DEFAULT 0);"
@@ -178,7 +179,7 @@ def claim_sql(+session: String, +owner: String) -> String:
 # A release names the exact row it settles: the owner and generation written
 # at admission, read back under the same held lock. A delete that names a
 # stale ticket removes nothing, so a late settler can never clear a newer
-# owner's row that an acknowledgement, a stop, or a takeover left behind.
+# owner's row that a read, a stop, or a takeover left behind.
 def release_ticket_sql(+session: String, +owner: String, +generation: String) -> String:
   "DELETE FROM wake_claims WHERE session=" ++ C.q(session) ++ " AND owner=" ++ C.q(owner) ++ " AND generation=CAST(" ++ C.q(generation) ++ " AS INTEGER);"
 

@@ -1,5 +1,6 @@
 import Base
 import ../coordinator/commands.bend as C
+import ../coordinator/agent-input.bend as AgentInput
 import ../host/sqlite.bend as DB
 import ../host/process.bend as P
 
@@ -10,26 +11,30 @@ def relevant(+kind: String, omp: Bool) -> Bool:
     Bool.or(String.eq(kind,"message_end\n"),Bool.or(String.eq(kind,"tool_execution_start\n"),
     Bool.or(String.eq(kind,"tool_execution_end\n"),String.eq(kind,"agent_end\n"))))))
 
-def send(+db: String, handle: U32, cursor: String, +next: String, same: Bool) -> IO(String):
+# A frame written to the native input stream is read by the recipient at
+# forwarding time. The read row is recorded against the running attempt,
+# independent of how the turn later ends.
+def send(+db: String, +player: String, handle: U32, cursor: String, +next: String, same: Bool) -> IO(String):
   match same:
     case True{}: IO.pure(String,cursor)
     case False{}: do IO<String>:
       frame : String <- IO.try(String,DB.Sql.query(db,"SELECT json_object('type','steer','id',id,'message',body) FROM messages WHERE seq=CAST(" ++ C.q(next) ++ " AS INTEGER);"))
       sent : Unit <- IO.try(Unit,P.ProcessChild.write(handle,frame))
+      recorded : Unit <- AgentInput.forward_read(db,player,next)
       IO.pure(String,next)
 
-# Guidance stays owed until its recipient records handling it. The send cursor
+# Guidance stays owed until its recipient records the read. The send cursor
 # records which messages this attempt has already forwarded.
 def outstanding_sql(+player: String) -> String:
-  "coalesce((SELECT group_concat(id,',') FROM (SELECT id FROM messages WHERE recipient=" ++ C.q(player) ++ " AND kind='guidance' AND receipt IS NULL AND NOT " ++ C.stopped_session_sql(C.q(player)) ++ " ORDER BY seq)),'')"
+  "coalesce((SELECT group_concat(id,',') FROM (SELECT id FROM messages WHERE recipient=" ++ C.q(player) ++ " AND kind='guidance' AND " ++ C.owed_sql("messages") ++ " AND NOT " ++ C.stopped_session_sql(C.q(player)) ++ " ORDER BY seq)),'')"
 
 def pending_sql(+player: String, +cursor: String) -> String:
-  "SELECT coalesce((SELECT seq FROM messages WHERE recipient=" ++ C.q(player) ++ " AND kind='guidance' AND receipt IS NULL AND NOT " ++ C.stopped_session_sql(C.q(player)) ++ " AND seq>CAST(" ++ C.q(cursor) ++ " AS INTEGER) ORDER BY seq LIMIT 1),CAST(" ++ C.q(cursor) ++ " AS INTEGER));"
+  "SELECT coalesce((SELECT seq FROM messages WHERE recipient=" ++ C.q(player) ++ " AND kind='guidance' AND " ++ C.owed_sql("messages") ++ " AND NOT " ++ C.stopped_session_sql(C.q(player)) ++ " AND seq>CAST(" ++ C.q(cursor) ++ " AS INTEGER) ORDER BY seq LIMIT 1),CAST(" ++ C.q(cursor) ++ " AS INTEGER));"
 
 def pending(+db: String, +player: String, handle: U32, +cursor: String) -> IO(String):
   do IO<String>:
     +next : String <- IO.try(String,DB.Sql.query(db,pending_sql(player,cursor)))
-    send(db,handle,cursor,next,String.eq(cursor,next))
+    send(db,player,handle,cursor,next,String.eq(cursor,next))
 
 # An attempt with closed input keeps its current forwarding cursor.
 def pending_live(db: String, player: String, handle: U32, cursor: String, closed: U32) -> IO(String):

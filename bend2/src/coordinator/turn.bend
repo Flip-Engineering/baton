@@ -241,8 +241,7 @@ def prepare(+db: String, +player: String, +id: String, log: String, stderr: Stri
     +generation : String <- IO.pure(String,generation_log(log,id))
     recipient : String <- IO.try(String,DB.Sql.query(db,"SELECT " ++ C.report_recipient(C.q(player)) ++ " IS NOT NULL;"))
     reported : Unit <- prepare_parent(db,player,id,generation,stderr,outcome,String.eq(recipient,"1\n"))
-    success : Bool <- settlement_success(db,outcome)
-    AgentInput.settle_if(db,player,id,success)
+    AgentInput.record_initial_reads(db,player,id)
 
 def record_exit(db: String, player: String, +id: String, log: String, outcome: Outcome) -> IO(Unit):
   match outcome:
