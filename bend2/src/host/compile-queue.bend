@@ -439,9 +439,9 @@ def write_failure(attempt: String, keydir: String, status: String, code: U32,
                   names: List<String>) -> IO(Unit):
   do IO<Unit>:
     finished <- IO.try(String, L.now_ns())
-    wrote : Unit <- IO.try(Unit, Result.write(attempt ++ "/result", status, code, kind, key, started,
+    wrote : Unit <- IO.try(Unit, Result.write(attempt ++ "/result", status, U32.show(code), kind, key, started,
       finished, attempt, attempt ++ "/work", attempt ++ "/stdout", attempt ++ "/stderr",
-      detail, names))
+      detail, Tx.join("\n", names)))
     removed : Unit <- IO.try(Unit, L.remove(keydir ++ "/active"))
     IO.pure(Unit, Unit{})
 
@@ -452,10 +452,10 @@ def finish_success(attempt: String, keydir: String, kind: String, key: String,
     +work = attempt ++ "/work"
     +cache = keydir ++ "/completed.tmp." ++ U32.show(pid)
     made : Unit <- IO.try(Unit, L.mkdir_p(cache ++ "/artifacts"))
-    retained : Unit <- IO.try(Unit, Result.retain_artifacts(work, cache ++ "/artifacts", names))
+    retained : Unit <- IO.try(Unit, Result.retain_artifacts(work, cache ++ "/artifacts", Tx.join("\n", names)))
     finished <- IO.try(String, L.now_ns())
-    wrote : Unit <- IO.try(Unit, Result.write(cache ++ "/result", "completed", 0, kind, key, started,
-      finished, attempt, work, attempt ++ "/stdout", attempt ++ "/stderr", "", names))
+    wrote : Unit <- IO.try(Unit, Result.write(cache ++ "/result", "completed", "0", kind, key, started,
+      finished, attempt, work, attempt ++ "/stdout", attempt ++ "/stderr", "", Tx.join("\n", names)))
     copied_out : Unit <- IO.try(Unit, L.copy_file(attempt ++ "/stdout", cache ++ "/stdout"))
     copied_err : Unit <- IO.try(Unit, L.copy_file(attempt ++ "/stderr", cache ++ "/stderr"))
     renamed : Unit <- IO.try(Unit, F.Files.rename(cache, keydir ++ "/completed"))
@@ -596,7 +596,7 @@ def run_command(args: List<String>) -> IO(Unit):
                       released : Unit <- IO.try(Unit, L.lock_release(lock))
                       IO.pure(Unit, Unit{})
                   case False{}:
-                    latest <- IO.try(String, Result.latest_result(keydir, wait_start, present))
+                    latest <- IO.try(String, Result.latest_result(keydir, wait_start, Bool.pick(String, present, "1", "0")))
                     match latest:
                       case SNil{}: start_attempt(parsed, key, keydir, lock, owner)
                       case path:
@@ -644,7 +644,7 @@ def wait_command(args: List<String>) -> IO(Unit):
                   released : Unit <- IO.try(Unit, L.lock_release(lock))
                   IO.write("status=completed\nkey=" ++ key ++ "\n")
               case False{}:
-                latest <- IO.try(String, Result.latest_result(keydir, "0", False{}))
+                latest <- IO.try(String, Result.latest_result(keydir, "0", "0"))
                 match latest:
                   case SNil{}: IO.die(Unit, 4, "compile-queue: no result for key " ++ key)
                   case path:
@@ -815,8 +815,8 @@ def write_adoption_failure(keydir: String, started: String, detail: String) -> I
   do IO<Unit>:
     +run = keydir ++ "/runs/external-" ++ started
     made : Unit <- IO.try(Unit, L.mkdir_p(run))
-    wrote : Unit <- IO.try(Unit, Result.write(run ++ "/result", "failed", 1, "cgen", "", started, started,
-      "external", run, run ++ "/stdout", run ++ "/stderr", detail, Nil{}))
+    wrote : Unit <- IO.try(Unit, Result.write(run ++ "/result", "failed", "1", "cgen", "", started, started,
+      "external", run, run ++ "/stdout", run ++ "/stderr", detail, Tx.join("\n", Nil{})))
     removed : Unit <- IO.try(Unit, L.remove(keydir ++ "/active"))
     IO.pure(Unit, Unit{})
 
