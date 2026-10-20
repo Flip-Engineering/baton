@@ -268,3 +268,159 @@ is incomplete for deployment.
 
 The pending measurement plan in section 7 applies to the head with the
 `comp.ts:226c3eee` pin; no measurement has been run.
+
+## 10. Continuation: per-file armHints, fixed-point passes, capture accounting
+
+Reviewed pins (both present in the consolidation object store):
+
+| Target | Commit | `comp.ts` sha256 | bytes / lines |
+| --- | --- | --- | --- |
+| Published production tip | `55fb5c28cb` | `982aa9b9f6b737b55075008d9db672e2b67ecc882480d9d83717dba0e76e8c36` | 210,838 / 7,048 |
+| Main-integration port (f38) | `5ddcd98a` | `1fa4be27…1b75644` | 221,374 / 7,384 |
+| Main-integration port (e8d5) | `cd80b1a6` | `1fa4be27…1b75644` | 221,374 / 7,384 |
+
+The production tip includes `ADT.r` (`da753a093e`), `Ref.b` (`8fc792aab4`)
+and the busy-equal inline fallback (`55fb5c28cb`). Both integration tips carry
+the same capture/arm-sharing code at shifted line numbers (`capture_order`
+3296, `capKs` 3358, `armHints.set` 3384, `compile_def` 3544,
+`emission_defs` 3694); the extra lines are main-based code, not a different
+sharing implementation. The task's `226c3eee` pin is `da753a093e`, not the
+published tip; the exact published pin is `982aa9b9`.
+
+### Topic 1: per-file armHints retention
+
+`File` carries `armSeq`, `armBusy`, `armHints` (`production-tip.ts:124-126`);
+an `ArmRep` is `{term, name, lay, ks, caps}` (`:151`). `file_new` initializes
+the map (`:1613`). A representative is appended at `:3065-3069`
+(`arm_<seq>`, `rec`, `armHints.set`), the busy set at `:3070`, cleared at
+`:3099`. `compile_def` resets `fresh`, `brwl`, `rest` and `armBusy` only
+(`:3228`), so `armHints` persists across every definition in the pass.
+
+Retention:
+
+- `term` is a reference to the arm `HTerm` from the definition's checked body;
+  the same tree is already retained by `cb.book.tlds[k].h`. The map does not
+  copy term trees.
+- Per representative the additional objects are the `ArmRep` object, the
+  `reps` array slot, the hint string (spans/kinds/layouts; tens to hundreds of
+  bytes), `ks` and `caps` arrays, and references to `lay`/`Probe` objects that
+  are shared with the book/environment.
+- The map is freed when the pass's `File` becomes unreachable after
+  `compile_book` builds the fills and returns; `armSeq` is just a number.
+
+Per-definition clearing is semantics-safe: a cross-definition hit requires the
+same hint, the same layout/word counts and `arm_eq` (`:3050-3055`); clearing
+only removes candidates, so the fallback is a new spin or inline emission. It
+would bound the map and free the hint strings/arrays per definition, but it
+would not free the term trees, because the book retains them. The plausible
+RSS impact is therefore the map metadata (a few tens of MB at thousands of
+representatives), not the 25->51.7 GiB climb in the perf sample. This topic
+cannot alone explain the allocation-dominated profile.
+
+### Topic 2: fixed-point pass duplication
+
+`BEND_FACTS_ONLY_FIRST` is off by default (`production-tip.ts:43-44`).
+`stable_defs` and `emission_defs` are computed once before any pass
+(`:3374-3375`); `pass` creates a fresh `File`, fills the cid map for every
+ADT, calls `compile_def` for every definition, runs `facts_lend`, and counts
+lines/units/spins (`:3379-3412`).
+
+With the default, only the real loop runs:
+
+```ts
+do {
+  was = facts();
+  fl = pass(emission_defs, false);
+} while (was !== facts());
+```
+
+(`production-tip.ts:3428-3432`). Each iteration re-emits the whole book and
+retains all `seg.lines`, spin source, tables, constants and fresh maps; only
+the last `File` is used for the output, and the previous pass's `File` is
+garbage. That duplicated emission is the main per-pass allocation, and it can
+repeat until `own/hot/stat` stabilize.
+
+If `BEND_FACTS_ONLY_FIRST=1`, the dry loop runs
+`pass(done_defs(cb).reverse(), true)` until stable (`:3418-3426`), with a
+fresh definition list per iteration, and then the real loop uses the
+`emission_defs` computed before the dry loop. `emit_arm_shared` returns false
+in dry (`:3039`), so the dry passes inline the shared arms while the real pass
+shares them. The comment claims the dry passes compute the same facts as
+emission; the sharing asymmetry means that claim needs proof when sharing
+changes `hot`/`stat` (the spin and inline paths bind/emit under different
+`dst`/`uses`/`spares` contexts). The real loop still converges on facts, but
+the definition order is not recomputed after the dry loop and the dry work is
+additional. Under the default the asymmetry is latent, not active.
+
+### Topic 3: capture sharing and ownership accounting
+
+`capture_order` (`production-tip.ts:2990-3008`) walks the term's first-use
+order, using `fl.uses` by probe index and skipping probes absent from scope.
+`emit_arm_shared` computes `u = term_uses(h)` and `caps`, and falls back
+inline when any used probe lacks a capture (`:3036-3039`). `capKs` flattens
+the captures' layouts (`:3043`); `capWs` flattens the capture words at either
+the hit path (`:3056-3060`) or the new-spin path (`:3100-3104`), each doing
+
+```ts
+const use = term_use(u, p);
+fl.uses.set(p, { ...b, n: b.n - use + 1 });
+return val_own(fl, bind_pop(fl, p));
+```
+
+The `use` uses move into the spin; `+1` reserves the single use of the value
+passed to the call; `bind_pop` transfers ownership for the call. This mirrors
+`emit_clo`'s capture accounting (`:2645-2649`). Inside the new spin the
+captures are bound with `bind_uses(..., [h], b.A, false)` (`:3086-3090`), so
+the spin's copied uses map carries the same `use` count.
+
+Checked paths:
+
+- `capture_order` deduplicates by probe index; a probe cannot appear twice in
+  `caps`.
+- The busy check is before the `capWs` loop (`:3055`), so a busy equal
+  representative returns inline without consuming captures.
+- The hit path passes the current site's captures; the rep stores only
+  `Probe[]` for the count check. Positional correctness relies on the
+  alpha-equality `arm_eq` and the identical first-use order of the two terms;
+  no path passes a rep's own capture values or re-binds them.
+- A missing capture is caught by the `u.length > caps.length` gate before any
+  consumption.
+
+No remaining source path was found that duplicates or drops a capture value.
+The residual risk is the alpha-order assumption: `arm_eq` maps free variables
+by first occurrence and `capture_order` walks runtime children; the two
+traversals agree for the shared kinds, but a future change to either traversal
+must preserve that correspondence.
+
+### Baseline correlation (uncertain)
+
+The perf sample (`knowledge-record:084b34f11911c8ac3bf8205c89b76fab`) shows
+~26% anonymous JIT, ~30% kernel anonymous-page allocation/fault handling and
+RSS 25->51.7 GiB over ~4.5 minutes, with no source attribution.
+
+- Topic 2 (repeated full emission passes) is the most plausible
+  allocation-heavy source among the three: each pass allocates the full C
+  text, spin sources, tables and maps; repeated passes multiply that and the
+  page-clearing profile is consistent with large string/heap allocation and
+  GC. It is not proof: the loop may converge in one or two passes.
+- Topic 1 (armHints metadata) can allocate the map/arrays/strings, but the
+  term trees are shared with the book, so it cannot plausibly account for
+  tens of GiB; per-definition clearing would not free the trees.
+- Topic 3 (capture accounting) performs small per-call allocations and the
+  sharing reduces emitted code; it cannot plausibly produce an
+  allocation-dominated profile on its own.
+
+The sample is one second of a long compile on a different pinned build
+(`2.0.25-f5185e38-pr967-pr968-e5c4efd-20261019`, source `5df034e6`), so none
+of these attributions is verified. A future queue-gated measurement should
+record pass count, per-pass byte/line/spin totals, and armHints size/clear
+impact.
+
+### Queue-held measurement additions
+
+The lane items in section 7 are unchanged. Add, when the #970 queue lands:
+pass count per fixture (diagnostic pass.begin/end), armHints map size and
+resident set with and without per-definition clearing, dry-vs-real fact
+counts with `BEND_FACTS_ONLY_FIRST=1`, and a capture-accounting assertion
+(sum of caller bind counts before/after a shared call equals the inspected
+expectation).
