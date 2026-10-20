@@ -714,14 +714,19 @@ def artifact_mode_check(mode: Result<&1,&1,U32 & String,U32>, name: String) -> I
     case Done{value}: IO.pure(Unit, Unit{})
     case Fail{error}: IO.die(Unit, 1, "compile-queue: artifact " ++ name ++ " was not written")
 
-def cgen_path_valid_kind(named: Bool, kind: String) -> Bool:
-  Bool.and(named, String.eq(kind, "text"))
-
-def cgen_path_valid(+name: String, path: String) -> IO(Bool):
+def cgen_content_valid(path: String) -> IO(Bool):
   do IO<Bool>:
     kind : String <- IO.try(String, Artifact.CompileQueueArtifact.c_source_kind(path))
+    IO.pure(Bool, String.eq(kind, "text"))
+
+def cgen_artifact_valid_kind(named: Bool, content: Bool) -> Bool:
+  Bool.and(named, content)
+
+def cgen_artifact_valid(+name: String, path: String) -> IO(Bool):
+  do IO<Bool>:
+    content : Bool <- cgen_content_valid(path)
     named : Bool <- IO.pure(Bool, String.ends_with(name, ".c"))
-    IO.pure(Bool, cgen_path_valid_kind(named, kind))
+    IO.pure(Bool, cgen_artifact_valid_kind(named, content))
 
 def verify_cgen_artifact_valid(valid: Bool, name: String) -> IO(Unit):
   Bool.pick(IO(Unit), valid, IO.pure(Unit, Unit{}),
@@ -729,7 +734,7 @@ def verify_cgen_artifact_valid(valid: Bool, name: String) -> IO(Unit):
 
 def verify_cgen_artifact(work: String, +name: String) -> IO(Unit):
   do IO<Unit>:
-    valid : Bool <- cgen_path_valid(name, work ++ "/" ++ name)
+    valid : Bool <- cgen_artifact_valid(name, work ++ "/" ++ name)
     verify_cgen_artifact_valid(valid, name)
 
 def verify_artifact_kind(kind: String, work: String, +name: String) -> IO(Unit):
@@ -1335,7 +1340,7 @@ def adoption_after_cgen_check(valid: Bool, +keydir: String, +adoption: String, +
 def guard_after_exit(+keydir: String, +name: String, +path: String, +started: String) -> IO(Unit):
   do IO<Unit>:
     +adoption : String <- IO.try(String, L.CompileQueueLifecycle.read_text(keydir ++ "/adoption"))
-    valid : Bool <- cgen_path_valid(name, path)
+    valid : Bool <- cgen_content_valid(path)
     adoption_after_cgen_check(valid, keydir, adoption, name, path, started)
 
 def guard_loop(+keydir: String, pid: U32, start: String, name: String, +path: String, +started: String) -> IO(Unit):
