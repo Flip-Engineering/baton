@@ -275,14 +275,29 @@ def validate_config(config: Config, need_command: Bool) -> String:
           "compile-queue: state root must be absolute"),
         "compile-queue: kind must be cgen or cc")
 
+def input_pairs_text(inputs: List<Input>) -> String:
+  match inputs:
+    case Nil{}: ""
+    case Con{Input{source, destination}, rest}:
+      source ++ "\t" ++ destination ++ "\n" ++ input_pairs_text(rest)
+
+def artifact_pairs_text(artifacts: List<Artifact>) -> String:
+  match artifacts:
+    case Nil{}: ""
+    case Con{Artifact{name, path}, rest}:
+      name ++ "\t" ++ path ++ "\n" ++ artifact_pairs_text(rest)
+
 def identity_key(config: Config) -> IO(String):
   match config:
     case Config{text, command}:
       IO.try(String, Identity.request_key(
         field(text, "kind"), field(text, "cwd"), field(text, "root"),
         field(text, "source_root"), field(text, "entry"), field(text, "compiler"),
-        field(text, "compiler"), "", input_rows(text), fields_all(text, "aux"),
-        artifact_rows(text), fields_all(text, "option"), command))
+        "", "", input_pairs_text(input_rows(text)),
+        Tx.join("\n", fields_all(text, "aux")),
+        artifact_pairs_text(artifact_rows(text)),
+        Tx.join("\n", fields_all(text, "option")),
+        Tx.join("\n", command)))
 
 def keydir_of(state_root: String, key: String) -> String:
   state_root ++ "/keys/" ++ key
