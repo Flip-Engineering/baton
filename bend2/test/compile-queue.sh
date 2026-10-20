@@ -614,7 +614,10 @@ unset BATON2_TEST_CAPTURE_ARGV
 # input/output paths and every argument in execution order.
 receipt=$(find "$STATE/keys" -type f -path '*/runs/*/command' \
   -exec grep -lF -- "$recorder" {} + | head -n 1)
-if [ -n "$receipt" ] && cmp -s "$receipt" "$capture"; then
+if [ -n "$receipt" ]; then
+  tail -n +2 "$receipt" > "$T/runtime-argv.receipt-args"
+fi
+if [ -n "$receipt" ] && cmp -s "$T/runtime-argv.receipt-args" "$capture"; then
   pass 'recorded argv matches the staged command receipt in order'
 else
   bad 'recorded argv differs from the staged command receipt'
@@ -632,6 +635,8 @@ cmp -s "$expected" "$T/runtime-argv.tail" \
 # compiler stays alive briefly; the guard must dispatch with its argv intact
 # and publish the adopted result and artifact.
 adopt_artifact="$T/adopt-artifact"
+mkdir -p "$T/bend2"
+: > "$T/bend2/main.ts"
 adopt_hold_output="$T/adopt-hold-output"
 adopt_hold_key=$(sh "$QUEUE" key --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" \
   --compiler "$FAKE" --linker "$FAKE" --version fake-version \
@@ -646,7 +651,8 @@ adopt_lock_pid=$!
 sleep 1
 run_cc adopt-hold "$adopt_hold_output" --sleep 3 >"$T/adopt-hold.out" 2>"$T/adopt-hold.err" &
 adopt_run_pid=$!
-"$FAKE" --tag adopt --log "$LOG" -o "$adopt_artifact" --sleep 5 &
+(cd "$T" && "$FAKE" "$T/bend2/main.ts" input.c --tag adopt --log "$LOG" \
+  -o "$adopt_artifact" --sleep 5) &
 adopt_pid=$!
 adopt_out=$(sh "$QUEUE" adopt --pid "$adopt_pid" --state-root "$STATE" \
   --artifact "binary=$adopt_artifact" 2>"$T/adopt.err") \

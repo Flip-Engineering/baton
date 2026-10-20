@@ -728,35 +728,50 @@ def cgen_artifact_valid(+name: String, path: String) -> IO(Bool):
     named : Bool <- IO.pure(Bool, String.ends_with(name, ".c"))
     IO.pure(Bool, cgen_artifact_valid_kind(named, content))
 
-def verify_cgen_artifact_valid(valid: Bool, name: String) -> IO(Unit):
-  Bool.pick(IO(Unit), valid, IO.pure(Unit, Unit{}),
-    IO.die(Unit, 1, "compile-queue: cgen artifact " ++ name ++ " must be nonempty text C with a .c suffix"))
+def invalid_cgen_name(names: List<&2,String>, +work: String) -> IO(String):
+  match names:
+    case Nil{}: IO.pure(String, "")
+    case Con{+name, rest}:
+      do IO<String>:
+        valid : Bool <- cgen_artifact_valid(name, work ++ "/" ++ name)
+        Bool.pick(IO(String), valid, invalid_cgen_name(rest, work), IO.pure(String, name))
 
-def verify_cgen_artifact(work: String, +name: String) -> IO(Unit):
-  do IO<Unit>:
-    valid : Bool <- cgen_artifact_valid(name, work ++ "/" ++ name)
-    verify_cgen_artifact_valid(valid, name)
-
-def verify_artifact_kind(kind: String, work: String, +name: String) -> IO(Unit):
+def invalid_artifact_name(kind: String, names: List<&2,String>, +work: String) -> IO(String):
   match kind:
-    case "cgen": verify_cgen_artifact(work, name)
-    case _: IO.pure(Unit, Unit{})
+    case "cgen": invalid_cgen_name(names, work)
+    case _: IO.pure(String, "")
 
-def verify_artifacts(+queue_kind: String, +work: String, names: List<&2,String>) -> IO(Unit):
+def finish_cgen_validation(invalid: String, +attempt: String, +keydir: String,
+                           +kind: String, +key: String, +started: String,
+                           +names: List<&2,String>) -> IO(Unit):
+  match invalid:
+    case SNil{}: finish_success(attempt, keydir, kind, key, started, names)
+    case name:
+      write_failure(attempt, keydir, "failed", 1, kind, key, started,
+        "compile-queue: cgen artifact " ++ name ++ " must be nonempty text C with a .c suffix", names)
+
+def finish_validated_artifacts(kind: String, invalid: String, +attempt: String,
+                               +keydir: String, +key: String, +started: String,
+                               +names: List<&2,String>) -> IO(Unit):
+  match kind:
+    case "cgen": finish_cgen_validation(invalid, attempt, keydir, kind, key, started, names)
+    case _: finish_success(attempt, keydir, kind, key, started, names)
+
+def verify_artifacts(+work: String, names: List<&2,String>) -> IO(Unit):
   match names:
     case Nil{}: IO.pure(Unit, Unit{})
     case Con{+name, rest}:
       do IO<Unit>:
         mode : Result<&1,&1,U32 & String,U32> <- F.Files.mode_of(work ++ "/" ++ name)
         checked : Unit <- artifact_mode_check(mode, name)
-        valid : Unit <- verify_artifact_kind(queue_kind, work, name)
-        verify_artifacts(queue_kind, work, rest)
+        verify_artifacts(work, rest)
 
 def verify_and_finish(+attempt: String, +keydir: String, +kind: String, +key: String,
                        +started: String, +names: List<&2,String>) -> IO(Unit):
   do IO<Unit>:
-    checked : Unit <- verify_artifacts(kind, attempt ++ "/work", names)
-    finish_success(attempt, keydir, kind, key, started, names)
+    checked : Unit <- verify_artifacts(attempt ++ "/work", names)
+    invalid : String <- invalid_artifact_name(kind, names, attempt ++ "/work")
+    finish_validated_artifacts(kind, invalid, attempt, keydir, key, started, names)
 
 def supervised_completion(canceled: Bool, failed: Bool, +code: U32, disposition: String,
                           +attempt: String, +keydir: String, +kind: String, +key: String,
@@ -1230,7 +1245,7 @@ def entry_of_argv(argv: List<&2,String>) -> String:
   match argv:
     case Nil{}: ""
     case token <> +value <> rest:
-      Bool.pick(String, Tx.starts_with(token, "/bend2/main.ts"), value,
+      Bool.pick(String, String.ends_with(token, "/bend2/main.ts"), value,
         entry_of_argv(Con{value, rest}))
     case other: ""
 
