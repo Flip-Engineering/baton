@@ -1,6 +1,6 @@
 # Native artifacts
 
-`bend2/scripts/package-native.py` builds the production receiver layout and packages a Darwin arm64 development or release archive. The layout contains the focused receiver at `bin/baton`, the full router at `bin/baton2`, and the general CLI sibling at `bin/baton-full`, together with harness adapters, Git helper, Orchestra UI, required Bend2 REPL compiler and Bun runtime, selected context providers, notices, and a manifest. The manifest records the overall source identity, each binary's path, SHA256, entry, build mode and source commit with tree or source manifest hash, the retained full C hash when available, the full wrapper source pin, the target platform, selected module identities, required REPL dependency hashes, system prerequisites, build commands and log paths, and compiler archive used for license notices. `SHA256SUMS` records the archive checksum and the payload records executable checksums, the manifest and the install receipt.
+`bend2/scripts/package-native.py` builds the production receiver layout and packages a Darwin arm64 development or release archive. The layout contains the focused receiver at `bin/baton`, the full router at `bin/baton2`, the general CLI sibling at `bin/baton-full`, and the qualified host queue executable at `bin/baton-compile-queue`, together with harness adapters, Git helper, Orchestra UI, required Bend2 REPL compiler and Bun runtime, selected context providers, notices, and a manifest. The manifest records the overall source identity, each binary's path, SHA256, entry, build mode and source commit with tree or source manifest hash, the retained full C hash when available, the full wrapper source pin, the queue executable hash and source commit/tree, the shared-state contract, the target platform, selected module identities, required REPL dependency hashes, system prerequisites, build commands and log paths, and compiler archive used for license notices. `SHA256SUMS` records the archive checksum and the payload records executable checksums, the manifest and the install receipt.
 
 ## Build and package
 
@@ -23,10 +23,18 @@ BEND_HOME="$BATON2_RUN/toolchain-home" \
 BATON2_REPL_RUNTIME=/absolute/path/to/verified/darwin-arm64/bun
 BATON2_REPL_RUNTIME_SHA256='<verified-platform-runtime-sha256>'
 BATON2_REPL_NOTICES=/absolute/path/to/complete/Bun-NOTICES
+BATON2_COMPILE_QUEUE=/absolute/path/to/qualified/baton-compile-queue
+BATON2_COMPILE_QUEUE_COMMIT=<queue-source-commit>
+BATON2_COMPILE_QUEUE_TREE=<queue-source-tree>
+BATON2_COMPILE_QUEUE_DIRECTORY=/absolute/path/to/queue-source
 python3 "$BATON2_SOURCE/bend2/scripts/package-native.py" \
   --output "$BATON2_RUN/package" \
   --bend "$BATON2_RUN/toolchain-home/bin/bend" \
   --compiler-archive "$BATON2_RUN/toolchain/bend-2.0.25-darwin-arm64.tar.gz" \
+  --compile-queue-binary "$BATON2_COMPILE_QUEUE" \
+  --compile-queue-source-commit "$BATON2_COMPILE_QUEUE_COMMIT" \
+  --compile-queue-source-tree "$BATON2_COMPILE_QUEUE_TREE" \
+  --compile-queue-source-directory "$BATON2_COMPILE_QUEUE_DIRECTORY" \
   --repl-runtime "$BATON2_REPL_RUNTIME" \
   --repl-runtime-sha256 "$BATON2_REPL_RUNTIME_SHA256" \
   --repl-runtime-notices "$BATON2_REPL_NOTICES"
@@ -42,7 +50,7 @@ The package command runs [build-native.sh](../../bend2/scripts/build-native.sh) 
 
 `--context-typescript-package /path/to/node_modules/typescript` includes an installed TypeScript package and its source analysis provider. Packaging copies the compiler package into the selected module. Installed module discovery reads its declaration; a selected invocation uses Node module resolution to load the available compiler and records its actual version, path and digest. The provider analyzes TypeScript or JavaScript source and returns definitions, types, references, calls, callers, dependencies, diagnostics, flow and exceptions with captured source identities. Node.js 22.15 or newer runs the provider. The selected-context package fixture exercises TypeScript 5.9.3; `BATON2_CONTEXT_TYPESCRIPT` supplies its installed compiler package.
 
-Native builds use the shared host compile queue and require `BATON_COMPILE_QUEUE_ROOT`. Native runtime checks are available through `check-native.sh`:
+Native builds use the packaged `bin/baton-compile-queue` executable and require `BATON_COMPILE_QUEUE_ROOT` to name an absolute directory outside the install prefix. Create the shared state root with mode `2770` and the group used by queue callers; new queue directories inherit its setgid group and group-write access. The queue rejects state directories that lack setgid and group-write permissions. Native runtime checks are available through `check-native.sh`:
 
 ~~~sh
 sh bend2/scripts/check-native.sh

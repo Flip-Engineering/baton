@@ -648,6 +648,23 @@ def stage_receiver_binaries(payload, specs, built, c_hashes=None):
     return records
 
 
+def stage_compile_queue(payload, args):
+    source_path = Path(args.compile_queue_binary)
+    require(source_path.is_file() and not source_path.is_symlink() and os.access(source_path, os.X_OK),
+            'The supplied compile queue binary is unavailable or not executable: ' + str(source_path))
+    source_path = source_path.resolve()
+    default = {'directory': str(ROOT), **source_identity()}
+    source = source_pin(args.compile_queue_source_commit, args.compile_queue_source_tree,
+                        args.compile_queue_source_status, None, default,
+                        args.compile_queue_source_directory)
+    destination = payload / 'bin/baton-compile-queue'
+    shutil.copyfile(source_path, destination)
+    destination.chmod(0o755)
+    return {'path': 'bin/baton-compile-queue', 'sha256': sha256(destination),
+            'source': source, 'state_root_environment': 'BATON_COMPILE_QUEUE_ROOT',
+            'state_root_contract': 'absolute writable shared directory outside the install prefix'}
+
+
 def artifact_identity(release_version):
     if release_version is None:
         return {'archive_root': ARCHIVE_ROOT, 'kind': 'development'}
@@ -711,6 +728,7 @@ def package(args):
                   'tree': git('rev-parse', 'HEAD^{tree}')}
         payload = output / identity['archive_root']
         records = stage_receiver_binaries(payload, specs, built, c_hashes)
+        compile_queue = stage_compile_queue(payload, args)
         closures = stage_source_closures(payload, args)
         require_manifest_closures(specs, closures)
         stage_adapters(payload)
@@ -741,6 +759,7 @@ def package(args):
                           'sha256': record['sha256'], 'build_mode': record['build_mode']}
                          for record in records],
             'closures': closures,
+            'compile_queue': compile_queue,
         }
         if full_record.get('wrapper_source') is not None:
             source_manifest['full']['wrapper_source'] = full_record['wrapper_source']
@@ -753,6 +772,7 @@ def package(args):
             'platform': {'system': platform.system(), 'machine': platform.machine(), 'artifact': 'darwin-arm64'},
             'source': source,
             'binaries': records, 'source_manifest': source_manifest,
+            'compile_queue': compile_queue,
             'binary': {'path': focused['path'], 'alias': focused.get('alias'),
                        'sha256': focused['sha256'], 'source': focused['source']},
             'selected_modules': selected_context,
@@ -812,6 +832,12 @@ def main():
     parser.add_argument('--release-version', help='version identifier for a release archive; requires the project root LICENSE')
     parser.add_argument('--repl-compiler-source', type=Path, default=ROOT / 'bend2/compiler/upstream',
                         help='exact pinned compiler source; defaults to the required checked-in closure')
+    parser.add_argument('--compile-queue-binary', type=Path, required=True,
+                        help='qualified native queue executable included as bin/baton-compile-queue')
+    parser.add_argument('--compile-queue-source-commit', required=True)
+    parser.add_argument('--compile-queue-source-tree', required=True)
+    parser.add_argument('--compile-queue-source-status', default='')
+    parser.add_argument('--compile-queue-source-directory')
     parser.add_argument('--repl-runtime', type=Path, required=True,
                         help='required platform Bun executable for the bundled REPL compiler')
     parser.add_argument('--repl-runtime-sha256', required=True,

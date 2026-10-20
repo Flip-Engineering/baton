@@ -101,6 +101,22 @@ jobs:
           test "$(stat -c %G "$BATON_COMPILE_QUEUE_ROOT")" = "$BATON_COMPILE_QUEUE_GROUP"
           test -w "$BATON_COMPILE_QUEUE_ROOT"
           test "$(stat -c %U:%G:%a "$BATON2_COMPILE_QUEUE_BIN")" = root:root:755
+          python3 - "$BATON2_COMPILE_QUEUE_BIN" >> "$GITHUB_ENV" <<'PY'
+          import hashlib, json, pathlib, re, sys
+          binary = pathlib.Path(sys.argv[1])
+          manifest = json.loads((binary.parent.parent / 'manifest.json').read_text())
+          queue = manifest['compile_queue']
+          source = queue['source']
+          assert queue['path'] == 'bin/baton-compile-queue'
+          assert hashlib.sha256(binary.read_bytes()).hexdigest() == queue['sha256']
+          assert re.fullmatch(r'[0-9a-f]{40}', source['commit'])
+          assert re.fullmatch(r'[0-9a-f]{40}', source['tree'])
+          assert source.get('status') == ''
+          assert '\n' not in source['directory'] and '\r' not in source['directory']
+          print('BATON2_COMPILE_QUEUE_SOURCE_COMMIT=' + source['commit'])
+          print('BATON2_COMPILE_QUEUE_SOURCE_TREE=' + source['tree'])
+          print('BATON2_COMPILE_QUEUE_SOURCE_DIRECTORY=' + source['directory'])
+          PY
       - name: Validate exact source commit
         shell: bash
         run: '[[ "$BATON2_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]'
@@ -414,6 +430,22 @@ jobs:
           id -Gn | tr ' ' '\n' | grep -Fx "$BATON_COMPILE_QUEUE_GROUP"
           test -w "$BATON_COMPILE_QUEUE_ROOT"
           test "$(stat -f %Su:%Sg:%Lp "$BATON2_COMPILE_QUEUE_BIN")" = root:wheel:755
+          python3 - "$BATON2_COMPILE_QUEUE_BIN" >> "$GITHUB_ENV" <<'PY'
+          import hashlib, json, pathlib, re, sys
+          binary = pathlib.Path(sys.argv[1])
+          manifest = json.loads((binary.parent.parent / 'manifest.json').read_text())
+          queue = manifest['compile_queue']
+          source = queue['source']
+          assert queue['path'] == 'bin/baton-compile-queue'
+          assert hashlib.sha256(binary.read_bytes()).hexdigest() == queue['sha256']
+          assert re.fullmatch(r'[0-9a-f]{40}', source['commit'])
+          assert re.fullmatch(r'[0-9a-f]{40}', source['tree'])
+          assert source.get('status') == ''
+          assert '\n' not in source['directory'] and '\r' not in source['directory']
+          print('BATON2_COMPILE_QUEUE_SOURCE_COMMIT=' + source['commit'])
+          print('BATON2_COMPILE_QUEUE_SOURCE_TREE=' + source['tree'])
+          print('BATON2_COMPILE_QUEUE_SOURCE_DIRECTORY=' + source['directory'])
+          PY
       - name: Checkout exact source
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -584,6 +616,10 @@ jobs:
             --output "$BATON2_NATIVE_RUN/package"
             --bend "$BATON2_NATIVE_RUN/toolchain-home/bin/bend"
             --compiler-archive "$BATON2_NATIVE_RUN/toolchain/bend-2.0.25-darwin-arm64.tar.gz"
+            --compile-queue-binary "$BATON2_COMPILE_QUEUE_BIN"
+            --compile-queue-source-commit "$BATON2_COMPILE_QUEUE_SOURCE_COMMIT"
+            --compile-queue-source-tree "$BATON2_COMPILE_QUEUE_SOURCE_TREE"
+            --compile-queue-source-directory "$BATON2_COMPILE_QUEUE_SOURCE_DIRECTORY"
             --context-typescript-package "$BATON2_NATIVE_RUN/typescript-runtime/node_modules/typescript"
           )
           runtime_sha=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["binary"]["sha256"])' "$BATON2_NATIVE_RUN/repl-runtime/runtime.json")

@@ -33,7 +33,7 @@ class ReceiverLayout(unittest.TestCase):
         self.home = Path(tempfile.mkdtemp(prefix='baton2-receiver-layout-'))
         self.addCleanup(shutil.rmtree, self.home)
         self.binaries = {}
-        for role, name in (('focused', 'focused'), ('full', 'full'), ('recovery', 'recovery')):
+        for role, name in (('focused', 'focused'), ('full', 'full'), ('recovery', 'recovery'), ('compile_queue', 'compile-queue')):
             path = self.home / name
             path.write_bytes(role.encode() + b'\n')
             path.chmod(0o755)
@@ -43,6 +43,10 @@ class ReceiverLayout(unittest.TestCase):
         value = argparse.Namespace(
             focused_binary=self.binaries['focused'], full_binary=self.binaries['full'],
             recovery_binary=self.binaries['recovery'],
+            compile_queue_binary=self.binaries['compile_queue'],
+            compile_queue_source_commit=COMMIT, compile_queue_source_tree='f' * 40,
+            compile_queue_source_status='', compile_queue_source_manifest_sha256=None,
+            compile_queue_source_directory=None,
             focused_source_commit=COMMIT, focused_source_status='',
             focused_source_tree='c' * 40, focused_source_manifest_sha256=None,
             full_source_commit=COMMIT, full_source_status='',
@@ -86,10 +90,12 @@ class ReceiverLayout(unittest.TestCase):
         specs = STAGE.binary_specs(self.args(), PACKAGE)
         records = STAGE.stage_binaries(prefix, specs, PACKAGE)
         focused = records[0]
+        compile_queue = STAGE.stage_compile_queue(prefix, self.args(), PACKAGE)
         source_manifest = self.source_manifest(records)
+        source_manifest['compile_queue'] = compile_queue
         manifest = {
             'schema': 'baton2-native-install-v2', 'source': {'commit': COMMIT, 'status': ''},
-            'binaries': records, 'source_manifest': source_manifest,
+            'binaries': records, 'source_manifest': source_manifest, 'compile_queue': compile_queue,
             'binary': {'path': focused['path'], 'alias': focused.get('alias'),
                        'sha256': focused['sha256'], 'source': focused['source']},
         }
@@ -99,7 +105,7 @@ class ReceiverLayout(unittest.TestCase):
                    'manifest': {'path': 'manifest.json',
                                 'sha256': PACKAGE.sha256(prefix / 'manifest.json')},
                    'source': manifest['source'], 'source_manifest': manifest['source_manifest'],
-                   'binaries': records}
+                   'binaries': records, 'compile_queue': compile_queue}
         PACKAGE.write_json(prefix / 'install-receipt.json', receipt)
         STAGE.stage_checksums(prefix, PACKAGE, records)
         return prefix, manifest, records
@@ -165,7 +171,7 @@ class ReceiverLayout(unittest.TestCase):
                    'manifest': {'path': 'manifest.json',
                                 'sha256': PACKAGE.sha256(prefix / 'manifest.json')},
                    'source': manifest['source'], 'source_manifest': manifest['source_manifest'],
-                   'binaries': records}
+                   'binaries': records, 'compile_queue': manifest['compile_queue']}
         PACKAGE.write_json(prefix / 'install-receipt.json', receipt)
         STAGE.stage_checksums(prefix, PACKAGE, records)
         checked = CHECK.verify_binaries(prefix, manifest, CHECK.verify_checksums(prefix))
@@ -276,6 +282,12 @@ class ReceiverLayout(unittest.TestCase):
                          (prefix / 'bin/baton-full').read_bytes())
         self.assertNotEqual((prefix / 'bin/baton').read_bytes(),
                             (prefix / 'bin/baton2').read_bytes())
+        queue = manifest['compile_queue']
+        self.assertEqual(queue['path'], 'bin/baton-compile-queue')
+        self.assertEqual((prefix / queue['path']).read_bytes(), self.binaries['compile_queue'].read_bytes())
+        self.assertEqual(queue['source']['commit'], COMMIT)
+        self.assertEqual(queue['source']['tree'], 'f' * 40)
+        self.assertEqual(queue['state_root_environment'], 'BATON_COMPILE_QUEUE_ROOT')
         self.assertEqual(manifest['binary']['path'], 'bin/baton')
         self.assertIsNone(manifest['binary']['alias'])
         self.assertEqual([record['source']['commit'] for record in records],
@@ -325,6 +337,63 @@ class ReceiverLayout(unittest.TestCase):
         self.assertEqual(focused['source']['commit'], COMMIT)
         with self.assertRaisesRegex(RuntimeError, '40-character lowercase'):
             STAGE.binary_specs(self.args(full_source_commit='not-a-commit'), PACKAGE)
+
+    def test_installed_check_requires_pinned_queue_binary_and_checksum(self):
+        prefix, manifest, records = self.staged()
+        verified = CHECK.verify_compile_queue(prefix, manifest, CHECK.verify_checksums(prefix))
+        override = self.home / 'queue-override'
+        override.write_text('#!/bin/sh\nexit 90\n')
+        override.chmod(0o755)
+        with mock.patch.dict(os.environ, {'BATON2_COMPILE_QUEUE_BIN': str(override)}):
+            self.assertEqual(CHECK.queue_executable(prefix), str(prefix / 'bin/baton-compile-queue'))
+        self.assertEqual(verified['path'], 'bin/baton-compile-queue')
+        queue_path = prefix / 'bin/baton-compile-queue'
+        queue_path.write_bytes(b'altered\n')
+        with self.assertRaisesRegex(RuntimeError, 'differs from its manifest or checksum'):
+            CHECK.verify_compile_queue(prefix, manifest, CHECK.verify_checksums(prefix))
+        queue_path.write_bytes(self.binaries['compile_queue'].read_bytes())
+        receipt_path = prefix / 'install-receipt.json'
+        receipt = json.loads(receipt_path.read_text())
+        receipt['compile_queue']['sha256'] = '0' * 64
+        receipt_path.write_text(json.dumps(receipt) + '\n')
+        STAGE.stage_checksums(prefix, PACKAGE, records)
+        with self.assertRaisesRegex(RuntimeError, 'receipt compile queue pin differs'):
+            CHECK.verify_binaries(prefix, manifest, CHECK.verify_checksums(prefix))
+        prefix, manifest, records = self.staged()
+        (prefix / 'bin/baton-compile-queue').unlink()
+        with self.assertRaisesRegex(RuntimeError, 'compile queue binary is missing'):
+            CHECK.verify_compile_queue(prefix, manifest, CHECK.verify_checksums(prefix))
+        prefix, manifest, records = self.staged()
+        manifest['compile_queue']['source']['tree'] = 'bad'
+        with self.assertRaisesRegex(RuntimeError, 'source commit/tree'):
+            CHECK.verify_compile_queue(prefix, manifest, CHECK.verify_checksums(prefix))
+
+    def test_release_payload_rejects_symlinked_compile_queue_input(self):
+        payload = self.home / 'release-symlink'
+        (payload / 'bin').mkdir(parents=True)
+        link = self.home / 'compile-queue-link'
+        link.symlink_to(self.binaries['compile_queue'])
+        args = argparse.Namespace(
+            compile_queue_binary=link, compile_queue_source_commit=COMMIT,
+            compile_queue_source_tree='f' * 40, compile_queue_source_status='',
+            compile_queue_source_directory=None)
+        with self.assertRaisesRegex(RuntimeError, 'unavailable or not executable'):
+            PACKAGE.stage_compile_queue(payload, args)
+
+    def test_release_payload_stages_pinned_compile_queue_outside_receiver_roles(self):
+        payload = self.home / 'release-payload'
+        (payload / 'bin').mkdir(parents=True)
+        args = argparse.Namespace(
+            compile_queue_binary=self.binaries['compile_queue'],
+            compile_queue_source_commit=COMMIT, compile_queue_source_tree='f' * 40,
+            compile_queue_source_status='', compile_queue_source_directory=None)
+        record = PACKAGE.stage_compile_queue(payload, args)
+        self.assertEqual(record['path'], 'bin/baton-compile-queue')
+        self.assertEqual((payload / record['path']).read_bytes(),
+                         self.binaries['compile_queue'].read_bytes())
+        self.assertEqual(record['source']['commit'], COMMIT)
+        self.assertEqual(record['source']['tree'], 'f' * 40)
+        self.assertEqual(record['state_root_environment'], 'BATON_COMPILE_QUEUE_ROOT')
 
     def test_installed_check_refuses_missing_or_altered_sibling(self):
         prefix, manifest, records = self.staged()

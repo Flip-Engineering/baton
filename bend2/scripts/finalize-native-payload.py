@@ -36,6 +36,7 @@ def finalize(prefix):
         'source': manifest['source'],
         'source_manifest': manifest['source_manifest'],
         'binaries': manifest['binaries'],
+        'compile_queue': manifest.get('compile_queue'),
     }
     receipt.write_text(json.dumps(receipt_value, indent=2) + '\n')
     files = sorted(path.relative_to(prefix).as_posix() for path in prefix.rglob('*')

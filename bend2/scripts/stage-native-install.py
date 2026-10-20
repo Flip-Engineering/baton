@@ -139,6 +139,21 @@ def stage_binaries(prefix, specs, package):
     return records
 
 
+def stage_compile_queue(prefix, args, package):
+    source_path = Path(args.compile_queue_binary)
+    executable_source(source_path, 'compile queue')
+    default = {'directory': str(ROOT), **package.source_identity()}
+    source = source_pin(args.compile_queue_source_commit, args.compile_queue_source_tree,
+                        args.compile_queue_source_status, args.compile_queue_source_manifest_sha256,
+                        default, 'compile queue', True, args.compile_queue_source_directory)
+    destination = prefix / 'bin' / 'baton-compile-queue'
+    shutil.copyfile(source_path, destination)
+    destination.chmod(0o755)
+    return {'path': 'bin/baton-compile-queue', 'sha256': package.sha256(destination),
+            'source': source, 'state_root_environment': 'BATON_COMPILE_QUEUE_ROOT',
+            'state_root_contract': 'absolute writable shared directory outside the install prefix'}
+
+
 def stage_checksums(prefix, package, records):
     files = sorted(path.relative_to(prefix).as_posix() for path in prefix.rglob('*')
                    if path.is_file() and path.relative_to(prefix).as_posix() != 'SHA256SUMS')
@@ -221,6 +236,13 @@ def main():
     for role in ('focused', 'full', 'recovery', 'full-wrapper'):
         parser.add_argument('--' + role + '-source-closure', type=Path,
                             help='complete source closure manifest for ' + role)
+    parser.add_argument('--compile-queue-binary', type=Path, required=True,
+                        help='qualified native compile queue installed as bin/baton-compile-queue')
+    parser.add_argument('--compile-queue-source-commit', required=True)
+    parser.add_argument('--compile-queue-source-tree', required=True)
+    parser.add_argument('--compile-queue-source-status')
+    parser.add_argument('--compile-queue-source-manifest-sha256')
+    parser.add_argument('--compile-queue-source-directory')
     parser.add_argument('--full-c-sha256', help='retained full generated-C SHA256')
     parser.add_argument('--full-wrapper-source-directory', help='current router wrapper source directory')
     for name in ('commit', 'tree', 'status', 'manifest_sha256'):
@@ -242,6 +264,7 @@ def main():
     try:
         (prefix / 'bin').mkdir()
         records = stage_binaries(prefix, specs, package)
+        compile_queue = stage_compile_queue(prefix, args, package)
         closures = stage_source_closures(prefix, args, package)
         require_manifest_closures(specs, closures)
         package.stage_adapters(prefix)
@@ -258,6 +281,7 @@ def main():
             'platform': {'system': platform.system(), 'machine': platform.machine()},
             'source': default_source,
             'binaries': records,
+            'compile_queue': compile_queue,
             'binary': {'path': focused['path'], 'alias': focused.get('alias'),
                        'sha256': focused['sha256'], 'source': focused['source']},
             'selected_modules': modules, 'selected_dependencies': dependencies,
@@ -285,6 +309,7 @@ def main():
                           'sha256': record['sha256'], 'build_mode': record['build_mode']}
                          for record in records],
             'closures': closures,
+            'compile_queue': compile_queue,
         }
         if full_record.get('wrapper_source') is not None:
             source_manifest['full']['wrapper_source'] = full_record['wrapper_source']
@@ -301,6 +326,7 @@ def main():
             'source': manifest['source'],
             'source_manifest': source_manifest,
             'binaries': records,
+            'compile_queue': compile_queue,
         }
         package.write_json(prefix / 'install-receipt.json', receipt)
         stage_checksums(prefix, package, records)
