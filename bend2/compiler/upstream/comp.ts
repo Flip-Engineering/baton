@@ -2889,7 +2889,10 @@ function arm_eq(a: HTerm, b: HTerm): boolean {
       case "Var": {
         return same_var(x.i, (y as Of<"Var">).i, d);
       }
-      case "Ref": return x.k === (y as Of<"Ref">).k;
+      case "Ref": {
+        const yr = y as Of<"Ref">;
+        return x.k === yr.k && (x.b === true) === (yr.b === true);
+      }
       case "Lam": {
         const yl = y as Of<"Lam">;
         if ((x.q?.$ ?? "") !== (yl.q?.$ ?? "")) return false;
