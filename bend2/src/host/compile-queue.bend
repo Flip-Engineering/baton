@@ -1255,7 +1255,8 @@ def live_inputs_next(result: Result<&1,&1,U32 & String,String>, skip: Bool,
                      +candidate: String, +acc: List<&2,Input>) -> List<&2,Input>:
   match result:
     case Done{value}:
-      Bool.pick(List<&2,Input>, skip, acc, Con{Input{candidate, candidate}, acc})
+      Bool.pick(List<&2,Input>, Bool.and(Bool.not(skip), Tx.str_eq(value, "1")),
+        Con{Input{candidate, candidate}, acc}, acc)
     case Fail{error}: acc
 
 def live_inputs_go(+cwd: String, argv: List<&2,String>, +output: String, +compiler: String,

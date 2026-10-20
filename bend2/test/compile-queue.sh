@@ -541,7 +541,7 @@ sh "$QUEUE" run --kind cc --source-root "$T" --state-root "$STATE" --cwd "$T" \
 unset BATON2_TEST_CAPTURE_ARGV
 # command is the queue's immutable execution receipt. It records staged
 # input/output paths and every argument in execution order.
-receipt=$(find "$STATE/keys" -type f -path '*/attempts/*/command' \
+receipt=$(find "$STATE/keys" -type f -path '*/runs/*/command' \
   -exec grep -lF -- "$recorder" {} + | head -n 1)
 if [ -n "$receipt" ] && cmp -s "$receipt" "$capture"; then
   pass 'recorded argv matches the staged command receipt in order'
