@@ -30,18 +30,23 @@ def argv(cmd: String, model: String, effort: String, sessions: String, session: 
     case True{}: P.argv(arguments(cmd,model,effort,sessions))
     case False{}: P.argv(List.append(&1,String,arguments(cmd,model,effort,sessions),["--resume",session]))
 
-def append_session_args(args: List<String>, session: String, fresh: Bool) -> List<String>:
-  match fresh:
-    case True{}: args
-    case False{}: List.append(&1,String,args,["--resume",session])
-
-def profile_arguments(binding: List<String>, cmd: String, model: String, effort: String, sessions: String, session: String, fresh: Bool) -> List<String>:
+# The configured profile store precedes the command when it names one. An empty
+# binding reproduces the ordinary argv exactly.
+def bound_head(binding: List<String>, cmd: String, model: String, effort: String, sessions: String) -> List<String>:
   match binding:
-    case Nil{}: append_session_args(arguments(cmd,model,effort,sessions),session,fresh)
-    case other: List.append(&1,String,["/usr/bin/env"],List.append(&1,String,binding,append_session_args(arguments(cmd,model,effort,sessions),session,fresh)))
+    case Nil{}: arguments(cmd,model,effort,sessions)
+    case other: List.append(&1,String,Con{"/usr/bin/env",other},arguments(cmd,model,effort,sessions))
+
+def bound_arguments(binding: List<String>, cmd: String, model: String, effort: String, sessions: String, session: String, fresh: Bool) -> List<String>:
+  match fresh:
+    case True{}: bound_head(binding,cmd,model,effort,sessions)
+    case False{}: List.append(&1,String,bound_head(binding,cmd,model,effort,sessions),["--resume",session])
 
 def argv_profile(binding: List<String>, cmd: String, model: String, effort: String, sessions: String, session: String, fresh: Bool) -> String:
-  P.argv(profile_arguments(binding,cmd,model,effort,sessions,session,fresh))
+  P.argv(bound_arguments(binding,cmd,model,effort,sessions,session,fresh))
+
+def start_player(cmd: String, model: String, effort: String, cwd: String, sessions: String, session: String, fresh: Bool, stderr: String) -> IO(Result<&1,&1,U32 & String,U32>):
+  P.ProcessChild.spawn(argv(cmd,model,effort,sessions,session,fresh),cwd,stderr)
 
 def preflight_failure(home: String, detail: String) -> Result<&1,&1,U32 & String,Unit>:
   Fail{(2, "native-environment-unwritable: HOME=" ++ home ++ " is not writable: " ++ detail ++ "; run the mutable Baton command as the recorded service account with its writable HOME")}
@@ -81,8 +86,63 @@ def preflight() -> IO(Result<&1,&1,U32 & String,Unit>):
     home : Result<&1,&1,U32 & String,String> <- IO.get_env("HOME")
     preflight_home_checked(home)
 
-def start_player(cmd: String, model: String, effort: String, cwd: String, sessions: String, session: String, fresh: Bool, stderr: String) -> IO(Result<&1,&1,U32 & String,U32>):
-  P.ProcessChild.spawn(argv(cmd,model,effort,sessions,session,fresh),cwd,stderr)
+def after_assignment(parts: List<String>) -> Maybe<String>:
+  match parts:
+    case value <> rest: Some{Tx.join("=",Con{value,rest})}
+    case Nil{}: None{}
+
+def assignment_named(name: String, rest: List<String>) -> Maybe<String>:
+  Bool.pick(Maybe<String>,String.eq(name,"PI_CODING_AGENT_DIR"),after_assignment(rest),None{})
+
+def split_strings(parts: List<&2,String>) -> List<String>:
+  match parts:
+    case Nil{}: Nil{}
+    case part <> rest: Con{part,split_strings(rest)}
+
+def assignment_value(parts: List<String>) -> Maybe<String>:
+  match parts:
+    case name <> rest: assignment_named(name,rest)
+    case Nil{}: None{}
+
+def chosen_store(found: Maybe<String>, current: Maybe<String>) -> Maybe<String>:
+  match found:
+    case Some{+store}: Some{store}
+    case None{}: current
+
+def store_from_argv(args: List<String>, current: Maybe<String>) -> Maybe<String>:
+  match args:
+    case Nil{}: current
+    case entry <> rest:
+      found = assignment_value(split_strings(String.split(entry,Char.from_u32(61))))
+      chosen = chosen_store(found,current)
+      store_from_argv(rest,chosen)
+
+def preflight_store(base: Result<&1,&1,U32 & String,Unit>, store: Maybe<String>) -> IO(Result<&1,&1,U32 & String,Unit>):
+  match base:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,Unit>,Fail{error})
+    case Done{made}:
+      match store:
+        case None{}: IO.pure(Result<&1,&1,U32 & String,Unit>,Done{Unit{}})
+        case Some{+path}: preflight_at(path)
+
+# The inherited HOME keeps its native extraction home and the configured store
+# keeps its own writable directory. Both are checked on the final argv.
+def preflight_arguments(argv: String) -> IO(Result<&1,&1,U32 & String,Unit>):
+  do IO<Result<&1,&1,U32 & String,Unit>>:
+    base : Result<&1,&1,U32 & String,Unit> <- preflight()
+    store : Maybe<String> <- IO.pure(Maybe<String>,store_from_argv(Tx.split_nul(argv),None{}))
+    preflight_store(base,store)
+
+def spawn_checked(checked: Result<&1,&1,U32 & String,Unit>, argv: String, cwd: String, stderr: String) -> IO(Result<&1,&1,U32 & String,U32>):
+  match checked:
+    case Fail{error}: IO.pure(Result<&1,&1,U32 & String,U32>,Fail{error})
+    case Done{made}: P.ProcessChild.spawn(argv,cwd,stderr)
+
+def start_player_profile(binding: List<String>, cmd: String, model: String, effort: String, cwd: String, sessions: String, session: String, fresh: Bool, stderr: String) -> IO(Result<&1,&1,U32 & String,U32>):
+  do IO<Result<&1,&1,U32 & String,U32>>:
+    +argv : String = argv_profile(binding,cmd,model,effort,sessions,session,fresh)
+    checked : Result<&1,&1,U32 & String,Unit> <- preflight_arguments(argv)
+    spawn_checked(checked,argv,cwd,stderr)
 
 # The setup asks the server for the event selection matching the session log
 # level (issue #686). Diagnostic asks for every event category with full

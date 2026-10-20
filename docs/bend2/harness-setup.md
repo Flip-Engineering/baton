@@ -138,6 +138,18 @@ K3 in the qualified workflow uses OMP's `kimi-code` provider. The native OMP
 adapter launches `--mode rpc`, queries `get_state` and retains conversation
 files beside the coordinator database.
 
+OMP binds a configured profile store through `PI_CODING_AGENT_DIR`, the supported
+agent directory (default `~/.omp/agent`). The OMP profile store is the agent
+directory that holds `agent.db`. Muse binds a configured profile store through
+`XDG_CONFIG_HOME`, the parent of `muse/auth.json`. The selected profile
+assignment overrides an inherited value. A launch with no selected profile adds
+no store binding and inherits the receiver environment. `HOME`, native session
+paths and the receiver UID are unchanged. OMP's preflight checks the inherited
+`HOME` and the selected `PI_CODING_AGENT_DIR` directory. Muse has no preflight;
+its `XDG_CONFIG_HOME` store is checked by Muse at startup. Codex and Claude bind
+their configured credential directories, and DSH binds `DSH_HOME`; those
+launches are unchanged.
+
 Muse uses its existing authenticated installation. The native adapter requires
 `exec --json --prompt-file` and resumes through `--session-id`. Preserve Muse's
 conversation storage when reconnecting the recorded native identity.
